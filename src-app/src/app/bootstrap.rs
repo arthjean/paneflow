@@ -712,7 +712,7 @@ impl PaneFlowApp {
                 picked: false,
                 owner: None,
                 parked: std::collections::HashMap::new(),
-                diff_tabs: vec![crate::app::diff_dock::DiffDockTab::Changes],
+                diff_tabs: Vec::new(),
                 diff_active_tab: 0,
                 diff_tab_close_armed: None,
                 diff_branch_menu: None,

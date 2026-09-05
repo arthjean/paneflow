@@ -187,65 +187,61 @@ fn render_diff_tab(
             .child(label),
     );
 
-    if matches!(
-        tab,
-        DiffDockTab::Terminal(_) | DiffDockTab::File(_) | DiffDockTab::PendingFile
-    ) {
-        let mark: AnyElement = if dirty && !close_armed {
-            div()
-                .relative()
-                .flex_none()
-                .size(px(11.))
-                .flex()
-                .items_center()
-                .justify_center()
-                .child(
-                    div()
-                        .flex_none()
-                        .size(px(7.))
-                        .rounded_full()
-                        .bg(ui.vc_modified)
-                        .group_hover(group.clone(), |style| style.invisible()),
-                )
-                .child(
-                    svg()
-                        .absolute()
-                        .inset_0()
-                        .size(px(11.))
-                        .invisible()
-                        .group_hover(group.clone(), |style| style.visible())
-                        .path("icons/close.svg")
-                        .text_color(ui.muted),
-                )
-                .into_any_element()
-        } else {
-            svg()
-                .size(px(11.))
-                .flex_none()
-                .path("icons/close.svg")
-                .text_color(if close_armed { ui.vc_deleted } else { ui.muted })
-                .into_any_element()
-        };
-        chip = chip.child(
-            div()
-                .id(SharedString::from(format!("diff-dock-tab-close-{index}")))
-                .flex_none()
-                .size(px(16.))
-                .flex()
-                .items_center()
-                .justify_center()
-                .rounded(px(6.))
-                .animated_hover_bg(
-                    gpui::transparent_black(),
-                    crate::app::constants::sidebar_tab_active_background(),
-                )
-                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
-                    this.request_close_diff_tab(index, cx);
-                }))
-                .child(mark),
-        );
-    }
+    let mark: AnyElement = if dirty && !close_armed {
+        div()
+            .relative()
+            .flex_none()
+            .size(px(11.))
+            .flex()
+            .items_center()
+            .justify_center()
+            .child(
+                div()
+                    .flex_none()
+                    .size(px(7.))
+                    .rounded_full()
+                    .bg(ui.vc_modified)
+                    .group_hover(group.clone(), |style| style.invisible()),
+            )
+            .child(
+                svg()
+                    .absolute()
+                    .inset_0()
+                    .size(px(11.))
+                    .invisible()
+                    .group_hover(group.clone(), |style| style.visible())
+                    .path("icons/close.svg")
+                    .text_color(ui.muted),
+            )
+            .into_any_element()
+    } else {
+        svg()
+            .size(px(11.))
+            .flex_none()
+            .path("icons/close.svg")
+            .text_color(if close_armed { ui.vc_deleted } else { ui.muted })
+            .into_any_element()
+    };
+    chip = chip.child(
+        div()
+            .id(SharedString::from(format!("diff-dock-tab-close-{index}")))
+            .flex_none()
+            .size(px(16.))
+            .flex()
+            .items_center()
+            .justify_center()
+            .rounded(px(6.))
+            .animated_hover_bg(
+                gpui::transparent_black(),
+                crate::app::constants::sidebar_tab_active_background(),
+            )
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
+                this.request_close_diff_tab(index, cx);
+                cx.stop_propagation();
+            }))
+            .child(mark),
+    );
 
     chip.into_any_element()
 }

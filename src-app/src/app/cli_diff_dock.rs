@@ -26,7 +26,7 @@ pub(crate) struct DiffDockSlot {
 
 impl DiffDockSlot {
     fn is_idle(&self) -> bool {
-        !self.open && !self.picked && self.tabs.len() <= 1
+        !self.open && !self.picked && self.tabs.is_empty()
     }
 }
 
@@ -62,7 +62,7 @@ impl PaneFlowApp {
             open: self.diff_dock.open,
             picker: self.diff_dock.picker,
             picked: self.diff_dock.picked,
-            tabs: std::mem::replace(&mut self.diff_dock.diff_tabs, vec![DiffDockTab::Changes]),
+            tabs: std::mem::take(&mut self.diff_dock.diff_tabs),
             active_tab: std::mem::replace(&mut self.diff_dock.diff_active_tab, 0),
             data: self.diff_dock.data.take(),
         };
@@ -232,7 +232,7 @@ mod tests {
 
     #[test]
     fn a_session_that_never_opened_the_dock_parks_nothing() {
-        assert!(slot(false, false, 1).is_idle());
+        assert!(slot(false, false, 0).is_idle());
     }
 
     #[test]
@@ -243,7 +243,7 @@ mod tests {
             "an answered picker must not ask again"
         );
         assert!(
-            !slot(false, false, 2).is_idle(),
+            !slot(false, false, 1).is_idle(),
             "a terminal / file tab must not be dropped"
         );
     }

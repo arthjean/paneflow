@@ -8,6 +8,19 @@ use crate::PaneFlowApp;
 use crate::terminal::{TerminalEvent, TerminalView};
 
 impl PaneFlowApp {
+    pub(crate) fn open_diff_changes_tab(&mut self, cx: &mut Context<Self>) {
+        let index = self
+            .diff_dock
+            .diff_tabs
+            .iter()
+            .position(|tab| matches!(tab, DiffDockTab::Changes));
+        let index = index.unwrap_or_else(|| {
+            self.diff_dock.diff_tabs.push(DiffDockTab::Changes);
+            self.diff_dock.diff_tabs.len() - 1
+        });
+        self.select_diff_tab(index, cx);
+    }
+
     pub(crate) fn open_diff_terminal_tab(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(ws) = self.active_workspace() else {
             return;
@@ -38,9 +51,7 @@ impl PaneFlowApp {
         self.diff_dock
             .diff_tabs
             .push(DiffDockTab::Terminal(terminal));
-        self.diff_dock.diff_active_tab = self.diff_dock.diff_tabs.len() - 1;
-        self.diff_dock.diff_tab_close_armed = None;
-        cx.notify();
+        self.select_diff_tab(self.diff_dock.diff_tabs.len() - 1, cx);
     }
 
     pub(crate) fn open_diff_file_tab(
@@ -55,10 +66,8 @@ impl PaneFlowApp {
         }
 
         if let Some(index) = file_tab_index(&self.diff_tab_facts(cx), &path) {
-            self.diff_dock.diff_active_tab = index;
-            self.diff_dock.diff_tab_close_armed = None;
+            self.select_diff_tab(index, cx);
             self.focus_diff_tab(index, window, cx);
-            cx.notify();
             return;
         }
 
@@ -71,10 +80,8 @@ impl PaneFlowApp {
         self.diff_dock
             .diff_tabs
             .insert(index, DiffDockTab::File(view));
-        self.diff_dock.diff_active_tab = index;
-        self.diff_dock.diff_tab_close_armed = None;
+        self.select_diff_tab(index, cx);
         self.focus_diff_tab(index, window, cx);
-        cx.notify();
     }
 
     fn pending_file_tab(&self) -> Option<usize> {
@@ -148,9 +155,7 @@ impl PaneFlowApp {
             Some(index) => self.select_diff_tab(index, cx),
             None => {
                 self.diff_dock.diff_tabs.push(DiffDockTab::PendingFile);
-                self.diff_dock.diff_active_tab = self.diff_dock.diff_tabs.len() - 1;
-                self.diff_dock.diff_tab_close_armed = None;
-                cx.notify();
+                self.select_diff_tab(self.diff_dock.diff_tabs.len() - 1, cx);
             }
         }
         if !self.files_sidebar_open {
@@ -162,7 +167,9 @@ impl PaneFlowApp {
     }
 
     pub(crate) fn select_diff_tab(&mut self, index: usize, cx: &mut Context<Self>) {
-        if index < self.diff_dock.diff_tabs.len() && self.diff_dock.diff_active_tab != index {
+        if index < self.diff_dock.diff_tabs.len() {
+            self.diff_dock.picker = false;
+            self.diff_dock.picked = true;
             self.diff_dock.diff_active_tab = index;
             self.diff_dock.diff_tab_close_armed = None;
             cx.notify();
@@ -170,7 +177,7 @@ impl PaneFlowApp {
     }
 
     pub(crate) fn request_close_diff_tab(&mut self, index: usize, cx: &mut Context<Self>) {
-        if index == 0 || index >= self.diff_dock.diff_tabs.len() {
+        if index >= self.diff_dock.diff_tabs.len() {
             return;
         }
         if close_arms_first(
@@ -186,13 +193,20 @@ impl PaneFlowApp {
     }
 
     pub(crate) fn close_diff_tab(&mut self, index: usize, cx: &mut Context<Self>) {
-        if index == 0 || index >= self.diff_dock.diff_tabs.len() {
+        if index >= self.diff_dock.diff_tabs.len() {
             return;
         }
         self.diff_dock.diff_tabs.remove(index);
         self.diff_dock.diff_active_tab =
             active_tab_after_close(self.diff_dock.diff_active_tab, index);
         self.diff_dock.diff_tab_close_armed = None;
+        if self.diff_dock.diff_tabs.is_empty() {
+            self.diff_dock.picker = true;
+            self.diff_dock.picked = false;
+        }
+        self.close_diff_options_menu(cx);
+        self.close_diff_new_tab_menu(cx);
+        self.diff_dock.diff_branch_menu = None;
         cx.notify();
     }
 
@@ -332,9 +346,11 @@ mod tests {
         assert_eq!(active_tab_after_close(3, 1), 2);
         assert_eq!(active_tab_after_close(1, 2), 1);
         assert_eq!(active_tab_after_close(1, 1), 0);
+        assert_eq!(active_tab_after_close(0, 0), 0);
+        assert_eq!(active_tab_after_close(1, 0), 0);
 
         for len in 2..=12usize {
-            for closed in 1..len {
+            for closed in 0..len {
                 for active in 0..len {
                     let next = active_tab_after_close(active, closed);
                     assert!(

@@ -40,14 +40,11 @@ impl PaneFlowApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.diff_dock.picker = false;
-        self.diff_dock.picked = true;
         match surface {
-            DiffDockSurface::Changes => self.select_diff_tab(0, cx),
+            DiffDockSurface::Changes => self.open_diff_changes_tab(cx),
             DiffDockSurface::Terminal => self.open_diff_terminal_tab(window, cx),
             DiffDockSurface::File => self.open_diff_file_picker(window, cx),
         }
-        cx.notify();
     }
 }
 

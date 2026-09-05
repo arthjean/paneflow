@@ -319,7 +319,9 @@ impl PaneFlowApp {
         ui: crate::theme::UiColors,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        if self.diff_dock.picker && matches!(self.mode, paneflow_config::schema::AppMode::Cli) {
+        if (self.diff_dock.picker || self.diff_dock.diff_tabs.is_empty())
+            && matches!(self.mode, paneflow_config::schema::AppMode::Cli)
+        {
             return self.render_diff_dock_picker(width, max_width, ui, cx);
         }
         self.refresh_diff_dock_if_theme_changed(cx);
@@ -365,10 +367,11 @@ impl PaneFlowApp {
                     view.clone().into_any_element(),
                 )
             }
-            _ => (
+            Some(DiffDockTab::Changes) => (
                 Some(self.render_diff_toolbar(&cwd, &data, ui, cx)),
                 self.render_diff_dock_body(&data, ui, cx),
             ),
+            None => (None, render_diff_surface_picker(ui, cx)),
         };
 
         let radius = crate::app::constants::PANE_CARD_RADIUS;

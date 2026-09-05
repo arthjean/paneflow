@@ -463,7 +463,11 @@ blue border, radius 8, margin 8, and a swap variant with its own tint.
 ### 5.4 Diff dock and Review view
 
 The dock attaches to a tab and opens on a surface picker (three cards, 122 by
-98). Tabs are chips with the sidebar rail skin: no separators, active chip on
+98). It starts with no content tabs: Changes is created only when selected in
+the picker or the `+` menu, which also offers File and Terminal. Every content
+tab is closable, including Changes and the first tab. Closing the last tab
+returns to the picker; switching sessions preserves the chosen tabs.
+Tabs are chips with the sidebar rail skin: no separators, active chip on
 the active tint, inactive chips wash in on hover. The Review view uses the
 same `DiffElement` as the dock: a `Unified | Split` segmented pill, a
 `Collapse all` action, a breadcrumb of Project, folder, and base branch, and

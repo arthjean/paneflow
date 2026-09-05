@@ -41,10 +41,23 @@ pub(super) fn render_diff_new_tab_menu(
         )
         .child(
             menu_row(
+                "diff-dock-new-tab-changes",
+                "icons/plus-minus.svg",
+                "Changes",
+                None,
+                ui,
+            )
+            .on_click(cx.listener(|this, _: &ClickEvent, _window, cx| {
+                this.close_diff_new_tab_menu(cx);
+                this.open_diff_changes_tab(cx);
+            })),
+        )
+        .child(
+            menu_row(
                 "diff-dock-new-tab-file",
                 "icons/file-text.svg",
                 "File",
-                "secondary-g",
+                Some("secondary-g"),
                 ui,
             )
             .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
@@ -57,7 +70,7 @@ pub(super) fn render_diff_new_tab_menu(
                 "diff-dock-new-tab-terminal",
                 "icons/terminal.svg",
                 "Terminal",
-                "secondary-j",
+                Some("secondary-j"),
                 ui,
             )
             .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
@@ -82,7 +95,7 @@ fn menu_row(
     id: &'static str,
     icon: &'static str,
     label: &'static str,
-    shortcut: &'static str,
+    shortcut: Option<&'static str>,
     ui: crate::theme::UiColors,
 ) -> gpui::Stateful<gpui::Div> {
     select_item(id, false, ui)
@@ -104,12 +117,12 @@ fn menu_row(
                 .text_color(ui.text)
                 .child(label),
         )
-        .child(
+        .children(shortcut.map(|shortcut| {
             div()
                 .flex_none()
                 .whitespace_nowrap()
                 .text_size(px(12.))
                 .text_color(ui.muted)
-                .child(crate::keybindings::format_keystroke(shortcut)),
-        )
+                .child(crate::keybindings::format_keystroke(shortcut))
+        }))
 }
