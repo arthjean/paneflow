@@ -488,9 +488,11 @@ differ only by whitespace is muted: the line wash drops to 0.08, no word
 rectangle is painted, and the 4 px change bar sits at 0.5 alpha. Highlight
 `None` keeps the change bar and gutter tint and drops every wash. Both
 `Highlight` and `Whitespace` live in the dock Options menu next to Layout, are
-session-scoped like Split and Unified, and rebuild the rows off the render
-thread; the previous rows stay on screen until the swap, and a failed rebuild
-keeps them under an error banner. The Review view receives the default
+session-scoped like Split and Unified. Highlight applies at paint time to
+cached word-level rows: switching Words, Lines, or None requires no Git work
+or row rebuild and preserves the scroll position. Whitespace rebuilds rows
+off the render thread; the previous rows stay on screen until the swap, and
+a failed rebuild keeps them under an error banner. The Review view receives the default
 rendering, `Words` and `Default`, without a menu.
 
 A file tab in the dock carries git markers in a 6 px column left of the line

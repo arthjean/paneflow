@@ -9,6 +9,15 @@ pub struct DiffOptions {
     pub whitespace: ComparisonPolicy,
 }
 
+impl DiffOptions {
+    pub fn for_cached_rows(self) -> Self {
+        Self {
+            highlight: HighlightPolicy::Words,
+            ..self
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DiffHunkStatus {
     Added,

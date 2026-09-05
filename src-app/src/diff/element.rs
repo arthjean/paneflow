@@ -11,7 +11,7 @@ use gpui::{
 };
 
 use super::align::CellKind;
-use super::engine::ChangeTone;
+use super::engine::{ChangeTone, HighlightPolicy};
 use super::hscroll::{
     H_SCROLLBAR_TRACK_HEIGHT, file_at_row, file_side_offset, h_scrollbar_segments,
 };
@@ -188,6 +188,7 @@ pub struct DiffElement {
     line_height: Pixels,
     gutter_w: Pixels,
     revert_chip: Option<usize>,
+    highlight: HighlightPolicy,
 }
 
 impl DiffElement {
@@ -211,7 +212,13 @@ impl DiffElement {
             line_height: px(ROW_HEIGHT),
             gutter_w: px(GUTTER_W),
             revert_chip: None,
+            highlight: HighlightPolicy::Words,
         }
+    }
+
+    pub fn with_highlight(mut self, highlight: HighlightPolicy) -> Self {
+        self.highlight = highlight;
+        self
     }
 
     pub fn with_revert_chip(mut self, row: Option<usize>) -> Self {
@@ -508,9 +515,15 @@ impl DiffElement {
 
     fn change_colors(&self, added: bool, tone: ChangeTone) -> (Hsla, Hsla, Option<Hsla>) {
         let p = &self.palette;
+        let tone = match self.highlight {
+            HighlightPolicy::Words => tone,
+            HighlightPolicy::Lines => ChangeTone::Full,
+            HighlightPolicy::None => ChangeTone::Plain,
+        };
+        let show_words = self.highlight == HighlightPolicy::Words;
         match (added, tone) {
-            (true, ChangeTone::Full) => (p.add_bg, p.add_bar, Some(p.word_add)),
-            (false, ChangeTone::Full) => (p.del_bg, p.del_bar, Some(p.word_del)),
+            (true, ChangeTone::Full) => (p.add_bg, p.add_bar, show_words.then_some(p.word_add)),
+            (false, ChangeTone::Full) => (p.del_bg, p.del_bar, show_words.then_some(p.word_del)),
             (true, ChangeTone::Muted) => (p.add_bg_muted, p.add_bar_muted, None),
             (false, ChangeTone::Muted) => (p.del_bg_muted, p.del_bar_muted, None),
             (true, ChangeTone::Plain) => (p.context_bg, p.add_bar, None),
@@ -1574,6 +1587,46 @@ mod tests {
             |x0, x1| out.push((x0, x1)),
         );
         out
+    }
+
+    #[test]
+    fn highlight_changes_apply_at_paint_time_without_rebuilding_rows() {
+        let palette = super::super::rows::palette(crate::theme::ui_colors());
+        let body = DiffBody::Unified {
+            rows: Rc::new(Vec::new()),
+            offsets: Rc::new(vec![0.0]),
+            max_line_no: 0,
+            spans: Rc::new(Vec::new()),
+            h_offsets: Rc::new(Vec::new()),
+        };
+        let mut element = DiffElement::new(body, palette);
+        for added in [true, false] {
+            let (bg, bar, word) = if added {
+                (palette.add_bg, palette.add_bar, palette.word_add)
+            } else {
+                (palette.del_bg, palette.del_bar, palette.word_del)
+            };
+            element = element.with_highlight(HighlightPolicy::Lines);
+            assert_eq!(
+                element.change_colors(added, ChangeTone::Full),
+                (bg, bar, None)
+            );
+            assert_eq!(
+                element.change_colors(added, ChangeTone::Muted),
+                (bg, bar, None)
+            );
+            element = element.with_highlight(HighlightPolicy::None);
+            assert_eq!(
+                element.change_colors(added, ChangeTone::Full),
+                (palette.context_bg, bar, None),
+            );
+            element = element.with_highlight(HighlightPolicy::Words);
+            assert_eq!(
+                element.change_colors(added, ChangeTone::Full),
+                (bg, bar, Some(word))
+            );
+            assert!(element.change_colors(added, ChangeTone::Muted).2.is_none());
+        }
     }
 
     #[test]

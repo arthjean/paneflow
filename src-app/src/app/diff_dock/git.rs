@@ -44,6 +44,7 @@ pub(super) fn build_diff_dock(
     theme_generation: u64,
     options: DiffOptions,
 ) -> Result<DiffDockBuilt, String> {
+    let options = options.for_cached_rows();
     let diff = compute_head_diff(Path::new(cwd), options);
     if let Some(e) = diff.error {
         return Err(e);

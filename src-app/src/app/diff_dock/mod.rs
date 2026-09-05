@@ -49,7 +49,7 @@ impl PaneFlowApp {
                 && !data.loading
                 && data.error.is_none()
                 && data.has_mode(split)
-                && data.options == self.diff_dock.diff_options
+                && data.options == self.diff_dock.diff_options.for_cached_rows()
                 && data.theme_generation == crate::theme::theme_generation()
         });
         self.diff_dock.open = true;
@@ -122,7 +122,12 @@ impl PaneFlowApp {
         if self.diff_dock.diff_options == options {
             return;
         }
+        let comparison_changed = self.diff_dock.diff_options.whitespace != options.whitespace;
         self.diff_dock.diff_options = options;
+        if !comparison_changed {
+            cx.notify();
+            return;
+        }
         let cwd = self
             .diff_dock
             .data
@@ -608,7 +613,11 @@ impl PaneFlowApp {
             .on_scroll_wheel(cx.listener(|this, ev: &ScrollWheelEvent, window, cx| {
                 this.apply_diff_dock_wheel(ev, window, cx);
             }))
-            .child(DiffElement::new(body, pal).with_revert_chip(chip_row));
+            .child(
+                DiffElement::new(body, pal)
+                    .with_highlight(self.diff_dock.diff_options.highlight)
+                    .with_revert_chip(chip_row),
+            );
         element.style().restrict_scroll_to_axis = Some(true);
 
         div()
