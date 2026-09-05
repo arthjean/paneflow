@@ -12,7 +12,7 @@ agents, and compare their feedback without switching windows or
 branches.
 
 It works for projects that live inside a Git repository. Open a project
-and select **Diff** in the sidebar to get started.
+and select **Review** in the sidebar footer to get started.
 
 ## What the Diff view shows [#what-the-diff-view-shows]
 
@@ -29,36 +29,38 @@ on Tree-sitter.
 
 ## Open and navigate the Diff view [#open-and-navigate-the-diff-view]
 
-Open the Diff view from the sidebar or with `Cmd/Ctrl+Shift+G`. Once
+Open the Diff view from the sidebar footer or with `Cmd/Ctrl+Shift+G`.
+The **Workspaces** rail on the left lists every repository you have open in
+Agents; the **Changes** rail next to it lists the modified files of the
+diff you are reading; the diff itself lives in a pane on the right. Once
 it's open:
 
-* Scroll through hunks to compare additions and deletions.
-* Toggle between a unified view and side by side.
+* Click a workspace folder to fold or unfold its branches and worktrees;
+  as many workspaces as you like can stay open, and Paneflow remembers
+  which ones you folded across restarts.
+* Click a branch or a worktree in the Workspaces rail to read its diff in
+  the focused pane.
+* Click a file in the Changes rail to jump to it.
+* Scroll through hunks with `[` and `]` to compare additions and deletions.
+* Press `u` to toggle between a unified view and side by side.
 * Pinned file headers keep your place while you scroll a long diff.
 
 ## Compare branches without switching worktrees [#compare-branches-without-switching-worktrees]
 
-You don't have to check branches out one at a time to read them:
+You don't have to check branches out one at a time to read them. Diff
+panes use the same grid as agent panes:
 
-* **Project view** shows the diff for your current task.
-* **Multi-project mode** gathers your open repos into tabs.
-* **Worktree mode** lines sibling branches up side by side, so you can
-  read each one's progress at a glance.
-
-## Ask agents to review the diff [#ask-agents-to-review-the-diff]
-
-Every branch column has a **Review** button. Pick Claude Code, Codex,
-OpenCode, or Pi, and Paneflow opens that agent in a real terminal
-directly under the diff, already in the right directory.
-
-* Paneflow **stages the review prompt but never sends it without your
-  approval** - you read it before pressing Enter.
-* The agent works through the diff and returns findings tied to specific
-  files and lines.
-* Launch a second agent and it gets a more skeptical framing, so you get
-  a genuine second opinion instead of a near-identical echo of the first.
-* Target a specific line or hunk and send it straight to an agent with a
-  focused question.
+* Drag a workspace, a branch, or a worktree from the Workspaces rail onto
+  the edge of a pane to open it side by side.
+* Drop it on the center of a pane to replace what that pane shows.
+* Split a pane with the usual split shortcuts to duplicate the diff, close
+  a pane to remove it, and drag pane headers to rearrange the grid, exactly
+  as in Agents.
+* The `...` menu in a pane header holds the same display options as the
+  Changes tab in Agents: layout (split or unified), highlight, whitespace,
+  collapse or expand every file, and refresh.
+* The Changes rail always follows the focused pane, and the base branch
+  chip in its header picks the branch each diff is computed against.
 
 ## See also [#see-also]
 

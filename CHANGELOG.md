@@ -7,6 +7,19 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
 
 ### Added
 
+- Review mode now has two rails and a pane grid. The Workspaces rail lists
+  every repository open in Agents as a folder row that folds its checkouts
+  and git worktrees and remembers the folded rows across restarts; clicking
+  a checkout shows its diff in the focused pane,
+  dragging one onto a pane edge opens it side by side, and dropping it on
+  the center replaces that pane's subject. The Changes rail follows the focused pane
+  and carries the base branch picker. Diff panes are
+  regular pane cards: split, close, zoom, focus navigation and header drag
+  work as in Agents, the grid persists across restarts, and it is capped at
+  six panes. Their header replaces the split buttons with the `...` options
+  menu of the Changes tab (layout, highlight, whitespace, collapse or expand
+  all, refresh), applied to that pane's diff.
+
 - The Changes tab highlights the words that differ inside a modified block,
   on top of the line wash, so a one-word edit on a long line reads at a
   glance. The comparison is a port of IntelliJ's pipeline on imara-diff:
@@ -32,7 +45,23 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
   refreshes the dock, and refuses when the file has unsaved changes in a
   dock tab or changed on disk since the dock was built.
 
+### Removed
+
+- `Review with agent` and the terminal panel it opened under a Review diff
+  are gone, along with the `review_prefill_delay_ms` setting; the key is
+  ignored if it is still present in `paneflow.json`. The Review rail menu
+  no longer offers `Open Shell in Worktree`. Launch agents from Agents mode.
+
 ### Changed
+
+- The toolbar above the Review diff is gone, along with the Multi-project
+  and Worktree scopes, the repo tabs, the hunk counter, the cost badge, the
+  `Unified | Split` segment, `Collapse all` and the cross-column scroll
+  sync (`s`). `u` still toggles unified and split, `[` and `]` still walk
+  the hunks, collapse all lives in the Changes rail header, and the agent
+  attribution is a tooltip on the pane header diffstat. A pane shows one
+  worktree, so the per-column headers and the internal column arrangement
+  left with the toolbar.
 
 - The code editor and diff view use Zed's highlighting queries for Rust,
   JSON/JSONC, shell, Python, TypeScript/TSX/JavaScript, Markdown, Go, YAML,

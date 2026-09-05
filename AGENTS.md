@@ -63,7 +63,7 @@ You cannot reproduce this on Linux, not even with a cross
 item order instead, and treat any file containing a `mod tests` as having a hard
 boundary after which nothing else may be declared. Where an item genuinely must
 follow the test module, add an `#[allow(clippy::items_after_test_module,
-reason = "...")]` on the module, as `src-app/src/diff/view.rs` does.
+reason = "...")]` on the module.
 
 ## Cross-platform compatibility is mandatory
 
