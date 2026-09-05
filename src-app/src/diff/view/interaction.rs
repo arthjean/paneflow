@@ -2,23 +2,11 @@ use super::*;
 use crate::ui_primitives::AnimatedHoverExt;
 
 impl DiffView {
-    pub(super) fn select_column(&mut self, idx: usize, cx: &mut Context<Self>) {
-        if self.selected_column != idx {
-            self.selected_column = idx;
-            cx.notify();
-        }
-    }
     pub(super) fn goto_hunk(&mut self, forward: bool, window: &mut Window, cx: &mut Context<Self>) {
         let mode = self.effective_mode(window);
-        let Some(ci) = self.selected_or_first_visible() else {
-            return;
-        };
-        let Some((handle, tops, cur_y)) = self.columns.get(ci).map(|col| {
-            let cur_y = f32::from(-col.el_scroll.offset().y).max(0.0);
-            (col.el_scroll.clone(), col.hunk_tops(mode).clone(), cur_y)
-        }) else {
-            return;
-        };
+        let col = &self.column;
+        let cur_y = f32::from(-col.el_scroll.offset().y).max(0.0);
+        let tops = col.hunk_tops(mode).clone();
         if tops.is_empty() {
             return;
         }
@@ -35,49 +23,28 @@ impl DiffView {
                 .find(|&t| t < pivot - 4.0)
                 .unwrap_or_else(|| *tops.last().unwrap_or(&0.0))
         };
+        let handle = col.el_scroll.clone();
         let x = handle.offset().x;
         handle.set_offset(point(x, px((HUNK_JUMP_MARGIN - target).min(0.0))));
-        self.selected_column = ci;
-        self.scroll_driver = ci;
         cx.notify();
     }
 
     pub(super) fn handle_body_click(
         &mut self,
-        col_idx: usize,
         ev: &ClickEvent,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.select_column(col_idx, cx);
         let mode = self.effective_mode(window);
         window.focus(&self.focus_handle, cx);
-        if self.handle_horizontal_scrollbar_click(col_idx, ev.position(), mode, cx) {
+        if self.handle_horizontal_scrollbar_click(ev.position(), mode, cx) {
             return;
         }
-        let row = {
-            let Some(col) = self.columns.get(col_idx) else {
-                return;
-            };
-            let bounds = col.el_scroll.bounds();
-            let y = ev.position().y;
-            if y < bounds.top() || y > bounds.bottom() {
-                return;
-            }
-            let target = f32::from(y - bounds.top() - col.el_scroll.offset().y).max(0.0);
-            let offsets = match mode {
-                ViewMode::Unified => &col.disp_unified_offsets,
-                ViewMode::Split => &col.disp_split_offsets,
-            };
-            match hit_test::row_at_offset(offsets, target) {
-                Some(r) => r,
-                None => return,
-            }
+        let Some(row) = self.row_at_point(ev.position(), mode) else {
+            return;
         };
         let fold_key = {
-            let Some(col) = self.columns.get(col_idx) else {
-                return;
-            };
+            let col = &self.column;
             match mode {
                 ViewMode::Unified => col
                     .disp_unified
@@ -92,19 +59,16 @@ impl DiffView {
             }
         };
         if let Some(key) = fold_key {
-            if let Some(col) = self.columns.get_mut(col_idx) {
-                if !col.expanded_folds.remove(&key) {
-                    col.expanded_folds.insert(key);
-                }
-                col.recompute_display();
-                cx.notify();
+            let col = &mut self.column;
+            if !col.expanded_folds.remove(&key) {
+                col.expanded_folds.insert(key);
             }
+            col.recompute_display();
+            cx.notify();
             return;
         }
         let path = {
-            let Some(col) = self.columns.get(col_idx) else {
-                return;
-            };
+            let col = &self.column;
             let anchors = match mode {
                 ViewMode::Unified => &col.disp_anchors_unified,
                 ViewMode::Split => &col.disp_anchors_split,
@@ -117,23 +81,17 @@ impl DiffView {
         let Some(path) = path else {
             return;
         };
-        if let Some(col) = self.columns.get_mut(col_idx) {
-            if !col.collapsed.remove(&path) {
-                discard_expanded_folds_for_path(&mut col.expanded_folds, &path);
-                col.collapsed.insert(path);
-            }
-            col.recompute_display();
-            cx.notify();
+        let col = &mut self.column;
+        if !col.collapsed.remove(&path) {
+            discard_expanded_folds_for_path(&mut col.expanded_folds, &path);
+            col.collapsed.insert(path);
         }
+        col.recompute_display();
+        cx.notify();
     }
 
-    pub(super) fn row_at_point(
-        &self,
-        col_idx: usize,
-        point: Point<Pixels>,
-        mode: ViewMode,
-    ) -> Option<usize> {
-        let col = self.columns.get(col_idx)?;
+    pub(super) fn row_at_point(&self, point: Point<Pixels>, mode: ViewMode) -> Option<usize> {
+        let col = &self.column;
         let bounds = col.el_scroll.bounds();
         if point.y < bounds.top() || point.y > bounds.bottom() {
             return None;
@@ -148,12 +106,11 @@ impl DiffView {
 
     pub(super) fn resolve_body_scope(
         &self,
-        col_idx: usize,
         point: Point<Pixels>,
         mode: ViewMode,
     ) -> Option<DiffBodyScope> {
-        let row = self.row_at_point(col_idx, point, mode)?;
-        let col = self.columns.get(col_idx)?;
+        let row = self.row_at_point(point, mode)?;
+        let col = &self.column;
         let ColumnState::Loaded { files_full, .. } = &col.state else {
             return None;
         };
@@ -192,16 +149,12 @@ impl DiffView {
 
     pub(super) fn copy_scope(
         &mut self,
-        col_idx: usize,
         scope: DiffBodyScope,
         want_hunk: bool,
         cx: &mut Context<Self>,
     ) {
         let result = {
-            let Some(col) = self.columns.get(col_idx) else {
-                return;
-            };
-            let ColumnState::Loaded { files_full, .. } = &col.state else {
+            let ColumnState::Loaded { files_full, .. } = &self.column.state else {
                 return;
             };
             let Some(file) = files_full.get(scope.file_idx) else {
@@ -235,29 +188,26 @@ impl DiffView {
 
     pub(super) fn copy_hovered_hunk(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let mode = self.effective_mode(window);
-        let Some((col_idx, point)) = self.last_body_pos else {
+        let Some(point) = self.last_body_pos else {
             self.set_flash("No hunk here".into(), cx);
             return;
         };
-        match self.resolve_body_scope(col_idx, point, mode) {
-            Some(scope) => self.copy_scope(col_idx, scope, true, cx),
+        match self.resolve_body_scope(point, mode) {
+            Some(scope) => self.copy_scope(scope, true, cx),
             None => self.set_flash("No hunk here".into(), cx),
         }
     }
 
     pub(super) fn open_body_menu(
         &mut self,
-        col_idx: usize,
         point: Point<Pixels>,
         mode: ViewMode,
         cx: &mut Context<Self>,
     ) {
-        self.select_column(col_idx, cx);
         self.body_menu = self
-            .resolve_body_scope(col_idx, point, mode)
+            .resolve_body_scope(point, mode)
             .map(|scope| DiffBodyMenu {
                 position: point,
-                col_idx,
                 scope,
                 mode,
             });
@@ -289,7 +239,6 @@ impl DiffView {
         } else {
             "Copy hunk"
         };
-        let col_idx = menu.col_idx;
         let scope = menu.scope;
         let copy_hunk_item = div()
             .id("diff-menu-copy-hunk")
@@ -307,12 +256,16 @@ impl DiffView {
                 .animated_hover_bg(with_alpha(ui.text, 0.0), with_alpha(ui.text, 0.05))
                 .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
                     this.body_menu = None;
-                    this.copy_scope(col_idx, scope, true, cx);
+                    this.copy_scope(scope, true, cx);
                     cx.stop_propagation();
                 }))
                 .into_any_element()
         } else {
             copy_hunk_item.into_any_element()
+        };
+        let mode_label = match menu.mode {
+            ViewMode::Unified => "Switch to split view",
+            ViewMode::Split => "Switch to unified view",
         };
         let panel = menu_surface(div().id("diff-body-context-menu"), ui)
             .occlude()
@@ -333,10 +286,20 @@ impl DiffView {
                     .cursor(CursorStyle::Arrow)
                     .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
                         this.body_menu = None;
-                        this.copy_scope(col_idx, scope, false, cx);
+                        this.copy_scope(scope, false, cx);
                         cx.stop_propagation();
                     }))
                     .child(div().text_color(ui.text).child("Copy file diff")),
+            )
+            .child(
+                select_item("diff-menu-toggle-mode", false, ui)
+                    .cursor(CursorStyle::Arrow)
+                    .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
+                        this.body_menu = None;
+                        this.toggle_view_mode(cx);
+                        cx.stop_propagation();
+                    }))
+                    .child(div().text_color(ui.text).child(mode_label)),
             );
         deferred(
             anchored()

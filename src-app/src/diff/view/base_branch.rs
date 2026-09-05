@@ -1,8 +1,8 @@
-use gpui::{Context, Window};
+use gpui::Context;
 
 use super::DiffView;
 
-pub(super) fn matching_indices(branches_lc: &[String], query: &str) -> Vec<usize> {
+pub(crate) fn matching_indices(branches_lc: &[String], query: &str) -> Vec<usize> {
     if query.is_empty() {
         return (0..branches_lc.len()).collect();
     }
@@ -13,7 +13,7 @@ pub(super) fn matching_indices(branches_lc: &[String], query: &str) -> Vec<usize
         .collect()
 }
 
-pub(super) fn first_matching_index(branches_lc: &[String], query: &str) -> Option<usize> {
+pub(crate) fn first_matching_index(branches_lc: &[String], query: &str) -> Option<usize> {
     if query.is_empty() && !branches_lc.is_empty() {
         return Some(0);
     }
@@ -21,14 +21,12 @@ pub(super) fn first_matching_index(branches_lc: &[String], query: &str) -> Optio
 }
 
 impl DiffView {
-    pub(super) fn resolve_and_set_base(&mut self, raw: String, cx: &mut Context<Self>) {
+    pub fn resolve_and_set_base(&mut self, raw: String, cx: &mut Context<Self>) {
         let raw = raw.trim().to_string();
         if raw.is_empty() {
             return;
         }
-        let Some(probe_dir) = self.columns.first().map(|column| column.path.clone()) else {
-            return;
-        };
+        let probe_dir = self.column.path.clone();
         cx.spawn(async move |this, cx| {
             let candidate = raw.clone();
             let exists =
@@ -42,36 +40,12 @@ impl DiffView {
         .detach();
     }
 
-    pub(super) fn toggle_base_picker(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.base_picker_open = !self.base_picker_open;
-        if self.base_picker_open {
-            self.base_filter.update(cx, |input, cx| {
-                input.clear(cx);
-            });
-            let focus_handle = self.base_filter.read(cx).focus_handle.clone();
-            window.focus(&focus_handle, cx);
-        } else {
-            window.focus(&self.focus_handle, cx);
-        }
-        cx.notify();
-    }
-
-    pub(super) fn close_base_picker(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.base_picker_open {
-            self.base_picker_open = false;
-            window.focus(&self.focus_handle, cx);
-            cx.notify();
-        }
-    }
-
-    pub(super) fn set_base(&mut self, base: String, cx: &mut Context<Self>) {
+    pub fn set_base(&mut self, base: String, cx: &mut Context<Self>) {
         if base == self.base_ref {
-            self.base_picker_open = false;
             cx.notify();
             return;
         }
         self.base_ref = base;
-        self.base_picker_open = false;
         self.start_loading(cx);
         cx.notify();
     }

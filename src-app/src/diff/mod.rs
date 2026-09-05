@@ -1,5 +1,4 @@
 mod align;
-mod arrange;
 mod element;
 mod engine;
 mod extract;
@@ -7,22 +6,14 @@ mod git;
 mod highlighter;
 mod hit_test;
 mod hscroll;
-mod multi_view;
 #[cfg(test)]
 pub(crate) mod parity_tests;
-mod review_terminal;
 mod rows;
-mod scope;
-mod scope_header;
 mod syntax;
 mod view;
 
-pub use git::{FileChange, list_repo_worktrees};
-pub use multi_view::MultiRepoDiffView;
-pub use scope::{DiffScope, RepoGroup};
-pub use view::{
-    DiffView, DiffViewEvent, DiffWorktree, FileEntry, FileListState, aggregate_file_lists,
-};
+pub use git::FileChange;
+pub use view::{DiffView, DiffWorktree, FileEntry, FileListState, ReviewSubject};
 
 pub(crate) use align::CellKind;
 pub(crate) use element::{DiffBody, DiffElement, revert_chip_bounds};

@@ -55,8 +55,6 @@ pub struct PaneFlowConfig {
     #[serde(default, deserialize_with = "lenient_value_or_default")]
     pub agent_stall_threshold_secs: Option<u64>,
     #[serde(default, deserialize_with = "lenient_value_or_default")]
-    pub review_prefill_delay_ms: Option<u64>,
-    #[serde(default, deserialize_with = "lenient_value_or_default")]
     pub submit_paste_delay_ms: Option<u64>,
     #[serde(default, deserialize_with = "lenient_value_or_default")]
     pub external_editor: Option<String>,
@@ -152,10 +150,6 @@ impl PaneFlowConfig {
     pub const MIN_AGENT_STALL_THRESHOLD_SECS: u64 = 30;
     pub const MAX_AGENT_STALL_THRESHOLD_SECS: u64 = 86_400;
 
-    pub const DEFAULT_REVIEW_PREFILL_DELAY_MS: u64 = 2000;
-    pub const MIN_REVIEW_PREFILL_DELAY_MS: u64 = 250;
-    pub const MAX_REVIEW_PREFILL_DELAY_MS: u64 = 10_000;
-
     pub const DEFAULT_UNFOCUSED_PANE_OPACITY: f32 = 0.7;
     pub const MIN_UNFOCUSED_PANE_OPACITY: f32 = 0.15;
     pub const MAX_UNFOCUSED_PANE_OPACITY: f32 = 1.0;
@@ -222,27 +216,6 @@ impl PaneFlowConfig {
                 "agent_stall_threshold_secs out of range [{min}, {max}], clamped",
                 min = Self::MIN_AGENT_STALL_THRESHOLD_SECS,
                 max = Self::MAX_AGENT_STALL_THRESHOLD_SECS,
-            );
-        }
-        clamped
-    }
-
-    pub fn resolved_review_prefill_delay_ms(&self) -> u64 {
-        let raw = self
-            .review_prefill_delay_ms
-            .unwrap_or(Self::DEFAULT_REVIEW_PREFILL_DELAY_MS);
-        let clamped = raw.clamp(
-            Self::MIN_REVIEW_PREFILL_DELAY_MS,
-            Self::MAX_REVIEW_PREFILL_DELAY_MS,
-        );
-        if clamped != raw {
-            tracing::warn!(
-                target: "paneflow_config::review",
-                requested = raw,
-                clamped,
-                "review_prefill_delay_ms out of range [{min}, {max}], clamped",
-                min = Self::MIN_REVIEW_PREFILL_DELAY_MS,
-                max = Self::MAX_REVIEW_PREFILL_DELAY_MS,
             );
         }
         clamped

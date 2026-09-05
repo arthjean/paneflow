@@ -49,7 +49,6 @@ Unknown top-level keys are ignored by the runtime. The schema uses
 | `shell_integration` | boolean or null | enabled | Master switch for shell rc injection: OSC 7 CWD reporting and OSC 133 command marks. |
 | `agent_stall_detection` | boolean or null | `true` | Enables stalled-agent detection. |
 | `agent_stall_threshold_secs` | integer or null | `60` | Silence threshold before a Thinking agent is marked Stalled. Clamped to `30` to `86400`. |
-| `review_prefill_delay_ms` | integer or null | `2000` | Delay before Review pre-fills a freshly launched CLI. Clamped to `250` to `10000`. |
 | `submit_paste_delay_ms` | integer or null | `70` | Minimum delay between bracketed paste and submit carriage return. Clamped to `10` to `5000`. |
 | `external_editor` | string or null | `auto` | `auto`, `system`, `zed`, `cursor`, `windsurf`, or `code`. |
 | `shortcuts` | object | `{}` | Custom keybindings: `{ "ctrl+shift+t": "new_tab" }`. |
@@ -277,7 +276,6 @@ unconditionally.
   "shell_integration": true,
   "agent_stall_detection": true,
   "agent_stall_threshold_secs": 60,
-  "review_prefill_delay_ms": 2000,
   "submit_paste_delay_ms": 70,
   "external_editor": "auto",
   "shortcuts": {},

@@ -600,33 +600,6 @@ struct AgentSessionsState {
     sessions_scanning: [bool; agent_sessions::SESSION_AGENT_COUNT],
 }
 
-struct DiffModeState {
-    diff_view: Option<gpui::Entity<crate::diff::DiffView>>,
-    multi_diff_view: Option<gpui::Entity<crate::diff::MultiRepoDiffView>>,
-    diff_view_cache: std::collections::HashMap<
-        crate::app::diff_view_actions::DiffViewKey,
-        gpui::Entity<crate::diff::DiffView>,
-    >,
-    diff_view_key: Option<crate::app::diff_view_actions::DiffViewKey>,
-    multi_diff_view_retained: Option<(u64, gpui::Entity<crate::diff::MultiRepoDiffView>)>,
-    diff_collapsed_branches: std::collections::HashSet<String>,
-    diff_discovering: bool,
-    diff_discovering_root: Option<std::path::PathBuf>,
-    diff_chosen_worktrees:
-        std::collections::HashMap<std::path::PathBuf, std::collections::HashSet<String>>,
-    diff_worktree_picker_open: bool,
-    diff_available_worktrees: Vec<crate::diff::DiffWorktree>,
-    diff_available_repo: Option<std::path::PathBuf>,
-    diff_scope: crate::diff::DiffScope,
-    diff_scope_picker_open: bool,
-    diff_project_picker_open: bool,
-    diff_selected_file: Option<String>,
-    diff_files_collapsed: bool,
-    diff_files_tree: bool,
-    diff_collapsed_dirs: std::collections::HashSet<String>,
-    diff_file_filter: gpui::Entity<crate::widgets::text_input::TextInput>,
-}
-
 struct DiffDockState {
     pub(crate) open: bool,
     pub(crate) data: Option<crate::app::diff_dock::DiffDockData>,
@@ -774,7 +747,7 @@ struct PaneFlowApp {
     launch_instant: std::time::Instant,
     telemetry_enabled_last: Option<bool>,
     theme_changed: std::sync::Arc<std::sync::atomic::AtomicBool>,
-    diff_mode: DiffModeState,
+    pub(crate) review: crate::app::review::ReviewState,
     pub(crate) mode: paneflow_config::schema::AppMode,
     pub(crate) diff_dock: DiffDockState,
     pub(crate) sidebar_order_cache: std::cell::RefCell<crate::app::sidebar::SidebarOrderCache>,
@@ -788,9 +761,7 @@ impl PaneFlowApp {
             crate::settings::chrome::SETTINGS_NAV_WIDTH
         } else {
             match self.mode {
-                paneflow_config::schema::AppMode::Diff => {
-                    crate::app::diff_view_actions::DIFF_SIDEBAR_WIDTH
-                }
+                paneflow_config::schema::AppMode::Diff => Self::review_rails_width(),
                 paneflow_config::schema::AppMode::Cli => SIDEBAR_WIDTH,
             }
         }
@@ -997,10 +968,7 @@ impl Render for PaneFlowApp {
         let panel_bg = if settings_open {
             ui.base
         } else {
-            match self.mode {
-                paneflow_config::schema::AppMode::Cli => gpui::transparent_black(),
-                paneflow_config::schema::AppMode::Diff => ui.base,
-            }
+            gpui::transparent_black()
         };
         let panel_corner_mask_bg = crate::app::constants::cockpit_backdrop_background(
             shell_color,
@@ -1065,7 +1033,7 @@ impl Render for PaneFlowApp {
         let main_content = if self.settings_section.is_some() {
             self.render_settings_content_panel(cx).into_any_element()
         } else if matches!(self.mode, paneflow_config::schema::AppMode::Diff) {
-            self.render_diff_main(cx)
+            self.render_review_main(pane_grid_left_gutter, window, cx)
         } else if let Some(ws) = self.active_workspace() {
             if let Some(root) = &ws.active_tab().root {
                 let app_weak = cx.weak_entity();
@@ -1215,7 +1183,6 @@ impl Render for PaneFlowApp {
             .on_action(cx.listener(Self::handle_split_equalize))
             .on_action(cx.listener(Self::handle_swap_pane))
             .on_action(cx.listener(Self::handle_undo_close_pane))
-            .on_action(cx.listener(Self::handle_open_multi_diff))
             .on_action(cx.listener(Self::handle_open_diff_view))
             .on_action(cx.listener(Self::handle_ws1))
             .on_action(cx.listener(Self::handle_ws2))
@@ -1332,7 +1299,7 @@ impl Render for PaneFlowApp {
                                 .overflow_hidden()
                                 .opacity(primary_sidebar_opacity)
                                 .pt(title_bar_h)
-                                .child(self.render_diff_sidebar(window, cx))
+                                .child(self.render_review_rails(window, cx))
                                 .into_any_element(),
                             paneflow_config::schema::AppMode::Cli => div()
                                 .flex()
@@ -1558,6 +1525,10 @@ impl Render for PaneFlowApp {
 
         if let Some(menu) = self.pane_menu_open.clone() {
             app_content = app_content.child(self.render_pane_context_menu(menu, ui, window, cx));
+        }
+
+        if let Some(menu) = self.review.rail_menu.clone() {
+            app_content = app_content.child(self.render_review_rail_menu(menu, ui, window, cx));
         }
 
         if let Some(menu) = self.files_menu_open.clone() {

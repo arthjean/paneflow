@@ -1,9 +1,9 @@
 use crate::PaneFlowApp;
-use crate::diff::{FileChange, FileEntry};
+use crate::diff::{DiffView, FileChange, FileEntry};
 use crate::theme::UiColors;
 use gpui::{
-    AnyElement, ClickEvent, Context, FontWeight, InteractiveElement, IntoElement, ParentElement,
-    SharedString, Styled, div, prelude::*, px,
+    AnyElement, ClickEvent, Context, Entity, FontWeight, InteractiveElement, IntoElement,
+    ParentElement, SharedString, Styled, div, prelude::*, px,
 };
 
 use super::{REVIEW_SIDEBAR_ROW_MARGIN_X, REVIEW_SIDEBAR_ROW_PADDING_X, REVIEW_SIDEBAR_ROW_RADIUS};
@@ -11,9 +11,8 @@ use super::{REVIEW_SIDEBAR_ROW_MARGIN_X, REVIEW_SIDEBAR_ROW_PADDING_X, REVIEW_SI
 impl PaneFlowApp {
     pub(super) fn render_diff_file_row(
         &self,
+        view: &Entity<DiffView>,
         entry: &FileEntry,
-        col_idx: usize,
-        is_active: bool,
         indent_px: f32,
         ui: UiColors,
         cx: &mut Context<Self>,
@@ -39,9 +38,9 @@ impl PaneFlowApp {
         } else {
             ui.text
         };
-        let selected =
-            is_active && self.diff_mode.diff_selected_file.as_deref() == Some(entry.path.as_str());
+        let selected = self.review.selected_file.as_deref() == Some(entry.path.as_str());
         let path = entry.path.clone();
+        let jump_view = view.clone();
         let show_counts = !entry.is_binary && (entry.added > 0 || entry.removed > 0);
         let row_background = crate::app::constants::sidebar_tab_active_background();
         let resting_background = if selected {
@@ -51,10 +50,7 @@ impl PaneFlowApp {
         };
 
         div()
-            .id(SharedString::from(format!(
-                "diff-file-{col_idx}-{}",
-                entry.path
-            )))
+            .id(SharedString::from(format!("diff-file-{}", entry.path)))
             .flex_none()
             .h(px(28.))
             .mx(px(REVIEW_SIDEBAR_ROW_MARGIN_X))
@@ -68,21 +64,8 @@ impl PaneFlowApp {
             .bg(resting_background)
             .hover(|s| s.bg(row_background))
             .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
-                this.diff_mode.diff_selected_file = Some(path.clone());
-                match this.diff_mode.diff_scope {
-                    crate::diff::DiffScope::MultiProject => {
-                        if let Some(mv) = this.diff_mode.multi_diff_view.clone() {
-                            mv.update(cx, |mv, cx| {
-                                mv.active_select_and_jump(col_idx, &path, window, cx)
-                            });
-                        }
-                    }
-                    _ => {
-                        if let Some(dv) = this.diff_mode.diff_view.clone() {
-                            dv.update(cx, |dv, cx| dv.select_and_jump(col_idx, &path, window, cx));
-                        }
-                    }
-                }
+                this.review.selected_file = Some(path.clone());
+                jump_view.update(cx, |view, cx| view.jump_to_file(&path, window, cx));
                 cx.notify();
             }))
             .child(

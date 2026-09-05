@@ -15,6 +15,9 @@ pub(crate) use model::{
     DIFF_DOCK_PANEL_MIN_WIDTH, DIFF_DOCK_PANEL_WIDTH, DiffDockData, DiffDockHScrollDrag,
     DiffDockTab, DiffHover, DiffOptionsSubmenu,
 };
+pub(crate) use options_menu::{
+    DiffOptionsMenuActions, DiffOptionsMenuState, OptionChoice, render_diff_options_menu,
+};
 
 use gpui::{
     AnyElement, ClickEvent, Context, InteractiveElement, IntoElement, MouseButton, MouseDownEvent,

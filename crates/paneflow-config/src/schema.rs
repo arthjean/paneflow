@@ -94,7 +94,6 @@ mod tests {
             shell_integration: Some(true),
             agent_stall_detection: Some(true),
             agent_stall_threshold_secs: Some(300),
-            review_prefill_delay_ms: Some(2000),
             submit_paste_delay_ms: Some(70),
             external_editor: Some("auto".to_string()),
             claude_code_bypass_permissions: Some(false),

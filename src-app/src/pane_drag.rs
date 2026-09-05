@@ -4,6 +4,7 @@ use gpui::{
 };
 
 use crate::agent_sessions::SessionAgent;
+use crate::diff::ReviewSubject;
 
 pub struct SessionDrag {
     pub agent: SessionAgent,
@@ -11,6 +12,12 @@ pub struct SessionDrag {
     pub cwd: String,
     pub title: SharedString,
     pub icon: SharedString,
+}
+
+#[derive(Clone)]
+pub struct ReviewSubjectDrag {
+    pub subject: ReviewSubject,
+    pub title: SharedString,
 }
 
 #[derive(Clone)]

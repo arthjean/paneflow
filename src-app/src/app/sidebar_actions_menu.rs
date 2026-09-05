@@ -280,7 +280,7 @@ impl PaneFlowApp {
                 "sidebar-mode-diff",
                 "Review",
                 matches!(mode, AppMode::Diff),
-                Box::new(|this, _window, cx| this.enter_diff_mode(cx)),
+                Box::new(|this, window, cx| this.enter_diff_mode(window, cx)),
             ))
             .child(settings_trigger)
             .into_any_element();

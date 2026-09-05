@@ -52,7 +52,9 @@ pub struct SessionState {
     #[serde(default)]
     pub mode: AppMode,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub diff_scope: Option<String>,
+    pub review_layout: Option<LayoutNode>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub review_collapsed: Vec<String>,
 }
 
 #[expect(

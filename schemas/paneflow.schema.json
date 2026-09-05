@@ -170,13 +170,6 @@
       "maximum": 86400,
       "default": 60
     },
-    "review_prefill_delay_ms": {
-      "type": ["integer", "null"],
-      "description": "Delay in milliseconds before the Review view types the review prompt into a freshly launched CLI. The prompt is always copied to the clipboard as a fallback, so raise this only if a slow-starting CLI keeps missing the auto-fill. Out-of-range values are clamped.",
-      "minimum": 250,
-      "maximum": 10000,
-      "default": 2000
-    },
     "submit_paste_delay_ms": {
       "type": ["integer", "null"],
       "description": "Base delay in milliseconds between writing a bracketed-paste burst to an agent pane and the separate carriage return that submits it (paneflow send --submit). The server then waits for the agent's paste echo before pressing Enter, so this is only the floor. Raise it if a slow agent keeps swallowing the submit. Out-of-range values are clamped.",

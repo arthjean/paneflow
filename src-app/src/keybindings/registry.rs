@@ -556,13 +556,6 @@ pub(super) const ACTIONS: &[ActionMeta] = &[
         group: ShortcutGroup::Diff,
     },
     ActionMeta {
-        name: "diff_toggle_sync",
-        factory: || Box::new(crate::DiffToggleSync),
-        context: "DiffView && !Terminal && !TextInput && !PaneflowTextArea",
-        description: "Diff: toggle scroll sync",
-        group: ShortcutGroup::Diff,
-    },
-    ActionMeta {
         name: "diff_new_file_tab",
         factory: || Box::new(crate::DiffNewFileTab),
         context: "!Terminal && !TextInput && !PaneflowTextArea && !CodeEditor",

@@ -48,7 +48,7 @@ fn pid_is_alive(pid: u32) -> bool {
     }
 }
 
-fn split_pane_at_edge(
+pub(crate) fn split_pane_at_edge(
     root: &mut LayoutTree,
     target: &Entity<Pane>,
     edge: DropEdge,
@@ -422,7 +422,12 @@ impl PaneFlowApp {
         event: &pane::PaneEvent,
         cx: &mut Context<Self>,
     ) {
+        if self.review_contains_pane(&pane) {
+            self.handle_review_pane_event(pane, event, cx);
+            return;
+        }
         match event {
+            pane::PaneEvent::DropSubjectSplit { .. } => {}
             pane::PaneEvent::Remove => {
                 let Some((ws_idx, tab_idx)) =
                     self.workspaces.iter().enumerate().find_map(|(idx, ws)| {

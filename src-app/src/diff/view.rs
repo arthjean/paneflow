@@ -4,24 +4,20 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use gpui::{
-    AnyElement, App, Bounds, ClickEvent, Context, CursorStyle, DragMoveEvent, Entity, EventEmitter,
-    FocusHandle, Focusable, FontWeight, IntoElement, KeyDownEvent, MouseButton, MouseDownEvent,
-    MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Point, Render, ScrollHandle,
-    ScrollWheelEvent, SharedString, StatefulInteractiveElement, Styled, Window, anchored, deferred,
-    div, point, prelude::*, px, relative,
+    AnyElement, App, ClickEvent, Context, CursorStyle, FocusHandle, Focusable, IntoElement,
+    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Point,
+    Render, ScrollHandle, ScrollWheelEvent, SharedString, StatefulInteractiveElement, Styled,
+    Window, anchored, deferred, div, point, prelude::*, px,
 };
 use notify::RecommendedWatcher;
 
 use crate::agent_sessions::SessionMeta;
-use crate::pane_drag::{DragPreview, DropEdge, SPLIT_EDGE_BAND, compute_drop_edge};
-use crate::settings::components::{menu_divider_color, menu_surface, select_item, with_alpha};
-use crate::widgets::text_input::TextInput;
+use crate::diff::DiffOptions;
+use crate::settings::components::{menu_surface, select_item, with_alpha};
 
-use super::arrange::{Arrange, Axis};
 use super::element::{DiffBody, DiffElement};
 use super::hit_test;
 use super::hscroll::HScrollbarSegment;
-use super::review_terminal::ReviewTerminal;
 
 mod attribution;
 mod base_branch;
@@ -29,20 +25,13 @@ mod interaction;
 mod loader;
 mod model;
 mod render;
-mod review;
 mod scroller;
 mod watcher;
 
-pub use model::{DiffWorktree, FileEntry, FileListState, aggregate_file_lists};
-
-#[derive(Clone)]
-pub struct DiffColumnDrag {
-    pub source_idx: usize,
-}
+pub use model::{DiffWorktree, FileEntry, FileListState, ReviewSubject};
 
 #[derive(Clone, Copy)]
 struct DiffHScrollDrag {
-    col_idx: usize,
     offset_idx: usize,
     start_mouse_x: Pixels,
     start_offset: f32,
@@ -60,10 +49,6 @@ use super::rows::{
 
 const HUNK_JUMP_MARGIN: f32 = 28.0;
 
-const COL_HEADER_HEIGHT: f32 = 30.0;
-
-const TOOLBAR_CHIP_BOTTOM: f32 = 31.0;
-
 const MIN_SPLIT_COLUMN_PX: f32 = 360.0;
 
 const REFRESH_DEBOUNCE: Duration = Duration::from_millis(500);
@@ -71,10 +56,6 @@ const REFRESH_DEBOUNCE: Duration = Duration::from_millis(500);
 const REFRESH_COOLDOWN: Duration = Duration::from_millis(1000);
 
 const SYNTAX_HIGHLIGHT_ENABLED: bool = true;
-
-const REVIEW_DEFAULT_HEIGHT: f32 = 520.0;
-const REVIEW_MIN_HEIGHT: f32 = 120.0;
-const REVIEW_MAX_HEIGHT: f32 = 1000.0;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum ViewMode {
@@ -192,7 +173,6 @@ struct Column {
     workspace_id: Option<u64>,
     state: ColumnState,
     el_scroll: ScrollHandle,
-    visible: bool,
     collapsed: std::collections::HashSet<String>,
     expanded_folds: std::collections::HashSet<String>,
     disp_unified: Rc<Vec<DisplayRow>>,
@@ -208,13 +188,9 @@ struct Column {
     disp_hunk_tops_unified: Rc<Vec<f32>>,
     disp_hunk_tops_split: Rc<Vec<f32>>,
     fingerprint: Option<super::git::ColumnFingerprint>,
-    base_override: Option<String>,
     generation: u64,
     loading_mode: Option<ViewMode>,
     loading_theme_generation: Option<u64>,
-    review_terminals: Vec<ReviewTerminal>,
-    active_review_terminal: usize,
-    review_height: f32,
     attribution: Vec<SessionMeta>,
     h_offsets: Rc<Vec<f32>>,
 }
@@ -227,7 +203,6 @@ impl Column {
             workspace_id,
             state: ColumnState::Loading,
             el_scroll: ScrollHandle::new(),
-            visible: true,
             collapsed: std::collections::HashSet::new(),
             expanded_folds: std::collections::HashSet::new(),
             disp_unified: Rc::new(Vec::new()),
@@ -243,22 +218,12 @@ impl Column {
             disp_hunk_tops_unified: Rc::new(Vec::new()),
             disp_hunk_tops_split: Rc::new(Vec::new()),
             fingerprint: None,
-            base_override: None,
             generation: 0,
             loading_mode: None,
             loading_theme_generation: None,
-            review_terminals: Vec::new(),
-            active_review_terminal: 0,
-            review_height: REVIEW_DEFAULT_HEIGHT,
             attribution: Vec::new(),
             h_offsets: Rc::new(Vec::new()),
         }
-    }
-
-    fn reset_display_caches(&mut self) {
-        self.clear_display_mode(ViewMode::Unified);
-        self.clear_display_mode(ViewMode::Split);
-        self.h_offsets = Rc::new(Vec::new());
     }
 
     fn clear_display_mode(&mut self, mode: ViewMode) {
@@ -282,6 +247,7 @@ impl Column {
         }
     }
 
+    #[cfg(test)]
     fn drop_loaded_data(&mut self) {
         self.generation = self.generation.wrapping_add(1);
         self.loading_mode = None;
@@ -291,28 +257,9 @@ impl Column {
         self.expanded_folds.clear();
         self.fingerprint = None;
         self.attribution.clear();
-        self.reset_display_caches();
-    }
-
-    fn has_running_review_terminal(&self, cx: &mut Context<DiffView>) -> bool {
-        self.review_terminals
-            .iter()
-            .any(|term| term.terminal.read(cx).terminal.exited.is_none())
-    }
-
-    fn drop_exited_review_terminals(&mut self, cx: &mut Context<DiffView>) {
-        self.review_terminals
-            .retain(|term| term.terminal.read(cx).terminal.exited.is_none());
-        if self.review_terminals.is_empty() {
-            self.active_review_terminal = 0;
-        } else if self.active_review_terminal >= self.review_terminals.len() {
-            self.active_review_terminal = self.review_terminals.len() - 1;
-        }
-    }
-
-    fn drop_review_terminals(&mut self) {
-        self.review_terminals.clear();
-        self.active_review_terminal = 0;
+        self.clear_display_mode(ViewMode::Unified);
+        self.clear_display_mode(ViewMode::Split);
+        self.h_offsets = Rc::new(Vec::new());
     }
 
     fn has_rows_for_mode(&self, mode: ViewMode) -> bool {
@@ -488,6 +435,14 @@ impl Column {
             ViewMode::Split => &self.disp_hunk_tops_split,
         }
     }
+
+    fn file_list(&self) -> FileListState {
+        match &self.state {
+            ColumnState::Loading => FileListState::Loading,
+            ColumnState::Failed(e) => FileListState::Failed(e.clone()),
+            ColumnState::Loaded { files, .. } => FileListState::Loaded(files.clone()),
+        }
+    }
 }
 
 pub struct DiffView {
@@ -495,40 +450,25 @@ pub struct DiffView {
     base_ref: String,
     branches: Vec<String>,
     branches_lc: Vec<String>,
-    base_picker_open: bool,
-    base_filter: Entity<TextInput>,
-    columns: Vec<Column>,
+    column: Column,
+    options: DiffOptions,
     focus_handle: FocusHandle,
     element_id: SharedString,
     watch_epoch: u64,
     mode: ViewMode,
     last_effective_mode: ViewMode,
-    sync_scroll: bool,
-    scroll_driver: usize,
-    selected_column: usize,
     _watchers: Vec<RecommendedWatcher>,
     suspended: bool,
     bootstrapped: bool,
-    arrange: Arrange,
-    drag_target: Option<(usize, Option<DropEdge>)>,
     body_menu: Option<DiffBodyMenu>,
-    last_body_pos: Option<(usize, Point<Pixels>)>,
+    last_body_pos: Option<Point<Pixels>>,
     flash: Option<SharedString>,
-    review_menu_open: Option<usize>,
-    review_picks: Vec<bool>,
-    review_resizing: Option<(usize, f32, f32)>,
     h_scroll_drag: Option<DiffHScrollDrag>,
-    close_removes: bool,
-    pub scope_slot: Option<AnyElement>,
-}
-
-pub enum DiffViewEvent {
-    CloseColumn { path: PathBuf },
+    vertical_scrollbar: crate::widgets::editor_scrollbar::EditorScrollbar,
 }
 
 struct DiffBodyMenu {
     position: Point<Pixels>,
-    col_idx: usize,
     scope: DiffBodyScope,
     mode: ViewMode,
 }
@@ -540,93 +480,100 @@ struct DiffBodyScope {
 }
 
 impl DiffView {
-    pub fn new(repo_root: PathBuf, worktrees: Vec<DiffWorktree>, cx: &mut Context<Self>) -> Self {
-        Self::with_base(repo_root, worktrees, None, cx)
+    pub fn new(subject: ReviewSubject, cx: &mut Context<Self>) -> Self {
+        Self::with_base(subject, None, cx)
     }
 
-    pub fn with_base(
-        repo_root: PathBuf,
-        worktrees: Vec<DiffWorktree>,
-        base: Option<String>,
-        cx: &mut Context<Self>,
-    ) -> Self {
-        let element_id = SharedString::from(format!("diff-view-{}", repo_root.display()));
-        let columns: Vec<Column> = worktrees
-            .into_iter()
-            .map(|w| Column::new_loading(w.branch, w.path, w.workspace_id))
-            .collect();
-        let arrange = Arrange::row(&(0..columns.len()).collect::<Vec<_>>());
-        let base_filter = cx.new(|cx| TextInput::new("", "Filter branches…", cx));
-        cx.observe(&base_filter, |_, _, cx| cx.notify()).detach();
+    pub fn with_base(subject: ReviewSubject, base: Option<String>, cx: &mut Context<Self>) -> Self {
+        let element_id =
+            SharedString::from(format!("diff-view-{}", subject.worktree.path.display()));
+        let column = Column::new_loading(
+            subject.worktree.branch,
+            subject.worktree.path,
+            subject.worktree.workspace_id,
+        );
         let mut view = Self {
-            repo_root,
+            repo_root: subject.repo_root,
             base_ref: base.unwrap_or_default(),
             branches: Vec::new(),
             branches_lc: Vec::new(),
-            base_picker_open: false,
-            base_filter,
-            columns,
+            column,
+            options: DiffOptions::default(),
             focus_handle: cx.focus_handle(),
             element_id,
             watch_epoch: 0,
             mode: ViewMode::Unified,
             last_effective_mode: ViewMode::Unified,
-            sync_scroll: true,
-            scroll_driver: 0,
-            selected_column: 0,
             _watchers: Vec::new(),
             suspended: false,
             bootstrapped: false,
-            arrange,
-            drag_target: None,
             body_menu: None,
             last_body_pos: None,
             flash: None,
-            review_menu_open: None,
-            review_picks: Vec::new(),
-            review_resizing: None,
             h_scroll_drag: None,
-            close_removes: false,
-            scope_slot: None,
+            vertical_scrollbar: Default::default(),
         };
         view.bootstrap(cx);
         view
     }
 
-    pub fn set_close_removes(&mut self, v: bool) {
-        self.close_removes = v;
+    pub fn subject(&self) -> ReviewSubject {
+        ReviewSubject {
+            repo_root: self.repo_root.clone(),
+            worktree: DiffWorktree {
+                path: self.column.path.clone(),
+                branch: self.column.branch.clone(),
+                workspace_id: self.column.workspace_id,
+            },
+        }
     }
 
-    pub fn column_paths(&self) -> Vec<PathBuf> {
-        self.columns
-            .iter()
-            .filter(|c| c.visible)
-            .map(|c| c.path.clone())
-            .collect()
+    pub fn worktree_path(&self) -> &PathBuf {
+        &self.column.path
+    }
+
+    pub fn file_list(&self) -> FileListState {
+        self.column.file_list()
+    }
+
+    pub fn has_changes(&self) -> bool {
+        matches!(&self.column.state, ColumnState::Loaded { file_count, .. } if *file_count > 0)
+    }
+
+    pub fn base_ref(&self) -> &str {
+        &self.base_ref
+    }
+
+    pub fn branches(&self) -> &[String] {
+        &self.branches
+    }
+
+    pub fn matching_branches(&self, filter_lc: &str) -> Vec<usize> {
+        base_branch::matching_indices(&self.branches_lc, filter_lc)
+    }
+
+    pub fn first_matching_branch(&self, filter_lc: &str) -> Option<String> {
+        base_branch::first_matching_index(&self.branches_lc, filter_lc)
+            .and_then(|index| self.branches.get(index))
+            .cloned()
     }
 
     fn bootstrap(&mut self, cx: &mut Context<Self>) {
-        let first = self.columns.first().map(|c| c.path.clone());
-        let n = self.columns.len();
+        let probe = self.column.path.clone();
         let preset = self.base_ref.clone();
         cx.spawn(async move |this, cx| {
-            log::debug!("diff: bootstrap START ({n} columns); resolving base off-thread");
+            log::debug!("diff: bootstrap START; resolving base off-thread");
             let t = Instant::now();
-            let (base, branches) = match first {
-                Some(p) => {
-                    smol::unblock(move || {
-                        let base = if !preset.is_empty() && super::git::ref_exists(&p, &preset) {
-                            preset
-                        } else {
-                            super::git::default_base_ref(&p).unwrap_or_default()
-                        };
-                        let branches = super::git::list_base_ref_candidates(&p);
-                        (base, branches)
-                    })
-                    .await
-                }
-                None => (preset, Vec::new()),
-            };
+            let (base, branches) = smol::unblock(move || {
+                let base = if !preset.is_empty() && super::git::ref_exists(&probe, &preset) {
+                    preset
+                } else {
+                    super::git::default_base_ref(&probe).unwrap_or_default()
+                };
+                let branches = super::git::list_base_ref_candidates(&probe);
+                (base, branches)
+            })
+            .await;
             log::debug!(
                 "diff: bootstrap resolved base={base:?}, {} branches in {:?}; -> start_loading + start_watchers",
                 branches.len(),
@@ -649,370 +596,107 @@ impl DiffView {
     }
 
     pub fn title(&self) -> String {
-        let name = self
-            .repo_root
-            .file_name()
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_else(|| self.repo_root.display().to_string());
-        format!("Diff: {name}")
+        self.subject().label()
     }
 
     fn effective_mode(&self, window: &Window) -> ViewMode {
         if self.mode == ViewMode::Unified {
             return ViewMode::Unified;
         }
-        let cols = self.visible_count().max(1) as f32;
-        let per_col = f32::from(window.viewport_size().width) / cols;
-        if per_col < MIN_SPLIT_COLUMN_PX {
+        let measured = f32::from(self.column.el_scroll.bounds().size.width);
+        let width = if measured > 0.0 {
+            measured
+        } else {
+            f32::from(window.viewport_size().width)
+        };
+        if width < MIN_SPLIT_COLUMN_PX {
             ViewMode::Unified
         } else {
             ViewMode::Split
         }
     }
 
-    fn visible_count(&self) -> usize {
-        self.columns.iter().filter(|c| c.visible).count()
-    }
-
-    fn toggle_column_base(&mut self, idx: usize, cx: &mut Context<Self>) {
-        match self.columns.get_mut(idx) {
-            Some(col) => {
-                col.base_override = match col.base_override {
-                    None => Some("HEAD~1".to_string()),
-                    Some(_) => None,
-                };
-            }
-            None => return,
-        }
-        self.start_loading_columns(&[idx], cx);
-    }
-
-    fn hide_column(&mut self, idx: usize, cx: &mut Context<Self>) {
-        let blocked_by_running_review = {
-            let Some(col) = self.columns.get_mut(idx) else {
-                return;
-            };
-            if col.has_running_review_terminal(cx) {
-                col.drop_exited_review_terminals(cx);
-                true
-            } else {
-                col.visible = false;
-                col.drop_review_terminals();
-                col.drop_loaded_data();
-                false
-            }
-        };
-        if blocked_by_running_review {
-            self.set_flash(
-                "Close Review terminals before hiding this column".into(),
-                cx,
-            );
+    fn reload_if_theme_changed(&mut self, cx: &mut Context<Self>) {
+        let current = crate::theme::theme_generation();
+        if self.column.loading_theme_generation == Some(current) {
             return;
         }
-        if self
-            .body_menu
-            .as_ref()
-            .is_some_and(|menu| menu.col_idx == idx)
-        {
-            self.body_menu = None;
-        }
-        if self.review_menu_open == Some(idx) {
-            self.review_menu_open = None;
-        }
-        if self
-            .review_resizing
-            .is_some_and(|(col_idx, _, _)| col_idx == idx)
-        {
-            self.review_resizing = None;
-        }
-        if self.h_scroll_drag.is_some_and(|drag| drag.col_idx == idx) {
-            self.h_scroll_drag = None;
-        }
-        if self
-            .last_body_pos
-            .is_some_and(|(col_idx, _)| col_idx == idx)
-        {
-            self.last_body_pos = None;
-        }
-        if self.scroll_driver == idx || self.selected_column == idx {
-            let first_visible = self.columns.iter().position(|c| c.visible).unwrap_or(0);
-            if self.scroll_driver == idx {
-                self.scroll_driver = first_visible;
-            }
-            if self.selected_column == idx {
-                self.selected_column = first_visible;
-            }
-        }
-        self.restart_watchers(cx);
-        cx.notify();
-    }
-
-    fn show_all_columns(&mut self, cx: &mut Context<Self>) {
-        for col in &mut self.columns {
-            col.visible = true;
-        }
-        self.start_loading(cx);
-        self.restart_watchers(cx);
-        cx.notify();
-    }
-
-    pub fn base_ref(&self) -> &str {
-        &self.base_ref
-    }
-
-    pub fn add_columns(&mut self, worktrees: Vec<DiffWorktree>, cx: &mut Context<Self>) {
-        let existing: std::collections::HashSet<String> =
-            self.columns.iter().map(|c| norm_key(&c.path)).collect();
-        let mut added = false;
-        for w in worktrees {
-            if existing.contains(&norm_key(&w.path)) {
-                continue;
-            }
-            self.columns
-                .push(Column::new_loading(w.branch, w.path, w.workspace_id));
-            added = true;
-        }
-        if added {
+        let Some(loaded) = self.column.loaded_theme_generation() else {
+            return;
+        };
+        if loaded != current {
             self.start_loading(cx);
-            self.restart_watchers(cx);
         }
     }
 
-    fn selected_or_first_visible(&self) -> Option<usize> {
-        if self
-            .columns
-            .get(self.selected_column)
-            .is_some_and(|c| c.visible)
-        {
-            Some(self.selected_column)
+    pub fn options(&self) -> DiffOptions {
+        self.options
+    }
+
+    pub fn set_options(&mut self, options: DiffOptions, cx: &mut Context<Self>) {
+        if self.options == options {
+            return;
+        }
+        let comparison_changed = self.options.whitespace != options.whitespace;
+        self.options = options;
+        if comparison_changed {
+            self.start_loading(cx);
         } else {
-            self.columns.iter().position(|c| c.visible)
+            cx.notify();
         }
     }
 
-    fn reload_visible_columns_if_theme_changed(&mut self, cx: &mut Context<Self>) {
-        let current_theme_generation = crate::theme::theme_generation();
-        let stale: Vec<usize> = self
-            .columns
-            .iter()
-            .enumerate()
-            .filter_map(|(idx, col)| {
-                if !col.visible || col.loading_theme_generation == Some(current_theme_generation) {
-                    return None;
+    pub fn is_split(&self) -> bool {
+        self.mode == ViewMode::Split
+    }
+
+    pub fn set_split(&mut self, split: bool, cx: &mut Context<Self>) {
+        let mode = if split {
+            ViewMode::Split
+        } else {
+            ViewMode::Unified
+        };
+        if self.mode != mode {
+            self.mode = mode;
+            cx.notify();
+        }
+    }
+
+    pub fn refresh(&mut self, cx: &mut Context<Self>) {
+        self.start_loading(cx);
+    }
+
+    pub fn all_collapsed(&self) -> bool {
+        match &self.column.state {
+            ColumnState::Loaded { files_full, .. } => {
+                !files_full.is_empty()
+                    && files_full
+                        .iter()
+                        .all(|file| self.column.collapsed.contains(&file.path))
+            }
+            _ => false,
+        }
+    }
+
+    pub fn set_all_collapsed(&mut self, collapse: bool, cx: &mut Context<Self>) {
+        let col = &mut self.column;
+        col.collapsed.clear();
+        if collapse {
+            let paths: Vec<String> = match &col.state {
+                ColumnState::Loaded { files_full, .. } => {
+                    files_full.iter().map(|file| file.path.clone()).collect()
                 }
-                let loaded_generation = col.loaded_theme_generation()?;
-                (loaded_generation != current_theme_generation).then_some(idx)
-            })
-            .collect();
-        if !stale.is_empty() {
-            self.start_loading_columns(&stale, cx);
+                _ => Vec::new(),
+            };
+            col.collapsed.extend(paths);
+            col.expanded_folds.clear();
         }
-    }
-
-    fn all_visible_collapsed(&self) -> bool {
-        let mut any_loaded = false;
-        for col in &self.columns {
-            if !col.visible {
-                continue;
-            }
-            if let ColumnState::Loaded { files_full, .. } = &col.state {
-                any_loaded = true;
-                if !files_full
-                    .iter()
-                    .all(|file| col.collapsed.contains(&file.path))
-                {
-                    return false;
-                }
-            }
-        }
-        any_loaded
-    }
-
-    fn toggle_collapse_all(&mut self, cx: &mut Context<Self>) {
-        let collapse = !self.all_visible_collapsed();
-        for col in &mut self.columns {
-            if !col.visible {
-                continue;
-            }
-            col.collapsed.clear();
-            if collapse {
-                let paths: Vec<String> = match &col.state {
-                    ColumnState::Loaded { files_full, .. } => {
-                        files_full.iter().map(|file| file.path.clone()).collect()
-                    }
-                    _ => Vec::new(),
-                };
-                col.collapsed.extend(paths);
-                col.expanded_folds.clear();
-            }
-            col.recompute_display();
-        }
+        col.recompute_display();
         cx.notify();
-    }
-}
-
-impl DiffView {
-    fn render_base_popover(&self, cx: &mut Context<Self>) -> AnyElement {
-        let ui = crate::theme::ui_colors();
-
-        let filter = self.base_filter.read(cx).value().to_lowercase();
-        let matches = base_branch::matching_indices(&self.branches_lc, &filter);
-
-        let search = div()
-            .flex()
-            .flex_row()
-            .items_center()
-            .gap(px(7.))
-            .px(px(10.))
-            .py(px(7.))
-            .border_b_1()
-            .border_color(menu_divider_color(ui))
-            .child(
-                gpui::svg()
-                    .size(px(13.))
-                    .flex_none()
-                    .path("icons/tool_search.svg")
-                    .text_color(ui.muted),
-            )
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .text_size(crate::ui_primitives::BODY)
-                    .text_color(ui.text)
-                    .child(self.base_filter.clone()),
-            )
-            .when(!self.branches.is_empty(), |d| {
-                d.child(
-                    div()
-                        .flex_none()
-                        .text_size(crate::ui_primitives::LABEL_SM)
-                        .text_color(ui.muted)
-                        .child(format!("{}", matches.len())),
-                )
-            });
-
-        let mut list = div()
-            .id("diff-base-list")
-            .flex()
-            .flex_col()
-            .gap(px(1.))
-            .max_h(px(280.))
-            .overflow_y_scroll()
-            .p(px(4.));
-
-        if self.branches.is_empty() {
-            list = list.child(
-                div()
-                    .px(px(8.))
-                    .py(px(6.))
-                    .text_size(crate::ui_primitives::BODY)
-                    .text_color(ui.muted)
-                    .child("No local branches found"),
-            );
-        } else if matches.is_empty() {
-            list = list.child(
-                div()
-                    .px(px(8.))
-                    .py(px(6.))
-                    .text_size(crate::ui_primitives::BODY)
-                    .text_color(ui.muted)
-                    .child("No branch matches your filter"),
-            );
-        } else {
-            for bi in matches {
-                let Some(branch) = self.branches.get(bi) else {
-                    continue;
-                };
-                let is_current = *branch == self.base_ref;
-                let branch_owned = branch.clone();
-                list = list.child(
-                    select_item(
-                        SharedString::from(format!("diff-base-opt-{bi}")),
-                        is_current,
-                        ui,
-                    )
-                    .cursor(CursorStyle::Arrow)
-                    .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
-                        this.set_base(branch_owned.clone(), cx);
-                        window.focus(&this.focus_handle, cx);
-                    }))
-                    .child(
-                        gpui::svg()
-                            .size(px(13.))
-                            .flex_none()
-                            .path("icons/git-branch.svg")
-                            .text_color(if is_current { ui.accent } else { ui.muted }),
-                    )
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .overflow_hidden()
-                            .whitespace_nowrap()
-                            .text_color(ui.text)
-                            .child(branch.clone()),
-                    )
-                    .when(is_current, |d| {
-                        d.child(
-                            gpui::svg()
-                                .size(px(13.))
-                                .flex_none()
-                                .path("icons/check.svg")
-                                .text_color(ui.accent),
-                        )
-                    }),
-                );
-            }
-        }
-
-        menu_surface(div().id("diff-base-popover"), ui)
-            .occlude()
-            .absolute()
-            .left(px(8.))
-            .top(px(TOOLBAR_CHIP_BOTTOM))
-            .w(px(288.))
-            .flex()
-            .flex_col()
-            .on_mouse_down_out(cx.listener(|this, _, window, cx| {
-                this.close_base_picker(window, cx);
-            }))
-            .on_key_down(cx.listener(|this, ev: &KeyDownEvent, window, cx| {
-                match ev.keystroke.key.as_str() {
-                    "escape" => {
-                        this.close_base_picker(window, cx);
-                        cx.stop_propagation();
-                    }
-                    "enter" => {
-                        let raw = this.base_filter.read(cx).value().to_string();
-                        let filter = raw.to_lowercase();
-                        if let Some(branch) =
-                            base_branch::first_matching_index(&this.branches_lc, &filter)
-                                .and_then(|index| this.branches.get(index))
-                                .cloned()
-                        {
-                            this.set_base(branch, cx);
-                            window.focus(&this.focus_handle, cx);
-                        } else if !raw.trim().is_empty() {
-                            this.resolve_and_set_base(raw, cx);
-                            window.focus(&this.focus_handle, cx);
-                        }
-                        cx.stop_propagation();
-                    }
-                    _ => {}
-                }
-            }))
-            .child(search)
-            .child(list)
-            .into_any_element()
     }
 }
 
 #[cfg(test)]
-#[allow(
-    clippy::items_after_test_module,
-    reason = "path normalization remains beside the view implementation"
-)]
 mod tests {
     use super::*;
 
@@ -1073,8 +757,63 @@ mod tests {
         col
     }
 
+    #[gpui::test]
+    fn highlight_changes_reuse_loaded_rows_without_waiting_for_a_reload(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let view = cx.new(|cx| DiffView {
+            repo_root: PathBuf::new(),
+            base_ref: "HEAD".into(),
+            branches: Vec::new(),
+            branches_lc: Vec::new(),
+            column: loaded_column_with_both_modes(),
+            options: DiffOptions::default(),
+            focus_handle: cx.focus_handle(),
+            element_id: "highlight-test".into(),
+            watch_epoch: 0,
+            mode: ViewMode::Unified,
+            last_effective_mode: ViewMode::Unified,
+            _watchers: Vec::new(),
+            suspended: true,
+            bootstrapped: true,
+            body_menu: None,
+            last_body_pos: None,
+            flash: None,
+            h_scroll_drag: None,
+            vertical_scrollbar: Default::default(),
+        });
+        view.update(cx, |view, cx| {
+            let generation = view.column.generation;
+            let unified = view.column.disp_unified.clone();
+            let split = view.column.disp_split.clone();
+            let offsets = view.column.h_offsets.clone();
+            for highlight in [
+                crate::diff::HighlightPolicy::Lines,
+                crate::diff::HighlightPolicy::None,
+                crate::diff::HighlightPolicy::Words,
+            ] {
+                view.set_options(
+                    DiffOptions {
+                        highlight,
+                        ..view.options
+                    },
+                    cx,
+                );
+                assert_eq!(view.options.highlight, highlight);
+                assert_eq!(
+                    view.column.generation, generation,
+                    "Highlight queued a full reload"
+                );
+                assert!(Rc::ptr_eq(&unified, &view.column.disp_unified));
+                assert!(Rc::ptr_eq(&split, &view.column.disp_split));
+                assert!(Rc::ptr_eq(&offsets, &view.column.h_offsets));
+                assert!(view.column.loading_theme_generation.is_none());
+            }
+        });
+    }
+
     #[test]
-    fn hidden_column_cleanup_drops_loaded_data_and_display_caches() {
+    fn dropping_loaded_data_clears_display_caches() {
         let mut col = loaded_column_with_both_modes();
         assert!(col.has_rows_for_mode(ViewMode::Unified));
         assert!(col.has_rows_for_mode(ViewMode::Split));
@@ -1087,7 +826,6 @@ mod tests {
         assert!(matches!(col.state, ColumnState::Loading));
         assert_eq!(col.generation, generation.wrapping_add(1));
         assert!(col.collapsed.is_empty());
-        assert!(col.review_terminals.is_empty());
         assert!(col.attribution.is_empty());
         assert!(col.h_offsets.is_empty());
         assert!(col.disp_unified.is_empty());
@@ -1120,14 +858,17 @@ mod tests {
         assert!(!col.disp_unified.is_empty());
         assert!(!col.disp_split.is_empty());
     }
-}
 
-fn norm_key(p: &std::path::Path) -> String {
-    let resolved = std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
-    let s = resolved.to_string_lossy().into_owned();
-    if cfg!(target_os = "macos") || cfg!(target_os = "windows") {
-        s.to_lowercase()
-    } else {
-        s
+    #[test]
+    fn subject_label_joins_repo_and_branch() {
+        let subject = ReviewSubject {
+            repo_root: PathBuf::from("/home/dev/paneflow"),
+            worktree: DiffWorktree {
+                path: PathBuf::from("/home/dev/paneflow"),
+                branch: "main".into(),
+                workspace_id: Some(1),
+            },
+        };
+        assert_eq!(subject.label(), "paneflow · main");
     }
 }

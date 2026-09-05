@@ -76,22 +76,10 @@ impl LayoutTree {
                                 font_size: None,
                             }
                         }
-                        crate::pane::PaneSurface::Diff(_) => SurfaceDefinition {
-                            surface_type: Some("diff".to_string()),
-                            name: None,
-                            custom_name: None,
-                            command: None,
-                            prompt: None,
-                            cwd: None,
-                            path: None,
-                            env: None,
-                            focus: None,
-                            scrollback: None,
-                            agent: None,
-                            font_size: None,
-                        },
+                        crate::pane::PaneSurface::Diff(diff) => {
+                            crate::app::review::surface_for_subject(&diff.read(cx).subject())
+                        }
                     })
-                    .filter(|surface| surface.surface_type.as_deref() != Some("diff"))
                     .collect();
                 LayoutNode::Pane { surfaces }
             }

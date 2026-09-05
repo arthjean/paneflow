@@ -425,50 +425,6 @@ pub(crate) fn text_tooltip(
     }
 }
 
-fn icon_button(
-    id: impl Into<ElementId>,
-    outer: Pixels,
-    icon: &'static str,
-    icon_size: Pixels,
-    icon_color: Hsla,
-    hover_bg: Hsla,
-) -> AnimatedHover {
-    div()
-        .id(id.into())
-        .flex_none()
-        .flex()
-        .items_center()
-        .justify_center()
-        .size(outer)
-        .rounded(px(4.))
-        .animated_hover_bg(hover_bg.opacity(0.0), hover_bg)
-        .child(
-            svg()
-                .size(icon_size)
-                .flex_none()
-                .path(icon)
-                .text_color(icon_color),
-        )
-}
-
-pub(crate) fn icon_button_sm(
-    id: impl Into<ElementId>,
-    icon: &'static str,
-    icon_color: Hsla,
-    hover_bg: Hsla,
-) -> AnimatedHover {
-    icon_button(id, px(20.), icon, px(12.), icon_color, hover_bg)
-}
-
-pub(crate) fn icon_button_md(
-    id: impl Into<ElementId>,
-    icon: &'static str,
-    icon_color: Hsla,
-    hover_bg: Hsla,
-) -> AnimatedHover {
-    icon_button(id, px(24.), icon, px(13.), icon_color, hover_bg)
-}
-
 pub(crate) fn toolbar_pill(id: impl Into<ElementId>, ui: UiColors, active: bool) -> AnimatedHover {
     let resting_bg = if active {
         ui.subtle

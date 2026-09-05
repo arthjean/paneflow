@@ -357,7 +357,7 @@ impl PaneFlowApp {
         }
         self.prune_worktree_states();
         self.spawn_worktree_listing(ws_idx, cx);
-        self.invalidate_worktree_diff_cache(repo_root, cx);
+        self.review_forget_worktree(repo_root, path, cx);
     }
 }
 

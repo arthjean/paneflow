@@ -197,6 +197,7 @@ impl PaneFlowApp {
         self.pane_menu_open = None;
         self.profile_menu_open = None;
         self.files_menu_open = None;
+        self.review.dismiss_popovers();
     }
 
     pub(crate) fn active_workspace(&self) -> Option<&Workspace> {
@@ -304,13 +305,8 @@ impl PaneFlowApp {
         .detach();
     }
 
-    pub(crate) fn reconcile_diff_after_workspace_change(&self, cx: &mut Context<Self>) {
-        if matches!(self.mode, paneflow_config::schema::AppMode::Diff) {
-            let weak = cx.weak_entity();
-            cx.defer(move |cx| {
-                let _ = weak.update(cx, |app, cx| app.rebuild_diff_view(cx));
-            });
-        }
+    pub(crate) fn reconcile_diff_after_workspace_change(&mut self, cx: &mut Context<Self>) {
+        self.review_prune_after_workspace_change(cx);
     }
 
     #[allow(dead_code)]
@@ -422,6 +418,22 @@ impl PaneFlowApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if matches!(self.mode, paneflow_config::schema::AppMode::Diff) {
+            let Some(focused) = self
+                .review
+                .layout
+                .as_ref()
+                .and_then(|root| root.focused_pane(window, cx))
+                .or_else(|| self.review_active_pane())
+            else {
+                self.show_toast("No focused pane to split", cx);
+                return;
+            };
+            if let Err(message) = self.review_split_pane(focused, direction, cx) {
+                self.show_toast(message, cx);
+            }
+            return;
+        }
         let Some(ws) = self.active_workspace() else {
             return;
         };
@@ -526,6 +538,21 @@ impl PaneFlowApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if matches!(self.mode, paneflow_config::schema::AppMode::Diff) {
+            let closing = if self.review.is_zoomed() {
+                self.review.layout.as_ref().and_then(LayoutTree::first_leaf)
+            } else {
+                self.review
+                    .layout
+                    .as_ref()
+                    .and_then(|root| root.focused_pane(window, cx))
+                    .or_else(|| self.review_active_pane())
+            };
+            if let Some(pane) = closing {
+                self.review_close_pane(pane, cx);
+            }
+            return;
+        }
         let workspace_idx = self.active_idx;
         if let Some(ws) = self.active_workspace()
             && let Some(root) = &ws.active_tab().root
@@ -592,6 +619,10 @@ impl PaneFlowApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if matches!(self.mode, paneflow_config::schema::AppMode::Diff) {
+            self.show_toast("Switch to Agents to restore a closed pane", cx);
+            return;
+        }
         let Some(record) = self.closed_panes.pop() else {
             self.show_toast("No closed pane to restore", cx);
             return;

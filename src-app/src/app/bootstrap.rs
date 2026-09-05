@@ -112,10 +112,10 @@ impl PaneFlowApp {
         let (saved_session, session_corruption) = Self::load_session();
 
         let restored_mode = saved_session.as_ref().map(|s| s.mode).unwrap_or_default();
-        let restored_diff_scope = saved_session
+        let restored_review_layout = saved_session.as_ref().and_then(|s| s.review_layout.clone());
+        let restored_review_collapsed = saved_session
             .as_ref()
-            .and_then(|s| s.diff_scope.as_deref())
-            .and_then(crate::diff::DiffScope::from_persisted)
+            .map(|s| s.review_collapsed.clone())
             .unwrap_or_default();
 
         let (workspaces, active_idx) = match saved_session {
@@ -476,10 +476,6 @@ impl PaneFlowApp {
             }
         }
 
-        let diff_file_filter =
-            cx.new(|cx| crate::widgets::text_input::TextInput::new("", "Filter files…", cx));
-        cx.observe(&diff_file_filter, |_, _, cx| cx.notify())
-            .detach();
         let agents_filter_input =
             cx.new(|cx| crate::widgets::text_input::TextInput::new("", "Search threads", cx));
         cx.observe(&agents_filter_input, |_, _, cx| cx.notify())
@@ -673,28 +669,7 @@ impl PaneFlowApp {
             launch_instant: std::time::Instant::now(),
             telemetry_enabled_last,
             theme_changed,
-            diff_mode: crate::DiffModeState {
-                diff_view: None,
-                multi_diff_view: None,
-                diff_view_cache: std::collections::HashMap::new(),
-                diff_view_key: None,
-                multi_diff_view_retained: None,
-                diff_collapsed_branches: std::collections::HashSet::new(),
-                diff_discovering: false,
-                diff_discovering_root: None,
-                diff_chosen_worktrees: std::collections::HashMap::new(),
-                diff_worktree_picker_open: false,
-                diff_available_worktrees: Vec::new(),
-                diff_available_repo: None,
-                diff_scope: restored_diff_scope,
-                diff_scope_picker_open: false,
-                diff_project_picker_open: false,
-                diff_selected_file: None,
-                diff_files_collapsed: false,
-                diff_files_tree: false,
-                diff_collapsed_dirs: std::collections::HashSet::new(),
-                diff_file_filter,
-            },
+            review: crate::app::review::ReviewState::new(cx),
             mode: restored_mode,
             diff_dock: crate::DiffDockState {
                 open: false,
@@ -726,21 +701,23 @@ impl PaneFlowApp {
             sidebar_order_cache: std::cell::RefCell::new(Default::default()),
         };
 
+        if let Some(node) = restored_review_layout {
+            app.restore_review_layout(&node, cx);
+        }
+        app.restore_review_collapsed(&restored_review_collapsed);
         if matches!(app.mode, paneflow_config::schema::AppMode::Diff) {
-            let viable = match app.diff_mode.diff_scope {
-                crate::diff::DiffScope::MultiProject => {
-                    app.workspaces.iter().any(|ws| ws.repo_root.is_some())
+            if app.review.layout.is_none() {
+                match app.review_default_subject() {
+                    Some(subject) => app.review_show_subject(subject, cx),
+                    None => app.mode = paneflow_config::schema::AppMode::Cli,
                 }
-                _ => app
-                    .workspaces
-                    .get(app.active_idx)
-                    .is_some_and(|ws| ws.repo_root.is_some()),
-            };
-            if viable {
-                app.rebuild_diff_view(cx);
-            } else {
-                app.mode = paneflow_config::schema::AppMode::Cli;
             }
+            if matches!(app.mode, paneflow_config::schema::AppMode::Diff) {
+                app.review_refresh_worktree_listings(cx);
+            }
+        }
+        if matches!(app.mode, paneflow_config::schema::AppMode::Cli) {
+            app.review_suspend_all(cx);
         }
 
         app.emit_app_started(is_first_run_for_telemetry);

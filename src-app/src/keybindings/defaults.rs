@@ -356,11 +356,6 @@ pub(super) const DEFAULTS: &[DefaultBinding] = &[
         context: Some("DiffView && !Terminal && !TextInput && !PaneflowTextArea"),
     },
     DefaultBinding {
-        key: "s",
-        action_name: "diff_toggle_sync",
-        context: Some("DiffView && !Terminal && !TextInput && !PaneflowTextArea"),
-    },
-    DefaultBinding {
         key: "escape",
         action_name: "diff_dismiss",
         context: Some("DiffView && !Terminal && !TextInput && !PaneflowTextArea"),

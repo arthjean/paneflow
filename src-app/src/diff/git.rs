@@ -4,17 +4,6 @@ use std::process::Command;
 
 use super::engine::{DiffHunk, DiffOptions, compute_hunk_report};
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Worktree {
-    pub path: PathBuf,
-    pub ref_name: Option<String>,
-    pub sha: String,
-    #[allow(dead_code)]
-    pub is_main: bool,
-    #[allow(dead_code)]
-    pub is_bare: bool,
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum FileChange {
     Added,
@@ -60,46 +49,6 @@ pub struct FileDiffStat {
     pub removed: u32,
 }
 
-pub fn parse_worktrees_from_str(raw: &str, main_worktree_path: Option<&Path>) -> Vec<Worktree> {
-    let mut worktrees = Vec::new();
-    let normalized = raw.replace("\r\n", "\n");
-    for entry in normalized.split("\n\n") {
-        let mut path = None;
-        let mut sha = None;
-        let mut ref_name = None;
-        let mut is_bare = false;
-
-        for line in entry.lines() {
-            let line = line.trim();
-            if line.is_empty() {
-                continue;
-            }
-            if let Some(rest) = line.strip_prefix("worktree ") {
-                path = Some(rest.to_string());
-            } else if let Some(rest) = line.strip_prefix("HEAD ") {
-                sha = Some(rest.to_string());
-            } else if let Some(rest) = line.strip_prefix("branch ") {
-                ref_name = Some(rest.to_string());
-            } else if line == "bare" {
-                is_bare = true;
-            }
-        }
-
-        if let (Some(path), Some(sha)) = (path, sha) {
-            let path = PathBuf::from(path);
-            let is_main = main_worktree_path.is_some_and(|main| path == main);
-            worktrees.push(Worktree {
-                path,
-                ref_name,
-                sha,
-                is_main,
-                is_bare,
-            });
-        }
-    }
-    worktrees
-}
-
 const GIT_DEADLINE: std::time::Duration = std::time::Duration::from_secs(30);
 
 const GIT_STDOUT_CAP: u64 = 16 * 1024 * 1024;
@@ -126,37 +75,6 @@ fn run_git(dir: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
         });
     }
     Ok(output.stdout)
-}
-
-pub fn list_worktrees(repo_dir: &Path) -> Result<Vec<Worktree>, String> {
-    let out = run_git(repo_dir, &["worktree", "list", "--porcelain"])?;
-    let text = String::from_utf8_lossy(&out);
-    Ok(parse_worktrees_from_str(&text, Some(repo_dir)))
-}
-
-pub fn list_repo_worktrees(repo_dir: &Path) -> Vec<(PathBuf, String)> {
-    let worktrees = match list_worktrees(repo_dir) {
-        Ok(w) => w,
-        Err(_) => return Vec::new(),
-    };
-    worktrees
-        .into_iter()
-        .map(|w| {
-            let branch = w
-                .ref_name
-                .as_deref()
-                .map(short_ref)
-                .unwrap_or_else(|| w.sha.chars().take(7).collect());
-            (w.path, branch)
-        })
-        .collect()
-}
-
-fn short_ref(ref_name: &str) -> String {
-    ref_name
-        .strip_prefix("refs/heads/")
-        .unwrap_or(ref_name)
-        .to_string()
 }
 
 pub fn ref_exists(worktree_dir: &Path, ref_name: &str) -> bool {
@@ -603,7 +521,11 @@ fn stub_file(path: String, change: FileChange) -> FileDiff {
     }
 }
 
-pub fn compute_worktree_diff(worktree_dir: &Path, base_ref: &str) -> WorktreeDiff {
+pub fn compute_worktree_diff(
+    worktree_dir: &Path,
+    base_ref: &str,
+    options: DiffOptions,
+) -> WorktreeDiff {
     let toplevel = worktree_toplevel(worktree_dir);
     let worktree_dir = toplevel.as_path();
     log::debug!(
@@ -623,7 +545,7 @@ pub fn compute_worktree_diff(worktree_dir: &Path, base_ref: &str) -> WorktreeDif
     };
     log::debug!("git: merge_base={merge_base}");
 
-    compute_diff_against(worktree_dir, &merge_base, DiffOptions::default())
+    compute_diff_against(worktree_dir, &merge_base, options)
 }
 
 pub fn compute_worktree_file_stats(
@@ -796,29 +718,6 @@ fn compute_file_stats_against(worktree_dir: &Path, base: &str) -> HashMap<String
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn parse_worktrees_basic() {
-        let raw = "worktree /repo/main\nHEAD abc123\nbranch refs/heads/develop\n\n\
-                   worktree /repo/wt-a\nHEAD def456\nbranch refs/heads/feature-a\n";
-        let wts = parse_worktrees_from_str(raw, Some(Path::new("/repo/main")));
-        assert_eq!(wts.len(), 2);
-        assert!(wts[0].is_main);
-        assert_eq!(wts[0].ref_name.as_deref(), Some("refs/heads/develop"));
-        assert_eq!(wts[0].sha, "abc123");
-        assert!(!wts[1].is_main);
-        assert_eq!(wts[1].path, PathBuf::from("/repo/wt-a"));
-    }
-
-    #[test]
-    fn parse_worktrees_detached_and_bare() {
-        let raw = "worktree /repo/bare\nbare\n\n\
-                   worktree /repo/det\nHEAD aaa111\ndetached\n";
-        let wts = parse_worktrees_from_str(raw, None);
-        assert_eq!(wts.len(), 1);
-        assert_eq!(wts[0].ref_name, None);
-        assert_eq!(wts[0].sha, "aaa111");
-    }
 
     #[test]
     fn name_status_z_parsing() {

@@ -28,8 +28,11 @@ const WATCH_IGNORE_DIRS: &[&str] = &[
     "vendor",
 ];
 
-type AttributionRefresh = (usize, u64, Vec<SessionMeta>);
-type RevalidationResult = (Vec<usize>, Vec<AttributionRefresh>);
+enum Revalidation {
+    Unchanged,
+    Changed,
+    Attribution(Vec<SessionMeta>),
+}
 
 pub(super) fn event_relevant(res: &notify::Result<Event>) -> bool {
     let Ok(event) = res else {
@@ -91,7 +94,7 @@ fn is_noise_path(path: &Path) -> bool {
 
 pub(super) fn build(
     tx: mpsc::UnboundedSender<notify::Result<Event>>,
-    worktrees: Vec<PathBuf>,
+    worktree: PathBuf,
     repo_root: PathBuf,
 ) -> Option<RecommendedWatcher> {
     let mut watcher = match RecommendedWatcher::new(
@@ -108,11 +111,8 @@ pub(super) fn build(
     };
 
     let mut targets: Vec<(PathBuf, RecursiveMode)> = Vec::new();
-    for worktree in &worktrees {
-        targets.push((worktree.clone(), RecursiveMode::NonRecursive));
-        let Ok(entries) = std::fs::read_dir(worktree) else {
-            continue;
-        };
+    targets.push((worktree.clone(), RecursiveMode::NonRecursive));
+    if let Ok(entries) = std::fs::read_dir(&worktree) {
         for entry in entries.flatten() {
             let is_dir = entry.file_type().map(|kind| kind.is_dir()).unwrap_or(false);
             if !is_dir {
@@ -144,23 +144,16 @@ pub(super) fn build(
         }
     }
     log::debug!(
-        "diff: watcher registered {registered}/{} paths across {} worktrees",
+        "diff: watcher registered {registered}/{} paths for {}",
         targets.len(),
-        worktrees.len()
+        worktree.display()
     );
     Some(watcher)
 }
 
 impl DiffView {
     pub(super) fn start_watchers(&mut self, cx: &mut gpui::Context<Self>) {
-        let mut worktrees: Vec<PathBuf> = self
-            .columns
-            .iter()
-            .filter(|column| column.visible)
-            .map(|column| column.path.clone())
-            .collect();
-        worktrees.sort();
-        worktrees.dedup();
+        let worktree = self.column.path.clone();
         let repo_root = self.repo_root.clone();
         let epoch = self.watch_epoch;
         let (tx, mut rx) = mpsc::unbounded::<notify::Result<Event>>();
@@ -168,7 +161,7 @@ impl DiffView {
         cx.spawn(
             async move |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
                 log::debug!("diff: start_watchers building watcher off-thread");
-                let watcher = smol::unblock(move || build(tx, worktrees, repo_root)).await;
+                let watcher = smol::unblock(move || build(tx, worktree, repo_root)).await;
                 let Some(watcher) = watcher else {
                     log::warn!("diff: watcher build returned None");
                     return;
@@ -246,15 +239,6 @@ impl DiffView {
         .detach();
     }
 
-    pub(super) fn restart_watchers(&mut self, cx: &mut gpui::Context<Self>) {
-        if self.suspended || !self.bootstrapped {
-            return;
-        }
-        self.watch_epoch = self.watch_epoch.wrapping_add(1);
-        self._watchers.clear();
-        self.start_watchers(cx);
-    }
-
     pub fn suspend(&mut self, _cx: &mut gpui::Context<Self>) {
         if self.suspended {
             return;
@@ -278,87 +262,28 @@ impl DiffView {
         }
     }
 
-    pub(crate) fn resume_with_base(&mut self, base: Option<String>, cx: &mut gpui::Context<Self>) {
-        let base_changed = match base {
-            Some(base) if !base.is_empty() && base != self.base_ref => {
-                self.base_ref = base;
-                self.base_picker_open = false;
-                true
-            }
-            _ => false,
-        };
-
-        if !self.suspended {
-            if base_changed {
-                self.start_loading(cx);
-            }
-            return;
-        }
-
-        self.suspended = false;
-        if !self.bootstrapped {
-            return;
-        }
-        self.start_watchers(cx);
-        if base_changed {
-            self.start_loading(cx);
-        } else if !self.base_ref.is_empty() {
-            self.revalidate(cx);
-        }
-    }
-
     fn revalidate(&mut self, cx: &mut gpui::Context<Self>) {
-        let shared_base = self.base_ref.clone();
-        let probes: Vec<(
-            usize,
-            PathBuf,
-            String,
-            String,
-            u64,
-            Option<super::super::git::ColumnFingerprint>,
-        )> = self
-            .columns
-            .iter()
-            .enumerate()
-            .filter(|(_, column)| column.visible)
-            .map(|(index, column)| {
-                (
-                    index,
-                    column.path.clone(),
-                    column
-                        .base_override
-                        .clone()
-                        .unwrap_or_else(|| shared_base.clone()),
-                    column.branch.clone(),
-                    column.generation,
-                    column.fingerprint.clone(),
-                )
-            })
-            .collect();
-        if probes.is_empty() {
-            return;
-        }
+        let base = self.base_ref.clone();
+        let path = self.column.path.clone();
+        let branch = self.column.branch.clone();
+        let generation = self.column.generation;
+        let stored = self.column.fingerprint.clone();
         cx.spawn(async move |this, cx| {
-            let (changed, attribution): RevalidationResult = smol::unblock(move || {
-                let mut changed = Vec::new();
-                let mut attribution = Vec::new();
-                for (index, path, base, branch, generation, stored) in probes {
-                    let fresh = super::super::git::column_fingerprint(&path, &base);
-                    if stored.as_ref() != Some(&fresh) {
-                        changed.push(index);
-                    } else {
-                        let cwd = path.to_string_lossy();
-                        attribution.push((
-                            index,
-                            generation,
-                            crate::agent_sessions::attribution_for_column(&cwd, &branch),
-                        ));
-                    }
+            let outcome = smol::unblock(move || {
+                let fresh = super::super::git::column_fingerprint(&path, &base);
+                if stored.as_ref() != Some(&fresh) {
+                    return Revalidation::Changed;
                 }
-                (changed, attribution)
+                let cwd = path.to_string_lossy();
+                let sessions = crate::agent_sessions::attribution_for_column(&cwd, &branch);
+                if sessions.is_empty() {
+                    Revalidation::Unchanged
+                } else {
+                    Revalidation::Attribution(sessions)
+                }
             })
             .await;
-            if changed.is_empty() && attribution.is_empty() {
+            if matches!(outcome, Revalidation::Unchanged) {
                 return;
             }
             let _ = cx.update(|cx| {
@@ -366,21 +291,15 @@ impl DiffView {
                     if view.suspended {
                         return;
                     }
-                    let mut attribution_refreshed = false;
-                    for (index, generation, sessions) in attribution {
-                        let Some(col) = view.columns.get_mut(index) else {
-                            continue;
-                        };
-                        if !col.visible || col.generation != generation {
-                            continue;
+                    match outcome {
+                        Revalidation::Changed => view.start_loading(cx),
+                        Revalidation::Attribution(sessions) => {
+                            if view.column.generation == generation {
+                                view.column.attribution = sessions;
+                                cx.notify();
+                            }
                         }
-                        col.attribution = sessions;
-                        attribution_refreshed = true;
-                    }
-                    if !changed.is_empty() {
-                        view.start_loading_columns(&changed, cx);
-                    } else if attribution_refreshed {
-                        cx.notify();
+                        Revalidation::Unchanged => {}
                     }
                 })
             });

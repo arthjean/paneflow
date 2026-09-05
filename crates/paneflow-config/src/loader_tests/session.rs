@@ -51,7 +51,8 @@ fn test_session_roundtrip_single_workspace() {
             })],
         )],
         mode: AppMode::default(),
-        diff_scope: None,
+        review_layout: None,
+        review_collapsed: Vec::new(),
     };
     let json = serde_json::to_string_pretty(&state).unwrap();
     let restored: SessionState = serde_json::from_str(&json).unwrap();
@@ -81,7 +82,8 @@ fn test_session_roundtrip_multiple_workspaces() {
             make_workspace("devops", "/home/user/infra", vec![TabSession::empty()]),
         ],
         mode: AppMode::default(),
-        diff_scope: None,
+        review_layout: None,
+        review_collapsed: Vec::new(),
     };
     let json = serde_json::to_string_pretty(&state).unwrap();
     let restored: SessionState = serde_json::from_str(&json).unwrap();
@@ -123,7 +125,8 @@ fn test_session_roundtrip_nested_splits() {
             })],
         )],
         mode: AppMode::default(),
-        diff_scope: None,
+        review_layout: None,
+        review_collapsed: Vec::new(),
     };
     let json = serde_json::to_string_pretty(&state).unwrap();
     let restored: SessionState = serde_json::from_str(&json).unwrap();
@@ -150,7 +153,8 @@ fn test_session_roundtrip_with_scrollback() {
             })],
         )],
         mode: AppMode::default(),
-        diff_scope: None,
+        review_layout: None,
+        review_collapsed: Vec::new(),
     };
     let json = serde_json::to_string_pretty(&state).unwrap();
     let restored: SessionState = serde_json::from_str(&json).unwrap();
@@ -248,19 +252,42 @@ fn test_app_mode_diff_round_trips() {
 }
 
 #[test]
-fn test_session_diff_scope_round_trips_and_defaults() {
+fn test_session_review_layout_round_trips_and_defaults() {
     let legacy = r#"{ "version": 1, "active_workspace": 0, "workspaces": [] }"#;
     let restored: SessionState = serde_json::from_str(legacy).unwrap();
-    assert_eq!(restored.diff_scope, None);
+    assert_eq!(restored.review_layout, None);
+    assert!(restored.review_collapsed.is_empty());
 
-    let with_scope = r#"{
-        "version": 1,
+    let with_layout = r#"{
+        "version": 2,
         "active_workspace": 0,
         "workspaces": [],
-        "diff_scope": "worktree"
+        "review_layout": {
+            "type": "pane",
+            "surfaces": [ { "surface_type": "diff", "cwd": "/repo", "path": "/repo", "name": "main" } ]
+        },
+        "review_collapsed": ["/repo", "/other"]
     }"#;
-    let restored2: SessionState = serde_json::from_str(with_scope).unwrap();
-    assert_eq!(restored2.diff_scope.as_deref(), Some("worktree"));
+    let restored2: SessionState = serde_json::from_str(with_layout).unwrap();
+    let layout = restored2
+        .review_layout
+        .clone()
+        .expect("review layout restored");
+    assert_eq!(layout.leaf_count(), 1);
+    let LayoutNode::Pane { surfaces } = &layout else {
+        panic!("expected a pane node");
+    };
+    assert_eq!(surfaces[0].surface_type.as_deref(), Some("diff"));
+    assert_eq!(surfaces[0].cwd.as_deref(), Some("/repo"));
+    assert_eq!(restored2.review_collapsed, vec!["/repo", "/other"]);
+
+    let round_trip = serde_json::to_string(&restored2).unwrap();
+    let restored3: SessionState = serde_json::from_str(&round_trip).unwrap();
+    assert_eq!(restored3.review_layout, restored2.review_layout);
+    assert_eq!(restored3.review_collapsed, restored2.review_collapsed);
+    assert!(!serde_json::to_string(&restored)
+        .unwrap()
+        .contains("review_collapsed"));
 }
 
 #[test]
@@ -508,7 +535,8 @@ fn test_tab_title_source_survives_a_roundtrip() {
             ],
         )],
         mode: AppMode::default(),
-        diff_scope: None,
+        review_layout: None,
+        review_collapsed: Vec::new(),
     };
     let json = serde_json::to_string(&state).unwrap();
     let back: SessionState = serde_json::from_str(&json).unwrap();

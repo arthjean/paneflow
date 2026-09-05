@@ -69,7 +69,8 @@ impl PaneFlowApp {
                 })
                 .collect(),
             mode: self.mode,
-            diff_scope: Some(self.diff_mode.diff_scope.as_persisted().to_string()),
+            review_layout: self.serialize_review_layout(cx),
+            review_collapsed: self.serialize_review_collapsed(),
         }
     }
 

@@ -1,7 +1,10 @@
+use std::cell::Cell;
+use std::rc::Rc;
+
 use gpui::{
-    AnyElement, ClickEvent, Context, InteractiveElement, IntoElement, MouseButton, MouseUpEvent,
-    ParentElement, StatefulInteractiveElement, Styled, deferred, div, prelude::FluentBuilder, px,
-    svg,
+    AnyElement, App, Bounds, ClickEvent, Context, InteractiveElement, IntoElement, MouseButton,
+    MouseUpEvent, ParentElement, Pixels, StatefulInteractiveElement, Styled, canvas, deferred, div,
+    prelude::FluentBuilder, px, svg,
 };
 
 use super::model::{DiffChrome, DiffOptionsSubmenu};
@@ -14,9 +17,30 @@ const MENU_WIDTH: f32 = 232.0;
 const SUBMENU_WIDTH: f32 = 150.0;
 
 #[derive(Clone, Copy)]
-enum OptionChoice {
+pub(crate) enum OptionChoice {
     Layout(bool),
     Diff(DiffOptions),
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct DiffOptionsMenuState {
+    pub(crate) split: bool,
+    pub(crate) options: DiffOptions,
+    pub(crate) submenu: Option<DiffOptionsSubmenu>,
+    pub(crate) all_collapsed: Option<bool>,
+}
+
+pub(crate) type MenuAction<T> = Rc<dyn Fn(T, &mut App)>;
+
+type SubmenuBounds = Rc<Cell<Option<Bounds<Pixels>>>>;
+
+#[derive(Clone)]
+pub(crate) struct DiffOptionsMenuActions {
+    pub(crate) toggle_submenu: MenuAction<DiffOptionsSubmenu>,
+    pub(crate) choose: MenuAction<OptionChoice>,
+    pub(crate) set_all_collapsed: MenuAction<bool>,
+    pub(crate) refresh: Rc<dyn Fn(&mut App)>,
+    pub(crate) dismiss: Rc<dyn Fn(&mut App)>,
 }
 
 struct OptionEntry {
@@ -58,7 +82,6 @@ impl PaneFlowApp {
             OptionChoice::Layout(split) => self.set_diff_dock_split(split, cx),
             OptionChoice::Diff(options) => self.set_diff_dock_options(options, cx),
         }
-        self.close_diff_options_menu(cx);
     }
 }
 
@@ -95,21 +118,75 @@ pub(super) fn render_diff_options_button(
             .text_color(ui.muted),
     )
     .when(open, |trigger| {
-        trigger.child(render_diff_options_menu(chrome, ui, cx))
+        trigger.child(render_dock_options_menu(chrome, ui, cx))
     })
     .into_any_element()
+}
+
+fn render_dock_options_menu(
+    chrome: &DiffChrome<'_>,
+    ui: crate::theme::UiColors,
+    cx: &mut Context<PaneFlowApp>,
+) -> AnyElement {
+    let loaded = chrome
+        .data
+        .as_ref()
+        .filter(|d| d.has_rows() && d.file_count > 0);
+    let paths = loaded.map(|data| data.paths()).unwrap_or_default();
+    let cwd = chrome.cwd.clone();
+    let app = cx.weak_entity();
+    let state = DiffOptionsMenuState {
+        split: chrome.split,
+        options: chrome.options,
+        submenu: chrome.options_submenu,
+        all_collapsed: loaded.map(|data| data.all_collapsed(chrome.collapsed)),
+    };
+    let actions = DiffOptionsMenuActions {
+        toggle_submenu: {
+            let app = app.clone();
+            Rc::new(move |submenu, cx| {
+                let _ = app.update(cx, |this, cx| this.toggle_diff_options_submenu(submenu, cx));
+            })
+        },
+        choose: {
+            let app = app.clone();
+            Rc::new(move |choice, cx| {
+                let _ = app.update(cx, |this, cx| this.apply_diff_option_choice(choice, cx));
+            })
+        },
+        set_all_collapsed: {
+            let app = app.clone();
+            Rc::new(move |collapse, cx| {
+                let _ = app.update(cx, |this, cx| {
+                    this.set_all_diff_collapsed(&paths, collapse, cx);
+                });
+            })
+        },
+        refresh: {
+            let app = app.clone();
+            Rc::new(move |cx| {
+                let _ = app.update(cx, |this, cx| {
+                    this.refresh_diff_dock(cwd.clone(), cx);
+                });
+            })
+        },
+        dismiss: Rc::new(move |cx| {
+            let _ = app.update(cx, |this, cx| this.close_diff_options_menu(cx));
+        }),
+    };
+    render_diff_options_menu(32., state, actions, ui)
 }
 
 fn layout_entries(split: bool) -> Vec<OptionEntry> {
     vec![
         OptionEntry {
-            id: "diff-dock-layout-split",
+            id: "diff-options-layout-split",
             label: "Split",
             selected: split,
             choice: OptionChoice::Layout(true),
         },
         OptionEntry {
-            id: "diff-dock-layout-unified",
+            id: "diff-options-layout-unified",
             label: "Unified",
             selected: !split,
             choice: OptionChoice::Layout(false),
@@ -119,9 +196,17 @@ fn layout_entries(split: bool) -> Vec<OptionEntry> {
 
 fn highlight_entries(options: DiffOptions) -> Vec<OptionEntry> {
     [
-        ("diff-dock-highlight-words", "Words", HighlightPolicy::Words),
-        ("diff-dock-highlight-lines", "Lines", HighlightPolicy::Lines),
-        ("diff-dock-highlight-none", "None", HighlightPolicy::None),
+        (
+            "diff-options-highlight-words",
+            "Words",
+            HighlightPolicy::Words,
+        ),
+        (
+            "diff-options-highlight-lines",
+            "Lines",
+            HighlightPolicy::Lines,
+        ),
+        ("diff-options-highlight-none", "None", HighlightPolicy::None),
     ]
     .into_iter()
     .map(|(id, label, highlight)| OptionEntry {
@@ -139,17 +224,17 @@ fn highlight_entries(options: DiffOptions) -> Vec<OptionEntry> {
 fn whitespace_entries(options: DiffOptions) -> Vec<OptionEntry> {
     [
         (
-            "diff-dock-whitespace-default",
+            "diff-options-whitespace-default",
             "Default",
             ComparisonPolicy::Default,
         ),
         (
-            "diff-dock-whitespace-trim",
+            "diff-options-whitespace-trim",
             "Trim",
             ComparisonPolicy::TrimWhitespaces,
         ),
         (
-            "diff-dock-whitespace-ignore",
+            "diff-options-whitespace-ignore",
             "Ignore",
             ComparisonPolicy::IgnoreWhitespaces,
         ),
@@ -183,58 +268,66 @@ fn whitespace_label(whitespace: ComparisonPolicy) -> &'static str {
     }
 }
 
-fn render_diff_options_menu(
-    chrome: &DiffChrome<'_>,
+pub(crate) fn render_diff_options_menu(
+    top: f32,
+    state: DiffOptionsMenuState,
+    actions: DiffOptionsMenuActions,
     ui: crate::theme::UiColors,
-    cx: &mut Context<PaneFlowApp>,
 ) -> AnyElement {
-    let loaded = chrome
-        .data
-        .as_ref()
-        .filter(|d| d.has_rows() && d.file_count > 0);
-    let submenu = chrome.options_submenu;
-    let options = chrome.options;
-    let cwd = chrome.cwd.clone();
-
-    let mut menu = menu_surface(div().id("diff-dock-options-menu"), ui)
+    let dismiss = actions.dismiss.clone();
+    let submenu_bounds: SubmenuBounds = Rc::default();
+    let dismiss_bounds = submenu_bounds.clone();
+    let mut menu = menu_surface(div().id("diff-options-menu"), ui)
         .flex()
         .flex_col()
         .gap(px(1.))
         .p(px(4.))
         .w(px(MENU_WIDTH))
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-        .on_mouse_up_out(
-            MouseButton::Left,
-            cx.listener(|this, _: &MouseUpEvent, _w, cx| {
-                this.close_diff_options_menu(cx);
-            }),
-        )
+        .on_mouse_up_out(MouseButton::Left, move |event: &MouseUpEvent, _w, cx| {
+            if dismiss_bounds
+                .get()
+                .is_some_and(|bounds| bounds.contains(&event.position))
+            {
+                return;
+            }
+            dismiss(cx);
+        })
         .child(render_submenu_row(
-            DiffOptionsSubmenu::Layout,
-            "Layout",
-            if chrome.split { "Split" } else { "Unified" },
-            submenu,
-            layout_entries(chrome.split),
+            SubmenuRow {
+                submenu: DiffOptionsSubmenu::Layout,
+                label: "Layout",
+                value: if state.split { "Split" } else { "Unified" },
+                entries: layout_entries(state.split),
+            },
+            state.submenu,
+            &actions,
+            &submenu_bounds,
             ui,
-            cx,
         ))
         .child(render_submenu_row(
-            DiffOptionsSubmenu::Highlight,
-            "Highlight",
-            highlight_label(options.highlight),
-            submenu,
-            highlight_entries(options),
+            SubmenuRow {
+                submenu: DiffOptionsSubmenu::Highlight,
+                label: "Highlight",
+                value: highlight_label(state.options.highlight),
+                entries: highlight_entries(state.options),
+            },
+            state.submenu,
+            &actions,
+            &submenu_bounds,
             ui,
-            cx,
         ))
         .child(render_submenu_row(
-            DiffOptionsSubmenu::Whitespace,
-            "Whitespace",
-            whitespace_label(options.whitespace),
-            submenu,
-            whitespace_entries(options),
+            SubmenuRow {
+                submenu: DiffOptionsSubmenu::Whitespace,
+                label: "Whitespace",
+                value: whitespace_label(state.options.whitespace),
+                entries: whitespace_entries(state.options),
+            },
+            state.submenu,
+            &actions,
+            &submenu_bounds,
             ui,
-            cx,
         ));
 
     menu = menu.child(
@@ -246,38 +339,32 @@ fn render_diff_options_menu(
             .bg(menu_divider_color(ui)),
     );
 
-    if let Some(data) = loaded {
-        let all_collapsed = data.all_collapsed(chrome.collapsed);
+    if let Some(all_collapsed) = state.all_collapsed {
         let label = if all_collapsed {
             "Expand All"
         } else {
             "Collapse All"
         };
         let next_collapse = !all_collapsed;
-        let paths = data.paths();
+        let set_all_collapsed = actions.set_all_collapsed.clone();
         menu = menu.child(
-            select_item("diff-dock-options-collapse", false, ui)
-                .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
-                    this.set_all_diff_collapsed(&paths, next_collapse, cx);
-                    this.close_diff_options_menu(cx);
-                }))
+            select_item("diff-options-collapse", false, ui)
+                .on_click(move |_: &ClickEvent, _w, cx| set_all_collapsed(next_collapse, cx))
                 .child(menu_label(label, ui)),
         );
     }
 
+    let refresh = actions.refresh.clone();
     menu = menu.child(
-        select_item("diff-dock-options-refresh", false, ui)
-            .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
-                this.refresh_diff_dock(cwd.clone(), cx);
-                this.close_diff_options_menu(cx);
-            }))
+        select_item("diff-options-refresh", false, ui)
+            .on_click(move |_: &ClickEvent, _w, cx| refresh(cx))
             .child(menu_label("Refresh Changes", ui)),
     );
 
     deferred(
         div()
             .absolute()
-            .top(px(32.))
+            .top(px(top))
             .right(px(0.))
             .occlude()
             .child(menu),
@@ -288,34 +375,43 @@ fn render_diff_options_menu(
 
 fn submenu_ids(submenu: DiffOptionsSubmenu) -> (&'static str, &'static str) {
     match submenu {
-        DiffOptionsSubmenu::Layout => ("diff-dock-options-layout", "diff-dock-layout-submenu"),
+        DiffOptionsSubmenu::Layout => ("diff-options-layout", "diff-options-layout-submenu"),
         DiffOptionsSubmenu::Highlight => {
-            ("diff-dock-options-highlight", "diff-dock-highlight-submenu")
+            ("diff-options-highlight", "diff-options-highlight-submenu")
         }
-        DiffOptionsSubmenu::Whitespace => (
-            "diff-dock-options-whitespace",
-            "diff-dock-whitespace-submenu",
-        ),
+        DiffOptionsSubmenu::Whitespace => {
+            ("diff-options-whitespace", "diff-options-whitespace-submenu")
+        }
     }
 }
 
-fn render_submenu_row(
+struct SubmenuRow {
     submenu: DiffOptionsSubmenu,
     label: &'static str,
     value: &'static str,
-    open_submenu: Option<DiffOptionsSubmenu>,
     entries: Vec<OptionEntry>,
+}
+
+fn render_submenu_row(
+    row: SubmenuRow,
+    open_submenu: Option<DiffOptionsSubmenu>,
+    actions: &DiffOptionsMenuActions,
+    submenu_bounds: &SubmenuBounds,
     ui: crate::theme::UiColors,
-    cx: &mut Context<PaneFlowApp>,
 ) -> AnyElement {
+    let SubmenuRow {
+        submenu,
+        label,
+        value,
+        entries,
+    } = row;
     let open = open_submenu == Some(submenu);
     let (row_id, submenu_id) = submenu_ids(submenu);
+    let toggle_submenu = actions.toggle_submenu.clone();
 
     select_item(row_id, open, ui)
         .relative()
-        .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
-            this.toggle_diff_options_submenu(submenu, cx);
-        }))
+        .on_click(move |_: &ClickEvent, _w, cx| toggle_submenu(submenu, cx))
         .child(menu_label(label, ui))
         .child(
             div()
@@ -332,7 +428,13 @@ fn render_submenu_row(
                 .text_color(ui.muted),
         )
         .when(open, |row| {
-            row.child(render_submenu(submenu_id, entries, ui, cx))
+            row.child(render_submenu(
+                submenu_id,
+                entries,
+                &actions.choose,
+                submenu_bounds.clone(),
+                ui,
+            ))
         })
         .into_any_element()
 }
@@ -340,8 +442,9 @@ fn render_submenu_row(
 fn render_submenu(
     id: &'static str,
     entries: Vec<OptionEntry>,
+    choose: &MenuAction<OptionChoice>,
+    submenu_bounds: SubmenuBounds,
     ui: crate::theme::UiColors,
-    cx: &mut Context<PaneFlowApp>,
 ) -> AnyElement {
     let mut menu = menu_surface(div().id(id), ui)
         .flex()
@@ -349,9 +452,17 @@ fn render_submenu(
         .gap(px(1.))
         .p(px(4.))
         .w(px(SUBMENU_WIDTH))
-        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation());
+        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+        .child(
+            canvas(
+                move |bounds, _, _| submenu_bounds.set(Some(bounds)),
+                |_, _, _, _| {},
+            )
+            .absolute()
+            .size_full(),
+        );
     for entry in entries {
-        menu = menu.child(render_option_entry(entry, ui, cx));
+        menu = menu.child(render_option_entry(entry, choose.clone(), ui));
     }
 
     deferred(
@@ -368,14 +479,12 @@ fn render_submenu(
 
 fn render_option_entry(
     entry: OptionEntry,
+    choose: MenuAction<OptionChoice>,
     ui: crate::theme::UiColors,
-    cx: &mut Context<PaneFlowApp>,
 ) -> AnyElement {
     let choice = entry.choice;
     select_item(entry.id, entry.selected, ui)
-        .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
-            this.apply_diff_option_choice(choice, cx);
-        }))
+        .on_click(move |_: &ClickEvent, _w, cx| choose(choice, cx))
         .child(menu_label(entry.label, ui))
         .child(div().w(px(14.)).flex_none().child(if entry.selected {
             svg()

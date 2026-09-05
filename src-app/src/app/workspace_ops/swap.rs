@@ -12,8 +12,7 @@ impl PaneFlowApp {
         if self.swap_source.is_some() {
             self.swap_source = None;
             SWAP_MODE.store(false, std::sync::atomic::Ordering::Relaxed);
-        } else if let Some(ws) = self.active_workspace()
-            && let Some(root) = &ws.active_tab().root
+        } else if let Some(root) = self.nav_root()
             && root.leaf_count() > 1
             && let Some(pane) = root.focused_pane(window, cx)
         {
