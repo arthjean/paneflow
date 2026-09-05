@@ -77,7 +77,7 @@ platform shaper.
 | `resolve_runs_3750` | ns | `resolve_runs` over 3 750 captures taken from a 10 000-character minified JSON line, the shape the diff view shares. |
 | `byte_to_utf16_eof` | ns | One byte offset converted to a UTF-16 offset at the end of a 3.7 MB document, two to four times per keystroke through `EntityInputHandler`. |
 | `to_disk_string_3_7mb` | ns | The whole 3.7 MB document rendered to the string a save writes. |
-| `theme_switch` | ns | A theme change on 300 KB of Rust, which today requeries the whole document on the render thread. |
+| `theme_switch` | ns | A theme change on 300 KB of Rust, rebuilding capture color tables without reparsing or requerying the trees. |
 | `shape_cold_60_rows` | ns | Sixty never-seen ASCII rows of 100 characters shaped with the editor monospace font, the cold-cache cost of one scrolled viewport. |
 | `shape_warm_60_rows` | ns | The same sixty rows shaped again, the warm-cache cost the line-layout cache serves on a second frame. |
 | `prepaint_60_rows_warm` | ns | The same sixty rows re-shaped the way `CodeElement::prepaint` does it since US-025: keyed by content hash through `shape_line_by_hash`, with one reused `Vec<TextRun>`. Its `allocs_per_iter` is the per-viewport allocation count US-025 caps at one per row. |
@@ -361,3 +361,30 @@ allocated per iteration and are exact.
 
 The editor suite writes the same document with `"suite":
 "paneflow-editor-bench"` and its own `corpus_seed`.
+
+## Syntax query parity measurement
+
+The Windows x86_64 release run
+[editor-20260904T231427Z-d03590c2816f.json](results/editor-20260904T231427Z-d03590c2816f.json)
+measures the Zed query integration on the working tree based on `d03590c2816f`.
+CPU share was 0.965. `editor-baseline.json` remains unchanged. These are measured
+pipeline times, not end-to-end GPU frame times.
+
+| Metric | Measured | Required |
+| --- | ---: | ---: |
+| `keystroke_to_runs` p95 | 0.767 ms | < 1.5 ms |
+| `viewport_query_60_rows` | 0.306 ms | < 0.6 ms |
+| `fill_60_stale_rows` | 0.290 ms | < 0.6 ms |
+| `resolve_runs_3750` | 18.4 us | < 500 us |
+| `theme_switch` | 3.1 us | < 5 us |
+| `open_markdown_injected` | 37.9 us | < 100 us |
+| `pagedown_stale_rows_max` | 0 | 0 |
+| `pagedown_frames_to_fresh` | 1 | 1 |
+| `reload_200_retained_bytes` | 5,409,886 bytes | < 64 MiB |
+| `plain_highlighter_retained_bytes` | 0 | 0 |
+| `open_to_first_tree_300kb` | 45.365 ms | within 10% of the preceding implementation |
+
+The historic baseline predates `open_to_first_tree_300kb`. Its comparison uses
+[the last recorded EP-011 run](results/editor-20260904T210646Z-f76af1ef703c.json):
+43.445 ms before, 45.365 ms after (+4.4%). Other comparisons use the baseline
+selected by `scripts/bench-editor.ps1`.
