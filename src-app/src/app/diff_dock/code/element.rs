@@ -20,6 +20,11 @@ use super::highlight::LineRuns;
 use super::markers::{
     MARKER_BAR_RADIUS, MARKER_BAR_W, MARKER_COLUMN_W, MARKER_HOVER_GROW, marker_rects,
 };
+use super::minimap::MinimapPaint;
+use super::navigation::{
+    MINIMAP_FONT_SIZE, NavigationLayout, SCROLLBAR_SIZE, minimap_top, minimap_track, minimap_width,
+    scrollbar_track,
+};
 use super::view::CodeView;
 use crate::diff::{ROW_HEIGHT, RowPalette};
 use crate::widgets::scrollbar::ScrollableHandle;
@@ -35,11 +40,6 @@ const CODE_PAD_R: f32 = 8.0;
 const H_SCROLL_MARGIN: f32 = 12.0;
 const CARET_WIDTH: f32 = 2.0;
 
-const V_SCROLLBAR_W: f32 = 6.0;
-const V_SCROLLBAR_INSET: f32 = 2.0;
-const H_SCROLLBAR_H: f32 = 6.0;
-const H_SCROLLBAR_INSET: f32 = 3.0;
-const H_SCROLLBAR_MIN_THUMB: f32 = 28.0;
 const SCROLL_EPSILON: f32 = 0.5;
 const REVEAL_MARGIN_ROWS: f32 = 2.0;
 
@@ -142,18 +142,6 @@ pub(crate) fn text_viewport_width(element_w: f32, gutter_w: f32) -> f32 {
 pub(crate) fn max_h_offset(longest_line_chars: usize, char_w: f32, text_viewport_w: f32) -> f32 {
     let content_w = longest_line_chars as f32 * char_w + H_SCROLL_MARGIN;
     (content_w - text_viewport_w).max(0.0)
-}
-
-pub(crate) fn h_thumb(offset: f32, max_offset: f32, track_w: f32) -> Option<(f32, f32)> {
-    if track_w <= 0.0 || max_offset < SCROLL_EPSILON {
-        return None;
-    }
-    let content_w = track_w + max_offset;
-    let thumb_w = (track_w * track_w / content_w)
-        .max(H_SCROLLBAR_MIN_THUMB)
-        .min(track_w);
-    let progress = (offset / max_offset).clamp(0.0, 1.0);
-    Some((progress * (track_w - thumb_w), thumb_w))
 }
 
 pub(crate) fn reveal_rows(row: usize, viewport_h: f32, max_rows: f64, current: f64) -> f64 {
@@ -461,10 +449,13 @@ impl CodeHitMap {
 }
 
 pub(crate) struct CodePrepaint {
+    content_bounds: Bounds<Pixels>,
     quads: Vec<Quad>,
     markers: Vec<RoundedQuad>,
     glyphs: Vec<CodeGlyph>,
-    scrollbars: Vec<RoundedQuad>,
+    navigation: NavigationLayout,
+    navigation_hitbox: Hitbox,
+    minimap: Option<MinimapPaint>,
     marker_hitbox: Hitbox,
     marker_pointer: bool,
 }
@@ -663,18 +654,95 @@ impl Element for CodeElement {
         let doc = view.document()?;
         let line_count = doc.line_count();
 
-        self.scroll.set_metrics(bounds, line_count);
-        let scroll_rows = self.scroll.rows();
-        let scale_factor = window.scale_factor();
-        let viewport_h = f32::from(bounds.size.height);
-        let rows = visible_rows_at(scroll_rows, viewport_h, line_count);
-
         let memo = self.resolve_gutter(window, digit_count(line_count));
         let gutter_w = memo.gutter_w;
-        let element_w = f32::from(bounds.size.width);
+        let display = view.controls.read(cx).display;
+        let scrollbar_w = if display.scrollbar {
+            SCROLLBAR_SIZE
+        } else {
+            0.0
+        };
+        let minimap_w = minimap_width(
+            text_viewport_width(f32::from(bounds.size.width) - scrollbar_w, gutter_w),
+            memo.digit_w * MINIMAP_FONT_SIZE / CODE_FONT_SIZE,
+            display.minimap,
+        );
+        let element_w = (f32::from(bounds.size.width) - scrollbar_w - minimap_w).max(0.0);
         let text_viewport_w = text_viewport_width(element_w, gutter_w);
         let h_max = max_h_offset(doc.longest_line_chars(), memo.digit_w, text_viewport_w);
         let h_offset = self.h_offset.clamp(0.0, h_max);
+        let scrollbar_h = if display.scrollbar && h_max > SCROLL_EPSILON {
+            SCROLLBAR_SIZE
+        } else {
+            0.0
+        };
+        let viewport_h = (f32::from(bounds.size.height) - scrollbar_h).max(0.0);
+        self.scroll.set_metrics(
+            Bounds::new(bounds.origin, size(bounds.size.width, px(viewport_h))),
+            line_count,
+        );
+        let scroll_rows = self.scroll.rows();
+        let scale_factor = window.scale_factor();
+        let rows = visible_rows_at(scroll_rows, viewport_h, line_count);
+        let vertical = display.scrollbar.then(|| {
+            scrollbar_track(
+                Bounds::new(
+                    point(bounds.right() - px(SCROLLBAR_SIZE), bounds.origin.y),
+                    size(px(SCROLLBAR_SIZE), px(viewport_h)),
+                ),
+                self.scroll.visible_rows(),
+                line_count as f64,
+                scroll_rows,
+                false,
+            )
+        });
+        let horizontal = (scrollbar_h > 0.0).then(|| {
+            scrollbar_track(
+                Bounds::new(
+                    point(
+                        bounds.origin.x + px(gutter_w + CODE_PAD_L),
+                        bounds.bottom() - px(SCROLLBAR_SIZE),
+                    ),
+                    size(px(text_viewport_w), px(SCROLLBAR_SIZE)),
+                ),
+                f64::from(text_viewport_w),
+                f64::from(text_viewport_w + h_max),
+                f64::from(h_offset),
+                true,
+            )
+        });
+        let minimap_track = (minimap_w > 0.0).then(|| {
+            minimap_track(
+                Bounds::new(
+                    point(bounds.origin.x + px(element_w), bounds.origin.y),
+                    size(px(minimap_w), px(viewport_h)),
+                ),
+                line_count,
+                &self.scroll,
+            )
+        });
+        let navigation = NavigationLayout {
+            vertical,
+            horizontal,
+            minimap: minimap_track,
+            minimap_top: minimap_top(line_count, &self.scroll),
+        };
+        if minimap_track.is_some() && view.navigation.layout.get().minimap.is_none() {
+            window.request_animation_frame();
+        }
+        view.navigation.layout.set(navigation);
+        let navigation_hitbox = window.insert_hitbox(bounds, HitboxBehavior::Normal);
+        let minimap = minimap_track.and_then(|track| {
+            MinimapPaint::layout(
+                view,
+                track,
+                &self.scroll,
+                self.palette.context_bg,
+                self.palette.text,
+                window,
+            )
+        });
+        let bounds = Bounds::new(bounds.origin, size(px(element_w), px(viewport_h)));
         self.geometry.set(CodeGeometry {
             gutter_w,
             char_w: memo.digit_w,
@@ -693,7 +761,6 @@ impl Element for CodeElement {
         let visible = rows.len();
         let mut quads = Vec::with_capacity(visible + 2);
         let mut glyphs = Vec::with_capacity(visible * 2);
-        let mut scrollbars = Vec::with_capacity(2);
 
         let left = bounds.origin.x;
         let gutter_px = px(gutter_w);
@@ -943,36 +1010,14 @@ impl Element for CodeElement {
         }
         *self.hits.borrow_mut() = hits;
 
-        let corners = Corners::all(px(3.));
-        if let Some(m) = crate::widgets::scrollbar::metrics(&self.scroll) {
-            let x = bounds.right() - px(V_SCROLLBAR_INSET + V_SCROLLBAR_W);
-            scrollbars.push(RoundedQuad {
-                bounds: Bounds::new(
-                    point(x, bounds.origin.y + px(m.thumb_top)),
-                    size(px(V_SCROLLBAR_W), px(m.thumb_h)),
-                ),
-                corners,
-                color: self.colors.scrollbar_thumb,
-            });
-        }
-
-        if let Some((thumb_x, thumb_w)) = h_thumb(h_offset, h_max, text_viewport_w) {
-            let y = bounds.bottom() - px(H_SCROLLBAR_INSET + H_SCROLLBAR_H);
-            scrollbars.push(RoundedQuad {
-                bounds: Bounds::new(
-                    point(text_x + px(thumb_x), y),
-                    size(px(thumb_w), px(H_SCROLLBAR_H)),
-                ),
-                corners,
-                color: self.colors.scrollbar_thumb,
-            });
-        }
-
         Some(CodePrepaint {
+            content_bounds: bounds,
             quads,
             markers,
             glyphs,
-            scrollbars,
+            navigation,
+            navigation_hitbox,
+            minimap,
             marker_hitbox,
             marker_pointer,
         })
@@ -998,48 +1043,25 @@ impl Element for CodeElement {
             cx,
         );
         let lh = self.line_height;
-        window.with_content_mask(Some(ContentMask { bounds }), |window| {
-            for q in &layout.quads {
-                match q.clip {
-                    Some(clip) => {
-                        window.with_content_mask(Some(ContentMask { bounds: clip }), |window| {
-                            window.paint_quad(fill(q.bounds, q.color));
-                        });
+        window.with_content_mask(
+            Some(ContentMask {
+                bounds: layout.content_bounds,
+            }),
+            |window| {
+                for q in &layout.quads {
+                    match q.clip {
+                        Some(clip) => {
+                            window.with_content_mask(
+                                Some(ContentMask { bounds: clip }),
+                                |window| {
+                                    window.paint_quad(fill(q.bounds, q.color));
+                                },
+                            );
+                        }
+                        None => window.paint_quad(fill(q.bounds, q.color)),
                     }
-                    None => window.paint_quad(fill(q.bounds, q.color)),
                 }
-            }
-            for q in &layout.markers {
-                window.paint_quad(quad(
-                    q.bounds,
-                    q.corners,
-                    q.color,
-                    px(0.),
-                    q.color,
-                    BorderStyle::Solid,
-                ));
-            }
-            if layout.marker_pointer {
-                window.set_cursor_style(CursorStyle::PointingHand, &layout.marker_hitbox);
-            }
-            for g in layout.glyphs {
-                if let Some(clip) = g.clip {
-                    window.with_content_mask(Some(ContentMask { bounds: clip }), |window| {
-                        let _ = g
-                            .line
-                            .paint(g.origin, lh, TextAlign::Left, None, window, cx);
-                    });
-                } else {
-                    let _ = g
-                        .line
-                        .paint(g.origin, lh, TextAlign::Left, None, window, cx);
-                }
-            }
-        });
-        if !layout.scrollbars.is_empty() {
-            let viewport = window.content_mask().bounds;
-            window.paint_layer(viewport, |window| {
-                for q in &layout.scrollbars {
+                for q in &layout.markers {
                     window.paint_quad(quad(
                         q.bounds,
                         q.corners,
@@ -1049,8 +1071,41 @@ impl Element for CodeElement {
                         BorderStyle::Solid,
                     ));
                 }
-            });
+                if layout.marker_pointer {
+                    window.set_cursor_style(CursorStyle::PointingHand, &layout.marker_hitbox);
+                }
+                for g in layout.glyphs {
+                    if let Some(clip) = g.clip {
+                        window.with_content_mask(Some(ContentMask { bounds: clip }), |window| {
+                            let _ = g
+                                .line
+                                .paint(g.origin, lh, TextAlign::Left, None, window, cx);
+                        });
+                    } else {
+                        let _ = g
+                            .line
+                            .paint(g.origin, lh, TextAlign::Left, None, window, cx);
+                    }
+                }
+            },
+        );
+        if let Some(minimap) = layout.minimap {
+            minimap.paint(window, cx);
         }
+        let view = self.view.read(cx);
+        if view.navigation.drag.is_some() {
+            super::navigation::bind_drag(&self.view, window);
+        }
+        if layout.navigation.part_at(window.mouse_position()).is_some() {
+            window.set_cursor_style(CursorStyle::Arrow, &layout.navigation_hitbox);
+        }
+        super::navigation_paint::paint(
+            layout.navigation,
+            &view.navigation,
+            view,
+            self.colors.scrollbar_thumb,
+            window,
+        );
     }
 }
 
@@ -1217,17 +1272,6 @@ mod tests {
         let w = text_viewport_width(800.0, 60.0);
         assert_eq!(w, 800.0 - 60.0 - CODE_PAD_L - CODE_PAD_R);
         assert_eq!(text_viewport_width(20.0, 60.0), 0.0);
-    }
-
-    #[test]
-    fn horizontal_thumb_only_exists_on_overflow() {
-        assert!(h_thumb(0.0, 0.0, 600.0).is_none());
-        assert!(h_thumb(0.0, 0.2, 600.0).is_none());
-        let (x, w) = h_thumb(0.0, 600.0, 600.0).expect("overflowing line has a thumb");
-        assert_eq!(x, 0.0);
-        assert!((H_SCROLLBAR_MIN_THUMB..600.0).contains(&w));
-        let (x_end, w_end) = h_thumb(600.0, 600.0, 600.0).expect("thumb");
-        assert!((x_end + w_end - 600.0).abs() < 0.001);
     }
 
     fn max_rows_for(viewport_h: f32, line_count: usize) -> f64 {

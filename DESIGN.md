@@ -103,8 +103,9 @@ Nerd Font as the default.
    color, or motion that competes with a running terminal.
 2. Depth comes from the surface ramp (`base`, `surface`, `overlay`, `subtle`)
    and from inset cards with masked corners. Drop shadows were removed in
-   0.5.4 and MUST NOT return on chrome; the only shadows are the client-side
-   window shadow, the drag ghost, and the About dialog, which is Migration.
+   0.5.4 and MUST NOT return on chrome outside the contextual Zed Editor
+   Controls menu in 5.4; the other shadows are the client-side window, the
+   drag ghost, and the About dialog, which is Migration.
 3. One highlight material. Hovered, active, and selected states are alpha
    tints of one color per theme lightness, never a per-component fill.
 4. Every rounded surface takes its radius from section 4.4. New radii are not
@@ -318,7 +319,7 @@ controls at 10 px or below, where the superellipse is invisible.
 | Scrollbar | width 6, gutter 10, minimum thumb 24, inset 2 |
 | Diff | row 18, file header 32, fold row 32, sticky header 24, gutter 36, change bar 4, split divider 3, column header 30, minimum split column 360, revert chip 56 by 16 inset 10 |
 | Review terminal panel | 520 default, 120 to 1000 |
-| Code editor | 12 px mono, caret 2, scrollbar 6, minimum thumb 28; git marker column 6 left of the numbers, bar 4 radius 2 inset 1, deleted dot 8, hover grows 3 to the left |
+| Code editor | 12 px mono, caret 2, scrollbar 15, minimum thumb 25; git marker column 6 left of the numbers, bar 4 radius 2 inset 1, deleted dot 8, hover grows 3 to the left |
 
 ### 4.6 Typography
 
@@ -507,6 +508,24 @@ inset 10 from the right edge; the click writes the base lines back through the
 atomic save path and refreshes the dock, and refuses with the error banner when
 the file has unsaved changes in a dock tab or changed on disk since the build.
 
+The file header places Zed's 14 px `filter.svg` icon after `Ln` and `Col`.
+Its Editor Controls menu offers Minimap and Scrollbar toggles, scoped to the
+open file tab. The minimap starts hidden; scrollbars start visible. This menu
+is a contextual exception to the shared menu skin: it follows Zed's 200 px
+minimum width, 6 px corners, 1 px border, 4 px vertical padding, 14 px check
+slot on the left, and small two-layer shadow. Palette roles remain theme-aware.
+Escape, an outside click, or a second click on the trigger dismisses it.
+
+Editor scrollbars follow Zed's 15 px tracks, square thumbs with a 25 px
+minimum, and a 1 px left border on the vertical track and thumb. Both axes
+support centered track clicks and dragging. Git change markers occupy the
+vertical track. The minimap uses the bundled `.ZedMono` alias at 2 px, Black,
+with a 1.618 line height. Its width is capped at 15% of the text area and 80
+miniature columns, and it hides below 20 columns. Its viewport thumb has an
+open left border; clicking centers the editor and dragging follows document
+progress. Only the miniature rows in view are shaped, with syntax filling
+inside the editor's existing frame budget.
+
 ### 5.5 Settings
 
 Navigation reuses the sidebar width: `Back to the app`, a search field, and
@@ -522,7 +541,8 @@ preset, a live diff sample, then the preset select and the preferences.
 
 ### 5.6 Menus, selects, tooltips
 
-All popups share `menu_surface`: squircle 18, lifted surface, 0.6 border.
+Popups share `menu_surface`, except the Zed Editor Controls menu in 5.4:
+squircle 18, lifted surface, 0.6 border.
 Items are 28 px squircle rows at radius 14 with `text` washes for hover and
 selection, 12 px text, a 12 px chevron on triggers, and a 13 px check on the
 selected item. Widths run from 200 to
@@ -630,9 +650,9 @@ Rules that follow:
 These are the Paneflow-specific bans, in addition to the generic ones a
 design review would raise anywhere.
 
-- Drop shadows on chrome, cards, rows, menus, or toasts. Only the window and
-  the drag ghost cast one; the About dialog's shadow is Migration, not a
-  precedent.
+- Drop shadows on chrome, cards, rows, menus, or toasts outside the contextual
+  Editor Controls menu in 5.4. The window and drag ghost retain their shadows;
+  the About dialog's shadow is Migration, not a precedent.
 - Separators between tabs, chips, or toolbar buttons. The floating chip
   language replaced full-height bordered tabs in 0.5.5.
 - Identity pills, badges, or logos in the pane header. The sidebar owns

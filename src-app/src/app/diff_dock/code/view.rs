@@ -24,6 +24,7 @@ type WatchBridge = Arc<Mutex<Option<mpsc::UnboundedSender<notify::Result<notify:
 type WatchEvents = mpsc::UnboundedReceiver<notify::Result<notify::Event>>;
 
 use super::base::{Base, spawn_base_load};
+use super::controls::EditorControls;
 use super::cursor::{self, CodeSelection};
 use super::document::{CodeDocument, ReadOnlyReason, normalize_newlines};
 use super::edit::{self, EditGroup, IndentUnit, TrackerWindow};
@@ -38,11 +39,11 @@ use super::highlight::{
 };
 use super::load::{CodeLoadSlot, CodeLoadState, CodeOpen, spawn_code_load};
 use super::markers::MARKER_COLUMN_W;
+use super::navigation::NavigationState;
 use super::save::{self, FileStamp};
 use crate::diff::{DiffSyntax, highlight_lines, palette};
 use crate::settings::components::menu_surface;
 use crate::terminal::blink::{BlinkPhaseGlobal, CURSOR_BLINK_INTERVAL};
-use crate::widgets::scrollbar::{self, SCROLLBAR_GUTTER, ScrollDragState, ScrollableHandle};
 
 pub(crate) const CODE_KEY_CONTEXT: &str = "CodeEditor";
 
@@ -281,12 +282,13 @@ async fn reload_from_disk(
 }
 
 pub(crate) struct CodeView {
+    pub(crate) controls: gpui::Entity<EditorControls>,
+    pub(super) navigation: NavigationState,
     path: PathBuf,
     state: CodeLoadState,
     slot: CodeLoadSlot,
     focus: FocusHandle,
     scroll: CodeScroll,
-    v_drag: Option<ScrollDragState>,
     h_offset: f32,
     selection: CodeSelection,
     goal_column: usize,
@@ -334,14 +336,17 @@ impl CodeView {
         stamp: Option<FileStamp>,
         cx: &mut Context<Self>,
     ) -> Self {
+        let focus = cx.focus_handle();
+        let controls = EditorControls::attach(focus.clone(), cx);
         Self {
+            controls,
+            navigation: NavigationState::default(),
             element_id: format!("code-view:{}", path.display()).into(),
             path,
             state,
             slot: CodeLoadSlot::new(),
-            focus: cx.focus_handle(),
+            focus,
             scroll: CodeScroll::new(),
-            v_drag: None,
             h_offset: 0.0,
             selection: CodeSelection::default(),
             goal_column: 0,
@@ -383,7 +388,11 @@ impl CodeView {
             DiffSyntax::from_theme(&crate::theme::active_theme()),
         );
         highlighter.parse_initial_blocking(&document);
+        let focus = cx.focus_handle();
+        let controls = EditorControls::attach(focus.clone(), cx);
         Self {
+            controls,
+            navigation: NavigationState::default(),
             element_id: format!("code-view:{}", path.display()).into(),
             path,
             state: CodeLoadState::Ready(Box::new(super::load::LoadedCode {
@@ -393,9 +402,8 @@ impl CodeView {
                 stamp: None,
             })),
             slot: CodeLoadSlot::new(),
-            focus: cx.focus_handle(),
+            focus,
             scroll: CodeScroll::new(),
-            v_drag: None,
             h_offset: 0.0,
             selection: CodeSelection::default(),
             goal_column: 0,
@@ -816,10 +824,28 @@ impl CodeView {
             0..INITIAL_HIGHLIGHT_ROWS.min(line_count)
         };
         let budget = self.highlight_budget;
-        if let Some((doc, highlighter)) = self.state.editable()
-            && highlighter.fill_stale_rows(doc, rows, budget).any_stale()
-        {
-            window.request_animation_frame();
+        let minimap_rows = self
+            .navigation
+            .layout
+            .get()
+            .minimap
+            .map(|_| super::minimap::visible_rows(line_count, &self.scroll));
+        if let Some((doc, highlighter)) = self.state.editable() {
+            let started = Instant::now();
+            let mut stale = highlighter.fill_stale_rows(doc, rows, budget).any_stale();
+            if let Some(rows) = minimap_rows {
+                let remaining = budget.saturating_sub(started.elapsed());
+                if remaining.is_zero() {
+                    stale = true;
+                } else {
+                    stale |= highlighter
+                        .fill_stale_rows(doc, rows, remaining)
+                        .any_stale();
+                }
+            }
+            if stale {
+                window.request_animation_frame();
+            }
         }
     }
 
@@ -844,45 +870,33 @@ impl CodeView {
         }
     }
 
-    fn over_v_scrollbar(&self, position: Point<gpui::Pixels>) -> bool {
-        let bounds = self.scroll.bounds();
-        position.x >= bounds.right() - SCROLLBAR_GUTTER && position.x <= bounds.right()
-    }
-
     fn on_scrollbar_down(&mut self, ev: &MouseDownEvent, cx: &mut Context<Self>) -> bool {
-        if !self.over_v_scrollbar(ev.position) {
-            return false;
-        }
-        let Some(m) = scrollbar::metrics(&self.scroll) else {
-            return false;
-        };
-        let local_y = f32::from(ev.position.y - self.scroll.bounds().origin.y);
-        if local_y >= m.thumb_top && local_y <= m.thumb_top + m.thumb_h {
-            self.v_drag = Some(scrollbar::begin_drag(&self.scroll, ev.position.y));
-        } else if let Some(offset) = scrollbar::track_click_offset(&self.scroll, ev.position.y) {
-            self.scroll.set_offset(Point::new(px(0.), px(offset)));
+        let handled = self.navigation.mouse_down(
+            ev.position,
+            &self.scroll,
+            &mut self.h_offset,
+            self.geometry.get().max_h_offset,
+        );
+        if handled {
             cx.notify();
         }
-        true
+        handled
     }
 
-    fn on_scrollbar_move(&mut self, ev: &MouseMoveEvent, cx: &mut Context<Self>) {
-        let Some(drag) = self.v_drag else {
-            return;
-        };
-        if ev.pressed_button != Some(MouseButton::Left) {
-            self.v_drag = None;
-            cx.notify();
-            return;
-        }
-        if let Some(offset) = scrollbar::drag_offset(&self.scroll, &drag, ev.position.y) {
-            self.scroll.set_offset(Point::new(px(0.), px(offset)));
+    pub(super) fn on_scrollbar_move(&mut self, ev: &MouseMoveEvent, cx: &mut Context<Self>) {
+        if self.navigation.mouse_move(
+            ev.position,
+            ev.pressed_button == Some(MouseButton::Left),
+            &self.scroll,
+            &mut self.h_offset,
+            self.geometry.get().max_h_offset,
+        ) {
             cx.notify();
         }
     }
 
-    fn on_scrollbar_up(&mut self, _ev: &MouseUpEvent, cx: &mut Context<Self>) {
-        if self.v_drag.take().is_some() {
+    pub(super) fn on_scrollbar_up(&mut self, _ev: &MouseUpEvent, cx: &mut Context<Self>) {
+        if self.navigation.drag.take().is_some() {
             cx.notify();
         }
     }
@@ -2282,7 +2296,7 @@ impl CodeView {
     }
 
     fn on_marker_move(&mut self, ev: &MouseMoveEvent, cx: &mut Context<Self>) {
-        if self.text_drag.is_some() || self.v_drag.is_some() {
+        if self.text_drag.is_some() || self.navigation.drag.is_some() {
             return;
         }
         let hit = self.hits.borrow().marker_at(ev.position);
@@ -2736,6 +2750,11 @@ impl Render for CodeView {
             .w_full()
             .overflow_hidden()
             .line_height(px(CODE_ROW_HEIGHT))
+            .on_hover(cx.listener(|this, hovered: &bool, _window, cx| {
+                if !*hovered && this.navigation.hovered.take().is_some() {
+                    cx.notify();
+                }
+            }))
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|this, ev: &MouseDownEvent, window, cx| {
@@ -2804,6 +2823,13 @@ impl Render for CodeView {
                 this.on_marker_move(ev, cx);
             }))
             .on_mouse_up(
+                MouseButton::Left,
+                cx.listener(|this, ev: &MouseUpEvent, _w, cx| {
+                    this.on_scrollbar_up(ev, cx);
+                    this.on_text_up(ev, cx);
+                }),
+            )
+            .on_mouse_up_out(
                 MouseButton::Left,
                 cx.listener(|this, ev: &MouseUpEvent, _w, cx| {
                     this.on_scrollbar_up(ev, cx);
@@ -3113,9 +3139,15 @@ mod tests {
         let (view, cx) = scrolled(cx, "/nonexistent/bar.rs", &rows_of_code(2_000));
 
         let thumb_h = view.update(cx, |view, cx| {
-            let metrics = scrollbar::metrics(&view.scroll).expect("an overflowing document");
-            let bar_x = view.scroll.bounds().right() - px(3.);
-            let below_thumb = view.scroll.bounds().origin.y + px(metrics.thumb_h + 40.0);
+            let thumb = view
+                .navigation
+                .layout
+                .get()
+                .vertical
+                .and_then(|track| track.thumb)
+                .expect("an overflowing document");
+            let bar_x = thumb.right() - px(3.);
+            let below_thumb = thumb.bottom() + px(40.0);
             assert!(view.on_scrollbar_down(
                 &MouseDownEvent {
                     button: MouseButton::Left,
@@ -3126,15 +3158,22 @@ mod tests {
                 },
                 cx,
             ));
-            metrics.thumb_h
+            f32::from(thumb.size.height)
         });
+        cx.run_until_parked();
         let after_click = view.read_with(cx, |view, _| view.scroll_rows());
         assert!(after_click > 0.0, "a track click must move the position");
 
         view.update(cx, |view, cx| {
-            let metrics = scrollbar::metrics(&view.scroll).expect("an overflowing document");
-            let bar_x = view.scroll.bounds().right() - px(3.);
-            let thumb_y = view.scroll.bounds().origin.y + px(metrics.thumb_top + thumb_h / 2.0);
+            let thumb = view
+                .navigation
+                .layout
+                .get()
+                .vertical
+                .and_then(|track| track.thumb)
+                .expect("an overflowing document");
+            let bar_x = thumb.right() - px(3.);
+            let thumb_y = thumb.origin.y + px(thumb_h / 2.0);
             view.on_scrollbar_down(
                 &MouseDownEvent {
                     button: MouseButton::Left,
@@ -3457,31 +3496,45 @@ mod tests {
 
     #[gpui::test]
     fn a_move_without_the_left_button_ends_the_drag(cx: &mut TestAppContext) {
-        let (view, cx) = view(cx, "");
+        let (view, cx) = scrolled(cx, "/nonexistent/drag.rs", &rows_of_code(500));
 
         view.update(cx, |view, cx| {
-            view.v_drag = Some(scrollbar::begin_drag(&view.scroll, px(40.)));
-
+            let thumb = view
+                .navigation
+                .layout
+                .get()
+                .vertical
+                .and_then(|track| track.thumb)
+                .expect("an overflowing document");
+            let position = thumb.center();
+            let down = MouseDownEvent {
+                button: MouseButton::Left,
+                position,
+                modifiers: Modifiers::default(),
+                click_count: 1,
+                first_mouse: false,
+            };
+            assert!(view.on_scrollbar_down(&down, cx));
             view.on_scrollbar_move(
                 &MouseMoveEvent {
-                    position: point(px(10.), px(90.)),
+                    position,
                     pressed_button: None,
                     modifiers: Modifiers::default(),
                 },
                 cx,
             );
-            assert!(view.v_drag.is_none());
+            assert!(view.navigation.drag.is_none());
 
-            view.v_drag = Some(scrollbar::begin_drag(&view.scroll, px(40.)));
+            assert!(view.on_scrollbar_down(&down, cx));
             view.on_scrollbar_move(
                 &MouseMoveEvent {
-                    position: point(px(10.), px(90.)),
+                    position,
                     pressed_button: Some(MouseButton::Left),
                     modifiers: Modifiers::default(),
                 },
                 cx,
             );
-            assert!(view.v_drag.is_some());
+            assert!(view.navigation.drag.is_some());
         });
     }
 

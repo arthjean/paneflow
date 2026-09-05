@@ -334,6 +334,7 @@ pub(super) fn render_diff_file_header(
     path: String,
     line: usize,
     column: usize,
+    controls: AnyElement,
     ui: crate::theme::UiColors,
 ) -> AnyElement {
     div()
@@ -366,6 +367,7 @@ pub(super) fn render_diff_file_header(
                 .text_color(ui.muted)
                 .child(format!("Ln {line}, Col {column}")),
         )
+        .child(controls)
         .into_any_element()
 }
 

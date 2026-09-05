@@ -357,8 +357,11 @@ impl PaneFlowApp {
                         column,
                     )
                 };
+                let controls = view.read(cx).controls.clone().into_any_element();
                 (
-                    Some(render_diff_file_header(icon, path, line, column, ui)),
+                    Some(render_diff_file_header(
+                        icon, path, line, column, controls, ui,
+                    )),
                     view.clone().into_any_element(),
                 )
             }
