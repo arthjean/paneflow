@@ -8,6 +8,13 @@ use crate::PaneFlowApp;
 use crate::terminal::{TerminalEvent, TerminalView};
 
 impl PaneFlowApp {
+    pub(crate) fn diff_file_tab_active(&self) -> bool {
+        matches!(
+            self.diff_dock.diff_tabs.get(self.diff_dock.diff_active_tab),
+            Some(DiffDockTab::File(_) | DiffDockTab::PendingFile)
+        )
+    }
+
     pub(crate) fn open_diff_changes_tab(&mut self, cx: &mut Context<Self>) {
         let index = self
             .diff_dock
@@ -115,14 +122,24 @@ impl PaneFlowApp {
         }
     }
 
-    fn focus_diff_tab(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn focus_diff_tab(
+        &mut self,
+        index: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let focus = match self.diff_dock.diff_tabs.get(index) {
             Some(DiffDockTab::File(view)) => Some(view.read(cx).focus_handle(cx)),
             Some(DiffDockTab::Terminal(terminal)) => Some(terminal.read(cx).focus_handle(cx)),
+            Some(DiffDockTab::PendingFile) if self.files_sidebar_open => {
+                Some(self.files_sidebar.read(cx).focus_handle(cx))
+            }
             _ => None,
         };
         if let Some(focus) = focus {
             window.focus(&focus, cx);
+        } else {
+            window.blur();
         }
     }
 
@@ -176,7 +193,12 @@ impl PaneFlowApp {
         }
     }
 
-    pub(crate) fn request_close_diff_tab(&mut self, index: usize, cx: &mut Context<Self>) {
+    pub(crate) fn request_close_diff_tab(
+        &mut self,
+        index: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if index >= self.diff_dock.diff_tabs.len() {
             return;
         }
@@ -190,13 +212,23 @@ impl PaneFlowApp {
             return;
         }
         self.close_diff_tab(index, cx);
+        self.focus_diff_tab(self.diff_dock.diff_active_tab, window, cx);
     }
 
     pub(crate) fn close_diff_tab(&mut self, index: usize, cx: &mut Context<Self>) {
         if index >= self.diff_dock.diff_tabs.len() {
             return;
         }
-        self.diff_dock.diff_tabs.remove(index);
+        let closed = self.diff_dock.diff_tabs.remove(index);
+        if matches!(closed, DiffDockTab::File(_) | DiffDockTab::PendingFile)
+            && !self
+                .diff_dock
+                .diff_tabs
+                .iter()
+                .any(|tab| matches!(tab, DiffDockTab::File(_) | DiffDockTab::PendingFile))
+        {
+            self.close_files_sidebar(cx);
+        }
         self.diff_dock.diff_active_tab =
             active_tab_after_close(self.diff_dock.diff_active_tab, index);
         self.diff_dock.diff_tab_close_armed = None;

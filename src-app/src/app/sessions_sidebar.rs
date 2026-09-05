@@ -33,10 +33,6 @@ impl PaneFlowApp {
             })
         });
 
-        if self.files_sidebar_open {
-            self.close_files_sidebar(cx);
-        }
-
         self.dismiss_transient_surfaces();
 
         self.set_sessions_sidebar_open(true, cx);
@@ -797,15 +793,6 @@ impl PaneFlowApp {
         self.agent_sessions.sessions_group_show_all =
             [false; crate::agent_sessions::SESSION_AGENT_COUNT];
         self.agent_sessions.sessions_scanning = [false; crate::agent_sessions::SESSION_AGENT_COUNT];
-    }
-
-    pub(crate) fn close_sessions_sidebar_immediate(&mut self, cx: &mut Context<Self>) {
-        self.agent_sessions.sessions_sidebar_open = false;
-        self.agent_sessions.sessions_sidebar_animation = None;
-        self.agent_sessions.sessions_scan_generation =
-            self.agent_sessions.sessions_scan_generation.wrapping_add(1);
-        self.clear_sessions_sidebar_state();
-        cx.notify();
     }
 
     pub(crate) fn close_sessions_sidebar(&mut self, cx: &mut Context<Self>) {

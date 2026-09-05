@@ -1,85 +1,19 @@
 use gpui::{
-    AnyElement, ClickEvent, Context, FontWeight, InteractiveElement, IntoElement, KeyDownEvent,
-    ParentElement, Render, Styled, Window, div, prelude::*, px,
+    AnyElement, ClickEvent, Context, InteractiveElement, IntoElement, KeyDownEvent, ParentElement,
+    Render, Styled, Window, div, px,
 };
 
-use super::panel::{FilesEvent, FilesSidebar};
-use super::{SIDEBAR_WIDTH, list};
-
-use crate::ui_primitives::{AnimatedHoverExt, lerp_color};
+use super::list;
+use super::panel::FilesSidebar;
 
 impl FilesSidebar {
-    pub(super) fn files_sidebar_header(
-        &self,
-        ui: crate::theme::UiColors,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        let title = self.title.clone();
-        let hover_background = crate::app::constants::sidebar_tab_hover_background();
-        let title_row = div()
-            .flex()
-            .flex_row()
-            .items_center()
-            .justify_between()
-            .gap(px(8.))
-            .h(px(36.))
-            .flex_none()
-            .px(px(12.))
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .overflow_x_hidden()
-                    .whitespace_nowrap()
-                    .text_ellipsis()
-                    .text_size(px(12.))
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .text_color(ui.text)
-                    .child(title),
-            )
-            .child(
-                div()
-                    .id("files-sidebar-close")
-                    .flex()
-                    .flex_none()
-                    .items_center()
-                    .justify_center()
-                    .size(px(22.))
-                    .rounded(px(5.))
-                    .text_size(px(14.))
-                    .text_color(ui.muted)
-                    .animated_hover(move |style, delta| {
-                        style
-                            .bg(lerp_color(
-                                hover_background.opacity(0.0),
-                                hover_background,
-                                delta,
-                            ))
-                            .text_color(lerp_color(ui.muted, ui.text, delta));
-                    })
-                    .on_click(cx.listener(|_, _: &ClickEvent, _window, cx| {
-                        cx.emit(FilesEvent::Close);
-                        cx.stop_propagation();
-                    }))
-                    .child("×"),
-            );
-
-        div()
-            .flex()
-            .flex_col()
-            .flex_none()
-            .child(title_row)
-            .child(self.files_filter_row(ui, cx))
-            .into_any_element()
-    }
-
     fn files_filter_row(&self, ui: crate::theme::UiColors, cx: &mut Context<Self>) -> AnyElement {
         let is_empty = self.filter_input.read(cx).value().is_empty();
         div()
             .flex()
             .flex_none()
             .px(px(8.))
-            .pb(px(6.))
+            .pt(px(8.))
             .child(
                 crate::ui_primitives::filter_pill(
                     "files-sidebar-filter",
@@ -92,6 +26,13 @@ impl FilesSidebar {
                     }),
                 )
                 .w_full()
+                .h(px(28.))
+                .py_0()
+                .px(px(8.))
+                .rounded(px(8.))
+                .border_1()
+                .border_color(ui.border)
+                .bg(ui.text.opacity(0.025))
                 .on_key_down(cx.listener(|this, ev: &KeyDownEvent, window, cx| {
                     if ev.keystroke.key.as_str() == "escape" && this.clear_files_filter(window, cx)
                     {
@@ -150,22 +91,17 @@ impl Render for FilesSidebar {
             self.render_count += 1;
         }
         let ui = crate::theme::ui_colors();
-        let theme = crate::theme::active_theme();
         div()
             .id("files-sidebar")
             .flex()
             .flex_col()
-            .w(SIDEBAR_WIDTH)
+            .w_full()
             .h_full()
             .min_h_0()
             .track_focus(&self.focus)
             .on_key_down(cx.listener(Self::handle_files_sidebar_key_down))
-            .bg(crate::app::constants::cockpit_chrome_background(
-                theme.title_bar_background,
-                self.window_active,
-                self.material,
-            ))
-            .child(self.files_sidebar_header(ui, cx))
+            .bg(ui.base)
+            .child(self.files_filter_row(ui, cx))
             .child(self.files_sidebar_body(ui, cx))
     }
 }

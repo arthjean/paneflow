@@ -39,7 +39,6 @@ fn install(panel: &mut FilesSidebar, tree: FilesTreeState) {
     panel.expanded = tree.expanded.clone();
     panel.projection = Arc::new(FilesProjection::build(&tree, &panel.expanded, ""));
     panel.tree = Arc::new(tree);
-    panel.title = "workspace".into();
 }
 
 struct Sibling(Rc<Cell<usize>>);
@@ -193,7 +192,7 @@ fn panel_filter_allows_result_navigation_and_escape_closes_when_empty(cx: &mut T
     let closed_event = closed.clone();
     cx.update(|_, cx| {
         cx.subscribe(&panel, move |_, event, _| {
-            if matches!(event, super::FilesEvent::Close) {
+            if matches!(event, super::FilesEvent::Close(_)) {
                 closed_event.set(true);
             }
         })

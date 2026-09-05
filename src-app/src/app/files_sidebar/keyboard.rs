@@ -106,7 +106,7 @@ impl FilesSidebar {
         match event.keystroke.key.as_str() {
             "escape" => {
                 if !self.clear_files_filter(window, cx) {
-                    cx.emit(FilesEvent::Close);
+                    cx.emit(FilesEvent::Close(window.window_handle()));
                 }
             }
             "up" if count > 0 => self.select_index(index.saturating_sub(1), cx),

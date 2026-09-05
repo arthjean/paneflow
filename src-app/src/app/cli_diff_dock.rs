@@ -1,6 +1,6 @@
 use gpui::{
-    AnyElement, Context, InteractiveElement, IntoElement, MouseButton, ParentElement, Styled, div,
-    px,
+    AnyElement, Context, InteractiveElement, IntoElement, MouseButton, ParentElement, Styled,
+    Window, div, px,
 };
 
 use crate::PaneFlowApp;
@@ -31,7 +31,7 @@ impl DiffDockSlot {
 }
 
 impl PaneFlowApp {
-    fn sync_diff_dock_session(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn sync_diff_dock_session(&mut self, cx: &mut Context<Self>) {
         let active = self.active_session_id();
         if self.diff_dock.owner == active {
             return;
@@ -138,9 +138,11 @@ impl PaneFlowApp {
         &mut self,
         body: AnyElement,
         available_width: f32,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        self.sync_diff_dock_session(cx);
+        self.sync_files_sidebar_session(cx);
+        let files_width = self.rendered_files_sidebar_width(window, cx);
         if !self.diff_dock_visible() {
             return body;
         }
@@ -184,7 +186,7 @@ impl PaneFlowApp {
                     .pt(px(crate::layout::PANE_GUTTER_PX))
                     .pb(px(crate::layout::PANE_GUTTER_PX))
                     .pr(px(crate::layout::PANE_GUTTER_PX))
-                    .child(self.render_diff_dock_panel(width, max_width, ui, cx)),
+                    .child(self.render_diff_dock_panel(width, max_width, files_width, ui, cx)),
             )
             .into_any_element()
     }

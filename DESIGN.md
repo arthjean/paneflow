@@ -43,7 +43,8 @@ diverge. `MAY` is optional.
 ### 1.4 Reference captures
 
 `assets/images/demo-0.9.png` is the reference capture: two agents in pane
-cards, the diff dock open on a file, the Files rail alongside. A pull request
+cards, the diff dock open on a file, and the former standalone Files rail.
+The file surface now follows the integrated layout described in 5.4. A pull request
 that changes a surface ships a capture of that surface in the same theme
 family, as `AGENTS.md` already requires.
 
@@ -148,7 +149,8 @@ Nerd Font as the default.
 | Primary sidebar | Workspaces rail in Agents mode, Changes rail in Review mode, navigation in Settings | Width 300; slides in 280 ms | `src-app/src/app/sidebar/mod.rs`, `src-app/src/main.rs` |
 | Main panel | The inset card that holds the pane grid, the Review view, or a Settings page | Inset 4 on right and bottom, and on the left only when the sidebar is hidden; radius 10; four corner masks painted in the shell color | `src-app/src/main.rs` |
 | Pane grid | Binary split tree of pane cards | Gutter 8, divider hit area 7, minimum pane 80 | `src-app/src/layout/tree.rs`, `src-app/src/layout/render.rs` |
-| Right rail | Sessions rail or Files rail, one at a time | Width 300 | `src-app/src/app/sessions_sidebar.rs`, `src-app/src/app/files_sidebar/mod.rs` |
+| Right rail | Sessions rail | Width 300 | `src-app/src/app/sessions_sidebar.rs` |
+| File tree | Inside the file dock, below its shared toolbar, to the right of the editor | Width 250, shrinking to preserve 200 px for the editor | `src-app/src/app/files_sidebar/mod.rs` |
 | Diff dock | Side dock attached to a tab, holding the branch diff and editable file tabs | Width 880 default, 360 minimum, 1400 maximum, clamped to the room the panel has; 8 file tabs maximum | `src-app/src/app/diff_dock/model.rs` |
 | Footer | Mode switch Agents / Review plus the Settings gear, with the IPC offline and update banners stacked above it | Persistent primary navigation | `src-app/src/app/sidebar_actions_menu.rs` |
 
@@ -512,6 +514,24 @@ inset 10 from the right edge; the click writes the base lines back through the
 atomic save path and refreshes the dock, and refuses with the error banner when
 the file has unsaved changes in a dock tab or changed on disk since the build.
 
+The file surface shares one frame, retaining the 40 px tab bar and its
+26 px tabs, original spacing, typography and corner radius. A 40 px
+breadcrumb toolbar spans both the editor and the tree. The tree
+starts below that toolbar with a 1 px left divider. Its width is 250 px,
+shrinking only when needed to leave 200 px for the editor. The search field
+has an 8 px outer inset, 28 px height, 8 px corners and a 1 px border. Tree
+rows are 28 px tall with 13 px labels, 14 px icons, 18 px indentation and
+6 px selection corners. These dimensions follow the Codex App reference
+provided for this surface and are contextual exceptions to the rail skin.
+
+The tree button sits immediately after Editor Controls in the file toolbar.
+It and `secondary-alt-f` toggle the embedded tree.
+Opening it selects an existing file tab or creates a file picker tab. Closing
+the last file or file picker tab closes the tree; Changes and Terminal remain
+available. Selecting those surfaces temporarily hides the tree and gives them
+the full dock width. Sessions can remain open alongside the integrated tree.
+Tree visibility remains local to the active agent session.
+
 The file header places Zed's 14 px `filter.svg` icon after `Ln` and `Col`.
 Its Editor Controls menu offers Minimap and Scrollbar toggles, scoped to the
 open file tab. The minimap starts hidden; scrollbars start visible. This menu
@@ -597,7 +617,7 @@ with Tab.
 | New tab, next, previous | `secondary-shift-t`, `secondary-]`, `secondary-[` |
 | Workspaces 1 to 9 | `secondary-1` to `secondary-9` |
 | Diff view | `secondary-shift-g` |
-| Files rail | `secondary-alt-f` |
+| File tree in the dock | `secondary-alt-f` |
 | Composer | `secondary-shift-space` |
 | Launch Pad | `secondary-shift-l` |
 | Attention queue | `secondary-shift-a` |

@@ -1,5 +1,6 @@
 mod branch;
 pub(crate) mod code;
+mod file_chrome;
 mod git;
 mod model;
 mod new_tab_menu;
@@ -18,7 +19,7 @@ pub(crate) use model::{
 use gpui::{
     AnyElement, ClickEvent, Context, InteractiveElement, IntoElement, MouseButton, MouseDownEvent,
     ParentElement, Pixels, Point, ScrollHandle, ScrollWheelEvent, StatefulInteractiveElement,
-    Styled, Window, div, px,
+    Styled, Window, div, prelude::FluentBuilder, px,
 };
 
 use self::branch::render_diff_branch_chip;
@@ -316,6 +317,7 @@ impl PaneFlowApp {
         &mut self,
         width: f32,
         max_width: f32,
+        files_width: f32,
         ui: crate::theme::UiColors,
         cx: &mut Context<Self>,
     ) -> AnyElement {
@@ -332,6 +334,7 @@ impl PaneFlowApp {
             .diff_active_tab
             .min(self.diff_dock.diff_tabs.len().saturating_sub(1));
         let tabs = self.diff_dock.diff_tabs.clone();
+        let file_active = self.diff_file_tab_active();
         let header = render_diff_tab_strip(
             &tabs,
             active,
@@ -342,27 +345,45 @@ impl PaneFlowApp {
         );
         let (toolbar, body) = match tabs.get(active) {
             Some(DiffDockTab::Terminal(terminal)) => (None, terminal.clone().into_any_element()),
-            Some(DiffDockTab::PendingFile) => (None, render::render_pending_file_body(ui)),
+            Some(DiffDockTab::PendingFile) => (
+                Some(
+                    div()
+                        .h(px(40.))
+                        .w_full()
+                        .flex_none()
+                        .flex()
+                        .border_b_1()
+                        .border_color(ui.border)
+                        .pr(px(8.))
+                        .items_center()
+                        .child(file_chrome::render_file_breadcrumbs(&cwd, "", ui))
+                        .child(file_chrome::render_tree_toggle(
+                            self.files_sidebar_open,
+                            ui,
+                            cx,
+                        ))
+                        .into_any_element(),
+                ),
+                render::render_pending_file_body(ui),
+            ),
             Some(DiffDockTab::File(view)) => {
-                let (icon, path, line, column) = {
+                let (path, line, column) = {
                     let view = view.read(cx);
                     let path = view.path().to_path_buf();
                     let (line, column) = view.cursor_line_column();
-                    let name = path
-                        .file_name()
-                        .map(|name| name.to_string_lossy().into_owned())
-                        .unwrap_or_default();
-                    (
-                        render::file_tab_icon(&name),
-                        diff_file_header_path(&cwd, &path),
-                        line,
-                        column,
-                    )
+                    (diff_file_header_path(&cwd, &path), line, column)
                 };
                 let controls = view.read(cx).controls.clone().into_any_element();
+                let tree_toggle = file_chrome::render_tree_toggle(self.files_sidebar_open, ui, cx);
                 (
                     Some(render_diff_file_header(
-                        icon, path, line, column, controls, ui,
+                        &cwd,
+                        path,
+                        line,
+                        column,
+                        controls,
+                        tree_toggle,
+                        ui,
                     )),
                     view.clone().into_any_element(),
                 )
@@ -373,6 +394,39 @@ impl PaneFlowApp {
             ),
             None => (None, render_diff_surface_picker(ui, cx)),
         };
+
+        let sidebar_width = (width - 200.).clamp(0., super::files_sidebar::FILES_SIDEBAR_WIDTH);
+        let sidebar_progress =
+            (files_width / super::files_sidebar::FILES_SIDEBAR_WIDTH).clamp(0., 1.);
+        let body = div()
+            .flex_1()
+            .min_h_0()
+            .w_full()
+            .flex()
+            .overflow_hidden()
+            .rounded_b(crate::app::constants::PANE_CARD_RADIUS)
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .h_full()
+                    .flex()
+                    .flex_col()
+                    .child(body),
+            )
+            .when(file_active && sidebar_progress > 0., |body| {
+                body.child(
+                    div()
+                        .flex_none()
+                        .w(px(sidebar_width * sidebar_progress))
+                        .h_full()
+                        .overflow_hidden()
+                        .border_l_1()
+                        .border_color(ui.border)
+                        .opacity(sidebar_progress)
+                        .child(self.render_files_sidebar((sidebar_width - 1.).max(0.))),
+                )
+            });
 
         let radius = crate::app::constants::PANE_CARD_RADIUS;
         div()

@@ -169,8 +169,9 @@ fn render_diff_tab(
         resting,
         hovered,
     )
-    .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
+    .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
         this.select_diff_tab(index, cx);
+        this.focus_diff_tab(index, window, cx);
     }))
     .child(file_icon_element(
         icon,
@@ -236,8 +237,8 @@ fn render_diff_tab(
                 crate::app::constants::sidebar_tab_active_background(),
             )
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
-                this.request_close_diff_tab(index, cx);
+            .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                this.request_close_diff_tab(index, window, cx);
                 cx.stop_propagation();
             }))
             .child(mark),
@@ -326,35 +327,25 @@ pub(super) fn diff_file_header_path(root: &str, path: &std::path::Path) -> Strin
 }
 
 pub(super) fn render_diff_file_header(
-    icon: &'static str,
+    root: &str,
     path: String,
     line: usize,
     column: usize,
     controls: AnyElement,
+    tree_toggle: AnyElement,
     ui: crate::theme::UiColors,
 ) -> AnyElement {
     div()
         .flex_none()
-        .h(px(36.))
+        .h(px(40.))
         .w_full()
         .flex()
-        .flex_row()
         .items_center()
         .gap(px(6.))
-        .px(px(10.))
+        .pr(px(8.))
         .border_b_1()
         .border_color(ui.border)
-        .child(file_icon_element(icon, px(14.), ui.muted))
-        .child(
-            div()
-                .flex_1()
-                .min_w_0()
-                .whitespace_nowrap()
-                .overflow_hidden()
-                .text_size(crate::ui_primitives::BODY)
-                .text_color(ui.text)
-                .child(path),
-        )
+        .child(super::file_chrome::render_file_breadcrumbs(root, &path, ui))
         .child(
             div()
                 .flex_none()
@@ -364,6 +355,7 @@ pub(super) fn render_diff_file_header(
                 .child(format!("Ln {line}, Col {column}")),
         )
         .child(controls)
+        .child(tree_toggle)
         .into_any_element()
 }
 

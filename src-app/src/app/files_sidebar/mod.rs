@@ -17,8 +17,7 @@ use gpui::{Context, Focusable, Pixels, Window, px};
 use crate::{PaneFlowApp, ToggleFilesSidebar};
 pub(crate) use panel::{FilesEvent, FilesSidebar};
 
-pub(crate) const FILES_SIDEBAR_WIDTH: f32 = 300.;
-pub(super) const SIDEBAR_WIDTH: Pixels = px(FILES_SIDEBAR_WIDTH);
+pub(crate) const FILES_SIDEBAR_WIDTH: f32 = 250.;
 pub(super) const ROW_HEIGHT: Pixels = px(28.);
 pub(super) const INDENT_STEP: f32 = 18.;
 pub(super) const ROW_SLOT: f32 = 14.;
@@ -40,9 +39,38 @@ impl PaneFlowApp {
         if !self.files_sidebar_host_visible() {
             return;
         }
-        self.toggle_files_sidebar(cx);
-        if self.files_sidebar_open {
+        self.sync_files_sidebar_session(cx);
+        if self.diff_dock_visible() && self.diff_file_tab_active() && self.files_sidebar_open {
+            self.close_files_sidebar(cx);
+            self.focus_diff_tab(self.diff_dock.diff_active_tab, window, cx);
+            return;
+        }
+        if !self.diff_dock.open {
+            let Some(cwd) = self.active_checkout() else {
+                return;
+            };
+            self.open_diff_dock_panel(cwd, cx);
+        }
+        let file_index = self
+            .diff_file_tab_active()
+            .then_some(self.diff_dock.diff_active_tab)
+            .or_else(|| {
+                self.diff_dock.diff_tabs.iter().position(|tab| {
+                    matches!(
+                        tab,
+                        super::diff_dock::DiffDockTab::File(_)
+                            | super::diff_dock::DiffDockTab::PendingFile
+                    )
+                })
+            });
+        if let Some(index) = file_index {
+            self.select_diff_tab(index, cx);
+            if !self.files_sidebar_open {
+                self.toggle_files_sidebar(cx);
+            }
             self.focus_files_sidebar(window, cx);
+        } else {
+            self.open_diff_file_picker(window, cx);
         }
     }
 
@@ -64,11 +92,6 @@ impl PaneFlowApp {
         let root = PathBuf::from(&ws.cwd);
         let persisted = ws.files_expanded.clone();
         self.files_sidebar_workspace = Some(ws.id);
-        if self.agent_sessions.sessions_sidebar_open
-            || self.agent_sessions.sessions_sidebar_animation.is_some()
-        {
-            self.close_sessions_sidebar_immediate(cx);
-        }
         self.dismiss_transient_surfaces();
         self.set_files_sidebar_open(true, cx);
         self.files_sidebar_root = Some(root.clone());
@@ -145,6 +168,7 @@ impl PaneFlowApp {
     }
 
     pub(crate) fn sync_files_sidebar_session(&mut self, cx: &mut Context<Self>) {
+        self.sync_diff_dock_session(cx);
         let wanted = self
             .active_workspace()
             .is_some_and(|ws| ws.active_tab().files_sidebar_open);

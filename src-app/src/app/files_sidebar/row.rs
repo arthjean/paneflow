@@ -8,7 +8,7 @@ use super::projection::FileRow;
 use super::{DIMMED_OPACITY, INDENT_STEP, ROW_GAP, ROW_HEIGHT, ROW_SLOT};
 use crate::app::files_tree;
 use crate::app::sidebar::{SIDEBAR_ROW_LINE_HEIGHT, SIDEBAR_ROW_PADDING_X};
-use crate::ui_primitives::{ROW_RADIUS, squircle_skin};
+use crate::ui_primitives::squircle_skin;
 
 impl FilesSidebar {
     pub(super) fn files_row(
@@ -72,25 +72,19 @@ impl FilesSidebar {
             })
             .collect::<Vec<_>>();
 
-        let mut el = squircle_skin(
-            div().id(row.id.clone()),
-            group,
-            ROW_RADIUS,
-            resting,
-            hovered,
-        )
-        .flex()
-        .flex_row()
-        .items_center()
-        .gap(px(ROW_GAP))
-        .h(ROW_HEIGHT)
-        .w_full()
-        .flex_none()
-        .overflow_x_hidden()
-        .pl(indent)
-        .pr(px(SIDEBAR_ROW_PADDING_X))
-        .when(dimmed, |s| s.opacity(DIMMED_OPACITY))
-        .children(guides);
+        let mut el = squircle_skin(div().id(row.id.clone()), group, px(6.), resting, hovered)
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap(px(ROW_GAP))
+            .h(ROW_HEIGHT)
+            .w_full()
+            .flex_none()
+            .overflow_x_hidden()
+            .pl(indent)
+            .pr(px(SIDEBAR_ROW_PADDING_X))
+            .when(dimmed, |s| s.opacity(DIMMED_OPACITY))
+            .children(guides);
 
         #[cfg(test)]
         {
@@ -140,7 +134,7 @@ impl FilesSidebar {
             div()
                 .flex_1()
                 .min_w_0()
-                .text_sm()
+                .text_size(px(13.))
                 .line_height(px(SIDEBAR_ROW_LINE_HEIGHT))
                 .text_color(text_color)
                 .overflow_x_hidden()

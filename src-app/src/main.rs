@@ -956,26 +956,9 @@ impl Render for PaneFlowApp {
         let sessions_sidebar_opacity = (sessions_sidebar_width
             / crate::app::sessions_sidebar::SESSIONS_SIDEBAR_WIDTH.max(1.))
         .clamp(0., 1.);
-        let files_sidebar_host_visible = self.files_sidebar_host_visible();
-        if files_sidebar_host_visible {
-            self.sync_files_sidebar_session(cx);
-        }
-        let animated_files_sidebar_width = self.rendered_files_sidebar_width(window, cx);
-        let files_sidebar_width = if files_sidebar_host_visible {
-            animated_files_sidebar_width
-        } else {
-            0.
-        };
-        let files_sidebar_mounted = files_sidebar_host_visible
-            && (self.files_sidebar_open || self.files_sidebar_animation.is_some());
-        let files_sidebar_opacity = (files_sidebar_width
-            / crate::app::files_sidebar::FILES_SIDEBAR_WIDTH.max(1.))
-        .clamp(0., 1.);
-        let secondary_sidebar_open = sessions_sidebar_mounted || files_sidebar_mounted;
+        let secondary_sidebar_open = sessions_sidebar_mounted;
         let right_rail_width = if sessions_sidebar_mounted {
             sessions_sidebar_width
-        } else if files_sidebar_mounted {
-            files_sidebar_width
         } else {
             0.
         };
@@ -1176,7 +1159,7 @@ impl Render for PaneFlowApp {
                 )
                 .into_any_element()
         };
-        let main_content = self.wrap_cli_diff_dock(main_content, main_panel_width, cx);
+        let main_content = self.wrap_cli_diff_dock(main_content, main_panel_width, window, cx);
         let ws_name = if self.settings_section.is_some() {
             None
         } else {
@@ -1319,11 +1302,7 @@ impl Render for PaneFlowApp {
                                 .right_0()
                                 .top_0()
                                 .bottom_0()
-                                .w(px(if sessions_sidebar_mounted {
-                                    sessions_sidebar_width
-                                } else {
-                                    files_sidebar_width
-                                }))
+                                .w(px(sessions_sidebar_width))
                                 .bg(panel_corner_mask_bg),
                         )
                     })
@@ -1493,21 +1472,6 @@ impl Render for PaneFlowApp {
                                 .opacity(sessions_sidebar_opacity)
                                 .pt(title_bar_h)
                                 .child(self.render_sessions_sidebar(window, cx))
-                                .into_any_element(),
-                        )
-                    })
-                    .when(files_sidebar_mounted && !sessions_sidebar_mounted, |row| {
-                        row.child(
-                            div()
-                                .flex()
-                                .flex_col()
-                                .h_full()
-                                .w(px(files_sidebar_width))
-                                .flex_shrink_0()
-                                .overflow_hidden()
-                                .opacity(files_sidebar_opacity)
-                                .pt(title_bar_h)
-                                .child(self.render_files_sidebar(window, cx))
                                 .into_any_element(),
                         )
                     }),

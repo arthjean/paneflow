@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 
 use gpui::{AnyElement, Context, Entity, IntoElement, StyleRefinement, Styled, Window, px};
 
-use super::{FILES_SIDEBAR_WIDTH, FilesEvent, FilesSidebar};
+use super::{FilesEvent, FilesSidebar};
 use crate::PaneFlowApp;
 
 impl PaneFlowApp {
@@ -13,7 +13,18 @@ impl PaneFlowApp {
         cx: &mut Context<Self>,
     ) {
         match event {
-            FilesEvent::Close => self.close_files_sidebar(cx),
+            FilesEvent::Close(window) => {
+                self.close_files_sidebar(cx);
+                let host = cx.weak_entity();
+                let window = *window;
+                cx.defer(move |cx| {
+                    let _ = window.update(cx, |_, window, cx| {
+                        let _ = host.update(cx, |app, cx| {
+                            app.focus_diff_tab(app.diff_dock.diff_active_tab, window, cx);
+                        });
+                    });
+                });
+            }
             FilesEvent::ContextMenu(menu) => {
                 self.dismiss_transient_surfaces();
                 self.files_menu_open = Some(menu.clone());
@@ -63,20 +74,12 @@ impl PaneFlowApp {
         self.open_diff_file_tab(path, window, cx);
     }
 
-    pub(crate) fn render_files_sidebar(
-        &self,
-        window: &Window,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        let material = self.cached_config.cockpit_chrome_material_enabled();
-        self.files_sidebar.update(cx, |panel, cx| {
-            panel.set_chrome(material, window.is_window_active(), cx)
-        });
+    pub(crate) fn render_files_sidebar(&self, width: f32) -> AnyElement {
         self.files_sidebar
             .clone()
             .cached(
                 StyleRefinement::default()
-                    .w(px(FILES_SIDEBAR_WIDTH))
+                    .w(px(width))
                     .h_full()
                     .flex_shrink_0(),
             )

@@ -13,7 +13,7 @@ use crate::app::files_tree::FilesTreeState;
 use crate::widgets::text_input::TextInput;
 
 pub(crate) enum FilesEvent {
-    Close,
+    Close(AnyWindowHandle),
     OpenFile {
         path: PathBuf,
         root: PathBuf,
@@ -33,7 +33,6 @@ pub(crate) struct FilesSidebar {
     pub(super) selected: Option<PathBuf>,
     pub(super) filter_input: Entity<TextInput>,
     pub(super) query: String,
-    pub(super) title: gpui::SharedString,
     pub(super) focus: FocusHandle,
     pub(super) scroll: UniformListScrollHandle,
     pub(super) active: bool,
@@ -43,8 +42,6 @@ pub(crate) struct FilesSidebar {
     pub(super) projection_task: Option<Task<()>>,
     pub(super) updates_task: Option<Task<()>>,
     pub(super) worker: Option<FilesWorker>,
-    pub(super) material: bool,
-    pub(super) window_active: bool,
     pub(super) pending_reveal: bool,
     #[cfg(test)]
     pub(super) render_count: usize,
@@ -62,7 +59,7 @@ impl Focusable for FilesSidebar {
 
 impl FilesSidebar {
     pub(crate) fn new(cx: &mut Context<Self>) -> Self {
-        let filter_input = cx.new(|cx| TextInput::new("", "Filter files", cx));
+        let filter_input = cx.new(|cx| TextInput::new("", "Filter files...", cx));
         cx.observe(&filter_input, |this, input, cx| {
             let query = input.read(cx).value().to_lowercase();
             if this.query != query {
@@ -82,7 +79,6 @@ impl FilesSidebar {
             selected: None,
             filter_input,
             query: String::new(),
-            title: gpui::SharedString::default(),
             focus: cx.focus_handle(),
             scroll: UniformListScrollHandle::new(),
             active: false,
@@ -92,8 +88,6 @@ impl FilesSidebar {
             projection_task: None,
             updates_task: None,
             worker: None,
-            material: false,
-            window_active: true,
             pending_reveal: false,
             #[cfg(test)]
             render_count: 0,
@@ -108,11 +102,6 @@ impl FilesSidebar {
         self.active = true;
         self.revision = 0;
         self.tree = Arc::new(FilesTreeState::root_shell(root.clone()));
-        self.title = root
-            .file_name()
-            .map(|name| name.to_string_lossy().into_owned())
-            .unwrap_or_else(|| root.to_string_lossy().into_owned())
-            .into();
         self.expanded = expanded
             .iter()
             .cloned()
@@ -135,19 +124,6 @@ impl FilesSidebar {
         self.updates_task = None;
         self.projection_task = None;
         self.pending_reveal = false;
-    }
-
-    pub(crate) fn set_chrome(
-        &mut self,
-        material: bool,
-        window_active: bool,
-        cx: &mut Context<Self>,
-    ) {
-        if self.material != material || self.window_active != window_active {
-            self.material = material;
-            self.window_active = window_active;
-            cx.notify();
-        }
     }
 
     pub(crate) fn release_snapshot(&mut self, cx: &mut Context<Self>) {
