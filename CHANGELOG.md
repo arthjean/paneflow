@@ -5,6 +5,8 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-09-06
+
 ### Added
 
 - Review mode now has two rails and a pane grid. The Workspaces rail lists
@@ -45,12 +47,25 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
   refreshes the dock, and refuses when the file has unsaved changes in a
   dock tab or changed on disk since the dock was built.
 
+- An Editor Controls button on the editor opens a menu that toggles a
+  Zed-style minimap and the scrollbar, for the session. The Changes tab gets
+  a permanent editor-style scrollbar of its own.
+
+- The Files tree lives inside the editor dock next to the file tabs rather
+  than in a sidebar of its own. Toggling Files opens the dock on the active
+  file tab, or on the file picker when no file is open, and closes it again
+  from a file tab.
+
 ### Removed
 
 - `Review with agent` and the terminal panel it opened under a Review diff
   are gone, along with the `review_prefill_delay_ms` setting; the key is
   ignored if it is still present in `paneflow.json`. The Review rail menu
   no longer offers `Open Shell in Worktree`. Launch agents from Agents mode.
+
+- The in-pane peek overlay that painted an agent's question over the
+  terminal. The attention ring, the header dot, the sidebar row and the
+  attention queue keep carrying it.
 
 ### Changed
 
@@ -113,6 +128,43 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
 - The APCA contrast floor applied to the theme's ANSI colors is off by
   default and configurable as `terminal.minimum_contrast` (Zed's floor is
   `45`). Themes render their colors as designed.
+- The editor dock no longer opens with a permanent Changes tab in first
+  position. Changes is an entry of the dock's `+` menu next to the file
+  picker, opens once, and closes like any other tab.
+- A desktop notification is dropped only when its pane's workspace and tab
+  are on screen in the active window, the test the completion dot already
+  used. It used to be muted whenever the Paneflow window was active, so an
+  agent asking for permission in another workspace never reached you while
+  you worked elsewhere in Paneflow. Agent notifications and OSC 9 / OSC 777
+  program notifications take the same answer.
+- The workspace row no longer carries the detected dev-server port badge, so
+  folder rows are single line. The service list stays in the workspace
+  context menu.
+- The editor colors the viewport without dropping a frame. A 2 MB Rust file
+  shows its text in 1.3 ms with the parse off the render thread instead of
+  waiting 45 ms for it, the highlight cap rises from 300 KB to 2 MB (1 MB for
+  Markdown), a keystroke on 300 KB of Rust reaches its colored runs in
+  0.71 ms at p95 where it took 1.77 ms, a wheel notch moves exactly three
+  rows, reloads from disk diff off-thread and apply one batch, and idle
+  terminal panes are cached during an editor scroll. Measured on the
+  reproducible suite behind `scripts/bench-editor.sh`, recorded under
+  `bench/results`.
+- The four `libghostty-vt` archives are no longer committed. They are assets
+  of the `libghostty-vt-<sha>` pre-release named in
+  `native/libghostty/manifest.toml`; run `scripts/fetch-libghostty.sh` (or
+  `.ps1`) once per pin before building from source. Cargo still performs no
+  downloads.
+
+### Fixed
+
+- The sidebar bell rings only for agent-initiated requests. Claude Code's
+  `waitingFor: "dialog open"`, written while you sit in a local slash command
+  such as `/resume` or `/model`, now reads as idle, and an OSC 9 notification
+  is a request only when its wording asks for permission, approval, input or
+  confirmation; Claude Code's `idle_prompt` is idle and anything else says
+  nothing.
+- Switching Highlight or Whitespace repaints the existing diff in place
+  instead of rebuilding it.
 
 ## [0.11.0] - 2026-09-02
 

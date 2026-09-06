@@ -63,6 +63,18 @@
   <content_rating type="oars-1.1" />
 
   <releases>
+    <release version="0.12.0" date="2026-09-06">
+      <description>
+        <p>Review is rebuilt around two rails and a pane grid, the Changes tab reads word by word, and the terminal grid is measured on the font.</p>
+        <ul>
+          <li>The Workspaces rail lists every repository open in Agents with its checkouts and worktrees, the Changes rail follows the focused pane, and a diff is a pane card you split, close, zoom and drag like a terminal</li>
+          <li>The Changes tab highlights the words that differ inside a modified block with Highlight and Whitespace options, a file open in the dock shows its changes against HEAD in the gutter with a Revert popup, and a Revert chip restores a block from the Changes tab</li>
+          <li>The editor gains a minimap and scrollbar controls, hosts the Files tree in the dock, uses Zed highlighting queries, and colors the viewport without dropping a frame</li>
+          <li>The terminal cell is measured on the font the way Ghostty measures it, box drawing and Powerline glyphs are drawn as seamless sprites, and the bundled font is the regular JetBrainsMono Nerd Font</li>
+          <li>Desktop notifications are dropped only for the pane on screen, the sidebar bell rings only for agent-initiated requests, and Review with agent is removed</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.11.0" date="2026-09-02">
       <description>
         <p>A tab binds to its own git worktree, and the terminal pipeline gets faster.</p>
