@@ -6,9 +6,9 @@
 [![platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-000000?style=flat&colorA=000000&colorB=000000)](#install)
 [![discord](https://img.shields.io/badge/discord-join-000000?style=flat&colorA=000000&colorB=000000)](https://discord.gg/UqGM29Gvat)
 
-Your agents work in parallel, this keeps them in sight.
+The workspace where your coding agents work, and where you read what they changed.
 
-Paneflow is a native terminal workspace for running coding agents side by side. Each agent lives in a real PTY pane you can read, interrupt, and take over, while the app tracks which one is thinking, waiting, stalled, failed, or done, and keeps every task tied to its workspace and branch.
+Paneflow is a native workspace for coding agents. The Workspaces rail lists every repository you have open; each tab is an agent session bound to its own branch or worktree, named after its work, with the agent's live state: thinking, waiting, stalled, failed, or done. Inside a session, the agent runs in a real Ghostty terminal pane you can read, interrupt, and take over. A dock beside the session holds Changes (the checkout's diff against its base branch), Files (a code editor with git markers in the gutter and the file tree), and a terminal. Review mode lays several worktree diffs side by side in one pane grid.
 
 Works with any CLI agent - Claude Code, Codex, Gemini, opencode, Pi, Hermes, you name it.
 
@@ -32,7 +32,7 @@ Everywhere else, take the build for your machine from the [latest release](https
 
 [Install docs →](https://paneflow.dev/docs/installation)
 
-<img alt="Two coding agents running in parallel panes, with the review dock open on a source file and the files sidebar alongside" src="./assets/images/demo-0.9.png" width="100%">
+<img alt="Claude Code and fx running in parallel panes, the dock open on a Rust file beside the file tree, and the Workspaces rail listing one tab per session" src="./assets/images/demo-0.12.png" width="100%">
 
 ### 2. Install for agents
 
@@ -68,11 +68,11 @@ Themes, shell, keybindings, and shortcuts live in `~/.config/paneflow/paneflow.j
 
 [Learn more →](docs/user/configuration.md)
 
-## Review worktree diffs
+## Read what the agents changed
 
-When each agent works on its own branch or worktree, the review surface shows the resulting diffs side by side, one column per worktree, with hunk navigation, per-hunk actions, agent attribution, and a local cost estimate where token usage is available.
+The Changes tab shows the session's checkout against its base branch, split or unified, with the words that differ highlighted inside each modified line and a Revert chip on each block of a modified file. Whitespace can be trimmed or ignored so a reformat reads as one change. A file open in the dock carries the same blocks in its gutter, with a popup to read, copy, or revert the previous text.
 
-Reviewing is a supervision step, not an automation step: acting on a hunk pre-fills a prompt in the agent's own pane and waits for you.
+Review mode puts the Workspaces rail, the Changes rail, and a grid of diff panes in one view. Drag a branch or a worktree onto a pane edge to read diffs side by side, up to six at once, each against the base branch you pick, without checking anything out.
 
 [Review docs →](docs/user/review.md)
 
