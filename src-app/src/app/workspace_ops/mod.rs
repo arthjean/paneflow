@@ -77,7 +77,7 @@ fn capture_closed_pane_record(
     cx: &App,
 ) -> Option<ClosedPaneRecord> {
     let pane_ref = pane.read(cx);
-    let surface = match &pane_ref.surface {
+    let surface = match pane_ref.surface() {
         crate::pane::PaneSurface::Terminal(tv) => {
             let tv_ref = tv.read(cx);
             ClosedSurfaceRecord::Terminal {

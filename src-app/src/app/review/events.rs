@@ -18,7 +18,10 @@ impl PaneFlowApp {
                     self.show_toast(message, cx);
                 }
             }
-            PaneEvent::ToggleAgentSessions | PaneEvent::ToggleDiffDock => {}
+            PaneEvent::ToggleAgentSessions
+            | PaneEvent::ToggleDiffDock
+            | PaneEvent::NewTab
+            | PaneEvent::SurfacesChanged => {}
             PaneEvent::OpenPaneMenu { position } => {
                 self.dismiss_transient_surfaces();
                 self.pane_menu_open = Some(crate::PaneContextMenu {

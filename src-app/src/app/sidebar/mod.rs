@@ -308,7 +308,7 @@ struct TabPaneIcon {
 
 fn tab_pane_icon(pane: &crate::pane::Pane, cx: &gpui::App) -> TabPaneIcon {
     let agent = pane
-        .surface
+        .surface()
         .as_terminal()
         .and_then(|terminal| terminal.read(cx).terminal.detected_agent);
     match agent {
@@ -317,8 +317,8 @@ fn tab_pane_icon(pane: &crate::pane::Pane, cx: &gpui::App) -> TabPaneIcon {
             label: agent.display_name(),
         },
         None => TabPaneIcon {
-            path: pane.surface.kind_icon(),
-            label: pane.surface.kind_label(),
+            path: pane.surface().kind_icon(),
+            label: pane.surface().kind_label(),
         },
     }
 }

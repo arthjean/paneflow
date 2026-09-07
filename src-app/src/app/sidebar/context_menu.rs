@@ -562,7 +562,7 @@ impl PaneFlowApp {
             .find(|ws| ws.id == owner_id)
             .map(|ws| PathBuf::from(&ws.cwd));
 
-        let surface_path = Self::surface_context_path(&source.read(cx).surface, cx);
+        let surface_path = Self::surface_context_path(source.read(cx).surface(), cx);
         let full_path = surface_path
             .as_ref()
             .map(|path| path.to_string_lossy().into_owned());
@@ -575,7 +575,7 @@ impl PaneFlowApp {
 
         let pending_sid = source
             .read(cx)
-            .surface
+            .surface()
             .as_terminal()
             .map(|t| t.entity_id().as_u64())
             .filter(|sid| self.broadcast.pending.contains_key(sid));

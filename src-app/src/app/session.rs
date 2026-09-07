@@ -390,15 +390,21 @@ impl PaneFlowApp {
         fallback_cwd: &std::path::Path,
         cx: &mut Context<Self>,
     ) -> Entity<Pane> {
-        let mut built: Option<crate::pane::PaneSurface> = None;
-        for i in restore_candidate_order(surfaces) {
-            built = Self::build_restored_surface(workspace_id, &surfaces[i], fallback_cwd, cx);
-            if built.is_some() {
-                break;
+        let mut built: Vec<crate::pane::PaneSurface> = Vec::new();
+        let mut active = None;
+        for definition in surfaces.iter().take(crate::pane::MAX_PANE_TABS) {
+            let Some(surface) =
+                Self::build_restored_surface(workspace_id, definition, fallback_cwd, cx)
+            else {
+                continue;
+            };
+            if definition.focus == Some(true) && active.is_none() {
+                active = Some(built.len());
             }
+            built.push(surface);
         }
 
-        let Some(surface) = built else {
+        if built.is_empty() {
             if !surfaces.is_empty() {
                 log::error!(
                     "spawn_pane_from_surfaces: no restorable surface built; using fallback"
@@ -411,24 +417,12 @@ impl PaneFlowApp {
             let pane = cx.new(|cx| Pane::new(t, workspace_id, cx));
             cx.subscribe(&pane, Self::handle_pane_event).detach();
             return pane;
-        };
-        let pane = cx.new(|cx| Pane::new_with_surface(surface, workspace_id, cx));
+        }
+        let pane =
+            cx.new(|cx| Pane::new_with_surfaces(built, active.unwrap_or(0), workspace_id, cx));
         cx.subscribe(&pane, Self::handle_pane_event).detach();
         pane
     }
-}
-
-fn restore_candidate_order(surfaces: &[paneflow_config::schema::SurfaceDefinition]) -> Vec<usize> {
-    if surfaces.is_empty() {
-        return Vec::new();
-    }
-    let focused = surfaces
-        .iter()
-        .position(|s| s.focus == Some(true))
-        .unwrap_or(0);
-    std::iter::once(focused)
-        .chain((0..surfaces.len()).filter(|&i| i != focused))
-        .collect()
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -1317,28 +1311,6 @@ mod tests {
             restored.teardown,
             crate::workspace::worktree::TeardownPolicy::Keep,
             "unknown restored policy must not become auto-remove"
-        );
-    }
-
-    #[test]
-    fn restore_candidate_order_puts_the_focused_surface_first() {
-        use paneflow_config::schema::SurfaceDefinition;
-
-        let surface = |focus: Option<bool>| SurfaceDefinition {
-            focus,
-            ..Default::default()
-        };
-
-        assert!(super::restore_candidate_order(&[]).is_empty());
-
-        assert_eq!(
-            super::restore_candidate_order(&[surface(None), surface(Some(false))]),
-            vec![0, 1]
-        );
-
-        assert_eq!(
-            super::restore_candidate_order(&[surface(None), surface(None), surface(Some(true))]),
-            vec![2, 0, 1]
         );
     }
 }

@@ -11,7 +11,7 @@ use gpui::{
 };
 
 use crate::ui_primitives::squircle::{squircle_border, squircle_fill};
-use crate::ui_primitives::{AnimatedHoverExt, lerp_color};
+use crate::ui_primitives::{AnimatedHoverExt, lerp_color, squircle_skin};
 
 use crate::diff::DiffView;
 use crate::markdown::MarkdownView;
@@ -103,6 +103,14 @@ const DROP_OVERLAY_BACKGROUND_ALPHA: f32 = 0.10;
 const SWAP_OVERLAY_FILL_ALPHA: f32 = 0.10;
 const SWAP_OVERLAY_BORDER_ALPHA: f32 = 0.22;
 const MAX_SURFACE_TITLE_LEN: usize = 24;
+pub const MAX_PANE_TABS: usize = 8;
+const TAB_BAR_HEIGHT: f32 = 26.0;
+const TAB_BAR_GAP: f32 = 3.0;
+const TAB_BAR_BOTTOM_INSET: f32 = 6.0;
+const TAB_ICON_SIZE: f32 = 13.0;
+const TAB_CLOSE_SIZE: f32 = 16.0;
+const TAB_CLOSE_GLYPH_SIZE: f32 = 11.0;
+const TAB_FADE_WIDTH: f32 = 28.0;
 
 fn truncate_surface_title(raw: &str) -> String {
     if raw.chars().count() <= MAX_SURFACE_TITLE_LEN {
@@ -114,6 +122,8 @@ fn truncate_surface_title(raw: &str) -> String {
 
 pub enum PaneEvent {
     Remove,
+    NewTab,
+    SurfacesChanged,
     Split(crate::layout::SplitDirection),
     ToggleAgentSessions,
     ToggleDiffDock,
@@ -155,13 +165,15 @@ impl HeaderHoverMotion {
 }
 
 pub struct Pane {
-    pub surface: PaneSurface,
+    surfaces: Vec<PaneSurface>,
+    active_surface: usize,
     attention: Option<String>,
     errored: bool,
     search_hits: Option<usize>,
     pub zoomed: bool,
     pub workspace_id: u64,
     header_hover_motion: std::collections::HashMap<SharedString, HeaderHoverMotion>,
+    tab_scroll: gpui::ScrollHandle,
     pub cached_config: paneflow_config::schema::PaneFlowConfig,
     drag_split_direction: Option<DropEdge>,
     overlay_prev_dir: Option<DropEdge>,
@@ -192,19 +204,34 @@ impl Pane {
         workspace_id: u64,
         cx: &mut Context<Self>,
     ) -> Self {
+        Self::new_with_surfaces(vec![surface], 0, workspace_id, cx)
+    }
+
+    pub fn new_with_surfaces(
+        surfaces: Vec<PaneSurface>,
+        active_surface: usize,
+        workspace_id: u64,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        debug_assert!(!surfaces.is_empty(), "a pane needs at least one surface");
         let cached_config = paneflow_config::loader::load_config();
-        if let PaneSurface::Terminal(t) = &surface {
-            Self::subscribe_terminal(t, cx);
-            Self::apply_terminal_render_config(t, &cached_config, cx);
+        for surface in &surfaces {
+            if let PaneSurface::Terminal(t) = surface {
+                Self::subscribe_terminal(t, cx);
+                Self::apply_terminal_render_config(t, &cached_config, cx);
+            }
         }
+        let active_surface = active_surface.min(surfaces.len().saturating_sub(1));
         Self {
-            surface,
+            surfaces,
+            active_surface,
             attention: None,
             errored: false,
             search_hits: None,
             zoomed: false,
             workspace_id,
             header_hover_motion: std::collections::HashMap::new(),
+            tab_scroll: gpui::ScrollHandle::new(),
             cached_config,
             drag_split_direction: None,
             overlay_prev_dir: None,
@@ -222,6 +249,61 @@ impl Pane {
             diff_options_open: false,
             diff_options_submenu: None,
         }
+    }
+
+    pub fn surface(&self) -> &PaneSurface {
+        &self.surfaces[self.active_surface]
+    }
+
+    pub fn surfaces(&self) -> &[PaneSurface] {
+        &self.surfaces
+    }
+
+    pub fn active_surface_idx(&self) -> usize {
+        self.active_surface
+    }
+
+    pub fn can_add_surface(&self) -> bool {
+        self.surfaces.len() < MAX_PANE_TABS
+    }
+
+    pub fn set_surface(&mut self, surface: PaneSurface) {
+        self.surfaces[self.active_surface] = surface;
+    }
+
+    pub fn push_surface(&mut self, surface: PaneSurface, cx: &mut Context<Self>) {
+        if let PaneSurface::Terminal(t) = &surface {
+            Self::subscribe_terminal(t, cx);
+            Self::apply_terminal_render_config(t, &self.cached_config, cx);
+        }
+        self.surfaces.push(surface);
+        self.active_surface = self.surfaces.len() - 1;
+        self.tab_scroll.scroll_to_item(self.active_surface);
+        cx.notify();
+    }
+
+    pub fn activate_surface(&mut self, idx: usize, cx: &mut Context<Self>) {
+        if idx < self.surfaces.len() && idx != self.active_surface {
+            self.active_surface = idx;
+            self.tab_scroll.scroll_to_item(idx);
+            cx.notify();
+        }
+    }
+
+    fn close_surface(&mut self, idx: usize, cx: &mut Context<Self>) {
+        if idx >= self.surfaces.len() {
+            return;
+        }
+        if self.surfaces.len() == 1 {
+            cx.emit(PaneEvent::Remove);
+            return;
+        }
+        self.surfaces.remove(idx);
+        if self.active_surface > idx || self.active_surface >= self.surfaces.len() {
+            self.active_surface = self.active_surface.saturating_sub(1);
+        }
+        cx.emit(PaneEvent::SurfacesChanged);
+        cx.notify();
     }
 
     pub fn set_attention(&mut self, attention: Option<String>, cx: &mut Context<Self>) {
@@ -424,7 +506,7 @@ impl Pane {
     }
 
     pub fn terminals(&self) -> impl Iterator<Item = &Entity<TerminalView>> {
-        self.surface.as_terminal().into_iter()
+        self.surfaces.iter().filter_map(PaneSurface::as_terminal)
     }
 
     pub fn apply_config(
@@ -479,8 +561,12 @@ impl Pane {
             terminal,
             |this, terminal, event: &TerminalEvent, cx| match event {
                 TerminalEvent::ChildExited => {
-                    if this.surface.as_terminal() == Some(&terminal) {
-                        cx.emit(PaneEvent::Remove);
+                    if let Some(idx) = this
+                        .surfaces
+                        .iter()
+                        .position(|surface| surface.as_terminal() == Some(&terminal))
+                    {
+                        this.close_surface(idx, cx);
                     }
                 }
                 TerminalEvent::TitleChanged => {
@@ -956,15 +1042,15 @@ impl Pane {
     }
 
     pub fn active_terminal_opt(&self) -> Option<&Entity<TerminalView>> {
-        self.surface.as_terminal()
+        self.surface().as_terminal()
     }
 
     fn render_surface_title(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
-        if let PaneSurface::Diff(diff) = &self.surface {
+        if let PaneSurface::Diff(diff) = self.surface() {
             return Self::render_diff_surface_title(diff, cx);
         }
-        let full_title = Self::surface_full_title(&self.surface, cx);
-        let display_title = Self::surface_title(&self.surface, cx);
+        let full_title = Self::surface_full_title(self.surface(), cx);
+        let display_title = Self::surface_title(self.surface(), cx);
         let show_tooltip = full_title != display_title
             || full_title.chars().count() > SURFACE_TITLE_TOOLTIP_THRESHOLD;
         let mut title = div()
@@ -1070,7 +1156,7 @@ impl Pane {
 
         let leading_slots: u8 = u8::from(has_errored || has_attention) + u8::from(has_pending);
         let progress = self
-            .surface
+            .surface()
             .as_terminal()
             .and_then(|terminal| terminal.read(cx).terminal.progress)
             .filter(|_| leading_slots < 2)
@@ -1095,7 +1181,7 @@ impl Pane {
 
         let match_badge = {
             let slots_used: u8 = leading_slots + u8::from(progress.is_some());
-            self.surface
+            self.surface()
                 .as_terminal()
                 .and(self.search_hits)
                 .filter(|count| *count > 0 && slots_used < 2)
@@ -1168,8 +1254,8 @@ impl Pane {
             .on_drag(
                 PaneDrag {
                     pane_id: cx.entity().entity_id().as_u64(),
-                    title: SharedString::from(Self::surface_title(&self.surface, cx)),
-                    icon: SharedString::from(Self::surface_icon(&self.surface)),
+                    title: SharedString::from(Self::surface_title(self.surface(), cx)),
+                    icon: SharedString::from(Self::surface_icon(self.surface())),
                 },
                 |drag, _offset, _window, cx| {
                     cx.new(|_| DragPreview {
@@ -1210,6 +1296,208 @@ impl Pane {
             )
     }
 
+    fn render_tab_bar(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        if matches!(self.surface(), PaneSurface::Diff(_)) {
+            return None;
+        }
+        let ui = pane_colors();
+        let pane_id = cx.entity().entity_id().as_u64();
+        let rail_hover = crate::app::constants::sidebar_tab_hover_background();
+        let rail_active = crate::app::constants::sidebar_tab_active_background();
+
+        let mut strip = div()
+            .id("pane-tab-strip")
+            .flex()
+            .flex_row()
+            .items_center()
+            .h_full()
+            .gap(px(TAB_BAR_GAP))
+            .overflow_x_scroll()
+            .track_scroll(&self.tab_scroll);
+
+        for (index, surface) in self.surfaces.iter().enumerate() {
+            let active = index == self.active_surface;
+            let full_title = Self::surface_full_title(surface, cx);
+            let label = Self::surface_title(surface, cx);
+            let (resting, hovered) = if active {
+                (Some(rail_active), None)
+            } else {
+                (None, Some(rail_hover))
+            };
+            let text = if active { ui.text } else { ui.muted };
+            let group = SharedString::from(format!("pane-{pane_id}-tab-{index}-group"));
+            let chip = squircle_skin(
+                div()
+                    .id(SharedString::from(format!("pane-{pane_id}-tab-{index}")))
+                    .flex_none()
+                    .h(px(TAB_BAR_HEIGHT))
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap(px(6.))
+                    .pl(px(8.))
+                    .pr(px(4.))
+                    .cursor(gpui::CursorStyle::PointingHand),
+                group.clone(),
+                crate::ui_primitives::ROW_RADIUS,
+                resting,
+                hovered,
+            )
+            .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                this.activate_surface(index, cx);
+                this.focus_handle(cx).focus(window, cx);
+                cx.stop_propagation();
+            }))
+            .delayed_tooltip(crate::ui_primitives::text_tooltip(full_title))
+            .child(
+                svg()
+                    .size(px(TAB_ICON_SIZE))
+                    .flex_none()
+                    .path(surface.kind_icon())
+                    .text_color(ui.muted),
+            )
+            .child(
+                div()
+                    .flex_none()
+                    .whitespace_nowrap()
+                    .text_size(crate::ui_primitives::BODY)
+                    .font_weight(gpui::FontWeight::MEDIUM)
+                    .text_color(text)
+                    .child(label),
+            )
+            .child(
+                div()
+                    .id(SharedString::from(format!(
+                        "pane-{pane_id}-tab-close-{index}"
+                    )))
+                    .flex_none()
+                    .size(px(TAB_CLOSE_SIZE))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded(px(4.))
+                    .invisible()
+                    .group_hover(group, |style| style.visible())
+                    .hover(|style| style.bg(ui.text.opacity(0.12)))
+                    .on_click(cx.listener(move |this, _: &ClickEvent, _window, cx| {
+                        this.close_surface(index, cx);
+                        cx.stop_propagation();
+                    }))
+                    .child(
+                        svg()
+                            .size(px(TAB_CLOSE_GLYPH_SIZE))
+                            .flex_none()
+                            .path("icons/close.svg")
+                            .text_color(ui.muted),
+                    ),
+            );
+            strip = strip.child(chip);
+        }
+
+        let fade_color = pane_card_background(
+            &crate::theme::active_theme(),
+            self.cached_config.windows_terminal_material_enabled(),
+            true,
+        );
+        let fade_scroll = self.tab_scroll.clone();
+        let fades = gpui::canvas(
+            |_, _, _| {},
+            move |bounds, _, window, _| {
+                if fade_color.a <= f32::EPSILON {
+                    return;
+                }
+                let hidden_right = fade_scroll.max_offset().x + fade_scroll.offset().x;
+                let hidden_left = -fade_scroll.offset().x;
+                let fade_width = px(TAB_FADE_WIDTH).min(bounds.size.width);
+                if hidden_right > px(1.) {
+                    let fade = gpui::Bounds {
+                        origin: gpui::point(bounds.right() - fade_width, bounds.top()),
+                        size: gpui::size(fade_width, bounds.size.height),
+                    };
+                    window.paint_quad(gpui::fill(
+                        fade,
+                        gpui::linear_gradient(
+                            90.,
+                            gpui::linear_color_stop(fade_color.opacity(0.), 0.),
+                            gpui::linear_color_stop(fade_color, 1.),
+                        ),
+                    ));
+                }
+                if hidden_left > px(1.) {
+                    let fade = gpui::Bounds {
+                        origin: bounds.origin,
+                        size: gpui::size(fade_width, bounds.size.height),
+                    };
+                    window.paint_quad(gpui::fill(
+                        fade,
+                        gpui::linear_gradient(
+                            90.,
+                            gpui::linear_color_stop(fade_color, 0.),
+                            gpui::linear_color_stop(fade_color.opacity(0.), 1.),
+                        ),
+                    ));
+                }
+            },
+        )
+        .absolute()
+        .inset_0();
+
+        let mut bar = div()
+            .id("pane-tab-bar")
+            .flex()
+            .flex_none()
+            .flex_row()
+            .items_center()
+            .w_full()
+            .h(px(TAB_BAR_HEIGHT + TAB_BAR_BOTTOM_INSET))
+            .pb(px(TAB_BAR_BOTTOM_INSET))
+            .px(px(SECTION_PX))
+            .gap(px(TAB_BAR_GAP))
+            .overflow_hidden()
+            .child(
+                div()
+                    .relative()
+                    .flex_1()
+                    .min_w_0()
+                    .h_full()
+                    .child(strip)
+                    .child(fades),
+            );
+
+        if self.can_add_surface() {
+            bar = bar.child(
+                squircle_skin(
+                    div()
+                        .id(SharedString::from(format!("pane-{pane_id}-tab-new")))
+                        .flex_none()
+                        .size(px(TAB_BAR_HEIGHT))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .cursor(gpui::CursorStyle::PointingHand),
+                    SharedString::from(format!("pane-{pane_id}-tab-new-group")),
+                    crate::ui_primitives::ROW_RADIUS,
+                    None,
+                    Some(rail_hover),
+                )
+                .delayed_tooltip(crate::ui_primitives::text_tooltip("New tab"))
+                .on_click(cx.listener(|_this, _: &ClickEvent, _window, cx| {
+                    cx.emit(PaneEvent::NewTab);
+                    cx.stop_propagation();
+                }))
+                .child(
+                    svg()
+                        .size(px(TAB_ICON_SIZE))
+                        .flex_none()
+                        .path("icons/plus.svg")
+                        .text_color(ui.muted),
+                ),
+            );
+        }
+
+        Some(bar.into_any_element())
+    }
+
     fn render_end_section(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let ui = pane_colors();
         let end_section = div()
@@ -1220,7 +1508,7 @@ impl Pane {
             .h_full()
             .gap(px(0.));
 
-        let is_diff = matches!(self.surface, PaneSurface::Diff(_));
+        let is_diff = matches!(self.surface(), PaneSurface::Diff(_));
         let show_sessions_button = !is_diff
             && !crate::agent_sessions::enabled_session_agents_from_config(&self.cached_config)
                 .is_empty();
@@ -1249,7 +1537,7 @@ impl Pane {
             );
         }
 
-        action_cluster = match &self.surface {
+        action_cluster = match self.surface() {
             PaneSurface::Diff(diff) => {
                 action_cluster.child(self.render_diff_options_button(diff.clone(), cx))
             }
@@ -1389,7 +1677,7 @@ impl Pane {
 
 impl Focusable for Pane {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
-        match &self.surface {
+        match self.surface() {
             PaneSurface::Terminal(t) => t.read(cx).focus_handle(cx),
             PaneSurface::Markdown(m) => m.read(cx).focus_handle(cx),
             PaneSurface::Diff(d) => d.read(cx).focus_handle(cx),
@@ -1403,8 +1691,8 @@ fn cached_surface_style() -> StyleRefinement {
 
 impl Render for Pane {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let terminal_selected = matches!(self.surface, PaneSurface::Terminal(_));
-        let body = match &self.surface {
+        let terminal_selected = matches!(self.surface(), PaneSurface::Terminal(_));
+        let body = match self.surface() {
             PaneSurface::Terminal(t) => t.clone().cached(cached_surface_style()).into_any_element(),
             PaneSurface::Markdown(m) => m.clone().into_any_element(),
             PaneSurface::Diff(d) => d.clone().into_any_element(),
@@ -1574,6 +1862,7 @@ impl Render for Pane {
                 },
             ))
             .child(self.render_header(cx))
+            .children(self.render_tab_bar(cx))
             .child(div().flex_1().min_h_0().w_full().child(body))
             .children(dim_layer)
             .child(overlay);
@@ -1635,9 +1924,79 @@ fn progress_chip_label(report: paneflow_terminal_ghostty::ProgressReport) -> Opt
 mod tests {
     use paneflow_terminal_ghostty::{ProgressReport, ProgressState};
 
+    use gpui::{AppContext, Entity, TestAppContext};
+
     use super::{
-        MAX_SURFACE_TITLE_LEN, pane_card_background, progress_chip_label, truncate_surface_title,
+        MAX_SURFACE_TITLE_LEN, Pane, PaneEvent, PaneSurface, pane_card_background,
+        progress_chip_label, truncate_surface_title,
     };
+    use crate::terminal::TerminalView;
+
+    fn terminal_surface(cx: &mut impl AppContext) -> PaneSurface {
+        PaneSurface::Terminal(cx.new(|cx| TerminalView::display_only_for_test(1, cx)))
+    }
+
+    fn tabbed_pane(count: usize, cx: &mut impl AppContext) -> Entity<Pane> {
+        let surfaces: Vec<PaneSurface> = (0..count).map(|_| terminal_surface(cx)).collect();
+        cx.new(|cx| Pane::new_with_surfaces(surfaces, 0, 1, cx))
+    }
+
+    fn tab_state(pane: &Entity<Pane>, cx: &mut gpui::VisualTestContext) -> (usize, usize) {
+        cx.update(|_, cx| {
+            let pane = pane.read(cx);
+            (pane.surfaces().len(), pane.active_surface_idx())
+        })
+    }
+
+    #[gpui::test]
+    fn push_surface_activates_the_new_tab_and_close_keeps_the_neighbor(cx: &mut TestAppContext) {
+        let cx = cx.add_empty_window();
+        let pane = tabbed_pane(1, cx);
+        let extra = cx.update(|_, cx| terminal_surface(cx));
+        pane.update(cx, |pane, cx| pane.push_surface(extra, cx));
+        assert_eq!(tab_state(&pane, cx), (2, 1));
+
+        pane.update(cx, |pane, cx| pane.activate_surface(0, cx));
+        assert_eq!(tab_state(&pane, cx), (2, 0));
+
+        pane.update(cx, |pane, cx| pane.close_surface(0, cx));
+        assert_eq!(tab_state(&pane, cx), (1, 0));
+    }
+
+    #[gpui::test]
+    fn closing_a_tab_before_the_active_one_shifts_the_active_index(cx: &mut TestAppContext) {
+        let cx = cx.add_empty_window();
+        let pane = tabbed_pane(3, cx);
+        pane.update(cx, |pane, cx| pane.activate_surface(2, cx));
+        let active_before =
+            cx.update(|_, cx| pane.read(cx).surface().as_terminal().map(Entity::entity_id));
+
+        pane.update(cx, |pane, cx| pane.close_surface(0, cx));
+        assert_eq!(tab_state(&pane, cx), (2, 1));
+        let active_after =
+            cx.update(|_, cx| pane.read(cx).surface().as_terminal().map(Entity::entity_id));
+        assert_eq!(active_after, active_before);
+    }
+
+    #[gpui::test]
+    fn closing_the_last_tab_asks_to_remove_the_pane(cx: &mut TestAppContext) {
+        let cx = cx.add_empty_window();
+        let pane = tabbed_pane(1, cx);
+        let removed = std::rc::Rc::new(std::cell::Cell::new(false));
+        let removed_for_sub = removed.clone();
+        cx.update(|_, cx| {
+            cx.subscribe(&pane, move |_, event: &PaneEvent, _| {
+                if matches!(event, PaneEvent::Remove) {
+                    removed_for_sub.set(true);
+                }
+            })
+            .detach();
+        });
+
+        pane.update(cx, |pane, cx| pane.close_surface(0, cx));
+        assert!(removed.get(), "the pane must emit Remove for its last tab");
+        assert_eq!(tab_state(&pane, cx), (1, 0));
+    }
 
     #[test]
     fn progress_chip_label_prefers_the_percentage_and_names_every_other_state() {

@@ -305,6 +305,7 @@ controls at 10 px or below, where the superellipse is invisible.
 | Pane gutter | 8 |
 | Pane content inset | 10 horizontal, 6 vertical |
 | Pane header | 28 content plus the vertical inset twice, 40 total; gap 7 |
+| Pane tab bar | 26 chips plus 6 below, 32 total; gap 3; 8 tabs maximum |
 | Sidebar row | margin 8, padding 8 by 6, gap 4, line height 18, spacing 4 |
 | Sidebar tab icon stack | 16 px icons, cap 4, overlap 11, 24 by 24 icon card |
 | Sidebar action button | 20, gap 4; status slot 48; icon slot 20 |
@@ -454,6 +455,19 @@ close button that appears only while the header is hovered, its glyph fading
 from 0.16 to 0.92 under the pointer. The identity
 pill was removed in 0.9; the sidebar carries identity, the pane carries
 title and state.
+
+Under the header, a tab bar lists the pane's surfaces as chips with the
+sidebar rail skin: 26 tall on squircle 14, gap 3, padding 8 left and 4
+right, a 13 px kind icon, the surface title at body size Medium, and a 16 px
+close slot with an 11 px glyph that shows on hover. The active chip rests on
+the active row tint in `text`; the others hover into the rail tint in
+`muted`. The chips sit in a strip that scrolls horizontally with the wheel,
+without a scrollbar; the active chip scrolls into view when it changes.
+Where chips are hidden past an edge, a 28 px fade to the card background
+signals them. A 26 by 26 `+` chip is pinned at the visible end of the bar,
+outside the strip; it opens a new terminal in the active tab's directory and
+disappears at the 8 tab cap. Closing the last tab closes the pane. Diff
+panes have no tab bar.
 
 State layers, painted in this order: card fill, content, dim layer, drag
 overlay, broadcast stripe (3 px of the group color, inset by the radius top

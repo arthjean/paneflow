@@ -7,6 +7,11 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
 
 ### Added
 
+- Panes have tabs. A tab bar under the pane header lists the pane's
+  surfaces as squircle chips carrying the same title as the header, with a
+  `+` chip that opens a new terminal in the active tab's directory. Tabs
+  survive a restart with their scrollback; closing the last tab closes the
+  pane.
 - The update check repeats every four hours while Paneflow runs (every thirty
   minutes after a failed attempt), so a release published mid-session shows up
   in the title bar without a restart. A dismissed version stays dismissed; a

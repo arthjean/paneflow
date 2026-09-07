@@ -428,6 +428,48 @@ impl PaneFlowApp {
         }
         match event {
             pane::PaneEvent::DropSubjectSplit { .. } => {}
+            pane::PaneEvent::SurfacesChanged => {
+                self.save_session(cx);
+                cx.notify();
+            }
+            pane::PaneEvent::NewTab => {
+                let ws_id = pane.read(cx).workspace_id;
+                if !pane.read(cx).can_add_surface() {
+                    self.show_toast(
+                        format!("Maximum tab count reached ({})", pane::MAX_PANE_TABS),
+                        cx,
+                    );
+                    return;
+                }
+                let cwd = pane
+                    .read(cx)
+                    .active_terminal_opt()
+                    .and_then(|terminal| {
+                        let terminal = terminal.read(cx);
+                        terminal
+                            .terminal
+                            .current_cwd
+                            .as_deref()
+                            .filter(|cwd| !cwd.is_empty())
+                            .map(std::path::PathBuf::from)
+                            .or_else(|| terminal.terminal.cwd_now())
+                    })
+                    .or_else(|| {
+                        self.workspaces
+                            .iter()
+                            .find(|ws| ws.id == ws_id)
+                            .map(|ws| std::path::PathBuf::from(&ws.cwd))
+                    });
+                let terminal = cx.new(|cx| TerminalView::with_cwd(ws_id, cwd, None, cx));
+                cx.subscribe(&terminal, Self::handle_terminal_event)
+                    .detach();
+                pane.update(cx, |pane, cx| {
+                    pane.push_surface(pane::PaneSurface::Terminal(terminal), cx);
+                });
+                self.pending_pane_focus = Some(pane);
+                self.save_session(cx);
+                cx.notify();
+            }
             pane::PaneEvent::Remove => {
                 let Some((ws_idx, tab_idx)) =
                     self.workspaces.iter().enumerate().find_map(|(idx, ws)| {
@@ -1794,7 +1836,7 @@ mod tests {
         };
 
         let target = new_pane(cx);
-        let target_surface = cx.update(|_, cx| target.read(cx).surface.as_terminal().cloned());
+        let target_surface = cx.update(|_, cx| target.read(cx).active_terminal_opt().cloned());
         let mut workspaces = vec![crate::workspace::Workspace::with_layout_and_id(
             1,
             "ws",
@@ -1842,7 +1884,7 @@ mod tests {
             Some(vec![target.clone()])
         );
         assert_eq!(
-            cx.update(|_, cx| target.read(cx).surface.as_terminal().cloned()),
+            cx.update(|_, cx| target.read(cx).active_terminal_opt().cloned()),
             target_surface,
             "the pane dropped onto keeps its own surface"
         );
