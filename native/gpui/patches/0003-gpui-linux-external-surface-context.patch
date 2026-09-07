@@ -1,0 +1,40 @@
+diff --git a/crates/gpui_linux/src/gpui_linux.rs b/crates/gpui_linux/src/gpui_linux.rs
+index 62d972d..9cbae4d 100644
+--- a/crates/gpui_linux/src/gpui_linux.rs
++++ b/crates/gpui_linux/src/gpui_linux.rs
+@@ -1,4 +1,5 @@
+ #![cfg(any(target_os = "linux", target_os = "freebsd"))]
+ mod linux;
+ 
++pub use gpui_wgpu;
+ pub use linux::current_platform;
+diff --git a/crates/gpui_linux/src/linux/wayland/window.rs b/crates/gpui_linux/src/linux/wayland/window.rs
+index eb84b7f..9d5c8c6 100644
+--- a/crates/gpui_linux/src/linux/wayland/window.rs
++++ b/crates/gpui_linux/src/linux/wayland/window.rs
+@@ -2101,6 +2101,10 @@ impl PlatformWindow for WaylandWindow {
+         self.borrow().renderer.gpu_specs().into()
+     }
+ 
++    fn external_surface_context(&self) -> Option<Arc<dyn std::any::Any + Send + Sync>> {
++        Some(self.borrow().renderer.external_surface_context())
++    }
++
+     fn play_system_bell(&self) {
+         let state = self.borrow();
+         let surface = if state.surface_state.toplevel().is_some() {
+diff --git a/crates/gpui_linux/src/linux/x11/window.rs b/crates/gpui_linux/src/linux/x11/window.rs
+index d6db24e..fb63a83 100644
+--- a/crates/gpui_linux/src/linux/x11/window.rs
++++ b/crates/gpui_linux/src/linux/x11/window.rs
+@@ -1938,6 +1938,10 @@ impl PlatformWindow for X11Window {
+         self.0.state.borrow().renderer.gpu_specs().into()
+     }
+ 
++    fn external_surface_context(&self) -> Option<Arc<dyn std::any::Any + Send + Sync>> {
++        Some(self.0.state.borrow().renderer.external_surface_context())
++    }
++
+     fn play_system_bell(&self) {
+         // Volume 0% means don't increase or decrease from system volume
+         let _ = self.0.xcb.bell(0);

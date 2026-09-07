@@ -92,3 +92,4 @@ LOG_*.text
 # libghostty-vt archives: fetched from the GitHub Release named by
 # native/libghostty/manifest.toml (scripts/fetch-libghostty.sh), never tracked.
 /native/libghostty/prebuilt/*/lib/
+/native/gpui/checkout/

@@ -1,0 +1,64 @@
+schema_version = 1
+contract_version = 1
+upstream_repository = "https://github.com/zed-industries/zed"
+upstream_sha = "fecc3273ed32643c2ea1b04a74c8780e2c9ffaf8"
+checkout_directory = "native/gpui/checkout"
+patch_directory = "native/gpui/patches"
+external_surface_platforms = ["linux-wayland", "linux-x11"]
+unavailable_platforms = ["macos", "windows", "web", "linux-headless"]
+
+checkout_paths = [
+    "Cargo.toml",
+    "assets/fonts/ibm-plex-sans",
+    "assets/fonts/lilex",
+    "crates/collections",
+    "crates/gpui",
+    "crates/gpui_apple",
+    "crates/gpui_linux",
+    "crates/gpui_macos",
+    "crates/gpui_macros",
+    "crates/gpui_platform",
+    "crates/gpui_shared_string",
+    "crates/gpui_util",
+    "crates/gpui_web",
+    "crates/gpui_wgpu",
+    "crates/gpui_windows",
+    "crates/http_client",
+    "crates/media",
+    "crates/refineable",
+    "crates/scheduler",
+    "crates/sum_tree",
+    "crates/util_macros",
+    "crates/zlog",
+    "crates/ztracing",
+    "crates/ztracing_macro",
+    "tooling/perf",
+]
+
+[[patches]]
+file = "0001-gpui-external-surface-source.patch"
+sha256 = "a3a283371e3f69b71f429cb2fff2141acb4104780f7616952662aa88aede2944"
+
+[[patches]]
+file = "0002-gpui-wgpu-external-surface-composition.patch"
+sha256 = "46fbb2fc1f3316f5be6f3ca425d734701e288a5c51a08a565094099672d2e02f"
+
+[[patches]]
+file = "0003-gpui-linux-external-surface-context.patch"
+sha256 = "6f15e4c50027a8923c8f1344b8033f59dfb80569d96a320d5eabdccd192d6799"
+
+[[patches]]
+file = "0004-gpui-platform-external-surface-reexport.patch"
+sha256 = "65fc826bcfaf9383be9642d10a26170385f11c71d1a0131ef6db1ee2967c01ca"
+
+[[patches]]
+file = "0005-gpui-wayland-fullscreen-output.patch"
+sha256 = "c00ddf56d0d91f93fc529e6787bae1a304ba741ca404598cc98c05519a2ed473"
+
+[[patches]]
+file = "0006-gpui-wayland-effective-display.patch"
+sha256 = "50e54935ca0b9164ab8745dac6d67ae81d4a4b2417d9ece759a7d742f371e0dd"
+
+[[patches]]
+file = "0007-gpui-renderer-timing-observer.patch"
+sha256 = "2c37d9f65553968fd5a9e4c66396d955279611cdc59ccbf0a5915a0a6578469f"

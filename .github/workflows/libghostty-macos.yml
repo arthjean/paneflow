@@ -150,6 +150,7 @@ jobs:
       # proves the *published* archive is the one the recipe produces, so a
       # tampered release asset cannot pass by matching a tampered manifest.
       - uses: ./.github/actions/fetch-libghostty
+      - uses: ./.github/actions/fetch-gpui
 
       - name: Compare against the published archive
         run: |
@@ -189,6 +190,7 @@ jobs:
         with:
           persist-credentials: false
       - uses: ./.github/actions/fetch-libghostty
+      - uses: ./.github/actions/fetch-gpui
 
       - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88
         with:

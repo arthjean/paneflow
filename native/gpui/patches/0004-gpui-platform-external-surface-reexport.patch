@@ -1,0 +1,13 @@
+diff --git a/crates/gpui_platform/src/gpui_platform.rs b/crates/gpui_platform/src/gpui_platform.rs
+index b95e609..62b0bf7 100644
+--- a/crates/gpui_platform/src/gpui_platform.rs
++++ b/crates/gpui_platform/src/gpui_platform.rs
+@@ -2,6 +2,8 @@
+ //! `current_platform` constructor so consumers don't need `#[cfg]` gating.
+ 
+ pub use gpui::Platform;
++#[cfg(any(target_os = "linux", target_os = "freebsd"))]
++pub use gpui_linux::gpui_wgpu;
+ 
+ use std::rc::Rc;
+ 

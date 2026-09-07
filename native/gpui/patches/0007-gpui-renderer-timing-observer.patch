@@ -1,0 +1,265 @@
+--- a/crates/gpui/src/platform.rs
++++ b/crates/gpui/src/platform.rs
+@@ -812,6 +812,37 @@
+     ContentChanged,
+ }
+ 
++#[allow(missing_docs)]
++#[derive(Clone, Copy, Default)]
++pub struct RendererTimingIdentity {
++    pub window_id: u64,
++    pub wl_surface_id: u32,
++    pub wl_display_address: Option<usize>,
++}
++
++#[allow(missing_docs)]
++pub struct RendererTiming {
++    pub identity: RendererTimingIdentity,
++    pub surface_epoch: u64,
++    pub attempt: u64,
++    pub stage: &'static str,
++    pub start_ns: Option<u64>,
++    pub end_ns: Option<u64>,
++    pub outcome: &'static str,
++    pub present_mode: u32,
++    pub requested_present_mode: Option<u32>,
++    pub supported_present_modes_mask: Option<u32>,
++    pub desired_maximum_frame_latency: u32,
++    pub width: u32,
++    pub height: u32,
++}
++
++#[allow(missing_docs)]
++pub trait RendererTimingObserver: Send + Sync {
++    fn now_ns(&self) -> Option<u64>;
++    fn record(&self, timing: RendererTiming);
++}
++
+ #[expect(missing_docs)]
+ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
+     fn bounds(&self) -> Bounds<Pixels>;
+@@ -935,6 +966,9 @@
+         None
+     }
+ 
++    #[allow(missing_docs)]
++    fn set_renderer_timing_observer(&self, _observer: Option<Arc<dyn RendererTimingObserver>>) {}
++
+     fn update_ime_position(&self, _bounds: Bounds<Pixels>);
+ 
+     // Mobile platform methods.
+--- a/crates/gpui/src/window.rs
++++ b/crates/gpui/src/window.rs
+@@ -4631,6 +4631,14 @@
+         });
+     }
+ 
++    #[allow(missing_docs)]
++    pub fn set_renderer_timing_observer(
++        &self,
++        observer: Option<Arc<dyn crate::RendererTimingObserver>>,
++    ) {
++        self.platform_window.set_renderer_timing_observer(observer);
++    }
++
+     /// The renderer context that external surfaces painted into this window must be created
+     /// with, when the platform renderer supports composing them. `None` means external
+     /// surfaces are unavailable on this window and [`Self::paint_external_surface`] would
+--- a/crates/gpui_linux/src/linux/wayland/window.rs
++++ b/crates/gpui_linux/src/linux/wayland/window.rs
+@@ -2128,6 +2128,23 @@
+         self.borrow().renderer.gpu_specs().into()
+     }
+ 
++    fn set_renderer_timing_observer(
++        &self,
++        observer: Option<Arc<dyn gpui::RendererTimingObserver>>,
++    ) {
++        let mut state = self.borrow_mut();
++        let identity = gpui::RendererTimingIdentity {
++            window_id: state.handle.window_id().as_u64(),
++            wl_surface_id: state.surface.id().protocol_id(),
++            wl_display_address: state
++                .surface
++                .backend()
++                .upgrade()
++                .map(|backend| backend.display_ptr() as usize),
++        };
++        state.renderer.set_timing_observer(observer, identity);
++    }
++
+     fn external_surface_context(&self) -> Option<Arc<dyn std::any::Any + Send + Sync>> {
+         Some(self.borrow().renderer.external_surface_context())
+     }
+--- a/crates/gpui_wgpu/src/wgpu_renderer.rs
++++ b/crates/gpui_wgpu/src/wgpu_renderer.rs
+@@ -274,6 +274,12 @@
+     external_surface_context: Arc<ExternalSurfaceContext>,
+     external_surface_stride: u64,
+     external_surface_slot: Cell<u32>,
++    timing_observer: Option<Arc<dyn gpui::RendererTimingObserver>>,
++    timing_identity: gpui::RendererTimingIdentity,
++    timing_surface_epoch: u64,
++    timing_attempt: u64,
++    timing_requested_present_mode: Option<u32>,
++    timing_supported_present_modes_mask: Option<u32>,
+ }
+ 
+ impl WgpuRenderer {
+@@ -666,6 +672,17 @@
+             external_surface_context,
+             external_surface_stride,
+             external_surface_slot: Cell::new(0),
++            timing_observer: None,
++            timing_identity: gpui::RendererTimingIdentity::default(),
++            timing_surface_epoch: 1,
++            timing_attempt: 0,
++            timing_requested_present_mode: config.preferred_present_mode.map(|mode| mode as u32),
++            timing_supported_present_modes_mask: Some(
++                surface_caps
++                    .present_modes
++                    .iter()
++                    .fold(0, |mask, mode| mask | (1 << (*mode as u32))),
++            ),
+         })
+     }
+ 
+@@ -1374,7 +1391,51 @@
+         self.max_texture_size
+     }
+ 
++    pub fn set_timing_observer(
++        &mut self,
++        observer: Option<Arc<dyn gpui::RendererTimingObserver>>,
++        identity: gpui::RendererTimingIdentity,
++    ) {
++        self.timing_observer = observer;
++        self.timing_identity = identity;
++    }
++
++    fn timing_now(&self) -> Option<u64> {
++        self.timing_observer
++            .as_ref()
++            .and_then(|observer| observer.now_ns())
++    }
++
++    fn timing_record(
++        &self,
++        stage: &'static str,
++        start_ns: Option<u64>,
++        end_ns: Option<u64>,
++        outcome: &'static str,
++    ) {
++        if let Some(observer) = &self.timing_observer {
++            observer.record(gpui::RendererTiming {
++                identity: self.timing_identity,
++                surface_epoch: self.timing_surface_epoch,
++                attempt: self.timing_attempt,
++                stage,
++                start_ns,
++                end_ns,
++                outcome,
++                present_mode: self.surface_config.present_mode as u32,
++                requested_present_mode: self.timing_requested_present_mode,
++                supported_present_modes_mask: self.timing_supported_present_modes_mask,
++                desired_maximum_frame_latency: self.surface_config.desired_maximum_frame_latency,
++                width: self.surface_config.width,
++                height: self.surface_config.height,
++            });
++        }
++    }
++
+     pub fn draw(&mut self, scene: &Scene) -> bool {
++        if self.timing_observer.is_some() {
++            self.timing_attempt = self.timing_attempt.saturating_add(1);
++        }
+         #[cfg(target_family = "wasm")]
+         if self.device_lost() {
+             if self.surface_configured {
+@@ -1420,7 +1481,20 @@
+ 
+         self.atlas.before_frame();
+ 
+-        let frame = match self.resources().surface.get_current_texture() {
++        let acquire_start = self.timing_now();
++        let acquired = self.resources().surface.get_current_texture();
++        let acquire_end = self.timing_now();
++        let outcome = match &acquired {
++            wgpu::CurrentSurfaceTexture::Success(_) => "success",
++            wgpu::CurrentSurfaceTexture::Suboptimal(_) => "suboptimal",
++            wgpu::CurrentSurfaceTexture::Lost => "lost",
++            wgpu::CurrentSurfaceTexture::Outdated => "outdated",
++            wgpu::CurrentSurfaceTexture::Timeout => "timeout",
++            wgpu::CurrentSurfaceTexture::Occluded => "occluded",
++            wgpu::CurrentSurfaceTexture::Validation => "validation",
++        };
++        self.timing_record("acquire", acquire_start, acquire_end, outcome);
++        let frame = match acquired {
+             wgpu::CurrentSurfaceTexture::Success(frame) => frame,
+             wgpu::CurrentSurfaceTexture::Suboptimal(frame) => {
+                 // Textures must be destroyed before the surface can be reconfigured.
+@@ -1506,11 +1580,17 @@
+ 
+         if let Err(error) = self.record_frame(scene, &frame_view) {
+             log::error!("{error:#}");
++            let submit_start = self.timing_now();
+             self.resources().queue.submit(std::iter::empty());
++            let submit_end = self.timing_now();
++            self.timing_record("submit_error_flush", submit_start, submit_end, "returned");
+             return false;
+         }
+ 
++        let present_start = self.timing_now();
+         frame.present();
++        let present_end = self.timing_now();
++        self.timing_record("present", present_start, present_end, "returned");
+         true
+     }
+ 
+@@ -1651,9 +1731,13 @@
+             }
+         }
+ 
++        let command_buffer = encoder.finish();
++        let submit_start = self.timing_now();
+         self.resources()
+             .queue
+-            .submit(std::iter::once(encoder.finish()));
++            .submit(std::iter::once(command_buffer));
++        let submit_end = self.timing_now();
++        self.timing_record("submit", submit_start, submit_end, "returned");
+         Ok(())
+     }
+ 
+@@ -2190,6 +2274,9 @@
+             .map_err(|e| anyhow::anyhow!("Failed to get window handle: {e}"))?;
+ 
+         let surface = create_surface(instance, window_handle.as_raw())?;
++        self.timing_surface_epoch = self.timing_surface_epoch.saturating_add(1);
++        self.timing_requested_present_mode = config.preferred_present_mode.map(|mode| mode as u32);
++        self.timing_supported_present_modes_mask = None;
+ 
+         let width = (config.size.width.0 as u32).max(1);
+         let height = (config.size.height.0 as u32).max(1);
+@@ -2305,6 +2392,10 @@
+         self.resources = None;
+         self.atlas.handle_device_lost(context);
+ 
++        let timing_observer = self.timing_observer.clone();
++        let timing_identity = self.timing_identity;
++        let timing_surface_epoch = self.timing_surface_epoch.saturating_add(1);
++        let timing_attempt = self.timing_attempt;
+         *self = Self::new_internal(
+             Some(gpu_context.clone()),
+             context,
+@@ -2314,6 +2405,10 @@
+             self.atlas.clone(),
+         )?;
+ 
++        self.timing_observer = timing_observer;
++        self.timing_identity = timing_identity;
++        self.timing_surface_epoch = timing_surface_epoch;
++        self.timing_attempt = timing_attempt;
+         log::info!("GPU recovery complete");
+         Ok(())
+     }

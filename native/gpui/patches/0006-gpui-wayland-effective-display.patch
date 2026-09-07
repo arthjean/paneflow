@@ -1,0 +1,63 @@
+diff --git a/crates/gpui_linux/src/linux/wayland/window.rs b/crates/gpui_linux/src/linux/wayland/window.rs
+--- a/crates/gpui_linux/src/linux/wayland/window.rs
++++ b/crates/gpui_linux/src/linux/wayland/window.rs
+@@ -652,7 +652,10 @@
+ 
+     pub fn primary_output_scale(&mut self) -> i32 {
+         let mut scale = 1;
+-        let mut current_output = self.display.take();
++        let mut current_output = self
++            .display
++            .take()
++            .and_then(|(id, _)| self.outputs.get(&id).cloned().map(|output| (id, output)));
+         for (id, output) in self.outputs.iter() {
+             if let Some((_, output_data)) = &current_output {
+                 if output.scale > output_data.scale {
+@@ -1360,6 +1363,7 @@
+         outputs: HashMap<ObjectId, Output>,
+     ) {
+         let mut state = self.state.borrow_mut();
++        let previous_display = state.display.as_ref().map(|(id, _)| id.clone());
+ 
+         match event {
+             wl_surface::Event::Enter { output } => {
+@@ -1382,6 +1386,7 @@
+                 } else {
+                     drop(state);
+                 }
++                self.notify_display_changed(previous_display);
+                 self.request_redraw();
+             }
+             wl_surface::Event::Leave { output } => {
+@@ -1398,6 +1403,7 @@
+                 } else {
+                     drop(state);
+                 }
++                self.notify_display_changed(previous_display);
+                 self.request_redraw();
+             }
+             wl_surface::Event::PreferredBufferScale { factor } => {
+@@ -1410,6 +1416,23 @@
+                 }
+             }
+             _ => {}
++        }
++    }
++
++    fn notify_display_changed(&self, previous: Option<ObjectId>) {
++        let current = self
++            .state
++            .borrow()
++            .display
++            .as_ref()
++            .map(|(id, _)| id.clone());
++        if previous == current {
++            return;
++        }
++        let callback = self.callbacks.borrow_mut().moved.take();
++        if let Some(mut callback) = callback {
++            callback();
++            self.callbacks.borrow_mut().moved = Some(callback);
+         }
+     }
+ 

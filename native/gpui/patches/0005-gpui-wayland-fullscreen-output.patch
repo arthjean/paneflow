@@ -1,0 +1,40 @@
+diff --git a/crates/gpui_linux/src/linux/wayland/window.rs b/crates/gpui_linux/src/linux/wayland/window.rs
+--- a/crates/gpui_linux/src/linux/wayland/window.rs
++++ b/crates/gpui_linux/src/linux/wayland/window.rs
+@@ -288,6 +288,7 @@
+             toplevel,
+             decoration,
+             dialog,
++            target_output,
+         }))
+     }
+ }
+@@ -297,6 +298,7 @@
+     toplevel: xdg_toplevel::XdgToplevel,
+     decoration: Option<zxdg_toplevel_decoration_v1::ZxdgToplevelDecorationV1>,
+     dialog: Option<XdgDialogV1>,
++    target_output: Option<wl_output::WlOutput>,
+ }
+ 
+ pub struct WaylandLayerSurfaceState {
+@@ -506,6 +508,7 @@
+                 toplevel,
+                 decoration: _decoration,
+                 dialog,
++                ..
+             }) => {
+                 // drop the dialog before toplevel so compositor can explicitly unapply it's effects
+                 if let Some(dialog) = dialog {
+@@ -1842,9 +1845,10 @@
+ 
+     fn toggle_fullscreen(&self) {
+         let state = self.borrow();
+-        if let Some(toplevel) = state.surface_state.toplevel() {
++        if let WaylandSurfaceState::Xdg(xdg) = &state.surface_state {
++            let toplevel = &xdg.toplevel;
+             if !state.fullscreen {
+-                toplevel.set_fullscreen(None);
++                toplevel.set_fullscreen(xdg.target_output.as_ref());
+             } else {
+                 toplevel.unset_fullscreen();
+             }

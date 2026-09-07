@@ -187,6 +187,7 @@ jobs:
       # byte-identical to what the recipe produces. Mirrors
       # `libghostty-macos.yml::Compare against the published archive`.
       - uses: ./.github/actions/fetch-libghostty
+      - uses: ./.github/actions/fetch-gpui
 
       - name: Compare against the published archive
         env:

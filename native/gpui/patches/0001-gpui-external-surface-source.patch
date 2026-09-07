@@ -1,0 +1,227 @@
+diff --git a/crates/gpui/src/elements/surface.rs b/crates/gpui/src/elements/surface.rs
+index ac1c247..d30fe59 100644
+--- a/crates/gpui/src/elements/surface.rs
++++ b/crates/gpui/src/elements/surface.rs
+@@ -1,3 +1,5 @@
++#[cfg(not(target_os = "macos"))]
++use crate::ExternalSurface;
+ use crate::{
+     App, Bounds, Element, ElementId, GlobalElementId, InspectorElementId, IntoElement, LayoutId,
+     ObjectFit, Pixels, Style, StyleRefinement, Styled, Window,
+@@ -12,6 +14,9 @@ pub enum SurfaceSource {
+     /// A macOS image buffer from CoreVideo
+     #[cfg(target_os = "macos")]
+     Surface(CVPixelBuffer),
++    /// A GPU resource composed by the platform renderer, see [`ExternalSurface`].
++    #[cfg(not(target_os = "macos"))]
++    External(ExternalSurface),
+ }
+ 
+ #[cfg(target_os = "macos")]
+@@ -21,6 +26,13 @@ impl From<CVPixelBuffer> for SurfaceSource {
+     }
+ }
+ 
++#[cfg(not(target_os = "macos"))]
++impl From<ExternalSurface> for SurfaceSource {
++    fn from(value: ExternalSurface) -> Self {
++        SurfaceSource::External(value)
++    }
++}
++
+ /// A surface element.
+ pub struct Surface {
+     source: SurfaceSource,
+@@ -29,7 +41,6 @@ pub struct Surface {
+ }
+ 
+ /// Create a new surface element.
+-#[cfg(target_os = "macos")]
+ pub fn surface(source: impl Into<SurfaceSource>) -> Surface {
+     Surface {
+         source: source.into(),
+@@ -86,10 +97,10 @@ impl Element for Surface {
+         &mut self,
+         _global_id: Option<&GlobalElementId>,
+         _inspector_id: Option<&InspectorElementId>,
+-        #[cfg_attr(not(target_os = "macos"), allow(unused_variables))] bounds: Bounds<Pixels>,
++        bounds: Bounds<Pixels>,
+         _: &mut Self::RequestLayoutState,
+         _: &mut Self::PrepaintState,
+-        #[cfg_attr(not(target_os = "macos"), allow(unused_variables))] window: &mut Window,
++        window: &mut Window,
+         _: &mut App,
+     ) {
+         match &self.source {
+@@ -100,8 +111,11 @@ impl Element for Surface {
+                 // TODO: Add support for corner_radii
+                 window.paint_surface(new_bounds, surface.clone());
+             }
+-            #[allow(unreachable_patterns)]
+-            _ => {}
++            #[cfg(not(target_os = "macos"))]
++            SurfaceSource::External(external) => {
++                let new_bounds = self.object_fit.get_bounds(bounds, external.size());
++                window.paint_external_surface(new_bounds, external.clone());
++            }
+         }
+     }
+ }
+diff --git a/crates/gpui/src/platform.rs b/crates/gpui/src/platform.rs
+index 44b0480..bd58329 100644
+--- a/crates/gpui/src/platform.rs
++++ b/crates/gpui/src/platform.rs
+@@ -929,6 +929,12 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
+     fn set_client_inset(&self, _inset: Pixels) {}
+     fn gpu_specs(&self) -> Option<GpuSpecs>;
+ 
++    /// The renderer context external surfaces must be created with, or `None` when this
++    /// window cannot compose external surfaces.
++    fn external_surface_context(&self) -> Option<Arc<dyn std::any::Any + Send + Sync>> {
++        None
++    }
++
+     fn update_ime_position(&self, _bounds: Bounds<Pixels>);
+ 
+     // Mobile platform methods.
+diff --git a/crates/gpui/src/scene.rs b/crates/gpui/src/scene.rs
+index ea0f5d7..2747e07 100644
+--- a/crates/gpui/src/scene.rs
++++ b/crates/gpui/src/scene.rs
+@@ -771,8 +771,86 @@ pub struct PaintSurface {
+     pub content_mask: ContentMask<ScaledPixels>,
+     #[cfg(target_os = "macos")]
+     pub image_buffer: core_video::pixel_buffer::CVPixelBuffer,
++    #[cfg(not(target_os = "macos"))]
++    pub external: ExternalSurface,
+ }
+ 
++/// A GPU resource produced outside GPUI and composed by the platform renderer.
++///
++/// The handle is type-erased so the scene stays independent of any graphics
++/// API; each platform renderer downcasts it to the resource type it created
++/// (for example a wgpu texture) and ignores handles it does not recognize.
++/// The generation lets producers retire a resource: a renderer must never
++/// present a surface whose generation is older than the one it was told is
++/// current, and dropping every clone releases the underlying resource.
++#[cfg(not(target_os = "macos"))]
++#[derive(Clone)]
++pub struct ExternalSurface {
++    id: u64,
++    generation: u64,
++    size: Size<crate::DevicePixels>,
++    handle: std::sync::Arc<dyn std::any::Any + Send + Sync>,
++}
++
++#[cfg(not(target_os = "macos"))]
++impl ExternalSurface {
++    /// Wrap a renderer-specific resource of `size` device pixels.
++    pub fn new(
++        generation: u64,
++        size: Size<crate::DevicePixels>,
++        handle: std::sync::Arc<dyn std::any::Any + Send + Sync>,
++    ) -> Self {
++        static NEXT_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
++        Self {
++            id: NEXT_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
++            generation,
++            size,
++            handle,
++        }
++    }
++
++    /// A process-unique identifier for this handle.
++    pub fn id(&self) -> u64 {
++        self.id
++    }
++
++    /// The producer generation this resource belongs to.
++    pub fn generation(&self) -> u64 {
++        self.generation
++    }
++
++    /// The resource size in device pixels.
++    pub fn size(&self) -> Size<crate::DevicePixels> {
++        self.size
++    }
++
++    /// The renderer-specific resource.
++    pub fn handle(&self) -> &std::sync::Arc<dyn std::any::Any + Send + Sync> {
++        &self.handle
++    }
++}
++
++#[cfg(not(target_os = "macos"))]
++impl std::fmt::Debug for ExternalSurface {
++    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
++        f.debug_struct("ExternalSurface")
++            .field("id", &self.id)
++            .field("generation", &self.generation)
++            .field("size", &self.size)
++            .finish()
++    }
++}
++
++#[cfg(not(target_os = "macos"))]
++impl PartialEq for ExternalSurface {
++    fn eq(&self, other: &Self) -> bool {
++        self.id == other.id && self.generation == other.generation
++    }
++}
++
++#[cfg(not(target_os = "macos"))]
++impl Eq for ExternalSurface {}
++
+ impl From<PaintSurface> for Primitive {
+     fn from(surface: PaintSurface) -> Self {
+         Primitive::Surface(surface)
+diff --git a/crates/gpui/src/window.rs b/crates/gpui/src/window.rs
+index e677bb9..3d2c0fa 100644
+--- a/crates/gpui/src/window.rs
++++ b/crates/gpui/src/window.rs
+@@ -29,6 +29,8 @@ use anyhow::{Context as _, Result, anyhow};
+ use collections::{FxHashMap, FxHashSet};
+ #[cfg(target_os = "macos")]
+ use core_video::pixel_buffer::CVPixelBuffer;
++#[cfg(not(target_os = "macos"))]
++use crate::ExternalSurface;
+ use derive_more::{Deref, DerefMut};
+ use futures::FutureExt;
+ use futures::channel::oneshot;
+@@ -4607,6 +4609,36 @@ impl Window {
+         });
+     }
+ 
++    /// Paint a renderer-owned external surface into the scene for the next frame at the
++    /// current z-index.
++    ///
++    /// The platform renderer composes the resource behind the handle; a renderer that does
++    /// not recognize the handle draws nothing. This method should only be called as part of
++    /// the paint phase of element drawing.
++    #[cfg(not(target_os = "macos"))]
++    pub fn paint_external_surface(&mut self, bounds: Bounds<Pixels>, external: ExternalSurface) {
++        use crate::PaintSurface;
++
++        self.invalidator.debug_assert_paint();
++
++        let bounds = self.snap_bounds(bounds);
++        let content_mask = self.snapped_content_mask();
++        self.next_frame.scene.insert_primitive(PaintSurface {
++            order: 0,
++            bounds,
++            content_mask,
++            external,
++        });
++    }
++
++    /// The renderer context that external surfaces painted into this window must be created
++    /// with, when the platform renderer supports composing them. `None` means external
++    /// surfaces are unavailable on this window and [`Self::paint_external_surface`] would
++    /// draw nothing.
++    pub fn external_surface_context(&self) -> Option<Arc<dyn std::any::Any + Send + Sync>> {
++        self.platform_window.external_surface_context()
++    }
++
+     /// Removes an image from the sprite atlas.
+     pub fn drop_image(&mut self, data: Arc<RenderImage>) -> Result<()> {
+         for frame_index in 0..data.frame_count() {

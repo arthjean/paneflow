@@ -92,6 +92,7 @@ jobs:
           persist-credentials: false
 
       - uses: ./.github/actions/fetch-libghostty
+      - uses: ./.github/actions/fetch-gpui
 
       - name: Setup MSVC developer environment
         uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1

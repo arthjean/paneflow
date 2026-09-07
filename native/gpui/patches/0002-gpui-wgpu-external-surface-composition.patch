@@ -1,0 +1,486 @@
+diff --git a/crates/gpui_wgpu/Cargo.toml b/crates/gpui_wgpu/Cargo.toml
+index 3d889ff..c9c9aa3 100644
+--- a/crates/gpui_wgpu/Cargo.toml
++++ b/crates/gpui_wgpu/Cargo.toml
+@@ -42,6 +42,9 @@ font-kit = { git = "https://github.com/zed-industries/font-kit", rev = "94b0f281
+ web-sys = { version = "0.3", features = ["HtmlCanvasElement"] }
+ wgpu = { workspace = true, features = ["webgl"] }
+ 
++[target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
++ash = "0.38"
++
+ [dev-dependencies]
+ criterion.workspace = true
+ naga = { version = "29.0.4", features = ["wgsl-in"] }
+diff --git a/crates/gpui_wgpu/src/gpui_wgpu.rs b/crates/gpui_wgpu/src/gpui_wgpu.rs
+index 452c3c0..f84f9eb 100644
+--- a/crates/gpui_wgpu/src/gpui_wgpu.rs
++++ b/crates/gpui_wgpu/src/gpui_wgpu.rs
+@@ -7,4 +7,6 @@ pub use cosmic_text_system::*;
+ pub use wgpu;
+ pub use wgpu_atlas::*;
+ pub use wgpu_context::*;
+-pub use wgpu_renderer::{GpuContext, WgpuRenderer, WgpuSurfaceConfig};
++pub use wgpu_renderer::{
++    ExternalSurfaceContext, ExternalWgpuSurface, GpuContext, WgpuRenderer, WgpuSurfaceConfig,
++};
+diff --git a/crates/gpui_wgpu/src/shaders.wgsl b/crates/gpui_wgpu/src/shaders.wgsl
+index 718cb75..c79d688 100644
+--- a/crates/gpui_wgpu/src/shaders.wgsl
++++ b/crates/gpui_wgpu/src/shaders.wgsl
+@@ -1360,3 +1360,29 @@ fn fs_surface(input: SurfaceVarying) -> @location(0) vec4<f32> {
+ 
+     return ycbcr_to_RGB * y_cb_cr;
+ }
++
++// --- external surfaces --- //
++
++@group(1) @binding(0) var<uniform> external_surface_locals: SurfaceParams;
++@group(1) @binding(1) var t_external_surface: texture_2d<f32>;
++@group(1) @binding(2) var s_external_surface: sampler;
++
++@vertex
++fn vs_external_surface(@builtin(vertex_index) vertex_id: u32) -> SurfaceVarying {
++    let unit_vertex = vec2<f32>(f32(vertex_id & 1u), 0.5 * f32(vertex_id & 2u));
++
++    var out = SurfaceVarying();
++    out.position = to_device_position(unit_vertex, external_surface_locals.bounds);
++    out.texture_position = unit_vertex;
++    out.clip_distances = distance_from_clip_rect(unit_vertex, external_surface_locals.bounds, external_surface_locals.content_mask);
++    return out;
++}
++
++@fragment
++fn fs_external_surface(input: SurfaceVarying) -> @location(0) vec4<f32> {
++    if (any(input.clip_distances < vec4<f32>(0.0))) {
++        return vec4<f32>(0.0);
++    }
++
++    return textureSampleLevel(t_external_surface, s_external_surface, input.texture_position, 0.0);
++}
+diff --git a/crates/gpui_wgpu/src/wgpu_context.rs b/crates/gpui_wgpu/src/wgpu_context.rs
+index 7e744e8..7023f18 100644
+--- a/crates/gpui_wgpu/src/wgpu_context.rs
++++ b/crates/gpui_wgpu/src/wgpu_context.rs
+@@ -266,17 +266,25 @@ impl WgpuContext {
+             .using_resolution(adapter.limits())
+             .using_alignment(adapter.limits());
+ 
+-        let (device, queue) = adapter
+-            .request_device(&wgpu::DeviceDescriptor {
+-                label: Some("gpui_device"),
+-                required_features,
+-                required_limits,
+-                memory_hints: wgpu::MemoryHints::MemoryUsage,
+-                trace: wgpu::Trace::Off,
+-                experimental_features: wgpu::ExperimentalFeatures::disabled(),
+-            })
+-            .await
+-            .map_err(|e| anyhow::anyhow!("Failed to create wgpu device: {e}"))?;
++        let descriptor = wgpu::DeviceDescriptor {
++            label: Some("gpui_device"),
++            required_features,
++            required_limits,
++            memory_hints: wgpu::MemoryHints::MemoryUsage,
++            trace: wgpu::Trace::Off,
++            experimental_features: wgpu::ExperimentalFeatures::disabled(),
++        };
++        #[cfg(any(target_os = "linux", target_os = "freebsd"))]
++        let external_memory_device = Self::request_vulkan_device_with_external_memory(adapter, &descriptor);
++        #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
++        let external_memory_device: Option<anyhow::Result<(wgpu::Device, wgpu::Queue)>> = None;
++        let (device, queue) = match external_memory_device {
++            Some(result) => result?,
++            None => adapter
++                .request_device(&descriptor)
++                .await
++                .map_err(|e| anyhow::anyhow!("Failed to create wgpu device: {e}"))?,
++        };
+ 
+         Ok((
+             device,
+@@ -286,6 +294,77 @@ impl WgpuContext {
+         ))
+     }
+ 
++    /// Open a Vulkan device with the external-memory extensions that importing DMA-BUF
++    /// backed external surfaces needs, when the adapter is Vulkan and offers them.
++    /// `None` means the adapter is not Vulkan and the ordinary request path applies.
++    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
++    fn request_vulkan_device_with_external_memory(
++        adapter: &wgpu::Adapter,
++        descriptor: &wgpu::DeviceDescriptor<'_>,
++    ) -> Option<anyhow::Result<(wgpu::Device, wgpu::Queue)>> {
++        use std::ffi::CStr;
++        use wgpu::hal::api::Vulkan;
++
++        if adapter.get_info().backend != wgpu::Backend::Vulkan {
++            return None;
++        }
++        let hal_adapter = unsafe { adapter.as_hal::<Vulkan>() }?;
++        let supported = unsafe {
++            hal_adapter
++                .shared_instance()
++                .raw_instance()
++                .enumerate_device_extension_properties(hal_adapter.raw_physical_device())
++        }
++        .ok()?;
++        let wanted: [&'static CStr; 8] = [
++            ash::khr::external_memory_fd::NAME,
++            ash::ext::external_memory_dma_buf::NAME,
++            ash::ext::image_drm_format_modifier::NAME,
++            ash::khr::image_format_list::NAME,
++            ash::khr::bind_memory2::NAME,
++            ash::khr::sampler_ycbcr_conversion::NAME,
++            ash::khr::external_semaphore_fd::NAME,
++            ash::ext::queue_family_foreign::NAME,
++        ];
++        let extra: Vec<&'static CStr> = wanted
++            .into_iter()
++            .filter(|name| {
++                supported.iter().any(|properties| {
++                    properties
++                        .extension_name_as_c_str()
++                        .is_ok_and(|supported_name| supported_name == *name)
++                })
++            })
++            .collect();
++        log::info!("Vulkan external-memory device extensions: {extra:?}");
++        let open = unsafe {
++            hal_adapter.open_with_callback(
++                descriptor.required_features,
++                &descriptor.required_limits,
++                &descriptor.memory_hints,
++                Some(Box::new(move |args| {
++                    for name in extra {
++                        if !args.extensions.contains(&name) {
++                            args.extensions.push(name);
++                        }
++                    }
++                })),
++            )
++        };
++        let open = match open {
++            Ok(open) => open,
++            Err(error) => {
++                return Some(Err(anyhow::anyhow!(
++                    "Failed to open Vulkan device with external-memory extensions: {error}"
++                )));
++            }
++        };
++        Some(
++            unsafe { adapter.create_device_from_hal::<Vulkan>(open, descriptor) }
++                .map_err(|e| anyhow::anyhow!("Failed to create wgpu device: {e}")),
++        )
++    }
++
+     #[cfg(not(target_family = "wasm"))]
+     pub fn instance(display: Box<dyn wgpu::wgt::WgpuHasDisplayHandle>) -> wgpu::Instance {
+         wgpu::Instance::new(wgpu::InstanceDescriptor {
+diff --git a/crates/gpui_wgpu/src/wgpu_renderer.rs b/crates/gpui_wgpu/src/wgpu_renderer.rs
+index b0cd40a..1596230 100644
+--- a/crates/gpui_wgpu/src/wgpu_renderer.rs
++++ b/crates/gpui_wgpu/src/wgpu_renderer.rs
+@@ -8,7 +8,7 @@ use gpui::{
+ use log::warn;
+ #[cfg(not(target_family = "wasm"))]
+ use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
+-use std::cell::RefCell;
++use std::cell::{Cell, RefCell};
+ use std::num::NonZeroU64;
+ use std::ops::Range;
+ use std::rc::Rc;
+@@ -18,6 +18,43 @@ const MAX_INSTANCE_BUFFER_SIZE: u64 = 256 * 1024 * 1024;
+ 
+ const INSTANCE_TEXTURE_TEXEL_SIZE: u64 = 16;
+ 
++/// External surfaces composed per frame beyond this count are skipped with a warning.
++const MAX_EXTERNAL_SURFACES: u32 = 64;
++
++/// The wgpu objects that external surfaces painted into a window must be created with.
++///
++/// Every window sharing a [`GpuContext`] hands out the same device; a device recovery
++/// replaces it, and resources created against the previous device must be dropped.
++pub struct ExternalSurfaceContext {
++    pub instance: wgpu::Instance,
++    pub adapter: wgpu::Adapter,
++    pub device: Arc<wgpu::Device>,
++    pub queue: Arc<wgpu::Queue>,
++}
++
++/// A wgpu texture that [`WgpuRenderer`] composes when it is the handle behind a
++/// [`gpui::ExternalSurface`]. The texture must belong to the window's
++/// [`ExternalSurfaceContext`] device and carry `TEXTURE_BINDING` usage; its content is
++/// sampled as premultiplied color in the window's output color space.
++pub struct ExternalWgpuSurface {
++    texture: wgpu::Texture,
++    view: wgpu::TextureView,
++}
++
++impl ExternalWgpuSurface {
++    pub fn new(texture: wgpu::Texture) -> Self {
++        let view = texture.create_view(&wgpu::TextureViewDescriptor {
++            label: Some("external_surface_view"),
++            ..Default::default()
++        });
++        Self { texture, view }
++    }
++
++    pub fn texture(&self) -> &wgpu::Texture {
++        &self.texture
++    }
++}
++
+ /// Shader variant for backends with storage buffer support: the shared shader
+ /// logic plus the storage-buffer instance transport.
+ const STORAGE_BUFFER_SHADERS: &str = concat!(
+@@ -132,6 +169,7 @@ struct WgpuPipelines {
+     poly_sprites: wgpu::RenderPipeline,
+     #[allow(dead_code)]
+     surfaces: wgpu::RenderPipeline,
++    external_surfaces: wgpu::RenderPipeline,
+ }
+ 
+ /// One frame allocation of instance data, ready to bind.
+@@ -159,6 +197,7 @@ struct WgpuBindGroupLayouts {
+     instances: wgpu::BindGroupLayout,
+     texture: wgpu::BindGroupLayout,
+     surfaces: wgpu::BindGroupLayout,
++    external_surfaces: wgpu::BindGroupLayout,
+ }
+ 
+ /// Shared GPU context reference, used to coordinate device recovery across multiple windows.
+@@ -188,6 +227,7 @@ struct WgpuResources {
+     globals_bind_group: wgpu::BindGroup,
+     path_globals_bind_group: wgpu::BindGroup,
+     instance_data: InstanceData,
++    external_surface_params: wgpu::Buffer,
+     path_intermediate_texture: Option<wgpu::Texture>,
+     path_intermediate_view: Option<wgpu::TextureView>,
+     path_msaa_texture: Option<wgpu::Texture>,
+@@ -231,6 +271,9 @@ pub struct WgpuRenderer {
+     device_lost: std::sync::Arc<std::sync::atomic::AtomicBool>,
+     surface_configured: bool,
+     needs_redraw: bool,
++    external_surface_context: Arc<ExternalSurfaceContext>,
++    external_surface_stride: u64,
++    external_surface_slot: Cell<u32>,
+ }
+ 
+ impl WgpuRenderer {
+@@ -464,6 +507,21 @@ impl WgpuRenderer {
+             mapped_at_creation: false,
+         });
+ 
++        let external_surface_stride =
++            (std::mem::size_of::<SurfaceParams>() as u64).next_multiple_of(uniform_alignment);
++        let external_surface_params = device.create_buffer(&wgpu::BufferDescriptor {
++            label: Some("external_surface_params"),
++            size: external_surface_stride * u64::from(MAX_EXTERNAL_SURFACES),
++            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
++            mapped_at_creation: false,
++        });
++        let external_surface_context = Arc::new(ExternalSurfaceContext {
++            instance: context.instance.clone(),
++            adapter: context.adapter.clone(),
++            device: Arc::clone(&device),
++            queue: Arc::clone(&queue),
++        });
++
+         let (
+             instance_data,
+             instance_data_capacity,
+@@ -572,6 +630,7 @@ impl WgpuRenderer {
+             globals_bind_group,
+             path_globals_bind_group,
+             instance_data,
++            external_surface_params,
+             // Defer intermediate texture creation to first draw call via ensure_intermediate_textures().
+             // This avoids panics when the device/surface is in an invalid state during initialization.
+             path_intermediate_texture: None,
+@@ -604,6 +663,9 @@ impl WgpuRenderer {
+             device_lost: context.device_lost_flag(),
+             surface_configured: true,
+             needs_redraw: false,
++            external_surface_context,
++            external_surface_stride,
++            external_surface_slot: Cell::new(0),
+         })
+     }
+ 
+@@ -732,11 +794,47 @@ impl WgpuRenderer {
+             ],
+         });
+ 
++        let external_surfaces =
++            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
++                label: Some("external_surfaces_layout"),
++                entries: &[
++                    wgpu::BindGroupLayoutEntry {
++                        binding: 0,
++                        visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
++                        ty: wgpu::BindingType::Buffer {
++                            ty: wgpu::BufferBindingType::Uniform,
++                            has_dynamic_offset: false,
++                            min_binding_size: NonZeroU64::new(
++                                std::mem::size_of::<SurfaceParams>() as u64,
++                            ),
++                        },
++                        count: None,
++                    },
++                    wgpu::BindGroupLayoutEntry {
++                        binding: 1,
++                        visibility: wgpu::ShaderStages::FRAGMENT,
++                        ty: wgpu::BindingType::Texture {
++                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
++                            view_dimension: wgpu::TextureViewDimension::D2,
++                            multisampled: false,
++                        },
++                        count: None,
++                    },
++                    wgpu::BindGroupLayoutEntry {
++                        binding: 2,
++                        visibility: wgpu::ShaderStages::FRAGMENT,
++                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
++                        count: None,
++                    },
++                ],
++            });
++
+         WgpuBindGroupLayouts {
+             globals,
+             instances,
+             texture,
+             surfaces,
++            external_surfaces,
+         }
+     }
+ 
+@@ -1049,6 +1147,19 @@ impl WgpuRenderer {
+             &layouts.surfaces,
+             None,
+             wgpu::PrimitiveTopology::TriangleStrip,
++            &[Some(color_target.clone())],
++            1,
++            &shader_module,
++        );
++
++        let external_surfaces = create_pipeline(
++            "external_surfaces",
++            "vs_external_surface",
++            "fs_external_surface",
++            &layouts.globals,
++            &layouts.external_surfaces,
++            None,
++            wgpu::PrimitiveTopology::TriangleStrip,
+             &[Some(color_target)],
+             1,
+             &shader_module,
+@@ -1064,6 +1175,7 @@ impl WgpuRenderer {
+             subpixel_sprites,
+             poly_sprites,
+             surfaces,
++            external_surfaces,
+         }
+     }
+ 
+@@ -1403,6 +1515,7 @@ impl WgpuRenderer {
+     }
+ 
+     fn record_frame(&mut self, scene: &Scene, frame_view: &wgpu::TextureView) -> Result<()> {
++        self.external_surface_slot.set(0);
+         let mut instance_offset = 0;
+         let instance_bindings = self
+             .write_instances(scene, &mut instance_offset)
+@@ -1526,9 +1639,14 @@ impl WgpuRenderer {
+                         instance_range(range),
+                         &mut pass,
+                     ),
+-                    // Surfaces are macOS-only for video playback and are not
+-                    // implemented by the WGPU renderer.
++                    // CoreVideo surfaces are macOS-only; every other target composes
++                    // renderer-owned external surfaces here.
++                    #[cfg(target_os = "macos")]
+                     PrimitiveBatch::Surfaces(_surfaces) => {}
++                    #[cfg(not(target_os = "macos"))]
++                    PrimitiveBatch::Surfaces(range) => {
++                        self.draw_external_surfaces(&scene.surfaces[range], &mut pass)
++                    }
+                 }
+             }
+         }
+@@ -1646,6 +1764,74 @@ impl WgpuRenderer {
+         );
+     }
+ 
++    #[cfg(not(target_os = "macos"))]
++    fn draw_external_surfaces(
++        &self,
++        surfaces: &[gpui::PaintSurface],
++        pass: &mut wgpu::RenderPass<'_>,
++    ) {
++        let resources = self.resources();
++        for surface in surfaces {
++            let Some(external) = surface
++                .external
++                .handle()
++                .downcast_ref::<ExternalWgpuSurface>()
++            else {
++                continue;
++            };
++            let slot = self.external_surface_slot.get();
++            if slot >= MAX_EXTERNAL_SURFACES {
++                warn!("more than {MAX_EXTERNAL_SURFACES} external surfaces in one frame; skipping");
++                return;
++            }
++            self.external_surface_slot.set(slot + 1);
++            let offset = u64::from(slot) * self.external_surface_stride;
++            let params = SurfaceParams {
++                bounds: surface.bounds.into(),
++                content_mask: surface.content_mask.bounds.into(),
++            };
++            resources.queue.write_buffer(
++                &resources.external_surface_params,
++                offset,
++                bytemuck::bytes_of(&params),
++            );
++            let bind_group = resources
++                .device
++                .create_bind_group(&wgpu::BindGroupDescriptor {
++                    label: Some("external_surface_bind_group"),
++                    layout: &resources.bind_group_layouts.external_surfaces,
++                    entries: &[
++                        wgpu::BindGroupEntry {
++                            binding: 0,
++                            resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
++                                buffer: &resources.external_surface_params,
++                                offset,
++                                size: NonZeroU64::new(std::mem::size_of::<SurfaceParams>() as u64),
++                            }),
++                        },
++                        wgpu::BindGroupEntry {
++                            binding: 1,
++                            resource: wgpu::BindingResource::TextureView(&external.view),
++                        },
++                        wgpu::BindGroupEntry {
++                            binding: 2,
++                            resource: wgpu::BindingResource::Sampler(&resources.atlas_sampler),
++                        },
++                    ],
++                });
++            pass.set_pipeline(&resources.pipelines.external_surfaces);
++            pass.set_bind_group(0, &resources.globals_bind_group, &[]);
++            pass.set_bind_group(1, &bind_group, &[]);
++            pass.draw(0..4, 0..1);
++        }
++    }
++
++    /// The device, queue and adapter that external surfaces composed by this renderer must
++    /// be created with. A device recovery replaces the returned context.
++    pub fn external_surface_context(&self) -> Arc<ExternalSurfaceContext> {
++        Arc::clone(&self.external_surface_context)
++    }
++
+     unsafe fn instance_bytes<T>(instances: &[T]) -> &[u8] {
+         unsafe {
+             std::slice::from_raw_parts(

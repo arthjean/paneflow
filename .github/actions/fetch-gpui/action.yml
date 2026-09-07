@@ -1,0 +1,16 @@
+name: Fetch the patched GPUI checkout
+description: >-
+  Place the GPUI checkout that Cargo's [patch."https://github.com/zed-industries/zed"]
+  table points at under native/gpui/checkout: a sparse upstream tree at the
+  commit native/gpui/manifest.toml pins, with the reviewed patch series from
+  native/gpui/patches applied and digest-checked. Git does not track the
+  checkout, so every job that runs cargo against the workspace needs this
+  step after checkout, next to the libghostty fetch. Requires git and
+  Python 3.11 or newer; Cargo itself performs no downloads.
+
+runs:
+  using: composite
+  steps:
+    - name: Fetch and patch the manifest-pinned GPUI checkout
+      shell: bash
+      run: python3 scripts/fetch-gpui.py
