@@ -5,6 +5,13 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
 
 ## [Unreleased]
 
+### Added
+
+- The update check repeats every four hours while Paneflow runs (every thirty
+  minutes after a failed attempt), so a release published mid-session shows up
+  in the title bar without a restart. A dismissed version stays dismissed; a
+  newer one shows again.
+
 ## [0.12.0] - 2026-09-06
 
 ### Added

@@ -226,6 +226,7 @@ struct SelfUpdateState {
     install_method: update::install_method::InstallMethod,
     update_attempt_count: u32,
     download_generation: u64,
+    dismissed_version: Option<String>,
 }
 
 const PRIMARY_SIDEBAR_ANIMATION_MS: u64 = 280;

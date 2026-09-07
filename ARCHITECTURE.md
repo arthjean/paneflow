@@ -304,9 +304,12 @@ app state.
 
 ## Self-update
 
-Each install format has its own update path (apt/dnf repos, AppImage swap,
-tarball swap, macOS app replacement, Windows MSI relay), all driven by one
-in-app updater. Update artifacts are verified with
+A single background thread polls the GitHub releases feed at launch and then
+every four hours (thirty minutes after a failure), handing each result to the
+GPUI tick through a shared slot; a result never displaces a download in flight
+or a staged binary waiting for restart. Each install format has its own update
+path (apt/dnf repos, AppImage swap, tarball swap, macOS app replacement,
+Windows MSI relay), all driven by one in-app updater. Update artifacts are verified with
 [minisign](https://jedisct1.github.io/minisign/) signatures and the client
 **fails closed**: an unsigned or tampered artifact is rejected, never installed.
 macOS builds add Developer ID / notarization checks with Team ID pinning;
