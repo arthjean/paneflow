@@ -126,6 +126,5 @@ After installation, verify with `paneflow --version`, then tell me the shortest 
 - [Shortcuts and actions](/docs/keybindings): Review default shortcuts and the action names you can bind in paneflow.json.
 - [Troubleshooting](/docs/troubleshooting): Fix launch, GPU, PATH, config, signing, and shell issues.
 
-Need to compare tools? Use the [comparison hub](/compare). Need to
-report a bug? Open an issue on
+Need to report a bug? Open an issue on
 [GitHub](https://github.com/arthjean/paneflow/issues).

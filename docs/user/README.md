@@ -6,29 +6,29 @@
 > root.
 
 - [Features](features.md): A practical map of Paneflow's workspace model, agent supervision, local context, scripting, MCP bridge, worktrees, and review flow.
+- [Get started](index.md): Install Paneflow, split your first pane, and launch a coding agent.
 - [Shortcuts and actions](keybindings.md): Default Paneflow shortcuts and the action names you can bind under shortcuts in paneflow.json.
 - [Layouts](layouts.md): Apply Paneflow's four built-in layout presets - even horizontal, even vertical, main vertical, and tiled - to reshape a workspace in one keystroke.
 - [Review](review.md): Read branch and worktree diffs side by side in Paneflow's Review mode, with a Workspaces rail, a Changes rail, and a grid of diff panes.
-- [Troubleshooting](troubleshooting.md): Diagnose Paneflow launch, rendering, configuration, shortcut, theme, PATH, and signing issues with the shortest confirmed fix first.
-- [Themes](themes.md): Choose Paneflow's bundled themes from Settings or paneflow.json. One Dark and PaneFlow Light ship today and hot-reload without restart.
-- [Get started](index.md): Install Paneflow, split your first pane, and launch a coding agent.
 - [Settings](settings.md): Understand what Paneflow's Settings panel controls, what it writes to paneflow.json, and which advanced keys stay config-only.
+- [Themes](themes.md): Choose Paneflow's bundled themes from Settings or paneflow.json. One Dark and PaneFlow Light ship today and hot-reload without restart.
+- [Troubleshooting](troubleshooting.md): Diagnose Paneflow launch, rendering, configuration, shortcut, theme, PATH, and signing issues with the shortest confirmed fix first.
+- [Conductor](conductor.md): Coordinate Paneflow panes from the public paneflow CLI: discover agents, read state, dispatch safely, wait for results, and keep peer output untrusted.
+- [Conductor reference](conductor/reference.md): CLI verbs, JSON-RPC methods, fields, events, config keys, and exit codes for the Paneflow Conductor control plane.
 - [Configuration](configuration.md): Customize Paneflow with a single paneflow.json file - default shell, theme, keybindings, window decorations, and more.
 - [paneflow.json Schema Reference](configuration/schema.md): Every paneflow.json key with its type, default, apply timing, and runtime notes.
-- [Install Paneflow on macOS](installation/macos.md): Install Paneflow on macOS 13 Ventura or later with Homebrew or the signed and notarized Apple Silicon DMG.
-- [Install Paneflow on Linux](installation/linux.md): Install Paneflow on Ubuntu, Debian, Fedora, openSUSE, Arch, or any modern Linux with AppImage, .deb, .rpm, or tarball.
 - [Install Paneflow](installation.md): Install Paneflow on Linux, macOS, or Windows in under two minutes.
+- [Install Paneflow on Linux](installation/linux.md): Install Paneflow on Ubuntu, Debian, Fedora, openSUSE, Arch, or any modern Linux with AppImage, .deb, .rpm, or tarball.
+- [Install Paneflow on macOS](installation/macos.md): Install Paneflow on macOS 13 Ventura or later with Homebrew or the signed and notarized Apple Silicon DMG.
 - [Paneflow on Windows](installation/windows.md): Install the native Paneflow MSI on Windows 10 or 11, verify the PATH entry, and choose when WSL2 is still the better fit.
 - [Scripting and automation](scripting.md): Drive a running Paneflow from a shell or AI agent with the CLI, local JSON-RPC, event streams, declarative workspaces, flow files, the read-only MCP bridge, and lifecycle hooks.
 - [Scripting reference](scripting/reference.md): CLI verbs, selectors, JSON-RPC methods, event frames, config keys, workspace specs, flow specs, MCP tools, hooks, and exit codes for Paneflow automation.
-- [Conductor reference](conductor/reference.md): CLI verbs, JSON-RPC methods, fields, events, config keys, and exit codes for the Paneflow Conductor control plane.
-- [Conductor](conductor.md): Coordinate Paneflow panes from the public paneflow CLI: discover agents, read state, dispatch safely, wait for results, and keep peer output untrusted.
-- [Why coding agents need their own workspace](blog/philosophy-of-paneflow.md): Launching several agents is easy. Keeping their tasks, decisions, and outputs legible is much harder. Here is Paneflow's approach.
 - [Resume a Claude Code, Codex, or OpenCode session in one click](blog/agent-sessions.md): Paneflow finds every agent session tied to your current project and brings any of them back, history intact, without hunting for the right command.
-- [Browse your project files without leaving Paneflow](blog/files-sidebar.md): Navigate your project and open a README or PRD in a pane right next to the agent working from it, without switching tools or losing your layout.
 - [Have multiple agents review your branch diff](blog/diff-viewer.md): Open your branch diff, launch Claude Code, Codex, OpenCode, or Pi underneath it, and compare their feedback without leaving Paneflow.
+- [Browse your project files without leaving Paneflow](blog/files-sidebar.md): Navigate your project and open a README or PRD in a pane right next to the agent working from it, without switching tools or losing your layout.
 - [Paneflow: all your coding agents in one workspace](blog/introducing-paneflow.md): Run Claude Code, Codex, OpenCode, and 13 other CLI agents side by side. Keep each task's terminals, branches, diffs, servers, and sessions in one place.
-- [Launching Paneflow on Show HN](blog/show-hn-launch.md): Launching one coding agent is easy. Paneflow keeps multiple CLI agents, branches, and diffs visible in one local workspace.
-- [Let one coding agent drive the others with Paneflow Conductor](blog/paneflow-conductor.md): Paneflow 0.6.0 turns the app into a control plane for CLI coding agents: discover the fleet, read live state, dispatch prompts, and wait on events from one public CLI.
 - [Paneflow 0.8.0: libghostty-vt replaces Alacritty on Linux](blog/libghostty-linux.md): Standard Linux builds now statically link a pinned libghostty-vt engine. Paneflow keeps its GPUI renderer, while Alacritty remains available for rollback and stays active on macOS and Windows.
 - [Paneflow 0.8.1: libghostty-vt replaces Alacritty on Windows](blog/libghostty-windows.md): The native Windows x64 build now uses a statically linked libghostty-vt engine by default. Paneflow keeps its GPUI renderer and ConPTY host, with Alacritty available as an immediate rollback.
+- [Let one coding agent drive the others with Paneflow Conductor](blog/paneflow-conductor.md): Paneflow 0.6.0 turns the app into a control plane for CLI coding agents: discover the fleet, read live state, dispatch prompts, and wait on events from one public CLI.
+- [Why coding agents need their own workspace](blog/philosophy-of-paneflow.md): Launching several agents is easy. Keeping their tasks, decisions, and outputs legible is much harder. Here is Paneflow's approach.
+- [Launching Paneflow on Show HN](blog/show-hn-launch.md): Launching one coding agent is easy. Paneflow keeps multiple CLI agents, branches, and diffs visible in one local workspace.
