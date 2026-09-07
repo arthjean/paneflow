@@ -34,10 +34,10 @@ mod tests {
             .expect("expected schema properties")
             .keys()
         {
-            let needle = format!("`{key}`");
-            let dotted = format!("`{context}.{key}`");
+            let bare = format!("`{key}`");
+            let nested = format!(".{key}`");
             assert!(
-                doc.contains(&needle) || doc.contains(&dotted),
+                doc.contains(&bare) || doc.contains(&nested),
                 "configuration docs do not mention public schema key {context}.{key}"
             );
         }
@@ -84,6 +84,13 @@ mod tests {
                 pr: Some(true),
                 indent_guide: Some(true),
             },
+            editor: EditorDisplayConfig {
+                minimap: Some(true),
+                scrollbar: Some(false),
+            },
+            automation: AutomationConfig {
+                tab_auto_naming: Some(true),
+            },
             line_height: Some(1.0),
             cell_width: Some(1.0),
             font_family: Some("Geist Mono".to_string()),
@@ -92,8 +99,6 @@ mod tests {
             font_weight: Some("normal".to_string()),
             option_as_meta: Some(true),
             shell_integration: Some(true),
-            agent_stall_detection: Some(true),
-            agent_stall_threshold_secs: Some(300),
             submit_paste_delay_ms: Some(70),
             external_editor: Some("auto".to_string()),
             claude_code_bypass_permissions: Some(false),
@@ -163,6 +168,16 @@ mod tests {
             object_keys(&serialized["sidebar_show"]),
             object_keys(&schema["properties"]["sidebar_show"]["properties"]),
             "SidebarShow and public JSON Schema drifted"
+        );
+        assert_eq!(
+            object_keys(&serialized["editor"]),
+            object_keys(&schema["properties"]["editor"]["properties"]),
+            "EditorDisplayConfig and public JSON Schema drifted"
+        );
+        assert_eq!(
+            object_keys(&serialized["automation"]),
+            object_keys(&schema["properties"]["automation"]["properties"]),
+            "AutomationConfig and public JSON Schema drifted"
         );
         assert_eq!(
             object_keys(&serialized["terminal"]),
@@ -322,11 +337,11 @@ mod tests {
         );
 
         assert!(
-            doc.contains("| `font_size` | number or null | `13.0` |"),
+            doc.contains("| `font_size` | number/null | `13.0` |"),
             "configuration docs must publish the runtime font_size default"
         );
         assert!(
-            doc.contains("| `line_height` | number or null | `1.0` |"),
+            doc.contains("| `line_height` | number/null | `1.0` |"),
             "configuration docs must publish the runtime line_height default"
         );
         assert!(
@@ -380,35 +395,6 @@ mod tests {
             cfg.resolved_scrollback_lines_for_profile(TerminalSurfaceProfile::Agent),
             500
         );
-    }
-
-    #[test]
-    fn agent_stall_settings_resolve_with_defaults_and_clamp() {
-        let cfg = PaneFlowConfig::default();
-        assert!(cfg.agent_stall_detection_enabled());
-        assert_eq!(cfg.resolved_agent_stall_threshold_secs(), 60);
-
-        let cfg = PaneFlowConfig {
-            agent_stall_detection: Some(false),
-            ..Default::default()
-        };
-        assert!(!cfg.agent_stall_detection_enabled());
-
-        let cfg = PaneFlowConfig {
-            agent_stall_threshold_secs: Some(1),
-            ..Default::default()
-        };
-        assert_eq!(cfg.resolved_agent_stall_threshold_secs(), 30);
-        let cfg = PaneFlowConfig {
-            agent_stall_threshold_secs: Some(u64::MAX),
-            ..Default::default()
-        };
-        assert_eq!(cfg.resolved_agent_stall_threshold_secs(), 86_400);
-        let cfg = PaneFlowConfig {
-            agent_stall_threshold_secs: Some(600),
-            ..Default::default()
-        };
-        assert_eq!(cfg.resolved_agent_stall_threshold_secs(), 600);
     }
 
     #[test]

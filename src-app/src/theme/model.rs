@@ -472,7 +472,6 @@ pub struct UiColors {
     pub group_7: Hsla,
     pub group_8: Hsla,
     pub agent_error: Hsla,
-    pub agent_stalled: Hsla,
     pub agent_claude: Hsla,
     pub agent_codex: Hsla,
 }
@@ -564,7 +563,6 @@ pub fn ui_colors_with(theme: &TerminalTheme) -> UiColors {
             group_7: h(0xfe640b),
             group_8: h(0x7287fd),
             agent_error: h(0xd20f39),
-            agent_stalled: h(0x808080),
             agent_claude: h(0xe89271),
             agent_codex: h(0x5b6cff),
         }
@@ -598,7 +596,6 @@ pub fn ui_colors_with(theme: &TerminalTheme) -> UiColors {
             group_7: h(0xffa657),
             group_8: h(0x9ea7ff),
             agent_error: h(0xff6f6a),
-            agent_stalled: h(0xa0a0a0),
             agent_claude: h(0xffa657),
             agent_codex: h(0x7eb6ff),
         }

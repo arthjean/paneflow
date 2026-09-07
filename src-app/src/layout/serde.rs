@@ -28,8 +28,12 @@ impl LayoutTree {
         match self {
             LayoutTree::Leaf(pane) => {
                 let pane_ref = pane.read(cx);
-                let surfaces: Vec<SurfaceDefinition> = std::iter::once(&pane_ref.surface)
-                    .map(|tab| match tab {
+                let active = pane_ref.active_surface_idx();
+                let surfaces: Vec<SurfaceDefinition> = pane_ref
+                    .surfaces()
+                    .iter()
+                    .enumerate()
+                    .map(|(index, tab)| match tab {
                         crate::pane::PaneSurface::Terminal(tv) => {
                             let tv_ref = tv.read(cx);
                             let name = if tv_ref.terminal.title.is_empty() {
@@ -53,7 +57,7 @@ impl LayoutTree {
                                 cwd,
                                 path: None,
                                 env: None,
-                                focus: Some(true),
+                                focus: Some(index == active),
                                 scrollback,
                                 agent: tv_ref.terminal.detected_agent.map(|a| a.tag().to_string()),
                                 font_size: tv_ref.terminal.font_size_override,
@@ -70,7 +74,7 @@ impl LayoutTree {
                                 cwd: None,
                                 path: Some(path),
                                 env: None,
-                                focus: Some(true),
+                                focus: Some(index == active),
                                 scrollback: None,
                                 agent: None,
                                 font_size: None,

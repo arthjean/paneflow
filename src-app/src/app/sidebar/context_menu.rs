@@ -171,12 +171,28 @@ impl PaneFlowApp {
             })
             .unwrap_or_default();
 
+        let (has_unread, muted) = self
+            .workspaces
+            .get(idx)
+            .map(|workspace| {
+                (
+                    workspace.agent_completion_notification.is_unread(),
+                    workspace.muted,
+                )
+            })
+            .unwrap_or((false, false));
+
         let workflow_rows = usize::from(workflow_template.is_some());
         let service_rows = services.len();
-        let separator_rows = 2 + workflow_rows + usize::from(service_rows > 0);
+        let notification_rows = 1 + usize::from(has_unread);
+        let separator_rows = 3 + workflow_rows + usize::from(service_rows > 0);
         let browser_rows = usize::from(self.workspace_has_browser_data(idx, cx));
-        let menu_rows =
-            EDITOR_CONTEXT_MENU_ITEMS.len() + 4 + workflow_rows + service_rows + browser_rows;
+        let menu_rows = EDITOR_CONTEXT_MENU_ITEMS.len()
+            + 4
+            + workflow_rows
+            + service_rows
+            + notification_rows
+            + browser_rows;
         let menu_height = px(8. + menu_rows as f32 * 28. + separator_rows as f32 * 9.);
         let menu_pos = clamped_context_menu_position(menu.position, px(248.), menu_height, window);
 
@@ -317,6 +333,38 @@ impl PaneFlowApp {
                 }),
             ));
         }
+
+        context_menu = context_menu.child(context_menu_divider(ui));
+
+        if has_unread {
+            context_menu = context_menu.child(self.render_select_menu_item(
+                "workspace-context-mark-read".into(),
+                "Mark as Read",
+                None,
+                ui,
+                cx.listener(move |this, _: &ClickEvent, _window, cx| {
+                    this.workspace_menu_open = None;
+                    this.mark_workspace_read(idx, cx);
+                    cx.stop_propagation();
+                }),
+            ));
+        }
+
+        context_menu = context_menu.child(self.render_select_menu_item(
+            "workspace-context-mute".into(),
+            if muted {
+                "Unmute Notifications"
+            } else {
+                "Mute Notifications"
+            },
+            None,
+            ui,
+            cx.listener(move |this, _: &ClickEvent, _window, cx| {
+                this.workspace_menu_open = None;
+                this.toggle_workspace_muted(idx, cx);
+                cx.stop_propagation();
+            }),
+        ));
 
         context_menu = context_menu.child(context_menu_divider(ui));
 
@@ -565,7 +613,7 @@ impl PaneFlowApp {
             .find(|ws| ws.id == owner_id)
             .map(|ws| PathBuf::from(&ws.cwd));
 
-        let surface_path = Self::surface_context_path(&source.read(cx).surface, cx);
+        let surface_path = Self::surface_context_path(source.read(cx).surface(), cx);
         let full_path = surface_path
             .as_ref()
             .map(|path| path.to_string_lossy().into_owned());
@@ -578,7 +626,7 @@ impl PaneFlowApp {
 
         let pending_sid = source
             .read(cx)
-            .surface
+            .surface()
             .as_terminal()
             .map(|t| t.entity_id().as_u64())
             .filter(|sid| self.broadcast.pending.contains_key(sid));

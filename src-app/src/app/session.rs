@@ -54,9 +54,16 @@ impl PaneFlowApp {
                         .serialize_tabs_without_scrollback(cx)
                         .into_iter()
                         .zip(ws.tabs())
-                        .map(|(mut session, tab)| {
-                            session.browsers = self.browser_descriptors_for_tab(tab.id, cx);
-                            session
+                        .map(|(mut tab_session, tab)| {
+                            tab_session.browsers = self.browser_descriptors_for_tab(tab.id, cx);
+                            tab_session.pull_request = self.tab_pull_request(ws, tab).map(|pr| {
+                                paneflow_config::schema::PullRequestSession {
+                                    branch: self.tab_row_branch(ws, tab),
+                                    number: pr.number,
+                                    state: pr.state.wire_str().to_string(),
+                                }
+                            });
+                            tab_session
                         })
                         .collect(),
                     active_tab: ws.active_tab_idx(),
@@ -76,6 +83,7 @@ impl PaneFlowApp {
                         .collect(),
                     sidebar_collapsed: !ws.sidebar_expanded,
                     browser_profile: ws.browser_profile.clone(),
+                    muted: ws.muted,
                 })
                 .collect(),
             mode: self.mode,
@@ -241,6 +249,40 @@ impl PaneFlowApp {
         }
     }
 
+    pub(crate) fn pull_request_seeds(
+        session: &paneflow_config::schema::SessionState,
+        workspaces: &[Workspace],
+    ) -> Vec<(
+        std::path::PathBuf,
+        String,
+        crate::app::pull_request::PullRequest,
+    )> {
+        session
+            .workspaces
+            .iter()
+            .zip(workspaces)
+            .filter_map(|(ws_session, ws)| Some((ws_session, ws.repo_root.clone()?)))
+            .flat_map(|(ws_session, repo_root)| {
+                ws_session
+                    .tabs
+                    .iter()
+                    .filter_map(|tab| tab.pull_request.as_ref())
+                    .filter(|pr| !pr.branch.is_empty())
+                    .filter_map(move |pr| {
+                        let state = crate::app::pull_request::PrState::from_wire(&pr.state)?;
+                        Some((
+                            repo_root.clone(),
+                            pr.branch.clone(),
+                            crate::app::pull_request::PullRequest {
+                                number: pr.number,
+                                state,
+                            },
+                        ))
+                    })
+            })
+            .collect()
+    }
+
     pub(crate) fn restore_workspaces(
         session: &paneflow_config::schema::SessionState,
         cx: &mut Context<Self>,
@@ -316,6 +358,19 @@ impl PaneFlowApp {
 
             workspace.custom_buttons = ws_session.custom_buttons.clone();
             workspace.sidebar_expanded = !ws_session.sidebar_collapsed;
+            workspace.muted = ws_session.muted;
+            let unread_surfaces: Vec<u64> = ws_session
+                .tabs
+                .iter()
+                .zip(workspace.tabs())
+                .filter(|(tab_session, _)| tab_session.unread)
+                .flat_map(|(_, tab)| tab.surface_ids(cx))
+                .collect();
+            for surface_id in unread_surfaces {
+                workspace
+                    .agent_completion_notification
+                    .record_finished(false, Some(surface_id));
+            }
             workspace.managed_worktrees = ws_session
                 .managed_worktrees
                 .iter()
@@ -414,15 +469,21 @@ impl PaneFlowApp {
         fallback_cwd: &std::path::Path,
         cx: &mut Context<Self>,
     ) -> Entity<Pane> {
-        let mut built: Option<crate::pane::PaneSurface> = None;
-        for i in restore_candidate_order(surfaces) {
-            built = Self::build_restored_surface(workspace_id, &surfaces[i], fallback_cwd, cx);
-            if built.is_some() {
-                break;
+        let mut built: Vec<crate::pane::PaneSurface> = Vec::new();
+        let mut active = None;
+        for definition in surfaces.iter().take(crate::pane::MAX_PANE_TABS) {
+            let Some(surface) =
+                Self::build_restored_surface(workspace_id, definition, fallback_cwd, cx)
+            else {
+                continue;
+            };
+            if definition.focus == Some(true) && active.is_none() {
+                active = Some(built.len());
             }
+            built.push(surface);
         }
 
-        let Some(surface) = built else {
+        if built.is_empty() {
             if !surfaces.is_empty() {
                 log::error!(
                     "spawn_pane_from_surfaces: no restorable surface built; using fallback"
@@ -435,24 +496,12 @@ impl PaneFlowApp {
             let pane = cx.new(|cx| Pane::new(t, workspace_id, cx));
             cx.subscribe(&pane, Self::handle_pane_event).detach();
             return pane;
-        };
-        let pane = cx.new(|cx| Pane::new_with_surface(surface, workspace_id, cx));
+        }
+        let pane =
+            cx.new(|cx| Pane::new_with_surfaces(built, active.unwrap_or(0), workspace_id, cx));
         cx.subscribe(&pane, Self::handle_pane_event).detach();
         pane
     }
-}
-
-fn restore_candidate_order(surfaces: &[paneflow_config::schema::SurfaceDefinition]) -> Vec<usize> {
-    if surfaces.is_empty() {
-        return Vec::new();
-    }
-    let focused = surfaces
-        .iter()
-        .position(|s| s.focus == Some(true))
-        .unwrap_or(0);
-    std::iter::once(focused)
-        .chain((0..surfaces.len()).filter(|&i| i != focused))
-        .collect()
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -1341,28 +1390,6 @@ mod tests {
             restored.teardown,
             crate::workspace::worktree::TeardownPolicy::Keep,
             "unknown restored policy must not become auto-remove"
-        );
-    }
-
-    #[test]
-    fn restore_candidate_order_puts_the_focused_surface_first() {
-        use paneflow_config::schema::SurfaceDefinition;
-
-        let surface = |focus: Option<bool>| SurfaceDefinition {
-            focus,
-            ..Default::default()
-        };
-
-        assert!(super::restore_candidate_order(&[]).is_empty());
-
-        assert_eq!(
-            super::restore_candidate_order(&[surface(None), surface(Some(false))]),
-            vec![0, 1]
-        );
-
-        assert_eq!(
-            super::restore_candidate_order(&[surface(None), surface(None), surface(Some(true))]),
-            vec![2, 0, 1]
         );
     }
 }

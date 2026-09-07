@@ -205,8 +205,52 @@ mod tests {
         assert!(tab.set_title("Worktree test deflake", TabTitleSource::Generated));
         assert_eq!(tab.title(), "Worktree test deflake");
 
+        assert!(tab.set_title("Deflake the worktree test", TabTitleSource::Process));
+        assert_eq!(tab.title(), "Deflake the worktree test");
+
         assert!(tab.set_title("sprint 3", TabTitleSource::User));
         assert_eq!(tab.title(), "sprint 3");
+    }
+
+    #[test]
+    fn the_process_title_follows_the_cli_until_the_user_renames() {
+        let mut tab = tab("Claude Code");
+        assert!(tab.set_title("Claude Code", TabTitleSource::Process));
+        assert!(!tab.set_title("fix the flaky worktree test", TabTitleSource::Prompt));
+        assert!(!tab.set_title("Worktree test deflake", TabTitleSource::Generated));
+        assert_eq!(tab.title(), "Claude Code");
+
+        assert!(tab.set_title("Deflake the worktree test", TabTitleSource::Process));
+        assert!(tab.set_title("Release checksum job", TabTitleSource::Process));
+        assert_eq!(tab.title(), "Release checksum job");
+
+        assert!(tab.set_title("sprint 3", TabTitleSource::User));
+        assert!(!tab.set_title("Anything the CLI says", TabTitleSource::Process));
+        assert_eq!(tab.title(), "sprint 3");
+    }
+
+    #[test]
+    fn a_summarized_title_outranks_the_live_process_title_and_refreshes_itself() {
+        let mut tab = tab("Codex");
+        assert!(tab.set_title("codex", TabTitleSource::Process));
+        assert!(tab.set_title("Worktree deflake", TabTitleSource::Summarized));
+        assert!(!tab.set_title("Anything the CLI says", TabTitleSource::Process));
+        assert!(tab.set_title("Windows worktree port", TabTitleSource::Summarized));
+        assert_eq!(tab.title(), "Windows worktree port");
+        assert!(tab.title_is_settled());
+
+        assert!(tab.set_title("sprint 3", TabTitleSource::User));
+        assert!(!tab.set_title("Anything the model says", TabTitleSource::Summarized));
+        assert_eq!(tab.title(), "sprint 3");
+    }
+
+    #[test]
+    fn reset_hands_the_tab_back_to_the_process_title() {
+        let mut tab = tab("Claude Code");
+        assert!(tab.set_title("sprint 3", TabTitleSource::User));
+        assert!(tab.unlock_title());
+        assert!(tab.set_title("Deflake the worktree test", TabTitleSource::Process));
+        assert_eq!(tab.title(), "Deflake the worktree test");
     }
 
     #[test]
@@ -218,6 +262,8 @@ mod tests {
             TabTitleSource::Preset,
             TabTitleSource::Prompt,
             TabTitleSource::Generated,
+            TabTitleSource::Process,
+            TabTitleSource::Summarized,
         ] {
             assert!(!tab.set_title("something else", source), "{source:?}");
         }
@@ -282,7 +328,7 @@ mod tests {
     }
 
     #[test]
-    fn only_a_generated_or_user_title_settles_a_tab() {
+    fn only_a_generated_process_or_user_title_settles_a_tab() {
         let mut tab = tab("Claude Code");
         assert!(!tab.title_is_settled());
 
@@ -290,6 +336,9 @@ mod tests {
         assert!(!tab.title_is_settled());
 
         assert!(tab.set_title("Test deflake", TabTitleSource::Generated));
+        assert!(tab.title_is_settled());
+
+        assert!(tab.set_title("Deflake the test", TabTitleSource::Process));
         assert!(tab.title_is_settled());
 
         assert!(tab.set_title("sprint 3", TabTitleSource::User));

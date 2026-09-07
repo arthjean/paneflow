@@ -18,6 +18,34 @@ pub(crate) enum PrState {
 }
 
 impl PrState {
+    pub(crate) fn wire_str(self) -> &'static str {
+        match self {
+            PrState::Draft => "draft",
+            PrState::Open => "open",
+            PrState::Merged => "merged",
+            PrState::Closed => "closed",
+        }
+    }
+
+    pub(crate) fn from_wire(raw: &str) -> Option<Self> {
+        match raw {
+            "draft" => Some(PrState::Draft),
+            "open" => Some(PrState::Open),
+            "merged" => Some(PrState::Merged),
+            "closed" => Some(PrState::Closed),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn rank(self) -> u8 {
+        match self {
+            PrState::Open => 3,
+            PrState::Draft => 2,
+            PrState::Merged => 1,
+            PrState::Closed => 0,
+        }
+    }
+
     pub(crate) fn color(self, ui: crate::theme::UiColors) -> Hsla {
         let light = ui.surface.l > 0.5;
         let hex = match (self, light) {
@@ -48,6 +76,7 @@ pub(crate) struct PullRequest {
 struct Cached {
     value: Option<PullRequest>,
     at: Instant,
+    seeded: bool,
 }
 
 #[derive(Default)]
@@ -78,7 +107,22 @@ impl PrStates {
         }
         self.entries
             .get(&key)
-            .is_none_or(|cached| cached.at.elapsed() > TTL)
+            .is_none_or(|cached| cached.seeded || cached.at.elapsed() > TTL)
+    }
+
+    pub(crate) fn seed(&mut self, repo_root: &str, branch: &str, value: PullRequest) {
+        let key = Self::key(repo_root, branch);
+        if self.entries.contains_key(&key) {
+            return;
+        }
+        self.entries.insert(
+            key,
+            Cached {
+                value: Some(value),
+                at: Instant::now(),
+                seeded: true,
+            },
+        );
     }
 
     fn store(&mut self, repo_root: &str, branch: &str, value: Option<PullRequest>) -> bool {
@@ -90,6 +134,7 @@ impl PrStates {
             Cached {
                 value,
                 at: Instant::now(),
+                seeded: false,
             },
         );
         changed
@@ -145,15 +190,7 @@ fn pick(rows: &[serde_json::Value]) -> Option<PullRequest> {
             };
             Some(PullRequest { number, state })
         })
-        .max_by_key(|pr| {
-            let rank = match pr.state {
-                PrState::Open => 3,
-                PrState::Draft => 2,
-                PrState::Merged => 1,
-                PrState::Closed => 0,
-            };
-            (rank, pr.number)
-        })
+        .max_by_key(|pr| (pr.state.rank(), pr.number))
 }
 
 impl PaneFlowApp {
@@ -242,6 +279,36 @@ mod tests {
 
     fn row(number: u64, state: &str, draft: bool) -> serde_json::Value {
         serde_json::json!({ "number": number, "state": state, "isDraft": draft })
+    }
+
+    #[test]
+    fn a_seeded_entry_answers_at_once_and_is_refreshed_on_the_first_pass() {
+        let mut states = super::PrStates::default();
+        let seeded = super::PullRequest {
+            number: 46,
+            state: PrState::Open,
+        };
+        states.seed("/repo", "feat/parser", seeded);
+        assert_eq!(states.get("/repo", "feat/parser"), Some(seeded));
+        assert!(
+            states.is_stale("/repo", "feat/parser"),
+            "a value restored from the session file is shown, then re-read"
+        );
+        states.store("/repo", "feat/parser", None);
+        assert_eq!(states.get("/repo", "feat/parser"), None);
+        assert!(!states.is_stale("/repo", "feat/parser"));
+
+        states.seed("/repo", "feat/parser", seeded);
+        assert_eq!(
+            states.get("/repo", "feat/parser"),
+            None,
+            "a seed never overwrites a live answer"
+        );
+        assert_eq!(
+            PrState::from_wire(PrState::Merged.wire_str()),
+            Some(PrState::Merged)
+        );
+        assert_eq!(PrState::from_wire("weird"), None);
     }
 
     #[test]

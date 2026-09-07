@@ -116,7 +116,7 @@ Nerd Font as the default.
    update banner shimmer, and status spinners. Any new animation MUST read
    `reduce_motion`; section 4.8 lists which existing ones do.
 6. Color carries meaning first: added, modified, deleted, conflict, error,
-   stalled, and the eight broadcast groups keep their hues across presets.
+   and the eight broadcast groups keep their hues across presets.
 7. Density over decoration. Body text is 12 px, labels are 11 px, micro
    chips are 9 to 10 px. Whitespace is spent on the grid, not on padding.
 8. Every surface holds with the native material on and off, in light and
@@ -221,7 +221,7 @@ inside `theme/builtin.rs`.
 | `vc_word_added`, `vc_word_deleted` | Word washes inside a changed diff row | `vc_added`, `vc_deleted` at 0.40 | at 0.40 |
 | `group_1` to `group_8` | Broadcast group stripe and picker | blue, green, yellow, red, violet, teal, orange, periwinkle | Catppuccin Latte hues |
 | `agent_claude`, `agent_codex` | Identity dots and status glyphs | `#ffa657`, `#7eb6ff` | `#e89271`, `#5b6cff` |
-| `agent_error`, `agent_stalled` | Failed and stalled agent states | `#ff6f6a`, `#a0a0a0` | `#d20f39`, `#808080` |
+| `agent_error` | Failed agent state | `#ff6f6a` | `#d20f39` |
 
 The dark work surface is `#181818` and the dark chrome is `#141414`: the
 panel is lighter than the shell around it, which is what makes the inset card
@@ -305,6 +305,7 @@ controls at 10 px or below, where the superellipse is invisible.
 | Pane gutter | 8 |
 | Pane content inset | 10 horizontal, 6 vertical |
 | Pane header | 28 content plus the vertical inset twice, 40 total; gap 7 |
+| Pane tab bar | 26 chips plus 6 below, 32 total; gap 3; 8 tabs maximum |
 | Sidebar row | margin 8, padding 8 by 6, gap 4, line height 18, spacing 4 |
 | Sidebar tab icon stack | 16 px icons, cap 4, overlap 11, 24 by 24 icon card |
 | Sidebar action button | 20, gap 4; status slot 48; icon slot 20 |
@@ -361,7 +362,7 @@ multicolor image otherwise (`render_logo` decides per logo).
 | Size | Use |
 | --- | --- |
 | 10 | Filter clear glyph |
-| 11 | Sidebar agent state glyphs (bell, error, stalled) and the thinking matrix |
+| 11 | Sidebar agent state glyphs (bell, error, pull request) and the thinking matrix |
 | 12 | Small icon button, select chevron, drag ghost |
 | 13 | Medium icon button, filter search, preset logo, menu check mark |
 | 14 | Title bar sidebar toggle, editor logos, sidebar folder, sidebar footer banners and gear |
@@ -419,14 +420,18 @@ Header row `Workspaces` at label size with two 20 px icon buttons (the
 Customize Sidebar menu behind a filter glyph, and new workspace behind a
 folder-plus glyph). A workspace is a folder row; its tabs are child rows with
 inline rename, hover actions, and reorder by drag. A tab row shows the tab
-title, the branch with its glyph, the diffstat in `vc_added` and
-`vc_deleted`, and a stack of agent icons capped at four with an 11 px
-overlap. Agent status lives in a 48 px slot with 11 px glyphs: an amber bell
-when the agent needs input, a light blue 7 px dot when it finished, the
-muted dot matrix while it thinks, an `agent_error` circle-x when it failed,
-and an `agent_stalled` triangle when it stalled. The bell and the dot use the
-fixed colors from 4.3. A `Customize Sidebar` menu on the rail header toggles
-branch, diffstat, pull request, and indent guide per value.
+title, the branch with its glyph, and the
+diffstat in `vc_added` and `vc_deleted`. Status sits at the trailing edge of
+both row kinds, on one X, as an 11 px glyph and a 10 px word: an amber bell
+and `Input` when the agent needs input, an `agent_error` circle-x and
+`Error` when it failed, the muted dot matrix alone while it thinks, a light
+blue 7 px dot and `Done` with the unread count once it is finished.
+With no agent to report, the tab's pull request takes the slot in GitHub's
+state color: `Review`, `Draft`, or `Merged`. The bell and the dot use the
+fixed colors from 4.3. The slot is shared with the hover action: under the
+pointer the status turns invisible, its width kept, and the button paints
+over it. A `Customize Sidebar` menu on the rail header toggles branch,
+diffstat, pull request, and indent guide per value.
 
 Drop placeholder while dragging: margin 6, radius 8, blue at 0.10 with a 0.22
 border and a 2 px line.
@@ -454,6 +459,19 @@ close button that appears only while the header is hovered, its glyph fading
 from 0.16 to 0.92 under the pointer. The identity
 pill was removed in 0.9; the sidebar carries identity, the pane carries
 title and state.
+
+Under the header, a tab bar lists the pane's surfaces as chips with the
+sidebar rail skin: 26 tall on squircle 14, gap 3, padding 8 left and 4
+right, a 13 px kind icon, the surface title at body size Medium, and a 16 px
+close slot with an 11 px glyph that shows on hover. The active chip rests on
+the active row tint in `text`; the others hover into the rail tint in
+`muted`. The chips sit in a strip that scrolls horizontally with the wheel,
+without a scrollbar; the active chip scrolls into view when it changes.
+Where chips are hidden past an edge, a 28 px fade to the card background
+signals them. A 26 by 26 `+` chip is pinned at the visible end of the bar,
+outside the strip; it opens a new terminal in the active tab's directory and
+disappears at the 8 tab cap. Closing the last tab closes the pane. Diff
+panes have no tab bar.
 
 State layers, painted in this order: card fill, content, dim layer, drag
 overlay, broadcast stripe (3 px of the group color, inset by the radius top

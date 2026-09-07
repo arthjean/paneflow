@@ -73,14 +73,6 @@ impl DesktopNotification {
             urgency: DesktopNotificationUrgency::Critical,
         }
     }
-
-    pub(crate) fn stalled(agent: TerminalAgent, workspace_title: &str, silent_secs: u64) -> Self {
-        Self {
-            summary: format!("{} may be stuck", agent.display_name()),
-            body: stalled_notification_body(workspace_title, silent_secs),
-            urgency: DesktopNotificationUrgency::Critical,
-        }
-    }
 }
 
 pub(crate) fn program_notification(
@@ -174,13 +166,6 @@ pub(crate) fn attention_notification_body(workspace_title: &str, message: Option
 pub(crate) fn agent_exit_notification_body(workspace_title: &str, exit_code: i32) -> String {
     format!(
         "{}: exited with code {exit_code}",
-        notification_context_body(workspace_title, None)
-    )
-}
-
-pub(crate) fn stalled_notification_body(workspace_title: &str, silent_secs: u64) -> String {
-    format!(
-        "{}: no activity for {silent_secs} s",
         notification_context_body(workspace_title, None)
     )
 }
@@ -331,10 +316,6 @@ mod tests {
         assert_eq!(
             agent_exit_notification_body("api", 1),
             "api: exited with code 1"
-        );
-        assert_eq!(
-            stalled_notification_body("api", 300),
-            "api: no activity for 300 s"
         );
         assert_eq!(
             notification_context_body("workspace", Some("Finished the release draft")),

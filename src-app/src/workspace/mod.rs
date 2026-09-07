@@ -65,9 +65,22 @@ impl AgentCompletionNotification {
     }
 
     pub(crate) fn is_unread_for(&self, surfaces: &std::collections::HashSet<u64>) -> bool {
+        self.unread_count_for(surfaces) > 0
+    }
+
+    pub(crate) fn unread_count(&self) -> usize {
+        self.unread.len()
+    }
+
+    pub(crate) fn unread_count_for(&self, surfaces: &std::collections::HashSet<u64>) -> usize {
         self.unread
             .iter()
-            .any(|key| key.is_some_and(|id| surfaces.contains(&id)))
+            .filter(|key| key.is_some_and(|id| surfaces.contains(&id)))
+            .count()
+    }
+
+    pub(crate) fn clear(&mut self) {
+        self.unread.clear();
     }
 }
 
@@ -97,6 +110,7 @@ pub struct Workspace {
     pub managed_worktrees: Vec<worktree::ManagedWorktree>,
     pub sidebar_expanded: bool,
     pub browser_profile: Option<String>,
+    pub muted: bool,
 }
 
 impl Workspace {
@@ -141,6 +155,7 @@ impl Workspace {
             managed_worktrees: Vec::new(),
             sidebar_expanded: true,
             browser_profile: None,
+            muted: false,
         }
     }
 
@@ -363,6 +378,10 @@ impl Workspace {
                     .as_ref()
                     .map(|path| path.to_string_lossy().into_owned()),
                 browsers: Vec::new(),
+                unread: self
+                    .agent_completion_notification
+                    .is_unread_for(&tab.surface_ids(cx)),
+                pull_request: None,
             })
             .collect()
     }

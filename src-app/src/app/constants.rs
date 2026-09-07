@@ -16,9 +16,6 @@ const DARK_SIDEBAR_TAB_ACTIVE_OPACITY: f32 = 0.11;
 const DARK_SIDEBAR_TAB_HOVER_OPACITY: f32 = 0.07;
 const LIGHT_SIDEBAR_TAB_ACTIVE_OPACITY: f32 = 0.08;
 const LIGHT_SIDEBAR_TAB_HOVER_OPACITY: f32 = 0.04;
-const SIDEBAR_TAB_ICON_CARD_TINT: u32 = 0x000000;
-const DARK_SIDEBAR_TAB_ICON_CARD_DARKEN: f32 = 0.10;
-const LIGHT_SIDEBAR_TAB_ICON_CARD_DARKEN: f32 = 0.05;
 
 pub(crate) const SIDEBAR_TAB_CORNER_RADIUS: Pixels = px(8.);
 
@@ -223,30 +220,6 @@ pub(crate) fn sidebar_tab_hover_background() -> Hsla {
         LIGHT_SIDEBAR_TAB_HOVER_OPACITY,
         DARK_SIDEBAR_TAB_HOVER_OPACITY,
     )
-}
-
-pub(crate) fn sidebar_tab_icon_card_background() -> Hsla {
-    let theme = crate::theme::active_theme();
-    let is_light = theme.background.l > 0.5;
-    let (tab_tint, tab_opacity, darken) = if is_light {
-        (
-            LIGHT_SIDEBAR_TAB_TINT,
-            LIGHT_SIDEBAR_TAB_ACTIVE_OPACITY,
-            LIGHT_SIDEBAR_TAB_ICON_CARD_DARKEN,
-        )
-    } else {
-        (
-            DARK_SIDEBAR_TAB_TINT,
-            DARK_SIDEBAR_TAB_ACTIVE_OPACITY,
-            DARK_SIDEBAR_TAB_ICON_CARD_DARKEN,
-        )
-    };
-    let card = Hsla {
-        a: 1.0,
-        ..theme.title_bar_background
-    }
-    .blend(Hsla::from(gpui::rgb(tab_tint)).opacity(tab_opacity));
-    card.blend(Hsla::from(gpui::rgb(SIDEBAR_TAB_ICON_CARD_TINT)).opacity(darken))
 }
 
 fn sidebar_tab_background(light_opacity: f32, dark_opacity: f32) -> Hsla {

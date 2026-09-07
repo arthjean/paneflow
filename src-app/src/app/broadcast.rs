@@ -52,10 +52,7 @@ pub(crate) fn next_free_color<Id>(groups: &[BroadcastGroup<Id>]) -> usize {
 }
 
 pub(crate) fn state_blocks_delivery(state: &crate::ai_types::AgentState) -> bool {
-    matches!(
-        state,
-        crate::ai_types::AgentState::Thinking | crate::ai_types::AgentState::Stalled
-    )
+    matches!(state, crate::ai_types::AgentState::Thinking)
 }
 
 pub(crate) fn validate_group_name<Id>(
@@ -649,7 +646,6 @@ mod tests {
     #[test]
     fn only_generating_states_block_delivery() {
         assert!(state_blocks_delivery(&AgentState::Thinking));
-        assert!(state_blocks_delivery(&AgentState::Stalled));
         assert!(!state_blocks_delivery(&AgentState::WaitingForInput));
         assert!(!state_blocks_delivery(&AgentState::Finished));
         assert!(!state_blocks_delivery(&AgentState::Errored));

@@ -35,6 +35,10 @@ pub struct PaneFlowConfig {
     #[serde(default, deserialize_with = "lenient_value_or_default")]
     pub sidebar_show: SidebarShow,
     #[serde(default, deserialize_with = "lenient_value_or_default")]
+    pub editor: EditorDisplayConfig,
+    #[serde(default, deserialize_with = "lenient_value_or_default")]
+    pub automation: AutomationConfig,
+    #[serde(default, deserialize_with = "lenient_value_or_default")]
     pub line_height: Option<f32>,
     #[serde(default, deserialize_with = "lenient_value_or_default")]
     pub cell_width: Option<f32>,
@@ -50,10 +54,6 @@ pub struct PaneFlowConfig {
     pub option_as_meta: Option<bool>,
     #[serde(default, deserialize_with = "lenient_value_or_default")]
     pub shell_integration: Option<bool>,
-    #[serde(default, deserialize_with = "lenient_value_or_default")]
-    pub agent_stall_detection: Option<bool>,
-    #[serde(default, deserialize_with = "lenient_value_or_default")]
-    pub agent_stall_threshold_secs: Option<u64>,
     #[serde(default, deserialize_with = "lenient_value_or_default")]
     pub submit_paste_delay_ms: Option<u64>,
     #[serde(default, deserialize_with = "lenient_value_or_default")]
@@ -123,6 +123,38 @@ pub struct SidebarShow {
     pub indent_guide: Option<bool>,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct EditorDisplayConfig {
+    #[serde(default, deserialize_with = "lenient_value_or_default")]
+    pub minimap: Option<bool>,
+    #[serde(default, deserialize_with = "lenient_value_or_default")]
+    pub scrollbar: Option<bool>,
+}
+
+impl EditorDisplayConfig {
+    pub fn minimap_enabled(&self) -> bool {
+        self.minimap.unwrap_or(false)
+    }
+
+    pub fn scrollbar_enabled(&self) -> bool {
+        self.scrollbar.unwrap_or(true)
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AutomationConfig {
+    #[serde(default, deserialize_with = "lenient_value_or_default")]
+    pub tab_auto_naming: Option<bool>,
+}
+
+impl AutomationConfig {
+    pub fn tab_auto_naming_enabled(&self) -> bool {
+        self.tab_auto_naming.unwrap_or(false)
+    }
+}
+
 impl SidebarShow {
     pub fn branch_enabled(&self) -> bool {
         self.branch.unwrap_or(false)
@@ -146,10 +178,6 @@ impl SidebarShow {
 }
 
 impl PaneFlowConfig {
-    pub const DEFAULT_AGENT_STALL_THRESHOLD_SECS: u64 = 60;
-    pub const MIN_AGENT_STALL_THRESHOLD_SECS: u64 = 30;
-    pub const MAX_AGENT_STALL_THRESHOLD_SECS: u64 = 86_400;
-
     pub const DEFAULT_UNFOCUSED_PANE_OPACITY: f32 = 0.7;
     pub const MIN_UNFOCUSED_PANE_OPACITY: f32 = 0.15;
     pub const MAX_UNFOCUSED_PANE_OPACITY: f32 = 1.0;
@@ -157,10 +185,6 @@ impl PaneFlowConfig {
     pub const DEFAULT_SUBMIT_PASTE_DELAY_MS: u64 = 70;
     pub const MIN_SUBMIT_PASTE_DELAY_MS: u64 = 10;
     pub const MAX_SUBMIT_PASTE_DELAY_MS: u64 = 5_000;
-
-    pub fn agent_stall_detection_enabled(&self) -> bool {
-        self.agent_stall_detection.unwrap_or(true)
-    }
 
     pub fn windows_terminal_material_enabled(&self) -> bool {
         cfg!(target_os = "windows") && self.windows_terminal_material.unwrap_or(false)
@@ -198,27 +222,6 @@ impl PaneFlowConfig {
 
     pub fn reduce_motion_enabled(&self) -> bool {
         self.reduce_motion.unwrap_or(false)
-    }
-
-    pub fn resolved_agent_stall_threshold_secs(&self) -> u64 {
-        let raw = self
-            .agent_stall_threshold_secs
-            .unwrap_or(Self::DEFAULT_AGENT_STALL_THRESHOLD_SECS);
-        let clamped = raw.clamp(
-            Self::MIN_AGENT_STALL_THRESHOLD_SECS,
-            Self::MAX_AGENT_STALL_THRESHOLD_SECS,
-        );
-        if clamped != raw {
-            tracing::warn!(
-                target: "paneflow_config::agent",
-                requested = raw,
-                clamped,
-                "agent_stall_threshold_secs out of range [{min}, {max}], clamped",
-                min = Self::MIN_AGENT_STALL_THRESHOLD_SECS,
-                max = Self::MAX_AGENT_STALL_THRESHOLD_SECS,
-            );
-        }
-        clamped
     }
 
     pub fn resolved_submit_paste_delay_ms(&self) -> u64 {

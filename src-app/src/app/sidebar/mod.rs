@@ -1,19 +1,22 @@
 pub(crate) mod context_menu;
 pub(crate) mod customize_menu;
+mod lane;
 
 use crate::ui_primitives::TooltipDelayExt;
 use gpui::{
     Animation, AnimationExt, AnyElement, AppContext, ClickEvent, Context, FontWeight,
     InteractiveElement, IntoElement, KeyDownEvent, MouseButton, ParentElement, Render,
-    SharedString, Styled, Window, div, prelude::*, px, rgb, svg,
+    SharedString, Styled, Window, div, prelude::*, px, svg,
 };
+
+use lane::{infer_lane, render_lane_slot};
 
 use crate::{
     PaneFlowApp, SIDEBAR_WIDTH, TabContextMenu, TabDrag, WorkspaceContextMenu, WorkspaceDrag,
     WorkspaceDragPreview, ai_types,
-    app::pane_palette::PalettePlacement,
+    app::pull_request::PullRequest,
     pane_drag::PaneDrag,
-    ui_primitives::{ROW_RADIUS, squircle, squircle_skin},
+    ui_primitives::{ROW_RADIUS, squircle_skin},
     workspace::{Tab, Workspace},
 };
 
@@ -32,7 +35,6 @@ struct SidebarRenderTimeCanary {
 enum SidebarAgentState {
     NeedsInput,
     Errored,
-    Stalled,
     Finished,
     Thinking,
 }
@@ -61,8 +63,6 @@ pub(crate) const SIDEBAR_ROW_PADDING_Y: f32 = 6.0;
 const SIDEBAR_ROW_GAP: f32 = 4.0;
 pub(crate) const SIDEBAR_ROW_LINE_HEIGHT: f32 = 18.0;
 const SIDEBAR_TITLE_ROW_GAP: f32 = 8.0;
-const SIDEBAR_AGENT_STATUS_SLOT_WIDTH: f32 = 48.0;
-const SIDEBAR_AGENT_ICON_SLOT_WIDTH: f32 = 20.0;
 const SIDEBAR_DROP_GROUP: &str = "sidebar-drop-zone";
 const SIDEBAR_DROP_PLACEHOLDER_MARGIN: f32 = 6.0;
 const SIDEBAR_DROP_PLACEHOLDER_RADIUS: f32 = 8.0;
@@ -70,20 +70,12 @@ const SIDEBAR_DROP_PLACEHOLDER_FILL_ALPHA: f32 = 0.10;
 const SIDEBAR_DROP_PLACEHOLDER_BORDER_ALPHA: f32 = 0.22;
 const SIDEBAR_ACTION_BUTTON_SIZE: f32 = 20.0;
 const SIDEBAR_ACTION_BUTTON_GAP: f32 = 4.0;
-const SIDEBAR_ACTION_LANE_WIDTH: f32 = SIDEBAR_TITLE_ROW_GAP + SIDEBAR_ACTION_BUTTON_SIZE;
 const SIDEBAR_ROW_SPACING: f32 = 4.0;
 const SIDEBAR_DROP_LINE_PX: f32 = 2.0;
 const SIDEBAR_DROP_BAND_REACH: f32 = SIDEBAR_ROW_LINE_HEIGHT / 2.0 + SIDEBAR_ROW_PADDING_Y;
 const SIDEBAR_WORKSPACE_ROW_CONTENT_WIDTH: f32 =
     SIDEBAR_WIDTH - SIDEBAR_ROW_MARGIN_X * 2.0 - SIDEBAR_ROW_PADDING_X * 2.0;
 const SIDEBAR_FOLDER_ICON_WIDTH: f32 = 14.0;
-const SIDEBAR_TAB_ICON_SIZE: f32 = 16.0;
-const SIDEBAR_TAB_ICON_GAP: f32 = 3.0;
-const SIDEBAR_TAB_ICON_CAP: usize = 4;
-const SIDEBAR_TAB_CARD_WIDTH: f32 = 24.0;
-const SIDEBAR_TAB_CARD_HEIGHT: f32 = 24.0;
-const SIDEBAR_TAB_CARD_ICON_SIZE: f32 = 16.0;
-const SIDEBAR_TAB_ICON_OVERLAP: f32 = 11.0;
 
 fn sidebar_row_shell() -> gpui::Div {
     div()
@@ -97,19 +89,16 @@ fn sidebar_row_shell() -> gpui::Div {
         .gap(px(SIDEBAR_ROW_GAP))
 }
 
-fn render_sidebar_indent_guide(ui: crate::theme::UiColors, interrupted: bool) -> Vec<gpui::Div> {
+fn render_sidebar_indent_guide(ui: crate::theme::UiColors) -> gpui::Div {
     let color = ui.text.opacity(0.08);
     let left = px(SIDEBAR_ROW_PADDING_X + (SIDEBAR_FOLDER_ICON_WIDTH / 2.).floor());
-    let segment = move || div().absolute().left(left).w(px(1.)).bg(color);
-    if !interrupted {
-        return vec![segment().top_0().bottom_0()];
-    }
-    let center = SIDEBAR_ROW_PADDING_Y + SIDEBAR_ROW_LINE_HEIGHT / 2.;
-    let radius = SIDEBAR_AGENT_ICON_SLOT_WIDTH / 2.;
-    vec![
-        segment().top_0().h(px(center - radius)),
-        segment().top(px(center + radius)).bottom_0(),
-    ]
+    div()
+        .absolute()
+        .left(left)
+        .top(px(-SIDEBAR_ROW_SPACING))
+        .bottom_0()
+        .w(px(1.))
+        .bg(color)
 }
 
 fn squircle_row(
@@ -164,23 +153,12 @@ fn sidebar_action_button(
 }
 
 impl SidebarAgentSummary {
-    fn slot_width(self) -> f32 {
-        if self.state == SidebarAgentState::NeedsInput {
-            SIDEBAR_AGENT_STATUS_SLOT_WIDTH
-        } else if self.count > 1 {
-            28.0
-        } else {
-            SIDEBAR_AGENT_ICON_SLOT_WIDTH
-        }
-    }
-
     fn tooltip_state(self) -> String {
         match self.state {
             SidebarAgentState::NeedsInput => {
                 agent_status_sentence(self.count, "needs input", "need input")
             }
             SidebarAgentState::Errored => agent_status_sentence(self.count, "errored", "errored"),
-            SidebarAgentState::Stalled => agent_status_sentence(self.count, "stalled", "stalled"),
             SidebarAgentState::Thinking => {
                 agent_status_sentence(self.count, "thinking", "thinking")
             }
@@ -229,43 +207,41 @@ fn tab_diffstat_visible(
     show.diffstat_enabled() && (stats.insertions > 0 || stats.deletions > 0)
 }
 
-fn sidebar_agent_summary<'a, I>(sessions: I, completion_unread: bool) -> Option<SidebarAgentSummary>
+fn sidebar_agent_summary<'a, I>(
+    sessions: I,
+    completion_unread: usize,
+) -> Option<SidebarAgentSummary>
 where
     I: IntoIterator<Item = &'a ai_types::AgentSession>,
 {
-    let mut counts = [0usize; 4];
+    let mut counts = [0usize; 3];
     for session in sessions {
         let index = match session.state {
             ai_types::AgentState::WaitingForInput => 0,
             ai_types::AgentState::Errored => 1,
-            ai_types::AgentState::Stalled => 2,
-            ai_types::AgentState::Thinking => 3,
+            ai_types::AgentState::Thinking => 2,
             ai_types::AgentState::Finished => continue,
         };
         counts[index] += 1;
     }
 
-    let priority = [
-        SidebarAgentState::NeedsInput,
-        SidebarAgentState::Errored,
-        SidebarAgentState::Stalled,
-    ];
-    for (state, count) in priority.into_iter().zip(counts[..3].iter().copied()) {
+    let priority = [SidebarAgentState::NeedsInput, SidebarAgentState::Errored];
+    for (state, count) in priority.into_iter().zip(counts[..2].iter().copied()) {
         if count > 0 {
             return Some(SidebarAgentSummary { state, count });
         }
     }
 
-    if completion_unread {
+    if completion_unread > 0 {
         return Some(SidebarAgentSummary {
             state: SidebarAgentState::Finished,
-            count: 1,
+            count: completion_unread,
         });
     }
 
-    (counts[3] > 0).then_some(SidebarAgentSummary {
+    (counts[2] > 0).then_some(SidebarAgentSummary {
         state: SidebarAgentState::Thinking,
-        count: counts[3],
+        count: counts[2],
     })
 }
 
@@ -293,34 +269,6 @@ where
     sessions
         .into_iter()
         .filter(move |session| session.surface_id.is_some_and(|id| surfaces.contains(&id)))
-}
-
-fn tab_icon_cluster_split(pane_count: usize) -> (usize, usize) {
-    let shown = pane_count.min(SIDEBAR_TAB_ICON_CAP);
-    (shown, pane_count - shown)
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct TabPaneIcon {
-    path: &'static str,
-    label: &'static str,
-}
-
-fn tab_pane_icon(pane: &crate::pane::Pane, cx: &gpui::App) -> TabPaneIcon {
-    let agent = pane
-        .surface
-        .as_terminal()
-        .and_then(|terminal| terminal.read(cx).terminal.detected_agent);
-    match agent {
-        Some(agent) => TabPaneIcon {
-            path: agent.icon_path(),
-            label: agent.display_name(),
-        },
-        None => TabPaneIcon {
-            path: pane.surface.kind_icon(),
-            label: pane.surface.kind_label(),
-        },
-    }
 }
 
 fn tab_display_title(tab: &Tab, tab_idx: usize) -> String {
@@ -754,11 +702,17 @@ impl PaneFlowApp {
         let folder_sessions = || folder_row_sessions(ws.agent_sessions.values(), is_expanded);
         let agent_status = ai_types::workspace_agent_status(folder_sessions(), &ws.detected_agents);
         let completion_unread = if is_expanded {
-            ws.agent_completion_notification.has_unattributed_unread()
+            usize::from(ws.agent_completion_notification.has_unattributed_unread())
         } else {
-            ws.agent_completion_notification.is_unread()
+            ws.agent_completion_notification.unread_count()
         };
         let row_agent_status = sidebar_agent_summary(folder_sessions(), completion_unread);
+        let lane = infer_lane(
+            row_agent_status,
+            (!is_expanded)
+                .then(|| self.workspace_pull_request(ws))
+                .flatten(),
+        );
         let title_el = div()
             .flex_1()
             .min_w_0()
@@ -790,7 +744,7 @@ impl PaneFlowApp {
                     .text_color(ui.muted),
             );
 
-        let mut title_row = div()
+        let title_row = div()
             .flex()
             .flex_row()
             .items_center()
@@ -799,18 +753,15 @@ impl PaneFlowApp {
             .max_w(px(SIDEBAR_WORKSPACE_ROW_CONTENT_WIDTH))
             .min_w_0()
             .overflow_x_hidden()
-            .pr(px(SIDEBAR_ACTION_LANE_WIDTH))
             .child(disclosure)
-            .child(title_el);
-        if let Some(row_agent_status) = row_agent_status {
-            let status_tooltip = sidebar_agent_status_tooltip(row_agent_status, &agent_status);
-            title_row = title_row.child(render_workspace_agent_summary(
-                row_agent_status,
+            .child(title_el)
+            .child(render_lane_slot(
+                lane,
                 &format!("ws-{ws_id}"),
-                status_tooltip,
+                |summary| sidebar_agent_status_tooltip(summary, &agent_status),
+                group_name.clone(),
                 ui,
             ));
-        }
 
         let mut body = div()
             .flex()
@@ -873,7 +824,6 @@ impl PaneFlowApp {
         let panes = tab.collect_panes();
         let mut surfaces: std::collections::HashSet<u64> =
             std::collections::HashSet::with_capacity(panes.len());
-        let mut pane_icons: Vec<TabPaneIcon> = Vec::with_capacity(panes.len());
         let mut tab_agents: std::collections::HashSet<String> = std::collections::HashSet::new();
         for pane in &panes {
             let pane = pane.read(cx);
@@ -883,21 +833,14 @@ impl PaneFlowApp {
                     tab_agents.insert(agent.binary().to_string());
                 }
             }
-            pane_icons.push(tab_pane_icon(pane, cx));
         }
-        let pending_split_pane = match self.pane_palette.as_ref().map(|p| &p.placement) {
-            Some(PalettePlacement::Split { target, .. }) => {
-                let target = target.entity_id();
-                panes.iter().any(|pane| pane.entity_id() == target)
-            }
-            _ => false,
-        };
         let tab_sessions = || tab_row_sessions(ws.agent_sessions.values(), &surfaces);
         let row_agent_status = sidebar_agent_summary(
             tab_sessions(),
-            ws.agent_completion_notification.is_unread_for(&surfaces),
+            ws.agent_completion_notification.unread_count_for(&surfaces),
         );
         let agent_status = ai_types::workspace_agent_status(tab_sessions(), &tab_agents);
+        let lane = infer_lane(row_agent_status, self.tab_pull_request(ws, tab));
         let hover_bg = crate::app::constants::sidebar_tab_hover_background();
         let (resting_bg, hovered_bg) = if is_active_tab && is_active_workspace {
             (Some(hover_bg), None)
@@ -921,19 +864,7 @@ impl PaneFlowApp {
                 .child(title.clone())
         };
 
-        let leading_slot = match row_agent_status {
-            Some(status) => render_tab_agent_summary(
-                status,
-                &format!("tab-{tab_id}"),
-                sidebar_agent_status_tooltip(status, &agent_status),
-                ui,
-            ),
-            None => div()
-                .flex_none()
-                .w(px(SIDEBAR_FOLDER_ICON_WIDTH))
-                .into_any_element(),
-        };
-
+        let tab_group = SharedString::from(format!("tab-row-group-{tab_id}"));
         let mut title_row = div()
             .flex()
             .flex_row()
@@ -942,28 +873,15 @@ impl PaneFlowApp {
             .w(px(SIDEBAR_WORKSPACE_ROW_CONTENT_WIDTH))
             .max_w(px(SIDEBAR_WORKSPACE_ROW_CONTENT_WIDTH))
             .min_w_0()
-            .child(leading_slot)
-            .child(title_el);
-        let tab_group = SharedString::from(format!("tab-row-group-{tab_id}"));
-        match render_tab_pane_icons(
-            &pane_icons,
-            &format!("tab-{tab_id}"),
-            pending_split_pane,
-            ui,
-        ) {
-            Some(cluster) => {
-                title_row = title_row.child(
-                    div()
-                        .flex_none()
-                        .group_hover(tab_group.clone(), |style| style.invisible())
-                        .child(cluster),
-                );
-            }
-            None => {
-                title_row = title_row.child(div().flex_none().w(px(SIDEBAR_ACTION_BUTTON_SIZE)));
-            }
-        }
-
+            .child(div().flex_none().w(px(SIDEBAR_FOLDER_ICON_WIDTH)))
+            .child(title_el)
+            .child(render_lane_slot(
+                lane,
+                &format!("tab-{tab_id}"),
+                |summary| sidebar_agent_status_tooltip(summary, &agent_status),
+                tab_group.clone(),
+                ui,
+            ));
         title_row = title_row.child(
             sidebar_hover_actions(tab_group.clone()).child(
                 sidebar_action_button(
@@ -1062,12 +980,8 @@ impl PaneFlowApp {
                 }
             }));
 
-        let body = match self.render_tab_checkout_meta(
-            ws,
-            tab,
-            SIDEBAR_FOLDER_ICON_WIDTH + SIDEBAR_TITLE_ROW_GAP,
-            ui,
-        ) {
+        let indent = SIDEBAR_FOLDER_ICON_WIDTH + SIDEBAR_TITLE_ROW_GAP;
+        let body = match self.render_tab_checkout_meta(ws, tab, indent, ui) {
             Some(meta) => div()
                 .flex()
                 .flex_col()
@@ -1090,12 +1004,12 @@ impl PaneFlowApp {
             .rounded(ROW_RADIUS)
             .when(
                 self.cached_config.sidebar_show.indent_guide_enabled(),
-                |el| el.children(render_sidebar_indent_guide(ui, row_agent_status.is_some())),
+                |el| el.child(render_sidebar_indent_guide(ui)),
             )
             .child(row)
     }
 
-    fn tab_row_branch(&self, ws: &Workspace, tab: &Tab) -> String {
+    pub(crate) fn tab_row_branch(&self, ws: &Workspace, tab: &Tab) -> String {
         match tab.worktree.as_ref() {
             Some(_) => self
                 .tab_checkout_git(tab)
@@ -1103,6 +1017,24 @@ impl PaneFlowApp {
                 .unwrap_or_default(),
             None => ws.git_branch.clone(),
         }
+    }
+
+    pub(crate) fn tab_pull_request(&self, ws: &Workspace, tab: &Tab) -> Option<PullRequest> {
+        if !self.cached_config.sidebar_show.pr_enabled() {
+            return None;
+        }
+        let repo_root = ws.repo_root.as_ref()?;
+        let branch = self.tab_row_branch(ws, tab);
+        (!branch.is_empty())
+            .then(|| self.pull_request_for(repo_root, &branch))
+            .flatten()
+    }
+
+    fn workspace_pull_request(&self, ws: &Workspace) -> Option<PullRequest> {
+        ws.tabs()
+            .iter()
+            .filter_map(|tab| self.tab_pull_request(ws, tab))
+            .max_by_key(|pr| (pr.state.rank(), pr.number))
     }
 
     fn tab_row_checkout(
@@ -1146,15 +1078,7 @@ impl PaneFlowApp {
             return None;
         }
 
-        let pr = show
-            .pr_enabled()
-            .then(|| self.tab_row_branch(ws, tab))
-            .and_then(|branch| {
-                let repo_root = ws.repo_root.as_ref()?;
-                (!branch.is_empty())
-                    .then(|| self.pull_request_for(repo_root, &branch))
-                    .flatten()
-            });
+        let pr = self.tab_pull_request(ws, tab);
 
         let branch = draw_branch.then(|| {
             div()
@@ -1311,238 +1235,7 @@ fn sidebar_agent_status_tooltip(
     }
 }
 
-fn render_tab_pane_icons(
-    icons: &[TabPaneIcon],
-    row_key: &str,
-    pending_pane: bool,
-    ui: crate::theme::UiColors,
-) -> Option<AnyElement> {
-    if icons.is_empty() {
-        return None;
-    }
-    let (shown, overflow) = tab_icon_cluster_split(icons.len());
-    let tooltip: SharedString = icons
-        .iter()
-        .map(|icon| icon.label)
-        .collect::<Vec<_>>()
-        .join(", ")
-        .into();
-
-    let glyph = ui.text.opacity(0.75);
-    if shown == 1 && !pending_pane {
-        return Some(tab_pane_icon_lane(
-            row_key,
-            tooltip,
-            overflow,
-            ui,
-            svg()
-                .size(px(SIDEBAR_TAB_ICON_SIZE))
-                .min_w(px(SIDEBAR_TAB_ICON_SIZE))
-                .flex_none()
-                .path(icons[0].path)
-                .text_color(glyph),
-        ));
-    }
-
-    let card_fill = crate::app::constants::sidebar_tab_icon_card_background();
-    let card_border = ui.text.opacity(0.14);
-    let card_glyph = ui.text.opacity(0.92);
-
-    let step = SIDEBAR_TAB_CARD_WIDTH - SIDEBAR_TAB_ICON_OVERLAP;
-    let cluster_width = SIDEBAR_TAB_CARD_WIDTH + (shown.saturating_sub(1) as f32) * step;
-    let card_overhang = (SIDEBAR_ROW_LINE_HEIGHT - SIDEBAR_TAB_CARD_HEIGHT) / 2.0;
-    let mut cluster = div()
-        .flex_none()
-        .relative()
-        .w(px(cluster_width))
-        .min_w(px(cluster_width))
-        .h(px(SIDEBAR_ROW_LINE_HEIGHT));
-    for (slot, icon) in icons[..shown].iter().enumerate() {
-        cluster = cluster.child(
-            div()
-                .absolute()
-                .top(px(card_overhang))
-                .left(px(slot as f32 * step))
-                .flex()
-                .flex_row()
-                .items_center()
-                .justify_center()
-                .w(px(SIDEBAR_TAB_CARD_WIDTH))
-                .h(px(SIDEBAR_TAB_CARD_HEIGHT))
-                .child(squircle::squircle_fill(ROW_RADIUS, card_fill))
-                .child(squircle::squircle_border(ROW_RADIUS, px(1.), card_border))
-                .child(
-                    svg()
-                        .size(px(SIDEBAR_TAB_CARD_ICON_SIZE))
-                        .flex_none()
-                        .path(icon.path)
-                        .text_color(card_glyph),
-                ),
-        );
-    }
-    Some(tab_pane_icon_lane(row_key, tooltip, overflow, ui, cluster))
-}
-
-fn tab_pane_icon_lane(
-    row_key: &str,
-    tooltip: SharedString,
-    overflow: usize,
-    ui: crate::theme::UiColors,
-    cluster: impl IntoElement,
-) -> AnyElement {
-    div()
-        .id(SharedString::from(format!("tab-panes-{row_key}")))
-        .flex_none()
-        .flex()
-        .flex_row()
-        .items_center()
-        .gap(px(SIDEBAR_TAB_ICON_GAP))
-        .delayed_tooltip(move |_w, cx| {
-            cx.new(|_| SidebarTooltip {
-                label: tooltip.clone(),
-            })
-            .into()
-        })
-        .child(cluster)
-        .when(overflow > 0, |d| {
-            d.child(
-                div()
-                    .flex_none()
-                    .text_size(px(10.))
-                    .font_weight(FontWeight::MEDIUM)
-                    .text_color(ui.muted)
-                    .child(format!("+{overflow}")),
-            )
-        })
-        .into_any_element()
-}
-
-fn render_workspace_agent_summary(
-    summary: SidebarAgentSummary,
-    row_key: &str,
-    tooltip: SharedString,
-    ui: crate::theme::UiColors,
-) -> AnyElement {
-    let (color, glyph, label) = agent_summary_visual(summary, row_key, ui);
-
-    div()
-        .id(SharedString::from(format!("agent-status-{row_key}")))
-        .w(px(summary.slot_width()))
-        .h(px(20.))
-        .flex_none()
-        .flex()
-        .flex_row()
-        .items_center()
-        .justify_end()
-        .gap(px(3.))
-        .text_size(px(10.))
-        .font_weight(FontWeight::MEDIUM)
-        .text_color(color)
-        .delayed_tooltip(move |_w, cx| {
-            cx.new(|_| SidebarTooltip {
-                label: tooltip.clone(),
-            })
-            .into()
-        })
-        .child(glyph)
-        .when_some(label, |d, label| d.child(label))
-        .into_any_element()
-}
-
-fn render_tab_agent_summary(
-    summary: SidebarAgentSummary,
-    row_key: &str,
-    tooltip: SharedString,
-    ui: crate::theme::UiColors,
-) -> AnyElement {
-    let (_, glyph, _) = agent_summary_visual(summary, row_key, ui);
-
-    div()
-        .id(SharedString::from(format!("agent-status-{row_key}")))
-        .w(px(SIDEBAR_FOLDER_ICON_WIDTH))
-        .h(px(20.))
-        .flex_none()
-        .flex()
-        .flex_row()
-        .items_center()
-        .justify_center()
-        .delayed_tooltip(move |_w, cx| {
-            cx.new(|_| SidebarTooltip {
-                label: tooltip.clone(),
-            })
-            .into()
-        })
-        .child(glyph)
-        .into_any_element()
-}
-
-fn agent_summary_visual(
-    summary: SidebarAgentSummary,
-    row_key: &str,
-    ui: crate::theme::UiColors,
-) -> (gpui::Hsla, AnyElement, Option<String>) {
-    match summary.state {
-        SidebarAgentState::NeedsInput => (
-            rgb(0xFBBF24).into(),
-            svg()
-                .size(px(11.))
-                .flex_none()
-                .path("icons/bell.svg")
-                .text_color(rgb(0xFBBF24))
-                .into_any_element(),
-            Some(if summary.count > 1 {
-                format!("Input {}", summary.count)
-            } else {
-                "Input".to_string()
-            }),
-        ),
-        SidebarAgentState::Errored => (
-            ui.agent_error,
-            svg()
-                .size(px(11.))
-                .flex_none()
-                .path("icons/x_circle.svg")
-                .text_color(ui.agent_error)
-                .into_any_element(),
-            (summary.count > 1).then(|| summary.count.to_string()),
-        ),
-        SidebarAgentState::Stalled => (
-            ui.agent_stalled,
-            svg()
-                .size(px(11.))
-                .flex_none()
-                .path("icons/triangle-alert.svg")
-                .text_color(ui.agent_stalled)
-                .into_any_element(),
-            (summary.count > 1).then(|| summary.count.to_string()),
-        ),
-        SidebarAgentState::Thinking => {
-            let color = ui.muted;
-            (
-                color,
-                render_comet_trail_loader(row_key, color),
-                (summary.count > 1).then(|| summary.count.to_string()),
-            )
-        }
-        SidebarAgentState::Finished => {
-            let color: gpui::Hsla = rgb(0x83C3FF).into();
-            (
-                color,
-                div()
-                    .size(px(11.))
-                    .flex_none()
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .child(div().size(px(7.)).rounded_full().bg(color))
-                    .into_any_element(),
-                None,
-            )
-        }
-    }
-}
-
-fn render_comet_trail_loader(row_key: &str, color: gpui::Hsla) -> AnyElement {
+pub(super) fn render_comet_trail_loader(row_key: &str, color: gpui::Hsla) -> AnyElement {
     static SYNC_EPOCH: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
 
     const MATRIX_SIZE: usize = 3;
@@ -1623,18 +1316,17 @@ impl Render for SidebarTooltip {
 
 #[cfg(test)]
 mod tests {
+    use super::lane::{Lane, infer_lane};
     use super::{
-        ROW_RADIUS, SIDEBAR_ACTION_BUTTON_SIZE, SIDEBAR_ACTION_LANE_WIDTH, SIDEBAR_DROP_BAND_REACH,
-        SIDEBAR_DROP_LINE_PX, SIDEBAR_FOLDER_ICON_WIDTH, SIDEBAR_ROW_LINE_HEIGHT,
-        SIDEBAR_ROW_MARGIN_X, SIDEBAR_ROW_PADDING_Y, SIDEBAR_ROW_SPACING, SIDEBAR_TAB_CARD_HEIGHT,
-        SIDEBAR_TAB_CARD_ICON_SIZE, SIDEBAR_TAB_CARD_WIDTH, SIDEBAR_TAB_ICON_CAP,
-        SIDEBAR_TAB_ICON_SIZE, SIDEBAR_TITLE_ROW_GAP, SIDEBAR_WIDTH, SidebarAgentState,
-        SidebarAgentSummary, SidebarDropSlot, SidebarRow, folder_row_sessions, reorder_target,
-        sidebar_agent_summary, sidebar_drop_slots, sidebar_row_shell, tab_diffstat_visible,
-        tab_display_title, tab_icon_cluster_split, tab_row_sessions,
+        ROW_RADIUS, SIDEBAR_DROP_BAND_REACH, SIDEBAR_DROP_LINE_PX, SIDEBAR_FOLDER_ICON_WIDTH,
+        SIDEBAR_ROW_LINE_HEIGHT, SIDEBAR_ROW_MARGIN_X, SIDEBAR_ROW_PADDING_Y, SIDEBAR_ROW_SPACING,
+        SIDEBAR_WIDTH, SidebarAgentState, SidebarAgentSummary, SidebarDropSlot, SidebarRow,
+        folder_row_sessions, reorder_target, sidebar_agent_summary, sidebar_drop_slots,
+        sidebar_row_shell, tab_diffstat_visible, tab_display_title, tab_row_sessions,
     };
     use crate::agent_launcher::TerminalAgent;
     use crate::ai_types::{AgentSession, AgentState};
+    use crate::app::pull_request::{PrState, PullRequest};
     use crate::workspace::Tab;
     use gpui::{
         AvailableSpace, InteractiveElement, ParentElement, Styled, TestAppContext, div, point, px,
@@ -1884,7 +1576,7 @@ mod tests {
 
     #[test]
     fn sidebar_agent_summary_hides_idle_without_signal() {
-        assert_eq!(sidebar_agent_summary(std::iter::empty(), false), None);
+        assert_eq!(sidebar_agent_summary(std::iter::empty(), 0), None);
     }
 
     #[test]
@@ -1895,7 +1587,7 @@ mod tests {
             session(AgentState::WaitingForInput),
         ];
         assert_eq!(
-            sidebar_agent_summary(sessions.iter(), false),
+            sidebar_agent_summary(sessions.iter(), 0),
             Some(SidebarAgentSummary {
                 state: SidebarAgentState::NeedsInput,
                 count: 2
@@ -1911,11 +1603,7 @@ mod tests {
                 SidebarAgentState::Thinking,
             ),
             (
-                vec![AgentState::Thinking, AgentState::Stalled],
-                SidebarAgentState::Stalled,
-            ),
-            (
-                vec![AgentState::Stalled, AgentState::Errored],
+                vec![AgentState::Thinking, AgentState::Errored],
                 SidebarAgentState::Errored,
             ),
             (
@@ -1926,7 +1614,7 @@ mod tests {
         for (states, expected) in cases {
             let sessions: Vec<_> = states.into_iter().map(session).collect();
             assert_eq!(
-                sidebar_agent_summary(sessions.iter(), false).map(|summary| summary.state),
+                sidebar_agent_summary(sessions.iter(), 0).map(|summary| summary.state),
                 Some(expected)
             );
         }
@@ -1935,7 +1623,7 @@ mod tests {
     #[test]
     fn sidebar_agent_summary_surfaces_unread_completion_without_live_session() {
         assert_eq!(
-            sidebar_agent_summary(std::iter::empty(), true),
+            sidebar_agent_summary(std::iter::empty(), 1),
             Some(SidebarAgentSummary {
                 state: SidebarAgentState::Finished,
                 count: 1
@@ -1946,7 +1634,58 @@ mod tests {
     #[test]
     fn sidebar_agent_summary_hides_acknowledged_finished_session() {
         let sessions = [session(AgentState::Finished)];
-        assert_eq!(sidebar_agent_summary(sessions.iter(), false), None);
+        assert_eq!(sidebar_agent_summary(sessions.iter(), 0), None);
+    }
+
+    #[test]
+    fn the_finished_count_is_the_number_of_unread_surfaces() {
+        assert_eq!(
+            sidebar_agent_summary(std::iter::empty(), 3),
+            Some(SidebarAgentSummary {
+                state: SidebarAgentState::Finished,
+                count: 3
+            })
+        );
+    }
+
+    fn pr(state: PrState) -> PullRequest {
+        PullRequest { number: 46, state }
+    }
+
+    #[test]
+    fn an_agent_state_outranks_the_pull_request() {
+        let working = SidebarAgentSummary {
+            state: SidebarAgentState::Thinking,
+            count: 1,
+        };
+        assert_eq!(
+            infer_lane(Some(working), Some(pr(PrState::Open))),
+            Some(Lane::Agent(working))
+        );
+        assert_eq!(
+            infer_lane(None, Some(pr(PrState::Open))),
+            Some(Lane::PullRequest(pr(PrState::Open)))
+        );
+    }
+
+    #[test]
+    fn a_closed_pull_request_draws_no_lane() {
+        assert_eq!(infer_lane(None, Some(pr(PrState::Closed))), None);
+        assert_eq!(infer_lane(None, None), None);
+    }
+
+    #[test]
+    fn every_lane_answers_with_a_word_and_only_agents_count() {
+        let summary = |state, count| Lane::Agent(SidebarAgentSummary { state, count });
+        assert_eq!(summary(SidebarAgentState::NeedsInput, 1).label(), "Input");
+        assert_eq!(summary(SidebarAgentState::NeedsInput, 2).label(), "Input 2");
+        assert_eq!(summary(SidebarAgentState::Errored, 1).label(), "Error");
+        assert_eq!(summary(SidebarAgentState::Thinking, 1).label(), "");
+        assert_eq!(summary(SidebarAgentState::Thinking, 2).label(), "2");
+        assert_eq!(summary(SidebarAgentState::Finished, 3).label(), "Done 3");
+        assert_eq!(Lane::PullRequest(pr(PrState::Open)).label(), "Review");
+        assert_eq!(Lane::PullRequest(pr(PrState::Draft)).label(), "Draft");
+        assert_eq!(Lane::PullRequest(pr(PrState::Merged)).label(), "Merged");
     }
 
     #[test]
@@ -1976,7 +1715,7 @@ mod tests {
         let sessions = attributed_sessions();
         let surfaces = HashSet::from([11u64]);
         assert_eq!(
-            sidebar_agent_summary(tab_row_sessions(sessions.iter(), &surfaces), false),
+            sidebar_agent_summary(tab_row_sessions(sessions.iter(), &surfaces), 0),
             Some(SidebarAgentSummary {
                 state: SidebarAgentState::NeedsInput,
                 count: 1
@@ -1985,7 +1724,7 @@ mod tests {
         );
 
         assert_eq!(
-            sidebar_agent_summary(tab_row_sessions(sessions.iter(), &HashSet::new()), false),
+            sidebar_agent_summary(tab_row_sessions(sessions.iter(), &HashSet::new()), 0),
             None
         );
     }
@@ -1994,7 +1733,7 @@ mod tests {
     fn expanded_folder_keeps_only_the_unattributed_sessions() {
         let sessions = attributed_sessions();
         assert_eq!(
-            sidebar_agent_summary(folder_row_sessions(sessions.iter(), true), false),
+            sidebar_agent_summary(folder_row_sessions(sessions.iter(), true), 0),
             Some(SidebarAgentSummary {
                 state: SidebarAgentState::Thinking,
                 count: 1
@@ -2003,7 +1742,7 @@ mod tests {
 
         let resolved = [attributed_sessions()[0].clone()];
         assert_eq!(
-            sidebar_agent_summary(folder_row_sessions(resolved.iter(), true), false),
+            sidebar_agent_summary(folder_row_sessions(resolved.iter(), true), 0),
             None
         );
     }
@@ -2012,7 +1751,7 @@ mod tests {
     fn collapsed_folder_re_aggregates_every_tab() {
         let sessions = attributed_sessions();
         assert_eq!(
-            sidebar_agent_summary(folder_row_sessions(sessions.iter(), false), false),
+            sidebar_agent_summary(folder_row_sessions(sessions.iter(), false), 0),
             Some(SidebarAgentSummary {
                 state: SidebarAgentState::NeedsInput,
                 count: 1
@@ -2033,54 +1772,5 @@ mod tests {
         let tab_after = tab_row_sessions(sessions.iter(), &surfaces).count();
         assert_eq!((folder_after, tab_after), (0, 2));
         assert_eq!(folder_before + tab_before, folder_after + tab_after);
-    }
-
-    #[test]
-    fn the_folder_action_lane_holds_its_button() {
-        let cluster = SIDEBAR_ACTION_BUTTON_SIZE + SIDEBAR_TITLE_ROW_GAP;
-        assert_eq!(
-            SIDEBAR_ACTION_LANE_WIDTH, cluster,
-            "the reserved lane no longer matches the cluster it holds"
-        );
-        let narrowest_cluster = SIDEBAR_TAB_ICON_SIZE + SIDEBAR_TITLE_ROW_GAP;
-        assert!(
-            narrowest_cluster >= SIDEBAR_ACTION_BUTTON_SIZE,
-            "a tab row's close button now overhangs past its pane cluster onto the title"
-        );
-    }
-
-    #[test]
-    fn tab_card_fits_inside_a_row() {
-        let row_height = SIDEBAR_ROW_LINE_HEIGHT + 2. * SIDEBAR_ROW_PADDING_Y;
-        assert!(
-            SIDEBAR_TAB_CARD_HEIGHT <= row_height,
-            "a {SIDEBAR_TAB_CARD_HEIGHT}px card overflows a {row_height}px row and would be clipped"
-        );
-        assert!(
-            SIDEBAR_TAB_CARD_ICON_SIZE + 8. <= SIDEBAR_TAB_CARD_WIDTH.min(SIDEBAR_TAB_CARD_HEIGHT),
-            "a {SIDEBAR_TAB_CARD_ICON_SIZE}px glyph leaves under 4px of padding in the card"
-        );
-        for side in [SIDEBAR_TAB_CARD_WIDTH, SIDEBAR_TAB_CARD_HEIGHT] {
-            let gap = side - SIDEBAR_TAB_CARD_ICON_SIZE;
-            assert_eq!(
-                gap % 2.,
-                0.,
-                "a {gap}px gap around the glyph centers it on a half pixel"
-            );
-        }
-    }
-
-    #[test]
-    fn tab_icon_cluster_caps_at_four_panes() {
-        assert_eq!(tab_icon_cluster_split(0), (0, 0));
-        assert_eq!(tab_icon_cluster_split(1), (1, 0));
-        assert_eq!(
-            tab_icon_cluster_split(SIDEBAR_TAB_ICON_CAP),
-            (SIDEBAR_TAB_ICON_CAP, 0)
-        );
-        assert_eq!(
-            tab_icon_cluster_split(SIDEBAR_TAB_ICON_CAP + 3),
-            (SIDEBAR_TAB_ICON_CAP, 3)
-        );
     }
 }

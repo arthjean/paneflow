@@ -118,6 +118,7 @@ impl PaneFlowApp {
             .map(|s| s.review_collapsed.clone())
             .unwrap_or_default();
 
+        let mut pull_request_seeds = Vec::new();
         let (workspaces, active_idx, restored_browsers) = match saved_session {
             Some(session) => {
                 log::info!(
@@ -127,6 +128,7 @@ impl PaneFlowApp {
                 );
                 let (workspaces, active_idx, restored_browsers) =
                     Self::restore_workspaces(&session, cx);
+                pull_request_seeds = Self::pull_request_seeds(&session, &workspaces);
                 if workspaces.is_empty() {
                     log::warn!(
                         "session restore: session contained no restorable workspaces; creating default workspace"
@@ -663,6 +665,7 @@ impl PaneFlowApp {
                 install_method,
                 update_attempt_count: 0,
                 download_generation: 0,
+                dismissed_version: None,
             },
             custom_buttons_modal: None,
             custom_buttons_modal_focus: cx.focus_handle(),
@@ -693,6 +696,10 @@ impl PaneFlowApp {
                 diff_tab_close_armed: None,
                 diff_branch_menu: None,
                 width: crate::app::diff_dock::DIFF_DOCK_PANEL_WIDTH,
+                maximized: None,
+                maximize_animation: None,
+                reveal_animation: None,
+                pane_grid_width: std::rc::Rc::default(),
                 resize: None,
                 h_scroll_drag: None,
                 vertical_scrollbar: Default::default(),
@@ -707,6 +714,11 @@ impl PaneFlowApp {
             app.restore_review_layout(&node, cx);
         }
         app.restore_review_collapsed(&restored_review_collapsed);
+        for (repo_root, branch, pr) in pull_request_seeds {
+            app.pr_states
+                .seed(&repo_root.to_string_lossy(), &branch, pr);
+        }
+        app.refresh_pull_requests(cx);
         if matches!(app.mode, paneflow_config::schema::AppMode::Diff) {
             if app.review.layout.is_none() {
                 match app.review_default_subject() {
@@ -728,6 +740,11 @@ impl PaneFlowApp {
         }
 
         crate::ui_primitives::set_reduce_motion(app.cached_config.reduce_motion_enabled());
+        crate::app::diff_dock::code::controls::set_editor_display(
+            crate::app::diff_dock::code::controls::EditorDisplay::from_config(
+                &app.cached_config.editor,
+            ),
+        );
 
         app
     }

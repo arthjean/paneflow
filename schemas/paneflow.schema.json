@@ -122,6 +122,35 @@
         }
       }
     },
+    "editor": {
+      "type": ["object", "null"],
+      "description": "What the code editor draws beside the text. Toggled from the editor's controls menu.",
+      "additionalProperties": false,
+      "properties": {
+        "minimap": {
+          "type": ["boolean", "null"],
+          "description": "Draw a minimap of the file along the editor's right edge. Default false.",
+          "default": false
+        },
+        "scrollbar": {
+          "type": ["boolean", "null"],
+          "description": "Draw the editor's vertical scrollbar. Default true.",
+          "default": true
+        }
+      }
+    },
+    "automation": {
+      "type": ["object", "null"],
+      "description": "Background work Paneflow may run on your behalf after an agent turn.",
+      "additionalProperties": false,
+      "properties": {
+        "tab_auto_naming": {
+          "type": ["boolean", "null"],
+          "description": "After an agent turn, summarize the conversation into a 2-5 word tab name with the agent's own CLI (claude -p, codex exec, opencode run, pi --print), tools disabled. A name you typed is never replaced. Default false.",
+          "default": false
+        }
+      }
+    },
     "window_decorations": {
       "type": ["string", "null"],
       "description": "Window decoration mode. 'client' = client-side decorations (custom title bar). 'server' = server-side decorations (compositor-drawn). Read once at startup; changes require a restart.",
@@ -157,18 +186,6 @@
     "shell_integration": {
       "type": ["boolean", "null"],
       "description": "Master switch for the per-shell rc injection (OSC 7 CWD reporting + OSC 133 command marks). null/true = enabled (default); false = no snippet is written or wired - the shell starts exactly as it would outside Paneflow."
-    },
-    "agent_stall_detection": {
-      "type": ["boolean", "null"],
-      "description": "Master switch for Stalled agent detection. null/true = enabled (default): a Thinking agent session with no hook activity past agent_stall_threshold_secs is flagged Stalled, with ONE desktop notification per stall episode (the flag clears on the next hook event, so a legitimately long turn costs at most one notification). false = kill switch - no Stalled state is ever produced.",
-      "default": true
-    },
-    "agent_stall_threshold_secs": {
-      "type": ["integer", "null"],
-      "description": "Silence threshold in seconds before a Thinking agent session is flagged Stalled (a likely-lost ai.stop). Checked by a 30 s sweep, so the effective detection latency is threshold + up to 30 s. Out-of-range values are clamped.",
-      "minimum": 30,
-      "maximum": 86400,
-      "default": 60
     },
     "submit_paste_delay_ms": {
       "type": ["integer", "null"],

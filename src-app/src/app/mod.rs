@@ -2,6 +2,7 @@ pub mod about_dialog;
 pub mod actions;
 pub mod agent_status;
 pub mod attention_queue;
+pub mod auto_naming;
 pub mod bootstrap;
 pub mod broadcast;
 pub mod browser_dock;

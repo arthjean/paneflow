@@ -6,6 +6,8 @@ use super::install_method::{self, InstallMethod, PackageManager};
 use crate::telemetry::event::UpdateAssetFormat;
 
 const UPDATE_HTTP_TIMEOUT: Duration = Duration::from_secs(30);
+const RECHECK_INTERVAL: Duration = Duration::from_secs(4 * 60 * 60);
+const RECHECK_AFTER_FAILURE: Duration = Duration::from_secs(30 * 60);
 
 const DEFAULT_FEED_URL: &str = "https://api.github.com/repos/arthjean/paneflow/releases/latest";
 const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -229,11 +231,41 @@ pub fn spawn_check(
         std::sync::Arc::new(std::sync::Mutex::new(Some(UpdateStatus::Checking)));
     let writer = std::sync::Arc::clone(&slot);
     std::thread::spawn(move || {
-        crate::app::telemetry_events::emit_update_check_started(&telemetry, CURRENT_VERSION);
-        let status = check_github_release(&telemetry);
-        *writer.lock().unwrap_or_else(|e| e.into_inner()) = Some(status);
+        loop {
+            crate::app::telemetry_events::emit_update_check_started(&telemetry, CURRENT_VERSION);
+            let status = check_github_release(&telemetry);
+            let next_check = recheck_delay(&status);
+            *writer.lock().unwrap_or_else(|e| e.into_inner()) = Some(status);
+            std::thread::sleep(next_check);
+        }
     });
     slot
+}
+
+fn recheck_delay(status: &UpdateStatus) -> Duration {
+    match status {
+        UpdateStatus::Failed => RECHECK_AFTER_FAILURE,
+        _ => RECHECK_INTERVAL,
+    }
+}
+
+pub(crate) fn should_replace_status(
+    current: Option<&UpdateStatus>,
+    incoming: &UpdateStatus,
+    dismissed_version: Option<&str>,
+    installer_holds_artifact: bool,
+) -> bool {
+    match (current, incoming) {
+        (_, UpdateStatus::Checking) => false,
+        (_, UpdateStatus::Available { version, .. })
+            if dismissed_version == Some(version.as_str()) =>
+        {
+            false
+        }
+        (None, _) => true,
+        (Some(_), UpdateStatus::Failed) => false,
+        (Some(current), incoming) => !installer_holds_artifact && current != incoming,
+    }
 }
 
 #[derive(serde::Deserialize)]
@@ -388,6 +420,120 @@ pub(crate) fn check_github_release(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn available(version: &str) -> UpdateStatus {
+        UpdateStatus::Available {
+            version: version.to_string(),
+            url: "https://github.com/arthjean/paneflow/releases".to_string(),
+            asset_url: None,
+            asset_format: None,
+        }
+    }
+
+    #[test]
+    fn first_result_always_lands_except_checking() {
+        assert!(should_replace_status(
+            None,
+            &available("9.0.0"),
+            None,
+            false
+        ));
+        assert!(should_replace_status(
+            None,
+            &UpdateStatus::UpToDate,
+            None,
+            false
+        ));
+        assert!(should_replace_status(
+            None,
+            &UpdateStatus::Failed,
+            None,
+            false
+        ));
+        assert!(!should_replace_status(
+            None,
+            &UpdateStatus::Checking,
+            None,
+            false
+        ));
+    }
+
+    #[test]
+    fn failed_recheck_never_clobbers_a_known_result() {
+        let current = available("9.0.0");
+        assert!(!should_replace_status(
+            Some(&current),
+            &UpdateStatus::Failed,
+            None,
+            false
+        ));
+        assert!(!should_replace_status(
+            Some(&UpdateStatus::UpToDate),
+            &UpdateStatus::Failed,
+            None,
+            false
+        ));
+    }
+
+    #[test]
+    fn newer_release_replaces_the_shown_one_only_while_installer_is_idle() {
+        let current = available("9.0.0");
+        let newer = available("9.1.0");
+        assert!(should_replace_status(Some(&current), &newer, None, false));
+        assert!(!should_replace_status(Some(&current), &newer, None, true));
+        assert!(!should_replace_status(
+            Some(&current),
+            &current.clone(),
+            None,
+            false
+        ));
+    }
+
+    #[test]
+    fn up_to_date_after_failure_or_yanked_release_replaces() {
+        assert!(should_replace_status(
+            Some(&UpdateStatus::Failed),
+            &UpdateStatus::UpToDate,
+            None,
+            false
+        ));
+        assert!(should_replace_status(
+            Some(&available("9.0.0")),
+            &UpdateStatus::UpToDate,
+            None,
+            false
+        ));
+        assert!(!should_replace_status(
+            Some(&UpdateStatus::UpToDate),
+            &UpdateStatus::UpToDate,
+            None,
+            false
+        ));
+    }
+
+    #[test]
+    fn dismissed_version_stays_dismissed_but_a_newer_one_shows() {
+        assert!(!should_replace_status(
+            None,
+            &available("9.0.0"),
+            Some("9.0.0"),
+            false
+        ));
+        assert!(should_replace_status(
+            None,
+            &available("9.1.0"),
+            Some("9.0.0"),
+            false
+        ));
+    }
+
+    #[test]
+    fn recheck_backs_off_shorter_after_failure() {
+        assert_eq!(recheck_delay(&UpdateStatus::Failed), RECHECK_AFTER_FAILURE);
+        assert_eq!(recheck_delay(&UpdateStatus::UpToDate), RECHECK_INTERVAL);
+        assert_eq!(recheck_delay(&available("9.0.0")), RECHECK_INTERVAL);
+        assert!(RECHECK_AFTER_FAILURE < RECHECK_INTERVAL);
+    }
     use std::path::PathBuf;
 
     fn make_asset(name: &str) -> GitHubAsset {

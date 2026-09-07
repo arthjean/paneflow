@@ -15,6 +15,7 @@ mod ai_hooks;
 mod ai_types;
 mod app;
 mod assets;
+mod auto_naming;
 #[cfg(test)]
 mod bench_harness;
 mod browser;
@@ -228,6 +229,7 @@ struct SelfUpdateState {
     install_method: update::install_method::InstallMethod,
     update_attempt_count: u32,
     download_generation: u64,
+    dismissed_version: Option<String>,
 }
 
 const PRIMARY_SIDEBAR_ANIMATION_MS: u64 = 280;
@@ -623,6 +625,10 @@ struct DiffDockState {
     pub(crate) diff_tab_close_armed: Option<usize>,
     pub(crate) diff_branch_menu: Option<crate::app::diff_dock::DiffBranchMenuState>,
     pub(crate) width: f32,
+    pub(crate) maximized: Option<Option<gpui::FocusHandle>>,
+    pub(crate) maximize_animation: Option<SidebarWidthAnimation>,
+    pub(crate) reveal_animation: Option<SidebarWidthAnimation>,
+    pub(crate) pane_grid_width: std::rc::Rc<std::cell::Cell<f32>>,
     pub(crate) resize: Option<(f32, f32, f32)>,
     pub(crate) h_scroll_drag: Option<crate::app::diff_dock::DiffDockHScrollDrag>,
     pub(crate) vertical_scrollbar: crate::widgets::editor_scrollbar::EditorScrollbar,
@@ -1230,6 +1236,7 @@ impl Render for PaneFlowApp {
             .on_action(cx.listener(Self::handle_start_self_update))
             .on_action(cx.listener(Self::handle_dismiss_update))
             .on_action(cx.listener(Self::handle_toggle_files_sidebar))
+            .on_action(cx.listener(Self::handle_toggle_diff_dock_maximize))
             .on_action(cx.listener(Self::handle_open_composer))
             .on_action(cx.listener(Self::handle_toggle_broadcast_member))
             .on_action(cx.listener(Self::handle_open_broadcast_groups))

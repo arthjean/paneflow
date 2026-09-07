@@ -336,6 +336,11 @@ pub(super) const DEFAULTS: &[DefaultBinding] = &[
         context: None,
     },
     DefaultBinding {
+        key: "secondary-shift-f",
+        action_name: "toggle_diff_dock_maximize",
+        context: None,
+    },
+    DefaultBinding {
         key: "ctrl-shift-c",
         action_name: "copy_diff_hunk",
         context: Some("DiffView"),

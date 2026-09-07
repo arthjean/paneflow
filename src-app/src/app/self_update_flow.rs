@@ -112,7 +112,11 @@ impl PaneFlowApp {
         cx: &mut Context<Self>,
     ) {
         self.emit_update_dismissed();
-        self.self_update.update_status = None;
+        if let Some(update::checker::UpdateStatus::Available { version, .. }) =
+            self.self_update.update_status.take()
+        {
+            self.self_update.dismissed_version = Some(version);
+        }
         cx.notify();
     }
 

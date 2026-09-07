@@ -1,4 +1,4 @@
-use gpui::{AppContext, Context, Window};
+use gpui::{App, AppContext, Context, Entity, Window};
 use paneflow_config::schema::{TabTitleSource, TerminalSurfaceProfile};
 
 use crate::PaneFlowApp;
@@ -11,6 +11,29 @@ impl PaneFlowApp {
     pub(crate) fn toggle_workspace_expanded(&mut self, ws_idx: usize, cx: &mut Context<Self>) {
         if let Some(ws) = self.workspaces.get_mut(ws_idx) {
             ws.sidebar_expanded = !ws.sidebar_expanded;
+            self.save_session(cx);
+            cx.notify();
+        }
+    }
+
+    pub(crate) fn toggle_workspace_muted(&mut self, ws_idx: usize, cx: &mut Context<Self>) {
+        if let Some(ws) = self.workspaces.get_mut(ws_idx) {
+            ws.muted = !ws.muted;
+            self.save_session(cx);
+            cx.notify();
+        }
+    }
+
+    pub(crate) fn workspace_is_muted(&self, ws_id: u64) -> bool {
+        self.workspaces
+            .iter()
+            .find(|ws| ws.id == ws_id)
+            .is_some_and(|ws| ws.muted)
+    }
+
+    pub(crate) fn mark_workspace_read(&mut self, ws_idx: usize, cx: &mut Context<Self>) {
+        if let Some(ws) = self.workspaces.get_mut(ws_idx) {
+            ws.agent_completion_notification.clear();
             self.save_session(cx);
             cx.notify();
         }
@@ -242,11 +265,48 @@ impl PaneFlowApp {
     }
 
     pub(crate) fn reset_tab_name(&mut self, ws_idx: usize, tab_idx: usize, cx: &mut Context<Self>) {
-        if self
+        let unlocked = self
             .workspaces
             .get_mut(ws_idx)
             .and_then(|ws| ws.tab_mut(tab_idx))
-            .is_some_and(Tab::unlock_title)
+            .is_some_and(Tab::unlock_title);
+        if !unlocked {
+            return;
+        }
+        if let Some(terminal) = self
+            .workspaces
+            .get(ws_idx)
+            .and_then(|ws| ws.tabs().get(tab_idx))
+            .and_then(|tab| sole_terminal(tab, cx))
+        {
+            self.apply_process_title(&terminal, cx);
+        }
+        self.save_session(cx);
+        cx.notify();
+    }
+
+    pub(crate) fn apply_process_title(
+        &mut self,
+        terminal: &Entity<TerminalView>,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(ws_idx) = self.workspace_idx_for_terminal(terminal, cx) else {
+            return;
+        };
+        let surface_id = terminal.entity_id().as_u64();
+        let Some((tab_idx, 1)) =
+            crate::app::ipc_handler::tab_for_surface(&self.workspaces[ws_idx], surface_id, cx)
+        else {
+            return;
+        };
+        let Some(title) =
+            crate::sidebar_title::clean_sidebar_title(&terminal.read(cx).terminal.title)
+        else {
+            return;
+        };
+        if self.workspaces[ws_idx]
+            .tab_mut(tab_idx)
+            .is_some_and(|tab| tab.set_title(&title, TabTitleSource::Process))
         {
             self.save_session(cx);
             cx.notify();
@@ -439,4 +499,13 @@ impl PaneFlowApp {
         self.save_session(cx);
         cx.notify();
     }
+}
+
+fn sole_terminal(tab: &Tab, cx: &App) -> Option<Entity<TerminalView>> {
+    let mut terminals = tab
+        .collect_panes()
+        .into_iter()
+        .flat_map(|pane| pane.read(cx).terminals().cloned().collect::<Vec<_>>());
+    let first = terminals.next()?;
+    terminals.next().is_none().then_some(first)
 }

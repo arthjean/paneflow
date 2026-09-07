@@ -76,6 +76,8 @@ pub enum TabTitleSource {
     Preset,
     Prompt,
     Generated,
+    Process,
+    Summarized,
     User,
 }
 
@@ -85,12 +87,17 @@ impl TabTitleSource {
             Self::Preset => 0,
             Self::Prompt => 1,
             Self::Generated => 2,
-            Self::User => 3,
+            Self::Process => 3,
+            Self::Summarized => 4,
+            Self::User => 5,
         }
     }
 
     fn replaces_itself(self) -> bool {
-        matches!(self, Self::Generated | Self::User)
+        matches!(
+            self,
+            Self::Generated | Self::Process | Self::Summarized | Self::User
+        )
     }
 
     pub fn yields_to(self, incoming: Self) -> bool {
@@ -98,7 +105,10 @@ impl TabTitleSource {
     }
 
     pub fn is_settled(self) -> bool {
-        matches!(self, Self::Generated | Self::User)
+        matches!(
+            self,
+            Self::Generated | Self::Process | Self::Summarized | Self::User
+        )
     }
 }
 
@@ -124,6 +134,8 @@ impl<'de> Deserialize<'de> for TabTitleSource {
                     "preset" | "auto" => TabTitleSource::Preset,
                     "prompt" => TabTitleSource::Prompt,
                     "generated" => TabTitleSource::Generated,
+                    "process" => TabTitleSource::Process,
+                    "summarized" => TabTitleSource::Summarized,
                     _ => TabTitleSource::User,
                 })
             }
@@ -174,6 +186,17 @@ pub struct TabSession {
     pub worktree: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub browsers: Vec<BrowserDescriptor>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub unread: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pull_request: Option<PullRequestSession>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PullRequestSession {
+    pub branch: String,
+    pub number: u64,
+    pub state: String,
 }
 
 impl TabSession {
@@ -188,6 +211,8 @@ impl TabSession {
             layout: Some(layout),
             worktree: None,
             browsers: Vec::new(),
+            unread: false,
+            pull_request: None,
         }
     }
 }
@@ -214,6 +239,8 @@ pub struct WorkspaceSession {
     pub sidebar_collapsed: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub browser_profile: Option<String>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub muted: bool,
 }
 
 pub fn migrate_session_v1(state: &mut SessionState) {
@@ -277,6 +304,8 @@ fn demote_panes_to_focused_surface(node: &mut LayoutNode, promoted: &mut Vec<Tab
                     }),
                     worktree: None,
                     browsers: Vec::new(),
+                    unread: false,
+                    pull_request: None,
                 });
             }
         }

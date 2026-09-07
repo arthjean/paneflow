@@ -412,22 +412,6 @@ fn fire_agent_exit_notification(
     );
 }
 
-pub(crate) fn fire_stalled_notification(
-    agent: TerminalAgent,
-    workspace_title: &str,
-    silent_secs: u64,
-    config: &paneflow_config::schema::PaneFlowConfig,
-    seen: bool,
-    executor: gpui::BackgroundExecutor,
-) {
-    desktop_notifications::fire_desktop_notification(
-        DesktopNotification::stalled(agent, workspace_title, silent_secs),
-        config,
-        seen,
-        executor,
-    );
-}
-
 fn ipc_scripting_enabled() -> bool {
     scripting_enabled_from(std::env::var("PANEFLOW_IPC_SCRIPTING").ok().as_deref())
 }
@@ -604,7 +588,7 @@ pub(crate) fn find_terminal_by_surface_id(
     None
 }
 
-fn tab_for_surface(ws: &Workspace, surface_id: u64, cx: &App) -> Option<(usize, usize)> {
+pub(crate) fn tab_for_surface(ws: &Workspace, surface_id: u64, cx: &App) -> Option<(usize, usize)> {
     ws.tabs().iter().enumerate().find_map(|(idx, tab)| {
         let panes = tab.collect_panes();
         let mut holds_surface = false;
@@ -1182,6 +1166,7 @@ impl PaneFlowApp {
             self.cached_config = config;
             self.theme_mode = theme_mode;
             crate::ui_primitives::set_reduce_motion(self.cached_config.reduce_motion_enabled());
+            self.apply_editor_display(cx);
             if default_shell_changed {
                 self.handle_default_shell_changed(cx);
             }
@@ -1242,22 +1227,34 @@ impl PaneFlowApp {
     }
 
     pub(crate) fn process_update_check(&mut self, cx: &mut Context<Self>) {
-        if self.self_update.update_status.is_some() {
-            return;
-        }
-        let status = self
+        let Some(incoming) = self
             .self_update
             .pending_update
             .lock()
             .unwrap_or_else(|e| e.into_inner())
-            .take();
-        if let Some(status) = status
-            && !matches!(status, update::checker::UpdateStatus::Checking)
-        {
-            self.self_update.update_status = Some(status);
-            cx.notify();
-            self.try_auto_kickoff_install(cx);
+            .take()
+        else {
+            return;
+        };
+        let installer_holds_artifact = matches!(
+            self.self_update.self_update_status,
+            update::SelfUpdateStatus::Downloading
+                | update::SelfUpdateStatus::Installing
+                | update::SelfUpdateStatus::ReadyToRestart
+        );
+        if !update::checker::should_replace_status(
+            self.self_update.update_status.as_ref(),
+            &incoming,
+            self.self_update.dismissed_version.as_deref(),
+            installer_holds_artifact,
+        ) {
+            return;
         }
+        self.self_update.update_status = Some(incoming);
+        self.self_update.self_update_status = update::SelfUpdateStatus::Idle;
+        self.self_update.update_attempt_count = 0;
+        cx.notify();
+        self.try_auto_kickoff_install(cx);
     }
 
     pub(crate) fn collect_surface_meta(&self, cx: &App) -> Vec<SurfaceMeta> {
@@ -1709,6 +1706,13 @@ impl PaneFlowApp {
                 };
                 cx.update(|cx| {
                     let _ = this.update(cx, |app, cx| {
+                        app.record_auto_naming_message(
+                            ws_id,
+                            session_key,
+                            crate::auto_naming::Role::Assistant,
+                            &text,
+                        );
+                        app.schedule_auto_naming(ws_id, session_key, cx);
                         let filled = if let Some(ws) =
                             app.workspaces.iter_mut().find(|ws| ws.id == ws_id)
                             && let Some(s) = ws.agent_sessions.get_mut(&session_key)
@@ -1860,13 +1864,8 @@ impl PaneFlowApp {
         cx: &mut Context<Self>,
     ) {
         if let Some(ws) = self.workspaces.iter_mut().find(|ws| ws.id == ws_id)
-            && let Some(session) = ws.agent_sessions.get_mut(&key)
-            && session.surface_id != Some(sid)
+            && bind_session_surface(&mut ws.agent_sessions, key, sid)
         {
-            session.surface_id = Some(sid);
-            ws.agent_sessions.retain(|k, s| {
-                *k == key || s.surface_id != Some(sid) || s.state != ai_types::AgentState::Errored
-            });
             self.sync_attention(cx);
             self.agent_sessions_changed(cx);
             cx.notify();
@@ -2819,10 +2818,15 @@ impl PaneFlowApp {
                     ) else {
                         return stale_frame_response();
                     };
-                    if let Some(session) = ws.agent_sessions.get_mut(&key)
-                        && let Some(title) = read_hook_prompt_title(params)
-                    {
-                        session.pending_tab_title = Some(title);
+                    if let Some(session) = ws.agent_sessions.get_mut(&key) {
+                        if let Some(prompt) = read_hook_prompt(params) {
+                            session
+                                .auto_naming
+                                .record(crate::auto_naming::Role::User, prompt);
+                        }
+                        if let Some(title) = read_hook_prompt_title(params) {
+                            session.pending_tab_title = Some(title);
+                        }
                     }
                     cx.notify();
                     self.bind_or_resolve_session_surface(
@@ -2921,7 +2925,8 @@ impl PaneFlowApp {
                         &ws_title,
                         message.as_deref(),
                         &notify_config,
-                        self.session_is_seen(workspace_id, key, cx),
+                        self.session_is_seen(workspace_id, key, cx)
+                            || self.workspace_is_muted(workspace_id),
                         cx.background_executor().clone(),
                     );
                     self.sync_attention(cx);
@@ -2968,7 +2973,7 @@ impl PaneFlowApp {
                     let seen = crate::app::agent_status::completion_was_seen(
                         visible_surfaces.as_ref(),
                         finished_surface,
-                    );
+                    ) || ws.muted;
                     if !interrupt_stop {
                         ws.agent_completion_notification
                             .record_finished(seen, finished_surface);
@@ -2983,6 +2988,17 @@ impl PaneFlowApp {
                             params,
                             cx,
                         );
+                        if let Some(summary) = session_summary.as_deref() {
+                            self.record_auto_naming_message(
+                                workspace_id,
+                                session_key,
+                                crate::auto_naming::Role::Assistant,
+                                summary,
+                            );
+                        }
+                        if transcript_to_read.is_none() {
+                            self.schedule_auto_naming(workspace_id, session_key, cx);
+                        }
                     }
                     if !interrupt_stop {
                         if let Some(path) = transcript_to_read {
@@ -3094,7 +3110,8 @@ impl PaneFlowApp {
                             &ws_title,
                             exit_code,
                             &notify_config,
-                            self.session_is_seen(workspace_id, key, cx),
+                            self.session_is_seen(workspace_id, key, cx)
+                                || self.workspace_is_muted(workspace_id),
                             cx.background_executor().clone(),
                         );
                     }
@@ -3189,12 +3206,15 @@ fn generated_title_source(
     }
 }
 
-fn read_hook_prompt_title(params: &serde_json::Value) -> Option<String> {
-    let prompt = params
+fn read_hook_prompt(params: &serde_json::Value) -> Option<&str> {
+    params
         .get("hook_payload")?
         .get("prompt")
-        .and_then(serde_json::Value::as_str)?;
-    crate::sidebar_title::tab_title_from_prompt(prompt)
+        .and_then(serde_json::Value::as_str)
+}
+
+fn read_hook_prompt_title(params: &serde_json::Value) -> Option<String> {
+    crate::sidebar_title::tab_title_from_prompt(read_hook_prompt(params)?)
 }
 
 fn read_tool(params: &serde_json::Value) -> Option<crate::agent_launcher::TerminalAgent> {
@@ -3222,6 +3242,43 @@ fn session_end_fallback_candidate(
 }
 
 const SYNTHETIC_SESSION_PID_BASE: u32 = 0xFFFF_0000;
+
+pub(crate) fn bind_session_surface(
+    sessions: &mut std::collections::HashMap<u32, AgentSession>,
+    key: u32,
+    sid: u64,
+) -> bool {
+    let Some(tool) = sessions.get(&key).map(|session| session.tool) else {
+        return false;
+    };
+    let twins: Vec<u32> = sessions
+        .iter()
+        .filter(|(k, s)| **k != key && s.tool == tool && s.surface_id == Some(sid))
+        .map(|(k, _)| *k)
+        .collect();
+    let bound = sessions
+        .get(&key)
+        .is_some_and(|session| session.surface_id == Some(sid));
+    if bound && twins.is_empty() {
+        return false;
+    }
+    let mut inherited_result = None;
+    for twin in twins {
+        if let Some(twin) = sessions.remove(&twin)
+            && inherited_result.is_none()
+        {
+            inherited_result = twin.last_result;
+        }
+    }
+    let session = sessions
+        .get_mut(&key)
+        .expect("the bound session was just read");
+    session.surface_id = Some(sid);
+    if session.last_result.is_none() {
+        session.last_result = inherited_result;
+    }
+    true
+}
 
 pub(crate) fn upsert_session_state(
     sessions: &mut std::collections::HashMap<u32, AgentSession>,
@@ -3649,14 +3706,6 @@ mod tests {
         assert_eq!(
             crate::agents::notifications::agent_exit_notification_body("ws", -1073741510),
             "ws: exited with code -1073741510"
-        );
-    }
-
-    #[test]
-    fn stalled_body_carries_workspace_and_silence() {
-        assert_eq!(
-            crate::agents::notifications::stalled_notification_body("api", 300),
-            "api: no activity for 300 s"
         );
     }
 
@@ -4490,6 +4539,47 @@ mod tests {
             Some(100),
             "errored rows are not fallback-removal candidates"
         );
+    }
+
+    #[test]
+    fn binding_a_surface_leaves_one_session_per_tool_on_it() {
+        let mut sessions = std::collections::HashMap::new();
+        let mut by_shell = AgentSession::new(
+            TerminalAgent::ClaudeCode,
+            crate::ai_types::AgentState::Thinking,
+        );
+        by_shell.surface_id = Some(11);
+        by_shell.last_result = Some("earlier turn".into());
+        sessions.insert(4000, by_shell);
+        let by_registry = AgentSession::new(
+            TerminalAgent::ClaudeCode,
+            crate::ai_types::AgentState::Thinking,
+        );
+        sessions.insert(4242, by_registry);
+        let mut codex =
+            AgentSession::new(TerminalAgent::Codex, crate::ai_types::AgentState::Thinking);
+        codex.surface_id = Some(11);
+        sessions.insert(5000, codex);
+
+        assert!(super::bind_session_surface(&mut sessions, 4242, 11));
+        assert!(
+            !sessions.contains_key(&4000),
+            "the shell-keyed twin of the same agent on the same pane is folded away"
+        );
+        assert_eq!(
+            sessions[&4242].last_result.as_deref(),
+            Some("earlier turn"),
+            "what the twin knew is carried over"
+        );
+        assert!(
+            sessions.contains_key(&5000),
+            "another agent on the same pane is not a twin"
+        );
+        assert!(
+            !super::bind_session_surface(&mut sessions, 4242, 11),
+            "rebinding to the same pane with no twin left changes nothing"
+        );
+        assert!(!super::bind_session_surface(&mut sessions, 9, 11));
     }
 
     #[test]

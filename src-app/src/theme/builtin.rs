@@ -228,7 +228,6 @@ fn vercel_dark_ui() -> UiColors {
         group_7: h(0xff5a5f),
         group_8: h(0x999999),
         agent_error: h(0xff5a5f),
-        agent_stalled: h(0x8a8a8a),
         agent_claude: h(0xff7a18),
         agent_codex: h(0x3291ff),
     }
@@ -301,7 +300,6 @@ fn vercel_light_ui() -> UiColors {
         group_7: h(0xcd2b31),
         group_8: h(0x666666),
         agent_error: h(0xcd2b31),
-        agent_stalled: h(0x666666),
         agent_claude: h(0xbd4b00),
         agent_codex: h(0x0068d6),
     }
@@ -374,7 +372,6 @@ fn claude_dark_ui() -> UiColors {
         group_7: h(0xe68a6d),
         group_8: h(0xc3c2b7),
         agent_error: h(0xd97757),
-        agent_stalled: h(0x93938b),
         agent_claude: h(0xd97757),
         agent_codex: h(0x8fa4b8),
     }
@@ -447,7 +444,6 @@ fn claude_light_ui() -> UiColors {
         group_7: h(0xc2552f),
         group_8: h(0x83827d),
         agent_error: h(0xd20f39),
-        agent_stalled: h(0x83827d),
         agent_claude: h(0xd97757),
         agent_codex: h(0x4a6fa5),
     }
@@ -520,7 +516,6 @@ fn cursor_dark_ui() -> UiColors {
         group_7: h(0xff6f6a),
         group_8: h(0xf0f0f0),
         agent_error: h(0xff6f6a),
-        agent_stalled: h(0x989898),
         agent_claude: h(0xffa657),
         agent_codex: h(0xa0d0f0),
     }
@@ -593,7 +588,6 @@ fn cursor_light_ui() -> UiColors {
         group_7: h(0xd20f39),
         group_8: h(0x555555),
         agent_error: h(0xd20f39),
-        agent_stalled: h(0x767676),
         agent_claude: h(0xfe640b),
         agent_codex: h(0x0f6fc5),
     }

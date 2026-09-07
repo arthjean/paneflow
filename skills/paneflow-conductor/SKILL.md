@@ -38,7 +38,7 @@ paneflow ls            # the panes themselves (surface_id, name, cwd, cmd)
 ```
 
 `state` is one of `thinking`, `waiting_for_input`, `finished`, `errored`,
-`stalled`, `idle` (a bare shell with no agent), or `unknown_running` (an agent
+`idle` (a bare shell with no agent), or `unknown_running` (an agent
 Paneflow detected but cannot hook). Target any pane by its `surface_id`, its
 name, `cmdline:<substr>`, or `cwd:<path>`.
 

@@ -10,7 +10,7 @@ use crate::pane::{Pane, PaneSurface};
 use crate::pane_drag::DropEdge;
 
 pub(crate) fn pane_view(pane: &Entity<Pane>, cx: &App) -> Option<Entity<DiffView>> {
-    match &pane.read(cx).surface {
+    match pane.read(cx).surface() {
         PaneSurface::Diff(view) => Some(view.clone()),
         _ => None,
     }
@@ -118,7 +118,7 @@ impl PaneFlowApp {
         let workspace_id = subject.worktree.workspace_id.unwrap_or(0);
         let view = cx.new(|cx| DiffView::new(subject, cx));
         pane.update(cx, |pane, cx| {
-            pane.surface = PaneSurface::Diff(view);
+            pane.set_surface(PaneSurface::Diff(view));
             pane.workspace_id = workspace_id;
             cx.notify();
         });

@@ -22,7 +22,7 @@ use paneflow_config::schema::{TerminalConfig, TerminalSurfaceProfile};
 use paneflow_terminal_ghostty::Scroll as GhosttyScroll;
 
 const DEFAULT_SCROLLBACK_LINES: usize = TerminalConfig::DEFAULT_SCROLLBACK_LINES;
-const INHERITED_AGENT_SESSION_ENV: &[&str] = &[
+pub(crate) const INHERITED_AGENT_SESSION_ENV: &[&str] = &[
     "CLAUDECODE",
     "CLAUDE_CODE_CHILD_SESSION",
     "CLAUDE_CODE_SESSION_ID",

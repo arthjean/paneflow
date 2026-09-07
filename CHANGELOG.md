@@ -7,6 +7,74 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
 
 ### Added
 
+- Tabs follow the title their CLI sets. The terminal title a program writes
+  (Claude Code publishes its topic title there, shells their prompt line)
+  becomes the tab's name in the sidebar and keeps tracking it, the way cmux
+  names its workspaces after the focused panel. Spinner glyphs and control
+  characters are stripped first, and a tab holding several surfaces is left
+  alone. The first-prompt placeholder and the resume-picker title still cover
+  a CLI that never writes a terminal title. A name you typed always wins;
+  "Reset name" hands the tab straight back to the current terminal title.
+- Tabs can name themselves from the conversation. With `automation.tab_auto_naming`
+  on in `paneflow.json` (off by default), the end of an agent turn summarizes the
+  session's opening request and last few exchanges into a 2-5 word title, in
+  the conversation's language, and refreshes it when the topic moves. The
+  summary runs through the agent's own CLI with tools, MCP servers, and session
+  persistence off (`claude -p`, `codex exec`, `opencode run`, `pi --print`), so
+  it uses the account you already signed in with; a session on another agent
+  borrows the first of those that is installed. At most one call per session
+  every three minutes, only when the conversation grew, never blocking the
+  agent, and silently skipped when no summarizer is on `PATH` or the call
+  times out. A summarized name outranks the live terminal title; a name you
+  typed outranks both, and "Reset name" reopens the tab.
+- The Changes dock can take the whole cockpit. A maximize button in the dock's
+  tab strip (or `Cmd/Ctrl+Shift+F`) hides the pane grid so Changes, an editor
+  tab, or a dock terminal gets the full window width; the same control or
+  shortcut restores the panes. Hidden panes keep running, so an agent working
+  behind the dock is untouched and its focus comes back on restore. Opening
+  the dock and maximizing it both animate like the sidebar slide, and
+  `reduce_motion` settles them instantly.
+- The editor's Minimap and Scrollbar toggles are a user setting. They live in
+  the new `editor` section of `paneflow.json`, apply to every open file at
+  once, and survive a restart.
+- Panes have tabs. A tab bar under the pane header lists the pane's
+  surfaces as squircle chips carrying the same title as the header, with a
+  `+` chip that opens a new terminal in the active tab's directory. Tabs
+  survive a restart with their scrollback; closing the last tab closes the
+  pane.
+- The rail answers every state with a word. Status moved to the trailing edge
+  of both workspace and tab rows, on one X: `Input`, `Error`, the spinner
+  alone while it works, and `Done` with the unread count. When no agent is reporting, the tab's pull
+  request takes the slot in GitHub's state color as `Review`, `Draft`, or
+  `Merged` (with the `PR` switch on). Under the pointer the status yields the
+  slot to the hover action without reflowing the row.
+- Unread agent completions survive a restart, and the workspace context menu
+  gained `Mark as Read` and `Mute Notifications`. A muted workspace fires no
+  desktop notification and records no unread completion.
+- The update check repeats every four hours while Paneflow runs (every thirty
+  minutes after a failed attempt), so a release published mid-session shows up
+  in the title bar without a restart. A dismissed version stays dismissed; a
+  newer one shows again.
+
+### Fixed
+
+- Pull request lanes and glyphs no longer wait for the first 30 second git
+  tick: the lookup starts as soon as a checkout's branch is known, and the
+  last known state of each tab's pull request is kept in the session file so
+  it is drawn at launch and corrected in the background.
+
+### Removed
+
+- The `Stalled` agent state, with the `agent_stall_detection` and
+  `agent_stall_threshold_secs` settings and the `agent_stalled` theme color. A
+  long turn is a long turn, not a fault.
+- The stack of pane icons on tab rows, which restated what a tab holds while
+  occupying the lane the status needed.
+
+## [0.12.0] - 2026-09-06
+
+### Added
+
 - Review mode now has two rails and a pane grid. The Workspaces rail lists
   every repository open in Agents as a folder row that folds its checkouts
   and git worktrees and remembers the folded rows across restarts; clicking
@@ -45,12 +113,25 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
   refreshes the dock, and refuses when the file has unsaved changes in a
   dock tab or changed on disk since the dock was built.
 
+- An Editor Controls button on the editor opens a menu that toggles a
+  Zed-style minimap and the scrollbar, for the session. The Changes tab gets
+  a permanent editor-style scrollbar of its own.
+
+- The Files tree lives inside the editor dock next to the file tabs rather
+  than in a sidebar of its own. Toggling Files opens the dock on the active
+  file tab, or on the file picker when no file is open, and closes it again
+  from a file tab.
+
 ### Removed
 
 - `Review with agent` and the terminal panel it opened under a Review diff
   are gone, along with the `review_prefill_delay_ms` setting; the key is
   ignored if it is still present in `paneflow.json`. The Review rail menu
   no longer offers `Open Shell in Worktree`. Launch agents from Agents mode.
+
+- The in-pane peek overlay that painted an agent's question over the
+  terminal. The attention ring, the header dot, the sidebar row and the
+  attention queue keep carrying it.
 
 ### Changed
 
@@ -113,6 +194,43 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
 - The APCA contrast floor applied to the theme's ANSI colors is off by
   default and configurable as `terminal.minimum_contrast` (Zed's floor is
   `45`). Themes render their colors as designed.
+- The editor dock no longer opens with a permanent Changes tab in first
+  position. Changes is an entry of the dock's `+` menu next to the file
+  picker, opens once, and closes like any other tab.
+- A desktop notification is dropped only when its pane's workspace and tab
+  are on screen in the active window, the test the completion dot already
+  used. It used to be muted whenever the Paneflow window was active, so an
+  agent asking for permission in another workspace never reached you while
+  you worked elsewhere in Paneflow. Agent notifications and OSC 9 / OSC 777
+  program notifications take the same answer.
+- The workspace row no longer carries the detected dev-server port badge, so
+  folder rows are single line. The service list stays in the workspace
+  context menu.
+- The editor colors the viewport without dropping a frame. A 2 MB Rust file
+  shows its text in 1.3 ms with the parse off the render thread instead of
+  waiting 45 ms for it, the highlight cap rises from 300 KB to 2 MB (1 MB for
+  Markdown), a keystroke on 300 KB of Rust reaches its colored runs in
+  0.71 ms at p95 where it took 1.77 ms, a wheel notch moves exactly three
+  rows, reloads from disk diff off-thread and apply one batch, and idle
+  terminal panes are cached during an editor scroll. Measured on the
+  reproducible suite behind `scripts/bench-editor.sh`, recorded under
+  `bench/results`.
+- The four `libghostty-vt` archives are no longer committed. They are assets
+  of the `libghostty-vt-<sha>` pre-release named in
+  `native/libghostty/manifest.toml`; run `scripts/fetch-libghostty.sh` (or
+  `.ps1`) once per pin before building from source. Cargo still performs no
+  downloads.
+
+### Fixed
+
+- The sidebar bell rings only for agent-initiated requests. Claude Code's
+  `waitingFor: "dialog open"`, written while you sit in a local slash command
+  such as `/resume` or `/model`, now reads as idle, and an OSC 9 notification
+  is a request only when its wording asks for permission, approval, input or
+  confirmation; Claude Code's `idle_prompt` is idle and anything else says
+  nothing.
+- Switching Highlight or Whitespace repaints the existing diff in place
+  instead of rebuilding it.
 
 ## [0.11.0] - 2026-09-02
 

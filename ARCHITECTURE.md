@@ -303,8 +303,7 @@ agent CLI (claude, codex, opencode, …)
   rank, so a weaker observer never talks over a live stronger one - and a
   stronger one that falls silent hands over instead of freezing the sidebar.
 - **States**: thinking, waiting for input (with the actual prompt text),
-  finished, errored (non-zero exit), stalled (no hook activity past a
-  threshold). Each state routes to the UI - and to your own tooling, since
+  finished, errored (non-zero exit). Each state routes to the UI - and to your own tooling, since
   the same events are observable over IPC.
 
 The default loop is human-in-the-loop: Paneflow pre-fills prompts into real PTY
@@ -334,9 +333,12 @@ app state.
 
 ## Self-update
 
-Each install format has its own update path (apt/dnf repos, AppImage swap,
-tarball swap, macOS app replacement, Windows MSI relay), all driven by one
-in-app updater. Update artifacts are verified with
+A single background thread polls the GitHub releases feed at launch and then
+every four hours (thirty minutes after a failure), handing each result to the
+GPUI tick through a shared slot; a result never displaces a download in flight
+or a staged binary waiting for restart. Each install format has its own update
+path (apt/dnf repos, AppImage swap, tarball swap, macOS app replacement,
+Windows MSI relay), all driven by one in-app updater. Update artifacts are verified with
 [minisign](https://jedisct1.github.io/minisign/) signatures and the client
 **fails closed**: an unsigned or tampered artifact is rejected, never installed.
 macOS builds add Developer ID / notarization checks with Team ID pinning;

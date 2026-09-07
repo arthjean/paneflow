@@ -236,7 +236,7 @@ ignore = "0.4"
 base64 = "0.22"
 
 # Cross-platform desktop notifications fired by the agents runtime when a
-# turn ends, needs input, stalls, or exits unexpectedly while the user is not
+# turn ends, needs input, or exits unexpectedly while the user is not
 # already looking at the Agents panel. `notify-rust` 4.x default features use
 # freedesktop DBus on Linux, NSUserNotificationCenter on macOS, and WinRT
 # toasts on Windows. Release Windows attribution depends on the Start Menu
