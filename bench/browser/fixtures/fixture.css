@@ -1,0 +1,12 @@
+:root { color-scheme: light; font-family: monospace; background: white; color: black; }
+body { margin: 0; }
+main { padding: 16px; }
+label, button, input, a, output { display: block; margin: 12px 0; }
+input { font: inherit; }
+.scroll { height: 480px; overflow-y: scroll; border: 1px solid black; }
+.row { height: 48px; display: flex; align-items: center; gap: 16px; }
+.row img { width: 40px; height: 40px; }
+.track { width: 640px; height: 80px; overflow: hidden; }
+.moving { width: 64px; height: 64px; background: #005fcc; animation: move 2s linear infinite alternate; }
+@keyframes move { from { transform: translateX(0); } to { transform: translateX(576px); } }
+canvas { width: 640px; height: 360px; display: block; }

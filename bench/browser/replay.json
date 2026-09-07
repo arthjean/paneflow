@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "seed": "50414e45464c4f57",
+  "terminal_count": 4,
+  "terminal_geometry": [
+    { "columns": 69, "rows": 17 },
+    { "columns": 70, "rows": 17 },
+    { "columns": 69, "rows": 17 },
+    { "columns": 70, "rows": 17 }
+  ],
+  "font": "JetBrains Mono",
+  "font_size": 14,
+  "shell": "none: replay writer in PTY",
+  "warmup_seconds": 10,
+  "duration_seconds": 60,
+  "tick_ns": 50000000,
+  "input_every_ticks": 4,
+  "focus_every_ticks": 20,
+  "max_delivery_error_ns": 2000000,
+  "input_marker": "reserved first row; output scroll region starts at row 2; echo writes the marker with cursor save/restore",
+  "families": [
+    "ascii",
+    "unicode",
+    "ansi",
+    "cursor",
+    "scroll"
+  ],
+  "injection": "synthetic dispatch to the focused terminal GPUI input handler; writer stdin echoes event marker; timestamp excludes IPC transport",
+  "observation": "native compositor presentation correlated with marker and surface frame id"
+}

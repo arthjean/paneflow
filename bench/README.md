@@ -6,6 +6,10 @@ comes from one of the suites below, run with the scripts described here, and
 the raw result of each run is archived next to the baseline it is compared
 against.
 
+The experimental [browser qualification protocol](browser/README.md) provides
+local fixtures and raw-sample integrity checks. It has no measured GPU baseline
+or qualified browser runtime yet and does not replace either CPU suite below.
+
 There are two suites, two baselines, and two result prefixes:
 
 | Suite | Test | Script | Baseline | Result files |
