@@ -29,6 +29,7 @@ fn test_serialization_roundtrip() {
         unfocused_pane_opacity: None,
         reduce_motion: None,
         sidebar_show: SidebarShow::default(),
+        editor: EditorDisplayConfig::default(),
         line_height: None,
         cell_width: None,
         font_family: None,

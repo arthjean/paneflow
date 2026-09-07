@@ -35,6 +35,8 @@ pub struct PaneFlowConfig {
     #[serde(default, deserialize_with = "lenient_value_or_default")]
     pub sidebar_show: SidebarShow,
     #[serde(default, deserialize_with = "lenient_value_or_default")]
+    pub editor: EditorDisplayConfig,
+    #[serde(default, deserialize_with = "lenient_value_or_default")]
     pub line_height: Option<f32>,
     #[serde(default, deserialize_with = "lenient_value_or_default")]
     pub cell_width: Option<f32>,
@@ -121,6 +123,25 @@ pub struct SidebarShow {
     pub pr: Option<bool>,
     #[serde(default, deserialize_with = "lenient_value_or_default")]
     pub indent_guide: Option<bool>,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct EditorDisplayConfig {
+    #[serde(default, deserialize_with = "lenient_value_or_default")]
+    pub minimap: Option<bool>,
+    #[serde(default, deserialize_with = "lenient_value_or_default")]
+    pub scrollbar: Option<bool>,
+}
+
+impl EditorDisplayConfig {
+    pub fn minimap_enabled(&self) -> bool {
+        self.minimap.unwrap_or(false)
+    }
+
+    pub fn scrollbar_enabled(&self) -> bool {
+        self.scrollbar.unwrap_or(true)
+    }
 }
 
 impl SidebarShow {

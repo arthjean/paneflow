@@ -84,6 +84,10 @@ mod tests {
                 pr: Some(true),
                 indent_guide: Some(true),
             },
+            editor: EditorDisplayConfig {
+                minimap: Some(true),
+                scrollbar: Some(false),
+            },
             line_height: Some(1.0),
             cell_width: Some(1.0),
             font_family: Some("Geist Mono".to_string()),
@@ -163,6 +167,11 @@ mod tests {
             object_keys(&serialized["sidebar_show"]),
             object_keys(&schema["properties"]["sidebar_show"]["properties"]),
             "SidebarShow and public JSON Schema drifted"
+        );
+        assert_eq!(
+            object_keys(&serialized["editor"]),
+            object_keys(&schema["properties"]["editor"]["properties"]),
+            "EditorDisplayConfig and public JSON Schema drifted"
         );
         assert_eq!(
             object_keys(&serialized["terminal"]),

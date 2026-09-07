@@ -122,6 +122,23 @@
         }
       }
     },
+    "editor": {
+      "type": ["object", "null"],
+      "description": "What the code editor draws beside the text. Toggled from the editor's controls menu.",
+      "additionalProperties": false,
+      "properties": {
+        "minimap": {
+          "type": ["boolean", "null"],
+          "description": "Draw a minimap of the file along the editor's right edge. Default false.",
+          "default": false
+        },
+        "scrollbar": {
+          "type": ["boolean", "null"],
+          "description": "Draw the editor's vertical scrollbar. Default true.",
+          "default": true
+        }
+      }
+    },
     "window_decorations": {
       "type": ["string", "null"],
       "description": "Window decoration mode. 'client' = client-side decorations (custom title bar). 'server' = server-side decorations (compositor-drawn). Read once at startup; changes require a restart.",
