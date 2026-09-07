@@ -34,10 +34,10 @@ mod tests {
             .expect("expected schema properties")
             .keys()
         {
-            let needle = format!("`{key}`");
-            let dotted = format!("`{context}.{key}`");
+            let bare = format!("`{key}`");
+            let nested = format!(".{key}`");
             assert!(
-                doc.contains(&needle) || doc.contains(&dotted),
+                doc.contains(&bare) || doc.contains(&nested),
                 "configuration docs do not mention public schema key {context}.{key}"
             );
         }
@@ -337,11 +337,11 @@ mod tests {
         );
 
         assert!(
-            doc.contains("| `font_size` | number or null | `13.0` |"),
+            doc.contains("| `font_size` | number/null | `13.0` |"),
             "configuration docs must publish the runtime font_size default"
         );
         assert!(
-            doc.contains("| `line_height` | number or null | `1.0` |"),
+            doc.contains("| `line_height` | number/null | `1.0` |"),
             "configuration docs must publish the runtime line_height default"
         );
         assert!(

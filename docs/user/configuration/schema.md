@@ -45,7 +45,7 @@ JetBrains IDEs, Helix, and other JSON Schema-aware editors:
 | --- | --- | --- | --- | --- |
 | `$schema` | string | none | Editor only | Points editors to the published schema. Ignored by Paneflow. |
 | `$schemaVersion` | string | `1.0.0` | Startup/reload | Unknown versions warn but do not block loading. |
-| `default_shell` | string/null | Platform shell fallback | New terminal | Falls back through configured executable, `$SHELL`, `/bin/sh`, then `%COMSPEC%` on Windows. |
+| `default_shell` | string/null | Platform shell fallback | New terminal | Unix: configured -> `$SHELL` -> `/bin/sh`. Windows: configured -> `pwsh.exe` -> `powershell.exe` -> `%ComSpec%` -> `C:\Windows\System32\cmd.exe` -> `cmd.exe`. |
 | `theme` | string/null | `Paneflow Dark` | Hot reload | The light or dark variant of one preset: Paneflow, Vercel, Claude, Cursor. Pre-preset names (`One Dark`, `PaneFlow Light`, `Vercel`, `Claude`, `Cursor`) still resolve. Runtime lookup is case-insensitive. |
 | `theme_mode` | string/null | `dark` | Hot reload | `light` and `dark` force the matching bundled theme; `system` follows the OS window appearance. |
 | `font_family` | string/null | bundled `JetBrainsMono Nerd Font` | Hot reload cache | Accepts `.PaneflowMono`, `JetBrainsMono NF`, `JetBrainsMono NFM`, `.PaneflowSans`, embedded font names, or installed monospace families. |
