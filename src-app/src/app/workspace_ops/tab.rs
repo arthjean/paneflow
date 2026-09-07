@@ -1,4 +1,4 @@
-use gpui::{AppContext, Context, Window};
+use gpui::{App, AppContext, Context, Entity, Window};
 use paneflow_config::schema::{TabTitleSource, TerminalSurfaceProfile};
 
 use crate::PaneFlowApp;
@@ -265,11 +265,48 @@ impl PaneFlowApp {
     }
 
     pub(crate) fn reset_tab_name(&mut self, ws_idx: usize, tab_idx: usize, cx: &mut Context<Self>) {
-        if self
+        let unlocked = self
             .workspaces
             .get_mut(ws_idx)
             .and_then(|ws| ws.tab_mut(tab_idx))
-            .is_some_and(Tab::unlock_title)
+            .is_some_and(Tab::unlock_title);
+        if !unlocked {
+            return;
+        }
+        if let Some(terminal) = self
+            .workspaces
+            .get(ws_idx)
+            .and_then(|ws| ws.tabs().get(tab_idx))
+            .and_then(|tab| sole_terminal(tab, cx))
+        {
+            self.apply_process_title(&terminal, cx);
+        }
+        self.save_session(cx);
+        cx.notify();
+    }
+
+    pub(crate) fn apply_process_title(
+        &mut self,
+        terminal: &Entity<TerminalView>,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(ws_idx) = self.workspace_idx_for_terminal(terminal, cx) else {
+            return;
+        };
+        let surface_id = terminal.entity_id().as_u64();
+        let Some((tab_idx, 1)) =
+            crate::app::ipc_handler::tab_for_surface(&self.workspaces[ws_idx], surface_id, cx)
+        else {
+            return;
+        };
+        let Some(title) =
+            crate::sidebar_title::clean_sidebar_title(&terminal.read(cx).terminal.title)
+        else {
+            return;
+        };
+        if self.workspaces[ws_idx]
+            .tab_mut(tab_idx)
+            .is_some_and(|tab| tab.set_title(&title, TabTitleSource::Process))
         {
             self.save_session(cx);
             cx.notify();
@@ -462,4 +499,13 @@ impl PaneFlowApp {
         self.save_session(cx);
         cx.notify();
     }
+}
+
+fn sole_terminal(tab: &Tab, cx: &App) -> Option<Entity<TerminalView>> {
+    let mut terminals = tab
+        .collect_panes()
+        .into_iter()
+        .flat_map(|pane| pane.read(cx).terminals().cloned().collect::<Vec<_>>());
+    let first = terminals.next()?;
+    terminals.next().is_none().then_some(first)
 }

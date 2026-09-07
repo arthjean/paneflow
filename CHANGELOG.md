@@ -7,6 +7,14 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
 
 ### Added
 
+- Tabs follow the title their CLI sets. The terminal title a program writes
+  (Claude Code publishes its topic title there, shells their prompt line)
+  becomes the tab's name in the sidebar and keeps tracking it, the way cmux
+  names its workspaces after the focused panel. Spinner glyphs and control
+  characters are stripped first, and a tab holding several surfaces is left
+  alone. The first-prompt placeholder and the resume-picker title still cover
+  a CLI that never writes a terminal title. A name you typed always wins;
+  "Reset name" hands the tab straight back to the current terminal title.
 - The Changes dock can take the whole cockpit. A maximize button in the dock's
   tab strip (or `Cmd/Ctrl+Shift+F`) hides the pane grid so Changes, an editor
   tab, or a dock terminal gets the full window width; the same control or

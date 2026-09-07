@@ -746,6 +746,9 @@ impl PaneFlowApp {
             terminal::TerminalEvent::CwdChanged(new_cwd) => {
                 self.handle_cwd_change(&terminal, new_cwd, cx);
             }
+            terminal::TerminalEvent::TitleChanged => {
+                self.apply_process_title(&terminal, cx);
+            }
             terminal::TerminalEvent::ServiceDetected(info) => {
                 terminal.update(cx, |view, _| view.terminal.note_announced_port(info.port));
                 if let Some(ws_idx) = self.workspace_idx_for_terminal(&terminal, cx) {
@@ -821,7 +824,6 @@ impl PaneFlowApp {
             terminal::TerminalEvent::ChildExited => {
                 self.purge_sessions_for_surface(terminal.entity_id().as_u64(), cx);
             }
-            _ => {}
         }
     }
 
@@ -871,7 +873,7 @@ impl PaneFlowApp {
         cx.notify();
     }
 
-    fn workspace_idx_for_terminal(
+    pub(crate) fn workspace_idx_for_terminal(
         &self,
         terminal: &Entity<TerminalView>,
         cx: &App,

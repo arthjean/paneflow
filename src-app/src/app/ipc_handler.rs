@@ -588,7 +588,7 @@ pub(crate) fn find_terminal_by_surface_id(
     None
 }
 
-fn tab_for_surface(ws: &Workspace, surface_id: u64, cx: &App) -> Option<(usize, usize)> {
+pub(crate) fn tab_for_surface(ws: &Workspace, surface_id: u64, cx: &App) -> Option<(usize, usize)> {
     ws.tabs().iter().enumerate().find_map(|(idx, tab)| {
         let panes = tab.collect_panes();
         let mut holds_surface = false;
