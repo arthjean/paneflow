@@ -1,0 +1,13 @@
+--- a/ui/ozone/platform/x11/ozone_platform_x11.cc
++++ b/ui/ozone/platform/x11/ozone_platform_x11.cc
+@@ -302,9 +302,7 @@
+   void InitializeGPU(const InitParams& params) override {
+     InitializeCommon(params);
+     if (params.enable_native_gpu_memory_buffers) {
+-      base::ThreadPool::PostTask(FROM_HERE, base::BindOnce([]() {
+-                                   ui::GBMSupportX11::GetInstance();
+-                                 }));
++      ui::GBMSupportX11::GetInstance();
+     }
+     // In single process mode either the UI thread will create an event source
+     // or it's a test and an event source isn't desired.

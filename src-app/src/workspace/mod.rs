@@ -96,6 +96,7 @@ pub struct Workspace {
     pub files_expanded: Vec<std::path::PathBuf>,
     pub managed_worktrees: Vec<worktree::ManagedWorktree>,
     pub sidebar_expanded: bool,
+    pub browser_profile: Option<String>,
 }
 
 impl Workspace {
@@ -139,6 +140,7 @@ impl Workspace {
             files_expanded: Vec::new(),
             managed_worktrees: Vec::new(),
             sidebar_expanded: true,
+            browser_profile: None,
         }
     }
 
@@ -360,6 +362,7 @@ impl Workspace {
                     .worktree
                     .as_ref()
                     .map(|path| path.to_string_lossy().into_owned()),
+                browsers: Vec::new(),
             })
             .collect()
     }

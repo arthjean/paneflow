@@ -42,6 +42,10 @@ use crate::diff::{
 };
 use crate::ui_primitives::squircle::{squircle_border, squircle_fill};
 
+pub(crate) fn needs_git_snapshot(tabs: &[DiffDockTab]) -> bool {
+    tabs.is_empty() || tabs.iter().any(|tab| matches!(tab, DiffDockTab::Changes))
+}
+
 impl PaneFlowApp {
     pub(crate) fn open_diff_dock_panel(&mut self, cwd: String, cx: &mut Context<Self>) {
         let cwd = cwd.trim().to_string();
@@ -56,7 +60,8 @@ impl PaneFlowApp {
                 && data.theme_generation == crate::theme::theme_generation()
         });
         self.diff_dock.open = true;
-        if has_current_snapshot {
+        self.show_diff_dock_browsers(cx);
+        if has_current_snapshot || !needs_git_snapshot(&self.diff_dock.diff_tabs) {
             cx.notify();
         } else {
             self.refresh_diff_dock(cwd, cx);
@@ -65,6 +70,7 @@ impl PaneFlowApp {
 
     pub(crate) fn close_diff_dock_panel(&mut self, cx: &mut Context<Self>) {
         self.diff_dock.open = false;
+        self.hide_diff_dock_browsers(cx);
         self.diff_dock.data = None;
         self.clear_diff_dock_snapshot_state();
         self.diff_dock.resize = None;
@@ -353,6 +359,10 @@ impl PaneFlowApp {
         );
         let (toolbar, body) = match tabs.get(active) {
             Some(DiffDockTab::Terminal(terminal)) => (None, terminal.clone().into_any_element()),
+            Some(DiffDockTab::Browser(view)) => {
+                view.update(cx, |view, _| view.set_dock_width(width));
+                (None, view.clone().into_any_element())
+            }
             Some(DiffDockTab::PendingFile) => (
                 Some(
                     div()

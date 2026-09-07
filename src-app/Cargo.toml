@@ -66,6 +66,7 @@ ttf-parser = "0.25"
 
 # Internal crates
 paneflow-config = { path = "../crates/paneflow-config" }
+paneflow-browser-protocol = { path = "../crates/paneflow-browser-protocol" }
 paneflow-terminal-ghostty = { path = "../crates/paneflow-terminal-ghostty", features = [
     "native",
 ] }
@@ -276,6 +277,7 @@ gpui_platform = { git = "https://github.com/zed-industries/zed", rev = "fecc3273
 # ext-background-effect-v1 and falls back to GPUI's KDE protocol; X11 uses
 # KWin's _KDE_NET_WM_BLUR_BEHIND_REGION hint when the effect is advertised.
 raw-window-handle = "0.6"
+ash = "0.38"
 wayland-client = { version = "0.31.14", features = ["dlopen", "system"] }
 wayland-protocols = { version = "0.32.12", features = ["client", "staging"] }
 x11rb = { version = "0.13.2", features = ["allow-unsafe-code"] }

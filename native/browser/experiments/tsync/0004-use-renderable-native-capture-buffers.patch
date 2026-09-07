@@ -1,0 +1,55 @@
+--- a/components/viz/service/frame_sinks/video_capture/frame_sink_video_capturer_impl.cc
++++ b/components/viz/service/frame_sinks/video_capture/frame_sink_video_capturer_impl.cc
+@@ -471,8 +471,10 @@
+   // If we are using ARGB format with mappable SI, we must have the pool context
+   CHECK((pixel_format_ != media::PIXEL_FORMAT_ARGB &&
+          pixel_format_ != media::PIXEL_FORMAT_RGBAF16) ||
+-        buffer_format_preference_ !=
+-            mojom::BufferFormatPreference::kPreferMappableSharedImage ||
++        (buffer_format_preference_ !=
++             mojom::BufferFormatPreference::kPreferMappableSharedImage &&
++         buffer_format_preference_ !=
++             mojom::BufferFormatPreference::kPreferSharedImageWithNativeHandle) ||
+         gmb_video_frame_pool_context_provider_);
+ 
+   video_capture_started_ = true;
+@@ -1140,8 +1142,10 @@
+   // be necessary but video capture is started with I420+mappable SI in tests.
+   // That still captures software I420 frames and not textures.
+   const bool capture_texture_results =
+-      buffer_format_preference_ ==
+-          mojom::BufferFormatPreference::kPreferMappableSharedImage &&
++      (buffer_format_preference_ ==
++           mojom::BufferFormatPreference::kPreferMappableSharedImage ||
++       buffer_format_preference_ ==
++           mojom::BufferFormatPreference::kPreferSharedImageWithNativeHandle) &&
+       (pixel_format_ == media::PIXEL_FORMAT_NV12 ||
+        pixel_format_ == media::PIXEL_FORMAT_ARGB ||
+        pixel_format_ == media::PIXEL_FORMAT_RGBAF16);
+@@ -1367,8 +1371,10 @@
+         frame_capture.CaptureFailed(CaptureResult::kARGBReadbackFailed);
+       }
+     } else {
+-      CHECK_EQ(buffer_format_preference_,
+-               mojom::BufferFormatPreference::kPreferMappableSharedImage);
++      CHECK(buffer_format_preference_ ==
++                mojom::BufferFormatPreference::kPreferMappableSharedImage ||
++            buffer_format_preference_ ==
++                mojom::BufferFormatPreference::kPreferSharedImageWithNativeHandle);
+       // MappableSI ARGB results are written to the existing pool texture.
+       if (result->IsEmpty()) {
+         frame_capture.CaptureFailed(
+--- a/cef/libcef/browser/osr/video_consumer_osr.cc
++++ b/cef/libcef/browser/osr/video_consumer_osr.cc
+@@ -51,7 +51,11 @@
+     video_capturer_->Start(
+         this,
+         use_shared_texture_
++#if BUILDFLAG(IS_LINUX)
++            ? viz::mojom::BufferFormatPreference::kPreferSharedImageWithNativeHandle
++#else
+             ? viz::mojom::BufferFormatPreference::kPreferMappableSharedImage
++#endif
+             : viz::mojom::BufferFormatPreference::kDefault);
+   } else {
+     video_capturer_->Stop();

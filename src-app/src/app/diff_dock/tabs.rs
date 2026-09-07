@@ -26,6 +26,22 @@ impl PaneFlowApp {
             self.diff_dock.diff_tabs.len() - 1
         });
         self.select_diff_tab(index, cx);
+        let needs_snapshot = self
+            .diff_dock
+            .data
+            .as_ref()
+            .is_none_or(|data| !data.has_rows() && !data.loading);
+        if needs_snapshot {
+            let cwd = self
+                .diff_dock
+                .data
+                .as_ref()
+                .map(|data| data.cwd.clone())
+                .filter(|cwd| !cwd.is_empty())
+                .or_else(|| self.active_checkout())
+                .unwrap_or_default();
+            self.refresh_diff_dock(cwd, cx);
+        }
     }
 
     pub(crate) fn open_diff_terminal_tab(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -131,6 +147,16 @@ impl PaneFlowApp {
         let focus = match self.diff_dock.diff_tabs.get(index) {
             Some(DiffDockTab::File(view)) => Some(view.read(cx).focus_handle(cx)),
             Some(DiffDockTab::Terminal(terminal)) => Some(terminal.read(cx).focus_handle(cx)),
+            Some(DiffDockTab::Browser(view)) => {
+                let view = view.clone();
+                view.update(cx, |view, cx| view.select(window, cx));
+                let view = view.read(cx);
+                Some(if view.url().is_some() {
+                    view.focus_handle(cx)
+                } else {
+                    view.address_focus_handle(cx)
+                })
+            }
             Some(DiffDockTab::PendingFile) if self.files_sidebar_open => {
                 Some(self.files_sidebar.read(cx).focus_handle(cx))
             }
@@ -189,7 +215,30 @@ impl PaneFlowApp {
             self.diff_dock.picked = true;
             self.diff_dock.diff_active_tab = index;
             self.diff_dock.diff_tab_close_armed = None;
+            for (position, tab) in self.diff_dock.diff_tabs.clone().into_iter().enumerate() {
+                if let DiffDockTab::Browser(view) = tab {
+                    let visible = position == index && self.diff_dock.open;
+                    view.update(cx, |view, cx| view.set_visible(visible, cx));
+                }
+            }
             cx.notify();
+        }
+    }
+
+    pub(crate) fn show_diff_dock_browsers(&mut self, cx: &mut Context<Self>) {
+        let active = self.diff_dock.diff_active_tab;
+        for (position, tab) in self.diff_dock.diff_tabs.clone().into_iter().enumerate() {
+            if let DiffDockTab::Browser(view) = tab {
+                view.update(cx, |view, cx| view.set_visible(position == active, cx));
+            }
+        }
+    }
+
+    pub(crate) fn hide_diff_dock_browsers(&mut self, cx: &mut Context<Self>) {
+        for tab in self.diff_dock.diff_tabs.clone() {
+            if let DiffDockTab::Browser(view) = tab {
+                view.update(cx, |view, cx| view.set_visible(false, cx));
+            }
         }
     }
 
@@ -220,6 +269,10 @@ impl PaneFlowApp {
             return;
         }
         let closed = self.diff_dock.diff_tabs.remove(index);
+        if let DiffDockTab::Browser(view) = &closed {
+            view.update(cx, |view, cx| view.close(cx));
+            self.save_session(cx);
+        }
         if matches!(closed, DiffDockTab::File(_) | DiffDockTab::PendingFile)
             && !self
                 .diff_dock

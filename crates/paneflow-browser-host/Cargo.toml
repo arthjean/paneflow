@@ -1,0 +1,22 @@
+[package]
+name = "paneflow-browser-host"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[features]
+cef-runtime = ["dep:cef", "dep:ash"]
+
+[dependencies]
+paneflow-browser-protocol = { path = "../paneflow-browser-protocol" }
+serde.workspace = true
+serde_json.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+ash = { version = "0.38", optional = true }
+cef = { git = "https://github.com/tauri-apps/cef-rs", rev = "71a3eba55bb46957b7bdd627ef7caf5c70acf4bb", default-features = false, features = ["dox", "sandbox"], optional = true }
+libc.workspace = true
+
+[lints]
+workspace = true

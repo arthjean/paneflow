@@ -9,6 +9,7 @@ use paneflow_config::schema::{LayoutNode, TabTitleSource};
 
 use crate::PaneFlowApp;
 use crate::agent_launcher::TerminalAgent;
+use crate::app::browser_dock::RestoredBrowserTab;
 use crate::launch_cwd;
 use crate::layout::{LayoutTree, MAX_PANES};
 use crate::limits::MAX_SESSION_SIZE_BYTES;
@@ -49,7 +50,15 @@ impl PaneFlowApp {
                 .map(|ws| paneflow_config::schema::WorkspaceSession {
                     title: ws.title.clone(),
                     cwd: ws.cwd.clone(),
-                    tabs: ws.serialize_tabs_without_scrollback(cx),
+                    tabs: ws
+                        .serialize_tabs_without_scrollback(cx)
+                        .into_iter()
+                        .zip(ws.tabs())
+                        .map(|(mut session, tab)| {
+                            session.browsers = self.browser_descriptors_for_tab(tab.id, cx);
+                            session
+                        })
+                        .collect(),
                     active_tab: ws.active_tab_idx(),
                     legacy_layout: None,
                     legacy_empty: false,
@@ -66,6 +75,7 @@ impl PaneFlowApp {
                         })
                         .collect(),
                     sidebar_collapsed: !ws.sidebar_expanded,
+                    browser_profile: ws.browser_profile.clone(),
                 })
                 .collect(),
             mode: self.mode,
@@ -234,8 +244,9 @@ impl PaneFlowApp {
     pub(crate) fn restore_workspaces(
         session: &paneflow_config::schema::SessionState,
         cx: &mut Context<Self>,
-    ) -> (Vec<Workspace>, usize) {
+    ) -> (Vec<Workspace>, usize, Vec<RestoredBrowserTab>) {
         let mut workspaces = Vec::new();
+        let mut restored_browsers = Vec::new();
 
         if session.workspaces.len() > MAX_WORKSPACES {
             log::warn!(
@@ -287,8 +298,21 @@ impl PaneFlowApp {
                     restored_tab_worktree(tab_session.worktree.as_deref()),
                 ));
             }
+            for (tab, tab_session) in tabs.iter().zip(ws_session.tabs.iter()) {
+                if !tab_session.browsers.is_empty() {
+                    restored_browsers.push(RestoredBrowserTab {
+                        workspace_id: ws_id,
+                        tab_id: tab.id,
+                        descriptors: tab_session.browsers.clone(),
+                    });
+                }
+            }
             let mut workspace =
                 Workspace::restored_with_id(ws_id, title.clone(), cwd, tabs, ws_session.active_tab);
+            workspace.browser_profile = ws_session
+                .browser_profile
+                .clone()
+                .filter(|id| paneflow_browser_protocol::ProfileId::try_from(id.clone()).is_ok());
 
             workspace.custom_buttons = ws_session.custom_buttons.clone();
             workspace.sidebar_expanded = !ws_session.sidebar_collapsed;
@@ -329,7 +353,7 @@ impl PaneFlowApp {
         let active_idx = session
             .active_workspace
             .min(workspaces.len().saturating_sub(1));
-        (workspaces, active_idx)
+        (workspaces, active_idx, restored_browsers)
     }
 
     fn build_restored_surface(

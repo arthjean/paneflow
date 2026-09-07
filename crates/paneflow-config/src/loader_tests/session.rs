@@ -12,6 +12,7 @@ fn make_workspace(title: &str, cwd: &str, tabs: Vec<TabSession>) -> WorkspaceSes
         expanded_paths: vec![],
         managed_worktrees: vec![],
         sidebar_collapsed: false,
+        browser_profile: None,
     }
 }
 
@@ -525,12 +526,14 @@ fn test_tab_title_source_survives_a_roundtrip() {
                     title_source: Some(TabTitleSource::User),
                     layout: None,
                     worktree: None,
+                    browsers: Vec::new(),
                 },
                 TabSession {
                     title: "wire up the parser".to_string(),
                     title_source: Some(TabTitleSource::Prompt),
                     layout: None,
                     worktree: Some("/home/user/project.worktrees/parser".to_string()),
+                    browsers: Vec::new(),
                 },
             ],
         )],

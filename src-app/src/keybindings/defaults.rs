@@ -371,6 +371,71 @@ pub(super) const DEFAULTS: &[DefaultBinding] = &[
         context: Some("!Terminal && !TextInput && !PaneflowTextArea && !CodeEditor"),
     },
     DefaultBinding {
+        key: "secondary-l",
+        action_name: "browser_focus_address",
+        context: Some("Browser"),
+    },
+    DefaultBinding {
+        key: "secondary-t",
+        action_name: "browser_new_tab",
+        context: Some("Browser"),
+    },
+    DefaultBinding {
+        key: "secondary-w",
+        action_name: "browser_close",
+        context: Some("Browser"),
+    },
+    DefaultBinding {
+        key: "secondary-r",
+        action_name: "browser_reload",
+        context: Some("Browser"),
+    },
+    DefaultBinding {
+        key: "secondary-shift-r",
+        action_name: "browser_reload_ignore_cache",
+        context: Some("Browser"),
+    },
+    DefaultBinding {
+        key: "alt-left",
+        action_name: "browser_back",
+        context: Some("Browser"),
+    },
+    DefaultBinding {
+        key: "alt-right",
+        action_name: "browser_forward",
+        context: Some("Browser"),
+    },
+    DefaultBinding {
+        key: "secondary-=",
+        action_name: "browser_zoom_in",
+        context: Some("Browser"),
+    },
+    DefaultBinding {
+        key: "secondary--",
+        action_name: "browser_zoom_out",
+        context: Some("Browser"),
+    },
+    DefaultBinding {
+        key: "secondary-0",
+        action_name: "browser_zoom_reset",
+        context: Some("Browser"),
+    },
+    DefaultBinding {
+        key: "escape",
+        action_name: "browser_escape",
+        context: Some("Browser && !TextInput"),
+    },
+    DefaultBinding {
+        key: "f6",
+        action_name: "browser_focus_next",
+        context: Some("Browser"),
+    },
+    DefaultBinding {
+        key: "shift-f6",
+        action_name: "browser_focus_prev",
+        context: Some("Browser"),
+    },
+    DefaultBinding {
         key: "secondary-shift-space",
         action_name: "open_composer",
         context: None,

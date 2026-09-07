@@ -1,0 +1,193 @@
+{
+  "schema_version": 1,
+  "status": "FUNCTIONAL_PARTIAL",
+  "created_at": "2026-09-06T15:24:46.101763+00:00",
+  "chromium_version": "151.0.7922.174",
+  "chromium_commit": "39c51c70dd5feca6b6aba5bb7997b595011c553d",
+  "cef_commit": "2384915b7b1f0fe5ad1107e48d80c34e86b698d7",
+  "depot_tools_commit": "94e89b10b92cc9d6e58fc8d1b6474b7d29e8a114",
+  "patch": "0001-prepare-gpu-broker-before-driver-threads.patch",
+  "patch_sha256": "978b82822091e3ef170da8bf1664a55525fa73213452e32334a47eb0a4e786ac",
+  "gn_args": "blink_heap_inside_shared_library=true\nblink_symbol_level=0\nchrome_pgo_phase=0\nclang_use_chrome_plugins=false\ndcheck_always_on=true\nenable_background_mode=false\nenable_downgrade_processing=false\nenable_linux_installer=false\nenable_precompiled_headers=false\nenable_resource_allowlist_generation=false\nenable_widevine=true\nforbid_non_component_debug_builds=false\nis_cfi=false\nis_component_build=false\nis_debug=false\noptimize_webui=true\nsymbol_level=0\ntarget_cpu=\"x64\"\nuse_qt5=false\nuse_qt6=false\nuse_remoteexec=false\nuse_siso=false\nuse_sysroot=true\nuse_thin_lto=false\nv8_symbol_level=0\nroot_extra_deps = [ \"//paneflow_tsync_probe:paneflow_tsync_probe\" ]\n",
+  "source_workspace": "/home/arthur/.cache/paneflow-cef-tsync/work/chromium/src",
+  "baseline_evidence": "bench/browser/evidence/prototype/cef-tsync-baseline-20260906-r2/prototype/native.json",
+  "runtime_qualification": "AMD_AND_NVIDIA_WAYLAND_NVIDIA_XWAYLAND_FUNCTIONAL_ONLY",
+  "production_manifest_modified": false,
+  "real_policy_probe": {
+    "status": "PASS_WITH_NATIVE_SHADER_CACHES_DISABLED",
+    "evidence": "bench/browser/evidence/prototype/real-policy-tsync-20260906-r2",
+    "gpus": [
+      "AMD Raphael Mesa 26.1.8",
+      "NVIDIA RTX 4070 Ti SUPER 610.57.04"
+    ],
+    "namespace_layer": false,
+    "full_cef_qualification": false,
+    "source_sha256": "67b351538b3805fb7ffe1f50d3234679a5c5e9d7b8cb9ec9b20ee4c7c5a2bf4e",
+    "binary_sha256": "edfdbb20e214ed0f0b4baebb9cf8530efda979d1616895f243b2330bd522142f",
+    "native_shader_caches_disabled": true
+  },
+  "changed_translation_units": "PASS",
+  "paneflow_snapshot": "/home/arthur/.cache/paneflow-cef-tsync/paneflow-snapshot",
+  "paneflow_target_directory": "/home/arthur/.cache/paneflow-cef-tsync/paneflow-target",
+  "full_build_receipt": "/home/arthur/.cache/paneflow-cef-tsync/compile-cef-r4.json",
+  "full_build_log": "/home/arthur/.cache/paneflow-cef-tsync/compile-cef-r4.log",
+  "cache_enabled_followup": {
+    "evidence": "bench/browser/evidence/prototype/real-policy-tsync-cache-20260906",
+    "nvidia": "PASS",
+    "mesa": "FAIL_TIMING_SENSITIVE",
+    "mesa_additional_runs": 10,
+    "mesa_additional_failures": 9,
+    "denied_syscall": "sched_setscheduler",
+    "cef_relevance": "Actual CEF 120-shader fresh-cache runs PASS on Mesa Wayland and NVIDIA XWayland; standalone native EGL failure retained",
+    "policy_modified": false
+  },
+  "build_resource_stop": {
+    "receipt": "/home/arthur/.cache/paneflow-cef-tsync/compile-cef-r3.json",
+    "reason": "available memory below five GiB; resumed incrementally with eight jobs"
+  },
+  "updated_at": "2026-09-06T19:24:57.164580+00:00",
+  "integrated_evidence": "bench/browser/evidence/prototype/cef-tsync-integrated-20260906/summary.json",
+  "full_build_evidence": "bench/browser/evidence/prototype/cef-tsync-source-build-20260906/provenance.json",
+  "final_build_receipt": "/home/arthur/.cache/paneflow-cef-tsync/compile-cef-gbm.json",
+  "final_runtime": {
+    "workspace": "/home/arthur/.cache/paneflow-cef-tsync/paneflow-snapshot",
+    "build_output": "/home/arthur/.cache/paneflow-cef-tsync/work/chromium/src/out/Release_GN_x64",
+    "manifest_sha256": "8409ade79dd187ac3a1f0a7b429d90897f569371bd3dc44094b8142a5a2d83bb",
+    "archive_sha256": "ebc4369c6a3f87f685f937f9afc3d67dbcbb97b8eebb00bd5f57981900aa402a",
+    "runtime": "/home/arthur/.cache/paneflow-cef-tsync/paneflow-snapshot/native/browser/prebuilt/x86_64-unknown-linux-gnu/ebc4369c6a3f87f685f937f9afc3d67dbcbb97b8eebb00bd5f57981900aa402a",
+    "full_cef_qualification": false
+  },
+  "patch_series": [
+    {
+      "file": "0001-prepare-gpu-broker-before-driver-threads.patch",
+      "sha256": "978b82822091e3ef170da8bf1664a55525fa73213452e32334a47eb0a4e786ac"
+    },
+    {
+      "file": "0002-preserve-offscreen-scale-without-native-view.patch",
+      "sha256": "add00e65af71bcb4b3a94b95db0933238a5f8a42d560afd3d39b83e468f28b1b"
+    },
+    {
+      "file": "0003-initialize-x11-gbm-before-sandbox.patch",
+      "sha256": "3f10976496fb6b1e3788616701825f05925af426f8149ff6008ce8ce76ed5b2a"
+    },
+    {
+      "file": "0004-use-renderable-native-capture-buffers.patch",
+      "sha256": "6c567e561fce73e0654c049713fe61eb7ca199644cf965f72e8315c58d272161"
+    },
+    {
+      "file": "0005-correlate-capture-with-draw-trace.patch",
+      "sha256": "56271da334826e86a12046337e301478d0bab53f871bf815b6d40400fb93152b"
+    },
+    {
+      "file": "0006-bound-linux-linker-parallelism.patch",
+      "sha256": "30307c0a20633d673c79f2c224936eaf23916a5912f308f452de1d6211935a3d"
+    }
+  ],
+  "runtime_cases": {
+    "mesa_wayland": {
+      "evidence": "bench/browser/evidence/prototype/cef-tsync-20260906-mesa-wayland-r2/prototype/native.json",
+      "status": "COMPLETED",
+      "gpu_thread_counts": [
+        32,
+        32
+      ],
+      "all_observed_gpu_threads_filtered": true
+    },
+    "nvidia_xwayland": {
+      "evidence": "bench/browser/evidence/prototype/cef-tsync-20260906-nvidia-xwayland-r3/prototype/native.json",
+      "status": "COMPLETED",
+      "gpu_thread_counts": [
+        20,
+        20
+      ],
+      "all_observed_gpu_threads_filtered": true
+    },
+    "mesa_shaders": {
+      "evidence": "bench/browser/evidence/prototype/cef-tsync-20260906-mesa-shaders-r2/prototype/native.json",
+      "status": "COMPLETED",
+      "gpu_thread_counts": [
+        22
+      ],
+      "all_observed_gpu_threads_filtered": true
+    },
+    "nvidia_shaders": {
+      "evidence": "bench/browser/evidence/prototype/cef-tsync-20260906-nvidia-shaders/prototype/native.json",
+      "status": "COMPLETED",
+      "gpu_thread_counts": [
+        20
+      ],
+      "all_observed_gpu_threads_filtered": true
+    },
+    "nvidia_wayland": {
+      "evidence": "bench/browser/evidence/prototype/cef-tsync-20260906-nvidia-wayland/prototype/native.json",
+      "status": "FAILED",
+      "gpu_thread_counts": [],
+      "all_observed_gpu_threads_filtered": false
+    }
+  },
+  "remaining_gates": [
+    "Native Xorg execution",
+    "Physical M1 A/B/C timing",
+    "Qualification with shipping hardening configuration and distributable source-pinned runtime"
+  ],
+  "nvidia_wayland_evidence": "bench/browser/evidence/prototype/cef-tsync-nvidia-wayland-20260906/summary.json",
+  "official_candidate": {
+    "purpose": "CEF official Linux x64 CFI icall ThinLTO PGO candidate",
+    "gn_args": {
+      "is_component_build": false,
+      "enable_background_mode": false,
+      "enable_resource_allowlist_generation": false,
+      "enable_downgrade_processing": false,
+      "enable_precompiled_headers": false,
+      "forbid_non_component_debug_builds": false,
+      "use_sysroot": true,
+      "use_qt5": false,
+      "use_qt6": false,
+      "blink_heap_inside_shared_library": true,
+      "is_official_build": true,
+      "is_cfi": true,
+      "use_cfi_icall": true,
+      "use_cfi_diag": false,
+      "use_cfi_recover": false,
+      "use_thin_lto": true,
+      "thin_lto_enable_optimizations": true,
+      "chrome_pgo_phase": 2,
+      "dcheck_always_on": false,
+      "symbol_level": 0,
+      "blink_symbol_level": 0,
+      "v8_symbol_level": 0,
+      "use_remoteexec": false,
+      "use_siso": false,
+      "clang_use_chrome_plugins": false,
+      "optimize_webui": true,
+      "enable_widevine": true,
+      "enable_linux_installer": false,
+      "disable_fieldtrial_testing_config": true,
+      "use_partition_alloc_as_malloc": false,
+      "enable_backup_ref_ptr_support": false,
+      "is_debug": false,
+      "target_cpu": "x64"
+    },
+    "gn_args_sha256": "9ae554261255a31fa12a022ce1eeee6c1a39846fc435e256e6da53108aa2d14c",
+    "patches": {
+      "0001-prepare-gpu-broker-before-driver-threads.patch": "978b82822091e3ef170da8bf1664a55525fa73213452e32334a47eb0a4e786ac",
+      "0002-preserve-offscreen-scale-without-native-view.patch": "add00e65af71bcb4b3a94b95db0933238a5f8a42d560afd3d39b83e468f28b1b",
+      "0003-initialize-x11-gbm-before-sandbox.patch": "3f10976496fb6b1e3788616701825f05925af426f8149ff6008ce8ce76ed5b2a",
+      "0005-correlate-capture-with-draw-trace.patch": "56271da334826e86a12046337e301478d0bab53f871bf815b6d40400fb93152b",
+      "0004-use-renderable-native-capture-buffers.patch": "6c567e561fce73e0654c049713fe61eb7ca199644cf965f72e8315c58d272161",
+      "0006-bound-linux-linker-parallelism.patch": "30307c0a20633d673c79f2c224936eaf23916a5912f308f452de1d6211935a3d"
+    },
+    "pgo_profile": "chrome-linux-7922-1787137391-84aa9e46e15c5db6abd0f5fd9ddd9932fcfee163-ec4cb49a3f249e284869eb290824dc769f7564ba.profdata"
+  },
+  "official_build_status": "IN_PROGRESS",
+  "official_build_receipt": "/home/arthur/.cache/paneflow-cef-tsync/compile-cef-official-r2.json",
+  "latest_verified_evidence": {
+    "checked_at": "2026-09-07T06:22:58.024975+00:00",
+    "external_ownership": "bench/browser/evidence/prototype/external-ownership-wayland-20260907/receipt.json",
+    "mesa_worker_growth": "bench/browser/evidence/tsync-mesa-growth-20260907/cache-growth.json",
+    "verified_archive_hashes": 28,
+    "scope": "Diagnostic runtime only; native AMD/NVIDIA Wayland functional observations and bounded Mesa worker growth. Pixel content and full M1 remain pending.",
+    "hardened_build": "compile-cef-official-r5 running; r4 interrupted, no success receipt",
+    "xorg": "NOT_EXECUTED"
+  }
+}

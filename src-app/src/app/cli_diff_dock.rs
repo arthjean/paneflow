@@ -25,8 +25,55 @@ pub(crate) struct DiffDockSlot {
 }
 
 impl DiffDockSlot {
-    fn is_idle(&self) -> bool {
+    pub(crate) fn is_idle(&self) -> bool {
         !self.open && !self.picked && self.tabs.is_empty()
+    }
+
+    pub(crate) fn with_browsers(
+        views: Vec<gpui::Entity<crate::browser::view::BrowserView>>,
+    ) -> Self {
+        Self {
+            open: false,
+            picker: false,
+            picked: true,
+            tabs: views.into_iter().map(DiffDockTab::Browser).collect(),
+            active_tab: 0,
+            data: None,
+        }
+    }
+
+    pub(crate) fn with_browser(view: gpui::Entity<crate::browser::view::BrowserView>) -> Self {
+        Self::with_browsers(vec![view])
+    }
+
+    pub(crate) fn set_active_tab(&mut self, index: usize) {
+        self.active_tab = index.min(self.tabs.len().saturating_sub(1));
+    }
+
+    pub(crate) fn push_browser(&mut self, view: gpui::Entity<crate::browser::view::BrowserView>) {
+        self.tabs.push(DiffDockTab::Browser(view));
+        self.picked = true;
+    }
+
+    pub(crate) fn take_browsers(&mut self) -> Vec<gpui::Entity<crate::browser::view::BrowserView>> {
+        let mut taken = Vec::new();
+        let mut kept = Vec::new();
+        for tab in std::mem::take(&mut self.tabs) {
+            match tab {
+                DiffDockTab::Browser(view) => taken.push(view),
+                other => kept.push(other),
+            }
+        }
+        self.tabs = kept;
+        self.active_tab = self.active_tab.min(self.tabs.len().saturating_sub(1));
+        taken
+    }
+
+    pub(crate) fn browser_descriptors(
+        &self,
+        cx: &gpui::App,
+    ) -> Vec<paneflow_config::schema::BrowserDescriptor> {
+        crate::app::browser_dock::browser_descriptors(&self.tabs, self.active_tab, cx)
     }
 }
 
@@ -58,6 +105,7 @@ impl PaneFlowApp {
     }
 
     fn park_live_diff_dock(&mut self, owner: Option<u64>, cx: &mut Context<Self>) {
+        self.hide_diff_dock_browsers(cx);
         let slot = DiffDockSlot {
             open: self.diff_dock.open,
             picker: self.diff_dock.picker,
@@ -119,7 +167,7 @@ impl PaneFlowApp {
                 .diff_dock
                 .data
                 .as_ref()
-                .is_some_and(|data| data.cwd == cwd);
+                .is_none_or(|data| data.cwd == cwd);
         if showing {
             self.close_diff_dock_panel(cx);
         } else {

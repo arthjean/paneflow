@@ -118,24 +118,25 @@ impl PaneFlowApp {
             .map(|s| s.review_collapsed.clone())
             .unwrap_or_default();
 
-        let (workspaces, active_idx) = match saved_session {
+        let (workspaces, active_idx, restored_browsers) = match saved_session {
             Some(session) => {
                 log::info!(
                     "restoring session: {} workspace(s), mode={:?}",
                     session.workspaces.len(),
                     session.mode
                 );
-                let (workspaces, active_idx) = Self::restore_workspaces(&session, cx);
+                let (workspaces, active_idx, restored_browsers) =
+                    Self::restore_workspaces(&session, cx);
                 if workspaces.is_empty() {
                     log::warn!(
                         "session restore: session contained no restorable workspaces; creating default workspace"
                     );
-                    (vec![Self::default_workspace(cx)], 0)
+                    (vec![Self::default_workspace(cx)], 0, Vec::new())
                 } else {
-                    (workspaces, active_idx)
+                    (workspaces, active_idx, restored_browsers)
                 }
             }
-            None => (vec![Self::default_workspace(cx)], 0),
+            None => (vec![Self::default_workspace(cx)], 0, Vec::new()),
         };
 
         let (git_event_tx, git_event_rx) = std::sync::mpsc::channel();
@@ -701,6 +702,7 @@ impl PaneFlowApp {
             sidebar_order_cache: std::cell::RefCell::new(Default::default()),
         };
 
+        app.restore_browser_tabs(restored_browsers, cx);
         if let Some(node) = restored_review_layout {
             app.restore_review_layout(&node, cx);
         }

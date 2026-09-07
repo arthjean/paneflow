@@ -2345,6 +2345,133 @@ impl PaneFlowApp {
                     "scope": "workspace",
                 })
             }
+            #[cfg(target_os = "linux")]
+            "qualification.browser.stop" => {
+                if !ipc_scripting_enabled() || !crate::browser_qualification::enabled() {
+                    return JsonRpcError {
+                        code: -32601,
+                        message: "qualification.browser.stop requires PANEFLOW_M1_LOG and PANEFLOW_IPC_SCRIPTING=1".into(),
+                    }.into_value();
+                }
+                match crate::browser::prototype::close_m1_window(cx) {
+                    Ok(true) => serde_json::json!({"queued":true}),
+                    Ok(false) => {
+                        JsonRpcError::invalid_params("No M1 Browser window is open").into_value()
+                    }
+                    Err(error) => JsonRpcError {
+                        code: -32603,
+                        message: error,
+                    }
+                    .into_value(),
+                }
+            }
+            "qualification.input" => {
+                static PENDING: std::sync::atomic::AtomicUsize =
+                    std::sync::atomic::AtomicUsize::new(0);
+
+                if !ipc_scripting_enabled() || !crate::browser_qualification::enabled() {
+                    return JsonRpcError {
+                        code: -32601,
+                        message: "qualification.input requires PANEFLOW_M1_LOG and PANEFLOW_IPC_SCRIPTING=1".into(),
+                    }.into_value();
+                }
+                let Some(surface_id) = params.get("surface_id").and_then(|value| value.as_u64())
+                else {
+                    return JsonRpcError::invalid_params("Missing surface_id").into_value();
+                };
+                let Some(terminal) = self.find_surface_terminal_by_id(surface_id, cx) else {
+                    return JsonRpcError::invalid_params("Surface not found").into_value();
+                };
+                let Some(events) = params.get("events").and_then(|value| value.as_array()) else {
+                    return JsonRpcError::invalid_params("Expected a qualification events array")
+                        .into_value();
+                };
+                if events.is_empty() || events.len() > 350 {
+                    return JsonRpcError::invalid_params("Expected 1..350 qualification events")
+                        .into_value();
+                }
+                let now = crate::browser_qualification::now_ns();
+                let mut previous = now.saturating_add(100_000_000);
+                let mut schedule = Vec::with_capacity(events.len());
+                for event in events {
+                    let input = event
+                        .get("input")
+                        .and_then(|value| value.as_str())
+                        .unwrap_or("");
+                    let tick = input
+                        .strip_prefix('i')
+                        .and_then(|value| value.strip_suffix('\n'))
+                        .filter(|value| {
+                            !value.is_empty() && value.bytes().all(|byte| byte.is_ascii_digit())
+                        })
+                        .and_then(|value| value.parse::<u64>().ok());
+                    let planned_ns = event
+                        .get("planned_ns")
+                        .and_then(|value| value.as_u64())
+                        .unwrap_or(0);
+                    if input.len() > 32
+                        || tick.is_none()
+                        || planned_ns <= previous
+                        || planned_ns > now.saturating_add(75_000_000_000)
+                    {
+                        return JsonRpcError::invalid_params("Expected ordered i<tick>\\n events scheduled 100 ms..75 s ahead on CLOCK_MONOTONIC").into_value();
+                    }
+                    previous = planned_ns;
+                    schedule.push((input.to_owned(), planned_ns));
+                }
+                let count = schedule.len();
+                if PENDING
+                    .fetch_update(
+                        std::sync::atomic::Ordering::AcqRel,
+                        std::sync::atomic::Ordering::Acquire,
+                        |pending| pending.checked_add(count).filter(|total| *total <= 512),
+                    )
+                    .is_err()
+                {
+                    return JsonRpcError::invalid_params(
+                        "Qualification input queue exceeds 512 events",
+                    )
+                    .into_value();
+                }
+                cx.spawn(async move |_, cx: &mut gpui::AsyncApp| {
+                    for (input, planned_ns) in schedule {
+                        let delay =
+                            planned_ns.saturating_sub(crate::browser_qualification::now_ns());
+                        if delay > 0 {
+                            smol::Timer::after(Duration::from_nanos(delay)).await;
+                        }
+                        let delivered = cx.update(|cx| {
+                            for handle in cx.windows() {
+                                if handle
+                                    .update(cx, |_, window, cx| {
+                                        if window.root::<PaneFlowApp>().flatten().is_none() {
+                                            return false;
+                                        }
+                                        terminal.read(cx).focus_handle(cx).focus(window, cx);
+                                        terminal.update(cx, |terminal, cx| {
+                                            terminal.qualification_input(&input, window, cx)
+                                        });
+                                        true
+                                    })
+                                    .unwrap_or(false)
+                                {
+                                    return true;
+                                }
+                            }
+                            false
+                        });
+                        if !delivered {
+                            log::error!(
+                                "qualification input could not reach the current application window"
+                            );
+                            break;
+                        }
+                    }
+                    PENDING.fetch_sub(count, std::sync::atomic::Ordering::AcqRel);
+                })
+                .detach();
+                serde_json::json!({"queued":true,"surface_id":surface_id,"scheduled_events":count})
+            }
             "surface.send_text" => {
                 let unrestricted = self.cached_config.ai_unrestricted_enabled();
                 if !send_text_gate_open(ipc_scripting_enabled(), unrestricted) {

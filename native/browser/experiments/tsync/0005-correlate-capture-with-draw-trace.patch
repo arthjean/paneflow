@@ -1,0 +1,135 @@
+diff --git a/components/viz/service/display/display.cc b/components/viz/service/display/display.cc
+index 2aa82e4..f354c9c 100644
+--- a/components/viz/service/display/display.cc
++++ b/components/viz/service/display/display.cc
+@@ -900,7 +900,8 @@ bool Display::DrawAndSwap(const DrawAndSwapParams& params) {
+ 
+   TRACE_EVENT_BEGIN(
+       "viz,benchmark", "Graphics.Pipeline.DrawAndSwap",
+-      perfetto::NamedTrack("Graphics.Pipeline", display_trace_id));
++      perfetto::NamedTrack("Graphics.Pipeline", display_trace_id),
++      "display_trace_id", base::NumberToString(display_trace_id));
+ 
+   // Run callbacks early to allow pipelining and collect presented callbacks.
+   damage_tracker_->RunDrawCallbacks();
+@@ -982,6 +983,21 @@ bool Display::DrawAndSwap(const DrawAndSwapParams& params) {
+     draw_timer.emplace();
+     overlay_processor_->SetFrameSequenceNumber(frame_sequence_number_);
+     overlay_processor_->SetIsPageFullscreen(frame.page_fullscreen_mode);
++    bool trace_capture_copy_requests = false;
++    TRACE_EVENT_CATEGORY_GROUP_ENABLED("gpu.capture",
++                                       &trace_capture_copy_requests);
++    if (trace_capture_copy_requests) {
++      for (const auto& pass : frame.render_pass_list) {
++        for (const auto& request : pass->copy_requests) {
++          TRACE_EVENT_INSTANT(
++              "gpu.capture", "Paneflow.CaptureCopyDraw",
++              perfetto::Track::FromPointer(request.get()), "request_track_uuid",
++              base::NumberToString(
++                  perfetto::Track::FromPointer(request.get()).uuid),
++              "display_trace_id", base::NumberToString(display_trace_id));
++        }
++      }
++    }
+     renderer_->DrawFrame(&frame.render_pass_list, device_scale_factor_,
+                          current_surface_size, display_color_spaces_,
+                          std::move(frame.surface_damage_rect_list_),
+diff --git a/components/viz/service/frame_sinks/video_capture/frame_sink_video_capturer_impl.cc b/components/viz/service/frame_sinks/video_capture/frame_sink_video_capturer_impl.cc
+index 371498e..ecbcc7f 100644
+--- a/components/viz/service/frame_sinks/video_capture/frame_sink_video_capturer_impl.cc
++++ b/components/viz/service/frame_sinks/video_capture/frame_sink_video_capturer_impl.cc
+@@ -17,6 +17,7 @@
+ #include "base/memory/read_only_shared_memory_region.h"
+ #include "base/metrics/histogram_macros.h"
+ #include "base/strings/strcat.h"
++#include "base/strings/string_number_conversions.h"
+ #include "base/strings/stringprintf.h"
+ #include "base/task/sequenced_task_runner.h"
+ #include "base/time/default_tick_clock.h"
+@@ -963,6 +964,14 @@ void FrameSinkVideoCapturerImpl::MaybeCaptureFrame(
+   // adding the frame to the `delivery_queue_` or decrementing the frame number
+   // will cause the queue to be permanently stuck.
+   VideoFrameMetadata& metadata = frame->metadata();
++  if (can_resurrect_content) {
++    TRACE_EVENT_INSTANT(
++        "gpu.capture", "Paneflow.CaptureResurrected",
++        "capturer_id", copy_request_source_.ToString(), "capture_counter",
++        base::NumberToString(capture_frame_number), "previous_capture_counter",
++        base::NumberToString(metadata.capture_counter.value_or(-1)),
++        "content_version", base::NumberToString(content_version_));
++  }
+   metadata.capture_begin_time = capture_begin_time;
+   metadata.capture_counter = capture_frame_number;
+   metadata.frame_duration = oracle_->estimated_frame_duration();
+@@ -1083,6 +1092,11 @@ void FrameSinkVideoCapturerImpl::MaybeCaptureFrame(
+   // Extreme edge-case: If somehow the source size is so tiny that the content
+   // region becomes empty, just deliver a frame filled with black.
+   if (content_rect.IsEmpty()) {
++    TRACE_EVENT_INSTANT(
++        "gpu.capture", "Paneflow.CaptureEmptyContent",
++        "capturer_id", copy_request_source_.ToString(), "capture_counter",
++        base::NumberToString(capture_frame_number), "content_version",
++        base::NumberToString(content_version_));
+     media::LetterboxVideoFrame(frame.get(), gfx::Rect());
+ 
+     // This is already done in `SharedMemoryVideoFramePool` when creating
+@@ -1197,6 +1211,16 @@ void FrameSinkVideoCapturerImpl::MaybeCaptureFrame(
+   request->set_result_task_runner(
+       base::SequencedTaskRunner::GetCurrentDefault());
+   request->set_source(copy_request_source_);
++  TRACE_EVENT_INSTANT(
++      "gpu.capture", "Paneflow.CaptureCopyRequested",
++      perfetto::Track::FromPointer(request.get()), "capturer_id",
++      copy_request_source_.ToString(), "capture_counter",
++      base::NumberToString(capture_frame_number), "request_track_uuid",
++      base::NumberToString(perfetto::Track::FromPointer(request.get()).uuid),
++      "capture_version_source", base::NumberToString(capture_version_source_),
++      "capture_version_sub_capture",
++      base::NumberToString(capture_version_sub_capture_), "content_version",
++      base::NumberToString(content_version_));
+   request->set_area(region_properties->render_pass_subrect);
+   request->SetScaleRatio(
+       gfx::Vector2d(source_size.width(), source_size.height()),
+@@ -1251,6 +1275,11 @@ void FrameSinkVideoCapturerImpl::DidCopyFrame(
+   CHECK_GE(frame_capture.capture_frame_number, next_delivery_frame_number_);
+   CHECK(frame_capture.frame);
+   CHECK(result);
++  TRACE_EVENT_INSTANT(
++      "gpu.capture", "Paneflow.CaptureCopyResult",
++      "capturer_id", copy_request_source_.ToString(), "capture_counter",
++      base::NumberToString(frame_capture.capture_frame_number), "empty",
++      result->IsEmpty());
+ 
+   scoped_refptr<media::VideoFrame>& frame = frame_capture.frame;
+   const gfx::Rect& content_rect = frame_capture.content_rect;
+@@ -1509,6 +1538,11 @@ void FrameSinkVideoCapturerImpl::MaybeDeliverFrame(FrameCapture frame_capture) {
+   }
+ 
+   if (!frame_capture.success()) {
++    TRACE_EVENT_INSTANT(
++        "gpu.capture", "Paneflow.CaptureDropped",
++        "capturer_id", copy_request_source_.ToString(), "capture_counter",
++        base::NumberToString(frame_capture.capture_frame_number), "result",
++        base::NumberToString(static_cast<int>(frame_capture.result())));
+     const media::VideoFrameMetadata& metadata = frame_capture.frame_metadata();
+     TRACE_EVENT_END("gpu.capture", CaptureTrack(metadata), "result",
+                     frame_capture.result());
+@@ -1568,6 +1602,18 @@ void FrameSinkVideoCapturerImpl::MaybeDeliverFrame(FrameCapture frame_capture) {
+ 
+   TRACE_COUNTER("gpu.capture", "NumFramesInFlight", num_frames_in_flight_);
+ 
++  TRACE_EVENT_INSTANT(
++      "gpu.capture", "Paneflow.CaptureDelivered",
++      "capturer_id", copy_request_source_.ToString(), "capture_counter",
++      base::NumberToString(frame_capture.capture_frame_number),
++      "metadata_capture_counter",
++      base::NumberToString(info->metadata.capture_counter.value_or(-1)),
++      "capture_version_source",
++      base::NumberToString(info->metadata.capture_version.source),
++      "capture_version_sub_capture",
++      base::NumberToString(info->metadata.capture_version.sub_capture),
++      "timestamp_micros", base::NumberToString(info->timestamp.InMicroseconds()));
++
+   // Send the frame to the consumer.
+   consumer_->OnFrameCaptured(std::move(handle), std::move(info),
+                              frame_capture.content_rect, std::move(callbacks));

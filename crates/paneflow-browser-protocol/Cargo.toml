@@ -1,0 +1,21 @@
+[package]
+name = "paneflow-browser-protocol"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+url = "2.5"
+
+[target.'cfg(unix)'.dependencies]
+libc.workspace = true
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "paneflow-browser-harness"
+path = "src/main.rs"

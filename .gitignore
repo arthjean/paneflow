@@ -93,3 +93,5 @@ LOG_*.text
 # native/libghostty/manifest.toml (scripts/fetch-libghostty.sh), never tracked.
 /native/libghostty/prebuilt/*/lib/
 /native/gpui/checkout/
+/native/browser/prebuilt/
+__pycache__/

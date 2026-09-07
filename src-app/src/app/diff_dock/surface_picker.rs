@@ -1,6 +1,7 @@
 use gpui::{
     AnyElement, ClickEvent, Context, Hsla, InteractiveElement, IntoElement, MouseButton,
-    ParentElement, StatefulInteractiveElement, Styled, Window, div, px, rgb, svg,
+    ParentElement, StatefulInteractiveElement, Styled, Window, div, prelude::FluentBuilder, px,
+    rgb, svg,
 };
 
 use super::render::render_diff_header_icon_button;
@@ -31,6 +32,7 @@ pub(crate) enum DiffDockSurface {
     Changes,
     Terminal,
     File,
+    Browser,
 }
 
 impl PaneFlowApp {
@@ -44,6 +46,7 @@ impl PaneFlowApp {
             DiffDockSurface::Changes => self.open_diff_changes_tab(cx),
             DiffDockSurface::Terminal => self.open_diff_terminal_tab(window, cx),
             DiffDockSurface::File => self.open_diff_file_picker(window, cx),
+            DiffDockSurface::Browser => self.open_diff_browser_tab(None, window, cx),
         }
     }
 }
@@ -75,6 +78,7 @@ pub(super) fn render_diff_surface_picker(
     ui: crate::theme::UiColors,
     cx: &mut Context<PaneFlowApp>,
 ) -> AnyElement {
+    let browser = crate::browser::authority::BrowserAuthority::available(cx);
     div()
         .flex_1()
         .min_h_0()
@@ -112,7 +116,17 @@ pub(super) fn render_diff_surface_picker(
                     DiffDockSurface::File,
                     ui,
                     cx,
-                )),
+                ))
+                .when(browser, |grid| {
+                    grid.child(card(
+                        "diff-dock-picker-browser",
+                        "icons/world.svg",
+                        "Browser",
+                        DiffDockSurface::Browser,
+                        ui,
+                        cx,
+                    ))
+                }),
         )
         .into_any_element()
 }

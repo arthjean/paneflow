@@ -492,6 +492,7 @@ impl Pane {
                 | TerminalEvent::CancelSwapMode
                 | TerminalEvent::SelectionCopied
                 | TerminalEvent::OpenMarkdownPath(_)
+                | TerminalEvent::OpenUrl(_)
                 | TerminalEvent::OpenCodePath { .. }
                 | TerminalEvent::FontZoomChanged
                 | TerminalEvent::FleetSearchRequested { .. }

@@ -1,0 +1,212 @@
+--- a/content/browser/gpu/gpu_process_host.h
++++ b/content/browser/gpu/gpu_process_host.h
+@@ -8,6 +8,7 @@
+ #include <stdint.h>
+ 
+ #include <memory>
++#include <optional>
+ #include <set>
+ #include <string>
+ 
+@@ -101,6 +102,8 @@
+   static GpuProcessHost* FromID(int host_id);
+   int host_id() const { return host_id_; }
+   base::ProcessId process_id() const { return process_id_; }
++  CONTENT_EXPORT const gpu::GPUInfo* PaneflowInitializedGPUInfo(
++      uint64_t* revision) const;
+ 
+   // What kind of GPU process, e.g. sandboxed or unsandboxed.
+   GpuProcessKind kind();
+@@ -235,6 +238,8 @@
+ 
+   // The serial number of the GpuProcessHost.
+   int host_id_;
++  std::optional<gpu::GPUInfo> paneflow_initialized_gpu_info_;
++  uint64_t paneflow_gpu_info_revision_ = 0;
+ 
+   // GPU process id in case GPU is not in-process.
+   base::ProcessId process_id_ = base::kNullProcessId;
+--- a/content/browser/gpu/gpu_process_host.cc
++++ b/content/browser/gpu/gpu_process_host.cc
+@@ -1026,11 +1026,13 @@
+ }
+ 
+ void GpuProcessHost::OnProcessLaunchFailed(int error_code) {
++  paneflow_initialized_gpu_info_.reset();
+   LOG(ERROR) << "GPU process launch failed: error_code=" << error_code;
+   RecordProcessCrash();
+ }
+ 
+ void GpuProcessHost::OnProcessCrashed(int exit_code) {
++  paneflow_initialized_gpu_info_.reset();
+   // Record crash before doing anything that could start a new GPU process.
+   LOG(ERROR) << "GPU process exited unexpectedly: exit_code=" << exit_code;
+   RecordProcessCrash();
+@@ -1039,6 +1041,18 @@
+   GpuDataManagerImpl::GetInstance()->ProcessCrashed();
+ }
+ 
++const gpu::GPUInfo* GpuProcessHost::PaneflowInitializedGPUInfo(
++    uint64_t* revision) const {
++  if (!revision || !BrowserThread::CurrentlyOn(BrowserThread::UI) ||
++      !valid_ || !process_launched_ || did_fail_initialize_ || in_process_ ||
++      kind_ != GPU_PROCESS_KIND_SANDBOXED || host_id_ <= 0 ||
++      process_id_ == base::kNullProcessId || !paneflow_initialized_gpu_info_) {
++    return nullptr;
++  }
++  *revision = paneflow_gpu_info_revision_;
++  return &*paneflow_initialized_gpu_info_;
++}
++
+ gpu::GPUInfo GpuProcessHost::GetGPUInfo() const {
+   return GpuDataManagerImpl::GetInstance()->GetGPUInfo();
+ }
+@@ -1053,6 +1067,14 @@
+     const std::optional<gpu::GPUInfo>& gpu_info_for_hardware_gpu,
+     const std::optional<gpu::GpuFeatureInfo>& gpu_feature_info_for_hardware_gpu,
+     const gfx::GpuExtraInfo& gpu_extra_info) {
++  if (kind_ == GPU_PROCESS_KIND_SANDBOXED && !in_process_) {
++    if (paneflow_gpu_info_revision_ != UINT64_MAX) {
++      paneflow_initialized_gpu_info_ = gpu_info;
++      ++paneflow_gpu_info_revision_;
++    } else {
++      paneflow_initialized_gpu_info_.reset();
++    }
++  }
+   if (GetGpuCrashCount() > 0) {
+     LOG(WARNING) << "Reinitialized the GPU process after a crash. The reported "
+                     "initialization time was "
+@@ -1081,6 +1103,7 @@
+ }
+ 
+ void GpuProcessHost::DidFailInitialize() {
++  paneflow_initialized_gpu_info_.reset();
+   did_fail_initialize_ = true;
+   if (kind_ == GPU_PROCESS_KIND_SANDBOXED) {
+     base::UmaHistogramEnumeration(kFallbackEventCause,
+@@ -1108,6 +1131,14 @@
+ }
+ 
+ void GpuProcessHost::DidUpdateGPUInfo(const gpu::GPUInfo& gpu_info) {
++  if (paneflow_initialized_gpu_info_) {
++    if (paneflow_gpu_info_revision_ != UINT64_MAX) {
++      paneflow_initialized_gpu_info_ = gpu_info;
++      ++paneflow_gpu_info_revision_;
++    } else {
++      paneflow_initialized_gpu_info_.reset();
++    }
++  }
+   GpuDataManagerImpl::GetInstance()->UpdateGpuInfo(gpu_info, std::nullopt);
+ }
+ 
+@@ -1277,6 +1308,7 @@
+ 
+ // Atomically shut down the GPU process with a normal termination status.
+ void GpuProcessHost::ForceShutdown() {
++  paneflow_initialized_gpu_info_.reset();
+   DCHECK_CURRENTLY_ON(BrowserThread::UI);
+ 
+   // This is only called on the UI thread so no race against the constructor
+--- a/cef/libcef/browser/trace_impl.cc
++++ b/cef/libcef/browser/trace_impl.cc
+@@ -2,7 +2,15 @@
+ // reserved. Use of this source code is governed by a BSD-style license that can
+ // be found in the LICENSE file.
+ 
++#include <cstddef>
++#include <cstdint>
++
+ #include "base/time/time.h"
++#include "build/build_config.h"
++#include "cef/include/internal/cef_export.h"
++#include "content/browser/gpu/gpu_process_host.h"
++#include "gpu/config/gpu_info.h"
++#include "ui/gl/gl_implementation.h"
+ #include "cef/include/cef_trace.h"
+ #include "cef/libcef/browser/context.h"
+ #include "cef/libcef/browser/thread_util.h"
+@@ -51,3 +59,84 @@
+ int64_t CefNowFromSystemTraceTime() {
+   return base::TimeTicks::Now().ToInternalValue();
+ }
++
++struct cef_paneflow_gpu_contract_info_v1 {
++  uint32_t abi_version;
++  uint32_t struct_size;
++  uint32_t status;
++  uint32_t flags;
++  uint64_t gpu_host_id;
++  uint64_t gpu_process_id;
++  uint64_t gpu_info_revision;
++  uint32_t vendor_id;
++  uint32_t device_id;
++  uint32_t skia_backend;
++  uint32_t gl_implementation;
++  uint32_t angle_implementation;
++  uint32_t reserved;
++};
++
++static_assert(sizeof(cef_paneflow_gpu_contract_info_v1) == 64);
++static_assert(offsetof(cef_paneflow_gpu_contract_info_v1, gpu_host_id) == 16);
++
++extern "C" CEF_EXPORT int32_t cef_paneflow_gpu_contract_v1(
++    uint32_t output_size,
++    cef_paneflow_gpu_contract_info_v1* output) {
++  if (!output || output_size != sizeof(*output)) {
++    return 1;
++  }
++  *output = {};
++  output->abi_version = 1;
++  output->struct_size = sizeof(*output);
++  const auto result = [output](int32_t status) {
++    output->status = status;
++    return status;
++  };
++  if (!CONTEXT_STATE_VALID()) {
++    return result(2);
++  }
++  if (!CEF_CURRENTLY_ON_UIT()) {
++    return result(3);
++  }
++#if BUILDFLAG(IS_LINUX) && !BUILDFLAG(IS_CHROMEOS)
++  auto* host = content::GpuProcessHost::Get(
++      content::GPU_PROCESS_KIND_SANDBOXED, false);
++  if (!host) {
++    return result(4);
++  }
++  uint64_t revision = 0;
++  const auto* info = host->PaneflowInitializedGPUInfo(&revision);
++  if (!info) {
++    return result(5);
++  }
++  output->gpu_host_id = static_cast<uint64_t>(host->host_id());
++  output->gpu_process_id = static_cast<uint64_t>(host->process_id());
++  output->gpu_info_revision = revision;
++  output->flags = 1u | (info->sandboxed ? 2u : 0u) | (info->UsesSwiftShader() ? 4u : 0u);
++  output->skia_backend =
++      info->skia_backend_type == gpu::SkiaBackendType::kGaneshGL ? 1u : 0u;
++  output->gl_implementation =
++      info->gl_implementation_parts.gl == gl::kGLImplementationEGLANGLE ? 1u : 0u;
++  output->angle_implementation =
++      info->gl_implementation_parts.angle == gl::ANGLEImplementation::kVulkan
++          ? 1u : 0u;
++  size_t active = info->gpu.active ? 1u : 0u;
++  for (const auto& gpu : info->secondary_gpus) {
++    active += gpu.active ? 1u : 0u;
++  }
++  if (active != 1 && !info->secondary_gpus.empty()) {
++    return result(6);
++  }
++  const auto& gpu = info->active_gpu();
++  output->vendor_id = gpu.vendor_id;
++  output->device_id = gpu.device_id;
++  if (output->flags != 3 || output->skia_backend != 1 ||
++      output->gl_implementation != 1 || output->angle_implementation != 1 ||
++      output->vendor_id == 0 || output->device_id == 0) {
++    return result(6);
++  }
++  return result(0);
++#else
++  return result(7);
++#endif
++}

@@ -726,6 +726,9 @@ impl PaneFlowApp {
             terminal::TerminalEvent::OpenMarkdownPath(path) => {
                 self.open_markdown_in_pane(&terminal, path.clone(), cx);
             }
+            terminal::TerminalEvent::OpenUrl(url) => {
+                self.open_url_from_terminal(&terminal, url, cx);
+            }
             terminal::TerminalEvent::FontZoomChanged => {
                 self.save_session(cx);
             }

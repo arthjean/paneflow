@@ -1,0 +1,116 @@
+diff --git a/third_party/wayland/src/src/connection.c b/third_party/wayland/src/src/connection.c
+index 3ef8688..96d66b6 100644
+--- a/third_party/wayland/src/src/connection.c
++++ b/third_party/wayland/src/src/connection.c
+@@ -29,6 +29,7 @@
+ #include <math.h>
+ #include <stdlib.h>
+ #include <stdint.h>
++#include <inttypes.h>
+ #include <string.h>
+ #include <stdio.h>
+ #include <errno.h>
+@@ -1494,7 +1495,7 @@ wl_closure_queue(struct wl_closure *closure, struct wl_connection *connection)
+ void
+ wl_closure_print(struct wl_closure *closure, struct wl_object *target,
+ 		 int send, int discarded, uint32_t (*n_parse)(union wl_argument *arg),
+-		 const char *queue_name)
++		 const char *queue_name, uint64_t debug_connection_id)
+ {
+ 	int i;
+ 	struct argument_details arg;
+@@ -1514,6 +1515,9 @@ wl_closure_print(struct wl_closure *closure, struct wl_object *target,
+ 	time = (tp.tv_sec * 1000000L) + (tp.tv_nsec / 1000);
+ 
+ 	fprintf(f, "[%7u.%03u] ", time / 1000, time % 1000);
++	if (debug_connection_id != 0)
++		fprintf(f, "[pid=%ld connection=%" PRIu64 "] ",
++			(long) getpid(), debug_connection_id);
+ 
+ 	if (queue_name)
+ 		fprintf(f, "{%s} ", queue_name);
+diff --git a/third_party/wayland/src/src/wayland-client.c b/third_party/wayland/src/src/wayland-client.c
+index 2464e7b..eb26dec 100644
+--- a/third_party/wayland/src/src/wayland-client.c
++++ b/third_party/wayland/src/src/wayland-client.c
+@@ -28,6 +28,7 @@
+ 
+ #include <stdlib.h>
+ #include <stdint.h>
++#include <stdatomic.h>
+ #include <stddef.h>
+ #include <stdio.h>
+ #include <stdbool.h>
+@@ -83,6 +84,7 @@ struct wl_event_queue {
+ struct wl_display {
+ 	struct wl_proxy proxy;
+ 	struct wl_connection *connection;
++	uint64_t debug_connection_id;
+ 
+ 	/* errno of the last wl_display error */
+ 	int last_error;
+@@ -115,6 +117,7 @@ struct wl_display {
+ /** \endcond */
+ 
+ static int debug_client = 0;
++static _Atomic uint64_t next_debug_connection_id = 1;
+ 
+ /**
+  * This helper function wakes up all threads that are
+@@ -936,7 +939,7 @@ wl_proxy_marshal_array_flags(struct wl_proxy *proxy, uint32_t opcode,
+ 			queue_name = wl_event_queue_get_name(queue);
+ 
+ 		wl_closure_print(closure, &proxy->object, true, false, NULL,
+-				 queue_name);
++				 queue_name, proxy->display->debug_connection_id);
+ 	}
+ 
+ 	if (wl_closure_send(closure, proxy->display->connection)) {
+@@ -1240,6 +1243,11 @@ wl_display_connect_to_fd(int fd)
+ 		return NULL;
+ 	}
+ 
++	display->debug_connection_id = atomic_fetch_add_explicit(
++		&next_debug_connection_id, 1, memory_order_relaxed);
++	if (display->debug_connection_id == 0)
++		wl_abort("Wayland debug connection identity exhausted\n");
++
+ 	display->fd = fd;
+ 	wl_map_init(&display->objects, WL_MAP_CLIENT_SIDE);
+ 	wl_event_queue_init(&display->default_queue, display, "Default Queue");
+@@ -1690,7 +1698,8 @@ dispatch_event(struct wl_display *display, struct wl_event_queue *queue)
+ 				 !(proxy->dispatcher || proxy->object.implementation);
+ 
+ 		wl_closure_print(closure, &proxy->object, false, discarded,
+-				 id_from_object, queue->name);
++				 id_from_object, queue->name,
++				 proxy->display->debug_connection_id);
+ 	}
+ 
+ 	if (proxy_destroyed) {
+diff --git a/third_party/wayland/src/src/wayland-private.h b/third_party/wayland/src/src/wayland-private.h
+index b84010d..2d9aa72 100644
+--- a/third_party/wayland/src/src/wayland-private.h
++++ b/third_party/wayland/src/src/wayland-private.h
+@@ -233,7 +233,7 @@ void
+ wl_closure_print(struct wl_closure *closure,
+ 		 struct wl_object *target, int send, int discarded,
+ 		 uint32_t (*n_parse)(union wl_argument *arg),
+-		 const char *queue_name);
++		 const char *queue_name, uint64_t debug_connection_id);
+ 
+ void
+ wl_closure_destroy(struct wl_closure *closure);
+diff --git a/third_party/wayland/src/src/wayland-server.c b/third_party/wayland/src/src/wayland-server.c
+index 72a1201..d9165b0 100644
+--- a/third_party/wayland/src/src/wayland-server.c
++++ b/third_party/wayland/src/src/wayland-server.c
+@@ -160,7 +160,7 @@ log_closure(struct wl_resource *resource,
+ 	struct wl_protocol_logger_message message;
+ 
+ 	if (debug_server)
+-		wl_closure_print(closure, object, send, false, NULL, NULL);
++		wl_closure_print(closure, object, send, false, NULL, NULL, 0);
+ 
+ 	if (!wl_list_empty(&display->protocol_loggers)) {
+ 		message.resource = resource;

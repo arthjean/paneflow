@@ -1,0 +1,129 @@
+--- a/sandbox/policy/linux/bpf_gpu_policy_linux.cc
++++ b/sandbox/policy/linux/bpf_gpu_policy_linux.cc
+@@ -6,6 +6,7 @@
+ 
+ #include <errno.h>
+ #include <fcntl.h>
++#include <sched.h>
+ #include <sys/socket.h>
+ #include <sys/types.h>
+ #include <unistd.h>
+@@ -13,10 +14,14 @@
+ #include "base/compiler_specific.h"
+ #include "build/build_config.h"
+ #include "sandbox/linux/bpf_dsl/bpf_dsl.h"
++#include "sandbox/linux/seccomp-bpf-helpers/sigsys_handlers.h"
+ #include "sandbox/linux/seccomp-bpf-helpers/syscall_parameters_restrictions.h"
+ #include "sandbox/linux/seccomp-bpf-helpers/syscall_sets.h"
++#include "sandbox/linux/services/syscall_wrappers.h"
+ #include "sandbox/linux/syscall_broker/broker_process.h"
++#include "sandbox/linux/system_headers/linux_seccomp.h"
+ #include "sandbox/linux/system_headers/linux_syscalls.h"
++#include "sandbox/policy/chromecast_sandbox_allowlist_buildflags.h"
+ #include "sandbox/policy/linux/bpf_base_policy_linux.h"
+ #include "sandbox/policy/linux/sandbox_linux.h"
+ #include "sandbox/policy/linux/sandbox_seccomp_bpf_linux.h"
+@@ -34,8 +39,26 @@
+ namespace sandbox {
+ namespace policy {
+ 
+-GpuProcessPolicy::GpuProcessPolicy(MremapPolicy mremap_policy)
+-    : mremap_policy_(mremap_policy) {}
++#if BUILDFLAG(IS_LINUX) && !BUILDFLAG(IS_CHROMEOS) && \
++    !BUILDFLAG(ENABLE_CHROMECAST_GPU_SANDBOX_ALLOWLIST)
++namespace {
++
++intptr_t DenyForeignGpuBatchScheduler(const arch_seccomp_data& args, void*) {
++  if (args.nr == __NR_sched_setscheduler &&
++      args.args[1] == static_cast<uint64_t>(SCHED_BATCH) &&
++      args.args[0] != static_cast<uint64_t>(sys_gettid())) {
++    return -EPERM;
++  }
++  return SIGSYSSchedHandler(args, nullptr);
++}
++
++}
++#endif
++
++GpuProcessPolicy::GpuProcessPolicy(MremapPolicy mremap_policy,
++                                   bool deny_foreign_batch_scheduler)
++    : mremap_policy_(mremap_policy),
++      deny_foreign_batch_scheduler_(deny_foreign_batch_scheduler) {}
+ 
+ GpuProcessPolicy::~GpuProcessPolicy() {}
+ 
+@@ -102,6 +125,23 @@
+     case __NR_sysinfo:
+     case __NR_uname:  // https://crbug.com/1075934
+       return Allow();
++    case __NR_sched_setscheduler: {
++      if (!deny_foreign_batch_scheduler_) {
++        break;
++      }
++#if BUILDFLAG(IS_LINUX) && !BUILDFLAG(IS_CHROMEOS) && \
++    !BUILDFLAG(ENABLE_CHROMECAST_GPU_SANDBOX_ALLOWLIST)
++      const Arg<pid_t> pid(0);
++      const Arg<uint64_t> scheduling_policy(1);
++      return If(scheduling_policy == static_cast<uint64_t>(SCHED_BATCH),
++                bpf_dsl::Switch(pid)
++                    .Cases({0, GetPolicyPid()}, Allow())
++                    .Default(Trap(DenyForeignGpuBatchScheduler, nullptr)))
++          .Else(RestrictSchedTarget(GetPolicyPid(), sysno));
++#else
++      break;
++#endif
++    }
+     case __NR_sched_setaffinity:
+       return RestrictSchedTarget(GetPolicyPid(), sysno);
+     case __NR_prlimit64:
+--- a/sandbox/policy/linux/bpf_gpu_policy_linux.h
++++ b/sandbox/policy/linux/bpf_gpu_policy_linux.h
+@@ -19,7 +19,8 @@
+ 
+ class SANDBOX_POLICY_EXPORT GpuProcessPolicy : public BPFBasePolicy {
+  public:
+-  explicit GpuProcessPolicy(MremapPolicy mremap_policy);
++  explicit GpuProcessPolicy(MremapPolicy mremap_policy,
++                            bool deny_foreign_batch_scheduler = false);
+ 
+   GpuProcessPolicy(const GpuProcessPolicy&) = delete;
+   GpuProcessPolicy& operator=(const GpuProcessPolicy&) = delete;
+@@ -30,6 +31,7 @@
+ 
+  private:
+   MremapPolicy mremap_policy_;
++  bool deny_foreign_batch_scheduler_;
+ };
+ 
+ }  // namespace policy
+--- a/sandbox/policy/linux/sandbox_seccomp_bpf_linux.cc
++++ b/sandbox/policy/linux/sandbox_seccomp_bpf_linux.cc
+@@ -120,7 +120,8 @@
+ 
+ std::unique_ptr<BPFBasePolicy> GetGpuProcessSandbox(
+     const SandboxSeccompBPF::Options& options,
+-    MremapPolicy mremap_policy) {
++    MremapPolicy mremap_policy,
++    bool deny_foreign_batch_scheduler = false) {
+   if (IsChromeOS() || UseChromecastSandboxAllowlist()) {
+     if (IsArchitectureArm()) {
+       return std::make_unique<CrosArmGpuProcessPolicy>(
+@@ -140,7 +141,8 @@
+       return std::make_unique<CrosVirtIoGpuProcessPolicy>(mremap_policy);
+     }
+   }
+-  return std::make_unique<GpuProcessPolicy>(mremap_policy);
++  return std::make_unique<GpuProcessPolicy>(mremap_policy,
++                                            deny_foreign_batch_scheduler);
+ }
+ #endif  // !defined(IN_NACL_HELPER)
+ 
+@@ -183,7 +185,7 @@
+     const SandboxSeccompBPF::Options& options) {
+   switch (sandbox_type) {
+     case sandbox::mojom::Sandbox::kGpu:
+-      return GetGpuProcessSandbox(options, MremapPolicy::kBlock);
++      return GetGpuProcessSandbox(options, MremapPolicy::kBlock, true);
+     case sandbox::mojom::Sandbox::kRenderer:
+       return std::make_unique<RendererProcessPolicy>();
+     case sandbox::mojom::Sandbox::kOnDeviceModelExecution:

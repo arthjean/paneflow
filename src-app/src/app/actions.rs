@@ -88,6 +88,20 @@ actions!(
         OpenAttentionQueue,
         OpenLaunchPad,
         DiffNewFileTab,
-        DiffNewTerminalTab
+        DiffNewTerminalTab,
+        BrowserFocusAddress,
+        BrowserNewTab,
+        BrowserClose,
+        BrowserReload,
+        BrowserReloadIgnoreCache,
+        BrowserBack,
+        BrowserForward,
+        BrowserZoomIn,
+        BrowserZoomOut,
+        BrowserZoomReset,
+        BrowserEscape,
+        BrowserFocusNext,
+        BrowserFocusPrev,
+        BrowserFocusTerminal
     ]
 );

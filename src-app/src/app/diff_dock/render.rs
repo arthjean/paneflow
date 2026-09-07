@@ -9,7 +9,7 @@ use super::new_tab_menu::render_diff_new_tab_menu;
 use super::options_menu::render_diff_options_button;
 use crate::PaneFlowApp;
 use crate::settings::components::with_alpha;
-use crate::ui_primitives::{AnimatedHoverExt, ROW_RADIUS, squircle_skin};
+use crate::ui_primitives::{AnimatedHoverExt, ROW_RADIUS, TooltipDelayExt, squircle_skin};
 
 pub(super) fn render_diff_resize_handle(
     width: f32,
@@ -136,13 +136,32 @@ fn render_diff_tab(
         }
         _ => None,
     };
-    let (icon, label) = match (tab, &file) {
-        (DiffDockTab::Changes, _) => ("icons/plus-minus.svg", "Changes".to_string()),
-        (DiffDockTab::Terminal(_), _) => ("icons/terminal.svg", "Terminal".to_string()),
-        (DiffDockTab::PendingFile, _) => ("icons/file-text.svg", "Open a file".to_string()),
-        (_, Some((icon, label, _))) => (*icon, label.clone()),
+    let browser = match tab {
+        DiffDockTab::Browser(view) => {
+            let view = view.read(cx);
+            let loading = matches!(view.navigation(), crate::browser::view::Navigation::Loading)
+                && view.is_live();
+            Some((view.chip_label(), loading))
+        }
+        _ => None,
+    };
+    let (icon, label) = match (tab, &file, &browser) {
+        (DiffDockTab::Changes, _, _) => ("icons/plus-minus.svg", "Changes".to_string()),
+        (DiffDockTab::Terminal(_), _, _) => ("icons/terminal.svg", "Terminal".to_string()),
+        (DiffDockTab::PendingFile, _, _) => ("icons/file-text.svg", "Open a file".to_string()),
+        (DiffDockTab::Browser(_), _, Some((label, true))) => {
+            ("icons/loader-circle.svg", truncate_tab_label(label))
+        }
+        (DiffDockTab::Browser(_), _, Some((label, false))) => {
+            ("icons/world.svg", truncate_tab_label(label))
+        }
+        (_, Some((icon, label, _)), _) => (*icon, label.clone()),
         _ => ("icons/file-text.svg", "File".to_string()),
     };
+    let full_label: Option<SharedString> = browser
+        .as_ref()
+        .map(|(label, _)| SharedString::from(label.clone()))
+        .filter(|full| full.as_ref() != label.as_str());
     let dirty = file.map(|(_, _, dirty)| dirty).unwrap_or(false);
     let rail_hover = crate::app::constants::sidebar_tab_hover_background();
     let (resting, hovered) = if active {
@@ -173,6 +192,9 @@ fn render_diff_tab(
         this.select_diff_tab(index, cx);
         this.focus_diff_tab(index, window, cx);
     }))
+    .when_some(full_label, |chip, full| {
+        chip.delayed_tooltip(crate::ui_primitives::text_tooltip(full))
+    })
     .child(file_icon_element(
         icon,
         px(13.),

@@ -1,6 +1,7 @@
 use gpui::{
     AnyElement, ClickEvent, Context, InteractiveElement, IntoElement, MouseButton, MouseUpEvent,
-    ParentElement, StatefulInteractiveElement, Styled, deferred, div, px, svg,
+    ParentElement, StatefulInteractiveElement, Styled, deferred, div, prelude::FluentBuilder, px,
+    svg,
 };
 
 use crate::PaneFlowApp;
@@ -77,6 +78,26 @@ pub(super) fn render_diff_new_tab_menu(
                 this.close_diff_new_tab_menu(cx);
                 this.open_diff_terminal_tab(window, cx);
             })),
+        )
+        .when(
+            crate::browser::authority::BrowserAuthority::available(cx),
+            |menu| {
+                menu.child(
+                    menu_row(
+                        "diff-dock-new-tab-browser",
+                        "icons/world.svg",
+                        "Browser",
+                        None,
+                        ui,
+                    )
+                    .on_click(cx.listener(
+                        |this, _: &ClickEvent, window, cx| {
+                            this.close_diff_new_tab_menu(cx);
+                            this.open_diff_browser_tab(None, window, cx);
+                        },
+                    )),
+                )
+            },
         );
 
     deferred(

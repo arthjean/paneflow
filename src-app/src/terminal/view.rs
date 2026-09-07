@@ -692,6 +692,42 @@ impl TerminalView {
 }
 
 impl TerminalView {
+    pub(crate) fn qualification_input(
+        &mut self,
+        input: &str,
+        window: &mut gpui::Window,
+        cx: &mut Context<Self>,
+    ) {
+        for character in input.chars() {
+            let key = if character == '\n' {
+                "enter".to_string()
+            } else {
+                character.to_string()
+            };
+            let event = gpui::KeyDownEvent {
+                keystroke: gpui::Keystroke {
+                    modifiers: gpui::Modifiers::default(),
+                    key,
+                    key_char: (character != '\n').then(|| character.to_string()),
+                },
+                is_held: false,
+                prefer_character_input: false,
+            };
+            self.handle_key_down(&event, window, cx);
+            if character != '\n' {
+                self.commit_text(&character.to_string(), cx);
+            }
+            self.handle_key_up(
+                &gpui::KeyUpEvent {
+                    keystroke: event.keystroke,
+                },
+                window,
+                cx,
+            );
+        }
+        cx.notify();
+    }
+
     pub fn set_marked_text(&mut self, text: String, cx: &mut Context<Self>) {
         self.ime_marked_text = text;
         {
@@ -706,6 +742,9 @@ impl TerminalView {
     }
 
     pub fn commit_text(&mut self, text: &str, _cx: &mut Context<Self>) {
+        #[cfg(target_os = "linux")]
+        crate::browser_qualification::input_text(_cx.entity_id().as_u64(), text);
+
         let was_composing = !self.ime_marked_text.is_empty();
         self.ime_marked_text.clear();
         {
@@ -916,6 +955,7 @@ pub enum TerminalEvent {
     CancelSwapMode,
     SelectionCopied,
     OpenMarkdownPath(std::path::PathBuf),
+    OpenUrl(String),
     OpenCodePath {
         path: std::path::PathBuf,
         line: Option<u32>,

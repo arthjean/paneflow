@@ -1,0 +1,12 @@
+--- a/content/browser/renderer_host/render_widget_host_view_base.cc
++++ b/content/browser/renderer_host/render_widget_host_view_base.cc
+@@ -574,7 +574,8 @@
+   // hacky scale handling in platforms that support per-window scaling.
+   if (ui::OzonePlatform::GetInstance()
+           ->GetPlatformRuntimeProperties()
+-          .supports_per_window_scaling) {
++          .supports_per_window_scaling &&
++      GetNativeView()) {
+     const float window_scale =
+         display::Screen::Get()
+             ->GetPreferredScaleFactorForView(GetNativeView())

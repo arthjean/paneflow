@@ -1,0 +1,21 @@
+assert(is_linux && !is_chromeos)
+
+executable("paneflow_tsync_probe") {
+  sources = [
+    "//content/common/gpu_pre_sandbox_hook_linux.cc",
+    "//content/common/gpu_pre_sandbox_hook_linux.h",
+    "main.cc",
+  ]
+  include_dirs = [ "//third_party/angle/include" ]
+  deps = [
+    "//base",
+    "//content/public/common:static_switches",
+    "//media/gpu:buildflags",
+    "//sandbox/linux:sandbox_services",
+    "//sandbox/linux:seccomp_bpf",
+    "//sandbox/policy",
+    "//sandbox/policy:chromecast_sandbox_allowlist_buildflags",
+    "//sandbox/policy/mojom",
+  ]
+  libs = [ "dl", "pthread" ]
+}

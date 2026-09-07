@@ -143,19 +143,6 @@ impl PaneFlowApp {
             })
     }
 
-    pub(crate) fn open_workspace_service_url(&mut self, url: &str, cx: &mut Context<Self>) {
-        if let Err(err) = crate::external_open::open_url(url) {
-            let message = if err.kind() == std::io::ErrorKind::NotFound {
-                "Could not open URL - install xdg-utils (Linux), or check your default browser"
-                    .to_string()
-            } else {
-                format!("Could not open URL: {err}")
-            };
-            log::warn!("sidebar: open URL failed: {err}");
-            self.show_toast(message, cx);
-        }
-    }
-
     pub(crate) fn render_workspace_context_menu(
         &self,
         menu: WorkspaceContextMenu,
@@ -187,7 +174,9 @@ impl PaneFlowApp {
         let workflow_rows = usize::from(workflow_template.is_some());
         let service_rows = services.len();
         let separator_rows = 2 + workflow_rows + usize::from(service_rows > 0);
-        let menu_rows = EDITOR_CONTEXT_MENU_ITEMS.len() + 4 + workflow_rows + service_rows;
+        let browser_rows = usize::from(self.workspace_has_browser_data(idx, cx));
+        let menu_rows =
+            EDITOR_CONTEXT_MENU_ITEMS.len() + 4 + workflow_rows + service_rows + browser_rows;
         let menu_height = px(8. + menu_rows as f32 * 28. + separator_rows as f32 * 9.);
         let menu_pos = clamped_context_menu_position(menu.position, px(248.), menu_height, window);
 
@@ -239,7 +228,7 @@ impl PaneFlowApp {
                     ui,
                     cx.listener(move |this, _: &ClickEvent, _window, cx| {
                         this.workspace_menu_open = None;
-                        this.open_workspace_service_url(&url, cx);
+                        this.open_workspace_service_url(idx, &url, cx);
                         cx.stop_propagation();
                     }),
                 ));
@@ -314,6 +303,20 @@ impl PaneFlowApp {
                 cx.stop_propagation();
             }),
         ));
+
+        if self.workspace_has_browser_data(idx, cx) {
+            context_menu = context_menu.child(self.render_select_menu_item(
+                "workspace-context-clear-browser-data".into(),
+                "Clear Browser Data",
+                None,
+                ui,
+                cx.listener(move |this, _: &ClickEvent, _window, cx| {
+                    this.workspace_menu_open = None;
+                    this.clear_workspace_browser_data(idx, cx);
+                    cx.stop_propagation();
+                }),
+            ));
+        }
 
         context_menu = context_menu.child(context_menu_divider(ui));
 

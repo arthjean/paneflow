@@ -268,6 +268,9 @@ impl TerminalView {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        #[cfg(target_os = "linux")]
+        crate::browser_qualification::input_key(cx.entity_id().as_u64(), &event.keystroke.key);
+
         if crate::SWAP_MODE.load(std::sync::atomic::Ordering::Relaxed)
             && event.keystroke.key == "escape"
         {
@@ -803,7 +806,10 @@ impl TerminalView {
                 });
             }
             HyperlinkSource::Osc8 | HyperlinkSource::Regex => {
-                if let Err(err) = crate::external_open::open_url(&link.uri) {
+                let lower = link.uri.to_ascii_lowercase();
+                if lower.starts_with("http://") || lower.starts_with("https://") {
+                    cx.emit(TerminalEvent::OpenUrl(link.uri.clone()));
+                } else if let Err(err) = crate::external_open::open_url(&link.uri) {
                     log::warn!("terminal: open URL failed: {err}");
                 }
             }

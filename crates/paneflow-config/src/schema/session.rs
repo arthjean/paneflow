@@ -133,6 +133,35 @@ impl<'de> Deserialize<'de> for TabTitleSource {
     }
 }
 
+pub const BROWSER_DESCRIPTOR_VERSION: u32 = 1;
+
+pub const DEFAULT_BROWSER_ZOOM_PERCENT: u32 = 100;
+
+fn default_browser_zoom() -> u32 {
+    DEFAULT_BROWSER_ZOOM_PERCENT
+}
+
+fn default_browser_descriptor_version() -> u32 {
+    BROWSER_DESCRIPTOR_VERSION
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct BrowserDescriptor {
+    #[serde(default = "default_browser_descriptor_version")]
+    pub version: u32,
+    pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    #[serde(default)]
+    pub title: String,
+    #[serde(default = "default_browser_zoom")]
+    pub zoom: u32,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub muted: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub active: bool,
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct TabSession {
     #[serde(default)]
@@ -143,6 +172,8 @@ pub struct TabSession {
     pub layout: Option<LayoutNode>,
     #[serde(default)]
     pub worktree: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub browsers: Vec<BrowserDescriptor>,
 }
 
 impl TabSession {
@@ -156,6 +187,7 @@ impl TabSession {
             title_source: Some(TabTitleSource::Preset),
             layout: Some(layout),
             worktree: None,
+            browsers: Vec::new(),
         }
     }
 }
@@ -180,6 +212,8 @@ pub struct WorkspaceSession {
     pub managed_worktrees: Vec<ManagedWorktreeDef>,
     #[serde(default, skip_serializing_if = "is_false")]
     pub sidebar_collapsed: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub browser_profile: Option<String>,
 }
 
 pub fn migrate_session_v1(state: &mut SessionState) {
@@ -242,6 +276,7 @@ fn demote_panes_to_focused_surface(node: &mut LayoutNode, promoted: &mut Vec<Tab
                         surfaces: vec![surface],
                     }),
                     worktree: None,
+                    browsers: Vec::new(),
                 });
             }
         }
@@ -278,4 +313,60 @@ pub struct ButtonCommand {
     pub name: String,
     pub icon: String,
     pub command: String,
+}
+
+#[cfg(test)]
+mod browser_descriptor_tests {
+    use super::*;
+
+    #[test]
+    fn a_pre_feature_session_reads_back_without_browser_fields() {
+        let json = r#"{"version":2,"active_workspace":0,"workspaces":[{"title":"ws","cwd":"/tmp","tabs":[{"title":"t"}]}]}"#;
+        let state: SessionState = serde_json::from_str(json).unwrap();
+        assert!(state.workspaces[0].browser_profile.is_none());
+        assert!(state.workspaces[0].tabs[0].browsers.is_empty());
+        let written = serde_json::to_string(&state).unwrap();
+        assert!(!written.contains("browsers"), "{written}");
+        assert!(!written.contains("browser_profile"), "{written}");
+    }
+
+    #[test]
+    fn descriptors_round_trip_with_only_durable_fields() {
+        let descriptor = BrowserDescriptor {
+            version: BROWSER_DESCRIPTOR_VERSION,
+            id: "b-1".into(),
+            url: Some("http://localhost:5173/".into()),
+            title: "Vite".into(),
+            zoom: 125,
+            muted: true,
+            active: true,
+        };
+        let tab = TabSession {
+            browsers: vec![descriptor.clone()],
+            ..TabSession::default()
+        };
+        let json = serde_json::to_value(&tab).unwrap();
+        let mut keys: Vec<_> = json["browsers"][0]
+            .as_object()
+            .unwrap()
+            .keys()
+            .cloned()
+            .collect();
+        keys.sort();
+        assert_eq!(
+            keys,
+            ["active", "id", "muted", "title", "url", "version", "zoom"]
+        );
+        let back: TabSession = serde_json::from_value(json).unwrap();
+        assert_eq!(back.browsers, vec![descriptor]);
+    }
+
+    #[test]
+    fn a_minimal_descriptor_defaults_to_an_empty_dormant_page() {
+        let back: BrowserDescriptor = serde_json::from_str(r#"{"id":"b-2"}"#).unwrap();
+        assert_eq!(back.version, BROWSER_DESCRIPTOR_VERSION);
+        assert_eq!(back.url, None);
+        assert_eq!(back.zoom, DEFAULT_BROWSER_ZOOM_PERCENT);
+        assert!(!back.muted && !back.active);
+    }
 }

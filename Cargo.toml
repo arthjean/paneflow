@@ -3,6 +3,8 @@ resolver = "2"
 members = [
     "crates/paneflow-agent-config",
     "crates/paneflow-ai-hook",
+    "crates/paneflow-browser-protocol",
+    "crates/paneflow-browser-host",
     "crates/paneflow-config",
     "crates/paneflow-ipc-client",
     "crates/paneflow-ghostty-smoke",
@@ -21,6 +23,9 @@ members = [
 # `-p` or the release-min profile); including them here would make `cargo
 # run` ambiguous across three binaries.
 default-members = ["src-app"]
+# The patched GPUI checkout below is its own Cargo workspace; keep it out of
+# ours so Cargo resolves its crates through native/gpui/checkout/Cargo.toml.
+exclude = ["native/gpui/checkout"]
 
 [workspace.package]
 version = "0.11.0"
@@ -87,6 +92,38 @@ missing_safety_doc = "allow"
 async-process = { git = "https://github.com/zed-industries/async-process.git", rev = "0b6d6713570af61806e1e5cb40e0f757cb93fd9d" }
 async-task = { git = "https://github.com/smol-rs/async-task.git", rev = "b4486cd71e4e94fbda54ce6302444de14f4d190e" }
 calloop = { git = "https://github.com/zed-industries/calloop", rev = "eb6b4fd17b9af5ecc226546bdd04185391b3e265" }
+
+# GPUI external-surface extension (docs/browser/gpui-external-surfaces.md).
+# scripts/fetch-gpui.py places the upstream tree pinned by
+# native/gpui/manifest.toml under native/gpui/checkout and applies the
+# reviewed patch series from native/gpui/patches. Every Zed crate that the
+# pinned `rev` values in src-app/Cargo.toml pull is redirected here so one
+# source serves the whole GPUI closure; the `rev` values remain the upstream
+# pin and must match native/gpui/manifest.toml.
+[patch."https://github.com/zed-industries/zed"]
+collections = { path = "native/gpui/checkout/crates/collections" }
+derive_refineable = { path = "native/gpui/checkout/crates/refineable/derive_refineable" }
+gpui = { path = "native/gpui/checkout/crates/gpui" }
+gpui_apple = { path = "native/gpui/checkout/crates/gpui_apple" }
+gpui_linux = { path = "native/gpui/checkout/crates/gpui_linux" }
+gpui_macos = { path = "native/gpui/checkout/crates/gpui_macos" }
+gpui_macros = { path = "native/gpui/checkout/crates/gpui_macros" }
+gpui_platform = { path = "native/gpui/checkout/crates/gpui_platform" }
+gpui_shared_string = { path = "native/gpui/checkout/crates/gpui_shared_string" }
+gpui_util = { path = "native/gpui/checkout/crates/gpui_util" }
+gpui_web = { path = "native/gpui/checkout/crates/gpui_web" }
+gpui_wgpu = { path = "native/gpui/checkout/crates/gpui_wgpu" }
+gpui_windows = { path = "native/gpui/checkout/crates/gpui_windows" }
+http_client = { path = "native/gpui/checkout/crates/http_client" }
+media = { path = "native/gpui/checkout/crates/media" }
+perf = { path = "native/gpui/checkout/tooling/perf" }
+refineable = { path = "native/gpui/checkout/crates/refineable" }
+scheduler = { path = "native/gpui/checkout/crates/scheduler" }
+sum_tree = { path = "native/gpui/checkout/crates/sum_tree" }
+util_macros = { path = "native/gpui/checkout/crates/util_macros" }
+zlog = { path = "native/gpui/checkout/crates/zlog" }
+ztracing = { path = "native/gpui/checkout/crates/ztracing" }
+ztracing_macro = { path = "native/gpui/checkout/crates/ztracing_macro" }
 
 [profile.release]
 lto = "thin"

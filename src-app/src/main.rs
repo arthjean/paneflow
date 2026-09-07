@@ -17,6 +17,8 @@ mod app;
 mod assets;
 #[cfg(test)]
 mod bench_harness;
+mod browser;
+mod browser_qualification;
 mod claude_session_registry;
 mod claude_sessions;
 mod cli;
@@ -1235,6 +1237,9 @@ impl Render for PaneFlowApp {
             .on_action(cx.listener(Self::handle_open_launch_pad))
             .on_action(cx.listener(Self::handle_diff_new_file_tab))
             .on_action(cx.listener(Self::handle_diff_new_terminal_tab))
+            .on_action(cx.listener(Self::handle_browser_new_tab))
+            .on_action(cx.listener(Self::handle_browser_close))
+            .on_action(cx.listener(Self::handle_browser_focus_terminal))
             .capture_key_down(cx.listener(|_this, e: &gpui::KeyDownEvent, window, cx| {
                 if cx.has_active_drag() && e.keystroke.key == "escape" {
                     cx.stop_active_drag(window);
@@ -1758,6 +1763,9 @@ fn main() {
     #[cfg(not(windows))]
     let is_msi_relay = false;
     let is_mcp_subcommand = args.get(1).map(String::as_str) == Some("mcp");
+    if args.get(1).map(String::as_str) == Some(browser::PROTOTYPE_VERB) {
+        std::process::exit(browser::run_prototype(&args));
+    }
     let is_cli_subcommand = cli::is_cli_verb(args.get(1).map(String::as_str));
     let is_hooks_subcommand = args.get(1).map(String::as_str) == Some("hooks");
     let is_global_help = !is_msi_relay
@@ -1925,7 +1933,11 @@ fn main() {
     application()
         .with_assets(assets::Assets)
         .run(|cx: &mut App| {
+            let launch = |cx: &mut App| {
             let config = paneflow_config::loader::load_config();
+            #[cfg(target_os = "linux")]
+            browser::BrowserRuntime::install(cx);
+            browser::authority::BrowserAuthority::install(cx);
             cx.set_text_rendering_mode(gpui::TextRenderingMode::Grayscale);
             keybindings::apply_keybindings(cx, &config.shortcuts);
 
@@ -1964,8 +1976,8 @@ fn main() {
                 ..Default::default()
             };
 
-            let window_result = cx.open_window(
-                WindowOptions {
+            #[cfg_attr(not(target_os = "linux"), allow(unused_mut))]
+            let mut window_options = WindowOptions {
                     window_bounds: Some(WindowBounds::Windowed(bounds)),
                     window_min_size: Some(crate::window_state::minimum_size()),
                     window_decorations: Some(decorations),
@@ -1975,7 +1987,16 @@ fn main() {
                     ),
                     app_id: Some("paneflow".into()),
                     ..Default::default()
-                },
+                };
+            #[cfg(target_os = "linux")]
+            if let Err(error) = browser::prototype::configure_m1_window(&mut window_options, "terminal", cx) {
+                log::error!("M1 terminal window configuration failed: {error}");
+                eprintln!("M1 terminal window configuration failed: {error}");
+                cx.quit();
+                return;
+            }
+            let window_result = cx.open_window(
+                window_options,
                 |window, cx| {
                     #[cfg(target_os = "windows")]
                     if crate::app::constants::window_backdrop_uses_mica(
@@ -2002,6 +2023,16 @@ fn main() {
                     cx.new(StartupSplashView::new)
                 },
             );
+
+            #[cfg(target_os = "linux")]
+            if window_result.is_ok()
+                && let Err(error) = browser::prototype::open_m1_window(cx)
+            {
+                log::error!("M1 combined Browser window failed: {error}");
+                eprintln!("M1 combined Browser window failed: {error}");
+                cx.quit();
+                return;
+            }
 
             match window_result {
                 Ok(_) => cx.activate(true),
@@ -2037,5 +2068,12 @@ fn main() {
                     std::process::exit(1);
                 }
             }
+            };
+            #[cfg(target_os = "linux")]
+            if browser_qualification::enabled() {
+                browser::prototype::launch_m1_when_outputs_ready(launch, cx);
+                return;
+            }
+            launch(cx);
         });
 }

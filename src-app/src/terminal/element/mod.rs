@@ -1333,7 +1333,19 @@ impl Element for TerminalElement {
         window: &mut Window,
         cx: &mut App,
     ) -> Self::PrepaintState {
-        Some(self.build_layout(bounds, window, cx))
+        #[cfg(target_os = "linux")]
+        let qualification_start =
+            crate::browser_qualification::enabled().then(crate::browser_qualification::cpu_started);
+        let layout = self.build_layout(bounds, window, cx);
+        #[cfg(target_os = "linux")]
+        if let Some(start) = qualification_start {
+            crate::browser_qualification::cpu_finished(
+                self.terminal_view.entity_id().as_u64(),
+                "prepaint",
+                start,
+            );
+        }
+        Some(layout)
     }
 
     fn paint(
@@ -1346,6 +1358,10 @@ impl Element for TerminalElement {
         window: &mut Window,
         cx: &mut App,
     ) {
+        #[cfg(target_os = "linux")]
+        let qualification_start =
+            crate::browser_qualification::enabled().then(crate::browser_qualification::cpu_started);
+
         #[cfg(debug_assertions)]
         let _paint_start = if crate::terminal::probe_enabled() {
             Some(std::time::Instant::now())
@@ -1478,6 +1494,26 @@ impl Element for TerminalElement {
                 &layout, &geom, bounds, font_size, base_font, exit_fg, window, cx,
             );
         });
+
+        #[cfg(target_os = "linux")]
+        if let Some(start) = qualification_start {
+            crate::browser_qualification::cpu_finished(
+                self.terminal_view.entity_id().as_u64(),
+                "paint",
+                start,
+            );
+            crate::browser_qualification::painted(
+                self.terminal_view.entity_id().as_u64(),
+                layout
+                    .batched_runs
+                    .iter()
+                    .map(|run| (run.line, run.col_start, run.text.as_ref())),
+                layout.desired_cols,
+                layout.desired_rows,
+                window,
+                cx,
+            );
+        }
 
         #[cfg(debug_assertions)]
         if let Some(paint_start) = _paint_start {
