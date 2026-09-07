@@ -63,6 +63,17 @@
   <content_rating type="oars-1.1" />
 
   <releases>
+    <release version="0.13.0" date="2026-09-07">
+      <description>
+        <p>Tabs follow the terminal title and can name themselves from the conversation, every agent state is a word on the row, and the Changes dock can take the whole cockpit.</p>
+        <ul>
+          <li>A tab takes the title its CLI writes to the terminal and keeps tracking it, and with automation.tab_auto_naming on it is summarized into a short title through the agent's own CLI</li>
+          <li>Status sits on the trailing edge of workspace and tab rows as Input, Error, the spinner, or Done with the unread count, and a pull request takes the slot as Review, Draft, or Merged; the Stalled state is removed</li>
+          <li>Panes have a tab bar of squircle chips, the Changes dock maximizes over the pane grid with Cmd/Ctrl+Shift+F, and the editor's Minimap and Scrollbar toggles persist in the new editor section</li>
+          <li>Unread completions and muted workspaces survive a restart, and the update check repeats every four hours while the app runs</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.12.0" date="2026-09-06">
       <description>
         <p>Review is rebuilt around two rails and a pane grid, the Changes tab reads word by word, and the terminal grid is measured on the font.</p>

@@ -5,6 +5,8 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-09-07
+
 ### Added
 
 - Tabs follow the title their CLI sets. The terminal title a program writes
