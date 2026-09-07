@@ -34,6 +34,36 @@ focused library crates:
 | `paneflow-process` | `crates/paneflow-process/` | Bounded external-process execution (wall-clock deadline + stdout cap) shared across crates |
 | `paneflow-acp` | `crates/paneflow-acp/` | Legacy Claude/Codex identity enum plus the `CLAUDECODE` environment scrub |
 | `paneflow-telemetry` | `crates/paneflow-telemetry/` | Opt-in telemetry plumbing (no event leaves the machine unless consent resolves to `true`) |
+| `paneflow-browser-protocol` | `crates/paneflow-browser-protocol/` | Portable browser control contract: identities, session and frame ledgers, wire framing, the Unix frame channel, and the deterministic harness binary |
+| `paneflow-browser-host` | `crates/paneflow-browser-host/` | Separate CEF host process (Linux, `cef-runtime` feature): sandboxed lifecycle witness and windowless presentation exporting DMA-BUF frames |
+
+`src-app/src/browser/` holds the application side of the browser: the lazy
+host supervisor, the frame consumer, the Linux DMA-BUF importer and the
+`paneflow browser-prototype` entry. GPUI itself is extended for external
+surfaces through the reviewed patch series under `native/gpui/` (see
+[docs/browser/gpui-external-surfaces.md](docs/browser/gpui-external-surfaces.md)),
+which `scripts/fetch-gpui.py` applies to a sparse upstream checkout that the
+root `Cargo.toml` patches in.
+
+The dock integration sits on top of that runtime. `browser/authority.rs` is
+the single in-process `Controller` every UI action goes through (identities,
+the 8 per session, 64 total and 8 live caps, generations) and the availability
+gate: the Browser surface exists only when `PANEFLOW_CEF_ROOT` names a verified
+runtime, otherwise links keep opening externally. `browser/profile.rs` owns
+the profile root under the private data directory (`browser/profiles/<id>`,
+0700, a versioned marker, an `owner.lock` that a second Paneflow instance
+cannot take), one `ProfileId` per workspace persisted in the session file.
+`browser/page.rs` wraps one `HostSupervisor` per live page with the frame
+consumer, importer and GPU acknowledgement loop, and `browser/view.rs` is the
+GPUI entity behind a `DiffDockTab::Browser` chip: toolbar, viewport, input and
+IME forwarding, and the Dormant/Starting/Visible/Hidden/Crashed state. The
+current host is a single-browser witness pinned to one origin, so a live page
+owns its engine root under the workspace profile and a cross-origin navigation
+restarts its host. `app/browser_dock.rs` routes terminal links and detected
+services to the owning session's dock, keeps the Git snapshot lazy when only
+Browser, terminal or file tabs are open, and serializes the C1 descriptors
+(identity, URL, order, bounded title, zoom, mute, selection) into each
+`TabSession`; every Browser is restored Dormant.
 
 `src-app` is the default workspace member, so bare `cargo run` starts the
 desktop app instead of becoming ambiguous across helper binaries. The split is
@@ -335,6 +365,7 @@ other two platforms:
 | Terminal engine | `libghostty-vt`, statically linked | `libghostty-vt`, statically linked (Apple Silicon) | `libghostty-vt`, statically linked (x64 MSVC) |
 | PTY | `portable-pty` | `portable-pty` | ConPTY via `portable-pty` |
 | IPC | Unix socket | Unix socket | Named pipe |
+| Browser presentation | CEF host + DMA-BUF into the GPUI Vulkan device (Wayland, X11) | unavailable | unavailable |
 | Packaging | `.deb` / `.rpm` / AppImage / tarball | signed + notarized `.dmg` | signed `.msi` |
 
 Linux, macOS Apple Silicon, and Windows x64 ship as release artifacts today.
