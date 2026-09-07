@@ -614,7 +614,7 @@ fn compute_diff_against(worktree_dir: &Path, base: &str, options: DiffOptions) -
             break;
         }
         if is_skipped_name(&path) || is_too_large(worktree_dir, &path) {
-            log::warn!("diff: {path}: skipped (lockfile or too large), no inline change runs");
+            log::debug!("diff: {path}: skipped (lockfile or too large), no inline change runs");
             files.push(stub_file(path, change));
             continue;
         }
@@ -638,12 +638,12 @@ fn compute_diff_against(worktree_dir: &Path, base: &str, options: DiffOptions) -
         }
         let is_binary = base_bin || new_bin;
         let hunks = if is_binary {
-            log::warn!("diff: {path}: binary content, no inline change runs");
+            log::debug!("diff: {path}: binary content, no inline change runs");
             Vec::new()
         } else {
             let report = compute_hunk_report(&base_text, &new_text, options);
             if report.too_big_blocks > 0 {
-                log::warn!(
+                log::debug!(
                     "diff: {path}: {} block(s) too big for word diff, line hunks only",
                     report.too_big_blocks
                 );
