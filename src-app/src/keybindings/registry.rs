@@ -528,6 +528,13 @@ pub(super) const ACTIONS: &[ActionMeta] = &[
         group: ShortcutGroup::Diff,
     },
     ActionMeta {
+        name: "toggle_diff_dock_maximize",
+        factory: || Box::new(crate::ToggleDiffDockMaximize),
+        context: "",
+        description: "Maximize or restore the Changes dock",
+        group: ShortcutGroup::Diff,
+    },
+    ActionMeta {
         name: "copy_diff_hunk",
         factory: || Box::new(crate::CopyDiffHunk),
         context: "DiffView",

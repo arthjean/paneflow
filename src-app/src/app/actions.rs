@@ -85,6 +85,7 @@ actions!(
         ToggleBroadcastMember,
         OpenBroadcastGroups,
         ToggleFilesSidebar,
+        ToggleDiffDockMaximize,
         OpenAttentionQueue,
         OpenLaunchPad,
         DiffNewFileTab,

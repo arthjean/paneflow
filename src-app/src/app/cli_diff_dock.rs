@@ -1,6 +1,7 @@
+use gpui::prelude::FluentBuilder;
 use gpui::{
     AnyElement, Context, InteractiveElement, IntoElement, MouseButton, ParentElement, Styled,
-    Window, div, px,
+    Window, canvas, div, px,
 };
 
 use crate::PaneFlowApp;
@@ -13,6 +14,28 @@ fn diff_dock_fit(preferred: f32, available: f32) -> (f32, f32) {
     let max = (available - PANE_GRID_RESERVED_WIDTH - crate::layout::PANE_GUTTER_PX)
         .max(DIFF_DOCK_PANEL_MIN_WIDTH);
     (preferred.min(max), max)
+}
+
+fn diff_dock_maximized_width(available: f32) -> f32 {
+    (available - 2. * crate::layout::PANE_GUTTER_PX).max(DIFF_DOCK_PANEL_MIN_WIDTH)
+}
+
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum PaneGridLayout {
+    Flex,
+    Clipped { visible: f32, full: f32 },
+    Hidden,
+}
+
+impl PaneGridLayout {
+    fn dock_left_gutter(self) -> f32 {
+        let gutter = crate::layout::PANE_GUTTER_PX;
+        match self {
+            Self::Flex => 0.,
+            Self::Clipped { visible, full } => gutter * (1. - visible / full.max(1.)).clamp(0., 1.),
+            Self::Hidden => gutter,
+        }
+    }
 }
 
 pub(crate) struct DiffDockSlot {
@@ -109,6 +132,7 @@ impl PaneFlowApp {
         if slot.open {
             let cwd = cwd.or_else(|| self.active_checkout()).unwrap_or_default();
             self.open_diff_dock_panel(cwd, cx);
+            self.diff_dock.reveal_animation = None;
         }
     }
 
@@ -125,6 +149,98 @@ impl PaneFlowApp {
         } else {
             self.diff_dock.picker = !self.diff_dock.picked;
             self.open_diff_dock_panel(cwd, cx);
+        }
+    }
+
+    pub(crate) fn handle_toggle_diff_dock_maximize(
+        &mut self,
+        _: &crate::ToggleDiffDockMaximize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.diff_dock_visible() {
+            return;
+        }
+        self.toggle_diff_dock_maximize(window, cx);
+    }
+
+    pub(crate) fn toggle_diff_dock_maximize(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.diff_dock.resize = None;
+        let now = std::time::Instant::now();
+        let full = self.diff_dock.pane_grid_width.get();
+        let from = match self.diff_dock.maximize_animation {
+            Some(animation) => animation.width_at(now),
+            None if self.diff_dock.maximized.is_some() => 0.,
+            None => full,
+        };
+        let to = match self.diff_dock.maximized.take() {
+            Some(previous_focus) => {
+                match previous_focus {
+                    Some(focus) => window.focus(&focus, cx),
+                    None => {
+                        if let Some(ws) = self.workspaces.get(self.active_idx) {
+                            ws.focus_first(window, cx);
+                        }
+                    }
+                }
+                full
+            }
+            None => {
+                self.diff_dock.maximized = Some(window.focused(cx));
+                self.focus_diff_tab(self.diff_dock.diff_active_tab, window, cx);
+                0.
+            }
+        };
+        self.diff_dock.maximize_animation = if !crate::ui_primitives::reduce_motion()
+            && (from - to).abs() > crate::PRIMARY_SIDEBAR_MIN_ANIMATION_DELTA
+        {
+            Some(crate::SidebarWidthAnimation {
+                from_width: from,
+                to_width: to,
+                started_at: now,
+            })
+        } else {
+            None
+        };
+        cx.notify();
+    }
+
+    pub(crate) fn diff_dock_fills_panel(&self) -> bool {
+        self.diff_dock.maximized.is_some() || self.diff_dock.maximize_animation.is_some()
+    }
+
+    fn rendered_dock_reveal(&mut self, window: &mut Window) -> Option<f32> {
+        let animation = self.diff_dock.reveal_animation?;
+        let now = std::time::Instant::now();
+        if animation.is_finished(now) {
+            self.diff_dock.reveal_animation = None;
+            return None;
+        }
+        window.request_animation_frame();
+        Some(animation.width_at(now))
+    }
+
+    fn rendered_pane_grid_layout(&mut self, window: &mut Window) -> PaneGridLayout {
+        let now = std::time::Instant::now();
+        if let Some(animation) = self.diff_dock.maximize_animation {
+            if animation.is_finished(now) {
+                self.diff_dock.maximize_animation = None;
+            } else {
+                window.request_animation_frame();
+                return PaneGridLayout::Clipped {
+                    visible: animation.width_at(now),
+                    full: animation.from_width.max(animation.to_width),
+                };
+            }
+        }
+        if self.diff_dock.maximized.is_some() {
+            PaneGridLayout::Hidden
+        } else {
+            PaneGridLayout::Flex
         }
     }
 
@@ -147,7 +263,21 @@ impl PaneFlowApp {
             return body;
         }
         let ui = crate::theme::ui_colors();
-        let (width, max_width) = diff_dock_fit(self.diff_dock.width, available_width);
+        let grid = self.rendered_pane_grid_layout(window);
+        let fills_panel = grid != PaneGridLayout::Flex;
+        let (width, max_width) = if fills_panel {
+            let width = diff_dock_maximized_width(available_width);
+            (width, width)
+        } else {
+            diff_dock_fit(self.diff_dock.width, available_width)
+        };
+        let measured_grid_width = self.diff_dock.pane_grid_width.clone();
+        let reveal = if fills_panel {
+            None
+        } else {
+            self.rendered_dock_reveal(window)
+        };
+        let dock_column_width = width + crate::layout::PANE_GUTTER_PX;
         div()
             .size_full()
             .flex()
@@ -176,18 +306,72 @@ impl PaneFlowApp {
                     this.end_diff_dock_resize(cx);
                 }),
             )
-            .child(div().flex_1().min_w_0().h_full().child(body))
-            .child(
-                div()
-                    .flex_none()
+            .map(|row| match grid {
+                PaneGridLayout::Flex => row.child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .h_full()
+                        .relative()
+                        .child(
+                            canvas(
+                                move |bounds, _, _| {
+                                    measured_grid_width.set(f32::from(bounds.size.width))
+                                },
+                                |_, _, _, _| {},
+                            )
+                            .absolute()
+                            .size_full(),
+                        )
+                        .child(body),
+                ),
+                PaneGridLayout::Clipped { visible, full } => row.child(
+                    div()
+                        .flex_none()
+                        .w(px(visible))
+                        .h_full()
+                        .overflow_hidden()
+                        .child(div().w(px(full)).h_full().child(body)),
+                ),
+                PaneGridLayout::Hidden => row,
+            })
+            .child({
+                let dock = div()
+                    .map(|dock| {
+                        if fills_panel {
+                            dock.flex_1().min_w_0()
+                        } else {
+                            dock.flex_none()
+                        }
+                    })
+                    .pl(px(grid.dock_left_gutter()))
                     .h_full()
                     .flex()
                     .flex_col()
                     .pt(px(crate::layout::PANE_GUTTER_PX))
                     .pb(px(crate::layout::PANE_GUTTER_PX))
                     .pr(px(crate::layout::PANE_GUTTER_PX))
-                    .child(self.render_diff_dock_panel(width, max_width, files_width, ui, cx)),
-            )
+                    .child(self.render_diff_dock_panel(width, max_width, files_width, ui, cx));
+                match reveal {
+                    Some(progress) => div()
+                        .relative()
+                        .flex_none()
+                        .h_full()
+                        .w(px(dock_column_width * progress))
+                        .overflow_hidden()
+                        .child(
+                            div()
+                                .absolute()
+                                .top_0()
+                                .bottom_0()
+                                .right_0()
+                                .w(px(dock_column_width))
+                                .child(dock),
+                        )
+                        .into_any_element(),
+                    None => dock.into_any_element(),
+                }
+            })
             .into_any_element()
     }
 }
@@ -222,6 +406,38 @@ mod tests {
             width + PANE_GRID_RESERVED_WIDTH + crate::layout::PANE_GUTTER_PX <= available,
             "the dock still overflows the panel: {width}"
         );
+    }
+
+    #[test]
+    fn a_maximized_dock_spans_the_panel_minus_the_gutters() {
+        let available = 1920.;
+        assert_eq!(
+            diff_dock_maximized_width(available),
+            available - 2. * crate::layout::PANE_GUTTER_PX
+        );
+        assert!(diff_dock_maximized_width(available) > diff_dock_fit(880., available).1);
+    }
+
+    #[test]
+    fn the_dock_gutter_grows_as_the_pane_grid_is_clipped_away() {
+        let gutter = crate::layout::PANE_GUTTER_PX;
+        assert_eq!(PaneGridLayout::Flex.dock_left_gutter(), 0.);
+        assert_eq!(PaneGridLayout::Hidden.dock_left_gutter(), gutter);
+        let half = PaneGridLayout::Clipped {
+            visible: 400.,
+            full: 800.,
+        };
+        assert!((half.dock_left_gutter() - gutter / 2.).abs() < 1e-3);
+        let gone = PaneGridLayout::Clipped {
+            visible: 0.,
+            full: 800.,
+        };
+        assert_eq!(gone.dock_left_gutter(), gutter);
+    }
+
+    #[test]
+    fn a_maximized_dock_never_drops_below_the_floor() {
+        assert_eq!(diff_dock_maximized_width(200.), DIFF_DOCK_PANEL_MIN_WIDTH);
     }
 
     #[test]

@@ -7,6 +7,13 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
 
 ### Added
 
+- The Changes dock can take the whole cockpit. A maximize button in the dock's
+  tab strip (or `Cmd/Ctrl+Shift+F`) hides the pane grid so Changes, an editor
+  tab, or a dock terminal gets the full window width; the same control or
+  shortcut restores the panes. Hidden panes keep running, so an agent working
+  behind the dock is untouched and its focus comes back on restore. Opening
+  the dock and maximizing it both animate like the sidebar slide, and
+  `reduce_motion` settles them instantly.
 - Panes have tabs. A tab bar under the pane header lists the pane's
   surfaces as squircle chips carrying the same title as the header, with a
   `+` chip that opens a new terminal in the active tab's directory. Tabs
