@@ -22,10 +22,34 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
   `+` chip that opens a new terminal in the active tab's directory. Tabs
   survive a restart with their scrollback; closing the last tab closes the
   pane.
+- The rail answers every state with a word. Status moved to the trailing edge
+  of both workspace and tab rows, on one X: `Input`, `Error`, the spinner
+  alone while it works, and `Done` with the unread count. When no agent is reporting, the tab's pull
+  request takes the slot in GitHub's state color as `Review`, `Draft`, or
+  `Merged` (with the `PR` switch on). Under the pointer the status yields the
+  slot to the hover action without reflowing the row.
+- Unread agent completions survive a restart, and the workspace context menu
+  gained `Mark as Read` and `Mute Notifications`. A muted workspace fires no
+  desktop notification and records no unread completion.
 - The update check repeats every four hours while Paneflow runs (every thirty
   minutes after a failed attempt), so a release published mid-session shows up
   in the title bar without a restart. A dismissed version stays dismissed; a
   newer one shows again.
+
+### Fixed
+
+- Pull request lanes and glyphs no longer wait for the first 30 second git
+  tick: the lookup starts as soon as a checkout's branch is known, and the
+  last known state of each tab's pull request is kept in the session file so
+  it is drawn at launch and corrected in the background.
+
+### Removed
+
+- The `Stalled` agent state, with the `agent_stall_detection` and
+  `agent_stall_threshold_secs` settings and the `agent_stalled` theme color. A
+  long turn is a long turn, not a fault.
+- The stack of pane icons on tab rows, which restated what a tab holds while
+  occupying the lane the status needed.
 
 ## [0.12.0] - 2026-09-06
 

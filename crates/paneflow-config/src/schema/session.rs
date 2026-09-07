@@ -143,6 +143,17 @@ pub struct TabSession {
     pub layout: Option<LayoutNode>,
     #[serde(default)]
     pub worktree: Option<String>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub unread: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pull_request: Option<PullRequestSession>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PullRequestSession {
+    pub branch: String,
+    pub number: u64,
+    pub state: String,
 }
 
 impl TabSession {
@@ -156,6 +167,8 @@ impl TabSession {
             title_source: Some(TabTitleSource::Preset),
             layout: Some(layout),
             worktree: None,
+            unread: false,
+            pull_request: None,
         }
     }
 }
@@ -180,6 +193,8 @@ pub struct WorkspaceSession {
     pub managed_worktrees: Vec<ManagedWorktreeDef>,
     #[serde(default, skip_serializing_if = "is_false")]
     pub sidebar_collapsed: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub muted: bool,
 }
 
 pub fn migrate_session_v1(state: &mut SessionState) {
@@ -242,6 +257,8 @@ fn demote_panes_to_focused_surface(node: &mut LayoutNode, promoted: &mut Vec<Tab
                         surfaces: vec![surface],
                     }),
                     worktree: None,
+                    unread: false,
+                    pull_request: None,
                 });
             }
         }

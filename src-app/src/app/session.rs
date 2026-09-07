@@ -49,7 +49,21 @@ impl PaneFlowApp {
                 .map(|ws| paneflow_config::schema::WorkspaceSession {
                     title: ws.title.clone(),
                     cwd: ws.cwd.clone(),
-                    tabs: ws.serialize_tabs_without_scrollback(cx),
+                    tabs: ws
+                        .serialize_tabs_without_scrollback(cx)
+                        .into_iter()
+                        .zip(ws.tabs())
+                        .map(|(mut tab_session, tab)| {
+                            tab_session.pull_request = self.tab_pull_request(ws, tab).map(|pr| {
+                                paneflow_config::schema::PullRequestSession {
+                                    branch: self.tab_row_branch(ws, tab),
+                                    number: pr.number,
+                                    state: pr.state.wire_str().to_string(),
+                                }
+                            });
+                            tab_session
+                        })
+                        .collect(),
                     active_tab: ws.active_tab_idx(),
                     legacy_layout: None,
                     legacy_empty: false,
@@ -66,6 +80,7 @@ impl PaneFlowApp {
                         })
                         .collect(),
                     sidebar_collapsed: !ws.sidebar_expanded,
+                    muted: ws.muted,
                 })
                 .collect(),
             mode: self.mode,
@@ -231,6 +246,40 @@ impl PaneFlowApp {
         }
     }
 
+    pub(crate) fn pull_request_seeds(
+        session: &paneflow_config::schema::SessionState,
+        workspaces: &[Workspace],
+    ) -> Vec<(
+        std::path::PathBuf,
+        String,
+        crate::app::pull_request::PullRequest,
+    )> {
+        session
+            .workspaces
+            .iter()
+            .zip(workspaces)
+            .filter_map(|(ws_session, ws)| Some((ws_session, ws.repo_root.clone()?)))
+            .flat_map(|(ws_session, repo_root)| {
+                ws_session
+                    .tabs
+                    .iter()
+                    .filter_map(|tab| tab.pull_request.as_ref())
+                    .filter(|pr| !pr.branch.is_empty())
+                    .filter_map(move |pr| {
+                        let state = crate::app::pull_request::PrState::from_wire(&pr.state)?;
+                        Some((
+                            repo_root.clone(),
+                            pr.branch.clone(),
+                            crate::app::pull_request::PullRequest {
+                                number: pr.number,
+                                state,
+                            },
+                        ))
+                    })
+            })
+            .collect()
+    }
+
     pub(crate) fn restore_workspaces(
         session: &paneflow_config::schema::SessionState,
         cx: &mut Context<Self>,
@@ -292,6 +341,19 @@ impl PaneFlowApp {
 
             workspace.custom_buttons = ws_session.custom_buttons.clone();
             workspace.sidebar_expanded = !ws_session.sidebar_collapsed;
+            workspace.muted = ws_session.muted;
+            let unread_surfaces: Vec<u64> = ws_session
+                .tabs
+                .iter()
+                .zip(workspace.tabs())
+                .filter(|(tab_session, _)| tab_session.unread)
+                .flat_map(|(_, tab)| tab.surface_ids(cx))
+                .collect();
+            for surface_id in unread_surfaces {
+                workspace
+                    .agent_completion_notification
+                    .record_finished(false, Some(surface_id));
+            }
             workspace.managed_worktrees = ws_session
                 .managed_worktrees
                 .iter()

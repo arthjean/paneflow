@@ -14,7 +14,7 @@
 ## User-Facing Concepts
 
 - Panes and workspaces: real PTY terminals grouped by project context.
-- Agent state: thinking, waiting for input, finished, errored, stalled, or unknown.
+- Agent state: thinking, waiting for input, finished, errored, or unknown.
 - Paneflow Conductor: `paneflow` CLI, JSON-RPC IPC, `paneflow up`, `paneflow watch`, and `paneflow flow run`.
 - MCP bridge: `list_panes`, `read_pane`, and `search_pane`; read-only and untrusted-output aware.
 - Review: side-by-side worktree diffs, hunk navigation, branch review prompts, and local cost estimates.

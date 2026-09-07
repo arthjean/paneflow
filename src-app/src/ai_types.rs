@@ -8,7 +8,6 @@ pub enum AgentState {
     WaitingForInput,
     Finished,
     Errored,
-    Stalled,
 }
 
 impl AgentState {
@@ -18,12 +17,7 @@ impl AgentState {
             AgentState::WaitingForInput => "waiting_for_input",
             AgentState::Finished => "finished",
             AgentState::Errored => "errored",
-            AgentState::Stalled => "stalled",
         }
-    }
-
-    pub fn stalls_after(&self, idle: std::time::Duration, threshold: std::time::Duration) -> bool {
-        matches!(self, AgentState::Thinking) && idle >= threshold
     }
 }
 
@@ -260,7 +254,6 @@ fn state_rank(s: &AgentState) -> u8 {
     match s {
         AgentState::Errored => 5,
         AgentState::WaitingForInput => 4,
-        AgentState::Stalled => 3,
         AgentState::Thinking => 2,
         AgentState::Finished => 1,
     }
@@ -431,19 +424,6 @@ mod tests {
     }
 
     #[test]
-    fn stalls_after_only_thinking_past_threshold() {
-        use std::time::Duration;
-        let threshold = Duration::from_secs(60);
-        assert!(AgentState::Thinking.stalls_after(Duration::from_secs(61), threshold));
-        assert!(AgentState::Thinking.stalls_after(Duration::from_secs(60), threshold));
-        assert!(!AgentState::Thinking.stalls_after(Duration::from_secs(59), threshold));
-        assert!(!AgentState::Stalled.stalls_after(Duration::from_secs(600), threshold));
-        assert!(!AgentState::WaitingForInput.stalls_after(Duration::from_secs(600), threshold));
-        assert!(!AgentState::Finished.stalls_after(Duration::from_secs(600), threshold));
-        assert!(!AgentState::Errored.stalls_after(Duration::from_secs(600), threshold));
-    }
-
-    #[test]
     fn waiting_since_stamps_on_entering_waiting_only() {
         use AgentState::*;
         let now = std::time::Instant::now();
@@ -488,7 +468,6 @@ mod tests {
         assert_eq!(WaitingForInput.wire_str(), "waiting_for_input");
         assert_eq!(Finished.wire_str(), "finished");
         assert_eq!(Errored.wire_str(), "errored");
-        assert_eq!(Stalled.wire_str(), "stalled");
     }
 
     #[test]
@@ -549,26 +528,6 @@ mod tests {
         ];
         let rows = aggregate_by_tool(sessions.iter());
         assert_eq!(rows[0].dominant, AgentState::Errored);
-    }
-
-    #[test]
-    fn dominant_picks_waiting_over_stalled() {
-        let sessions = [
-            s(TerminalAgent::ClaudeCode, AgentState::Stalled),
-            s(TerminalAgent::ClaudeCode, AgentState::WaitingForInput),
-        ];
-        let rows = aggregate_by_tool(sessions.iter());
-        assert_eq!(rows[0].dominant, AgentState::WaitingForInput);
-    }
-
-    #[test]
-    fn dominant_picks_stalled_over_thinking() {
-        let sessions = [
-            s(TerminalAgent::ClaudeCode, AgentState::Thinking),
-            s(TerminalAgent::ClaudeCode, AgentState::Stalled),
-        ];
-        let rows = aggregate_by_tool(sessions.iter());
-        assert_eq!(rows[0].dominant, AgentState::Stalled);
     }
 
     #[test]

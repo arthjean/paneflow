@@ -43,14 +43,6 @@ impl PaneSurface {
             PaneSurface::Diff(_) => "icons/git-branch.svg",
         }
     }
-
-    pub(crate) fn kind_label(&self) -> &'static str {
-        match self {
-            PaneSurface::Terminal(_) => "Terminal",
-            PaneSurface::Markdown(_) => "Markdown",
-            PaneSurface::Diff(_) => "Diff",
-        }
-    }
 }
 
 fn pane_colors() -> crate::theme::UiColors {

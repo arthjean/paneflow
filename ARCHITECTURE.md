@@ -273,8 +273,7 @@ agent CLI (claude, codex, opencode, …)
   rank, so a weaker observer never talks over a live stronger one - and a
   stronger one that falls silent hands over instead of freezing the sidebar.
 - **States**: thinking, waiting for input (with the actual prompt text),
-  finished, errored (non-zero exit), stalled (no hook activity past a
-  threshold). Each state routes to the UI - and to your own tooling, since
+  finished, errored (non-zero exit). Each state routes to the UI - and to your own tooling, since
   the same events are observable over IPC.
 
 The default loop is human-in-the-loop: Paneflow pre-fills prompts into real PTY

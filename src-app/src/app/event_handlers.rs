@@ -793,10 +793,11 @@ impl PaneFlowApp {
             }
             terminal::TerminalEvent::ProgramNotification { title, body } => {
                 let surface_id = terminal.entity_id().as_u64();
-                let seen = self
-                    .workspace_id_for_surface(surface_id, cx)
+                let ws_id = self.workspace_id_for_surface(surface_id, cx);
+                let seen = ws_id
                     .and_then(|ws_id| self.surfaces_under_user_eye(ws_id, cx))
-                    .is_some_and(|visible| visible.contains(&surface_id));
+                    .is_some_and(|visible| visible.contains(&surface_id))
+                    || ws_id.is_some_and(|ws_id| self.workspace_is_muted(ws_id));
                 let pane_title = terminal.read(cx).terminal.title.clone();
                 crate::agents::notifications::fire_program_notification(
                     crate::agents::notifications::program_notification(
@@ -969,17 +970,6 @@ impl PaneFlowApp {
                     .collect::<Vec<_>>()
             })
             .collect();
-        let stall_enabled = self.cached_config.agent_stall_detection_enabled();
-        let stall_threshold = std::time::Duration::from_secs(
-            self.cached_config.resolved_agent_stall_threshold_secs(),
-        );
-        let mut stalled_notifs: Vec<(
-            crate::agent_launcher::TerminalAgent,
-            String,
-            u64,
-            u64,
-            Option<u64>,
-        )> = Vec::new();
         for ws in &mut self.workspaces {
             if ws.agent_sessions.is_empty() {
                 continue;
@@ -992,44 +982,11 @@ impl PaneFlowApp {
             if ws.agent_sessions.len() < before {
                 changed = true;
             }
-            if stall_enabled {
-                for session in ws.agent_sessions.values_mut() {
-                    if session
-                        .state
-                        .stalls_after(session.last_activity.elapsed(), stall_threshold)
-                    {
-                        session.state = ai_types::AgentState::Stalled;
-                        session.waiting_since = None;
-                        stalled_notifs.push((
-                            session.tool,
-                            ws.title.clone(),
-                            session.last_activity.elapsed().as_secs(),
-                            ws.id,
-                            session.surface_id,
-                        ));
-                        changed = true;
-                    }
-                }
-            }
         }
         if changed {
             self.sync_attention(cx);
             self.agent_sessions_changed(cx);
             cx.notify();
-        }
-        for (agent, title, silent_secs, ws_id, surface_id) in stalled_notifs {
-            let seen = crate::app::agent_status::completion_was_seen(
-                self.surfaces_under_user_eye(ws_id, cx).as_ref(),
-                surface_id,
-            );
-            super::ipc_handler::fire_stalled_notification(
-                agent,
-                &title,
-                silent_secs,
-                &self.cached_config,
-                seen,
-                cx.background_executor().clone(),
-            );
         }
     }
 
@@ -1434,6 +1391,9 @@ impl PaneFlowApp {
                                 && app.refresh_diff_dock_if_open_for_cwd(&cwd_for_apply, cx);
                             if changed && !refreshed_diff {
                                 cx.notify();
+                            }
+                            if changed {
+                                app.refresh_pull_requests(cx);
                             }
                         }
                     })

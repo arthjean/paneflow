@@ -59,7 +59,7 @@ is available on your `PATH`. Paneflow runs the agent in a normal PTY pane, so
 you can watch the raw terminal, interrupt it, or take over with the keyboard.
 
 Supported and hooked agents can report richer lifecycle state such as
-thinking, waiting, finished, errored, or stalled. Other CLI tools still run in
+thinking, waiting, finished, or errored. Other CLI tools still run in
 panes, but Paneflow may only know what it can infer from the process tree and
 terminal activity.
 

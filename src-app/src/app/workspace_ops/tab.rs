@@ -16,6 +16,29 @@ impl PaneFlowApp {
         }
     }
 
+    pub(crate) fn toggle_workspace_muted(&mut self, ws_idx: usize, cx: &mut Context<Self>) {
+        if let Some(ws) = self.workspaces.get_mut(ws_idx) {
+            ws.muted = !ws.muted;
+            self.save_session(cx);
+            cx.notify();
+        }
+    }
+
+    pub(crate) fn workspace_is_muted(&self, ws_id: u64) -> bool {
+        self.workspaces
+            .iter()
+            .find(|ws| ws.id == ws_id)
+            .is_some_and(|ws| ws.muted)
+    }
+
+    pub(crate) fn mark_workspace_read(&mut self, ws_idx: usize, cx: &mut Context<Self>) {
+        if let Some(ws) = self.workspaces.get_mut(ws_idx) {
+            ws.agent_completion_notification.clear();
+            self.save_session(cx);
+            cx.notify();
+        }
+    }
+
     pub(crate) fn open_tab_with_surface(
         &mut self,
         ws_idx: usize,

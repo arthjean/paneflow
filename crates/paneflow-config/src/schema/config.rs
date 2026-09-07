@@ -53,10 +53,6 @@ pub struct PaneFlowConfig {
     #[serde(default, deserialize_with = "lenient_value_or_default")]
     pub shell_integration: Option<bool>,
     #[serde(default, deserialize_with = "lenient_value_or_default")]
-    pub agent_stall_detection: Option<bool>,
-    #[serde(default, deserialize_with = "lenient_value_or_default")]
-    pub agent_stall_threshold_secs: Option<u64>,
-    #[serde(default, deserialize_with = "lenient_value_or_default")]
     pub submit_paste_delay_ms: Option<u64>,
     #[serde(default, deserialize_with = "lenient_value_or_default")]
     pub external_editor: Option<String>,
@@ -167,10 +163,6 @@ impl SidebarShow {
 }
 
 impl PaneFlowConfig {
-    pub const DEFAULT_AGENT_STALL_THRESHOLD_SECS: u64 = 60;
-    pub const MIN_AGENT_STALL_THRESHOLD_SECS: u64 = 30;
-    pub const MAX_AGENT_STALL_THRESHOLD_SECS: u64 = 86_400;
-
     pub const DEFAULT_UNFOCUSED_PANE_OPACITY: f32 = 0.7;
     pub const MIN_UNFOCUSED_PANE_OPACITY: f32 = 0.15;
     pub const MAX_UNFOCUSED_PANE_OPACITY: f32 = 1.0;
@@ -178,10 +170,6 @@ impl PaneFlowConfig {
     pub const DEFAULT_SUBMIT_PASTE_DELAY_MS: u64 = 70;
     pub const MIN_SUBMIT_PASTE_DELAY_MS: u64 = 10;
     pub const MAX_SUBMIT_PASTE_DELAY_MS: u64 = 5_000;
-
-    pub fn agent_stall_detection_enabled(&self) -> bool {
-        self.agent_stall_detection.unwrap_or(true)
-    }
 
     pub fn windows_terminal_material_enabled(&self) -> bool {
         cfg!(target_os = "windows") && self.windows_terminal_material.unwrap_or(false)
@@ -219,27 +207,6 @@ impl PaneFlowConfig {
 
     pub fn reduce_motion_enabled(&self) -> bool {
         self.reduce_motion.unwrap_or(false)
-    }
-
-    pub fn resolved_agent_stall_threshold_secs(&self) -> u64 {
-        let raw = self
-            .agent_stall_threshold_secs
-            .unwrap_or(Self::DEFAULT_AGENT_STALL_THRESHOLD_SECS);
-        let clamped = raw.clamp(
-            Self::MIN_AGENT_STALL_THRESHOLD_SECS,
-            Self::MAX_AGENT_STALL_THRESHOLD_SECS,
-        );
-        if clamped != raw {
-            tracing::warn!(
-                target: "paneflow_config::agent",
-                requested = raw,
-                clamped,
-                "agent_stall_threshold_secs out of range [{min}, {max}], clamped",
-                min = Self::MIN_AGENT_STALL_THRESHOLD_SECS,
-                max = Self::MAX_AGENT_STALL_THRESHOLD_SECS,
-            );
-        }
-        clamped
     }
 
     pub fn resolved_submit_paste_delay_ms(&self) -> u64 {

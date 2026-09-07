@@ -65,8 +65,6 @@ JetBrains IDEs, Helix, and other JSON Schema-aware editors:
 | `macos_chrome_material` | boolean/null | `true` | Window/chrome render | macOS-only native Sidebar material in the primary navigation card. Ignored on other platforms. |
 | `option_as_meta` | boolean/null | `true` | New terminal | Sends Alt/Option as ESC-prefix Meta. Set `false` on macOS when Option should type Unicode characters. |
 | `shell_integration` | boolean/null | `true` | New terminal | Enables Paneflow shell snippets for OSC 7 CWD and OSC 133 command marks. |
-| `agent_stall_detection` | boolean/null | `true` | Runtime sweep | Detects Thinking agents with no hook activity past the threshold. |
-| `agent_stall_threshold_secs` | integer/null | `60` | Runtime sweep | Range `30` to `86400`; checked by a 30 second sweep. |
 | `submit_paste_delay_ms` | integer/null | `70` | IPC send | Floor delay between bracketed paste and Enter for `paneflow send --submit`. Range `10` to `5000`. |
 | `external_editor` | string/null | `auto` | Next open action | `auto`, `system`, `zed`, `cursor`, `windsurf`, or `code`. |
 | `shortcuts` | object | `{}` | Hot reload | Maps keystrokes to action names. See [shortcuts and actions](/docs/keybindings). |

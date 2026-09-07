@@ -113,7 +113,7 @@ flag `--raw` passes `fenced: false`.
 | --- | --- |
 | `pid` | Agent process id, when known |
 | `tool` | Agent family such as `claude`, `codex`, `opencode`, or `gemini` |
-| `state` | `thinking`, `waiting_for_input`, `finished`, `errored`, `stalled`, `idle`, or `unknown_running` |
+| `state` | `thinking`, `waiting_for_input`, `finished`, `errored`, `idle`, or `unknown_running` |
 | `hooked` | Whether lifecycle hook events are attached |
 | `reason` | Detection reason, including `no_hook` |
 | `surface_id` | Pane id |

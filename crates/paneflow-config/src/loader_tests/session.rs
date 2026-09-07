@@ -12,7 +12,35 @@ fn make_workspace(title: &str, cwd: &str, tabs: Vec<TabSession>) -> WorkspaceSes
         expanded_paths: vec![],
         managed_worktrees: vec![],
         sidebar_collapsed: false,
+        muted: false,
     }
+}
+
+#[test]
+fn an_unread_tab_and_a_muted_workspace_survive_a_restart() {
+    let mut ws = make_workspace("main", "/home/user/project", vec![TabSession::empty()]);
+    ws.muted = true;
+    ws.tabs[0].unread = true;
+    ws.tabs[0].pull_request = Some(PullRequestSession {
+        branch: "feat/parser".to_string(),
+        number: 46,
+        state: "open".to_string(),
+    });
+    let json = serde_json::to_string(&ws).unwrap();
+    assert!(json.contains("\"muted\":true"));
+    assert!(json.contains("\"unread\":true"));
+    let back: WorkspaceSession = serde_json::from_str(&json).unwrap();
+    assert!(back.muted);
+    assert!(back.tabs[0].unread);
+
+    let quiet = make_workspace("main", "/home/user/project", vec![TabSession::empty()]);
+    let json = serde_json::to_string(&quiet).unwrap();
+    assert!(!json.contains("muted") && !json.contains("unread"));
+    assert!(!json.contains("pull_request"));
+    let older: WorkspaceSession =
+        serde_json::from_str(r#"{"title":"main","cwd":"/home/user/project","tabs":[{}]}"#).unwrap();
+    assert!(!older.muted);
+    assert!(!older.tabs[0].unread);
 }
 
 #[test]
@@ -525,12 +553,16 @@ fn test_tab_title_source_survives_a_roundtrip() {
                     title_source: Some(TabTitleSource::User),
                     layout: None,
                     worktree: None,
+                    unread: false,
+                    pull_request: None,
                 },
                 TabSession {
                     title: "wire up the parser".to_string(),
                     title_source: Some(TabTitleSource::Prompt),
                     layout: None,
                     worktree: Some("/home/user/project.worktrees/parser".to_string()),
+                    unread: false,
+                    pull_request: None,
                 },
             ],
         )],

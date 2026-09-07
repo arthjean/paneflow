@@ -38,8 +38,6 @@ fn test_serialization_roundtrip() {
         font_weight: None,
         option_as_meta: None,
         shell_integration: None,
-        agent_stall_detection: None,
-        agent_stall_threshold_secs: None,
         submit_paste_delay_ms: None,
         claude_code_bypass_permissions: None,
         ai_unrestricted: None,

@@ -130,7 +130,7 @@ impl PaneFlowApp {
             let seen = completion_was_seen(visible.as_ref(), Some(surface_id));
             if let Some(ws) = self.workspaces.iter_mut().find(|ws| ws.id == ws_id) {
                 ws.agent_completion_notification
-                    .record_finished(seen, Some(surface_id));
+                    .record_finished(seen || ws.muted, Some(surface_id));
             }
             self.schedule_finished_sweep(ws_id, key, cx);
         }

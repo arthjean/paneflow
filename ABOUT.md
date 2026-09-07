@@ -17,7 +17,7 @@ several worktrees, a read-only MCP bridge, and scriptable orchestration.
   DirectX.
 - **One session per tab, on its own worktree.** A tab binds to a branch or
   worktree, names itself after its work, and shows the agent's state in the
-  rail: thinking, waiting, stalled, failed, or done.
+  rail: thinking, waiting, failed, or done.
 - **The diff next to the agent.** Changes shows the checkout against its base
   branch with word-level highlighting and per-block revert, Files opens the
   code with git markers in the gutter, and Review lays several worktree diffs

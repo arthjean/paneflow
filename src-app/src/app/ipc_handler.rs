@@ -412,22 +412,6 @@ fn fire_agent_exit_notification(
     );
 }
 
-pub(crate) fn fire_stalled_notification(
-    agent: TerminalAgent,
-    workspace_title: &str,
-    silent_secs: u64,
-    config: &paneflow_config::schema::PaneFlowConfig,
-    seen: bool,
-    executor: gpui::BackgroundExecutor,
-) {
-    desktop_notifications::fire_desktop_notification(
-        DesktopNotification::stalled(agent, workspace_title, silent_secs),
-        config,
-        seen,
-        executor,
-    );
-}
-
 fn ipc_scripting_enabled() -> bool {
     scripting_enabled_from(std::env::var("PANEFLOW_IPC_SCRIPTING").ok().as_deref())
 }
@@ -2807,7 +2791,8 @@ impl PaneFlowApp {
                         &ws_title,
                         message.as_deref(),
                         &notify_config,
-                        self.session_is_seen(workspace_id, key, cx),
+                        self.session_is_seen(workspace_id, key, cx)
+                            || self.workspace_is_muted(workspace_id),
                         cx.background_executor().clone(),
                     );
                     self.sync_attention(cx);
@@ -2854,7 +2839,7 @@ impl PaneFlowApp {
                     let seen = crate::app::agent_status::completion_was_seen(
                         visible_surfaces.as_ref(),
                         finished_surface,
-                    );
+                    ) || ws.muted;
                     if !interrupt_stop {
                         ws.agent_completion_notification
                             .record_finished(seen, finished_surface);
@@ -2980,7 +2965,8 @@ impl PaneFlowApp {
                             &ws_title,
                             exit_code,
                             &notify_config,
-                            self.session_is_seen(workspace_id, key, cx),
+                            self.session_is_seen(workspace_id, key, cx)
+                                || self.workspace_is_muted(workspace_id),
                             cx.background_executor().clone(),
                         );
                     }
@@ -3535,14 +3521,6 @@ mod tests {
         assert_eq!(
             crate::agents::notifications::agent_exit_notification_body("ws", -1073741510),
             "ws: exited with code -1073741510"
-        );
-    }
-
-    #[test]
-    fn stalled_body_carries_workspace_and_silence() {
-        assert_eq!(
-            crate::agents::notifications::stalled_notification_body("api", 300),
-            "api: no activity for 300 s"
         );
     }
 

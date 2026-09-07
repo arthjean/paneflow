@@ -118,6 +118,7 @@ impl PaneFlowApp {
             .map(|s| s.review_collapsed.clone())
             .unwrap_or_default();
 
+        let mut pull_request_seeds = Vec::new();
         let (workspaces, active_idx) = match saved_session {
             Some(session) => {
                 log::info!(
@@ -126,6 +127,7 @@ impl PaneFlowApp {
                     session.mode
                 );
                 let (workspaces, active_idx) = Self::restore_workspaces(&session, cx);
+                pull_request_seeds = Self::pull_request_seeds(&session, &workspaces);
                 if workspaces.is_empty() {
                     log::warn!(
                         "session restore: session contained no restorable workspaces; creating default workspace"
@@ -710,6 +712,11 @@ impl PaneFlowApp {
             app.restore_review_layout(&node, cx);
         }
         app.restore_review_collapsed(&restored_review_collapsed);
+        for (repo_root, branch, pr) in pull_request_seeds {
+            app.pr_states
+                .seed(&repo_root.to_string_lossy(), &branch, pr);
+        }
+        app.refresh_pull_requests(cx);
         if matches!(app.mode, paneflow_config::schema::AppMode::Diff) {
             if app.review.layout.is_none() {
                 match app.review_default_subject() {

@@ -8,7 +8,7 @@
 
 The workspace where your coding agents work, and where you read what they changed.
 
-Paneflow is a native workspace for coding agents. The Workspaces rail lists every repository you have open; each tab is an agent session bound to its own branch or worktree, named after its work, with the agent's live state: thinking, waiting, stalled, failed, or done. Inside a session, the agent runs in a real Ghostty terminal pane you can read, interrupt, and take over. A dock beside the session holds Changes (the checkout's diff against its base branch), Files (a code editor with git markers in the gutter and the file tree), and a terminal. Review mode lays several worktree diffs side by side in one pane grid.
+Paneflow is a native workspace for coding agents. The Workspaces rail lists every repository you have open; each tab is an agent session bound to its own branch or worktree, named after its work, with the agent's live state: thinking, waiting, failed, or done. Inside a session, the agent runs in a real Ghostty terminal pane you can read, interrupt, and take over. A dock beside the session holds Changes (the checkout's diff against its base branch), Files (a code editor with git markers in the gutter and the file tree), and a terminal. Review mode lays several worktree diffs side by side in one pane grid.
 
 Works with any CLI agent - Claude Code, Codex, Gemini, opencode, Pi, Hermes, you name it.
 

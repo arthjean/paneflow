@@ -96,8 +96,6 @@ mod tests {
             font_weight: Some("normal".to_string()),
             option_as_meta: Some(true),
             shell_integration: Some(true),
-            agent_stall_detection: Some(true),
-            agent_stall_threshold_secs: Some(300),
             submit_paste_delay_ms: Some(70),
             external_editor: Some("auto".to_string()),
             claude_code_bypass_permissions: Some(false),
@@ -389,35 +387,6 @@ mod tests {
             cfg.resolved_scrollback_lines_for_profile(TerminalSurfaceProfile::Agent),
             500
         );
-    }
-
-    #[test]
-    fn agent_stall_settings_resolve_with_defaults_and_clamp() {
-        let cfg = PaneFlowConfig::default();
-        assert!(cfg.agent_stall_detection_enabled());
-        assert_eq!(cfg.resolved_agent_stall_threshold_secs(), 60);
-
-        let cfg = PaneFlowConfig {
-            agent_stall_detection: Some(false),
-            ..Default::default()
-        };
-        assert!(!cfg.agent_stall_detection_enabled());
-
-        let cfg = PaneFlowConfig {
-            agent_stall_threshold_secs: Some(1),
-            ..Default::default()
-        };
-        assert_eq!(cfg.resolved_agent_stall_threshold_secs(), 30);
-        let cfg = PaneFlowConfig {
-            agent_stall_threshold_secs: Some(u64::MAX),
-            ..Default::default()
-        };
-        assert_eq!(cfg.resolved_agent_stall_threshold_secs(), 86_400);
-        let cfg = PaneFlowConfig {
-            agent_stall_threshold_secs: Some(600),
-            ..Default::default()
-        };
-        assert_eq!(cfg.resolved_agent_stall_threshold_secs(), 600);
     }
 
     #[test]

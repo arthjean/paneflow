@@ -45,7 +45,7 @@ A selector that matches nothing or several panes exits with code `3`, except com
 | --- | --- |
 | `pid` | Agent process id, or `null` for scan-only detection |
 | `tool` | Agent family such as `claude`, `codex`, `opencode`, or `gemini` |
-| `state` | `thinking`, `waiting_for_input`, `finished`, `errored`, `stalled`, `idle`, or `unknown_running` |
+| `state` | `thinking`, `waiting_for_input`, `finished`, `errored`, `idle`, or `unknown_running` |
 | `hooked` | `true` when Paneflow receives lifecycle hook events |
 | `reason` | Detection reason, including `no_hook` for unhooked processes |
 | `surface_id` | Pane id when resolved |
@@ -128,7 +128,6 @@ Timeouts exit with code `4`.
 | --- | --- | --- |
 | `ai_unrestricted` | `false` | Allows trusted AI automation to submit when enabled |
 | `ai_injection_fence` | `true` | Wraps peer terminal output as untrusted text |
-| `agent_stall_threshold_secs` | app default | Marks silent in-progress turns as stalled |
 
 ## Exit codes
 
