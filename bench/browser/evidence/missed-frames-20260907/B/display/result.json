@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "recorded_at_unix_ns": 1788761969113995606,
+  "monotonic_ns": 827351061429,
+  "status": "FAILED",
+  "exit_code": 1,
+  "error": null,
+  "signals": []
+}

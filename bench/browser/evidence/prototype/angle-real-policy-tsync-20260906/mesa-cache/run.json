@@ -1,0 +1,12 @@
+{
+  "command": [
+    "timeout",
+    "--kill-after=5",
+    "60",
+    "/home/arthur/.cache/paneflow-cef-tsync/angle-probe/probe",
+    "--angle-root=/home/arthur/dev/paneflow-browser/native/browser/prebuilt/x86_64-unknown-linux-gnu/db53c43fdace8b7ee4af0f005120116d6973aa9d8eb7702c0617badf9be8684e/Release"
+  ],
+  "returncode": 1,
+  "native_cache_requested": true,
+  "vulkan_icd": "/usr/share/vulkan/icd.d/radeon_icd.x86_64.json"
+}

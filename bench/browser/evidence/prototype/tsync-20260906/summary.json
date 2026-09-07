@@ -1,0 +1,63 @@
+{
+  "captured_at": "2026-09-06T12:59:40.219373+00:00",
+  "scope": "EP-002 follow-up: native EGL TSYNC feasibility and exact Chromium source audit",
+  "baseline_commit": "fbfefd250a3f3c8d9968a23f8c358712859bc904",
+  "epic_status": "BLOCKED",
+  "stories_done": 3,
+  "stories_total": 5,
+  "runtime_changed": false,
+  "cef_pin_changed": false,
+  "gpu_sandbox_requirement_relaxed": false,
+  "kernel_tsync": {
+    "amd_mesa": "PASS_WITH_NATIVE_DRIVER_THREADS",
+    "nvidia": "PASS_WITH_SYNTHETIC_WITNESS_THREAD_ONLY"
+  },
+  "synthetic_bounded_policy": {
+    "amd_mesa": "PASS",
+    "nvidia": "FAIL_AT_PROCESS_EXIT_SENDMSG_AFTER_VERIFIED_RENDERING"
+  },
+  "cef_tsync_integration": "NOT_EXECUTED",
+  "chromium_obstacle": "GpuPreSandboxHook creates a broker before TSYNC; BrokerProcess::Fork asserts one thread and executes a C++ child callback without exec",
+  "analysis": "docs/browser/gpu-sandbox-tsync.md",
+  "source_digests": "sources.json",
+  "receipts": [
+    "mesa/result.json",
+    "nvidia/result.json"
+  ],
+  "prior_epic_review": "bench/browser/evidence/prototype/validation/review.json",
+  "prior_epic_gates": "bench/browser/evidence/prototype/validation/gates.json",
+  "prior_review_scope": "Historical certification receipt retained unchanged; no full epic recertification in this follow-up",
+  "remaining": [
+    "Broker lifecycle design and source-pinned patched CEF artifact",
+    "Real Chromium GPU policy and complete host/renderer/broker/GPUI native lifecycle",
+    "Scale-only repaint",
+    "Native Xorg",
+    "Applicable M1 measurements"
+  ],
+  "mesa_cases": {
+    "control-no-tsync": "PASS",
+    "tsync-marker": "PASS",
+    "tsync-bounded": "PASS",
+    "trap-control": "PASS"
+  },
+  "nvidia_cases": {
+    "control-no-tsync": "PASS",
+    "tsync-marker": "PASS",
+    "tsync-bounded": "FAIL",
+    "trap-control": "PASS"
+  },
+  "validation": {
+    "checked_at": "2026-09-06T13:00:44.150493+00:00",
+    "native_probe": "C compiled with -O2 -Wall -Wextra -Werror on each GPU run; results retained including NVIDIA bounded-policy exit failure",
+    "qualification_tests": {
+      "command": "bun test scripts/browser-qualification/qualification.test.mjs",
+      "passed": 36,
+      "failed": 0
+    },
+    "artifacts": "All new JSON and JSONL parsed; runner and C source digests match both GPU receipts",
+    "tracker": "Python replay of task artifact invariants passed across status files",
+    "diff": "git diff --check passed; scoped documentation diff inspected against pre-edit backups",
+    "rust_workspace_gates": "NOT_EXECUTED: no Rust/runtime modification and no full epic recertification",
+    "native_windows_macos": "NOT_EXECUTED"
+  }
+}

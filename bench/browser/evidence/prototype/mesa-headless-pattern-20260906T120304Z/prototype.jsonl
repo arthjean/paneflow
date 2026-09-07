@@ -1,0 +1,29 @@
+{"schema_version":1,"pid":360274,"source":"pattern","url":null,"ozone":"wayland","scenario":"resize,scale","clock":"CLOCK_MONOTONIC","profile":"debug","event":"started","at_ns":11525795719817}
+{"backend":"Vulkan","adapter":"AMD Ryzen 7 7800X3D 8-Core Processor (RADV RAPHAEL_MENDOCINO)","driver":"radv","driver_info":"Mesa 26.1.8","vendor_id":4098,"device_id":5710,"scale":1.0,"wayland":true,"display":false,"event":"window","at_ns":11526118365971}
+{"source":"pattern","event":"source_ready","at_ns":11526118380851}
+{"width":1280,"height":800,"source":"pattern","event":"present","at_ns":11526118394101}
+{"generation":1,"pools":1,"event":"pool_imported","at_ns":11526118539691}
+{"pool_generation":1,"buffer":0,"sequence":1,"callback_ns":11526135222659,"ready_ns":11526135222659,"intake_ns":11526173920502,"copy_us":0,"transfer_us":38697,"event":"frame","at_ns":11526173938462}
+{"step":"resize","event":"step_started","at_ns":11526173956692}
+{"width":1088,"height":608,"source":"pattern","event":"present","at_ns":11526174142882}
+{"reason":"pool retired","event":"frame_ignored","at_ns":11526174185412}
+{"generation":2,"pools":1,"event":"pool_imported","at_ns":11526174261842}
+{"pool_generation":2,"buffer":0,"sequence":2,"callback_ns":11526190080751,"ready_ns":11526190080751,"intake_ns":11526206475239,"copy_us":0,"transfer_us":16394,"event":"frame","at_ns":11526206488659}
+{"pool_generations":2,"fixture":null,"presented":{"width":1088,"height":608},"event":"resize_observed","at_ns":11526206510999}
+{"step":"resize","elapsed_ms":32,"event":"step_completed","at_ns":11526206518249}
+{"pool_generation":2,"buffer":1,"sequence":3,"callback_ns":11526222672588,"ready_ns":11526222672588,"intake_ns":11526238886337,"copy_us":0,"transfer_us":16213,"event":"frame","at_ns":11526238900287}
+{"step":"scale","event":"step_started","at_ns":11526238913787}
+{"width":2176,"height":1216,"source":"pattern","event":"present","at_ns":11526238989117}
+{"reason":"pool retired","event":"frame_ignored","at_ns":11526239020877}
+{"generation":3,"pools":1,"event":"pool_imported","at_ns":11526239112877}
+{"pool_generation":3,"buffer":0,"sequence":4,"callback_ns":11526255050135,"ready_ns":11526255050135,"intake_ns":11526343170973,"copy_us":0,"transfer_us":88120,"event":"frame","at_ns":11526343184973}
+{"scale_percent":200,"fixture":null,"event":"scale_observed","at_ns":11526343200363}
+{"width":1088,"height":608,"source":"pattern","event":"present","at_ns":11526343292303}
+{"reason":"pool retired","event":"frame_ignored","at_ns":11526343318893}
+{"generation":4,"pools":1,"event":"pool_imported","at_ns":11526343380593}
+{"pool_generation":4,"buffer":0,"sequence":5,"callback_ns":11526359306872,"ready_ns":11526359306872,"intake_ns":11526375462981,"copy_us":0,"transfer_us":16156,"event":"frame","at_ns":11526375476421}
+{"fixture":null,"event":"scale_restored","at_ns":11526375490231}
+{"step":"scale","elapsed_ms":136,"event":"step_completed","at_ns":11526375492811}
+{"seconds":2,"event":"hold","at_ns":11526407632848}
+{"pool_generation":4,"buffer":1,"sequence":30,"callback_ns":11527533120519,"ready_ns":11527533120519,"intake_ns":11527549217438,"copy_us":0,"transfer_us":16096,"event":"frame","at_ns":11527549243458}
+{"status":"COMPLETED","failure":null,"source":"pattern","ozone":"wayland","presented_frames":48,"pool_generations":4,"first_frame_after_ms":55,"consumer":{"outstanding":2,"pools_created":4,"pools_retired":3,"frames_received":48,"frames_presented":48,"frames_ignored":0,"releases_sent":43,"failures":0},"host_pids":[],"remaining_steps":[],"event":"summary","at_ns":11528416911529}

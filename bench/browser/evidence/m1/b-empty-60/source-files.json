@@ -1,0 +1,66 @@
+[
+  {
+    "path": "Cargo.lock",
+    "sha256": "a194eb3ee7519f503ce9640b50c25dbf03f02d2de983e335f8a55cda49ec2d95"
+  },
+  {
+    "path": "Cargo.toml",
+    "sha256": "6157368c253d082dff2453f321463ccf4f20687026c2468a01befe65a982fb26"
+  },
+  {
+    "path": "crates/paneflow-browser-host/Cargo.toml",
+    "sha256": "4f894a8b2912a1788632787771e8aa6b1479d1a722dc288c547ea1a571b1ecfd"
+  },
+  {
+    "path": "crates/paneflow-browser-host/build.rs",
+    "sha256": "d10b0baa197fc5045e89ad901caf734b146c7d9e8759476d350a3f07c381d661"
+  },
+  {
+    "path": "crates/paneflow-browser-host/src/linux/handlers.rs",
+    "sha256": "eeb688fd27aadded2b29c069dfde630797305913a8710d0d197c6124c61c8c50"
+  },
+  {
+    "path": "crates/paneflow-browser-host/src/linux/views.rs",
+    "sha256": "fa8762b524ae38b06ca52354f9802a1ea4a3d70c8a9772fec07e4154677a491b"
+  },
+  {
+    "path": "crates/paneflow-browser-host/src/linux.rs",
+    "sha256": "345c7f5f57dc2868dcc03a29fb0a0463ab5f7ebafd22f3b0e4ca5f6052cfaf49"
+  },
+  {
+    "path": "crates/paneflow-browser-host/src/main.rs",
+    "sha256": "216ffdecb993863f68c6520ff4c59eace686d53ad5a5fd07dc886ccfc6b7e33e"
+  },
+  {
+    "path": "crates/paneflow-browser-host/src/qualification.rs",
+    "sha256": "42d0afdd9b19f7a17bbc6bfc5921bcd207d460f068749ace5cc8937603fcee73"
+  },
+  {
+    "path": "crates/paneflow-browser-protocol/Cargo.toml",
+    "sha256": "ae6981476eaceb2b1d0b1f23066a34c4d9ff95f328b1ddfb76658df0ed5c0956"
+  },
+  {
+    "path": "crates/paneflow-browser-protocol/src/controller.rs",
+    "sha256": "d929e88d798adfadf9ecb4e6030c1b7bc9929c42f35fd9a80c91a25b52a45f87"
+  },
+  {
+    "path": "crates/paneflow-browser-protocol/src/domain.rs",
+    "sha256": "30887360dd93db39d02500d50ff802488472974ae67cd46ebce9719a4a46dce6"
+  },
+  {
+    "path": "crates/paneflow-browser-protocol/src/frames.rs",
+    "sha256": "598372703aafe2d923befb717c9f7532d242024e9bb8155fb2c2c36ee212a1f8"
+  },
+  {
+    "path": "crates/paneflow-browser-protocol/src/lib.rs",
+    "sha256": "a3a670e655df40134023181ec8c332edc92a6b333044d8c632539db9a790c583"
+  },
+  {
+    "path": "crates/paneflow-browser-protocol/src/main.rs",
+    "sha256": "7c4777f3462e2568ad58969cad16ce4276630ab19cc3172551470f3a8f63c57c"
+  },
+  {
+    "path": "crates/paneflow-browser-protocol/src/wire.rs",
+    "sha256": "b558c88fe04f7a3364f9be008c89847de69e470dd9d63f5d13db31a72c377e1d"
+  }
+]

@@ -1,0 +1,1634 @@
+{
+  "schema_version": 1,
+  "status": "COMPLETED",
+  "recorded_at": "2026-09-06T18:14:47.979Z",
+  "paneflow_commit": "",
+  "display": "x11",
+  "source": "cef",
+  "scenario": "webgl",
+  "requested_steps": [
+    "input"
+  ],
+  "session_type": "wayland",
+  "cef_version": "151.3.24+g2384915+chromium-151.0.7922.174",
+  "archive_sha256": "ebc4369c6a3f87f685f937f9afc3d67dbcbb97b8eebb00bd5f57981900aa402a",
+  "fixture_sha256": "ba2c59f47be45058bdfb1c2153c9cb9760b4a86e5e66a4b7ab2f6e6e04cb6cda",
+  "binary_sha256": "1da5ac2739bba086b93d5f9d40c51a9519a83402dfb0adcc25c7c5f99e37bd87",
+  "host_sha256": "aac67ed1c61c178731e9266616b73bdee60119813ca02c863244fc8827f8c78d",
+  "exit": {
+    "code": 0,
+    "signal": null
+  },
+  "fatal": null,
+  "window": {
+    "backend": "Vulkan",
+    "adapter": "NVIDIA GeForce RTX 4070 Ti SUPER",
+    "driver": "NVIDIA",
+    "driver_info": "610.57.04",
+    "vendor_id": 4318,
+    "device_id": 9989,
+    "scale": 1,
+    "wayland": false,
+    "display": true,
+    "event": "window",
+    "at_ns": 33798736091817
+  },
+  "importer": {
+    "device": "NVIDIA GeForce RTX 4070 Ti SUPER",
+    "vendor_id": 4318,
+    "device_id": 9989,
+    "extensions": [
+      "VK_KHR_swapchain",
+      "VK_KHR_swapchain_mutable_format",
+      "VK_EXT_robustness2",
+      "VK_KHR_external_memory_fd",
+      "VK_EXT_external_memory_dma_buf",
+      "VK_EXT_memory_budget",
+      "VK_EXT_image_drm_format_modifier",
+      "VK_KHR_image_format_list",
+      "VK_KHR_bind_memory2",
+      "VK_KHR_sampler_ycbcr_conversion",
+      "VK_KHR_external_semaphore_fd",
+      "VK_EXT_queue_family_foreign"
+    ],
+    "render_node": "/dev/dri/renderD129",
+    "event": "importer_ready",
+    "at_ns": 33798736193467
+  },
+  "host_ready": [
+    {
+      "pid": 749004,
+      "presentation": true,
+      "initialized": {
+        "contract_version": 1,
+        "native": "initialized",
+        "pid": 749004,
+        "presentation": true,
+        "protocol": {
+          "operation": "hello",
+          "result": {
+            "Ok": {
+              "availability": "development",
+              "contract_version": 1,
+              "target": "x86_64-linux",
+              "terminal_available": true,
+              "type": "capabilities"
+            }
+          },
+          "version": 1
+        },
+        "sandbox_requested": true,
+        "trace_us": 33801042631
+      }
+    }
+  ],
+  "summary": {
+    "status": "COMPLETED",
+    "failure": null,
+    "source": "cef",
+    "ozone": "x11",
+    "presented_frames": 32,
+    "pool_generations": 1,
+    "first_frame_after_ms": 2527,
+    "consumer": {
+      "outstanding": 1,
+      "pools_created": 1,
+      "pools_retired": 0,
+      "frames_received": 32,
+      "frames_presented": 32,
+      "frames_ignored": 0,
+      "releases_sent": 31,
+      "failures": 0
+    },
+    "host_pids": [
+      749004
+    ],
+    "remaining_steps": [],
+    "event": "summary",
+    "at_ns": 33831423691595
+  },
+  "frame_chain_us": {
+    "copy_in_host": {
+      "count": 6,
+      "min": 415,
+      "p50": 495,
+      "p95": 1634,
+      "max": 1634
+    },
+    "host_ready_to_app_intake": {
+      "count": 6,
+      "min": 167,
+      "p50": 207,
+      "p95": 1183,
+      "max": 1183
+    },
+    "note": "callback_ns to ready_ns covers the host Vulkan blit and fence wait; ready_ns to intake_ns covers the SCM_RIGHTS transfer and app dispatch; presentation feedback is not measured here"
+  },
+  "sandbox": [
+    {
+      "host_pid": 749004,
+      "renderer": true,
+      "gpu_process": true,
+      "switches_clean": true,
+      "roles": [
+        "host",
+        "zygote",
+        "zygote",
+        "utility",
+        "gpu-process",
+        "zygote",
+        "utility",
+        "zygote",
+        "zygote",
+        "zygote",
+        "renderer",
+        "renderer",
+        "renderer"
+      ]
+    }
+  ],
+  "x11": [
+    {
+      "host_pid": 749004,
+      "connected": [
+        {
+          "pid": 749004,
+          "role": "host",
+          "inodes": [
+            2023181,
+            2052225,
+            2049553
+          ]
+        },
+        {
+          "pid": 749063,
+          "role": "gpu-process",
+          "inodes": [
+            2030506,
+            2048311,
+            2030507,
+            2030508,
+            2052259
+          ]
+        }
+      ],
+      "ss_available": true,
+      "display_env": [
+        749004,
+        749011,
+        749012,
+        749067,
+        749063,
+        749014,
+        749093,
+        749076,
+        749105,
+        749163,
+        749185,
+        749186,
+        749218
+      ],
+      "ozone": []
+    }
+  ],
+  "snapshots": [
+    {
+      "host_pid": 749004,
+      "taken_after_ms": 3617,
+      "tree": [
+        {
+          "pid": 749004,
+          "parent": 748898,
+          "start_ticks": "3379998",
+          "comm": "paneflow-browse",
+          "role": "host",
+          "thread_security": [
+            {
+              "tid": 749004,
+              "name": "paneflow-browse",
+              "seccomp": 0,
+              "no_new_privs": 0,
+              "filter_count": 0
+            },
+            {
+              "tid": 749009,
+              "name": "sandbox_ipc_thr",
+              "seccomp": 0,
+              "no_new_privs": 0,
+              "filter_count": 0
+            },
+            {
+              "tid": 749015,
+              "name": "paneflow-browse",
+              "seccomp": 0,
+              "no_new_privs": 0,
+              "filter_count": 0
+            },
+            {
+              "tid": 749016,
+              "name": "HangWatcher",
+              "seccomp": 0,
+              "no_new_privs": 0,
+              "filter_count": 0
+            },
+            {
+              "tid": 749017,
+              "name": "PerfettoTrace",
+              "seccomp": 0,
+              "no_new_privs": 0,
+              "filter_count": 0
+            },
+            {
+              "tid": 749018,
+              "name": "ThreadPoolServi",
+              "seccomp": 0,
+              "no_new_privs": 0,
+              "filter_count": 0
+            },
+            {
+              "tid": 749019,
+              "name": "ThreadPoolForeg",
+              "seccomp": 0,
+              "no_new_privs": 0,
+              "filter_count": 0
+            },
+            {
+              "tid": 749020,
+              "name": "ThreadPoolPrese",
+              "seccomp": 0,
+              "no_new_privs": 0,
+              "filter_count": 0
+            },
+            {
+              "tid": 749021,
+              "name": "ThreadPoolAudio",
+              "seccomp": 0,
+              "no_new_privs": 0,
+              "filter_count": 0
+            },
+            {
+              "tid": 749022,
+              "name": "ThreadPoolSingl",
+              "seccomp": 0,
+              "no_new_privs": 0,
+              "filter_count": 0
+            },
+            {
+              "tid": 749023,
+              "name": "Chrome_IOThread",
+              "seccomp": 0,
+              "no_new_privs": 0,
+              "filter_count": 0
+            },
+            {
+              "tid": 749024,
+              "name": "MemoryInfra",
+              "seccomp": 0,
+              "no_new_privs": 0,
+              "filter_count": 0
+            },
+            {
+              "tid": 749039,
+              "name": "pool-spawner",
+              "seccomp": 0,
+              "no_new_privs": 0,
+              "filter_count": 0
+            },
+            {
+              "tid": 749040,
+              "name": "gmain",
+              "seccomp": 0,
+              "no_new_privs": 0,
+              "filter_count": 0
+            },
+            {
+              "tid": 749041,
+              "name": "gdbus",
+              "seccomp": 0,
+              "no_new_privs": 0,
+              "filter_count": 0
+            },
+            {
+              "tid": 749047,
+              "name": "[pango] fontcon",
+              "seccomp": 0,
+              "no_new_privs": 0,
+              "filter_count": 0
+            },
+            {
+              "tid": 749048,
+              "name": "CrShutdownDetec",
+              "seccomp": 0,
+              "no_new_privs": 0,
+              "filter_count": 0
+            },
+            {
+              "tid": 749049,
+              "name": "dconf worker",
+              "seccomp": 0,
+              "no_new_privs": 0,
+              "filter_count": 0
+            },
+            {
+              "tid": 749050,
+              "name": "ThreadPoolForeg",
+              "seccomp": 0,
+              "no_new_privs": 0,
+              "filter_count": 0
+            },
+            {
+              "tid": 749051,
+              "name": "ThreadPoolForeg",
+              "seccomp": 0,
+              "no_new_privs": 0,
+              "filter_count": 0
+            },
+            {
+              "tid": 749052,
+              "name": "ThreadPoolForeg",
+              "seccomp": 0,
+              "no_new_privs": 0,
+              "filter_count": 0
+            },
+            {
+              "tid": 749053,
+              "name": "ThreadPoolForeg",
+              "seccomp": 0,
+              "no_new_privs": 0,
+              "filter_count": 0
+            },
+            {
+              "tid": 749054,
+              "name": "ThreadPoolForeg",
+              "seccomp": 0,
+              "no_new_privs": 0,
+              "filter_count": 0
+            },
+            {
+              "tid": 749055,
+              "name": "ThreadPoolForeg",
+              "seccomp": 0,
+              "no_new_privs": 0,
+              "filter_count": 0
+            },
+            {
+              "tid": 749056,
+              "name": "ThreadPoolForeg",
+              "seccomp": 0,
+              "no_new_privs": 0,
+              "filter_count": 0
+            },
+            {
+              "tid": 749057,
+              "name": "inotify_reader",
+              "seccomp": 0,
+              "no_new_privs": 0,
+              "filter_count": 0
+            },
+            {
+              "tid": 749060,
+              "name": "ThreadPoolSingl",
+              "seccomp": 0,
+              "no_new_privs": 0,
+              "filter_count": 0
+            },
+            {
+              "tid": 749061,
+              "name": "CompositorTileW",
+              "seccomp": 0,
+              "no_new_privs": 0,
+              "filter_count": 0
+            },
+            {
+              "tid": 749062,
+              "name": "VideoCaptureThr",
+              "seccomp": 0,
+              "no_new_privs": 0,
+              "filter_count": 0
+            },
+            {
+              "tid": 749108,
+              "name": "ThreadPoolSingl",
+              "seccomp": 0,
+              "no_new_privs": 0,
+              "filter_count": 0
+            },
+            {
+              "tid": 749109,
+              "name": "ThreadPoolForeg",
+              "seccomp": 0,
+              "no_new_privs": 0,
+              "filter_count": 0
+            },
+            {
+              "tid": 749117,
+              "name": "ThreadPoolForeg",
+              "seccomp": 0,
+              "no_new_privs": 0,
+              "filter_count": 0
+            },
+            {
+              "tid": 749119,
+              "name": "ThreadPoolForeg",
+              "seccomp": 0,
+              "no_new_privs": 0,
+              "filter_count": 0
+            },
+            {
+              "tid": 749120,
+              "name": "ThreadPoolForeg",
+              "seccomp": 0,
+              "no_new_privs": 0,
+              "filter_count": 0
+            },
+            {
+              "tid": 749121,
+              "name": "ThreadPoolForeg",
+              "seccomp": 0,
+              "no_new_privs": 0,
+              "filter_count": 0
+            },
+            {
+              "tid": 749122,
+              "name": "ThreadPoolForeg",
+              "seccomp": 0,
+              "no_new_privs": 0,
+              "filter_count": 0
+            },
+            {
+              "tid": 749123,
+              "name": "ThreadPoolForeg",
+              "seccomp": 0,
+              "no_new_privs": 0,
+              "filter_count": 0
+            },
+            {
+              "tid": 749124,
+              "name": "ThreadPoolForeg",
+              "seccomp": 0,
+              "no_new_privs": 0,
+              "filter_count": 0
+            },
+            {
+              "tid": 749140,
+              "name": "paneflo:disk$0",
+              "seccomp": 0,
+              "no_new_privs": 0,
+              "filter_count": 0
+            },
+            {
+              "tid": 749141,
+              "name": "paneflo:disk$0",
+              "seccomp": 0,
+              "no_new_privs": 0,
+              "filter_count": 0
+            },
+            {
+              "tid": 749152,
+              "name": "paneflow-browse",
+              "seccomp": 0,
+              "no_new_privs": 0,
+              "filter_count": 0
+            },
+            {
+              "tid": 749153,
+              "name": "[vkcf] Analysis",
+              "seccomp": 0,
+              "no_new_privs": 0,
+              "filter_count": 0
+            },
+            {
+              "tid": 749156,
+              "name": "[vkrt] Analysis",
+              "seccomp": 0,
+              "no_new_privs": 0,
+              "filter_count": 0
+            },
+            {
+              "tid": 749157,
+              "name": "[vkps] Update",
+              "seccomp": 0,
+              "no_new_privs": 0,
+              "filter_count": 0
+            },
+            {
+              "tid": 749160,
+              "name": "paneflow-browse",
+              "seccomp": 0,
+              "no_new_privs": 0,
+              "filter_count": 0
+            },
+            {
+              "tid": 749161,
+              "name": "paneflow-browse",
+              "seccomp": 0,
+              "no_new_privs": 0,
+              "filter_count": 0
+            },
+            {
+              "tid": 749162,
+              "name": "paneflow-browse",
+              "seccomp": 0,
+              "no_new_privs": 0,
+              "filter_count": 0
+            },
+            {
+              "tid": 749174,
+              "name": "CacheThread_Blo",
+              "seccomp": 0,
+              "no_new_privs": 0,
+              "filter_count": 0
+            },
+            {
+              "tid": 749175,
+              "name": "ThreadPoolSingl",
+              "seccomp": 0,
+              "no_new_privs": 0,
+              "filter_count": 0
+            }
+          ],
+          "thread_security_complete": true,
+          "args_count": 1,
+          "sandbox_disabled": false,
+          "seccomp": 0,
+          "no_new_privs": 0,
+          "user_namespace": "user:[4026531837]",
+          "pid_namespace": "pid:[4026531836]",
+          "display_env": true,
+          "wayland_env": false,
+          "ozone": null,
+          "sockets": [
+            2023151,
+            2030383,
+            2030384,
+            2023156,
+            2023158,
+            2023180,
+            2034457,
+            2023181,
+            2052225,
+            2052226,
+            2036626,
+            2051104,
+            2052231,
+            2023352,
+            2032973,
+            2034460,
+            2055271,
+            2035048,
+            2053121,
+            2049547,
+            2049553,
+            2050154,
+            2023151,
+            2052275,
+            2053342,
+            2049607,
+            2051123,
+            2049600,
+            2053343,
+            2048429,
+            2050183,
+            2049665,
+            2029192
+          ]
+        },
+        {
+          "pid": 749011,
+          "parent": 749004,
+          "start_ticks": "3380002",
+          "comm": "paneflow-browse",
+          "role": "zygote",
+          "thread_security": [
+            {
+              "tid": 749011,
+              "name": "paneflow-browse",
+              "seccomp": 0,
+              "no_new_privs": 1,
+              "filter_count": 0
+            }
+          ],
+          "thread_security_complete": true,
+          "args_count": 8,
+          "sandbox_disabled": false,
+          "seccomp": 0,
+          "no_new_privs": 1,
+          "user_namespace": "user:[4026531837]",
+          "pid_namespace": "pid:[4026531836]",
+          "display_env": true,
+          "wayland_env": false,
+          "ozone": null,
+          "sockets": [
+            2023157,
+            2030383
+          ]
+        },
+        {
+          "pid": 749012,
+          "parent": 749004,
+          "start_ticks": "3380002",
+          "comm": "paneflow-browse",
+          "role": "zygote",
+          "thread_security": [
+            {
+              "tid": 749012,
+              "name": "paneflow-browse",
+              "seccomp": 0,
+              "no_new_privs": 1,
+              "filter_count": 0
+            }
+          ],
+          "thread_security_complete": true,
+          "args_count": 7,
+          "sandbox_disabled": false,
+          "seccomp": 0,
+          "no_new_privs": 1,
+          "user_namespace": "user:[4026535015]",
+          "pid_namespace": "pid:[4026534941]",
+          "display_env": true,
+          "wayland_env": false,
+          "ozone": null,
+          "sockets": [
+            2023159,
+            2030383
+          ]
+        },
+        {
+          "pid": 749067,
+          "parent": 749004,
+          "start_ticks": "3380070",
+          "comm": "paneflow-browse",
+          "role": "utility",
+          "thread_security": [
+            {
+              "tid": 749067,
+              "name": "paneflow-browse",
+              "seccomp": 2,
+              "no_new_privs": 1,
+              "filter_count": 1
+            },
+            {
+              "tid": 749094,
+              "name": "PerfettoTrace",
+              "seccomp": 2,
+              "no_new_privs": 1,
+              "filter_count": 1
+            },
+            {
+              "tid": 749095,
+              "name": "HangWatcher",
+              "seccomp": 2,
+              "no_new_privs": 1,
+              "filter_count": 1
+            },
+            {
+              "tid": 749096,
+              "name": "ThreadPoolServi",
+              "seccomp": 2,
+              "no_new_privs": 1,
+              "filter_count": 1
+            },
+            {
+              "tid": 749097,
+              "name": "ThreadPoolForeg",
+              "seccomp": 2,
+              "no_new_privs": 1,
+              "filter_count": 1
+            },
+            {
+              "tid": 749098,
+              "name": "ThreadPoolPrese",
+              "seccomp": 2,
+              "no_new_privs": 1,
+              "filter_count": 1
+            },
+            {
+              "tid": 749099,
+              "name": "ThreadPoolAudio",
+              "seccomp": 2,
+              "no_new_privs": 1,
+              "filter_count": 1
+            },
+            {
+              "tid": 749100,
+              "name": "Chrome_ChildIOT",
+              "seccomp": 2,
+              "no_new_privs": 1,
+              "filter_count": 1
+            },
+            {
+              "tid": 749101,
+              "name": "ThreadPoolForeg",
+              "seccomp": 2,
+              "no_new_privs": 1,
+              "filter_count": 1
+            },
+            {
+              "tid": 749102,
+              "name": "inotify_reader",
+              "seccomp": 2,
+              "no_new_privs": 1,
+              "filter_count": 1
+            },
+            {
+              "tid": 749103,
+              "name": "ThreadPoolForeg",
+              "seccomp": 2,
+              "no_new_privs": 1,
+              "filter_count": 1
+            },
+            {
+              "tid": 749104,
+              "name": "ThreadPoolForeg",
+              "seccomp": 2,
+              "no_new_privs": 1,
+              "filter_count": 1
+            },
+            {
+              "tid": 749106,
+              "name": "ThreadPoolForeg",
+              "seccomp": 2,
+              "no_new_privs": 1,
+              "filter_count": 1
+            },
+            {
+              "tid": 749107,
+              "name": "ThreadPoolForeg",
+              "seccomp": 2,
+              "no_new_privs": 1,
+              "filter_count": 1
+            }
+          ],
+          "thread_security_complete": true,
+          "args_count": 21,
+          "sandbox_disabled": false,
+          "seccomp": 2,
+          "no_new_privs": 1,
+          "user_namespace": "user:[4026531837]",
+          "pid_namespace": "pid:[4026531836]",
+          "display_env": true,
+          "wayland_env": false,
+          "ozone": null,
+          "sockets": [
+            2052232,
+            2023350,
+            2023351,
+            2047472,
+            2054167,
+            2047473,
+            2048455,
+            2047470,
+            2047471,
+            2034648,
+            2047474,
+            2031329
+          ]
+        },
+        {
+          "pid": 749063,
+          "parent": 749011,
+          "start_ticks": "3380070",
+          "comm": "paneflow-browse",
+          "role": "gpu-process",
+          "thread_security": [
+            {
+              "tid": 749063,
+              "name": "paneflow-browse",
+              "seccomp": 2,
+              "no_new_privs": 1,
+              "filter_count": 1
+            },
+            {
+              "tid": 749132,
+              "name": "paneflo:disk$0",
+              "seccomp": 2,
+              "no_new_privs": 1,
+              "filter_count": 1
+            },
+            {
+              "tid": 749133,
+              "name": "paneflo:disk$0",
+              "seccomp": 2,
+              "no_new_privs": 1,
+              "filter_count": 1
+            },
+            {
+              "tid": 749135,
+              "name": "paneflow-browse",
+              "seccomp": 2,
+              "no_new_privs": 1,
+              "filter_count": 1
+            },
+            {
+              "tid": 749137,
+              "name": "paneflow-browse",
+              "seccomp": 2,
+              "no_new_privs": 1,
+              "filter_count": 1
+            },
+            {
+              "tid": 749138,
+              "name": "[vkcf] Analysis",
+              "seccomp": 2,
+              "no_new_privs": 1,
+              "filter_count": 1
+            },
+            {
+              "tid": 749142,
+              "name": "[vkrt] Analysis",
+              "seccomp": 2,
+              "no_new_privs": 1,
+              "filter_count": 1
+            },
+            {
+              "tid": 749143,
+              "name": "[vkps] Update",
+              "seccomp": 2,
+              "no_new_privs": 1,
+              "filter_count": 1
+            },
+            {
+              "tid": 749164,
+              "name": "paneflow-browse",
+              "seccomp": 2,
+              "no_new_privs": 1,
+              "filter_count": 1
+            },
+            {
+              "tid": 749172,
+              "name": "ANGLE-GC",
+              "seccomp": 2,
+              "no_new_privs": 1,
+              "filter_count": 1
+            },
+            {
+              "tid": 749176,
+              "name": "GpuWatchdog",
+              "seccomp": 2,
+              "no_new_privs": 1,
+              "filter_count": 1
+            },
+            {
+              "tid": 749177,
+              "name": "PerfettoTrace",
+              "seccomp": 2,
+              "no_new_privs": 1,
+              "filter_count": 1
+            },
+            {
+              "tid": 749178,
+              "name": "HangWatcher",
+              "seccomp": 2,
+              "no_new_privs": 1,
+              "filter_count": 1
+            },
+            {
+              "tid": 749179,
+              "name": "ThreadPoolServi",
+              "seccomp": 2,
+              "no_new_privs": 1,
+              "filter_count": 1
+            },
+            {
+              "tid": 749180,
+              "name": "ThreadPoolForeg",
+              "seccomp": 2,
+              "no_new_privs": 1,
+              "filter_count": 1
+            },
+            {
+              "tid": 749181,
+              "name": "ThreadPoolPrese",
+              "seccomp": 2,
+              "no_new_privs": 1,
+              "filter_count": 1
+            },
+            {
+              "tid": 749182,
+              "name": "ThreadPoolAudio",
+              "seccomp": 2,
+              "no_new_privs": 1,
+              "filter_count": 1
+            },
+            {
+              "tid": 749183,
+              "name": "Chrome_ChildIOT",
+              "seccomp": 2,
+              "no_new_privs": 1,
+              "filter_count": 1
+            },
+            {
+              "tid": 749184,
+              "name": "VizCompositorTh",
+              "seccomp": 2,
+              "no_new_privs": 1,
+              "filter_count": 1
+            },
+            {
+              "tid": 749211,
+              "name": "ThreadPoolForeg",
+              "seccomp": 2,
+              "no_new_privs": 1,
+              "filter_count": 1
+            }
+          ],
+          "thread_security_complete": true,
+          "args_count": 8,
+          "sandbox_disabled": false,
+          "seccomp": 2,
+          "no_new_privs": 1,
+          "user_namespace": "user:[4026531837]",
+          "pid_namespace": "pid:[4026531836]",
+          "display_env": true,
+          "wayland_env": false,
+          "ozone": null,
+          "sockets": [
+            2030383,
+            2030504,
+            2051105,
+            2030506,
+            2048311,
+            2030507,
+            2030508,
+            2052259,
+            2030511,
+            2055270,
+            2049596,
+            2034643,
+            2054175,
+            2054181,
+            2047477
+          ]
+        },
+        {
+          "pid": 749014,
+          "parent": 749012,
+          "start_ticks": "3380005",
+          "comm": "paneflow-browse",
+          "role": "zygote",
+          "thread_security": [
+            {
+              "tid": 749014,
+              "name": "paneflow-browse",
+              "seccomp": 0,
+              "no_new_privs": 1,
+              "filter_count": 0
+            }
+          ],
+          "thread_security_complete": true,
+          "args_count": 7,
+          "sandbox_disabled": false,
+          "seccomp": 0,
+          "no_new_privs": 1,
+          "user_namespace": "user:[4026535015]",
+          "pid_namespace": "pid:[4026534941]",
+          "display_env": true,
+          "wayland_env": false,
+          "ozone": null,
+          "sockets": [
+            2023159,
+            2030383
+          ]
+        },
+        {
+          "pid": 749093,
+          "parent": 749067,
+          "start_ticks": "3380073",
+          "comm": "paneflow-browse",
+          "role": "utility",
+          "thread_security": [
+            {
+              "tid": 749093,
+              "name": "paneflow-browse",
+              "seccomp": 2,
+              "no_new_privs": 1,
+              "filter_count": 1
+            }
+          ],
+          "thread_security_complete": true,
+          "args_count": 21,
+          "sandbox_disabled": false,
+          "seccomp": 2,
+          "no_new_privs": 1,
+          "user_namespace": "user:[4026531837]",
+          "pid_namespace": "pid:[4026531836]",
+          "display_env": true,
+          "wayland_env": false,
+          "ozone": null,
+          "sockets": [
+            2052232,
+            2023349
+          ]
+        },
+        {
+          "pid": 749076,
+          "parent": 749063,
+          "start_ticks": "3380070",
+          "comm": "paneflow-browse",
+          "role": "zygote",
+          "thread_security": [
+            {
+              "tid": 749076,
+              "name": "paneflow-browse",
+              "seccomp": 2,
+              "no_new_privs": 1,
+              "filter_count": 1
+            }
+          ],
+          "thread_security_complete": true,
+          "args_count": 8,
+          "sandbox_disabled": false,
+          "seccomp": 2,
+          "no_new_privs": 1,
+          "user_namespace": "user:[4026531837]",
+          "pid_namespace": "pid:[4026531836]",
+          "display_env": true,
+          "wayland_env": false,
+          "ozone": null,
+          "sockets": [
+            2030503,
+            2030383,
+            2051105
+          ]
+        },
+        {
+          "pid": 749105,
+          "parent": 749014,
+          "start_ticks": "3380074",
+          "comm": "paneflow-browse",
+          "role": "zygote",
+          "thread_security": [
+            {
+              "tid": 749105,
+              "name": "paneflow-browse",
+              "seccomp": 2,
+              "no_new_privs": 1,
+              "filter_count": 1
+            },
+            {
+              "tid": 749110,
+              "name": "PerfettoTrace",
+              "seccomp": 2,
+              "no_new_privs": 1,
+              "filter_count": 1
+            },
+            {
+              "tid": 749111,
+              "name": "HangWatcher",
+              "seccomp": 2,
+              "no_new_privs": 1,
+              "filter_count": 1
+            },
+            {
+              "tid": 749112,
+              "name": "ThreadPoolServi",
+              "seccomp": 2,
+              "no_new_privs": 1,
+              "filter_count": 1
+            },
+            {
+              "tid": 749113,
+              "name": "ThreadPoolForeg",
+              "seccomp": 2,
+              "no_new_privs": 1,
+              "filter_count": 1
+            },
+            {
+              "tid": 749114,
+              "name": "ThreadPoolPrese",
+              "seccomp": 2,
+              "no_new_privs": 1,
+              "filter_count": 1
+            },
+            {
+              "tid": 749115,
+              "name": "ThreadPoolAudio",
+              "seccomp": 2,
+              "no_new_privs": 1,
+              "filter_count": 1
+            },
+            {
+              "tid": 749116,
+              "name": "Chrome_ChildIOT",
+              "seccomp": 2,
+              "no_new_privs": 1,
+              "filter_count": 1
+            },
+            {
+              "tid": 749118,
+              "name": "ThreadPoolForeg",
+              "seccomp": 2,
+              "no_new_privs": 1,
+              "filter_count": 1
+            },
+            {
+              "tid": 749129,
+              "name": "ThreadPoolForeg",
+              "seccomp": 2,
+              "no_new_privs": 1,
+              "filter_count": 1
+            }
+          ],
+          "thread_security_complete": true,
+          "args_count": 7,
+          "sandbox_disabled": false,
+          "seccomp": 2,
+          "no_new_privs": 1,
+          "user_namespace": "user:[4026535015]",
+          "pid_namespace": "pid:[4026533428]",
+          "display_env": true,
+          "wayland_env": false,
+          "ozone": null,
+          "sockets": [
+            2030383,
+            2053122,
+            2049546,
+            2054169,
+            2034650
+          ]
+        },
+        {
+          "pid": 749163,
+          "parent": 749014,
+          "start_ticks": "3380104",
+          "comm": "paneflow-browse",
+          "role": "zygote",
+          "thread_security": [
+            {
+              "tid": 749163,
+              "name": "paneflow-browse",
+              "seccomp": 2,
+              "no_new_privs": 1,
+              "filter_count": 1
+            },
+            {
+              "tid": 749165,
+              "name": "PerfettoTrace",
+              "seccomp": 2,
+              "no_new_privs": 1,
+              "filter_count": 1
+            },
+            {
+              "tid": 749166,
+              "name": "HangWatcher",
+              "seccomp": 2,
+              "no_new_privs": 1,
+              "filter_count": 1
+            },
+            {
+              "tid": 749167,
+              "name": "ThreadPoolServi",
+              "seccomp": 2,
+              "no_new_privs": 1,
+              "filter_count": 1
+            },
+            {
+              "tid": 749168,
+              "name": "ThreadPoolForeg",
+              "seccomp": 2,
+              "no_new_privs": 1,
+              "filter_count": 1
+            },
+            {
+              "tid": 749169,
+              "name": "ThreadPoolPrese",
+              "seccomp": 2,
+              "no_new_privs": 1,
+              "filter_count": 1
+            },
+            {
+              "tid": 749170,
+              "name": "ThreadPoolAudio",
+              "seccomp": 2,
+              "no_new_privs": 1,
+              "filter_count": 1
+            },
+            {
+              "tid": 749171,
+              "name": "Chrome_ChildIOT",
+              "seccomp": 2,
+              "no_new_privs": 1,
+              "filter_count": 1
+            }
+          ],
+          "thread_security_complete": true,
+          "args_count": 7,
+          "sandbox_disabled": false,
+          "seccomp": 2,
+          "no_new_privs": 1,
+          "user_namespace": "user:[4026535015]",
+          "pid_namespace": "pid:[4026533415]",
+          "display_env": true,
+          "wayland_env": false,
+          "ozone": null,
+          "sockets": [
+            2030383,
+            2052276,
+            2053341,
+            2054166,
+            2054168,
+            2049597,
+            2054182,
+            2054187,
+            2047476
+          ]
+        },
+        {
+          "pid": 749185,
+          "parent": 749014,
+          "start_ticks": "3380108",
+          "comm": "paneflow-browse",
+          "role": "renderer",
+          "thread_security": [
+            {
+              "tid": 749185,
+              "name": "paneflow-browse",
+              "seccomp": 2,
+              "no_new_privs": 1,
+              "filter_count": 1
+            },
+            {
+              "tid": 749187,
+              "name": "PerfettoTrace",
+              "seccomp": 2,
+              "no_new_privs": 1,
+              "filter_count": 1
+            },
+            {
+              "tid": 749188,
+              "name": "ThreadPoolServi",
+              "seccomp": 2,
+              "no_new_privs": 1,
+              "filter_count": 1
+            },
+            {
+              "tid": 749189,
+              "name": "ThreadPoolForeg",
+              "seccomp": 2,
+              "no_new_privs": 1,
+              "filter_count": 1
+            },
+            {
+              "tid": 749190,
+              "name": "ThreadPoolPrese",
+              "seccomp": 2,
+              "no_new_privs": 1,
+              "filter_count": 1
+            },
+            {
+              "tid": 749191,
+              "name": "ThreadPoolAudio",
+              "seccomp": 2,
+              "no_new_privs": 1,
+              "filter_count": 1
+            },
+            {
+              "tid": 749192,
+              "name": "Chrome_ChildIOT",
+              "seccomp": 2,
+              "no_new_privs": 1,
+              "filter_count": 1
+            },
+            {
+              "tid": 749194,
+              "name": "ThreadPoolForeg",
+              "seccomp": 2,
+              "no_new_privs": 1,
+              "filter_count": 1
+            },
+            {
+              "tid": 749201,
+              "name": "Compositor",
+              "seccomp": 2,
+              "no_new_privs": 1,
+              "filter_count": 1
+            },
+            {
+              "tid": 749203,
+              "name": "ThreadPoolSingl",
+              "seccomp": 2,
+              "no_new_privs": 1,
+              "filter_count": 1
+            },
+            {
+              "tid": 749205,
+              "name": "HangWatcher",
+              "seccomp": 2,
+              "no_new_privs": 1,
+              "filter_count": 1
+            }
+          ],
+          "thread_security_complete": true,
+          "args_count": 7,
+          "sandbox_disabled": false,
+          "seccomp": 2,
+          "no_new_privs": 1,
+          "user_namespace": "user:[4026535015]",
+          "pid_namespace": "pid:[4026534927]",
+          "display_env": true,
+          "wayland_env": false,
+          "ozone": null,
+          "sockets": [
+            2030383,
+            2053344,
+            2049606,
+            2054183,
+            2034644
+          ]
+        },
+        {
+          "pid": 749186,
+          "parent": 749014,
+          "start_ticks": "3380108",
+          "comm": "paneflow-browse",
+          "role": "renderer",
+          "thread_security": [
+            {
+              "tid": 749186,
+              "name": "paneflow-browse",
+              "seccomp": 2,
+              "no_new_privs": 1,
+              "filter_count": 1
+            },
+            {
+              "tid": 749193,
+              "name": "PerfettoTrace",
+              "seccomp": 2,
+              "no_new_privs": 1,
+              "filter_count": 1
+            },
+            {
+              "tid": 749195,
+              "name": "ThreadPoolServi",
+              "seccomp": 2,
+              "no_new_privs": 1,
+              "filter_count": 1
+            },
+            {
+              "tid": 749196,
+              "name": "ThreadPoolForeg",
+              "seccomp": 2,
+              "no_new_privs": 1,
+              "filter_count": 1
+            },
+            {
+              "tid": 749197,
+              "name": "ThreadPoolPrese",
+              "seccomp": 2,
+              "no_new_privs": 1,
+              "filter_count": 1
+            },
+            {
+              "tid": 749198,
+              "name": "ThreadPoolAudio",
+              "seccomp": 2,
+              "no_new_privs": 1,
+              "filter_count": 1
+            },
+            {
+              "tid": 749199,
+              "name": "Chrome_ChildIOT",
+              "seccomp": 2,
+              "no_new_privs": 1,
+              "filter_count": 1
+            },
+            {
+              "tid": 749200,
+              "name": "ThreadPoolForeg",
+              "seccomp": 2,
+              "no_new_privs": 1,
+              "filter_count": 1
+            },
+            {
+              "tid": 749202,
+              "name": "Compositor",
+              "seccomp": 2,
+              "no_new_privs": 1,
+              "filter_count": 1
+            },
+            {
+              "tid": 749204,
+              "name": "ThreadPoolSingl",
+              "seccomp": 2,
+              "no_new_privs": 1,
+              "filter_count": 1
+            },
+            {
+              "tid": 749206,
+              "name": "HangWatcher",
+              "seccomp": 2,
+              "no_new_privs": 1,
+              "filter_count": 1
+            },
+            {
+              "tid": 749212,
+              "name": "ThreadPoolForeg",
+              "seccomp": 2,
+              "no_new_privs": 1,
+              "filter_count": 1
+            }
+          ],
+          "thread_security_complete": true,
+          "args_count": 7,
+          "sandbox_disabled": false,
+          "seccomp": 2,
+          "no_new_privs": 1,
+          "user_namespace": "user:[4026535015]",
+          "pid_namespace": "pid:[4026535016]",
+          "display_env": true,
+          "wayland_env": false,
+          "ozone": null,
+          "sockets": [
+            2030383,
+            2049601,
+            2051122,
+            2054174,
+            2048430,
+            2054179,
+            2054178,
+            2054180,
+            2054186,
+            2034647,
+            2034649
+          ]
+        },
+        {
+          "pid": 749218,
+          "parent": 749014,
+          "start_ticks": "3380121",
+          "comm": "paneflow-browse",
+          "role": "renderer",
+          "thread_security": [
+            {
+              "tid": 749218,
+              "name": "paneflow-browse",
+              "seccomp": 2,
+              "no_new_privs": 1,
+              "filter_count": 1
+            },
+            {
+              "tid": 749219,
+              "name": "PerfettoTrace",
+              "seccomp": 2,
+              "no_new_privs": 1,
+              "filter_count": 1
+            },
+            {
+              "tid": 749220,
+              "name": "ThreadPoolServi",
+              "seccomp": 2,
+              "no_new_privs": 1,
+              "filter_count": 1
+            },
+            {
+              "tid": 749221,
+              "name": "ThreadPoolForeg",
+              "seccomp": 2,
+              "no_new_privs": 1,
+              "filter_count": 1
+            },
+            {
+              "tid": 749222,
+              "name": "ThreadPoolPrese",
+              "seccomp": 2,
+              "no_new_privs": 1,
+              "filter_count": 1
+            },
+            {
+              "tid": 749223,
+              "name": "ThreadPoolAudio",
+              "seccomp": 2,
+              "no_new_privs": 1,
+              "filter_count": 1
+            },
+            {
+              "tid": 749224,
+              "name": "Chrome_ChildIOT",
+              "seccomp": 2,
+              "no_new_privs": 1,
+              "filter_count": 1
+            },
+            {
+              "tid": 749225,
+              "name": "ThreadPoolForeg",
+              "seccomp": 2,
+              "no_new_privs": 1,
+              "filter_count": 1
+            },
+            {
+              "tid": 749226,
+              "name": "Compositor",
+              "seccomp": 2,
+              "no_new_privs": 1,
+              "filter_count": 1
+            },
+            {
+              "tid": 749227,
+              "name": "ThreadPoolSingl",
+              "seccomp": 2,
+              "no_new_privs": 1,
+              "filter_count": 1
+            },
+            {
+              "tid": 749228,
+              "name": "HangWatcher",
+              "seccomp": 2,
+              "no_new_privs": 1,
+              "filter_count": 1
+            },
+            {
+              "tid": 749230,
+              "name": "ServiceWorker t",
+              "seccomp": 2,
+              "no_new_privs": 1,
+              "filter_count": 1
+            }
+          ],
+          "thread_security_complete": true,
+          "args_count": 7,
+          "sandbox_disabled": false,
+          "seccomp": 2,
+          "no_new_privs": 1,
+          "user_namespace": "user:[4026535015]",
+          "pid_namespace": "pid:[4026535017]",
+          "display_env": true,
+          "wayland_env": false,
+          "ozone": null,
+          "sockets": [
+            2030383,
+            2029193,
+            2049664,
+            2047475,
+            2047478
+          ]
+        }
+      ],
+      "x11": {
+        "client_inodes": [
+          2049553,
+          1026672,
+          48422,
+          2048311,
+          50351,
+          60713,
+          2023181,
+          2023102,
+          2030323,
+          2030507,
+          2030508,
+          1026673,
+          1018417,
+          54289,
+          28606,
+          2052225,
+          2030506,
+          1018418,
+          2030328,
+          2052259
+        ],
+        "connected": [
+          {
+            "pid": 749004,
+            "role": "host",
+            "inodes": [
+              2023181,
+              2052225,
+              2049553
+            ]
+          },
+          {
+            "pid": 749063,
+            "role": "gpu-process",
+            "inodes": [
+              2030506,
+              2048311,
+              2030507,
+              2030508,
+              2052259
+            ]
+          }
+        ]
+      },
+      "ss_available": true,
+      "ss_status": 0,
+      "ss_error": null
+    }
+  ],
+  "shutdown": {
+    "observed_count": 13,
+    "waited_ms": 1,
+    "remaining": [],
+    "scope": "processes captured in runtime snapshots"
+  },
+  "verdict": {
+    "page_presented": "MEASURED",
+    "x11_connection_absent": "NOT_APPLICABLE",
+    "sandbox": "MEASURED",
+    "observed_processes_exited": "MEASURED",
+    "steps": {
+      "input": "MEASURED"
+    },
+    "m1_presentation_feedback": "NOT_MEASURED",
+    "x11_session": "XWAYLAND_CLIENT_ONLY"
+  }
+}

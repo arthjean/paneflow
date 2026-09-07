@@ -1,0 +1,22 @@
+{
+  "started_at": "2026-09-06T15:49:54.021873+00:00",
+  "command": [
+    "nice",
+    "-n",
+    "10",
+    "autoninja",
+    "-j",
+    "10",
+    "-l",
+    "14",
+    "-C",
+    "out/Release_GN_x64",
+    "cefsimple",
+    "chrome_sandbox"
+  ],
+  "cwd": "/home/arthur/.cache/paneflow-cef-tsync/work/chromium/src",
+  "pid": 599091,
+  "returncode": 1,
+  "finished_at": "2026-09-06T16:26:54.049227+00:00",
+  "interruption_reason": "Deliberate SIGINT to resume the same Ninja output with fourteen jobs and a five-GiB available-memory stop guard"
+}

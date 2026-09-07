@@ -1,0 +1,8 @@
+{
+  "workspace": "/home/arthur/.cache/paneflow-cef-tsync/paneflow-snapshot",
+  "build_output": "/home/arthur/.cache/paneflow-cef-tsync/work/chromium/src/out/Release_GN_x64",
+  "manifest_sha256": "83d9220a5c5edb72c16ee04e697a68ed881988f069258cb8b096707b0a3df9fd",
+  "archive_sha256": "b8d0c48679ef43f396ea0421f944e6c06bb1625d67b59c64e1486df07f6e0628",
+  "runtime": "/home/arthur/.cache/paneflow-cef-tsync/paneflow-snapshot/native/browser/prebuilt/x86_64-unknown-linux-gnu/b8d0c48679ef43f396ea0421f944e6c06bb1625d67b59c64e1486df07f6e0628",
+  "full_cef_qualification": false
+}

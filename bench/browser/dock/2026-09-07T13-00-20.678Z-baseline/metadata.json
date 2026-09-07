@@ -1,0 +1,17 @@
+{
+  "schema": 1,
+  "label": "baseline",
+  "date": "2026-09-07T13:10:02.037Z",
+  "platform": "linux",
+  "arch": "x64",
+  "session": "wayland",
+  "display": "2560x1440, 144 Hz, échelle 100 %, panneau droit environ 880 px",
+  "fixture_sha256": "d1db2b507209e238d1c3d757ddd1f0560d51bcf316ec733af220c1cfcacd81a0",
+  "manifest_sha256": "62eb709a0c52b1c34744799f551bfc24f4d5ecfec0834b50e650bd03f275cece",
+  "app_sha256": "d6c1945a156588064570fc9b4b3e24cfc0fe1a5c7310cbbad155f7ce939ce729",
+  "host_sha256": "f418d29743e5d25667608ec4835ac66c3341786b1758fa7b8150c0d6114fbcf2",
+  "git_head": "fbfefd250a3f3c8d9968a23f8c358712859bc904",
+  "tracked_diff_sha256": "dea3e854e602661431f45c64e0983e384e0034470bf91546f44aa7927b1a2442",
+  "frame_rate": "60",
+  "url": "http://127.0.0.1:38785/"
+}

@@ -1,0 +1,93 @@
+{
+  "schema_version": 1,
+  "status": "COMPLETED",
+  "recorded_at": "2026-09-06T12:03:04.552Z",
+  "paneflow_commit": "fbfefd250a3f3c8d9968a23f8c358712859bc904",
+  "display": "wayland",
+  "source": "pattern",
+  "scenario": "empty",
+  "requested_steps": [
+    "resize",
+    "scale"
+  ],
+  "session_type": "wayland",
+  "cef_version": "151.3.24+g2384915+chromium-151.0.7922.174",
+  "archive_sha256": "db53c43fdace8b7ee4af0f005120116d6973aa9d8eb7702c0617badf9be8684e",
+  "fixture_sha256": "83dac6881a8f57843e5e60a5065d1f681f966331b2e4ef14c777bb40572d9121",
+  "binary_sha256": "5a2dc13fe5f5bf1d711b60cbea7b75a7ad7b6252f6f30f1e9795fabdeed901b2",
+  "host_sha256": "63b2d21eeb8cd940d66881bd32d4f472548ab2a7f1ac48c4db44ac01c3eb3f06",
+  "exit": {
+    "code": 0,
+    "signal": null
+  },
+  "fatal": null,
+  "window": {
+    "backend": "Vulkan",
+    "adapter": "AMD Ryzen 7 7800X3D 8-Core Processor (RADV RAPHAEL_MENDOCINO)",
+    "driver": "radv",
+    "driver_info": "Mesa 26.1.8",
+    "vendor_id": 4098,
+    "device_id": 5710,
+    "scale": 1,
+    "wayland": true,
+    "display": false,
+    "event": "window",
+    "at_ns": 11526118365971
+  },
+  "importer": null,
+  "host_ready": [],
+  "summary": {
+    "status": "COMPLETED",
+    "failure": null,
+    "source": "pattern",
+    "ozone": "wayland",
+    "presented_frames": 48,
+    "pool_generations": 4,
+    "first_frame_after_ms": 55,
+    "consumer": {
+      "outstanding": 2,
+      "pools_created": 4,
+      "pools_retired": 3,
+      "frames_received": 48,
+      "frames_presented": 48,
+      "frames_ignored": 0,
+      "releases_sent": 43,
+      "failures": 0
+    },
+    "host_pids": [],
+    "remaining_steps": [],
+    "event": "summary",
+    "at_ns": 11528416911529
+  },
+  "frame_chain_us": {
+    "copy_in_host": {
+      "count": 6,
+      "min": 0,
+      "p50": 0,
+      "p95": 0,
+      "max": 0
+    },
+    "host_ready_to_app_intake": {
+      "count": 6,
+      "min": 16096,
+      "p50": 16394,
+      "p95": 88120,
+      "max": 88120
+    },
+    "note": "callback_ns to ready_ns covers the host Vulkan blit and fence wait; ready_ns to intake_ns covers the SCM_RIGHTS transfer and app dispatch; presentation feedback is not measured here"
+  },
+  "sandbox": [],
+  "x11": [],
+  "snapshots": [],
+  "verdict": {
+    "page_presented": "MEASURED",
+    "x11_connection_absent": "NOT_EXECUTED",
+    "sandbox": "NOT_EXECUTED",
+    "steps": {
+      "resize": "MEASURED",
+      "scale": "MEASURED"
+    },
+    "m1_presentation_feedback": "NOT_MEASURED",
+    "x11_session": "NOT_APPLICABLE"
+  }
+}

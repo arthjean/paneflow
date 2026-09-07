@@ -1,0 +1,70 @@
+{
+  "probe_sha256": "04349156b5b02c56372dd7efce8ffb2d5085722d8e5953fa2636fdf2da4c49ad",
+  "angle_libraries": {
+    "libEGL.so": "47e89491e42772b922136ee8a74900f6bcfb61fe1179dba020bd4f1bf5d155b0",
+    "libGLESv2.so": "884ce51ab4eccdc25a66d3ac687c9bc930a3a575accef48c1f1e2d2573932de5"
+  },
+  "results": [
+    {
+      "case": "mesa-no-cache",
+      "command": [
+        "timeout",
+        "--kill-after=5",
+        "60",
+        "/home/arthur/.cache/paneflow-cef-tsync/angle-probe/probe",
+        "--angle-root=/home/arthur/dev/paneflow-browser/native/browser/prebuilt/x86_64-unknown-linux-gnu/db53c43fdace8b7ee4af0f005120116d6973aa9d8eb7702c0617badf9be8684e/Release"
+      ],
+      "returncode": 1,
+      "native_cache_requested": false,
+      "vulkan_icd": "/usr/share/vulkan/icd.d/radeon_icd.x86_64.json"
+    },
+    {
+      "case": "mesa-cache",
+      "command": [
+        "timeout",
+        "--kill-after=5",
+        "60",
+        "/home/arthur/.cache/paneflow-cef-tsync/angle-probe/probe",
+        "--angle-root=/home/arthur/dev/paneflow-browser/native/browser/prebuilt/x86_64-unknown-linux-gnu/db53c43fdace8b7ee4af0f005120116d6973aa9d8eb7702c0617badf9be8684e/Release"
+      ],
+      "returncode": 1,
+      "native_cache_requested": true,
+      "vulkan_icd": "/usr/share/vulkan/icd.d/radeon_icd.x86_64.json"
+    },
+    {
+      "case": "nvidia-no-cache",
+      "command": [
+        "timeout",
+        "--kill-after=5",
+        "60",
+        "/home/arthur/.cache/paneflow-cef-tsync/angle-probe/probe",
+        "--angle-root=/home/arthur/dev/paneflow-browser/native/browser/prebuilt/x86_64-unknown-linux-gnu/db53c43fdace8b7ee4af0f005120116d6973aa9d8eb7702c0617badf9be8684e/Release",
+        "--nvidia"
+      ],
+      "returncode": 1,
+      "native_cache_requested": false,
+      "vulkan_icd": "/usr/share/vulkan/icd.d/nvidia_icd.x86_64.json"
+    },
+    {
+      "case": "nvidia-cache",
+      "command": [
+        "timeout",
+        "--kill-after=5",
+        "60",
+        "/home/arthur/.cache/paneflow-cef-tsync/angle-probe/probe",
+        "--angle-root=/home/arthur/dev/paneflow-browser/native/browser/prebuilt/x86_64-unknown-linux-gnu/db53c43fdace8b7ee4af0f005120116d6973aa9d8eb7702c0617badf9be8684e/Release",
+        "--nvidia"
+      ],
+      "returncode": 1,
+      "native_cache_requested": true,
+      "vulkan_icd": "/usr/share/vulkan/icd.d/nvidia_icd.x86_64.json"
+    }
+  ],
+  "full_cef_qualification": false,
+  "status": "SETUP_UNAVAILABLE",
+  "reason": "Chromium 151 uses static ANGLE on Linux. Distributed libEGL.so and libGLESv2.so are dummy libraries without EGL/GLES entry points; the implementation is linked into libcef. This attempted dynamic-library probe does not test ANGLE or the GPU policy.",
+  "source_references": [
+    "Chromium 151.0.7922.174 ui/gl/features.gni:10",
+    "Chromium 151.0.7922.174 ui/gl/BUILD.gn:60-83"
+  ]
+}

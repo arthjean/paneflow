@@ -1,0 +1,13 @@
+{
+  "started_at": "2026-09-06T15:38:58.102180+00:00",
+  "command": [
+    "timeout",
+    "--kill-after=5",
+    "90",
+    "/home/arthur/.cache/paneflow-cef-tsync/work/chromium/src/out/Release_GN_x64/paneflow_tsync_probe",
+    "--render-node=/dev/dri/renderD128"
+  ],
+  "returncode": 0,
+  "vendor": "/usr/share/glvnd/egl_vendor.d/50_mesa.json",
+  "shader_cache_disabled": true
+}

@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "recorded_at": "2026-09-05T20:51:42Z",
+  "os": "Fedora Linux 44 (Workstation Edition)",
+  "kernel": "7.1.12-200.fc44.x86_64",
+  "architecture": "x86_64",
+  "compositor": "GNOME Shell 50.4",
+  "session_type": "wayland",
+  "driver": "NVIDIA GeForce RTX 4070 Ti SUPER, 610.57.04",
+  "display": {
+    "physical_mode": "2560x1440",
+    "scale": 1,
+    "refresh_hz": [
+      143.973,
+      144.006
+    ],
+    "M1_condition": "not_configured"
+  },
+  "missing_references": [
+    "Linux Mesa",
+    "Linux ARM GPU",
+    "KDE/KWin",
+    "wlroots",
+    "X11 session",
+    "Ubuntu/Debian",
+    "Arch",
+    "openSUSE"
+  ],
+  "presentation_measurements": "NOT_EXECUTED",
+  "browser_native": "BOOTSTRAP_OBSERVED_SANDBOX_ATTRIBUTION_REJECTED",
+  "native_input_injection": {
+    "uinput": "root-only 0600; current user cannot write",
+    "sudo": "noninteractive access unavailable, password required",
+    "wayland_injector": "no wtype, ydotool or dotool installed",
+    "x11_injector": "xdotool present; X11 presentation correlation remains unimplemented"
+  },
+  "native_evidence": [
+    "linux-witness-rejected-1.json",
+    "linux-witness-rejected-2.json"
+  ]
+}

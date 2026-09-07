@@ -1,0 +1,31 @@
+{"schema_version":1,"pid":380605,"source":"cef","url":"http://127.0.0.1:33369/empty","ozone":"wayland","scenario":"input","clock":"CLOCK_MONOTONIC","profile":"debug","event":"started","at_ns":12388845753516}
+{"backend":"Vulkan","adapter":"AMD Ryzen 7 7800X3D 8-Core Processor (RADV RAPHAEL_MENDOCINO)","driver":"radv","driver_info":"Mesa 26.1.8","vendor_id":4098,"device_id":5710,"scale":1.0,"wayland":true,"display":false,"event":"window","at_ns":12389211551268}
+{"device":"AMD Ryzen 7 7800X3D 8-Core Processor (RADV RAPHAEL_MENDOCINO)","vendor_id":4098,"device_id":5710,"extensions":["VK_KHR_swapchain","VK_KHR_swapchain_mutable_format","VK_EXT_robustness2","VK_KHR_external_memory_fd","VK_EXT_external_memory_dma_buf","VK_EXT_memory_budget","VK_EXT_image_drm_format_modifier","VK_KHR_image_format_list","VK_KHR_bind_memory2","VK_KHR_sampler_ycbcr_conversion","VK_KHR_external_semaphore_fd","VK_EXT_queue_family_foreign"],"render_node":"/dev/dri/renderD128","event":"importer_ready","at_ns":12389211624508}
+{"ozone":"Wayland","gpu":[4098,5710],"render_node":"/dev/dri/renderD128","host_stderr":"/home/arthur/.local/share/paneflow-dev/browser/profiles/3e741aee5b33e8e7/host.stderr","event":"host_config","at_ns":12389211725178}
+{"state":"Starting","event":"activate","at_ns":12389211777128}
+{"pid":380657,"availability":"Development","contract_version":1,"presentation":true,"initialized":{"contract_version":1,"native":"initialized","pid":380657,"presentation":true,"protocol":{"operation":"hello","result":{"Ok":{"availability":"development","contract_version":1,"target":"x86_64-linux","terminal_available":true,"type":"capabilities"}},"version":1},"sandbox_requested":true,"trace_us":12390756182},"event":"host_ready","at_ns":12390756530668}
+{"command":"create","operation":"OperationId(\"op-1\")","event":"command","at_ns":12390756560288}
+{"state":"Dormant","mounted":false,"event":"state","at_ns":12390759966434}
+{"command":"start","operation":"OperationId(\"op-2\")","event":"command","at_ns":12390759982744}
+{"state":"Hidden","mounted":false,"event":"state","at_ns":12390769970105}
+{"width":1280,"height":800,"scale_percent":100,"generation":1,"event":"present","at_ns":12390770081195}
+{"command":"present","operation":"OperationId(\"op-3\")","event":"command","at_ns":12390770092525}
+{"native":{"cef_browser_id":1,"native":"created","native_window":0,"trace_us":12390771726},"event":"native","at_ns":12390771809453}
+{"state":"Visible","mounted":true,"event":"state","at_ns":12390800356016}
+{"native":{"native":"address","trace_us":12390878082,"url":"http://127.0.0.1:33369/empty"},"event":"native","at_ns":12390878225672}
+{"native":{"native":"title","title":"Empty fixture","trace_us":12390879622},"event":"native","at_ns":12390879707320}
+{"native":{"http_status":200,"native":"loaded","trace_us":12390880124},"event":"native","at_ns":12390880195190}
+{"native":{"native":"title","title":"Empty fixture","trace_us":12390880221},"event":"native","at_ns":12390880261670}
+{"native":{"native":"trace_started","trace_us":12392170260},"event":"native","at_ns":12392170424982}
+{"native":{"detail":"CEF fell back to software painting (1280x800); the CPU path is refused","native":"frame_failed","reason":"unsupported_format","trace_us":12395399590},"event":"native","at_ns":12395399759729}
+{"reason":"browser error: UnsupportedFormat: CEF fell back to software painting (1280x800); the CPU path is refused","event":"fatal","at_ns":12395399796959}
+{"status":"FAILED","failure":"browser error: UnsupportedFormat: CEF fell back to software painting (1280x800); the CPU path is refused","source":"cef","ozone":"wayland","presented_frames":0,"pool_generations":0,"first_frame_after_ms":null,"consumer":{"outstanding":0,"pools_created":0,"pools_retired":0,"frames_received":0,"frames_presented":0,"frames_ignored":0,"releases_sent":0,"failures":1},"host_pids":[380657],"remaining_steps":["input"],"event":"summary","at_ns":12395399844209}
+{"event":"closed","at_ns":12395404537614}
+{"native":{"native":"trace_completed","path":"/home/arthur/.local/share/paneflow-dev/browser/profiles/3e741aee5b33e8e7/chromium-trace.json","trace_us":12395419450},"event":"native","at_ns":12395419584910}
+{"native":{"native":"close_requested","trace_us":12395419471},"event":"native","at_ns":12395419614270}
+{"native":{"native":"close_ready","trace_us":12395419483},"event":"native","at_ns":12395419626100}
+{"native":{"native":"closed","trace_us":12395420799},"event":"native","at_ns":12395420877829}
+{"native":{"native":"close_dispatched","trace_us":12395421407},"event":"native","at_ns":12395421475268}
+{"native":{"native":"presentation_stats","stats":{"dropped":2,"failures":0,"sent":0},"trace_us":12395435649},"event":"native","at_ns":12395435756584}
+{"native":{"native":"shutdown","trace_us":12395486138},"event":"native","at_ns":12395486254476}
+{"event":"host_stopped","at_ns":12395525655829}

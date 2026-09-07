@@ -1,0 +1,11 @@
+libmutter-Message: 22:44:09.946: Running Mutter (using mutter 50.4) as a Wayland display server
+libmutter-Message: 22:44:10.047: Added device '/dev/dri/renderD128' (amdgpu) using no mode setting.
+libmutter-Message: 22:44:10.048: Created gbm renderer for '/dev/dri/renderD128'
+libmutter-Message: 22:44:10.048: GPU /dev/dri/renderD128 selected as primary
+** Message: 22:44:10.050: Obtained a high priority EGL context
+dbus-daemon[1334213]: [session uid=1000 pid=1334213 pidfd=5] Activating service name='org.gtk.vfs.Daemon' requested by ':1.0' (uid=1000 pid=1334214 comm="mutter --headless --virtual-monitor 1280x800 --way" label="unconfined_u:unconfined_r:unconfined_t:s0-s0:c0.c1023")
+dbus-daemon[1334213]: [session uid=1000 pid=1334213 pidfd=5] Successfully activated service 'org.gtk.vfs.Daemon'
+libmutter-Message: 22:44:10.077: Added virtual monitor Meta-0
+fusermount3: mount failed: Operation not permitted
+libmutter-Message: 22:44:10.087: Using Wayland display name 'paneflow-tsync-1334210'
+libmutter-Message: 22:44:36.034: Removed virtual monitor Meta-0

@@ -1,0 +1,1 @@
+unavailable: ENOENT: no such file or directory, open '/home/arthur/.local/share/paneflow-dev/browser/profiles/29f1e96d794029d4/host.stderr'

@@ -1,0 +1,10 @@
+[380657:380657:0906/141726.320542:ERROR:content/browser/browser_main_loop.cc:277] GLib-GObject: g_object_set_is_valid_property: object class 'GtkSettings' has no property named 'gtk-modules'
+[380696:380696:0906/141726.520904:ERROR:sandbox/policy/linux/sandbox_linux.cc:394] InitializeSandbox() called with multiple threads in process gpu-process. Try waiting for /proc to be updated.
+[380696:380696:0906/141727.596410:FATAL:sandbox/linux/services/thread_helpers.cc:104] Current process is not mono-threaded! (iterations: 30)
+[380657:380657:0906/141727.924579:ERROR:content/browser/gpu/gpu_process_host.cc:1035] GPU process exited unexpectedly: exit_code=133
+[380810:380810:0906/141728.094534:ERROR:sandbox/policy/linux/sandbox_linux.cc:394] InitializeSandbox() called with multiple threads in process gpu-process. Try waiting for /proc to be updated.
+[380810:380810:0906/141729.170022:FATAL:sandbox/linux/services/thread_helpers.cc:104] Current process is not mono-threaded! (iterations: 30)
+[380657:380657:0906/141729.499522:ERROR:content/browser/gpu/gpu_process_host.cc:1035] GPU process exited unexpectedly: exit_code=133
+[380888:380888:0906/141729.666798:ERROR:sandbox/policy/linux/sandbox_linux.cc:394] InitializeSandbox() called with multiple threads in process gpu-process. Try waiting for /proc to be updated.
+[380888:380888:0906/141730.742304:FATAL:sandbox/linux/services/thread_helpers.cc:104] Current process is not mono-threaded! (iterations: 30)
+[380657:380657:0906/141731.079931:ERROR:content/browser/gpu/gpu_process_host.cc:1035] GPU process exited unexpectedly: exit_code=133

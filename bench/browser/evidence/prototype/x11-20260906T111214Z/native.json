@@ -1,0 +1,143 @@
+{
+  "schema_version": 1,
+  "status": "FAILED",
+  "recorded_at": "2026-09-06T11:12:26.875Z",
+  "paneflow_commit": "fbfefd250a3f3c8d9968a23f8c358712859bc904",
+  "display": "x11",
+  "source": "cef",
+  "scenario": "empty",
+  "requested_steps": [
+    "input",
+    "resize",
+    "scale",
+    "host-loss"
+  ],
+  "session_type": "wayland",
+  "cef_version": "151.3.24+g2384915+chromium-151.0.7922.174",
+  "archive_sha256": "db53c43fdace8b7ee4af0f005120116d6973aa9d8eb7702c0617badf9be8684e",
+  "fixture_sha256": "83dac6881a8f57843e5e60a5065d1f681f966331b2e4ef14c777bb40572d9121",
+  "binary_sha256": "0bb00a88468916f53ff636836df320e73ae9e1fba43e69d9d5cae305fcc9c724",
+  "host_sha256": "93542d2f3674f7023ee1d93de25dc6229b2cb9e75c366befc4c7d6be5688a9eb",
+  "exit": {
+    "code": 1,
+    "signal": null
+  },
+  "fatal": {
+    "reason": "browser error: UnsupportedFormat: CEF fell back to software painting (1280x800); the CPU path is refused",
+    "event": "fatal",
+    "at_ns": 8490731876969
+  },
+  "window": {
+    "backend": "Vulkan",
+    "adapter": "NVIDIA GeForce RTX 4070 Ti SUPER",
+    "driver": "NVIDIA",
+    "driver_info": "610.57.04",
+    "vendor_id": 4318,
+    "device_id": 9989,
+    "scale": 1,
+    "wayland": false,
+    "display": true,
+    "event": "window",
+    "at_ns": 8480452819278
+  },
+  "importer": {
+    "device": "NVIDIA GeForce RTX 4070 Ti SUPER",
+    "vendor_id": 4318,
+    "device_id": 9989,
+    "extensions": [
+      "VK_KHR_swapchain",
+      "VK_KHR_swapchain_mutable_format",
+      "VK_EXT_robustness2",
+      "VK_KHR_external_memory_fd",
+      "VK_EXT_external_memory_dma_buf",
+      "VK_EXT_memory_budget",
+      "VK_EXT_image_drm_format_modifier",
+      "VK_KHR_image_format_list",
+      "VK_KHR_bind_memory2",
+      "VK_KHR_sampler_ycbcr_conversion",
+      "VK_KHR_external_semaphore_fd",
+      "VK_EXT_queue_family_foreign"
+    ],
+    "render_node": "/dev/dri/renderD129",
+    "event": "importer_ready",
+    "at_ns": 8480452879208
+  },
+  "host_ready": [
+    {
+      "pid": 271671,
+      "presentation": true,
+      "initialized": {
+        "contract_version": 1,
+        "native": "initialized",
+        "pid": 271671,
+        "presentation": true,
+        "protocol": {
+          "operation": "hello",
+          "result": {
+            "Ok": {
+              "availability": "development",
+              "contract_version": 1,
+              "target": "x86_64-linux",
+              "terminal_available": true,
+              "type": "capabilities"
+            }
+          },
+          "version": 1
+        },
+        "sandbox_requested": true,
+        "trace_us": 8480803222
+      }
+    }
+  ],
+  "summary": {
+    "status": "FAILED",
+    "failure": "browser error: UnsupportedFormat: CEF fell back to software painting (1280x800); the CPU path is refused",
+    "source": "cef",
+    "ozone": "x11",
+    "presented_frames": 0,
+    "pool_generations": 0,
+    "first_frame_after_ms": null,
+    "consumer": {
+      "outstanding": 0,
+      "pools_created": 0,
+      "pools_retired": 0,
+      "frames_received": 0,
+      "frames_presented": 0,
+      "frames_ignored": 0,
+      "releases_sent": 0,
+      "failures": 1
+    },
+    "host_pids": [
+      271671
+    ],
+    "remaining_steps": [
+      "input",
+      "resize",
+      "scale",
+      "host-loss"
+    ],
+    "event": "summary",
+    "at_ns": 8490731884589
+  },
+  "frame_chain_us": {
+    "copy_in_host": null,
+    "host_ready_to_app_intake": null,
+    "note": "callback_ns to ready_ns covers the host Vulkan blit and fence wait; ready_ns to intake_ns covers the SCM_RIGHTS transfer and app dispatch; presentation feedback is not measured here"
+  },
+  "sandbox": [],
+  "x11": [],
+  "snapshots": [],
+  "verdict": {
+    "page_presented": "FAILED",
+    "x11_connection_absent": "NOT_APPLICABLE",
+    "sandbox": "NOT_EXECUTED",
+    "steps": {
+      "input": "FAILED",
+      "resize": "FAILED",
+      "scale": "FAILED",
+      "host-loss": "FAILED"
+    },
+    "m1_presentation_feedback": "NOT_MEASURED",
+    "x11_session": "XWAYLAND_CLIENT_ONLY"
+  }
+}

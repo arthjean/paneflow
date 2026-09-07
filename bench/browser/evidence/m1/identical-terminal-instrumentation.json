@@ -1,0 +1,38 @@
+{
+  "status": "BYTE_IDENTICAL",
+  "baseline_commit": "fbfefd250a3f3c8d9968a23f8c358712859bc904",
+  "files": [
+    {
+      "path": "src-app/src/app/ipc_handler.rs",
+      "sha256": "71fe307b8c927a580a3371da1bc9227aa38af4abfb8a69b6d3c147b3c2e9161b"
+    },
+    {
+      "path": "src-app/src/main.rs",
+      "sha256": "46292b75eafdd58a628d2eb5005bf5eb969a6851b601ba84448edc41c511105f"
+    },
+    {
+      "path": "src-app/src/terminal/element/mod.rs",
+      "sha256": "7b78db8f58d0d9cec04416d1d6b7dc74b52989d06cedfaf32e3214b8a5a978e7"
+    },
+    {
+      "path": "src-app/src/terminal/element/paint/text.rs",
+      "sha256": "063fafce5d20b1e09c6e37c0c383b8f47687d9bda1d7eafc3c8a2d90e2f6fb7f"
+    },
+    {
+      "path": "src-app/src/terminal/input.rs",
+      "sha256": "be7df7e5a12ff2e1e8d89eedbee34835848c910228d53abe99c917236d359e19"
+    },
+    {
+      "path": "src-app/src/terminal/view.rs",
+      "sha256": "0cf7da867416fe20894eb82855cd5ea3c1474ae5ef49738ba7d2c2163f16d376"
+    },
+    {
+      "path": "src-app/src/browser_qualification.rs",
+      "sha256": "4b8b5482362073a6d612501a4a4fd117f0e7dfa6c0ec8f4b20d47e7d677be973"
+    },
+    {
+      "path": "src-app/src/browser_qualification/linux.rs",
+      "sha256": "2644c835e15fc1e49d3509d02b1813725dc7581428675b5e85d3d5a4f92d7923"
+    }
+  ]
+}

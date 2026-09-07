@@ -1,0 +1,17 @@
+{
+  "status": "FAILED",
+  "verdict": {
+    "page_presented": "FAILED",
+    "x11_connection_absent": "NOT_EXECUTED",
+    "sandbox": "NOT_EXECUTED",
+    "steps": {
+      "input": "FAILED",
+      "resize": "FAILED",
+      "scale": "FAILED",
+      "host-loss": "FAILED"
+    },
+    "m1_presentation_feedback": "NOT_MEASURED",
+    "x11_session": "NOT_APPLICABLE"
+  },
+  "output": "/home/arthur/dev/paneflow-browser/bench/browser/evidence/prototype/cef-tsync-baseline-20260906-r2/prototype"
+}

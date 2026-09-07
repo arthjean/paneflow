@@ -1,0 +1,54 @@
+{
+  "schema_version": 1,
+  "checked_at": "2026-09-05T21:05:12.845262+00:00",
+  "baseline_commit": "fbfefd250a3f3c8d9968a23f8c358712859bc904",
+  "scope": "EP-001 implementation on Linux; native qualification rejected, not certified",
+  "cargo": [
+    {
+      "command": "cargo fmt --check",
+      "exit_code": 0,
+      "log": "target/browser-qualification/final/cargo-0.log"
+    },
+    {
+      "command": "cargo check --workspace --all-targets --locked",
+      "exit_code": 0,
+      "log": "target/browser-qualification/final/cargo-1.log"
+    },
+    {
+      "command": "cargo clippy --workspace --all-targets --locked -- -D warnings",
+      "exit_code": 0,
+      "log": "target/browser-qualification/final/cargo-2.log"
+    },
+    {
+      "command": "cargo test --workspace --locked",
+      "exit_code": 0,
+      "log": "target/browser-qualification/final/cargo-3.log",
+      "fixture_repair": "Fetched missing pinned macOS libghostty archive; hash verified; no source changes."
+    },
+    {
+      "command": "cargo deny check advisories licenses sources",
+      "exit_code": 0,
+      "log": "target/browser-qualification/final/cargo-4.log"
+    }
+  ],
+  "workspace_tests": {
+    "passed": 2646,
+    "failed": 0,
+    "ignored": 6
+  },
+  "qualification_tests": {
+    "passed": 48,
+    "failed": 0,
+    "assertions": 225
+  },
+  "native_host_build": "PASS, cef-runtime feature with explicitly verified runtime",
+  "native_host_clippy": "PASS, cef-runtime and all-targets, warnings denied",
+  "cef_artifacts": {
+    "x86_64": "VERIFIED",
+    "aarch64": "VERIFIED",
+    "native_qualification": "NOT_QUALIFIED"
+  },
+  "native_lifecycle": "Two earlier bootstrap runs loaded the fixture, both rejected on sandbox role attribution; not final-code proof",
+  "presentation_measurements": "NOT_EXECUTED",
+  "task_validator": "Python equivalent of scripts/validate-task-artifacts.ps1; PowerShell unavailable"
+}

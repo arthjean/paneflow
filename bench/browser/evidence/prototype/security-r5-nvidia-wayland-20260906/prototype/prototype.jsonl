@@ -1,0 +1,121 @@
+{"schema_version":1,"pid":1396861,"source":"cef","url":"http://127.0.0.1:45113/empty","ozone":"wayland","scenario":"input,resize,scale,host-loss","clock":"CLOCK_MONOTONIC","profile":"release","event":"started","at_ns":43070897746871}
+{"backend":"Vulkan","adapter":"NVIDIA GeForce RTX 4070 Ti SUPER","driver":"NVIDIA","driver_info":"610.57.04","vendor_id":4318,"device_id":9989,"scale":1.0,"wayland":true,"display":false,"event":"window","at_ns":43071484344991}
+{"device":"NVIDIA GeForce RTX 4070 Ti SUPER","vendor_id":4318,"device_id":9989,"extensions":["VK_KHR_swapchain","VK_KHR_swapchain_mutable_format","VK_EXT_robustness2","VK_KHR_external_memory_fd","VK_EXT_external_memory_dma_buf","VK_EXT_memory_budget","VK_EXT_image_drm_format_modifier","VK_KHR_image_format_list","VK_KHR_bind_memory2","VK_KHR_sampler_ycbcr_conversion","VK_KHR_external_semaphore_fd","VK_EXT_queue_family_foreign"],"render_node":"/dev/dri/renderD129","event":"importer_ready","at_ns":43071484400091}
+{"ozone":"Wayland","gpu":[4318,9989],"render_node":"/dev/dri/renderD129","host_stderr":"/home/arthur/.local/share/paneflow/browser/profiles/a804858542f3f49f/host.stderr","event":"host_config","at_ns":43071484455701}
+{"state":"Starting","event":"activate","at_ns":43071484496291}
+{"pid":1397904,"availability":"Development","contract_version":1,"presentation":true,"initialized":{"native":"initialized","pid":1397904,"sandbox_requested":true,"contract_version":1,"presentation":true,"protocol":{"version":1,"operation":"hello","result":{"Ok":{"type":"capabilities","target":"x86_64-linux","availability":"development","contract_version":1,"terminal_available":true}}},"trace_us":43072877256},"event":"host_ready","at_ns":43072877383419}
+{"command":"create","operation":"OperationId(\"op-1\")","event":"command","at_ns":43072877406909}
+{"native":{"native":"trace_started","trace_us":43072932096},"event":"native","at_ns":43072932142833}
+{"state":"Dormant","mounted":false,"event":"state","at_ns":43072932807263}
+{"command":"start","operation":"OperationId(\"op-2\")","event":"command","at_ns":43072932827633}
+{"native":{"native":"browser_create_requested","document":{"owner":{"workspace":"prototype","session":"browser"},"browser":"prototype","generation":1},"trace_us":43072943654},"event":"native","at_ns":43072943698143}
+{"native":{"native":"capture_frame_rate","fps":60,"trace_us":43072943664},"event":"native","at_ns":43072943703583}
+{"state":"Hidden","mounted":false,"event":"state","at_ns":43072943714773}
+{"width":1280,"height":800,"scale_percent":100,"generation":1,"event":"present","at_ns":43072943752213}
+{"command":"present","operation":"OperationId(\"op-3\")","event":"command","at_ns":43072943759323}
+{"native":{"native":"created","cef_browser_id":1,"native_window":0,"trace_us":43072950965},"event":"native","at_ns":43072951002988}
+{"state":"Visible","mounted":true,"event":"state","at_ns":43072987209077}
+{"native":{"native":"address","url":"http://127.0.0.1:45113/empty","trace_us":43073052266},"event":"native","at_ns":43073052318213}
+{"native":{"native":"title","title":"Empty fixture","trace_us":43073055463},"event":"native","at_ns":43073055502510}
+{"native":{"native":"loaded","http_status":200,"trace_us":43073057664},"event":"native","at_ns":43073057692888}
+{"native":{"native":"title","title":"Empty fixture","trace_us":43073058247},"event":"native","at_ns":43073058274058}
+{"native":{"native":"frame_dropped","reason":"stale_geometry","coded":[1,1],"visible":[1,1],"expected":[1280,800],"scale_percent":100,"refreshes":1,"trace_us":43073607904},"event":"native","at_ns":43073607971419}
+{"native":{"native":"pool_created","pool_generation":1,"width":1280,"height":800,"format":"bgra8","modifier":0,"trace_us":43073629750},"event":"native","at_ns":43073629793671}
+{"native":{"native":"frame_source","detail":"cef frame format Bgra8 modifier 0x300000000606014 coded 1280x800 visible 1280x800+0+0 planes [PlaneLayout { stride: 5120, offset: 0, size: 4096000 }] fd 317 device NVIDIA GeForce RTX 4070 Ti SUPER","trace_us":43073629765},"event":"native","at_ns":43073629801641}
+{"generation":1,"pools":1,"event":"pool_imported","at_ns":43073631754169}
+{"native":{"native":"frame_slot_occupied","clock":"CLOCK_MONOTONIC","at_ns":43073631468330,"document":{"owner":{"workspace":"prototype","session":"browser"},"browser":"prototype","generation":1},"pool_generation":1,"buffer":0,"sequence":1,"capture_counter":1,"capture_timestamp_us":47772,"occupied_slots":1,"total_slots":3,"trace_us":43073631474},"event":"native","at_ns":43073631768129}
+{"pool_generation":1,"buffer":0,"sequence":1,"callback_ns":43073629247731,"ready_ns":43073630901730,"capture_timestamp_us":47772,"capture_counter":1,"intake_ns":43073631769059,"copy_us":1653,"transfer_us":867,"event":"frame","at_ns":43073631771899}
+{"step":"input","event":"step_started","at_ns":43073638590344}
+{"x":640,"y":400,"keys":["a"],"clicks":1,"event":"input_sent","at_ns":43073638603234}
+{"native":{"native":"fixture_state","state":{"state":"ready","width":1280,"height":800,"scale":1.0,"visibility":"visible","clicks":1,"keys":0,"wheel":0},"trace_us":43073675133},"event":"native","at_ns":43073675182993}
+{"native":{"native":"fixture_state","state":{"state":"ready","width":1280,"height":800,"scale":1.0,"visibility":"visible","clicks":1,"keys":1,"wheel":0},"trace_us":43073685464},"event":"native","at_ns":43073685505855}
+{"clicks":1,"keys":1,"fixture":{"state":"ready","width":1280,"height":800,"scale":1.0,"visibility":"visible","clicks":1,"keys":1,"wheel":0},"event":"input_observed","at_ns":43073686799674}
+{"step":"input","elapsed_ms":48,"event":"step_completed","at_ns":43073686802844}
+{"step":"resize","event":"step_started","at_ns":43073702860610}
+{"width":1088,"height":608,"scale_percent":100,"generation":2,"event":"present","at_ns":43073702891990}
+{"command":"present","operation":"OperationId(\"op-11\")","event":"command","at_ns":43073702899260}
+{"state":"Visible","mounted":true,"event":"state","at_ns":43073716633599}
+{"native":{"native":"frame_dropped","reason":"stale_geometry","coded":[1280,800],"visible":[1280,800],"expected":[1088,608],"scale_percent":100,"refreshes":1,"trace_us":43073748763},"event":"native","at_ns":43073748828132}
+{"native":{"native":"pool_created","pool_generation":2,"width":1088,"height":608,"format":"bgra8","modifier":0,"trace_us":43073764845},"event":"native","at_ns":43073764881698}
+{"native":{"native":"frame_source","detail":"cef frame format Bgra8 modifier 0x300000000606014 coded 1088x608 visible 1088x608+0+0 planes [PlaneLayout { stride: 4352, offset: 0, size: 2646016 }] fd 319 device NVIDIA GeForce RTX 4070 Ti SUPER","trace_us":43073764859},"event":"native","at_ns":43073764888048}
+{"generation":2,"pools":2,"event":"pool_imported","at_ns":43073766073247}
+{"native":{"native":"frame_slot_occupied","clock":"CLOCK_MONOTONIC","at_ns":43073765496278,"document":{"owner":{"workspace":"prototype","session":"browser"},"browser":"prototype","generation":1},"pool_generation":2,"buffer":0,"sequence":2,"capture_counter":3,"capture_timestamp_us":185783,"occupied_slots":1,"total_slots":3,"trace_us":43073765512},"event":"native","at_ns":43073766087337}
+{"pool_generation":2,"buffer":0,"sequence":2,"callback_ns":43073764231279,"ready_ns":43073765414628,"capture_timestamp_us":185783,"capture_counter":3,"intake_ns":43073766088197,"copy_us":1183,"transfer_us":673,"event":"frame","at_ns":43073766091237}
+{"native":{"native":"frame_ack_received","clock":"CLOCK_MONOTONIC","received_ns":43073767151586,"ui_dispatch_ns":43073767183146,"document":{"owner":{"workspace":"prototype","session":"browser"},"browser":"prototype","generation":1},"pool_generation":1,"buffer":0,"sequence":1,"occupied_slots_at_ui_dispatch":1,"total_slots":3,"trace_us":43073767187},"event":"native","at_ns":43073767224536}
+{"native":{"native":"frame_slot_released","clock":"CLOCK_MONOTONIC","at_ns":43073767194256,"received_ns":43073767151586,"document":{"owner":{"workspace":"prototype","session":"browser"},"browser":"prototype","generation":1},"pool_generation":1,"buffer":0,"sequence":1,"occupied_slots":0,"total_slots":3,"trace_us":43073767196},"event":"native","at_ns":43073767229666}
+{"reason":"pool retired","event":"frame_ignored","at_ns":43073767576836}
+{"native":{"native":"frame_slot_occupied","clock":"CLOCK_MONOTONIC","at_ns":43073800021539,"document":{"owner":{"workspace":"prototype","session":"browser"},"browser":"prototype","generation":1},"pool_generation":2,"buffer":1,"sequence":3,"capture_counter":4,"capture_timestamp_us":222142,"occupied_slots":2,"total_slots":3,"trace_us":43073800028},"event":"native","at_ns":43073800080599}
+{"pool_generation":2,"buffer":1,"sequence":3,"callback_ns":43073799419809,"ready_ns":43073799943729,"capture_timestamp_us":222142,"capture_counter":4,"intake_ns":43073800086809,"copy_us":523,"transfer_us":143,"event":"frame","at_ns":43073800091289}
+{"native":{"native":"frame_ack_received","clock":"CLOCK_MONOTONIC","received_ns":43073801013808,"ui_dispatch_ns":43073801041538,"document":{"owner":{"workspace":"prototype","session":"browser"},"browser":"prototype","generation":1},"pool_generation":2,"buffer":0,"sequence":2,"occupied_slots_at_ui_dispatch":2,"total_slots":3,"trace_us":43073801046},"event":"native","at_ns":43073801079358}
+{"native":{"native":"frame_slot_released","clock":"CLOCK_MONOTONIC","at_ns":43073801059018,"received_ns":43073801013808,"document":{"owner":{"workspace":"prototype","session":"browser"},"browser":"prototype","generation":1},"pool_generation":2,"buffer":0,"sequence":2,"occupied_slots":1,"total_slots":3,"trace_us":43073801063},"event":"native","at_ns":43073801085208}
+{"native":{"native":"fixture_state","state":{"state":"ready","width":1088,"height":608,"scale":1.0,"visibility":"visible","clicks":1,"keys":1,"wheel":0},"trace_us":43074063214},"event":"native","at_ns":43074063280559}
+{"pool_generations":2,"fixture":{"state":"ready","width":1088,"height":608,"scale":1.0,"visibility":"visible","clicks":1,"keys":1,"wheel":0},"presented":{"width":1088,"height":608},"event":"resize_observed","at_ns":43074072204082}
+{"step":"resize","elapsed_ms":369,"event":"step_completed","at_ns":43074072209082}
+{"step":"scale","event":"step_started","at_ns":43074088264559}
+{"width":1088,"height":608,"scale_percent":200,"generation":3,"event":"present","at_ns":43074088296209}
+{"command":"present","operation":"OperationId(\"op-12\")","event":"command","at_ns":43074088305349}
+{"state":"Visible","mounted":true,"event":"state","at_ns":43074092642515}
+{"native":{"native":"frame_dropped","reason":"stale_geometry","coded":[1088,608],"visible":[1088,608],"expected":[2176,1216],"scale_percent":200,"refreshes":1,"trace_us":43074115632},"event":"native","at_ns":43074115693956}
+{"native":{"native":"pool_created","pool_generation":3,"width":2176,"height":1216,"format":"bgra8","modifier":0,"trace_us":43074135639},"event":"native","at_ns":43074135691129}
+{"native":{"native":"frame_source","detail":"cef frame format Bgra8 modifier 0x300000000606014 coded 2176x1216 visible 2176x1216+0+0 planes [PlaneLayout { stride: 8704, offset: 0, size: 10584064 }] fd 278 device NVIDIA GeForce RTX 4070 Ti SUPER","trace_us":43074135655},"event":"native","at_ns":43074135698219}
+{"generation":3,"pools":2,"event":"pool_imported","at_ns":43074137061228}
+{"native":{"native":"frame_slot_occupied","clock":"CLOCK_MONOTONIC","at_ns":43074136442768,"document":{"owner":{"workspace":"prototype","session":"browser"},"browser":"prototype","generation":1},"pool_generation":3,"buffer":0,"sequence":4,"capture_counter":6,"capture_timestamp_us":554931,"occupied_slots":1,"total_slots":3,"trace_us":43074136448},"event":"native","at_ns":43074137074958}
+{"pool_generation":3,"buffer":0,"sequence":4,"callback_ns":43074135236799,"ready_ns":43074136253258,"capture_timestamp_us":554931,"capture_counter":6,"intake_ns":43074137076128,"copy_us":1016,"transfer_us":822,"event":"frame","at_ns":43074137078508}
+{"native":{"native":"frame_ack_received","clock":"CLOCK_MONOTONIC","received_ns":43074137893037,"ui_dispatch_ns":43074137924747,"document":{"owner":{"workspace":"prototype","session":"browser"},"browser":"prototype","generation":1},"pool_generation":2,"buffer":1,"sequence":3,"occupied_slots_at_ui_dispatch":1,"total_slots":3,"trace_us":43074137929},"event":"native","at_ns":43074137958877}
+{"native":{"native":"frame_slot_released","clock":"CLOCK_MONOTONIC","at_ns":43074137938017,"received_ns":43074137893037,"document":{"owner":{"workspace":"prototype","session":"browser"},"browser":"prototype","generation":1},"pool_generation":2,"buffer":1,"sequence":3,"occupied_slots":0,"total_slots":3,"trace_us":43074137941},"event":"native","at_ns":43074137964747}
+{"reason":"pool retired","event":"frame_ignored","at_ns":43074138325707}
+{"native":{"native":"frame_slot_occupied","clock":"CLOCK_MONOTONIC","at_ns":43074166949483,"document":{"owner":{"workspace":"prototype","session":"browser"},"browser":"prototype","generation":1},"pool_generation":3,"buffer":1,"sequence":5,"capture_counter":7,"capture_timestamp_us":588967,"occupied_slots":2,"total_slots":3,"trace_us":43074166956},"event":"native","at_ns":43074167018203}
+{"pool_generation":3,"buffer":1,"sequence":5,"callback_ns":43074166253133,"ready_ns":43074166864813,"capture_timestamp_us":588967,"capture_counter":7,"intake_ns":43074167023363,"copy_us":611,"transfer_us":158,"event":"frame","at_ns":43074167027163}
+{"native":{"native":"frame_ack_received","clock":"CLOCK_MONOTONIC","received_ns":43074171348289,"ui_dispatch_ns":43074171386249,"document":{"owner":{"workspace":"prototype","session":"browser"},"browser":"prototype","generation":1},"pool_generation":3,"buffer":0,"sequence":4,"occupied_slots_at_ui_dispatch":2,"total_slots":3,"trace_us":43074171392},"event":"native","at_ns":43074171431319}
+{"native":{"native":"frame_slot_released","clock":"CLOCK_MONOTONIC","at_ns":43074171404969,"received_ns":43074171348289,"document":{"owner":{"workspace":"prototype","session":"browser"},"browser":"prototype","generation":1},"pool_generation":3,"buffer":0,"sequence":4,"occupied_slots":1,"total_slots":3,"trace_us":43074171410},"event":"native","at_ns":43074171437159}
+{"native":{"native":"fixture_state","state":{"state":"ready","width":1088,"height":608,"scale":2.0,"visibility":"visible","clicks":1,"keys":1,"wheel":0},"trace_us":43075063194},"event":"native","at_ns":43075063252915}
+{"scale_percent":200,"fixture":{"state":"ready","width":1088,"height":608,"scale":2.0,"visibility":"visible","clicks":1,"keys":1,"wheel":0},"event":"scale_observed","at_ns":43075068846600}
+{"width":1088,"height":608,"scale_percent":100,"generation":4,"event":"present","at_ns":43075068873220}
+{"command":"present","operation":"OperationId(\"op-13\")","event":"command","at_ns":43075068879510}
+{"state":"Visible","mounted":true,"event":"state","at_ns":43075075827634}
+{"native":{"native":"frame_dropped","reason":"stale_geometry","coded":[2176,1216],"visible":[2176,1216],"expected":[1088,608],"scale_percent":100,"refreshes":1,"trace_us":43075084046},"event":"native","at_ns":43075084089568}
+{"native":{"native":"pool_created","pool_generation":4,"width":1088,"height":608,"format":"bgra8","modifier":0,"trace_us":43075102507},"event":"native","at_ns":43075102551562}
+{"native":{"native":"frame_source","detail":"cef frame format Bgra8 modifier 0x300000000606014 coded 1088x608 visible 1088x608+0+0 planes [PlaneLayout { stride: 4352, offset: 0, size: 2646016 }] fd 326 device NVIDIA GeForce RTX 4070 Ti SUPER","trace_us":43075102524},"event":"native","at_ns":43075102556172}
+{"generation":4,"pools":2,"event":"pool_imported","at_ns":43075103909171}
+{"native":{"native":"frame_slot_occupied","clock":"CLOCK_MONOTONIC","at_ns":43075103186342,"document":{"owner":{"workspace":"prototype","session":"browser"},"browser":"prototype","generation":1},"pool_generation":4,"buffer":0,"sequence":6,"capture_counter":9,"capture_timestamp_us":1523434,"occupied_slots":1,"total_slots":3,"trace_us":43075103192},"event":"native","at_ns":43075103920801}
+{"pool_generation":4,"buffer":0,"sequence":6,"callback_ns":43075101994803,"ready_ns":43075103068802,"capture_timestamp_us":1523434,"capture_counter":9,"intake_ns":43075103921731,"copy_us":1073,"transfer_us":852,"event":"frame","at_ns":43075103924741}
+{"native":{"native":"frame_ack_received","clock":"CLOCK_MONOTONIC","received_ns":43075104796690,"ui_dispatch_ns":43075104820160,"document":{"owner":{"workspace":"prototype","session":"browser"},"browser":"prototype","generation":1},"pool_generation":3,"buffer":1,"sequence":5,"occupied_slots_at_ui_dispatch":1,"total_slots":3,"trace_us":43075104825},"event":"native","at_ns":43075104858450}
+{"native":{"native":"frame_slot_released","clock":"CLOCK_MONOTONIC","at_ns":43075104835900,"received_ns":43075104796690,"document":{"owner":{"workspace":"prototype","session":"browser"},"browser":"prototype","generation":1},"pool_generation":3,"buffer":1,"sequence":5,"occupied_slots":0,"total_slots":3,"trace_us":43075104840},"event":"native","at_ns":43075104862730}
+{"reason":"pool retired","event":"frame_ignored","at_ns":43075105334850}
+{"native":{"native":"fixture_state","state":{"state":"ready","width":1088,"height":608,"scale":1.0,"visibility":"visible","clicks":1,"keys":1,"wheel":0},"trace_us":43076063209},"event":"native","at_ns":43076063278190}
+{"fixture":{"state":"ready","width":1088,"height":608,"scale":1.0,"visibility":"visible","clicks":1,"keys":1,"wheel":0},"event":"scale_restored","at_ns":43076064370150}
+{"step":"scale","elapsed_ms":1976,"event":"step_completed","at_ns":43076064373750}
+{"step":"host-loss","event":"step_started","at_ns":43076080424496}
+{"pid":1397904,"signalled":true,"event":"host_killed","at_ns":43076080572436}
+{"reason":"host exited: signal: 9 (SIGKILL)","surface_cleared":true,"event":"host_lost","at_ns":43076152844386}
+{"state":"Some(Failed(\"host exited: signal: 9 (SIGKILL)\"))","surface_cleared":true,"auto_restart":false,"event":"host_loss_observed","at_ns":43076160872619}
+{"state":"Starting","event":"host_retry","at_ns":43076160898439}
+{"pid":1401311,"availability":"Development","contract_version":1,"presentation":true,"initialized":{"native":"initialized","pid":1401311,"sandbox_requested":true,"contract_version":1,"presentation":true,"protocol":{"version":1,"operation":"hello","result":{"Ok":{"type":"capabilities","target":"x86_64-linux","availability":"development","contract_version":1,"terminal_available":true}}},"trace_us":43077515433},"event":"host_ready","at_ns":43077515519969}
+{"command":"create","operation":"OperationId(\"op-14\")","event":"command","at_ns":43077515540559}
+{"native":{"native":"trace_started","trace_us":43077590172},"event":"native","at_ns":43077590225856}
+{"state":"Dormant","mounted":false,"event":"state","at_ns":43077592812594}
+{"command":"start","operation":"OperationId(\"op-15\")","event":"command","at_ns":43077592826054}
+{"native":{"native":"browser_create_requested","document":{"owner":{"workspace":"prototype","session":"browser"},"browser":"prototype","generation":1},"trace_us":43077603326},"event":"native","at_ns":43077603367716}
+{"native":{"native":"capture_frame_rate","fps":60,"trace_us":43077603336},"event":"native","at_ns":43077603373195}
+{"state":"Hidden","mounted":false,"event":"state","at_ns":43077603431635}
+{"width":1088,"height":608,"scale_percent":100,"generation":5,"event":"present","at_ns":43077603476985}
+{"command":"present","operation":"OperationId(\"op-16\")","event":"command","at_ns":43077603482685}
+{"native":{"native":"created","cef_browser_id":1,"native_window":0,"trace_us":43077611402},"event":"native","at_ns":43077611433909}
+{"state":"Visible","mounted":true,"event":"state","at_ns":43077635944658}
+{"native":{"native":"address","url":"http://127.0.0.1:45113/empty","trace_us":43077666163},"event":"native","at_ns":43077666238993}
+{"native":{"native":"title","title":"Empty fixture","trace_us":43077669230},"event":"native","at_ns":43077669266701}
+{"native":{"native":"loaded","http_status":200,"trace_us":43077675117},"event":"native","at_ns":43077675480095}
+{"native":{"native":"title","title":"Empty fixture","trace_us":43077675651},"event":"native","at_ns":43077675684985}
+{"native":{"native":"fixture_state","state":{"state":"ready","width":1088,"height":608,"scale":1.0,"visibility":"visible","clicks":0,"keys":0,"wheel":0},"trace_us":43077679053},"event":"native","at_ns":43077679093382}
+{"native":{"native":"frame_dropped","reason":"stale_geometry","coded":[1,1],"visible":[1,1],"expected":[1088,608],"scale_percent":100,"refreshes":1,"trace_us":43078191053},"event":"native","at_ns":43078191194945}
+{"native":{"native":"pool_created","pool_generation":1,"width":1088,"height":608,"format":"bgra8","modifier":0,"trace_us":43078209520},"event":"native","at_ns":43078209560280}
+{"generation":1,"pools":1,"event":"pool_imported","at_ns":43078210858579}
+{"native":{"native":"frame_source","detail":"cef frame format Bgra8 modifier 0x300000000606014 coded 1088x608 visible 1088x608+0+0 planes [PlaneLayout { stride: 4352, offset: 0, size: 2646016 }] fd 305 device NVIDIA GeForce RTX 4070 Ti SUPER","trace_us":43078209537},"event":"native","at_ns":43078210871869}
+{"native":{"native":"frame_slot_occupied","clock":"CLOCK_MONOTONIC","at_ns":43078211505668,"document":{"owner":{"workspace":"prototype","session":"browser"},"browser":"prototype","generation":1},"pool_generation":1,"buffer":0,"sequence":1,"capture_counter":1,"capture_timestamp_us":13895,"occupied_slots":1,"total_slots":3,"trace_us":43078211509},"event":"native","at_ns":43078211555918}
+{"pool_generation":1,"buffer":0,"sequence":1,"callback_ns":43078208935590,"ready_ns":43078210778669,"capture_timestamp_us":13895,"capture_counter":1,"intake_ns":43078211558588,"copy_us":1843,"transfer_us":779,"event":"frame","at_ns":43078211560978}
+{"step":"host-loss","elapsed_ms":2136,"event":"step_completed","at_ns":43078217014434}
+{"seconds":1,"event":"hold","at_ns":43078233071810}
+{"status":"COMPLETED","failure":null,"source":"cef","ozone":"wayland","presented_frames":1,"intake_frames":1,"counter_boundary":"accepted external surface, not compositor presentation","pool_generations":5,"first_frame_after_ms":2147,"consumer":{"outstanding":1,"pools_created":5,"pools_retired":3,"frames_received":7,"frames_presented":7,"frames_ignored":0,"releases_sent":5,"failures":0},"host_pids":[1397904,1401311],"remaining_steps":[],"event":"summary","at_ns":43079244769736}
+{"event":"closed","at_ns":43079253870038}
+{"native":{"native":"trace_stop_requested","trace_us":43079253837},"event":"native","at_ns":43079253876958}
+{"event":"host_stopped","at_ns":43084334201920}

@@ -1,0 +1,30 @@
+{"schema_version":1,"pid":776563,"source":"cef","url":"http://127.0.0.1:43501/empty","ozone":"wayland","scenario":"input","clock":"CLOCK_MONOTONIC","profile":"debug","event":"started","at_ns":36698553333267}
+{"backend":"Vulkan","adapter":"NVIDIA GeForce RTX 4070 Ti SUPER","driver":"NVIDIA","driver_info":"610.57.04","vendor_id":4318,"device_id":9989,"scale":1.0,"wayland":true,"display":false,"event":"window","at_ns":36698936041033}
+{"device":"NVIDIA GeForce RTX 4070 Ti SUPER","vendor_id":4318,"device_id":9989,"extensions":["VK_KHR_swapchain","VK_KHR_swapchain_mutable_format","VK_EXT_robustness2","VK_KHR_external_memory_fd","VK_EXT_external_memory_dma_buf","VK_EXT_memory_budget","VK_EXT_image_drm_format_modifier","VK_KHR_image_format_list","VK_KHR_bind_memory2","VK_KHR_sampler_ycbcr_conversion","VK_KHR_external_semaphore_fd","VK_EXT_queue_family_foreign"],"render_node":"/dev/dri/renderD129","event":"importer_ready","at_ns":36698936120663}
+{"ozone":"Wayland","gpu":[4318,9989],"render_node":"/dev/dri/renderD129","host_stderr":"/home/arthur/.local/share/paneflow-dev/browser/profiles/541e72c8a477f8c8/host.stderr","event":"host_config","at_ns":36698936229023}
+{"state":"Starting","event":"activate","at_ns":36698936269933}
+{"pid":776674,"availability":"Development","contract_version":1,"presentation":true,"initialized":{"contract_version":1,"native":"initialized","pid":776674,"presentation":true,"protocol":{"operation":"hello","result":{"Ok":{"availability":"development","contract_version":1,"target":"x86_64-linux","terminal_available":true,"type":"capabilities"}},"version":1},"sandbox_requested":true,"trace_us":36700692303},"event":"host_ready","at_ns":36700692656558}
+{"command":"create","operation":"OperationId(\"op-1\")","event":"command","at_ns":36700692692588}
+{"state":"Dormant","mounted":false,"event":"state","at_ns":36700700168917}
+{"command":"start","operation":"OperationId(\"op-2\")","event":"command","at_ns":36700700187697}
+{"state":"Hidden","mounted":false,"event":"state","at_ns":36700738139962}
+{"width":1280,"height":800,"scale_percent":100,"generation":1,"event":"present","at_ns":36700738324232}
+{"command":"present","operation":"OperationId(\"op-3\")","event":"command","at_ns":36700738341001}
+{"native":{"cef_browser_id":1,"native":"created","native_window":0,"trace_us":36700744961},"event":"native","at_ns":36700745046402}
+{"native":{"native":"trace_started","trace_us":36700774049},"event":"native","at_ns":36700774146610}
+{"state":"Visible","mounted":true,"event":"state","at_ns":36700805495604}
+{"native":{"native":"address","trace_us":36700858194,"url":"http://127.0.0.1:43501/empty"},"event":"native","at_ns":36700858339788}
+{"native":{"native":"title","title":"Empty fixture","trace_us":36700861363},"event":"native","at_ns":36700861454173}
+{"native":{"http_status":200,"native":"loaded","trace_us":36700863270},"event":"native","at_ns":36700863364040}
+{"native":{"native":"title","title":"Empty fixture","trace_us":36700863625},"event":"native","at_ns":36700863684250}
+{"reason":"no frame was presented within the startup budget","event":"fatal","at_ns":36738944033479}
+{"status":"FAILED","failure":"no frame was presented within the startup budget","source":"cef","ozone":"wayland","presented_frames":0,"pool_generations":0,"first_frame_after_ms":null,"consumer":{"outstanding":0,"pools_created":0,"pools_retired":0,"frames_received":0,"frames_presented":0,"frames_ignored":0,"releases_sent":0,"failures":0},"host_pids":[776674],"remaining_steps":["input"],"event":"summary","at_ns":36738944079469}
+{"event":"closed","at_ns":36738952590826}
+{"native":{"native":"trace_completed","path":"/home/arthur/.local/share/paneflow-dev/browser/profiles/541e72c8a477f8c8/chromium-trace.json","trace_us":36739002541},"event":"native","at_ns":36739002655944}
+{"native":{"native":"close_requested","trace_us":36739002560},"event":"native","at_ns":36739002683824}
+{"native":{"native":"close_ready","trace_us":36739002580},"event":"native","at_ns":36739002695154}
+{"native":{"native":"closed","trace_us":36739004585},"event":"native","at_ns":36739004673221}
+{"native":{"native":"close_dispatched","trace_us":36739007789},"event":"native","at_ns":36739007880336}
+{"native":{"native":"presentation_stats","stats":{"dropped":0,"failures":0,"sent":0},"trace_us":36739116720},"event":"native","at_ns":36739116828758}
+{"native":{"native":"shutdown","trace_us":36739159043},"event":"native","at_ns":36739159169957}
+{"event":"host_stopped","at_ns":36739235634246}

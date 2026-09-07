@@ -1,0 +1,52 @@
+{"schema_version":1,"pid":2038334,"source":"cef","url":"http://127.0.0.1:39343/webgl","ozone":"wayland","scenario":null,"clock":"CLOCK_MONOTONIC","profile":"release","event":"started","at_ns":50670388456488}
+{"backend":"Vulkan","adapter":"AMD Ryzen 7 7800X3D 8-Core Processor (RADV RAPHAEL_MENDOCINO)","driver":"radv","driver_info":"Mesa 26.1.8","vendor_id":4098,"device_id":5710,"scale":1.0,"wayland":true,"display":false,"event":"window","at_ns":50670678514817}
+{"device":"AMD Ryzen 7 7800X3D 8-Core Processor (RADV RAPHAEL_MENDOCINO)","vendor_id":4098,"device_id":5710,"extensions":["VK_KHR_swapchain","VK_KHR_swapchain_mutable_format","VK_EXT_robustness2","VK_KHR_external_memory_fd","VK_EXT_external_memory_dma_buf","VK_EXT_memory_budget","VK_EXT_image_drm_format_modifier","VK_KHR_image_format_list","VK_KHR_bind_memory2","VK_KHR_sampler_ycbcr_conversion","VK_KHR_external_semaphore_fd","VK_EXT_queue_family_foreign"],"render_node":"/dev/dri/renderD128","event":"importer_ready","at_ns":50670678559637}
+{"ozone":"Wayland","gpu":[4098,5710],"render_node":"/dev/dri/renderD128","host_stderr":"/home/arthur/.local/share/paneflow/browser/profiles/945ddeac94125308/host.stderr","event":"host_config","at_ns":50670678606167}
+{"state":"Starting","event":"activate","at_ns":50670678640067}
+{"pid":2038405,"availability":"Development","contract_version":2,"presentation":true,"initialized":{"contract_version":2,"native":"initialized","pid":2038405,"presentation":true,"protocol":{"operation":"hello","result":{"Ok":{"availability":"development","contract_version":2,"target":"x86_64-linux","terminal_available":true,"type":"capabilities"}},"version":2},"sandbox_requested":true,"trace_us":50672780491},"event":"host_ready","at_ns":50672780631602}
+{"command":"create","operation":"OperationId(\"op-1\")","event":"command","at_ns":50672780647802}
+{"native":{"native":"trace_started","trace_us":50673302074},"event":"native","at_ns":50673302125983}
+{"state":"Dormant","mounted":false,"event":"state","at_ns":50673302219523}
+{"command":"start","operation":"OperationId(\"op-2\")","event":"command","at_ns":50673302236453}
+{"native":{"document":{"browser":"prototype","generation":1,"owner":{"session":"browser","workspace":"prototype"}},"native":"browser_create_requested","trace_us":50673312306},"event":"native","at_ns":50673312347407}
+{"native":{"fps":60,"native":"capture_frame_rate","trace_us":50673312318},"event":"native","at_ns":50673312351247}
+{"state":"Hidden","mounted":false,"event":"state","at_ns":50673312378407}
+{"width":1280,"height":800,"scale_percent":100,"generation":1,"event":"present","at_ns":50673312417727}
+{"command":"present","operation":"OperationId(\"op-3\")","event":"command","at_ns":50673312422627}
+{"native":{"cef_browser_id":1,"native":"created","native_window":0,"trace_us":50673322137},"event":"native","at_ns":50673322175392}
+{"state":"Visible","mounted":true,"event":"state","at_ns":50673352587675}
+{"native":{"native":"address","trace_us":50673393796,"url":"http://127.0.0.1:39343/webgl"},"event":"native","at_ns":50673393848842}
+{"native":{"native":"title","title":"Paneflow browser qualification","trace_us":50673397092},"event":"native","at_ns":50673397128010}
+{"native":{"native":"title","title":"PANEFLOW_SHADER_CHURN_ARMED","trace_us":50673418755},"event":"native","at_ns":50673419320428}
+{"native":{"http_status":200,"native":"loaded","trace_us":50673425743},"event":"native","at_ns":50673425785835}
+{"native":{"native":"title","title":"PANEFLOW_SHADER_CHURN_ARMED","trace_us":50673426281},"event":"native","at_ns":50673426315334}
+{"native":{"native":"title","title":"PANEFLOW_SHADER_CHURN_STARTED","trace_us":50673427681},"event":"native","at_ns":50673427709934}
+{"native":{"coded":[1,1],"expected":[1280,800],"native":"frame_dropped","reason":"stale_geometry","refreshes":1,"scale_percent":100,"trace_us":50673481568,"visible":[1,1]},"event":"native","at_ns":50673481641544}
+{"document":{"owner":{"workspace":"prototype","session":"browser"},"browser":"prototype","generation":1},"pool_generation":1,"at_ns":50673496080206,"event":"pool_init_submitted"}
+{"native":{"format":"bgra8","height":800,"modifier":0,"native":"pool_created","pool_generation":1,"trace_us":50673493918,"width":1280},"event":"native","at_ns":50673496094136}
+{"document":{"owner":{"workspace":"prototype","session":"browser"},"browser":"prototype","generation":1},"pool_generation":1,"at_ns":50673496167206,"event":"pool_init_completed"}
+{"native":{"at_ns":50673496362785,"document":{"browser":"prototype","generation":1,"owner":{"session":"browser","workspace":"prototype"}},"native":"pool_ready_accepted","pool_generation":1,"received_ns":50673496319635,"trace_us":50673496362},"event":"native","at_ns":50673496423655}
+{"native":{"at_ns":50673501743492,"buffer":0,"capture_counter":2,"capture_timestamp_us":75751,"clock":"CLOCK_MONOTONIC","document":{"browser":"prototype","generation":1,"owner":{"session":"browser","workspace":"prototype"}},"native":"frame_slot_occupied","occupied_slots":1,"pool_generation":1,"sequence":1,"total_slots":3,"trace_us":50673501745},"event":"native","at_ns":50673501813012}
+{"pool_generation":1,"buffer":0,"sequence":1,"callback_ns":50673498939964,"ready_ns":50673501725782,"capture_timestamp_us":75751,"capture_counter":2,"intake_ns":50673501817822,"copy_us":2785,"transfer_us":92,"event":"frame","at_ns":50673501875612}
+{"seconds":60,"event":"hold","at_ns":50673515414735}
+{"native":{"at_ns":50673517964264,"buffer":1,"capture_counter":3,"capture_timestamp_us":94302,"clock":"CLOCK_MONOTONIC","document":{"browser":"prototype","generation":1,"owner":{"session":"browser","workspace":"prototype"}},"native":"frame_slot_occupied","occupied_slots":2,"pool_generation":1,"sequence":2,"total_slots":3,"trace_us":50673517967},"event":"native","at_ns":50673518022774}
+{"pool_generation":1,"buffer":1,"sequence":2,"callback_ns":50673517525944,"ready_ns":50673517949644,"capture_timestamp_us":94302,"capture_counter":3,"intake_ns":50673518027664,"copy_us":423,"transfer_us":78,"event":"frame","at_ns":50673518141163}
+{"native":{"buffer":0,"clock":"CLOCK_MONOTONIC","document":{"browser":"prototype","generation":1,"owner":{"session":"browser","workspace":"prototype"}},"native":"frame_ack_received","occupied_slots_at_ui_dispatch":2,"pool_generation":1,"received_ns":50673519680383,"sequence":1,"total_slots":3,"trace_us":50673519719,"ui_dispatch_ns":50673519717483},"event":"native","at_ns":50673519803913}
+{"native":{"at_ns":50673519737233,"buffer":0,"clock":"CLOCK_MONOTONIC","document":{"browser":"prototype","generation":1,"owner":{"session":"browser","workspace":"prototype"}},"native":"frame_slot_released","occupied_slots":1,"pool_generation":1,"received_ns":50673519680383,"sequence":1,"total_slots":3,"trace_us":50673519739},"event":"native","at_ns":50673519810423}
+{"native":{"native":"title","title":"PANEFLOW_SHADER_CHURN_PASSED:120","trace_us":50673920235},"event":"native","at_ns":50673920446430}
+{"native":{"at_ns":50673924601038,"buffer":0,"capture_counter":4,"capture_timestamp_us":499980,"clock":"CLOCK_MONOTONIC","document":{"browser":"prototype","generation":1,"owner":{"session":"browser","workspace":"prototype"}},"native":"frame_slot_occupied","occupied_slots":2,"pool_generation":1,"sequence":3,"total_slots":3,"trace_us":50673924603},"event":"native","at_ns":50673924649608}
+{"pool_generation":1,"buffer":0,"sequence":3,"callback_ns":50673924175568,"ready_ns":50673924580268,"capture_timestamp_us":499980,"capture_counter":4,"intake_ns":50673924682758,"copy_us":404,"transfer_us":102,"event":"frame","at_ns":50673924752858}
+{"native":{"buffer":1,"clock":"CLOCK_MONOTONIC","document":{"browser":"prototype","generation":1,"owner":{"session":"browser","workspace":"prototype"}},"native":"frame_ack_received","occupied_slots_at_ui_dispatch":2,"pool_generation":1,"received_ns":50673926292397,"sequence":2,"total_slots":3,"trace_us":50673926323,"ui_dispatch_ns":50673926322237},"event":"native","at_ns":50673926354547}
+{"native":{"at_ns":50673926334777,"buffer":1,"clock":"CLOCK_MONOTONIC","document":{"browser":"prototype","generation":1,"owner":{"session":"browser","workspace":"prototype"}},"native":"frame_slot_released","occupied_slots":1,"pool_generation":1,"received_ns":50673926292397,"sequence":2,"total_slots":3,"trace_us":50673926336},"event":"native","at_ns":50673926359777}
+{"status":"COMPLETED","failure":null,"source":"cef","ozone":"wayland","presented_frames":3,"intake_frames":3,"counter_boundary":"accepted external surface, not compositor presentation","pool_generations":1,"first_frame_after_ms":2823,"consumer":{"outstanding":1,"pools_created":1,"pools_retired":0,"frames_received":3,"frames_presented":3,"frames_ignored":0,"releases_sent":2,"failures":0},"host_pids":[2038405],"remaining_steps":[],"event":"summary","at_ns":50733520263437}
+{"event":"closed","at_ns":50733525635784}
+{"native":{"native":"trace_stop_requested","trace_us":50733525600},"event":"native","at_ns":50733525644164}
+{"native":{"native":"trace_completed","path":"/home/arthur/.local/share/paneflow/browser/profiles/945ddeac94125308/chromium-trace.json","trace_us":50733573007},"event":"native","at_ns":50733573070408}
+{"native":{"native":"close_requested","trace_us":50733573031},"event":"native","at_ns":50733573079728}
+{"native":{"native":"close_ready","trace_us":50733573052},"event":"native","at_ns":50733573081378}
+{"native":{"native":"closed","trace_us":50733576248},"event":"native","at_ns":50733576286876}
+{"native":{"native":"close_dispatched","trace_us":50733580765},"event":"native","at_ns":50733580804764}
+{"native":{"native":"presentation_stats","stats":{"dropped":2,"failures":0,"sent":3},"trace_us":50733580862},"event":"native","at_ns":50733580885744}
+{"native":{"native":"presentation_quarantined","pools":1,"trace_us":50733580869},"event":"native","at_ns":50733580888764}
+{"native":{"native":"shutdown","trace_us":50733631723},"event":"native","at_ns":50733631785505}
+{"event":"host_stopped","at_ns":50733685511966}

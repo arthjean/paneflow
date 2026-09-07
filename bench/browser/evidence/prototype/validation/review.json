@@ -1,0 +1,231 @@
+{
+  "epic": "EP-002",
+  "status": "BLOCKED",
+  "profile": "DEEP",
+  "baseline_commit": "fbfefd250a3f3c8d9968a23f8c358712859bc904",
+  "branch": "feat/agents-browser",
+  "reviewed_at": "2026-09-06T11:37:53.637744+00:00",
+  "stories": {
+    "US-006": "DONE",
+    "US-007": "DONE",
+    "US-008": "BLOCKED",
+    "US-009": "BLOCKED",
+    "US-010": "DONE"
+  },
+  "criteria": [
+    {
+      "story": "US-006",
+      "criterion": "AC-1",
+      "status": "PASS",
+      "path": "docs/browser/gpui-external-surfaces.md:9",
+      "entry_point": "ADR read by reviewers; obstacles table maps each pinned file",
+      "proof": "Surface type, ownership, scene dispatch, import and presentation points bounded; seven obstacle rows name files at pin fecc3273"
+    },
+    {
+      "story": "US-006",
+      "criterion": "AC-2",
+      "status": "PASS",
+      "path": "native/gpui/manifest.toml:1",
+      "entry_point": "scripts/fetch-gpui.py -> Cargo [patch] table -> .github/actions/fetch-gpui on every cargo job",
+      "proof": "Four digest-pinned patches applied to a sparse checkout; --verify-only exit 0; Cargo cache untouched (checkout is gitignored)"
+    },
+    {
+      "story": "US-006",
+      "criterion": "AC-3",
+      "status": "PASS",
+      "path": "src-app/Cargo.toml:45",
+      "entry_point": "cargo clippy/test --locked through the patched checkout",
+      "proof": "Four rev values equal upstream_sha; font-kit, wayland, x11 features kept; PlatformWindow::external_surface_context defaults to None; browser::run_prototype non-Linux stub exits 2 with an unavailable message"
+    },
+    {
+      "story": "US-006",
+      "criterion": "AC-4",
+      "status": "PASS",
+      "path": "src-app/src/browser/presentation.rs:411",
+      "entry_point": "cargo test -p paneflow-app browser::presentation",
+      "proof": "Generation change, resource removal and UI-thread nonblocking tests pass; delta table in the ADR (457 insertions, 20 deletions over 13 files)"
+    },
+    {
+      "story": "US-006",
+      "criterion": "AC-5",
+      "status": "PASS",
+      "path": "docs/browser/gpui-external-surfaces.md:150",
+      "entry_point": "ADR escalation conditions",
+      "proof": "Terminal refactor, private API and shell change named as plan-revision triggers; none applies to the series"
+    },
+    {
+      "story": "US-007",
+      "criterion": "AC-1",
+      "status": "PASS",
+      "path": "crates/paneflow-browser-host/src/linux/vulkan.rs:446",
+      "entry_point": "CEF OnAcceleratedPaint -> presentation::accelerated_paint -> Engine::copy_frame",
+      "proof": "Blit into the exported pool image and fence wait before returning; format/modifier/planes/stride/offset/device traced in frame_source. Review fix: fence timeout now waits device idle before destroying import objects"
+    },
+    {
+      "story": "US-007",
+      "criterion": "AC-2",
+      "status": "MANUAL_PROVEN",
+      "path": "crates/paneflow-browser-protocol/src/channel.rs:83",
+      "entry_point": "SCM_RIGHTS seqpacket channel -> HostSupervisor frame thread -> FrameConsumer::intake -> DmabufImporter::import",
+      "proof": "Ownership explicit (OwnedFd, dup before Vulkan import, into_raw_fd on success); observed end to end in bench/browser/evidence/prototype/x11-20260906T110908Z (5 pools imported, frames presented on NVIDIA 610.57.04, sandbox not enforced)"
+    },
+    {
+      "story": "US-007",
+      "criterion": "AC-3",
+      "status": "PASS",
+      "path": "src-app/src/browser/presentation.rs:245",
+      "entry_point": "cargo test -p paneflow-app browser::presentation; protocol frame ledger tests",
+      "proof": "3 slots per pool, 2 pools max on both ends, acks only after on_submitted_work_done + Device::poll off-thread. Review fix: pending budget is 3 per live pool (6 during a replacement) instead of a fatal at 4 while an old pool drains"
+    },
+    {
+      "story": "US-007",
+      "criterion": "AC-4",
+      "status": "PASS",
+      "path": "src-app/src/browser/prototype.rs:782",
+      "entry_point": "Render -> schedule_releases -> window.on_next_frame -> background poll",
+      "proof": "Resize/scale/document change retire generations through set_document and PoolRetired; no fence wait on the GPUI thread (frame_intake_never_imports_or_waits test)"
+    },
+    {
+      "story": "US-007",
+      "criterion": "AC-5",
+      "status": "PASS",
+      "path": "crates/paneflow-browser-host/src/linux/presentation.rs:333",
+      "entry_point": "CEF OnPaint/OnAcceleratedPaint failure paths -> FrameMessage::Failed -> Intake::Fatal",
+      "proof": "unsupported_modifier, wrong_device, invalid_handle refused before import; software OnPaint refused (evidence x11-20260906T111214Z). Review fix: retire_timeout now raises the Browser error instead of being ignored, and the host announces PoolRetired for the leaked pool"
+    },
+    {
+      "story": "US-008",
+      "criterion": "AC-1",
+      "status": "FAIL",
+      "path": "bench/browser/evidence/prototype/wayland-20260906T111226Z/native.json:1",
+      "entry_point": "bun scripts/browser-qualification/prototype.mjs --display wayland",
+      "proof": "No frame presented: GPU process cannot create a Skia surface on the GBM pixmaps (Unable to initialize SkSurface) on NVIDIA 610.57.04; X11-absence trace NOT_EXECUTED"
+    },
+    {
+      "story": "US-008",
+      "criterion": "AC-2",
+      "status": "MANUAL_PENDING",
+      "path": "docs/browser/runtime.md:205",
+      "entry_point": "prototype runner snapshot",
+      "proof": "Sandbox, keyboard, click, resize, scale, host loss not executed under Wayland because no frame was presented"
+    },
+    {
+      "story": "US-008",
+      "criterion": "AC-3",
+      "status": "MANUAL_PENDING",
+      "path": "bench/browser/evidence/prototype/wayland-20260906T111226Z/native.json:1",
+      "entry_point": "prototype runner m1_presentation_feedback",
+      "proof": "NOT_MEASURED; driver named (NVIDIA 610.57.04), Mesa not exercised"
+    },
+    {
+      "story": "US-008",
+      "criterion": "AC-4",
+      "status": "PASS",
+      "path": "scripts/browser-qualification/prototype.mjs:150",
+      "entry_point": "prototype.mjs verdict",
+      "proof": "MEASURED / NOT_MEASURED / NOT_EXECUTED / FAILED distinguished per criterion in native.json"
+    },
+    {
+      "story": "US-008",
+      "criterion": "AC-5",
+      "status": "PASS",
+      "path": "docs/browser/runtime.md:205",
+      "entry_point": "runtime.md local outcome table",
+      "proof": "Wayland path left non-qualified with cause; X11 study ran independently"
+    },
+    {
+      "story": "US-009",
+      "criterion": "AC-1",
+      "status": "MANUAL_PENDING",
+      "path": "bench/browser/evidence/prototype/x11-20260906T110908Z/native.json:1",
+      "entry_point": "paneflow browser-prototype --x11",
+      "proof": "Same BrowserPresentation interface and host binary (Ozone switch only); executed as an XWayland client, no native Xorg session on the local machine"
+    },
+    {
+      "story": "US-009",
+      "criterion": "AC-2",
+      "status": "FAIL",
+      "path": "bench/browser/evidence/prototype/x11-20260906T111214Z/native.json:1",
+      "entry_point": "prototype.mjs --display x11 with sandbox enforced",
+      "proof": "Sandbox-enforced run fails (NVIDIA Vulkan leaves the GPU process multi-threaded, seccomp cannot start, software fallback refused); input/resize/scale/host-loss MEASURED only with the sandbox not enforced (x11-20260906T110908Z, sandbox verdict FAILED); topology XWAYLAND_CLIENT_ONLY"
+    },
+    {
+      "story": "US-009",
+      "criterion": "AC-3",
+      "status": "MANUAL_PENDING",
+      "path": "bench/browser/evidence/prototype/x11-20260906T110908Z/native.json:1",
+      "entry_point": "prototype.mjs frame_chain_us",
+      "proof": "Copy and transfer counters archived (about 1 ms blit+fence, under 1 ms to intake); M1 A/B/C NOT_MEASURED"
+    },
+    {
+      "story": "US-009",
+      "criterion": "AC-4",
+      "status": "PASS",
+      "path": "crates/paneflow-browser-host/src/linux/handlers.rs:8",
+      "entry_point": "PANEFLOW_BROWSER_OZONE read once in on_before_command_line_processing",
+      "proof": "Wayland/X11 differences confined to the host switches and the supervisor DISPLAY handling; X11 proof kept pending"
+    },
+    {
+      "story": "US-009",
+      "criterion": "AC-5",
+      "status": "PASS",
+      "path": "docs/browser/runtime.md:205",
+      "entry_point": "runtime.md local outcome table",
+      "proof": "X11 non-qualified with traces; Wayland not declared equivalent"
+    },
+    {
+      "story": "US-010",
+      "criterion": "AC-1",
+      "status": "PASS",
+      "path": "src-app/src/browser/supervisor.rs:371",
+      "entry_point": "main.rs BrowserRuntime::install -> HostSupervisor::activate (paneflow browser-prototype)",
+      "proof": "Runtime stamp, required files, manifest spot digests and host binary verified before spawn; handshake checks contract version, availability and presentation. Review fix: send() no longer nests running->state locks against shutdown()'s state->running order"
+    },
+    {
+      "story": "US-010",
+      "criterion": "AC-2",
+      "status": "PASS",
+      "path": "src-app/src/browser/supervisor.rs:977",
+      "entry_point": "cargo test -p paneflow-app browser::supervisor",
+      "proof": "nothing_runs_and_no_libcef_is_mapped_before_activation; non-Linux run_prototype reports unavailable and exits 2"
+    },
+    {
+      "story": "US-010",
+      "criterion": "AC-3",
+      "status": "PASS",
+      "path": "src-app/src/browser/supervisor.rs:85",
+      "entry_point": "HostState Inactive/Starting/Ready/Stopping/Failed",
+      "proof": "Verification, staging and launch on browser-host-start thread; app quit shuts down through smol::unblock"
+    },
+    {
+      "story": "US-010",
+      "criterion": "AC-4",
+      "status": "PASS",
+      "path": "src-app/src/browser/supervisor.rs:996",
+      "entry_point": "cargo test -p paneflow-app browser::supervisor",
+      "proof": "concurrent_activation_starts_exactly_one_host, a_garbage_handshake_fails_once_and_never_restarts_on_its_own, shutdown_reaps_every_descendant_of_the_host, a_dead_host_is_reported_without_relaunch, runtime_verification_rejects_a_foreign_or_altered_runtime, a_missing_presentation_is_a_handshake_failure"
+    },
+    {
+      "story": "US-010",
+      "criterion": "AC-5",
+      "status": "PASS",
+      "path": "src-app/src/browser/supervisor.rs:414",
+      "entry_point": "HostSupervisor::retry",
+      "proof": "Failed state persists until an explicit retry; process-group signals only; no kill by process name"
+    }
+  ],
+  "fixes": [
+    "src-app/src/browser/supervisor.rs: send() checks the state before locking running (shutdown locks state then running; the old order could deadlock the GPUI thread against the shutdown thread)",
+    "src-app/src/browser/presentation.rs: pending-frame budget scales with live pools (3 stable, 6 during a replacement); retire_timeout is a Browser error per US-007 AC-5 and docs/browser/protocol.md",
+    "crates/paneflow-browser-host/src/linux/vulkan.rs: a failed fence wait calls device_wait_idle before reset_fences and before the import objects are destroyed",
+    "crates/paneflow-browser-host/src/linux/presentation.rs: retire_check also announces PoolRetired; a frame dropped for lack of a free slot triggers one repaint when a slot frees; PoolCreated send failure destroys the images and invalidates the ledger",
+    "src-app/src/browser/prototype.rs: the tick loop holds a WeakEntity so a debug build exits without the GPUI leaked-handle panic"
+  ],
+  "unapplied": [
+    "native/gpui/patches/0002: WgpuContext::create_device returns the open_with_callback error instead of falling back to request_device; a Vulkan driver that rejects the extra extension set would leave the terminal without a device (speculative, no observed failure, left unchanged)"
+  ],
+  "manual_pending": [
+    "US-008 native Wayland presentation with the GPU process sandboxed (Mesa headless run archived: GPUI composition proven, CEF GPU process multi-threaded before seccomp)",
+    "US-009 native Xorg session with the sandbox enforced"
+  ]
+}

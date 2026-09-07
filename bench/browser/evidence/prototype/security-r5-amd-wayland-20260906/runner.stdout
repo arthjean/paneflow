@@ -1,0 +1,18 @@
+{
+  "status": "FAILED",
+  "verdict": {
+    "page_presented": "FAILED",
+    "x11_connection_absent": "MEASURED",
+    "sandbox": "MEASURED",
+    "observed_processes_exited": "MEASURED",
+    "steps": {
+      "input": "MEASURED",
+      "resize": "MEASURED",
+      "scale": "MEASURED",
+      "host-loss": "FAILED"
+    },
+    "m1_presentation_feedback": "NOT_MEASURED",
+    "x11_session": "NOT_APPLICABLE"
+  },
+  "output": "/home/arthur/dev/paneflow-browser/bench/browser/evidence/prototype/security-r5-amd-wayland-20260906/prototype"
+}

@@ -1,0 +1,45 @@
+{
+  "status": "FAILED",
+  "started_at": "2026-09-06T17:08:35.729585+00:00",
+  "phases": [
+    {
+      "name": "stage-runtime",
+      "command": [
+        "python3",
+        "/home/arthur/dev/paneflow-browser/native/browser/experiments/tsync/stage-cef.py",
+        "--build-output",
+        "/home/arthur/.cache/paneflow-cef-tsync/work/chromium/src/out/Release_GN_x64",
+        "--workspace",
+        "/home/arthur/.cache/paneflow-cef-tsync/paneflow-snapshot",
+        "--output",
+        "/home/arthur/.cache/paneflow-cef-tsync/runtime-bundle"
+      ],
+      "started_at": "2026-09-06T17:58:15.790148+00:00",
+      "pid": 733268,
+      "returncode": 0,
+      "finished_at": "2026-09-06T17:59:13.150954+00:00"
+    },
+    {
+      "name": "build-paneflow",
+      "command": [
+        "nice",
+        "-n",
+        "10",
+        "cargo",
+        "build",
+        "--locked",
+        "-p",
+        "paneflow-app",
+        "-p",
+        "paneflow-browser-host",
+        "--features",
+        "paneflow-browser-host/cef-runtime"
+      ],
+      "started_at": "2026-09-06T17:59:13.151522+00:00",
+      "pid": 733799,
+      "returncode": 101,
+      "finished_at": "2026-09-06T17:59:28.580360+00:00"
+    }
+  ],
+  "error": "build-paneflow failed"
+}

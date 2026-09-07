@@ -1,0 +1,412 @@
+626347 prctl(PR_SET_VMA, PR_SET_VMA_ANON_NAME, 0x10000, 4295950336, "partition_alloc") = -1 EINVAL (Invalid argument)
+626347 prctl(PR_SET_VMA, PR_SET_VMA_ANON_NAME, 0x219000000000, 34359738368, "partition_alloc") = -1 EINVAL (Invalid argument)
+626347 prctl(PR_SET_VMA, PR_SET_VMA_ANON_NAME, 0x3cf552f64000, 17179869184, "partition_alloc") = -1 EINVAL (Invalid argument)
+626347 gettid()                         = 626347
+626347 gettid()                         = 626347
+626347 gettid()                         = 626347
+626347 gettid()                         = 626347
+626347 gettid()                         = 626347
+626347 gettid()                         = 626347
+626347 gettid()                         = 626347
+626347 gettid()                         = 626347
+626347 gettid()                         = 626347
+626347 gettid()                         = 626347
+626347 gettid()                         = 626347
+626347 gettid()                         = 626347
+626347 clone(child_stack=NULL, flags=CLONE_CHILD_CLEARTID|CLONE_CHILD_SETTID|SIGCHLD, child_tidptr=0x7ff313196c50) = 626348
+626348 prctl(PR_SET_NAME, "paneflow_tsync_"...) = 0
+626348 gettid()                         = 626348
+626348 prctl(PR_SET_SECCOMP, SECCOMP_MODE_FILTER, NULL) = -1 EFAULT (Bad address)
+626348 seccomp(SECCOMP_SET_MODE_FILTER, SECCOMP_FILTER_FLAG_TSYNC, NULL) = -1 EFAULT (Bad address)
+626348 prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) = 0
+626348 seccomp(SECCOMP_SET_MODE_FILTER, SECCOMP_FILTER_FLAG_SPEC_ALLOW, NULL) = -1 EFAULT (Bad address)
+626348 prctl(PR_GET_SPECULATION_CTRL, PR_SPEC_INDIRECT_BRANCH) = 0x3 (PR_SPEC_PRCTL|PR_SPEC_ENABLE)
+626348 prctl(PR_SET_SPECULATION_CTRL, PR_SPEC_INDIRECT_BRANCH, PR_SPEC_FORCE_DISABLE) = 0
+626348 seccomp(SECCOMP_SET_MODE_FILTER, SECCOMP_FILTER_FLAG_SPEC_ALLOW, {len=638, filter=0x7fff98ab1630}) = 0
+626347 clone3({flags=CLONE_VM|CLONE_FS|CLONE_FILES|CLONE_SIGHAND|CLONE_THREAD|CLONE_SYSVSEM|CLONE_SETTLS|CLONE_PARENT_SETTID|CLONE_CHILD_CLEARTID, child_tid=0x7ff3065ffce8, parent_tid=0x7ff3065ff990, exit_signal=0, stack=0x7ff305dff000, stack_size=0x7fed40, tls=0x7ff3065ff6c0} => {parent_tid=[626349]}, 88) = 626349
+626349 prctl(PR_SET_NAME, "paneflow_t:cs0") = 0
+626347 clone3({flags=CLONE_VM|CLONE_FS|CLONE_FILES|CLONE_SIGHAND|CLONE_THREAD|CLONE_SYSVSEM|CLONE_SETTLS|CLONE_PARENT_SETTID|CLONE_CHILD_CLEARTID, child_tid=0x7ff3059ffce8, parent_tid=0x7ff3059ff990, exit_signal=0, stack=0x7ff3051ff000, stack_size=0x7fed40, tls=0x7ff3059ff6c0} => {parent_tid=[626350]}, 88) = 626350
+626347 sched_setscheduler(626350, SCHED_BATCH, {sched_priority=0}) = 0
+626350 gettid()                         = 626350
+626350 prctl(PR_SET_NAME, "paneflo:disk$0" <unfinished ...>
+626347 clone3({flags=CLONE_VM|CLONE_FS|CLONE_FILES|CLONE_SIGHAND|CLONE_THREAD|CLONE_SYSVSEM|CLONE_SETTLS|CLONE_PARENT_SETTID|CLONE_CHILD_CLEARTID, child_tid=0x7ff3051fece8, parent_tid=0x7ff3051fe990, exit_signal=0, stack=0x7ff3049fe000, stack_size=0x7fed40, tls=0x7ff3051fe6c0} <unfinished ...>
+626350 <... prctl resumed>)             = 0
+626347 <... clone3 resumed> => {parent_tid=[626351]}, 88) = 626351
+626351 prctl(PR_SET_NAME, "paneflow_t:sh0") = 0
+626347 clone3({flags=CLONE_VM|CLONE_FS|CLONE_FILES|CLONE_SIGHAND|CLONE_THREAD|CLONE_SYSVSEM|CLONE_SETTLS|CLONE_PARENT_SETTID|CLONE_CHILD_CLEARTID, child_tid=0x7ff3049fdce8, parent_tid=0x7ff3049fd990, exit_signal=0, stack=0x7ff3041fd000, stack_size=0x7fed40, tls=0x7ff3049fd6c0} => {parent_tid=[626352]}, 88) = 626352
+626352 prctl(PR_SET_NAME, "panefl:sh_opt0") = 0
+626347 clone3({flags=CLONE_VM|CLONE_FS|CLONE_FILES|CLONE_SIGHAND|CLONE_THREAD|CLONE_SYSVSEM|CLONE_SETTLS|CLONE_PARENT_SETTID|CLONE_CHILD_CLEARTID, child_tid=0x7ff303dfcce8, parent_tid=0x7ff303dfc990, exit_signal=0, stack=0x7ff3035fc000, stack_size=0x7fed40, tls=0x7ff303dfc6c0} => {parent_tid=[626353]}, 88) = 626353
+626347 sched_setscheduler(626353, SCHED_BATCH, {sched_priority=0}) = 0
+626353 gettid()                         = 626353
+626353 prctl(PR_SET_NAME, "panefl:traceq0") = 0
+626347 clone3({flags=CLONE_VM|CLONE_FS|CLONE_FILES|CLONE_SIGHAND|CLONE_THREAD|CLONE_SYSVSEM|CLONE_SETTLS|CLONE_PARENT_SETTID|CLONE_CHILD_CLEARTID, child_tid=0x7ff3035fbce8, parent_tid=0x7ff3035fb990, exit_signal=0, stack=0x7ff302dfb000, stack_size=0x7fed40, tls=0x7ff3035fb6c0} => {parent_tid=[626354]}, 88) = 626354
+626354 gettid()                         = 626354
+626347 sched_setscheduler(626354, SCHED_BATCH, {sched_priority=0}) = 0
+626354 prctl(PR_SET_NAME, "panefl:traceq0") = 0
+626347 clone3({flags=CLONE_VM|CLONE_FS|CLONE_FILES|CLONE_SIGHAND|CLONE_THREAD|CLONE_SYSVSEM|CLONE_SETTLS|CLONE_PARENT_SETTID|CLONE_CHILD_CLEARTID, child_tid=0x7ff302dface8, parent_tid=0x7ff302dfa990, exit_signal=0, stack=0x7ff3025fa000, stack_size=0x7fed40, tls=0x7ff302dfa6c0} => {parent_tid=[626355]}, 88) = 626355
+626355 gettid( <unfinished ...>
+626347 sched_setscheduler(626355, SCHED_BATCH, {sched_priority=0} <unfinished ...>
+626355 <... gettid resumed>)            = 626355
+626347 <... sched_setscheduler resumed>) = 0
+626355 prctl(PR_SET_NAME, "panefl:traceq0") = 0
+626347 clone3({flags=CLONE_VM|CLONE_FS|CLONE_FILES|CLONE_SIGHAND|CLONE_THREAD|CLONE_SYSVSEM|CLONE_SETTLS|CLONE_PARENT_SETTID|CLONE_CHILD_CLEARTID, child_tid=0x7ff3025f9ce8, parent_tid=0x7ff3025f9990, exit_signal=0, stack=0x7ff301df9000, stack_size=0x7fed40, tls=0x7ff3025f96c0} => {parent_tid=[626356]}, 88) = 626356
+626347 sched_setscheduler(626356, SCHED_BATCH, {sched_priority=0}) = 0
+626356 gettid()                         = 626356
+626356 prctl(PR_SET_NAME, "panefl:traceq0") = 0
+626347 clone3({flags=CLONE_VM|CLONE_FS|CLONE_FILES|CLONE_SIGHAND|CLONE_THREAD|CLONE_SYSVSEM|CLONE_SETTLS|CLONE_PARENT_SETTID|CLONE_CHILD_CLEARTID, child_tid=0x7ff301df8ce8, parent_tid=0x7ff301df8990, exit_signal=0, stack=0x7ff3015f8000, stack_size=0x7fed40, tls=0x7ff301df86c0} => {parent_tid=[626357]}, 88) = 626357
+626357 prctl(PR_SET_NAME, "paneflow:gdrv0") = 0
+626347 clone3({flags=CLONE_VM|CLONE_FS|CLONE_FILES|CLONE_SIGHAND|CLONE_THREAD|CLONE_SYSVSEM|CLONE_SETTLS|CLONE_PARENT_SETTID|CLONE_CHILD_CLEARTID, child_tid=0x7ff3015f7ce8, parent_tid=0x7ff3015f7990, exit_signal=0, stack=0x7ff300df7000, stack_size=0x7fed40, tls=0x7ff3015f76c0} => {parent_tid=[626358]}, 88) = 626358
+626358 prctl(PR_SET_NAME, "paneflow_t:gl0") = 0
+626347 clone3({flags=CLONE_VM|CLONE_FS|CLONE_FILES|CLONE_SIGHAND|CLONE_THREAD|CLONE_SYSVSEM|CLONE_SETTLS|CLONE_PARENT_SETTID|CLONE_CHILD_CLEARTID, child_tid=0x7ff3007f6ce8, parent_tid=0x7ff3007f6990, exit_signal=0, stack=0x7ff2ffff6000, stack_size=0x7fed40, tls=0x7ff3007f66c0} => {parent_tid=[626366]}, 88) = 626366
+626347 prctl(PR_SET_SECCOMP, SECCOMP_MODE_FILTER, NULL) = -1 EFAULT (Bad address)
+626347 seccomp(SECCOMP_SET_MODE_FILTER, SECCOMP_FILTER_FLAG_TSYNC, NULL) = -1 EFAULT (Bad address)
+626347 gettid()                         = 626347
+626347 gettid()                         = 626347
+626347 prctl(PR_SET_SECCOMP, SECCOMP_MODE_FILTER, NULL) = -1 EFAULT (Bad address)
+626347 prctl(PR_SET_VMA, PR_SET_VMA_ANON_NAME, 0x3cf554d65000, 4096, "partition_alloc") = -1 EINVAL (Invalid argument)
+626347 prctl(PR_SET_VMA, PR_SET_VMA_ANON_NAME, 0x219001e00000, 2097152, "partition_alloc") = -1 EINVAL (Invalid argument)
+626347 prctl(PR_SET_VMA, PR_SET_VMA_ANON_NAME, 0x3cf554d65000, 4096, "partition_alloc") = -1 EINVAL (Invalid argument)
+626347 prctl(PR_SET_VMA, PR_SET_VMA_ANON_NAME, 0x219001e00000, 2097152, "partition_alloc") = -1 EINVAL (Invalid argument)
+626347 gettid()                         = 626347
+626347 prctl(PR_SET_VMA, PR_SET_VMA_ANON_NAME, 0x3cf554f65000, 4096, "partition_alloc") = -1 EINVAL (Invalid argument)
+626347 prctl(PR_SET_VMA, PR_SET_VMA_ANON_NAME, 0x219002000000, 2097152, "partition_alloc") = -1 EINVAL (Invalid argument)
+626347 prctl(PR_SET_VMA, PR_SET_VMA_ANON_NAME, 0x3cf554f65000, 4096, "partition_alloc") = -1 EINVAL (Invalid argument)
+626347 prctl(PR_SET_VMA, PR_SET_VMA_ANON_NAME, 0x219002000000, 2097152, "partition_alloc") = -1 EINVAL (Invalid argument)
+626347 prctl(PR_SET_VMA, PR_SET_VMA_ANON_NAME, 0x3cf554f65000, 4096, "partition_alloc") = -1 EINVAL (Invalid argument)
+626347 prctl(PR_SET_VMA, PR_SET_VMA_ANON_NAME, 0x219002000000, 2097152, "partition_alloc") = -1 EINVAL (Invalid argument)
+626347 prctl(PR_SET_VMA, PR_SET_VMA_ANON_NAME, 0x3cf554f65000, 4096, "partition_alloc") = -1 EINVAL (Invalid argument)
+626347 prctl(PR_SET_VMA, PR_SET_VMA_ANON_NAME, 0x219002000000, 2097152, "partition_alloc") = -1 EINVAL (Invalid argument)
+626347 prctl(PR_SET_VMA, PR_SET_VMA_ANON_NAME, 0x3cf554f65000, 4096, "partition_alloc") = -1 EINVAL (Invalid argument)
+626347 prctl(PR_SET_VMA, PR_SET_VMA_ANON_NAME, 0x219002000000, 4194304, "partition_alloc") = -1 EINVAL (Invalid argument)
+626347 prctl(PR_SET_VMA, PR_SET_VMA_ANON_NAME, 0x3cf554f65000, 4096, "partition_alloc") = -1 EINVAL (Invalid argument)
+626347 prctl(PR_SET_VMA, PR_SET_VMA_ANON_NAME, 0x219002000000, 4194304, "partition_alloc") = -1 EINVAL (Invalid argument)
+626347 prctl(PR_SET_SECCOMP, SECCOMP_MODE_FILTER, NULL) = -1 EFAULT (Bad address)
+626347 seccomp(SECCOMP_SET_MODE_FILTER, SECCOMP_FILTER_FLAG_TSYNC, NULL) = -1 EFAULT (Bad address)
+626347 prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) = 0
+626347 seccomp(SECCOMP_SET_MODE_FILTER, SECCOMP_FILTER_FLAG_TSYNC, {len=615, filter=0x7fff98ab17e0}) = 0
+626347 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626347 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626347 prctl(PR_GET_SECCOMP)            = 2
+626366 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626366 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626366 prctl(PR_GET_SECCOMP)            = 2
+626366 +++ exited with 0 +++
+626358 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626351 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626358 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626351 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626358 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626351 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626358 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626351 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626358 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626351 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626358 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626351 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626358 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626351 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626358 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626351 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626358 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626351 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626358 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626351 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626358 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626351 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626358 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626351 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626358 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626351 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626358 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626351 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626358 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626351 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626358 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626351 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626358 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626351 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626358 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626351 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626358 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626351 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626358 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626351 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626358 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626351 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626358 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626351 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626358 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626351 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626358 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626351 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626358 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626351 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626358 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626351 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626358 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626351 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626358 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626351 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626358 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626351 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626358 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626351 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626358 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626358 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626358 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626358 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626358 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626358 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626358 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626358 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626358 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626358 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626358 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626358 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626358 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626358 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626358 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626358 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626358 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626358 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626358 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626358 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626358 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626358 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626358 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626358 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626358 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626358 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626358 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626358 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626358 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626358 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626358 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626358 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626358 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626358 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626358 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626358 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626358 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626358 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626358 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626358 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626358 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626358 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626358 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626358 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626358 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626358 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626358 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626358 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626358 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626358 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626358 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626358 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626358 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626358 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626358 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626358 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626358 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626358 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626358 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626358 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626358 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626358 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626358 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626358 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626358 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626358 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626358 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626358 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626358 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626358 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626358 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626358 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626358 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626358 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626358 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626358 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626358 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626358 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626358 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626358 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626358 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626358 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626358 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626358 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626358 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626358 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626358 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626358 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626358 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626358 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626350 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7ff3133e5312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+626358 +++ exited with 0 +++
+626357 +++ exited with 0 +++
+626356 +++ exited with 0 +++
+626353 +++ exited with 0 +++
+626354 +++ exited with 0 +++
+626355 +++ exited with 0 +++
+626351 +++ exited with 0 +++
+626352 +++ exited with 0 +++
+626350 +++ exited with 0 +++
+626349 +++ exited with 0 +++
+626347 prctl(PR_SET_VMA, PR_SET_VMA_ANON_NAME, 0x3cf554365000, 4096, "partition_alloc") = -1 EINVAL (Invalid argument)
+626347 prctl(PR_SET_VMA, PR_SET_VMA_ANON_NAME, 0x219001400000, 2097152, "partition_alloc") = -1 EINVAL (Invalid argument)
+626347 prctl(PR_SET_VMA, PR_SET_VMA_ANON_NAME, 0x3cf553365000, 4096, "partition_alloc") = -1 EINVAL (Invalid argument)
+626347 prctl(PR_SET_VMA, PR_SET_VMA_ANON_NAME, 0x219000400000, 2097152, "partition_alloc") = -1 EINVAL (Invalid argument)
+626347 exit_group(0)                    = ?
+626348 exit_group(1 <unfinished ...>
+626347 +++ exited with 0 +++
+626348 <... exit_group resumed>)        = ?
+626348 +++ exited with 1 +++

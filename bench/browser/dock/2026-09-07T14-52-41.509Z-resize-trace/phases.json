@@ -1,0 +1,22 @@
+[
+  {
+    "name": "load",
+    "clock": "CLOCK_MONOTONIC",
+    "at_ns": 31631916455198
+  },
+  {
+    "name": "prepare_resize",
+    "clock": "CLOCK_MONOTONIC",
+    "at_ns": 31661163032918
+  },
+  {
+    "name": "resize",
+    "clock": "CLOCK_MONOTONIC",
+    "at_ns": 31666173505889
+  },
+  {
+    "name": "end_resize",
+    "clock": "CLOCK_MONOTONIC",
+    "at_ns": 31686184118676
+  }
+]

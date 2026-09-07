@@ -1,0 +1,15 @@
+{
+  "status": "COMPLETED",
+  "verdict": {
+    "page_presented": "MEASURED",
+    "x11_connection_absent": "MEASURED",
+    "sandbox": "MEASURED",
+    "observed_processes_exited": "MEASURED",
+    "steps": {
+      "input": "MEASURED"
+    },
+    "m1_presentation_feedback": "NOT_MEASURED",
+    "x11_session": "NOT_APPLICABLE"
+  },
+  "output": "/home/arthur/dev/paneflow-browser/bench/browser/evidence/prototype/cef-tsync-20260906-mesa-shaders/prototype"
+}

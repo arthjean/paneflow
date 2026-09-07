@@ -1,0 +1,28 @@
+{
+  "status": "SUPPLEMENTAL_CPU_MEASUREMENTS",
+  "presentation_observation": null,
+  "baseline_updated": false,
+  "configuration": "A",
+  "commands": [
+    "CARGO_TARGET_DIR=/home/arthur/dev/paneflow/target bash scripts/bench-terminal.sh",
+    "CARGO_TARGET_DIR=/home/arthur/dev/paneflow/target bash scripts/bench-editor.sh"
+  ],
+  "artifacts": [
+    {
+      "path": "a-terminal.json",
+      "sha256": "40adaf4fe0d3de18b8eb120a8d7ffe4a074727f539c10bbfc98ec8d5def2e00b"
+    },
+    {
+      "path": "a-editor.json",
+      "sha256": "b4a98536a7816cd881d15f559e7f4e5426f42050e0080eb2c6ed4b0098a5ba8b"
+    },
+    {
+      "path": "a-terminal.log",
+      "sha256": "d9b5a4907768cb9ad9234a2a150a3ccceaccc379313c75ee3875e1a14d549f9a"
+    },
+    {
+      "path": "a-editor.log",
+      "sha256": "ecf5ff929f6ae3246ab12f25d81d3265a2fa621a59503ab8b2bbf2f65bbab37d"
+    }
+  ]
+}

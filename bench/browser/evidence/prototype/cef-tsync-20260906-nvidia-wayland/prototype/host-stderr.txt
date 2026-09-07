@@ -1,0 +1,10 @@
+[736965:736965:0906/200122.086887:ERROR:ui/ozone/platform/wayland/host/wayland_seat.cc:91] Not implemented reached in static void ui::WaylandSeat::OnName(void *, wl_seat *, const char *). 
+[736965:736965:0906/200122.087450:ERROR:ui/ozone/platform/wayland/host/wayland_zwp_linux_dmabuf.cc:395] Not implemented reached in static void ui::WaylandZwpLinuxDmabuf::OnTrancheFlags(void *, zwp_linux_dmabuf_feedback_v1 *, uint32_t). 
+[736965:736965:0906/200122.147806:ERROR:content/browser/browser_main_loop.cc:277] GLib-GObject: g_object_set_is_valid_property: object class 'GtkSettings' has no property named 'gtk-modules'
+[736965:736965:0906/200122.242668:ERROR:ui/ozone/platform/wayland/host/wayland_screen.cc:473] Not implemented reached in virtual bool ui::WaylandScreen::IsScreenSaverActive() const. 
+WARN: SystemInfo_vulkan.cpp:198 (HasKhronosValidationLayer): Vulkan validation layers are missing
+[736965:736965:0906/200122.565304:ERROR:cef/libcef/browser/osr/render_widget_host_view_osr.cc:356] Not implemented reached in virtual gfx::NativeView CefRenderWidgetHostViewOSR::GetNativeView(). 
+[736965:736965:0906/200122.576105:ERROR:cef/libcef/browser/osr/render_widget_host_view_osr.cc:356] Not implemented reached in virtual gfx::NativeView CefRenderWidgetHostViewOSR::GetNativeView(). 
+WARN: FramebufferGL.cpp:1351 (checkStatus): GL framebuffer returned incomplete: 0x00008CD6
+[737016:737016:0906/200123.172859:ERROR:gpu/command_buffer/service/shared_image/shared_image_representation.cc:438] Unable to initialize SkSurface
+[736965:736965:0906/200200.936667:ERROR:base/process/kill_posix.cc:33] waitpid(737020): No child processes (10)

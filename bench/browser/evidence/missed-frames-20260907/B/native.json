@@ -1,0 +1,5218 @@
+{
+  "schema_version": 1,
+  "host_pid": 14932,
+  "status": "NATIVE_LIFECYCLE_OBSERVED",
+  "error": null,
+  "target": "x86_64-unknown-linux-gnu",
+  "cef_version": "151.3.24+g2384915+chromium-151.0.7922.174",
+  "archive_sha256": "64c291f64dd6505e9a6faa56f12dbc3f02fd99cc0a35811e8bb689d98e392b23",
+  "fixture_sha256": "83dac6881a8f57843e5e60a5065d1f681f966331b2e4ef14c777bb40572d9121",
+  "scenario": "animation",
+  "duration_seconds": 70,
+  "binary_sha256": "4dfbfd99405ea9ae831360b94987d546612dfae2ab0e4b9862e75a5dcadb2ad8",
+  "display_backend": "wayland",
+  "source_root": "/home/arthur/.cache/paneflow-cef-tsync/paneflow-snapshot",
+  "session_type": "wayland",
+  "presentation_measurement": "NOT_EXECUTED",
+  "observation_origin_ns": 747602979000,
+  "process_evidence_start": {
+    "schema_version": 1,
+    "host_pid": 14932,
+    "host_start_ticks": "74571",
+    "clock": "CLOCK_MONOTONIC",
+    "clock_observation": "native_syscall_bounds_around_collection",
+    "started_ns": 746616370008,
+    "ended_ns": 746774739586,
+    "complete": true,
+    "limits": {
+      "scanned_processes": 8192,
+      "processes": 256,
+      "threads_per_process": 1024,
+      "threads_total": 8192,
+      "fds_per_process": 4096,
+      "fds_total": 16384,
+      "bytes_total": 16777216,
+      "duration_ms": 15000,
+      "errors": 256
+    },
+    "scanned_processes": 497,
+    "bytes_read": 475067,
+    "processes": [
+      {
+        "pid": 14932,
+        "parent": 14915,
+        "start_ticks": "74571",
+        "role": "host",
+        "role_sources": [],
+        "seccomp": 0,
+        "no_new_privs": 0,
+        "seccomp_filters": 0,
+        "sandbox_flags": [],
+        "threads": [
+          {
+            "tid": 14932,
+            "start_ticks": "74571",
+            "role_hint": null,
+            "seccomp": 0,
+            "no_new_privs": 0,
+            "seccomp_filters": 0
+          },
+          {
+            "tid": 14940,
+            "start_ticks": "74576",
+            "role_hint": null,
+            "seccomp": 0,
+            "no_new_privs": 0,
+            "seccomp_filters": 0
+          },
+          {
+            "tid": 14946,
+            "start_ticks": "74579",
+            "role_hint": null,
+            "seccomp": 0,
+            "no_new_privs": 0,
+            "seccomp_filters": 0
+          },
+          {
+            "tid": 14947,
+            "start_ticks": "74579",
+            "role_hint": null,
+            "seccomp": 0,
+            "no_new_privs": 0,
+            "seccomp_filters": 0
+          },
+          {
+            "tid": 14948,
+            "start_ticks": "74579",
+            "role_hint": null,
+            "seccomp": 0,
+            "no_new_privs": 0,
+            "seccomp_filters": 0
+          },
+          {
+            "tid": 14949,
+            "start_ticks": "74579",
+            "role_hint": null,
+            "seccomp": 0,
+            "no_new_privs": 0,
+            "seccomp_filters": 0
+          },
+          {
+            "tid": 14950,
+            "start_ticks": "74579",
+            "role_hint": null,
+            "seccomp": 0,
+            "no_new_privs": 0,
+            "seccomp_filters": 0
+          },
+          {
+            "tid": 14951,
+            "start_ticks": "74579",
+            "role_hint": null,
+            "seccomp": 0,
+            "no_new_privs": 0,
+            "seccomp_filters": 0
+          },
+          {
+            "tid": 14952,
+            "start_ticks": "74579",
+            "role_hint": null,
+            "seccomp": 0,
+            "no_new_privs": 0,
+            "seccomp_filters": 0
+          },
+          {
+            "tid": 14953,
+            "start_ticks": "74579",
+            "role_hint": null,
+            "seccomp": 0,
+            "no_new_privs": 0,
+            "seccomp_filters": 0
+          },
+          {
+            "tid": 14954,
+            "start_ticks": "74579",
+            "role_hint": null,
+            "seccomp": 0,
+            "no_new_privs": 0,
+            "seccomp_filters": 0
+          },
+          {
+            "tid": 14955,
+            "start_ticks": "74579",
+            "role_hint": null,
+            "seccomp": 0,
+            "no_new_privs": 0,
+            "seccomp_filters": 0
+          },
+          {
+            "tid": 14957,
+            "start_ticks": "74581",
+            "role_hint": null,
+            "seccomp": 0,
+            "no_new_privs": 0,
+            "seccomp_filters": 0
+          },
+          {
+            "tid": 14958,
+            "start_ticks": "74581",
+            "role_hint": null,
+            "seccomp": 0,
+            "no_new_privs": 0,
+            "seccomp_filters": 0
+          },
+          {
+            "tid": 14959,
+            "start_ticks": "74581",
+            "role_hint": null,
+            "seccomp": 0,
+            "no_new_privs": 0,
+            "seccomp_filters": 0
+          },
+          {
+            "tid": 14961,
+            "start_ticks": "74582",
+            "role_hint": null,
+            "seccomp": 0,
+            "no_new_privs": 0,
+            "seccomp_filters": 0
+          },
+          {
+            "tid": 14964,
+            "start_ticks": "74583",
+            "role_hint": null,
+            "seccomp": 0,
+            "no_new_privs": 0,
+            "seccomp_filters": 0
+          },
+          {
+            "tid": 14965,
+            "start_ticks": "74587",
+            "role_hint": null,
+            "seccomp": 0,
+            "no_new_privs": 0,
+            "seccomp_filters": 0
+          },
+          {
+            "tid": 14966,
+            "start_ticks": "74588",
+            "role_hint": null,
+            "seccomp": 0,
+            "no_new_privs": 0,
+            "seccomp_filters": 0
+          },
+          {
+            "tid": 14968,
+            "start_ticks": "74588",
+            "role_hint": null,
+            "seccomp": 0,
+            "no_new_privs": 0,
+            "seccomp_filters": 0
+          },
+          {
+            "tid": 14969,
+            "start_ticks": "74588",
+            "role_hint": null,
+            "seccomp": 0,
+            "no_new_privs": 0,
+            "seccomp_filters": 0
+          },
+          {
+            "tid": 14970,
+            "start_ticks": "74588",
+            "role_hint": null,
+            "seccomp": 0,
+            "no_new_privs": 0,
+            "seccomp_filters": 0
+          },
+          {
+            "tid": 14971,
+            "start_ticks": "74588",
+            "role_hint": null,
+            "seccomp": 0,
+            "no_new_privs": 0,
+            "seccomp_filters": 0
+          },
+          {
+            "tid": 14972,
+            "start_ticks": "74588",
+            "role_hint": null,
+            "seccomp": 0,
+            "no_new_privs": 0,
+            "seccomp_filters": 0
+          },
+          {
+            "tid": 14973,
+            "start_ticks": "74588",
+            "role_hint": null,
+            "seccomp": 0,
+            "no_new_privs": 0,
+            "seccomp_filters": 0
+          },
+          {
+            "tid": 14974,
+            "start_ticks": "74588",
+            "role_hint": null,
+            "seccomp": 0,
+            "no_new_privs": 0,
+            "seccomp_filters": 0
+          },
+          {
+            "tid": 14975,
+            "start_ticks": "74588",
+            "role_hint": null,
+            "seccomp": 0,
+            "no_new_privs": 0,
+            "seccomp_filters": 0
+          },
+          {
+            "tid": 14977,
+            "start_ticks": "74588",
+            "role_hint": null,
+            "seccomp": 0,
+            "no_new_privs": 0,
+            "seccomp_filters": 0
+          },
+          {
+            "tid": 14991,
+            "start_ticks": "74589",
+            "role_hint": null,
+            "seccomp": 0,
+            "no_new_privs": 0,
+            "seccomp_filters": 0
+          },
+          {
+            "tid": 14993,
+            "start_ticks": "74589",
+            "role_hint": null,
+            "seccomp": 0,
+            "no_new_privs": 0,
+            "seccomp_filters": 0
+          },
+          {
+            "tid": 15025,
+            "start_ticks": "74594",
+            "role_hint": null,
+            "seccomp": 0,
+            "no_new_privs": 0,
+            "seccomp_filters": 0
+          },
+          {
+            "tid": 15026,
+            "start_ticks": "74594",
+            "role_hint": null,
+            "seccomp": 0,
+            "no_new_privs": 0,
+            "seccomp_filters": 0
+          },
+          {
+            "tid": 15034,
+            "start_ticks": "74594",
+            "role_hint": null,
+            "seccomp": 0,
+            "no_new_privs": 0,
+            "seccomp_filters": 0
+          },
+          {
+            "tid": 15036,
+            "start_ticks": "74595",
+            "role_hint": null,
+            "seccomp": 0,
+            "no_new_privs": 0,
+            "seccomp_filters": 0
+          },
+          {
+            "tid": 15037,
+            "start_ticks": "74595",
+            "role_hint": null,
+            "seccomp": 0,
+            "no_new_privs": 0,
+            "seccomp_filters": 0
+          },
+          {
+            "tid": 15038,
+            "start_ticks": "74595",
+            "role_hint": null,
+            "seccomp": 0,
+            "no_new_privs": 0,
+            "seccomp_filters": 0
+          },
+          {
+            "tid": 15039,
+            "start_ticks": "74595",
+            "role_hint": null,
+            "seccomp": 0,
+            "no_new_privs": 0,
+            "seccomp_filters": 0
+          },
+          {
+            "tid": 15040,
+            "start_ticks": "74595",
+            "role_hint": null,
+            "seccomp": 0,
+            "no_new_privs": 0,
+            "seccomp_filters": 0
+          },
+          {
+            "tid": 15041,
+            "start_ticks": "74595",
+            "role_hint": null,
+            "seccomp": 0,
+            "no_new_privs": 0,
+            "seccomp_filters": 0
+          },
+          {
+            "tid": 15042,
+            "start_ticks": "74595",
+            "role_hint": null,
+            "seccomp": 0,
+            "no_new_privs": 0,
+            "seccomp_filters": 0
+          },
+          {
+            "tid": 15058,
+            "start_ticks": "74605",
+            "role_hint": null,
+            "seccomp": 0,
+            "no_new_privs": 0,
+            "seccomp_filters": 0
+          },
+          {
+            "tid": 15059,
+            "start_ticks": "74605",
+            "role_hint": null,
+            "seccomp": 0,
+            "no_new_privs": 0,
+            "seccomp_filters": 0
+          }
+        ],
+        "threads_complete": true,
+        "fds": {
+          "total": 278,
+          "inspected": 278,
+          "complete": true,
+          "types": {
+            "dma_buf": 0,
+            "socket": 34,
+            "anon_inode": 16,
+            "pipe": 6,
+            "file": 222,
+            "unknown": 0
+          }
+        },
+        "memory": {
+          "pss_kb": 199239,
+          "private_clean_kb": 72580,
+          "private_dirty_kb": 84068,
+          "private_hugetlb_kb": 0,
+          "private_kb": 156648
+        },
+        "started_elapsed_ns": 54211789,
+        "ended_elapsed_ns": 78719194,
+        "complete": true
+      },
+      {
+        "pid": 14942,
+        "parent": 14932,
+        "start_ticks": "74576",
+        "role": "zygote",
+        "role_sources": [
+          {
+            "source": "cmdline_type",
+            "role": "zygote"
+          }
+        ],
+        "seccomp": 0,
+        "no_new_privs": 1,
+        "seccomp_filters": 0,
+        "sandbox_flags": [],
+        "threads": [
+          {
+            "tid": 14942,
+            "start_ticks": "74576",
+            "role_hint": null,
+            "seccomp": 0,
+            "no_new_privs": 1,
+            "seccomp_filters": 0
+          }
+        ],
+        "threads_complete": true,
+        "fds": {
+          "total": 96,
+          "inspected": 96,
+          "complete": true,
+          "types": {
+            "dma_buf": 0,
+            "socket": 4,
+            "anon_inode": 0,
+            "pipe": 0,
+            "file": 92,
+            "unknown": 0
+          }
+        },
+        "memory": {
+          "pss_kb": 17649,
+          "private_clean_kb": 0,
+          "private_dirty_kb": 580,
+          "private_hugetlb_kb": 0,
+          "private_kb": 580
+        },
+        "started_elapsed_ns": 78746804,
+        "ended_elapsed_ns": 82857903,
+        "complete": true
+      },
+      {
+        "pid": 14943,
+        "parent": 14932,
+        "start_ticks": "74576",
+        "role": "zygote",
+        "role_sources": [
+          {
+            "source": "cmdline_type",
+            "role": "zygote"
+          }
+        ],
+        "seccomp": 0,
+        "no_new_privs": 1,
+        "seccomp_filters": 0,
+        "sandbox_flags": [],
+        "threads": [
+          {
+            "tid": 14943,
+            "start_ticks": "74576",
+            "role_hint": null,
+            "seccomp": 0,
+            "no_new_privs": 1,
+            "seccomp_filters": 0
+          }
+        ],
+        "threads_complete": true,
+        "fds": {
+          "total": 96,
+          "inspected": 96,
+          "complete": true,
+          "types": {
+            "dma_buf": 0,
+            "socket": 4,
+            "anon_inode": 0,
+            "pipe": 0,
+            "file": 92,
+            "unknown": 0
+          }
+        },
+        "memory": {
+          "pss_kb": 13537,
+          "private_clean_kb": 4,
+          "private_dirty_kb": 176,
+          "private_hugetlb_kb": 0,
+          "private_kb": 180
+        },
+        "started_elapsed_ns": 82877773,
+        "ended_elapsed_ns": 86708913,
+        "complete": true
+      },
+      {
+        "pid": 14999,
+        "parent": 14932,
+        "start_ticks": "74589",
+        "role": "utility",
+        "role_sources": [
+          {
+            "source": "cmdline_type",
+            "role": "utility"
+          }
+        ],
+        "seccomp": 2,
+        "no_new_privs": 1,
+        "seccomp_filters": 1,
+        "sandbox_flags": [],
+        "threads": [
+          {
+            "tid": 14999,
+            "start_ticks": "74589",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15011,
+            "start_ticks": "74592",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15012,
+            "start_ticks": "74593",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15013,
+            "start_ticks": "74593",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15014,
+            "start_ticks": "74593",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15015,
+            "start_ticks": "74593",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15016,
+            "start_ticks": "74593",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15017,
+            "start_ticks": "74593",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15018,
+            "start_ticks": "74593",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15019,
+            "start_ticks": "74593",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15020,
+            "start_ticks": "74593",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15021,
+            "start_ticks": "74593",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15023,
+            "start_ticks": "74594",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15024,
+            "start_ticks": "74594",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          }
+        ],
+        "threads_complete": true,
+        "fds": {
+          "total": 127,
+          "inspected": 127,
+          "complete": true,
+          "types": {
+            "dma_buf": 0,
+            "socket": 14,
+            "anon_inode": 7,
+            "pipe": 0,
+            "file": 106,
+            "unknown": 0
+          }
+        },
+        "memory": {
+          "pss_kb": 43728,
+          "private_clean_kb": 6160,
+          "private_dirty_kb": 6168,
+          "private_hugetlb_kb": 0,
+          "private_kb": 12328
+        },
+        "started_elapsed_ns": 86714563,
+        "ended_elapsed_ns": 94873081,
+        "complete": true
+      },
+      {
+        "pid": 14997,
+        "parent": 14942,
+        "start_ticks": "74589",
+        "role": "gpu-process",
+        "role_sources": [
+          {
+            "source": "cmdline_type",
+            "role": "zygote"
+          },
+          {
+            "source": "thread:15101",
+            "role": "gpu-process"
+          }
+        ],
+        "seccomp": 2,
+        "no_new_privs": 1,
+        "seccomp_filters": 1,
+        "sandbox_flags": [],
+        "threads": [
+          {
+            "tid": 14997,
+            "start_ticks": "74589",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15078,
+            "start_ticks": "74625",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15079,
+            "start_ticks": "74625",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15080,
+            "start_ticks": "74626",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15082,
+            "start_ticks": "74628",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15083,
+            "start_ticks": "74628",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15085,
+            "start_ticks": "74629",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15086,
+            "start_ticks": "74629",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15091,
+            "start_ticks": "74637",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15092,
+            "start_ticks": "74637",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15093,
+            "start_ticks": "74638",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15094,
+            "start_ticks": "74638",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15095,
+            "start_ticks": "74638",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15096,
+            "start_ticks": "74638",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15097,
+            "start_ticks": "74638",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15098,
+            "start_ticks": "74638",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15099,
+            "start_ticks": "74638",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15100,
+            "start_ticks": "74638",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15101,
+            "start_ticks": "74638",
+            "role_hint": "gpu-process",
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15102,
+            "start_ticks": "74640",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          }
+        ],
+        "threads_complete": true,
+        "fds": {
+          "total": 192,
+          "inspected": 192,
+          "complete": true,
+          "types": {
+            "dma_buf": 4,
+            "socket": 13,
+            "anon_inode": 14,
+            "pipe": 2,
+            "file": 159,
+            "unknown": 0
+          }
+        },
+        "memory": {
+          "pss_kb": 149639,
+          "private_clean_kb": 53160,
+          "private_dirty_kb": 63232,
+          "private_hugetlb_kb": 0,
+          "private_kb": 116392
+        },
+        "started_elapsed_ns": 94879701,
+        "ended_elapsed_ns": 107227488,
+        "complete": true
+      },
+      {
+        "pid": 14945,
+        "parent": 14943,
+        "start_ticks": "74579",
+        "role": "zygote",
+        "role_sources": [
+          {
+            "source": "cmdline_type",
+            "role": "zygote"
+          }
+        ],
+        "seccomp": 0,
+        "no_new_privs": 1,
+        "seccomp_filters": 0,
+        "sandbox_flags": [],
+        "threads": [
+          {
+            "tid": 14945,
+            "start_ticks": "74579",
+            "role_hint": null,
+            "seccomp": 0,
+            "no_new_privs": 1,
+            "seccomp_filters": 0
+          }
+        ],
+        "threads_complete": true,
+        "fds": {
+          "total": 97,
+          "inspected": 97,
+          "complete": true,
+          "types": {
+            "dma_buf": 0,
+            "socket": 4,
+            "anon_inode": 0,
+            "pipe": 0,
+            "file": 93,
+            "unknown": 0
+          }
+        },
+        "memory": {
+          "pss_kb": 3269,
+          "private_clean_kb": 0,
+          "private_dirty_kb": 220,
+          "private_hugetlb_kb": 0,
+          "private_kb": 220
+        },
+        "started_elapsed_ns": 107246888,
+        "ended_elapsed_ns": 110139058,
+        "complete": true
+      },
+      {
+        "pid": 15010,
+        "parent": 14999,
+        "start_ticks": "74592",
+        "role": "utility",
+        "role_sources": [
+          {
+            "source": "cmdline_type",
+            "role": "utility"
+          }
+        ],
+        "seccomp": 2,
+        "no_new_privs": 1,
+        "seccomp_filters": 1,
+        "sandbox_flags": [],
+        "threads": [
+          {
+            "tid": 15010,
+            "start_ticks": "74592",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          }
+        ],
+        "threads_complete": true,
+        "fds": {
+          "total": 97,
+          "inspected": 97,
+          "complete": true,
+          "types": {
+            "dma_buf": 0,
+            "socket": 4,
+            "anon_inode": 0,
+            "pipe": 0,
+            "file": 93,
+            "unknown": 0
+          }
+        },
+        "memory": {
+          "pss_kb": 10650,
+          "private_clean_kb": 0,
+          "private_dirty_kb": 776,
+          "private_hugetlb_kb": 0,
+          "private_kb": 776
+        },
+        "started_elapsed_ns": 110144208,
+        "ended_elapsed_ns": 112752447,
+        "complete": true
+      },
+      {
+        "pid": 15008,
+        "parent": 14997,
+        "start_ticks": "74590",
+        "role": "zygote",
+        "role_sources": [
+          {
+            "source": "cmdline_type",
+            "role": "zygote"
+          }
+        ],
+        "seccomp": 2,
+        "no_new_privs": 1,
+        "seccomp_filters": 1,
+        "sandbox_flags": [],
+        "threads": [
+          {
+            "tid": 15008,
+            "start_ticks": "74590",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          }
+        ],
+        "threads_complete": true,
+        "fds": {
+          "total": 97,
+          "inspected": 97,
+          "complete": true,
+          "types": {
+            "dma_buf": 0,
+            "socket": 5,
+            "anon_inode": 0,
+            "pipe": 0,
+            "file": 92,
+            "unknown": 0
+          }
+        },
+        "memory": {
+          "pss_kb": 8135,
+          "private_clean_kb": 0,
+          "private_dirty_kb": 1196,
+          "private_hugetlb_kb": 0,
+          "private_kb": 1196
+        },
+        "started_elapsed_ns": 112757167,
+        "ended_elapsed_ns": 115610757,
+        "complete": true
+      },
+      {
+        "pid": 15022,
+        "parent": 14945,
+        "start_ticks": "74593",
+        "role": "zygote",
+        "role_sources": [
+          {
+            "source": "cmdline_type",
+            "role": "zygote"
+          }
+        ],
+        "seccomp": 2,
+        "no_new_privs": 1,
+        "seccomp_filters": 1,
+        "sandbox_flags": [],
+        "threads": [
+          {
+            "tid": 15022,
+            "start_ticks": "74593",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15027,
+            "start_ticks": "74594",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15028,
+            "start_ticks": "74594",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15029,
+            "start_ticks": "74594",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15030,
+            "start_ticks": "74594",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15031,
+            "start_ticks": "74594",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15032,
+            "start_ticks": "74594",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15033,
+            "start_ticks": "74594",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15035,
+            "start_ticks": "74594",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          }
+        ],
+        "threads_complete": true,
+        "fds": {
+          "total": 111,
+          "inspected": 111,
+          "complete": true,
+          "types": {
+            "dma_buf": 0,
+            "socket": 7,
+            "anon_inode": 6,
+            "pipe": 0,
+            "file": 98,
+            "unknown": 0
+          }
+        },
+        "memory": {
+          "pss_kb": 10291,
+          "private_clean_kb": 0,
+          "private_dirty_kb": 2532,
+          "private_hugetlb_kb": 0,
+          "private_kb": 2532
+        },
+        "started_elapsed_ns": 115615517,
+        "ended_elapsed_ns": 120713306,
+        "complete": true
+      },
+      {
+        "pid": 15043,
+        "parent": 14945,
+        "start_ticks": "74596",
+        "role": "zygote",
+        "role_sources": [
+          {
+            "source": "cmdline_type",
+            "role": "zygote"
+          }
+        ],
+        "seccomp": 2,
+        "no_new_privs": 1,
+        "seccomp_filters": 1,
+        "sandbox_flags": [],
+        "threads": [
+          {
+            "tid": 15043,
+            "start_ticks": "74596",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15044,
+            "start_ticks": "74596",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15045,
+            "start_ticks": "74596",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15046,
+            "start_ticks": "74596",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15047,
+            "start_ticks": "74596",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15048,
+            "start_ticks": "74596",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15049,
+            "start_ticks": "74596",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15050,
+            "start_ticks": "74596",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          }
+        ],
+        "threads_complete": true,
+        "fds": {
+          "total": 121,
+          "inspected": 121,
+          "complete": true,
+          "types": {
+            "dma_buf": 0,
+            "socket": 12,
+            "anon_inode": 6,
+            "pipe": 0,
+            "file": 103,
+            "unknown": 0
+          }
+        },
+        "memory": {
+          "pss_kb": 10277,
+          "private_clean_kb": 0,
+          "private_dirty_kb": 3108,
+          "private_hugetlb_kb": 0,
+          "private_kb": 3108
+        },
+        "started_elapsed_ns": 120716726,
+        "ended_elapsed_ns": 126589094,
+        "complete": true
+      },
+      {
+        "pid": 15060,
+        "parent": 14945,
+        "start_ticks": "74606",
+        "role": "renderer",
+        "role_sources": [
+          {
+            "source": "cmdline_type",
+            "role": "zygote"
+          },
+          {
+            "source": "thread:15068",
+            "role": "renderer"
+          }
+        ],
+        "seccomp": 2,
+        "no_new_privs": 1,
+        "seccomp_filters": 1,
+        "sandbox_flags": [],
+        "threads": [
+          {
+            "tid": 15060,
+            "start_ticks": "74606",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15061,
+            "start_ticks": "74606",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15062,
+            "start_ticks": "74606",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15063,
+            "start_ticks": "74606",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15064,
+            "start_ticks": "74606",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15065,
+            "start_ticks": "74606",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15066,
+            "start_ticks": "74606",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15067,
+            "start_ticks": "74607",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15068,
+            "start_ticks": "74608",
+            "role_hint": "renderer",
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15069,
+            "start_ticks": "74608",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15070,
+            "start_ticks": "74608",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15071,
+            "start_ticks": "74608",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          }
+        ],
+        "threads_complete": true,
+        "fds": {
+          "total": 118,
+          "inspected": 118,
+          "complete": true,
+          "types": {
+            "dma_buf": 0,
+            "socket": 7,
+            "anon_inode": 8,
+            "pipe": 0,
+            "file": 103,
+            "unknown": 0
+          }
+        },
+        "memory": {
+          "pss_kb": 44535,
+          "private_clean_kb": 2368,
+          "private_dirty_kb": 17988,
+          "private_hugetlb_kb": 0,
+          "private_kb": 20356
+        },
+        "started_elapsed_ns": 126593904,
+        "ended_elapsed_ns": 132592513,
+        "complete": true
+      },
+      {
+        "pid": 15103,
+        "parent": 14945,
+        "start_ticks": "74648",
+        "role": "renderer",
+        "role_sources": [
+          {
+            "source": "cmdline_type",
+            "role": "zygote"
+          },
+          {
+            "source": "thread:15119",
+            "role": "renderer"
+          }
+        ],
+        "seccomp": 2,
+        "no_new_privs": 1,
+        "seccomp_filters": 1,
+        "sandbox_flags": [],
+        "threads": [
+          {
+            "tid": 15103,
+            "start_ticks": "74648",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15104,
+            "start_ticks": "74649",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15105,
+            "start_ticks": "74649",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15106,
+            "start_ticks": "74649",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15107,
+            "start_ticks": "74649",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15108,
+            "start_ticks": "74649",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15109,
+            "start_ticks": "74649",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15110,
+            "start_ticks": "74649",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15119,
+            "start_ticks": "74651",
+            "role_hint": "renderer",
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15120,
+            "start_ticks": "74651",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15121,
+            "start_ticks": "74651",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          }
+        ],
+        "threads_complete": true,
+        "fds": {
+          "total": 112,
+          "inspected": 112,
+          "complete": true,
+          "types": {
+            "dma_buf": 0,
+            "socket": 7,
+            "anon_inode": 8,
+            "pipe": 0,
+            "file": 97,
+            "unknown": 0
+          }
+        },
+        "memory": {
+          "pss_kb": 30639,
+          "private_clean_kb": 0,
+          "private_dirty_kb": 12756,
+          "private_hugetlb_kb": 0,
+          "private_kb": 12756
+        },
+        "started_elapsed_ns": 132596873,
+        "ended_elapsed_ns": 139039632,
+        "complete": true
+      },
+      {
+        "pid": 15111,
+        "parent": 14945,
+        "start_ticks": "74650",
+        "role": "renderer",
+        "role_sources": [
+          {
+            "source": "cmdline_type",
+            "role": "zygote"
+          },
+          {
+            "source": "thread:15128",
+            "role": "renderer"
+          }
+        ],
+        "seccomp": 2,
+        "no_new_privs": 1,
+        "seccomp_filters": 1,
+        "sandbox_flags": [],
+        "threads": [
+          {
+            "tid": 15111,
+            "start_ticks": "74650",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15112,
+            "start_ticks": "74650",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15113,
+            "start_ticks": "74650",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15114,
+            "start_ticks": "74650",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15115,
+            "start_ticks": "74650",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15116,
+            "start_ticks": "74650",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15117,
+            "start_ticks": "74650",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15118,
+            "start_ticks": "74651",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15128,
+            "start_ticks": "74652",
+            "role_hint": "renderer",
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15130,
+            "start_ticks": "74652",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15131,
+            "start_ticks": "74653",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15136,
+            "start_ticks": "74656",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          }
+        ],
+        "threads_complete": true,
+        "fds": {
+          "total": 138,
+          "inspected": 138,
+          "complete": true,
+          "types": {
+            "dma_buf": 0,
+            "socket": 13,
+            "anon_inode": 8,
+            "pipe": 0,
+            "file": 117,
+            "unknown": 0
+          }
+        },
+        "memory": {
+          "pss_kb": 82480,
+          "private_clean_kb": 29248,
+          "private_dirty_kb": 19592,
+          "private_hugetlb_kb": 0,
+          "private_kb": 48840
+        },
+        "started_elapsed_ns": 139047852,
+        "ended_elapsed_ns": 147882190,
+        "complete": true
+      },
+      {
+        "pid": 15122,
+        "parent": 14945,
+        "start_ticks": "74652",
+        "role": "renderer",
+        "role_sources": [
+          {
+            "source": "cmdline_type",
+            "role": "zygote"
+          },
+          {
+            "source": "thread:15133",
+            "role": "renderer"
+          }
+        ],
+        "seccomp": 2,
+        "no_new_privs": 1,
+        "seccomp_filters": 1,
+        "sandbox_flags": [],
+        "threads": [
+          {
+            "tid": 15122,
+            "start_ticks": "74652",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15123,
+            "start_ticks": "74652",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15124,
+            "start_ticks": "74652",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15125,
+            "start_ticks": "74652",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15126,
+            "start_ticks": "74652",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15127,
+            "start_ticks": "74652",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15129,
+            "start_ticks": "74652",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15132,
+            "start_ticks": "74653",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15133,
+            "start_ticks": "74655",
+            "role_hint": "renderer",
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15134,
+            "start_ticks": "74655",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15135,
+            "start_ticks": "74655",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          }
+        ],
+        "threads_complete": true,
+        "fds": {
+          "total": 112,
+          "inspected": 112,
+          "complete": true,
+          "types": {
+            "dma_buf": 0,
+            "socket": 7,
+            "anon_inode": 8,
+            "pipe": 0,
+            "file": 97,
+            "unknown": 0
+          }
+        },
+        "memory": {
+          "pss_kb": 30926,
+          "private_clean_kb": 0,
+          "private_dirty_kb": 12924,
+          "private_hugetlb_kb": 0,
+          "private_kb": 12924
+        },
+        "started_elapsed_ns": 147888020,
+        "ended_elapsed_ns": 154360079,
+        "complete": true
+      }
+    ],
+    "errors": [],
+    "omitted_errors": 0
+  },
+  "process_evidence_end": {
+    "schema_version": 1,
+    "host_pid": 14932,
+    "host_start_ticks": "74571",
+    "clock": "CLOCK_MONOTONIC",
+    "clock_observation": "native_syscall_bounds_around_collection",
+    "started_ns": 818642949987,
+    "ended_ns": 818759329518,
+    "complete": true,
+    "limits": {
+      "scanned_processes": 8192,
+      "processes": 256,
+      "threads_per_process": 1024,
+      "threads_total": 8192,
+      "fds_per_process": 4096,
+      "fds_total": 16384,
+      "bytes_total": 16777216,
+      "duration_ms": 15000,
+      "errors": 256
+    },
+    "scanned_processes": 499,
+    "bytes_read": 500091,
+    "processes": [
+      {
+        "pid": 14932,
+        "parent": 14915,
+        "start_ticks": "74571",
+        "role": "host",
+        "role_sources": [],
+        "seccomp": 0,
+        "no_new_privs": 0,
+        "seccomp_filters": 0,
+        "sandbox_flags": [],
+        "threads": [
+          {
+            "tid": 14932,
+            "start_ticks": "74571",
+            "role_hint": null,
+            "seccomp": 0,
+            "no_new_privs": 0,
+            "seccomp_filters": 0
+          },
+          {
+            "tid": 14940,
+            "start_ticks": "74576",
+            "role_hint": null,
+            "seccomp": 0,
+            "no_new_privs": 0,
+            "seccomp_filters": 0
+          },
+          {
+            "tid": 14946,
+            "start_ticks": "74579",
+            "role_hint": null,
+            "seccomp": 0,
+            "no_new_privs": 0,
+            "seccomp_filters": 0
+          },
+          {
+            "tid": 14947,
+            "start_ticks": "74579",
+            "role_hint": null,
+            "seccomp": 0,
+            "no_new_privs": 0,
+            "seccomp_filters": 0
+          },
+          {
+            "tid": 14948,
+            "start_ticks": "74579",
+            "role_hint": null,
+            "seccomp": 0,
+            "no_new_privs": 0,
+            "seccomp_filters": 0
+          },
+          {
+            "tid": 14949,
+            "start_ticks": "74579",
+            "role_hint": null,
+            "seccomp": 0,
+            "no_new_privs": 0,
+            "seccomp_filters": 0
+          },
+          {
+            "tid": 14950,
+            "start_ticks": "74579",
+            "role_hint": null,
+            "seccomp": 0,
+            "no_new_privs": 0,
+            "seccomp_filters": 0
+          },
+          {
+            "tid": 14951,
+            "start_ticks": "74579",
+            "role_hint": null,
+            "seccomp": 0,
+            "no_new_privs": 0,
+            "seccomp_filters": 0
+          },
+          {
+            "tid": 14952,
+            "start_ticks": "74579",
+            "role_hint": null,
+            "seccomp": 0,
+            "no_new_privs": 0,
+            "seccomp_filters": 0
+          },
+          {
+            "tid": 14953,
+            "start_ticks": "74579",
+            "role_hint": null,
+            "seccomp": 0,
+            "no_new_privs": 0,
+            "seccomp_filters": 0
+          },
+          {
+            "tid": 14954,
+            "start_ticks": "74579",
+            "role_hint": null,
+            "seccomp": 0,
+            "no_new_privs": 0,
+            "seccomp_filters": 0
+          },
+          {
+            "tid": 14955,
+            "start_ticks": "74579",
+            "role_hint": null,
+            "seccomp": 0,
+            "no_new_privs": 0,
+            "seccomp_filters": 0
+          },
+          {
+            "tid": 14957,
+            "start_ticks": "74581",
+            "role_hint": null,
+            "seccomp": 0,
+            "no_new_privs": 0,
+            "seccomp_filters": 0
+          },
+          {
+            "tid": 14958,
+            "start_ticks": "74581",
+            "role_hint": null,
+            "seccomp": 0,
+            "no_new_privs": 0,
+            "seccomp_filters": 0
+          },
+          {
+            "tid": 14959,
+            "start_ticks": "74581",
+            "role_hint": null,
+            "seccomp": 0,
+            "no_new_privs": 0,
+            "seccomp_filters": 0
+          },
+          {
+            "tid": 14961,
+            "start_ticks": "74582",
+            "role_hint": null,
+            "seccomp": 0,
+            "no_new_privs": 0,
+            "seccomp_filters": 0
+          },
+          {
+            "tid": 14965,
+            "start_ticks": "74587",
+            "role_hint": null,
+            "seccomp": 0,
+            "no_new_privs": 0,
+            "seccomp_filters": 0
+          },
+          {
+            "tid": 14966,
+            "start_ticks": "74588",
+            "role_hint": null,
+            "seccomp": 0,
+            "no_new_privs": 0,
+            "seccomp_filters": 0
+          },
+          {
+            "tid": 14968,
+            "start_ticks": "74588",
+            "role_hint": null,
+            "seccomp": 0,
+            "no_new_privs": 0,
+            "seccomp_filters": 0
+          },
+          {
+            "tid": 14969,
+            "start_ticks": "74588",
+            "role_hint": null,
+            "seccomp": 0,
+            "no_new_privs": 0,
+            "seccomp_filters": 0
+          },
+          {
+            "tid": 14970,
+            "start_ticks": "74588",
+            "role_hint": null,
+            "seccomp": 0,
+            "no_new_privs": 0,
+            "seccomp_filters": 0
+          },
+          {
+            "tid": 14971,
+            "start_ticks": "74588",
+            "role_hint": null,
+            "seccomp": 0,
+            "no_new_privs": 0,
+            "seccomp_filters": 0
+          },
+          {
+            "tid": 14972,
+            "start_ticks": "74588",
+            "role_hint": null,
+            "seccomp": 0,
+            "no_new_privs": 0,
+            "seccomp_filters": 0
+          },
+          {
+            "tid": 14973,
+            "start_ticks": "74588",
+            "role_hint": null,
+            "seccomp": 0,
+            "no_new_privs": 0,
+            "seccomp_filters": 0
+          },
+          {
+            "tid": 14974,
+            "start_ticks": "74588",
+            "role_hint": null,
+            "seccomp": 0,
+            "no_new_privs": 0,
+            "seccomp_filters": 0
+          },
+          {
+            "tid": 14975,
+            "start_ticks": "74588",
+            "role_hint": null,
+            "seccomp": 0,
+            "no_new_privs": 0,
+            "seccomp_filters": 0
+          },
+          {
+            "tid": 14977,
+            "start_ticks": "74588",
+            "role_hint": null,
+            "seccomp": 0,
+            "no_new_privs": 0,
+            "seccomp_filters": 0
+          },
+          {
+            "tid": 14991,
+            "start_ticks": "74589",
+            "role_hint": null,
+            "seccomp": 0,
+            "no_new_privs": 0,
+            "seccomp_filters": 0
+          },
+          {
+            "tid": 14993,
+            "start_ticks": "74589",
+            "role_hint": null,
+            "seccomp": 0,
+            "no_new_privs": 0,
+            "seccomp_filters": 0
+          },
+          {
+            "tid": 15025,
+            "start_ticks": "74594",
+            "role_hint": null,
+            "seccomp": 0,
+            "no_new_privs": 0,
+            "seccomp_filters": 0
+          },
+          {
+            "tid": 15026,
+            "start_ticks": "74594",
+            "role_hint": null,
+            "seccomp": 0,
+            "no_new_privs": 0,
+            "seccomp_filters": 0
+          },
+          {
+            "tid": 15034,
+            "start_ticks": "74594",
+            "role_hint": null,
+            "seccomp": 0,
+            "no_new_privs": 0,
+            "seccomp_filters": 0
+          },
+          {
+            "tid": 15036,
+            "start_ticks": "74595",
+            "role_hint": null,
+            "seccomp": 0,
+            "no_new_privs": 0,
+            "seccomp_filters": 0
+          },
+          {
+            "tid": 15037,
+            "start_ticks": "74595",
+            "role_hint": null,
+            "seccomp": 0,
+            "no_new_privs": 0,
+            "seccomp_filters": 0
+          },
+          {
+            "tid": 15038,
+            "start_ticks": "74595",
+            "role_hint": null,
+            "seccomp": 0,
+            "no_new_privs": 0,
+            "seccomp_filters": 0
+          },
+          {
+            "tid": 15039,
+            "start_ticks": "74595",
+            "role_hint": null,
+            "seccomp": 0,
+            "no_new_privs": 0,
+            "seccomp_filters": 0
+          },
+          {
+            "tid": 15040,
+            "start_ticks": "74595",
+            "role_hint": null,
+            "seccomp": 0,
+            "no_new_privs": 0,
+            "seccomp_filters": 0
+          },
+          {
+            "tid": 15041,
+            "start_ticks": "74595",
+            "role_hint": null,
+            "seccomp": 0,
+            "no_new_privs": 0,
+            "seccomp_filters": 0
+          },
+          {
+            "tid": 15042,
+            "start_ticks": "74595",
+            "role_hint": null,
+            "seccomp": 0,
+            "no_new_privs": 0,
+            "seccomp_filters": 0
+          },
+          {
+            "tid": 15058,
+            "start_ticks": "74605",
+            "role_hint": null,
+            "seccomp": 0,
+            "no_new_privs": 0,
+            "seccomp_filters": 0
+          },
+          {
+            "tid": 15059,
+            "start_ticks": "74605",
+            "role_hint": null,
+            "seccomp": 0,
+            "no_new_privs": 0,
+            "seccomp_filters": 0
+          }
+        ],
+        "threads_complete": true,
+        "fds": {
+          "total": 287,
+          "inspected": 287,
+          "complete": true,
+          "types": {
+            "dma_buf": 0,
+            "socket": 33,
+            "anon_inode": 17,
+            "pipe": 6,
+            "file": 231,
+            "unknown": 0
+          }
+        },
+        "memory": {
+          "pss_kb": 203497,
+          "private_clean_kb": 74036,
+          "private_dirty_kb": 84092,
+          "private_hugetlb_kb": 0,
+          "private_kb": 158128
+        },
+        "started_elapsed_ns": 38292597,
+        "ended_elapsed_ns": 54441156,
+        "complete": true
+      },
+      {
+        "pid": 14942,
+        "parent": 14932,
+        "start_ticks": "74576",
+        "role": "zygote",
+        "role_sources": [
+          {
+            "source": "cmdline_type",
+            "role": "zygote"
+          }
+        ],
+        "seccomp": 0,
+        "no_new_privs": 1,
+        "seccomp_filters": 0,
+        "sandbox_flags": [],
+        "threads": [
+          {
+            "tid": 14942,
+            "start_ticks": "74576",
+            "role_hint": null,
+            "seccomp": 0,
+            "no_new_privs": 1,
+            "seccomp_filters": 0
+          }
+        ],
+        "threads_complete": true,
+        "fds": {
+          "total": 96,
+          "inspected": 96,
+          "complete": true,
+          "types": {
+            "dma_buf": 0,
+            "socket": 4,
+            "anon_inode": 0,
+            "pipe": 0,
+            "file": 92,
+            "unknown": 0
+          }
+        },
+        "memory": {
+          "pss_kb": 17874,
+          "private_clean_kb": 0,
+          "private_dirty_kb": 580,
+          "private_hugetlb_kb": 0,
+          "private_kb": 580
+        },
+        "started_elapsed_ns": 54465786,
+        "ended_elapsed_ns": 57808385,
+        "complete": true
+      },
+      {
+        "pid": 14943,
+        "parent": 14932,
+        "start_ticks": "74576",
+        "role": "zygote",
+        "role_sources": [
+          {
+            "source": "cmdline_type",
+            "role": "zygote"
+          }
+        ],
+        "seccomp": 0,
+        "no_new_privs": 1,
+        "seccomp_filters": 0,
+        "sandbox_flags": [],
+        "threads": [
+          {
+            "tid": 14943,
+            "start_ticks": "74576",
+            "role_hint": null,
+            "seccomp": 0,
+            "no_new_privs": 1,
+            "seccomp_filters": 0
+          }
+        ],
+        "threads_complete": true,
+        "fds": {
+          "total": 96,
+          "inspected": 96,
+          "complete": true,
+          "types": {
+            "dma_buf": 0,
+            "socket": 4,
+            "anon_inode": 0,
+            "pipe": 0,
+            "file": 92,
+            "unknown": 0
+          }
+        },
+        "memory": {
+          "pss_kb": 14085,
+          "private_clean_kb": 4,
+          "private_dirty_kb": 176,
+          "private_hugetlb_kb": 0,
+          "private_kb": 180
+        },
+        "started_elapsed_ns": 57815855,
+        "ended_elapsed_ns": 60593455,
+        "complete": true
+      },
+      {
+        "pid": 14999,
+        "parent": 14932,
+        "start_ticks": "74589",
+        "role": "utility",
+        "role_sources": [
+          {
+            "source": "cmdline_type",
+            "role": "utility"
+          }
+        ],
+        "seccomp": 2,
+        "no_new_privs": 1,
+        "seccomp_filters": 1,
+        "sandbox_flags": [],
+        "threads": [
+          {
+            "tid": 14999,
+            "start_ticks": "74589",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15011,
+            "start_ticks": "74592",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15012,
+            "start_ticks": "74593",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15013,
+            "start_ticks": "74593",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15014,
+            "start_ticks": "74593",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15015,
+            "start_ticks": "74593",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15016,
+            "start_ticks": "74593",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15017,
+            "start_ticks": "74593",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15018,
+            "start_ticks": "74593",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15019,
+            "start_ticks": "74593",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15020,
+            "start_ticks": "74593",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15021,
+            "start_ticks": "74593",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15023,
+            "start_ticks": "74594",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15024,
+            "start_ticks": "74594",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          }
+        ],
+        "threads_complete": true,
+        "fds": {
+          "total": 128,
+          "inspected": 128,
+          "complete": true,
+          "types": {
+            "dma_buf": 0,
+            "socket": 15,
+            "anon_inode": 7,
+            "pipe": 0,
+            "file": 106,
+            "unknown": 0
+          }
+        },
+        "memory": {
+          "pss_kb": 44600,
+          "private_clean_kb": 6228,
+          "private_dirty_kb": 5724,
+          "private_hugetlb_kb": 0,
+          "private_kb": 11952
+        },
+        "started_elapsed_ns": 60597005,
+        "ended_elapsed_ns": 66835295,
+        "complete": true
+      },
+      {
+        "pid": 14997,
+        "parent": 14942,
+        "start_ticks": "74589",
+        "role": "gpu-process",
+        "role_sources": [
+          {
+            "source": "cmdline_type",
+            "role": "zygote"
+          },
+          {
+            "source": "thread:15101",
+            "role": "gpu-process"
+          }
+        ],
+        "seccomp": 2,
+        "no_new_privs": 1,
+        "seccomp_filters": 1,
+        "sandbox_flags": [],
+        "threads": [
+          {
+            "tid": 14997,
+            "start_ticks": "74589",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15078,
+            "start_ticks": "74625",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15079,
+            "start_ticks": "74625",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15080,
+            "start_ticks": "74626",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15082,
+            "start_ticks": "74628",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15083,
+            "start_ticks": "74628",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15085,
+            "start_ticks": "74629",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15086,
+            "start_ticks": "74629",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15091,
+            "start_ticks": "74637",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15092,
+            "start_ticks": "74637",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15093,
+            "start_ticks": "74638",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15094,
+            "start_ticks": "74638",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15095,
+            "start_ticks": "74638",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15096,
+            "start_ticks": "74638",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15097,
+            "start_ticks": "74638",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15098,
+            "start_ticks": "74638",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15099,
+            "start_ticks": "74638",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15100,
+            "start_ticks": "74638",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15101,
+            "start_ticks": "74638",
+            "role_hint": "gpu-process",
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15102,
+            "start_ticks": "74640",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          }
+        ],
+        "threads_complete": true,
+        "fds": {
+          "total": 185,
+          "inspected": 185,
+          "complete": true,
+          "types": {
+            "dma_buf": 4,
+            "socket": 12,
+            "anon_inode": 14,
+            "pipe": 2,
+            "file": 153,
+            "unknown": 0
+          }
+        },
+        "memory": {
+          "pss_kb": 149432,
+          "private_clean_kb": 51724,
+          "private_dirty_kb": 61256,
+          "private_hugetlb_kb": 0,
+          "private_kb": 112980
+        },
+        "started_elapsed_ns": 66839125,
+        "ended_elapsed_ns": 77059634,
+        "complete": true
+      },
+      {
+        "pid": 14945,
+        "parent": 14943,
+        "start_ticks": "74579",
+        "role": "zygote",
+        "role_sources": [
+          {
+            "source": "cmdline_type",
+            "role": "zygote"
+          }
+        ],
+        "seccomp": 0,
+        "no_new_privs": 1,
+        "seccomp_filters": 0,
+        "sandbox_flags": [],
+        "threads": [
+          {
+            "tid": 14945,
+            "start_ticks": "74579",
+            "role_hint": null,
+            "seccomp": 0,
+            "no_new_privs": 1,
+            "seccomp_filters": 0
+          }
+        ],
+        "threads_complete": true,
+        "fds": {
+          "total": 97,
+          "inspected": 97,
+          "complete": true,
+          "types": {
+            "dma_buf": 0,
+            "socket": 4,
+            "anon_inode": 0,
+            "pipe": 0,
+            "file": 93,
+            "unknown": 0
+          }
+        },
+        "memory": {
+          "pss_kb": 3725,
+          "private_clean_kb": 0,
+          "private_dirty_kb": 268,
+          "private_hugetlb_kb": 0,
+          "private_kb": 268
+        },
+        "started_elapsed_ns": 77065484,
+        "ended_elapsed_ns": 79625494,
+        "complete": true
+      },
+      {
+        "pid": 15010,
+        "parent": 14999,
+        "start_ticks": "74592",
+        "role": "utility",
+        "role_sources": [
+          {
+            "source": "cmdline_type",
+            "role": "utility"
+          }
+        ],
+        "seccomp": 2,
+        "no_new_privs": 1,
+        "seccomp_filters": 1,
+        "sandbox_flags": [],
+        "threads": [
+          {
+            "tid": 15010,
+            "start_ticks": "74592",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          }
+        ],
+        "threads_complete": true,
+        "fds": {
+          "total": 97,
+          "inspected": 97,
+          "complete": true,
+          "types": {
+            "dma_buf": 0,
+            "socket": 4,
+            "anon_inode": 0,
+            "pipe": 0,
+            "file": 93,
+            "unknown": 0
+          }
+        },
+        "memory": {
+          "pss_kb": 10700,
+          "private_clean_kb": 0,
+          "private_dirty_kb": 808,
+          "private_hugetlb_kb": 0,
+          "private_kb": 808
+        },
+        "started_elapsed_ns": 79629654,
+        "ended_elapsed_ns": 81866783,
+        "complete": true
+      },
+      {
+        "pid": 15008,
+        "parent": 14997,
+        "start_ticks": "74590",
+        "role": "zygote",
+        "role_sources": [
+          {
+            "source": "cmdline_type",
+            "role": "zygote"
+          }
+        ],
+        "seccomp": 2,
+        "no_new_privs": 1,
+        "seccomp_filters": 1,
+        "sandbox_flags": [],
+        "threads": [
+          {
+            "tid": 15008,
+            "start_ticks": "74590",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          }
+        ],
+        "threads_complete": true,
+        "fds": {
+          "total": 97,
+          "inspected": 97,
+          "complete": true,
+          "types": {
+            "dma_buf": 0,
+            "socket": 5,
+            "anon_inode": 0,
+            "pipe": 0,
+            "file": 92,
+            "unknown": 0
+          }
+        },
+        "memory": {
+          "pss_kb": 8180,
+          "private_clean_kb": 0,
+          "private_dirty_kb": 1216,
+          "private_hugetlb_kb": 0,
+          "private_kb": 1216
+        },
+        "started_elapsed_ns": 81871593,
+        "ended_elapsed_ns": 84103643,
+        "complete": true
+      },
+      {
+        "pid": 15022,
+        "parent": 14945,
+        "start_ticks": "74593",
+        "role": "zygote",
+        "role_sources": [
+          {
+            "source": "cmdline_type",
+            "role": "zygote"
+          }
+        ],
+        "seccomp": 2,
+        "no_new_privs": 1,
+        "seccomp_filters": 1,
+        "sandbox_flags": [],
+        "threads": [
+          {
+            "tid": 15022,
+            "start_ticks": "74593",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15027,
+            "start_ticks": "74594",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15028,
+            "start_ticks": "74594",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15029,
+            "start_ticks": "74594",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15030,
+            "start_ticks": "74594",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15031,
+            "start_ticks": "74594",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15032,
+            "start_ticks": "74594",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15033,
+            "start_ticks": "74594",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15035,
+            "start_ticks": "74594",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          }
+        ],
+        "threads_complete": true,
+        "fds": {
+          "total": 111,
+          "inspected": 111,
+          "complete": true,
+          "types": {
+            "dma_buf": 0,
+            "socket": 7,
+            "anon_inode": 6,
+            "pipe": 0,
+            "file": 98,
+            "unknown": 0
+          }
+        },
+        "memory": {
+          "pss_kb": 11115,
+          "private_clean_kb": 0,
+          "private_dirty_kb": 2492,
+          "private_hugetlb_kb": 0,
+          "private_kb": 2492
+        },
+        "started_elapsed_ns": 84108543,
+        "ended_elapsed_ns": 88471493,
+        "complete": true
+      },
+      {
+        "pid": 15043,
+        "parent": 14945,
+        "start_ticks": "74596",
+        "role": "zygote",
+        "role_sources": [
+          {
+            "source": "cmdline_type",
+            "role": "zygote"
+          }
+        ],
+        "seccomp": 2,
+        "no_new_privs": 1,
+        "seccomp_filters": 1,
+        "sandbox_flags": [],
+        "threads": [
+          {
+            "tid": 15043,
+            "start_ticks": "74596",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15044,
+            "start_ticks": "74596",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15045,
+            "start_ticks": "74596",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15046,
+            "start_ticks": "74596",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15047,
+            "start_ticks": "74596",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15048,
+            "start_ticks": "74596",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15049,
+            "start_ticks": "74596",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15050,
+            "start_ticks": "74596",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          }
+        ],
+        "threads_complete": true,
+        "fds": {
+          "total": 119,
+          "inspected": 119,
+          "complete": true,
+          "types": {
+            "dma_buf": 0,
+            "socket": 11,
+            "anon_inode": 6,
+            "pipe": 0,
+            "file": 102,
+            "unknown": 0
+          }
+        },
+        "memory": {
+          "pss_kb": 41246,
+          "private_clean_kb": 0,
+          "private_dirty_kb": 29264,
+          "private_hugetlb_kb": 0,
+          "private_kb": 29264
+        },
+        "started_elapsed_ns": 88481323,
+        "ended_elapsed_ns": 93443202,
+        "complete": true
+      },
+      {
+        "pid": 15103,
+        "parent": 14945,
+        "start_ticks": "74648",
+        "role": "renderer",
+        "role_sources": [
+          {
+            "source": "cmdline_type",
+            "role": "zygote"
+          },
+          {
+            "source": "thread:15119",
+            "role": "renderer"
+          }
+        ],
+        "seccomp": 2,
+        "no_new_privs": 1,
+        "seccomp_filters": 1,
+        "sandbox_flags": [],
+        "threads": [
+          {
+            "tid": 15103,
+            "start_ticks": "74648",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15104,
+            "start_ticks": "74649",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15105,
+            "start_ticks": "74649",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15106,
+            "start_ticks": "74649",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15107,
+            "start_ticks": "74649",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15108,
+            "start_ticks": "74649",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15109,
+            "start_ticks": "74649",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15110,
+            "start_ticks": "74649",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15119,
+            "start_ticks": "74651",
+            "role_hint": "renderer",
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15120,
+            "start_ticks": "74651",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15121,
+            "start_ticks": "74651",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15216,
+            "start_ticks": "77661",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15217,
+            "start_ticks": "77661",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15218,
+            "start_ticks": "77661",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15219,
+            "start_ticks": "77661",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15227,
+            "start_ticks": "77722",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15228,
+            "start_ticks": "77722",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          }
+        ],
+        "threads_complete": true,
+        "fds": {
+          "total": 112,
+          "inspected": 112,
+          "complete": true,
+          "types": {
+            "dma_buf": 0,
+            "socket": 7,
+            "anon_inode": 8,
+            "pipe": 0,
+            "file": 97,
+            "unknown": 0
+          }
+        },
+        "memory": {
+          "pss_kb": 34837,
+          "private_clean_kb": 0,
+          "private_dirty_kb": 12380,
+          "private_hugetlb_kb": 0,
+          "private_kb": 12380
+        },
+        "started_elapsed_ns": 93448562,
+        "ended_elapsed_ns": 100569122,
+        "complete": true
+      },
+      {
+        "pid": 15111,
+        "parent": 14945,
+        "start_ticks": "74650",
+        "role": "renderer",
+        "role_sources": [
+          {
+            "source": "cmdline_type",
+            "role": "zygote"
+          },
+          {
+            "source": "thread:15128",
+            "role": "renderer"
+          }
+        ],
+        "seccomp": 2,
+        "no_new_privs": 1,
+        "seccomp_filters": 1,
+        "sandbox_flags": [],
+        "threads": [
+          {
+            "tid": 15111,
+            "start_ticks": "74650",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15112,
+            "start_ticks": "74650",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15113,
+            "start_ticks": "74650",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15114,
+            "start_ticks": "74650",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15115,
+            "start_ticks": "74650",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15116,
+            "start_ticks": "74650",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15117,
+            "start_ticks": "74650",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15118,
+            "start_ticks": "74651",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15128,
+            "start_ticks": "74652",
+            "role_hint": "renderer",
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15130,
+            "start_ticks": "74652",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15131,
+            "start_ticks": "74653",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15136,
+            "start_ticks": "74656",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15139,
+            "start_ticks": "74711",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15140,
+            "start_ticks": "74711",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15141,
+            "start_ticks": "74711",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15142,
+            "start_ticks": "74711",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15143,
+            "start_ticks": "74711",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15144,
+            "start_ticks": "74711",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15145,
+            "start_ticks": "74711",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15146,
+            "start_ticks": "74711",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15147,
+            "start_ticks": "74711",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15148,
+            "start_ticks": "74711",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15149,
+            "start_ticks": "74711",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15150,
+            "start_ticks": "74711",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 16530,
+            "start_ticks": "80850",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          }
+        ],
+        "threads_complete": true,
+        "fds": {
+          "total": 135,
+          "inspected": 135,
+          "complete": true,
+          "types": {
+            "dma_buf": 0,
+            "socket": 13,
+            "anon_inode": 8,
+            "pipe": 0,
+            "file": 114,
+            "unknown": 0
+          }
+        },
+        "memory": {
+          "pss_kb": 93677,
+          "private_clean_kb": 39232,
+          "private_dirty_kb": 19104,
+          "private_hugetlb_kb": 0,
+          "private_kb": 58336
+        },
+        "started_elapsed_ns": 100573942,
+        "ended_elapsed_ns": 109164931,
+        "complete": true
+      },
+      {
+        "pid": 15122,
+        "parent": 14945,
+        "start_ticks": "74652",
+        "role": "renderer",
+        "role_sources": [
+          {
+            "source": "cmdline_type",
+            "role": "zygote"
+          },
+          {
+            "source": "thread:15133",
+            "role": "renderer"
+          }
+        ],
+        "seccomp": 2,
+        "no_new_privs": 1,
+        "seccomp_filters": 1,
+        "sandbox_flags": [],
+        "threads": [
+          {
+            "tid": 15122,
+            "start_ticks": "74652",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15123,
+            "start_ticks": "74652",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15124,
+            "start_ticks": "74652",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15125,
+            "start_ticks": "74652",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15126,
+            "start_ticks": "74652",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15127,
+            "start_ticks": "74652",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15129,
+            "start_ticks": "74652",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15132,
+            "start_ticks": "74653",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15133,
+            "start_ticks": "74655",
+            "role_hint": "renderer",
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15134,
+            "start_ticks": "74655",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15135,
+            "start_ticks": "74655",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15220,
+            "start_ticks": "77665",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15221,
+            "start_ticks": "77665",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15222,
+            "start_ticks": "77665",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15223,
+            "start_ticks": "77665",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15229,
+            "start_ticks": "77725",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15230,
+            "start_ticks": "77725",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          },
+          {
+            "tid": 15231,
+            "start_ticks": "77725",
+            "role_hint": null,
+            "seccomp": 2,
+            "no_new_privs": 1,
+            "seccomp_filters": 1
+          }
+        ],
+        "threads_complete": true,
+        "fds": {
+          "total": 112,
+          "inspected": 112,
+          "complete": true,
+          "types": {
+            "dma_buf": 0,
+            "socket": 7,
+            "anon_inode": 8,
+            "pipe": 0,
+            "file": 97,
+            "unknown": 0
+          }
+        },
+        "memory": {
+          "pss_kb": 35265,
+          "private_clean_kb": 0,
+          "private_dirty_kb": 12716,
+          "private_hugetlb_kb": 0,
+          "private_kb": 12716
+        },
+        "started_elapsed_ns": 109169841,
+        "ended_elapsed_ns": 115255581,
+        "complete": true
+      }
+    ],
+    "errors": [],
+    "omitted_errors": 0
+  },
+  "processes": [
+    {
+      "pid": 14932,
+      "parent": 14915,
+      "start_ticks": 74571,
+      "role": "host",
+      "comm": "paneflow-browse",
+      "seccomp": 0,
+      "no_new_privs": 0,
+      "user_namespace": "user:[4026531837]",
+      "pid_namespace": "pid:[4026531836]",
+      "sandbox_disabled": false
+    },
+    {
+      "pid": 14942,
+      "parent": 14932,
+      "start_ticks": 74576,
+      "role": "zygote",
+      "comm": "paneflow-browse",
+      "seccomp": 0,
+      "no_new_privs": 1,
+      "user_namespace": "user:[4026531837]",
+      "pid_namespace": "pid:[4026531836]",
+      "sandbox_disabled": false
+    },
+    {
+      "pid": 14943,
+      "parent": 14932,
+      "start_ticks": 74576,
+      "role": "zygote",
+      "comm": "paneflow-browse",
+      "seccomp": 0,
+      "no_new_privs": 1,
+      "user_namespace": "user:[4026533564]",
+      "pid_namespace": "pid:[4026533249]",
+      "sandbox_disabled": false
+    },
+    {
+      "pid": 14945,
+      "parent": 14943,
+      "start_ticks": 74579,
+      "role": "zygote",
+      "comm": "paneflow-browse",
+      "seccomp": 0,
+      "no_new_privs": 1,
+      "user_namespace": "user:[4026533564]",
+      "pid_namespace": "pid:[4026533249]",
+      "sandbox_disabled": false
+    },
+    {
+      "pid": 14997,
+      "parent": 14942,
+      "start_ticks": 74589,
+      "role": "gpu-process",
+      "comm": "paneflow-browse",
+      "seccomp": 2,
+      "no_new_privs": 1,
+      "user_namespace": "user:[4026531837]",
+      "pid_namespace": "pid:[4026531836]",
+      "sandbox_disabled": false,
+      "trace_name": "GPU Process",
+      "role_evidence": "Chromium trace process_name metadata joined to live /proc PID"
+    },
+    {
+      "pid": 14999,
+      "parent": 14932,
+      "start_ticks": 74589,
+      "role": "utility",
+      "comm": "paneflow-browse",
+      "seccomp": 2,
+      "no_new_privs": 1,
+      "user_namespace": "user:[4026531837]",
+      "pid_namespace": "pid:[4026531836]",
+      "sandbox_disabled": false
+    },
+    {
+      "pid": 15008,
+      "parent": 14997,
+      "start_ticks": 74590,
+      "role": "zygote",
+      "comm": "paneflow-browse",
+      "seccomp": 2,
+      "no_new_privs": 1,
+      "user_namespace": "user:[4026531837]",
+      "pid_namespace": "pid:[4026531836]",
+      "sandbox_disabled": false
+    },
+    {
+      "pid": 15010,
+      "parent": 14999,
+      "start_ticks": 74592,
+      "role": "utility",
+      "comm": "paneflow-browse",
+      "seccomp": 2,
+      "no_new_privs": 1,
+      "user_namespace": "user:[4026531837]",
+      "pid_namespace": "pid:[4026531836]",
+      "sandbox_disabled": false
+    },
+    {
+      "pid": 15022,
+      "parent": 14945,
+      "start_ticks": 74593,
+      "role": "zygote",
+      "comm": "paneflow-browse",
+      "seccomp": 2,
+      "no_new_privs": 1,
+      "user_namespace": "user:[4026533564]",
+      "pid_namespace": "pid:[4026533184]",
+      "sandbox_disabled": false
+    },
+    {
+      "pid": 15043,
+      "parent": 14945,
+      "start_ticks": 74596,
+      "role": "zygote",
+      "comm": "paneflow-browse",
+      "seccomp": 2,
+      "no_new_privs": 1,
+      "user_namespace": "user:[4026533564]",
+      "pid_namespace": "pid:[4026533246]",
+      "sandbox_disabled": false,
+      "trace_name": "Service: tracing.mojom.TracingService",
+      "role_evidence": "Chromium trace process_name metadata joined to live /proc PID"
+    },
+    {
+      "pid": 15103,
+      "parent": 14945,
+      "start_ticks": 74648,
+      "role": "zygote",
+      "comm": "paneflow-browse",
+      "seccomp": 2,
+      "no_new_privs": 1,
+      "user_namespace": "user:[4026533564]",
+      "pid_namespace": "pid:[4026533566]",
+      "sandbox_disabled": false
+    },
+    {
+      "pid": 15111,
+      "parent": 14945,
+      "start_ticks": 74650,
+      "role": "renderer",
+      "comm": "paneflow-browse",
+      "seccomp": 2,
+      "no_new_privs": 1,
+      "user_namespace": "user:[4026533564]",
+      "pid_namespace": "pid:[4026533567]",
+      "sandbox_disabled": false,
+      "trace_name": "Renderer",
+      "role_evidence": "Chromium trace process_name metadata joined to live /proc PID"
+    },
+    {
+      "pid": 15122,
+      "parent": 14945,
+      "start_ticks": 74652,
+      "role": "zygote",
+      "comm": "paneflow-browse",
+      "seccomp": 2,
+      "no_new_privs": 1,
+      "user_namespace": "user:[4026533564]",
+      "pid_namespace": "pid:[4026533568]",
+      "sandbox_disabled": false
+    }
+  ],
+  "events": [
+    {
+      "elapsed_ns": 255904478,
+      "native": "initialized",
+      "pid": 14932,
+      "sandbox_requested": true,
+      "contract_version": 2,
+      "presentation": false,
+      "protocol": {
+        "version": 2,
+        "operation": "hello",
+        "result": {
+          "Ok": {
+            "type": "capabilities",
+            "target": "x86_64-linux",
+            "availability": "development",
+            "contract_version": 2,
+            "terminal_available": true
+          }
+        }
+      },
+      "trace_us": 745958792
+    },
+    {
+      "elapsed_ns": 705850537,
+      "native": "trace_started",
+      "trace_us": 746409034
+    },
+    {
+      "elapsed_ns": 726112522,
+      "protocol": {
+        "version": 2,
+        "operation": "create",
+        "result": {
+          "Ok": {
+            "type": "state",
+            "session": {
+              "document": {
+                "owner": {
+                  "workspace": "witness",
+                  "session": "qualification"
+                },
+                "browser": "fixture",
+                "generation": 1
+              },
+              "profile": "isolated",
+              "url": "http://127.0.0.1:45637/animation",
+              "title": "Qualification fixture",
+              "state": "dormant",
+              "presentation": {
+                "mounted": false,
+                "visible": false,
+                "width": 0,
+                "height": 0,
+                "generation": 0,
+                "scale_percent": 100
+              }
+            }
+          }
+        }
+      },
+      "trace_us": 746429331
+    },
+    {
+      "elapsed_ns": 746359078,
+      "native": "browser_create_requested",
+      "document": {
+        "owner": {
+          "workspace": "witness",
+          "session": "qualification"
+        },
+        "browser": "fixture",
+        "generation": 1
+      },
+      "trace_us": 746449595
+    },
+    {
+      "elapsed_ns": 782136121,
+      "native": "created",
+      "cef_browser_id": 1,
+      "native_window": 1,
+      "trace_us": 746485326
+    },
+    {
+      "elapsed_ns": 807565886,
+      "native": "window_fullscreen",
+      "completed": true,
+      "fullscreen": true,
+      "width": 1920,
+      "height": 1080,
+      "trace_us": 746510794
+    },
+    {
+      "elapsed_ns": 807615486,
+      "protocol": {
+        "version": 2,
+        "operation": "start",
+        "result": {
+          "Ok": {
+            "type": "state",
+            "session": {
+              "document": {
+                "owner": {
+                  "workspace": "witness",
+                  "session": "qualification"
+                },
+                "browser": "fixture",
+                "generation": 1
+              },
+              "profile": "isolated",
+              "url": "http://127.0.0.1:45637/animation",
+              "title": "Qualification fixture",
+              "state": "hidden",
+              "presentation": {
+                "mounted": false,
+                "visible": false,
+                "width": 0,
+                "height": 0,
+                "generation": 0,
+                "scale_percent": 100
+              }
+            }
+          }
+        }
+      },
+      "trace_us": 746510826
+    },
+    {
+      "elapsed_ns": 867511844,
+      "native": "address",
+      "url": "http://127.0.0.1:45637/animation",
+      "trace_us": 746570720
+    },
+    {
+      "elapsed_ns": 869967093,
+      "native": "title",
+      "title": "Paneflow browser qualification",
+      "trace_us": 746573212
+    },
+    {
+      "elapsed_ns": 898367778,
+      "native": "loaded",
+      "http_status": 200,
+      "trace_us": 746601543
+    },
+    {
+      "elapsed_ns": 898881548,
+      "native": "title",
+      "title": "Paneflow browser qualification",
+      "trace_us": 746602160
+    },
+    {
+      "elapsed_ns": 900710777,
+      "native": "fixture_state",
+      "state": {
+        "state": "ready",
+        "width": 1920,
+        "height": 1080,
+        "scale": 1,
+        "visibility": "visible",
+        "clicks": 0,
+        "keys": 0,
+        "wheel": 0
+      },
+      "trace_us": 746602905
+    },
+    {
+      "elapsed_ns": 1899765925,
+      "native": "fixture_state",
+      "state": {
+        "state": "ready",
+        "width": 1920,
+        "height": 1080,
+        "scale": 1,
+        "visibility": "visible",
+        "clicks": 0,
+        "keys": 0,
+        "wheel": 0
+      },
+      "trace_us": 747602979
+    },
+    {
+      "elapsed_ns": 2899645462,
+      "native": "fixture_state",
+      "state": {
+        "state": "ready",
+        "width": 1920,
+        "height": 1080,
+        "scale": 1,
+        "visibility": "visible",
+        "clicks": 0,
+        "keys": 0,
+        "wheel": 0
+      },
+      "trace_us": 748602864
+    },
+    {
+      "elapsed_ns": 3899636989,
+      "native": "fixture_state",
+      "state": {
+        "state": "ready",
+        "width": 1920,
+        "height": 1080,
+        "scale": 1,
+        "visibility": "visible",
+        "clicks": 0,
+        "keys": 0,
+        "wheel": 0
+      },
+      "trace_us": 749602858
+    },
+    {
+      "elapsed_ns": 4899584346,
+      "native": "fixture_state",
+      "state": {
+        "state": "ready",
+        "width": 1920,
+        "height": 1080,
+        "scale": 1,
+        "visibility": "visible",
+        "clicks": 0,
+        "keys": 0,
+        "wheel": 0
+      },
+      "trace_us": 750602807
+    },
+    {
+      "elapsed_ns": 5899602214,
+      "native": "fixture_state",
+      "state": {
+        "state": "ready",
+        "width": 1920,
+        "height": 1080,
+        "scale": 1,
+        "visibility": "visible",
+        "clicks": 0,
+        "keys": 0,
+        "wheel": 0
+      },
+      "trace_us": 751602836
+    },
+    {
+      "elapsed_ns": 6899565361,
+      "native": "fixture_state",
+      "state": {
+        "state": "ready",
+        "width": 1920,
+        "height": 1080,
+        "scale": 1,
+        "visibility": "visible",
+        "clicks": 0,
+        "keys": 0,
+        "wheel": 0
+      },
+      "trace_us": 752602819
+    },
+    {
+      "elapsed_ns": 7899593189,
+      "native": "fixture_state",
+      "state": {
+        "state": "ready",
+        "width": 1920,
+        "height": 1080,
+        "scale": 1,
+        "visibility": "visible",
+        "clicks": 0,
+        "keys": 0,
+        "wheel": 0
+      },
+      "trace_us": 753602828
+    },
+    {
+      "elapsed_ns": 8899523706,
+      "native": "fixture_state",
+      "state": {
+        "state": "ready",
+        "width": 1920,
+        "height": 1080,
+        "scale": 1,
+        "visibility": "visible",
+        "clicks": 0,
+        "keys": 0,
+        "wheel": 0
+      },
+      "trace_us": 754602764
+    },
+    {
+      "elapsed_ns": 9899609762,
+      "native": "fixture_state",
+      "state": {
+        "state": "ready",
+        "width": 1920,
+        "height": 1080,
+        "scale": 1,
+        "visibility": "visible",
+        "clicks": 0,
+        "keys": 0,
+        "wheel": 0
+      },
+      "trace_us": 755602855
+    },
+    {
+      "elapsed_ns": 10899439750,
+      "native": "fixture_state",
+      "state": {
+        "state": "ready",
+        "width": 1920,
+        "height": 1080,
+        "scale": 1,
+        "visibility": "visible",
+        "clicks": 0,
+        "keys": 0,
+        "wheel": 0
+      },
+      "trace_us": 756602697
+    },
+    {
+      "elapsed_ns": 11899449018,
+      "native": "fixture_state",
+      "state": {
+        "state": "ready",
+        "width": 1920,
+        "height": 1080,
+        "scale": 1,
+        "visibility": "visible",
+        "clicks": 0,
+        "keys": 0,
+        "wheel": 0
+      },
+      "trace_us": 757602683
+    },
+    {
+      "elapsed_ns": 12899458817,
+      "native": "fixture_state",
+      "state": {
+        "state": "ready",
+        "width": 1920,
+        "height": 1080,
+        "scale": 1,
+        "visibility": "visible",
+        "clicks": 0,
+        "keys": 0,
+        "wheel": 0
+      },
+      "trace_us": 758602718
+    },
+    {
+      "elapsed_ns": 13899453096,
+      "native": "fixture_state",
+      "state": {
+        "state": "ready",
+        "width": 1920,
+        "height": 1080,
+        "scale": 1,
+        "visibility": "visible",
+        "clicks": 0,
+        "keys": 0,
+        "wheel": 0
+      },
+      "trace_us": 759602696
+    },
+    {
+      "elapsed_ns": 14899426583,
+      "native": "fixture_state",
+      "state": {
+        "state": "ready",
+        "width": 1920,
+        "height": 1080,
+        "scale": 1,
+        "visibility": "visible",
+        "clicks": 0,
+        "keys": 0,
+        "wheel": 0
+      },
+      "trace_us": 760602690
+    },
+    {
+      "elapsed_ns": 15899423440,
+      "native": "fixture_state",
+      "state": {
+        "state": "ready",
+        "width": 1920,
+        "height": 1080,
+        "scale": 1,
+        "visibility": "visible",
+        "clicks": 0,
+        "keys": 0,
+        "wheel": 0
+      },
+      "trace_us": 761602679
+    },
+    {
+      "elapsed_ns": 16899440268,
+      "native": "fixture_state",
+      "state": {
+        "state": "ready",
+        "width": 1920,
+        "height": 1080,
+        "scale": 1,
+        "visibility": "visible",
+        "clicks": 0,
+        "keys": 0,
+        "wheel": 0
+      },
+      "trace_us": 762602700
+    },
+    {
+      "elapsed_ns": 17899428854,
+      "native": "fixture_state",
+      "state": {
+        "state": "ready",
+        "width": 1920,
+        "height": 1080,
+        "scale": 1,
+        "visibility": "visible",
+        "clicks": 0,
+        "keys": 0,
+        "wheel": 0
+      },
+      "trace_us": 763602692
+    },
+    {
+      "elapsed_ns": 18899402312,
+      "native": "fixture_state",
+      "state": {
+        "state": "ready",
+        "width": 1920,
+        "height": 1080,
+        "scale": 1,
+        "visibility": "visible",
+        "clicks": 0,
+        "keys": 0,
+        "wheel": 0
+      },
+      "trace_us": 764602664
+    },
+    {
+      "elapsed_ns": 19899435491,
+      "native": "fixture_state",
+      "state": {
+        "state": "ready",
+        "width": 1920,
+        "height": 1080,
+        "scale": 1,
+        "visibility": "visible",
+        "clicks": 0,
+        "keys": 0,
+        "wheel": 0
+      },
+      "trace_us": 765602688
+    },
+    {
+      "elapsed_ns": 20899394930,
+      "native": "fixture_state",
+      "state": {
+        "state": "ready",
+        "width": 1920,
+        "height": 1080,
+        "scale": 1,
+        "visibility": "visible",
+        "clicks": 0,
+        "keys": 0,
+        "wheel": 0
+      },
+      "trace_us": 766602646
+    },
+    {
+      "elapsed_ns": 21899423298,
+      "native": "fixture_state",
+      "state": {
+        "state": "ready",
+        "width": 1920,
+        "height": 1080,
+        "scale": 1,
+        "visibility": "visible",
+        "clicks": 0,
+        "keys": 0,
+        "wheel": 0
+      },
+      "trace_us": 767602674
+    },
+    {
+      "elapsed_ns": 22899401056,
+      "native": "fixture_state",
+      "state": {
+        "state": "ready",
+        "width": 1920,
+        "height": 1080,
+        "scale": 1,
+        "visibility": "visible",
+        "clicks": 0,
+        "keys": 0,
+        "wheel": 0
+      },
+      "trace_us": 768602639
+    },
+    {
+      "elapsed_ns": 23899426925,
+      "native": "fixture_state",
+      "state": {
+        "state": "ready",
+        "width": 1920,
+        "height": 1080,
+        "scale": 1,
+        "visibility": "visible",
+        "clicks": 0,
+        "keys": 0,
+        "wheel": 0
+      },
+      "trace_us": 769602651
+    },
+    {
+      "elapsed_ns": 24899393454,
+      "native": "fixture_state",
+      "state": {
+        "state": "ready",
+        "width": 1920,
+        "height": 1080,
+        "scale": 1,
+        "visibility": "visible",
+        "clicks": 0,
+        "keys": 0,
+        "wheel": 0
+      },
+      "trace_us": 770602629
+    },
+    {
+      "elapsed_ns": 25899396243,
+      "native": "fixture_state",
+      "state": {
+        "state": "ready",
+        "width": 1920,
+        "height": 1080,
+        "scale": 1,
+        "visibility": "visible",
+        "clicks": 0,
+        "keys": 0,
+        "wheel": 0
+      },
+      "trace_us": 771602661
+    },
+    {
+      "elapsed_ns": 26899443409,
+      "native": "fixture_state",
+      "state": {
+        "state": "ready",
+        "width": 1920,
+        "height": 1080,
+        "scale": 1,
+        "visibility": "visible",
+        "clicks": 0,
+        "keys": 0,
+        "wheel": 0
+      },
+      "trace_us": 772602659
+    },
+    {
+      "elapsed_ns": 27899361358,
+      "native": "fixture_state",
+      "state": {
+        "state": "ready",
+        "width": 1920,
+        "height": 1080,
+        "scale": 1,
+        "visibility": "visible",
+        "clicks": 0,
+        "keys": 0,
+        "wheel": 0
+      },
+      "trace_us": 773602616
+    },
+    {
+      "elapsed_ns": 28899404216,
+      "native": "fixture_state",
+      "state": {
+        "state": "ready",
+        "width": 1920,
+        "height": 1080,
+        "scale": 1,
+        "visibility": "visible",
+        "clicks": 0,
+        "keys": 0,
+        "wheel": 0
+      },
+      "trace_us": 774602655
+    },
+    {
+      "elapsed_ns": 29899372733,
+      "native": "fixture_state",
+      "state": {
+        "state": "ready",
+        "width": 1920,
+        "height": 1080,
+        "scale": 1,
+        "visibility": "visible",
+        "clicks": 0,
+        "keys": 0,
+        "wheel": 0
+      },
+      "trace_us": 775602629
+    },
+    {
+      "elapsed_ns": 30899434750,
+      "native": "fixture_state",
+      "state": {
+        "state": "ready",
+        "width": 1920,
+        "height": 1080,
+        "scale": 1,
+        "visibility": "visible",
+        "clicks": 0,
+        "keys": 0,
+        "wheel": 0
+      },
+      "trace_us": 776602682
+    },
+    {
+      "elapsed_ns": 31899665347,
+      "native": "fixture_state",
+      "state": {
+        "state": "ready",
+        "width": 1920,
+        "height": 1080,
+        "scale": 1,
+        "visibility": "visible",
+        "clicks": 0,
+        "keys": 0,
+        "wheel": 0
+      },
+      "trace_us": 777602904
+    },
+    {
+      "elapsed_ns": 32899555324,
+      "native": "fixture_state",
+      "state": {
+        "state": "ready",
+        "width": 1920,
+        "height": 1080,
+        "scale": 1,
+        "visibility": "visible",
+        "clicks": 0,
+        "keys": 0,
+        "wheel": 0
+      },
+      "trace_us": 778602792
+    },
+    {
+      "elapsed_ns": 33899531971,
+      "native": "fixture_state",
+      "state": {
+        "state": "ready",
+        "width": 1920,
+        "height": 1080,
+        "scale": 1,
+        "visibility": "visible",
+        "clicks": 0,
+        "keys": 0,
+        "wheel": 0
+      },
+      "trace_us": 779602772
+    },
+    {
+      "elapsed_ns": 34899488278,
+      "native": "fixture_state",
+      "state": {
+        "state": "ready",
+        "width": 1920,
+        "height": 1080,
+        "scale": 1,
+        "visibility": "visible",
+        "clicks": 0,
+        "keys": 0,
+        "wheel": 0
+      },
+      "trace_us": 780602736
+    },
+    {
+      "elapsed_ns": 35899432015,
+      "native": "fixture_state",
+      "state": {
+        "state": "ready",
+        "width": 1920,
+        "height": 1080,
+        "scale": 1,
+        "visibility": "visible",
+        "clicks": 0,
+        "keys": 0,
+        "wheel": 0
+      },
+      "trace_us": 781602679
+    },
+    {
+      "elapsed_ns": 36899426062,
+      "native": "fixture_state",
+      "state": {
+        "state": "ready",
+        "width": 1920,
+        "height": 1080,
+        "scale": 1,
+        "visibility": "visible",
+        "clicks": 0,
+        "keys": 0,
+        "wheel": 0
+      },
+      "trace_us": 782602682
+    },
+    {
+      "elapsed_ns": 37899403820,
+      "native": "fixture_state",
+      "state": {
+        "state": "ready",
+        "width": 1920,
+        "height": 1080,
+        "scale": 1,
+        "visibility": "visible",
+        "clicks": 0,
+        "keys": 0,
+        "wheel": 0
+      },
+      "trace_us": 783602661
+    },
+    {
+      "elapsed_ns": 38899398676,
+      "native": "fixture_state",
+      "state": {
+        "state": "ready",
+        "width": 1920,
+        "height": 1080,
+        "scale": 1,
+        "visibility": "visible",
+        "clicks": 0,
+        "keys": 0,
+        "wheel": 0
+      },
+      "trace_us": 784602668
+    },
+    {
+      "elapsed_ns": 39899405343,
+      "native": "fixture_state",
+      "state": {
+        "state": "ready",
+        "width": 1920,
+        "height": 1080,
+        "scale": 1,
+        "visibility": "visible",
+        "clicks": 0,
+        "keys": 0,
+        "wheel": 0
+      },
+      "trace_us": 785602673
+    },
+    {
+      "elapsed_ns": 40899467510,
+      "native": "fixture_state",
+      "state": {
+        "state": "ready",
+        "width": 1920,
+        "height": 1080,
+        "scale": 1,
+        "visibility": "visible",
+        "clicks": 0,
+        "keys": 0,
+        "wheel": 0
+      },
+      "trace_us": 786602659
+    },
+    {
+      "elapsed_ns": 41899548137,
+      "native": "fixture_state",
+      "state": {
+        "state": "ready",
+        "width": 1920,
+        "height": 1080,
+        "scale": 1,
+        "visibility": "visible",
+        "clicks": 0,
+        "keys": 0,
+        "wheel": 0
+      },
+      "trace_us": 787602755
+    },
+    {
+      "elapsed_ns": 42899417964,
+      "native": "fixture_state",
+      "state": {
+        "state": "ready",
+        "width": 1920,
+        "height": 1080,
+        "scale": 1,
+        "visibility": "visible",
+        "clicks": 0,
+        "keys": 0,
+        "wheel": 0
+      },
+      "trace_us": 788602665
+    },
+    {
+      "elapsed_ns": 43899437301,
+      "native": "fixture_state",
+      "state": {
+        "state": "ready",
+        "width": 1920,
+        "height": 1080,
+        "scale": 1,
+        "visibility": "visible",
+        "clicks": 0,
+        "keys": 0,
+        "wheel": 0
+      },
+      "trace_us": 789602692
+    },
+    {
+      "elapsed_ns": 44899404576,
+      "native": "fixture_state",
+      "state": {
+        "state": "ready",
+        "width": 1920,
+        "height": 1080,
+        "scale": 1,
+        "visibility": "visible",
+        "clicks": 0,
+        "keys": 0,
+        "wheel": 0
+      },
+      "trace_us": 790602651
+    },
+    {
+      "elapsed_ns": 45899376915,
+      "native": "fixture_state",
+      "state": {
+        "state": "ready",
+        "width": 1920,
+        "height": 1080,
+        "scale": 1,
+        "visibility": "visible",
+        "clicks": 0,
+        "keys": 0,
+        "wheel": 0
+      },
+      "trace_us": 791602631
+    },
+    {
+      "elapsed_ns": 46899397602,
+      "native": "fixture_state",
+      "state": {
+        "state": "ready",
+        "width": 1920,
+        "height": 1080,
+        "scale": 1,
+        "visibility": "visible",
+        "clicks": 0,
+        "keys": 0,
+        "wheel": 0
+      },
+      "trace_us": 792602643
+    },
+    {
+      "elapsed_ns": 47899506689,
+      "native": "fixture_state",
+      "state": {
+        "state": "ready",
+        "width": 1920,
+        "height": 1080,
+        "scale": 1,
+        "visibility": "visible",
+        "clicks": 0,
+        "keys": 0,
+        "wheel": 0
+      },
+      "trace_us": 793602742
+    },
+    {
+      "elapsed_ns": 48899395476,
+      "native": "fixture_state",
+      "state": {
+        "state": "ready",
+        "width": 1920,
+        "height": 1080,
+        "scale": 1,
+        "visibility": "visible",
+        "clicks": 0,
+        "keys": 0,
+        "wheel": 0
+      },
+      "trace_us": 794602647
+    },
+    {
+      "elapsed_ns": 49899415323,
+      "native": "fixture_state",
+      "state": {
+        "state": "ready",
+        "width": 1920,
+        "height": 1080,
+        "scale": 1,
+        "visibility": "visible",
+        "clicks": 0,
+        "keys": 0,
+        "wheel": 0
+      },
+      "trace_us": 795602670
+    },
+    {
+      "elapsed_ns": 50899511380,
+      "native": "fixture_state",
+      "state": {
+        "state": "ready",
+        "width": 1920,
+        "height": 1080,
+        "scale": 1,
+        "visibility": "visible",
+        "clicks": 0,
+        "keys": 0,
+        "wheel": 0
+      },
+      "trace_us": 796602746
+    },
+    {
+      "elapsed_ns": 51899462071,
+      "native": "fixture_state",
+      "state": {
+        "state": "ready",
+        "width": 1920,
+        "height": 1080,
+        "scale": 1,
+        "visibility": "visible",
+        "clicks": 0,
+        "keys": 0,
+        "wheel": 0
+      },
+      "trace_us": 797602715
+    },
+    {
+      "elapsed_ns": 52899477001,
+      "native": "fixture_state",
+      "state": {
+        "state": "ready",
+        "width": 1920,
+        "height": 1080,
+        "scale": 1,
+        "visibility": "visible",
+        "clicks": 0,
+        "keys": 0,
+        "wheel": 0
+      },
+      "trace_us": 798602726
+    },
+    {
+      "elapsed_ns": 53899439650,
+      "native": "fixture_state",
+      "state": {
+        "state": "ready",
+        "width": 1920,
+        "height": 1080,
+        "scale": 1,
+        "visibility": "visible",
+        "clicks": 0,
+        "keys": 0,
+        "wheel": 0
+      },
+      "trace_us": 799602701
+    },
+    {
+      "elapsed_ns": 54899361640,
+      "native": "fixture_state",
+      "state": {
+        "state": "ready",
+        "width": 1920,
+        "height": 1080,
+        "scale": 1,
+        "visibility": "visible",
+        "clicks": 0,
+        "keys": 0,
+        "wheel": 0
+      },
+      "trace_us": 800602633
+    },
+    {
+      "elapsed_ns": 55899381200,
+      "native": "fixture_state",
+      "state": {
+        "state": "ready",
+        "width": 1920,
+        "height": 1080,
+        "scale": 1,
+        "visibility": "visible",
+        "clicks": 0,
+        "keys": 0,
+        "wheel": 0
+      },
+      "trace_us": 801602655
+    },
+    {
+      "elapsed_ns": 56899391530,
+      "native": "fixture_state",
+      "state": {
+        "state": "ready",
+        "width": 1920,
+        "height": 1080,
+        "scale": 1,
+        "visibility": "visible",
+        "clicks": 0,
+        "keys": 0,
+        "wheel": 0
+      },
+      "trace_us": 802602659
+    },
+    {
+      "elapsed_ns": 57899412000,
+      "native": "fixture_state",
+      "state": {
+        "state": "ready",
+        "width": 1920,
+        "height": 1080,
+        "scale": 1,
+        "visibility": "visible",
+        "clicks": 0,
+        "keys": 0,
+        "wheel": 0
+      },
+      "trace_us": 803602676
+    },
+    {
+      "elapsed_ns": 58899384649,
+      "native": "fixture_state",
+      "state": {
+        "state": "ready",
+        "width": 1920,
+        "height": 1080,
+        "scale": 1,
+        "visibility": "visible",
+        "clicks": 0,
+        "keys": 0,
+        "wheel": 0
+      },
+      "trace_us": 804602657
+    },
+    {
+      "elapsed_ns": 59899411719,
+      "native": "fixture_state",
+      "state": {
+        "state": "ready",
+        "width": 1920,
+        "height": 1080,
+        "scale": 1,
+        "visibility": "visible",
+        "clicks": 0,
+        "keys": 0,
+        "wheel": 0
+      },
+      "trace_us": 805602663
+    },
+    {
+      "elapsed_ns": 60899513319,
+      "native": "fixture_state",
+      "state": {
+        "state": "ready",
+        "width": 1920,
+        "height": 1080,
+        "scale": 1,
+        "visibility": "visible",
+        "clicks": 0,
+        "keys": 0,
+        "wheel": 0
+      },
+      "trace_us": 806602722
+    },
+    {
+      "elapsed_ns": 61899525099,
+      "native": "fixture_state",
+      "state": {
+        "state": "ready",
+        "width": 1920,
+        "height": 1080,
+        "scale": 1,
+        "visibility": "visible",
+        "clicks": 0,
+        "keys": 0,
+        "wheel": 0
+      },
+      "trace_us": 807602722
+    },
+    {
+      "elapsed_ns": 62899469929,
+      "native": "fixture_state",
+      "state": {
+        "state": "ready",
+        "width": 1920,
+        "height": 1080,
+        "scale": 1,
+        "visibility": "visible",
+        "clicks": 0,
+        "keys": 0,
+        "wheel": 0
+      },
+      "trace_us": 808602697
+    },
+    {
+      "elapsed_ns": 63899437879,
+      "native": "fixture_state",
+      "state": {
+        "state": "ready",
+        "width": 1920,
+        "height": 1080,
+        "scale": 1,
+        "visibility": "visible",
+        "clicks": 0,
+        "keys": 0,
+        "wheel": 0
+      },
+      "trace_us": 809602655
+    },
+    {
+      "elapsed_ns": 64899530259,
+      "native": "fixture_state",
+      "state": {
+        "state": "ready",
+        "width": 1920,
+        "height": 1080,
+        "scale": 1,
+        "visibility": "visible",
+        "clicks": 0,
+        "keys": 0,
+        "wheel": 0
+      },
+      "trace_us": 810602739
+    },
+    {
+      "elapsed_ns": 65899490858,
+      "native": "fixture_state",
+      "state": {
+        "state": "ready",
+        "width": 1920,
+        "height": 1080,
+        "scale": 1,
+        "visibility": "visible",
+        "clicks": 0,
+        "keys": 0,
+        "wheel": 0
+      },
+      "trace_us": 811602703
+    },
+    {
+      "elapsed_ns": 66899462288,
+      "native": "fixture_state",
+      "state": {
+        "state": "ready",
+        "width": 1920,
+        "height": 1080,
+        "scale": 1,
+        "visibility": "visible",
+        "clicks": 0,
+        "keys": 0,
+        "wheel": 0
+      },
+      "trace_us": 812602699
+    },
+    {
+      "elapsed_ns": 67899575878,
+      "native": "fixture_state",
+      "state": {
+        "state": "ready",
+        "width": 1920,
+        "height": 1080,
+        "scale": 1,
+        "visibility": "visible",
+        "clicks": 0,
+        "keys": 0,
+        "wheel": 0
+      },
+      "trace_us": 813602780
+    },
+    {
+      "elapsed_ns": 68899465038,
+      "native": "fixture_state",
+      "state": {
+        "state": "ready",
+        "width": 1920,
+        "height": 1080,
+        "scale": 1,
+        "visibility": "visible",
+        "clicks": 0,
+        "keys": 0,
+        "wheel": 0
+      },
+      "trace_us": 814602690
+    },
+    {
+      "elapsed_ns": 69899455158,
+      "native": "fixture_state",
+      "state": {
+        "state": "ready",
+        "width": 1920,
+        "height": 1080,
+        "scale": 1,
+        "visibility": "visible",
+        "clicks": 0,
+        "keys": 0,
+        "wheel": 0
+      },
+      "trace_us": 815602672
+    },
+    {
+      "elapsed_ns": 70899461008,
+      "native": "fixture_state",
+      "state": {
+        "state": "ready",
+        "width": 1920,
+        "height": 1080,
+        "scale": 1,
+        "visibility": "visible",
+        "clicks": 0,
+        "keys": 0,
+        "wheel": 0
+      },
+      "trace_us": 816602690
+    },
+    {
+      "elapsed_ns": 71899396988,
+      "native": "fixture_state",
+      "state": {
+        "state": "ready",
+        "width": 1920,
+        "height": 1080,
+        "scale": 1,
+        "visibility": "visible",
+        "clicks": 0,
+        "keys": 0,
+        "wheel": 0
+      },
+      "trace_us": 817602651
+    },
+    {
+      "elapsed_ns": 72899454677,
+      "native": "fixture_state",
+      "state": {
+        "state": "ready",
+        "width": 1920,
+        "height": 1080,
+        "scale": 1,
+        "visibility": "visible",
+        "clicks": 0,
+        "keys": 0,
+        "wheel": 0
+      },
+      "trace_us": 818602707
+    },
+    {
+      "elapsed_ns": 73073283564,
+      "protocol": {
+        "version": 2,
+        "operation": "close",
+        "result": {
+          "Ok": {
+            "type": "closed",
+            "document": {
+              "owner": {
+                "workspace": "witness",
+                "session": "qualification"
+              },
+              "browser": "fixture",
+              "generation": 1
+            }
+          }
+        }
+      },
+      "trace_us": 818776548
+    },
+    {
+      "elapsed_ns": 73073310664,
+      "native": "trace_stop_requested",
+      "trace_us": 818776566
+    },
+    {
+      "elapsed_ns": 73899548267,
+      "native": "fixture_state",
+      "state": {
+        "state": "ready",
+        "width": 1920,
+        "height": 1080,
+        "scale": 1,
+        "visibility": "visible",
+        "clicks": 0,
+        "keys": 0,
+        "wheel": 0
+      },
+      "trace_us": 819602788
+    },
+    {
+      "elapsed_ns": 74899549637,
+      "native": "fixture_state",
+      "state": {
+        "state": "ready",
+        "width": 1920,
+        "height": 1080,
+        "scale": 1,
+        "visibility": "visible",
+        "clicks": 0,
+        "keys": 0,
+        "wheel": 0
+      },
+      "trace_us": 820602782
+    },
+    {
+      "elapsed_ns": 75899540807,
+      "native": "fixture_state",
+      "state": {
+        "state": "ready",
+        "width": 1920,
+        "height": 1080,
+        "scale": 1,
+        "visibility": "visible",
+        "clicks": 0,
+        "keys": 0,
+        "wheel": 0
+      },
+      "trace_us": 821602779
+    },
+    {
+      "elapsed_ns": 76899519867,
+      "native": "fixture_state",
+      "state": {
+        "state": "ready",
+        "width": 1920,
+        "height": 1080,
+        "scale": 1,
+        "visibility": "visible",
+        "clicks": 0,
+        "keys": 0,
+        "wheel": 0
+      },
+      "trace_us": 822602759
+    },
+    {
+      "elapsed_ns": 77899521037,
+      "native": "fixture_state",
+      "state": {
+        "state": "ready",
+        "width": 1920,
+        "height": 1080,
+        "scale": 1,
+        "visibility": "visible",
+        "clicks": 0,
+        "keys": 0,
+        "wheel": 0
+      },
+      "trace_us": 823602764
+    },
+    {
+      "elapsed_ns": 78899512847,
+      "native": "fixture_state",
+      "state": {
+        "state": "ready",
+        "width": 1920,
+        "height": 1080,
+        "scale": 1,
+        "visibility": "visible",
+        "clicks": 0,
+        "keys": 0,
+        "wheel": 0
+      },
+      "trace_us": 824602755
+    },
+    {
+      "elapsed_ns": 79899778926,
+      "native": "fixture_state",
+      "state": {
+        "state": "ready",
+        "width": 1920,
+        "height": 1080,
+        "scale": 1,
+        "visibility": "visible",
+        "clicks": 0,
+        "keys": 0,
+        "wheel": 0
+      },
+      "trace_us": 825602751
+    },
+    {
+      "elapsed_ns": 80398207517,
+      "native": "trace_completed",
+      "path": "/home/arthur/.cache/paneflow-cef-tsync/pilot-b-0907/profile/chromium-trace.json",
+      "trace_us": 826101416
+    },
+    {
+      "elapsed_ns": 80398225417,
+      "native": "close_requested",
+      "trace_us": 826101429
+    },
+    {
+      "elapsed_ns": 80398241627,
+      "native": "close_ready",
+      "trace_us": 826101447
+    },
+    {
+      "elapsed_ns": 80399690206,
+      "native": "close_dispatched",
+      "trace_us": 826102983
+    },
+    {
+      "elapsed_ns": 80404375746,
+      "native": "closed",
+      "trace_us": 826107651
+    },
+    {
+      "elapsed_ns": 80406036616,
+      "native": "window_destroyed",
+      "trace_us": 826109322
+    },
+    {
+      "elapsed_ns": 80447429083,
+      "native": "shutdown",
+      "trace_us": 826150673
+    }
+  ]
+}

@@ -1,0 +1,9 @@
+{"event":"renderer","renderer":"NVIDIA GeForce RTX 4070 Ti SUPER/PCIe/SSE2","version":"OpenGL ES 3.2 NVIDIA 610.57.04"}
+{"event":"thread","phase":"before","tid":412665,"name":"gpu-tsync","seccomp":0,"filters":0,"no_new_privs":0}
+{"event":"thread","phase":"before","tid":412673,"name":"tsync-witness","seccomp":0,"filters":0,"no_new_privs":0}
+{"event":"filter_install","tsync":1,"bounded":1,"result":0}
+{"event":"thread","phase":"sealed","tid":412665,"name":"gpu-tsync","seccomp":2,"filters":1,"no_new_privs":1}
+{"event":"thread","phase":"sealed","tid":412673,"name":"tsync-witness","seccomp":2,"filters":1,"no_new_privs":1}
+{"event":"marker","main_result":-1,"main_errno":1,"worker_before":412537,"worker_result":-1,"worker_errno":1}
+{"event":"thread","phase":"after_render","tid":412665,"name":"gpu-tsync","seccomp":2,"filters":1,"no_new_privs":1}
+{"event":"completed","verified_frames_after_filter":120}

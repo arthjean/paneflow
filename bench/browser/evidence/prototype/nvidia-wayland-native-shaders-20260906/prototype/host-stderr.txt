@@ -1,0 +1,12 @@
+[791309:791309:0906/211841.351415:ERROR:ui/ozone/platform/wayland/host/wayland_seat.cc:91] Not implemented reached in static void ui::WaylandSeat::OnName(void *, wl_seat *, const char *). 
+[791309:791309:0906/211841.352028:ERROR:ui/ozone/platform/wayland/host/wayland_zwp_linux_dmabuf.cc:395] Not implemented reached in static void ui::WaylandZwpLinuxDmabuf::OnTrancheFlags(void *, zwp_linux_dmabuf_feedback_v1 *, uint32_t). 
+[791309:791309:0906/211841.891371:ERROR:content/browser/browser_main_loop.cc:277] GLib-GObject: g_object_set_is_valid_property: object class 'GtkSettings' has no property named 'gtk-modules'
+[791309:791309:0906/211841.991811:ERROR:ui/ozone/platform/wayland/host/wayland_screen.cc:473] Not implemented reached in virtual bool ui::WaylandScreen::IsScreenSaverActive() const. 
+WARN: SystemInfo_vulkan.cpp:198 (HasKhronosValidationLayer): Vulkan validation layers are missing
+[791309:791309:0906/211842.306772:ERROR:cef/libcef/browser/osr/render_widget_host_view_osr.cc:356] Not implemented reached in virtual gfx::NativeView CefRenderWidgetHostViewOSR::GetNativeView(). 
+[791309:791309:0906/211842.382158:ERROR:cef/libcef/browser/osr/render_widget_host_view_osr.cc:356] Not implemented reached in virtual gfx::NativeView CefRenderWidgetHostViewOSR::GetNativeView(). 
+[791380:791380:0906/211842.474130:ERROR:gpu/command_buffer/service/shared_image/ozone_image_gl_textures_holder.cc:91] [DEBUG-EP002-DMABUF] format=BGRA_8888 plane_format=BGRA_8888 size=1x1 pixmap_format=BGRA_8888 pixmap_size=1x1 modifier=216172782120099856 pitch=64 target=3553
+[791380:791380:0906/211842.696583:ERROR:gpu/command_buffer/service/shared_image/ozone_image_gl_textures_holder.cc:91] [DEBUG-EP002-DMABUF] format=BGRA_8888 plane_format=BGRA_8888 size=1280x800 pixmap_format=BGRA_8888 pixmap_size=1280x800 modifier=216172782120099860 pitch=5120 target=3553
+[791309:791309:0906/211842.703931:ERROR:cef/libcef/browser/osr/render_widget_host_view_osr.cc:356] Not implemented reached in virtual gfx::NativeView CefRenderWidgetHostViewOSR::GetNativeView(). 
+[791380:791380:0906/211842.740476:ERROR:gpu/command_buffer/service/shared_image/ozone_image_gl_textures_holder.cc:91] [DEBUG-EP002-DMABUF] format=BGRA_8888 plane_format=BGRA_8888 size=1280x800 pixmap_format=BGRA_8888 pixmap_size=1280x800 modifier=216172782120099860 pitch=5120 target=3553
+[791309:791309:0906/211913.112834:ERROR:base/process/kill_posix.cc:33] waitpid(791385): No child processes (10)

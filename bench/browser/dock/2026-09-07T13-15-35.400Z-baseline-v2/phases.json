@@ -1,0 +1,52 @@
+[
+  {
+    "name": "load",
+    "clock": "CLOCK_MONOTONIC",
+    "at_ns": 25802765117787
+  },
+  {
+    "name": "prepare_steady",
+    "clock": "CLOCK_MONOTONIC",
+    "at_ns": 25830839520918
+  },
+  {
+    "name": "steady",
+    "clock": "CLOCK_MONOTONIC",
+    "at_ns": 25835849156960
+  },
+  {
+    "name": "end_steady",
+    "clock": "CLOCK_MONOTONIC",
+    "at_ns": 25855858872640
+  },
+  {
+    "name": "prepare_scroll",
+    "clock": "CLOCK_MONOTONIC",
+    "at_ns": 25860702989722
+  },
+  {
+    "name": "scroll",
+    "clock": "CLOCK_MONOTONIC",
+    "at_ns": 25865712563473
+  },
+  {
+    "name": "end_scroll",
+    "clock": "CLOCK_MONOTONIC",
+    "at_ns": 25885722091674
+  },
+  {
+    "name": "prepare_resize",
+    "clock": "CLOCK_MONOTONIC",
+    "at_ns": 25895556953553
+  },
+  {
+    "name": "resize",
+    "clock": "CLOCK_MONOTONIC",
+    "at_ns": 25900567152694
+  },
+  {
+    "name": "end_resize",
+    "clock": "CLOCK_MONOTONIC",
+    "at_ns": 25920577347944
+  }
+]

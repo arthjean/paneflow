@@ -1,0 +1,215 @@
+{
+  "schema_version": 1,
+  "status": "REJECTED",
+  "error": "sandbox not proven for both renderer and GPU (seccomp, no_new_privs, namespace)",
+  "target": "x86_64-unknown-linux-gnu",
+  "cef_version": "151.3.24+g2384915+chromium-151.0.7922.174",
+  "archive_sha256": "db53c43fdace8b7ee4af0f005120116d6973aa9d8eb7702c0617badf9be8684e",
+  "fixture_sha256": "83dac6881a8f57843e5e60a5065d1f681f966331b2e4ef14c777bb40572d9121",
+  "scenario": "empty",
+  "duration_seconds": 2,
+  "binary_sha256": "b1a5837a595ae765853f5c543f651876dbb19aced49b70cf79df802ed62f6af9",
+  "session_type": "wayland",
+  "presentation_measurement": "NOT_EXECUTED",
+  "processes": [
+    {
+      "pid": 1737756,
+      "parent": 1737727,
+      "role": "host",
+      "seccomp": 0,
+      "no_new_privs": 0,
+      "user_namespace": "user:[4026531837]",
+      "pid_namespace": "pid:[4026531836]",
+      "sandbox_disabled": false
+    },
+    {
+      "pid": 1737766,
+      "parent": 1737756,
+      "role": "zygote",
+      "seccomp": 0,
+      "no_new_privs": 1,
+      "user_namespace": "user:[4026531837]",
+      "pid_namespace": "pid:[4026531836]",
+      "sandbox_disabled": false
+    },
+    {
+      "pid": 1737767,
+      "parent": 1737756,
+      "role": "zygote",
+      "seccomp": 0,
+      "no_new_privs": 1,
+      "user_namespace": "user:[4026533651]",
+      "pid_namespace": "pid:[4026532942]",
+      "sandbox_disabled": false
+    },
+    {
+      "pid": 1737769,
+      "parent": 1737767,
+      "role": "zygote",
+      "seccomp": 0,
+      "no_new_privs": 1,
+      "user_namespace": "user:[4026533651]",
+      "pid_namespace": "pid:[4026532942]",
+      "sandbox_disabled": false
+    },
+    {
+      "pid": 1737799,
+      "parent": 1737766,
+      "role": "zygote",
+      "seccomp": 2,
+      "no_new_privs": 1,
+      "user_namespace": "user:[4026531837]",
+      "pid_namespace": "pid:[4026531836]",
+      "sandbox_disabled": false
+    },
+    {
+      "pid": 1737802,
+      "parent": 1737756,
+      "role": "utility",
+      "seccomp": 0,
+      "no_new_privs": 1,
+      "user_namespace": "user:[4026531837]",
+      "pid_namespace": "pid:[4026531836]",
+      "sandbox_disabled": false
+    },
+    {
+      "pid": 1737819,
+      "parent": 1737799,
+      "role": "zygote",
+      "seccomp": 2,
+      "no_new_privs": 1,
+      "user_namespace": "user:[4026531837]",
+      "pid_namespace": "pid:[4026531836]",
+      "sandbox_disabled": false
+    },
+    {
+      "pid": 1737866,
+      "parent": 1737769,
+      "role": "zygote",
+      "seccomp": 2,
+      "no_new_privs": 1,
+      "user_namespace": "user:[4026533651]",
+      "pid_namespace": "pid:[4026532937]",
+      "sandbox_disabled": false
+    },
+    {
+      "pid": 1737889,
+      "parent": 1737769,
+      "role": "zygote",
+      "seccomp": 2,
+      "no_new_privs": 1,
+      "user_namespace": "user:[4026533651]",
+      "pid_namespace": "pid:[4026532940]",
+      "sandbox_disabled": false
+    },
+    {
+      "pid": 1737898,
+      "parent": 1737769,
+      "role": "zygote",
+      "seccomp": 2,
+      "no_new_privs": 1,
+      "user_namespace": "user:[4026533651]",
+      "pid_namespace": "pid:[4026533652]",
+      "sandbox_disabled": false
+    }
+  ],
+  "events": [
+    {
+      "elapsed_ns": 4115123445,
+      "contract_version": 1,
+      "native": "initialized",
+      "pid": 1737756,
+      "protocol": {
+        "operation": "hello",
+        "result": {
+          "Ok": {
+            "availability": "development",
+            "contract_version": 1,
+            "target": "x86_64-linux",
+            "terminal_available": true,
+            "type": "capabilities"
+          }
+        },
+        "version": 1
+      },
+      "sandbox_requested": true
+    },
+    {
+      "elapsed_ns": 4116133484,
+      "protocol": {
+        "operation": "create",
+        "result": {
+          "Ok": {
+            "session": {
+              "document": {
+                "browser": "fixture",
+                "generation": 1,
+                "owner": {
+                  "session": "qualification",
+                  "workspace": "witness"
+                }
+              },
+              "presentation": {
+                "generation": 0,
+                "height": 0,
+                "mounted": false,
+                "visible": false,
+                "width": 0
+              },
+              "profile": "isolated",
+              "state": "dormant",
+              "title": "Qualification fixture",
+              "url": "http://127.0.0.1:42941/empty"
+            },
+            "type": "state"
+          }
+        },
+        "version": 1
+      }
+    },
+    {
+      "elapsed_ns": 4147205401,
+      "protocol": {
+        "operation": "start",
+        "result": {
+          "Ok": {
+            "session": {
+              "document": {
+                "browser": "fixture",
+                "generation": 1,
+                "owner": {
+                  "session": "qualification",
+                  "workspace": "witness"
+                }
+              },
+              "presentation": {
+                "generation": 0,
+                "height": 0,
+                "mounted": false,
+                "visible": false,
+                "width": 0
+              },
+              "profile": "isolated",
+              "state": "hidden",
+              "title": "Qualification fixture",
+              "url": "http://127.0.0.1:42941/empty"
+            },
+            "type": "state"
+          }
+        },
+        "version": 1
+      }
+    },
+    {
+      "elapsed_ns": 4166036201,
+      "cef_browser_id": 1,
+      "native": "created"
+    },
+    {
+      "elapsed_ns": 4273950865,
+      "http_status": 200,
+      "native": "loaded"
+    }
+  ],
+  "evidence_note": "Native bootstrap investigation, not M1. Process role attribution failed. Source subsequently repaired shutdown sequencing; these traces are not final-code validation."
+}

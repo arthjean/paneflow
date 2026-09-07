@@ -1,0 +1,45 @@
+{
+  "status": "CLOSED_WITH_TRACE_ARCHIVED",
+  "qualification": "NOT_EVALUATED",
+  "artifacts": [
+    {
+      "path": "chromium-trace.json",
+      "sha256": "faebe82a5ac50b0810a815c7c085064b5ac27348fcf27dbdc8c9083a8984dffe",
+      "bytes": 37930169,
+      "source": "/home/arthur/.cache/paneflow-cef-tsync/diagnostic-m1-0907b/r1/data/paneflow/browser/profiles/62b2163673f348eb/chromium-trace.json"
+    },
+    {
+      "path": "host.stderr",
+      "sha256": "c2a700e72ce57952e36c1885ae69f10c12f7a13e5a41c6cb925eb0e9a5af684b",
+      "bytes": 1581,
+      "source": "/home/arthur/.cache/paneflow-cef-tsync/diagnostic-m1-0907b/r1/data/paneflow/browser/profiles/62b2163673f348eb/host.stderr"
+    }
+  ],
+  "observed": [
+    {
+      "event": "closed",
+      "at_ns": 624497066406
+    },
+    {
+      "native": {
+        "native": "trace_completed",
+        "path": "/home/arthur/.cache/paneflow-cef-tsync/diagnostic-m1-0907b/r1/data/paneflow/browser/profiles/62b2163673f348eb/chromium-trace.json",
+        "trace_us": 626645753
+      },
+      "event": "native",
+      "at_ns": 626645802550
+    },
+    {
+      "native": {
+        "native": "closed",
+        "trace_us": 626648163
+      },
+      "event": "native",
+      "at_ns": 626648194341
+    },
+    {
+      "event": "host_stopped",
+      "at_ns": 626909454526
+    }
+  ]
+}

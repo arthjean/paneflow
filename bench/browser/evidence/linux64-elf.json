@@ -1,0 +1,175 @@
+[
+  {
+    "file": "libvulkan.so.1",
+    "versions": {
+      "GLIBC": [
+        "2.2.5",
+        "2.3",
+        "2.3.2",
+        "2.4",
+        "2.7",
+        "2.14",
+        "2.16"
+      ],
+      "GLIBCXX": [],
+      "CXXABI": []
+    },
+    "needed": [
+      "libdl.so.2",
+      "libpthread.so.0",
+      "libgcc_s.so.1",
+      "libc.so.6",
+      "ld-linux-x86-64.so.2"
+    ]
+  },
+  {
+    "file": "libvk_swiftshader.so",
+    "versions": {
+      "GLIBC": [
+        "2.2.5",
+        "2.3",
+        "2.3.2",
+        "2.3.4",
+        "2.4",
+        "2.6",
+        "2.7",
+        "2.12",
+        "2.14",
+        "2.16",
+        "2.17"
+      ],
+      "GLIBCXX": [],
+      "CXXABI": []
+    },
+    "needed": [
+      "libdl.so.2",
+      "libpthread.so.0",
+      "libm.so.6",
+      "libgcc_s.so.1",
+      "libc.so.6",
+      "ld-linux-x86-64.so.2"
+    ]
+  },
+  {
+    "file": "libcef.so",
+    "versions": {
+      "GLIBC": [
+        "2.2.5",
+        "2.3",
+        "2.3.2",
+        "2.3.3",
+        "2.3.4",
+        "2.4",
+        "2.6",
+        "2.7",
+        "2.8",
+        "2.9",
+        "2.10",
+        "2.11",
+        "2.12",
+        "2.14",
+        "2.15",
+        "2.16",
+        "2.17",
+        "2.18",
+        "2.25"
+      ],
+      "GLIBCXX": [],
+      "CXXABI": []
+    },
+    "needed": [
+      "libdl.so.2",
+      "libpthread.so.0",
+      "libglib-2.0.so.0",
+      "libgobject-2.0.so.0",
+      "libnspr4.so",
+      "libnss3.so",
+      "libnssutil3.so",
+      "libsmime3.so",
+      "libgio-2.0.so.0",
+      "libatk-1.0.so.0",
+      "libatk-bridge-2.0.so.0",
+      "libdbus-1.so.3",
+      "libcups.so.2",
+      "libX11.so.6",
+      "libXcomposite.so.1",
+      "libXdamage.so.1",
+      "libXext.so.6",
+      "libXfixes.so.3",
+      "libXrandr.so.2",
+      "libgbm.so.1",
+      "libexpat.so.1",
+      "libxcb.so.1",
+      "libxkbcommon.so.0",
+      "libcairo.so.2",
+      "libpango-1.0.so.0",
+      "libudev.so.1",
+      "libasound.so.2",
+      "libm.so.6",
+      "libatspi.so.0",
+      "libgcc_s.so.1",
+      "libc.so.6",
+      "ld-linux-x86-64.so.2"
+    ]
+  },
+  {
+    "file": "libGLESv2.so",
+    "versions": {
+      "GLIBC": [
+        "2.2.5",
+        "2.3",
+        "2.3.2",
+        "2.4",
+        "2.7",
+        "2.14",
+        "2.16"
+      ],
+      "GLIBCXX": [],
+      "CXXABI": []
+    },
+    "needed": [
+      "libpthread.so.0",
+      "libgcc_s.so.1",
+      "libc.so.6",
+      "ld-linux-x86-64.so.2"
+    ]
+  },
+  {
+    "file": "libEGL.so",
+    "versions": {
+      "GLIBC": [
+        "2.2.5",
+        "2.3",
+        "2.3.2",
+        "2.4",
+        "2.7",
+        "2.14",
+        "2.16"
+      ],
+      "GLIBCXX": [],
+      "CXXABI": []
+    },
+    "needed": [
+      "libpthread.so.0",
+      "libgcc_s.so.1",
+      "libc.so.6",
+      "ld-linux-x86-64.so.2"
+    ]
+  },
+  {
+    "file": "chrome-sandbox",
+    "versions": {
+      "GLIBC": [
+        "2.2.5",
+        "2.3.4",
+        "2.4"
+      ],
+      "GLIBCXX": [],
+      "CXXABI": []
+    },
+    "needed": [
+      "libpthread.so.0",
+      "libc.so.6"
+    ]
+  }
+]

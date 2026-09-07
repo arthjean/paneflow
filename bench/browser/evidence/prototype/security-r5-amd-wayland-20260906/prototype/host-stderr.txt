@@ -1,0 +1,777 @@
+[1338443:1338443:0906/224416.842576:ERROR:ui/ozone/platform/wayland/host/wayland_seat.cc:91] Not implemented reached in static void ui::WaylandSeat::OnName(void *, wl_seat *, const char *). 
+[1338443:1338443:0906/224416.843148:ERROR:ui/ozone/platform/wayland/host/wayland_zwp_linux_dmabuf.cc:395] Not implemented reached in static void ui::WaylandZwpLinuxDmabuf::OnTrancheFlags(void *, zwp_linux_dmabuf_feedback_v1 *, uint32_t). 
+[1338443:1338443:0906/224416.917768:ERROR:content/browser/browser_main_loop.cc:277] GLib-GObject: g_object_set_is_valid_property: object class 'GtkSettings' has no property named 'gtk-modules'
+[1338443:1338443:0906/224417.051542:ERROR:ui/ozone/platform/wayland/host/wayland_screen.cc:473] Not implemented reached in virtual bool ui::WaylandScreen::IsScreenSaverActive() const. 
+WARN: SystemInfo_vulkan.cpp:198 (HasKhronosValidationLayer): Vulkan validation layers are missing
+[1338443:1338443:0906/224417.401790:ERROR:cef/libcef/browser/osr/render_widget_host_view_osr.cc:356] Not implemented reached in virtual gfx::NativeView CefRenderWidgetHostViewOSR::GetNativeView(). 
+[1338443:1338443:0906/224417.421808:ERROR:cef/libcef/browser/osr/render_widget_host_view_osr.cc:356] Not implemented reached in virtual gfx::NativeView CefRenderWidgetHostViewOSR::GetNativeView(). 
+[1338493:1338493:0906/224417.984482:ERROR:gpu/command_buffer/service/shared_image/ozone_image_gl_textures_holder.cc:91] [DEBUG-EP002-DMABUF] format=BGRA_8888 plane_format=BGRA_8888 size=1x1 pixmap_format=BGRA_8888 pixmap_size=1x1 modifier=144115188080057091 pitch=512 target=3553
+../../sandbox/linux/seccomp-bpf-helpers/sigsys_handlers.cc:**CRASHING**:seccomp-bpf failure in syscall nr=0x90 arg1=0x146e2d arg2=0x3 arg3=0x7f22d95f3184 arg4=0x8
+Received signal 11 SEGV_ACCERR 00000032d090
+#0 0x7f2306f25c62 base::debug::CollectStackTrace()
+#1 0x7f2306f0d541 base::debug::StackTrace::StackTrace()
+#2 0x7f2306f2568f base::debug::(anonymous namespace)::StackDumpSignalHandler()
+#3 0x7f22f6c20fb0 (/usr/lib64/libc.so.6+0x19faf)
+#4 0x7f2309c36ea4 sandbox::CrashSIGSYS_Handler()
+#5 0x7f2309c37928 sandbox::SIGSYSSchedHandler()
+#6 0x7f2309c3ac6a sandbox::Trap::SigSys()
+#7 0x7f22f6c20fb0 (/usr/lib64/libc.so.6+0x19faf)
+#8 0x7f22f6ce40fb __GI_sched_setscheduler
+#9 0x7f22f6c80f04 __pthread_setschedparam
+#10 0x7f22ddbb3b60 <unknown>
+#11 0x7f22ddbb4022 <unknown>
+#12 0x7f22ddbb4378 <unknown>
+#13 0x7f22ddbb4874 <unknown>
+#14 0x7f22de15d909 <unknown>
+#15 0x7f22de15e6ab <unknown>
+#16 0x7f22ddbb3d3e <unknown>
+#17 0x7f22ddbfe24c <unknown>
+#18 0x7f22f6c79c19 start_thread
+#19 0x7f22f6cfd5cc __clone3
+  r8: 0000000000000090  r9: 0000000000000090 r10: 0000000000000090 r11: 0000000000000246
+ r12: 00003eb401182e00 r13: 00007f22d95f2540 r14: 0000000000000090 r15: 000000000000000f
+  di: 0000000000000002  si: 00007f22fd19efd4  bp: 00007f22d95f2410  bx: 00007f22d95f2470
+  dx: 0000000000000001  ax: 000000000002d000  cx: 000000000032d090  sp: 00007f22d95f2400
+  ip: 00007f2309c36ea4 efl: 0000000000010206 cgf: 002b000000000033 erf: 0000000000000006
+ trp: 000000000000000e msk: fffffffe3ffbfaff cr2: 000000000032d090
+[end of stack trace]
+../../sandbox/linux/seccomp-bpf-helpers/sigsys_handlers.cc:**CRASHING**:seccomp-bpf failure in syscall nr=0x25 arg1=0x5 arg2=0x7f22d95f0990 arg3=0x0 arg4=0x8
+[1338443:1338443:0906/224418.246317:ERROR:content/browser/gpu/gpu_process_host.cc:1035] GPU process exited unexpectedly: exit_code=139
+WARN: SystemInfo_vulkan.cpp:198 (HasKhronosValidationLayer): Vulkan validation layers are missing
+../../sandbox/linux/seccomp-bpf-helpers/sigsys_handlers.cc:**CRASHING**:seccomp-bpf failure in syscall nr=0x90 arg1=0x146fe7 arg2=0x3 arg3=0x7f22da1f5184 arg4=0x8
+Received signal 11 SEGV_ACCERR 0000003e7090
+#0 0x7f2306f25c62 base::debug::CollectStackTrace()
+#1 0x7f2306f0d541 base::debug::StackTrace::StackTrace()
+#2 0x7f2306f2568f base::debug::(anonymous namespace)::StackDumpSignalHandler()
+#3 0x7f22f6c20fb0 (/usr/lib64/libc.so.6+0x19faf)
+#4 0x7f2309c36ea4 sandbox::CrashSIGSYS_Handler()
+#5 0x7f2309c37928 sandbox::SIGSYSSchedHandler()
+#6 0x7f2309c3ac6a sandbox::Trap::SigSys()
+#7 0x7f22f6c20fb0 (/usr/lib64/libc.so.6+0x19faf)
+#8 0x7f22f6ce40fb __GI_sched_setscheduler
+#9 0x7f22f6c80f04 __pthread_setschedparam
+#10 0x7f22dd7b3b60 <unknown>
+#11 0x7f22dd7b4022 <unknown>
+#12 0x7f22dd7b4378 <unknown>
+#13 0x7f22dd7b4874 <unknown>
+#14 0x7f22ddd5d909 <unknown>
+#15 0x7f22ddd5e6ab <unknown>
+#16 0x7f22dd7b3d3e <unknown>
+#17 0x7f22dd7fe24c <unknown>
+#18 0x7f22f6c79c19 start_thread
+#19 0x7f22f6cfd5cc __clone3
+  r8: 0000000000000090  r9: 0000000000000090 r10: 0000000000000090 r11: 0000000000000246
+ r12: 00003eb401173c00 r13: 00007f22da1f4540 r14: 0000000000000090 r15: 000000000000000f
+  di: 0000000000000002  si: 00007f22fd19efd4  bp: 00007f22da1f4410  bx: 00007f22da1f4470
+  dx: 0000000000000001  ax: 00000000000e7000  cx: 00000000003e7090  sp: 00007f22da1f4400
+  ip: 00007f2309c36ea4 efl: 0000000000010206 cgf: 002b000000000033 erf: 0000000000000006
+ trp: 000000000000000e msk: fffffffe3ffbfaff cr2: 00000000003e7090
+[end of stack trace]
+../../sandbox/linux/seccomp-bpf-helpers/sigsys_handlers.cc:**CRASHING**:seccomp-bpf failure in syscall nr=0x25 arg1=0x5 arg2=0x7f22da1f2990 arg3=0x0 arg4=0x8
+[1338443:1338443:0906/224419.062828:ERROR:content/browser/gpu/gpu_process_host.cc:1035] GPU process exited unexpectedly: exit_code=139
+WARN: SystemInfo_vulkan.cpp:198 (HasKhronosValidationLayer): Vulkan validation layers are missing
+../../sandbox/linux/seccomp-bpf-helpers/sigsys_handlers.cc:**CRASHING**:seccomp-bpf failure in syscall nr=0x90 arg1=0x1471c6 arg2=0x3 arg3=0x7f22cb3f7184 arg4=0x8
+Received signal 11 SEGV_ACCERR 0000003c6090
+#0 0x7f2306f25c62 base::debug::CollectStackTrace()
+#1 0x7f2306f0d541 base::debug::StackTrace::StackTrace()
+#2 0x7f2306f2568f base::debug::(anonymous namespace)::StackDumpSignalHandler()
+#3 0x7f22f6c20fb0 (/usr/lib64/libc.so.6+0x19faf)
+#4 0x7f2309c36ea4 sandbox::CrashSIGSYS_Handler()
+#5 0x7f2309c37928 sandbox::SIGSYSSchedHandler()
+#6 0x7f2309c3ac6a sandbox::Trap::SigSys()
+#7 0x7f22f6c20fb0 (/usr/lib64/libc.so.6+0x19faf)
+#8 0x7f22f6ce40fb __GI_sched_setscheduler
+#9 0x7f22f6c80f04 __pthread_setschedparam
+#10 0x7f22dd7b3b60 <unknown>
+#11 0x7f22dd7b4022 <unknown>
+#12 0x7f22dd7b4378 <unknown>
+#13 0x7f22dd7b4874 <unknown>
+#14 0x7f22ddd5d909 <unknown>
+#15 0x7f22ddd5e6ab <unknown>
+#16 0x7f22dd7b3d3e <unknown>
+#17 0x7f22dd7fe24c <unknown>
+#18 0x7f22f6c79c19 start_thread
+#19 0x7f22f6cfd5cc __clone3
+  r8: 0000000000000090  r9: 0000000000000090 r10: 0000000000000090 r11: 0000000000000246
+ r12: 00003eb401578600 r13: 00007f22cb3f6540 r14: 0000000000000090 r15: 000000000000000f
+  di: 0000000000000002  si: 00007f22fd19efd4  bp: 00007f22cb3f6410  bx: 00007f22cb3f6470
+  dx: 0000000000000001  ax: 00000000000c6000  cx: 00000000003c6090  sp: 00007f22cb3f6400
+  ip: 00007f2309c36ea4 efl: 0000000000010206 cgf: 002b000000000033 erf: 0000000000000006
+ trp: 000000000000000e msk: fffffffe3ffbfaff cr2: 00000000003c6090
+[end of stack trace]
+../../sandbox/linux/seccomp-bpf-helpers/sigsys_handlers.cc:**CRASHING**:seccomp-bpf failure in syscall nr=0x25 arg1=0x5 arg2=0x7f22cb3f4990 arg3=0x0 arg4=0x8
+[1338443:1338443:0906/224419.841457:ERROR:content/browser/gpu/gpu_process_host.cc:1035] GPU process exited unexpectedly: exit_code=139
+[1339947:1339947:0906/224419.981209:ERROR:gpu/ipc/service/gpu_channel_manager.cc:928] ContextResult::kFatalFailure: Failed to create shared context for virtualization.
+[1339947:1339947:0906/224419.981319:FATAL:components/viz/service/frame_sinks/gmb_video_frame_pool_context_provider_impl.cc:104] Check failed: shared_context_state_. 
+#0 0x7f2306f25c62 base::debug::CollectStackTrace()
+#1 0x7f2306f0d541 base::debug::StackTrace::StackTrace()
+#2 0x7f2306df8e5c logging::LogMessage::Flush()
+#3 0x7f2306df8d2c logging::LogMessage::~LogMessage()
+#4 0x7f2306ddf3a2 logging::(anonymous namespace)::CheckLogMessage::~CheckLogMessage()
+#5 0x7f2306ddf08b logging::CheckNoreturnError::~CheckNoreturnError()
+#6 0x7f230b7c22f2 viz::GmbVideoFramePoolContext::InitializeOnGpu()
+#7 0x7f22fd555631 base::OnceCallback<>::Run()
+#8 0x7f23026fb0bc gpu::Scheduler::ExecuteSequence()
+#9 0x7f23026f9e7e gpu::Scheduler::RunNextTask()
+#10 0x7f22fd555631 base::OnceCallback<>::Run()
+#11 0x7f2306e76451 base::TaskAnnotator::RunTaskImpl()
+#12 0x7f2306ea7cf2 base::sequence_manager::internal::ThreadControllerWithMessagePumpImpl::DoWorkImpl()
+#13 0x7f2306ea6ecb base::sequence_manager::internal::ThreadControllerWithMessagePumpImpl::DoWork()
+#14 0x7f2306e088da base::MessagePumpDefault::Run()
+#15 0x7f2306ea8d60 base::sequence_manager::internal::ThreadControllerWithMessagePumpImpl::Run()
+#16 0x7f2306e49886 base::RunLoop::Run()
+#17 0x7f230b6e38e7 content::GpuMain()
+#18 0x7f2305a54032 content::RunZygote()
+#19 0x7f2305a54e71 content::RunOtherNamedProcessTypeMain()
+#20 0x7f2305a56ef2 content::ContentMainRunnerImpl::Run()
+#21 0x7f2305a533d7 content::ContentMain()
+#22 0x7f22fd5c4d39 CefMainRunner::RunAsHelperProcess()
+#23 0x7f22fd59f032 CefExecuteProcess()
+#24 0x7f22fd42a551 cef_execute_process
+#25 0x55f3143558a5 (/home/arthur/.local/share/paneflow/browser/host-7144184259a699ab/bin/paneflow-browser-host+0xd68a4)
+#26 0x55f31430a433 (/home/arthur/.local/share/paneflow/browser/host-7144184259a699ab/bin/paneflow-browser-host+0x8b432)
+#27 0x55f314346231 (/home/arthur/.local/share/paneflow/browser/host-7144184259a699ab/bin/paneflow-browser-host+0xc7230)
+#28 0x55f3143ade6e (/home/arthur/.local/share/paneflow/browser/host-7144184259a699ab/bin/paneflow-browser-host+0x12ee6d)
+#29 0x55f314367715 (/home/arthur/.local/share/paneflow/browser/host-7144184259a699ab/bin/paneflow-browser-host+0xe8714)
+#30 0x7f22f6c0a681 __libc_start_call_main
+#31 0x7f22f6c0a798 __libc_start_main_alias_2
+#32 0x55f3142d9c35 (/home/arthur/.local/share/paneflow/browser/host-7144184259a699ab/bin/paneflow-browser-host+0x5ac34)
+Task trace:
+#0 0x7f23026f7e2c gpu::Scheduler::TryScheduleSequence()
+#1 0x7f23073afe1d mojo::Connector::PostDispatchNextMessageFromPipe()
+#2 0x7f23073dea1c mojo::SimpleWatcher::ArmOrNotify()
+#3 0x7f23073afe1d mojo::Connector::PostDispatchNextMessageFromPipe()
+#4 0x7f23073dea1c mojo::SimpleWatcher::ArmOrNotify()
+Task trace buffer limit hit, update PendingTask::kTaskBacktraceLength to increase.
+Crash keys:
+  "variations" = "1db03297-3f4a17df,61b619cb-3f4a17df,6c9bc01b-3f4a17df,6f27bc8a-3f4a17df,c203d55b-3f4a17df,cf16e290-b446100,a66dbd64-71c38a98,e32097a3-3f4a17df,1e11dbbb-3f4a17df,102166ac-3f4a17df,89986dbe-3f01b610,e0a24f31-3d47f4f4,75251bde-3d47f4f4,fbf04c3e-3f4a17df,f7adf49b-3f4a17df,b13ca3d9-84f6cff8,f2b6a878-3f4a17df,6f87b0c-3f4a17df,32806e4f-28ea5088,be9ac099-f9095748,2468d6e5-3f4a17df,3fcef0b9-3f4a17df,f5a1eb9a-3f4a17df,7c4b8ebb-3f4a17df,ac59e11a-3f4a17df,d6284ba0-9610fd4e,73551ca1-3f4a17df,d6737162-3f4a17df,e35cc1a-3f4a17df,e5a1483c-3f4a17df,6a68c9a6-3f4a17df,c1531af3-3f4a17df,47a0a3b2-3f4a17df,1b0dc97-3f4a17df,97063883-1f820d08,63ef0138-3f4a17df,af00e384-3f4a17df,8f80c10-78198108,a62c052e-3f4a17df,a4ca7cb1-3f4a17df,da968c94-3f4a17df,ae727645-d13781e7,3fbd6932-3f4a17df,2441c03c-3f4a17df,de69cad8-3f4a17df,b0f4d712-3f4a17df,99fb13df-c3c0f822,ec937206-3f4a17df,cad2b12b-8ef57898,57d6085b-3f4a17df,fb92da45-3f4a17df,d6ad7f9a-a9080253,a5ecfb95-3f4a17df,797fe373-3f4a17df,ead3e59e-8c7df51c,29936542-3f4a17df,17a43872-3f4a17df,1ffefb1a-3f4a17df,f419bc72-3f4a17df,470d37ba-3f4a17df,f7d06457-e9d42fcd,bcb58f65-3f4a17df,d512da3a-513c429d,a8d4875a-3f4a17df,54d601a5-3f4a17df,63f121e7-3f4a17df,98ab2bc2-b6dc7ce0,600d2fa6-3f4a17df,8e887d5e-3f4a17df,bca7ba0b-8cb78501,ff1e0777-3f4a17df,b127f8bf-3f4a17df,392d9f80-3f4a17df,b6083631-447a6f32,d7af3875-3f4a17df,4dc2f223-3f4a17df,5133eb43-307b98b1,f314f5b9-a2b13a7f,816b88d4-3f4a17df,6e4a21fe-efc28565,531e1626-4513f3bf,820f17d2-e484eeec,44666d99-3d47f4f4,c9c3bf92-3f4a17df,aa43c9da-fb669628,27bae43b-3d47f4f4,ea0e1b65-3f4a17df,e14ee5ee-c6d6098d,6222c570-3f4a17df,fd051c38-3f4a17df,c5c172fe-443695d8,a98def31-2a5a8f5d,8f9d758f-3f4a17df,fc1790de-3f4a17df,73f2ea1f-7fe57363,47b4cae6-3f4a17df,216faa60-715a9504,35c106c9-3f4a17df,639ee5d3-3f4a17df,7dcaa2cd-3f4a17df,f6f5c542-3f4a17df,5e05ef36-3f4a17df,18324944-3f4a17df,9d8b5725-3f4a17df,3779be93-3f4a17df,ee9f791c-47d2cc8b,537bb749-f459c823,305240ad-3f4a17df,3b02c079-3f4a17df,54b15be4-e3ec50a6,bd6dd170-b5b075b6,669a7db8-3f4a17df,a028f288-d24710ce,350559e5-3f4a17df,4356ac4a-3f4a17df,91cba98-b3b3bb94,6a6ab26-faa329bf,4eb998ce-3f4a17df,493cac11-3f4a17df,3e15bfc6-3f4a17df,6e4912ad-3f4a17df,f980930-642c19ed,779782d3-3f4a17df,1e12d864-9973a429,efd40742-3f4a17df,e5c8270a-3f4a17df,ef3132a9-3f4a17df,87bc8a34-3f4a17df,96def758-3f4a17df,2d3e25b-3f4a17df,7ccab089-3f4a17df,e770b78e-3f4a17df,f4159b43-3f4a17df,151258bf-3f4a17df,5dfc4774-3f4a17df,3e672fd9-e109e63f,893cc7a4-3f4a17df,7b328958-3f4a17df,3c978b59-3f4a17df,9cf6c713-7585e9f1,bab9965f-76c70532,7c5b314e-fb669628,78049c75-111140a5,c297985a-3f4a17df,6ddea229-6ddea229,95341ce8-3f4a17df,31f4a8bd-3f4a17df,609ae08f-3f4a17df,2e7369a1-4aceb943,96d006a-c3a49e71,f6264095-c3f8eab0,f42905ff-3f4a17df,210f81c-3f4a17df,2faf225b-3f4a17df,c17129bb-3f4a17df,4369f1a2-3f4a17df,74be468c-3f4a17df,26d5c1b5-3f4a17df,1f70f502-3f4a17df,4146cc26-775f6248,e9844d40-3f4a17df,819760d7-3f4a17df,2b68be8f-3f4a17df,d1ae5bf4-3f4a17df,15d1b2d8-3f4a17df,7ca2dd7e-3f4a17df,e1f2626b-3f4a17df,8ba22946-3f4a17df,55cc39e1-3f4a17df,ba449693-95f487fd,cad46b80-3f4a17df,70404afa-803f8fc4,eac788b4-77795d80,8643cb65-cf4f6ead,b47631a7-3f4a17df,e6ed801e-cf4f6ead,fc9ceed7-ee2a48b4,4af38a69-3c635604,6ff79bbe-3f4a17df,c1e2f598-3f4a17df,c823d1e9-3d47f4f4,7262ef2c-140d00b2,b4c2bd17-23db2647,6ec84df5-3f4a17df,4d625646-3f4a17df,2394f90f-ecc8f8cf,d5f746a4-39aaf314,3f7e8985-3645359a,260bef7d-9973a429,3a3c323e-3f4a17df,56aa5797-e5fec5a6,54be7848-3f4a17df,68366129-3f4a17df,e2d38844-3f4a17df,eef5d69a-1dca273f,da493d3c-3f4a17df,a7038f69-49218683,72bafd3e-cdb4c186,c290aefb-cf69bd0a,f659c5ca-3f4a17df,f3ed486d-3f4a17df,b3c54bb3-88fcaf7d,4076100b-3f4a17df,8c162025-3d47f4f4,ffdf4988-3f4a17df,3d3963fc-5d65cee9,3ac9fcb9-3f4a17df,b76b514f-3ac589b9,56c4f1cd-8c7df51c,8f418b04-299bae22,d3566fbd-c6f74b94,6821fcbe-3f4a17df,fec9e2f8-3f4a17df,af943b4f-b3e166c8,2e862394-fb669628,ed2195eb-3f4a17df,a2f28ef8-d7d235fa,5abe5347-3f4a17df,35a386c3-3f4a17df,40e3c61f-3f4a17df,afeeb5d0-3f4a17df,186d6e2c-36c0e608,408c2549-3f4a17df,1339c0d9-3f4a17df,ab7eb98c-3f4a17df,258151b3-3f4a17df,4fa4e3b8-3f4a17df,44fe0078-3f4a17df,c92d2cc4-3f4a17df,2468be5e-5f6398dc,aa540f4f-3f4a17df,30cf4980-61673e6,19e446cd-3f4a17df,bf46f37a-3f4a17df,28d782e1-683d1bb,93d2b4c8-c3c0f822,2d2b187a-3f4a17df,f86bc1e2-3f4a17df,f112d133-3f4a17df,1f490b80-3f4a17df,7f6b87dc-3f4a17df,41392635-3f4a17df,ea0d881d-fd860968,3f752d-3f4a17df,20a0c4ec-3f4a17df,53c64de7-3f4a17df,e3559213-c0f46cd5,89bba52e-174ae9a8,444b9649-3f4a17df,d990c4ac-3f4a17df,a374fdf0-964ff297,5e2ea1a-3f4a17df,5870a003-3f4a17df,a8df36b5-f4367231,9ba1837a-3f4a17df,3797f84b-3f4a17df,fe28a636-3f4a17df,52a20523-3f4a17df,d0083347-3ec702d4,ef4764d7-88fcaf7d,ba6e201d-3f4a17df,2bac45ad-3f4a17df,613081e8-3f4a17df,dd88aa3e-3f4a17df,c49d2b35-3f4a17df,377002b7-3f4a17df,935eb749-7a935877,94b88ba6-7e2e67c9,f3dbf5bd-faff9ce0,eff066ba-9ab9e8fd,15607410-b6e8dbb7,c6080aa-3f4a17df,8018a043-3d47f4f4,ad4acdda-3f4a17df,90860314-5ab828e2,b1ceb06f-3f4a17df,a595b987-3f4a17df,a39574eb-3f4a17df,46ca825f-3f4a17df,72b751de-3f4a17df,ec21b181-3f4a17df,4776ceb-3f4a17df,80b60e4a-3f4a17df,84b4fc65-3f4a17df,f585af0a-3f4a17df,75a4cec6-3d47f4f4,2cee8ab6-3f4a17df,8a0f7c51-112fdb12,51d22fd4-3f4a17df,6331e4d6-3f4a17df,aa8204ea-3f4a17df,5e19e3dc-70d6abf1,6332ffaf-3f4a17df,5910121-3f4a17df,595f5eb0-f23d1dea,a2c6574d-3f4a17df,798ea899-3f4a17df,7b4be1f2-3d47f4f4,9cdd2223-3f4a17df,c5be9d88-3f4a17df,743dedd5-3f4a17df,7f8767fe-3f4a17df,e0e211ad-e0e211ad,7e109629-3f4a17df,2f95a72f-3f4a17df,bc3ce3e6-148d4d4e,c55491ea-156838e5,c21c2b8b-3d47f4f4,"
+  "num-experiments" = "308"
+  "gr-context-type" = "None"
+  "gpu-gl-renderer" = "Disabled"
+  "gpu-gl-vendor" = "Disabled"
+  "gpu-generation-intel" = "0"
+  "gpu_count" = "0"
+  "gpu-devid" = "0x0000"
+  "gpu-venid" = "0x0000"
+  "chrome-trace-id" = "16953375607252040409"
+  "reentry_guard_tls_slot" = "unused"
+  "tls_system-sampling_heap_profiler" = "8"
+  "switch-17" = "--trace-process-track-uuid=6448464126260461666"
+  "switch-16" = "--pseudonymization-salt-handle=7,i,15329271479200535286,34568027"
+  "switch-15" = "--trace-buffer-handle=6,i,5468105298270759582,158179127513888843"
+  "switch-14" = "--trace-config-handle=5,i,5711324925661755507,107468112964822049"
+  "switch-13" = "--variations-seed-version"
+  "switch-12" = "--field-trial-handle=3,i,2967958016317727066,5625340887775249364"
+  "switch-11" = "--metrics-shmem-handle=4,i,13716248959891307191,1494515065851281"
+  "switch-10" = "--shared-files"
+  "switch-9" = "--use-gl=disabled"
+  "switch-8" = "--resources-dir-path=/home/arthur/.cache/paneflow-cef-tsync/pane"
+  "switch-7" = "--locales-dir-path=/home/arthur/.cache/paneflow-cef-tsync/panefl"
+  "tls_system-poisson_allocation_sampler" = "6"
+  "switch-6" = "--user-data-dir=/home/arthur/.local/share/paneflow/browser/profi"
+  "switch-5" = "--change-stack-guard-on-fork=enable"
+  "switch-4" = "--enable-crash-reporter=,"
+  "switch-3" = "--render-node-override=/dev/dri/renderD128"
+  "switch-2" = "--ozone-platform=wayland"
+  "switch-1" = "--gpu-sandbox-failures-fatal=yes"
+  "num-switches" = "21"
+
+Received signal 6
+#0 0x7f2306f25c62 base::debug::CollectStackTrace()
+#1 0x7f2306f0d541 base::debug::StackTrace::StackTrace()
+#2 0x7f2306f2568f base::debug::(anonymous namespace)::StackDumpSignalHandler()
+#3 0x7f22f6c20fb0 (/usr/lib64/libc.so.6+0x19faf)
+#4 0x7f22f6c7bccc __pthread_kill_implementation
+#5 0x7f22f6c20e8e __GI_raise
+#6 0x7f22f6c087b3 __GI_abort
+#7 0x7f2306df9927 logging::LogMessage::HandleFatal()
+#8 0x7f2306df9419 logging::LogMessage::Flush()
+#9 0x7f2306df8d2c logging::LogMessage::~LogMessage()
+#10 0x7f2306ddf3a2 logging::(anonymous namespace)::CheckLogMessage::~CheckLogMessage()
+#11 0x7f2306ddf08b logging::CheckNoreturnError::~CheckNoreturnError()
+#12 0x7f230b7c22f2 viz::GmbVideoFramePoolContext::InitializeOnGpu()
+#13 0x7f22fd555631 base::OnceCallback<>::Run()
+#14 0x7f23026fb0bc gpu::Scheduler::ExecuteSequence()
+#15 0x7f23026f9e7e gpu::Scheduler::RunNextTask()
+#16 0x7f22fd555631 base::OnceCallback<>::Run()
+#17 0x7f2306e76451 base::TaskAnnotator::RunTaskImpl()
+#18 0x7f2306ea7cf2 base::sequence_manager::internal::ThreadControllerWithMessagePumpImpl::DoWorkImpl()
+#19 0x7f2306ea6ecb base::sequence_manager::internal::ThreadControllerWithMessagePumpImpl::DoWork()
+#20 0x7f2306e088da base::MessagePumpDefault::Run()
+#21 0x7f2306ea8d60 base::sequence_manager::internal::ThreadControllerWithMessagePumpImpl::Run()
+#22 0x7f2306e49886 base::RunLoop::Run()
+#23 0x7f230b6e38e7 content::GpuMain()
+#24 0x7f2305a54032 content::RunZygote()
+#25 0x7f2305a54e71 content::RunOtherNamedProcessTypeMain()
+#26 0x7f2305a56ef2 content::ContentMainRunnerImpl::Run()
+#27 0x7f2305a533d7 content::ContentMain()
+#28 0x7f22fd5c4d39 CefMainRunner::RunAsHelperProcess()
+#29 0x7f22fd59f032 CefExecuteProcess()
+#30 0x7f22fd42a551 cef_execute_process
+#31 0x55f3143558a5 (/home/arthur/.local/share/paneflow/browser/host-7144184259a699ab/bin/paneflow-browser-host+0xd68a4)
+#32 0x55f31430a433 (/home/arthur/.local/share/paneflow/browser/host-7144184259a699ab/bin/paneflow-browser-host+0x8b432)
+#33 0x55f314346231 (/home/arthur/.local/share/paneflow/browser/host-7144184259a699ab/bin/paneflow-browser-host+0xc7230)
+#34 0x55f3143ade6e (/home/arthur/.local/share/paneflow/browser/host-7144184259a699ab/bin/paneflow-browser-host+0x12ee6d)
+#35 0x55f314367715 (/home/arthur/.local/share/paneflow/browser/host-7144184259a699ab/bin/paneflow-browser-host+0xe8714)
+#36 0x7f22f6c0a681 __libc_start_call_main
+#37 0x7f22f6c0a798 __libc_start_main_alias_2
+#38 0x55f3142d9c35 (/home/arthur/.local/share/paneflow/browser/host-7144184259a699ab/bin/paneflow-browser-host+0x5ac34)
+  r8: 00000000000003ff  r9: 0000000000000000 r10: 000000000000268d r11: 0000000000000246
+ r12: 00007ffcf70f3bf0 r13: 000000000000268c r14: 0000000000000006 r15: 00003eb4000bb680
+  di: 000000000014722b  si: 000000000014722b  bp: 00007ffcf70f3a60  bx: 000000000014722b
+  dx: 0000000000000006  ax: 0000000000000000  cx: 00007f22f6c7bccc  sp: 00007ffcf70f3a30
+  ip: 00007f22f6c7bccc efl: 0000000000000246 cgf: 002b000000000033 erf: 0000000000000000
+ trp: 0000000000000000 msk: 0000000000000000 cr2: 0000000000000000
+[end of stack trace]
+../../sandbox/linux/seccomp-bpf-helpers/sigsys_handlers.cc:**CRASHING**:seccomp-bpf failure in syscall nr=0x25 arg1=0x5 arg2=0x7ffcf70f1fd0 arg3=0x0 arg4=0x8
+Received signal 11 SEGV_ACCERR 00000d005025
+#0 0x7f2306f25c62 base::debug::CollectStackTrace()
+#1 0x7f2306f0d541 base::debug::StackTrace::StackTrace()
+#2 0x7f2306f2568f base::debug::(anonymous namespace)::StackDumpSignalHandler()
+#3 0x7f22f6c20fb0 (/usr/lib64/libc.so.6+0x19faf)
+#4 0x7f2309c36ea4 sandbox::CrashSIGSYS_Handler()
+#5 0x7f2309c3ac6a sandbox::Trap::SigSys()
+#6 0x7f22f6c20fb0 (/usr/lib64/libc.so.6+0x19faf)
+#7 0x7f22f6cc71db __GI_alarm
+#8 0x7f2306f25bd8 base::debug::(anonymous namespace)::StackDumpSignalHandler()
+#9 0x7f22f6c20fb0 (/usr/lib64/libc.so.6+0x19faf)
+#10 0x7f22f6c7bccc __pthread_kill_implementation
+#11 0x7f22f6c20e8e __GI_raise
+#12 0x7f22f6c087b3 __GI_abort
+#13 0x7f2306df9927 logging::LogMessage::HandleFatal()
+#14 0x7f2306df9419 logging::LogMessage::Flush()
+#15 0x7f2306df8d2c logging::LogMessage::~LogMessage()
+#16 0x7f2306ddf3a2 logging::(anonymous namespace)::CheckLogMessage::~CheckLogMessage()
+#17 0x7f2306ddf08b logging::CheckNoreturnError::~CheckNoreturnError()
+#18 0x7f230b7c22f2 viz::GmbVideoFramePoolContext::InitializeOnGpu()
+#19 0x7f22fd555631 base::OnceCallback<>::Run()
+#20 0x7f23026fb0bc gpu::Scheduler::ExecuteSequence()
+#21 0x7f23026f9e7e gpu::Scheduler::RunNextTask()
+#22 0x7f22fd555631 base::OnceCallback<>::Run()
+#23 0x7f2306e76451 base::TaskAnnotator::RunTaskImpl()
+#24 0x7f2306ea7cf2 base::sequence_manager::internal::ThreadControllerWithMessagePumpImpl::DoWorkImpl()
+#25 0x7f2306ea6ecb base::sequence_manager::internal::ThreadControllerWithMessagePumpImpl::DoWork()
+#26 0x7f2306e088da base::MessagePumpDefault::Run()
+#27 0x7f2306ea8d60 base::sequence_manager::internal::ThreadControllerWithMessagePumpImpl::Run()
+#28 0x7f2306e49886 base::RunLoop::Run()
+#29 0x7f230b6e38e7 content::GpuMain()
+#30 0x7f2305a54032 content::RunZygote()
+#31 0x7f2305a54e71 content::RunOtherNamedProcessTypeMain()
+#32 0x7f2305a56ef2 content::ContentMainRunnerImpl::Run()
+#33 0x7f2305a533d7 content::ContentMain()
+#34 0x7f22fd5c4d39 CefMainRunner::RunAsHelperProcess()
+#35 0x7f22fd59f032 CefExecuteProcess()
+#36 0x7f22fd42a551 cef_execute_process
+#37 0x55f3143558a5 (/home/arthur/.local/share/paneflow/browser/host-7144184259a699ab/bin/paneflow-browser-host+0xd68a4)
+#38 0x55f31430a433 (/home/arthur/.local/share/paneflow/browser/host-7144184259a699ab/bin/paneflow-browser-host+0x8b432)
+#39 0x55f314346231 (/home/arthur/.local/share/paneflow/browser/host-7144184259a699ab/bin/paneflow-browser-host+0xc7230)
+#40 0x55f3143ade6e (/home/arthur/.local/share/paneflow/browser/host-7144184259a699ab/bin/paneflow-browser-host+0x12ee6d)
+#41 0x55f314367715 (/home/arthur/.local/share/paneflow/browser/host-7144184259a699ab/bin/paneflow-browser-host+0xe8714)
+#42 0x7f22f6c0a681 __libc_start_call_main
+#43 0x7f22f6c0a798 __libc_start_main_alias_2
+#44 0x55f3142d9c35 (/home/arthur/.local/share/paneflow/browser/host-7144184259a699ab/bin/paneflow-browser-host+0x5ac34)
+  r8: 0000000000000025  r9: 0000000000000025 r10: 0000000000000025 r11: 0000000000000246
+ r12: 00003eb400136200 r13: 00007ffcf70f1540 r14: 0000000000000025 r15: 0000000000000000
+  di: 0000000000000002  si: 00007f22fd19efd4  bp: 00007ffcf70f1440  bx: 00007ffcf70f1470
+  dx: 0000000000000001  ax: 0000000000005000  cx: 000000000d005025  sp: 00007ffcf70f1430
+  ip: 00007f2309c36ea4 efl: 0000000000010202 cgf: 002b000000000033 erf: 0000000000000006
+ trp: 000000000000000e msk: 0000000000000020 cr2: 000000000d005025
+[end of stack trace]
+../../sandbox/linux/seccomp-bpf-helpers/sigsys_handlers.cc:**CRASHING**:seccomp-bpf failure in syscall nr=0x25 arg1=0x5 arg2=0x7ffcf70ef9d0 arg3=0x0 arg4=0x8
+[1338443:1338443:0906/224420.829217:ERROR:content/browser/gpu/gpu_process_host.cc:1035] GPU process exited unexpectedly: exit_code=139
+[1340465:1340465:0906/224420.946489:ERROR:gpu/ipc/service/gpu_channel_manager.cc:928] ContextResult::kFatalFailure: Failed to create shared context for virtualization.
+[1340465:1340465:0906/224420.946606:FATAL:components/viz/service/frame_sinks/gmb_video_frame_pool_context_provider_impl.cc:104] Check failed: shared_context_state_. 
+#0 0x7f2306f25c62 base::debug::CollectStackTrace()
+#1 0x7f2306f0d541 base::debug::StackTrace::StackTrace()
+#2 0x7f2306df8e5c logging::LogMessage::Flush()
+#3 0x7f2306df8d2c logging::LogMessage::~LogMessage()
+#4 0x7f2306ddf3a2 logging::(anonymous namespace)::CheckLogMessage::~CheckLogMessage()
+#5 0x7f2306ddf08b logging::CheckNoreturnError::~CheckNoreturnError()
+#6 0x7f230b7c22f2 viz::GmbVideoFramePoolContext::InitializeOnGpu()
+#7 0x7f22fd555631 base::OnceCallback<>::Run()
+#8 0x7f23026fb0bc gpu::Scheduler::ExecuteSequence()
+#9 0x7f23026f9e7e gpu::Scheduler::RunNextTask()
+#10 0x7f22fd555631 base::OnceCallback<>::Run()
+#11 0x7f2306e76451 base::TaskAnnotator::RunTaskImpl()
+#12 0x7f2306ea7cf2 base::sequence_manager::internal::ThreadControllerWithMessagePumpImpl::DoWorkImpl()
+#13 0x7f2306ea6ecb base::sequence_manager::internal::ThreadControllerWithMessagePumpImpl::DoWork()
+#14 0x7f2306e088da base::MessagePumpDefault::Run()
+#15 0x7f2306ea8d60 base::sequence_manager::internal::ThreadControllerWithMessagePumpImpl::Run()
+#16 0x7f2306e49886 base::RunLoop::Run()
+#17 0x7f230b6e38e7 content::GpuMain()
+#18 0x7f2305a54032 content::RunZygote()
+#19 0x7f2305a54e71 content::RunOtherNamedProcessTypeMain()
+#20 0x7f2305a56ef2 content::ContentMainRunnerImpl::Run()
+#21 0x7f2305a533d7 content::ContentMain()
+#22 0x7f22fd5c4d39 CefMainRunner::RunAsHelperProcess()
+#23 0x7f22fd59f032 CefExecuteProcess()
+#24 0x7f22fd42a551 cef_execute_process
+#25 0x55f3143558a5 (/home/arthur/.local/share/paneflow/browser/host-7144184259a699ab/bin/paneflow-browser-host+0xd68a4)
+#26 0x55f31430a433 (/home/arthur/.local/share/paneflow/browser/host-7144184259a699ab/bin/paneflow-browser-host+0x8b432)
+#27 0x55f314346231 (/home/arthur/.local/share/paneflow/browser/host-7144184259a699ab/bin/paneflow-browser-host+0xc7230)
+#28 0x55f3143ade6e (/home/arthur/.local/share/paneflow/browser/host-7144184259a699ab/bin/paneflow-browser-host+0x12ee6d)
+#29 0x55f314367715 (/home/arthur/.local/share/paneflow/browser/host-7144184259a699ab/bin/paneflow-browser-host+0xe8714)
+#30 0x7f22f6c0a681 __libc_start_call_main
+#31 0x7f22f6c0a798 __libc_start_main_alias_2
+#32 0x55f3142d9c35 (/home/arthur/.local/share/paneflow/browser/host-7144184259a699ab/bin/paneflow-browser-host+0x5ac34)
+Task trace:
+#0 0x7f23026f7e2c gpu::Scheduler::TryScheduleSequence()
+#1 0x7f23073afe1d mojo::Connector::PostDispatchNextMessageFromPipe()
+#2 0x7f23073dea1c mojo::SimpleWatcher::ArmOrNotify()
+#3 0x7f23073afe1d mojo::Connector::PostDispatchNextMessageFromPipe()
+#4 0x7f23073dea1c mojo::SimpleWatcher::ArmOrNotify()
+Task trace buffer limit hit, update PendingTask::kTaskBacktraceLength to increase.
+Crash keys:
+  "variations" = "1db03297-3f4a17df,61b619cb-3f4a17df,6c9bc01b-3f4a17df,6f27bc8a-3f4a17df,c203d55b-3f4a17df,cf16e290-b446100,a66dbd64-71c38a98,e32097a3-3f4a17df,1e11dbbb-3f4a17df,102166ac-3f4a17df,89986dbe-3f01b610,e0a24f31-3d47f4f4,75251bde-3d47f4f4,fbf04c3e-3f4a17df,f7adf49b-3f4a17df,b13ca3d9-84f6cff8,f2b6a878-3f4a17df,6f87b0c-3f4a17df,32806e4f-28ea5088,be9ac099-f9095748,2468d6e5-3f4a17df,3fcef0b9-3f4a17df,f5a1eb9a-3f4a17df,7c4b8ebb-3f4a17df,ac59e11a-3f4a17df,d6284ba0-9610fd4e,73551ca1-3f4a17df,d6737162-3f4a17df,e35cc1a-3f4a17df,e5a1483c-3f4a17df,6a68c9a6-3f4a17df,c1531af3-3f4a17df,47a0a3b2-3f4a17df,1b0dc97-3f4a17df,97063883-1f820d08,63ef0138-3f4a17df,af00e384-3f4a17df,8f80c10-78198108,a62c052e-3f4a17df,a4ca7cb1-3f4a17df,da968c94-3f4a17df,ae727645-d13781e7,3fbd6932-3f4a17df,2441c03c-3f4a17df,de69cad8-3f4a17df,b0f4d712-3f4a17df,99fb13df-c3c0f822,ec937206-3f4a17df,cad2b12b-8ef57898,57d6085b-3f4a17df,fb92da45-3f4a17df,d6ad7f9a-a9080253,a5ecfb95-3f4a17df,797fe373-3f4a17df,ead3e59e-8c7df51c,29936542-3f4a17df,17a43872-3f4a17df,1ffefb1a-3f4a17df,f419bc72-3f4a17df,470d37ba-3f4a17df,f7d06457-e9d42fcd,bcb58f65-3f4a17df,d512da3a-513c429d,a8d4875a-3f4a17df,54d601a5-3f4a17df,63f121e7-3f4a17df,98ab2bc2-b6dc7ce0,600d2fa6-3f4a17df,8e887d5e-3f4a17df,bca7ba0b-8cb78501,ff1e0777-3f4a17df,b127f8bf-3f4a17df,392d9f80-3f4a17df,b6083631-447a6f32,d7af3875-3f4a17df,4dc2f223-3f4a17df,5133eb43-307b98b1,f314f5b9-a2b13a7f,816b88d4-3f4a17df,6e4a21fe-efc28565,531e1626-4513f3bf,820f17d2-e484eeec,44666d99-3d47f4f4,c9c3bf92-3f4a17df,aa43c9da-fb669628,27bae43b-3d47f4f4,ea0e1b65-3f4a17df,e14ee5ee-c6d6098d,6222c570-3f4a17df,fd051c38-3f4a17df,c5c172fe-443695d8,a98def31-2a5a8f5d,8f9d758f-3f4a17df,fc1790de-3f4a17df,73f2ea1f-7fe57363,47b4cae6-3f4a17df,216faa60-715a9504,35c106c9-3f4a17df,639ee5d3-3f4a17df,7dcaa2cd-3f4a17df,f6f5c542-3f4a17df,5e05ef36-3f4a17df,18324944-3f4a17df,9d8b5725-3f4a17df,3779be93-3f4a17df,ee9f791c-47d2cc8b,537bb749-f459c823,305240ad-3f4a17df,3b02c079-3f4a17df,54b15be4-e3ec50a6,bd6dd170-b5b075b6,669a7db8-3f4a17df,a028f288-d24710ce,350559e5-3f4a17df,4356ac4a-3f4a17df,91cba98-b3b3bb94,6a6ab26-faa329bf,4eb998ce-3f4a17df,493cac11-3f4a17df,3e15bfc6-3f4a17df,6e4912ad-3f4a17df,f980930-642c19ed,779782d3-3f4a17df,1e12d864-9973a429,efd40742-3f4a17df,e5c8270a-3f4a17df,ef3132a9-3f4a17df,87bc8a34-3f4a17df,96def758-3f4a17df,2d3e25b-3f4a17df,7ccab089-3f4a17df,e770b78e-3f4a17df,f4159b43-3f4a17df,151258bf-3f4a17df,5dfc4774-3f4a17df,3e672fd9-e109e63f,893cc7a4-3f4a17df,7b328958-3f4a17df,3c978b59-3f4a17df,9cf6c713-7585e9f1,bab9965f-76c70532,7c5b314e-fb669628,78049c75-111140a5,c297985a-3f4a17df,6ddea229-6ddea229,95341ce8-3f4a17df,31f4a8bd-3f4a17df,609ae08f-3f4a17df,2e7369a1-4aceb943,96d006a-c3a49e71,f6264095-c3f8eab0,f42905ff-3f4a17df,210f81c-3f4a17df,2faf225b-3f4a17df,c17129bb-3f4a17df,4369f1a2-3f4a17df,74be468c-3f4a17df,26d5c1b5-3f4a17df,1f70f502-3f4a17df,4146cc26-775f6248,e9844d40-3f4a17df,819760d7-3f4a17df,2b68be8f-3f4a17df,d1ae5bf4-3f4a17df,15d1b2d8-3f4a17df,7ca2dd7e-3f4a17df,e1f2626b-3f4a17df,8ba22946-3f4a17df,55cc39e1-3f4a17df,ba449693-95f487fd,cad46b80-3f4a17df,70404afa-803f8fc4,eac788b4-77795d80,8643cb65-cf4f6ead,b47631a7-3f4a17df,e6ed801e-cf4f6ead,fc9ceed7-ee2a48b4,4af38a69-3c635604,6ff79bbe-3f4a17df,c1e2f598-3f4a17df,c823d1e9-3d47f4f4,7262ef2c-140d00b2,b4c2bd17-23db2647,6ec84df5-3f4a17df,4d625646-3f4a17df,2394f90f-ecc8f8cf,d5f746a4-39aaf314,3f7e8985-3645359a,260bef7d-9973a429,3a3c323e-3f4a17df,56aa5797-e5fec5a6,54be7848-3f4a17df,68366129-3f4a17df,e2d38844-3f4a17df,eef5d69a-1dca273f,da493d3c-3f4a17df,a7038f69-49218683,72bafd3e-cdb4c186,c290aefb-cf69bd0a,f659c5ca-3f4a17df,f3ed486d-3f4a17df,b3c54bb3-88fcaf7d,4076100b-3f4a17df,8c162025-3d47f4f4,ffdf4988-3f4a17df,3d3963fc-5d65cee9,3ac9fcb9-3f4a17df,b76b514f-3ac589b9,56c4f1cd-8c7df51c,8f418b04-299bae22,d3566fbd-c6f74b94,6821fcbe-3f4a17df,fec9e2f8-3f4a17df,af943b4f-b3e166c8,2e862394-fb669628,ed2195eb-3f4a17df,a2f28ef8-d7d235fa,5abe5347-3f4a17df,35a386c3-3f4a17df,40e3c61f-3f4a17df,afeeb5d0-3f4a17df,186d6e2c-36c0e608,408c2549-3f4a17df,1339c0d9-3f4a17df,ab7eb98c-3f4a17df,258151b3-3f4a17df,4fa4e3b8-3f4a17df,44fe0078-3f4a17df,c92d2cc4-3f4a17df,2468be5e-5f6398dc,aa540f4f-3f4a17df,30cf4980-61673e6,19e446cd-3f4a17df,bf46f37a-3f4a17df,28d782e1-683d1bb,93d2b4c8-c3c0f822,2d2b187a-3f4a17df,f86bc1e2-3f4a17df,f112d133-3f4a17df,1f490b80-3f4a17df,7f6b87dc-3f4a17df,41392635-3f4a17df,ea0d881d-fd860968,3f752d-3f4a17df,20a0c4ec-3f4a17df,53c64de7-3f4a17df,e3559213-c0f46cd5,89bba52e-174ae9a8,444b9649-3f4a17df,d990c4ac-3f4a17df,a374fdf0-964ff297,5e2ea1a-3f4a17df,5870a003-3f4a17df,a8df36b5-f4367231,9ba1837a-3f4a17df,3797f84b-3f4a17df,fe28a636-3f4a17df,52a20523-3f4a17df,d0083347-3ec702d4,ef4764d7-88fcaf7d,ba6e201d-3f4a17df,2bac45ad-3f4a17df,613081e8-3f4a17df,dd88aa3e-3f4a17df,c49d2b35-3f4a17df,377002b7-3f4a17df,935eb749-7a935877,94b88ba6-7e2e67c9,f3dbf5bd-faff9ce0,eff066ba-9ab9e8fd,15607410-b6e8dbb7,c6080aa-3f4a17df,8018a043-3d47f4f4,ad4acdda-3f4a17df,90860314-5ab828e2,b1ceb06f-3f4a17df,a595b987-3f4a17df,a39574eb-3f4a17df,46ca825f-3f4a17df,72b751de-3f4a17df,ec21b181-3f4a17df,4776ceb-3f4a17df,80b60e4a-3f4a17df,84b4fc65-3f4a17df,f585af0a-3f4a17df,75a4cec6-3d47f4f4,2cee8ab6-3f4a17df,8a0f7c51-112fdb12,51d22fd4-3f4a17df,6331e4d6-3f4a17df,aa8204ea-3f4a17df,5e19e3dc-70d6abf1,6332ffaf-3f4a17df,5910121-3f4a17df,595f5eb0-f23d1dea,a2c6574d-3f4a17df,798ea899-3f4a17df,7b4be1f2-3d47f4f4,9cdd2223-3f4a17df,c5be9d88-3f4a17df,743dedd5-3f4a17df,7f8767fe-3f4a17df,e0e211ad-e0e211ad,7e109629-3f4a17df,2f95a72f-3f4a17df,bc3ce3e6-148d4d4e,c55491ea-156838e5,c21c2b8b-3d47f4f4,f4f00e05-ca7d8d80,9481ce98-3d47f4f4,2a426c03-3d47f4f4,70678518-dee66fa8,be338734-dee66fa8,5f9907a9-dee66fa8,8eeccb9a-dee66fa8,2b465683-dee66fa8,52fc7926-dee66fa8,bc9b361d-dee66fa8,a41a7188-dee66fa8,ff71bfdc-dee66fa8,251fc742-dee66fa8,2159dd0c-dee66fa8,e7cc79d5-dee66fa8,4b935545-bb2d3403,ce263fae-3d47f4f4,9a38bae3-3d47f4f4,2d1e43a3-3f4a17df,370ace14-3f4a17df,386dc267-3d47f4f4,a4406b35-1657e2d6,408da146-1657e2d6,d69d967d-4866ef6e,3c8f75a1-21623f2a,"
+  "num-experiments" = "333"
+  "gr-context-type" = "None"
+  "gpu-gl-renderer" = "Disabled"
+  "gpu-gl-vendor" = "Disabled"
+  "gpu-generation-intel" = "0"
+  "gpu_count" = "0"
+  "gpu-devid" = "0x0000"
+  "gpu-venid" = "0x0000"
+  "chrome-trace-id" = "3050869293690409919"
+  "reentry_guard_tls_slot" = "unused"
+  "tls_system-sampling_heap_profiler" = "8"
+  "switch-17" = "--trace-process-track-uuid=4409342569178606415"
+  "switch-16" = "--pseudonymization-salt-handle=7,i,15329271479200535286,34568027"
+  "switch-15" = "--trace-buffer-handle=6,i,2990404135433239242,673072637120796346"
+  "switch-14" = "--trace-config-handle=5,i,11688747986543280908,17330335191832616"
+  "switch-13" = "--variations-seed-version"
+  "switch-12" = "--field-trial-handle=3,i,2967958016317727066,5625340887775249364"
+  "switch-11" = "--metrics-shmem-handle=4,i,13395407811666662662,4049098382238131"
+  "switch-10" = "--shared-files"
+  "switch-9" = "--use-gl=disabled"
+  "switch-8" = "--resources-dir-path=/home/arthur/.cache/paneflow-cef-tsync/pane"
+  "switch-7" = "--locales-dir-path=/home/arthur/.cache/paneflow-cef-tsync/panefl"
+  "tls_system-poisson_allocation_sampler" = "6"
+  "switch-6" = "--user-data-dir=/home/arthur/.local/share/paneflow/browser/profi"
+  "switch-5" = "--change-stack-guard-on-fork=enable"
+  "switch-4" = "--enable-crash-reporter=,"
+  "switch-3" = "--render-node-override=/dev/dri/renderD128"
+  "switch-2" = "--ozone-platform=wayland"
+  "switch-1" = "--gpu-sandbox-failures-fatal=yes"
+  "num-switches" = "21"
+
+Received signal 6
+#0 0x7f2306f25c62 base::debug::CollectStackTrace()
+#1 0x7f2306f0d541 base::debug::StackTrace::StackTrace()
+#2 0x7f2306f2568f base::debug::(anonymous namespace)::StackDumpSignalHandler()
+#3 0x7f22f6c20fb0 (/usr/lib64/libc.so.6+0x19faf)
+#4 0x7f22f6c7bccc __pthread_kill_implementation
+#5 0x7f22f6c20e8e __GI_raise
+#6 0x7f22f6c087b3 __GI_abort
+#7 0x7f2306df9927 logging::LogMessage::HandleFatal()
+#8 0x7f2306df9419 logging::LogMessage::Flush()
+#9 0x7f2306df8d2c logging::LogMessage::~LogMessage()
+#10 0x7f2306ddf3a2 logging::(anonymous namespace)::CheckLogMessage::~CheckLogMessage()
+#11 0x7f2306ddf08b logging::CheckNoreturnError::~CheckNoreturnError()
+#12 0x7f230b7c22f2 viz::GmbVideoFramePoolContext::InitializeOnGpu()
+#13 0x7f22fd555631 base::OnceCallback<>::Run()
+#14 0x7f23026fb0bc gpu::Scheduler::ExecuteSequence()
+#15 0x7f23026f9e7e gpu::Scheduler::RunNextTask()
+#16 0x7f22fd555631 base::OnceCallback<>::Run()
+#17 0x7f2306e76451 base::TaskAnnotator::RunTaskImpl()
+#18 0x7f2306ea7cf2 base::sequence_manager::internal::ThreadControllerWithMessagePumpImpl::DoWorkImpl()
+#19 0x7f2306ea6ecb base::sequence_manager::internal::ThreadControllerWithMessagePumpImpl::DoWork()
+#20 0x7f2306e088da base::MessagePumpDefault::Run()
+#21 0x7f2306ea8d60 base::sequence_manager::internal::ThreadControllerWithMessagePumpImpl::Run()
+#22 0x7f2306e49886 base::RunLoop::Run()
+#23 0x7f230b6e38e7 content::GpuMain()
+#24 0x7f2305a54032 content::RunZygote()
+#25 0x7f2305a54e71 content::RunOtherNamedProcessTypeMain()
+#26 0x7f2305a56ef2 content::ContentMainRunnerImpl::Run()
+#27 0x7f2305a533d7 content::ContentMain()
+#28 0x7f22fd5c4d39 CefMainRunner::RunAsHelperProcess()
+#29 0x7f22fd59f032 CefExecuteProcess()
+#30 0x7f22fd42a551 cef_execute_process
+#31 0x55f3143558a5 (/home/arthur/.local/share/paneflow/browser/host-7144184259a699ab/bin/paneflow-browser-host+0xd68a4)
+#32 0x55f31430a433 (/home/arthur/.local/share/paneflow/browser/host-7144184259a699ab/bin/paneflow-browser-host+0x8b432)
+#33 0x55f314346231 (/home/arthur/.local/share/paneflow/browser/host-7144184259a699ab/bin/paneflow-browser-host+0xc7230)
+#34 0x55f3143ade6e (/home/arthur/.local/share/paneflow/browser/host-7144184259a699ab/bin/paneflow-browser-host+0x12ee6d)
+#35 0x55f314367715 (/home/arthur/.local/share/paneflow/browser/host-7144184259a699ab/bin/paneflow-browser-host+0xe8714)
+#36 0x7f22f6c0a681 __libc_start_call_main
+#37 0x7f22f6c0a798 __libc_start_main_alias_2
+#38 0x55f3142d9c35 (/home/arthur/.local/share/paneflow/browser/host-7144184259a699ab/bin/paneflow-browser-host+0x5ac34)
+  r8: 00000000000003ff  r9: 0000000000000000 r10: 000000000000284e r11: 0000000000000246
+ r12: 00007ffcf70f3bf0 r13: 000000000000284d r14: 0000000000000006 r15: 00003eb4000b2e80
+  di: 0000000000147431  si: 0000000000147431  bp: 00007ffcf70f3a60  bx: 0000000000147431
+  dx: 0000000000000006  ax: 0000000000000000  cx: 00007f22f6c7bccc  sp: 00007ffcf70f3a30
+  ip: 00007f22f6c7bccc efl: 0000000000000246 cgf: 002b000000000033 erf: 0000000000000000
+ trp: 0000000000000000 msk: 0000000000000000 cr2: 0000000000000000
+[end of stack trace]
+../../sandbox/linux/seccomp-bpf-helpers/sigsys_handlers.cc:**CRASHING**:seccomp-bpf failure in syscall nr=0x25 arg1=0x5 arg2=0x7ffcf70f1fd0 arg3=0x0 arg4=0x8
+Received signal 11 SEGV_ACCERR 00000d005025
+#0 0x7f2306f25c62 base::debug::CollectStackTrace()
+#1 0x7f2306f0d541 base::debug::StackTrace::StackTrace()
+#2 0x7f2306f2568f base::debug::(anonymous namespace)::StackDumpSignalHandler()
+#3 0x7f22f6c20fb0 (/usr/lib64/libc.so.6+0x19faf)
+#4 0x7f2309c36ea4 sandbox::CrashSIGSYS_Handler()
+#5 0x7f2309c3ac6a sandbox::Trap::SigSys()
+#6 0x7f22f6c20fb0 (/usr/lib64/libc.so.6+0x19faf)
+#7 0x7f22f6cc71db __GI_alarm
+#8 0x7f2306f25bd8 base::debug::(anonymous namespace)::StackDumpSignalHandler()
+#9 0x7f22f6c20fb0 (/usr/lib64/libc.so.6+0x19faf)
+#10 0x7f22f6c7bccc __pthread_kill_implementation
+#11 0x7f22f6c20e8e __GI_raise
+#12 0x7f22f6c087b3 __GI_abort
+#13 0x7f2306df9927 logging::LogMessage::HandleFatal()
+#14 0x7f2306df9419 logging::LogMessage::Flush()
+#15 0x7f2306df8d2c logging::LogMessage::~LogMessage()
+#16 0x7f2306ddf3a2 logging::(anonymous namespace)::CheckLogMessage::~CheckLogMessage()
+#17 0x7f2306ddf08b logging::CheckNoreturnError::~CheckNoreturnError()
+#18 0x7f230b7c22f2 viz::GmbVideoFramePoolContext::InitializeOnGpu()
+#19 0x7f22fd555631 base::OnceCallback<>::Run()
+#20 0x7f23026fb0bc gpu::Scheduler::ExecuteSequence()
+#21 0x7f23026f9e7e gpu::Scheduler::RunNextTask()
+#22 0x7f22fd555631 base::OnceCallback<>::Run()
+#23 0x7f2306e76451 base::TaskAnnotator::RunTaskImpl()
+#24 0x7f2306ea7cf2 base::sequence_manager::internal::ThreadControllerWithMessagePumpImpl::DoWorkImpl()
+#25 0x7f2306ea6ecb base::sequence_manager::internal::ThreadControllerWithMessagePumpImpl::DoWork()
+#26 0x7f2306e088da base::MessagePumpDefault::Run()
+#27 0x7f2306ea8d60 base::sequence_manager::internal::ThreadControllerWithMessagePumpImpl::Run()
+#28 0x7f2306e49886 base::RunLoop::Run()
+#29 0x7f230b6e38e7 content::GpuMain()
+#30 0x7f2305a54032 content::RunZygote()
+#31 0x7f2305a54e71 content::RunOtherNamedProcessTypeMain()
+#32 0x7f2305a56ef2 content::ContentMainRunnerImpl::Run()
+#33 0x7f2305a533d7 content::ContentMain()
+#34 0x7f22fd5c4d39 CefMainRunner::RunAsHelperProcess()
+#35 0x7f22fd59f032 CefExecuteProcess()
+#36 0x7f22fd42a551 cef_execute_process
+#37 0x55f3143558a5 (/home/arthur/.local/share/paneflow/browser/host-7144184259a699ab/bin/paneflow-browser-host+0xd68a4)
+#38 0x55f31430a433 (/home/arthur/.local/share/paneflow/browser/host-7144184259a699ab/bin/paneflow-browser-host+0x8b432)
+#39 0x55f314346231 (/home/arthur/.local/share/paneflow/browser/host-7144184259a699ab/bin/paneflow-browser-host+0xc7230)
+#40 0x55f3143ade6e (/home/arthur/.local/share/paneflow/browser/host-7144184259a699ab/bin/paneflow-browser-host+0x12ee6d)
+#41 0x55f314367715 (/home/arthur/.local/share/paneflow/browser/host-7144184259a699ab/bin/paneflow-browser-host+0xe8714)
+#42 0x7f22f6c0a681 __libc_start_call_main
+#43 0x7f22f6c0a798 __libc_start_main_alias_2
+#44 0x55f3142d9c35 (/home/arthur/.local/share/paneflow/browser/host-7144184259a699ab/bin/paneflow-browser-host+0x5ac34)
+  r8: 0000000000000025  r9: 0000000000000025 r10: 0000000000000025 r11: 0000000000000246
+ r12: 00003eb400ee0000 r13: 00007ffcf70f1540 r14: 0000000000000025 r15: 0000000000000000
+  di: 0000000000000002  si: 00007f22fd19efd4  bp: 00007ffcf70f1440  bx: 00007ffcf70f1470
+  dx: 0000000000000001  ax: 0000000000005000  cx: 000000000d005025  sp: 00007ffcf70f1430
+  ip: 00007f2309c36ea4 efl: 0000000000010202 cgf: 002b000000000033 erf: 0000000000000006
+ trp: 000000000000000e msk: 0000000000000020 cr2: 000000000d005025
+[end of stack trace]
+../../sandbox/linux/seccomp-bpf-helpers/sigsys_handlers.cc:**CRASHING**:seccomp-bpf failure in syscall nr=0x25 arg1=0x5 arg2=0x7ffcf70ef9d0 arg3=0x0 arg4=0x8
+[1338443:1338443:0906/224421.678020:ERROR:content/browser/gpu/gpu_process_host.cc:1035] GPU process exited unexpectedly: exit_code=139
+[1340904:1340904:0906/224421.796933:ERROR:gpu/ipc/service/gpu_channel_manager.cc:928] ContextResult::kFatalFailure: Failed to create shared context for virtualization.
+[1340904:1340904:0906/224421.797039:FATAL:components/viz/service/frame_sinks/gmb_video_frame_pool_context_provider_impl.cc:104] Check failed: shared_context_state_. 
+#0 0x7f2306f25c62 base::debug::CollectStackTrace()
+#1 0x7f2306f0d541 base::debug::StackTrace::StackTrace()
+#2 0x7f2306df8e5c logging::LogMessage::Flush()
+#3 0x7f2306df8d2c logging::LogMessage::~LogMessage()
+#4 0x7f2306ddf3a2 logging::(anonymous namespace)::CheckLogMessage::~CheckLogMessage()
+#5 0x7f2306ddf08b logging::CheckNoreturnError::~CheckNoreturnError()
+#6 0x7f230b7c22f2 viz::GmbVideoFramePoolContext::InitializeOnGpu()
+#7 0x7f22fd555631 base::OnceCallback<>::Run()
+#8 0x7f23026fb0bc gpu::Scheduler::ExecuteSequence()
+#9 0x7f23026f9e7e gpu::Scheduler::RunNextTask()
+#10 0x7f22fd555631 base::OnceCallback<>::Run()
+#11 0x7f2306e76451 base::TaskAnnotator::RunTaskImpl()
+#12 0x7f2306ea7cf2 base::sequence_manager::internal::ThreadControllerWithMessagePumpImpl::DoWorkImpl()
+#13 0x7f2306ea6ecb base::sequence_manager::internal::ThreadControllerWithMessagePumpImpl::DoWork()
+#14 0x7f2306e088da base::MessagePumpDefault::Run()
+#15 0x7f2306ea8d60 base::sequence_manager::internal::ThreadControllerWithMessagePumpImpl::Run()
+#16 0x7f2306e49886 base::RunLoop::Run()
+#17 0x7f230b6e38e7 content::GpuMain()
+#18 0x7f2305a54032 content::RunZygote()
+#19 0x7f2305a54e71 content::RunOtherNamedProcessTypeMain()
+#20 0x7f2305a56ef2 content::ContentMainRunnerImpl::Run()
+#21 0x7f2305a533d7 content::ContentMain()
+#22 0x7f22fd5c4d39 CefMainRunner::RunAsHelperProcess()
+#23 0x7f22fd59f032 CefExecuteProcess()
+#24 0x7f22fd42a551 cef_execute_process
+#25 0x55f3143558a5 (/home/arthur/.local/share/paneflow/browser/host-7144184259a699ab/bin/paneflow-browser-host+0xd68a4)
+#26 0x55f31430a433 (/home/arthur/.local/share/paneflow/browser/host-7144184259a699ab/bin/paneflow-browser-host+0x8b432)
+#27 0x55f314346231 (/home/arthur/.local/share/paneflow/browser/host-7144184259a699ab/bin/paneflow-browser-host+0xc7230)
+#28 0x55f3143ade6e (/home/arthur/.local/share/paneflow/browser/host-7144184259a699ab/bin/paneflow-browser-host+0x12ee6d)
+#29 0x55f314367715 (/home/arthur/.local/share/paneflow/browser/host-7144184259a699ab/bin/paneflow-browser-host+0xe8714)
+#30 0x7f22f6c0a681 __libc_start_call_main
+#31 0x7f22f6c0a798 __libc_start_main_alias_2
+#32 0x55f3142d9c35 (/home/arthur/.local/share/paneflow/browser/host-7144184259a699ab/bin/paneflow-browser-host+0x5ac34)
+Task trace:
+#0 0x7f23026f7e2c gpu::Scheduler::TryScheduleSequence()
+#1 0x7f23073afe1d mojo::Connector::PostDispatchNextMessageFromPipe()
+#2 0x7f23073dea1c mojo::SimpleWatcher::ArmOrNotify()
+#3 0x7f23073afe1d mojo::Connector::PostDispatchNextMessageFromPipe()
+#4 0x7f23073dea1c mojo::SimpleWatcher::ArmOrNotify()
+Task trace buffer limit hit, update PendingTask::kTaskBacktraceLength to increase.
+Crash keys:
+  "variations" = "1db03297-3f4a17df,61b619cb-3f4a17df,6c9bc01b-3f4a17df,6f27bc8a-3f4a17df,c203d55b-3f4a17df,cf16e290-b446100,a66dbd64-71c38a98,e32097a3-3f4a17df,1e11dbbb-3f4a17df,102166ac-3f4a17df,89986dbe-3f01b610,e0a24f31-3d47f4f4,75251bde-3d47f4f4,fbf04c3e-3f4a17df,f7adf49b-3f4a17df,b13ca3d9-84f6cff8,f2b6a878-3f4a17df,6f87b0c-3f4a17df,32806e4f-28ea5088,be9ac099-f9095748,2468d6e5-3f4a17df,3fcef0b9-3f4a17df,f5a1eb9a-3f4a17df,7c4b8ebb-3f4a17df,ac59e11a-3f4a17df,d6284ba0-9610fd4e,73551ca1-3f4a17df,d6737162-3f4a17df,e35cc1a-3f4a17df,e5a1483c-3f4a17df,6a68c9a6-3f4a17df,c1531af3-3f4a17df,47a0a3b2-3f4a17df,1b0dc97-3f4a17df,97063883-1f820d08,63ef0138-3f4a17df,af00e384-3f4a17df,8f80c10-78198108,a62c052e-3f4a17df,a4ca7cb1-3f4a17df,da968c94-3f4a17df,ae727645-d13781e7,3fbd6932-3f4a17df,2441c03c-3f4a17df,de69cad8-3f4a17df,b0f4d712-3f4a17df,99fb13df-c3c0f822,ec937206-3f4a17df,cad2b12b-8ef57898,57d6085b-3f4a17df,fb92da45-3f4a17df,d6ad7f9a-a9080253,a5ecfb95-3f4a17df,797fe373-3f4a17df,ead3e59e-8c7df51c,29936542-3f4a17df,17a43872-3f4a17df,1ffefb1a-3f4a17df,f419bc72-3f4a17df,470d37ba-3f4a17df,f7d06457-e9d42fcd,bcb58f65-3f4a17df,d512da3a-513c429d,a8d4875a-3f4a17df,54d601a5-3f4a17df,63f121e7-3f4a17df,98ab2bc2-b6dc7ce0,600d2fa6-3f4a17df,8e887d5e-3f4a17df,bca7ba0b-8cb78501,ff1e0777-3f4a17df,b127f8bf-3f4a17df,392d9f80-3f4a17df,b6083631-447a6f32,d7af3875-3f4a17df,4dc2f223-3f4a17df,5133eb43-307b98b1,f314f5b9-a2b13a7f,816b88d4-3f4a17df,6e4a21fe-efc28565,531e1626-4513f3bf,820f17d2-e484eeec,44666d99-3d47f4f4,c9c3bf92-3f4a17df,aa43c9da-fb669628,27bae43b-3d47f4f4,ea0e1b65-3f4a17df,e14ee5ee-c6d6098d,6222c570-3f4a17df,fd051c38-3f4a17df,c5c172fe-443695d8,a98def31-2a5a8f5d,8f9d758f-3f4a17df,fc1790de-3f4a17df,73f2ea1f-7fe57363,47b4cae6-3f4a17df,216faa60-715a9504,35c106c9-3f4a17df,639ee5d3-3f4a17df,7dcaa2cd-3f4a17df,f6f5c542-3f4a17df,5e05ef36-3f4a17df,18324944-3f4a17df,9d8b5725-3f4a17df,3779be93-3f4a17df,ee9f791c-47d2cc8b,537bb749-f459c823,305240ad-3f4a17df,3b02c079-3f4a17df,54b15be4-e3ec50a6,bd6dd170-b5b075b6,669a7db8-3f4a17df,a028f288-d24710ce,350559e5-3f4a17df,4356ac4a-3f4a17df,91cba98-b3b3bb94,6a6ab26-faa329bf,4eb998ce-3f4a17df,493cac11-3f4a17df,3e15bfc6-3f4a17df,6e4912ad-3f4a17df,f980930-642c19ed,779782d3-3f4a17df,1e12d864-9973a429,efd40742-3f4a17df,e5c8270a-3f4a17df,ef3132a9-3f4a17df,87bc8a34-3f4a17df,96def758-3f4a17df,2d3e25b-3f4a17df,7ccab089-3f4a17df,e770b78e-3f4a17df,f4159b43-3f4a17df,151258bf-3f4a17df,5dfc4774-3f4a17df,3e672fd9-e109e63f,893cc7a4-3f4a17df,7b328958-3f4a17df,3c978b59-3f4a17df,9cf6c713-7585e9f1,bab9965f-76c70532,7c5b314e-fb669628,78049c75-111140a5,c297985a-3f4a17df,6ddea229-6ddea229,95341ce8-3f4a17df,31f4a8bd-3f4a17df,609ae08f-3f4a17df,2e7369a1-4aceb943,96d006a-c3a49e71,f6264095-c3f8eab0,f42905ff-3f4a17df,210f81c-3f4a17df,2faf225b-3f4a17df,c17129bb-3f4a17df,4369f1a2-3f4a17df,74be468c-3f4a17df,26d5c1b5-3f4a17df,1f70f502-3f4a17df,4146cc26-775f6248,e9844d40-3f4a17df,819760d7-3f4a17df,2b68be8f-3f4a17df,d1ae5bf4-3f4a17df,15d1b2d8-3f4a17df,7ca2dd7e-3f4a17df,e1f2626b-3f4a17df,8ba22946-3f4a17df,55cc39e1-3f4a17df,ba449693-95f487fd,cad46b80-3f4a17df,70404afa-803f8fc4,eac788b4-77795d80,8643cb65-cf4f6ead,b47631a7-3f4a17df,e6ed801e-cf4f6ead,fc9ceed7-ee2a48b4,4af38a69-3c635604,6ff79bbe-3f4a17df,c1e2f598-3f4a17df,c823d1e9-3d47f4f4,7262ef2c-140d00b2,b4c2bd17-23db2647,6ec84df5-3f4a17df,4d625646-3f4a17df,2394f90f-ecc8f8cf,d5f746a4-39aaf314,3f7e8985-3645359a,260bef7d-9973a429,3a3c323e-3f4a17df,56aa5797-e5fec5a6,54be7848-3f4a17df,68366129-3f4a17df,e2d38844-3f4a17df,eef5d69a-1dca273f,da493d3c-3f4a17df,a7038f69-49218683,72bafd3e-cdb4c186,c290aefb-cf69bd0a,f659c5ca-3f4a17df,f3ed486d-3f4a17df,b3c54bb3-88fcaf7d,4076100b-3f4a17df,8c162025-3d47f4f4,ffdf4988-3f4a17df,3d3963fc-5d65cee9,3ac9fcb9-3f4a17df,b76b514f-3ac589b9,56c4f1cd-8c7df51c,8f418b04-299bae22,d3566fbd-c6f74b94,6821fcbe-3f4a17df,fec9e2f8-3f4a17df,af943b4f-b3e166c8,2e862394-fb669628,ed2195eb-3f4a17df,a2f28ef8-d7d235fa,5abe5347-3f4a17df,35a386c3-3f4a17df,40e3c61f-3f4a17df,afeeb5d0-3f4a17df,186d6e2c-36c0e608,408c2549-3f4a17df,1339c0d9-3f4a17df,ab7eb98c-3f4a17df,258151b3-3f4a17df,4fa4e3b8-3f4a17df,44fe0078-3f4a17df,c92d2cc4-3f4a17df,2468be5e-5f6398dc,aa540f4f-3f4a17df,30cf4980-61673e6,19e446cd-3f4a17df,bf46f37a-3f4a17df,28d782e1-683d1bb,93d2b4c8-c3c0f822,2d2b187a-3f4a17df,f86bc1e2-3f4a17df,f112d133-3f4a17df,1f490b80-3f4a17df,7f6b87dc-3f4a17df,41392635-3f4a17df,ea0d881d-fd860968,3f752d-3f4a17df,20a0c4ec-3f4a17df,53c64de7-3f4a17df,e3559213-c0f46cd5,89bba52e-174ae9a8,444b9649-3f4a17df,d990c4ac-3f4a17df,a374fdf0-964ff297,5e2ea1a-3f4a17df,5870a003-3f4a17df,a8df36b5-f4367231,9ba1837a-3f4a17df,3797f84b-3f4a17df,fe28a636-3f4a17df,52a20523-3f4a17df,d0083347-3ec702d4,ef4764d7-88fcaf7d,ba6e201d-3f4a17df,2bac45ad-3f4a17df,613081e8-3f4a17df,dd88aa3e-3f4a17df,c49d2b35-3f4a17df,377002b7-3f4a17df,935eb749-7a935877,94b88ba6-7e2e67c9,f3dbf5bd-faff9ce0,eff066ba-9ab9e8fd,15607410-b6e8dbb7,c6080aa-3f4a17df,8018a043-3d47f4f4,ad4acdda-3f4a17df,90860314-5ab828e2,b1ceb06f-3f4a17df,a595b987-3f4a17df,a39574eb-3f4a17df,46ca825f-3f4a17df,72b751de-3f4a17df,ec21b181-3f4a17df,4776ceb-3f4a17df,80b60e4a-3f4a17df,84b4fc65-3f4a17df,f585af0a-3f4a17df,75a4cec6-3d47f4f4,2cee8ab6-3f4a17df,8a0f7c51-112fdb12,51d22fd4-3f4a17df,6331e4d6-3f4a17df,aa8204ea-3f4a17df,5e19e3dc-70d6abf1,6332ffaf-3f4a17df,5910121-3f4a17df,595f5eb0-f23d1dea,a2c6574d-3f4a17df,798ea899-3f4a17df,7b4be1f2-3d47f4f4,9cdd2223-3f4a17df,c5be9d88-3f4a17df,743dedd5-3f4a17df,7f8767fe-3f4a17df,e0e211ad-e0e211ad,7e109629-3f4a17df,2f95a72f-3f4a17df,bc3ce3e6-148d4d4e,c55491ea-156838e5,c21c2b8b-3d47f4f4,f4f00e05-ca7d8d80,9481ce98-3d47f4f4,2a426c03-3d47f4f4,70678518-dee66fa8,be338734-dee66fa8,5f9907a9-dee66fa8,8eeccb9a-dee66fa8,2b465683-dee66fa8,52fc7926-dee66fa8,bc9b361d-dee66fa8,a41a7188-dee66fa8,ff71bfdc-dee66fa8,251fc742-dee66fa8,2159dd0c-dee66fa8,e7cc79d5-dee66fa8,4b935545-bb2d3403,ce263fae-3d47f4f4,9a38bae3-3d47f4f4,2d1e43a3-3f4a17df,370ace14-3f4a17df,386dc267-3d47f4f4,a4406b35-1657e2d6,408da146-1657e2d6,d69d967d-4866ef6e,3c8f75a1-21623f2a,"
+  "num-experiments" = "333"
+  "gr-context-type" = "None"
+  "gpu-gl-renderer" = "Disabled"
+  "gpu-gl-vendor" = "Disabled"
+  "gpu-generation-intel" = "0"
+  "gpu_count" = "0"
+  "gpu-devid" = "0x0000"
+  "gpu-venid" = "0x0000"
+  "chrome-trace-id" = "5106142799044457022"
+  "reentry_guard_tls_slot" = "unused"
+  "tls_system-sampling_heap_profiler" = "8"
+  "switch-17" = "--trace-process-track-uuid=5198617293639699396"
+  "switch-16" = "--pseudonymization-salt-handle=7,i,15329271479200535286,34568027"
+  "switch-15" = "--trace-buffer-handle=6,i,8347299765170339593,125353894256035792"
+  "switch-14" = "--trace-config-handle=5,i,17100990753925261318,14660021911100140"
+  "switch-13" = "--variations-seed-version"
+  "switch-12" = "--field-trial-handle=3,i,2967958016317727066,5625340887775249364"
+  "switch-11" = "--metrics-shmem-handle=4,i,202595309626293214,164085460508693838"
+  "switch-10" = "--shared-files"
+  "switch-9" = "--use-gl=disabled"
+  "switch-8" = "--resources-dir-path=/home/arthur/.cache/paneflow-cef-tsync/pane"
+  "switch-7" = "--locales-dir-path=/home/arthur/.cache/paneflow-cef-tsync/panefl"
+  "tls_system-poisson_allocation_sampler" = "6"
+  "switch-6" = "--user-data-dir=/home/arthur/.local/share/paneflow/browser/profi"
+  "switch-5" = "--change-stack-guard-on-fork=enable"
+  "switch-4" = "--enable-crash-reporter=,"
+  "switch-3" = "--render-node-override=/dev/dri/renderD128"
+  "switch-2" = "--ozone-platform=wayland"
+  "switch-1" = "--gpu-sandbox-failures-fatal=yes"
+  "num-switches" = "21"
+
+Received signal 6
+#0 0x7f2306f25c62 base::debug::CollectStackTrace()
+#1 0x7f2306f0d541 base::debug::StackTrace::StackTrace()
+#2 0x7f2306f2568f base::debug::(anonymous namespace)::StackDumpSignalHandler()
+#3 0x7f22f6c20fb0 (/usr/lib64/libc.so.6+0x19faf)
+#4 0x7f22f6c7bccc __pthread_kill_implementation
+#5 0x7f22f6c20e8e __GI_raise
+#6 0x7f22f6c087b3 __GI_abort
+#7 0x7f2306df9927 logging::LogMessage::HandleFatal()
+#8 0x7f2306df9419 logging::LogMessage::Flush()
+#9 0x7f2306df8d2c logging::LogMessage::~LogMessage()
+#10 0x7f2306ddf3a2 logging::(anonymous namespace)::CheckLogMessage::~CheckLogMessage()
+#11 0x7f2306ddf08b logging::CheckNoreturnError::~CheckNoreturnError()
+#12 0x7f230b7c22f2 viz::GmbVideoFramePoolContext::InitializeOnGpu()
+#13 0x7f22fd555631 base::OnceCallback<>::Run()
+#14 0x7f23026fb0bc gpu::Scheduler::ExecuteSequence()
+#15 0x7f23026f9e7e gpu::Scheduler::RunNextTask()
+#16 0x7f22fd555631 base::OnceCallback<>::Run()
+#17 0x7f2306e76451 base::TaskAnnotator::RunTaskImpl()
+#18 0x7f2306ea7cf2 base::sequence_manager::internal::ThreadControllerWithMessagePumpImpl::DoWorkImpl()
+#19 0x7f2306ea6ecb base::sequence_manager::internal::ThreadControllerWithMessagePumpImpl::DoWork()
+#20 0x7f2306e088da base::MessagePumpDefault::Run()
+#21 0x7f2306ea8d60 base::sequence_manager::internal::ThreadControllerWithMessagePumpImpl::Run()
+#22 0x7f2306e49886 base::RunLoop::Run()
+#23 0x7f230b6e38e7 content::GpuMain()
+#24 0x7f2305a54032 content::RunZygote()
+#25 0x7f2305a54e71 content::RunOtherNamedProcessTypeMain()
+#26 0x7f2305a56ef2 content::ContentMainRunnerImpl::Run()
+#27 0x7f2305a533d7 content::ContentMain()
+#28 0x7f22fd5c4d39 CefMainRunner::RunAsHelperProcess()
+#29 0x7f22fd59f032 CefExecuteProcess()
+#30 0x7f22fd42a551 cef_execute_process
+#31 0x55f3143558a5 (/home/arthur/.local/share/paneflow/browser/host-7144184259a699ab/bin/paneflow-browser-host+0xd68a4)
+#32 0x55f31430a433 (/home/arthur/.local/share/paneflow/browser/host-7144184259a699ab/bin/paneflow-browser-host+0x8b432)
+#33 0x55f314346231 (/home/arthur/.local/share/paneflow/browser/host-7144184259a699ab/bin/paneflow-browser-host+0xc7230)
+#34 0x55f3143ade6e (/home/arthur/.local/share/paneflow/browser/host-7144184259a699ab/bin/paneflow-browser-host+0x12ee6d)
+#35 0x55f314367715 (/home/arthur/.local/share/paneflow/browser/host-7144184259a699ab/bin/paneflow-browser-host+0xe8714)
+#36 0x7f22f6c0a681 __libc_start_call_main
+#37 0x7f22f6c0a798 __libc_start_main_alias_2
+#38 0x55f3142d9c35 (/home/arthur/.local/share/paneflow/browser/host-7144184259a699ab/bin/paneflow-browser-host+0x5ac34)
+  r8: 00000000000003ff  r9: 0000000000000000 r10: 000000000000284e r11: 0000000000000246
+ r12: 00007ffcf70f3bf0 r13: 000000000000284d r14: 0000000000000006 r15: 00003eb4000b1500
+  di: 00000000001475e8  si: 00000000001475e8  bp: 00007ffcf70f3a60  bx: 00000000001475e8
+  dx: 0000000000000006  ax: 0000000000000000  cx: 00007f22f6c7bccc  sp: 00007ffcf70f3a30
+  ip: 00007f22f6c7bccc efl: 0000000000000246 cgf: 002b000000000033 erf: 0000000000000000
+ trp: 0000000000000000 msk: 0000000000000000 cr2: 0000000000000000
+[end of stack trace]
+../../sandbox/linux/seccomp-bpf-helpers/sigsys_handlers.cc:**CRASHING**:seccomp-bpf failure in syscall nr=0x25 arg1=0x5 arg2=0x7ffcf70f1fd0 arg3=0x0 arg4=0x8
+Received signal 11 SEGV_ACCERR 00000d005025
+#0 0x7f2306f25c62 base::debug::CollectStackTrace()
+#1 0x7f2306f0d541 base::debug::StackTrace::StackTrace()
+#2 0x7f2306f2568f base::debug::(anonymous namespace)::StackDumpSignalHandler()
+#3 0x7f22f6c20fb0 (/usr/lib64/libc.so.6+0x19faf)
+#4 0x7f2309c36ea4 sandbox::CrashSIGSYS_Handler()
+#5 0x7f2309c3ac6a sandbox::Trap::SigSys()
+#6 0x7f22f6c20fb0 (/usr/lib64/libc.so.6+0x19faf)
+#7 0x7f22f6cc71db __GI_alarm
+#8 0x7f2306f25bd8 base::debug::(anonymous namespace)::StackDumpSignalHandler()
+#9 0x7f22f6c20fb0 (/usr/lib64/libc.so.6+0x19faf)
+#10 0x7f22f6c7bccc __pthread_kill_implementation
+#11 0x7f22f6c20e8e __GI_raise
+#12 0x7f22f6c087b3 __GI_abort
+#13 0x7f2306df9927 logging::LogMessage::HandleFatal()
+#14 0x7f2306df9419 logging::LogMessage::Flush()
+#15 0x7f2306df8d2c logging::LogMessage::~LogMessage()
+#16 0x7f2306ddf3a2 logging::(anonymous namespace)::CheckLogMessage::~CheckLogMessage()
+#17 0x7f2306ddf08b logging::CheckNoreturnError::~CheckNoreturnError()
+#18 0x7f230b7c22f2 viz::GmbVideoFramePoolContext::InitializeOnGpu()
+#19 0x7f22fd555631 base::OnceCallback<>::Run()
+#20 0x7f23026fb0bc gpu::Scheduler::ExecuteSequence()
+#21 0x7f23026f9e7e gpu::Scheduler::RunNextTask()
+#22 0x7f22fd555631 base::OnceCallback<>::Run()
+#23 0x7f2306e76451 base::TaskAnnotator::RunTaskImpl()
+#24 0x7f2306ea7cf2 base::sequence_manager::internal::ThreadControllerWithMessagePumpImpl::DoWorkImpl()
+#25 0x7f2306ea6ecb base::sequence_manager::internal::ThreadControllerWithMessagePumpImpl::DoWork()
+#26 0x7f2306e088da base::MessagePumpDefault::Run()
+#27 0x7f2306ea8d60 base::sequence_manager::internal::ThreadControllerWithMessagePumpImpl::Run()
+#28 0x7f2306e49886 base::RunLoop::Run()
+#29 0x7f230b6e38e7 content::GpuMain()
+#30 0x7f2305a54032 content::RunZygote()
+#31 0x7f2305a54e71 content::RunOtherNamedProcessTypeMain()
+#32 0x7f2305a56ef2 content::ContentMainRunnerImpl::Run()
+#33 0x7f2305a533d7 content::ContentMain()
+#34 0x7f22fd5c4d39 CefMainRunner::RunAsHelperProcess()
+#35 0x7f22fd59f032 CefExecuteProcess()
+#36 0x7f22fd42a551 cef_execute_process
+#37 0x55f3143558a5 (/home/arthur/.local/share/paneflow/browser/host-7144184259a699ab/bin/paneflow-browser-host+0xd68a4)
+#38 0x55f31430a433 (/home/arthur/.local/share/paneflow/browser/host-7144184259a699ab/bin/paneflow-browser-host+0x8b432)
+#39 0x55f314346231 (/home/arthur/.local/share/paneflow/browser/host-7144184259a699ab/bin/paneflow-browser-host+0xc7230)
+#40 0x55f3143ade6e (/home/arthur/.local/share/paneflow/browser/host-7144184259a699ab/bin/paneflow-browser-host+0x12ee6d)
+#41 0x55f314367715 (/home/arthur/.local/share/paneflow/browser/host-7144184259a699ab/bin/paneflow-browser-host+0xe8714)
+#42 0x7f22f6c0a681 __libc_start_call_main
+#43 0x7f22f6c0a798 __libc_start_main_alias_2
+#44 0x55f3142d9c35 (/home/arthur/.local/share/paneflow/browser/host-7144184259a699ab/bin/paneflow-browser-host+0x5ac34)
+  r8: 0000000000000025  r9: 0000000000000025 r10: 0000000000000025 r11: 0000000000000246
+ r12: 00003eb400017600 r13: 00007ffcf70f1540 r14: 0000000000000025 r15: 0000000000000000
+  di: 0000000000000002  si: 00007f22fd19efd4  bp: 00007ffcf70f1440  bx: 00007ffcf70f1470
+  dx: 0000000000000001  ax: 0000000000005000  cx: 000000000d005025  sp: 00007ffcf70f1430
+  ip: 00007f2309c36ea4 efl: 0000000000010202 cgf: 002b000000000033 erf: 0000000000000006
+ trp: 000000000000000e msk: 0000000000000020 cr2: 000000000d005025
+[end of stack trace]
+../../sandbox/linux/seccomp-bpf-helpers/sigsys_handlers.cc:**CRASHING**:seccomp-bpf failure in syscall nr=0x25 arg1=0x5 arg2=0x7ffcf70ef9d0 arg3=0x0 arg4=0x8
+[1338443:1338443:0906/224422.550240:ERROR:content/browser/gpu/gpu_process_host.cc:1035] GPU process exited unexpectedly: exit_code=139
+[1338443:1338443:0906/224422.550279:FATAL:content/browser/gpu/gpu_data_manager_impl_private.cc:417] GPU process isn't usable. Goodbye.
+#0 0x7fdde4d25c62 base::debug::CollectStackTrace()
+#1 0x7fdde4d0d541 base::debug::StackTrace::StackTrace()
+#2 0x7fdde4bf8e5c logging::LogMessage::Flush()
+#3 0x7fdde4bf9a89 logging::LogMessageFatal::~LogMessageFatal()
+#4 0x7fdde0c4f027 content::(anonymous namespace)::IntentionallyCrashBrowserForUnusableGpuProcess()
+#5 0x7fdde0c4b379 content::GpuDataManagerImplPrivate::FallBackToNextGpuMode()
+#6 0x7fdde0c4f03e content::GpuDataManagerImplPrivate::FallBackToNextGpuModeDueToCrash()
+#7 0x7fdde0c49b31 content::GpuDataManagerImpl::FallBackToNextGpuModeDueToCrash()
+#8 0x7fdde0c57233 content::GpuProcessHost::RecordProcessCrash()
+#9 0x7fdde0c58c67 content::GpuProcessHost::OnProcessCrashed()
+#10 0x7fdde09627b9 content::BrowserChildProcessHostImpl::OnChildDisconnected()
+#11 0x7fdde0a15b62 content::ChildProcessHostImpl::OnDisconnectedFromChildProcess()
+#12 0x7fdde59d7592 IPC::Channel::OnPipeError()
+#13 0x7fdde59db925 IPC::internal::MessagePipeReader::OnPipeError()
+#14 0x7fdddb355631 base::OnceCallback<>::Run()
+#15 0x7fdde51b6773 mojo::InterfaceEndpointClient::NotifyError()
+#16 0x7fdde59dd25e IPC::ChannelAssociatedGroupController::NotifyEndpointOfError()
+#17 0x7fdde59dccbd IPC::ChannelAssociatedGroupController::OnPipeError()
+#18 0x7fdddb355631 base::OnceCallback<>::Run()
+#19 0x7fdde51aed62 mojo::Connector::HandleError()
+#20 0x7fdde51af7ce mojo::Connector::OnWatcherHandleReady()
+#21 0x7fdddb411889 base::RepeatingCallback<>::Run()
+#22 0x7fdddb81c543 base::RepeatingCallback<>::Run()
+#23 0x7fdde51dee64 mojo::SimpleWatcher::OnHandleReady()
+#24 0x7fdddb355631 base::OnceCallback<>::Run()
+#25 0x7fdde4c76451 base::TaskAnnotator::RunTaskImpl()
+#26 0x7fdde4ca7cf2 base::sequence_manager::internal::ThreadControllerWithMessagePumpImpl::DoWorkImpl()
+#27 0x7fdde4ca6ecb base::sequence_manager::internal::ThreadControllerWithMessagePumpImpl::DoWork()
+#28 0x7fdde4d4ace4 base::MessagePumpGlib::HandleDispatch()
+#29 0x7fdde4d482de base::(anonymous namespace)::WorkSourceDispatch()
+#30 0x7fddf09c3f24 (/usr/lib64/libglib-2.0.so.0.8800.3+0x43f23)
+#31 0x7fddf09c8038 (/usr/lib64/libglib-2.0.so.0.8800.3+0x48037)
+#32 0x7fddf09c81e3 g_main_context_iteration
+#33 0x7fdde4d4affd base::MessagePumpGlib::Run()
+#34 0x7fdde4ca8d60 base::sequence_manager::internal::ThreadControllerWithMessagePumpImpl::Run()
+#35 0x7fdde4c49886 base::RunLoop::Run()
+#36 0x7fdddb3c4a04 CefMainRunner::RunMessageLoop()
+#37 0x7fdddb39fedf CefRunMessageLoop()
+#38 0x55ef3a3bbde1 (/home/arthur/.local/share/paneflow/browser/host-7144184259a699ab/bin/paneflow-browser-host+0xd8de0)
+#39 0x55ef3a36e433 (/home/arthur/.local/share/paneflow/browser/host-7144184259a699ab/bin/paneflow-browser-host+0x8b432)
+#40 0x55ef3a3aa231 (/home/arthur/.local/share/paneflow/browser/host-7144184259a699ab/bin/paneflow-browser-host+0xc7230)
+#41 0x55ef3a411e6e (/home/arthur/.local/share/paneflow/browser/host-7144184259a699ab/bin/paneflow-browser-host+0x12ee6d)
+#42 0x55ef3a3cb715 (/home/arthur/.local/share/paneflow/browser/host-7144184259a699ab/bin/paneflow-browser-host+0xe8714)
+#43 0x7fddd4a0a681 __libc_start_call_main
+#44 0x7fddd4a0a798 __libc_start_main_alias_2
+#45 0x55ef3a33dc35 (/home/arthur/.local/share/paneflow/browser/host-7144184259a699ab/bin/paneflow-browser-host+0x5ac34)
+Task trace:
+#0 0x7fdde51df0c6 mojo::SimpleWatcher::Context::Notify()
+Crash keys:
+  "gpu-gl-renderer" = "Disabled"
+  "gpu-gl-vendor" = "Disabled"
+  "gpu-generation-intel" = "0"
+  "gpu_count" = "0"
+  "gpu-devid" = "0x0000"
+  "gpu-venid" = "0x0000"
+  "chrome-trace-id" = "3009774574536815634"
+  "num-extensions" = "0"
+  "switch-12" = "--disable-sync"
+  "commandline-disabled-feature-4" = "KillOnInvalidNavigationHeaders"
+  "commandline-disabled-feature-3" = "LensOverlay"
+  "commandline-disabled-feature-2" = "AutofillActorMode"
+  "commandline-disabled-feature-1" = "GlicActorUi"
+  "reentry_guard_tls_slot" = "unused"
+  "tls_system-sampling_heap_profiler" = "12"
+  "variations" = "9cdd2223-3f4a17df,bd6dd170-b5b075b6,f6f5c542-3f4a17df,63ef0138-3f4a17df,af00e384-3f4a17df,ae727645-d13781e7,2f95a72f-3f4a17df,f3dbf5bd-faff9ce0,c290aefb-cf69bd0a,dd88aa3e-3f4a17df,f3ed486d-3f4a17df,da493d3c-3f4a17df,eef5d69a-1dca273f,a7038f69-49218683,f659c5ca-3f4a17df,72bafd3e-cdb4c186,35c106c9-3f4a17df,99fb13df-c3c0f822,a66dbd64-71c38a98,1e12d864-9973a429,7f8767fe-3f4a17df,4dc2f223-3f4a17df,d7af3875-3f4a17df,d6ad7f9a-a9080253,4af38a69-3c635604,3e15bfc6-3f4a17df,b13ca3d9-84f6cff8,bc3ce3e6-148d4d4e,2441c03c-3f4a17df,73f2ea1f-7fe57363,fc1790de-3f4a17df,305240ad-3f4a17df,a4ca7cb1-3f4a17df,c6080aa-3f4a17df,102166ac-3f4a17df,5e2ea1a-3f4a17df,4076100b-3f4a17df,fc9ceed7-ee2a48b4,b127f8bf-3f4a17df,94b88ba6-7e2e67c9,3779be93-3f4a17df,3f7e8985-3645359a,bcb58f65-3f4a17df,e9844d40-3f4a17df,ba449693-95f487fd,c92d2cc4-3f4a17df,8f80c10-78198108,d1ae5bf4-3f4a17df,ea0d881d-fd860968,8f9d758f-3f4a17df,8f418b04-299bae22,89bba52e-174ae9a8,cad2b12b-8ef57898,44fe0078-3f4a17df,54be7848-3f4a17df,4fa4e3b8-3f4a17df,743dedd5-3f4a17df,55cc39e1-3f4a17df,26d5c1b5-3f4a17df,8e887d5e-3f4a17df,392d9f80-3f4a17df,d3566fbd-c6f74b94,c203d55b-3f4a17df,4146cc26-775f6248,e14ee5ee-c6d6098d,ee9f791c-47d2cc8b,aa43c9da-fb669628,639ee5d3-3f4a17df,ef4764d7-88fcaf7d,53c64de7-3f4a17df,7c5b314e-fb669628,2e862394-fb669628,e3559213-c0f46cd5,b6083631-447a6f32,669a7db8-3f4a17df,80b60e4a-3f4a17df,d5f746a4-39aaf314,4d625646-3f4a17df,260bef7d-9973a429,2394f90f-ecc8f8cf,f7d06457-e9d42fcd,29936542-3f4a17df,8c162025-3d47f4f4,151258bf-3f4a17df,3ac9fcb9-3f4a17df,216faa60-715a9504,1f490b80-3f4a17df,ff1e0777-3f4a17df,600d2fa6-3f4a17df,96d006a-c3a49e71,779782d3-3f4a17df,cf16e290-b446100,4eb998ce-3f4a17df,a374fdf0-964ff297,a39574eb-3f4a17df,a2f28ef8-d7d235fa,7dcaa2cd-3f4a17df,e0e211ad-e0e211ad,820f17d2-e484eeec,a028f288-d24710ce,44666d99-3d47f4f4,ef3132a9-3f4a17df,7b328958-3f4a17df,893cc7a4-3f4a17df,3c978b59-3f4a17df,40e3c61f-3f4a17df,a595b987-3f4a17df,3b02c079-3f4a17df,210f81c-3f4a17df,54b15be4-e3ec50a6,9ba1837a-3f4a17df,1339c0d9-3f4a17df,97063883-1f820d08,c9c3bf92-3f4a17df,d990c4ac-3f4a17df,f980930-642c19ed,35a386c3-3f4a17df,258151b3-3f4a17df,5dfc4774-3f4a17df,6f87b0c-3f4a17df,46ca825f-3f4a17df,8ba22946-3f4a17df,b1ceb06f-3f4a17df,32806e4f-28ea5088,408c2549-3f4a17df,6821fcbe-3f4a17df,56aa5797-e5fec5a6,6ddea229-6ddea229,74be468c-3f4a17df,f4159b43-3f4a17df,2bac45ad-3f4a17df,ec937206-3f4a17df,4356ac4a-3f4a17df,5abe5347-3f4a17df,7c4b8ebb-3f4a17df,15607410-b6e8dbb7,cad46b80-3f4a17df,72b751de-3f4a17df,3a3c323e-3f4a17df,1db03297-3f4a17df,6a6ab26-faa329bf,eac788b4-77795d80,816b88d4-3f4a17df,e6ed801e-cf4f6ead,fd051c38-3f4a17df,1e11dbbb-3f4a17df,ab7eb98c-3f4a17df,bab9965f-76c70532,28d782e1-683d1bb,b3c54bb3-88fcaf7d,78049c75-111140a5,f86bc1e2-3f4a17df,3e672fd9-e109e63f,47a0a3b2-3f4a17df,c1e2f598-3f4a17df,b0f4d712-3f4a17df,17a43872-3f4a17df,8643cb65-cf4f6ead,7ccab089-3f4a17df,27bae43b-3d47f4f4,f2b6a878-3f4a17df,819760d7-3f4a17df,56c4f1cd-8c7df51c,c5c172fe-443695d8,aa540f4f-3f4a17df,609ae08f-3f4a17df,b47631a7-3f4a17df,e1f2626b-3f4a17df,493cac11-3f4a17df,c21c2b8b-3d47f4f4,ba6e201d-3f4a17df,61b619cb-3f4a17df,6c9bc01b-3f4a17df,e32097a3-3f4a17df,a62c052e-3f4a17df,da968c94-3f4a17df,54d601a5-3f4a17df,ea0e1b65-3f4a17df,91cba98-b3b3bb94,2b68be8f-3f4a17df,7ca2dd7e-3f4a17df,c823d1e9-3d47f4f4,e2d38844-3f4a17df,afeeb5d0-3f4a17df,19e446cd-3f4a17df,20a0c4ec-3f4a17df,613081e8-3f4a17df,c49d2b35-3f4a17df,7e109629-3f4a17df,2faf225b-3f4a17df,75a4cec6-3d47f4f4,2cee8ab6-3f4a17df,51d22fd4-3f4a17df,a2c6574d-3f4a17df,798ea899-3f4a17df,7b4be1f2-3d47f4f4,f585af0a-3f4a17df,6331e4d6-3f4a17df,6332ffaf-3f4a17df,5e19e3dc-70d6abf1,aa8204ea-3f4a17df,595f5eb0-f23d1dea,5910121-3f4a17df,f314f5b9-a2b13a7f,31f4a8bd-3f4a17df,fe28a636-3f4a17df,95341ce8-3f4a17df,8a0f7c51-112fdb12,c5be9d88-3f4a17df,5e05ef36-3f4a17df,30cf4980-61673e6,efd40742-3f4a17df,797fe373-3f4a17df,6f27bc8a-3f4a17df,3797f84b-3f4a17df,c17129bb-3f4a17df,3fcef0b9-3f4a17df,89986dbe-3f01b610,75251bde-3d47f4f4,fbf04c3e-3f4a17df,68366129-3f4a17df,9d8b5725-3f4a17df,bca7ba0b-8cb78501,d512da3a-513c429d,ad4acdda-3f4a17df,3d3963fc-5d65cee9,444b9649-3f4a17df,3f752d-3f4a17df,96def758-3f4a17df,87bc8a34-3f4a17df,2d3e25b-3f4a17df,90860314-5ab828e2,2468d6e5-3f4a17df,f5a1eb9a-3f4a17df,ac59e11a-3f4a17df,d6284ba0-9610fd4e,c1531af3-3f4a17df,e35cc1a-3f4a17df,e5a1483c-3f4a17df,73551ca1-3f4a17df,d6737162-3f4a17df,6a68c9a6-3f4a17df,57d6085b-3f4a17df,f419bc72-3f4a17df,470d37ba-3f4a17df,c55491ea-156838e5,e770b78e-3f4a17df,2468be5e-5f6398dc,a98def31-2a5a8f5d,a5ecfb95-3f4a17df,ffdf4988-3f4a17df,537bb749-f459c823,9cf6c713-7585e9f1,f7adf49b-3f4a17df,5133eb43-307b98b1,70404afa-803f8fc4,8018a043-3d47f4f4,eff066ba-9ab9e8fd,6e4a21fe-efc28565,531e1626-4513f3bf,7262ef2c-140d00b2,a8d4875a-3f4a17df,41392635-3f4a17df,935eb749-7a935877,d0083347-3ec702d4,b76b514f-3ac589b9,15d1b2d8-3f4a17df,fb92da45-3f4a17df,4369f1a2-3f4a17df,bf46f37a-3f4a17df,6ec84df5-3f4a17df,af943b4f-b3e166c8,47b4cae6-3f4a17df,b4c2bd17-23db2647,ec21b181-3f4a17df,fec9e2f8-3f4a17df,2d2b187a-3f4a17df,98ab2bc2-b6dc7ce0,e5c8270a-3f4a17df,1f70f502-3f4a17df,350559e5-3f4a17df,c297985a-3f4a17df,6222c570-3f4a17df,5870a003-3f4a17df,6ff79bbe-3f4a17df,1ffefb1a-3f4a17df,18324944-3f4a17df,377002b7-3f4a17df,63f121e7-3f4a17df,52a20523-3f4a17df,f6264095-c3f8eab0,186d6e2c-36c0e608,1b0dc97-3f4a17df,ed2195eb-3f4a17df,be9ac099-f9095748,f42905ff-3f4a17df,ead3e59e-8c7df51c,2e7369a1-4aceb943,93d2b4c8-c3c0f822,a8df36b5-f4367231,3fbd6932-3f4a17df,84b4fc65-3f4a17df,4776ceb-3f4a17df,e0a24f31-3d47f4f4,6e4912ad-3f4a17df,de69cad8-3f4a17df,7f6b87dc-3f4a17df,f112d133-3f4a17df,f4f00e05-ca7d8d80,9481ce98-3d47f4f4,2a426c03-3d47f4f4,70678518-dee66fa8,be338734-dee66fa8,5f9907a9-dee66fa8,8eeccb9a-dee66fa8,2b465683-dee66fa8,52fc7926-dee66fa8,bc9b361d-dee66fa8,a41a7188-dee66fa8,ff71bfdc-dee66fa8,251fc742-dee66fa8,2159dd0c-dee66fa8,e7cc79d5-dee66fa8,4b935545-bb2d3403,ce263fae-3d47f4f4,9a38bae3-3d47f4f4,2d1e43a3-3f4a17df,370ace14-3f4a17df,386dc267-3d47f4f4,a4406b35-1657e2d6,408da146-1657e2d6,d69d967d-4866ef6e,3c8f75a1-21623f2a,"
+  "num-experiments" = "333"
+  "switch-11" = "--disable-background-networking"
+  "switch-10" = "--disable-extensions"
+  "switch-9" = "--no-first-run"
+  "switch-8" = "--gpu-sandbox-failures-fatal=yes"
+  "switch-7" = "--render-node-override=/dev/dri/renderD128"
+  "switch-6" = "--password-store=basic"
+  "switch-5" = "--ozone-platform=wayland"
+  "switch-4" = "--locales-dir-path=/home/arthur/.cache/paneflow-cef-tsync/panefl"
+  "switch-3" = "--resources-dir-path=/home/arthur/.cache/paneflow-cef-tsync/pane"
+  "switch-2" = "--log-file=/home/arthur/.local/share/paneflow/browser/profiles/d"
+  "switch-1" = "--lang=en-US"
+  "num-switches" = "15"
+
+Received signal 6
+#0 0x7fdde4d25c62 base::debug::CollectStackTrace()
+#1 0x7fdde4d0d541 base::debug::StackTrace::StackTrace()
+#2 0x7fdde4d2568f base::debug::(anonymous namespace)::StackDumpSignalHandler()
+#3 0x7fddd4a20fb0 (/usr/lib64/libc.so.6+0x19faf)
+#4 0x7fddd4a7bccc __pthread_kill_implementation
+#5 0x7fddd4a20e8e __GI_raise
+#6 0x7fddd4a087b3 __GI_abort
+#7 0x7fdde4bf9927 logging::LogMessage::HandleFatal()
+#8 0x7fdde4bf9419 logging::LogMessage::Flush()
+#9 0x7fdde4bf9a89 logging::LogMessageFatal::~LogMessageFatal()
+#10 0x7fdde0c4f027 content::(anonymous namespace)::IntentionallyCrashBrowserForUnusableGpuProcess()
+#11 0x7fdde0c4b379 content::GpuDataManagerImplPrivate::FallBackToNextGpuMode()
+#12 0x7fdde0c4f03e content::GpuDataManagerImplPrivate::FallBackToNextGpuModeDueToCrash()
+#13 0x7fdde0c49b31 content::GpuDataManagerImpl::FallBackToNextGpuModeDueToCrash()
+#14 0x7fdde0c57233 content::GpuProcessHost::RecordProcessCrash()
+#15 0x7fdde0c58c67 content::GpuProcessHost::OnProcessCrashed()
+#16 0x7fdde09627b9 content::BrowserChildProcessHostImpl::OnChildDisconnected()
+#17 0x7fdde0a15b62 content::ChildProcessHostImpl::OnDisconnectedFromChildProcess()
+#18 0x7fdde59d7592 IPC::Channel::OnPipeError()
+#19 0x7fdde59db925 IPC::internal::MessagePipeReader::OnPipeError()
+#20 0x7fdddb355631 base::OnceCallback<>::Run()
+#21 0x7fdde51b6773 mojo::InterfaceEndpointClient::NotifyError()
+#22 0x7fdde59dd25e IPC::ChannelAssociatedGroupController::NotifyEndpointOfError()
+#23 0x7fdde59dccbd IPC::ChannelAssociatedGroupController::OnPipeError()
+#24 0x7fdddb355631 base::OnceCallback<>::Run()
+#25 0x7fdde51aed62 mojo::Connector::HandleError()
+#26 0x7fdde51af7ce mojo::Connector::OnWatcherHandleReady()
+#27 0x7fdddb411889 base::RepeatingCallback<>::Run()
+#28 0x7fdddb81c543 base::RepeatingCallback<>::Run()
+#29 0x7fdde51dee64 mojo::SimpleWatcher::OnHandleReady()
+#30 0x7fdddb355631 base::OnceCallback<>::Run()
+#31 0x7fdde4c76451 base::TaskAnnotator::RunTaskImpl()
+#32 0x7fdde4ca7cf2 base::sequence_manager::internal::ThreadControllerWithMessagePumpImpl::DoWorkImpl()
+#33 0x7fdde4ca6ecb base::sequence_manager::internal::ThreadControllerWithMessagePumpImpl::DoWork()
+#34 0x7fdde4d4ace4 base::MessagePumpGlib::HandleDispatch()
+#35 0x7fdde4d482de base::(anonymous namespace)::WorkSourceDispatch()
+#36 0x7fddf09c3f24 (/usr/lib64/libglib-2.0.so.0.8800.3+0x43f23)
+#37 0x7fddf09c8038 (/usr/lib64/libglib-2.0.so.0.8800.3+0x48037)
+#38 0x7fddf09c81e3 g_main_context_iteration
+#39 0x7fdde4d4affd base::MessagePumpGlib::Run()
+#40 0x7fdde4ca8d60 base::sequence_manager::internal::ThreadControllerWithMessagePumpImpl::Run()
+#41 0x7fdde4c49886 base::RunLoop::Run()
+#42 0x7fdddb3c4a04 CefMainRunner::RunMessageLoop()
+#43 0x7fdddb39fedf CefRunMessageLoop()
+#44 0x55ef3a3bbde1 (/home/arthur/.local/share/paneflow/browser/host-7144184259a699ab/bin/paneflow-browser-host+0xd8de0)
+#45 0x55ef3a36e433 (/home/arthur/.local/share/paneflow/browser/host-7144184259a699ab/bin/paneflow-browser-host+0x8b432)
+#46 0x55ef3a3aa231 (/home/arthur/.local/share/paneflow/browser/host-7144184259a699ab/bin/paneflow-browser-host+0xc7230)
+#47 0x55ef3a411e6e (/home/arthur/.local/share/paneflow/browser/host-7144184259a699ab/bin/paneflow-browser-host+0x12ee6d)
+#48 0x55ef3a3cb715 (/home/arthur/.local/share/paneflow/browser/host-7144184259a699ab/bin/paneflow-browser-host+0xe8714)
+#49 0x7fddd4a0a681 __libc_start_call_main
+#50 0x7fddd4a0a798 __libc_start_main_alias_2
+#51 0x55ef3a33dc35 (/home/arthur/.local/share/paneflow/browser/host-7144184259a699ab/bin/paneflow-browser-host+0x5ac34)
+  r8: 00000000000003ff  r9: 0000000000000000 r10: 00000000000029a8 r11: 0000000000000246
+ r12: 00007ffc758d79c0 r13: 00000000000029a7 r14: 0000000000000006 r15: 00007ffc758d8e78
+  di: 0000000000146c4b  si: 0000000000146c4b  bp: 00007ffc758d7830  bx: 0000000000146c4b
+  dx: 0000000000000006  ax: 0000000000000000  cx: 00007fddd4a7bccc  sp: 00007ffc758d7800
+  ip: 00007fddd4a7bccc efl: 0000000000000246 cgf: 002b000000000033 erf: 0000000000000000
+ trp: 0000000000000000 msk: 0000000000000000 cr2: 0000000000000000
+[end of stack trace]

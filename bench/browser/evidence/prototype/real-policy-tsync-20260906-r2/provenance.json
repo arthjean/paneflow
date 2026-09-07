@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "status": "BUILDING",
+  "created_at": "2026-09-06T15:24:46.101763+00:00",
+  "chromium_version": "151.0.7922.174",
+  "chromium_commit": "39c51c70dd5feca6b6aba5bb7997b595011c553d",
+  "cef_commit": "2384915b7b1f0fe5ad1107e48d80c34e86b698d7",
+  "depot_tools_commit": "94e89b10b92cc9d6e58fc8d1b6474b7d29e8a114",
+  "patch": "0001-prepare-gpu-broker-before-driver-threads.patch",
+  "patch_sha256": "978b82822091e3ef170da8bf1664a55525fa73213452e32334a47eb0a4e786ac",
+  "gn_args": "blink_heap_inside_shared_library=true\nblink_symbol_level=0\nchrome_pgo_phase=0\nclang_use_chrome_plugins=false\ndcheck_always_on=true\nenable_background_mode=false\nenable_downgrade_processing=false\nenable_linux_installer=false\nenable_precompiled_headers=false\nenable_resource_allowlist_generation=false\nenable_widevine=true\nforbid_non_component_debug_builds=false\nis_cfi=false\nis_component_build=false\nis_debug=false\noptimize_webui=true\nsymbol_level=0\ntarget_cpu=\"x64\"\nuse_qt5=false\nuse_qt6=false\nuse_remoteexec=false\nuse_siso=false\nuse_sysroot=true\nuse_thin_lto=false\nv8_symbol_level=0\nroot_extra_deps = [ \"//paneflow_tsync_probe:paneflow_tsync_probe\" ]\n",
+  "source_workspace": "/home/arthur/.cache/paneflow-cef-tsync/work/chromium/src",
+  "baseline_evidence": "bench/browser/evidence/prototype/cef-tsync-baseline-20260906-r2/prototype/native.json",
+  "runtime_qualification": "NOT_EXECUTED",
+  "production_manifest_modified": false,
+  "real_policy_probe": {
+    "status": "PASS",
+    "evidence": "bench/browser/evidence/prototype/real-policy-tsync-20260906-r2",
+    "gpus": [
+      "AMD Raphael Mesa 26.1.8",
+      "NVIDIA RTX 4070 Ti SUPER 610.57.04"
+    ],
+    "namespace_layer": false,
+    "full_cef_qualification": false,
+    "source_sha256": "67b351538b3805fb7ffe1f50d3234679a5c5e9d7b8cb9ec9b20ee4c7c5a2bf4e",
+    "binary_sha256": "edfdbb20e214ed0f0b4baebb9cf8530efda979d1616895f243b2330bd522142f"
+  },
+  "changed_translation_units": "PASS"
+}

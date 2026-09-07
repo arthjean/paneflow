@@ -1,0 +1,111 @@
+{
+  "profile": "DEEP",
+  "completed_at": "2026-09-06T12:05:37.665963+00:00",
+  "rust_tests_passed": 2667,
+  "rust_tests_ignored": 6,
+  "bun_tests_passed": 78,
+  "powershell_validate_task_artifacts": "not run: pwsh absent on this host; invariants replayed with python (see task_artifacts_check)",
+  "results": [
+    {
+      "command": [
+        "cargo",
+        "fmt",
+        "--check"
+      ],
+      "exit_code": 0,
+      "started_at": "2026-09-06T12:05:01.764692+00:00",
+      "log": "gate-0.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "command": [
+        "cargo",
+        "check",
+        "--workspace",
+        "--all-targets",
+        "--locked"
+      ],
+      "exit_code": 0,
+      "started_at": "2026-09-06T12:05:03.071799+00:00",
+      "log": "gate-1.log",
+      "sha256": "9688657c6cdbe379144f1d6acff214711212e8f96077ef249103e0def5e91b2f"
+    },
+    {
+      "command": [
+        "cargo",
+        "clippy",
+        "--workspace",
+        "--all-targets",
+        "--locked",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "exit_code": 0,
+      "started_at": "2026-09-06T12:05:06.368322+00:00",
+      "log": "gate-2.log",
+      "sha256": "471f6b64b6e243b019b0cb9aae63f42c138c642480ec939d8eb9f763ad1da3e0"
+    },
+    {
+      "command": [
+        "cargo",
+        "test",
+        "--workspace",
+        "--locked"
+      ],
+      "exit_code": 0,
+      "started_at": "2026-09-06T12:05:11.037712+00:00",
+      "log": "gate-3.log",
+      "sha256": "239c84d240a284824f44c389049599184d90a7d4ad07dcd299f961859a22384b"
+    },
+    {
+      "command": [
+        "cargo",
+        "deny",
+        "check",
+        "advisories",
+        "licenses",
+        "sources"
+      ],
+      "exit_code": 0,
+      "started_at": "2026-09-06T12:05:33.505577+00:00",
+      "log": "gate-4.log",
+      "sha256": "f8d7d69aabe32120b5fa8f43ba05a2e7add72ffb0c14c8a290282ece4d639e35"
+    },
+    {
+      "command": [
+        "bun",
+        "test",
+        "scripts/browser-qualification/"
+      ],
+      "exit_code": 0,
+      "started_at": "2026-09-06T12:05:34.357432+00:00",
+      "log": "gate-5.log",
+      "sha256": "1e9b2c18d9231a51b28ce5e31680f3a73e94de8d2bc503cc2e27f5c2d5d70010"
+    },
+    {
+      "command": [
+        "python3",
+        "scripts/fetch-gpui.py",
+        "--verify-only"
+      ],
+      "exit_code": 0,
+      "started_at": "2026-09-06T12:05:36.777062+00:00",
+      "log": "gate-6.log",
+      "sha256": "e84b8529085697ba9321ae9900dac9e8875b3c31a492fd70d8f08828fe82078b"
+    },
+    {
+      "command": [
+        "python3",
+        "scripts/fetch-browser.py",
+        "--target",
+        "x86_64-unknown-linux-gnu",
+        "--verify-only"
+      ],
+      "exit_code": 0,
+      "started_at": "2026-09-06T12:05:36.814183+00:00",
+      "log": "gate-7.log",
+      "sha256": "63f8607dd6ce51f2b60731b4efb8f9dc65277a0b05f5e9fba1e2ecca913c7dc7"
+    }
+  ]
+}

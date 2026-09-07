@@ -1,0 +1,3 @@
+[747933:747933:0906/201246.509116:ERROR:gpu/vulkan/vulkan_instance.cc:284] Required extension VK_KHR_external_memory_capabilities missing from enumerated Vulkan extensions. vkCreateInstance will may fail but could succeed if extension has been promoted to core.
+[747933:747933:0906/201246.509176:ERROR:gpu/vulkan/vulkan_instance.cc:284] Required extension VK_KHR_external_semaphore_capabilities missing from enumerated Vulkan extensions. vkCreateInstance will may fail but could succeed if extension has been promoted to core.
+[747889:747889:0906/201248.328980:ERROR:base/process/kill_posix.cc:33] waitpid(747935): No child processes (10)

@@ -1,0 +1,33 @@
+Monitors:
+├──Monitor DP-3 (ASUSTek COMPUTER INC 27")
+│  ├──Vendor: AUS
+│  ├──Product: VG27AQML1A
+│  ├──Serial: T1LMQS087597
+│  ├──Current mode
+│  │   └──2560x1440@143.973
+│  └──Preferences
+│      └──Backlight: None
+└──Monitor DP-4 (BenQ Corporation 27")
+   ├──Vendor: BNQ
+   ├──Product: BenQ EX2710Q
+   ├──Serial: W7P00107019
+   ├──Current mode
+   │   └──2560x1440@144.006
+   └──Preferences
+       └──Backlight: None
+
+Logical monitors:
+├──Logical monitor #1
+│  ├──Position: (0, 0)
+│  ├──Scale: 1.0
+│  ├──Transform: normal
+│  ├──Primary: yes
+│  └──Monitors: (1)
+│      └──DP-3 (ASUSTek COMPUTER INC 27")
+└──Logical monitor #2
+   ├──Position: (2560, 0)
+   ├──Scale: 1.0
+   ├──Transform: normal
+   ├──Primary: no
+   └──Monitors: (1)
+       └──DP-4 (BenQ Corporation 27")

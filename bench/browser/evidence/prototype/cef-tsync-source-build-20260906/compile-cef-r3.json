@@ -1,0 +1,22 @@
+{
+  "started_at": "2026-09-06T16:27:16.645386+00:00",
+  "command": [
+    "nice",
+    "-n",
+    "10",
+    "autoninja",
+    "-j",
+    "14",
+    "-l",
+    "16",
+    "-C",
+    "out/Release_GN_x64",
+    "cefsimple",
+    "chrome_sandbox"
+  ],
+  "cwd": "/home/arthur/.cache/paneflow-cef-tsync/work/chromium/src",
+  "pid": 646372,
+  "stopped_reason": "less than 5 GiB memory available",
+  "returncode": 1,
+  "finished_at": "2026-09-06T17:06:35.305649+00:00"
+}

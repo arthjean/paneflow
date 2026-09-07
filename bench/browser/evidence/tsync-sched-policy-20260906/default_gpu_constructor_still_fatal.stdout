@@ -1,0 +1,2 @@
+{"event":"sandbox_started","tsync":true,"policy_source":"Chromium default GpuProcessPolicy","namespace_layer":false,"no_new_privs_probe":"checked"}
+{"event":"armed","syscall_nr":144,"target":1687526,"caller_tid":1687524,"scheduling_policy":3}

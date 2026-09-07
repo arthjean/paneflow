@@ -1,0 +1,96 @@
+{
+  "status": "SUPPLEMENTAL_CPU_MEASUREMENTS",
+  "clock": "CLOCK_THREAD_CPUTIME_ID",
+  "presentation_observation": null,
+  "duration": "thread_cpu_end_ns - thread_cpu_start_ns",
+  "window_clock": "CLOCK_MONOTONIC",
+  "warmup_seconds": 10,
+  "duration_seconds": 60,
+  "repetitions": [
+    {
+      "index": 1,
+      "prepaint": {
+        "samples": 5875,
+        "p50_ns": 14260,
+        "p95_ns": 19490,
+        "p99_ns": 24420,
+        "total_ns": 79654904
+      },
+      "paint": {
+        "samples": 5875,
+        "p50_ns": 52330,
+        "p95_ns": 67450,
+        "p99_ns": 76600,
+        "total_ns": 314537169
+      }
+    },
+    {
+      "index": 2,
+      "prepaint": {
+        "samples": 5884,
+        "p50_ns": 14180,
+        "p95_ns": 19430,
+        "p99_ns": 24100,
+        "total_ns": 78627406
+      },
+      "paint": {
+        "samples": 5884,
+        "p50_ns": 51780,
+        "p95_ns": 66340,
+        "p99_ns": 78260,
+        "total_ns": 311772518
+      }
+    },
+    {
+      "index": 3,
+      "prepaint": {
+        "samples": 5922,
+        "p50_ns": 14130,
+        "p95_ns": 19300,
+        "p99_ns": 20500,
+        "total_ns": 78462254
+      },
+      "paint": {
+        "samples": 5922,
+        "p50_ns": 52111,
+        "p95_ns": 65900,
+        "p99_ns": 74520,
+        "total_ns": 314638558
+      }
+    },
+    {
+      "index": 4,
+      "prepaint": {
+        "samples": 5871,
+        "p50_ns": 14300,
+        "p95_ns": 19440,
+        "p99_ns": 23760,
+        "total_ns": 79401557
+      },
+      "paint": {
+        "samples": 5871,
+        "p50_ns": 52180,
+        "p95_ns": 66670,
+        "p99_ns": 79690,
+        "total_ns": 312854380
+      }
+    },
+    {
+      "index": 5,
+      "prepaint": {
+        "samples": 5878,
+        "p50_ns": 14241,
+        "p95_ns": 19560,
+        "p99_ns": 24530,
+        "total_ns": 79811481
+      },
+      "paint": {
+        "samples": 5878,
+        "p50_ns": 53310,
+        "p95_ns": 68821,
+        "p99_ns": 80750,
+        "total_ns": 319880482
+      }
+    }
+  ]
+}

@@ -1,0 +1,1836 @@
+{
+  "schema_version": 1,
+  "status": "PASS",
+  "started_ns": 44851760760250,
+  "scope": "native Chromium scheduling policy with TSYNC; no namespace or GPU rendering qualification",
+  "sources": [
+    {
+      "path": "/home/arthur/.cache/paneflow-cef-tsync/work/chromium/src/out/Release_GN_x64/paneflow_sched_policy_probe",
+      "sha256": "a84bae138ff6a703e56bedcad7605e48a17281a9ba375137af42d45465544d0c"
+    },
+    {
+      "path": "/home/arthur/dev/paneflow-browser/native/browser/experiments/tsync/sched-policy-probe/main.cc",
+      "sha256": "51e679cd0aaa9138b9846ddf6be3b0981f621a795ee2afdd89b89dae6131c4e8"
+    },
+    {
+      "path": "/home/arthur/dev/paneflow-browser/native/browser/experiments/tsync/sched-policy-probe/operation.cc",
+      "sha256": "54fee2aba10e9f7d81002ee55c3d4032be1b291c4b463dc394c265de14d64592"
+    },
+    {
+      "path": "/home/arthur/dev/paneflow-browser/native/browser/experiments/tsync/sched-policy-probe/probe.h",
+      "sha256": "b952ccb5bd00c43748ce3c6f267985f7d9fbc7f7ea8eeb9f64d8795b1e86457e"
+    },
+    {
+      "path": "/home/arthur/dev/paneflow-browser/native/browser/experiments/tsync/sched-policy-probe/BUILD.gn",
+      "sha256": "cda23857b7904a1061997b5d2c3b9e9e41af754471bf650a62a2b22d5b3c9900"
+    },
+    {
+      "path": "/home/arthur/dev/paneflow-browser/native/browser/experiments/tsync/sched-policy-probe/run.py",
+      "sha256": "03e4540b1b2b8f9de082e0ac2fb7ef44009cea3c1522556c61f9c22674625de2"
+    },
+    {
+      "path": "/home/arthur/dev/paneflow-browser/native/browser/experiments/tsync/0008-deny-foreign-gpu-batch-scheduler.patch",
+      "sha256": "f59838f30fd0c404e16f8c8f7001157c8cf7481b5d274aab295118fac2bd5919"
+    }
+  ],
+  "cases": [
+    {
+      "name": "pid_zero_allowed",
+      "target": "zero",
+      "caller": "main",
+      "method": "raw",
+      "scheduling_policy": 3,
+      "sandbox": "gpu",
+      "invalid_pointer": false,
+      "expected": "success",
+      "status": "PASS",
+      "errors": [],
+      "events": [
+        {
+          "event": "sandbox_started",
+          "tsync": true,
+          "policy_source": "Chromium PolicyForSandboxType",
+          "namespace_layer": false,
+          "no_new_privs_probe": "checked"
+        },
+        {
+          "event": "armed",
+          "syscall_nr": 144,
+          "target": 0,
+          "caller_tid": 1687327,
+          "scheduling_policy": 3
+        },
+        {
+          "event": "result",
+          "result": 0,
+          "errno": 0
+        },
+        {
+          "event": "completed",
+          "target_tid": 1687329,
+          "target_scheduler_before": 0,
+          "target_scheduler_after": 0,
+          "target_priority_before": 0,
+          "target_priority_after": 0,
+          "target_no_new_privs": 1
+        }
+      ],
+      "argv": [
+        "/home/arthur/.cache/paneflow-cef-tsync/work/chromium/src/out/Release_GN_x64/paneflow_sched_policy_probe",
+        "--sandbox=gpu",
+        "--target=zero",
+        "--caller=main",
+        "--method=raw",
+        "--scheduling-policy=3"
+      ],
+      "returncode": 0,
+      "started_ns": 44851763309509,
+      "completed_ns": 44851770884896,
+      "external_before": {
+        "pid": 1687326,
+        "policy": 0,
+        "priority": 0
+      },
+      "external_after": {
+        "pid": 1687326,
+        "policy": 0,
+        "priority": 0
+      },
+      "artifacts": [
+        {
+          "path": "pid_zero_allowed.stdout",
+          "sha256": "b121caae565f7de4a08070e4916990a4beb3a8476a37efa8f1e82e8f9470127f"
+        },
+        {
+          "path": "pid_zero_allowed.stderr",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      ]
+    },
+    {
+      "name": "own_pid_allowed",
+      "target": "pid",
+      "caller": "main",
+      "method": "raw",
+      "scheduling_policy": 3,
+      "sandbox": "gpu",
+      "invalid_pointer": false,
+      "expected": "success",
+      "status": "PASS",
+      "errors": [],
+      "events": [
+        {
+          "event": "sandbox_started",
+          "tsync": true,
+          "policy_source": "Chromium PolicyForSandboxType",
+          "namespace_layer": false,
+          "no_new_privs_probe": "checked"
+        },
+        {
+          "event": "armed",
+          "syscall_nr": 144,
+          "target": 1687334,
+          "caller_tid": 1687334,
+          "scheduling_policy": 3
+        },
+        {
+          "event": "result",
+          "result": 0,
+          "errno": 0
+        },
+        {
+          "event": "completed",
+          "target_tid": 1687339,
+          "target_scheduler_before": 0,
+          "target_scheduler_after": 0,
+          "target_priority_before": 0,
+          "target_priority_after": 0,
+          "target_no_new_privs": 1
+        }
+      ],
+      "argv": [
+        "/home/arthur/.cache/paneflow-cef-tsync/work/chromium/src/out/Release_GN_x64/paneflow_sched_policy_probe",
+        "--sandbox=gpu",
+        "--target=pid",
+        "--caller=main",
+        "--method=raw",
+        "--scheduling-policy=3"
+      ],
+      "returncode": 0,
+      "started_ns": 44851770970275,
+      "completed_ns": 44851778577412,
+      "external_before": {
+        "pid": 1687326,
+        "policy": 0,
+        "priority": 0
+      },
+      "external_after": {
+        "pid": 1687326,
+        "policy": 0,
+        "priority": 0
+      },
+      "artifacts": [
+        {
+          "path": "own_pid_allowed.stdout",
+          "sha256": "b76399ee8728ce5504cfd8ca30640a63da7674cc166f4fa824ec3b9ab638ff72"
+        },
+        {
+          "path": "own_pid_allowed.stderr",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      ]
+    },
+    {
+      "name": "self_tid_before_tsync_allowed",
+      "target": "self",
+      "caller": "before",
+      "method": "raw",
+      "scheduling_policy": 3,
+      "sandbox": "gpu",
+      "invalid_pointer": false,
+      "expected": "success",
+      "status": "PASS",
+      "errors": [],
+      "events": [
+        {
+          "event": "sandbox_started",
+          "tsync": true,
+          "policy_source": "Chromium PolicyForSandboxType",
+          "namespace_layer": false,
+          "no_new_privs_probe": "checked"
+        },
+        {
+          "event": "armed",
+          "syscall_nr": 144,
+          "target": 1687351,
+          "caller_tid": 1687351,
+          "scheduling_policy": 3
+        },
+        {
+          "event": "result",
+          "result": 0,
+          "errno": 0
+        },
+        {
+          "event": "completed",
+          "target_tid": 1687350,
+          "target_scheduler_before": 0,
+          "target_scheduler_after": 0,
+          "target_priority_before": 0,
+          "target_priority_after": 0,
+          "target_no_new_privs": 1
+        }
+      ],
+      "argv": [
+        "/home/arthur/.cache/paneflow-cef-tsync/work/chromium/src/out/Release_GN_x64/paneflow_sched_policy_probe",
+        "--sandbox=gpu",
+        "--target=self",
+        "--caller=before",
+        "--method=raw",
+        "--scheduling-policy=3"
+      ],
+      "returncode": 0,
+      "started_ns": 44851778627392,
+      "completed_ns": 44851786099758,
+      "external_before": {
+        "pid": 1687326,
+        "policy": 0,
+        "priority": 0
+      },
+      "external_after": {
+        "pid": 1687326,
+        "policy": 0,
+        "priority": 0
+      },
+      "artifacts": [
+        {
+          "path": "self_tid_before_tsync_allowed.stdout",
+          "sha256": "d30c96a94fc9d40da44175230628e261cbed25368c3df7b462554d31426c08f6"
+        },
+        {
+          "path": "self_tid_before_tsync_allowed.stderr",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      ]
+    },
+    {
+      "name": "self_tid_after_tsync_allowed",
+      "target": "self",
+      "caller": "after",
+      "method": "raw",
+      "scheduling_policy": 3,
+      "sandbox": "gpu",
+      "invalid_pointer": false,
+      "expected": "success",
+      "status": "PASS",
+      "errors": [],
+      "events": [
+        {
+          "event": "sandbox_started",
+          "tsync": true,
+          "policy_source": "Chromium PolicyForSandboxType",
+          "namespace_layer": false,
+          "no_new_privs_probe": "checked"
+        },
+        {
+          "event": "armed",
+          "syscall_nr": 144,
+          "target": 1687355,
+          "caller_tid": 1687355,
+          "scheduling_policy": 3
+        },
+        {
+          "event": "result",
+          "result": 0,
+          "errno": 0
+        },
+        {
+          "event": "completed",
+          "target_tid": 1687354,
+          "target_scheduler_before": 0,
+          "target_scheduler_after": 0,
+          "target_priority_before": 0,
+          "target_priority_after": 0,
+          "target_no_new_privs": 1
+        }
+      ],
+      "argv": [
+        "/home/arthur/.cache/paneflow-cef-tsync/work/chromium/src/out/Release_GN_x64/paneflow_sched_policy_probe",
+        "--sandbox=gpu",
+        "--target=self",
+        "--caller=after",
+        "--method=raw",
+        "--scheduling-policy=3"
+      ],
+      "returncode": 0,
+      "started_ns": 44851786158258,
+      "completed_ns": 44851793660395,
+      "external_before": {
+        "pid": 1687326,
+        "policy": 0,
+        "priority": 0
+      },
+      "external_after": {
+        "pid": 1687326,
+        "policy": 0,
+        "priority": 0
+      },
+      "artifacts": [
+        {
+          "path": "self_tid_after_tsync_allowed.stdout",
+          "sha256": "ac5fd17208159839d88182c569668c678e9c8f71cdd1582e52867cbf7df5e3ff"
+        },
+        {
+          "path": "self_tid_after_tsync_allowed.stderr",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      ]
+    },
+    {
+      "name": "other_worker_denied",
+      "target": "worker",
+      "caller": "main",
+      "method": "raw",
+      "scheduling_policy": 3,
+      "sandbox": "gpu",
+      "invalid_pointer": false,
+      "expected": "eperm",
+      "status": "PASS",
+      "errors": [],
+      "events": [
+        {
+          "event": "sandbox_started",
+          "tsync": true,
+          "policy_source": "Chromium PolicyForSandboxType",
+          "namespace_layer": false,
+          "no_new_privs_probe": "checked"
+        },
+        {
+          "event": "armed",
+          "syscall_nr": 144,
+          "target": 1687358,
+          "caller_tid": 1687356,
+          "scheduling_policy": 3
+        },
+        {
+          "event": "result",
+          "result": -1,
+          "errno": 1
+        },
+        {
+          "event": "completed",
+          "target_tid": 1687358,
+          "target_scheduler_before": 0,
+          "target_scheduler_after": 0,
+          "target_priority_before": 0,
+          "target_priority_after": 0,
+          "target_no_new_privs": 1
+        }
+      ],
+      "argv": [
+        "/home/arthur/.cache/paneflow-cef-tsync/work/chromium/src/out/Release_GN_x64/paneflow_sched_policy_probe",
+        "--sandbox=gpu",
+        "--target=worker",
+        "--caller=main",
+        "--method=raw",
+        "--scheduling-policy=3"
+      ],
+      "returncode": 0,
+      "started_ns": 44851793718785,
+      "completed_ns": 44851801296181,
+      "external_before": {
+        "pid": 1687326,
+        "policy": 0,
+        "priority": 0
+      },
+      "external_after": {
+        "pid": 1687326,
+        "policy": 0,
+        "priority": 0
+      },
+      "artifacts": [
+        {
+          "path": "other_worker_denied.stdout",
+          "sha256": "4d22d91d328c2e62376b6f3996c21f08fafb4072aa687a696a45fb4cfbdc1380"
+        },
+        {
+          "path": "other_worker_denied.stderr",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      ]
+    },
+    {
+      "name": "preexisting_caller_other_worker_denied",
+      "target": "worker",
+      "caller": "before",
+      "method": "raw",
+      "scheduling_policy": 3,
+      "sandbox": "gpu",
+      "invalid_pointer": false,
+      "expected": "eperm",
+      "status": "PASS",
+      "errors": [],
+      "events": [
+        {
+          "event": "sandbox_started",
+          "tsync": true,
+          "policy_source": "Chromium PolicyForSandboxType",
+          "namespace_layer": false,
+          "no_new_privs_probe": "checked"
+        },
+        {
+          "event": "armed",
+          "syscall_nr": 144,
+          "target": 1687361,
+          "caller_tid": 1687362,
+          "scheduling_policy": 3
+        },
+        {
+          "event": "result",
+          "result": -1,
+          "errno": 1
+        },
+        {
+          "event": "completed",
+          "target_tid": 1687361,
+          "target_scheduler_before": 0,
+          "target_scheduler_after": 0,
+          "target_priority_before": 0,
+          "target_priority_after": 0,
+          "target_no_new_privs": 1
+        }
+      ],
+      "argv": [
+        "/home/arthur/.cache/paneflow-cef-tsync/work/chromium/src/out/Release_GN_x64/paneflow_sched_policy_probe",
+        "--sandbox=gpu",
+        "--target=worker",
+        "--caller=before",
+        "--method=raw",
+        "--scheduling-policy=3"
+      ],
+      "returncode": 0,
+      "started_ns": 44851801353201,
+      "completed_ns": 44851808874838,
+      "external_before": {
+        "pid": 1687326,
+        "policy": 0,
+        "priority": 0
+      },
+      "external_after": {
+        "pid": 1687326,
+        "policy": 0,
+        "priority": 0
+      },
+      "artifacts": [
+        {
+          "path": "preexisting_caller_other_worker_denied.stdout",
+          "sha256": "92d2f9de81b4cfcff49e9e49ff7361a5abdc5e90a9b5f968c4f81ec545dc6e05"
+        },
+        {
+          "path": "preexisting_caller_other_worker_denied.stderr",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      ]
+    },
+    {
+      "name": "new_caller_other_worker_denied",
+      "target": "worker",
+      "caller": "after",
+      "method": "raw",
+      "scheduling_policy": 3,
+      "sandbox": "gpu",
+      "invalid_pointer": false,
+      "expected": "eperm",
+      "status": "PASS",
+      "errors": [],
+      "events": [
+        {
+          "event": "sandbox_started",
+          "tsync": true,
+          "policy_source": "Chromium PolicyForSandboxType",
+          "namespace_layer": false,
+          "no_new_privs_probe": "checked"
+        },
+        {
+          "event": "armed",
+          "syscall_nr": 144,
+          "target": 1687365,
+          "caller_tid": 1687366,
+          "scheduling_policy": 3
+        },
+        {
+          "event": "result",
+          "result": -1,
+          "errno": 1
+        },
+        {
+          "event": "completed",
+          "target_tid": 1687365,
+          "target_scheduler_before": 0,
+          "target_scheduler_after": 0,
+          "target_priority_before": 0,
+          "target_priority_after": 0,
+          "target_no_new_privs": 1
+        }
+      ],
+      "argv": [
+        "/home/arthur/.cache/paneflow-cef-tsync/work/chromium/src/out/Release_GN_x64/paneflow_sched_policy_probe",
+        "--sandbox=gpu",
+        "--target=worker",
+        "--caller=after",
+        "--method=raw",
+        "--scheduling-policy=3"
+      ],
+      "returncode": 0,
+      "started_ns": 44851808933208,
+      "completed_ns": 44851816496574,
+      "external_before": {
+        "pid": 1687326,
+        "policy": 0,
+        "priority": 0
+      },
+      "external_after": {
+        "pid": 1687326,
+        "policy": 0,
+        "priority": 0
+      },
+      "artifacts": [
+        {
+          "path": "new_caller_other_worker_denied.stdout",
+          "sha256": "2d02388eb77307847856c418ef2514527a588f2772e7581a3f80d1165a7ccf24"
+        },
+        {
+          "path": "new_caller_other_worker_denied.stderr",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      ]
+    },
+    {
+      "name": "external_process_denied",
+      "target": "external",
+      "caller": "main",
+      "method": "raw",
+      "scheduling_policy": 3,
+      "sandbox": "gpu",
+      "invalid_pointer": false,
+      "expected": "eperm",
+      "status": "PASS",
+      "errors": [],
+      "events": [
+        {
+          "event": "sandbox_started",
+          "tsync": true,
+          "policy_source": "Chromium PolicyForSandboxType",
+          "namespace_layer": false,
+          "no_new_privs_probe": "checked"
+        },
+        {
+          "event": "armed",
+          "syscall_nr": 144,
+          "target": 1687326,
+          "caller_tid": 1687367,
+          "scheduling_policy": 3
+        },
+        {
+          "event": "result",
+          "result": -1,
+          "errno": 1
+        },
+        {
+          "event": "completed",
+          "target_tid": 1687369,
+          "target_scheduler_before": 0,
+          "target_scheduler_after": 0,
+          "target_priority_before": 0,
+          "target_priority_after": 0,
+          "target_no_new_privs": 1
+        }
+      ],
+      "argv": [
+        "/home/arthur/.cache/paneflow-cef-tsync/work/chromium/src/out/Release_GN_x64/paneflow_sched_policy_probe",
+        "--sandbox=gpu",
+        "--target=external",
+        "--caller=main",
+        "--method=raw",
+        "--scheduling-policy=3"
+      ],
+      "returncode": 0,
+      "started_ns": 44851816555724,
+      "completed_ns": 44851824116421,
+      "external_before": {
+        "pid": 1687326,
+        "policy": 0,
+        "priority": 0
+      },
+      "external_after": {
+        "pid": 1687326,
+        "policy": 0,
+        "priority": 0
+      },
+      "artifacts": [
+        {
+          "path": "external_process_denied.stdout",
+          "sha256": "dc1f24d1e7e5d79401b324d0e1be4adbe6861b7e5420e3bafb4fae0262020eb0"
+        },
+        {
+          "path": "external_process_denied.stderr",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      ]
+    },
+    {
+      "name": "preexisting_caller_external_process_denied",
+      "target": "external",
+      "caller": "before",
+      "method": "raw",
+      "scheduling_policy": 3,
+      "sandbox": "gpu",
+      "invalid_pointer": false,
+      "expected": "eperm",
+      "status": "PASS",
+      "errors": [],
+      "events": [
+        {
+          "event": "sandbox_started",
+          "tsync": true,
+          "policy_source": "Chromium PolicyForSandboxType",
+          "namespace_layer": false,
+          "no_new_privs_probe": "checked"
+        },
+        {
+          "event": "armed",
+          "syscall_nr": 144,
+          "target": 1687326,
+          "caller_tid": 1687373,
+          "scheduling_policy": 3
+        },
+        {
+          "event": "result",
+          "result": -1,
+          "errno": 1
+        },
+        {
+          "event": "completed",
+          "target_tid": 1687372,
+          "target_scheduler_before": 0,
+          "target_scheduler_after": 0,
+          "target_priority_before": 0,
+          "target_priority_after": 0,
+          "target_no_new_privs": 1
+        }
+      ],
+      "argv": [
+        "/home/arthur/.cache/paneflow-cef-tsync/work/chromium/src/out/Release_GN_x64/paneflow_sched_policy_probe",
+        "--sandbox=gpu",
+        "--target=external",
+        "--caller=before",
+        "--method=raw",
+        "--scheduling-policy=3"
+      ],
+      "returncode": 0,
+      "started_ns": 44851824176360,
+      "completed_ns": 44851831680367,
+      "external_before": {
+        "pid": 1687326,
+        "policy": 0,
+        "priority": 0
+      },
+      "external_after": {
+        "pid": 1687326,
+        "policy": 0,
+        "priority": 0
+      },
+      "artifacts": [
+        {
+          "path": "preexisting_caller_external_process_denied.stdout",
+          "sha256": "fe8e1ad19c10b0030ea2125ab3183a6d16bc55ad84c28fe5cbf6b81b7e36dc44"
+        },
+        {
+          "path": "preexisting_caller_external_process_denied.stderr",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      ]
+    },
+    {
+      "name": "new_caller_external_process_denied",
+      "target": "external",
+      "caller": "after",
+      "method": "raw",
+      "scheduling_policy": 3,
+      "sandbox": "gpu",
+      "invalid_pointer": false,
+      "expected": "eperm",
+      "status": "PASS",
+      "errors": [],
+      "events": [
+        {
+          "event": "sandbox_started",
+          "tsync": true,
+          "policy_source": "Chromium PolicyForSandboxType",
+          "namespace_layer": false,
+          "no_new_privs_probe": "checked"
+        },
+        {
+          "event": "armed",
+          "syscall_nr": 144,
+          "target": 1687326,
+          "caller_tid": 1687377,
+          "scheduling_policy": 3
+        },
+        {
+          "event": "result",
+          "result": -1,
+          "errno": 1
+        },
+        {
+          "event": "completed",
+          "target_tid": 1687376,
+          "target_scheduler_before": 0,
+          "target_scheduler_after": 0,
+          "target_priority_before": 0,
+          "target_priority_after": 0,
+          "target_no_new_privs": 1
+        }
+      ],
+      "argv": [
+        "/home/arthur/.cache/paneflow-cef-tsync/work/chromium/src/out/Release_GN_x64/paneflow_sched_policy_probe",
+        "--sandbox=gpu",
+        "--target=external",
+        "--caller=after",
+        "--method=raw",
+        "--scheduling-policy=3"
+      ],
+      "returncode": 0,
+      "started_ns": 44851831737527,
+      "completed_ns": 44851839215554,
+      "external_before": {
+        "pid": 1687326,
+        "policy": 0,
+        "priority": 0
+      },
+      "external_after": {
+        "pid": 1687326,
+        "policy": 0,
+        "priority": 0
+      },
+      "artifacts": [
+        {
+          "path": "new_caller_external_process_denied.stdout",
+          "sha256": "03628b3b65fc306c69c50c701fadeef7af8e397c00b10a4d7c815709ed9b827b"
+        },
+        {
+          "path": "new_caller_external_process_denied.stderr",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      ]
+    },
+    {
+      "name": "pthread_other_worker_denied",
+      "target": "worker",
+      "caller": "main",
+      "method": "pthread",
+      "scheduling_policy": 3,
+      "sandbox": "gpu",
+      "invalid_pointer": false,
+      "expected": "pthread_eperm",
+      "status": "PASS",
+      "errors": [],
+      "events": [
+        {
+          "event": "sandbox_started",
+          "tsync": true,
+          "policy_source": "Chromium PolicyForSandboxType",
+          "namespace_layer": false,
+          "no_new_privs_probe": "checked"
+        },
+        {
+          "event": "armed",
+          "syscall_nr": 144,
+          "target": 1687380,
+          "caller_tid": 1687378,
+          "scheduling_policy": 3
+        },
+        {
+          "event": "result",
+          "result": 1,
+          "errno": 1
+        },
+        {
+          "event": "completed",
+          "target_tid": 1687380,
+          "target_scheduler_before": 0,
+          "target_scheduler_after": 0,
+          "target_priority_before": 0,
+          "target_priority_after": 0,
+          "target_no_new_privs": 1
+        }
+      ],
+      "argv": [
+        "/home/arthur/.cache/paneflow-cef-tsync/work/chromium/src/out/Release_GN_x64/paneflow_sched_policy_probe",
+        "--sandbox=gpu",
+        "--target=worker",
+        "--caller=main",
+        "--method=pthread",
+        "--scheduling-policy=3"
+      ],
+      "returncode": 0,
+      "started_ns": 44851839271833,
+      "completed_ns": 44851846784010,
+      "external_before": {
+        "pid": 1687326,
+        "policy": 0,
+        "priority": 0
+      },
+      "external_after": {
+        "pid": 1687326,
+        "policy": 0,
+        "priority": 0
+      },
+      "artifacts": [
+        {
+          "path": "pthread_other_worker_denied.stdout",
+          "sha256": "8e3348cd79a4510b288d8b59c400421f608311e4ada5396d30e8cf828888fd49"
+        },
+        {
+          "path": "pthread_other_worker_denied.stderr",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      ]
+    },
+    {
+      "name": "invalid_pointer_other_worker_denied",
+      "target": "worker",
+      "caller": "main",
+      "method": "raw",
+      "scheduling_policy": 3,
+      "sandbox": "gpu",
+      "invalid_pointer": true,
+      "expected": "eperm",
+      "status": "PASS",
+      "errors": [],
+      "events": [
+        {
+          "event": "sandbox_started",
+          "tsync": true,
+          "policy_source": "Chromium PolicyForSandboxType",
+          "namespace_layer": false,
+          "no_new_privs_probe": "checked"
+        },
+        {
+          "event": "armed",
+          "syscall_nr": 144,
+          "target": 1687383,
+          "caller_tid": 1687381,
+          "scheduling_policy": 3
+        },
+        {
+          "event": "result",
+          "result": -1,
+          "errno": 1
+        },
+        {
+          "event": "completed",
+          "target_tid": 1687383,
+          "target_scheduler_before": 0,
+          "target_scheduler_after": 0,
+          "target_priority_before": 0,
+          "target_priority_after": 0,
+          "target_no_new_privs": 1
+        }
+      ],
+      "argv": [
+        "/home/arthur/.cache/paneflow-cef-tsync/work/chromium/src/out/Release_GN_x64/paneflow_sched_policy_probe",
+        "--sandbox=gpu",
+        "--target=worker",
+        "--caller=main",
+        "--method=raw",
+        "--scheduling-policy=3",
+        "--invalid-pointer"
+      ],
+      "returncode": 0,
+      "started_ns": 44851846842450,
+      "completed_ns": 44851854393477,
+      "external_before": {
+        "pid": 1687326,
+        "policy": 0,
+        "priority": 0
+      },
+      "external_after": {
+        "pid": 1687326,
+        "policy": 0,
+        "priority": 0
+      },
+      "artifacts": [
+        {
+          "path": "invalid_pointer_other_worker_denied.stdout",
+          "sha256": "18c6754faadc146332443b03c59d21f42e172ba4ce9b06c0b89b166dde54faeb"
+        },
+        {
+          "path": "invalid_pointer_other_worker_denied.stderr",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      ]
+    },
+    {
+      "name": "invalid_pointer_external_process_denied",
+      "target": "external",
+      "caller": "main",
+      "method": "raw",
+      "scheduling_policy": 3,
+      "sandbox": "gpu",
+      "invalid_pointer": true,
+      "expected": "eperm",
+      "status": "PASS",
+      "errors": [],
+      "events": [
+        {
+          "event": "sandbox_started",
+          "tsync": true,
+          "policy_source": "Chromium PolicyForSandboxType",
+          "namespace_layer": false,
+          "no_new_privs_probe": "checked"
+        },
+        {
+          "event": "armed",
+          "syscall_nr": 144,
+          "target": 1687326,
+          "caller_tid": 1687384,
+          "scheduling_policy": 3
+        },
+        {
+          "event": "result",
+          "result": -1,
+          "errno": 1
+        },
+        {
+          "event": "completed",
+          "target_tid": 1687386,
+          "target_scheduler_before": 0,
+          "target_scheduler_after": 0,
+          "target_priority_before": 0,
+          "target_priority_after": 0,
+          "target_no_new_privs": 1
+        }
+      ],
+      "argv": [
+        "/home/arthur/.cache/paneflow-cef-tsync/work/chromium/src/out/Release_GN_x64/paneflow_sched_policy_probe",
+        "--sandbox=gpu",
+        "--target=external",
+        "--caller=main",
+        "--method=raw",
+        "--scheduling-policy=3",
+        "--invalid-pointer"
+      ],
+      "returncode": 0,
+      "started_ns": 44851854452396,
+      "completed_ns": 44851862013873,
+      "external_before": {
+        "pid": 1687326,
+        "policy": 0,
+        "priority": 0
+      },
+      "external_after": {
+        "pid": 1687326,
+        "policy": 0,
+        "priority": 0
+      },
+      "artifacts": [
+        {
+          "path": "invalid_pointer_external_process_denied.stdout",
+          "sha256": "b4df1f9af4bdb083095777b210f40bacb3a8e47d6477cb14e43e973f1386f01d"
+        },
+        {
+          "path": "invalid_pointer_external_process_denied.stderr",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      ]
+    },
+    {
+      "name": "invalid_pointer_self_reaches_kernel",
+      "target": "self",
+      "caller": "main",
+      "method": "raw",
+      "scheduling_policy": 3,
+      "sandbox": "gpu",
+      "invalid_pointer": true,
+      "expected": "efault",
+      "status": "PASS",
+      "errors": [],
+      "events": [
+        {
+          "event": "sandbox_started",
+          "tsync": true,
+          "policy_source": "Chromium PolicyForSandboxType",
+          "namespace_layer": false,
+          "no_new_privs_probe": "checked"
+        },
+        {
+          "event": "armed",
+          "syscall_nr": 144,
+          "target": 1687387,
+          "caller_tid": 1687387,
+          "scheduling_policy": 3
+        },
+        {
+          "event": "result",
+          "result": -1,
+          "errno": 14
+        },
+        {
+          "event": "completed",
+          "target_tid": 1687389,
+          "target_scheduler_before": 0,
+          "target_scheduler_after": 0,
+          "target_priority_before": 0,
+          "target_priority_after": 0,
+          "target_no_new_privs": 1
+        }
+      ],
+      "argv": [
+        "/home/arthur/.cache/paneflow-cef-tsync/work/chromium/src/out/Release_GN_x64/paneflow_sched_policy_probe",
+        "--sandbox=gpu",
+        "--target=self",
+        "--caller=main",
+        "--method=raw",
+        "--scheduling-policy=3",
+        "--invalid-pointer"
+      ],
+      "returncode": 0,
+      "started_ns": 44851862073223,
+      "completed_ns": 44851869587309,
+      "external_before": {
+        "pid": 1687326,
+        "policy": 0,
+        "priority": 0
+      },
+      "external_after": {
+        "pid": 1687326,
+        "policy": 0,
+        "priority": 0
+      },
+      "artifacts": [
+        {
+          "path": "invalid_pointer_self_reaches_kernel.stdout",
+          "sha256": "3d9c6724195b0832e648d5850926a1e004e4a268c313e090df09204847d13a02"
+        },
+        {
+          "path": "invalid_pointer_self_reaches_kernel.stderr",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      ]
+    },
+    {
+      "name": "other_policy_still_fatal",
+      "target": "worker",
+      "caller": "main",
+      "method": "raw",
+      "scheduling_policy": 0,
+      "sandbox": "gpu",
+      "invalid_pointer": false,
+      "expected": "fatal",
+      "status": "PASS",
+      "errors": [],
+      "events": [
+        {
+          "event": "sandbox_started",
+          "tsync": true,
+          "policy_source": "Chromium PolicyForSandboxType",
+          "namespace_layer": false,
+          "no_new_privs_probe": "checked"
+        },
+        {
+          "event": "armed",
+          "syscall_nr": 144,
+          "target": 1687392,
+          "caller_tid": 1687390,
+          "scheduling_policy": 0
+        }
+      ],
+      "argv": [
+        "/home/arthur/.cache/paneflow-cef-tsync/work/chromium/src/out/Release_GN_x64/paneflow_sched_policy_probe",
+        "--sandbox=gpu",
+        "--target=worker",
+        "--caller=main",
+        "--method=raw",
+        "--scheduling-policy=0"
+      ],
+      "returncode": -11,
+      "started_ns": 44851869644629,
+      "completed_ns": 44851933691400,
+      "external_before": {
+        "pid": 1687326,
+        "policy": 0,
+        "priority": 0
+      },
+      "external_after": {
+        "pid": 1687326,
+        "policy": 0,
+        "priority": 0
+      },
+      "artifacts": [
+        {
+          "path": "other_policy_still_fatal.stdout",
+          "sha256": "30db6105e14e9db0e59770f5bde7f3f3a9dd0171dceb35c4c95d80fb87d2ef55"
+        },
+        {
+          "path": "other_policy_still_fatal.stderr",
+          "sha256": "f78fc14e4f60fb6b23a47ac4e311aaaf89130e2d4e1b446d2f964ec16bd81b10"
+        }
+      ]
+    },
+    {
+      "name": "fifo_policy_still_fatal",
+      "target": "worker",
+      "caller": "main",
+      "method": "raw",
+      "scheduling_policy": 1,
+      "sandbox": "gpu",
+      "invalid_pointer": false,
+      "expected": "fatal",
+      "status": "PASS",
+      "errors": [],
+      "events": [
+        {
+          "event": "sandbox_started",
+          "tsync": true,
+          "policy_source": "Chromium PolicyForSandboxType",
+          "namespace_layer": false,
+          "no_new_privs_probe": "checked"
+        },
+        {
+          "event": "armed",
+          "syscall_nr": 144,
+          "target": 1687403,
+          "caller_tid": 1687401,
+          "scheduling_policy": 1
+        }
+      ],
+      "argv": [
+        "/home/arthur/.cache/paneflow-cef-tsync/work/chromium/src/out/Release_GN_x64/paneflow_sched_policy_probe",
+        "--sandbox=gpu",
+        "--target=worker",
+        "--caller=main",
+        "--method=raw",
+        "--scheduling-policy=1"
+      ],
+      "returncode": -11,
+      "started_ns": 44851933808339,
+      "completed_ns": 44851997768740,
+      "external_before": {
+        "pid": 1687326,
+        "policy": 0,
+        "priority": 0
+      },
+      "external_after": {
+        "pid": 1687326,
+        "policy": 0,
+        "priority": 0
+      },
+      "artifacts": [
+        {
+          "path": "fifo_policy_still_fatal.stdout",
+          "sha256": "134cf7db2267043ca53a121675362834a34d7bfe955fb98f718ac2c878d1ae8e"
+        },
+        {
+          "path": "fifo_policy_still_fatal.stderr",
+          "sha256": "b0b4f9cfa8a4c67e9285389af18a9d5a4a78c8bbfb0ebf92be5466935b966f1d"
+        }
+      ]
+    },
+    {
+      "name": "batch_reset_on_fork_still_fatal",
+      "target": "worker",
+      "caller": "main",
+      "method": "raw",
+      "scheduling_policy": 1073741827,
+      "sandbox": "gpu",
+      "invalid_pointer": false,
+      "expected": "fatal",
+      "status": "PASS",
+      "errors": [],
+      "events": [
+        {
+          "event": "sandbox_started",
+          "tsync": true,
+          "policy_source": "Chromium PolicyForSandboxType",
+          "namespace_layer": false,
+          "no_new_privs_probe": "checked"
+        },
+        {
+          "event": "armed",
+          "syscall_nr": 144,
+          "target": 1687420,
+          "caller_tid": 1687418,
+          "scheduling_policy": 1073741827
+        }
+      ],
+      "argv": [
+        "/home/arthur/.cache/paneflow-cef-tsync/work/chromium/src/out/Release_GN_x64/paneflow_sched_policy_probe",
+        "--sandbox=gpu",
+        "--target=worker",
+        "--caller=main",
+        "--method=raw",
+        "--scheduling-policy=1073741827"
+      ],
+      "returncode": -11,
+      "started_ns": 44851997852860,
+      "completed_ns": 44852061782380,
+      "external_before": {
+        "pid": 1687326,
+        "policy": 0,
+        "priority": 0
+      },
+      "external_after": {
+        "pid": 1687326,
+        "policy": 0,
+        "priority": 0
+      },
+      "artifacts": [
+        {
+          "path": "batch_reset_on_fork_still_fatal.stdout",
+          "sha256": "d8dbe5ed675ee2ddf791c5fb7649065106ceb4ff72fe8b87596dc4d5da43e927"
+        },
+        {
+          "path": "batch_reset_on_fork_still_fatal.stderr",
+          "sha256": "ffe5a5a516d829080eb05ae8ded7b97724a42dc1240d23a86770c1a6fd40dedc"
+        }
+      ]
+    },
+    {
+      "name": "batch_high_scalar_bits_still_fatal",
+      "target": "worker",
+      "caller": "main",
+      "method": "raw",
+      "scheduling_policy": 4294967299,
+      "sandbox": "gpu",
+      "invalid_pointer": false,
+      "expected": "fatal",
+      "status": "PASS",
+      "errors": [],
+      "events": [
+        {
+          "event": "sandbox_started",
+          "tsync": true,
+          "policy_source": "Chromium PolicyForSandboxType",
+          "namespace_layer": false,
+          "no_new_privs_probe": "checked"
+        },
+        {
+          "event": "armed",
+          "syscall_nr": 144,
+          "target": 1687433,
+          "caller_tid": 1687431,
+          "scheduling_policy": 4294967299
+        }
+      ],
+      "argv": [
+        "/home/arthur/.cache/paneflow-cef-tsync/work/chromium/src/out/Release_GN_x64/paneflow_sched_policy_probe",
+        "--sandbox=gpu",
+        "--target=worker",
+        "--caller=main",
+        "--method=raw",
+        "--scheduling-policy=4294967299"
+      ],
+      "returncode": -11,
+      "started_ns": 44852061872950,
+      "completed_ns": 44852125833380,
+      "external_before": {
+        "pid": 1687326,
+        "policy": 0,
+        "priority": 0
+      },
+      "external_after": {
+        "pid": 1687326,
+        "policy": 0,
+        "priority": 0
+      },
+      "artifacts": [
+        {
+          "path": "batch_high_scalar_bits_still_fatal.stdout",
+          "sha256": "6e30247495c7f49c8855338b9bb6dea0f1a4861faaeda0086df6cfa5857c3011"
+        },
+        {
+          "path": "batch_high_scalar_bits_still_fatal.stderr",
+          "sha256": "a84eeed954fa7612b600b121fae74b99996f8ae4f0cec7b026ada16fb02d36ae"
+        }
+      ]
+    },
+    {
+      "name": "other_get_scheduler_still_fatal",
+      "target": "worker",
+      "caller": "main",
+      "method": "get_scheduler",
+      "scheduling_policy": 3,
+      "sandbox": "gpu",
+      "invalid_pointer": false,
+      "expected": "fatal",
+      "status": "PASS",
+      "errors": [],
+      "events": [
+        {
+          "event": "sandbox_started",
+          "tsync": true,
+          "policy_source": "Chromium PolicyForSandboxType",
+          "namespace_layer": false,
+          "no_new_privs_probe": "checked"
+        },
+        {
+          "event": "armed",
+          "syscall_nr": 145,
+          "target": 1687444,
+          "caller_tid": 1687442,
+          "scheduling_policy": 3
+        }
+      ],
+      "argv": [
+        "/home/arthur/.cache/paneflow-cef-tsync/work/chromium/src/out/Release_GN_x64/paneflow_sched_policy_probe",
+        "--sandbox=gpu",
+        "--target=worker",
+        "--caller=main",
+        "--method=get_scheduler",
+        "--scheduling-policy=3"
+      ],
+      "returncode": -11,
+      "started_ns": 44852125925640,
+      "completed_ns": 44852189783600,
+      "external_before": {
+        "pid": 1687326,
+        "policy": 0,
+        "priority": 0
+      },
+      "external_after": {
+        "pid": 1687326,
+        "policy": 0,
+        "priority": 0
+      },
+      "artifacts": [
+        {
+          "path": "other_get_scheduler_still_fatal.stdout",
+          "sha256": "24e3bb928927e03b8ce8aa8c5c16d0b9179e2c8b8b4b6b56307d4504236f65d1"
+        },
+        {
+          "path": "other_get_scheduler_still_fatal.stderr",
+          "sha256": "fb560db405741b610752ea1852d633ebb609e6f720cd5810c542dd75611c0ce1"
+        }
+      ]
+    },
+    {
+      "name": "other_get_param_still_fatal",
+      "target": "worker",
+      "caller": "main",
+      "method": "get_param",
+      "scheduling_policy": 3,
+      "sandbox": "gpu",
+      "invalid_pointer": false,
+      "expected": "fatal",
+      "status": "PASS",
+      "errors": [],
+      "events": [
+        {
+          "event": "sandbox_started",
+          "tsync": true,
+          "policy_source": "Chromium PolicyForSandboxType",
+          "namespace_layer": false,
+          "no_new_privs_probe": "checked"
+        },
+        {
+          "event": "armed",
+          "syscall_nr": 143,
+          "target": 1687456,
+          "caller_tid": 1687454,
+          "scheduling_policy": 3
+        }
+      ],
+      "argv": [
+        "/home/arthur/.cache/paneflow-cef-tsync/work/chromium/src/out/Release_GN_x64/paneflow_sched_policy_probe",
+        "--sandbox=gpu",
+        "--target=worker",
+        "--caller=main",
+        "--method=get_param",
+        "--scheduling-policy=3"
+      ],
+      "returncode": -11,
+      "started_ns": 44852189886440,
+      "completed_ns": 44852253791750,
+      "external_before": {
+        "pid": 1687326,
+        "policy": 0,
+        "priority": 0
+      },
+      "external_after": {
+        "pid": 1687326,
+        "policy": 0,
+        "priority": 0
+      },
+      "artifacts": [
+        {
+          "path": "other_get_param_still_fatal.stdout",
+          "sha256": "66ee9cc4dbb5a596589793ad82237906eff7a5e69bc8d6d3219fe54feb4a3ee1"
+        },
+        {
+          "path": "other_get_param_still_fatal.stderr",
+          "sha256": "9509f29642f3d06aa8273eb626d959810f083f44875c0fdf4cce32e5e0efee5b"
+        }
+      ]
+    },
+    {
+      "name": "other_set_param_still_fatal",
+      "target": "worker",
+      "caller": "main",
+      "method": "set_param",
+      "scheduling_policy": 3,
+      "sandbox": "gpu",
+      "invalid_pointer": false,
+      "expected": "fatal",
+      "status": "PASS",
+      "errors": [],
+      "events": [
+        {
+          "event": "sandbox_started",
+          "tsync": true,
+          "policy_source": "Chromium PolicyForSandboxType",
+          "namespace_layer": false,
+          "no_new_privs_probe": "checked"
+        },
+        {
+          "event": "armed",
+          "syscall_nr": 142,
+          "target": 1687467,
+          "caller_tid": 1687465,
+          "scheduling_policy": 3
+        }
+      ],
+      "argv": [
+        "/home/arthur/.cache/paneflow-cef-tsync/work/chromium/src/out/Release_GN_x64/paneflow_sched_policy_probe",
+        "--sandbox=gpu",
+        "--target=worker",
+        "--caller=main",
+        "--method=set_param",
+        "--scheduling-policy=3"
+      ],
+      "returncode": -11,
+      "started_ns": 44852253879510,
+      "completed_ns": 44852317757320,
+      "external_before": {
+        "pid": 1687326,
+        "policy": 0,
+        "priority": 0
+      },
+      "external_after": {
+        "pid": 1687326,
+        "policy": 0,
+        "priority": 0
+      },
+      "artifacts": [
+        {
+          "path": "other_set_param_still_fatal.stdout",
+          "sha256": "c467bdfe575948276230bc587a903fbeadff3a27d962767eb839e9da0ef5d778"
+        },
+        {
+          "path": "other_set_param_still_fatal.stderr",
+          "sha256": "60c4ea38d20e56aed79ff582e8e9691dc2a5ded29085f42262bbd6bbb56a46ce"
+        }
+      ]
+    },
+    {
+      "name": "other_get_affinity_still_fatal",
+      "target": "worker",
+      "caller": "main",
+      "method": "get_affinity",
+      "scheduling_policy": 3,
+      "sandbox": "gpu",
+      "invalid_pointer": false,
+      "expected": "fatal",
+      "status": "PASS",
+      "errors": [],
+      "events": [
+        {
+          "event": "sandbox_started",
+          "tsync": true,
+          "policy_source": "Chromium PolicyForSandboxType",
+          "namespace_layer": false,
+          "no_new_privs_probe": "checked"
+        },
+        {
+          "event": "armed",
+          "syscall_nr": 204,
+          "target": 1687478,
+          "caller_tid": 1687476,
+          "scheduling_policy": 3
+        }
+      ],
+      "argv": [
+        "/home/arthur/.cache/paneflow-cef-tsync/work/chromium/src/out/Release_GN_x64/paneflow_sched_policy_probe",
+        "--sandbox=gpu",
+        "--target=worker",
+        "--caller=main",
+        "--method=get_affinity",
+        "--scheduling-policy=3"
+      ],
+      "returncode": -11,
+      "started_ns": 44852317839290,
+      "completed_ns": 44852381667840,
+      "external_before": {
+        "pid": 1687326,
+        "policy": 0,
+        "priority": 0
+      },
+      "external_after": {
+        "pid": 1687326,
+        "policy": 0,
+        "priority": 0
+      },
+      "artifacts": [
+        {
+          "path": "other_get_affinity_still_fatal.stdout",
+          "sha256": "b30c86532134d51c09deabc4413700c774d8394659d8c8a1d54618ebb2c3cfb7"
+        },
+        {
+          "path": "other_get_affinity_still_fatal.stderr",
+          "sha256": "f775064a123f111568de5f281aadbad5ed214126d53a7153cef23a63b97f1f63"
+        }
+      ]
+    },
+    {
+      "name": "other_set_affinity_still_fatal",
+      "target": "worker",
+      "caller": "main",
+      "method": "set_affinity",
+      "scheduling_policy": 3,
+      "sandbox": "gpu",
+      "invalid_pointer": false,
+      "expected": "fatal",
+      "status": "PASS",
+      "errors": [],
+      "events": [
+        {
+          "event": "sandbox_started",
+          "tsync": true,
+          "policy_source": "Chromium PolicyForSandboxType",
+          "namespace_layer": false,
+          "no_new_privs_probe": "checked"
+        },
+        {
+          "event": "armed",
+          "syscall_nr": 203,
+          "target": 1687489,
+          "caller_tid": 1687487,
+          "scheduling_policy": 3
+        }
+      ],
+      "argv": [
+        "/home/arthur/.cache/paneflow-cef-tsync/work/chromium/src/out/Release_GN_x64/paneflow_sched_policy_probe",
+        "--sandbox=gpu",
+        "--target=worker",
+        "--caller=main",
+        "--method=set_affinity",
+        "--scheduling-policy=3"
+      ],
+      "returncode": -11,
+      "started_ns": 44852381767280,
+      "completed_ns": 44852445603931,
+      "external_before": {
+        "pid": 1687326,
+        "policy": 0,
+        "priority": 0
+      },
+      "external_after": {
+        "pid": 1687326,
+        "policy": 0,
+        "priority": 0
+      },
+      "artifacts": [
+        {
+          "path": "other_set_affinity_still_fatal.stdout",
+          "sha256": "bbef6e162b053466b7284a98fbfd55a00d176333d848b70fe9e550c18f9ab052"
+        },
+        {
+          "path": "other_set_affinity_still_fatal.stderr",
+          "sha256": "7425e7ec2a6483085e690219292f3cb94af7c9a895418677819b3a8afa78c27f"
+        }
+      ]
+    },
+    {
+      "name": "renderer_batch_still_fatal",
+      "target": "worker",
+      "caller": "main",
+      "method": "raw",
+      "scheduling_policy": 3,
+      "sandbox": "renderer",
+      "invalid_pointer": false,
+      "expected": "fatal",
+      "status": "PASS",
+      "errors": [],
+      "events": [
+        {
+          "event": "sandbox_started",
+          "tsync": true,
+          "policy_source": "Chromium PolicyForSandboxType",
+          "namespace_layer": false,
+          "no_new_privs_probe": "forbidden_by_renderer_policy"
+        },
+        {
+          "event": "armed",
+          "syscall_nr": 144,
+          "target": 1687500,
+          "caller_tid": 1687499,
+          "scheduling_policy": 3
+        }
+      ],
+      "argv": [
+        "/home/arthur/.cache/paneflow-cef-tsync/work/chromium/src/out/Release_GN_x64/paneflow_sched_policy_probe",
+        "--sandbox=renderer",
+        "--target=worker",
+        "--caller=main",
+        "--method=raw",
+        "--scheduling-policy=3"
+      ],
+      "returncode": -11,
+      "started_ns": 44852445695521,
+      "completed_ns": 44852509491791,
+      "external_before": {
+        "pid": 1687326,
+        "policy": 0,
+        "priority": 0
+      },
+      "external_after": {
+        "pid": 1687326,
+        "policy": 0,
+        "priority": 0
+      },
+      "artifacts": [
+        {
+          "path": "renderer_batch_still_fatal.stdout",
+          "sha256": "27d87d4b929467d484e86e455c1ec63cba0950091f97d4db8bf2c1a96a30d722"
+        },
+        {
+          "path": "renderer_batch_still_fatal.stderr",
+          "sha256": "57d941b23c614f17596c534444adc5926c13b333899f5f13cf6cf07482c8c803"
+        }
+      ]
+    },
+    {
+      "name": "model_batch_still_fatal",
+      "target": "worker",
+      "caller": "main",
+      "method": "raw",
+      "scheduling_policy": 3,
+      "sandbox": "model",
+      "invalid_pointer": false,
+      "expected": "fatal",
+      "status": "PASS",
+      "errors": [],
+      "events": [
+        {
+          "event": "sandbox_started",
+          "tsync": true,
+          "policy_source": "Chromium PolicyForSandboxType",
+          "namespace_layer": false,
+          "no_new_privs_probe": "checked"
+        },
+        {
+          "event": "armed",
+          "syscall_nr": 144,
+          "target": 1687515,
+          "caller_tid": 1687513,
+          "scheduling_policy": 3
+        }
+      ],
+      "argv": [
+        "/home/arthur/.cache/paneflow-cef-tsync/work/chromium/src/out/Release_GN_x64/paneflow_sched_policy_probe",
+        "--sandbox=model",
+        "--target=worker",
+        "--caller=main",
+        "--method=raw",
+        "--scheduling-policy=3"
+      ],
+      "returncode": -11,
+      "started_ns": 44852509600761,
+      "completed_ns": 44852573372321,
+      "external_before": {
+        "pid": 1687326,
+        "policy": 0,
+        "priority": 0
+      },
+      "external_after": {
+        "pid": 1687326,
+        "policy": 0,
+        "priority": 0
+      },
+      "artifacts": [
+        {
+          "path": "model_batch_still_fatal.stdout",
+          "sha256": "cfe0cc72b0a1153f11e41687cea289e8da07ab9fe3edb7bbfb8a8e4f6b5792f3"
+        },
+        {
+          "path": "model_batch_still_fatal.stderr",
+          "sha256": "30c6db9ee90f6ad156719d58911508476a94990d90f1183287e0a257fa2c9089"
+        }
+      ]
+    },
+    {
+      "name": "default_gpu_constructor_still_fatal",
+      "target": "worker",
+      "caller": "main",
+      "method": "raw",
+      "scheduling_policy": 3,
+      "sandbox": "gpu-default",
+      "invalid_pointer": false,
+      "expected": "fatal",
+      "status": "PASS",
+      "errors": [],
+      "events": [
+        {
+          "event": "sandbox_started",
+          "tsync": true,
+          "policy_source": "Chromium default GpuProcessPolicy",
+          "namespace_layer": false,
+          "no_new_privs_probe": "checked"
+        },
+        {
+          "event": "armed",
+          "syscall_nr": 144,
+          "target": 1687526,
+          "caller_tid": 1687524,
+          "scheduling_policy": 3
+        }
+      ],
+      "argv": [
+        "/home/arthur/.cache/paneflow-cef-tsync/work/chromium/src/out/Release_GN_x64/paneflow_sched_policy_probe",
+        "--sandbox=gpu-default",
+        "--target=worker",
+        "--caller=main",
+        "--method=raw",
+        "--scheduling-policy=3"
+      ],
+      "returncode": -11,
+      "started_ns": 44852573470011,
+      "completed_ns": 44852637332701,
+      "external_before": {
+        "pid": 1687326,
+        "policy": 0,
+        "priority": 0
+      },
+      "external_after": {
+        "pid": 1687326,
+        "policy": 0,
+        "priority": 0
+      },
+      "artifacts": [
+        {
+          "path": "default_gpu_constructor_still_fatal.stdout",
+          "sha256": "2f13005b60c1acf117387406de0b245017578b34040f90c6301a05e200d9f72e"
+        },
+        {
+          "path": "default_gpu_constructor_still_fatal.stderr",
+          "sha256": "1acdac30f9448fa856146c40f4288daee1c5b7cfe68b3f971b2959cb94b89717"
+        }
+      ]
+    },
+    {
+      "name": "video_encoder_batch_still_fatal",
+      "target": "worker",
+      "caller": "main",
+      "method": "raw",
+      "scheduling_policy": 3,
+      "sandbox": "video-encoder",
+      "invalid_pointer": false,
+      "expected": "fatal",
+      "status": "PASS",
+      "errors": [],
+      "events": [
+        {
+          "event": "sandbox_started",
+          "tsync": true,
+          "policy_source": "Chromium PolicyForSandboxType",
+          "namespace_layer": false,
+          "no_new_privs_probe": "checked"
+        },
+        {
+          "event": "armed",
+          "syscall_nr": 144,
+          "target": 1687537,
+          "caller_tid": 1687535,
+          "scheduling_policy": 3
+        }
+      ],
+      "argv": [
+        "/home/arthur/.cache/paneflow-cef-tsync/work/chromium/src/out/Release_GN_x64/paneflow_sched_policy_probe",
+        "--sandbox=video-encoder",
+        "--target=worker",
+        "--caller=main",
+        "--method=raw",
+        "--scheduling-policy=3"
+      ],
+      "returncode": -11,
+      "started_ns": 44852637451081,
+      "completed_ns": 44852701345871,
+      "external_before": {
+        "pid": 1687326,
+        "policy": 0,
+        "priority": 0
+      },
+      "external_after": {
+        "pid": 1687326,
+        "policy": 0,
+        "priority": 0
+      },
+      "artifacts": [
+        {
+          "path": "video_encoder_batch_still_fatal.stdout",
+          "sha256": "af0b1b3d5f4fe6cd62c84fbe09d80beda2a231f047435e855c7c18e9ee62d6c6"
+        },
+        {
+          "path": "video_encoder_batch_still_fatal.stderr",
+          "sha256": "8a6f62293d05610952fe82d9521c81c501dc715063fa3a9c76ed67bb625cba0f"
+        }
+      ]
+    }
+  ],
+  "completed_ns": 44852701464191,
+  "external_final": {
+    "pid": 1687326,
+    "policy": 0,
+    "priority": 0
+  }
+}

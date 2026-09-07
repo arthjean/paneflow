@@ -1,0 +1,18 @@
+{
+  "status": "COMPLETED",
+  "verdict": {
+    "page_presented": "MEASURED",
+    "x11_connection_absent": "MEASURED",
+    "sandbox": "MEASURED",
+    "observed_processes_exited": "MEASURED",
+    "steps": {
+      "input": "MEASURED",
+      "resize": "MEASURED",
+      "scale": "MEASURED",
+      "host-loss": "MEASURED"
+    },
+    "m1_presentation_feedback": "NOT_MEASURED",
+    "x11_session": "NOT_APPLICABLE"
+  },
+  "output": "/home/arthur/dev/paneflow-browser/bench/browser/evidence/prototype/nvidia-wayland-native-size-20260906/prototype"
+}

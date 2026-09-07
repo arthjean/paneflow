@@ -1,0 +1,2 @@
+{"event":"sandbox_started","tsync":true,"policy_source":"Chromium PolicyForSandboxType","namespace_layer":false,"no_new_privs_probe":"checked"}
+{"event":"armed","syscall_nr":145,"target":1687444,"caller_tid":1687442,"scheduling_policy":3}

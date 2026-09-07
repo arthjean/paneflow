@@ -1,0 +1,160 @@
+{
+  "schema_version": 1,
+  "recorded_at": "2026-09-05T16:42:14+00:00",
+  "kind": "source_and_environment_inventory",
+  "qualification": "NOT_EVALUATED",
+  "gpui_checkout_head": "fecc3273ed32643c2ea1b04a74c8780e2c9ffaf8",
+  "commands": [
+    {
+      "command": [
+        "git",
+        "rev-parse",
+        "HEAD"
+      ],
+      "exit_code": 0,
+      "stdout": "fbfefd250a3f3c8d9968a23f8c358712859bc904\n",
+      "stderr": ""
+    },
+    {
+      "command": [
+        "git",
+        "branch",
+        "--show-current"
+      ],
+      "exit_code": 0,
+      "stdout": "feat/agents-browser\n",
+      "stderr": ""
+    },
+    {
+      "command": [
+        "rustc",
+        "--version"
+      ],
+      "exit_code": 0,
+      "stdout": "rustc 1.98.0 (88d9e12ae 2026-08-18)\n",
+      "stderr": ""
+    },
+    {
+      "command": [
+        "bun",
+        "--version"
+      ],
+      "exit_code": 0,
+      "stdout": "1.3.14\n",
+      "stderr": ""
+    },
+    {
+      "command": [
+        "uname",
+        "-srmo"
+      ],
+      "exit_code": 0,
+      "stdout": "Linux 7.1.12-200.fc44.x86_64 x86_64 GNU/Linux\n",
+      "stderr": ""
+    },
+    {
+      "command": [
+        "nvidia-smi",
+        "--query-gpu=name,driver_version",
+        "--format=csv,noheader"
+      ],
+      "exit_code": 0,
+      "stdout": "NVIDIA GeForce RTX 4070 Ti SUPER, 610.57.04\n",
+      "stderr": ""
+    },
+    {
+      "command": [
+        "gnome-shell",
+        "--version"
+      ],
+      "exit_code": 0,
+      "stdout": "GNOME Shell 50.4\n",
+      "stderr": ""
+    }
+  ],
+  "os_release": "NAME=\"Fedora Linux\"\nVERSION=\"44 (Workstation Edition)\"\nRELEASE_TYPE=stable\nID=fedora\nVERSION_ID=44\nVERSION_CODENAME=\"\"\nPRETTY_NAME=\"Fedora Linux 44 (Workstation Edition)\"\nANSI_COLOR=\"0;38;2;60;110;180\"\nLOGO=fedora-logo-icon\nCPE_NAME=\"cpe:/o:fedoraproject:fedora:44\"\nDEFAULT_HOSTNAME=\"fedora\"\nHOME_URL=\"https://fedoraproject.org/\"\nDOCUMENTATION_URL=\"https://docs.fedoraproject.org/en-US/fedora/f44/\"\nSUPPORT_URL=\"https://ask.fedoraproject.org/\"\nBUG_REPORT_URL=\"https://bugzilla.redhat.com/\"\nREDHAT_BUGZILLA_PRODUCT=\"Fedora\"\nREDHAT_BUGZILLA_PRODUCT_VERSION=44\nREDHAT_SUPPORT_PRODUCT=\"Fedora\"\nREDHAT_SUPPORT_PRODUCT_VERSION=44\nSUPPORT_END=2027-05-19\nVARIANT=\"Workstation Edition\"\nVARIANT_ID=workstation\n",
+  "session": {
+    "XDG_SESSION_TYPE": "wayland",
+    "WAYLAND_DISPLAY": "wayland-0",
+    "DISPLAY": ":0"
+  },
+  "sources": [
+    {
+      "path": "crates/gpui/src/elements/surface.rs",
+      "sha256": "b72696ba0a043fdcddcad5536c7cde2e1703a4fc185f6a5449b86b62cee20819",
+      "excerpts": [
+        {
+          "start_line": 9,
+          "end_line": 38,
+          "text": "/// A source of a surface's content.\n#[derive(Clone, Debug, PartialEq, Eq)]\npub enum SurfaceSource {\n    /// A macOS image buffer from CoreVideo\n    #[cfg(target_os = \"macos\")]\n    Surface(CVPixelBuffer),\n}\n\n#[cfg(target_os = \"macos\")]\nimpl From<CVPixelBuffer> for SurfaceSource {\n    fn from(value: CVPixelBuffer) -> Self {\n        SurfaceSource::Surface(value)\n    }\n}\n\n/// A surface element.\npub struct Surface {\n    source: SurfaceSource,\n    object_fit: ObjectFit,\n    style: StyleRefinement,\n}\n\n/// Create a new surface element.\n#[cfg(target_os = \"macos\")]\npub fn surface(source: impl Into<SurfaceSource>) -> Surface {\n    Surface {\n        source: source.into(),\n        object_fit: ObjectFit::Contain,\n        style: Default::default(),\n    }"
+        }
+      ]
+    },
+    {
+      "path": "crates/gpui/src/window.rs",
+      "sha256": "eaf3f4def3ab2fbf75e2b6161440c981ff1c8cc414c223f38c62e4cc44e0cacd",
+      "excerpts": [
+        {
+          "start_line": 4591,
+          "end_line": 4611,
+          "text": "    /// Paint a surface into the scene for the next frame at the current z-index.\n    ///\n    /// This method should only be called as part of the paint phase of element drawing.\n    #[cfg(target_os = \"macos\")]\n    pub fn paint_surface(&mut self, bounds: Bounds<Pixels>, image_buffer: CVPixelBuffer) {\n        use crate::PaintSurface;\n\n        self.invalidator.debug_assert_paint();\n\n        let bounds = self.snap_bounds(bounds);\n        let content_mask = self.snapped_content_mask();\n        self.next_frame.scene.insert_primitive(PaintSurface {\n            order: 0,\n            bounds,\n            content_mask,\n            image_buffer,\n        });\n    }\n\n    /// Removes an image from the sprite atlas.\n    pub fn drop_image(&mut self, data: Arc<RenderImage>) -> Result<()> {"
+        }
+      ]
+    },
+    {
+      "path": "crates/gpui_wgpu/src/wgpu_renderer.rs",
+      "sha256": "ea695f290022952f476d312fbce46e66af7cc2f3f2064df631bebe8799721169",
+      "excerpts": [
+        {
+          "start_line": 1527,
+          "end_line": 1533,
+          "text": "                        &mut pass,\n                    ),\n                    // Surfaces are macOS-only for video playback and are not\n                    // implemented by the WGPU renderer.\n                    PrimitiveBatch::Surfaces(_surfaces) => {}\n                }\n            }"
+        }
+      ]
+    },
+    {
+      "path": "crates/gpui_windows/src/directx_renderer.rs",
+      "sha256": "7dec9ea4399c17e300a2ac1dc8033865305477d896d5cd550b329e47e8c757cf",
+      "excerpts": [
+        {
+          "start_line": 810,
+          "end_line": 815,
+          "text": "    fn draw_surfaces(&mut self, surfaces: &[PaintSurface]) -> Result<()> {\n        if surfaces.is_empty() {\n            return Ok(());\n        }\n        Ok(())\n    }"
+        }
+      ]
+    },
+    {
+      "path": "crates/gpui_apple/src/metal_renderer.rs",
+      "sha256": "ffaad74c3f411b17d546907d774ace4bf403e6bfaf10e2b7653c7ca539b96e8d",
+      "excerpts": [
+        {
+          "start_line": 1146,
+          "end_line": 1161,
+          "text": "\n        for (index, surface) in surfaces.iter().enumerate() {\n            let texture_size = size(\n                DevicePixels::from(surface.image_buffer.get_width() as i32),\n                DevicePixels::from(surface.image_buffer.get_height() as i32),\n            );\n\n            assert_eq!(\n                surface.image_buffer.get_pixel_format(),\n                kCVPixelFormatType_420YpCbCr8BiPlanarFullRange\n            );\n\n            let y_texture = self\n                .core_video_texture_cache\n                .create_texture_from_image(\n                    surface.image_buffer.as_concrete_TypeRef(),"
+        }
+      ]
+    },
+    {
+      "path": "crates/gpui/src/assets.rs",
+      "sha256": "44e116678b8b351ecb7fb45a3163b58288d551fbc72049ddc7a8d255d589bcff",
+      "excerpts": [
+        {
+          "start_line": 43,
+          "end_line": 69,
+          "text": "pub struct RenderImage {\n    /// The ID associated with this image\n    pub id: ImageId,\n    /// The scale factor of this image on render.\n    pub(crate) scale_factor: f32,\n    data: SmallVec<[Frame; 1]>,\n}\n\nimpl PartialEq for RenderImage {\n    fn eq(&self, other: &Self) -> bool {\n        self.id == other.id\n    }\n}\n\nimpl Eq for RenderImage {}\n\nimpl RenderImage {\n    /// Create a new image from the given data.\n    pub fn new(data: impl Into<SmallVec<[Frame; 1]>>) -> Self {\n        static NEXT_ID: AtomicUsize = AtomicUsize::new(0);\n\n        Self {\n            id: ImageId(NEXT_ID.fetch_add(1, SeqCst)),\n            scale_factor: 1.0,\n            data: data.into(),\n        }\n    }"
+        }
+      ]
+    }
+  ],
+  "missing": [
+    "native input/presentation instrumentation",
+    "CEF runtime pin and minimal host",
+    "Linux/Windows GPUI external-surface composition",
+    "Linux Mesa reference",
+    "Linux aarch64 GPU reference",
+    "macOS Apple Silicon reference and signing access",
+    "Windows x64 reference",
+    "M1 A/B/C raw baselines",
+    "sandbox and screen-reader observations"
+  ]
+}

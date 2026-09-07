@@ -1,0 +1,43 @@
+[360061:360061:0906/140259.104135:ERROR:content/browser/browser_main_loop.cc:277] GLib-GObject: g_object_set_is_valid_property: object class 'GtkSettings' has no property named 'gtk-modules'
+[360101:360101:0906/140259.168388:ERROR:ui/gl/angle_platform_impl.cc:47] Display.cpp:1128 (initialize): ANGLE Display::initialize error 12289: Could not dlopen native EGL: libEGL.so.1: Ne peut ouvrir le fichier d'objet partagé: Permission non accordée
+ERR: Display.cpp:1128 (initialize): ANGLE Display::initialize error 12289: Could not dlopen native EGL: libEGL.so.1: Ne peut ouvrir le fichier d'objet partagé: Permission non accordée
+[360101:360101:0906/140259.168439:ERROR:ui/gl/egl_util.cc:92] EGL Driver message (Critical) eglInitialize: Could not dlopen native EGL: libEGL.so.1: Ne peut ouvrir le fichier d'objet partagé: Permission non accordée
+[360101:360101:0906/140259.168466:ERROR:ui/gl/gl_display.cc:630] eglInitialize OpenGL failed with error EGL_NOT_INITIALIZED, trying next display type
+[360101:360101:0906/140259.168515:ERROR:ui/gl/angle_platform_impl.cc:47] Display.cpp:1128 (initialize): ANGLE Display::initialize error 12289: Could not dlopen native EGL: libEGL.so.1: Ne peut ouvrir le fichier d'objet partagé: Permission non accordée
+ERR: Display.cpp:1128 (initialize): ANGLE Display::initialize error 12289: Could not dlopen native EGL: libEGL.so.1: Ne peut ouvrir le fichier d'objet partagé: Permission non accordée
+[360101:360101:0906/140259.168548:ERROR:ui/gl/egl_util.cc:92] EGL Driver message (Critical) eglInitialize: Could not dlopen native EGL: libEGL.so.1: Ne peut ouvrir le fichier d'objet partagé: Permission non accordée
+[360101:360101:0906/140259.168578:ERROR:ui/gl/gl_display.cc:630] eglInitialize OpenGLES failed with error EGL_NOT_INITIALIZED
+[360101:360101:0906/140259.168602:ERROR:ui/gl/gl_display.cc:665] Initialization of all (2) EGL display types failed.
+[360101:360101:0906/140259.168629:ERROR:ui/ozone/common/gl_ozone_egl.cc:26] GLDisplayEGL::Initialize failed.
+[360101:360101:0906/140259.169906:ERROR:ui/gl/angle_platform_impl.cc:47] Display.cpp:1128 (initialize): ANGLE Display::initialize error 12289: Could not dlopen native EGL: libEGL.so.1: Ne peut ouvrir le fichier d'objet partagé: Permission non accordée
+ERR: Display.cpp:1128 (initialize): ANGLE Display::initialize error 12289: Could not dlopen native EGL: libEGL.so.1: Ne peut ouvrir le fichier d'objet partagé: Permission non accordée
+[360101:360101:0906/140259.169965:ERROR:ui/gl/egl_util.cc:92] EGL Driver message (Critical) eglInitialize: Could not dlopen native EGL: libEGL.so.1: Ne peut ouvrir le fichier d'objet partagé: Permission non accordée
+[360101:360101:0906/140259.170065:ERROR:ui/gl/gl_display.cc:630] eglInitialize OpenGL failed with error EGL_NOT_INITIALIZED, trying next display type
+[360101:360101:0906/140259.170132:ERROR:ui/gl/angle_platform_impl.cc:47] Display.cpp:1128 (initialize): ANGLE Display::initialize error 12289: Could not dlopen native EGL: libEGL.so.1: Ne peut ouvrir le fichier d'objet partagé: Permission non accordée
+ERR: Display.cpp:1128 (initialize): ANGLE Display::initialize error 12289: Could not dlopen native EGL: libEGL.so.1: Ne peut ouvrir le fichier d'objet partagé: Permission non accordée
+[360101:360101:0906/140259.170170:ERROR:ui/gl/egl_util.cc:92] EGL Driver message (Critical) eglInitialize: Could not dlopen native EGL: libEGL.so.1: Ne peut ouvrir le fichier d'objet partagé: Permission non accordée
+[360101:360101:0906/140259.170200:ERROR:ui/gl/gl_display.cc:630] eglInitialize OpenGLES failed with error EGL_NOT_INITIALIZED
+[360101:360101:0906/140259.170226:ERROR:ui/gl/gl_display.cc:665] Initialization of all (2) EGL display types failed.
+[360101:360101:0906/140259.170251:ERROR:ui/ozone/common/gl_ozone_egl.cc:26] GLDisplayEGL::Initialize failed.
+[360101:360101:0906/140259.170823:ERROR:components/viz/service/main/viz_main_impl.cc:190] Exiting GPU process due to errors during initialization
+[360176:360176:0906/140259.321266:ERROR:ui/gl/angle_platform_impl.cc:47] Display.cpp:1128 (initialize): ANGLE Display::initialize error 12289: Could not dlopen native EGL: libEGL.so.1: Ne peut ouvrir le fichier d'objet partagé: Permission non accordée
+ERR: Display.cpp:1128 (initialize): ANGLE Display::initialize error 12289: Could not dlopen native EGL: libEGL.so.1: Ne peut ouvrir le fichier d'objet partagé: Permission non accordée
+[360176:360176:0906/140259.321332:ERROR:ui/gl/egl_util.cc:92] EGL Driver message (Critical) eglInitialize: Could not dlopen native EGL: libEGL.so.1: Ne peut ouvrir le fichier d'objet partagé: Permission non accordée
+[360176:360176:0906/140259.321364:ERROR:ui/gl/gl_display.cc:630] eglInitialize OpenGL failed with error EGL_NOT_INITIALIZED, trying next display type
+[360176:360176:0906/140259.321419:ERROR:ui/gl/angle_platform_impl.cc:47] Display.cpp:1128 (initialize): ANGLE Display::initialize error 12289: Could not dlopen native EGL: libEGL.so.1: Ne peut ouvrir le fichier d'objet partagé: Permission non accordée
+ERR: Display.cpp:1128 (initialize): ANGLE Display::initialize error 12289: Could not dlopen native EGL: libEGL.so.1: Ne peut ouvrir le fichier d'objet partagé: Permission non accordée
+[360176:360176:0906/140259.321462:ERROR:ui/gl/egl_util.cc:92] EGL Driver message (Critical) eglInitialize: Could not dlopen native EGL: libEGL.so.1: Ne peut ouvrir le fichier d'objet partagé: Permission non accordée
+[360176:360176:0906/140259.321494:ERROR:ui/gl/gl_display.cc:630] eglInitialize OpenGLES failed with error EGL_NOT_INITIALIZED
+[360176:360176:0906/140259.321565:ERROR:ui/gl/gl_display.cc:665] Initialization of all (2) EGL display types failed.
+[360176:360176:0906/140259.321600:ERROR:ui/ozone/common/gl_ozone_egl.cc:26] GLDisplayEGL::Initialize failed.
+[360176:360176:0906/140259.322893:ERROR:ui/gl/angle_platform_impl.cc:47] Display.cpp:1128 (initialize): ANGLE Display::initialize error 12289: Could not dlopen native EGL: libEGL.so.1: Ne peut ouvrir le fichier d'objet partagé: Permission non accordée
+ERR: Display.cpp:1128 (initialize): ANGLE Display::initialize error 12289: Could not dlopen native EGL: libEGL.so.1: Ne peut ouvrir le fichier d'objet partagé: Permission non accordée
+[360176:360176:0906/140259.322939:ERROR:ui/gl/egl_util.cc:92] EGL Driver message (Critical) eglInitialize: Could not dlopen native EGL: libEGL.so.1: Ne peut ouvrir le fichier d'objet partagé: Permission non accordée
+[360176:360176:0906/140259.322972:ERROR:ui/gl/gl_display.cc:630] eglInitialize OpenGL failed with error EGL_NOT_INITIALIZED, trying next display type
+[360176:360176:0906/140259.323011:ERROR:ui/gl/angle_platform_impl.cc:47] Display.cpp:1128 (initialize): ANGLE Display::initialize error 12289: Could not dlopen native EGL: libEGL.so.1: Ne peut ouvrir le fichier d'objet partagé: Permission non accordée
+ERR: Display.cpp:1128 (initialize): ANGLE Display::initialize error 12289: Could not dlopen native EGL: libEGL.so.1: Ne peut ouvrir le fichier d'objet partagé: Permission non accordée
+[360176:360176:0906/140259.323044:ERROR:ui/gl/egl_util.cc:92] EGL Driver message (Critical) eglInitialize: Could not dlopen native EGL: libEGL.so.1: Ne peut ouvrir le fichier d'objet partagé: Permission non accordée
+[360176:360176:0906/140259.323069:ERROR:ui/gl/gl_display.cc:630] eglInitialize OpenGLES failed with error EGL_NOT_INITIALIZED
+[360176:360176:0906/140259.323095:ERROR:ui/gl/gl_display.cc:665] Initialization of all (2) EGL display types failed.
+[360176:360176:0906/140259.323120:ERROR:ui/ozone/common/gl_ozone_egl.cc:26] GLDisplayEGL::Initialize failed.
+[360176:360176:0906/140259.323684:ERROR:components/viz/service/main/viz_main_impl.cc:190] Exiting GPU process due to errors during initialization

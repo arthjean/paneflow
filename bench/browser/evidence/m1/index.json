@@ -1,0 +1,262 @@
+{
+  "schema_version": 1,
+  "status": "LOCAL_REFERENCES_CAPTURED",
+  "recorded_at": "2026-09-05T23:33:16.383397+00:00",
+  "paneflow_commit": "fbfefd250a3f3c8d9968a23f8c358712859bc904",
+  "environment": {
+    "machine": "dune",
+    "os": "Fedora Linux 44 (Workstation Edition)",
+    "kernel": "7.1.12-200.fc44.x86_64",
+    "compositor": "GNOME Shell 50.4",
+    "cpu": "AMD Ryzen 7 7800X3D 8-Core Processor",
+    "gpu": "NVIDIA GeForce RTX 4070 Ti SUPER",
+    "driver": "610.57.04",
+    "ram_mib": 31229,
+    "power": "AC desktop; no battery present",
+    "scale": 1,
+    "refresh_hz": 60,
+    "refresh_actual_hz": 59.951,
+    "physical_width": 1920,
+    "physical_height": 1080,
+    "display_backend": "wayland",
+    "monitor": "DP-3 AUS VG27AQML1A and DP-4 BNQ EX2710Q both2560x1440@59.951, scale1; native compositor controls toplevel placement",
+    "other_display": "Both enabled outputs59.951Hz; no144Hz output in this condition",
+    "captured_at": "2026-09-05T22:38:33.363219+00:00"
+  },
+  "references": [
+    {
+      "name": "a-60",
+      "capture": "a-60/capture.json",
+      "capture_sha256": "4231307acdd782bad9378c2225a254cd0a71775421b401cba6815abf892bf9eb",
+      "inspection": "a-60/inspection.json",
+      "inspection_sha256": "36214a47d255382ffe36a0590565f29e8c71464f5a1632ea4779ce65a7131318",
+      "status": "ACCEPTED_SAMPLES",
+      "configuration": "A",
+      "scenario": "combined",
+      "kind": "terminal_input_to_present",
+      "samples": 1500,
+      "repetitions": 5,
+      "aggregate": {
+        "p50_ns": {
+          "median": 36425796,
+          "worst": 39247941
+        },
+        "p95_ns": {
+          "median": 46558846,
+          "worst": 47690146
+        },
+        "p99_ns": {
+          "median": 47360032,
+          "worst": 49630456
+        }
+      }
+    },
+    {
+      "name": "prefeature-60",
+      "capture": "prefeature-60/capture.json",
+      "capture_sha256": "430b1c7ac546faa3442927fd39b62621b0218bab177c1fe4fc6ffe46acc2c5de",
+      "inspection": "prefeature-60/inspection.json",
+      "inspection_sha256": "f219ae91c5561aa3dda3aaed3cc6508515bc5059b5c956b5e2ddfcd210f4ed75",
+      "status": "ACCEPTED_SAMPLES",
+      "configuration": "PRE_FEATURE",
+      "scenario": "combined",
+      "kind": "terminal_input_to_present",
+      "samples": 1500,
+      "repetitions": 5,
+      "aggregate": {
+        "p50_ns": {
+          "median": 35546243,
+          "worst": 37056503
+        },
+        "p95_ns": {
+          "median": 46299304,
+          "worst": 47335745
+        },
+        "p99_ns": {
+          "median": 47749610,
+          "worst": 48896451
+        }
+      }
+    },
+    {
+      "name": "b-empty-60",
+      "capture": "b-empty-60/capture.json",
+      "capture_sha256": "30961b65714743ef70a29fb7f2b515f2d31e91ee5378b77f02ca208d8427ea5e",
+      "inspection": "b-empty-60/inspection.json",
+      "inspection_sha256": "798d4e268cf30b026ecbfeedc0271de76f009511b03a8091982ebad5016857aa",
+      "status": "ACCEPTED_IDLE_OBSERVATION",
+      "configuration": "B",
+      "scenario": "empty",
+      "kind": "browser_idle",
+      "samples": 0,
+      "repetitions": 5,
+      "aggregate": null
+    },
+    {
+      "name": "b-scroll-60",
+      "capture": "b-scroll-60/capture.json",
+      "capture_sha256": "d0198204862c337930572c043768a20de01b856452f4b75ab99d411004b26acb",
+      "inspection": "b-scroll-60/inspection.json",
+      "inspection_sha256": "eae9209d2bbff64095aa80eb60f6648bf4865023763fd34681458329e8d56aa2",
+      "status": "ACCEPTED_SAMPLES",
+      "configuration": "B",
+      "scenario": "scroll",
+      "kind": "browser_draw_to_present",
+      "samples": 17961,
+      "repetitions": 5,
+      "aggregate": {
+        "p50_ns": {
+          "median": 49622000,
+          "worst": 55947000
+        },
+        "p95_ns": {
+          "median": 55740000,
+          "worst": 58469000
+        },
+        "p99_ns": {
+          "median": 56065000,
+          "worst": 61958000
+        }
+      }
+    },
+    {
+      "name": "b-animation-60",
+      "capture": "b-animation-60/capture.json",
+      "capture_sha256": "0ddbe6d3a1165f2fb016e69e003d67cc2b06765ad0c45b4d044ca0cbe9cfa2db",
+      "inspection": "b-animation-60/inspection.json",
+      "inspection_sha256": "f80fdb27e85fd56b8bfedaff10cb6be66d61aaa7f0f300a7ab2ba8198ef80e5e",
+      "status": "ACCEPTED_SAMPLES",
+      "configuration": "B",
+      "scenario": "animation",
+      "kind": "browser_draw_to_present",
+      "samples": 17965,
+      "repetitions": 5,
+      "aggregate": {
+        "p50_ns": {
+          "median": 49718000,
+          "worst": 49923000
+        },
+        "p95_ns": {
+          "median": 49785000,
+          "worst": 49947000
+        },
+        "p99_ns": {
+          "median": 49940000,
+          "worst": 55535000
+        }
+      }
+    },
+    {
+      "name": "b-webgl-60",
+      "capture": "b-webgl-60/capture.json",
+      "capture_sha256": "cb4c53601d9c7bfefb6cff3bf3fcfd98e33a75fc3b28480b86eb4a9e33bf21a1",
+      "inspection": "b-webgl-60/inspection.json",
+      "inspection_sha256": "78764fa1b2c0e7dace539f1e78d06df46e2448153183b57d3b84effc4520b2c6",
+      "status": "ACCEPTED_SAMPLES",
+      "configuration": "B",
+      "scenario": "webgl",
+      "kind": "browser_draw_to_present",
+      "samples": 17968,
+      "repetitions": 5,
+      "aggregate": {
+        "p50_ns": {
+          "median": 49733000,
+          "worst": 49735000
+        },
+        "p95_ns": {
+          "median": 49796000,
+          "worst": 49913000
+        },
+        "p99_ns": {
+          "median": 49932000,
+          "worst": 49941000
+        }
+      }
+    },
+    {
+      "name": "b-network-60",
+      "capture": "b-network-60/capture.json",
+      "capture_sha256": "eeb634d115555ba422b5fed7c95615d2b67e145e0d52a7a8c706351ff932ce09",
+      "inspection": "b-network-60/inspection.json",
+      "inspection_sha256": "62a4e2c2becd6fe98a9f7ad9429f4832fd921df0fad1c2e850a8386f953c829b",
+      "status": "ACCEPTED_SAMPLES",
+      "configuration": "B",
+      "scenario": "network",
+      "kind": "browser_draw_to_present",
+      "samples": 1195,
+      "repetitions": 5,
+      "aggregate": {
+        "p50_ns": {
+          "median": 15403000,
+          "worst": 15873000
+        },
+        "p95_ns": {
+          "median": 23042000,
+          "worst": 23452000
+        },
+        "p99_ns": {
+          "median": 24210000,
+          "worst": 24777000
+        }
+      }
+    },
+    {
+      "name": "b-combined-60",
+      "capture": "b-combined-60/capture.json",
+      "capture_sha256": "59a6593cfe3622a4f118f9e1eee796a390574b5825c3dd38b55302a4fe55b894",
+      "inspection": "b-combined-60/inspection.json",
+      "inspection_sha256": "90eec93fccf20ecd71020026c2500b540526389a5058f85d2550bdae7382cf13",
+      "status": "ACCEPTED_SAMPLES",
+      "configuration": "B",
+      "scenario": "combined",
+      "kind": "browser_draw_to_present",
+      "samples": 17963,
+      "repetitions": 5,
+      "aggregate": {
+        "p50_ns": {
+          "median": 56504000,
+          "worst": 56555000
+        },
+        "p95_ns": {
+          "median": 58289000,
+          "worst": 58947000
+        },
+        "p99_ns": {
+          "median": 59664000,
+          "worst": 62370000
+        }
+      }
+    }
+  ],
+  "comparison": "pre-feature-vs-a.json",
+  "cpu": "cpu/index.json",
+  "product_qualification": "NOT_EVALUATED",
+  "unexecuted": [
+    "C integrated GPUI browser",
+    "120Hz",
+    "X11 session",
+    "Linux Mesa",
+    "KDE/KWin",
+    "wlroots",
+    "Ubuntu/Debian",
+    "Arch",
+    "openSUSE",
+    "Linux aarch64 GPU",
+    "macOS",
+    "Windows"
+  ],
+  "historical_observations": [
+    "b-empty-60-secondary144/inspection.json",
+    "diagnostics/a-rejected-gc-1/index.json",
+    "diagnostics/a-rejected-gc-2/index.json",
+    "diagnostics/python-gc-cause.json",
+    "a-rejected-secondary144/analysis-rejected.json",
+    "diagnostics/a-rejected-display/index.json"
+  ],
+  "validation": "validation/gates.json",
+  "epic_status": "DONE",
+  "certification": "validation/review.json",
+  "validation_sha256": "50ac090de2ab0603f2eedb80ef1920aa152c0f43fb0c98da415d672b34f1de0e",
+  "negative_frequency_test": "diagnostics/wrong-refresh.json",
+  "display_restoration": "display-restored.txt"
+}

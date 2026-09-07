@@ -1,0 +1,2 @@
+dbus-daemon: fatal error setting up standard fds: Failed to open /dev/null: Permission denied
+dbus-run-session: EOF reading address from bus daemon

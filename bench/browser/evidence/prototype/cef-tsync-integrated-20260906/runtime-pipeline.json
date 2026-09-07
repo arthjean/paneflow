@@ -1,0 +1,227 @@
+{
+  "status": "FINISHED_REQUIRES_REVIEW",
+  "started_at": "2026-09-06T17:08:35.729585+00:00",
+  "phases": [
+    {
+      "name": "stage-runtime",
+      "command": [
+        "python3",
+        "/home/arthur/dev/paneflow-browser/native/browser/experiments/tsync/stage-cef.py",
+        "--build-output",
+        "/home/arthur/.cache/paneflow-cef-tsync/work/chromium/src/out/Release_GN_x64",
+        "--workspace",
+        "/home/arthur/.cache/paneflow-cef-tsync/paneflow-snapshot",
+        "--output",
+        "/home/arthur/.cache/paneflow-cef-tsync/runtime-bundle"
+      ],
+      "started_at": "2026-09-06T17:58:15.790148+00:00",
+      "pid": 733268,
+      "returncode": 0,
+      "finished_at": "2026-09-06T17:59:13.150954+00:00"
+    },
+    {
+      "name": "build-paneflow",
+      "command": [
+        "nice",
+        "-n",
+        "10",
+        "cargo",
+        "build",
+        "--locked",
+        "-p",
+        "paneflow-app",
+        "-p",
+        "paneflow-browser-host",
+        "--features",
+        "paneflow-browser-host/cef-runtime"
+      ],
+      "started_at": "2026-09-06T17:59:13.151522+00:00",
+      "pid": 733799,
+      "returncode": 101,
+      "finished_at": "2026-09-06T17:59:28.580360+00:00"
+    },
+    {
+      "name": "build-paneflow-r2",
+      "command": [
+        "nice",
+        "-n",
+        "10",
+        "cargo",
+        "build",
+        "--locked",
+        "-p",
+        "paneflow-app",
+        "-p",
+        "paneflow-browser-host",
+        "--features",
+        "paneflow-browser-host/cef-runtime"
+      ],
+      "started_at": "2026-09-06T18:00:37.077701+00:00",
+      "pid": 735502,
+      "returncode": 0,
+      "finished_at": "2026-09-06T18:00:53.930198+00:00"
+    },
+    {
+      "name": "wayland-mesa",
+      "command": [
+        "python3",
+        "/home/arthur/dev/paneflow-browser/native/browser/experiments/tsync/run-wayland.py",
+        "--workspace",
+        "/home/arthur/.cache/paneflow-cef-tsync/paneflow-snapshot",
+        "--binary",
+        "/home/arthur/.cache/paneflow-cef-tsync/paneflow-target/debug/paneflow",
+        "--host",
+        "/home/arthur/.cache/paneflow-cef-tsync/paneflow-target/debug/paneflow-browser-host",
+        "--render-node",
+        "/dev/dri/renderD128",
+        "--card",
+        "/dev/dri/card1",
+        "--egl-vendor",
+        "/usr/share/glvnd/egl_vendor.d/50_mesa.json",
+        "--gpui-device",
+        "0x164e",
+        "--output",
+        "/home/arthur/dev/paneflow-browser/bench/browser/evidence/prototype/cef-tsync-20260906-mesa-wayland"
+      ],
+      "started_at": "2026-09-06T18:00:53.930432+00:00",
+      "pid": 735925,
+      "returncode": 1,
+      "finished_at": "2026-09-06T18:01:19.663652+00:00"
+    },
+    {
+      "name": "wayland-nvidia",
+      "command": [
+        "python3",
+        "/home/arthur/dev/paneflow-browser/native/browser/experiments/tsync/run-wayland.py",
+        "--workspace",
+        "/home/arthur/.cache/paneflow-cef-tsync/paneflow-snapshot",
+        "--binary",
+        "/home/arthur/.cache/paneflow-cef-tsync/paneflow-target/debug/paneflow",
+        "--host",
+        "/home/arthur/.cache/paneflow-cef-tsync/paneflow-target/debug/paneflow-browser-host",
+        "--render-node",
+        "/dev/dri/renderD129",
+        "--card",
+        "/dev/dri/card2",
+        "--egl-vendor",
+        "/usr/share/glvnd/egl_vendor.d/10_nvidia.json",
+        "--gpui-device",
+        "0x2705",
+        "--output",
+        "/home/arthur/dev/paneflow-browser/bench/browser/evidence/prototype/cef-tsync-20260906-nvidia-wayland"
+      ],
+      "started_at": "2026-09-06T18:01:19.663924+00:00",
+      "pid": 736807,
+      "returncode": 1,
+      "finished_at": "2026-09-06T18:02:02.216315+00:00"
+    },
+    {
+      "name": "stage-runtime-r2",
+      "command": [
+        "python3",
+        "/home/arthur/dev/paneflow-browser/native/browser/experiments/tsync/stage-cef.py",
+        "--build-output",
+        "/home/arthur/.cache/paneflow-cef-tsync/work/chromium/src/out/Release_GN_x64",
+        "--workspace",
+        "/home/arthur/.cache/paneflow-cef-tsync/paneflow-snapshot",
+        "--output",
+        "/home/arthur/.cache/paneflow-cef-tsync/runtime-bundle-r2"
+      ],
+      "started_at": "2026-09-06T18:08:24.536782+00:00",
+      "pid": 742825,
+      "returncode": 0,
+      "finished_at": "2026-09-06T18:09:21.456814+00:00"
+    },
+    {
+      "name": "build-paneflow-r3",
+      "command": [
+        "nice",
+        "-n",
+        "10",
+        "cargo",
+        "build",
+        "--locked",
+        "-p",
+        "paneflow-app",
+        "-p",
+        "paneflow-browser-host",
+        "--features",
+        "paneflow-browser-host/cef-runtime"
+      ],
+      "started_at": "2026-09-06T18:09:21.457200+00:00",
+      "pid": 743300,
+      "returncode": 0,
+      "finished_at": "2026-09-06T18:09:27.013535+00:00"
+    },
+    {
+      "name": "wayland-mesa-r2",
+      "command": [
+        "python3",
+        "/home/arthur/dev/paneflow-browser/native/browser/experiments/tsync/run-wayland.py",
+        "--workspace",
+        "/home/arthur/.cache/paneflow-cef-tsync/paneflow-snapshot",
+        "--binary",
+        "/home/arthur/.cache/paneflow-cef-tsync/paneflow-target/debug/paneflow",
+        "--host",
+        "/home/arthur/.cache/paneflow-cef-tsync/paneflow-target/debug/paneflow-browser-host",
+        "--render-node",
+        "/dev/dri/renderD128",
+        "--card",
+        "/dev/dri/card1",
+        "--egl-vendor",
+        "/usr/share/glvnd/egl_vendor.d/50_mesa.json",
+        "--gpui-device",
+        "0x164e",
+        "--output",
+        "/home/arthur/dev/paneflow-browser/bench/browser/evidence/prototype/cef-tsync-20260906-mesa-wayland-r2"
+      ],
+      "started_at": "2026-09-06T18:09:27.013824+00:00",
+      "pid": 743901,
+      "returncode": 0,
+      "finished_at": "2026-09-06T18:09:38.279278+00:00"
+    },
+    {
+      "name": "xwayland-nvidia-r2",
+      "command": [
+        "python3",
+        "/home/arthur/.cache/paneflow-cef-tsync/run-xwayland.py",
+        "cef-tsync-20260906-nvidia-xwayland-r2"
+      ],
+      "started_at": "2026-09-06T18:09:38.279584+00:00",
+      "pid": 744848,
+      "returncode": 1,
+      "finished_at": "2026-09-06T18:10:20.618715+00:00"
+    },
+    {
+      "name": "build-paneflow-r4",
+      "command": [
+        "nice",
+        "-n",
+        "10",
+        "cargo",
+        "build",
+        "--locked",
+        "-p",
+        "paneflow-browser-host",
+        "--features",
+        "cef-runtime"
+      ],
+      "started_at": "2026-09-06T18:12:37.032238+00:00",
+      "pid": 747129,
+      "returncode": 0,
+      "finished_at": "2026-09-06T18:12:38.569047+00:00"
+    },
+    {
+      "name": "xwayland-nvidia-r3",
+      "command": [
+        "python3",
+        "/home/arthur/.cache/paneflow-cef-tsync/run-xwayland.py",
+        "cef-tsync-20260906-nvidia-xwayland-r3"
+      ],
+      "started_at": "2026-09-06T18:12:38.569307+00:00",
+      "pid": 747423,
+      "returncode": 0,
+      "finished_at": "2026-09-06T18:12:49.668662+00:00"
+    }
+  ]
+}

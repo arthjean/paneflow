@@ -1,0 +1,13 @@
+{
+  "command": [
+    "timeout",
+    "--kill-after=5",
+    "90",
+    "/home/arthur/.cache/paneflow-cef-tsync/work/chromium/src/out/Release_GN_x64/paneflow_tsync_probe",
+    "--render-node=/dev/dri/renderD128"
+  ],
+  "returncode": -11,
+  "shader_cache_requested": true,
+  "cache_directory": "/home/arthur/dev/paneflow-browser/bench/browser/evidence/prototype/real-policy-tsync-cache-20260906/mesa/cache",
+  "completed_at": "2026-09-06T16:08:10.105961+00:00"
+}

@@ -1,0 +1,16 @@
+{
+  "command": [
+    "timeout",
+    "--kill-after=5",
+    "90",
+    "strace",
+    "-f",
+    "-e",
+    "trace=seccomp,prctl,clone,clone3,exit_group",
+    "-o",
+    "bench/browser/evidence/prototype/real-policy-tsync-20260906-r2/mesa/sandbox-syscalls.txt",
+    "/home/arthur/.cache/paneflow-cef-tsync/work/chromium/src/out/Release_GN_x64/paneflow_tsync_probe",
+    "--render-node=/dev/dri/renderD128"
+  ],
+  "returncode": 0
+}

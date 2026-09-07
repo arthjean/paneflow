@@ -1,0 +1,231 @@
+{
+  "profile": "DEEP",
+  "completed_at": "2026-09-05T23:38:57.806408+00:00",
+  "rust_tests_passed": 2649,
+  "rust_tests_ignored": 6,
+  "bun_tests_passed": 87,
+  "native_negative_tests_executed": 9,
+  "native_frequency_negative": "../diagnostics/wrong-refresh.json",
+  "results": [
+    {
+      "command": [
+        "cargo",
+        "fmt",
+        "--check"
+      ],
+      "exit_code": 0,
+      "started_at": "2026-09-05T23:34:23.756215+00:00",
+      "log": "gate-0.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "command": [
+        "cargo",
+        "check",
+        "--workspace",
+        "--all-targets",
+        "--locked"
+      ],
+      "exit_code": 0,
+      "started_at": "2026-09-05T23:34:25.062875+00:00",
+      "log": "gate-1.log",
+      "sha256": "3819f5a7ceecd9222e0fbd258fbc5b3461b920ebd412d521eff393866d195f71"
+    },
+    {
+      "command": [
+        "cargo",
+        "clippy",
+        "--workspace",
+        "--all-targets",
+        "--locked",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "exit_code": 0,
+      "started_at": "2026-09-05T23:34:25.867312+00:00",
+      "log": "gate-2.log",
+      "sha256": "8950be1e8f4499f41b8e38ef15f09a0e2671be53a43aa5dec4d794320908881d"
+    },
+    {
+      "command": [
+        "cargo",
+        "test",
+        "--workspace",
+        "--locked"
+      ],
+      "exit_code": 0,
+      "started_at": "2026-09-05T23:34:26.264302+00:00",
+      "log": "gate-3.log",
+      "sha256": "3a0c7064295a10be3fd957a694dec9efbd5bede56436bd641b8b2ef79e17be0e"
+    },
+    {
+      "command": [
+        "cargo",
+        "deny",
+        "check",
+        "advisories",
+        "licenses",
+        "sources"
+      ],
+      "exit_code": 0,
+      "started_at": "2026-09-05T23:34:42.504802+00:00",
+      "log": "gate-4.log",
+      "sha256": "283d9c2dffc99ffd90ba0a224af497e9302b8a811460e3d128f187257d68f2e1"
+    },
+    {
+      "command": [
+        "cargo",
+        "clippy",
+        "-p",
+        "paneflow-browser-host",
+        "--features",
+        "cef-runtime",
+        "--all-targets",
+        "--locked",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "exit_code": 0,
+      "started_at": "2026-09-05T23:34:43.469444+00:00",
+      "log": "gate-5.log",
+      "sha256": "2bc683fb4e4f4f21ee9ee39e2b8ecce2efe20d3b1be57bda5316aa519ab3d30a"
+    },
+    {
+      "command": [
+        "bun",
+        "test",
+        "scripts/browser-qualification/qualification.test.mjs",
+        "scripts/browser-qualification/fetch.test.mjs",
+        "scripts/browser-qualification/host.test.mjs",
+        "scripts/browser-qualification/browser-trace.test.mjs",
+        "scripts/browser-qualification/terminal-analysis.test.mjs"
+      ],
+      "exit_code": 0,
+      "started_at": "2026-09-05T23:34:43.728145+00:00",
+      "log": "gate-6.log",
+      "sha256": "87751b601ef60d6a67dcb31d3671a6f704d1c0f04eaed07ffa9e7fe37aed5605"
+    },
+    {
+      "command": [
+        "git",
+        "diff",
+        "--check"
+      ],
+      "exit_code": 0,
+      "started_at": "2026-09-05T23:34:46.274860+00:00",
+      "log": "gate-7.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "command": [
+        "bun",
+        "scripts/browser-qualification.mjs",
+        "inspect",
+        "bench/browser/evidence/m1/a-60/capture.json"
+      ],
+      "exit_code": 0,
+      "started_at": "2026-09-05T23:34:46.283972+00:00",
+      "log": "gate-8.log",
+      "sha256": "36214a47d255382ffe36a0590565f29e8c71464f5a1632ea4779ce65a7131318"
+    },
+    {
+      "command": [
+        "bun",
+        "scripts/browser-qualification.mjs",
+        "inspect",
+        "bench/browser/evidence/m1/prefeature-60/capture.json"
+      ],
+      "exit_code": 0,
+      "started_at": "2026-09-05T23:34:46.322609+00:00",
+      "log": "gate-9.log",
+      "sha256": "f219ae91c5561aa3dda3aaed3cc6508515bc5059b5c956b5e2ddfcd210f4ed75"
+    },
+    {
+      "command": [
+        "bun",
+        "scripts/browser-qualification.mjs",
+        "inspect",
+        "bench/browser/evidence/m1/b-empty-60/capture.json"
+      ],
+      "exit_code": 0,
+      "started_at": "2026-09-05T23:34:46.364858+00:00",
+      "log": "gate-10.log",
+      "sha256": "798d4e268cf30b026ecbfeedc0271de76f009511b03a8091982ebad5016857aa"
+    },
+    {
+      "command": [
+        "bun",
+        "scripts/browser-qualification.mjs",
+        "inspect",
+        "bench/browser/evidence/m1/b-scroll-60/capture.json"
+      ],
+      "exit_code": 0,
+      "started_at": "2026-09-05T23:34:46.389104+00:00",
+      "log": "gate-11.log",
+      "sha256": "eae9209d2bbff64095aa80eb60f6648bf4865023763fd34681458329e8d56aa2"
+    },
+    {
+      "command": [
+        "bun",
+        "scripts/browser-qualification.mjs",
+        "inspect",
+        "bench/browser/evidence/m1/b-animation-60/capture.json"
+      ],
+      "exit_code": 0,
+      "started_at": "2026-09-05T23:34:46.540384+00:00",
+      "log": "gate-12.log",
+      "sha256": "f80fdb27e85fd56b8bfedaff10cb6be66d61aaa7f0f300a7ab2ba8198ef80e5e"
+    },
+    {
+      "command": [
+        "bun",
+        "scripts/browser-qualification.mjs",
+        "inspect",
+        "bench/browser/evidence/m1/b-webgl-60/capture.json"
+      ],
+      "exit_code": 0,
+      "started_at": "2026-09-05T23:34:46.634886+00:00",
+      "log": "gate-13.log",
+      "sha256": "78764fa1b2c0e7dace539f1e78d06df46e2448153183b57d3b84effc4520b2c6"
+    },
+    {
+      "command": [
+        "bun",
+        "scripts/browser-qualification.mjs",
+        "inspect",
+        "bench/browser/evidence/m1/b-network-60/capture.json"
+      ],
+      "exit_code": 0,
+      "started_at": "2026-09-05T23:34:46.747387+00:00",
+      "log": "gate-14.log",
+      "sha256": "62a4e2c2becd6fe98a9f7ad9429f4832fd921df0fad1c2e850a8386f953c829b"
+    },
+    {
+      "command": [
+        "bun",
+        "scripts/browser-qualification.mjs",
+        "inspect",
+        "bench/browser/evidence/m1/b-combined-60/capture.json"
+      ],
+      "exit_code": 0,
+      "started_at": "2026-09-05T23:34:46.785376+00:00",
+      "log": "gate-15.log",
+      "sha256": "90eec93fccf20ecd71020026c2500b540526389a5058f85d2550bdae7382cf13"
+    },
+    {
+      "command": [
+        "bun",
+        "scripts/browser-qualification.mjs",
+        "compare",
+        "bench/browser/evidence/m1/prefeature-60/capture.json",
+        "bench/browser/evidence/m1/a-60/capture.json"
+      ],
+      "exit_code": 0,
+      "started_at": "2026-09-05T23:34:46.926888+00:00",
+      "log": "gate-16.log",
+      "sha256": "be1eeddfe240628c00614a63e8b96a1e9f968db34ed38d03448e18f465d84505"
+    }
+  ]
+}

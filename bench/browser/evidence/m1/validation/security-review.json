@@ -1,0 +1,30 @@
+{
+  "axis": "security",
+  "baseline_commit": "fbfefd250a3f3c8d9968a23f8c358712859bc904",
+  "scope": "EP-001 shared protocol, fetch, native CEF witness and opt-in terminal instrumentation",
+  "method": "Independent read-only source review, then local confirmation and repairs",
+  "findings": [
+    {
+      "severity": "MEDIUM",
+      "failure": "CEF sandbox switch variants bypassed exact-token rejection",
+      "resolution": "Normalize switch prefix, value and ASCII case before execute_process and in topology checks",
+      "proof": [
+        "crates/paneflow-browser-host/src/qualification.rs",
+        "scripts/browser-qualification/host.test.mjs"
+      ],
+      "status": "RESOLVED"
+    },
+    {
+      "severity": "MEDIUM",
+      "failure": "Page console strings and outgoing JSON could allocate beyond the transport limit before rejection",
+      "resolution": "Cap UTF-16 input before conversion, use fixed fixture report schema and bounded JSON writer",
+      "proof": [
+        "crates/paneflow-browser-host/src/qualification.rs",
+        "crates/paneflow-browser-protocol/tests/harness.rs"
+      ],
+      "status": "RESOLVED"
+    }
+  ],
+  "unresolved_blocking_findings": 0,
+  "reviewed_at": "2026-09-05T22:31:12.532599+00:00"
+}

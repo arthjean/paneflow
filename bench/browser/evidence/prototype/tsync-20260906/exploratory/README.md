@@ -1,0 +1,1 @@
+Initial automatic EGL vendor enumeration selected a display that failed EGL initialization before installing a filter. Final runs explicitly select the vendor. These exploratory logs do not qualify TSYNC or CEF.

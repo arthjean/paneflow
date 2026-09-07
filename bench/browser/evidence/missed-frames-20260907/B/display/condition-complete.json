@@ -1,0 +1,1665 @@
+{
+  "schema_version": 1,
+  "recorded_at_unix_ns": 1788761969081744839,
+  "monotonic_ns": 827318811072,
+  "state": {
+    "serial": 1,
+    "monitors": [
+      {
+        "spec": [
+          "DP-3",
+          "AUS",
+          "VG27AQML1A",
+          "T1LMQS087597"
+        ],
+        "modes": [
+          {
+            "id": "2560x1440@240.001",
+            "width": 2560,
+            "height": 1440,
+            "refresh_hz": 240.00064086914062,
+            "preferred_scale": 1.0,
+            "scales": [
+              1.0,
+              1.25,
+              1.3333333730697632,
+              1.6666666269302368,
+              2.0,
+              2.5,
+              2.6666667461395264
+            ],
+            "properties": {}
+          },
+          {
+            "id": "2560x1440@240.001+vrr",
+            "width": 2560,
+            "height": 1440,
+            "refresh_hz": 240.00064086914062,
+            "preferred_scale": 1.0,
+            "scales": [
+              1.0,
+              1.25,
+              1.3333333730697632,
+              1.6666666269302368,
+              2.0,
+              2.5,
+              2.6666667461395264
+            ],
+            "properties": {
+              "refresh-rate-mode": "variable"
+            }
+          },
+          {
+            "id": "2560x1440@143.973",
+            "width": 2560,
+            "height": 1440,
+            "refresh_hz": 143.97325134277344,
+            "preferred_scale": 1.0,
+            "scales": [
+              1.0,
+              1.25,
+              1.3333333730697632,
+              1.6666666269302368,
+              2.0,
+              2.5,
+              2.6666667461395264
+            ],
+            "properties": {}
+          },
+          {
+            "id": "2560x1440@143.973+vrr",
+            "width": 2560,
+            "height": 1440,
+            "refresh_hz": 143.97325134277344,
+            "preferred_scale": 1.0,
+            "scales": [
+              1.0,
+              1.25,
+              1.3333333730697632,
+              1.6666666269302368,
+              2.0,
+              2.5,
+              2.6666667461395264
+            ],
+            "properties": {
+              "refresh-rate-mode": "variable"
+            }
+          },
+          {
+            "id": "2560x1440@119.998",
+            "width": 2560,
+            "height": 1440,
+            "refresh_hz": 119.99758911132812,
+            "preferred_scale": 1.0,
+            "scales": [
+              1.0,
+              1.25,
+              1.3333333730697632,
+              1.6666666269302368,
+              2.0,
+              2.5,
+              2.6666667461395264
+            ],
+            "properties": {}
+          },
+          {
+            "id": "2560x1440@119.998+vrr",
+            "width": 2560,
+            "height": 1440,
+            "refresh_hz": 119.99758911132812,
+            "preferred_scale": 1.0,
+            "scales": [
+              1.0,
+              1.25,
+              1.3333333730697632,
+              1.6666666269302368,
+              2.0,
+              2.5,
+              2.6666667461395264
+            ],
+            "properties": {
+              "refresh-rate-mode": "variable"
+            }
+          },
+          {
+            "id": "2560x1440@99.946",
+            "width": 2560,
+            "height": 1440,
+            "refresh_hz": 99.9464340209961,
+            "preferred_scale": 1.0,
+            "scales": [
+              1.0,
+              1.25,
+              1.3333333730697632,
+              1.6666666269302368,
+              2.0,
+              2.5,
+              2.6666667461395264
+            ],
+            "properties": {}
+          },
+          {
+            "id": "2560x1440@99.946+vrr",
+            "width": 2560,
+            "height": 1440,
+            "refresh_hz": 99.9464340209961,
+            "preferred_scale": 1.0,
+            "scales": [
+              1.0,
+              1.25,
+              1.3333333730697632,
+              1.6666666269302368,
+              2.0,
+              2.5,
+              2.6666667461395264
+            ],
+            "properties": {
+              "refresh-rate-mode": "variable"
+            }
+          },
+          {
+            "id": "2560x1440@59.951",
+            "width": 2560,
+            "height": 1440,
+            "refresh_hz": 59.9505500793457,
+            "preferred_scale": 1.0,
+            "scales": [
+              1.0,
+              1.25,
+              1.3333333730697632,
+              1.6666666269302368,
+              2.0,
+              2.5,
+              2.6666667461395264
+            ],
+            "properties": {
+              "is-preferred": true
+            }
+          },
+          {
+            "id": "2560x1440@59.951+vrr",
+            "width": 2560,
+            "height": 1440,
+            "refresh_hz": 59.9505500793457,
+            "preferred_scale": 1.0,
+            "scales": [
+              1.0,
+              1.25,
+              1.3333333730697632,
+              1.6666666269302368,
+              2.0,
+              2.5,
+              2.6666667461395264
+            ],
+            "properties": {
+              "refresh-rate-mode": "variable"
+            }
+          },
+          {
+            "id": "1920x1080@119.930",
+            "width": 1920,
+            "height": 1080,
+            "refresh_hz": 119.9301528930664,
+            "preferred_scale": 1.0,
+            "scales": [
+              1.0,
+              1.25,
+              1.3333333730697632,
+              1.5,
+              1.6666666269302368,
+              2.0
+            ],
+            "properties": {}
+          },
+          {
+            "id": "1920x1080@119.930+vrr",
+            "width": 1920,
+            "height": 1080,
+            "refresh_hz": 119.9301528930664,
+            "preferred_scale": 1.0,
+            "scales": [
+              1.0,
+              1.25,
+              1.3333333730697632,
+              1.5,
+              1.6666666269302368,
+              2.0
+            ],
+            "properties": {
+              "refresh-rate-mode": "variable"
+            }
+          },
+          {
+            "id": "1920x1080@119.879",
+            "width": 1920,
+            "height": 1080,
+            "refresh_hz": 119.8787841796875,
+            "preferred_scale": 1.0,
+            "scales": [
+              1.0,
+              1.25,
+              1.3333333730697632,
+              1.5,
+              1.6666666269302368,
+              2.0
+            ],
+            "properties": {
+              "is-current": true
+            }
+          },
+          {
+            "id": "1920x1080@119.879+vrr",
+            "width": 1920,
+            "height": 1080,
+            "refresh_hz": 119.8787841796875,
+            "preferred_scale": 1.0,
+            "scales": [
+              1.0,
+              1.25,
+              1.3333333730697632,
+              1.5,
+              1.6666666269302368,
+              2.0
+            ],
+            "properties": {
+              "refresh-rate-mode": "variable"
+            }
+          },
+          {
+            "id": "1920x1080@99.898",
+            "width": 1920,
+            "height": 1080,
+            "refresh_hz": 99.89828491210938,
+            "preferred_scale": 1.0,
+            "scales": [
+              1.0,
+              1.25,
+              1.3333333730697632,
+              1.5,
+              1.6666666269302368,
+              2.0
+            ],
+            "properties": {}
+          },
+          {
+            "id": "1920x1080@99.898+vrr",
+            "width": 1920,
+            "height": 1080,
+            "refresh_hz": 99.89828491210938,
+            "preferred_scale": 1.0,
+            "scales": [
+              1.0,
+              1.25,
+              1.3333333730697632,
+              1.5,
+              1.6666666269302368,
+              2.0
+            ],
+            "properties": {
+              "refresh-rate-mode": "variable"
+            }
+          },
+          {
+            "id": "1920x1080@60.000",
+            "width": 1920,
+            "height": 1080,
+            "refresh_hz": 60.0,
+            "preferred_scale": 1.0,
+            "scales": [
+              1.0,
+              1.25,
+              1.3333333730697632,
+              1.5,
+              1.6666666269302368,
+              2.0
+            ],
+            "properties": {}
+          },
+          {
+            "id": "1920x1080@60.000+vrr",
+            "width": 1920,
+            "height": 1080,
+            "refresh_hz": 60.0,
+            "preferred_scale": 1.0,
+            "scales": [
+              1.0,
+              1.25,
+              1.3333333730697632,
+              1.5,
+              1.6666666269302368,
+              2.0
+            ],
+            "properties": {
+              "refresh-rate-mode": "variable"
+            }
+          },
+          {
+            "id": "1920x1080@59.939",
+            "width": 1920,
+            "height": 1080,
+            "refresh_hz": 59.93939208984375,
+            "preferred_scale": 1.0,
+            "scales": [
+              1.0,
+              1.25,
+              1.3333333730697632,
+              1.5,
+              1.6666666269302368,
+              2.0
+            ],
+            "properties": {}
+          },
+          {
+            "id": "1920x1080@59.939+vrr",
+            "width": 1920,
+            "height": 1080,
+            "refresh_hz": 59.93939208984375,
+            "preferred_scale": 1.0,
+            "scales": [
+              1.0,
+              1.25,
+              1.3333333730697632,
+              1.5,
+              1.6666666269302368,
+              2.0
+            ],
+            "properties": {
+              "refresh-rate-mode": "variable"
+            }
+          },
+          {
+            "id": "1440x900@59.887",
+            "width": 1440,
+            "height": 900,
+            "refresh_hz": 59.88744354248047,
+            "preferred_scale": 1.0,
+            "scales": [
+              1.0,
+              1.25,
+              1.3333333730697632,
+              1.5,
+              1.6666666269302368
+            ],
+            "properties": {}
+          },
+          {
+            "id": "1440x900@59.887+vrr",
+            "width": 1440,
+            "height": 900,
+            "refresh_hz": 59.88744354248047,
+            "preferred_scale": 1.0,
+            "scales": [
+              1.0,
+              1.25,
+              1.3333333730697632,
+              1.5,
+              1.6666666269302368
+            ],
+            "properties": {
+              "refresh-rate-mode": "variable"
+            }
+          },
+          {
+            "id": "1440x480@59.940",
+            "width": 1440,
+            "height": 480,
+            "refresh_hz": 59.940059661865234,
+            "preferred_scale": 1.0,
+            "scales": [
+              1.0,
+              1.25,
+              1.3333333730697632
+            ],
+            "properties": {}
+          },
+          {
+            "id": "1440x480@59.940+vrr",
+            "width": 1440,
+            "height": 480,
+            "refresh_hz": 59.940059661865234,
+            "preferred_scale": 1.0,
+            "scales": [
+              1.0,
+              1.25,
+              1.3333333730697632
+            ],
+            "properties": {
+              "refresh-rate-mode": "variable"
+            }
+          },
+          {
+            "id": "1280x1024@75.025",
+            "width": 1280,
+            "height": 1024,
+            "refresh_hz": 75.02467346191406,
+            "preferred_scale": 1.0,
+            "scales": [
+              1.0,
+              1.3333333730697632
+            ],
+            "properties": {}
+          },
+          {
+            "id": "1280x1024@75.025+vrr",
+            "width": 1280,
+            "height": 1024,
+            "refresh_hz": 75.02467346191406,
+            "preferred_scale": 1.0,
+            "scales": [
+              1.0,
+              1.3333333730697632
+            ],
+            "properties": {
+              "refresh-rate-mode": "variable"
+            }
+          },
+          {
+            "id": "1280x1024@60.020",
+            "width": 1280,
+            "height": 1024,
+            "refresh_hz": 60.01974105834961,
+            "preferred_scale": 1.0,
+            "scales": [
+              1.0,
+              1.3333333730697632
+            ],
+            "properties": {}
+          },
+          {
+            "id": "1280x1024@60.020+vrr",
+            "width": 1280,
+            "height": 1024,
+            "refresh_hz": 60.01974105834961,
+            "preferred_scale": 1.0,
+            "scales": [
+              1.0,
+              1.3333333730697632
+            ],
+            "properties": {
+              "refresh-rate-mode": "variable"
+            }
+          },
+          {
+            "id": "1280x720@59.943",
+            "width": 1280,
+            "height": 720,
+            "refresh_hz": 59.94343566894531,
+            "preferred_scale": 1.0,
+            "scales": [
+              1.0,
+              1.25,
+              1.3333333730697632
+            ],
+            "properties": {}
+          },
+          {
+            "id": "1280x720@59.943+vrr",
+            "width": 1280,
+            "height": 720,
+            "refresh_hz": 59.94343566894531,
+            "preferred_scale": 1.0,
+            "scales": [
+              1.0,
+              1.25,
+              1.3333333730697632
+            ],
+            "properties": {
+              "refresh-rate-mode": "variable"
+            }
+          },
+          {
+            "id": "1152x864@75.000",
+            "width": 1152,
+            "height": 864,
+            "refresh_hz": 75.0,
+            "preferred_scale": 1.0,
+            "scales": [
+              1.0,
+              1.3333333730697632,
+              1.5
+            ],
+            "properties": {}
+          },
+          {
+            "id": "1152x864@75.000+vrr",
+            "width": 1152,
+            "height": 864,
+            "refresh_hz": 75.0,
+            "preferred_scale": 1.0,
+            "scales": [
+              1.0,
+              1.3333333730697632,
+              1.5
+            ],
+            "properties": {
+              "refresh-rate-mode": "variable"
+            }
+          },
+          {
+            "id": "1024x768@75.029",
+            "width": 1024,
+            "height": 768,
+            "refresh_hz": 75.02857971191406,
+            "preferred_scale": 1.0,
+            "scales": [
+              1.0,
+              1.3333333730697632
+            ],
+            "properties": {}
+          },
+          {
+            "id": "1024x768@75.029+vrr",
+            "width": 1024,
+            "height": 768,
+            "refresh_hz": 75.02857971191406,
+            "preferred_scale": 1.0,
+            "scales": [
+              1.0,
+              1.3333333730697632
+            ],
+            "properties": {
+              "refresh-rate-mode": "variable"
+            }
+          },
+          {
+            "id": "1024x768@70.069",
+            "width": 1024,
+            "height": 768,
+            "refresh_hz": 70.0693588256836,
+            "preferred_scale": 1.0,
+            "scales": [
+              1.0,
+              1.3333333730697632
+            ],
+            "properties": {}
+          },
+          {
+            "id": "1024x768@70.069+vrr",
+            "width": 1024,
+            "height": 768,
+            "refresh_hz": 70.0693588256836,
+            "preferred_scale": 1.0,
+            "scales": [
+              1.0,
+              1.3333333730697632
+            ],
+            "properties": {
+              "refresh-rate-mode": "variable"
+            }
+          },
+          {
+            "id": "1024x768@60.004",
+            "width": 1024,
+            "height": 768,
+            "refresh_hz": 60.003841400146484,
+            "preferred_scale": 1.0,
+            "scales": [
+              1.0,
+              1.3333333730697632
+            ],
+            "properties": {}
+          },
+          {
+            "id": "1024x768@60.004+vrr",
+            "width": 1024,
+            "height": 768,
+            "refresh_hz": 60.003841400146484,
+            "preferred_scale": 1.0,
+            "scales": [
+              1.0,
+              1.3333333730697632
+            ],
+            "properties": {
+              "refresh-rate-mode": "variable"
+            }
+          },
+          {
+            "id": "800x600@75.000",
+            "width": 800,
+            "height": 600,
+            "refresh_hz": 75.0,
+            "preferred_scale": 1.0,
+            "scales": [
+              1.0
+            ],
+            "properties": {}
+          },
+          {
+            "id": "800x600@75.000+vrr",
+            "width": 800,
+            "height": 600,
+            "refresh_hz": 75.0,
+            "preferred_scale": 1.0,
+            "scales": [
+              1.0
+            ],
+            "properties": {
+              "refresh-rate-mode": "variable"
+            }
+          },
+          {
+            "id": "800x600@72.188",
+            "width": 800,
+            "height": 600,
+            "refresh_hz": 72.18756866455078,
+            "preferred_scale": 1.0,
+            "scales": [
+              1.0
+            ],
+            "properties": {}
+          },
+          {
+            "id": "800x600@72.188+vrr",
+            "width": 800,
+            "height": 600,
+            "refresh_hz": 72.18756866455078,
+            "preferred_scale": 1.0,
+            "scales": [
+              1.0
+            ],
+            "properties": {
+              "refresh-rate-mode": "variable"
+            }
+          },
+          {
+            "id": "800x600@60.317",
+            "width": 800,
+            "height": 600,
+            "refresh_hz": 60.3165397644043,
+            "preferred_scale": 1.0,
+            "scales": [
+              1.0
+            ],
+            "properties": {}
+          },
+          {
+            "id": "800x600@60.317+vrr",
+            "width": 800,
+            "height": 600,
+            "refresh_hz": 60.3165397644043,
+            "preferred_scale": 1.0,
+            "scales": [
+              1.0
+            ],
+            "properties": {
+              "refresh-rate-mode": "variable"
+            }
+          },
+          {
+            "id": "800x600@56.250",
+            "width": 800,
+            "height": 600,
+            "refresh_hz": 56.25,
+            "preferred_scale": 1.0,
+            "scales": [
+              1.0
+            ],
+            "properties": {}
+          },
+          {
+            "id": "800x600@56.250+vrr",
+            "width": 800,
+            "height": 600,
+            "refresh_hz": 56.25,
+            "preferred_scale": 1.0,
+            "scales": [
+              1.0
+            ],
+            "properties": {
+              "refresh-rate-mode": "variable"
+            }
+          }
+        ],
+        "properties": {
+          "is-builtin": false,
+          "display-name": "ASUSTek COMPUTER INC 27\"",
+          "min-refresh-rate": 48,
+          "is-for-lease": false,
+          "color-mode": 0,
+          "supported-color-modes": [
+            0,
+            2,
+            1
+          ],
+          "rgb-range": 1
+        }
+      },
+      {
+        "spec": [
+          "DP-4",
+          "BNQ",
+          "BenQ EX2710Q",
+          "W7P00107019"
+        ],
+        "modes": [
+          {
+            "id": "2560x1440@165.002",
+            "width": 2560,
+            "height": 1440,
+            "refresh_hz": 165.0020294189453,
+            "preferred_scale": 1.0,
+            "scales": [
+              1.0,
+              1.25,
+              1.3333333730697632,
+              1.6666666269302368,
+              2.0,
+              2.5,
+              2.6666667461395264
+            ],
+            "properties": {}
+          },
+          {
+            "id": "2560x1440@165.002+vrr",
+            "width": 2560,
+            "height": 1440,
+            "refresh_hz": 165.0020294189453,
+            "preferred_scale": 1.0,
+            "scales": [
+              1.0,
+              1.25,
+              1.3333333730697632,
+              1.6666666269302368,
+              2.0,
+              2.5,
+              2.6666667461395264
+            ],
+            "properties": {
+              "refresh-rate-mode": "variable"
+            }
+          },
+          {
+            "id": "2560x1440@144.006",
+            "width": 2560,
+            "height": 1440,
+            "refresh_hz": 144.0061492919922,
+            "preferred_scale": 1.0,
+            "scales": [
+              1.0,
+              1.25,
+              1.3333333730697632,
+              1.6666666269302368,
+              2.0,
+              2.5,
+              2.6666667461395264
+            ],
+            "properties": {}
+          },
+          {
+            "id": "2560x1440@144.006+vrr",
+            "width": 2560,
+            "height": 1440,
+            "refresh_hz": 144.0061492919922,
+            "preferred_scale": 1.0,
+            "scales": [
+              1.0,
+              1.25,
+              1.3333333730697632,
+              1.6666666269302368,
+              2.0,
+              2.5,
+              2.6666667461395264
+            ],
+            "properties": {
+              "refresh-rate-mode": "variable"
+            }
+          },
+          {
+            "id": "2560x1440@119.998",
+            "width": 2560,
+            "height": 1440,
+            "refresh_hz": 119.99758911132812,
+            "preferred_scale": 1.0,
+            "scales": [
+              1.0,
+              1.25,
+              1.3333333730697632,
+              1.6666666269302368,
+              2.0,
+              2.5,
+              2.6666667461395264
+            ],
+            "properties": {}
+          },
+          {
+            "id": "2560x1440@119.998+vrr",
+            "width": 2560,
+            "height": 1440,
+            "refresh_hz": 119.99758911132812,
+            "preferred_scale": 1.0,
+            "scales": [
+              1.0,
+              1.25,
+              1.3333333730697632,
+              1.6666666269302368,
+              2.0,
+              2.5,
+              2.6666667461395264
+            ],
+            "properties": {
+              "refresh-rate-mode": "variable"
+            }
+          },
+          {
+            "id": "2560x1440@59.951",
+            "width": 2560,
+            "height": 1440,
+            "refresh_hz": 59.9505500793457,
+            "preferred_scale": 1.0,
+            "scales": [
+              1.0,
+              1.25,
+              1.3333333730697632,
+              1.6666666269302368,
+              2.0,
+              2.5,
+              2.6666667461395264
+            ],
+            "properties": {
+              "is-preferred": true
+            }
+          },
+          {
+            "id": "2560x1440@59.951+vrr",
+            "width": 2560,
+            "height": 1440,
+            "refresh_hz": 59.9505500793457,
+            "preferred_scale": 1.0,
+            "scales": [
+              1.0,
+              1.25,
+              1.3333333730697632,
+              1.6666666269302368,
+              2.0,
+              2.5,
+              2.6666667461395264
+            ],
+            "properties": {
+              "refresh-rate-mode": "variable"
+            }
+          },
+          {
+            "id": "1920x1080@119.879",
+            "width": 1920,
+            "height": 1080,
+            "refresh_hz": 119.8787841796875,
+            "preferred_scale": 1.0,
+            "scales": [
+              1.0,
+              1.25,
+              1.3333333730697632,
+              1.5,
+              1.6666666269302368,
+              2.0
+            ],
+            "properties": {
+              "is-current": true
+            }
+          },
+          {
+            "id": "1920x1080@119.879+vrr",
+            "width": 1920,
+            "height": 1080,
+            "refresh_hz": 119.8787841796875,
+            "preferred_scale": 1.0,
+            "scales": [
+              1.0,
+              1.25,
+              1.3333333730697632,
+              1.5,
+              1.6666666269302368,
+              2.0
+            ],
+            "properties": {
+              "refresh-rate-mode": "variable"
+            }
+          },
+          {
+            "id": "1920x1080@100.000",
+            "width": 1920,
+            "height": 1080,
+            "refresh_hz": 100.0,
+            "preferred_scale": 1.0,
+            "scales": [
+              1.0,
+              1.25,
+              1.3333333730697632,
+              1.5,
+              1.6666666269302368,
+              2.0
+            ],
+            "properties": {}
+          },
+          {
+            "id": "1920x1080@100.000+vrr",
+            "width": 1920,
+            "height": 1080,
+            "refresh_hz": 100.0,
+            "preferred_scale": 1.0,
+            "scales": [
+              1.0,
+              1.25,
+              1.3333333730697632,
+              1.5,
+              1.6666666269302368,
+              2.0
+            ],
+            "properties": {
+              "refresh-rate-mode": "variable"
+            }
+          },
+          {
+            "id": "1920x1080@60.000",
+            "width": 1920,
+            "height": 1080,
+            "refresh_hz": 60.0,
+            "preferred_scale": 1.0,
+            "scales": [
+              1.0,
+              1.25,
+              1.3333333730697632,
+              1.5,
+              1.6666666269302368,
+              2.0
+            ],
+            "properties": {}
+          },
+          {
+            "id": "1920x1080@60.000+vrr",
+            "width": 1920,
+            "height": 1080,
+            "refresh_hz": 60.0,
+            "preferred_scale": 1.0,
+            "scales": [
+              1.0,
+              1.25,
+              1.3333333730697632,
+              1.5,
+              1.6666666269302368,
+              2.0
+            ],
+            "properties": {
+              "refresh-rate-mode": "variable"
+            }
+          },
+          {
+            "id": "1920x1080@59.939",
+            "width": 1920,
+            "height": 1080,
+            "refresh_hz": 59.93939208984375,
+            "preferred_scale": 1.0,
+            "scales": [
+              1.0,
+              1.25,
+              1.3333333730697632,
+              1.5,
+              1.6666666269302368,
+              2.0
+            ],
+            "properties": {}
+          },
+          {
+            "id": "1920x1080@59.939+vrr",
+            "width": 1920,
+            "height": 1080,
+            "refresh_hz": 59.93939208984375,
+            "preferred_scale": 1.0,
+            "scales": [
+              1.0,
+              1.25,
+              1.3333333730697632,
+              1.5,
+              1.6666666269302368,
+              2.0
+            ],
+            "properties": {
+              "refresh-rate-mode": "variable"
+            }
+          },
+          {
+            "id": "1920x1080@50.000",
+            "width": 1920,
+            "height": 1080,
+            "refresh_hz": 50.0,
+            "preferred_scale": 1.0,
+            "scales": [
+              1.0,
+              1.25,
+              1.3333333730697632,
+              1.5,
+              1.6666666269302368,
+              2.0
+            ],
+            "properties": {}
+          },
+          {
+            "id": "1920x1080@50.000+vrr",
+            "width": 1920,
+            "height": 1080,
+            "refresh_hz": 50.0,
+            "preferred_scale": 1.0,
+            "scales": [
+              1.0,
+              1.25,
+              1.3333333730697632,
+              1.5,
+              1.6666666269302368,
+              2.0
+            ],
+            "properties": {
+              "refresh-rate-mode": "variable"
+            }
+          },
+          {
+            "id": "1920x1080@29.972",
+            "width": 1920,
+            "height": 1080,
+            "refresh_hz": 29.971717834472656,
+            "preferred_scale": 1.0,
+            "scales": [
+              1.0,
+              1.25,
+              1.3333333730697632,
+              1.5,
+              1.6666666269302368,
+              2.0
+            ],
+            "properties": {}
+          },
+          {
+            "id": "1920x1080@29.972+vrr",
+            "width": 1920,
+            "height": 1080,
+            "refresh_hz": 29.971717834472656,
+            "preferred_scale": 1.0,
+            "scales": [
+              1.0,
+              1.25,
+              1.3333333730697632,
+              1.5,
+              1.6666666269302368,
+              2.0
+            ],
+            "properties": {
+              "refresh-rate-mode": "variable"
+            }
+          },
+          {
+            "id": "1920x1080@25.000",
+            "width": 1920,
+            "height": 1080,
+            "refresh_hz": 25.0,
+            "preferred_scale": 1.0,
+            "scales": [
+              1.0,
+              1.25,
+              1.3333333730697632,
+              1.5,
+              1.6666666269302368,
+              2.0
+            ],
+            "properties": {}
+          },
+          {
+            "id": "1920x1080@25.000+vrr",
+            "width": 1920,
+            "height": 1080,
+            "refresh_hz": 25.0,
+            "preferred_scale": 1.0,
+            "scales": [
+              1.0,
+              1.25,
+              1.3333333730697632,
+              1.5,
+              1.6666666269302368,
+              2.0
+            ],
+            "properties": {
+              "refresh-rate-mode": "variable"
+            }
+          },
+          {
+            "id": "1920x1080@23.977",
+            "width": 1920,
+            "height": 1080,
+            "refresh_hz": 23.977373123168945,
+            "preferred_scale": 1.0,
+            "scales": [
+              1.0,
+              1.25,
+              1.3333333730697632,
+              1.5,
+              1.6666666269302368,
+              2.0
+            ],
+            "properties": {}
+          },
+          {
+            "id": "1920x1080@23.977+vrr",
+            "width": 1920,
+            "height": 1080,
+            "refresh_hz": 23.977373123168945,
+            "preferred_scale": 1.0,
+            "scales": [
+              1.0,
+              1.25,
+              1.3333333730697632,
+              1.5,
+              1.6666666269302368,
+              2.0
+            ],
+            "properties": {
+              "refresh-rate-mode": "variable"
+            }
+          },
+          {
+            "id": "1680x1050@59.954",
+            "width": 1680,
+            "height": 1050,
+            "refresh_hz": 59.95425033569336,
+            "preferred_scale": 1.0,
+            "scales": [
+              1.0,
+              1.25,
+              1.5,
+              1.6666666269302368,
+              1.75,
+              2.0
+            ],
+            "properties": {}
+          },
+          {
+            "id": "1680x1050@59.954+vrr",
+            "width": 1680,
+            "height": 1050,
+            "refresh_hz": 59.95425033569336,
+            "preferred_scale": 1.0,
+            "scales": [
+              1.0,
+              1.25,
+              1.5,
+              1.6666666269302368,
+              1.75,
+              2.0
+            ],
+            "properties": {
+              "refresh-rate-mode": "variable"
+            }
+          },
+          {
+            "id": "1600x900@60.000",
+            "width": 1600,
+            "height": 900,
+            "refresh_hz": 60.0,
+            "preferred_scale": 1.0,
+            "scales": [
+              1.0,
+              1.25,
+              1.3333333730697632,
+              1.6666666269302368,
+              2.0
+            ],
+            "properties": {}
+          },
+          {
+            "id": "1600x900@60.000+vrr",
+            "width": 1600,
+            "height": 900,
+            "refresh_hz": 60.0,
+            "preferred_scale": 1.0,
+            "scales": [
+              1.0,
+              1.25,
+              1.3333333730697632,
+              1.6666666269302368,
+              2.0
+            ],
+            "properties": {
+              "refresh-rate-mode": "variable"
+            }
+          },
+          {
+            "id": "1280x1024@119.958",
+            "width": 1280,
+            "height": 1024,
+            "refresh_hz": 119.9582290649414,
+            "preferred_scale": 1.0,
+            "scales": [
+              1.0,
+              1.3333333730697632
+            ],
+            "properties": {}
+          },
+          {
+            "id": "1280x1024@119.958+vrr",
+            "width": 1280,
+            "height": 1024,
+            "refresh_hz": 119.9582290649414,
+            "preferred_scale": 1.0,
+            "scales": [
+              1.0,
+              1.3333333730697632
+            ],
+            "properties": {
+              "refresh-rate-mode": "variable"
+            }
+          },
+          {
+            "id": "1280x1024@75.025",
+            "width": 1280,
+            "height": 1024,
+            "refresh_hz": 75.02467346191406,
+            "preferred_scale": 1.0,
+            "scales": [
+              1.0,
+              1.3333333730697632
+            ],
+            "properties": {}
+          },
+          {
+            "id": "1280x1024@75.025+vrr",
+            "width": 1280,
+            "height": 1024,
+            "refresh_hz": 75.02467346191406,
+            "preferred_scale": 1.0,
+            "scales": [
+              1.0,
+              1.3333333730697632
+            ],
+            "properties": {
+              "refresh-rate-mode": "variable"
+            }
+          },
+          {
+            "id": "1280x1024@60.020",
+            "width": 1280,
+            "height": 1024,
+            "refresh_hz": 60.01974105834961,
+            "preferred_scale": 1.0,
+            "scales": [
+              1.0,
+              1.3333333730697632
+            ],
+            "properties": {}
+          },
+          {
+            "id": "1280x1024@60.020+vrr",
+            "width": 1280,
+            "height": 1024,
+            "refresh_hz": 60.01974105834961,
+            "preferred_scale": 1.0,
+            "scales": [
+              1.0,
+              1.3333333730697632
+            ],
+            "properties": {
+              "refresh-rate-mode": "variable"
+            }
+          },
+          {
+            "id": "1280x800@59.810",
+            "width": 1280,
+            "height": 800,
+            "refresh_hz": 59.810325622558594,
+            "preferred_scale": 1.0,
+            "scales": [
+              1.0,
+              1.25,
+              1.3333333730697632,
+              1.6666666269302368
+            ],
+            "properties": {}
+          },
+          {
+            "id": "1280x800@59.810+vrr",
+            "width": 1280,
+            "height": 800,
+            "refresh_hz": 59.810325622558594,
+            "preferred_scale": 1.0,
+            "scales": [
+              1.0,
+              1.25,
+              1.3333333730697632,
+              1.6666666269302368
+            ],
+            "properties": {
+              "refresh-rate-mode": "variable"
+            }
+          },
+          {
+            "id": "1280x720@60.000",
+            "width": 1280,
+            "height": 720,
+            "refresh_hz": 60.0,
+            "preferred_scale": 1.0,
+            "scales": [
+              1.0,
+              1.25,
+              1.3333333730697632
+            ],
+            "properties": {}
+          },
+          {
+            "id": "1280x720@60.000+vrr",
+            "width": 1280,
+            "height": 720,
+            "refresh_hz": 60.0,
+            "preferred_scale": 1.0,
+            "scales": [
+              1.0,
+              1.25,
+              1.3333333730697632
+            ],
+            "properties": {
+              "refresh-rate-mode": "variable"
+            }
+          },
+          {
+            "id": "1280x720@59.943",
+            "width": 1280,
+            "height": 720,
+            "refresh_hz": 59.94343566894531,
+            "preferred_scale": 1.0,
+            "scales": [
+              1.0,
+              1.25,
+              1.3333333730697632
+            ],
+            "properties": {}
+          },
+          {
+            "id": "1280x720@59.943+vrr",
+            "width": 1280,
+            "height": 720,
+            "refresh_hz": 59.94343566894531,
+            "preferred_scale": 1.0,
+            "scales": [
+              1.0,
+              1.25,
+              1.3333333730697632
+            ],
+            "properties": {
+              "refresh-rate-mode": "variable"
+            }
+          },
+          {
+            "id": "1280x720@50.000",
+            "width": 1280,
+            "height": 720,
+            "refresh_hz": 50.0,
+            "preferred_scale": 1.0,
+            "scales": [
+              1.0,
+              1.25,
+              1.3333333730697632
+            ],
+            "properties": {}
+          },
+          {
+            "id": "1280x720@50.000+vrr",
+            "width": 1280,
+            "height": 720,
+            "refresh_hz": 50.0,
+            "preferred_scale": 1.0,
+            "scales": [
+              1.0,
+              1.25,
+              1.3333333730697632
+            ],
+            "properties": {
+              "refresh-rate-mode": "variable"
+            }
+          },
+          {
+            "id": "1024x768@119.989",
+            "width": 1024,
+            "height": 768,
+            "refresh_hz": 119.98853302001953,
+            "preferred_scale": 1.0,
+            "scales": [
+              1.0,
+              1.3333333730697632
+            ],
+            "properties": {}
+          },
+          {
+            "id": "1024x768@119.989+vrr",
+            "width": 1024,
+            "height": 768,
+            "refresh_hz": 119.98853302001953,
+            "preferred_scale": 1.0,
+            "scales": [
+              1.0,
+              1.3333333730697632
+            ],
+            "properties": {
+              "refresh-rate-mode": "variable"
+            }
+          },
+          {
+            "id": "1024x768@75.029",
+            "width": 1024,
+            "height": 768,
+            "refresh_hz": 75.02857971191406,
+            "preferred_scale": 1.0,
+            "scales": [
+              1.0,
+              1.3333333730697632
+            ],
+            "properties": {}
+          },
+          {
+            "id": "1024x768@75.029+vrr",
+            "width": 1024,
+            "height": 768,
+            "refresh_hz": 75.02857971191406,
+            "preferred_scale": 1.0,
+            "scales": [
+              1.0,
+              1.3333333730697632
+            ],
+            "properties": {
+              "refresh-rate-mode": "variable"
+            }
+          },
+          {
+            "id": "1024x768@60.004",
+            "width": 1024,
+            "height": 768,
+            "refresh_hz": 60.003841400146484,
+            "preferred_scale": 1.0,
+            "scales": [
+              1.0,
+              1.3333333730697632
+            ],
+            "properties": {}
+          },
+          {
+            "id": "1024x768@60.004+vrr",
+            "width": 1024,
+            "height": 768,
+            "refresh_hz": 60.003841400146484,
+            "preferred_scale": 1.0,
+            "scales": [
+              1.0,
+              1.3333333730697632
+            ],
+            "properties": {
+              "refresh-rate-mode": "variable"
+            }
+          },
+          {
+            "id": "800x600@75.000",
+            "width": 800,
+            "height": 600,
+            "refresh_hz": 75.0,
+            "preferred_scale": 1.0,
+            "scales": [
+              1.0
+            ],
+            "properties": {}
+          },
+          {
+            "id": "800x600@75.000+vrr",
+            "width": 800,
+            "height": 600,
+            "refresh_hz": 75.0,
+            "preferred_scale": 1.0,
+            "scales": [
+              1.0
+            ],
+            "properties": {
+              "refresh-rate-mode": "variable"
+            }
+          },
+          {
+            "id": "800x600@60.317",
+            "width": 800,
+            "height": 600,
+            "refresh_hz": 60.3165397644043,
+            "preferred_scale": 1.0,
+            "scales": [
+              1.0
+            ],
+            "properties": {}
+          },
+          {
+            "id": "800x600@60.317+vrr",
+            "width": 800,
+            "height": 600,
+            "refresh_hz": 60.3165397644043,
+            "preferred_scale": 1.0,
+            "scales": [
+              1.0
+            ],
+            "properties": {
+              "refresh-rate-mode": "variable"
+            }
+          },
+          {
+            "id": "720x576@50.000",
+            "width": 720,
+            "height": 576,
+            "refresh_hz": 50.0,
+            "preferred_scale": 1.0,
+            "scales": [
+              1.0
+            ],
+            "properties": {}
+          },
+          {
+            "id": "720x576@50.000+vrr",
+            "width": 720,
+            "height": 576,
+            "refresh_hz": 50.0,
+            "preferred_scale": 1.0,
+            "scales": [
+              1.0
+            ],
+            "properties": {
+              "refresh-rate-mode": "variable"
+            }
+          }
+        ],
+        "properties": {
+          "is-builtin": false,
+          "display-name": "BenQ Corporation 27\"",
+          "min-refresh-rate": 48,
+          "is-for-lease": false,
+          "color-mode": 0,
+          "supported-color-modes": [
+            0,
+            2,
+            1
+          ],
+          "rgb-range": 1
+        }
+      }
+    ],
+    "logical_monitors": [
+      {
+        "x": 0,
+        "y": 0,
+        "scale": 1.0,
+        "transform": 0,
+        "primary": false,
+        "monitors": [
+          [
+            "DP-3",
+            "AUS",
+            "VG27AQML1A",
+            "T1LMQS087597"
+          ]
+        ],
+        "properties": {}
+      },
+      {
+        "x": 1920,
+        "y": 0,
+        "scale": 1.0,
+        "transform": 0,
+        "primary": true,
+        "monitors": [
+          [
+            "DP-4",
+            "BNQ",
+            "BenQ EX2710Q",
+            "W7P00107019"
+          ]
+        ],
+        "properties": {}
+      }
+    ],
+    "properties": {
+      "layout-mode": 1,
+      "supports-changing-layout-mode": true
+    }
+  },
+  "verified_plan": {
+    "layout_mode": 1,
+    "outputs": [
+      {
+        "connector": "DP-3",
+        "spec": [
+          "DP-3",
+          "AUS",
+          "VG27AQML1A",
+          "T1LMQS087597"
+        ],
+        "mode": "1920x1080@119.879",
+        "refresh_actual_hz": 119.8787841796875,
+        "x": 0,
+        "y": 0,
+        "scale": 1.0,
+        "transform": 0,
+        "primary": false,
+        "properties": {
+          "color-mode": 0,
+          "rgb-range": 1
+        }
+      },
+      {
+        "connector": "DP-4",
+        "spec": [
+          "DP-4",
+          "BNQ",
+          "BenQ EX2710Q",
+          "W7P00107019"
+        ],
+        "mode": "1920x1080@119.879",
+        "refresh_actual_hz": 119.8787841796875,
+        "x": 1920,
+        "y": 0,
+        "scale": 1.0,
+        "transform": 0,
+        "primary": true,
+        "properties": {
+          "color-mode": 0,
+          "rgb-range": 1
+        }
+      }
+    ]
+  },
+  "monitor_change_events": [],
+  "serial_guard": 1
+}

@@ -1,0 +1,8 @@
+{
+  "status": "ACCEPTED_IDLE_OBSERVATION",
+  "qualification": "NOT_EVALUATED",
+  "kind": "browser_idle",
+  "samples": 0,
+  "repetitions": 5,
+  "latency": "NOT_APPLICABLE_NO_FRAMES_AFTER_WARMUP"
+}

@@ -1,0 +1,54 @@
+{
+  "status": "DIAGNOSTIC_ONLY",
+  "python": "3.14.7 (main, Aug 10 2026, 00:00:00) [GCC 16.1.1 20260515 (Red Hat 16.1.1-2)]",
+  "gc_threshold": [
+    2000,
+    10,
+    10
+  ],
+  "initial_output_buffers_per_terminal": 1400,
+  "measured_first_seconds": 35,
+  "paired_gc_events": [
+    {
+      "terminal": 0,
+      "sequence": 2193,
+      "collection_generation": 1,
+      "collection_duration_ns": 2072188,
+      "planned_seconds": 25.8,
+      "collection_before_actual_output": true,
+      "enabled_delivery_error_ns": 2135045,
+      "disabled_delivery_error_ns": 63427
+    },
+    {
+      "terminal": 1,
+      "sequence": 2194,
+      "collection_generation": 1,
+      "collection_duration_ns": 2060847,
+      "planned_seconds": 25.8,
+      "collection_before_actual_output": false,
+      "enabled_delivery_error_ns": 67147,
+      "disabled_delivery_error_ns": 71517
+    },
+    {
+      "terminal": 2,
+      "sequence": 2212,
+      "collection_generation": 1,
+      "collection_duration_ns": 1961838,
+      "planned_seconds": 26.0,
+      "collection_before_actual_output": false,
+      "enabled_delivery_error_ns": 70869,
+      "disabled_delivery_error_ns": 58049
+    },
+    {
+      "terminal": 3,
+      "sequence": 2218,
+      "collection_generation": 1,
+      "collection_duration_ns": 1885307,
+      "planned_seconds": 26.05,
+      "collection_before_actual_output": true,
+      "enabled_delivery_error_ns": 1944045,
+      "disabled_delivery_error_ns": 64568
+    }
+  ],
+  "other_scheduler_outliers_exist_in_both_conditions": true
+}

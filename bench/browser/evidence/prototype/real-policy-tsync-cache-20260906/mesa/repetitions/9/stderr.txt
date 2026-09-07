@@ -1,0 +1,2 @@
+../../sandbox/linux/seccomp-bpf-helpers/sigsys_handlers.cc:**CRASHING**:seccomp-bpf failure in syscall nr=0x90 arg1=0x994aa arg2=0x3 arg3=0x7eff46ff57e4 arg4=0x8
+timeout: the monitored command dumped core

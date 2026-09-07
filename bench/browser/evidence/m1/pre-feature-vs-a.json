@@ -1,0 +1,19 @@
+{
+  "status": "PAIRED_SAMPLES",
+  "qualification": "NOT_EVALUATED",
+  "kind": "terminal_input_to_present",
+  "deltas": {
+    "p50_ns": {
+      "median": 411840,
+      "worst": 4729361
+    },
+    "p95_ns": {
+      "median": 233821,
+      "worst": 1575791
+    },
+    "p99_ns": {
+      "median": 556972,
+      "worst": 2735886
+    }
+  }
+}

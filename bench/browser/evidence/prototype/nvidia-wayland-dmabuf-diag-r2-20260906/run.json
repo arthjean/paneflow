@@ -1,0 +1,63 @@
+{
+  "compositor_command": [
+    "bwrap",
+    "--bind",
+    "/",
+    "/",
+    "--dev-bind",
+    "/dev",
+    "/dev",
+    "--tmpfs",
+    "/dev/dri",
+    "--dev-bind",
+    "/dev/dri/renderD129",
+    "/dev/dri/renderD129",
+    "--dev-bind",
+    "/dev/dri/card2",
+    "/dev/dri/card2",
+    "--unsetenv",
+    "DISPLAY",
+    "dbus-run-session",
+    "--",
+    "mutter",
+    "--headless",
+    "--virtual-monitor",
+    "1280x800",
+    "--wayland",
+    "--no-x11",
+    "--wayland-display",
+    "paneflow-tsync-776477"
+  ],
+  "prototype_command": [
+    "bun",
+    "scripts/browser-qualification/prototype.mjs",
+    "--binary",
+    "/home/arthur/.cache/paneflow-cef-tsync/paneflow-target/debug/paneflow",
+    "--host",
+    "/home/arthur/.cache/paneflow-cef-tsync/paneflow-target/debug/paneflow-browser-host",
+    "--display",
+    "wayland",
+    "--scenario",
+    "empty",
+    "--steps",
+    "input",
+    "--hold",
+    "1",
+    "--output",
+    "/home/arthur/dev/paneflow-browser/bench/browser/evidence/prototype/nvidia-wayland-dmabuf-diag-r2-20260906/prototype"
+  ],
+  "returncode": 1,
+  "status": "FAILED",
+  "verdict": {
+    "page_presented": "FAILED",
+    "x11_connection_absent": "NOT_EXECUTED",
+    "sandbox": "NOT_EXECUTED",
+    "observed_processes_exited": "NOT_EXECUTED",
+    "steps": {
+      "input": "FAILED"
+    },
+    "m1_presentation_feedback": "NOT_MEASURED",
+    "x11_session": "NOT_APPLICABLE"
+  },
+  "physical_presentation_measured": false
+}

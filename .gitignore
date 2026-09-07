@@ -95,3 +95,21 @@ LOG_*.text
 /native/gpui/checkout/
 /native/browser/prebuilt/
 __pycache__/
+
+# Browser measurement runs: summaries, analyses and receipts are tracked, raw
+# capture streams, Chromium trace dumps and GPU shader caches are reproducible
+# run artifacts and stay local.
+/bench/browser/**/*.gz
+/bench/browser/**/chromium/
+/bench/browser/**/mesa_shader_cache/
+/bench/browser/**/radv_builtin_shaders/
+/bench/browser/**/trace-cache/
+/bench/browser/**/GLCache/
+/bench/browser/**/fontconfig/
+/bench/browser/**/mesa_cache.db
+/bench/browser/**/mesa_cache.idx
+/bench/browser/**/capture.json
+/bench/browser/**/raw-*.json
+/bench/browser/**/events.jsonl
+/bench/browser/**/chromium-trace.json
+/bench/browser/**/thread-observations.jsonl

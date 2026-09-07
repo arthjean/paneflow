@@ -1,0 +1,980 @@
+{
+  "scope": "diagnostic trace; reception not physical presentation",
+  "metrics": {
+    "host_to_capture_ms": {
+      "count": 191,
+      "p50": 72.737441,
+      "p95": 83.532982,
+      "max": 107.075443
+    },
+    "capture_to_ready_ms": {
+      "count": 191,
+      "p50": 1.656499,
+      "p95": 5.083406,
+      "max": 5.601455
+    },
+    "total_ms": {
+      "count": 191,
+      "p50": 75.207329,
+      "p95": 86.882319,
+      "max": 109.411881
+    }
+  },
+  "transitions": [
+    {
+      "host_to_capture_ms": 69.237854,
+      "capture_to_ready_ms": 1.438439,
+      "total_ms": 70.771973
+    },
+    {
+      "host_to_capture_ms": 73.74707,
+      "capture_to_ready_ms": 1.656499,
+      "total_ms": 75.496389
+    },
+    {
+      "host_to_capture_ms": 77.782617,
+      "capture_to_ready_ms": 1.168629,
+      "total_ms": 79.034656
+    },
+    {
+      "host_to_capture_ms": 80.704265,
+      "capture_to_ready_ms": 2.191198,
+      "total_ms": 82.989773
+    },
+    {
+      "host_to_capture_ms": 92.539935,
+      "capture_to_ready_ms": 2.350468,
+      "total_ms": 94.978893
+    },
+    {
+      "host_to_capture_ms": 66.641776,
+      "capture_to_ready_ms": 1.854639,
+      "total_ms": 68.590055
+    },
+    {
+      "host_to_capture_ms": 85.769551,
+      "capture_to_ready_ms": 1.557938,
+      "total_ms": 87.428439
+    },
+    {
+      "host_to_capture_ms": 81.517464,
+      "capture_to_ready_ms": 0.994349,
+      "total_ms": 82.591313
+    },
+    {
+      "host_to_capture_ms": 76.954928,
+      "capture_to_ready_ms": 1.551648,
+      "total_ms": 78.594326
+    },
+    {
+      "host_to_capture_ms": 86.51267,
+      "capture_to_ready_ms": 2.838837,
+      "total_ms": 89.438357
+    },
+    {
+      "host_to_capture_ms": 75.843979,
+      "capture_to_ready_ms": 1.016779,
+      "total_ms": 76.938088
+    },
+    {
+      "host_to_capture_ms": 78.088607,
+      "capture_to_ready_ms": 2.608818,
+      "total_ms": 80.782065
+    },
+    {
+      "host_to_capture_ms": 74.47475,
+      "capture_to_ready_ms": 5.230685,
+      "total_ms": 79.790765
+    },
+    {
+      "host_to_capture_ms": 65.088937,
+      "capture_to_ready_ms": 4.886826,
+      "total_ms": 71.027002
+    },
+    {
+      "host_to_capture_ms": 67.830115,
+      "capture_to_ready_ms": 4.892316,
+      "total_ms": 72.787701
+    },
+    {
+      "host_to_capture_ms": 77.128717,
+      "capture_to_ready_ms": 3.087988,
+      "total_ms": 80.297405
+    },
+    {
+      "host_to_capture_ms": 70.520572,
+      "capture_to_ready_ms": 1.177549,
+      "total_ms": 71.779631
+    },
+    {
+      "host_to_capture_ms": 62.992059,
+      "capture_to_ready_ms": 0.913159,
+      "total_ms": 63.990578
+    },
+    {
+      "host_to_capture_ms": 69.761264,
+      "capture_to_ready_ms": 3.579287,
+      "total_ms": 73.423151
+    },
+    {
+      "host_to_capture_ms": 69.872034,
+      "capture_to_ready_ms": 1.212109,
+      "total_ms": 71.189323
+    },
+    {
+      "host_to_capture_ms": 85.310311,
+      "capture_to_ready_ms": 1.123519,
+      "total_ms": 86.99647
+    },
+    {
+      "host_to_capture_ms": 74.85347,
+      "capture_to_ready_ms": 1.660028,
+      "total_ms": 76.602398
+    },
+    {
+      "host_to_capture_ms": 83.073093,
+      "capture_to_ready_ms": 2.138728,
+      "total_ms": 85.288751
+    },
+    {
+      "host_to_capture_ms": 72.623691,
+      "capture_to_ready_ms": 1.113699,
+      "total_ms": 73.81649
+    },
+    {
+      "host_to_capture_ms": 72.522432,
+      "capture_to_ready_ms": 1.245529,
+      "total_ms": 73.846501
+    },
+    {
+      "host_to_capture_ms": 76.961858,
+      "capture_to_ready_ms": 0.979469,
+      "total_ms": 78.064406
+    },
+    {
+      "host_to_capture_ms": 70.170833,
+      "capture_to_ready_ms": 2.888417,
+      "total_ms": 73.14389
+    },
+    {
+      "host_to_capture_ms": 69.829223,
+      "capture_to_ready_ms": 3.644377,
+      "total_ms": 73.56738
+    },
+    {
+      "host_to_capture_ms": 69.909043,
+      "capture_to_ready_ms": 3.386758,
+      "total_ms": 73.86451
+    },
+    {
+      "host_to_capture_ms": 56.721224,
+      "capture_to_ready_ms": 1.968018,
+      "total_ms": 58.785072
+    },
+    {
+      "host_to_capture_ms": 70.922023,
+      "capture_to_ready_ms": 4.680456,
+      "total_ms": 75.699189
+    },
+    {
+      "host_to_capture_ms": 64.710828,
+      "capture_to_ready_ms": 2.886767,
+      "total_ms": 67.691675
+    },
+    {
+      "host_to_capture_ms": 73.94137,
+      "capture_to_ready_ms": 1.198089,
+      "total_ms": 75.207329
+    },
+    {
+      "host_to_capture_ms": 73.412651,
+      "capture_to_ready_ms": 1.365158,
+      "total_ms": 74.875419
+    },
+    {
+      "host_to_capture_ms": 73.73676,
+      "capture_to_ready_ms": 2.414568,
+      "total_ms": 76.229918
+    },
+    {
+      "host_to_capture_ms": 76.353688,
+      "capture_to_ready_ms": 3.981727,
+      "total_ms": 80.442605
+    },
+    {
+      "host_to_capture_ms": 107.075443,
+      "capture_to_ready_ms": 2.242668,
+      "total_ms": 109.411881
+    },
+    {
+      "host_to_capture_ms": 71.616972,
+      "capture_to_ready_ms": 2.043978,
+      "total_ms": 73.86382
+    },
+    {
+      "host_to_capture_ms": 75.582579,
+      "capture_to_ready_ms": 1.023509,
+      "total_ms": 76.712018
+    },
+    {
+      "host_to_capture_ms": 71.517562,
+      "capture_to_ready_ms": 0.923119,
+      "total_ms": 72.516211
+    },
+    {
+      "host_to_capture_ms": 81.328565,
+      "capture_to_ready_ms": 1.158179,
+      "total_ms": 82.560833
+    },
+    {
+      "host_to_capture_ms": 73.94198,
+      "capture_to_ready_ms": 2.200518,
+      "total_ms": 76.230448
+    },
+    {
+      "host_to_capture_ms": 76.462908,
+      "capture_to_ready_ms": 4.089857,
+      "total_ms": 80.647695
+    },
+    {
+      "host_to_capture_ms": 70.340223,
+      "capture_to_ready_ms": 1.346369,
+      "total_ms": 71.762342
+    },
+    {
+      "host_to_capture_ms": 76.244438,
+      "capture_to_ready_ms": 1.248289,
+      "total_ms": 77.597527
+    },
+    {
+      "host_to_capture_ms": 75.868058,
+      "capture_to_ready_ms": 1.146019,
+      "total_ms": 77.124937
+    },
+    {
+      "host_to_capture_ms": 73.84968,
+      "capture_to_ready_ms": 1.446179,
+      "total_ms": 75.372449
+    },
+    {
+      "host_to_capture_ms": 64.323128,
+      "capture_to_ready_ms": 1.265199,
+      "total_ms": 65.669427
+    },
+    {
+      "host_to_capture_ms": 71.626982,
+      "capture_to_ready_ms": 1.019999,
+      "total_ms": 72.723651
+    },
+    {
+      "host_to_capture_ms": 54.700806,
+      "capture_to_ready_ms": 1.175829,
+      "total_ms": 55.964865
+    },
+    {
+      "host_to_capture_ms": 63.653209,
+      "capture_to_ready_ms": 3.869447,
+      "total_ms": 67.604955
+    },
+    {
+      "host_to_capture_ms": 73.256151,
+      "capture_to_ready_ms": 5.141136,
+      "total_ms": 78.496597
+    },
+    {
+      "host_to_capture_ms": 74.89767,
+      "capture_to_ready_ms": 1.087739,
+      "total_ms": 76.073238
+    },
+    {
+      "host_to_capture_ms": 69.281383,
+      "capture_to_ready_ms": 4.735197,
+      "total_ms": 74.11802
+    },
+    {
+      "host_to_capture_ms": 80.033096,
+      "capture_to_ready_ms": 2.712747,
+      "total_ms": 82.843753
+    },
+    {
+      "host_to_capture_ms": 75.568369,
+      "capture_to_ready_ms": 1.658639,
+      "total_ms": 77.335708
+    },
+    {
+      "host_to_capture_ms": 72.032052,
+      "capture_to_ready_ms": 1.739258,
+      "total_ms": 73.86856
+    },
+    {
+      "host_to_capture_ms": 79.949255,
+      "capture_to_ready_ms": 0.964879,
+      "total_ms": 81.002654
+    },
+    {
+      "host_to_capture_ms": 73.86791,
+      "capture_to_ready_ms": 1.576699,
+      "total_ms": 75.539299
+    },
+    {
+      "host_to_capture_ms": 75.637509,
+      "capture_to_ready_ms": 3.417957,
+      "total_ms": 79.175616
+    },
+    {
+      "host_to_capture_ms": 75.768638,
+      "capture_to_ready_ms": 5.552546,
+      "total_ms": 81.418974
+    },
+    {
+      "host_to_capture_ms": 64.808767,
+      "capture_to_ready_ms": 1.185239,
+      "total_ms": 66.098296
+    },
+    {
+      "host_to_capture_ms": 70.926263,
+      "capture_to_ready_ms": 4.394966,
+      "total_ms": 75.452939
+    },
+    {
+      "host_to_capture_ms": 81.038864,
+      "capture_to_ready_ms": 2.418838,
+      "total_ms": 83.521942
+    },
+    {
+      "host_to_capture_ms": 77.714917,
+      "capture_to_ready_ms": 2.692097,
+      "total_ms": 80.518734
+    },
+    {
+      "host_to_capture_ms": 77.286818,
+      "capture_to_ready_ms": 1.208369,
+      "total_ms": 78.608666
+    },
+    {
+      "host_to_capture_ms": 58.216143,
+      "capture_to_ready_ms": 0.998589,
+      "total_ms": 59.336281
+    },
+    {
+      "host_to_capture_ms": 65.670127,
+      "capture_to_ready_ms": 1.018269,
+      "total_ms": 67.965985
+    },
+    {
+      "host_to_capture_ms": 79.336686,
+      "capture_to_ready_ms": 0.895219,
+      "total_ms": 80.348575
+    },
+    {
+      "host_to_capture_ms": 61.41863,
+      "capture_to_ready_ms": 1.210519,
+      "total_ms": 62.742369
+    },
+    {
+      "host_to_capture_ms": 66.538676,
+      "capture_to_ready_ms": 5.140606,
+      "total_ms": 71.785022
+    },
+    {
+      "host_to_capture_ms": 67.473475,
+      "capture_to_ready_ms": 0.937529,
+      "total_ms": 68.943764
+    },
+    {
+      "host_to_capture_ms": 82.297803,
+      "capture_to_ready_ms": 2.734138,
+      "total_ms": 85.782621
+    },
+    {
+      "host_to_capture_ms": 80.091715,
+      "capture_to_ready_ms": 2.152609,
+      "total_ms": 82.320474
+    },
+    {
+      "host_to_capture_ms": 80.006556,
+      "capture_to_ready_ms": 1.558778,
+      "total_ms": 81.652243
+    },
+    {
+      "host_to_capture_ms": 78.428276,
+      "capture_to_ready_ms": 1.584799,
+      "total_ms": 80.094555
+    },
+    {
+      "host_to_capture_ms": 74.09646,
+      "capture_to_ready_ms": 1.275699,
+      "total_ms": 75.479689
+    },
+    {
+      "host_to_capture_ms": 64.955098,
+      "capture_to_ready_ms": 1.890928,
+      "total_ms": 66.945646
+    },
+    {
+      "host_to_capture_ms": 77.501547,
+      "capture_to_ready_ms": 1.14183,
+      "total_ms": 78.742147
+    },
+    {
+      "host_to_capture_ms": 70.311653,
+      "capture_to_ready_ms": 3.007567,
+      "total_ms": 73.39506
+    },
+    {
+      "host_to_capture_ms": 79.937265,
+      "capture_to_ready_ms": 1.068979,
+      "total_ms": 81.091564
+    },
+    {
+      "host_to_capture_ms": 75.886799,
+      "capture_to_ready_ms": 3.947306,
+      "total_ms": 79.956425
+    },
+    {
+      "host_to_capture_ms": 68.901544,
+      "capture_to_ready_ms": 3.775797,
+      "total_ms": 72.775061
+    },
+    {
+      "host_to_capture_ms": 69.264694,
+      "capture_to_ready_ms": 0.815449,
+      "total_ms": 70.156653
+    },
+    {
+      "host_to_capture_ms": 68.841464,
+      "capture_to_ready_ms": 1.009569,
+      "total_ms": 69.977703
+    },
+    {
+      "host_to_capture_ms": 80.322815,
+      "capture_to_ready_ms": 1.438898,
+      "total_ms": 81.847553
+    },
+    {
+      "host_to_capture_ms": 75.948368,
+      "capture_to_ready_ms": 0.9565,
+      "total_ms": 77.026068
+    },
+    {
+      "host_to_capture_ms": 68.799134,
+      "capture_to_ready_ms": 1.102659,
+      "total_ms": 69.991863
+    },
+    {
+      "host_to_capture_ms": 70.503923,
+      "capture_to_ready_ms": 2.834888,
+      "total_ms": 73.418021
+    },
+    {
+      "host_to_capture_ms": 70.369673,
+      "capture_to_ready_ms": 1.037229,
+      "total_ms": 71.495282
+    },
+    {
+      "host_to_capture_ms": 68.481385,
+      "capture_to_ready_ms": 1.019489,
+      "total_ms": 70.558323
+    },
+    {
+      "host_to_capture_ms": 71.571892,
+      "capture_to_ready_ms": 3.289728,
+      "total_ms": 74.95646
+    },
+    {
+      "host_to_capture_ms": 74.64507,
+      "capture_to_ready_ms": 1.348149,
+      "total_ms": 76.098108
+    },
+    {
+      "host_to_capture_ms": 84.507142,
+      "capture_to_ready_ms": 2.386968,
+      "total_ms": 86.993449
+    },
+    {
+      "host_to_capture_ms": 73.68188,
+      "capture_to_ready_ms": 2.382388,
+      "total_ms": 76.143228
+    },
+    {
+      "host_to_capture_ms": 75.736459,
+      "capture_to_ready_ms": 1.201569,
+      "total_ms": 77.022918
+    },
+    {
+      "host_to_capture_ms": 72.238582,
+      "capture_to_ready_ms": 1.344899,
+      "total_ms": 73.675851
+    },
+    {
+      "host_to_capture_ms": 68.086805,
+      "capture_to_ready_ms": 1.143639,
+      "total_ms": 69.345074
+    },
+    {
+      "host_to_capture_ms": 67.882875,
+      "capture_to_ready_ms": 1.949548,
+      "total_ms": 69.922293
+    },
+    {
+      "host_to_capture_ms": 60.846271,
+      "capture_to_ready_ms": 1.456179,
+      "total_ms": 62.38039
+    },
+    {
+      "host_to_capture_ms": 58.348993,
+      "capture_to_ready_ms": 1.407739,
+      "total_ms": 59.832442
+    },
+    {
+      "host_to_capture_ms": 67.192406,
+      "capture_to_ready_ms": 1.443189,
+      "total_ms": 68.708325
+    },
+    {
+      "host_to_capture_ms": 62.290559,
+      "capture_to_ready_ms": 1.544469,
+      "total_ms": 63.917778
+    },
+    {
+      "host_to_capture_ms": 67.485876,
+      "capture_to_ready_ms": 5.601455,
+      "total_ms": 73.187531
+    },
+    {
+      "host_to_capture_ms": 77.018688,
+      "capture_to_ready_ms": 1.783458,
+      "total_ms": 78.901406
+    },
+    {
+      "host_to_capture_ms": 88.598508,
+      "capture_to_ready_ms": 1.519289,
+      "total_ms": 90.205867
+    },
+    {
+      "host_to_capture_ms": 71.679052,
+      "capture_to_ready_ms": 1.436479,
+      "total_ms": 73.212921
+    },
+    {
+      "host_to_capture_ms": 71.461063,
+      "capture_to_ready_ms": 1.034929,
+      "total_ms": 72.587771
+    },
+    {
+      "host_to_capture_ms": 67.191875,
+      "capture_to_ready_ms": 1.177409,
+      "total_ms": 68.476454
+    },
+    {
+      "host_to_capture_ms": 78.942346,
+      "capture_to_ready_ms": 1.134809,
+      "total_ms": 80.195915
+    },
+    {
+      "host_to_capture_ms": 70.281793,
+      "capture_to_ready_ms": 3.301198,
+      "total_ms": 73.697091
+    },
+    {
+      "host_to_capture_ms": 63.594379,
+      "capture_to_ready_ms": 1.245329,
+      "total_ms": 64.938668
+    },
+    {
+      "host_to_capture_ms": 70.221054,
+      "capture_to_ready_ms": 2.725807,
+      "total_ms": 73.02991
+    },
+    {
+      "host_to_capture_ms": 70.760673,
+      "capture_to_ready_ms": 2.482818,
+      "total_ms": 73.328251
+    },
+    {
+      "host_to_capture_ms": 56.709574,
+      "capture_to_ready_ms": 2.249759,
+      "total_ms": 59.056172
+    },
+    {
+      "host_to_capture_ms": 72.764571,
+      "capture_to_ready_ms": 0.977569,
+      "total_ms": 73.82174
+    },
+    {
+      "host_to_capture_ms": 69.550453,
+      "capture_to_ready_ms": 4.472047,
+      "total_ms": 74.13722
+    },
+    {
+      "host_to_capture_ms": 71.966341,
+      "capture_to_ready_ms": 1.527589,
+      "total_ms": 73.58439
+    },
+    {
+      "host_to_capture_ms": 74.05573,
+      "capture_to_ready_ms": 1.318109,
+      "total_ms": 75.490009
+    },
+    {
+      "host_to_capture_ms": 77.274827,
+      "capture_to_ready_ms": 1.201029,
+      "total_ms": 78.568006
+    },
+    {
+      "host_to_capture_ms": 69.752634,
+      "capture_to_ready_ms": 1.510688,
+      "total_ms": 71.353682
+    },
+    {
+      "host_to_capture_ms": 72.257482,
+      "capture_to_ready_ms": 5.373615,
+      "total_ms": 77.718017
+    },
+    {
+      "host_to_capture_ms": 80.342025,
+      "capture_to_ready_ms": 2.547288,
+      "total_ms": 82.981693
+    },
+    {
+      "host_to_capture_ms": 77.227048,
+      "capture_to_ready_ms": 1.560009,
+      "total_ms": 80.067456
+    },
+    {
+      "host_to_capture_ms": 74.27131,
+      "capture_to_ready_ms": 0.944549,
+      "total_ms": 75.296209
+    },
+    {
+      "host_to_capture_ms": 83.889002,
+      "capture_to_ready_ms": 3.252738,
+      "total_ms": 87.25504
+    },
+    {
+      "host_to_capture_ms": 70.215573,
+      "capture_to_ready_ms": 2.399109,
+      "total_ms": 72.751591
+    },
+    {
+      "host_to_capture_ms": 65.848126,
+      "capture_to_ready_ms": 1.770839,
+      "total_ms": 68.261885
+    },
+    {
+      "host_to_capture_ms": 73.104511,
+      "capture_to_ready_ms": 4.497186,
+      "total_ms": 77.697987
+    },
+    {
+      "host_to_capture_ms": 63.186208,
+      "capture_to_ready_ms": 1.683839,
+      "total_ms": 64.955387
+    },
+    {
+      "host_to_capture_ms": 73.154261,
+      "capture_to_ready_ms": 1.011319,
+      "total_ms": 74.25638
+    },
+    {
+      "host_to_capture_ms": 73.41016,
+      "capture_to_ready_ms": 2.015538,
+      "total_ms": 75.508428
+    },
+    {
+      "host_to_capture_ms": 72.451051,
+      "capture_to_ready_ms": 1.053959,
+      "total_ms": 73.60121
+    },
+    {
+      "host_to_capture_ms": 72.737441,
+      "capture_to_ready_ms": 1.209429,
+      "total_ms": 74.056931
+    },
+    {
+      "host_to_capture_ms": 81.351524,
+      "capture_to_ready_ms": 1.180389,
+      "total_ms": 83.115133
+    },
+    {
+      "host_to_capture_ms": 67.973155,
+      "capture_to_ready_ms": 5.083406,
+      "total_ms": 73.132391
+    },
+    {
+      "host_to_capture_ms": 67.932195,
+      "capture_to_ready_ms": 1.02985,
+      "total_ms": 69.041394
+    },
+    {
+      "host_to_capture_ms": 83.532982,
+      "capture_to_ready_ms": 2.440458,
+      "total_ms": 86.08967
+    },
+    {
+      "host_to_capture_ms": 87.04175,
+      "capture_to_ready_ms": 1.255879,
+      "total_ms": 88.369109
+    },
+    {
+      "host_to_capture_ms": 76.161398,
+      "capture_to_ready_ms": 1.201109,
+      "total_ms": 77.466447
+    },
+    {
+      "host_to_capture_ms": 69.488884,
+      "capture_to_ready_ms": 1.291989,
+      "total_ms": 70.861543
+    },
+    {
+      "host_to_capture_ms": 78.950176,
+      "capture_to_ready_ms": 1.227919,
+      "total_ms": 80.258075
+    },
+    {
+      "host_to_capture_ms": 65.119988,
+      "capture_to_ready_ms": 1.831558,
+      "total_ms": 67.041865
+    },
+    {
+      "host_to_capture_ms": 68.157224,
+      "capture_to_ready_ms": 4.781647,
+      "total_ms": 73.037451
+    },
+    {
+      "host_to_capture_ms": 59.752141,
+      "capture_to_ready_ms": 1.907729,
+      "total_ms": 61.75278
+    },
+    {
+      "host_to_capture_ms": 68.496964,
+      "capture_to_ready_ms": 1.140709,
+      "total_ms": 69.733333
+    },
+    {
+      "host_to_capture_ms": 77.129677,
+      "capture_to_ready_ms": 4.407897,
+      "total_ms": 81.620334
+    },
+    {
+      "host_to_capture_ms": 73.18408,
+      "capture_to_ready_ms": 2.097369,
+      "total_ms": 75.371179
+    },
+    {
+      "host_to_capture_ms": 76.180009,
+      "capture_to_ready_ms": 1.999458,
+      "total_ms": 78.284907
+    },
+    {
+      "host_to_capture_ms": 73.54859,
+      "capture_to_ready_ms": 4.311307,
+      "total_ms": 77.964407
+    },
+    {
+      "host_to_capture_ms": 76.718438,
+      "capture_to_ready_ms": 3.747117,
+      "total_ms": 80.562145
+    },
+    {
+      "host_to_capture_ms": 70.136923,
+      "capture_to_ready_ms": 3.103238,
+      "total_ms": 73.323261
+    },
+    {
+      "host_to_capture_ms": 78.540736,
+      "capture_to_ready_ms": 2.614418,
+      "total_ms": 82.806913
+    },
+    {
+      "host_to_capture_ms": 76.116088,
+      "capture_to_ready_ms": 0.964139,
+      "total_ms": 77.153727
+    },
+    {
+      "host_to_capture_ms": 78.799786,
+      "capture_to_ready_ms": 1.022009,
+      "total_ms": 79.945355
+    },
+    {
+      "host_to_capture_ms": 74.529029,
+      "capture_to_ready_ms": 5.449466,
+      "total_ms": 80.074065
+    },
+    {
+      "host_to_capture_ms": 77.423547,
+      "capture_to_ready_ms": 2.118248,
+      "total_ms": 79.659345
+    },
+    {
+      "host_to_capture_ms": 56.358105,
+      "capture_to_ready_ms": 2.486728,
+      "total_ms": 58.951383
+    },
+    {
+      "host_to_capture_ms": 63.647818,
+      "capture_to_ready_ms": 1.992619,
+      "total_ms": 65.738867
+    },
+    {
+      "host_to_capture_ms": 64.312827,
+      "capture_to_ready_ms": 1.996309,
+      "total_ms": 66.420196
+    },
+    {
+      "host_to_capture_ms": 54.374645,
+      "capture_to_ready_ms": 4.842437,
+      "total_ms": 59.317252
+    },
+    {
+      "host_to_capture_ms": 61.32117,
+      "capture_to_ready_ms": 5.316296,
+      "total_ms": 66.733266
+    },
+    {
+      "host_to_capture_ms": 61.05047,
+      "capture_to_ready_ms": 0.90295,
+      "total_ms": 62.03058
+    },
+    {
+      "host_to_capture_ms": 67.656295,
+      "capture_to_ready_ms": 1.088249,
+      "total_ms": 68.840524
+    },
+    {
+      "host_to_capture_ms": 74.454729,
+      "capture_to_ready_ms": 1.006229,
+      "total_ms": 75.569448
+    },
+    {
+      "host_to_capture_ms": 76.370648,
+      "capture_to_ready_ms": 1.099799,
+      "total_ms": 77.571697
+    },
+    {
+      "host_to_capture_ms": 63.644579,
+      "capture_to_ready_ms": 2.192368,
+      "total_ms": 65.937627
+    },
+    {
+      "host_to_capture_ms": 77.104597,
+      "capture_to_ready_ms": 1.176589,
+      "total_ms": 78.374066
+    },
+    {
+      "host_to_capture_ms": 67.338676,
+      "capture_to_ready_ms": 4.605886,
+      "total_ms": 72.040512
+    },
+    {
+      "host_to_capture_ms": 78.632937,
+      "capture_to_ready_ms": 1.694228,
+      "total_ms": 80.421075
+    },
+    {
+      "host_to_capture_ms": 71.676512,
+      "capture_to_ready_ms": 1.209169,
+      "total_ms": 72.955881
+    },
+    {
+      "host_to_capture_ms": 81.825893,
+      "capture_to_ready_ms": 4.966656,
+      "total_ms": 86.882319
+    },
+    {
+      "host_to_capture_ms": 79.010226,
+      "capture_to_ready_ms": 1.077739,
+      "total_ms": 80.180965
+    },
+    {
+      "host_to_capture_ms": 64.779398,
+      "capture_to_ready_ms": 1.204419,
+      "total_ms": 66.135047
+    },
+    {
+      "host_to_capture_ms": 72.268861,
+      "capture_to_ready_ms": 3.535247,
+      "total_ms": 75.877038
+    },
+    {
+      "host_to_capture_ms": 68.194615,
+      "capture_to_ready_ms": 4.832136,
+      "total_ms": 73.110801
+    },
+    {
+      "host_to_capture_ms": 60.79511,
+      "capture_to_ready_ms": 1.00428,
+      "total_ms": 61.88524
+    },
+    {
+      "host_to_capture_ms": 68.175525,
+      "capture_to_ready_ms": 5.137206,
+      "total_ms": 73.39639
+    },
+    {
+      "host_to_capture_ms": 68.133695,
+      "capture_to_ready_ms": 1.616828,
+      "total_ms": 69.867483
+    },
+    {
+      "host_to_capture_ms": 81.168204,
+      "capture_to_ready_ms": 1.759829,
+      "total_ms": 82.990593
+    },
+    {
+      "host_to_capture_ms": 63.603598,
+      "capture_to_ready_ms": 2.875438,
+      "total_ms": 66.552086
+    },
+    {
+      "host_to_capture_ms": 80.257015,
+      "capture_to_ready_ms": 2.249638,
+      "total_ms": 82.578133
+    },
+    {
+      "host_to_capture_ms": 76.178358,
+      "capture_to_ready_ms": 1.271069,
+      "total_ms": 77.555217
+    },
+    {
+      "host_to_capture_ms": 78.727047,
+      "capture_to_ready_ms": 1.734238,
+      "total_ms": 80.556925
+    },
+    {
+      "host_to_capture_ms": 74.46353,
+      "capture_to_ready_ms": 1.077569,
+      "total_ms": 75.645889
+    },
+    {
+      "host_to_capture_ms": 66.681416,
+      "capture_to_ready_ms": 1.218269,
+      "total_ms": 69.503544
+    },
+    {
+      "host_to_capture_ms": 77.655847,
+      "capture_to_ready_ms": 2.776358,
+      "total_ms": 80.528285
+    },
+    {
+      "host_to_capture_ms": 70.982572,
+      "capture_to_ready_ms": 2.923538,
+      "total_ms": 73.98711
+    },
+    {
+      "host_to_capture_ms": 69.948283,
+      "capture_to_ready_ms": 2.656218,
+      "total_ms": 73.279891
+    },
+    {
+      "host_to_capture_ms": 75.617908,
+      "capture_to_ready_ms": 1.264069,
+      "total_ms": 76.953907
+    },
+    {
+      "host_to_capture_ms": 59.767611,
+      "capture_to_ready_ms": 1.579139,
+      "total_ms": 61.43169
+    }
+  ]
+}

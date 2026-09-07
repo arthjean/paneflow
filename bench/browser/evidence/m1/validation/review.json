@@ -1,0 +1,230 @@
+{
+  "epic": "EP-001",
+  "status": "DONE",
+  "profile": "DEEP",
+  "baseline_commit": "fbfefd250a3f3c8d9968a23f8c358712859bc904",
+  "branch": "feat/agents-browser",
+  "reviewed_at": "2026-09-05T23:38:57.806408+00:00",
+  "stories": {
+    "US-001": "DONE",
+    "US-002": "DONE",
+    "US-003": "DONE",
+    "US-004": "DONE",
+    "US-005": "DONE"
+  },
+  "criteria": [
+    {
+      "story": "US-001",
+      "criterion": "AC-1",
+      "status": "PASS",
+      "path": "scripts/browser-qualification/fixtures.mjs:18",
+      "entry_point": "browser-qualification.mjs serve / manifest",
+      "proof": "HTTP/digest tests through the CLI; all nine original fixtures retained"
+    },
+    {
+      "story": "US-001",
+      "criterion": "AC-2",
+      "status": "PASS",
+      "path": "bench/browser/README.md:43",
+      "entry_point": "browser-qualification.mjs inspect / compare",
+      "proof": "A/B/C/PRE_FEATURE protocol, five repetitions, physical viewport and separate60/120Hz conditions; qualification.test.mjs"
+    },
+    {
+      "story": "US-001",
+      "criterion": "AC-3",
+      "status": "PASS",
+      "path": "scripts/browser-qualification/replay.mjs:4",
+      "entry_point": "replay CLI -> terminal-capture CLI -> real PTY worker",
+      "proof": "Frozen replay digest4eb27e5ac4d4ba29bd1070817e39eeb3d01e8f3e954b33d63c168b44ff168504;29,750 conforming events per terminal reference"
+    },
+    {
+      "story": "US-001",
+      "criterion": "AC-4",
+      "status": "PASS",
+      "path": "bench/browser/evidence/m1/index.json:1",
+      "entry_point": "actual release native capture and environment inventory",
+      "proof": "Fedora/GNOME/NVIDIA local60Hz observed; missing references explicitly listed"
+    },
+    {
+      "story": "US-001",
+      "criterion": "AC-5",
+      "status": "PASS",
+      "path": "scripts/browser-qualification/measurements.mjs:50",
+      "entry_point": "inspect / compare CLI",
+      "proof": "Timestamp, tamper, uncontrolled workload and calibration rejection tests; native rejected runs retained"
+    },
+    {
+      "story": "US-002",
+      "criterion": "AC-1",
+      "status": "PASS",
+      "path": "native/browser/manifest.toml:1",
+      "entry_point": "fetch-browser.py --target",
+      "proof": "Exact CEF/Chromium/cef-rs pin, archive/file/header hashes and actual notices"
+    },
+    {
+      "story": "US-002",
+      "criterion": "AC-2",
+      "status": "PASS",
+      "path": "scripts/fetch-browser.py:42",
+      "entry_point": "fetch and verify-only for Linux x86_64 / aarch64",
+      "proof": "linux64-elf.json and linuxarm64-elf.json; GLIBC 2.25 maximum and 32 SONAMEs confronted with official Jammy package file lists"
+    },
+    {
+      "story": "US-002",
+      "criterion": "AC-3",
+      "status": "PASS",
+      "path": "scripts/fetch-browser.py:22",
+      "entry_point": "explicit fetch CLI",
+      "proof": "Archive digest, traversal/links/special files/size rejection tests; no native download from build.rs"
+    },
+    {
+      "story": "US-002",
+      "criterion": "AC-4",
+      "status": "PASS",
+      "path": "crates/paneflow-browser-protocol/src/wire.rs:10",
+      "entry_point": "versioned harness and native witness handshake",
+      "proof": "Manifest and shared wire contract version 1; incompatible-version real-harness rejection"
+    },
+    {
+      "story": "US-002",
+      "criterion": "AC-5",
+      "status": "PASS",
+      "path": "scripts/browser-qualification/fetch.test.mjs:1",
+      "entry_point": "fetch CLI subprocess",
+      "proof": "Unavailable target, wrong hash and incompatible ELF refuse installation while preserving existing components"
+    },
+    {
+      "story": "US-003",
+      "criterion": "AC-1",
+      "status": "PASS",
+      "path": "crates/paneflow-browser-protocol/src/domain.rs:26",
+      "entry_point": "paneflow-browser-harness -> Controller::dispatch",
+      "proof": "Portable identities, owner and document generations, operation IDs and explicit errors; scope integration tests"
+    },
+    {
+      "story": "US-003",
+      "criterion": "AC-2",
+      "status": "PASS",
+      "path": "crates/paneflow-browser-protocol/src/controller.rs:10",
+      "entry_point": "framed harness single / batch trusted channels",
+      "proof": "Descriptor8/64, live8 and operations4/16/1 limits tested through the executable"
+    },
+    {
+      "story": "US-003",
+      "criterion": "AC-3",
+      "status": "PASS",
+      "path": "crates/paneflow-browser-protocol/src/frames.rs:1",
+      "entry_point": "harness presentation and frame commands",
+      "proof": "Visibility/lifetime separation; bounded frame pools and exact generation-aware acknowledgements"
+    },
+    {
+      "story": "US-003",
+      "criterion": "AC-4",
+      "status": "PASS",
+      "path": "crates/paneflow-browser-protocol/src/domain.rs:41",
+      "entry_point": "harness capabilities with absent/deterministic backend",
+      "proof": "Absent/development/human-qualified/agent-qualified model; unavailable backend preserves terminal availability"
+    },
+    {
+      "story": "US-003",
+      "criterion": "AC-5",
+      "status": "PASS",
+      "path": "crates/paneflow-browser-protocol/src/wire.rs:105",
+      "entry_point": "harness framing / dispatch / bounded reply writer",
+      "proof": "Oversize, unknown identity, version and stale generation reject; no active-page fallback; outgoing oversize emits no partial frame"
+    },
+    {
+      "story": "US-004",
+      "criterion": "AC-1",
+      "status": "PASS",
+      "path": "scripts/browser-qualification.mjs:18",
+      "entry_point": "witness CLI -> runWitness -> linux::run",
+      "proof": "30 full native B lifecycles from private CEF Views/ALLOY hosts, fixture load, message loop and shutdown observed"
+    },
+    {
+      "story": "US-004",
+      "criterion": "AC-2",
+      "status": "PASS",
+      "path": "scripts/browser-qualification/witness.mjs:22",
+      "entry_point": "live topology plus Chromium process_name metadata",
+      "proof": "Renderer/GPU PIDs joined to live seccomp2 and no_new_privs1; renderer namespace isolation; normalized sandbox-disable switches rejected"
+    },
+    {
+      "story": "US-004",
+      "criterion": "AC-3",
+      "status": "PASS",
+      "path": "crates/paneflow-browser-host/src/qualification.rs:45",
+      "entry_point": "private framed stdin/stdout and native console callback",
+      "proof": "0700 isolated profiles, four queued controls, 256 KiB wire and 1,024 UTF-16 report bounds; no page-callable control API"
+    },
+    {
+      "story": "US-004",
+      "criterion": "AC-4",
+      "status": "PASS",
+      "path": "crates/paneflow-browser-host/src/linux.rs:175",
+      "entry_point": "native host create -> close -> OnBeforeClose -> Shutdown",
+      "proof": "Every accepted B raw native log records separate process creation and orderly closure; app/helpers remain separate"
+    },
+    {
+      "story": "US-004",
+      "criterion": "AC-5",
+      "status": "PASS",
+      "path": "scripts/browser-qualification/host.test.mjs:1",
+      "entry_point": "native host executable and witness cleanup",
+      "proof": "Nine native handshake/sandbox negative cases; historical bootstrap failures retained with owned-process cleanup"
+    },
+    {
+      "story": "US-005",
+      "criterion": "AC-1",
+      "status": "PASS",
+      "path": "scripts/browser-qualification/terminal-capture.mjs:247",
+      "entry_point": "terminal capture CLI and browser-capture.mjs CLI",
+      "proof": "A/PRE_FEATURE four real PTYs; B empty,scroll,animation,WebGL,network,combined on the exact same CEF pin"
+    },
+    {
+      "story": "US-005",
+      "criterion": "AC-2",
+      "status": "PASS",
+      "path": "scripts/browser-qualification/terminal-analysis.mjs:149",
+      "entry_point": "terminal analyzer CLI / Chromium-Wayland native parser",
+      "proof": "Release receipts and raw input->PTY echo->paint->native presentation; B exact DrawAndSwap/presentation match; clock calibration"
+    },
+    {
+      "story": "US-005",
+      "criterion": "AC-3",
+      "status": "PASS",
+      "path": "bench/browser/evidence/m1/index.json:1",
+      "entry_point": "eight completed native capture sets",
+      "proof": "Five 10+60 s repetitions per set;1,500 post-warmup inputs each in A/PRE; hardware, versions, raw traces and calibration archived"
+    },
+    {
+      "story": "US-005",
+      "criterion": "AC-4",
+      "status": "PASS",
+      "path": "bench/browser/evidence/m1/cpu/index.json:1",
+      "entry_point": "existing terminal/editor benchmark scripts and thread-CPU logs",
+      "proof": "Supplemental CPU data separate from presentation; existing baselines unchanged; other environments explicitly unexecuted"
+    },
+    {
+      "story": "US-005",
+      "criterion": "AC-5",
+      "status": "PASS",
+      "path": "scripts/browser-qualification/browser-trace.mjs:141",
+      "entry_point": "native analyzers, inspect/compare and early-refresh guard",
+      "proof": "Clock/feedback/replay failure tests; observed GC and 144 Hz runs rejected; deliberate 120 Hz request at 59.951 Hz rejected during warmup; no GO emitted"
+    }
+  ],
+  "blocking_findings": [],
+  "security_review": "security-review.json",
+  "gates": "gates.json",
+  "scope": "Shared contracts, pinned Linux candidate and measured local Linux references; no integrated GPUI Browser or distribution GO",
+  "cross_platform": "Common code and unavailable-backend stubs reviewed; macOS/Windows/aarch64 native execution not claimed",
+  "preserved_work": [
+    "Existing fixtures and fixture server",
+    "Historical docs/browser/qualification.md and preflight.json",
+    "Pre-existing bench/README.md changes",
+    "Existing terminal/editor CPU baselines"
+  ],
+  "display_restoration": "../display-restored.txt",
+  "git_actions": "No commit or push"
+}

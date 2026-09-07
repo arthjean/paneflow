@@ -1,0 +1,9 @@
+[745024:745024:0906/200941.051005:ERROR:gpu/vulkan/vulkan_instance.cc:284] Required extension VK_KHR_external_memory_capabilities missing from enumerated Vulkan extensions. vkCreateInstance will may fail but could succeed if extension has been promoted to core.
+[745024:745024:0906/200941.051069:ERROR:gpu/vulkan/vulkan_instance.cc:284] Required extension VK_KHR_external_semaphore_capabilities missing from enumerated Vulkan extensions. vkCreateInstance will may fail but could succeed if extension has been promoted to core.
+MESA-LOADER: failed to open dri: /usr/lib64/gbm/dri_gbm.so: cannot open shared object file: Permission denied (search paths /usr/lib64/gbm, suffix _gbm)
+[745024:745131:0906/200941.750871:ERROR:ui/gfx/linux/gbm_support_x11.cc:133] Can't create buffer -- gbm  device is missing.
+[745024:745131:0906/200941.750936:ERROR:gpu/command_buffer/service/shared_image/ozone_image_backing_factory.cc:104] Failed to create pixmap 1x1,  BGRA_8888, usage SCANOUT_CPU_READ_WRITE
+[745024:745131:0906/200941.750993:ERROR:media/video/renderable_mappable_shared_image_video_frame_pool.cc:270] Failed to allocate shared image for frame: visible_size=1x1, si_format=BGRA_8888
+[745024:745131:0906/200941.751043:ERROR:media/video/renderable_mappable_shared_image_video_frame_pool.cc:346] Failed to initialize frame resources.
+[745024:745131:0906/200941.751094:ERROR:components/viz/service/frame_sinks/video_capture/frame_sink_video_capturer_impl.cc:935] Unable to allocate frame for first frame capture: OOM?
+[744978:744978:0906/201019.448689:ERROR:base/process/kill_posix.cc:33] waitpid(745026): No child processes (10)

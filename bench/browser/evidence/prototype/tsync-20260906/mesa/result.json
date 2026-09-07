@@ -1,0 +1,134 @@
+{
+  "captured_at": "2026-09-06T12:54:01.820724+00:00",
+  "scope": "native EGL kernel TSYNC probe; synthetic policies, no Chromium, broker, ANGLE or GPUI",
+  "qualification": "NOT_EVALUATED",
+  "kernel": "7.1.12-200.fc44.x86_64",
+  "machine": "x86_64",
+  "render_node": "/dev/dri/renderD128",
+  "egl_vendor": "/usr/share/glvnd/egl_vendor.d/50_mesa.json",
+  "egl_vendor_sha256": "cd3881df4227c13ca7f9cfe6c78820f21d5f7a00a41b299214f6f827e63be369",
+  "source_sha256": "f915628167dc5604c635c70de5707e4a7d115b7a6ab0555f19524cd32c88471c",
+  "runner_sha256": "2d8ea8240381f9a593d84eae25e839c6531c32e95079fb34e1d3647ea4fb6a6f",
+  "environment": {
+    "__EGL_VENDOR_LIBRARY_FILENAMES": "/usr/share/glvnd/egl_vendor.d/50_mesa.json",
+    "MESA_SHADER_CACHE_DISABLE": "true"
+  },
+  "cases": [
+    {
+      "name": "control-no-tsync",
+      "command": [
+        "/tmp/paneflow-gpu-tsync-l0sqb5j8/gpu-tsync",
+        "/dev/dri/renderD128",
+        "0",
+        "0"
+      ],
+      "returncode": 0,
+      "checks": {
+        "expected_exit": true,
+        "hardware_renderer": true,
+        "multiple_threads_before_filter": true,
+        "unfiltered_initial_state": true,
+        "same_thread_set_at_install": true,
+        "filter_installed": true,
+        "marker_denied_on_main": true,
+        "render_after_filter": true,
+        "completion": true,
+        "control_other_threads_unfiltered": true,
+        "control_worker_marker_allowed": true
+      },
+      "passed": true
+    },
+    {
+      "name": "tsync-marker",
+      "command": [
+        "/tmp/paneflow-gpu-tsync-l0sqb5j8/gpu-tsync",
+        "/dev/dri/renderD128",
+        "1",
+        "0"
+      ],
+      "returncode": 0,
+      "checks": {
+        "expected_exit": true,
+        "hardware_renderer": true,
+        "multiple_threads_before_filter": true,
+        "unfiltered_initial_state": true,
+        "same_thread_set_at_install": true,
+        "filter_installed": true,
+        "marker_denied_on_main": true,
+        "render_after_filter": true,
+        "completion": true,
+        "all_threads_filtered": true,
+        "marker_denied_on_existing_worker": true
+      },
+      "passed": true
+    },
+    {
+      "name": "tsync-bounded",
+      "command": [
+        "/tmp/paneflow-gpu-tsync-l0sqb5j8/gpu-tsync",
+        "/dev/dri/renderD128",
+        "1",
+        "1"
+      ],
+      "returncode": 0,
+      "checks": {
+        "expected_exit": true,
+        "hardware_renderer": true,
+        "multiple_threads_before_filter": true,
+        "unfiltered_initial_state": true,
+        "same_thread_set_at_install": true,
+        "filter_installed": true,
+        "marker_denied_on_main": true,
+        "render_after_filter": true,
+        "completion": true,
+        "all_threads_filtered": true,
+        "marker_denied_on_existing_worker": true
+      },
+      "passed": true
+    },
+    {
+      "name": "trap-control",
+      "command": [
+        "/tmp/paneflow-gpu-tsync-l0sqb5j8/gpu-tsync",
+        "/dev/dri/renderD128",
+        "1",
+        "1",
+        "trap-control"
+      ],
+      "returncode": -31,
+      "checks": {
+        "expected_exit": true,
+        "hardware_renderer": true,
+        "multiple_threads_before_filter": true,
+        "unfiltered_initial_state": true,
+        "same_thread_set_at_install": true,
+        "filter_installed": true,
+        "marker_denied_on_main": true,
+        "render_after_filter": true,
+        "completion": true,
+        "all_threads_filtered": true,
+        "marker_denied_on_existing_worker": true
+      },
+      "passed": true
+    }
+  ],
+  "build": {
+    "command": [
+      "cc",
+      "-O2",
+      "-Wall",
+      "-Wextra",
+      "-Werror",
+      "/home/arthur/dev/paneflow-browser/bench/browser/evidence/prototype/tsync-20260906/mesa/gpu-tsync-linux.c",
+      "-o",
+      "/tmp/paneflow-gpu-tsync-l0sqb5j8/gpu-tsync",
+      "-lEGL",
+      "-lGLESv2",
+      "-lseccomp",
+      "-pthread"
+    ],
+    "returncode": 0
+  },
+  "binary_sha256": "1610634a4fab6d42bce50040b0da5ffda2e3a405b8adbde09508083cde7a7166",
+  "probe_passed": true
+}

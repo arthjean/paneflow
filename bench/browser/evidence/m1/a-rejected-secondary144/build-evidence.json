@@ -1,0 +1,11 @@
+{
+  "build_profile": "release",
+  "binary_sha256": "9517c49d11a645683bc02182058c1d1121641fad5024bc7a26b8d700e94dee26",
+  "paneflow_commit": "fbfefd250a3f3c8d9968a23f8c358712859bc904",
+  "source_files_sha256": "56f8335c43b0015b4536fbb8fbfd8013ad961477090584c77889a84bcbec4d34",
+  "source_patch_sha256": "9abf401136e775ad7cb758530422cee3be9c815389bd69f5878fe8badb45281e",
+  "build_log_sha256": "ad5118b0b88fd9c8a63bf0812fe80615ede8266d8946ff44142625bea9d51198",
+  "build_log": "/home/arthur/dev/paneflow-browser/target/browser-qualification/release-a-build-capture.log",
+  "build_command": "CARGO_TARGET_DIR=/home/arthur/dev/paneflow/target cargo build -p paneflow-app --release --locked",
+  "recorded_at": "2026-09-05T22:28:13.774406+00:00"
+}

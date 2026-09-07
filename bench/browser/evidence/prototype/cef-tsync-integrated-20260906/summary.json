@@ -1,0 +1,284 @@
+{
+  "recorded_at": "2026-09-06T18:18:25.721354+00:00",
+  "status": "FUNCTIONAL_PARTIAL",
+  "production_manifest_modified": false,
+  "shipping_configuration": false,
+  "native_xorg": "NOT_EXECUTED",
+  "m1_physical_presentation": "NOT_MEASURED",
+  "cases": {
+    "mesa_wayland": {
+      "evidence": "bench/browser/evidence/prototype/cef-tsync-20260906-mesa-wayland-r2/prototype/native.json",
+      "native_sha256": "e4c7897dc10c72d2611d1c48efb7e27f58e29ebabae24e1624ac8b4f0f30a540",
+      "status": "COMPLETED",
+      "verdict": {
+        "page_presented": "MEASURED",
+        "x11_connection_absent": "MEASURED",
+        "sandbox": "MEASURED",
+        "observed_processes_exited": "MEASURED",
+        "steps": {
+          "input": "MEASURED",
+          "resize": "MEASURED",
+          "scale": "MEASURED",
+          "host-loss": "MEASURED"
+        },
+        "m1_presentation_feedback": "NOT_MEASURED",
+        "x11_session": "NOT_APPLICABLE"
+      },
+      "archive_sha256": "ebc4369c6a3f87f685f937f9afc3d67dbcbb97b8eebb00bd5f57981900aa402a",
+      "binary_sha256": "1da5ac2739bba086b93d5f9d40c51a9519a83402dfb0adcc25c7c5f99e37bd87",
+      "host_sha256": "7ea1748d2124c6c11288f6ad4aba6c87af86d4421ab0bc9174a474c6886e2c0a",
+      "gpu_thread_counts": [
+        32,
+        32
+      ],
+      "all_observed_gpu_threads_filtered": true,
+      "shutdown": {
+        "observed_count": 26,
+        "waited_ms": 1,
+        "remaining": [],
+        "scope": "processes captured in runtime snapshots"
+      }
+    },
+    "nvidia_xwayland": {
+      "evidence": "bench/browser/evidence/prototype/cef-tsync-20260906-nvidia-xwayland-r3/prototype/native.json",
+      "native_sha256": "0f78c6b0fea79c69e97521844faf4a63b4700216984f60f13bef89f3b10aef45",
+      "status": "COMPLETED",
+      "verdict": {
+        "page_presented": "MEASURED",
+        "x11_connection_absent": "NOT_APPLICABLE",
+        "sandbox": "MEASURED",
+        "observed_processes_exited": "MEASURED",
+        "steps": {
+          "input": "MEASURED",
+          "resize": "MEASURED",
+          "scale": "MEASURED",
+          "host-loss": "MEASURED"
+        },
+        "m1_presentation_feedback": "NOT_MEASURED",
+        "x11_session": "XWAYLAND_CLIENT_ONLY"
+      },
+      "archive_sha256": "ebc4369c6a3f87f685f937f9afc3d67dbcbb97b8eebb00bd5f57981900aa402a",
+      "binary_sha256": "1da5ac2739bba086b93d5f9d40c51a9519a83402dfb0adcc25c7c5f99e37bd87",
+      "host_sha256": "aac67ed1c61c178731e9266616b73bdee60119813ca02c863244fc8827f8c78d",
+      "gpu_thread_counts": [
+        20,
+        20
+      ],
+      "all_observed_gpu_threads_filtered": true,
+      "shutdown": {
+        "observed_count": 26,
+        "waited_ms": 0,
+        "remaining": [],
+        "scope": "processes captured in runtime snapshots"
+      }
+    },
+    "mesa_shaders": {
+      "evidence": "bench/browser/evidence/prototype/cef-tsync-20260906-mesa-shaders-r2/prototype/native.json",
+      "native_sha256": "435383874a33b63952a0e9fe3fd2a5b9bfa42f9f2e0e657931198dc50c69d7de",
+      "status": "COMPLETED",
+      "verdict": {
+        "page_presented": "MEASURED",
+        "x11_connection_absent": "MEASURED",
+        "sandbox": "MEASURED",
+        "observed_processes_exited": "MEASURED",
+        "steps": {
+          "input": "MEASURED"
+        },
+        "m1_presentation_feedback": "NOT_MEASURED",
+        "x11_session": "NOT_APPLICABLE"
+      },
+      "archive_sha256": "ebc4369c6a3f87f685f937f9afc3d67dbcbb97b8eebb00bd5f57981900aa402a",
+      "binary_sha256": "1da5ac2739bba086b93d5f9d40c51a9519a83402dfb0adcc25c7c5f99e37bd87",
+      "host_sha256": "aac67ed1c61c178731e9266616b73bdee60119813ca02c863244fc8827f8c78d",
+      "gpu_thread_counts": [
+        22
+      ],
+      "all_observed_gpu_threads_filtered": true,
+      "shutdown": {
+        "observed_count": 13,
+        "waited_ms": 1,
+        "remaining": [],
+        "scope": "processes captured in runtime snapshots"
+      },
+      "shaders": {
+        "command": [
+          "python3",
+          "/home/arthur/dev/paneflow-browser/native/browser/experiments/tsync/run-wayland.py",
+          "--workspace",
+          "/home/arthur/.cache/paneflow-cef-tsync/paneflow-snapshot",
+          "--output",
+          "/home/arthur/dev/paneflow-browser/bench/browser/evidence/prototype/cef-tsync-20260906-mesa-shaders-r2",
+          "--scenario",
+          "webgl",
+          "--steps",
+          "input",
+          "--hold",
+          "30",
+          "--binary",
+          "/home/arthur/.cache/paneflow-cef-tsync/paneflow-target/debug/paneflow",
+          "--host",
+          "/home/arthur/.cache/paneflow-cef-tsync/paneflow-target/debug/paneflow-browser-host",
+          "--render-node",
+          "/dev/dri/renderD128",
+          "--card",
+          "/dev/dri/card1",
+          "--egl-vendor",
+          "/usr/share/glvnd/egl_vendor.d/50_mesa.json",
+          "--gpui-device",
+          "0x164e"
+        ],
+        "returncode": 0,
+        "verified_120_shader_programs": true,
+        "sandbox_and_gpu_threads_verified": true,
+        "display": "wayland",
+        "gpu_presentation_verified": true,
+        "native_wayland_presentation_verified": true,
+        "x11_session": "NOT_APPLICABLE",
+        "observed_processes_exited": true,
+        "page_pixel_oracle_reads_per_program": 1,
+        "native_shader_caches_requested": true,
+        "fresh_cache_directory": "/home/arthur/dev/paneflow-browser/bench/browser/evidence/prototype/cef-tsync-20260906-mesa-shaders-r2-cache",
+        "original_fixture_sha256": "146175bc876aa5e00b9d6aebefba7d97907ca3161c4b34102a85c97642da852a",
+        "experimental_fixture_sha256": "78db5c46c2c7836e37bc1c40f8fb164531ae919b12590a824ee9715383aa78ee",
+        "status": "PASS",
+        "physical_presentation_measured": false
+      }
+    },
+    "nvidia_shaders": {
+      "evidence": "bench/browser/evidence/prototype/cef-tsync-20260906-nvidia-shaders/prototype/native.json",
+      "native_sha256": "f7f718d96b0312bb38cb6f99943fa194b031b87911d7eda37ee82d6d3edb885d",
+      "status": "COMPLETED",
+      "verdict": {
+        "page_presented": "MEASURED",
+        "x11_connection_absent": "NOT_APPLICABLE",
+        "sandbox": "MEASURED",
+        "observed_processes_exited": "MEASURED",
+        "steps": {
+          "input": "MEASURED"
+        },
+        "m1_presentation_feedback": "NOT_MEASURED",
+        "x11_session": "XWAYLAND_CLIENT_ONLY"
+      },
+      "archive_sha256": "ebc4369c6a3f87f685f937f9afc3d67dbcbb97b8eebb00bd5f57981900aa402a",
+      "binary_sha256": "1da5ac2739bba086b93d5f9d40c51a9519a83402dfb0adcc25c7c5f99e37bd87",
+      "host_sha256": "aac67ed1c61c178731e9266616b73bdee60119813ca02c863244fc8827f8c78d",
+      "gpu_thread_counts": [
+        20
+      ],
+      "all_observed_gpu_threads_filtered": true,
+      "shutdown": {
+        "observed_count": 13,
+        "waited_ms": 1,
+        "remaining": [],
+        "scope": "processes captured in runtime snapshots"
+      },
+      "shaders": {
+        "command": [
+          "bun",
+          "scripts/browser-qualification/prototype.mjs",
+          "--binary",
+          "/home/arthur/.cache/paneflow-cef-tsync/paneflow-target/debug/paneflow",
+          "--host",
+          "/home/arthur/.cache/paneflow-cef-tsync/paneflow-target/debug/paneflow-browser-host",
+          "--display",
+          "x11",
+          "--scenario",
+          "webgl",
+          "--steps",
+          "input",
+          "--hold",
+          "30",
+          "--output",
+          "/home/arthur/dev/paneflow-browser/bench/browser/evidence/prototype/cef-tsync-20260906-nvidia-shaders/prototype"
+        ],
+        "returncode": 0,
+        "verified_120_shader_programs": true,
+        "sandbox_and_gpu_threads_verified": true,
+        "display": "x11",
+        "gpu_presentation_verified": true,
+        "native_wayland_presentation_verified": false,
+        "x11_session": "XWAYLAND_CLIENT_ONLY",
+        "observed_processes_exited": true,
+        "page_pixel_oracle_reads_per_program": 1,
+        "native_shader_caches_requested": true,
+        "fresh_cache_directory": "/home/arthur/dev/paneflow-browser/bench/browser/evidence/prototype/cef-tsync-20260906-nvidia-shaders-cache",
+        "original_fixture_sha256": "146175bc876aa5e00b9d6aebefba7d97907ca3161c4b34102a85c97642da852a",
+        "experimental_fixture_sha256": "78db5c46c2c7836e37bc1c40f8fb164531ae919b12590a824ee9715383aa78ee",
+        "status": "PASS",
+        "physical_presentation_measured": false
+      }
+    },
+    "nvidia_wayland": {
+      "evidence": "bench/browser/evidence/prototype/cef-tsync-20260906-nvidia-wayland/prototype/native.json",
+      "native_sha256": "c7789a8993891e8d5d301a1ed0f0b5fe8898c78d7ffb92c88452fa8ed7a8e650",
+      "status": "FAILED",
+      "verdict": {
+        "page_presented": "FAILED",
+        "x11_connection_absent": "NOT_EXECUTED",
+        "sandbox": "NOT_EXECUTED",
+        "observed_processes_exited": "NOT_EXECUTED",
+        "steps": {
+          "input": "FAILED",
+          "resize": "FAILED",
+          "scale": "FAILED",
+          "host-loss": "FAILED"
+        },
+        "m1_presentation_feedback": "NOT_MEASURED",
+        "x11_session": "NOT_APPLICABLE"
+      },
+      "archive_sha256": "b8d0c48679ef43f396ea0421f944e6c06bb1625d67b59c64e1486df07f6e0628",
+      "binary_sha256": "d0803203d2ed20b85535f4cfd4974ad82b077a28c42892f6d28c196ca4456f64",
+      "host_sha256": "7ea1748d2124c6c11288f6ad4aba6c87af86d4421ab0bc9174a474c6886e2c0a",
+      "gpu_thread_counts": [],
+      "all_observed_gpu_threads_filtered": false,
+      "shutdown": {
+        "observed_count": 0,
+        "waited_ms": 0,
+        "remaining": [],
+        "scope": "processes captured in runtime snapshots"
+      }
+    }
+  },
+  "files": {
+    "compile-cef-scale.log": "906cd445f3eae42fd59e4229984b69451956d0f4742cd3c473c22b9ce400ed35",
+    "compile-cef-scale.json": "c3615702bc694d945efdd1e936914feac6fec695a295880b10faf4b42b319192",
+    "compile-cef-gbm.log": "8e671cf2b7022589b635de84b8fc63f3ae1be6c5406e04cbf5d5e3dc31b45f57",
+    "compile-cef-gbm.json": "3c61b485de9141a81cc6e7530e7b5bdd830d3f8389551feb3f6e5742754ac15b",
+    "build-paneflow.log": "1ad8aa18ddb0ee9966ffd5444e0f7281fdf8109164ee9c734343111a59c349a1",
+    "build-paneflow-r2.log": "52bb3fc5efa289607606cea4df3a70ab1e74b92735bbe3557bdfd6937d8b995f",
+    "build-paneflow-r3.log": "78b87b8bed7ec6a67e359b7a272f71d69e3c8bf5f786713d6b0f2c5b781e0029",
+    "build-paneflow-r4.log": "9eac96be2ab00bb6a1655ae81f1dd0082d4850eaacf745378ad35896f5a80d5f",
+    "stage-runtime.log": "22d9303dc10a985e9570b57edd960a8b29f47828d49ccc992e8dd35d4809f48f",
+    "stage-runtime-r2.log": "625acb26046a364785492683ceb6ce9b7754541c836a3333ac893d3e3e0f531f",
+    "runtime-pipeline.json": "52ca64b546754444a0c373dff1d7bb01e31aff3e7e74412f4c1c7456a48110ee",
+    "runtime-pipeline-r1.json": "e64cccc4d1b5aa366e9842401a646475f49bafcaa5fcb6a79898311ecb3e35fa",
+    "runtime-pipeline-r2.json": "e137e50f84473e07772365d55a50d6537794c4b183ae61b4b199039d8b6c5dc5",
+    "runtime-pipeline-r3.json": "30ad4a4c5ee5697d9176979d4cb7935bbb5d8526bbf8ab2f11712f4623a5a0af",
+    "continue-runtime.py": "a454758e14d05988164fe9f1202d383b25fd41dde8ab55a9b41a797ed32e4751",
+    "continue-runtime-r2.py": "d6df4217a29890791450c011ff736456369ead073ea51f605cd932e2284160ce",
+    "continue-runtime-r3.py": "25189b6fd5588efac07e535e3b5e85310689b0b0023ad7100bf8f2a5e19095f4",
+    "continue-runtime-r4.py": "35b0bc08dc792ebb2e86b8470e9c4408104ae32c9e417541465d3524b2d1d0fa",
+    "run-xwayland.py": "d9cb43d43d92ac3a5758c626c058885702ba2fda7b1df2391e7669e2e1ec117d",
+    "snapshot-provenance.json": "fbc4f2a9930666b2782c80a62825a962852a857326dffe2e2a8e34dd48af4800",
+    "runtime-bundle/manifest.toml": "83d9220a5c5edb72c16ee04e697a68ed881988f069258cb8b096707b0a3df9fd",
+    "runtime-bundle/stage.json": "db7a7b08af4dd88d58a6493cfed3d14207f4c383819e10d1057c676a5ee7f00f",
+    "runtime-bundle-r2/manifest.toml": "8409ade79dd187ac3a1f0a7b429d90897f569371bd3dc44094b8142a5a2d83bb",
+    "runtime-bundle-r2/stage.json": "3cb121d78c0baf6c13ed7613e25a1820d974e2269ca205f0b94c47f8d9a51572",
+    "experiment/0001-prepare-gpu-broker-before-driver-threads.patch": "978b82822091e3ef170da8bf1664a55525fa73213452e32334a47eb0a4e786ac",
+    "experiment/0002-preserve-offscreen-scale-without-native-view.patch": "add00e65af71bcb4b3a94b95db0933238a5f8a42d560afd3d39b83e468f28b1b",
+    "experiment/0003-initialize-x11-gbm-before-sandbox.patch": "3f10976496fb6b1e3788616701825f05925af426f8149ff6008ce8ce76ed5b2a",
+    "experiment/stage-cef.py": "77f109cff7af98ccb4ad40044741d38bd07d23716f8795ae48aef759927ba824",
+    "experiment/run-wayland.py": "9f6f3738ade20583be7d50c43c841c847f242886cd98d733abb41feac53ebb7d",
+    "experiment/run-shader-churn.py": "c09cc3039b9308f367975730df1b7e4d81353146cd640a85c85fdb34b38fd41b",
+    "experiment/shader-churn.js": "72894b7df8f7b7022b56d81743b81f1dc6d519ffb8f78c2fbf4cccb4f47e7d36",
+    "paneflow-source/crates/paneflow-browser-host/src/linux/handlers.rs": "32aff4d0c5080d37da546cd698425cea52e94eb8a1ca79cc6a0d967012199326",
+    "paneflow-source/scripts/browser-qualification/prototype.mjs": "f2825259f29e22da177ce36f99bc7208793eac54b234ba89659447253e02e9e6",
+    "patched-source/ui/ozone/platform/x11/ozone_platform_x11.cc": "00a38fa9b554d1e802e92413c2beda8f13b98f2a0a6f58e662ebdb3dfe5f00aa",
+    "patched-source/content/gpu/gpu_main.cc": "809d9fed333003b482c2807f58e9c56f6c047f0ffcb3e05acdd67a044ba85788",
+    "patched-source/content/common/gpu_pre_sandbox_hook_linux.cc": "6e4c50dc5b513e414ffe0d9a75477928eb8f43b6d02cbbf54c9817ba110ca2e8",
+    "patched-source/content/common/gpu_pre_sandbox_hook_linux.h": "c432509ac99f37255679c623eeaa0d150c23bbab465b2e0b662168b02e1db99b",
+    "patched-source/content/browser/renderer_host/render_widget_host_view_base.cc": "02261c1c4836aa49c8a2e74ffa7690427c87d7e9b6df494bae840279f7a41317",
+    "experiment/experiment.json": "4e28efa01c3733080d89af2dc88c18f932cf52422cb1082c7950406520b29448",
+    "experiment/README.md": "df537e6d93ecc78a378f4d85e648db32fc15393e99eb7997da1db385af8c6006"
+  }
+}

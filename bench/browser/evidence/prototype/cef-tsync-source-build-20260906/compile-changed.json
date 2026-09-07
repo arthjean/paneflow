@@ -1,0 +1,21 @@
+{
+  "started_at": "2026-09-06T15:25:13.529395+00:00",
+  "command": [
+    "nice",
+    "-n",
+    "10",
+    "autoninja",
+    "-j",
+    "6",
+    "-l",
+    "10",
+    "-C",
+    "out/Release_GN_x64",
+    "obj/content/common/common/gpu_pre_sandbox_hook_linux.o",
+    "obj/content/gpu/gpu_sources/gpu_main.o"
+  ],
+  "cwd": "/home/arthur/.cache/paneflow-cef-tsync/work/chromium/src",
+  "pid": 531719,
+  "returncode": 0,
+  "finished_at": "2026-09-06T15:30:33.533719+00:00"
+}

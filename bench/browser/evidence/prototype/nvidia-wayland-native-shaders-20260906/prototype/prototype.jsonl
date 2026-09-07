@@ -1,0 +1,48 @@
+{"schema_version":1,"pid":791181,"source":"cef","url":"http://127.0.0.1:43691/webgl","ozone":"wayland","scenario":"input","clock":"CLOCK_MONOTONIC","profile":"debug","event":"started","at_ns":37663636263553}
+{"backend":"Vulkan","adapter":"NVIDIA GeForce RTX 4070 Ti SUPER","driver":"NVIDIA","driver_info":"610.57.04","vendor_id":4318,"device_id":9989,"scale":1.0,"wayland":true,"display":false,"event":"window","at_ns":37664249663168}
+{"device":"NVIDIA GeForce RTX 4070 Ti SUPER","vendor_id":4318,"device_id":9989,"extensions":["VK_KHR_swapchain","VK_KHR_swapchain_mutable_format","VK_EXT_robustness2","VK_KHR_external_memory_fd","VK_EXT_external_memory_dma_buf","VK_EXT_memory_budget","VK_EXT_image_drm_format_modifier","VK_KHR_image_format_list","VK_KHR_bind_memory2","VK_KHR_sampler_ycbcr_conversion","VK_KHR_external_semaphore_fd","VK_EXT_queue_family_foreign"],"render_node":"/dev/dri/renderD129","event":"importer_ready","at_ns":37664249743497}
+{"ozone":"Wayland","gpu":[4318,9989],"render_node":"/dev/dri/renderD129","host_stderr":"/home/arthur/.local/share/paneflow-dev/browser/profiles/c22156f0c6e127f9/host.stderr","event":"host_config","at_ns":37664249837397}
+{"state":"Starting","event":"activate","at_ns":37664249883517}
+{"pid":791309,"availability":"Development","contract_version":1,"presentation":true,"initialized":{"contract_version":1,"native":"initialized","pid":791309,"presentation":true,"protocol":{"operation":"hello","result":{"Ok":{"availability":"development","contract_version":1,"target":"x86_64-linux","terminal_available":true,"type":"capabilities"}},"version":1},"sandbox_requested":true,"trace_us":37666509527},"event":"host_ready","at_ns":37666509838957}
+{"command":"create","operation":"OperationId(\"op-1\")","event":"command","at_ns":37666509862757}
+{"state":"Dormant","mounted":false,"event":"state","at_ns":37666518053435}
+{"command":"start","operation":"OperationId(\"op-2\")","event":"command","at_ns":37666518071225}
+{"native":{"fps":60,"native":"capture_frame_rate","trace_us":37666528299},"event":"native","at_ns":37666528400070}
+{"state":"Hidden","mounted":false,"event":"state","at_ns":37666528517830}
+{"width":1280,"height":800,"scale_percent":100,"generation":1,"event":"present","at_ns":37666528658520}
+{"command":"present","operation":"OperationId(\"op-3\")","event":"command","at_ns":37666528672370}
+{"native":{"cef_browser_id":1,"native":"created","native_window":0,"trace_us":37666534965},"event":"native","at_ns":37666535070580}
+{"native":{"native":"trace_started","trace_us":37666596727},"event":"native","at_ns":37666596876838}
+{"state":"Visible","mounted":true,"event":"state","at_ns":37666625835435}
+{"native":{"native":"address","trace_us":37666656008,"url":"http://127.0.0.1:43691/webgl"},"event":"native","at_ns":37666656158800}
+{"native":{"native":"title","title":"Paneflow browser qualification","trace_us":37666659532},"event":"native","at_ns":37666659628395}
+{"native":{"coded":[1,1],"expected":[1280,800],"native":"frame_dropped","reason":"stale_geometry","refreshes":1,"scale_percent":100,"trace_us":37666729567,"visible":[1,1]},"event":"native","at_ns":37666729837881}
+{"native":{"format":"bgra8","height":800,"modifier":0,"native":"pool_created","pool_generation":1,"trace_us":37666945562,"width":1280},"event":"native","at_ns":37666945711810}
+{"native":{"detail":"cef frame format Bgra8 modifier 0x300000000606014 coded 1280x800 visible 1280x800+0+0 planes [PlaneLayout { stride: 5120, offset: 0, size: 4096000 }] fd 318 device NVIDIA GeForce RTX 4070 Ti SUPER","native":"frame_source","trace_us":37666945602},"event":"native","at_ns":37666945755570}
+{"generation":1,"pools":1,"event":"pool_imported","at_ns":37666948147596}
+{"pool_generation":1,"buffer":0,"sequence":1,"callback_ns":37666944969571,"ready_ns":37666946604359,"capture_timestamp_us":66814,"capture_counter":1,"intake_ns":37666948226416,"copy_us":1634,"transfer_us":1622,"event":"frame","at_ns":37666948266296}
+{"pool_generation":1,"buffer":1,"sequence":2,"callback_ns":37666947484147,"ready_ns":37666947933567,"capture_timestamp_us":269971,"capture_counter":2,"intake_ns":37666948276296,"copy_us":449,"transfer_us":342,"event":"frame","at_ns":37666948291316}
+{"native":{"http_status":200,"native":"loaded","trace_us":37666961638},"event":"native","at_ns":37666961774906}
+{"native":{"native":"title","title":"Paneflow browser qualification","trace_us":37666962122},"event":"native","at_ns":37666962197545}
+{"step":"input","event":"step_started","at_ns":37666976938394}
+{"x":640,"y":400,"keys":["a"],"clicks":1,"event":"input_sent","at_ns":37666976980284}
+{"native":{"native":"fixture_state","state":{"clicks":0,"height":800,"keys":0,"scale":1.0,"state":"missing","visibility":"visible","wheel":0,"width":1280},"trace_us":37666981542},"event":"native","at_ns":37666981664457}
+{"pool_generation":1,"buffer":2,"sequence":3,"callback_ns":37666984732383,"ready_ns":37666985339292,"capture_timestamp_us":316654,"capture_counter":3,"intake_ns":37666985524172,"copy_us":606,"transfer_us":184,"event":"frame","at_ns":37666985548022}
+{"pool_generation":1,"buffer":0,"sequence":4,"callback_ns":37667002051097,"ready_ns":37667002515386,"capture_timestamp_us":333320,"capture_counter":4,"intake_ns":37667002684556,"copy_us":464,"transfer_us":169,"event":"frame","at_ns":37667002706906}
+{"native":{"native":"fixture_state","state":{"clicks":1,"height":800,"keys":0,"scale":1.0,"state":"missing","visibility":"visible","wheel":0,"width":1280},"trace_us":37667017818},"event":"native","at_ns":37667017981513}
+{"native":{"native":"fixture_state","state":{"clicks":1,"height":800,"keys":1,"scale":1.0,"state":"missing","visibility":"visible","wheel":0,"width":1280},"trace_us":37667034775},"event":"native","at_ns":37667034915617}
+{"clicks":1,"keys":1,"fixture":{"clicks":1,"height":800,"keys":1,"scale":1.0,"state":"missing","visibility":"visible","wheel":0,"width":1280},"event":"input_observed","at_ns":37667041489928}
+{"step":"input","elapsed_ms":64,"event":"step_completed","at_ns":37667041500018}
+{"pool_generation":1,"buffer":1,"sequence":5,"callback_ns":37667053935919,"ready_ns":37667054446598,"capture_timestamp_us":383318,"capture_counter":7,"intake_ns":37667054690118,"copy_us":510,"transfer_us":243,"event":"frame","at_ns":37667054724018}
+{"seconds":30,"event":"hold","at_ns":37667057637803}
+{"native":{"native":"title","title":"PANEFLOW_SHADER_CHURN_PASSED:120","trace_us":37667446434},"event":"native","at_ns":37667446547375}
+{"status":"COMPLETED","failure":null,"source":"cef","ozone":"wayland","presented_frames":17,"intake_frames":17,"counter_boundary":"accepted external surface, not compositor presentation","pool_generations":1,"first_frame_after_ms":2698,"consumer":{"outstanding":1,"pools_created":1,"pools_retired":0,"frames_received":17,"frames_presented":17,"frames_ignored":0,"releases_sent":16,"failures":0},"host_pids":[791309],"remaining_steps":[],"event":"summary","at_ns":37697059234229}
+{"event":"closed","at_ns":37697067125808}
+{"native":{"native":"trace_completed","path":"/home/arthur/.local/share/paneflow-dev/browser/profiles/c22156f0c6e127f9/chromium-trace.json","trace_us":37697213557},"event":"native","at_ns":37697213721819}
+{"native":{"native":"close_requested","trace_us":37697213588},"event":"native","at_ns":37697213764939}
+{"native":{"native":"close_ready","trace_us":37697213612},"event":"native","at_ns":37697213777519}
+{"native":{"native":"closed","trace_us":37697215928},"event":"native","at_ns":37697216029896}
+{"native":{"native":"close_dispatched","trace_us":37697220601},"event":"native","at_ns":37697220702219}
+{"native":{"native":"presentation_stats","stats":{"dropped":16,"failures":0,"sent":17},"trace_us":37697315492},"event":"native","at_ns":37697315970146}
+{"native":{"native":"shutdown","trace_us":37697373375},"event":"native","at_ns":37697373526251}
+{"event":"host_stopped","at_ns":37697487270341}

@@ -1,0 +1,20 @@
+{
+  "schema": 2,
+  "clock": "CLOCK_MONOTONIC",
+  "diagnostic": false,
+  "label": "optimized-v4-120hz",
+  "date": "2026-09-07T16:09:01.221Z",
+  "platform": "linux",
+  "arch": "x64",
+  "session": "wayland",
+  "display": "2560x1440, 144 Hz, échelle 100 %, panneau droit environ 880 px",
+  "fixture_sha256": "d1db2b507209e238d1c3d757ddd1f0560d51bcf316ec733af220c1cfcacd81a0",
+  "manifest_sha256": "62eb709a0c52b1c34744799f551bfc24f4d5ecfec0834b50e650bd03f275cece",
+  "app_sha256": "ba21bf250d799a9a1d859aa4dbc039bf2fad9851df762031f994eeb01fd1770b",
+  "host_sha256": "6b22a71dac0eecf4dd14a3397bffb7a0478781500b11f7982fbed01e184b7ee2",
+  "git_head": "fbfefd250a3f3c8d9968a23f8c358712859bc904",
+  "tracked_diff_sha256": "dea3e854e602661431f45c64e0983e384e0034470bf91546f44aa7927b1a2442",
+  "frame_rate": "120",
+  "resize_refresh": "1",
+  "url": "http://127.0.0.1:35453/"
+}

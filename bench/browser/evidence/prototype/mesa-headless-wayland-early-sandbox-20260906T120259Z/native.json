@@ -1,0 +1,143 @@
+{
+  "schema_version": 1,
+  "status": "FAILED",
+  "recorded_at": "2026-09-06T12:02:59.949Z",
+  "paneflow_commit": "fbfefd250a3f3c8d9968a23f8c358712859bc904",
+  "display": "wayland",
+  "source": "cef",
+  "scenario": "empty",
+  "requested_steps": [
+    "input",
+    "resize",
+    "scale",
+    "host-loss"
+  ],
+  "session_type": "wayland",
+  "cef_version": "151.3.24+g2384915+chromium-151.0.7922.174",
+  "archive_sha256": "db53c43fdace8b7ee4af0f005120116d6973aa9d8eb7702c0617badf9be8684e",
+  "fixture_sha256": "83dac6881a8f57843e5e60a5065d1f681f966331b2e4ef14c777bb40572d9121",
+  "binary_sha256": "5a2dc13fe5f5bf1d711b60cbea7b75a7ad7b6252f6f30f1e9795fabdeed901b2",
+  "host_sha256": "63b2d21eeb8cd940d66881bd32d4f472548ab2a7f1ac48c4db44ac01c3eb3f06",
+  "exit": {
+    "code": 1,
+    "signal": null
+  },
+  "fatal": {
+    "reason": "browser error: UnsupportedFormat: CEF fell back to software painting (1280x800); the CPU path is refused",
+    "event": "fatal",
+    "at_ns": 11523646908743
+  },
+  "window": {
+    "backend": "Vulkan",
+    "adapter": "AMD Ryzen 7 7800X3D 8-Core Processor (RADV RAPHAEL_MENDOCINO)",
+    "driver": "radv",
+    "driver_info": "Mesa 26.1.8",
+    "vendor_id": 4098,
+    "device_id": 5710,
+    "scale": 1,
+    "wayland": true,
+    "display": false,
+    "event": "window",
+    "at_ns": 11522030579226
+  },
+  "importer": {
+    "device": "AMD Ryzen 7 7800X3D 8-Core Processor (RADV RAPHAEL_MENDOCINO)",
+    "vendor_id": 4098,
+    "device_id": 5710,
+    "extensions": [
+      "VK_KHR_swapchain",
+      "VK_KHR_swapchain_mutable_format",
+      "VK_EXT_robustness2",
+      "VK_KHR_external_memory_fd",
+      "VK_EXT_external_memory_dma_buf",
+      "VK_EXT_memory_budget",
+      "VK_EXT_image_drm_format_modifier",
+      "VK_KHR_image_format_list",
+      "VK_KHR_bind_memory2",
+      "VK_KHR_sampler_ycbcr_conversion",
+      "VK_KHR_external_semaphore_fd",
+      "VK_EXT_queue_family_foreign"
+    ],
+    "render_node": "/dev/dri/renderD128",
+    "event": "importer_ready",
+    "at_ns": 11522030638856
+  },
+  "host_ready": [
+    {
+      "pid": 360061,
+      "presentation": true,
+      "initialized": {
+        "contract_version": 1,
+        "native": "initialized",
+        "pid": 360061,
+        "presentation": true,
+        "protocol": {
+          "operation": "hello",
+          "result": {
+            "Ok": {
+              "availability": "development",
+              "contract_version": 1,
+              "target": "x86_64-linux",
+              "terminal_available": true,
+              "type": "capabilities"
+            }
+          },
+          "version": 1
+        },
+        "sandbox_requested": true,
+        "trace_us": 11523505615
+      }
+    }
+  ],
+  "summary": {
+    "status": "FAILED",
+    "failure": "browser error: UnsupportedFormat: CEF fell back to software painting (1280x800); the CPU path is refused",
+    "source": "cef",
+    "ozone": "wayland",
+    "presented_frames": 0,
+    "pool_generations": 0,
+    "first_frame_after_ms": null,
+    "consumer": {
+      "outstanding": 0,
+      "pools_created": 0,
+      "pools_retired": 0,
+      "frames_received": 0,
+      "frames_presented": 0,
+      "frames_ignored": 0,
+      "releases_sent": 0,
+      "failures": 1
+    },
+    "host_pids": [
+      360061
+    ],
+    "remaining_steps": [
+      "input",
+      "resize",
+      "scale",
+      "host-loss"
+    ],
+    "event": "summary",
+    "at_ns": 11523646960823
+  },
+  "frame_chain_us": {
+    "copy_in_host": null,
+    "host_ready_to_app_intake": null,
+    "note": "callback_ns to ready_ns covers the host Vulkan blit and fence wait; ready_ns to intake_ns covers the SCM_RIGHTS transfer and app dispatch; presentation feedback is not measured here"
+  },
+  "sandbox": [],
+  "x11": [],
+  "snapshots": [],
+  "verdict": {
+    "page_presented": "FAILED",
+    "x11_connection_absent": "NOT_EXECUTED",
+    "sandbox": "NOT_EXECUTED",
+    "steps": {
+      "input": "FAILED",
+      "resize": "FAILED",
+      "scale": "FAILED",
+      "host-loss": "FAILED"
+    },
+    "m1_presentation_feedback": "NOT_MEASURED",
+    "x11_session": "NOT_APPLICABLE"
+  }
+}

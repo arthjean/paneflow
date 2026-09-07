@@ -1,0 +1,13 @@
+[2038405:2038405:0907/005527.402793:ERROR:ui/ozone/platform/wayland/host/wayland_seat.cc:91] Not implemented reached in static void ui::WaylandSeat::OnName(void *, wl_seat *, const char *). 
+[2038405:2038405:0907/005527.403432:ERROR:ui/ozone/platform/wayland/host/wayland_zwp_linux_dmabuf.cc:395] Not implemented reached in static void ui::WaylandZwpLinuxDmabuf::OnTrancheFlags(void *, zwp_linux_dmabuf_feedback_v1 *, uint32_t). 
+[2038405:2038405:0907/005528.198676:ERROR:content/browser/browser_main_loop.cc:277] GLib-GObject: g_object_set_is_valid_property: object class 'GtkSettings' has no property named 'gtk-modules'
+[2038405:2038405:0907/005528.343720:ERROR:ui/ozone/platform/wayland/host/wayland_screen.cc:473] Not implemented reached in virtual bool ui::WaylandScreen::IsScreenSaverActive() const. 
+WARN: SystemInfo_vulkan.cpp:198 (HasKhronosValidationLayer): Vulkan validation layers are missing
+[2038405:2038405:0907/005529.093917:ERROR:cef/libcef/browser/osr/render_widget_host_view_osr.cc:356] Not implemented reached in virtual gfx::NativeView CefRenderWidgetHostViewOSR::GetNativeView(). 
+[2038405:2038405:0907/005529.109042:ERROR:cef/libcef/browser/osr/render_widget_host_view_osr.cc:356] Not implemented reached in virtual gfx::NativeView CefRenderWidgetHostViewOSR::GetNativeView(). 
+[2038405:2038405:0907/005529.250619:ERROR:cef/libcef/browser/osr/render_widget_host_view_osr.cc:356] Not implemented reached in virtual gfx::NativeView CefRenderWidgetHostViewOSR::GetNativeView(). 
+[2038471:2038471:0907/005529.250658:ERROR:gpu/command_buffer/service/gl_utils.cc:430] [.WebGL-0x182c00a70c00]GL Driver Message (OpenGL, Performance, GL_CLOSE_PATH_NV, High): GPU stall due to ReadPixels
+[2038471:2038471:0907/005529.390742:ERROR:gpu/command_buffer/service/gl_utils.cc:430] [.WebGL-0x182c00a70c00]GL Driver Message (OpenGL, Performance, GL_CLOSE_PATH_NV, High): GPU stall due to ReadPixels
+[2038471:2038471:0907/005529.391883:ERROR:gpu/command_buffer/service/gl_utils.cc:430] [.WebGL-0x182c00a70c00]GL Driver Message (OpenGL, Performance, GL_CLOSE_PATH_NV, High): GPU stall due to ReadPixels
+[2038471:2038471:0907/005529.392874:ERROR:gpu/command_buffer/service/gl_utils.cc:430] [.WebGL-0x182c00a70c00]GL Driver Message (OpenGL, Performance, GL_CLOSE_PATH_NV, High): GPU stall due to ReadPixels (this message will no longer repeat)
+[2038405:2038405:0907/005629.371095:ERROR:base/process/kill_posix.cc:33] waitpid(2038473): No child processes (10)

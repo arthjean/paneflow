@@ -1,0 +1,20 @@
+{
+  "machine": "dune",
+  "os": "Fedora Linux 44 (Workstation Edition)",
+  "kernel": "7.1.12-200.fc44.x86_64",
+  "compositor": "GNOME Shell 50.4",
+  "cpu": "AMD Ryzen 7 7800X3D 8-Core Processor",
+  "gpu": "NVIDIA GeForce RTX 4070 Ti SUPER",
+  "driver": "610.57.04",
+  "ram_mib": 31229,
+  "power": "AC desktop; no battery present",
+  "scale": 1,
+  "refresh_hz": 60,
+  "refresh_actual_hz": 59.951,
+  "physical_width": 1920,
+  "physical_height": 1080,
+  "display_backend": "wayland",
+  "monitor": "DP-3 AUS VG27AQML1A and DP-4 BNQ EX2710Q both2560x1440@59.951, scale1; native compositor controls toplevel placement",
+  "other_display": "Both enabled outputs59.951Hz; no144Hz output in this condition",
+  "captured_at": "2026-09-05T22:38:33.363219+00:00"
+}

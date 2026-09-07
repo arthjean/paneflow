@@ -1,0 +1,11 @@
+[1401311:1401311:0906/224852.824584:ERROR:ui/ozone/platform/wayland/host/wayland_seat.cc:91] Not implemented reached in static void ui::WaylandSeat::OnName(void *, wl_seat *, const char *). 
+[1401311:1401311:0906/224852.825045:ERROR:ui/ozone/platform/wayland/host/wayland_zwp_linux_dmabuf.cc:395] Not implemented reached in static void ui::WaylandZwpLinuxDmabuf::OnTrancheFlags(void *, zwp_linux_dmabuf_feedback_v1 *, uint32_t). 
+[1401311:1401311:0906/224852.887767:ERROR:content/browser/browser_main_loop.cc:277] GLib-GObject: g_object_set_is_valid_property: object class 'GtkSettings' has no property named 'gtk-modules'
+[1401311:1401311:0906/224853.001604:ERROR:ui/ozone/platform/wayland/host/wayland_screen.cc:473] Not implemented reached in virtual bool ui::WaylandScreen::IsScreenSaverActive() const. 
+WARN: SystemInfo_vulkan.cpp:198 (HasKhronosValidationLayer): Vulkan validation layers are missing
+[1401311:1401311:0906/224853.374190:ERROR:cef/libcef/browser/osr/render_widget_host_view_osr.cc:356] Not implemented reached in virtual gfx::NativeView CefRenderWidgetHostViewOSR::GetNativeView(). 
+[1401311:1401311:0906/224853.392081:ERROR:cef/libcef/browser/osr/render_widget_host_view_osr.cc:356] Not implemented reached in virtual gfx::NativeView CefRenderWidgetHostViewOSR::GetNativeView(). 
+[1401451:1401451:0906/224853.936614:ERROR:gpu/command_buffer/service/shared_image/ozone_image_gl_textures_holder.cc:91] [DEBUG-EP002-DMABUF] format=BGRA_8888 plane_format=BGRA_8888 size=1x1 pixmap_format=BGRA_8888 pixmap_size=1x1 modifier=216172782120099856 pitch=64 target=3553
+[1401451:1401451:0906/224853.964541:ERROR:gpu/command_buffer/service/shared_image/ozone_image_gl_textures_holder.cc:91] [DEBUG-EP002-DMABUF] format=BGRA_8888 plane_format=BGRA_8888 size=1088x608 pixmap_format=BGRA_8888 pixmap_size=1088x608 modifier=216172782120099860 pitch=4352 target=3553
+[1401311:1401311:0906/224853.968113:ERROR:cef/libcef/browser/osr/render_widget_host_view_osr.cc:356] Not implemented reached in virtual gfx::NativeView CefRenderWidgetHostViewOSR::GetNativeView(). 
+[1401311:1401311:0906/224900.008808:ERROR:content/common/zygote/zygote_communication_linux.cc:291] Failed to send GetTerminationStatus message to zygote

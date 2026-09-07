@@ -1,0 +1,1332 @@
+{
+  "schema_version": 1,
+  "status": "PASS_BOUNDED_GROWTH",
+  "m1_qualification": "NOT_EVALUATED",
+  "physical_presentation_measured": false,
+  "binding": {
+    "runtime_archive_sha256": "64c291f64dd6505e9a6faa56f12dbc3f02fd99cc0a35811e8bb689d98e392b23",
+    "libcef_sha256": "f2a92991ee85970b8102130d32f2f16a58c320576fba4c7e656cfdae58c77b13",
+    "fixture_sha256": "191ff36a5a81fe6b092f0d3541e2a96d8517f94f13dd4f4704a07b4a457a992f",
+    "fixture_server_sha256": "1d5923fd5636615977c96fb0f30eb226b60fa555e413d000ed57b44553e7d9b5",
+    "binary_sha256": "96e5fee51ceb07b755441e4823bd49b96e9adb1788c3b38570f46050982db8ee",
+    "host_sha256": "c7594bd4f5b27c814ee69364b8463e75d74d92eb39b19f64e26bb4529a3aafb1",
+    "harness_sha256": "cb46a8b0083748194a670d383d7cdf45b5d00ccb3c10ae9ff2241441be754efc",
+    "observer_sha256": "93c294fac4a502b4744fae5ccd2f596b2ee18702f898a9975c2d25a432e6501d",
+    "runner_sha256": "cb1ee2e6bbaa77f20117e51212f92b7d6584ac5d6937d51e4332abcf2ac1a8de"
+  },
+  "command": [
+    "/usr/bin/python3",
+    "/home/arthur/dev/paneflow-browser/native/browser/experiments/tsync/mesa-cache-growth/run-wayland.py",
+    "--workspace",
+    "/home/arthur/.cache/paneflow-cef-tsync/mesa-cache-growth-patch8-r4/workspace",
+    "--binary",
+    "/home/arthur/.cache/paneflow-cef-tsync/paneflow-target/release/paneflow",
+    "--host",
+    "/home/arthur/.cache/paneflow-cef-tsync/paneflow-target/release/paneflow-browser-host",
+    "--render-node",
+    "/dev/dri/renderD128",
+    "--card",
+    "/dev/dri/card1",
+    "--egl-vendor",
+    "/usr/share/glvnd/egl_vendor.d/50_mesa.json",
+    "--gpui-device",
+    "0x164e",
+    "--output",
+    "/home/arthur/.cache/paneflow-cef-tsync/mesa-cache-growth-patch8-r4/run",
+    "--scenario",
+    "webgl",
+    "--steps",
+    "",
+    "--hold",
+    "60"
+  ],
+  "limits": {
+    "processes": 8192,
+    "threads": 256,
+    "read_bytes": 134217728,
+    "artifact_bytes": 16777216,
+    "samples": 1500,
+    "errors": 128
+  },
+  "cache_before": [],
+  "observation_seconds": 20,
+  "cache_environment": {
+    "XDG_CACHE_HOME": "/home/arthur/.cache/paneflow-cef-tsync/mesa-cache-growth-patch8-r4/fresh-cache",
+    "MESA_SHADER_CACHE_DIR": "/home/arthur/.cache/paneflow-cef-tsync/mesa-cache-growth-patch8-r4/fresh-cache",
+    "MESA_SHADER_CACHE_DISABLE": "false",
+    "__GL_SHADER_DISK_CACHE": "1",
+    "__GL_SHADER_DISK_CACHE_PATH": "/home/arthur/.cache/paneflow-cef-tsync/mesa-cache-growth-patch8-r4/fresh-cache"
+  },
+  "growth": {
+    "status": "OBSERVED_SECURE_NEW_DISK_WORKER",
+    "confirmed": [
+      [
+        2038617,
+        "5067343"
+      ],
+      [
+        2038618,
+        "5067343"
+      ],
+      [
+        2038619,
+        "5067343"
+      ],
+      [
+        2038620,
+        "5067343"
+      ],
+      [
+        2038621,
+        "5067343"
+      ],
+      [
+        2038622,
+        "5067343"
+      ]
+    ],
+    "candidates": [
+      {
+        "first_seen_ns": "50673439127057",
+        "observations": 904,
+        "thread": {
+          "pid": 2038471,
+          "tid": 2038617,
+          "parent": 2038412,
+          "start_ticks": "5067343",
+          "name": "paneflo:disk$1",
+          "seccomp": 2,
+          "no_new_privs": 1,
+          "filter_count": 1
+        },
+        "born_after_baseline": true,
+        "secure": true,
+        "initial_disk_workers_still_present": true,
+        "new_index_above_baseline": true,
+        "concurrent_disk_count_increased": true,
+        "last_seen_ns": "50693315321901"
+      },
+      {
+        "first_seen_ns": "50673439246257",
+        "observations": 904,
+        "thread": {
+          "pid": 2038471,
+          "tid": 2038618,
+          "parent": 2038412,
+          "start_ticks": "5067343",
+          "name": "paneflo:disk$2",
+          "seccomp": 2,
+          "no_new_privs": 1,
+          "filter_count": 1
+        },
+        "born_after_baseline": true,
+        "secure": true,
+        "initial_disk_workers_still_present": true,
+        "new_index_above_baseline": true,
+        "concurrent_disk_count_increased": true,
+        "last_seen_ns": "50693315428321"
+      },
+      {
+        "first_seen_ns": "50673465059003",
+        "observations": 903,
+        "thread": {
+          "pid": 2038471,
+          "tid": 2038619,
+          "parent": 2038412,
+          "start_ticks": "5067343",
+          "name": "paneflo:disk$3",
+          "seccomp": 2,
+          "no_new_privs": 1,
+          "filter_count": 1
+        },
+        "born_after_baseline": true,
+        "secure": true,
+        "initial_disk_workers_still_present": true,
+        "new_index_above_baseline": true,
+        "concurrent_disk_count_increased": true,
+        "last_seen_ns": "50693315520551"
+      },
+      {
+        "first_seen_ns": "50673465138703",
+        "observations": 903,
+        "thread": {
+          "pid": 2038471,
+          "tid": 2038620,
+          "parent": 2038412,
+          "start_ticks": "5067343",
+          "name": "paneflo:disk$1",
+          "seccomp": 2,
+          "no_new_privs": 1,
+          "filter_count": 1
+        },
+        "born_after_baseline": true,
+        "secure": true,
+        "initial_disk_workers_still_present": true,
+        "new_index_above_baseline": true,
+        "concurrent_disk_count_increased": true,
+        "last_seen_ns": "50693315608871"
+      },
+      {
+        "first_seen_ns": "50673465211203",
+        "observations": 903,
+        "thread": {
+          "pid": 2038471,
+          "tid": 2038621,
+          "parent": 2038412,
+          "start_ticks": "5067343",
+          "name": "paneflo:disk$2",
+          "seccomp": 2,
+          "no_new_privs": 1,
+          "filter_count": 1
+        },
+        "born_after_baseline": true,
+        "secure": true,
+        "initial_disk_workers_still_present": true,
+        "new_index_above_baseline": true,
+        "concurrent_disk_count_increased": true,
+        "last_seen_ns": "50693315696241"
+      },
+      {
+        "first_seen_ns": "50673465281633",
+        "observations": 903,
+        "thread": {
+          "pid": 2038471,
+          "tid": 2038622,
+          "parent": 2038412,
+          "start_ticks": "5067343",
+          "name": "paneflo:disk$3",
+          "seccomp": 2,
+          "no_new_privs": 1,
+          "filter_count": 1
+        },
+        "born_after_baseline": true,
+        "secure": true,
+        "initial_disk_workers_still_present": true,
+        "new_index_above_baseline": true,
+        "concurrent_disk_count_increased": true,
+        "last_seen_ns": "50693315782851"
+      }
+    ],
+    "final": {
+      "chain": [
+        {
+          "pid": 2038471,
+          "tid": null,
+          "parent": 2038412,
+          "start_ticks": "5067250"
+        },
+        {
+          "pid": 2038412,
+          "tid": null,
+          "parent": 2038405,
+          "start_ticks": "5067161"
+        },
+        {
+          "pid": 2038405,
+          "tid": null,
+          "parent": 2038334,
+          "start_ticks": "5067158"
+        }
+      ],
+      "threads": [
+        {
+          "pid": 2038471,
+          "tid": 2038471,
+          "parent": 2038412,
+          "start_ticks": "5067250",
+          "name": "paneflow-browse",
+          "seccomp": 2,
+          "no_new_privs": 1,
+          "filter_count": 1
+        },
+        {
+          "pid": 2038471,
+          "tid": 2038553,
+          "parent": 2038412,
+          "start_ticks": "5067292",
+          "name": "paneflow-b:cs0",
+          "seccomp": 2,
+          "no_new_privs": 1,
+          "filter_count": 1
+        },
+        {
+          "pid": 2038471,
+          "tid": 2038555,
+          "parent": 2038412,
+          "start_ticks": "5067292",
+          "name": "paneflo:disk$0",
+          "seccomp": 2,
+          "no_new_privs": 1,
+          "filter_count": 1
+        },
+        {
+          "pid": 2038471,
+          "tid": 2038556,
+          "parent": 2038412,
+          "start_ticks": "5067292",
+          "name": "paneflow-b:sh0",
+          "seccomp": 2,
+          "no_new_privs": 1,
+          "filter_count": 1
+        },
+        {
+          "pid": 2038471,
+          "tid": 2038557,
+          "parent": 2038412,
+          "start_ticks": "5067292",
+          "name": "panefl:sh_opt0",
+          "seccomp": 2,
+          "no_new_privs": 1,
+          "filter_count": 1
+        },
+        {
+          "pid": 2038471,
+          "tid": 2038558,
+          "parent": 2038412,
+          "start_ticks": "5067292",
+          "name": "panefl:traceq0",
+          "seccomp": 2,
+          "no_new_privs": 1,
+          "filter_count": 1
+        },
+        {
+          "pid": 2038471,
+          "tid": 2038559,
+          "parent": 2038412,
+          "start_ticks": "5067292",
+          "name": "panefl:traceq0",
+          "seccomp": 2,
+          "no_new_privs": 1,
+          "filter_count": 1
+        },
+        {
+          "pid": 2038471,
+          "tid": 2038560,
+          "parent": 2038412,
+          "start_ticks": "5067292",
+          "name": "panefl:traceq0",
+          "seccomp": 2,
+          "no_new_privs": 1,
+          "filter_count": 1
+        },
+        {
+          "pid": 2038471,
+          "tid": 2038572,
+          "parent": 2038412,
+          "start_ticks": "5067319",
+          "name": "paneflo:disk$0",
+          "seccomp": 2,
+          "no_new_privs": 1,
+          "filter_count": 1
+        },
+        {
+          "pid": 2038471,
+          "tid": 2038573,
+          "parent": 2038412,
+          "start_ticks": "5067319",
+          "name": "paneflo:disk$0",
+          "seccomp": 2,
+          "no_new_privs": 1,
+          "filter_count": 1
+        },
+        {
+          "pid": 2038471,
+          "tid": 2038574,
+          "parent": 2038412,
+          "start_ticks": "5067321",
+          "name": "ANGLE-GC",
+          "seccomp": 2,
+          "no_new_privs": 1,
+          "filter_count": 1
+        },
+        {
+          "pid": 2038471,
+          "tid": 2038582,
+          "parent": 2038412,
+          "start_ticks": "5067327",
+          "name": "GpuWatchdog",
+          "seccomp": 2,
+          "no_new_privs": 1,
+          "filter_count": 1
+        },
+        {
+          "pid": 2038471,
+          "tid": 2038583,
+          "parent": 2038412,
+          "start_ticks": "5067327",
+          "name": "PerfettoTrace",
+          "seccomp": 2,
+          "no_new_privs": 1,
+          "filter_count": 1
+        },
+        {
+          "pid": 2038471,
+          "tid": 2038584,
+          "parent": 2038412,
+          "start_ticks": "5067327",
+          "name": "HangWatcher",
+          "seccomp": 2,
+          "no_new_privs": 1,
+          "filter_count": 1
+        },
+        {
+          "pid": 2038471,
+          "tid": 2038585,
+          "parent": 2038412,
+          "start_ticks": "5067327",
+          "name": "ThreadPoolServi",
+          "seccomp": 2,
+          "no_new_privs": 1,
+          "filter_count": 1
+        },
+        {
+          "pid": 2038471,
+          "tid": 2038586,
+          "parent": 2038412,
+          "start_ticks": "5067327",
+          "name": "ThreadPoolForeg",
+          "seccomp": 2,
+          "no_new_privs": 1,
+          "filter_count": 1
+        },
+        {
+          "pid": 2038471,
+          "tid": 2038587,
+          "parent": 2038412,
+          "start_ticks": "5067327",
+          "name": "ThreadPoolPrese",
+          "seccomp": 2,
+          "no_new_privs": 1,
+          "filter_count": 1
+        },
+        {
+          "pid": 2038471,
+          "tid": 2038588,
+          "parent": 2038412,
+          "start_ticks": "5067327",
+          "name": "ThreadPoolAudio",
+          "seccomp": 2,
+          "no_new_privs": 1,
+          "filter_count": 1
+        },
+        {
+          "pid": 2038471,
+          "tid": 2038589,
+          "parent": 2038412,
+          "start_ticks": "5067327",
+          "name": "Chrome_ChildIOT",
+          "seccomp": 2,
+          "no_new_privs": 1,
+          "filter_count": 1
+        },
+        {
+          "pid": 2038471,
+          "tid": 2038590,
+          "parent": 2038412,
+          "start_ticks": "5067327",
+          "name": "VizCompositorTh",
+          "seccomp": 2,
+          "no_new_privs": 1,
+          "filter_count": 1
+        },
+        {
+          "pid": 2038471,
+          "tid": 2038591,
+          "parent": 2038412,
+          "start_ticks": "5067330",
+          "name": "ThreadPoolForeg",
+          "seccomp": 2,
+          "no_new_privs": 1,
+          "filter_count": 1
+        },
+        {
+          "pid": 2038471,
+          "tid": 2038617,
+          "parent": 2038412,
+          "start_ticks": "5067343",
+          "name": "paneflo:disk$1",
+          "seccomp": 2,
+          "no_new_privs": 1,
+          "filter_count": 1
+        },
+        {
+          "pid": 2038471,
+          "tid": 2038618,
+          "parent": 2038412,
+          "start_ticks": "5067343",
+          "name": "paneflo:disk$2",
+          "seccomp": 2,
+          "no_new_privs": 1,
+          "filter_count": 1
+        },
+        {
+          "pid": 2038471,
+          "tid": 2038619,
+          "parent": 2038412,
+          "start_ticks": "5067343",
+          "name": "paneflo:disk$3",
+          "seccomp": 2,
+          "no_new_privs": 1,
+          "filter_count": 1
+        },
+        {
+          "pid": 2038471,
+          "tid": 2038620,
+          "parent": 2038412,
+          "start_ticks": "5067343",
+          "name": "paneflo:disk$1",
+          "seccomp": 2,
+          "no_new_privs": 1,
+          "filter_count": 1
+        },
+        {
+          "pid": 2038471,
+          "tid": 2038621,
+          "parent": 2038412,
+          "start_ticks": "5067343",
+          "name": "paneflo:disk$2",
+          "seccomp": 2,
+          "no_new_privs": 1,
+          "filter_count": 1
+        },
+        {
+          "pid": 2038471,
+          "tid": 2038622,
+          "parent": 2038412,
+          "start_ticks": "5067343",
+          "name": "paneflo:disk$3",
+          "seccomp": 2,
+          "no_new_privs": 1,
+          "filter_count": 1
+        }
+      ],
+      "started_ns": "50693335934240",
+      "ended_ns": "50693338281378",
+      "ended_boottime_ns": "50693338281828",
+      "clock_ticks_per_second": 100,
+      "complete": true
+    },
+    "poll_interval_ms": 20,
+    "samples": 909,
+    "read_bytes": 33588206,
+    "artifact_bytes": 3149139,
+    "errors": [],
+    "claim_scope": "new disk worker in the same GPU; util_queue instance identity unavailable"
+  },
+  "returncode": 0,
+  "shader_titles": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    "Paneflow browser qualification",
+    "PANEFLOW_SHADER_CHURN_ARMED",
+    null,
+    "PANEFLOW_SHADER_CHURN_ARMED",
+    "PANEFLOW_SHADER_CHURN_STARTED",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    "PANEFLOW_SHADER_CHURN_PASSED:120",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+  ],
+  "cache_after": [
+    {
+      "path": "fontconfig/CACHEDIR.TAG",
+      "size": 200
+    },
+    {
+      "path": "fontconfig/6bba809cfc2369db78e8d5e2b93c576f-le64.cache-11",
+      "size": 191144
+    },
+    {
+      "path": "fontconfig/3830d5c3ddfd5cd38a049b759396e72e-le64.cache-11",
+      "size": 1840
+    },
+    {
+      "path": "fontconfig/879f5ddd405eb95f39f593633890d8ea-le64.cache-11",
+      "size": 15256
+    },
+    {
+      "path": "fontconfig/e447e5d0f6dfba6fb73d34e06a3547bf-le64.cache-11",
+      "size": 37192
+    },
+    {
+      "path": "fontconfig/a11fef9c6b59ddb48eba670bb9bf2c6a-le64.cache-11",
+      "size": 9600
+    },
+    {
+      "path": "fontconfig/3196f05a030874ca00722cbf1e991434-le64.cache-11",
+      "size": 9752
+    },
+    {
+      "path": "fontconfig/18f520a508f13854f77176faf7889ae9-le64.cache-11",
+      "size": 10624
+    },
+    {
+      "path": "fontconfig/d4fe5728f86380c2e3b1e4e9a34fabd8-le64.cache-11",
+      "size": 28128
+    },
+    {
+      "path": "fontconfig/feeafda3627faad7596d025cfacea73f-le64.cache-11",
+      "size": 9608
+    },
+    {
+      "path": "fontconfig/6cdba951d5a16891afaaf2fee13e80e7-le64.cache-11",
+      "size": 37056
+    },
+    {
+      "path": "fontconfig/0f80fa86029ae75a63f21d682b864529-le64.cache-11",
+      "size": 4032
+    },
+    {
+      "path": "fontconfig/cc4435afd06e20625c417ffcddec4f51-le64.cache-11",
+      "size": 7912
+    },
+    {
+      "path": "fontconfig/383aa4c3ea81d46e4a1459cd427fba23-le64.cache-11",
+      "size": 7336
+    },
+    {
+      "path": "fontconfig/6ee3103884cce7b2fe6f32eba9089175-le64.cache-11",
+      "size": 34672
+    },
+    {
+      "path": "fontconfig/7ee6df7a8311986241317a58487e0145-le64.cache-11",
+      "size": 360400
+    },
+    {
+      "path": "fontconfig/aa02322cc1375fea2382deabf4339973-le64.cache-11",
+      "size": 2960
+    },
+    {
+      "path": "fontconfig/a1059391c956b3cbc42a78cac70f430a-le64.cache-11",
+      "size": 3024
+    },
+    {
+      "path": "fontconfig/c4be257954870c0bf6972134c1de66d5-le64.cache-11",
+      "size": 84272
+    },
+    {
+      "path": "fontconfig/efcfae1a52990961975415036867654f-le64.cache-11",
+      "size": 46160
+    },
+    {
+      "path": "fontconfig/42536ef14367b24656ac994a93d66238-le64.cache-11",
+      "size": 84552
+    },
+    {
+      "path": "fontconfig/d63f98f14a274bd69a5425fc33aaac6b-le64.cache-11",
+      "size": 411040
+    },
+    {
+      "path": "fontconfig/404d0f5f80c97257472e6581151470ac-le64.cache-11",
+      "size": 31416
+    },
+    {
+      "path": "fontconfig/22f06f3be2d16d058da85b73ae1dc5b1-le64.cache-11",
+      "size": 3592
+    },
+    {
+      "path": "fontconfig/2a3658b432e68423dcec456e1667e977-le64.cache-11",
+      "size": 34488
+    },
+    {
+      "path": "fontconfig/9162ae45def2e036f06e4d1913f17ba7-le64.cache-11",
+      "size": 8256
+    },
+    {
+      "path": "fontconfig/e5da922122f90e18ce9aab86d5c2b324-le64.cache-11",
+      "size": 8080
+    },
+    {
+      "path": "fontconfig/71fe2b50576cdbc5f931776365d4a6ea-le64.cache-11",
+      "size": 8728
+    },
+    {
+      "path": "fontconfig/2a90ec7ec7fc01d3a9f58fddf8db0237-le64.cache-11",
+      "size": 2008
+    },
+    {
+      "path": "fontconfig/29c8f5b6bf15d25ebb2e963855ab41be-le64.cache-11",
+      "size": 18528
+    },
+    {
+      "path": "fontconfig/6fcb01a03a016cc71057b587cdea6709-le64.cache-11",
+      "size": 120
+    },
+    {
+      "path": "fontconfig/9d9e7a658cb1f50f02561d1ed3ca8bca-le64.cache-11",
+      "size": 5720
+    },
+    {
+      "path": "fontconfig/f2e61d441ca43dbfffafb9d0f2c6d8fc-le64.cache-11",
+      "size": 44552
+    },
+    {
+      "path": "fontconfig/39377a11d38956c26ecfe23db50b3cd3-le64.cache-11",
+      "size": 2272
+    },
+    {
+      "path": "fontconfig/01d40cee498be4726842ba21cbce24ab-le64.cache-11",
+      "size": 7640
+    },
+    {
+      "path": "fontconfig/b2307de753f1224d9542f27e8b3975ae-le64.cache-11",
+      "size": 3872
+    },
+    {
+      "path": "fontconfig/5f83c5e20bd7d0a7cb83b2e020f779d2-le64.cache-11",
+      "size": 9000
+    },
+    {
+      "path": "fontconfig/131ab5cc1583381c4f7ce0194912c56d-le64.cache-11",
+      "size": 18656
+    },
+    {
+      "path": "fontconfig/123d59b33ddb0e7c76bb24004bd5cfac-le64.cache-11",
+      "size": 63480
+    },
+    {
+      "path": "fontconfig/cc8b894d3abbdf0310c48629c0737d80-le64.cache-11",
+      "size": 17688
+    },
+    {
+      "path": "fontconfig/6bba809cfc2369db78e8d5e2b93c576f-le64.cache-9",
+      "size": 186528
+    },
+    {
+      "path": "fontconfig/879f5ddd405eb95f39f593633890d8ea-le64.cache-9",
+      "size": 14864
+    },
+    {
+      "path": "fontconfig/e447e5d0f6dfba6fb73d34e06a3547bf-le64.cache-9",
+      "size": 36320
+    },
+    {
+      "path": "radv_builtin_shaders/index",
+      "size": 2097160
+    },
+    {
+      "path": "radv_builtin_shaders/part49/mesa_cache.db",
+      "size": 20
+    },
+    {
+      "path": "radv_builtin_shaders/part49/mesa_cache.idx",
+      "size": 20
+    },
+    {
+      "path": "radv_builtin_shaders/part48/mesa_cache.db",
+      "size": 20
+    },
+    {
+      "path": "radv_builtin_shaders/part48/mesa_cache.idx",
+      "size": 20
+    },
+    {
+      "path": "radv_builtin_shaders/part47/mesa_cache.db",
+      "size": 20
+    },
+    {
+      "path": "radv_builtin_shaders/part47/mesa_cache.idx",
+      "size": 20
+    },
+    {
+      "path": "radv_builtin_shaders/part46/mesa_cache.db",
+      "size": 20
+    },
+    {
+      "path": "radv_builtin_shaders/part46/mesa_cache.idx",
+      "size": 20
+    },
+    {
+      "path": "radv_builtin_shaders/part45/mesa_cache.db",
+      "size": 20
+    },
+    {
+      "path": "radv_builtin_shaders/part45/mesa_cache.idx",
+      "size": 20
+    },
+    {
+      "path": "radv_builtin_shaders/part44/mesa_cache.db",
+      "size": 20
+    },
+    {
+      "path": "radv_builtin_shaders/part44/mesa_cache.idx",
+      "size": 20
+    },
+    {
+      "path": "radv_builtin_shaders/part43/mesa_cache.db",
+      "size": 20
+    },
+    {
+      "path": "radv_builtin_shaders/part43/mesa_cache.idx",
+      "size": 20
+    },
+    {
+      "path": "radv_builtin_shaders/part42/mesa_cache.db",
+      "size": 20
+    },
+    {
+      "path": "radv_builtin_shaders/part42/mesa_cache.idx",
+      "size": 20
+    },
+    {
+      "path": "radv_builtin_shaders/part41/mesa_cache.db",
+      "size": 20
+    },
+    {
+      "path": "radv_builtin_shaders/part41/mesa_cache.idx",
+      "size": 20
+    },
+    {
+      "path": "radv_builtin_shaders/part40/mesa_cache.db",
+      "size": 20
+    },
+    {
+      "path": "radv_builtin_shaders/part40/mesa_cache.idx",
+      "size": 20
+    },
+    {
+      "path": "radv_builtin_shaders/part39/mesa_cache.db",
+      "size": 20
+    },
+    {
+      "path": "radv_builtin_shaders/part39/mesa_cache.idx",
+      "size": 20
+    },
+    {
+      "path": "radv_builtin_shaders/part38/mesa_cache.db",
+      "size": 20
+    },
+    {
+      "path": "radv_builtin_shaders/part38/mesa_cache.idx",
+      "size": 20
+    },
+    {
+      "path": "radv_builtin_shaders/part37/mesa_cache.db",
+      "size": 20
+    },
+    {
+      "path": "radv_builtin_shaders/part37/mesa_cache.idx",
+      "size": 20
+    },
+    {
+      "path": "radv_builtin_shaders/part36/mesa_cache.db",
+      "size": 20
+    },
+    {
+      "path": "radv_builtin_shaders/part36/mesa_cache.idx",
+      "size": 20
+    },
+    {
+      "path": "radv_builtin_shaders/part35/mesa_cache.db",
+      "size": 20
+    },
+    {
+      "path": "radv_builtin_shaders/part35/mesa_cache.idx",
+      "size": 20
+    },
+    {
+      "path": "radv_builtin_shaders/part34/mesa_cache.db",
+      "size": 20
+    },
+    {
+      "path": "radv_builtin_shaders/part34/mesa_cache.idx",
+      "size": 20
+    },
+    {
+      "path": "radv_builtin_shaders/part33/mesa_cache.db",
+      "size": 20
+    },
+    {
+      "path": "radv_builtin_shaders/part33/mesa_cache.idx",
+      "size": 20
+    },
+    {
+      "path": "radv_builtin_shaders/part32/mesa_cache.db",
+      "size": 20
+    },
+    {
+      "path": "radv_builtin_shaders/part32/mesa_cache.idx",
+      "size": 20
+    },
+    {
+      "path": "radv_builtin_shaders/part31/mesa_cache.db",
+      "size": 20
+    },
+    {
+      "path": "radv_builtin_shaders/part31/mesa_cache.idx",
+      "size": 20
+    },
+    {
+      "path": "radv_builtin_shaders/part30/mesa_cache.db",
+      "size": 20
+    },
+    {
+      "path": "radv_builtin_shaders/part30/mesa_cache.idx",
+      "size": 20
+    },
+    {
+      "path": "radv_builtin_shaders/part29/mesa_cache.db",
+      "size": 20
+    },
+    {
+      "path": "radv_builtin_shaders/part29/mesa_cache.idx",
+      "size": 20
+    },
+    {
+      "path": "radv_builtin_shaders/part28/mesa_cache.db",
+      "size": 20
+    },
+    {
+      "path": "radv_builtin_shaders/part28/mesa_cache.idx",
+      "size": 20
+    },
+    {
+      "path": "radv_builtin_shaders/part27/mesa_cache.db",
+      "size": 20
+    },
+    {
+      "path": "radv_builtin_shaders/part27/mesa_cache.idx",
+      "size": 20
+    },
+    {
+      "path": "radv_builtin_shaders/part26/mesa_cache.db",
+      "size": 20
+    },
+    {
+      "path": "radv_builtin_shaders/part26/mesa_cache.idx",
+      "size": 20
+    },
+    {
+      "path": "radv_builtin_shaders/part25/mesa_cache.db",
+      "size": 20
+    },
+    {
+      "path": "radv_builtin_shaders/part25/mesa_cache.idx",
+      "size": 20
+    },
+    {
+      "path": "radv_builtin_shaders/part24/mesa_cache.db",
+      "size": 20
+    },
+    {
+      "path": "radv_builtin_shaders/part24/mesa_cache.idx",
+      "size": 20
+    },
+    {
+      "path": "radv_builtin_shaders/part23/mesa_cache.db",
+      "size": 20
+    },
+    {
+      "path": "radv_builtin_shaders/part23/mesa_cache.idx",
+      "size": 20
+    },
+    {
+      "path": "radv_builtin_shaders/part22/mesa_cache.db",
+      "size": 20
+    },
+    {
+      "path": "radv_builtin_shaders/part22/mesa_cache.idx",
+      "size": 20
+    },
+    {
+      "path": "radv_builtin_shaders/part21/mesa_cache.db",
+      "size": 20
+    },
+    {
+      "path": "radv_builtin_shaders/part21/mesa_cache.idx",
+      "size": 20
+    },
+    {
+      "path": "radv_builtin_shaders/part20/mesa_cache.db",
+      "size": 20
+    },
+    {
+      "path": "radv_builtin_shaders/part20/mesa_cache.idx",
+      "size": 20
+    },
+    {
+      "path": "radv_builtin_shaders/part19/mesa_cache.db",
+      "size": 20
+    },
+    {
+      "path": "radv_builtin_shaders/part19/mesa_cache.idx",
+      "size": 20
+    },
+    {
+      "path": "radv_builtin_shaders/part18/mesa_cache.db",
+      "size": 20
+    },
+    {
+      "path": "radv_builtin_shaders/part18/mesa_cache.idx",
+      "size": 20
+    },
+    {
+      "path": "radv_builtin_shaders/part17/mesa_cache.db",
+      "size": 20
+    },
+    {
+      "path": "radv_builtin_shaders/part17/mesa_cache.idx",
+      "size": 20
+    },
+    {
+      "path": "radv_builtin_shaders/part16/mesa_cache.db",
+      "size": 20
+    },
+    {
+      "path": "radv_builtin_shaders/part16/mesa_cache.idx",
+      "size": 20
+    },
+    {
+      "path": "radv_builtin_shaders/part15/mesa_cache.db",
+      "size": 20
+    },
+    {
+      "path": "radv_builtin_shaders/part15/mesa_cache.idx",
+      "size": 20
+    },
+    {
+      "path": "radv_builtin_shaders/part14/mesa_cache.db",
+      "size": 20
+    },
+    {
+      "path": "radv_builtin_shaders/part14/mesa_cache.idx",
+      "size": 20
+    },
+    {
+      "path": "radv_builtin_shaders/part13/mesa_cache.db",
+      "size": 20
+    },
+    {
+      "path": "radv_builtin_shaders/part13/mesa_cache.idx",
+      "size": 20
+    },
+    {
+      "path": "radv_builtin_shaders/part12/mesa_cache.db",
+      "size": 20
+    },
+    {
+      "path": "radv_builtin_shaders/part12/mesa_cache.idx",
+      "size": 20
+    },
+    {
+      "path": "radv_builtin_shaders/part11/mesa_cache.db",
+      "size": 20
+    },
+    {
+      "path": "radv_builtin_shaders/part11/mesa_cache.idx",
+      "size": 20
+    },
+    {
+      "path": "radv_builtin_shaders/part10/mesa_cache.db",
+      "size": 20
+    },
+    {
+      "path": "radv_builtin_shaders/part10/mesa_cache.idx",
+      "size": 20
+    },
+    {
+      "path": "radv_builtin_shaders/part9/mesa_cache.db",
+      "size": 20
+    },
+    {
+      "path": "radv_builtin_shaders/part9/mesa_cache.idx",
+      "size": 20
+    },
+    {
+      "path": "radv_builtin_shaders/part8/mesa_cache.db",
+      "size": 20
+    },
+    {
+      "path": "radv_builtin_shaders/part8/mesa_cache.idx",
+      "size": 20
+    },
+    {
+      "path": "radv_builtin_shaders/part7/mesa_cache.db",
+      "size": 20
+    },
+    {
+      "path": "radv_builtin_shaders/part7/mesa_cache.idx",
+      "size": 20
+    },
+    {
+      "path": "radv_builtin_shaders/part6/mesa_cache.db",
+      "size": 20
+    },
+    {
+      "path": "radv_builtin_shaders/part6/mesa_cache.idx",
+      "size": 20
+    },
+    {
+      "path": "radv_builtin_shaders/part5/mesa_cache.db",
+      "size": 20
+    },
+    {
+      "path": "radv_builtin_shaders/part5/mesa_cache.idx",
+      "size": 20
+    },
+    {
+      "path": "radv_builtin_shaders/part4/mesa_cache.db",
+      "size": 20
+    },
+    {
+      "path": "radv_builtin_shaders/part4/mesa_cache.idx",
+      "size": 20
+    },
+    {
+      "path": "radv_builtin_shaders/part3/mesa_cache.db",
+      "size": 20
+    },
+    {
+      "path": "radv_builtin_shaders/part3/mesa_cache.idx",
+      "size": 20
+    },
+    {
+      "path": "radv_builtin_shaders/part2/mesa_cache.db",
+      "size": 20
+    },
+    {
+      "path": "radv_builtin_shaders/part2/mesa_cache.idx",
+      "size": 20
+    },
+    {
+      "path": "radv_builtin_shaders/part1/mesa_cache.db",
+      "size": 20
+    },
+    {
+      "path": "radv_builtin_shaders/part1/mesa_cache.idx",
+      "size": 20
+    },
+    {
+      "path": "radv_builtin_shaders/part0/mesa_cache.db",
+      "size": 2224
+    },
+    {
+      "path": "radv_builtin_shaders/part0/mesa_cache.idx",
+      "size": 244
+    },
+    {
+      "path": "mesa_shader_cache/index",
+      "size": 2097160
+    },
+    {
+      "path": "mesa_shader_cache/aa/61f9ac17ae77ef8f955fb3c08a2286e1df4c23b8f2c5a4acb38fa608747261",
+      "size": 408
+    },
+    {
+      "path": "mesa_shader_cache/4a/f5ff298840454dfd17e2227d85bb5a5d79a67d65f73697bc0b2ffc9aa6caa7",
+      "size": 290
+    },
+    {
+      "path": "mesa_shader_cache/f4/4c5d39c4f24a6bdc90e8c145fe78f13e5cee0f552d8e4ba03875b212604a0a",
+      "size": 1537
+    },
+    {
+      "path": "mesa_shader_cache/66/28c99ef7c96d613ebd99fda8383885d272101a23ff90afc70b3e0c330d6c36",
+      "size": 427
+    },
+    {
+      "path": "mesa_shader_cache/64/f4994018045092ae5c6542923e67b3420212b907b479d7ecc51d0d37bbc17c",
+      "size": 303
+    },
+    {
+      "path": "mesa_shader_cache/5c/0c3626d0b1da857bbcc21a9131466a751380a14452e9b8b7236897e9c1de67",
+      "size": 1579
+    },
+    {
+      "path": "mesa_shader_cache/19/2e1e87de9fc7837460ac96188e78a02dcc1c1b453d50b00b55445d9a9f116e",
+      "size": 407
+    },
+    {
+      "path": "mesa_shader_cache/ef/a5cbb748a4c5f8b35b5b68366572c99a6ae0cd71708ffcc552e8f6c7b717b0",
+      "size": 165
+    },
+    {
+      "path": "mesa_shader_cache/f9/6eabbb61ce1eeaa423ee6fc430b795cc26cb28704a8eaec0bb5496fc80bb96",
+      "size": 340
+    },
+    {
+      "path": "mesa_shader_cache/2b/54aac337a3d45fa2d872f3972797ba8ef6baf86ac293826e891bcbea79ddaa",
+      "size": 165
+    },
+    {
+      "path": "mesa_shader_cache/d5/a8de428c6a8bf8b104b3a4c134e3c677310f0ae6e3768451d45a2f2b1f360e",
+      "size": 408
+    },
+    {
+      "path": "mesa_shader_cache/a2/20135f21407724cc0e8434c352f714e23cf07a1d4b5947ed83ac554586d01d",
+      "size": 431
+    },
+    {
+      "path": "mesa_shader_cache/23/5fd68ab5b184061241bcd8594b1b83e27670bd476fcce22d4c5bef91731b2f",
+      "size": 550
+    },
+    {
+      "path": "mesa_shader_cache/1f/d64c11a2af8e7e1a95b21d5aeb0c70eab69f92ae891e9b801c8b03d8a0e274",
+      "size": 604
+    },
+    {
+      "path": "mesa_shader_cache/16/01e772849e01ddd25c8655e1aa11ebac25aa83f2cf16df7d030be42a956f05",
+      "size": 165
+    },
+    {
+      "path": "mesa_shader_cache/f3/b890e7bfe5c90c49ca7284e25ea9a4a9eb91e649b49efeedf65bad910d0169",
+      "size": 640
+    },
+    {
+      "path": "mesa_shader_cache/b1/128a9bb76f6ea135b44ad615581915c43c9f906c139d4967a1ea0f581b5106",
+      "size": 536
+    },
+    {
+      "path": "mesa_shader_cache/ad/bab399f79a4bd79e15a32c1ce8bf845593ca66d2313f68760930bd8005a1bd",
+      "size": 819
+    },
+    {
+      "path": "mesa_shader_cache/e6/fb10907cfc8a29207c07c9a4c2eea958dfb1a3aa1cab913517326fb88ca83d",
+      "size": 165
+    },
+    {
+      "path": "mesa_shader_cache/4b/28bbc5e984c45045c9f3c58d9f0b20b18f3ecfa9c76dc82449427f57fe1b0b",
+      "size": 165
+    },
+    {
+      "path": "mesa_shader_cache/44/3701164b9d87ac0bddc64d03c1c352bd0896d978b2b6428533feda02729147",
+      "size": 577
+    },
+    {
+      "path": "mesa_shader_cache/4f/ea2fcad1d0199a6148d80db08d5b30556248e52529e5106f2c940fb00b4f42",
+      "size": 638
+    },
+    {
+      "path": "mesa_shader_cache/11/78ffe0436de17fc0ecf206ad04f301991b6157a1c3f05369e178753125c48a",
+      "size": 165
+    },
+    {
+      "path": "mesa_shader_cache/ed/178aa7bd31c2bb25b476549e418c48196662893546edb08fb0b5bbff4ffbb1",
+      "size": 388
+    },
+    {
+      "path": "mesa_shader_cache/47/a8c9423f6c4f1c43ae52f930dd31b44fee37046aa37168ac3e690c3f25d3b5",
+      "size": 165
+    },
+    {
+      "path": "mesa_shader_cache/79/b89dea4e00011e291a16a2cd4747e6e773d57753f886f8956ff6a9941d2aec",
+      "size": 2362
+    },
+    {
+      "path": "mesa_shader_cache/1c/79c7f6e0038aead9f4f60b75dc6b13bdbcbd85a9badee56fda081ba4c82462",
+      "size": 409
+    },
+    {
+      "path": "mesa_shader_cache/55/a70d8ac3bc30e1d29ab224ef7110fa63101b6ec346665d9dc6f25800cdc1c1",
+      "size": 165
+    },
+    {
+      "path": "mesa_shader_cache/e7/8f74530ef106a345adb0490aa6d626905eea6296e6aa2426cf9f953a784fb7",
+      "size": 1431
+    },
+    {
+      "path": "mesa_shader_cache/e7/095bbad8ce8367635497d1b600069d1fb44648054d4dade03cd17c8cce0a06",
+      "size": 165
+    },
+    {
+      "path": "mesa_shader_cache/d8/c7d5396f6c2ff64b5453a90be7cad205d3a93ad20b5023a690fc6d41e110dc",
+      "size": 716
+    },
+    {
+      "path": "mesa_shader_cache/21/854df95525cbb2ab0fcd589c587637ceccb2fca344abb0f61ad280c4223068",
+      "size": 165
+    },
+    {
+      "path": "mesa_shader_cache/5e/724fe95ed3f1acbb4c8072a8477a9c5c249b564e5316ab3228859ce16997a2",
+      "size": 2470
+    },
+    {
+      "path": "mesa_shader_cache/5e/285745e2acbe1b9f3ec9774257e36f26f9ff3784470ac3969ea6e14f592d0c",
+      "size": 307
+    },
+    {
+      "path": "mesa_shader_cache/31/67e9db9a30d161704e5f4a2ef9acae9a2684a93f9e43e0a51d02a96dc0fa15",
+      "size": 1685
+    },
+    {
+      "path": "mesa_shader_cache/e8/7ac9af48eff45775f8dc0870ad0b7399398498f8a4e23a5b10b5279813e851",
+      "size": 133
+    },
+    {
+      "path": "mesa_shader_cache/b7/d58b2e8e66ca6564d26170f6bf4ea775f3a269256db1c58eb848c52fab111f",
+      "size": 493
+    },
+    {
+      "path": "mesa_shader_cache/0e/a34fddeace6492d2bc1a170e7cfd2b665cbad3399fcffe5030db71a419f003",
+      "size": 133
+    },
+    {
+      "path": "mesa_shader_cache/ee/49710478e0bc665af1ce39d19b0c981e79d6fa847b8f11bd640e79942cfe19",
+      "size": 316
+    },
+    {
+      "path": "mesa_shader_cache/e1/4621decca387b4a2b92b3c16ac51b1744dfea42dde64b94e49b753cdce65d4",
+      "size": 454
+    },
+    {
+      "path": "mesa_shader_cache/ca/958ef0674d488716d3499c9a3c7bb0ec62f0e64dc72b7729b4c8e248038c87",
+      "size": 2105
+    },
+    {
+      "path": "mesa_shader_cache/a9/8f4176ff2d01567a8e4bd1a5d9cd5bf6408bfc1f77ee3b2cb2b7f1694982e8",
+      "size": 247
+    },
+    {
+      "path": "mesa_shader_cache/a9/a033acad8b018cc2ece4f67b3467bd72b8b25247d7274d80aa574a36af7401",
+      "size": 466
+    },
+    {
+      "path": "mesa_shader_cache/75/9da35ffcc9660e60d4653b251a46789611bdcd6fc9ecc010d57d30e67f4804",
+      "size": 222
+    },
+    {
+      "path": "mesa_shader_cache/f6/86dc725f639ee6ab026dcde3344c2474a681159b298fdb2463f255563c4112",
+      "size": 221
+    }
+  ],
+  "observed_release": {
+    "token": "571a9013d038e236372997636e9a4f87",
+    "release": {
+      "token": "571a9013d038e236372997636e9a4f87",
+      "baseline_complete": true,
+      "baseline_sha256": "c44639425fdf1257f73b6837c0f96f6d40f87d6185d141dc3f44943f44d74fe8",
+      "release_ns": "50673331856157",
+      "clock": "CLOCK_MONOTONIC"
+    }
+  },
+  "native_verdict": {
+    "page_presented": "MEASURED",
+    "x11_connection_absent": "MEASURED",
+    "sandbox": "MEASURED",
+    "observed_processes_exited": "MEASURED",
+    "steps": {},
+    "m1_presentation_feedback": "NOT_MEASURED",
+    "x11_session": "NOT_APPLICABLE"
+  },
+  "observer_errors": [],
+  "read_bytes": 33588206
+}

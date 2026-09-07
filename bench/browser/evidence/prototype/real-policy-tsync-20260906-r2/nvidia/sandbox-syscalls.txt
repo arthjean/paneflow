@@ -1,0 +1,65 @@
+589413 prctl(PR_SET_VMA, PR_SET_VMA_ANON_NAME, 0x10000, 4295950336, "partition_alloc") = -1 EINVAL (Invalid argument)
+589413 prctl(PR_SET_VMA, PR_SET_VMA_ANON_NAME, 0x9d000000000, 34359738368, "partition_alloc") = -1 EINVAL (Invalid argument)
+589413 prctl(PR_SET_VMA, PR_SET_VMA_ANON_NAME, 0xd9b82cf2000, 17179869184, "partition_alloc") = -1 EINVAL (Invalid argument)
+589413 clone(child_stack=NULL, flags=CLONE_CHILD_CLEARTID|CLONE_CHILD_SETTID|SIGCHLD, child_tidptr=0x7f52814cfc50) = 589414
+589414 prctl(PR_SET_NAME, "paneflow_tsync_"...) = 0
+589414 prctl(PR_SET_SECCOMP, SECCOMP_MODE_FILTER, NULL) = -1 EFAULT (Bad address)
+589414 seccomp(SECCOMP_SET_MODE_FILTER, SECCOMP_FILTER_FLAG_TSYNC, NULL) = -1 EFAULT (Bad address)
+589414 prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) = 0
+589414 seccomp(SECCOMP_SET_MODE_FILTER, SECCOMP_FILTER_FLAG_SPEC_ALLOW, NULL) = -1 EFAULT (Bad address)
+589414 prctl(PR_GET_SPECULATION_CTRL, PR_SPEC_INDIRECT_BRANCH) = 0x3 (PR_SPEC_PRCTL|PR_SPEC_ENABLE)
+589414 prctl(PR_SET_SPECULATION_CTRL, PR_SPEC_INDIRECT_BRANCH, PR_SPEC_FORCE_DISABLE) = 0
+589414 seccomp(SECCOMP_SET_MODE_FILTER, SECCOMP_FILTER_FLAG_SPEC_ALLOW, {len=638, filter=0x7ffef3409e50}) = 0
+589413 clone3({flags=CLONE_VM|CLONE_FS|CLONE_FILES|CLONE_SIGHAND|CLONE_THREAD|CLONE_SYSVSEM|CLONE_SETTLS|CLONE_PARENT_SETTID|CLONE_CHILD_CLEARTID, child_tid=0x7f527780ace8, parent_tid=0x7f527780a990, exit_signal=0, stack=0x7f527700a000, stack_size=0x7fed40, tls=0x7f527780a6c0} => {parent_tid=[589423]}, 88) = 589423
+589413 prctl(PR_SET_SECCOMP, SECCOMP_MODE_FILTER, NULL) = -1 EFAULT (Bad address)
+589413 seccomp(SECCOMP_SET_MODE_FILTER, SECCOMP_FILTER_FLAG_TSYNC, NULL) = -1 EFAULT (Bad address)
+589413 prctl(PR_SET_SECCOMP, SECCOMP_MODE_FILTER, NULL) = -1 EFAULT (Bad address)
+589413 prctl(PR_SET_VMA, PR_SET_VMA_ANON_NAME, 0xd9b874f3000, 4096, "partition_alloc") = -1 EINVAL (Invalid argument)
+589413 prctl(PR_SET_VMA, PR_SET_VMA_ANON_NAME, 0x9d004800000, 2097152, "partition_alloc") = -1 EINVAL (Invalid argument)
+589413 prctl(PR_SET_VMA, PR_SET_VMA_ANON_NAME, 0xd9b874f3000, 4096, "partition_alloc") = -1 EINVAL (Invalid argument)
+589413 prctl(PR_SET_VMA, PR_SET_VMA_ANON_NAME, 0x9d004800000, 2097152, "partition_alloc") = -1 EINVAL (Invalid argument)
+589413 prctl(PR_SET_VMA, PR_SET_VMA_ANON_NAME, 0xd9b876f3000, 4096, "partition_alloc") = -1 EINVAL (Invalid argument)
+589413 prctl(PR_SET_VMA, PR_SET_VMA_ANON_NAME, 0x9d004a00000, 4194304, "partition_alloc") = -1 EINVAL (Invalid argument)
+589413 prctl(PR_SET_VMA, PR_SET_VMA_ANON_NAME, 0xd9b874f3000, 4096, "partition_alloc") = -1 EINVAL (Invalid argument)
+589413 prctl(PR_SET_VMA, PR_SET_VMA_ANON_NAME, 0x9d004800000, 2097152, "partition_alloc") = -1 EINVAL (Invalid argument)
+589413 prctl(PR_SET_VMA, PR_SET_VMA_ANON_NAME, 0xd9b876f3000, 4096, "partition_alloc") = -1 EINVAL (Invalid argument)
+589413 prctl(PR_SET_VMA, PR_SET_VMA_ANON_NAME, 0x9d004a00000, 4194304, "partition_alloc") = -1 EINVAL (Invalid argument)
+589413 prctl(PR_SET_VMA, PR_SET_VMA_ANON_NAME, 0xd9b874f3000, 4096, "partition_alloc") = -1 EINVAL (Invalid argument)
+589413 prctl(PR_SET_VMA, PR_SET_VMA_ANON_NAME, 0x9d004800000, 2097152, "partition_alloc") = -1 EINVAL (Invalid argument)
+589413 prctl(PR_SET_VMA, PR_SET_VMA_ANON_NAME, 0xd9b876f3000, 4096, "partition_alloc") = -1 EINVAL (Invalid argument)
+589413 prctl(PR_SET_VMA, PR_SET_VMA_ANON_NAME, 0x9d004a00000, 4194304, "partition_alloc") = -1 EINVAL (Invalid argument)
+589413 prctl(PR_SET_VMA, PR_SET_VMA_ANON_NAME, 0xd9b874f3000, 4096, "partition_alloc") = -1 EINVAL (Invalid argument)
+589413 prctl(PR_SET_VMA, PR_SET_VMA_ANON_NAME, 0x9d004800000, 2097152, "partition_alloc") = -1 EINVAL (Invalid argument)
+589413 prctl(PR_SET_VMA, PR_SET_VMA_ANON_NAME, 0xd9b876f3000, 4096, "partition_alloc") = -1 EINVAL (Invalid argument)
+589413 prctl(PR_SET_VMA, PR_SET_VMA_ANON_NAME, 0x9d004a00000, 4194304, "partition_alloc") = -1 EINVAL (Invalid argument)
+589413 prctl(PR_SET_VMA, PR_SET_VMA_ANON_NAME, 0xd9b874f3000, 4096, "partition_alloc") = -1 EINVAL (Invalid argument)
+589413 prctl(PR_SET_VMA, PR_SET_VMA_ANON_NAME, 0x9d004800000, 2097152, "partition_alloc") = -1 EINVAL (Invalid argument)
+589413 prctl(PR_SET_VMA, PR_SET_VMA_ANON_NAME, 0xd9b876f3000, 4096, "partition_alloc") = -1 EINVAL (Invalid argument)
+589413 prctl(PR_SET_VMA, PR_SET_VMA_ANON_NAME, 0x9d004a00000, 4194304, "partition_alloc") = -1 EINVAL (Invalid argument)
+589413 prctl(PR_SET_VMA, PR_SET_VMA_ANON_NAME, 0xd9b874f3000, 4096, "partition_alloc") = -1 EINVAL (Invalid argument)
+589413 prctl(PR_SET_VMA, PR_SET_VMA_ANON_NAME, 0x9d004800000, 4194304, "partition_alloc") = -1 EINVAL (Invalid argument)
+589413 prctl(PR_SET_VMA, PR_SET_VMA_ANON_NAME, 0xd9b874f3000, 4096, "partition_alloc") = -1 EINVAL (Invalid argument)
+589413 prctl(PR_SET_VMA, PR_SET_VMA_ANON_NAME, 0x9d004800000, 4194304, "partition_alloc") = -1 EINVAL (Invalid argument)
+589413 prctl(PR_SET_SECCOMP, SECCOMP_MODE_FILTER, NULL) = -1 EFAULT (Bad address)
+589413 seccomp(SECCOMP_SET_MODE_FILTER, SECCOMP_FILTER_FLAG_TSYNC, NULL) = -1 EFAULT (Bad address)
+589413 prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) = 0
+589413 seccomp(SECCOMP_SET_MODE_FILTER, SECCOMP_FILTER_FLAG_TSYNC, {len=615, filter=0x7ffef340a000}) = 0
+589413 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7f528171e312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+589413 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7f528171e312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+589423 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7f528171e312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+589423 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7f528171e312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+589413 prctl(PR_GET_SECCOMP)            = 2
+589423 prctl(PR_GET_SECCOMP)            = 2
+589423 +++ exited with 0 +++
+589413 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7f528171e312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+589413 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_errno=ENOENT, si_call_addr=0x7f528171e312, si_syscall=__NR_openat, si_arch=AUDIT_ARCH_X86_64} ---
+589413 prctl(PR_SET_VMA, PR_SET_VMA_ANON_NAME, 0xd9b832f3000, 4096, "partition_alloc") = -1 EINVAL (Invalid argument)
+589413 prctl(PR_SET_VMA, PR_SET_VMA_ANON_NAME, 0x9d000600000, 2097152, "partition_alloc") = -1 EINVAL (Invalid argument)
+589413 prctl(PR_SET_VMA, PR_SET_VMA_ANON_NAME, 0xd9b836f3000, 4096, "partition_alloc") = -1 EINVAL (Invalid argument)
+589413 prctl(PR_SET_VMA, PR_SET_VMA_ANON_NAME, 0x9d000a00000, 4194304, "partition_alloc") = -1 EINVAL (Invalid argument)
+589413 prctl(PR_SET_VMA, PR_SET_VMA_ANON_NAME, 0xd9b852f3000, 4096, "partition_alloc") = -1 EINVAL (Invalid argument)
+589413 prctl(PR_SET_VMA, PR_SET_VMA_ANON_NAME, 0x9d002600000, 4194304, "partition_alloc") = -1 EINVAL (Invalid argument)
+589413 exit_group(0)                    = ?
+589413 +++ exited with 0 +++
+589414 exit_group(1)                    = ?
+589414 +++ exited with 1 +++

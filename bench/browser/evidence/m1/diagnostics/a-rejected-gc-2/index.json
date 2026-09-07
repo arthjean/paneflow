@@ -1,0 +1,57 @@
+{
+  "status": "REJECTED",
+  "source": "/tmp/pf-m1-a-60-v2",
+  "reason": [
+    "replay delivery error 2179351 ns exceeds 2000000 ns"
+  ],
+  "artifacts": [
+    {
+      "path": "capture.json.gz",
+      "sha256": "77490a80a2e442600d4703fd4f484e3e5f7d5c7ed200a7ff1b5466e77b60ef95"
+    },
+    {
+      "path": "source-files.json.gz",
+      "sha256": "c217a98c0cad5fb831bf5376e757de08ca0eb14fb22850f1e8b395e3b8e567a1"
+    },
+    {
+      "path": "source.patch.gz",
+      "sha256": "0d07c941696d181747a4f394a880d2537db605617c335d5e62489aa49d5cbef4"
+    },
+    {
+      "path": "r1-capture.json.gz",
+      "sha256": "90449af965f665d4d3fdc1030fdc08a6c8197edc0a7c4aa8129d2730b48f9964"
+    },
+    {
+      "path": "r1-start.json.gz",
+      "sha256": "8c0cd22f6bd8f8fba123b15705be8da82e9722c0da894241fdbfcb52a994e138"
+    },
+    {
+      "path": "r1-native.jsonl.gz",
+      "sha256": "a084721b38a495be3f94abd09a5c394566259a1495680915834e72c2d219b308"
+    },
+    {
+      "path": "r1-inputs.jsonl.gz",
+      "sha256": "aa82150601622a5e8020a27ba660bf3c63550b505199ef32bd9e29a28ff243ff"
+    },
+    {
+      "path": "r1-replay-plan.json.gz",
+      "sha256": "48a57fe2e99fa9354ea7981e89dd733cc943524c7cc0175d15d97f6c913a0e3b"
+    },
+    {
+      "path": "r1-worker-0.jsonl.gz",
+      "sha256": "1c95d0ce16c5f34273510ea5d8cb68e1addd4fdd9878f54821348746d5db0952"
+    },
+    {
+      "path": "r1-worker-1.jsonl.gz",
+      "sha256": "4b5e49281e126425280ac8b6715dd2decfcb62a2149671a7f6a5b04b16b90595"
+    },
+    {
+      "path": "r1-worker-2.jsonl.gz",
+      "sha256": "03ee16f10e051cd55b37f30171f8624c83f44579f78f4f9be1f109361db5b1a0"
+    },
+    {
+      "path": "r1-worker-3.jsonl.gz",
+      "sha256": "e81a243e85fbc6787cbc727d0b78451cc6fb1601d67400c26574076637b16912"
+    }
+  ]
+}

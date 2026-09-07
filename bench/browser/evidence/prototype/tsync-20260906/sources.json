@@ -1,0 +1,66 @@
+{
+  "chromium_version": "151.0.7922.174",
+  "fetched_at": "2026-09-06T12:57:28.401373+00:00",
+  "sources": [
+    {
+      "path": "gpu/ipc/service/gpu_init.cc",
+      "url": "https://chromium.googlesource.com/chromium/src/+/151.0.7922.174/gpu/ipc/service/gpu_init.cc",
+      "sha256": "b9e0b15ad38d6193782c7e94d22b0513028880d9bb806ac0ee53491755286ff2",
+      "relevant_lines": [
+        906,
+        909
+      ],
+      "line_count": 1469
+    },
+    {
+      "path": "content/gpu/gpu_main.cc",
+      "url": "https://chromium.googlesource.com/chromium/src/+/151.0.7922.174/content/gpu/gpu_main.cc",
+      "sha256": "92069dde535c687534758fca6013ac15da9f19629ef1c71315cf64aa82254fd3",
+      "relevant_lines": [
+        499,
+        573
+      ],
+      "line_count": 628
+    },
+    {
+      "path": "sandbox/policy/linux/sandbox_linux.cc",
+      "url": "https://chromium.googlesource.com/chromium/src/+/151.0.7922.174/sandbox/policy/linux/sandbox_linux.cc",
+      "sha256": "35c62d065e2f2f8eab5cfe9d75c83c6285581ffac9d3f23be710652eb7736567",
+      "relevant_lines": [
+        321,
+        335
+      ],
+      "line_count": 657
+    },
+    {
+      "path": "content/common/gpu_pre_sandbox_hook_linux.cc",
+      "url": "https://chromium.googlesource.com/chromium/src/+/151.0.7922.174/content/common/gpu_pre_sandbox_hook_linux.cc",
+      "sha256": "6484df28cc337258695fdcb99b44f4c28e741e2bb229adde75fefc6fd5612f05",
+      "relevant_lines": [
+        698,
+        704
+      ],
+      "line_count": 711
+    },
+    {
+      "path": "sandbox/linux/syscall_broker/broker_process.cc",
+      "url": "https://chromium.googlesource.com/chromium/src/+/151.0.7922.174/sandbox/linux/syscall_broker/broker_process.cc",
+      "sha256": "6b4c1438e7de80e0f08e280731587f5870e47768f04d54d6a8854dd86431a8fd",
+      "relevant_lines": [
+        61,
+        106
+      ],
+      "line_count": 205
+    },
+    {
+      "path": "sandbox/linux/seccomp-bpf/sandbox_bpf.cc",
+      "url": "https://chromium.googlesource.com/chromium/src/+/151.0.7922.174/sandbox/linux/seccomp-bpf/sandbox_bpf.cc",
+      "sha256": "bb99a6d6d0af8cd7ecaacc740f102e68927905ecc1641ac04a13fa9a00a85aeb",
+      "relevant_lines": [
+        154,
+        278
+      ],
+      "line_count": 307
+    }
+  ]
+}

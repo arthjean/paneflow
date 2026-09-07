@@ -1,0 +1,102 @@
+{"schema_version":1,"pid":267580,"source":"cef","url":"http://127.0.0.1:35543/empty","ozone":"x11","scenario":"input,resize,scale,host-loss","clock":"CLOCK_MONOTONIC","profile":"release","event":"started","at_ns":8294105201795}
+{"backend":"Vulkan","adapter":"NVIDIA GeForce RTX 4070 Ti SUPER","driver":"NVIDIA","driver_info":"610.57.04","vendor_id":4318,"device_id":9989,"scale":1.0,"wayland":false,"display":true,"event":"window","at_ns":8294429901306}
+{"device":"NVIDIA GeForce RTX 4070 Ti SUPER","vendor_id":4318,"device_id":9989,"extensions":["VK_KHR_swapchain","VK_KHR_swapchain_mutable_format","VK_EXT_robustness2","VK_KHR_external_memory_fd","VK_EXT_external_memory_dma_buf","VK_EXT_memory_budget","VK_EXT_image_drm_format_modifier","VK_KHR_image_format_list","VK_KHR_bind_memory2","VK_KHR_sampler_ycbcr_conversion","VK_KHR_external_semaphore_fd","VK_EXT_queue_family_foreign"],"render_node":"/dev/dri/renderD129","event":"importer_ready","at_ns":8294429958886}
+{"ozone":"X11","gpu":[4318,9989],"render_node":"/dev/dri/renderD129","host_stderr":"/home/arthur/.local/share/paneflow/browser/profiles/7d1a0c0b247c5347/host.stderr","event":"host_config","at_ns":8294429998396}
+{"state":"Starting","event":"activate","at_ns":8294430051206}
+{"pid":267631,"availability":"Development","contract_version":1,"presentation":true,"initialized":{"contract_version":1,"native":"initialized","pid":267631,"presentation":true,"protocol":{"operation":"hello","result":{"Ok":{"availability":"development","contract_version":1,"target":"x86_64-linux","terminal_available":true,"type":"capabilities"}},"version":1},"sandbox_requested":true,"trace_us":8294784909},"event":"host_ready","at_ns":8294784993377}
+{"command":"create","operation":"OperationId(\"op-1\")","event":"command","at_ns":8294785010017}
+{"state":"Dormant","mounted":false,"event":"state","at_ns":8294789231343}
+{"command":"start","operation":"OperationId(\"op-2\")","event":"command","at_ns":8294789236853}
+{"state":"Hidden","mounted":false,"event":"state","at_ns":8294817542384}
+{"width":1280,"height":800,"scale_percent":100,"generation":1,"event":"present","at_ns":8294818514403}
+{"command":"present","operation":"OperationId(\"op-3\")","event":"command","at_ns":8294818525263}
+{"native":{"cef_browser_id":1,"native":"created","native_window":0,"trace_us":8294819235},"event":"native","at_ns":8294819260662}
+{"state":"Visible","mounted":true,"event":"state","at_ns":8294828119033}
+{"native":{"native":"trace_started","trace_us":8294870573},"event":"native","at_ns":8294870611280}
+{"native":{"native":"address","trace_us":8294920440,"url":"http://127.0.0.1:35543/empty"},"event":"native","at_ns":8294920481990}
+{"native":{"native":"title","title":"Empty fixture","trace_us":8294921713},"event":"native","at_ns":8294921767848}
+{"native":{"http_status":200,"native":"loaded","trace_us":8294922257},"event":"native","at_ns":8294922282588}
+{"native":{"native":"title","title":"Empty fixture","trace_us":8294922357},"event":"native","at_ns":8294922376838}
+{"native":{"coded":[1,1],"expected":[1280,800],"native":"frame_dropped","reason":"stale_geometry","refreshes":1,"scale_percent":100,"trace_us":8295445278,"visible":[1,1]},"event":"native","at_ns":8295445321438}
+{"native":{"format":"bgra8","height":800,"modifier":0,"native":"pool_created","pool_generation":1,"trace_us":8295463021,"width":1280},"event":"native","at_ns":8295463050240}
+{"native":{"detail":"cef frame format Bgra8 modifier 0x0 coded 1280x800 visible 1280x800+0+0 planes [PlaneLayout { stride: 5120, offset: 0, size: 4096000 }] fd 200 device NVIDIA GeForce RTX 4070 Ti SUPER","native":"frame_source","trace_us":8295463030},"event":"native","at_ns":8295463054100}
+{"generation":1,"pools":1,"event":"pool_imported","at_ns":8295464775238}
+{"pool_generation":1,"buffer":0,"sequence":1,"callback_ns":8295462567581,"ready_ns":8295463979989,"intake_ns":8295464781098,"copy_us":1412,"transfer_us":801,"event":"frame","at_ns":8295464783798}
+{"step":"input","event":"step_started","at_ns":8295474646178}
+{"x":640,"y":400,"keys":["a"],"clicks":1,"event":"input_sent","at_ns":8295474655718}
+{"native":{"native":"fixture_state","state":{"clicks":1,"height":800,"keys":0,"scale":1.0,"state":"ready","visibility":"visible","wheel":0,"width":1280},"trace_us":8295514178},"event":"native","at_ns":8295514203428}
+{"native":{"native":"fixture_state","state":{"clicks":1,"height":800,"keys":1,"scale":1.0,"state":"ready","visibility":"visible","wheel":0,"width":1280},"trace_us":8295524494},"event":"native","at_ns":8295524513538}
+{"clicks":1,"keys":1,"fixture":{"clicks":1,"height":800,"keys":1,"scale":1.0,"state":"ready","visibility":"visible","wheel":0,"width":1280},"event":"input_observed","at_ns":8295538815473}
+{"step":"input","elapsed_ms":64,"event":"step_completed","at_ns":8295538817953}
+{"step":"resize","event":"step_started","at_ns":8295554861227}
+{"width":1088,"height":608,"scale_percent":100,"generation":2,"event":"present","at_ns":8295555192857}
+{"command":"present","operation":"OperationId(\"op-11\")","event":"command","at_ns":8295555198747}
+{"state":"Visible","mounted":true,"event":"state","at_ns":8295565142707}
+{"native":{"format":"bgra8","height":608,"modifier":0,"native":"pool_created","pool_generation":2,"trace_us":8295570188,"width":1088},"event":"native","at_ns":8295570211032}
+{"native":{"detail":"cef frame format Bgra8 modifier 0x0 coded 1088x608 visible 1088x608+0+0 planes [PlaneLayout { stride: 4352, offset: 0, size: 2646016 }] fd 200 device NVIDIA GeForce RTX 4070 Ti SUPER","native":"frame_source","trace_us":8295570196},"event":"native","at_ns":8295570214252}
+{"generation":2,"pools":2,"event":"pool_imported","at_ns":8295571105711}
+{"pool_generation":2,"buffer":0,"sequence":2,"callback_ns":8295569751802,"ready_ns":8295570642311,"intake_ns":8295571109231,"copy_us":890,"transfer_us":466,"event":"frame","at_ns":8295571111071}
+{"reason":"pool retired","event":"frame_ignored","at_ns":8295583558698}
+{"native":{"native":"fixture_state","state":{"clicks":1,"height":608,"keys":1,"scale":1.0,"state":"ready","visibility":"visible","wheel":0,"width":1088},"trace_us":8295923266},"event":"native","at_ns":8295923307824}
+{"pool_generations":2,"fixture":{"clicks":1,"height":608,"keys":1,"scale":1.0,"state":"ready","visibility":"visible","wheel":0,"width":1088},"presented":{"width":1088,"height":608},"event":"resize_observed","at_ns":8295924150933}
+{"step":"resize","elapsed_ms":369,"event":"step_completed","at_ns":8295924152883}
+{"step":"scale","event":"step_started","at_ns":8295940208567}
+{"width":1088,"height":608,"scale_percent":200,"generation":3,"event":"present","at_ns":8295944398603}
+{"command":"present","operation":"OperationId(\"op-12\")","event":"command","at_ns":8295944408033}
+{"state":"Visible","mounted":true,"event":"state","at_ns":8295951577755}
+{"native":{"coded":[1088,608],"expected":[2176,1216],"native":"frame_dropped","reason":"stale_geometry","refreshes":1,"scale_percent":200,"trace_us":8295973280,"visible":[1088,608]},"event":"native","at_ns":8295973314533}
+{"native":{"format":"bgra8","height":1216,"modifier":0,"native":"pool_created","pool_generation":3,"trace_us":8295992401,"width":2176},"event":"native","at_ns":8295992423764}
+{"native":{"detail":"cef frame format Bgra8 modifier 0x0 coded 2176x1216 visible 2176x1216+0+0 planes [PlaneLayout { stride: 8704, offset: 0, size: 10584064 }] fd 152 device NVIDIA GeForce RTX 4070 Ti SUPER","native":"frame_source","trace_us":8295992409},"event":"native","at_ns":8295992426934}
+{"generation":3,"pools":2,"event":"pool_imported","at_ns":8295993738133}
+{"pool_generation":3,"buffer":0,"sequence":3,"callback_ns":8295992027734,"ready_ns":8295993026283,"intake_ns":8295993742313,"copy_us":998,"transfer_us":716,"event":"frame","at_ns":8295993744133}
+{"reason":"pool retired","event":"frame_ignored","at_ns":8296000637626}
+{"native":{"native":"fixture_state","state":{"clicks":1,"height":608,"keys":1,"scale":2.0,"state":"ready","visibility":"visible","wheel":0,"width":1088},"trace_us":8296923330},"event":"native","at_ns":8296923374661}
+{"scale_percent":200,"fixture":{"clicks":1,"height":608,"keys":1,"scale":2.0,"state":"ready","visibility":"visible","wheel":0,"width":1088},"event":"scale_observed","at_ns":8296935075399}
+{"width":1088,"height":608,"scale_percent":100,"generation":4,"event":"present","at_ns":8296938242056}
+{"command":"present","operation":"OperationId(\"op-13\")","event":"command","at_ns":8296938248586}
+{"state":"Visible","mounted":true,"event":"state","at_ns":8296947614427}
+{"native":{"coded":[2176,1216],"expected":[1088,608],"native":"frame_dropped","reason":"stale_geometry","refreshes":1,"scale_percent":100,"trace_us":8296957158,"visible":[2176,1216]},"event":"native","at_ns":8296957192147}
+{"native":{"format":"bgra8","height":608,"modifier":0,"native":"pool_created","pool_generation":4,"trace_us":8296976459,"width":1088},"event":"native","at_ns":8296976485687}
+{"native":{"detail":"cef frame format Bgra8 modifier 0x0 coded 1088x608 visible 1088x608+0+0 planes [PlaneLayout { stride: 4352, offset: 0, size: 2646016 }] fd 160 device NVIDIA GeForce RTX 4070 Ti SUPER","native":"frame_source","trace_us":8296976466},"event":"native","at_ns":8296976488767}
+{"generation":4,"pools":2,"event":"pool_imported","at_ns":8296977362507}
+{"pool_generation":4,"buffer":0,"sequence":4,"callback_ns":8296976094288,"ready_ns":8296976893937,"intake_ns":8296977366677,"copy_us":799,"transfer_us":472,"event":"frame","at_ns":8296977368757}
+{"reason":"pool retired","event":"frame_ignored","at_ns":8296987516276}
+{"native":{"native":"fixture_state","state":{"clicks":1,"height":608,"keys":1,"scale":1.0,"state":"ready","visibility":"visible","wheel":0,"width":1088},"trace_us":8297923307},"event":"native","at_ns":8297923361268}
+{"fixture":{"clicks":1,"height":608,"keys":1,"scale":1.0,"state":"ready","visibility":"visible","wheel":0,"width":1088},"event":"scale_restored","at_ns":8297930050892}
+{"step":"scale","elapsed_ms":1989,"event":"step_completed","at_ns":8297930053802}
+{"step":"host-loss","event":"step_started","at_ns":8297946100015}
+{"pid":267631,"signalled":true,"event":"host_killed","at_ns":8297946246365}
+{"reason":"host exited: signal: 9 (SIGKILL)","surface_cleared":true,"event":"host_lost","at_ns":8298018386892}
+{"state":"Some(Failed(\"host exited: signal: 9 (SIGKILL)\"))","surface_cleared":true,"auto_restart":false,"event":"host_loss_observed","at_ns":8298026492584}
+{"state":"Starting","event":"host_retry","at_ns":8298026521014}
+{"pid":267866,"availability":"Development","contract_version":1,"presentation":true,"initialized":{"contract_version":1,"native":"initialized","pid":267866,"presentation":true,"protocol":{"operation":"hello","result":{"Ok":{"availability":"development","contract_version":1,"target":"x86_64-linux","terminal_available":true,"type":"capabilities"}},"version":1},"sandbox_requested":true,"trace_us":8298351863},"event":"host_ready","at_ns":8298351921944}
+{"command":"create","operation":"OperationId(\"op-14\")","event":"command","at_ns":8298351936544}
+{"state":"Dormant","mounted":false,"event":"state","at_ns":8298361699304}
+{"command":"start","operation":"OperationId(\"op-15\")","event":"command","at_ns":8298361708044}
+{"state":"Hidden","mounted":false,"event":"state","at_ns":8298387927758}
+{"native":{"cef_browser_id":1,"native":"created","native_window":0,"trace_us":8298389699},"event":"native","at_ns":8298389726116}
+{"width":1088,"height":608,"scale_percent":100,"generation":5,"event":"present","at_ns":8298390803765}
+{"command":"present","operation":"OperationId(\"op-16\")","event":"command","at_ns":8298390807975}
+{"state":"Visible","mounted":true,"event":"state","at_ns":8298398409517}
+{"native":{"native":"address","trace_us":8298409865,"url":"http://127.0.0.1:35543/empty"},"event":"native","at_ns":8298409896715}
+{"native":{"native":"title","title":"Empty fixture","trace_us":8298411175},"event":"native","at_ns":8298411198094}
+{"native":{"http_status":200,"native":"loaded","trace_us":8298411443},"event":"native","at_ns":8298411465774}
+{"native":{"native":"title","title":"Empty fixture","trace_us":8298411504},"event":"native","at_ns":8298411522844}
+{"native":{"native":"fixture_state","state":{"clicks":0,"height":608,"keys":0,"scale":1.0,"state":"ready","visibility":"visible","wheel":0,"width":1088},"trace_us":8298412068},"event":"native","at_ns":8298412097383}
+{"native":{"native":"trace_started","trace_us":8298445951},"event":"native","at_ns":8298445977439}
+{"native":{"format":"bgra8","height":608,"modifier":0,"native":"pool_created","pool_generation":1,"trace_us":8298926418,"width":1088},"event":"native","at_ns":8298926462273}
+{"native":{"detail":"cef frame format Bgra8 modifier 0x0 coded 1088x608 visible 1088x608+0+0 planes [PlaneLayout { stride: 4352, offset: 0, size: 2646016 }] fd 188 device NVIDIA GeForce RTX 4070 Ti SUPER","native":"frame_source","trace_us":8298926430},"event":"native","at_ns":8298926469223}
+{"generation":1,"pools":1,"event":"pool_imported","at_ns":8298928212911}
+{"pool_generation":1,"buffer":0,"sequence":1,"callback_ns":8298925977833,"ready_ns":8298927340992,"intake_ns":8298928219001,"copy_us":1363,"transfer_us":878,"event":"frame","at_ns":8298928222391}
+{"step":"host-loss","elapsed_ms":995,"event":"step_completed","at_ns":8298941287588}
+{"seconds":5,"event":"hold","at_ns":8298957344891}
+{"status":"COMPLETED","failure":null,"source":"cef","ozone":"x11","presented_frames":1,"pool_generations":5,"first_frame_after_ms":1034,"consumer":{"outstanding":1,"pools_created":5,"pools_retired":3,"frames_received":5,"frames_presented":5,"frames_ignored":0,"releases_sent":3,"failures":0},"host_pids":[267631,267866],"remaining_steps":[],"event":"summary","at_ns":8303964507906}
+{"event":"closed","at_ns":8303969831700}
+{"native":{"native":"trace_completed","path":"/home/arthur/.local/share/paneflow/browser/profiles/7d1a0c0b247c5347/chromium-trace.json","trace_us":8303991824},"event":"native","at_ns":8303991863128}
+{"native":{"native":"close_requested","trace_us":8303991830},"event":"native","at_ns":8303991866658}
+{"native":{"native":"close_ready","trace_us":8303991837},"event":"native","at_ns":8303991867608}
+{"native":{"native":"closed","trace_us":8303994116},"event":"native","at_ns":8303994141836}
+{"native":{"native":"close_dispatched","trace_us":8303994901},"event":"native","at_ns":8303994926435}
+{"native":{"native":"presentation_stats","stats":{"dropped":0,"failures":0,"sent":1},"trace_us":8304033074},"event":"native","at_ns":8304033100936}
+{"native":{"native":"shutdown","trace_us":8304089112},"event":"native","at_ns":8304089144439}
+{"event":"host_stopped","at_ns":8304164744463}

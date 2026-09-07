@@ -1,0 +1,37 @@
+{
+  "status": "NATIVE_FUNCTIONAL_OBSERVED",
+  "m1": "NOT_MEASURED",
+  "pixel_content": "NOT_VERIFIED_BY_THIS_RUN",
+  "runtime_stage": {
+    "workspace": "/home/arthur/.cache/paneflow-cef-tsync/paneflow-snapshot",
+    "build_output": "/home/arthur/.cache/paneflow-cef-tsync/work/chromium/src/out/Release_GN_x64",
+    "manifest_sha256": "2fb7443001f691ee66e7804dc7a346e7dd25f5df22a6770132fe27325e526ed9",
+    "archive_sha256": "64c291f64dd6505e9a6faa56f12dbc3f02fd99cc0a35811e8bb689d98e392b23",
+    "runtime": "/home/arthur/.cache/paneflow-cef-tsync/paneflow-snapshot/native/browser/prebuilt/x86_64-unknown-linux-gnu/64c291f64dd6505e9a6faa56f12dbc3f02fd99cc0a35811e8bb689d98e392b23",
+    "full_cef_qualification": false
+  },
+  "application_build": "build-release-external-ownership-r2",
+  "host_build": "build-release-pool-refresh-r3",
+  "source_changed_since_application_build": [
+    "host pool refresh delay20ms",
+    "protocol test reply version assertion"
+  ],
+  "tests": {
+    "browser": 37,
+    "protocol": 15,
+    "host_gpu_contract": 2,
+    "runtime_fetch": 10
+  },
+  "files": {
+    "nvidia/run.json": "f6fa5b6fe74930dd6a3393eb309f3b8e01da078837f1d54b2e450f6febbd080f",
+    "amd/run.json": "ed3843fb059547afa4726da843a0708cd58594b571f8d8b6a129e90b1af95017",
+    "amd/prototype/native.json": "f7355632a118e1745efe2c57cf2d681d5ab7db71069a722ee6943915835abd72",
+    "amd/prototype/prototype.jsonl": "9754b2c9f93f3375410e17dc2b862e0fec1bec1dce8ac5b622efebc06f7c4fc9",
+    "amd/prototype/host-stderr.txt": "656e56cc95120b4a6b9cfe8660ecba7cac3fe0f07b3dfb43615510130be075aa",
+    "amd/prototype/stderr.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "nvidia/prototype/native.json": "e890134c3e9d622b321d59f93892dce9015515abd3ed8ccc6bc1790a8eb69a7d",
+    "nvidia/prototype/prototype.jsonl": "b155e2127588fec9575f300d358034c34f89e4c3c73ffe5444c37d0d91394b94",
+    "nvidia/prototype/host-stderr.txt": "6ad6b00aaae4ff85a0615f6be7ae69526fd70a71db5b0740fee6cc4f7ae90269",
+    "nvidia/prototype/stderr.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  }
+}

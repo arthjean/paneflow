@@ -1,0 +1,100 @@
+[744494:744494:0906/200934.295571:ERROR:ui/ozone/platform/wayland/host/wayland_seat.cc:91] Not implemented reached in static void ui::WaylandSeat::OnName(void *, wl_seat *, const char *). 
+[744494:744494:0906/200934.296129:ERROR:ui/ozone/platform/wayland/host/wayland_zwp_linux_dmabuf.cc:395] Not implemented reached in static void ui::WaylandZwpLinuxDmabuf::OnTrancheFlags(void *, zwp_linux_dmabuf_feedback_v1 *, uint32_t). 
+[744494:744494:0906/200934.355719:ERROR:content/browser/browser_main_loop.cc:277] GLib-GObject: g_object_set_is_valid_property: object class 'GtkSettings' has no property named 'gtk-modules'
+[744494:744494:0906/200934.442311:ERROR:ui/ozone/platform/wayland/host/wayland_screen.cc:473] Not implemented reached in virtual bool ui::WaylandScreen::IsScreenSaverActive() const. 
+WARN: SystemInfo_vulkan.cpp:198 (HasKhronosValidationLayer): Vulkan validation layers are missing
+[744494:744494:0906/200934.585397:ERROR:cef/libcef/browser/osr/render_widget_host_view_osr.cc:356] Not implemented reached in virtual gfx::NativeView CefRenderWidgetHostViewOSR::GetNativeView(). 
+[744494:744494:0906/200934.595769:ERROR:cef/libcef/browser/osr/render_widget_host_view_osr.cc:356] Not implemented reached in virtual gfx::NativeView CefRenderWidgetHostViewOSR::GetNativeView(). 
+../../sandbox/linux/seccomp-bpf-helpers/sigsys_handlers.cc:**CRASHING**:seccomp-bpf failure in syscall nr=0x90 arg1=0xb5cf7 arg2=0x3 arg3=0x7ffcb15429d4 arg4=0x8
+Received signal 11 SEGV_ACCERR 0000003f7090
+#0 0x7f9468d25c62 base::debug::CollectStackTrace()
+#1 0x7f9468d0d541 base::debug::StackTrace::StackTrace()
+#2 0x7f9468d2568f base::debug::(anonymous namespace)::StackDumpSignalHandler()
+#3 0x7f94589d4fb0 (/usr/lib64/libc.so.6+0x19faf)
+#4 0x7f946ba36ea4 sandbox::CrashSIGSYS_Handler()
+#5 0x7f946ba37928 sandbox::SIGSYSSchedHandler()
+#6 0x7f946ba3ac6a sandbox::Trap::SigSys()
+#7 0x7f94589d4fb0 (/usr/lib64/libc.so.6+0x19faf)
+#8 0x7f9458a980fb __GI_sched_setscheduler
+#9 0x7f9458a34f04 __pthread_setschedparam
+#10 0x7f943f7b3b60 <unknown>
+#11 0x7f943f7b4022 <unknown>
+#12 0x7f943f7b4378 <unknown>
+#13 0x7f943f7b4874 <unknown>
+#14 0x7f944023dadd <unknown>
+#15 0x7f943fd66041 <unknown>
+#16 0x7f944022e0ed <unknown>
+#17 0x7f943fd509ee <unknown>
+#18 0x7f943fa2a83c <unknown>
+#19 0x7f944022908b <unknown>
+#20 0x7f944022910c <unknown>
+#21 0x7f943fd778af <unknown>
+#22 0x7f943fa3b02d <unknown>
+#23 0x7f943fa3c339 <unknown>
+#24 0x7f943fa3cec4 <unknown>
+#25 0x7f943f31c788 <unknown>
+#26 0x7f943f337445 <unknown>
+#27 0x7f943f2a4285 <unknown>
+#28 0x7f9447338e69 <unknown>
+#29 0x7f944732a8f6 <unknown>
+#30 0x7f94473318b5 <unknown>
+#31 0x7f94606f642b std::__Cr::__function::__policy_func<>::__call_func<>()
+#32 0x7f9460550f0b angle::UnlockedTailCall::runImpl()
+#33 0x7f946b144a76 EGL_CreateSyncKHR
+#34 0x7f946afb78e6 gl::EGLApiBase::eglCreateSyncKHRFn()
+#35 0x7f946b067bee gl::GLFenceEGL::InitializeInternal()
+#36 0x7f946b082ad9 gl::GLFenceAndroidNativeFenceSync::CreateInternal()
+#37 0x7f946b067157 gl::GLFence::CreateForGpuFence()
+#38 0x7f946ca7d82a gpu::GLTexturePassthroughOzoneImageRepresentation::EndAccess()
+#39 0x7f946ca44d8e gpu::SkiaGLImageRepresentation::EndWriteAccess()
+#40 0x7f946ca1c453 gpu::WrappedSkiaGaneshCompoundImageRepresentation::EndWriteAccess()
+#41 0x7f946ca3d2c8 gpu::SkiaImageRepresentation::ScopedWriteAccess::~ScopedWriteAccess()
+#42 0x7f946ca3db44 gpu::SkiaGaneshImageRepresentation::ScopedGaneshWriteAccess::~ScopedGaneshWriteAccess()
+#43 0x7f946d5898b7 viz::SkiaOutputSurfaceImplOnGpu::CopyOutputRGBAInTexture()
+#44 0x7f946d588c19 viz::SkiaOutputSurfaceImplOnGpu::CopyOutputRGBA()
+#45 0x7f946d58cc7e viz::SkiaOutputSurfaceImplOnGpu::CopyOutput()
+#46 0x7f946d57f2f4 base::internal::Invoker<>::RunOnce()
+#47 0x7f945f355631 base::OnceCallback<>::Run()
+#48 0x7f946d57fe92 base::internal::Invoker<>::RunOnce()
+#49 0x7f945f355631 base::OnceCallback<>::Run()
+#50 0x7f94644fb0bc gpu::Scheduler::ExecuteSequence()
+#51 0x7f94644f9e7e gpu::Scheduler::RunNextTask()
+#52 0x7f945f355631 base::OnceCallback<>::Run()
+#53 0x7f9468c76451 base::TaskAnnotator::RunTaskImpl()
+#54 0x7f9468ca7cf2 base::sequence_manager::internal::ThreadControllerWithMessagePumpImpl::DoWorkImpl()
+#55 0x7f9468ca6ecb base::sequence_manager::internal::ThreadControllerWithMessagePumpImpl::DoWork()
+#56 0x7f9468c088da base::MessagePumpDefault::Run()
+#57 0x7f9468ca8d60 base::sequence_manager::internal::ThreadControllerWithMessagePumpImpl::Run()
+#58 0x7f9468c49886 base::RunLoop::Run()
+#59 0x7f946d4e3467 content::GpuMain()
+#60 0x7f9467854032 content::RunZygote()
+#61 0x7f9467854e71 content::RunOtherNamedProcessTypeMain()
+#62 0x7f9467856ef2 content::ContentMainRunnerImpl::Run()
+#63 0x7f94678533d7 content::ContentMain()
+#64 0x7f945f3c4d39 CefMainRunner::RunAsHelperProcess()
+#65 0x7f945f39f032 CefExecuteProcess()
+#66 0x7f945f22a551 cef_execute_process
+#67 0x55ca80b21013 _RNvNtNtCslSpb4nNZAtk_3cef8bindings24x86_64_unknown_linux_gnu15execute_process
+#68 0x55ca80912374 _RNvNtCs74vzfMKtiRr_21paneflow_browser_host5linux3run
+#69 0x55ca809e76d6 _RNvCs74vzfMKtiRr_21paneflow_browser_host4main
+#70 0x55ca80a0953b _RNvYFEINtNtCsc36rpYXAlPq_4core6result6ResultuINtNtCscHgRw1M2fX5_5alloc5boxed3BoxDNtNtB9_5error5ErrorEL_EEINtNtNtB9_3ops8function6FnOnceuE9call_onceCs74vzfMKtiRr_21paneflow_browser_host
+#71 0x55ca80a1095e _RINvNtNtCs6ZjlLoI6YmX_3std3sys9backtrace28___rust_begin_short_backtraceFEINtNtCsc36rpYXAlPq_4core6result6ResultuINtNtCscHgRw1M2fX5_5alloc5boxed3BoxDNtNtB1e_5error5ErrorEL_EEB19_ECs74vzfMKtiRr_21paneflow_browser_host
+#72 0x55ca80954fe1 _RNCINvNtCs6ZjlLoI6YmX_3std2rt10lang_startINtNtCsc36rpYXAlPq_4core6result6ResultuINtNtCscHgRw1M2fX5_5alloc5boxed3BoxDNtNtBI_5error5ErrorEL_EEE0Cs74vzfMKtiRr_21paneflow_browser_host
+#73 0x55ca80b5e737 _RNvNtCs6ZjlLoI6YmX_3std2rt19lang_start_internal
+#74 0x55ca80954fc7 _RINvNtCs6ZjlLoI6YmX_3std2rt10lang_startINtNtCsc36rpYXAlPq_4core6result6ResultuINtNtCscHgRw1M2fX5_5alloc5boxed3BoxDNtNtBG_5error5ErrorEL_EEECs74vzfMKtiRr_21paneflow_browser_host
+#75 0x55ca809e76fe main
+#76 0x7f94589be681 __libc_start_call_main
+#77 0x7f94589be798 __libc_start_main_alias_2
+#78 0x55ca80911715 _start
+  r8: 0000000000000090  r9: 0000000000000090 r10: 0000000000000090 r11: 0000000000000246
+ r12: 000011e400acf000 r13: 00007ffcb1541d80 r14: 0000000000000090 r15: 000000000000000f
+  di: 0000000000000002  si: 00007f945ef9ea94  bp: 00007ffcb1541c50  bx: 00007ffcb1541cb0
+  dx: 0000000000000001  ax: 00000000000f7000  cx: 00000000003f7090  sp: 00007ffcb1541c40
+  ip: 00007f946ba36ea4 efl: 0000000000010206 cgf: 002b000000000033 erf: 0000000000000006
+ trp: 000000000000000e msk: 0000000000000000 cr2: 00000000003f7090
+[end of stack trace]
+../../sandbox/linux/seccomp-bpf-helpers/sigsys_handlers.cc:**CRASHING**:seccomp-bpf failure in syscall nr=0x25 arg1=0x5 arg2=0x7ffcb15401d0 arg3=0x0 arg4=0x8
+[744494:744494:0906/200935.540470:ERROR:content/browser/gpu/gpu_process_host.cc:1035] GPU process exited unexpectedly: exit_code=139
+WARN: SystemInfo_vulkan.cpp:198 (HasKhronosValidationLayer): Vulkan validation layers are missing
+[744494:744494:0906/200935.910981:ERROR:cef/libcef/browser/osr/render_widget_host_view_osr.cc:356] Not implemented reached in virtual gfx::NativeView CefRenderWidgetHostViewOSR::GetNativeView(). 
+[744494:744494:0906/200937.080052:ERROR:base/process/kill_posix.cc:33] waitpid(744543): No child processes (10)

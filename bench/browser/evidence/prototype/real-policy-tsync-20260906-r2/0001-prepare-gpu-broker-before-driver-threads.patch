@@ -1,0 +1,205 @@
+--- a/content/common/gpu_pre_sandbox_hook_linux.h
++++ b/content/common/gpu_pre_sandbox_hook_linux.h
+@@ -18,6 +18,12 @@
+ // A pre-sandbox hook to use on Linux-based systems in sandboxed processes that
+ // require general GPU usage.
+ bool GpuPreSandboxHook(sandbox::policy::SandboxLinux::Options options);
++
++void PrepareGpuSandboxBroker(
++    const sandbox::policy::SandboxLinux::Options& options);
++
++bool GpuPreSandboxHookWithPreparedBroker(
++    sandbox::policy::SandboxLinux::Options options);
+ 
+ // These functions can be used by other pre-sandbox hooks that need GPU access
+ // in addition to their other permissions.
+--- a/content/common/gpu_pre_sandbox_hook_linux.cc
++++ b/content/common/gpu_pre_sandbox_hook_linux.cc
+@@ -695,17 +695,28 @@
+   return true;
+ }
+ 
++void PrepareGpuSandboxBroker(
++    const sandbox::policy::SandboxLinux::Options& options) {
++  auto* sandbox_linux = sandbox::policy::SandboxLinux::GetInstance();
++  CHECK(sandbox_linux->IsSingleThreaded());
++  sandbox_linux->StartBrokerProcess(CommandSetForGPU(options),
++                                   FilePermissionsForGpu(options), options);
++}
++
++bool GpuPreSandboxHookWithPreparedBroker(
++    sandbox::policy::SandboxLinux::Options options) {
++  if (!LoadLibrariesForGpu(options))
++    return false;
++
++  errno = 0;
++  return true;
++}
++
+ bool GpuPreSandboxHook(sandbox::policy::SandboxLinux::Options options) {
+   sandbox::policy::SandboxLinux::GetInstance()->StartBrokerProcess(
+       CommandSetForGPU(options), FilePermissionsForGpu(options), options);
+ 
+-  if (!LoadLibrariesForGpu(options))
+-    return false;
+-
+-  // TODO(tsepez): enable namspace sandbox here once crashes are understood.
+-
+-  errno = 0;
+-  return true;
++  return GpuPreSandboxHookWithPreparedBroker(options);
+ }
+ 
+ }  // namespace content
+--- a/content/gpu/gpu_main.cc
++++ b/content/gpu/gpu_main.cc
+@@ -115,6 +115,7 @@
+ #if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
+ #include "content/child/sandboxed_process_thread_type_handler.h"
+ #include "content/common/gpu_pre_sandbox_hook_linux.h"
++#include "sandbox/policy/chromecast_sandbox_allowlist_buildflags.h"
+ #include "sandbox/policy/linux/sandbox_linux.h"
+ #include "sandbox/policy/sandbox_type.h"
+ #endif
+@@ -136,7 +137,9 @@
+ #if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
+ bool StartSandboxLinux(gpu::GpuWatchdogThread*,
+                        const gpu::GPUInfo*,
+-                       const gpu::GpuPreferences&);
++                       const gpu::GpuPreferences&,
++                       bool broker_prepared,
++                       bool trace_thread_stopped);
+ #elif BUILDFLAG(IS_ANDROID)
+ bool StartSandboxAndroid(gpu::GpuWatchdogThread*);
+ #elif BUILDFLAG(IS_WIN)
+@@ -151,6 +154,47 @@
+   ContentSandboxHelper& operator=(const ContentSandboxHelper&) = delete;
+ 
+   ~ContentSandboxHelper() override {}
++
++#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
++  void PrepareEarlyGpuBroker(const gpu::GpuPreferences& gpu_prefs) {
++#if BUILDFLAG(IS_LINUX) && \
++    !BUILDFLAG(ENABLE_CHROMECAST_GPU_SANDBOX_ALLOWLIST)
++    const auto sandbox_type = sandbox::policy::SandboxTypeFromCommandLine(
++        *base::CommandLine::ForCurrentProcess());
++    if (gpu_prefs.gpu_sandbox_start_early ||
++        sandbox_type != sandbox::mojom::Sandbox::kGpu ||
++        !sandbox::policy::SandboxSeccompBPF::IsSeccompBPFDesired() ||
++        !sandbox::policy::SandboxSeccompBPF::SupportsSandbox()) {
++      return;
++    }
++
++    CHECK(!broker_prepared_);
++    auto* sandbox_linux = sandbox::policy::SandboxLinux::GetInstance();
++    auto* trace_thread = tracing::IsTracingInitialized()
++                             ? tracing::PerfettoTracedProcess::GetTraceThread()
++                             : nullptr;
++    if (trace_thread && trace_thread->IsRunning()) {
++      sandbox_linux->StopThread(trace_thread);
++      trace_thread_stopped_for_broker_ = true;
++    }
++
++    sandbox::policy::SandboxLinux::Options options;
++    options.accelerated_video_decode_enabled =
++        !gpu_prefs.disable_accelerated_video_decode;
++    options.accelerated_video_encode_enabled =
++        !gpu_prefs.disable_accelerated_video_encode;
++    PrepareGpuSandboxBroker(options);
++    broker_prepared_ = true;
++#endif
++  }
++
++  void FinishEarlyGpuBrokerStartup() {
++    if (trace_thread_stopped_for_broker_) {
++      tracing::PerfettoTracedProcess::Get().RestartThreadInSandbox();
++      trace_thread_stopped_for_broker_ = false;
++    }
++  }
++#endif
+ 
+ #if BUILDFLAG(IS_WIN)
+   void set_sandbox_info(const sandbox::SandboxInterfaceInfo* info) {
+@@ -202,7 +246,11 @@
+                                 const gpu::GpuPreferences& gpu_prefs) override {
+     TRACE_EVENT("gpu,startup", "gpu_main::EnsureSandboxInitialized");
+ #if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
+-    return StartSandboxLinux(watchdog_thread, gpu_info, gpu_prefs);
++    const bool result = StartSandboxLinux(
++        watchdog_thread, gpu_info, gpu_prefs, broker_prepared_,
++        trace_thread_stopped_for_broker_);
++    trace_thread_stopped_for_broker_ = false;
++    return result;
+ #elif BUILDFLAG(IS_WIN)
+     return StartSandboxWindows(sandbox_info_);
+ #elif BUILDFLAG(IS_MAC)
+@@ -217,6 +265,11 @@
+     return false;
+ #endif
+   }
++
++#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
++  bool broker_prepared_ = false;
++  bool trace_thread_stopped_for_broker_ = false;
++#endif
+ 
+ #if BUILDFLAG(IS_WIN)
+   raw_ptr<const sandbox::SandboxInterfaceInfo> sandbox_info_ = nullptr;
+@@ -362,6 +415,9 @@
+ #endif
+ 
+   gpu_init->set_sandbox_helper(&sandbox_helper);
++#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
++  sandbox_helper.PrepareEarlyGpuBroker(gpu_preferences);
++#endif
+ 
+   // Since GPU initialization calls into skia, it's important to initialize skia
+   // before it.
+@@ -386,6 +442,9 @@
+   // message from the browser (through mojom::VizMain::CreateGpuService()).
+   const bool init_success = gpu_init->InitializeAndStartSandbox(
+       const_cast<base::CommandLine*>(&command_line), gpu_preferences);
++#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
++  sandbox_helper.FinishEarlyGpuBrokerStartup();
++#endif
+ #if BUILDFLAG(IS_CHROMEOS)
+   LOG(WARNING) << "gpu initialization completed init_success:" << init_success;
+ #endif
+@@ -498,7 +557,9 @@
+ #if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
+ bool StartSandboxLinux(gpu::GpuWatchdogThread* watchdog_thread,
+                        const gpu::GPUInfo* gpu_info,
+-                       const gpu::GpuPreferences& gpu_prefs) {
++                       const gpu::GpuPreferences& gpu_prefs,
++                       bool broker_prepared,
++                       bool trace_thread_stopped) {
+   TRACE_EVENT("gpu,startup", "Initialize sandbox");
+ 
+   if (watchdog_thread) {
+@@ -511,13 +572,12 @@
+       tracing::IsTracingInitialized()
+           ? tracing::PerfettoTracedProcess::GetTraceThread()
+           : nullptr;
+-  if (trace_thread) {
++  if (trace_thread && !trace_thread_stopped) {
+     sandbox::policy::SandboxLinux::GetInstance()->StopThread(trace_thread);
+   }
+ 
+-  // SandboxLinux::InitializeSandbox() must always be called
+-  // with only one thread.
+   sandbox::policy::SandboxLinux::Options sandbox_options;
++  sandbox_options.allow_threads_during_sandbox_init = broker_prepared;
+   if (gpu_info) {
+     // We have to enable sandbox settings for all GPUs in the system
+     // for Chrome to be able to access/use them.
+@@ -560,7 +620,9 @@
+   bool res = sandbox::policy::SandboxLinux::GetInstance()->InitializeSandbox(
+       sandbox::policy::SandboxTypeFromCommandLine(
+           *base::CommandLine::ForCurrentProcess()),
+-      base::BindOnce(GpuPreSandboxHook), sandbox_options);
++      broker_prepared ? base::BindOnce(GpuPreSandboxHookWithPreparedBroker)
++                      : base::BindOnce(GpuPreSandboxHook),
++      sandbox_options);
+ 
+   if (watchdog_thread) {
+     watchdog_thread->Start();

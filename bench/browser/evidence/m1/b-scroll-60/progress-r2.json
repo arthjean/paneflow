@@ -1,0 +1,16 @@
+{
+  "status": "NATIVE_SAMPLES_CAPTURED",
+  "samples": 3592,
+  "diagnostics": {
+    "gpu_pid": 2033170,
+    "wl_surface": 46,
+    "measured_frames": 3592,
+    "idle_window": false,
+    "complete_trace_frames": 4256,
+    "native_presentations": 4612,
+    "matched_native_presentations": 4256,
+    "discarded_native_frames": 0,
+    "unfinished_trace_frames": 4,
+    "unfinished_native_feedbacks": 1
+  }
+}

@@ -1,0 +1,93 @@
+{
+  "schema_version": 1,
+  "status": "COMPLETED",
+  "recorded_at": "2026-09-06T11:13:15.443Z",
+  "paneflow_commit": "fbfefd250a3f3c8d9968a23f8c358712859bc904",
+  "display": "wayland",
+  "source": "pattern",
+  "scenario": "empty",
+  "requested_steps": [
+    "resize",
+    "scale"
+  ],
+  "session_type": "wayland",
+  "cef_version": "151.3.24+g2384915+chromium-151.0.7922.174",
+  "archive_sha256": "db53c43fdace8b7ee4af0f005120116d6973aa9d8eb7702c0617badf9be8684e",
+  "fixture_sha256": "83dac6881a8f57843e5e60a5065d1f681f966331b2e4ef14c777bb40572d9121",
+  "binary_sha256": "0bb00a88468916f53ff636836df320e73ae9e1fba43e69d9d5cae305fcc9c724",
+  "host_sha256": "93542d2f3674f7023ee1d93de25dc6229b2cb9e75c366befc4c7d6be5688a9eb",
+  "exit": {
+    "code": 0,
+    "signal": null
+  },
+  "fatal": null,
+  "window": {
+    "backend": "Vulkan",
+    "adapter": "NVIDIA GeForce RTX 4070 Ti SUPER",
+    "driver": "NVIDIA",
+    "driver_info": "610.57.04",
+    "vendor_id": 4318,
+    "device_id": 9989,
+    "scale": 1,
+    "wayland": true,
+    "display": true,
+    "event": "window",
+    "at_ns": 8534501291350
+  },
+  "importer": null,
+  "host_ready": [],
+  "summary": {
+    "status": "COMPLETED",
+    "failure": null,
+    "source": "pattern",
+    "ozone": "wayland",
+    "presented_frames": 300,
+    "pool_generations": 4,
+    "first_frame_after_ms": 19,
+    "consumer": {
+      "outstanding": 2,
+      "pools_created": 4,
+      "pools_retired": 3,
+      "frames_received": 300,
+      "frames_presented": 300,
+      "frames_ignored": 0,
+      "releases_sent": 295,
+      "failures": 0
+    },
+    "host_pids": [],
+    "remaining_steps": [],
+    "event": "summary",
+    "at_ns": 8539618467180
+  },
+  "frame_chain_us": {
+    "copy_in_host": {
+      "count": 15,
+      "min": 0,
+      "p50": 0,
+      "p95": 0,
+      "max": 0
+    },
+    "host_ready_to_app_intake": {
+      "count": 15,
+      "min": 797,
+      "p50": 977,
+      "p95": 7059,
+      "max": 7059
+    },
+    "note": "callback_ns to ready_ns covers the host Vulkan blit and fence wait; ready_ns to intake_ns covers the SCM_RIGHTS transfer and app dispatch; presentation feedback is not measured here"
+  },
+  "sandbox": [],
+  "x11": [],
+  "snapshots": [],
+  "verdict": {
+    "page_presented": "MEASURED",
+    "x11_connection_absent": "NOT_EXECUTED",
+    "sandbox": "NOT_EXECUTED",
+    "steps": {
+      "resize": "MEASURED",
+      "scale": "MEASURED"
+    },
+    "m1_presentation_feedback": "NOT_MEASURED",
+    "x11_session": "NOT_APPLICABLE"
+  }
+}

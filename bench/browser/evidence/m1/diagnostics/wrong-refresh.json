@@ -1,0 +1,17 @@
+{
+  "status": "EXPECTED_REJECTION",
+  "requested_refresh_hz": 120,
+  "actual_condition_hz": 59.951,
+  "capture": {
+    "status": "REJECTED",
+    "errors": [
+      "native refresh 59.950550388017945 Hz differs from the requested 120 Hz condition"
+    ],
+    "native_log": "native.jsonl",
+    "clock": "CLOCK_MONOTONIC",
+    "application_pid": 2058188,
+    "duration_seconds": 3
+  },
+  "native_artifact": "wrong-refresh-native.jsonl.gz",
+  "native_sha256": "f82ba4f8365f17de6beae224e0f678e756f65cfcc97701e4987d1b8b86e5639a"
+}

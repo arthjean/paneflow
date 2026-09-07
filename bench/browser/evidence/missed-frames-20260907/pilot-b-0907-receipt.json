@@ -1,0 +1,23 @@
+{
+  "command": [
+    "python3",
+    "scripts/browser-qualification/display-session.py",
+    "--run",
+    "--primary",
+    "DP-4",
+    "--refresh-hz",
+    "120",
+    "--output",
+    "/home/arthur/.cache/paneflow-cef-tsync/pilot-b-display-0907",
+    "--timeout-seconds",
+    "170",
+    "--",
+    "bun",
+    "/home/arthur/.cache/paneflow-cef-tsync/pilot-b-0907.mjs"
+  ],
+  "started_at": "2026-09-07T06:18:06.851623+00:00",
+  "paused_pid": 9401,
+  "returncode": 1,
+  "build_resumed": true,
+  "finished_at": "2026-09-07T06:19:29.169240+00:00"
+}

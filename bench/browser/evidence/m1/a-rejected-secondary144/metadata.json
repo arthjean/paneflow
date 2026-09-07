@@ -1,0 +1,37 @@
+{
+  "environment": {
+    "machine": "dune",
+    "os": "Fedora Linux 44 (Workstation Edition)",
+    "kernel": "7.1.12-200.fc44.x86_64",
+    "compositor": "GNOME Shell 50.4",
+    "cpu": "AMD Ryzen 7 7800X3D 8-Core Processor",
+    "gpu": "NVIDIA GeForce RTX 4070 Ti SUPER",
+    "driver": "610.57.04",
+    "ram_mib": 31229,
+    "power": "AC desktop; no battery present",
+    "scale": 1,
+    "refresh_hz": 60,
+    "refresh_actual_hz": 59.951,
+    "physical_width": 1920,
+    "physical_height": 1080,
+    "display_backend": "wayland",
+    "monitor": "DP-3 AUS VG27AQML1A at 2560x1440@59.951; viewport1920x1080",
+    "other_display": "DP-4 BNQ EX2710Q at 2560x1440@144.006",
+    "captured_at": "2026-09-05T23:55:35+02:00"
+  },
+  "gpui_commit": "fecc3273ed32643c2ea1b04a74c8780e2c9ffaf8",
+  "fixture_sha256": "83dac6881a8f57843e5e60a5065d1f681f966331b2e4ef14c777bb40572d9121",
+  "scenario": "combined",
+  "instrumentation": "gpui-terminal-wp-presentation-v1",
+  "build_profile": "release",
+  "load_controlled": true,
+  "fixture_failed": false,
+  "build_evidence": {
+    "path": "/home/arthur/dev/paneflow-browser/target/browser-qualification/build-a-capture.json",
+    "sha256": "5b5f577be42438e65ab1179e1767189765b7ccbaff90983bb1c50ecafaa20496"
+  },
+  "build_log": {
+    "path": "/home/arthur/dev/paneflow-browser/target/browser-qualification/release-a-build-capture.log",
+    "sha256": "ad5118b0b88fd9c8a63bf0812fe80615ede8266d8946ff44142625bea9d51198"
+  }
+}

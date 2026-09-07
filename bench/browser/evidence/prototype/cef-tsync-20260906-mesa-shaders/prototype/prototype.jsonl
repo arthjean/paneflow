@@ -1,0 +1,46 @@
+{"schema_version":1,"pid":738763,"source":"cef","url":"http://127.0.0.1:33501/webgl","ozone":"wayland","scenario":"input","clock":"CLOCK_MONOTONIC","profile":"debug","event":"started","at_ns":33173760757938}
+{"backend":"Vulkan","adapter":"AMD Ryzen 7 7800X3D 8-Core Processor (RADV RAPHAEL_MENDOCINO)","driver":"radv","driver_info":"Mesa 26.1.8","vendor_id":4098,"device_id":5710,"scale":1.0,"wayland":true,"display":false,"event":"window","at_ns":33174110872812}
+{"device":"AMD Ryzen 7 7800X3D 8-Core Processor (RADV RAPHAEL_MENDOCINO)","vendor_id":4098,"device_id":5710,"extensions":["VK_KHR_swapchain","VK_KHR_swapchain_mutable_format","VK_EXT_robustness2","VK_KHR_external_memory_fd","VK_EXT_external_memory_dma_buf","VK_EXT_memory_budget","VK_EXT_image_drm_format_modifier","VK_KHR_image_format_list","VK_KHR_bind_memory2","VK_KHR_sampler_ycbcr_conversion","VK_KHR_external_semaphore_fd","VK_EXT_queue_family_foreign"],"render_node":"/dev/dri/renderD128","event":"importer_ready","at_ns":33174110948222}
+{"ozone":"Wayland","gpu":[4098,5710],"render_node":"/dev/dri/renderD128","host_stderr":"/home/arthur/.local/share/paneflow-dev/browser/profiles/3a6db8f9555ba916/host.stderr","event":"host_config","at_ns":33174111049802}
+{"state":"Starting","event":"activate","at_ns":33174111089482}
+{"pid":738879,"availability":"Development","contract_version":1,"presentation":true,"initialized":{"native":"initialized","pid":738879,"sandbox_requested":true,"contract_version":1,"presentation":true,"protocol":{"version":1,"operation":"hello","result":{"Ok":{"type":"capabilities","target":"x86_64-linux","availability":"development","contract_version":1,"terminal_available":true}}},"trace_us":33176166129},"event":"host_ready","at_ns":33176166409508}
+{"command":"create","operation":"OperationId(\"op-1\")","event":"command","at_ns":33176166437728}
+{"state":"Dormant","mounted":false,"event":"state","at_ns":33176174334306}
+{"command":"start","operation":"OperationId(\"op-2\")","event":"command","at_ns":33176174350856}
+{"state":"Hidden","mounted":false,"event":"state","at_ns":33176211283477}
+{"width":1280,"height":800,"scale_percent":100,"generation":1,"event":"present","at_ns":33176211459097}
+{"command":"present","operation":"OperationId(\"op-3\")","event":"command","at_ns":33176211478007}
+{"native":{"native":"created","cef_browser_id":1,"native_window":0,"trace_us":33176217419},"event":"native","at_ns":33176217531525}
+{"state":"Visible","mounted":true,"event":"state","at_ns":33176233848531}
+{"native":{"native":"address","url":"http://127.0.0.1:33501/webgl","trace_us":33176330485},"event":"native","at_ns":33176330627528}
+{"native":{"native":"title","title":"Paneflow browser qualification","trace_us":33176333005},"event":"native","at_ns":33176333101287}
+{"native":{"native":"trace_started","trace_us":33176386355},"event":"native","at_ns":33176386460664}
+{"native":{"native":"loaded","http_status":200,"trace_us":33176427422},"event":"native","at_ns":33176427542024}
+{"native":{"native":"title","title":"Paneflow browser qualification","trace_us":33176427970},"event":"native","at_ns":33176428051004}
+{"native":{"native":"frame_dropped","reason":"stale_geometry","coded":[1,1],"visible":[1,1],"expected":[1280,800],"scale_percent":100,"refreshes":1,"trace_us":33176454016},"event":"native","at_ns":33176454192677}
+{"native":{"native":"pool_created","pool_generation":1,"width":1280,"height":800,"format":"bgra8","modifier":0,"trace_us":33176462476},"event":"native","at_ns":33176462573565}
+{"native":{"native":"frame_source","detail":"cef frame format Bgra8 modifier 0x0 coded 1280x800 visible 1280x800+0+0 planes [PlaneLayout { stride: 5120, offset: 0, size: 4096000 }] fd 278 device AMD Ryzen 7 7800X3D 8-Core Processor (RADV RAPHAEL_MENDOCINO)","trace_us":33176462502},"event":"native","at_ns":33176462594465}
+{"generation":1,"pools":1,"event":"pool_imported","at_ns":33176463079685}
+{"pool_generation":1,"buffer":0,"sequence":1,"callback_ns":33176462289705,"ready_ns":33176467232254,"intake_ns":33176467357384,"copy_us":4942,"transfer_us":125,"event":"frame","at_ns":33176467396284}
+{"pool_generation":1,"buffer":1,"sequence":2,"callback_ns":33176477340532,"ready_ns":33176477716472,"intake_ns":33176477841361,"copy_us":375,"transfer_us":124,"event":"frame","at_ns":33176477864611}
+{"step":"input","event":"step_started","at_ns":33176482527100}
+{"x":640,"y":400,"keys":["a"],"clicks":1,"event":"input_sent","at_ns":33176482555710}
+{"pool_generation":1,"buffer":2,"sequence":3,"callback_ns":33176493481158,"ready_ns":33176493851278,"intake_ns":33176493997297,"copy_us":370,"transfer_us":146,"event":"frame","at_ns":33176494027977}
+{"native":{"native":"fixture_state","state":{"state":"missing","width":1280,"height":800,"scale":1.0,"visibility":"visible","clicks":1,"keys":0,"wheel":0},"trace_us":33176521312},"event":"native","at_ns":33176521390451}
+{"pool_generation":1,"buffer":0,"sequence":4,"callback_ns":33176527061979,"ready_ns":33176527455969,"intake_ns":33176527589659,"copy_us":393,"transfer_us":133,"event":"frame","at_ns":33176527610909}
+{"native":{"native":"fixture_state","state":{"state":"missing","width":1280,"height":800,"scale":1.0,"visibility":"visible","clicks":1,"keys":1,"wheel":0},"trace_us":33176533280},"event":"native","at_ns":33176533385768}
+{"clicks":1,"keys":1,"fixture":{"state":"missing","width":1280,"height":800,"scale":1.0,"visibility":"visible","clicks":1,"keys":1,"wheel":0},"event":"input_observed","at_ns":33176547009895}
+{"step":"input","elapsed_ms":64,"event":"step_completed","at_ns":33176547037995}
+{"pool_generation":1,"buffer":1,"sequence":5,"callback_ns":33176560697591,"ready_ns":33176561087971,"intake_ns":33176561237021,"copy_us":390,"transfer_us":149,"event":"frame","at_ns":33176561264381}
+{"seconds":30,"event":"hold","at_ns":33176563137041}
+{"native":{"native":"title","title":"PANEFLOW_SHADER_CHURN_PASSED:120","trace_us":33176907045},"event":"native","at_ns":33176907152336}
+{"status":"COMPLETED","failure":null,"source":"cef","ozone":"wayland","presented_frames":16,"pool_generations":1,"first_frame_after_ms":2356,"consumer":{"outstanding":1,"pools_created":1,"pools_retired":0,"frames_received":16,"frames_presented":16,"frames_ignored":0,"releases_sent":15,"failures":0},"host_pids":[738879],"remaining_steps":[],"event":"summary","at_ns":33206578899708}
+{"event":"closed","at_ns":33206582804887}
+{"native":{"native":"trace_completed","path":"/home/arthur/.local/share/paneflow-dev/browser/profiles/3a6db8f9555ba916/chromium-trace.json","trace_us":33206693298},"event":"native","at_ns":33206693395070}
+{"native":{"native":"close_requested","trace_us":33206693322},"event":"native","at_ns":33206693419120}
+{"native":{"native":"close_ready","trace_us":33206693345},"event":"native","at_ns":33206693429450}
+{"native":{"native":"closed","trace_us":33206695582},"event":"native","at_ns":33206695677079}
+{"native":{"native":"close_dispatched","trace_us":33206698373},"event":"native","at_ns":33206698459129}
+{"native":{"native":"presentation_stats","stats":{"sent":16,"dropped":15,"failures":0},"trace_us":33206699579},"event":"native","at_ns":33206699680328}
+{"native":{"native":"shutdown","trace_us":33206741787},"event":"native","at_ns":33206741883268}
+{"event":"host_stopped","at_ns":33206779449429}

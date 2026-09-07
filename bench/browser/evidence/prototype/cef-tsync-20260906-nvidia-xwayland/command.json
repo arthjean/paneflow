@@ -1,0 +1,24 @@
+{
+  "command": [
+    "bun",
+    "scripts/browser-qualification/prototype.mjs",
+    "--binary",
+    "/home/arthur/.cache/paneflow-cef-tsync/paneflow-target/debug/paneflow",
+    "--host",
+    "/home/arthur/.cache/paneflow-cef-tsync/paneflow-target/debug/paneflow-browser-host",
+    "--display",
+    "x11",
+    "--scenario",
+    "empty",
+    "--steps",
+    "input,resize,scale,host-loss",
+    "--hold",
+    "1",
+    "--output",
+    "/home/arthur/dev/paneflow-browser/bench/browser/evidence/prototype/cef-tsync-20260906-nvidia-xwayland/prototype"
+  ],
+  "display": ":0",
+  "session_type": "wayland",
+  "native_xorg_qualification": false,
+  "returncode": 1
+}

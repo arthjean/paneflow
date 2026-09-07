@@ -1,0 +1,7 @@
+[749063:749063:0906/201416.823711:ERROR:gpu/vulkan/vulkan_instance.cc:284] Required extension VK_KHR_external_memory_capabilities missing from enumerated Vulkan extensions. vkCreateInstance will may fail but could succeed if extension has been promoted to core.
+[749063:749063:0906/201416.823777:ERROR:gpu/vulkan/vulkan_instance.cc:284] Required extension VK_KHR_external_semaphore_capabilities missing from enumerated Vulkan extensions. vkCreateInstance will may fail but could succeed if extension has been promoted to core.
+[749063:749063:0906/201417.041267:ERROR:gpu/command_buffer/service/gl_utils.cc:430] [.WebGL-0xfd400974200]GL Driver Message (OpenGL, Performance, GL_CLOSE_PATH_NV, High): GPU stall due to ReadPixels
+[749063:749063:0906/201417.048337:ERROR:gpu/command_buffer/service/gl_utils.cc:430] [.WebGL-0xfd400974200]GL Driver Message (OpenGL, Performance, GL_CLOSE_PATH_NV, High): GPU stall due to ReadPixels
+[749063:749063:0906/201417.054076:ERROR:gpu/command_buffer/service/gl_utils.cc:430] [.WebGL-0xfd400974200]GL Driver Message (OpenGL, Performance, GL_CLOSE_PATH_NV, High): GPU stall due to ReadPixels
+[749063:749063:0906/201417.059483:ERROR:gpu/command_buffer/service/gl_utils.cc:430] [.WebGL-0xfd400974200]GL Driver Message (OpenGL, Performance, GL_CLOSE_PATH_NV, High): GPU stall due to ReadPixels (this message will no longer repeat)
+[749004:749004:0906/201447.408560:ERROR:base/process/kill_posix.cc:33] waitpid(749067): No child processes (10)

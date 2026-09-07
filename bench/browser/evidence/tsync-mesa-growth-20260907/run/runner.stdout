@@ -1,0 +1,13 @@
+{
+  "status": "COMPLETED",
+  "verdict": {
+    "page_presented": "MEASURED",
+    "x11_connection_absent": "MEASURED",
+    "sandbox": "MEASURED",
+    "observed_processes_exited": "MEASURED",
+    "steps": {},
+    "m1_presentation_feedback": "NOT_MEASURED",
+    "x11_session": "NOT_APPLICABLE"
+  },
+  "output": "/home/arthur/.cache/paneflow-cef-tsync/mesa-cache-growth-patch8-r4/run/prototype"
+}

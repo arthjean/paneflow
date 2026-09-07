@@ -1,0 +1,16 @@
+{
+  "command": [
+    "timeout",
+    "--kill-after=5",
+    "90",
+    "strace",
+    "-f",
+    "-e",
+    "trace=seccomp,prctl,clone,clone3,sched_setscheduler,gettid,exit_group",
+    "-o",
+    "/home/arthur/dev/paneflow-browser/bench/browser/evidence/prototype/real-policy-tsync-cache-20260906/mesa/scheduler-syscalls.txt",
+    "/home/arthur/.cache/paneflow-cef-tsync/work/chromium/src/out/Release_GN_x64/paneflow_tsync_probe",
+    "--render-node=/dev/dri/renderD128"
+  ],
+  "returncode": 0
+}

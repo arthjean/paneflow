@@ -1,0 +1,20 @@
+{
+  "started_at": "2026-09-06T21:18:03.271242+00:00",
+  "command": [
+    "nice",
+    "-n",
+    "10",
+    "autoninja",
+    "-j",
+    "4",
+    "-l",
+    "10",
+    "-C",
+    "out/Release_GN_x64",
+    "paneflow_sched_policy_probe"
+  ],
+  "cwd": "/home/arthur/.cache/paneflow-cef-tsync/work/chromium/src",
+  "pid": 1686950,
+  "returncode": 0,
+  "finished_at": "2026-09-06T21:18:15.272973+00:00"
+}

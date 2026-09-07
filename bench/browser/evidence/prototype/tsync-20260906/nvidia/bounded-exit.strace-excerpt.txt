@@ -1,0 +1,18 @@
+412924 ioctl(11, _IOC(_IOC_READ|_IOC_WRITE, 0x46, 0x29, 0x10), 0x7ffe75d3c530) = 0
+412924 ioctl(11, _IOC(_IOC_READ|_IOC_WRITE, 0x46, 0x58, 0x30), 0x7ffe75d3c4d0) = 0
+412924 ioctl(11, _IOC(_IOC_READ|_IOC_WRITE, 0x46, 0x29, 0x10), 0x7ffe75d3c510) = 0
+412924 ioctl(11, _IOC(_IOC_READ|_IOC_WRITE, 0x46, 0x4f, 0x20), 0x7ffe75d3c530) = 0
+412924 munmap(0x7fe548cef000, 262144)   = 0
+412924 ioctl(11, _IOC(_IOC_READ|_IOC_WRITE, 0x46, 0x29, 0x10), 0x7ffe75d3c530) = 0
+412924 ioctl(11, _IOC(_IOC_READ|_IOC_WRITE, 0x46, 0x29, 0x10), 0x7ffe75d3c680) = 0
+412924 close(27)                        = 0
+412924 ioctl(3, _IOC(_IOC_READ|_IOC_WRITE, 0x46, 0x29, 0x10), 0x7ffe75d3c690) = 0
+412924 munmap(0x7fe548e8f000, 827392)   = 0
+412924 munmap(0x7fe548f59000, 155648)   = 0
+412924 ioctl(11, _IOC(_IOC_READ|_IOC_WRITE, 0x46, 0x4f, 0x20), 0x7ffe75d3c690) = 0
+412924 munmap(0x7fe552c7f000, 4096)     = 0
+412924 munmap(0x7fe5525cf000, 307200)   = 0
+412924 munmap(0x7fe54930d000, 167936)   = 0
+412924 sendmsg(15, {msg_name=NULL, msg_namelen=0, msg_iov=[{iov_base="l\1\1\1\207\0\0\0\5\0\0\0\177\0\0\0\1\1o\0\25\0\0\0/org/fre"..., iov_len=144}, {iov_base="\202\0\0\0type='signal',sender='org.fr"..., iov_len=135}], msg_iovlen=2, msg_controllen=0, msg_flags=0}, MSG_NOSIGNAL) = 46
+412924 --- SIGSYS {si_signo=SIGSYS, si_code=SYS_SECCOMP, si_call_addr=0x7fe552aa9312, si_syscall=__NR_sendmsg, si_arch=AUDIT_ARCH_X86_64} ---
+412924 +++ killed by SIGSYS (core dumped) +++

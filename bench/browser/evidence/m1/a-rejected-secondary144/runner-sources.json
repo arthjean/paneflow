@@ -1,0 +1,14 @@
+[
+  {
+    "path": "terminal-capture.mjs",
+    "sha256": "263166bee902ee562a96f4fda58f312f89eca3e162991c6cfee54273d768e789"
+  },
+  {
+    "path": "replay-worker.py",
+    "sha256": "a06b277efb1d684836bf1ddeda488388d7ea3d34182bc67965cd3352f31bd766"
+  },
+  {
+    "path": "replay.mjs",
+    "sha256": "ae155aa92636f02b4ed1adc06630db208e75ff7a48995923b538f85803513b1c"
+  }
+]

@@ -1,0 +1,22 @@
+{
+  "started_at": "2026-09-06T15:39:04.634804+00:00",
+  "command": [
+    "nice",
+    "-n",
+    "10",
+    "autoninja",
+    "-j",
+    "6",
+    "-l",
+    "10",
+    "-C",
+    "out/Release_GN_x64",
+    "cefsimple",
+    "chrome_sandbox"
+  ],
+  "cwd": "/home/arthur/.cache/paneflow-cef-tsync/work/chromium/src",
+  "pid": 573211,
+  "returncode": 1,
+  "finished_at": "2026-09-06T15:49:44.643167+00:00",
+  "interruption_reason": "Deliberate SIGINT to resume the same Ninja output with ten jobs; completed objects retained"
+}

@@ -1,0 +1,2 @@
+[273132:273132:0906/131228.320750:ERROR:content/browser/browser_main_loop.cc:277] GLib-GObject: g_object_set_is_valid_property: object class 'GtkSettings' has no property named 'gtk-modules'
+[273233:273233:0906/131229.251870:ERROR:gpu/command_buffer/service/shared_image/shared_image_representation.cc:438] Unable to initialize SkSurface

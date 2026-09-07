@@ -1,0 +1,8 @@
+{"event":"broker_prepared","allowed_path":"/usr/share/vulkan/icd.d/intel_icd.x86_64.json","single_threaded":true}
+{"event":"renderer","renderer":"NVIDIA GeForce RTX 4070 Ti SUPER/PCIe/SSE2","version":"OpenGL ES 3.2 NVIDIA 610.57.04"}
+{"event":"sandbox_initializing","policy":"Chromium kGpu","allow_threads_during_sandbox_init":true,"namespace_layer":false}
+{"event":"sandbox_started","seccomp_bpf_started":true}
+{"event":"access","thread":"main","denied_result":-1,"denied_errno":13,"allowed_result":0,"allowed_errno":0,"seccomp":2}
+{"event":"access","thread":"witness","denied_result":-1,"denied_errno":13,"allowed_result":0,"allowed_errno":0,"seccomp":2}
+{"event":"render_verified","frames_after_filter":120}
+{"event":"completed","verified_frames_after_filter":120,"egl_shutdown":true,"full_cef_qualification":false}

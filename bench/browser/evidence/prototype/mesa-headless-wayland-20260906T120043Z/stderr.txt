@@ -1,0 +1,6 @@
+
+thread 'main' (352274) panicked at native/gpui/checkout/crates/gpui/src/app/entity_map.rs:1116:9:
+Exited with leaked handles:
+Leaked handle for entity paneflow::browser::prototype::PrototypeView (EntityId(1v1)): (export LEAK_BACKTRACE to find allocation site)
+
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace

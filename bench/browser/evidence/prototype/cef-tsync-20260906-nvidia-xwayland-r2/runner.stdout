@@ -1,0 +1,18 @@
+{
+  "status": "FAILED",
+  "verdict": {
+    "page_presented": "FAILED",
+    "x11_connection_absent": "NOT_APPLICABLE",
+    "sandbox": "NOT_EXECUTED",
+    "observed_processes_exited": "NOT_EXECUTED",
+    "steps": {
+      "input": "FAILED",
+      "resize": "FAILED",
+      "scale": "FAILED",
+      "host-loss": "FAILED"
+    },
+    "m1_presentation_feedback": "NOT_MEASURED",
+    "x11_session": "XWAYLAND_CLIENT_ONLY"
+  },
+  "output": "/home/arthur/dev/paneflow-browser/bench/browser/evidence/prototype/cef-tsync-20260906-nvidia-xwayland-r2/prototype"
+}

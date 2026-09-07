@@ -1,0 +1,13 @@
+libEGL warning: pci id for fd 8: 10de:2705, driver (null)
+
+pci id for fd 10: 10de:2705, driver (null)
+pci id for fd 11: 10de:2705, driver (null)
+libEGL warning: egl: failed to create dri2 screen
+libEGL warning: pci id for fd 8: 10de:2705, driver (null)
+
+pci id for fd 10: 10de:2705, driver (null)
+pci id for fd 11: 10de:2705, driver (null)
+libEGL warning: egl: failed to create dri2 screen
+libEGL warning: pci id for fd 8: 10de:2705, driver (null)
+
+EGL init failed (errno=2 egl=0x3001 gl=0x0)

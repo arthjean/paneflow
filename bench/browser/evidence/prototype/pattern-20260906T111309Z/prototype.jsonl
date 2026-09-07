@@ -1,0 +1,38 @@
+{"schema_version":1,"pid":274239,"source":"pattern","url":null,"ozone":"wayland","scenario":"resize,scale","clock":"CLOCK_MONOTONIC","profile":"release","event":"started","at_ns":8534182525123}
+{"backend":"Vulkan","adapter":"NVIDIA GeForce RTX 4070 Ti SUPER","driver":"NVIDIA","driver_info":"610.57.04","vendor_id":4318,"device_id":9989,"scale":1.0,"wayland":true,"display":true,"event":"window","at_ns":8534501291350}
+{"source":"pattern","event":"source_ready","at_ns":8534501298160}
+{"width":1280,"height":800,"source":"pattern","event":"present","at_ns":8534501299740}
+{"generation":1,"pools":1,"event":"pool_imported","at_ns":8534501613340}
+{"pool_generation":1,"buffer":0,"sequence":1,"callback_ns":8534517836234,"ready_ns":8534517836234,"intake_ns":8534521136260,"copy_us":0,"transfer_us":3300,"event":"frame","at_ns":8534521140100}
+{"step":"resize","event":"step_started","at_ns":8534521147420}
+{"width":1088,"height":608,"source":"pattern","event":"present","at_ns":8534521168900}
+{"reason":"pool retired","event":"frame_ignored","at_ns":8534521179100}
+{"generation":2,"pools":1,"event":"pool_imported","at_ns":8534521193910}
+{"pool_generation":2,"buffer":0,"sequence":2,"callback_ns":8534537202274,"ready_ns":8534537202274,"intake_ns":8534538470423,"copy_us":0,"transfer_us":1268,"event":"frame","at_ns":8534538472543}
+{"pool_generations":2,"fixture":null,"presented":{"width":1088,"height":608},"event":"resize_observed","at_ns":8534538478133}
+{"step":"resize","elapsed_ms":17,"event":"step_completed","at_ns":8534538478583}
+{"pool_generation":2,"buffer":1,"sequence":3,"callback_ns":8534554537756,"ready_ns":8534554537756,"intake_ns":8534555566215,"copy_us":0,"transfer_us":1028,"event":"frame","at_ns":8534555568455}
+{"step":"scale","event":"step_started","at_ns":8534555571975}
+{"width":2176,"height":1216,"source":"pattern","event":"present","at_ns":8534555590335}
+{"reason":"pool retired","event":"frame_ignored","at_ns":8534555596625}
+{"generation":3,"pools":1,"event":"pool_imported","at_ns":8534556430315}
+{"pool_generation":3,"buffer":0,"sequence":4,"callback_ns":8534571611799,"ready_ns":8534571611799,"intake_ns":8534578671082,"copy_us":0,"transfer_us":7059,"event":"frame","at_ns":8534578673332}
+{"scale_percent":200,"fixture":null,"event":"scale_observed","at_ns":8534578676772}
+{"width":1088,"height":608,"source":"pattern","event":"present","at_ns":8534578694422}
+{"reason":"pool retired","event":"frame_ignored","at_ns":8534578700432}
+{"generation":4,"pools":1,"event":"pool_imported","at_ns":8534578717922}
+{"pool_generation":4,"buffer":0,"sequence":5,"callback_ns":8534594730836,"ready_ns":8534594730836,"intake_ns":8534595674275,"copy_us":0,"transfer_us":943,"event":"frame","at_ns":8534595676825}
+{"fixture":null,"event":"scale_restored","at_ns":8534595679885}
+{"step":"scale","elapsed_ms":40,"event":"step_completed","at_ns":8534595680725}
+{"seconds":5,"event":"hold","at_ns":8534612679158}
+{"pool_generation":4,"buffer":1,"sequence":30,"callback_ns":8535018315457,"ready_ns":8535018315457,"intake_ns":8535019112856,"copy_us":0,"transfer_us":797,"event":"frame","at_ns":8535019116006}
+{"pool_generation":4,"buffer":1,"sequence":60,"callback_ns":8535526784522,"ready_ns":8535526784522,"intake_ns":8535527761981,"copy_us":0,"transfer_us":977,"event":"frame","at_ns":8535527765591}
+{"pool_generation":4,"buffer":1,"sequence":90,"callback_ns":8536034945967,"ready_ns":8536034945967,"intake_ns":8536035912726,"copy_us":0,"transfer_us":966,"event":"frame","at_ns":8536035915996}
+{"pool_generation":4,"buffer":1,"sequence":120,"callback_ns":8536543372173,"ready_ns":8536543372173,"intake_ns":8536544260472,"copy_us":0,"transfer_us":888,"event":"frame","at_ns":8536544263862}
+{"pool_generation":4,"buffer":1,"sequence":150,"callback_ns":8537051209329,"ready_ns":8537051209329,"intake_ns":8537052141918,"copy_us":0,"transfer_us":932,"event":"frame","at_ns":8537052145298}
+{"pool_generation":4,"buffer":1,"sequence":180,"callback_ns":8537558987545,"ready_ns":8537558987545,"intake_ns":8537559927414,"copy_us":0,"transfer_us":939,"event":"frame","at_ns":8537559930694}
+{"pool_generation":4,"buffer":1,"sequence":210,"callback_ns":8538067052510,"ready_ns":8538067052510,"intake_ns":8538068027549,"copy_us":0,"transfer_us":975,"event":"frame","at_ns":8538068031059}
+{"pool_generation":4,"buffer":1,"sequence":240,"callback_ns":8538579192322,"ready_ns":8538579192322,"intake_ns":8538580620551,"copy_us":0,"transfer_us":1428,"event":"frame","at_ns":8538580623661}
+{"pool_generation":4,"buffer":1,"sequence":270,"callback_ns":8539099532705,"ready_ns":8539099532705,"intake_ns":8539100673634,"copy_us":0,"transfer_us":1140,"event":"frame","at_ns":8539100676974}
+{"pool_generation":4,"buffer":1,"sequence":300,"callback_ns":8539617137581,"ready_ns":8539617137581,"intake_ns":8539618455530,"copy_us":0,"transfer_us":1317,"event":"frame","at_ns":8539618459230}
+{"status":"COMPLETED","failure":null,"source":"pattern","ozone":"wayland","presented_frames":300,"pool_generations":4,"first_frame_after_ms":19,"consumer":{"outstanding":2,"pools_created":4,"pools_retired":3,"frames_received":300,"frames_presented":300,"frames_ignored":0,"releases_sent":295,"failures":0},"host_pids":[],"remaining_steps":[],"event":"summary","at_ns":8539618467180}

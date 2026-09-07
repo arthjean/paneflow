@@ -1,0 +1,61 @@
+{
+  "command": [
+    "timeout",
+    "--kill-after=5",
+    "30",
+    "/home/arthur/.cache/paneflow-cef-tsync/work/chromium/src/out/Release_GN_x64/paneflow_tsync_probe",
+    "--render-node=/dev/dri/renderD128"
+  ],
+  "cases": [
+    {
+      "case": 0,
+      "returncode": -11,
+      "completed_event": false
+    },
+    {
+      "case": 1,
+      "returncode": -11,
+      "completed_event": false
+    },
+    {
+      "case": 2,
+      "returncode": -11,
+      "completed_event": false
+    },
+    {
+      "case": 3,
+      "returncode": -11,
+      "completed_event": false
+    },
+    {
+      "case": 4,
+      "returncode": 0,
+      "completed_event": true
+    },
+    {
+      "case": 5,
+      "returncode": -11,
+      "completed_event": false
+    },
+    {
+      "case": 6,
+      "returncode": -11,
+      "completed_event": false
+    },
+    {
+      "case": 7,
+      "returncode": -11,
+      "completed_event": false
+    },
+    {
+      "case": 8,
+      "returncode": -11,
+      "completed_event": false
+    },
+    {
+      "case": 9,
+      "returncode": -11,
+      "completed_event": false
+    }
+  ]
+}

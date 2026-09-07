@@ -1,0 +1,28 @@
+{
+  "status": "ARCHIVED",
+  "source": "/home/arthur/.cache/paneflow-cef-tsync/mesa-cache-growth-patch8-r4",
+  "excluded": [
+    "workspace runtime copy",
+    "fresh-cache files; inventory retained in cache-growth.json"
+  ],
+  "files": {
+    "binding.json": "b21da27ef3afd33010bcd98fb7c38e2b8a32c73e5e6d4b2490e5e9ca2c591ba2",
+    "thread-observations.jsonl": "9215f5248f36ee0f81719bc3132ee13d8e601496b5541358f665add38690ff99",
+    "runner.stdout": "4ae79699601030b8c8f9ef0e21972e7c8e5b8ab688e473a8ae0b10874ea3b1d8",
+    "runner.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "baseline.json": "c44639425fdf1257f73b6837c0f96f6d40f87d6185d141dc3f44943f44d74fe8",
+    "cache-growth.json": "7d346418e4c141b938de3c02ba9bcf99cbf7616bb9b8e2d9b53cde67b75752bb",
+    "control/release.json": "c8eaedeecac2c22599b63337c97823da254900b864d4a1999a2fa8c26afcb699",
+    "control/armed.json": "021ff2776d4d6220791427ea733f46413aed54994cb33404b6fccaf9aadba9e9",
+    "control/observed.json": "319978f4129e74e163a3385b2b5f8f40ad87516f79d7985adc1e84fc00e53053",
+    "run/mutter.txt": "130da5cb2ba55c1952988f31a407211e34f81d5b46d16db915a0d04cf4f51ec4",
+    "run/runner.stdout": "dfd5a0c2f07c2589a4e218c2073deb1df31e4c138d31a23b565694b6a4c01e6a",
+    "run/runner.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "run/run.json": "4ae79699601030b8c8f9ef0e21972e7c8e5b8ab688e473a8ae0b10874ea3b1d8",
+    "run/prototype/prototype.jsonl": "d4bd2285cd312ac1cf07d4a814d78cb200ac69e66f85dbc1ea135517251e7e83",
+    "run/prototype/native.json": "8560adce08be101707adf993917480a4b42facc1a3da0835c384fe7bbd9bf712",
+    "run/prototype/stderr.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "run/prototype/host-stderr.txt": "12aa9b0e97356c96b5c6b012e3663fff9be075bb6bf6c2a88d8661658ac10059",
+    "run/prototype/stdout.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  }
+}
