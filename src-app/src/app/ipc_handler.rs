@@ -1857,13 +1857,8 @@ impl PaneFlowApp {
         cx: &mut Context<Self>,
     ) {
         if let Some(ws) = self.workspaces.iter_mut().find(|ws| ws.id == ws_id)
-            && let Some(session) = ws.agent_sessions.get_mut(&key)
-            && session.surface_id != Some(sid)
+            && bind_session_surface(&mut ws.agent_sessions, key, sid)
         {
-            session.surface_id = Some(sid);
-            ws.agent_sessions.retain(|k, s| {
-                *k == key || s.surface_id != Some(sid) || s.state != ai_types::AgentState::Errored
-            });
             self.sync_attention(cx);
             self.agent_sessions_changed(cx);
             cx.notify();
@@ -3094,6 +3089,43 @@ fn session_end_fallback_candidate(
 }
 
 const SYNTHETIC_SESSION_PID_BASE: u32 = 0xFFFF_0000;
+
+pub(crate) fn bind_session_surface(
+    sessions: &mut std::collections::HashMap<u32, AgentSession>,
+    key: u32,
+    sid: u64,
+) -> bool {
+    let Some(tool) = sessions.get(&key).map(|session| session.tool) else {
+        return false;
+    };
+    let twins: Vec<u32> = sessions
+        .iter()
+        .filter(|(k, s)| **k != key && s.tool == tool && s.surface_id == Some(sid))
+        .map(|(k, _)| *k)
+        .collect();
+    let bound = sessions
+        .get(&key)
+        .is_some_and(|session| session.surface_id == Some(sid));
+    if bound && twins.is_empty() {
+        return false;
+    }
+    let mut inherited_result = None;
+    for twin in twins {
+        if let Some(twin) = sessions.remove(&twin)
+            && inherited_result.is_none()
+        {
+            inherited_result = twin.last_result;
+        }
+    }
+    let session = sessions
+        .get_mut(&key)
+        .expect("the bound session was just read");
+    session.surface_id = Some(sid);
+    if session.last_result.is_none() {
+        session.last_result = inherited_result;
+    }
+    true
+}
 
 pub(crate) fn upsert_session_state(
     sessions: &mut std::collections::HashMap<u32, AgentSession>,
@@ -4354,6 +4386,47 @@ mod tests {
             Some(100),
             "errored rows are not fallback-removal candidates"
         );
+    }
+
+    #[test]
+    fn binding_a_surface_leaves_one_session_per_tool_on_it() {
+        let mut sessions = std::collections::HashMap::new();
+        let mut by_shell = AgentSession::new(
+            TerminalAgent::ClaudeCode,
+            crate::ai_types::AgentState::Thinking,
+        );
+        by_shell.surface_id = Some(11);
+        by_shell.last_result = Some("earlier turn".into());
+        sessions.insert(4000, by_shell);
+        let by_registry = AgentSession::new(
+            TerminalAgent::ClaudeCode,
+            crate::ai_types::AgentState::Thinking,
+        );
+        sessions.insert(4242, by_registry);
+        let mut codex =
+            AgentSession::new(TerminalAgent::Codex, crate::ai_types::AgentState::Thinking);
+        codex.surface_id = Some(11);
+        sessions.insert(5000, codex);
+
+        assert!(super::bind_session_surface(&mut sessions, 4242, 11));
+        assert!(
+            !sessions.contains_key(&4000),
+            "the shell-keyed twin of the same agent on the same pane is folded away"
+        );
+        assert_eq!(
+            sessions[&4242].last_result.as_deref(),
+            Some("earlier turn"),
+            "what the twin knew is carried over"
+        );
+        assert!(
+            sessions.contains_key(&5000),
+            "another agent on the same pane is not a twin"
+        );
+        assert!(
+            !super::bind_session_surface(&mut sessions, 4242, 11),
+            "rebinding to the same pane with no twin left changes nothing"
+        );
+        assert!(!super::bind_session_surface(&mut sessions, 9, 11));
     }
 
     #[test]
