@@ -77,6 +77,7 @@ pub enum TabTitleSource {
     Prompt,
     Generated,
     Process,
+    Summarized,
     User,
 }
 
@@ -87,12 +88,16 @@ impl TabTitleSource {
             Self::Prompt => 1,
             Self::Generated => 2,
             Self::Process => 3,
-            Self::User => 4,
+            Self::Summarized => 4,
+            Self::User => 5,
         }
     }
 
     fn replaces_itself(self) -> bool {
-        matches!(self, Self::Generated | Self::Process | Self::User)
+        matches!(
+            self,
+            Self::Generated | Self::Process | Self::Summarized | Self::User
+        )
     }
 
     pub fn yields_to(self, incoming: Self) -> bool {
@@ -100,7 +105,10 @@ impl TabTitleSource {
     }
 
     pub fn is_settled(self) -> bool {
-        matches!(self, Self::Generated | Self::Process | Self::User)
+        matches!(
+            self,
+            Self::Generated | Self::Process | Self::Summarized | Self::User
+        )
     }
 }
 
@@ -127,6 +135,7 @@ impl<'de> Deserialize<'de> for TabTitleSource {
                     "prompt" => TabTitleSource::Prompt,
                     "generated" => TabTitleSource::Generated,
                     "process" => TabTitleSource::Process,
+                    "summarized" => TabTitleSource::Summarized,
                     _ => TabTitleSource::User,
                 })
             }

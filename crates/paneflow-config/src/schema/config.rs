@@ -37,6 +37,8 @@ pub struct PaneFlowConfig {
     #[serde(default, deserialize_with = "lenient_value_or_default")]
     pub editor: EditorDisplayConfig,
     #[serde(default, deserialize_with = "lenient_value_or_default")]
+    pub automation: AutomationConfig,
+    #[serde(default, deserialize_with = "lenient_value_or_default")]
     pub line_height: Option<f32>,
     #[serde(default, deserialize_with = "lenient_value_or_default")]
     pub cell_width: Option<f32>,
@@ -137,6 +139,19 @@ impl EditorDisplayConfig {
 
     pub fn scrollbar_enabled(&self) -> bool {
         self.scrollbar.unwrap_or(true)
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AutomationConfig {
+    #[serde(default, deserialize_with = "lenient_value_or_default")]
+    pub tab_auto_naming: Option<bool>,
+}
+
+impl AutomationConfig {
+    pub fn tab_auto_naming_enabled(&self) -> bool {
+        self.tab_auto_naming.unwrap_or(false)
     }
 }
 

@@ -68,6 +68,7 @@ pub struct AgentSession {
     pub last_result: Option<String>,
     pub last_event_at_ms: Option<u64>,
     pub pending_tab_title: Option<String>,
+    pub auto_naming: crate::auto_naming::SessionNaming,
 }
 
 impl AgentSession {
@@ -85,6 +86,7 @@ impl AgentSession {
             last_result: None,
             last_event_at_ms: None,
             pending_tab_title: None,
+            auto_naming: crate::auto_naming::SessionNaming::default(),
         }
     }
 }

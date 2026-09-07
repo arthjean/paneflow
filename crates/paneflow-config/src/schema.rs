@@ -88,6 +88,9 @@ mod tests {
                 minimap: Some(true),
                 scrollbar: Some(false),
             },
+            automation: AutomationConfig {
+                tab_auto_naming: Some(true),
+            },
             line_height: Some(1.0),
             cell_width: Some(1.0),
             font_family: Some("Geist Mono".to_string()),
@@ -170,6 +173,11 @@ mod tests {
             object_keys(&serialized["editor"]),
             object_keys(&schema["properties"]["editor"]["properties"]),
             "EditorDisplayConfig and public JSON Schema drifted"
+        );
+        assert_eq!(
+            object_keys(&serialized["automation"]),
+            object_keys(&schema["properties"]["automation"]["properties"]),
+            "AutomationConfig and public JSON Schema drifted"
         );
         assert_eq!(
             object_keys(&serialized["terminal"]),

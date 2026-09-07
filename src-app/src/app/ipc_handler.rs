@@ -1706,6 +1706,13 @@ impl PaneFlowApp {
                 };
                 cx.update(|cx| {
                     let _ = this.update(cx, |app, cx| {
+                        app.record_auto_naming_message(
+                            ws_id,
+                            session_key,
+                            crate::auto_naming::Role::Assistant,
+                            &text,
+                        );
+                        app.schedule_auto_naming(ws_id, session_key, cx);
                         let filled = if let Some(ws) =
                             app.workspaces.iter_mut().find(|ws| ws.id == ws_id)
                             && let Some(s) = ws.agent_sessions.get_mut(&session_key)
@@ -2684,10 +2691,15 @@ impl PaneFlowApp {
                     ) else {
                         return stale_frame_response();
                     };
-                    if let Some(session) = ws.agent_sessions.get_mut(&key)
-                        && let Some(title) = read_hook_prompt_title(params)
-                    {
-                        session.pending_tab_title = Some(title);
+                    if let Some(session) = ws.agent_sessions.get_mut(&key) {
+                        if let Some(prompt) = read_hook_prompt(params) {
+                            session
+                                .auto_naming
+                                .record(crate::auto_naming::Role::User, prompt);
+                        }
+                        if let Some(title) = read_hook_prompt_title(params) {
+                            session.pending_tab_title = Some(title);
+                        }
                     }
                     cx.notify();
                     self.bind_or_resolve_session_surface(
@@ -2849,6 +2861,17 @@ impl PaneFlowApp {
                             params,
                             cx,
                         );
+                        if let Some(summary) = session_summary.as_deref() {
+                            self.record_auto_naming_message(
+                                workspace_id,
+                                session_key,
+                                crate::auto_naming::Role::Assistant,
+                                summary,
+                            );
+                        }
+                        if transcript_to_read.is_none() {
+                            self.schedule_auto_naming(workspace_id, session_key, cx);
+                        }
                     }
                     if !interrupt_stop {
                         if let Some(path) = transcript_to_read {
@@ -3056,12 +3079,15 @@ fn generated_title_source(
     }
 }
 
-fn read_hook_prompt_title(params: &serde_json::Value) -> Option<String> {
-    let prompt = params
+fn read_hook_prompt(params: &serde_json::Value) -> Option<&str> {
+    params
         .get("hook_payload")?
         .get("prompt")
-        .and_then(serde_json::Value::as_str)?;
-    crate::sidebar_title::tab_title_from_prompt(prompt)
+        .and_then(serde_json::Value::as_str)
+}
+
+fn read_hook_prompt_title(params: &serde_json::Value) -> Option<String> {
+    crate::sidebar_title::tab_title_from_prompt(read_hook_prompt(params)?)
 }
 
 fn read_tool(params: &serde_json::Value) -> Option<crate::agent_launcher::TerminalAgent> {

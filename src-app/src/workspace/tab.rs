@@ -230,6 +230,21 @@ mod tests {
     }
 
     #[test]
+    fn a_summarized_title_outranks_the_live_process_title_and_refreshes_itself() {
+        let mut tab = tab("Codex");
+        assert!(tab.set_title("codex", TabTitleSource::Process));
+        assert!(tab.set_title("Worktree deflake", TabTitleSource::Summarized));
+        assert!(!tab.set_title("Anything the CLI says", TabTitleSource::Process));
+        assert!(tab.set_title("Windows worktree port", TabTitleSource::Summarized));
+        assert_eq!(tab.title(), "Windows worktree port");
+        assert!(tab.title_is_settled());
+
+        assert!(tab.set_title("sprint 3", TabTitleSource::User));
+        assert!(!tab.set_title("Anything the model says", TabTitleSource::Summarized));
+        assert_eq!(tab.title(), "sprint 3");
+    }
+
+    #[test]
     fn reset_hands_the_tab_back_to_the_process_title() {
         let mut tab = tab("Claude Code");
         assert!(tab.set_title("sprint 3", TabTitleSource::User));
@@ -248,6 +263,7 @@ mod tests {
             TabTitleSource::Prompt,
             TabTitleSource::Generated,
             TabTitleSource::Process,
+            TabTitleSource::Summarized,
         ] {
             assert!(!tab.set_title("something else", source), "{source:?}");
         }

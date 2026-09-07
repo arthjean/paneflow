@@ -139,6 +139,18 @@
         }
       }
     },
+    "automation": {
+      "type": ["object", "null"],
+      "description": "Background work Paneflow may run on your behalf after an agent turn.",
+      "additionalProperties": false,
+      "properties": {
+        "tab_auto_naming": {
+          "type": ["boolean", "null"],
+          "description": "After an agent turn, summarize the conversation into a 2-5 word tab name with the agent's own CLI (claude -p, codex exec, opencode run, pi --print), tools disabled. A name you typed is never replaced. Default false.",
+          "default": false
+        }
+      }
+    },
     "window_decorations": {
       "type": ["string", "null"],
       "description": "Window decoration mode. 'client' = client-side decorations (custom title bar). 'server' = server-side decorations (compositor-drawn). Read once at startup; changes require a restart.",

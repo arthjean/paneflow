@@ -15,6 +15,18 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
   alone. The first-prompt placeholder and the resume-picker title still cover
   a CLI that never writes a terminal title. A name you typed always wins;
   "Reset name" hands the tab straight back to the current terminal title.
+- Tabs can name themselves from the conversation. With `automation.tab_auto_naming`
+  on in `paneflow.json` (off by default), the end of an agent turn summarizes the
+  session's opening request and last few exchanges into a 2-5 word title, in
+  the conversation's language, and refreshes it when the topic moves. The
+  summary runs through the agent's own CLI with tools, MCP servers, and session
+  persistence off (`claude -p`, `codex exec`, `opencode run`, `pi --print`), so
+  it uses the account you already signed in with; a session on another agent
+  borrows the first of those that is installed. At most one call per session
+  every three minutes, only when the conversation grew, never blocking the
+  agent, and silently skipped when no summarizer is on `PATH` or the call
+  times out. A summarized name outranks the live terminal title; a name you
+  typed outranks both, and "Reset name" reopens the tab.
 - The Changes dock can take the whole cockpit. A maximize button in the dock's
   tab strip (or `Cmd/Ctrl+Shift+F`) hides the pane grid so Changes, an editor
   tab, or a dock terminal gets the full window width; the same control or
