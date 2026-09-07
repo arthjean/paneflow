@@ -117,6 +117,9 @@ impl PaneFlowApp {
         if !nested && key == "reduce_motion" {
             crate::ui_primitives::set_reduce_motion(self.cached_config.reduce_motion_enabled());
         }
+        if !nested && key == "editor" {
+            self.apply_editor_display(cx);
+        }
         if default_shell_changed {
             self.handle_default_shell_changed(cx);
         }

@@ -731,6 +731,11 @@ impl PaneFlowApp {
         }
 
         crate::ui_primitives::set_reduce_motion(app.cached_config.reduce_motion_enabled());
+        crate::app::diff_dock::code::controls::set_editor_display(
+            crate::app::diff_dock::code::controls::EditorDisplay::from_config(
+                &app.cached_config.editor,
+            ),
+        );
 
         app
     }

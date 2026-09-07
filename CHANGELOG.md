@@ -14,6 +14,9 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
   behind the dock is untouched and its focus comes back on restore. Opening
   the dock and maximizing it both animate like the sidebar slide, and
   `reduce_motion` settles them instantly.
+- The editor's Minimap and Scrollbar toggles are a user setting. They live in
+  the new `editor` section of `paneflow.json`, apply to every open file at
+  once, and survive a restart.
 - Panes have tabs. A tab bar under the pane header lists the pane's
   surfaces as squircle chips carrying the same title as the header, with a
   `+` chip that opens a new terminal in the active tab's directory. Tabs

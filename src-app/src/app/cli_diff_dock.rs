@@ -5,6 +5,7 @@ use gpui::{
 };
 
 use crate::PaneFlowApp;
+use crate::app::diff_dock::code::controls::{EditorDisplay, editor_display, set_editor_display};
 use crate::app::diff_dock::{DIFF_DOCK_PANEL_MIN_WIDTH, DiffDockData, DiffDockTab};
 
 const PANE_GRID_RESERVED_WIDTH: f32 =
@@ -207,6 +208,25 @@ impl PaneFlowApp {
             None
         };
         cx.notify();
+    }
+
+    pub(crate) fn apply_editor_display(&mut self, cx: &mut Context<Self>) {
+        let display = EditorDisplay::from_config(&self.cached_config.editor);
+        if display == editor_display() {
+            return;
+        }
+        set_editor_display(display);
+        let live = self.diff_dock.diff_tabs.iter();
+        let parked = self
+            .diff_dock
+            .parked
+            .values()
+            .flat_map(|slot| slot.tabs.iter());
+        for tab in live.chain(parked) {
+            if let DiffDockTab::File(view) = tab {
+                view.update(cx, |_, cx| cx.notify());
+            }
+        }
     }
 
     pub(crate) fn diff_dock_fills_panel(&self) -> bool {
