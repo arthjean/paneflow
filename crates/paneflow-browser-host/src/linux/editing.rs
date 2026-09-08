@@ -1,4 +1,6 @@
+use paneflow_browser_protocol::BrowserId;
 use std::cell::RefCell;
+use std::collections::BTreeMap;
 
 use cef::*;
 use paneflow_browser_protocol::{clipboard_text_is_valid, EditAction};
@@ -19,11 +21,21 @@ struct PendingMenu {
 }
 
 thread_local! {
-    static EDITING: RefCell<Editing> = RefCell::new(Editing::default());
+    static EDITING: RefCell<BTreeMap<BrowserId, RefCell<Editing>>> = const { RefCell::new(BTreeMap::new()) };
+}
+
+fn with<R: Default>(f: impl FnOnce(&RefCell<Editing>) -> R) -> R {
+    let Some(document) = super::current_document() else {
+        return R::default();
+    };
+    EDITING.with(|state| {
+        let mut state = state.borrow_mut();
+        f(state.entry(document.browser).or_default())
+    })
 }
 
 fn cancel_menu() {
-    let pending = EDITING.with(|state| state.borrow_mut().menu.take());
+    let pending = with(|state| state.borrow_mut().menu.take());
     if let Some(pending) = pending {
         pending.callback.cancel();
         emit(json!({ "native": "context_menu_closed", "request": pending.request }));
@@ -36,7 +48,7 @@ pub(super) fn clear() {
 }
 
 pub(super) fn choose(request: u64, command: Option<i32>) {
-    let pending = EDITING.with(|state| {
+    let pending = with(|state| {
         let mut state = state.borrow_mut();
         if state
             .menu
@@ -91,6 +103,7 @@ wrap_context_menu_handler! {
 
     impl ContextMenuHandler {
         fn run_context_menu(&self, _browser: Option<&mut Browser>, _frame: Option<&mut Frame>, params: Option<&mut ContextMenuParams>, model: Option<&mut MenuModel>, callback: Option<&mut RunContextMenuCallback>) -> i32 {
+            let _context = super::Context::browser(_browser.as_deref());
             cancel_menu();
             let Some(callback) = callback else { return 0; };
             let (Some(params), Some(model)) = (params, model) else {
@@ -114,7 +127,7 @@ wrap_context_menu_handler! {
                 callback.cancel();
                 return 1;
             }
-            let request = EDITING.with(|state| {
+            let request = with(|state| {
                 let mut state = state.borrow_mut();
                 state.next_menu = state.next_menu.wrapping_add(1).max(1);
                 let request = state.next_menu;

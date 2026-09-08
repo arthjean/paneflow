@@ -1,4 +1,6 @@
+use paneflow_browser_protocol::BrowserId;
 use std::cell::RefCell;
+use std::collections::BTreeMap;
 
 use cef::*;
 use paneflow_browser_protocol::clipboard_text_is_valid;
@@ -28,7 +30,17 @@ struct Pending {
 }
 
 thread_local! {
-    static CLIPBOARD: RefCell<Clipboard> = RefCell::new(Clipboard::default());
+    static CLIPBOARD: RefCell<BTreeMap<BrowserId, RefCell<Clipboard>>> = const { RefCell::new(BTreeMap::new()) };
+}
+
+fn with<R: Default>(f: impl FnOnce(&RefCell<Clipboard>) -> R) -> R {
+    let Some(document) = super::current_document() else {
+        return R::default();
+    };
+    CLIPBOARD.with(|state| {
+        let mut state = state.borrow_mut();
+        f(state.entry(document.browser).or_default())
+    })
 }
 
 fn send(frame: &Frame, token: u64, action: i32) {
@@ -44,7 +56,7 @@ fn send(frame: &Frame, token: u64, action: i32) {
 }
 
 pub(super) fn clear() {
-    let pending = CLIPBOARD.with(|state| state.borrow_mut().pending.take());
+    let pending = with(|state| state.borrow_mut().pending.take());
     if let Some(pending) = pending {
         if let Some(frame) = current_browser()
             .and_then(|browser| browser.frame_by_identifier(Some(&pending.frame.as_str().into())))
@@ -56,7 +68,7 @@ pub(super) fn clear() {
 
 pub(super) fn request(frame: &Frame, request: u64, cut: bool) {
     clear();
-    let token = CLIPBOARD.with(|state| {
+    let token = with(|state| {
         let mut state = state.borrow_mut();
         state.sequence = state.sequence.wrapping_add(1).max(1);
         let token = state.sequence;
@@ -106,7 +118,7 @@ pub(super) fn receive(
     if !clipboard_text_is_valid(&text) || text.is_empty() {
         return 1;
     }
-    let request = CLIPBOARD.with(|state| {
+    let request = with(|state| {
         let mut state = state.borrow_mut();
         let pending = state.pending.as_mut()?;
         if pending.token != token || pending.frame != identifier || pending.delivered {
@@ -122,7 +134,7 @@ pub(super) fn receive(
 }
 
 pub(super) fn written(request: u64) {
-    let pending = CLIPBOARD.with(|state| {
+    let pending = with(|state| {
         let mut state = state.borrow_mut();
         if state
             .pending

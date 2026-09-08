@@ -1,4 +1,5 @@
 use std::cell::RefCell;
+use std::collections::BTreeMap;
 
 use cef::*;
 use paneflow_browser_protocol::clipboard_text_is_valid;
@@ -15,7 +16,7 @@ struct Snapshot {
 }
 
 thread_local! {
-    static CUT_SNAPSHOT: RefCell<Option<(u64, Snapshot)>> = const { RefCell::new(None) };
+    static CUT_SNAPSHOT: RefCell<BTreeMap<String, (u64, Snapshot)>> = const { RefCell::new(BTreeMap::new()) };
 }
 
 fn focused_path(document: &Domdocument) -> Option<Vec<usize>> {
@@ -68,22 +69,23 @@ wrap_domvisitor! {
 
     impl Domvisitor {
         fn visit(&self, document: Option<&mut Domdocument>) {
+            let frame_key = CefString::from(&self.frame.identifier()).to_string();
             let current = document.and_then(|document| snapshot(&self.frame, document));
             if self.action == COMMIT {
-                let saved = CUT_SNAPSHOT.with(|state| state.borrow_mut().take());
+                let saved = CUT_SNAPSHOT.with(|state| state.borrow_mut().remove(&frame_key));
                 if saved.zip(current).is_some_and(|((token, saved), current)| token == self.token && saved == current) {
                     self.frame.cut();
                 }
                 return;
             }
-            let _ = CUT_SNAPSHOT.with(|state| state.borrow_mut().take());
+            let _ = CUT_SNAPSHOT.with(|state| state.borrow_mut().remove(&frame_key));
             let Some(current) = current else { return; };
             let Some(mut message) = process_message_create(Some(&RESPONSE.into())) else { return; };
             let Some(args) = message.argument_list() else { return; };
             args.set_string(0, Some(&self.token.to_string().as_str().into()));
             args.set_string(1, Some(&current.text.as_str().into()));
             if self.action == CUT {
-                CUT_SNAPSHOT.with(|state| *state.borrow_mut() = Some((self.token, current)));
+                CUT_SNAPSHOT.with(|state| state.borrow_mut().insert(frame_key, (self.token, current)));
             }
             self.frame.send_process_message(ProcessId::BROWSER, Some(&mut message));
         }
@@ -94,8 +96,18 @@ wrap_render_process_handler! {
     pub(super) struct ClipboardRenderer;
 
     impl RenderProcessHandler {
+        fn on_browser_created(&self, browser: Option<&mut Browser>, extra_info: Option<&mut DictionaryValue>) {
+            if let Some(browser) = browser { super::devtools_renderer::created(browser, extra_info.as_deref()); }
+        }
+        fn on_browser_destroyed(&self, browser: Option<&mut Browser>) {
+            if let Some(browser) = browser { super::devtools_renderer::destroyed(browser); }
+        }
+        fn on_context_created(&self, browser: Option<&mut Browser>, frame: Option<&mut Frame>, context: Option<&mut V8Context>) {
+            if let (Some(browser), Some(frame), Some(context)) = (browser, frame, context) { super::devtools_renderer::context(browser, frame, context); }
+        }
+
         fn on_context_released(&self, _browser: Option<&mut Browser>, _frame: Option<&mut Frame>, _context: Option<&mut V8Context>) {
-            let _ = CUT_SNAPSHOT.with(|state| state.borrow_mut().take());
+            if let Some(frame) = _frame { let frame_key = CefString::from(&frame.identifier()).to_string(); CUT_SNAPSHOT.with(|state| state.borrow_mut().remove(&frame_key)); }
         }
 
         fn on_process_message_received(&self, browser: Option<&mut Browser>, frame: Option<&mut Frame>, source: ProcessId, message: Option<&mut ProcessMessage>) -> i32 {
@@ -108,7 +120,8 @@ wrap_render_process_handler! {
             if action == CANCEL {
                 CUT_SNAPSHOT.with(|state| {
                     let mut state = state.borrow_mut();
-                    if state.as_ref().is_some_and(|(saved, _)| *saved == token) { *state = None; }
+                    let frame_key = CefString::from(&frame.identifier()).to_string();
+                    if state.get(&frame_key).is_some_and(|(saved, _)| *saved == token) { state.remove(&frame_key); }
                 });
                 return 1;
             }

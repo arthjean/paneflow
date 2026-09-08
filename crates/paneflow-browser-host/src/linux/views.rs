@@ -68,7 +68,10 @@ wrap_browser_view_delegate! {
 
 pub(super) fn create(url: &str) -> bool {
     let view = browser_view_create(
-        Some(&mut super::handlers::WitnessClient::new()),
+        Some(&mut super::handlers::WitnessClient::new(
+            super::current_document(),
+            false,
+        )),
         Some(&url.into()),
         Some(&BrowserSettings::default()),
         None,
@@ -82,7 +85,11 @@ pub(super) fn create(url: &str) -> bool {
     let created = window.is_some();
     HOST.with(|state| {
         if let Some(host) = state.borrow_mut().as_mut() {
-            host.window = window;
+            if let Some(document) = super::current_document() {
+                if let Some(page) = host.pages.get_mut(&document.browser) {
+                    page.window = window;
+                }
+            }
         }
     });
     created

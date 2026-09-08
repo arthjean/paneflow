@@ -1,41 +1,112 @@
 use std::cell::RefCell;
+use std::collections::BTreeMap;
 use std::io;
+use std::os::fd::FromRawFd;
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 
 use cef::*;
 use paneflow_browser_protocol::{
-    read_message, write_message, BrowserError, Command, Controller, Envelope, Event, FrameChannel,
-    HistoryDirection, Owner, CONTRACT_VERSION, FRAME_CHANNEL_ENV,
+    read_message, write_message, BrowserError, BrowserId, Command, Controller, Document, Envelope,
+    Event, FrameChannel, HistoryDirection, Owner, ProfileId, CONTRACT_VERSION, FRAME_CHANNEL_ENV,
 };
 use serde_json::json;
 
+mod accessibility;
 mod clipboard;
 mod clipboard_renderer;
+mod devtools;
+mod devtools_renderer;
 mod editing;
+mod external_protocols;
 mod gpu_contract;
 mod handlers;
+mod permissions;
 mod presentation;
+mod transfers;
 mod views;
 mod vulkan;
+mod web_interactions;
 
 const GPU_ENV: &str = "PANEFLOW_BROWSER_GPU";
 
 struct Host {
     controller: Controller,
     owner: Owner,
+    profile: Option<ProfileId>,
     receiver: Receiver<Option<Envelope>>,
-    browser: Option<Browser>,
-    window: Option<Window>,
+    pages: BTreeMap<BrowserId, Page>,
     origin: String,
     closing: bool,
     tracing: bool,
     trace_path: PathBuf,
 }
 
+struct Page {
+    document: Document,
+    browser: Option<Browser>,
+    window: Option<Window>,
+    pending_close: Option<Envelope>,
+    inspected: Option<Document>,
+    expected_navigation: Option<String>,
+    creating: bool,
+}
+
 thread_local! {
+    #[cfg(test)]
+    static EMITTED: RefCell<Vec<serde_json::Value>> = const { RefCell::new(Vec::new()) };
+    static CONTROL_OUTPUT: RefCell<Option<std::fs::File>> = const { RefCell::new(None) };
+    static CONTEXT: RefCell<Option<Document>> = const { RefCell::new(None) };
     static HOST: RefCell<Option<Host>> = const { RefCell::new(None) };
+}
+
+fn current_document() -> Option<Document> {
+    CONTEXT.with(|state| state.borrow().clone())
+}
+
+fn latest_document(document: &Document) -> Option<Document> {
+    HOST.with(|state| {
+        state
+            .borrow()
+            .as_ref()?
+            .pages
+            .get(&document.browser)
+            .map(|page| page.document.clone())
+    })
+}
+
+struct Context(Option<Document>);
+
+impl Context {
+    fn enter(document: Option<Document>) -> Self {
+        Self(CONTEXT.with(|state| state.replace(document)))
+    }
+
+    fn browser(browser: Option<&Browser>) -> Self {
+        let document = browser.and_then(|browser| {
+            HOST.with(|state| {
+                state
+                    .borrow()
+                    .as_ref()?
+                    .pages
+                    .values()
+                    .find(|page| {
+                        page.browser
+                            .as_ref()
+                            .is_some_and(|candidate| candidate.identifier() == browser.identifier())
+                    })
+                    .map(|page| page.document.clone())
+            })
+        });
+        Self::enter(document)
+    }
+}
+
+impl Drop for Context {
+    fn drop(&mut self) {
+        CONTEXT.with(|state| state.replace(self.0.take()));
+    }
 }
 
 pub(crate) fn now_ns() -> u64 {
@@ -59,29 +130,49 @@ fn parse_gpu(value: &str) -> Result<(u32, u32), String> {
 }
 
 fn emit(mut value: serde_json::Value) {
+    if value.get("native").is_some() && value.get("document").is_none() {
+        if let Some(document) = current_document() {
+            value["document"] = json!(document);
+        }
+    }
     value["trace_us"] = json!(now_from_system_trace_time());
-    if write_message(&mut io::stdout().lock(), &value).is_err() {
+    #[cfg(test)]
+    EMITTED.with(|events| events.borrow_mut().push(value.clone()));
+    let result = CONTROL_OUTPUT.with(|output| {
+        let mut output = output.borrow_mut();
+        match output.as_mut() {
+            Some(output) => write_message(output, &value),
+            None => write_message(&mut io::stdout().lock(), &value),
+        }
+    });
+    if result.is_err() {
         quit_message_loop();
     }
 }
 
 fn close_browser() {
     editing::clear();
-    let browser = HOST.with(|state| {
+    let browsers = HOST.with(|state| {
         let mut state = state.borrow_mut();
-        state.as_mut().and_then(|host| {
-            host.closing = true;
-            host.browser.clone()
-        })
+        state
+            .as_mut()
+            .map(|host| {
+                host.closing = true;
+                host.pages
+                    .values()
+                    .filter_map(|page| page.browser.clone())
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default()
     });
-    if let Some(browser) = browser {
-        if let Some(host) = browser.host() {
-            emit(json!({ "native": "close_requested" }));
-            host.close_browser(1);
-            emit(json!({ "native": "close_dispatched" }));
-        }
-    } else {
+    if browsers.is_empty() {
         quit_message_loop();
+    }
+    for browser in browsers {
+        let _context = Context::browser(Some(&browser));
+        if let Some(host) = browser.host() {
+            host.close_browser(1);
+        }
     }
 }
 
@@ -133,28 +224,191 @@ wrap_end_tracing_callback! {
     }
 }
 
+fn cancel_close(document: &Document) {
+    let pending = HOST.with(|state| {
+        state
+            .borrow_mut()
+            .as_mut()?
+            .pages
+            .get_mut(&document.browser)?
+            .pending_close
+            .take()
+    });
+    if let Some(pending) = pending {
+        emit(
+            json!({ "protocol": paneflow_browser_protocol::Reply { version: CONTRACT_VERSION, operation: pending.operation, result: Err(BrowserError::Unavailable) } }),
+        );
+        emit(json!({ "native": "close_cancelled", "document": document }));
+    }
+}
+
+fn renderer_crashed() {
+    if let Some(document) = current_document() {
+        devtools::invalidate_target(&document.browser);
+    }
+    let result = HOST.with(|state| {
+        let mut state = state.borrow_mut();
+        let host = state.as_mut()?;
+        let document = current_document()?;
+        Some(host.controller.renderer_crashed(&document.owner, &document))
+    });
+    if let Some(Ok(Event::State { session })) = result {
+        HOST.with(|state| {
+            if let Some(host) = state.borrow_mut().as_mut() {
+                if let Some(page) = host.pages.get_mut(&session.document.browser) {
+                    page.document = session.document.clone();
+                }
+            }
+        });
+        CONTEXT.with(|state| state.replace(Some(session.document.clone())));
+        let _ = presentation::set_document(&session.document);
+        if let Ok(operation) = "native-crash".to_owned().try_into() {
+            emit(
+                json!({ "protocol": paneflow_browser_protocol::Reply { version: CONTRACT_VERSION, operation, result: Ok(Event::State { session }) } }),
+            );
+        }
+    }
+}
+
+fn accept_navigation(url: &str) -> bool {
+    let reply = HOST.with(|state| {
+        let mut state = state.borrow_mut();
+        let host = state.as_mut()?;
+        let document = current_document()?;
+        let page = host.pages.get_mut(&document.browser)?;
+        if page.expected_navigation.take().as_deref() == Some(url) {
+            return None;
+        }
+        let message = Envelope {
+            version: CONTRACT_VERSION,
+            operation: "native-navigation".to_owned().try_into().ok()?,
+            command: Command::Navigate {
+                document: document.clone(),
+                url: url.to_owned(),
+            },
+        };
+        Some(host.controller.dispatch(&document.owner, message))
+    });
+    let Some(reply) = reply else {
+        return true;
+    };
+    let Ok(Event::State { session }) = &reply.result else {
+        return false;
+    };
+    if let Some(document) = current_document() {
+        devtools::invalidate_target(&document.browser);
+    }
+    HOST.with(|state| {
+        if let Some(host) = state.borrow_mut().as_mut() {
+            if let Some(page) = host.pages.get_mut(&session.document.browser) {
+                page.document = session.document.clone();
+            }
+        }
+    });
+    CONTEXT.with(|state| state.replace(Some(session.document.clone())));
+    if presentation::set_document(&session.document).is_err() {
+        return false;
+    }
+    emit(json!({ "protocol": reply }));
+    true
+}
+
 fn process(message: Envelope) {
     let command = message.command.clone();
+    let document = serde_json::to_value(&command)
+        .ok()
+        .and_then(|value| value.get("document").cloned())
+        .and_then(|value| serde_json::from_value::<Document>(value).ok());
+    let _context = Context::enter(document.clone());
+    let caller = match &command {
+        Command::Create { owner, .. } => Some(owner.clone()),
+        _ => document.as_ref().map(|document| document.owner.clone()),
+    };
+    let has_browser = current_browser().is_some();
+    let creating = HOST.with(|state| {
+        state
+            .borrow()
+            .as_ref()
+            .and_then(|host| host.pages.get(&document.as_ref()?.browser))
+            .is_some_and(|page| page.creating)
+    });
+    if matches!(command, Command::Close { .. }) && (has_browser || creating) {
+        let validation = HOST.with(|state| {
+            let mut state = state.borrow_mut();
+            let host = state.as_mut()?;
+            let document = document.as_ref()?;
+            if document.owner.workspace != host.owner.workspace {
+                return None;
+            }
+            let check = Envelope {
+                command: Command::State {
+                    document: document.clone(),
+                },
+                ..message.clone()
+            };
+            let reply = host.controller.dispatch(&document.owner, check);
+            if reply.result.is_err() {
+                return Some(Err(reply));
+            }
+            let page = host.pages.get_mut(&document.browser)?;
+            page.pending_close = Some(message.clone());
+            Some(Ok(()))
+        });
+        match validation {
+            Some(Ok(())) => {
+                if let Some(host) = current_browser().and_then(|browser| browser.host()) {
+                    host.close_browser(0);
+                }
+                return;
+            }
+            Some(Err(reply)) => {
+                emit(json!({ "protocol": reply }));
+                return;
+            }
+            None => (),
+        }
+    }
     let reply = HOST.with(|state| {
         let mut state = state.borrow_mut();
         state.as_mut().map(|host| {
             let permitted = match &command {
-                Command::Create { url, .. } => url.starts_with(&format!("{}/", host.origin)),
+                Command::Create { url, profile, .. } => {
+                    host.profile
+                        .as_ref()
+                        .is_none_or(|current| current == profile)
+                        && (presentation::active() || url.starts_with(&format!("{}/", host.origin)))
+                }
                 Command::Navigate { url, .. } => {
                     presentation::active() || url.starts_with(&format!("{}/", host.origin))
                 }
                 Command::Capabilities | Command::State { .. } | Command::Close { .. } => true,
-                Command::Start { .. } => host.browser.is_none(),
+                Command::CreateDevTools { .. } => has_browser && presentation::active(),
+                Command::Start { .. } => !has_browser,
                 Command::Present { .. } | Command::Input { .. } => presentation::active(),
                 Command::History { .. }
                 | Command::Reload { .. }
                 | Command::Stop { .. }
                 | Command::Zoom { .. }
-                | Command::Mute { .. } => host.browser.is_some(),
+                | Command::Mute { .. }
+                | Command::Find { .. }
+                | Command::StopFinding { .. } => has_browser,
                 _ => false,
             };
-            if permitted && !host.closing {
-                host.controller.dispatch(&host.owner, message)
+            if permitted
+                && !host.closing
+                && caller
+                    .as_ref()
+                    .is_none_or(|caller| caller.workspace == host.owner.workspace)
+            {
+                let reply = host
+                    .controller
+                    .dispatch(caller.as_ref().unwrap_or(&host.owner), message);
+                if reply.result.is_ok() {
+                    if let Command::Create { profile, .. } = &command {
+                        host.profile = Some(profile.clone());
+                    }
+                }
+                reply
             } else {
                 paneflow_browser_protocol::Reply {
                     version: CONTRACT_VERSION,
@@ -168,15 +422,83 @@ fn process(message: Envelope) {
         return;
     };
     if let Ok(Event::State { session, .. }) = &reply.result {
-        presentation::set_document(&session.document);
+        if let Some(previous) = document
+            .as_ref()
+            .filter(|previous| **previous != session.document)
+        {
+            devtools::invalidate_target(&previous.browser);
+        }
+        CONTEXT.with(|state| state.replace(Some(session.document.clone())));
+        HOST.with(|state| {
+            if let Some(host) = state.borrow_mut().as_mut() {
+                host.pages
+                    .entry(session.document.browser.clone())
+                    .and_modify(|page| {
+                        page.document = session.document.clone();
+                        if matches!(command, Command::Navigate { .. }) {
+                            page.expected_navigation = Some(session.url.clone());
+                        }
+                    })
+                    .or_insert(Page {
+                        document: session.document.clone(),
+                        browser: None,
+                        window: None,
+                        pending_close: None,
+                        inspected: None,
+                        expected_navigation: Some(session.url.clone()),
+                        creating: false,
+                    });
+            }
+        });
+        if let Command::CreateDevTools { document, .. } = &command {
+            HOST.with(|state| {
+                if let Some(host) = state.borrow_mut().as_mut() {
+                    if let Some(page) = host.pages.get_mut(&session.document.browser) {
+                        page.inspected = Some(document.clone());
+                    }
+                }
+            });
+        }
+        if let Err(error) = presentation::set_document(&session.document) {
+            emit(json!({ "native": "create_failed", "reason": error }));
+            emit(
+                json!({ "protocol": paneflow_browser_protocol::Reply { version: CONTRACT_VERSION, operation: reply.operation.clone(), result: Err(BrowserError::Unavailable) } }),
+            );
+            return;
+        }
         if matches!(command, Command::Start { .. }) {
+            HOST.with(|state| {
+                if let Some(page) = state
+                    .borrow_mut()
+                    .as_mut()
+                    .and_then(|host| host.pages.get_mut(&session.document.browser))
+                {
+                    page.creating = true;
+                }
+            });
             emit(json!({ "native": "browser_create_requested", "document": session.document }));
-            let created = if presentation::active() {
+            let inspected = HOST.with(|state| {
+                let state = state.borrow();
+                let host = state.as_ref()?;
+                host.pages.get(&session.document.browser)?.inspected.clone()
+            });
+            let created = if inspected.is_some() {
+                presentation::create(devtools::URL)
+            } else if presentation::active() {
                 presentation::create(&session.url)
             } else {
                 views::create(&session.url)
             };
             if !created {
+                HOST.with(|state| {
+                    if let Some(page) = state
+                        .borrow_mut()
+                        .as_mut()
+                        .and_then(|host| host.pages.get_mut(&session.document.browser))
+                    {
+                        page.creating = false;
+                    }
+                });
                 reply.result = Err(BrowserError::Unavailable);
             }
         }
@@ -187,8 +509,47 @@ fn process(message: Envelope) {
     }
     if succeeded {
         match command {
-            Command::Close { .. } => close(),
+            Command::Close { .. } => {
+                editing::clear();
+                presentation::unmount();
+                if let Some(host) = current_browser().and_then(|browser| browser.host()) {
+                    host.close_browser(1);
+                }
+                if current_browser().is_none() {
+                    presentation::detach();
+                    emit(json!({ "native": "closed" }));
+                }
+                if !presentation::active() {
+                    close();
+                }
+            }
+            Command::Find {
+                text,
+                forward,
+                find_next,
+                ..
+            } => {
+                if let Some(host) = current_browser().and_then(|browser| browser.host()) {
+                    host.find(
+                        Some(&text.as_str().into()),
+                        i32::from(forward),
+                        0,
+                        i32::from(find_next),
+                    );
+                }
+            }
+            Command::StopFinding { .. } => {
+                if let Some(host) = current_browser().and_then(|browser| browser.host()) {
+                    host.stop_finding(1);
+                }
+            }
             Command::Navigate { url, .. } => {
+                if let Some(document) = current_document() {
+                    web_interactions::clear(&document);
+                    permissions::clear(&document);
+                    transfers::clear(&document);
+                    external_protocols::clear(&document);
+                }
                 if let Some(frame) = current_browser().and_then(|browser| browser.main_frame()) {
                     frame.load_url(Some(&url.as_str().into()));
                 }
@@ -235,10 +596,13 @@ fn process(message: Envelope) {
 
 fn current_browser() -> Option<Browser> {
     HOST.with(|state| {
-        state
-            .borrow()
-            .as_ref()
-            .and_then(|host| host.browser.clone())
+        state.borrow().as_ref().and_then(|host| {
+            let document = current_document()?;
+            let page = host.pages.get(&document.browser)?;
+            (page.document == document)
+                .then(|| page.browser.clone())
+                .flatten()
+        })
     })
 }
 
@@ -263,7 +627,21 @@ wrap_task! {
     }
 }
 
+fn isolate_control_output() -> io::Result<()> {
+    let fd = unsafe { libc::fcntl(libc::STDOUT_FILENO, libc::F_DUPFD_CLOEXEC, 3) };
+    if fd < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    let output = unsafe { std::fs::File::from_raw_fd(fd) };
+    if unsafe { libc::dup2(libc::STDERR_FILENO, libc::STDOUT_FILENO) } < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    CONTROL_OUTPUT.with(|slot| slot.replace(Some(output)));
+    Ok(())
+}
+
 pub fn run() -> Result<(), Box<dyn std::error::Error>> {
+    isolate_control_output()?;
     if std::env::args().any(|arg| crate::qualification::sandbox_disabled(&arg)) {
         return Err("sandbox disabling switches are forbidden".into());
     }
@@ -342,9 +720,9 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
         *state.borrow_mut() = Some(Host {
             controller,
             owner,
+            profile: None,
             receiver,
-            browser: None,
-            window: None,
+            pages: BTreeMap::new(),
             origin,
             closing: false,
             tracing: false,
@@ -439,4 +817,236 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     shutdown();
     emit(json!({ "native": "shutdown" }));
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn document_context_restores_nested_page_identity() {
+        let owner = Owner {
+            workspace: "workspace".to_owned().try_into().unwrap(),
+            session: "session".to_owned().try_into().unwrap(),
+        };
+        let first = Document {
+            owner: owner.clone(),
+            browser: "first".to_owned().try_into().unwrap(),
+            generation: 1,
+        };
+        let second = Document {
+            owner,
+            browser: "second".to_owned().try_into().unwrap(),
+            generation: 2,
+        };
+        assert_eq!(current_document(), None);
+        {
+            let _first = Context::enter(Some(first.clone()));
+            assert_eq!(current_document(), Some(first.clone()));
+            {
+                let _second = Context::enter(Some(second.clone()));
+                assert_eq!(current_document(), Some(second));
+            }
+            assert_eq!(current_document(), Some(first));
+        }
+        assert_eq!(current_document(), None);
+    }
+    #[test]
+    fn control_and_native_navigation_share_one_generation_transition_per_page() {
+        let owner = Owner {
+            workspace: "workspace".to_owned().try_into().unwrap(),
+            session: "session".to_owned().try_into().unwrap(),
+        };
+        let mut controller = Controller::new("test".to_owned(), true);
+        let mut pages = BTreeMap::new();
+        let mut documents = Vec::new();
+        for name in ["first", "second"] {
+            let command = Command::Create {
+                owner: owner.clone(),
+                browser: name.to_owned().try_into().unwrap(),
+                profile: "profile".to_owned().try_into().unwrap(),
+                url: "http://127.0.0.1:3000/start".to_owned(),
+                title: String::new(),
+            };
+            let reply = controller.dispatch(
+                &owner,
+                Envelope {
+                    version: CONTRACT_VERSION,
+                    operation: name.to_owned().try_into().unwrap(),
+                    command,
+                },
+            );
+            let session = match reply.result {
+                Ok(Event::State { session }) => Some(session),
+                _ => None,
+            }
+            .expect("expected session");
+            controller.dispatch(
+                &owner,
+                Envelope {
+                    version: CONTRACT_VERSION,
+                    operation: name.to_owned().try_into().unwrap(),
+                    command: Command::Start {
+                        document: session.document.clone(),
+                    },
+                },
+            );
+            documents.push(session.document.clone());
+            pages.insert(
+                session.document.browser.clone(),
+                Page {
+                    document: session.document,
+                    browser: None,
+                    window: None,
+                    pending_close: None,
+                    inspected: None,
+                    expected_navigation: Some(session.url),
+                    creating: false,
+                },
+            );
+        }
+        let (_, receiver) = mpsc::channel();
+        HOST.with(|state| {
+            state.replace(Some(Host {
+                controller,
+                owner: owner.clone(),
+                profile: Some("profile".to_owned().try_into().unwrap()),
+                receiver,
+                pages,
+                origin: "http://127.0.0.1:3000".to_owned(),
+                closing: false,
+                tracing: false,
+                trace_path: PathBuf::new(),
+            }))
+        });
+        {
+            let _context = Context::enter(Some(documents[0].clone()));
+            assert!(accept_navigation("http://127.0.0.1:3000/start"));
+            assert_eq!(latest_document(&documents[0]), Some(documents[0].clone()));
+            process(Envelope {
+                version: CONTRACT_VERSION,
+                operation: "navigate".to_owned().try_into().unwrap(),
+                command: Command::Navigate {
+                    document: documents[0].clone(),
+                    url: "http://127.0.0.1:3000/next".to_owned(),
+                },
+            });
+            let controlled = latest_document(&documents[0]).unwrap();
+            assert_ne!(controlled.generation, documents[0].generation);
+            let _native_context = Context::enter(Some(controlled.clone()));
+            assert!(accept_navigation("http://127.0.0.1:3000/next"));
+            assert_eq!(latest_document(&documents[0]), Some(controlled.clone()));
+            assert!(accept_navigation("http://127.0.0.1:3000/link"));
+            assert_ne!(
+                latest_document(&documents[0]).unwrap().generation,
+                controlled.generation
+            );
+            assert_eq!(latest_document(&documents[1]), Some(documents[1].clone()));
+        }
+        HOST.with(|state| state.borrow_mut().take());
+    }
+    #[test]
+    fn devtools_without_native_target_preserves_profile_pages() {
+        let owner = Owner {
+            workspace: "workspace".to_owned().try_into().unwrap(),
+            session: "session".to_owned().try_into().unwrap(),
+        };
+        let profile: ProfileId = "profile".to_owned().try_into().unwrap();
+        let mut controller = Controller::new("test".to_owned(), true);
+        let reply = controller.dispatch(
+            &owner,
+            Envelope {
+                version: CONTRACT_VERSION,
+                operation: "create".to_owned().try_into().unwrap(),
+                command: Command::Create {
+                    owner: owner.clone(),
+                    browser: "page".to_owned().try_into().unwrap(),
+                    profile: profile.clone(),
+                    url: "https://example.com/".to_owned(),
+                    title: String::new(),
+                },
+            },
+        );
+        let session = match reply.result {
+            Ok(Event::State { session }) => Some(session),
+            _ => None,
+        }
+        .expect("created target");
+        let document = session.document.clone();
+        let mut pages = BTreeMap::new();
+        pages.insert(
+            document.browser.clone(),
+            Page {
+                document: document.clone(),
+                browser: None,
+                window: None,
+                pending_close: None,
+                inspected: None,
+                expected_navigation: Some(session.url),
+                creating: false,
+            },
+        );
+        let (_, receiver) = mpsc::channel();
+        HOST.with(|state| {
+            state.replace(Some(Host {
+                controller,
+                owner: owner.clone(),
+                profile: Some(profile.clone()),
+                receiver,
+                pages,
+                origin: "https://example.com".to_owned(),
+                closing: false,
+                tracing: false,
+                trace_path: PathBuf::new(),
+            }))
+        });
+        EMITTED.with(|events| events.borrow_mut().clear());
+        process(Envelope {
+            version: CONTRACT_VERSION,
+            operation: "inspect".to_owned().try_into().unwrap(),
+            command: Command::CreateDevTools {
+                document: document.clone(),
+                browser: "inspector".to_owned().try_into().unwrap(),
+            },
+        });
+        HOST.with(|state| {
+            let mut state = state.borrow_mut();
+            let host = state.as_mut().expect("host preserved");
+            assert!(!host.closing);
+            assert_eq!(host.profile, Some(profile));
+            assert_eq!(host.pages.len(), 1);
+            assert_eq!(
+                host.pages
+                    .get(&document.browser)
+                    .expect("target preserved")
+                    .document,
+                document
+            );
+            let unknown = host.controller.dispatch(
+                &owner,
+                Envelope {
+                    version: CONTRACT_VERSION,
+                    operation: "state".to_owned().try_into().unwrap(),
+                    command: Command::State {
+                        document: Document {
+                            browser: "inspector".to_owned().try_into().unwrap(),
+                            ..document.clone()
+                        },
+                    },
+                },
+            );
+            assert_eq!(unknown.result.unwrap_err(), BrowserError::UnknownIdentity);
+        });
+        EMITTED.with(|events| {
+            let events = events.borrow();
+            let reply = events
+                .iter()
+                .find_map(|event| event.get("protocol"))
+                .expect("explicit protocol reply");
+            let reply: paneflow_browser_protocol::Reply =
+                serde_json::from_value(reply.clone()).unwrap();
+            assert_eq!(reply.result.unwrap_err(), BrowserError::Unavailable);
+        });
+        HOST.with(|state| state.borrow_mut().take());
+    }
 }

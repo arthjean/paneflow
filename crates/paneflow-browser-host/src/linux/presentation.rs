@@ -1,12 +1,13 @@
 use std::cell::RefCell;
+use std::collections::BTreeMap;
 use std::os::fd::{AsFd, BorrowedFd};
 use std::time::Instant;
 
 use cef::*;
 use paneflow_browser_protocol::{
-    BrowserPresentation, BufferLayout, DirtyRect, Document, FrameAck, FrameChannel, FrameFailure,
-    FrameFormat, FrameLedger, FrameMessage, InputEvent, KeyKind, MouseButton, PlaneLayout,
-    POOL_BUFFERS, RETIRE_DEADLINE_MS,
+    BrowserId, BrowserPresentation, BufferLayout, DirtyRect, Document, FrameAck, FrameChannel,
+    FrameFailure, FrameFormat, FrameLedger, FrameMessage, InputEvent, KeyKind, MouseButton,
+    PlaneLayout, POOL_BUFFERS, RETIRE_DEADLINE_MS,
 };
 use serde_json::json;
 
@@ -32,6 +33,32 @@ enum Slot {
     Consumer,
 }
 
+#[derive(Clone, Copy)]
+enum Retirement {
+    Active,
+    AwaitingReplacement,
+    AwaitingRelease(Instant),
+}
+
+impl Retirement {
+    fn superseded(self) -> bool {
+        !matches!(self, Self::Active)
+    }
+
+    fn begin_release(&mut self, now: Instant) -> bool {
+        if matches!(self, Self::AwaitingReplacement) {
+            *self = Self::AwaitingRelease(now);
+            true
+        } else {
+            false
+        }
+    }
+
+    fn expired(self, now: Instant) -> bool {
+        matches!(self, Self::AwaitingRelease(since) if now.duration_since(since).as_millis() >= u128::from(RETIRE_DEADLINE_MS))
+    }
+}
+
 struct Pool {
     document: Document,
     generation: u64,
@@ -40,7 +67,7 @@ struct Pool {
     format: FrameFormat,
     images: Vec<ExportedImage>,
     slots: [Slot; POOL_BUFFERS as usize],
-    retiring_since: Option<Instant>,
+    retirement: Retirement,
     initialization_started: Option<Instant>,
     painted: bool,
 }
@@ -86,12 +113,16 @@ struct Presenter {
     disabled: Option<FrameFailure>,
 }
 
+type PresentationConfig = (FrameChannel, Option<(u32, u32)>);
+
 thread_local! {
-    static PRESENTER: RefCell<Option<Presenter>> = const { RefCell::new(None) };
+    static PRESENTERS: RefCell<BTreeMap<BrowserId, Presenter>> = const { RefCell::new(BTreeMap::new()) };
+    static CONFIG: RefCell<Option<PresentationConfig>> = const { RefCell::new(None) };
 }
 
 fn with<R>(f: impl FnOnce(&mut Presenter) -> R) -> Option<R> {
-    PRESENTER.with(|state| state.borrow_mut().as_mut().map(f))
+    let document = super::current_document()?;
+    PRESENTERS.with(|state| state.borrow_mut().get_mut(&document.browser).map(f))
 }
 
 fn diagnostic_trace_enabled() -> bool {
@@ -104,7 +135,7 @@ fn diagnostic_trace_enabled() -> bool {
 }
 
 pub(super) fn active() -> bool {
-    PRESENTER.with(|state| state.borrow().is_some())
+    CONFIG.with(|state| state.borrow().is_some())
 }
 
 pub(super) fn install(
@@ -112,7 +143,7 @@ pub(super) fn install(
     expected_gpu: Option<(u32, u32)>,
 ) -> Result<(), String> {
     let engine = Engine::new(expected_gpu).map_err(|failure| failure.detail)?;
-    let gpu_contract = GpuContract::load((engine.vendor_id, engine.device_id))?;
+    GpuContract::load((engine.vendor_id, engine.device_id))?;
     let reader = channel.try_clone().map_err(|error| error.to_string())?;
     emit(json!({
         "native": "presentation_ready",
@@ -121,36 +152,7 @@ pub(super) fn install(
         "device_id": engine.device_id,
         "extensions": engine.extensions,
     }));
-    PRESENTER.with(|state| {
-        *state.borrow_mut() = Some(Presenter {
-            channel,
-            engine,
-            gpu_contract,
-            document: None,
-            view: View {
-                width: 1,
-                height: 1,
-                scale_percent: 100,
-                visible: false,
-            },
-            pools: Vec::new(),
-            ledger: FrameLedger::default(),
-            sequence: 0,
-            pool_generation: 0,
-            sent: 0,
-            dropped: 0,
-            failures: 0,
-            stale_refreshes: 0,
-            resize_epoch: 0,
-            base_frame_rate: DEFAULT_WINDOWLESS_FRAME_RATE,
-            resize_rate_until: None,
-            resize_pending: false,
-            resize_capture_pending: false,
-            slot_starved: false,
-            pool_starved: false,
-            disabled: None,
-        });
-    });
+    CONFIG.with(|state| state.replace(Some((channel, expected_gpu))));
     std::thread::spawn(move || loop {
         match reader.recv::<FrameAck>() {
             Ok(Some((ack, fds))) if fds.is_empty() => {
@@ -172,17 +174,14 @@ pub(super) fn install(
 }
 
 pub(super) fn uninstall() {
-    let presenter = PRESENTER.with(|state| state.borrow_mut().take());
-    if let Some(mut presenter) = presenter {
-        emit(
-            json!({ "native": "presentation_stats", "stats": { "sent": presenter.sent, "dropped": presenter.dropped, "failures": presenter.failures } }),
-        );
+    let presenters = PRESENTERS.with(|state| std::mem::take(&mut *state.borrow_mut()));
+    CONFIG.with(|state| state.borrow_mut().take());
+    for (_, mut presenter) in presenters {
         if presenter.pools.iter().any(|pool| {
             pool.initialization_started.is_some() || pool.slots.contains(&Slot::Consumer)
         }) {
-            emit(json!({ "native": "presentation_quarantined", "pools": presenter.pools.len() }));
             std::mem::forget(presenter);
-            return;
+            continue;
         }
         for pool in std::mem::take(&mut presenter.pools) {
             destroy_pool(&presenter.engine, pool);
@@ -220,30 +219,81 @@ pub(super) fn create(url: &str) -> bool {
         runtime_style: RuntimeStyle::ALLOY,
         ..Default::default()
     };
+    let mut extra = dictionary_value_create();
+    if super::devtools::is_inspector() {
+        if let Some(info) = extra.as_mut() {
+            info.set_bool(Some(&super::devtools::MARKER.into()), 1);
+        }
+    }
     browser_host_create_browser(
         Some(&window_info),
-        Some(&mut super::handlers::WitnessClient::new()),
+        Some(&mut super::handlers::WitnessClient::new(
+            super::current_document(),
+            super::devtools::is_inspector(),
+        )),
         Some(&url.into()),
         Some(&BrowserSettings {
             windowless_frame_rate: frame_rate,
             ..Default::default()
         }),
-        None,
+        extra.as_mut(),
         None,
     ) == 1
 }
 
 fn browser_host() -> Option<BrowserHost> {
-    HOST.with(|state| {
-        state
-            .borrow()
-            .as_ref()
-            .and_then(|host| host.browser.as_ref())
-            .and_then(|browser| browser.host())
-    })
+    super::current_browser().and_then(|browser| browser.host())
 }
 
-pub(super) fn set_document(document: &Document) {
+pub(super) fn set_document(document: &Document) -> Result<(), String> {
+    if !active() {
+        return Ok(());
+    }
+    if !PRESENTERS.with(|state| state.borrow().contains_key(&document.browser)) {
+        let (channel, expected_gpu) = CONFIG.with(|state| {
+            let state = state.borrow();
+            let (channel, expected_gpu) = state.as_ref().ok_or("missing frame channel")?;
+            Ok::<_, String>((
+                channel.try_clone().map_err(|error| error.to_string())?,
+                *expected_gpu,
+            ))
+        })?;
+        let engine = Engine::new(expected_gpu).map_err(|failure| failure.detail)?;
+        let gpu_contract = GpuContract::load((engine.vendor_id, engine.device_id))?;
+        let presenter = Presenter {
+            channel,
+            engine,
+            gpu_contract,
+            document: None,
+            view: View {
+                width: 1,
+                height: 1,
+                scale_percent: 100,
+                visible: false,
+            },
+            pools: Vec::new(),
+            ledger: FrameLedger::default(),
+            sequence: 0,
+            pool_generation: 0,
+            sent: 0,
+            dropped: 0,
+            failures: 0,
+            stale_refreshes: 0,
+            resize_epoch: 0,
+            base_frame_rate: DEFAULT_WINDOWLESS_FRAME_RATE,
+            resize_rate_until: None,
+            resize_pending: false,
+            resize_capture_pending: false,
+            slot_starved: false,
+            pool_starved: false,
+            disabled: None,
+        };
+        PRESENTERS.with(|state| {
+            state
+                .borrow_mut()
+                .insert(document.browser.clone(), presenter)
+        });
+    }
     let retire = with(|presenter| {
         let changed = presenter
             .document
@@ -255,6 +305,28 @@ pub(super) fn set_document(document: &Document) {
     .unwrap_or(false);
     if retire {
         retire_active_pool();
+    }
+    Ok(())
+}
+
+pub(super) fn detach() {
+    unmount();
+    retire_active_pool();
+    reap();
+}
+
+fn reap() {
+    let alive = HOST.with(|state| {
+        state
+            .borrow()
+            .as_ref()
+            .and_then(|host| host.pages.get(&super::current_document()?.browser))
+            .is_some_and(|page| page.browser.is_some())
+    });
+    if !alive && with(|presenter| presenter.pools.is_empty()) == Some(true) {
+        if let Some(document) = super::current_document() {
+            PRESENTERS.with(|state| state.borrow_mut().remove(&document.browser));
+        }
     }
 }
 
@@ -315,7 +387,11 @@ pub(super) fn present(presentation: &BrowserPresentation) {
             emit(
                 json!({"native":"capture_frame_rate", "fps":120, "at_ns":now_ns(), "reason":"resize"}),
             );
-            post_delayed_task(ThreadId::UI, Some(&mut RestoreFrameRate::new()), 200);
+            post_delayed_task(
+                ThreadId::UI,
+                Some(&mut RestoreFrameRate::new(super::current_document())),
+                200,
+            );
         }
         host.was_resized();
         if let Some(Err(failure)) = with(Presenter::prepare_resize_pool) {
@@ -324,7 +400,14 @@ pub(super) fn present(presentation: &BrowserPresentation) {
         }
         if std::env::var("PANEFLOW_BROWSER_RESIZE_REFRESH").as_deref() != Ok("0") {
             if let Some(epoch) = with(|presenter| presenter.resize_epoch) {
-                post_task(ThreadId::UI, Some(&mut ResizeRefreshTask::new(epoch, 16)));
+                post_task(
+                    ThreadId::UI,
+                    Some(&mut ResizeRefreshTask::new(
+                        super::current_document(),
+                        epoch,
+                        16,
+                    )),
+                );
             }
         }
     }
@@ -419,6 +502,19 @@ pub(super) fn input(input: InputEvent) {
         InputEvent::ClipboardWritten { request } => super::clipboard::written(request),
         InputEvent::Edit { action, request } => super::editing::edit(action, request),
         InputEvent::ContextMenu { request, command } => super::editing::choose(request, command),
+        response @ InputEvent::WebResponse { .. } => {
+            if let Some(document) = super::current_document() {
+                super::web_interactions::handle(&document, &response);
+                super::permissions::handle(&document, &response);
+                super::external_protocols::handle(&document, &response);
+            }
+        }
+        response @ (InputEvent::TransferResponse { .. } | InputEvent::CancelDownload { .. }) => {
+            if let Some(document) = super::current_document() {
+                super::transfers::handle(&document, &response);
+            }
+        }
+        InputEvent::DropFiles { paths, x, y } => super::transfers::drop_files(&host, &paths, x, y),
         InputEvent::CaptureLost => host.send_capture_lost_event(),
         InputEvent::ImeComposition {
             text,
@@ -571,10 +667,31 @@ impl Presenter {
     fn active_index(&self) -> Option<usize> {
         self.pools
             .iter()
-            .position(|pool| pool.retiring_since.is_none())
+            .position(|pool| !pool.retirement.superseded())
     }
 
     fn retire_active(&mut self) -> Vec<FrameMessage> {
+        let messages = self.retire(false);
+        self.begin_retirements();
+        messages
+    }
+
+    fn begin_retirements(&mut self) {
+        for pool in &mut self.pools {
+            if pool.retirement.begin_release(Instant::now()) {
+                post_delayed_task(
+                    ThreadId::UI,
+                    Some(&mut RetireCheck::new(
+                        super::current_document(),
+                        pool.generation,
+                    )),
+                    RETIRE_DEADLINE_MS as i64,
+                );
+            }
+        }
+    }
+
+    fn retire(&mut self, await_replacement: bool) -> Vec<FrameMessage> {
         let mut messages = Vec::new();
         let Some(index) = self.active_index() else {
             return messages;
@@ -582,12 +699,18 @@ impl Presenter {
         let outstanding = self.pools[index].initialization_started.is_some()
             || self.pools[index].slots.contains(&Slot::Consumer);
         if outstanding {
-            self.pools[index].retiring_since = Some(Instant::now());
-            post_delayed_task(
-                ThreadId::UI,
-                Some(&mut RetireCheck::new(self.pools[index].generation)),
-                RETIRE_DEADLINE_MS as i64,
-            );
+            self.pools[index].retirement = Retirement::AwaitingReplacement;
+            if !await_replacement {
+                self.pools[index].retirement.begin_release(Instant::now());
+                post_delayed_task(
+                    ThreadId::UI,
+                    Some(&mut RetireCheck::new(
+                        super::current_document(),
+                        self.pools[index].generation,
+                    )),
+                    RETIRE_DEADLINE_MS as i64,
+                );
+            }
         } else {
             let pool = self.pools.remove(index);
             messages.push(FrameMessage::PoolRetired {
@@ -601,7 +724,7 @@ impl Presenter {
     }
 
     fn prepare_resize_pool(&mut self) -> Result<(), Failure> {
-        if !self.view.visible || self.disabled.is_some() || self.pools.len() >= 2 {
+        if !self.view.visible || self.disabled.is_some() {
             return Ok(());
         }
         let Some(document) = self.document.clone() else {
@@ -612,12 +735,20 @@ impl Presenter {
         };
         let (width, height) = self.view.physical_size();
         let pool = &self.pools[index];
-        if !pool.painted || (pool.width, pool.height) == (width, height) {
+        if (pool.width, pool.height) == (width, height) {
             return Ok(());
         }
         let format = pool.format;
-        for message in self.retire_active() {
+        let painted = pool.painted;
+        if painted && self.pools.len() >= 2 {
+            return Ok(());
+        }
+        for message in self.retire(painted) {
             self.channel.send(&message, &[]).map_err(channel_failure)?;
+        }
+        if self.pools.len() >= 2 {
+            self.pool_starved = true;
+            return Ok(());
         }
         self.create_pool(document, width, height, format)?;
         if std::env::var_os("PANEFLOW_BROWSER_BENCH").is_some() {
@@ -712,7 +843,7 @@ impl Presenter {
             if self.stale_refreshes <= STALE_REFRESH_LIMIT {
                 post_delayed_task(
                     ThreadId::UI,
-                    Some(&mut RefreshTask::new(0)),
+                    Some(&mut RefreshTask::new(super::current_document(), 0)),
                     STALE_REFRESH_DELAY_MS,
                 );
             }
@@ -737,7 +868,7 @@ impl Presenter {
                 self.pool_starved = true;
                 return Ok(None);
             }
-            for message in self.retire_active() {
+            for message in self.retire(true) {
                 self.channel.send(&message, &[]).map_err(channel_failure)?;
             }
             self.create_pool(document.clone(), width, height, format)?;
@@ -866,6 +997,7 @@ impl Presenter {
                 .then_some(info.extra.capture_counter),
             dirty,
         };
+        self.begin_retirements();
         Ok(Some(frame))
     }
 
@@ -944,13 +1076,13 @@ impl Presenter {
             format,
             images,
             slots: [Slot::Free; POOL_BUFFERS as usize],
-            retiring_since: None,
+            retirement: Retirement::Active,
             initialization_started: Some(Instant::now()),
             painted: false,
         });
         post_delayed_task(
             ThreadId::UI,
-            Some(&mut RetireCheck::new(generation)),
+            Some(&mut RetireCheck::new(super::current_document(), generation)),
             POOL_INITIALIZATION_TIMEOUT_MS as i64,
         );
         Ok(())
@@ -982,19 +1114,31 @@ impl Presenter {
         emit(
             json!({ "native": "pool_ready_accepted", "document": document, "pool_generation": generation, "received_ns": received_ns, "at_ns": now_ns() }),
         );
-        if self.pools[index].retiring_since.is_some() {
+        if self.pools[index].retirement.superseded() {
             let pool = self.pools.remove(index);
             let message = FrameMessage::PoolRetired {
                 document: pool.document.clone(),
                 pool_generation: generation,
             };
             destroy_pool(&self.engine, pool);
+            if std::mem::take(&mut self.pool_starved) {
+                post_task(
+                    ThreadId::UI,
+                    Some(&mut RefreshTask::new(
+                        super::current_document(),
+                        POOL_REFRESH_RETRIES,
+                    )),
+                );
+            }
             return vec![message];
         }
         if self.view.visible && self.document.as_ref() == Some(&document) {
             post_task(
                 ThreadId::UI,
-                Some(&mut RefreshTask::new(POOL_REFRESH_RETRIES)),
+                Some(&mut RefreshTask::new(
+                    super::current_document(),
+                    POOL_REFRESH_RETRIES,
+                )),
             );
         }
         Vec::new()
@@ -1113,9 +1257,13 @@ impl Presenter {
                 "total_slots": pool.slots.len(),
             }));
         }
-        let retiring = self.pools[index].retiring_since.is_some();
+        let retiring = self.pools[index].retirement.superseded();
         if !retiring && std::mem::take(&mut self.slot_starved) {
-            post_delayed_task(ThreadId::UI, Some(&mut RefreshTask::new(0)), 0);
+            post_delayed_task(
+                ThreadId::UI,
+                Some(&mut RefreshTask::new(super::current_document(), 0)),
+                0,
+            );
         }
         let drained = self.pools[index]
             .slots
@@ -1129,7 +1277,11 @@ impl Presenter {
             });
             destroy_pool(&self.engine, pool);
             if std::mem::take(&mut self.pool_starved) {
-                post_delayed_task(ThreadId::UI, Some(&mut RefreshTask::new(0)), 0);
+                post_delayed_task(
+                    ThreadId::UI,
+                    Some(&mut RefreshTask::new(super::current_document(), 0)),
+                    0,
+                );
             }
         }
         messages
@@ -1142,9 +1294,7 @@ impl Presenter {
         let initialization_expired = pool.initialization_started.is_some_and(|since| {
             since.elapsed().as_millis() >= u128::from(POOL_INITIALIZATION_TIMEOUT_MS)
         });
-        let retirement_expired = pool
-            .retiring_since
-            .is_some_and(|since| since.elapsed().as_millis() >= u128::from(RETIRE_DEADLINE_MS));
+        let retirement_expired = pool.retirement.expired(Instant::now());
         if self.disabled.is_some() || (!initialization_expired && !retirement_expired) {
             return Vec::new();
         }
@@ -1202,21 +1352,25 @@ wrap_task! {
 
     impl Task {
         fn execute(&self) {
+            let document = match &self.ack { FrameAck::Release { document, .. } | FrameAck::PoolReady { document, .. } | FrameAck::PoolRejected { document, .. } => document.clone() };
+            let _context = super::Context::enter(Some(document));
             let ack = self.ack.clone();
             if let Some(messages) = with(|presenter| presenter.release(ack, self.received_ns)) {
                 for message in messages {
                     send(message, &[]);
                 }
             }
+            reap();
         }
     }
 }
 
 wrap_task! {
-    struct RestoreFrameRate;
+    struct RestoreFrameRate { document: Option<Document> }
 
     impl Task {
         fn execute(&self) {
+            let _context = super::Context::enter(self.document.clone());
             let rate = with(|presenter| {
                 let deadline = presenter.resize_rate_until?;
                 if presenter.view.visible && presenter.disabled.is_none() && Instant::now() < deadline {
@@ -1231,7 +1385,7 @@ wrap_task! {
                     emit(json!({"native":"capture_frame_rate", "fps":rate, "at_ns":now_ns(), "reason":"restore"}));
                 }
             } else if with(|presenter| presenter.resize_rate_until.is_some()) == Some(true) {
-                post_delayed_task(ThreadId::UI, Some(&mut RestoreFrameRate::new()), 50);
+                post_delayed_task(ThreadId::UI, Some(&mut RestoreFrameRate::new(super::current_document())), 50);
             }
         }
     }
@@ -1239,20 +1393,23 @@ wrap_task! {
 
 wrap_task! {
     struct ResizeRefreshTask {
+        document: Option<Document>,
         epoch: u64,
         remaining: u32,
     }
 
     impl Task {
         fn execute(&self) {
+            let _context = super::Context::enter(self.document.clone());
             let needed = with(|presenter| presenter.resize_epoch == self.epoch
                 && presenter.resize_pending && presenter.view.visible
                 && presenter.disabled.is_none()).unwrap_or(false);
+            if std::env::var_os("PANEFLOW_BROWSER_BENCH").is_some() { emit(json!({ "native": "resize_refresh", "needed": needed, "browser_available": browser_host().is_some(), "remaining": self.remaining, "epoch": self.epoch })); }
             if !needed || self.remaining == 0 { return; }
             if let Some(host) = browser_host() {
                 host.invalidate(PaintElementType::VIEW);
                 post_delayed_task(ThreadId::UI,
-                    Some(&mut ResizeRefreshTask::new(self.epoch, self.remaining - 1)), 16);
+                    Some(&mut ResizeRefreshTask::new(super::current_document(), self.epoch, self.remaining - 1)), 16);
             }
         }
     }
@@ -1260,18 +1417,21 @@ wrap_task! {
 
 wrap_task! {
     struct RefreshTask {
+        document: Option<Document>,
         retries: u32,
     }
 
     impl Task {
         fn execute(&self) {
+            let _context = super::Context::enter(self.document.clone());
+            if std::env::var_os("PANEFLOW_BROWSER_BENCH").is_some() { emit(json!({ "native": "refresh_requested", "browser_available": browser_host().is_some(), "retries": self.retries })); }
             if let Some(host) = browser_host() {
                 host.invalidate(PaintElementType::VIEW);
             }
             if self.retries > 0 && with(|presenter| presenter.awaits_first_frame()) == Some(true) {
                 post_delayed_task(
                     ThreadId::UI,
-                    Some(&mut RefreshTask::new(self.retries - 1)),
+                    Some(&mut RefreshTask::new(super::current_document(), self.retries - 1)),
                     POOL_REFRESH_RETRY_DELAY_MS,
                 );
             }
@@ -1281,11 +1441,13 @@ wrap_task! {
 
 wrap_task! {
     struct RetireCheck {
+        document: Option<Document>,
         generation: u64,
     }
 
     impl Task {
         fn execute(&self) {
+            let _context = super::Context::enter(self.document.clone());
             let generation = self.generation;
             if let Some(messages) = with(|presenter| presenter.retire_check(generation)) {
                 for message in messages {
@@ -1310,10 +1472,16 @@ wrap_task! {
 }
 
 wrap_render_handler! {
-    pub struct Renderer;
+    pub struct Renderer { document: Option<Document> }
 
     impl RenderHandler {
+        fn update_drag_cursor(&self, browser: Option<&mut Browser>, operation: DragOperationsMask) {
+            let _context = super::Context::browser(browser.as_deref());
+            if let Some(browser) = browser { super::transfers::update_drag_cursor(browser, operation); }
+        }
+        fn accessibility_handler(&self) -> Option<AccessibilityHandler> { self.document.clone().map(super::accessibility::Accessibility::new) }
         fn on_text_selection_changed(&self, _browser: Option<&mut Browser>, selected_text: Option<&CefString>, selected_range: Option<&Range>) {
+            let _context = super::Context::browser(_browser.as_deref());
             let Some(range) = selected_range else { return; };
             let Some(document) = with(|presenter| presenter.document.clone()).flatten() else { return; };
             let text = selected_text.map(ToString::to_string).filter(|text| text.len() <= 65536);
@@ -1321,6 +1489,7 @@ wrap_render_handler! {
         }
 
         fn on_ime_composition_range_changed(&self, _browser: Option<&mut Browser>, selected_range: Option<&Range>, character_bounds: Option<&[Rect]>) {
+            let _context = super::Context::browser(_browser.as_deref());
             let Some(range) = selected_range else { return; };
             let Some(document) = with(|presenter| presenter.document.clone()).flatten() else { return; };
             let bounds: Vec<_> = character_bounds.unwrap_or_default().iter().take(4096).map(|r| [r.x,r.y,r.width,r.height]).collect();
@@ -1328,12 +1497,14 @@ wrap_render_handler! {
         }
 
         fn view_rect(&self, _browser: Option<&mut Browser>, rect: Option<&mut Rect>) {
+            let _context = super::Context::browser(_browser.as_deref());
             if let Some(rect) = rect {
                 *rect = view_rect();
             }
         }
 
         fn screen_info(&self, _browser: Option<&mut Browser>, screen_info: Option<&mut ScreenInfo>) -> i32 {
+            let _context = super::Context::browser(_browser.as_deref());
             if let Some(screen_info) = screen_info {
                 *screen_info = self::screen_info();
                 return 1;
@@ -1342,13 +1513,36 @@ wrap_render_handler! {
         }
 
         fn on_paint(&self, _browser: Option<&mut Browser>, type_: PaintElementType, _dirty_rects: Option<&[Rect]>, _buffer: *const u8, width: i32, height: i32) {
+            let _context = super::Context::browser(_browser.as_deref());
             if type_ == PaintElementType::VIEW {
                 software_paint(width, height);
             }
         }
 
         fn on_accelerated_paint(&self, _browser: Option<&mut Browser>, type_: PaintElementType, dirty_rects: Option<&[Rect]>, info: Option<&AcceleratedPaintInfo>) {
+            let _context = super::Context::browser(_browser.as_deref());
             accelerated_paint(type_, dirty_rects, info);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn displayed_pool_retirement_waits_for_replacement_then_keeps_exact_deadline() {
+        let resize = Instant::now();
+        let replacement = resize + std::time::Duration::from_millis(5000);
+        let mut retirement = Retirement::AwaitingReplacement;
+        assert!(retirement.superseded());
+        assert!(!retirement.expired(replacement));
+        assert!(retirement.begin_release(replacement));
+        assert!(!retirement
+            .expired(replacement + std::time::Duration::from_millis(RETIRE_DEADLINE_MS - 1)));
+        assert!(
+            retirement.expired(replacement + std::time::Duration::from_millis(RETIRE_DEADLINE_MS))
+        );
+        assert!(!retirement.begin_release(replacement + std::time::Duration::from_millis(100)));
     }
 }

@@ -1,4 +1,5 @@
 use cef::*;
+use paneflow_browser_protocol::Document;
 use serde_json::json;
 
 use super::{clipboard, clipboard_renderer, editing, emit, presentation, HOST};
@@ -10,6 +11,24 @@ fn ozone_platform() -> &'static str {
         Ok("x11") => "x11",
         _ => "wayland",
     }
+}
+
+fn enforce_certificate_policy(browser: &Browser) -> bool {
+    let Some(context) = browser.host().and_then(|host| host.request_context()) else {
+        return false;
+    };
+    let Some(mut denied) = value_create() else {
+        return false;
+    };
+    denied.set_bool(0);
+    let name: CefString = "ssl.error_override_allowed".into();
+    let mut error = CefString::from("certificate policy preference");
+    if context.set_preference(Some(&name), Some(&mut denied), Some(&mut error)) == 0 {
+        return false;
+    }
+    context
+        .preference(Some(&name))
+        .is_some_and(|value| value.get_type() == ValueType::BOOL && value.bool() == 0)
 }
 
 wrap_app! {
@@ -43,51 +62,99 @@ wrap_app! {
 }
 
 wrap_client! {
-    pub struct WitnessClient;
+    pub struct WitnessClient { document: Option<Document>, inspector: bool }
 
     impl Client {
         fn on_process_message_received(&self, _browser: Option<&mut Browser>, frame: Option<&mut Frame>, source_process: ProcessId, message: Option<&mut ProcessMessage>) -> i32 {
+            let _context = super::Context::browser(_browser.as_deref());
+            if message.as_deref().is_some_and(|message| super::devtools::receive(_browser.as_deref(), frame.as_deref(), source_process, message)) { return 1; }
             clipboard::receive(frame, source_process, message)
         }
 
+        fn dialog_handler(&self) -> Option<DialogHandler> { self.document.clone().map(super::transfers::Uploads::new) }
+        fn download_handler(&self) -> Option<DownloadHandler> { self.document.clone().map(super::transfers::Downloads::new) }
+        fn permission_handler(&self) -> Option<PermissionHandler> { self.document.clone().map(super::permissions::Permissions::new) }
+        fn jsdialog_handler(&self) -> Option<JsdialogHandler> { self.document.clone().map(super::web_interactions::Dialogs::new) }
         fn context_menu_handler(&self) -> Option<ContextMenuHandler> { Some(editing::Menus::new()) }
-        fn life_span_handler(&self) -> Option<LifeSpanHandler> { Some(Life::new()) }
+        fn life_span_handler(&self) -> Option<LifeSpanHandler> { Some(Life::new(self.document.clone())) }
+        fn find_handler(&self) -> Option<FindHandler> { Some(FindResults::new()) }
         fn load_handler(&self) -> Option<LoadHandler> { Some(Load::new()) }
-        fn request_handler(&self) -> Option<RequestHandler> { Some(RequestPolicy::new()) }
+        fn request_handler(&self) -> Option<RequestHandler> { Some(RequestPolicy::new(self.inspector)) }
         fn display_handler(&self) -> Option<DisplayHandler> { Some(FixtureDisplay::new()) }
-        fn render_handler(&self) -> Option<RenderHandler> { presentation::active().then(presentation::Renderer::new) }
+        fn render_handler(&self) -> Option<RenderHandler> { presentation::active().then(|| presentation::Renderer::new(self.document.clone())) }
     }
 }
 
 wrap_life_span_handler! {
-    struct Life;
+    struct Life { document: Option<Document> }
 
     impl LifeSpanHandler {
         fn on_after_created(&self, browser: Option<&mut Browser>) {
+            let _context = super::Context::browser(browser.as_deref());
+            let _context = super::Context::enter(self.document.clone());
             let browser = browser.cloned();
+            if let Some(host) = browser.as_ref().and_then(|browser| browser.host()) { host.set_accessibility_state(State::ENABLED); }
             let identifier = browser.as_ref().map(|browser| browser.identifier());
             let native_window = browser.as_ref().and_then(|browser| browser.host()).map(|host| host.window_handle());
-            HOST.with(|state| { if let Some(host) = state.borrow_mut().as_mut() { host.browser = browser; } });
+            HOST.with(|state| { if let Some(host) = state.borrow_mut().as_mut() { if let Some(document) = super::current_document() { if let Some(page) = host.pages.get_mut(&document.browser) { page.browser = browser; page.creating = false; }} } });
+            if let Some(browser) = super::current_browser() {
+                if !enforce_certificate_policy(&browser) {
+                    emit(json!({ "native": "create_failed", "reason": "Strict certificate policy unavailable" }));
+                    if let Some(host) = browser.host() { host.close_browser(1); }
+                    return;
+                }
+                if !super::devtools::created(&browser) {
+                    emit(json!({ "native": "create_failed", "reason": "DevTools target observer unavailable" }));
+                    if let Some(host) = browser.host() { host.close_browser(1); }
+                    return;
+                }
+            }
             emit(json!({ "native": "created", "cef_browser_id": identifier, "native_window": native_window }));
+            let closing = HOST.with(|state| state.borrow().as_ref().and_then(|host| host.pages.get(&super::current_document()?.browser)).is_some_and(|page| page.pending_close.is_some()));
+            if closing { if let Some(host) = super::current_browser().and_then(|browser| browser.host()) { host.close_browser(0); } }
         }
 
         fn do_close(&self, _browser: Option<&mut Browser>) -> i32 {
+            let _context = super::Context::browser(_browser.as_deref());
             emit(json!({ "native": "close_ready" }));
             0
         }
 
         fn on_before_close(&self, _browser: Option<&mut Browser>) {
-            HOST.with(|state| { if let Some(host) = state.borrow_mut().as_mut() { host.browser = None; } });
+            let _context = super::Context::browser(_browser.as_deref());
+            if let Some(browser) = _browser.as_deref() { super::transfers::closed_drag(browser); }
+            super::devtools::closed();
+            let children = HOST.with(|state| { let state = state.borrow(); let Some(document) = super::current_document() else { return Vec::new(); }; state.as_ref().map(|host| host.pages.values().filter(|page| page.inspected.as_ref().is_some_and(|target| target.browser == document.browser)).filter_map(|page| page.browser.clone()).collect::<Vec<_>>()).unwrap_or_default() });
+            for child in children { if let Some(host) = child.host() { host.close_browser(1); } }
+            let reply = HOST.with(|state| {
+                let mut state = state.borrow_mut();
+                let host = state.as_mut()?;
+                let document = super::current_document()?;
+                let pending = host.pages.get_mut(&document.browser)?.pending_close.take().unwrap_or(paneflow_browser_protocol::Envelope {
+                    version: paneflow_browser_protocol::CONTRACT_VERSION,
+                    operation: "native-close".to_owned().try_into().ok()?,
+                    command: paneflow_browser_protocol::Command::Close { document: document.clone() },
+                });
+                Some(host.controller.dispatch(&document.owner, pending))
+            });
+            if let Some(reply) = reply { emit(json!({ "protocol": reply })); }
+            if let Some(document) = super::current_document() { super::web_interactions::clear(&document);
+                super::permissions::revoke(&document);
+                super::transfers::clear(&document);
+                    super::external_protocols::clear(&document); }
+            super::editing::clear();
+            HOST.with(|state| { if let Some(host) = state.borrow_mut().as_mut() { if let Some(document) = super::current_document() { if let Some(page) = host.pages.get_mut(&document.browser) { page.browser = None; page.window = None; } } } });
+            presentation::detach();
             emit(json!({ "native": "closed" }));
-            quit_message_loop();
+            if !presentation::active() { super::close(); }
+            if HOST.with(|state| state.borrow().as_ref().is_some_and(|host| host.closing && host.pages.values().all(|page| page.browser.is_none()))) { quit_message_loop(); }
         }
 
         fn on_before_popup(&self, browser: Option<&mut Browser>, _frame: Option<&mut Frame>, _popup_id: i32, target_url: Option<&CefString>, _target_frame_name: Option<&CefString>, _target_disposition: WindowOpenDisposition, user_gesture: i32, _popup_features: Option<&PopupFeatures>, _window_info: Option<&mut WindowInfo>, _client: Option<&mut Option<Client>>, _settings: Option<&mut BrowserSettings>, _extra_info: Option<&mut Option<DictionaryValue>>, _no_javascript_access: Option<&mut i32>) -> i32 {
+            let _context = super::Context::browser(browser.as_deref());
             let url = target_url.map(ToString::to_string).unwrap_or_default();
             if user_gesture != 0 && presentation::active() && paneflow_browser_protocol::validate_url(&url).is_ok() {
-                if let Some(frame) = browser.and_then(|browser| browser.main_frame()) {
-                    post_task(ThreadId::UI, Some(&mut OpenLink::new(frame, url)));
-                }
+                emit(json!({ "native": "popup_requested", "url": url }));
             }
             1
         }
@@ -99,8 +166,10 @@ wrap_load_handler! {
 
     impl LoadHandler {
         fn on_load_end(&self, _browser: Option<&mut Browser>, frame: Option<&mut Frame>, http_status_code: i32) {
+            let _context = super::Context::browser(_browser.as_deref());
             if let Some(frame) = frame.filter(|frame| frame.is_main() != 0) {
                 emit(json!({ "native": "loaded", "http_status": http_status_code }));
+                if super::devtools::is_inspector() { return; }
                 frame.execute_java_script(Some(&r#"(() => {
                     const counters = { clicks: 0, keys: 0, wheel: 0 };
                     addEventListener('click', () => { counters.clicks += 1; report(); }, true);
@@ -117,12 +186,14 @@ wrap_load_handler! {
         }
 
         fn on_load_error(&self, _browser: Option<&mut Browser>, frame: Option<&mut Frame>, error_code: Errorcode, error_text: Option<&CefString>, _failed_url: Option<&CefString>) {
+            let _context = super::Context::browser(_browser.as_deref());
             let main = frame.is_none_or(|frame| frame.is_main() != 0);
             let text: String = error_text.map(ToString::to_string).unwrap_or_default().chars().take(256).collect();
             emit(json!({ "native": "load_failed", "main": main, "error_code": error_code.get_raw(), "error_text": text }));
         }
 
         fn on_loading_state_change(&self, _browser: Option<&mut Browser>, is_loading: i32, can_go_back: i32, can_go_forward: i32) {
+            let _context = super::Context::browser(_browser.as_deref());
             emit(json!({ "native": "loading", "is_loading": is_loading != 0, "can_go_back": can_go_back != 0, "can_go_forward": can_go_forward != 0 }));
         }
     }
@@ -132,7 +203,12 @@ wrap_display_handler! {
     struct FixtureDisplay;
 
     impl DisplayHandler {
+        fn on_fullscreen_mode_change(&self, browser: Option<&mut Browser>, fullscreen: i32) {
+            let _context = super::Context::browser(browser.as_deref());
+            emit(json!({ "native": "fullscreen", "enabled": fullscreen != 0 }));
+        }
         fn on_cursor_change(&self, _browser: Option<&mut Browser>, _cursor: std::os::raw::c_ulong, type_: CursorType, _custom_cursor_info: Option<&CursorInfo>) -> i32 {
+            let _context = super::Context::browser(_browser.as_deref());
             let style = match type_ {
                 CursorType::HAND => "PointingHand",
                 CursorType::IBEAM => "IBeam",
@@ -161,16 +237,22 @@ wrap_display_handler! {
         }
 
         fn on_title_change(&self, _browser: Option<&mut Browser>, title: Option<&CefString>) {
+            let _context = super::Context::browser(_browser.as_deref());
             emit(json!({ "native": "title", "title": title.map(ToString::to_string).unwrap_or_default() }));
         }
 
         fn on_address_change(&self, _browser: Option<&mut Browser>, frame: Option<&mut Frame>, url: Option<&CefString>) {
+            let _context = super::Context::browser(_browser.as_deref());
             if frame.is_some_and(|frame| frame.is_main() != 0) {
                 emit(json!({ "native": "address", "url": url.map(ToString::to_string).unwrap_or_default() }));
             }
         }
 
         fn on_console_message(&self, _browser: Option<&mut Browser>, _level: LogSeverity, message: Option<&CefString>, _source: Option<&CefString>, _line: i32) -> i32 {
+            let _context = super::Context::browser(_browser.as_deref());
+            if super::devtools::is_inspector() && HOST.with(|state| state.borrow().as_ref().is_some_and(|host| host.tracing)) {
+                emit(json!({ "native": "devtools_console", "message": message.map(ToString::to_string).unwrap_or_default().chars().take(1024).collect::<String>() }));
+            }
             if let Some(report) = message.and_then(|message| message.as_slice()).and_then(crate::qualification::fixture_report) {
                 match report {
                     Ok(state) => emit(json!({ "native": "fixture_state", "state": state })),
@@ -184,30 +266,123 @@ wrap_display_handler! {
 }
 
 wrap_request_handler! {
-    struct RequestPolicy;
+    struct RequestPolicy { inspector: bool }
 
     impl RequestHandler {
+        fn resource_request_handler(&self, _browser: Option<&mut Browser>, _frame: Option<&mut Frame>, _request: Option<&mut Request>, _is_navigation: i32, _is_download: i32, _request_initiator: Option<&CefString>, _disable_default_handling: Option<&mut i32>) -> Option<ResourceRequestHandler> {
+            self.inspector.then(super::devtools::Resources::new)
+        }
+
+        fn on_certificate_error(&self, browser: Option<&mut Browser>, cert_error: Errorcode, _request_url: Option<&CefString>, _ssl_info: Option<&mut Sslinfo>, _callback: Option<&mut Callback>) -> i32 {
+            let _context = super::Context::browser(browser.as_deref());
+            emit(json!({ "native": "certificate_error", "error_code": cert_error.get_raw() }));
+            if let Some(callback) = _callback { callback.cancel(); }
+            1
+        }
+
+        fn on_render_process_terminated(&self, browser: Option<&mut Browser>, status: TerminationStatus, error_code: i32, _error_string: Option<&CefString>) {
+            let _context = super::Context::browser(browser.as_deref());
+            super::renderer_crashed();
+            editing::clear();
+            presentation::unmount();
+            if let Some(document) = super::current_document() { super::web_interactions::clear(&document); super::permissions::clear(&document); super::transfers::clear(&document);
+                    super::external_protocols::clear(&document); }
+            emit(json!({ "native": "renderer_crashed", "status": status.get_raw(), "error_code": error_code }));
+        }
+
         fn on_before_browse(&self, _browser: Option<&mut Browser>, _frame: Option<&mut Frame>, request: Option<&mut Request>, _user_gesture: i32, _is_redirect: i32) -> i32 {
-            clipboard::clear();
-            if _frame.is_some_and(|frame| frame.is_main() != 0) { editing::clear(); }
+            let _context = super::Context::browser(_browser.as_deref());
             let url = request.map(|request| CefString::from(&request.url()).to_string()).unwrap_or_default();
-            let allowed = (presentation::active() && paneflow_browser_protocol::validate_url(&url).is_ok()) || HOST.with(|state| state.borrow().as_ref().is_some_and(|host| url.starts_with(&format!("{}/", host.origin))));
-            i32::from(!allowed)
+            let inspector = HOST.with(|state| { let state = state.borrow(); state.as_ref().and_then(|host| host.pages.get(&super::current_document()?.browser)).is_some_and(|page| page.inspected.is_some()) });
+            let allowed = if inspector { url == super::devtools::URL } else { (presentation::active() && paneflow_browser_protocol::validate_url(&url).is_ok()) || HOST.with(|state| state.borrow().as_ref().is_some_and(|host| url.starts_with(&format!("{}/", host.origin)))) };
+            if !allowed {
+                if _user_gesture != 0 && _is_redirect == 0 {
+                    if let Some(document) = super::current_document() {
+                        let origin = _browser.as_deref().and_then(|browser| browser.main_frame()).map(|frame| CefString::from(&frame.url()).to_string()).unwrap_or_default();
+                        super::external_protocols::request(&document, &origin, &url);
+                    }
+                }
+                return 1;
+            }
+            if _frame.is_some_and(|frame| frame.is_main() != 0) {
+                if !inspector && _is_redirect == 0 && !super::accept_navigation(&url) { return 1; }
+                editing::clear();
+                if let Some(document) = super::current_document() {
+                    super::web_interactions::clear(&document);
+                    super::permissions::clear(&document);
+                    super::transfers::clear(&document);
+                    super::external_protocols::clear(&document);
+                }
+            }
+            0
         }
     }
 }
 
-wrap_task! {
-    struct OpenLink {
-        frame: Frame,
-        url: String,
+wrap_find_handler! {
+    struct FindResults;
+
+    impl FindHandler {
+        fn on_find_result(&self, browser: Option<&mut Browser>, _identifier: i32, count: i32, _selection_rect: Option<&Rect>, active_match_ordinal: i32, final_update: i32) {
+            let _context = super::Context::browser(browser.as_deref());
+            emit(json!({ "native": "find_result", "count": count, "active": active_match_ordinal, "final": final_update != 0 }));
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use cef::rc::ConvertReturnValue;
+    use std::cell::Cell;
+
+    thread_local! {
+        static CANCELLED: Cell<usize> = const { Cell::new(0) };
+        static CONTINUED: Cell<usize> = const { Cell::new(0) };
     }
 
-    impl Task {
-        fn execute(&self) {
-            if self.frame.is_valid() != 0 {
-                self.frame.load_url(Some(&self.url.as_str().into()));
-            }
-        }
+    unsafe extern "C" fn cancel(_callback: *mut cef::sys::_cef_callback_t) {
+        CANCELLED.with(|count| count.set(count.get() + 1));
+    }
+
+    unsafe extern "C" fn proceed(_callback: *mut cef::sys::_cef_callback_t) {
+        CONTINUED.with(|count| count.set(count.get() + 1));
+    }
+
+    #[test]
+    fn certificate_errors_cancel_once_and_never_delegate_to_chrome() {
+        CANCELLED.with(|count| count.set(0));
+        CONTINUED.with(|count| count.set(0));
+        let mut raw = cef::sys::_cef_callback_t {
+            base: cef::sys::_cef_base_ref_counted_t {
+                size: std::mem::size_of::<cef::sys::_cef_callback_t>(),
+                add_ref: None,
+                release: None,
+                has_one_ref: None,
+                has_at_least_one_ref: None,
+            },
+            cont: Some(proceed),
+            cancel: Some(cancel),
+        };
+        let mut callback: Callback = (&raw mut raw).wrap_result();
+        let handler = RequestPolicy::new(false);
+        assert_eq!(
+            handler.on_certificate_error(
+                None,
+                Errorcode::CERT_AUTHORITY_INVALID,
+                None,
+                None,
+                Some(&mut callback)
+            ),
+            1
+        );
+        assert_eq!(CANCELLED.with(Cell::get), 1);
+        assert_eq!(CONTINUED.with(Cell::get), 0);
+        assert_eq!(
+            handler.on_certificate_error(None, Errorcode::CERT_AUTHORITY_INVALID, None, None, None),
+            1
+        );
+        assert_eq!(CANCELLED.with(Cell::get), 1);
+        drop(callback);
     }
 }
