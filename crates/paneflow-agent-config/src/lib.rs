@@ -7,6 +7,9 @@ pub mod jsonc;
 pub mod lease;
 pub mod lock;
 
-pub use io::{config_dir, home_dir, read_optional_text, write_json_atomic, write_text_atomic};
+pub use io::{
+    claude_config_dir, config_dir, home_dir, read_optional_text, write_json_atomic,
+    write_text_atomic,
+};
 pub use lease::{ConfigLease, LastConfigLease};
 pub use lock::{lock_config, with_config_lock, ConfigLock};

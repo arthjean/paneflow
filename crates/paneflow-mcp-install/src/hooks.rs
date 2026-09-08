@@ -8,19 +8,19 @@ use crate::agents::{InstallOutcome, StatusOutcome, UninstallOutcome};
 use crate::{io, merge};
 
 fn claude_settings_path() -> Option<PathBuf> {
-    dirs::home_dir().map(|home| home.join(".claude").join("settings.json"))
+    paneflow_agent_config::claude_config_dir().map(|dir| dir.join("settings.json"))
 }
 
 fn claude_detected() -> bool {
     which::which("claude").is_ok()
-        || dirs::home_dir()
-            .map(|home| home.join(".claude").exists())
+        || paneflow_agent_config::claude_config_dir()
+            .map(|dir| dir.exists())
             .unwrap_or(false)
 }
 
 fn install(hook_path: &Path) -> Result<(PathBuf, InstallOutcome)> {
-    let settings =
-        claude_settings_path().ok_or_else(|| anyhow!("cannot resolve ~/.claude/settings.json"))?;
+    let settings = claude_settings_path()
+        .ok_or_else(|| anyhow!("cannot resolve the Claude settings.json path"))?;
     let outcome = install_at(&settings, hook_path)?;
     Ok((settings, outcome))
 }
@@ -44,8 +44,8 @@ fn install_at(settings: &Path, hook_path: &Path) -> Result<InstallOutcome> {
 }
 
 fn uninstall() -> Result<UninstallOutcome> {
-    let settings =
-        claude_settings_path().ok_or_else(|| anyhow!("cannot resolve ~/.claude/settings.json"))?;
+    let settings = claude_settings_path()
+        .ok_or_else(|| anyhow!("cannot resolve the Claude settings.json path"))?;
     uninstall_at(&settings)
 }
 
@@ -67,8 +67,8 @@ fn uninstall_at(settings: &Path) -> Result<UninstallOutcome> {
 }
 
 fn status(expected_hook_path: Option<&Path>) -> Result<StatusOutcome> {
-    let settings =
-        claude_settings_path().ok_or_else(|| anyhow!("cannot resolve ~/.claude/settings.json"))?;
+    let settings = claude_settings_path()
+        .ok_or_else(|| anyhow!("cannot resolve the Claude settings.json path"))?;
     status_at(&settings, expected_hook_path)
 }
 

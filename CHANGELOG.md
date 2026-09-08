@@ -5,6 +5,14 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
 
 ## [Unreleased]
 
+### Fixed
+
+- The shim now honors `CLAUDE_CONFIG_DIR` when it checks for a persistent
+  Claude Code hook, so a second config directory without one still receives the
+  project-local hook. `paneflow mcp install` and its status and uninstall paths
+  target the same directory, so `CLAUDE_CONFIG_DIR=... paneflow mcp install`
+  hooks a second account.
+
 ## [0.13.0] - 2026-09-07
 
 ### Added

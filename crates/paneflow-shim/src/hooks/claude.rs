@@ -5,7 +5,7 @@ use super::{
     HookInstall, HookInstallResult, HookInstallSkip, HookLease, InvalidJsonPolicy,
     CLAUDE_HOOK_EVENTS,
 };
-use paneflow_agent_config::{home_dir, read_optional_text};
+use paneflow_agent_config::{claude_config_dir, read_optional_text};
 use std::env;
 use std::path::{Path, PathBuf};
 
@@ -17,14 +17,13 @@ enum PersistentHookState {
 }
 
 fn persistent_claude_hooks_state() -> std::io::Result<PersistentHookState> {
-    let home = home_dir().ok_or_else(|| {
+    let directory = claude_config_dir().ok_or_else(|| {
         std::io::Error::new(
             std::io::ErrorKind::NotFound,
             "home directory is unavailable",
         )
     })?;
-    let path = home.join(".claude").join("settings.json");
-    persistent_claude_hooks_state_at(&path)
+    persistent_claude_hooks_state_at(&directory.join("settings.json"))
 }
 
 fn persistent_claude_hooks_state_at(path: &Path) -> std::io::Result<PersistentHookState> {
