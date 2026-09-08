@@ -92,7 +92,7 @@ afterAll(async () => {
 
 test("CLI serves every deterministic fixture and its assets from loopback", async () => {
   expect(origin).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
-  expect(manifest.scenarios).toEqual(["empty", "scroll", "animation", "ime", "popup", "download", "webgl", "network", "combined"]);
+  expect(manifest.scenarios).toEqual(["empty", "scroll", "animation", "ime", "popup", "download", "webgl", "network", "combined", "serviceworker", "websocket", "iframe", "auth"]);
   for (const scenario of manifest.scenarios) {
     const first = await http(`/${scenario}`);
     const second = await http(`/${scenario}`);
@@ -109,6 +109,55 @@ test("CLI serves every deterministic fixture and its assets from loopback", asyn
   expect((await http("/empty")).body.toString()).not.toContain("script");
   const script = await http("/fixture.js");
   expect(() => new Script(script.body.toString())).not.toThrow();
+});
+
+test("web-platform fixtures serve their own entry points from loopback only", async () => {
+  const worker = await http("/sw.js");
+  expect(worker.status).toBe(200);
+  expect(worker.headers["content-type"]).toBe("text/javascript");
+  expect(worker.headers["service-worker-allowed"]).toBe("/");
+  expect(worker.body.toString()).toContain("served-by-service-worker");
+
+  const frame = await http("/frame");
+  expect(frame.status).toBe(200);
+  expect(frame.headers["content-security-policy"]).toContain("frame-ancestors 'self'");
+  const refused = await http("/embedded");
+  expect(refused.status).toBe(200);
+  expect(refused.headers["x-frame-options"]).toBe("DENY");
+  expect(refused.headers["content-security-policy"]).toContain("frame-ancestors 'none'");
+  expect((await http("/iframe")).headers["content-security-policy"]).toContain("frame-ancestors 'self'");
+
+  const anonymous = await http("/private");
+  expect(anonymous.status).toBe(401);
+  expect(anonymous.headers["www-authenticate"]).toContain("Basic");
+  const wrong = await http("/private", { headers: { Authorization: `Basic ${Buffer.from("paneflow:wrong").toString("base64")}` } });
+  expect(wrong.status).toBe(401);
+  const authenticated = await http("/private", { headers: { Authorization: `Basic ${Buffer.from("paneflow:fixture-only-secret").toString("base64")}` } });
+  expect(authenticated.status).toBe(200);
+  expect(JSON.parse(authenticated.body.toString())).toEqual({ authenticated: true, user: "paneflow" });
+
+  const endpoint = JSON.parse((await http("/websocket.json")).body.toString()).websocket;
+  expect(endpoint).toMatch(/^ws:\/\/127\.0\.0\.1:\d+\/ws$/);
+  expect((await http("/websocket")).headers["content-security-policy"]).toContain(`connect-src 'self' ${endpoint}`);
+});
+
+test("WebSocket entry echoes masked text frames and refuses foreign hosts or paths", async () => {
+  const endpoint = JSON.parse((await http("/websocket.json")).body.toString()).websocket;
+  const echoed = await new Promise((resolve, reject) => {
+    const socket = new WebSocket(endpoint);
+    const timer = setTimeout(() => { socket.close(); reject(new Error("no echo")); }, 5000);
+    socket.addEventListener("open", () => socket.send("paneflow-fixture-0"));
+    socket.addEventListener("message", (event) => { clearTimeout(timer); socket.close(); resolve(event.data); });
+    socket.addEventListener("error", (event) => { clearTimeout(timer); reject(event); });
+  });
+  expect(echoed).toBe("paneflow-fixture-0");
+
+  await expect(new Promise((resolve, reject) => {
+    const socket = new WebSocket(endpoint.replace("/ws", "/not-ws"));
+    socket.addEventListener("open", () => { socket.close(); resolve("connected"); });
+    socket.addEventListener("error", () => reject(new Error("refused")));
+    socket.addEventListener("close", () => reject(new Error("refused")));
+  })).rejects.toThrow("refused");
 });
 
 test("manifest CLI and server identify identical fixture bytes", async () => {

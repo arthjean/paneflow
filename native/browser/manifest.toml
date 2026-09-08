@@ -11,26 +11,61 @@ minimum_ubuntu = "22.04"
 maximum_glibc = "2.35"
 
 [targets."x86_64-unknown-linux-gnu"]
-unpacked_size = 791298024
-max_file_size = 690577456
+unpacked_size = 392073315
+max_file_size = 279628952
 availability = "development"
-native_qualification = "tsync_source_experiment_not_qualified"
-archive = "cef_binary_151.3.24+g2384915+chromium-151.0.7922.174_linux64_tsync_experimental.tar.bz2"
-url = "file:///home/arthur/.cache/paneflow-cef-tsync/bundle-gpu-contract-r1/cef_binary_151.3.24%2Bg2384915%2Bchromium-151.0.7922.174_linux64_tsync_experimental.tar.bz2"
-sha256 = "64c291f64dd6505e9a6faa56f12dbc3f02fd99cc0a35811e8bb689d98e392b23"
-size = 244547790
+native_qualification = "hardened_candidate_not_qualified"
+archive = "cef_binary_151.3.24+g2384915+chromium-151.0.7922.174_linux64_hardened_candidate.tar.bz2"
+url = "file:///home/arthur/.cache/paneflow-browser-runtime/hardened-r6/cef_binary_151.3.24%2Bg2384915%2Bchromium-151.0.7922.174_linux64_hardened_candidate.tar.bz2"
+sha256 = "8e7bfbfdc3fdce7598433d1b3e9ca19fc1d0916ee8c02246bea59fa52823091c"
+size = 137889646
+
+[targets."x86_64-unknown-linux-gnu".hardening]
+is_debug = false
+is_official_build = true
+is_cfi = true
+use_cfi_icall = true
+use_cfi_diag = false
+use_cfi_recover = false
+use_thin_lto = true
+thin_lto_enable_optimizations = true
+chrome_pgo_phase = 2
+symbol_level = 0
+blink_symbol_level = 0
+v8_symbol_level = 0
+
+[targets."x86_64-unknown-linux-gnu".provenance]
+chromium_source_sha = "39c51c70dd5feca6b6aba5bb7997b595011c553d"
+cef_source_sha = "2384915b7b1f0fe5ad1107e48d80c34e86b698d7"
+gn_args_sha256 = "9ae554261255a31fa12a022ce1eeee6c1a39846fc435e256e6da53108aa2d14c"
+candidate_metadata_sha256 = "d0e46eff6be5a042bd2a6eeefbb0473e5b066805e98bf80f0e572990312aa0b6"
+build_log_sha256 = "bf9543ca2ac5ae1f4426cc1edb0407604f2e880fb2402dda6c2ece77423a509b"
+unstripped_libcef_sha256 = "c5ff8b346435c902a83d83b98ad1092220a16d5da5c2e37930f7e486968ad991"
+stripped_libcef_sha256 = "4e63487192fa13a7b21d951bfe6a2575b402e797339bb69db87e7b6fa0b20d41"
+credits_sha256 = "742d2697efcc77a25a89d17ee0816c0d98c03821f82888431696bed0adc98a07"
+strip_tool = "GNU strip version 2.46.1-1.fc44"
+patches_sha256 = "cf55313ebc708d45f506b91cc7d2a609f819df388be8c9c57370d86dd26ab4d4"
+
+[targets."x86_64-unknown-linux-gnu".codecs]
+h264 = false
+hevc = false
+aac = false
+mp3 = true
+flac = true
+vorbis = true
 
 [targets."x86_64-unknown-linux-gnu".files]
-"Release/chrome-sandbox" = "607d20d69dee2d02a250adb490190453ca02aa9d0d285389f058d5fc96633e55"
-"Release/libEGL.so" = "a8352eeece365fb5abb0ccb2f699f3f1a03f4c2f495cd351ac24e0441403f7ef"
-"Release/libGLESv2.so" = "b9669f8f29d9ebcb8a7cfc032048b686b92e2a6595f8b927f62ab5696574a4e7"
-"Release/libcef.so" = "f2a92991ee85970b8102130d32f2f16a58c320576fba4c7e656cfdae58c77b13"
-"Release/libvk_swiftshader.so" = "b3a61fa9c649701fb3c0542e3aeb752406f2a6cf24139ba7d8c61c5c8d7af693"
-"Release/libvulkan.so.1" = "31b576772d3fd502e5d9f4ce9fcd3197ea2a20c9e3348f845a41b0ae90f159d3"
-"Release/v8_context_snapshot.bin" = "4e4112faa10a8b92b7a982b0cef221b9ee03a6163ddfb007eb60f9a12e2fc745"
+"CREDITS.html" = "742d2697efcc77a25a89d17ee0816c0d98c03821f82888431696bed0adc98a07"
+"Release/chrome-sandbox" = "ab94933532f9e29cd3bdf2246ce5a7d1c73b995cad24786ce0e7a579d39fbe8f"
+"Release/libEGL.so" = "10d2140d191025b6c0b4c26e116ff96b5a0571dde642377d484f6ad8ba79e6cd"
+"Release/libGLESv2.so" = "4c89b0476c72448789d87c520ac4fa1bc408a36e59654877eccf9e60a68cc049"
+"Release/libcef.so" = "4e63487192fa13a7b21d951bfe6a2575b402e797339bb69db87e7b6fa0b20d41"
+"Release/libvk_swiftshader.so" = "ba516bd4656d2df67ab59bc49e6754c16c3794b31bea995c8f97392dc7a7e5d6"
+"Release/libvulkan.so.1" = "1f974eed0e9eeb0b05fc747fd2107a51fa17cf0b08616ee83e5ed598e9b527ce"
+"Release/v8_context_snapshot.bin" = "6de1ac8cfb236661e7512cd01c61b0ac2e6b22b282c94e2e62eb20cf8a2270ea"
 "Release/vk_swiftshader_icd.json" = "c9eef28b6b984fec220ef0abfecc40b502d46946706e47bfe97707027cb818bd"
-"Resources/chrome_100_percent.pak" = "98c6d1c6985f4deb12d3400d93d520f7497bd4717bbfa01c09da6f2a6b553f41"
-"Resources/chrome_200_percent.pak" = "4e5e1a2dd1d5d23f176340f3e00966ad0468d8ef151c39e15ab4cafc5fa9e5ea"
+"Resources/chrome_100_percent.pak" = "a26a37d690b7610be27aa16ca44b703f215d55740fd9c398deebf577bb3d9fab"
+"Resources/chrome_200_percent.pak" = "a507c629ae0b823e1a22f9badd95af25a7db0e5b1e5d92f68556ce35e6dddea1"
 "Resources/icudtl.dat" = "9f48c7f9c7c94d516a14870707e910ab94d75ae640ff6842c4af53276cd26ebe"
 "Resources/locales/af.pak" = "05780f90e2c43e846b658ca5784f4977076a422d7e0bda9ec849144ab3814ada"
 "Resources/locales/af_FEMININE.pak" = "ca73097bd968b363b7145e86b64f3c595e533808b0763dc8863a27fc363cfa51"
@@ -40,10 +75,6 @@ size = 244547790
 "Resources/locales/am_FEMININE.pak" = "ca73097bd968b363b7145e86b64f3c595e533808b0763dc8863a27fc363cfa51"
 "Resources/locales/am_MASCULINE.pak" = "ca73097bd968b363b7145e86b64f3c595e533808b0763dc8863a27fc363cfa51"
 "Resources/locales/am_NEUTER.pak" = "ca73097bd968b363b7145e86b64f3c595e533808b0763dc8863a27fc363cfa51"
-"Resources/locales/ar-XB.pak" = "178b5bf4379a499da1b4679e49d016370d2ad38c37701f297d636dc48ca3fe6a"
-"Resources/locales/ar-XB_FEMININE.pak" = "ca73097bd968b363b7145e86b64f3c595e533808b0763dc8863a27fc363cfa51"
-"Resources/locales/ar-XB_MASCULINE.pak" = "ca73097bd968b363b7145e86b64f3c595e533808b0763dc8863a27fc363cfa51"
-"Resources/locales/ar-XB_NEUTER.pak" = "ca73097bd968b363b7145e86b64f3c595e533808b0763dc8863a27fc363cfa51"
 "Resources/locales/ar.pak" = "ddfee2a92a57275fbf077f6cf50813086b9b0fcd0245f24bf97ada1b2b14e465"
 "Resources/locales/ar_FEMININE.pak" = "ca73097bd968b363b7145e86b64f3c595e533808b0763dc8863a27fc363cfa51"
 "Resources/locales/ar_MASCULINE.pak" = "ca73097bd968b363b7145e86b64f3c595e533808b0763dc8863a27fc363cfa51"
@@ -84,10 +115,6 @@ size = 244547790
 "Resources/locales/en-US_FEMININE.pak" = "ca73097bd968b363b7145e86b64f3c595e533808b0763dc8863a27fc363cfa51"
 "Resources/locales/en-US_MASCULINE.pak" = "ca73097bd968b363b7145e86b64f3c595e533808b0763dc8863a27fc363cfa51"
 "Resources/locales/en-US_NEUTER.pak" = "ca73097bd968b363b7145e86b64f3c595e533808b0763dc8863a27fc363cfa51"
-"Resources/locales/en-XA.pak" = "ee97db48cb5f54d50a73a046527e7245a216e349bdb99f9f9ed4c1a21a19b914"
-"Resources/locales/en-XA_FEMININE.pak" = "ca73097bd968b363b7145e86b64f3c595e533808b0763dc8863a27fc363cfa51"
-"Resources/locales/en-XA_MASCULINE.pak" = "ca73097bd968b363b7145e86b64f3c595e533808b0763dc8863a27fc363cfa51"
-"Resources/locales/en-XA_NEUTER.pak" = "ca73097bd968b363b7145e86b64f3c595e533808b0763dc8863a27fc363cfa51"
 "Resources/locales/es-419.pak" = "f82d32c1cbb83c2a9644dfca5aa767902b9f30b09294514196a64a3bbc35bb5f"
 "Resources/locales/es-419_FEMININE.pak" = "ca73097bd968b363b7145e86b64f3c595e533808b0763dc8863a27fc363cfa51"
 "Resources/locales/es-419_MASCULINE.pak" = "ca73097bd968b363b7145e86b64f3c595e533808b0763dc8863a27fc363cfa51"
@@ -260,4 +287,4 @@ size = 244547790
 "Resources/locales/zh-TW_FEMININE.pak" = "ca73097bd968b363b7145e86b64f3c595e533808b0763dc8863a27fc363cfa51"
 "Resources/locales/zh-TW_MASCULINE.pak" = "ca73097bd968b363b7145e86b64f3c595e533808b0763dc8863a27fc363cfa51"
 "Resources/locales/zh-TW_NEUTER.pak" = "ca73097bd968b363b7145e86b64f3c595e533808b0763dc8863a27fc363cfa51"
-"Resources/resources.pak" = "88e59f19fa84921c2c508816d36d82e2a86f37cbc6282a6e914e4e024e7b3db1"
+"Resources/resources.pak" = "9fe6068212942209286c286c4c441176bd8abb41ae21ec5a53d1155e688dfff9"

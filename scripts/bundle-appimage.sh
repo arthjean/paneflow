@@ -4,6 +4,13 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd -P)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd -P)"
 
+if [ -n "${PANEFLOW_BROWSER_STAGE:-}" ]; then
+    case "$PANEFLOW_BROWSER_STAGE" in
+        /*) ;;
+        *) PANEFLOW_BROWSER_STAGE="$REPO_ROOT/$PANEFLOW_BROWSER_STAGE" ;;
+    esac
+fi
+
 ARCH="${ARCH:-x86_64}"
 case "$ARCH" in
     x86_64|aarch64) ;;
@@ -117,6 +124,24 @@ cd "$OUT_DIR"
     --icon-filename paneflow \
     --custom-apprun "$REPO_ROOT/packaging/AppRun"
 
+case "$ARCH" in
+    x86_64)  LDCONFIG_TAG='(libc6,x86-64)' ;;
+    aarch64) LDCONFIG_TAG='(libc6,AArch64)' ;;
+esac
+LDCONFIG_CACHE="$(ldconfig -p 2>/dev/null || true)"
+for lib in "$APPDIR"/usr/lib/*.so*; do
+    [ -L "$lib" ] && continue
+    [ -f "$lib" ] || continue
+    name="$(basename "$lib")"
+    src="$(printf '%s\n' "$LDCONFIG_CACHE" \
+            | awk -v n="$name" -v tag="$LDCONFIG_TAG" \
+                '$1==n && index($0, tag) {print $NF; found=1} found{exit}' \
+            || true)"
+    if [ -n "$src" ] && [ -f "$src" ]; then
+        cp -Lf "$src" "$lib"
+    fi
+done
+
 if [ -n "$HOST_PATCHELF" ]; then
     PATCHELF_VER="$("$HOST_PATCHELF" --version 2>/dev/null | awk '{print $2}')"
     PATCHELF_MAJOR="${PATCHELF_VER%%.*}"
@@ -124,28 +149,22 @@ if [ -n "$HOST_PATCHELF" ]; then
     if [ -n "$PATCHELF_VER" ] \
        && { [ "$PATCHELF_MAJOR" -gt 0 ] 2>/dev/null \
             || [ "$PATCHELF_MINOR" -ge 18 ] 2>/dev/null; }; then
-        echo "info: healing AppDir with patchelf $PATCHELF_VER" >&2
-
-        case "$ARCH" in
-            x86_64)  LDCONFIG_TAG='(libc6,x86-64)' ;;
-            aarch64) LDCONFIG_TAG='(libc6,AArch64)' ;;
-        esac
-        LDCONFIG_CACHE="$(ldconfig -p 2>/dev/null || true)"
-        for lib in "$APPDIR"/usr/lib/*.so*; do
-            [ -L "$lib" ] && continue
-            [ -f "$lib" ] || continue
-            name="$(basename "$lib")"
-            src="$(printf '%s\n' "$LDCONFIG_CACHE" \
-                    | awk -v n="$name" -v tag="$LDCONFIG_TAG" \
-                        '$1==n && index($0, tag) {print $NF; found=1} found{exit}' \
-                    || true)"
-            if [ -n "$src" ] && [ -f "$src" ]; then
-                cp -f "$src" "$lib"
-            fi
-        done
-
         "$HOST_PATCHELF" --set-rpath '$ORIGIN/../lib' "$APPDIR/usr/bin/paneflow" 2>/dev/null || true
     fi
+fi
+
+if [ -n "${PANEFLOW_BROWSER_STAGE:-}" ]; then
+    if [ ! -d "$PANEFLOW_BROWSER_STAGE/lib/paneflow/browser" ]; then
+        echo "error: PANEFLOW_BROWSER_STAGE has no lib/paneflow/browser (run scripts/browser-package.py stage)" >&2
+        exit 1
+    fi
+    mkdir -p "$APPDIR/usr/lib/paneflow"
+    cp -a "$PANEFLOW_BROWSER_STAGE/lib/paneflow/." "$APPDIR/usr/lib/paneflow/"
+    install -m 644 "$PANEFLOW_BROWSER_STAGE/share/doc/paneflow/BROWSER_THIRD_PARTY_NOTICES.md" \
+                   "$APPDIR/usr/share/doc/paneflow/BROWSER_THIRD_PARTY_NOTICES.md"
+    python3 "$SCRIPT_DIR/browser-package.py" sbom --prefix "$APPDIR/usr" --format appimage \
+            --output "$APPDIR/usr/share/doc/paneflow/browser-sbom.json" >/dev/null
+    python3 "$SCRIPT_DIR/browser-package.py" verify --prefix "$APPDIR/usr" --format appimage >&2
 fi
 
 AT_BIN="${APPIMAGETOOL:-}"
@@ -184,8 +203,11 @@ fi
 
 SIZE=$(stat -c%s "$APPIMAGE")
 MAX=$((80 * 1024 * 1024))
+if [ -n "${PANEFLOW_BROWSER_STAGE:-}" ]; then
+    MAX=$((MAX + 250 * 1024 * 1024))
+fi
 if [ "$SIZE" -ge "$MAX" ]; then
-    echo "error: AppImage exceeds 80 MB budget ($SIZE bytes)" >&2
+    echo "error: AppImage exceeds its $((MAX / 1024 / 1024)) MB budget ($SIZE bytes)" >&2
     exit 1
 fi
 

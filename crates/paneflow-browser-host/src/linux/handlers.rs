@@ -171,14 +171,18 @@ wrap_load_handler! {
                 emit(json!({ "native": "loaded", "http_status": http_status_code }));
                 if super::devtools::is_inspector() { return; }
                 frame.execute_java_script(Some(&r#"(() => {
-                    const counters = { clicks: 0, keys: 0, wheel: 0 };
-                    addEventListener('click', () => { counters.clicks += 1; report(); }, true);
+                    const counters = { clicks: 0, keys: 0, wheel: 0, pointerdowns: 0, pointermoves: 0, pointerups: 0 };
+                    let lastPointer = null;
+                    addEventListener('click', event => { counters.clicks += 1; lastPointer = [event.clientX, event.clientY]; report(); }, true);
                     addEventListener('keydown', () => { counters.keys += 1; report(); }, true);
-                    addEventListener('wheel', () => { counters.wheel += 1; }, true);
+                    addEventListener('wheel', () => { counters.wheel += 1; report(); }, true);
+                    addEventListener('pointerdown', event => { counters.pointerdowns += 1; lastPointer = [event.clientX, event.clientY]; }, true);
+                    addEventListener('pointermove', event => { if (event.buttons) counters.pointermoves += 1; lastPointer = [event.clientX, event.clientY]; }, true);
+                    addEventListener('pointerup', event => { counters.pointerups += 1; lastPointer = [event.clientX, event.clientY]; report(); }, true);
                     const report = () => console.log('PANEFLOW_FIXTURE:' + JSON.stringify({
                         state: document.documentElement.dataset.fixtureState || (location.pathname === '/empty' ? 'ready' : 'missing'),
                         width: innerWidth, height: innerHeight, scale: devicePixelRatio, visibility: document.visibilityState,
-                        clicks: counters.clicks, keys: counters.keys, wheel: counters.wheel
+                        ...counters, last_pointer: lastPointer
                     }));
                     report(); setInterval(report, 1000);
                 })()"#.into()), None, 0);

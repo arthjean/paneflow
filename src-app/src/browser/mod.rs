@@ -7,6 +7,8 @@ pub mod input;
 #[cfg(test)]
 mod input_tests;
 #[cfg(target_os = "linux")]
+pub mod install;
+#[cfg(target_os = "linux")]
 pub mod linux;
 pub mod page;
 #[cfg(target_os = "linux")]
@@ -17,15 +19,26 @@ mod profile_host;
 #[cfg(target_os = "linux")]
 pub mod prototype;
 #[cfg(target_os = "linux")]
+pub mod security_corpus;
+#[cfg(target_os = "linux")]
 pub mod supervisor;
 pub mod view;
 
 pub const PROTOTYPE_VERB: &str = "browser-prototype";
+pub const SECURITY_CORPUS_VERB: &str = "browser-security-corpus";
 pub const HOST_ENV: &str = "PANEFLOW_BROWSER_HOST";
 pub const RUNTIME_ENV: &str = "PANEFLOW_CEF_ROOT";
 
 #[cfg(target_os = "linux")]
 pub use prototype::run as run_prototype;
+#[cfg(target_os = "linux")]
+pub use security_corpus::run as run_security_corpus;
+
+#[cfg(not(target_os = "linux"))]
+pub fn run_security_corpus() -> i32 {
+    eprintln!("browser unavailable: the security corpus describes the Linux browser only");
+    2
+}
 
 #[cfg(not(target_os = "linux"))]
 pub fn run_prototype(_args: &[String]) -> i32 {
@@ -85,6 +98,18 @@ impl BrowserRuntime {
 
     pub fn supervisor(&self) -> &supervisor::HostSupervisor {
         &self.supervisor
+    }
+
+    pub fn live_hosts(&self) -> usize {
+        let live = |supervisor: &supervisor::HostSupervisor| {
+            supervisor.state() != supervisor::HostState::Inactive
+        };
+        usize::from(live(&self.supervisor))
+            + self
+                .pages
+                .lock()
+                .map(|pages| pages.iter().filter(|page| live(page)).count())
+                .unwrap_or(0)
     }
 
     pub fn take_events(&self) -> Option<smol::channel::Receiver<supervisor::HostEvent>> {

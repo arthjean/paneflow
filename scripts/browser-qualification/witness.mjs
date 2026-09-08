@@ -71,10 +71,10 @@ export async function runWitness(binary, output, scenario = "empty", duration = 
   const verification = spawnSync("python3", [join(root, "scripts/fetch-browser.py"), "--target", target, "--manifest", join(sourceRoot, "native/browser/manifest.toml"), "--destination", join(sourceRoot, "native/browser/prebuilt"), "--verify-only"], { encoding: "utf8", timeout: 30_000 });
   if (verification.status !== 0) throw new Error(`runtime verification failed: ${verification.stderr}`);
   const fixtures = await serveFixtures();
-  if (!fixtures.manifest.scenarios.includes(scenario)) { fixtures.server.close(); throw new Error("unknown fixture"); }
+  if (!fixtures.manifest.scenarios.includes(scenario)) { fixtures.close(); throw new Error("unknown fixture"); }
   const directory = resolve(output);
   try { await mkdir(directory, { mode: 0o700 }); }
-  catch (error) { fixtures.server.close(); fixtures.server.closeAllConnections(); throw error; }
+  catch (error) { fixtures.close(); throw error; }
   let child;
   const events = [];
   let pending = Buffer.alloc(0);
@@ -194,8 +194,7 @@ export async function runWitness(binary, output, scenario = "empty", duration = 
         failure ??= "witness descendants exceeded graceful shutdown deadline";
       }
     }
-    fixtures.server.close();
-    fixtures.server.closeAllConnections();
+    fixtures.close();
     process.removeListener("SIGINT", interrupted);
     process.removeListener("SIGTERM", interrupted);
   }

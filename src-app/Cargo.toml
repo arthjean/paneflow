@@ -609,3 +609,123 @@ assets = [
 # shells out to. A file dependency resolves the right package on every rpm
 # distro without per-distro package-name fan-out.
 "/usr/bin/fc-list" = "*"
+
+# Browser variant of the Debian package (US-024). Built only when the CEF
+# runtime has been staged:
+#   python3 scripts/browser-package.py stage
+#   cargo deb --no-build --variant browser -p paneflow-app --target <triple>
+# cargo-deb replaces (never merges) the `assets` array of a variant, so the
+# terminal payload above is repeated here verbatim; the browser payload is the
+# tail of the list. `name` is set explicitly because cargo-deb otherwise
+# appends the variant name to the package name.
+#
+# The runtime is copied byte-identical from the pinned archive: no strip, no
+# patchelf. `verify_runtime` in src-app/src/browser/supervisor.rs re-checks
+# every manifest digest before the host process is allowed to load libcef, so
+# any post-hoc rewrite of these files would make Browser refuse to start.
+#
+# `chrome-sandbox` ships 4755 and root-owned, which is the only sandbox
+# mechanism a system package can guarantee across distributions whose
+# unprivileged user namespaces are restricted (Ubuntu's AppArmor policy,
+# hardened kernels). AppImage and tar.gz cannot set it, and fall back to the
+# user-namespace sandbox; src-app/src/browser/install.rs decides at start-up
+# and refuses Browser when neither mechanism is available.
+[package.metadata.deb.variants.browser]
+name = "paneflow"
+depends = "libc6, libgcc-s1, libwayland-client0, libxcb1, libxkbcommon0, libxkbcommon-x11-0, libx11-6, libvulkan1, libfontconfig1, libfreetype6, fontconfig, ca-certificates, libglib2.0-0, libnspr4, libnss3, libatk1.0-0, libatk-bridge2.0-0, libatspi2.0-0, libdbus-1-3, libcups2, libxcomposite1, libxdamage1, libxext6, libxfixes3, libxrandr2, libxtst6, libgbm1, libexpat1, libcairo2, libpango-1.0-0, libudev1, libasound2"
+assets = [
+    ["target/release/paneflow", "usr/bin/", "755"],
+    ["../native/libghostty/THIRD_PARTY_NOTICES.md", "usr/share/doc/paneflow/THIRD_PARTY_NOTICES.md", "644"],
+    ["../assets/paneflow.desktop", "usr/share/applications/paneflow.desktop", "644"],
+    ["../assets/icons/paneflow-16.png",  "usr/share/icons/hicolor/16x16/apps/paneflow.png",     "644"],
+    ["../assets/icons/paneflow-32.png",  "usr/share/icons/hicolor/32x32/apps/paneflow.png",     "644"],
+    ["../assets/icons/paneflow-48.png",  "usr/share/icons/hicolor/48x48/apps/paneflow.png",     "644"],
+    ["../assets/icons/paneflow-128.png", "usr/share/icons/hicolor/128x128/apps/paneflow.png",   "644"],
+    ["../assets/icons/paneflow-256.png", "usr/share/icons/hicolor/256x256/apps/paneflow.png",   "644"],
+    ["../assets/icons/paneflow-512.png", "usr/share/icons/hicolor/512x512/apps/paneflow.png",   "644"],
+    ["../assets/io.github.arthurdev44.paneflow.metainfo.xml", "usr/share/metainfo/io.github.arthurdev44.paneflow.metainfo.xml", "644"],
+    ["../packaging/paneflow-release.asc", "usr/share/keyrings/paneflow-archive.asc", "644"],
+    ["../target/browser-stage/lib/paneflow/paneflow-browser-host", "usr/lib/paneflow/paneflow-browser-host", "755"],
+    ["../target/browser-stage/lib/paneflow/browser/Release/*.so*", "usr/lib/paneflow/browser/Release/", "755"],
+    ["../target/browser-stage/lib/paneflow/browser/Release/chrome-sandbox", "usr/lib/paneflow/browser/Release/chrome-sandbox", "4755"],
+    ["../target/browser-stage/lib/paneflow/browser/Release/v8_context_snapshot.bin", "usr/lib/paneflow/browser/Release/v8_context_snapshot.bin", "644"],
+    ["../target/browser-stage/lib/paneflow/browser/Release/vk_swiftshader_icd.json", "usr/lib/paneflow/browser/Release/vk_swiftshader_icd.json", "644"],
+    ["../target/browser-stage/lib/paneflow/browser/Resources/*.pak", "usr/lib/paneflow/browser/Resources/", "644"],
+    ["../target/browser-stage/lib/paneflow/browser/Resources/icudtl.dat", "usr/lib/paneflow/browser/Resources/icudtl.dat", "644"],
+    ["../target/browser-stage/lib/paneflow/browser/Resources/locales/*.pak", "usr/lib/paneflow/browser/Resources/locales/", "644"],
+    ["../target/browser-stage/lib/paneflow/browser/CREDITS.html", "usr/lib/paneflow/browser/CREDITS.html", "644"],
+    ["../target/browser-stage/lib/paneflow/browser/verified-manifest.sha256", "usr/lib/paneflow/browser/verified-manifest.sha256", "644"],
+    ["../target/browser-stage/share/doc/paneflow/BROWSER_THIRD_PARTY_NOTICES.md", "usr/share/doc/paneflow/BROWSER_THIRD_PARTY_NOTICES.md", "644"],
+    ["../target/browser-stage/share/doc/paneflow/browser-sbom.json", "usr/share/doc/paneflow/browser-sbom.json", "644"],
+]
+
+# Browser variant of the RPM package (US-024), mirroring the deb variant:
+#   cargo generate-rpm -p src-app --variant browser --target <triple>
+# cargo-generate-rpm resolves asset sources relative to the workspace root, so
+# these paths have no `../` prefix. Same byte-identical-runtime and setuid
+# chrome-sandbox reasoning as the deb variant above.
+[package.metadata.generate-rpm.variants.browser]
+assets = [
+    { source = "target/release/paneflow",                                       dest = "/usr/bin/paneflow",                                                         mode = "755" },
+    { source = "native/libghostty/THIRD_PARTY_NOTICES.md",                      dest = "/usr/share/doc/paneflow/THIRD_PARTY_NOTICES.md",                              mode = "644" },
+    { source = "assets/paneflow.desktop",                                       dest = "/usr/share/applications/paneflow.desktop",                                  mode = "644" },
+    { source = "assets/icons/paneflow-16.png",                                  dest = "/usr/share/icons/hicolor/16x16/apps/paneflow.png",                          mode = "644" },
+    { source = "assets/icons/paneflow-32.png",                                  dest = "/usr/share/icons/hicolor/32x32/apps/paneflow.png",                          mode = "644" },
+    { source = "assets/icons/paneflow-48.png",                                  dest = "/usr/share/icons/hicolor/48x48/apps/paneflow.png",                          mode = "644" },
+    { source = "assets/icons/paneflow-128.png",                                 dest = "/usr/share/icons/hicolor/128x128/apps/paneflow.png",                        mode = "644" },
+    { source = "assets/icons/paneflow-256.png",                                 dest = "/usr/share/icons/hicolor/256x256/apps/paneflow.png",                        mode = "644" },
+    { source = "assets/icons/paneflow-512.png",                                 dest = "/usr/share/icons/hicolor/512x512/apps/paneflow.png",                        mode = "644" },
+    { source = "assets/io.github.arthurdev44.paneflow.metainfo.xml",            dest = "/usr/share/metainfo/io.github.arthurdev44.paneflow.metainfo.xml",           mode = "644" },
+    { source = "LICENSE",                                                       dest = "/usr/share/doc/paneflow/LICENSE",                                           mode = "644", doc = true },
+    { source = "target/browser-stage/lib/paneflow/paneflow-browser-host",       dest = "/usr/lib/paneflow/paneflow-browser-host",                                   mode = "755" },
+    { source = "target/browser-stage/lib/paneflow/browser/Release/*.so*",       dest = "/usr/lib/paneflow/browser/Release/",                                        mode = "755" },
+    { source = "target/browser-stage/lib/paneflow/browser/Release/chrome-sandbox", dest = "/usr/lib/paneflow/browser/Release/chrome-sandbox",                       mode = "4755" },
+    { source = "target/browser-stage/lib/paneflow/browser/Release/v8_context_snapshot.bin", dest = "/usr/lib/paneflow/browser/Release/v8_context_snapshot.bin",     mode = "644" },
+    { source = "target/browser-stage/lib/paneflow/browser/Release/vk_swiftshader_icd.json", dest = "/usr/lib/paneflow/browser/Release/vk_swiftshader_icd.json",     mode = "644" },
+    { source = "target/browser-stage/lib/paneflow/browser/Resources/*.pak",     dest = "/usr/lib/paneflow/browser/Resources/",                                      mode = "644" },
+    { source = "target/browser-stage/lib/paneflow/browser/Resources/icudtl.dat", dest = "/usr/lib/paneflow/browser/Resources/icudtl.dat",                           mode = "644" },
+    { source = "target/browser-stage/lib/paneflow/browser/Resources/locales/*.pak", dest = "/usr/lib/paneflow/browser/Resources/locales/",                          mode = "644" },
+    { source = "target/browser-stage/lib/paneflow/browser/CREDITS.html", dest = "/usr/lib/paneflow/browser/CREDITS.html",                                       mode = "644" },
+    { source = "target/browser-stage/lib/paneflow/browser/verified-manifest.sha256", dest = "/usr/lib/paneflow/browser/verified-manifest.sha256",                   mode = "644" },
+    { source = "target/browser-stage/share/doc/paneflow/BROWSER_THIRD_PARTY_NOTICES.md", dest = "/usr/share/doc/paneflow/BROWSER_THIRD_PARTY_NOTICES.md",           mode = "644" },
+    { source = "target/browser-stage/share/doc/paneflow/browser-sbom.json",     dest = "/usr/share/doc/paneflow/browser-sbom.json",                                 mode = "644" },
+]
+
+# CEF's 33 SONAME dependencies on top of the terminal set, expressed as
+# virtual provides for the same cross-distro reason as the base `requires`
+# table. Names verified against the `runtime_needed` check of
+# `scripts/browser-package.py verify`.
+[package.metadata.generate-rpm.variants.browser.requires]
+"libvulkan.so.1()(64bit)" = "*"
+"libwayland-client.so.0()(64bit)" = "*"
+"libxkbcommon.so.0()(64bit)" = "*"
+"libxkbcommon-x11.so.0()(64bit)" = "*"
+"libfontconfig.so.1()(64bit)" = "*"
+"libfreetype.so.6()(64bit)" = "*"
+"/usr/bin/fc-list" = "*"
+"libglib-2.0.so.0()(64bit)" = "*"
+"libgobject-2.0.so.0()(64bit)" = "*"
+"libgio-2.0.so.0()(64bit)" = "*"
+"libnspr4.so()(64bit)" = "*"
+"libnss3.so()(64bit)" = "*"
+"libnssutil3.so()(64bit)" = "*"
+"libsmime3.so()(64bit)" = "*"
+"libatk-1.0.so.0()(64bit)" = "*"
+"libatk-bridge-2.0.so.0()(64bit)" = "*"
+"libatspi.so.0()(64bit)" = "*"
+"libdbus-1.so.3()(64bit)" = "*"
+"libcups.so.2()(64bit)" = "*"
+"libX11.so.6()(64bit)" = "*"
+"libXcomposite.so.1()(64bit)" = "*"
+"libXdamage.so.1()(64bit)" = "*"
+"libXext.so.6()(64bit)" = "*"
+"libXfixes.so.3()(64bit)" = "*"
+"libXrandr.so.2()(64bit)" = "*"
+"libXtst.so.6()(64bit)" = "*"
+"libgbm.so.1()(64bit)" = "*"
+"libexpat.so.1()(64bit)" = "*"
+"libcairo.so.2()(64bit)" = "*"
+"libpango-1.0.so.0()(64bit)" = "*"
+"libudev.so.1()(64bit)" = "*"
+"libasound.so.2()(64bit)" = "*"
+"libxcb.so.1()(64bit)" = "*"

@@ -1,6 +1,7 @@
 use std::collections::VecDeque;
 use std::fs::OpenOptions;
 use std::io::{BufWriter, Write};
+use std::ops::Range;
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -22,7 +23,7 @@ use paneflow_browser_protocol::{
 };
 use serde_json::{Value, json};
 
-use super::input::{button_modifier, key_code, modifiers, mouse_button};
+use super::input::{button_modifier, consume_key_down, key_events, modifiers, mouse_button};
 use super::linux::{DmabufImporter, PatternProducer};
 use super::presentation::{FrameConsumer, Intake};
 use super::supervisor::{
@@ -64,7 +65,7 @@ struct Options {
     x11: bool,
     #[arg(
         long,
-        help = "Comma-separated steps executed in order: input,resize,scale,host-loss"
+        help = "Comma-separated steps executed in order: input,wheel,drag,resize,scale,host-loss"
     )]
     scenario: Option<String>,
     #[arg(long, help = "JSON Lines diagnostics log; absolute path, created new")]
@@ -86,6 +87,8 @@ struct Options {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Step {
     Input,
+    Wheel,
+    Drag,
     Resize,
     Scale,
     HostLoss,
@@ -95,6 +98,8 @@ impl Step {
     fn parse(value: &str) -> Option<Self> {
         match value.trim() {
             "input" => Some(Self::Input),
+            "wheel" => Some(Self::Wheel),
+            "drag" => Some(Self::Drag),
             "resize" => Some(Self::Resize),
             "scale" => Some(Self::Scale),
             "host-loss" => Some(Self::HostLoss),
@@ -105,6 +110,8 @@ impl Step {
     fn name(self) -> &'static str {
         match self {
             Self::Input => "input",
+            Self::Wheel => "wheel",
+            Self::Drag => "drag",
             Self::Resize => "resize",
             Self::Scale => "scale",
             Self::HostLoss => "host-loss",
@@ -208,6 +215,8 @@ struct PrototypeView {
     phase: Phase,
     loaded: bool,
     fixture: Option<Value>,
+    ime: super::ime::ImeState,
+    ime_composing: bool,
     intake_frames: u64,
     current_frame: Option<BrowserFrame>,
     first_frame_ns: Option<u64>,
@@ -216,6 +225,7 @@ struct PrototypeView {
     step_started: Option<Instant>,
     step_stage: u8,
     step_marker: u64,
+    step_pointer_marker: [u64; 3],
     hold_until: Option<Instant>,
     started: Instant,
     acks: smol::channel::Sender<GpuCompletion>,
@@ -279,6 +289,8 @@ impl PrototypeView {
             phase: Phase::Idle,
             loaded: false,
             fixture: None,
+            ime: super::ime::ImeState::default(),
+            ime_composing: false,
             intake_frames: 0,
             current_frame: None,
             first_frame_ns: None,
@@ -287,6 +299,7 @@ impl PrototypeView {
             step_started: None,
             step_stage: 0,
             step_marker: 0,
+            step_pointer_marker: [0; 3],
             hold_until: None,
             started: Instant::now(),
             acks,
@@ -389,6 +402,60 @@ impl PrototypeView {
         if let Some(sender) = self.trace_finished.take() {
             let _ = sender.try_send(result);
         }
+    }
+
+    fn ime_compose(
+        &mut self,
+        text: &str,
+        cursor: Option<Range<usize>>,
+        replacement: Option<Range<usize>>,
+        cx: &mut Context<Self>,
+    ) {
+        self.ime_composing = !text.is_empty();
+        let Ok(replacement) = super::ime::replacement_range(replacement) else {
+            return;
+        };
+        if let Some([start, end]) = replacement {
+            self.ime.marked = Some(start as usize..end as usize);
+        }
+        let selected = self.ime.compose(text, cursor);
+        self.log.emit(
+            "ime_composition_forwarded",
+            json!({ "text": text, "selection": [selected.start, selected.end], "replacement": replacement }),
+        );
+        self.input(
+            InputEvent::ImeComposition {
+                text: text.to_string(),
+                cursor: selected.end as u32,
+                selection_start: Some(selected.start as u32),
+                replacement,
+            },
+            cx,
+        );
+    }
+
+    fn ime_commit(
+        &mut self,
+        text: &str,
+        replacement: Option<Range<usize>>,
+        cx: &mut Context<Self>,
+    ) {
+        let Ok(replacement) = super::ime::replacement_range(replacement) else {
+            return;
+        };
+        self.ime_composing = false;
+        self.ime.finish();
+        self.log.emit(
+            "ime_commit_forwarded",
+            json!({ "text": text, "replacement": replacement }),
+        );
+        self.input(
+            InputEvent::ImeCommit {
+                text: text.to_string(),
+                replacement,
+            },
+            cx,
+        );
     }
 
     fn started_ns(&self) -> u64 {
@@ -652,17 +719,30 @@ impl PrototypeView {
                 match kind {
                     "loaded" => self.loaded = true,
                     "fixture_state" => self.fixture = value.get("state").cloned(),
+                    "ime_selection" => {
+                        if let Some(snapshot) = value
+                            .get("snapshot")
+                            .cloned()
+                            .and_then(|snapshot| serde_json::from_value(snapshot).ok())
+                        {
+                            self.ime.selection_changed(snapshot);
+                        }
+                    }
+                    "ime_bounds" => {
+                        if let Some(snapshot) = value
+                            .get("snapshot")
+                            .cloned()
+                            .and_then(|snapshot| serde_json::from_value(snapshot).ok())
+                        {
+                            self.ime.composition_bounds(snapshot);
+                        }
+                    }
                     "pool_created" => self.generations_seen += 1,
                     "trace_completed" => self.complete_trace(Ok(())),
                     "trace_failed" => self.complete_trace(Err("CEF trace export failed".into())),
                     _ => (),
                 }
-                if kind != "fixture_state"
-                    || self.step_started.is_some()
-                    || browser_qualification::enabled()
-                {
-                    self.log.emit("native", json!({ "native": value }));
-                }
+                self.log.emit("native", json!({ "native": value }));
                 if kind == "load_failed" {
                     self.fail("the page failed to load".to_string(), cx);
                 }
@@ -688,6 +768,8 @@ impl PrototypeView {
                 self.session = None;
                 self.loaded = false;
                 self.fixture = None;
+                self.ime = super::ime::ImeState::default();
+                self.ime_composing = false;
                 self.presented = None;
                 self.current_frame = None;
                 self.phase = Phase::Lost;
@@ -1168,6 +1250,13 @@ impl PrototypeView {
             .unwrap_or(0)
     }
 
+    fn fixture_pointer(&self) -> Option<(i32, i32)> {
+        let point = self.fixture.as_ref()?.get("last_pointer")?.as_array()?;
+        let x = i32::try_from(point.first()?.as_i64()?).ok()?;
+        let y = i32::try_from(point.get(1)?.as_i64()?).ok()?;
+        Some((x, y))
+    }
+
     fn tick(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.phase == Phase::Finished {
             return;
@@ -1231,6 +1320,8 @@ impl PrototypeView {
         }
         let done = match step {
             Step::Input => self.step_input(window, cx),
+            Step::Wheel => self.step_wheel(),
+            Step::Drag => self.step_drag(),
             Step::Resize => self.step_resize(cx),
             Step::Scale => self.step_scale(cx),
             Step::HostLoss => self.step_host_loss(cx),
@@ -1334,6 +1425,83 @@ impl PrototypeView {
         false
     }
 
+    fn step_wheel(&mut self) -> bool {
+        if matches!(self.source, Source::Pattern { .. }) {
+            self.log.emit(
+                "step_skipped",
+                json!({ "step": "wheel", "reason": "pattern source has no page" }),
+            );
+            return true;
+        }
+        if self.step_stage == 0 {
+            self.step_marker = self.fixture_counter("wheel");
+            self.step_stage = 1;
+            self.log
+                .emit("wheel_waiting", json!({ "wheel": self.step_marker }));
+            return false;
+        }
+        let wheel = self.fixture_counter("wheel");
+        if wheel > self.step_marker {
+            self.log.emit(
+                "wheel_observed",
+                json!({ "wheel": wheel, "fixture": self.fixture }),
+            );
+            return true;
+        }
+        false
+    }
+
+    fn step_drag(&mut self) -> bool {
+        if matches!(self.source, Source::Pattern { .. }) {
+            self.log.emit(
+                "step_skipped",
+                json!({ "step": "drag", "reason": "pattern source has no page" }),
+            );
+            return true;
+        }
+        if self.step_stage == 0 {
+            self.step_pointer_marker = [
+                self.fixture_counter("pointerdowns"),
+                self.fixture_counter("pointermoves"),
+                self.fixture_counter("pointerups"),
+            ];
+            self.step_stage = 1;
+            self.log.emit(
+                "drag_waiting",
+                json!({ "counters": self.step_pointer_marker }),
+            );
+            return false;
+        }
+        let pointerdowns = self.fixture_counter("pointerdowns");
+        let pointermoves = self.fixture_counter("pointermoves");
+        let pointerups = self.fixture_counter("pointerups");
+        let selection = self
+            .ime
+            .selection
+            .clone()
+            .filter(|range| range.start != range.end);
+        if pointerdowns > self.step_pointer_marker[0]
+            && pointermoves > self.step_pointer_marker[1]
+            && pointerups > self.step_pointer_marker[2]
+            && let Some(selection) = selection
+        {
+            let selected_text = self.ime.text_for_range(selection.clone());
+            self.log.emit(
+                "drag_observed",
+                json!({
+                    "pointerdowns": pointerdowns,
+                    "pointermoves": pointermoves,
+                    "pointerups": pointerups,
+                    "selection": [selection.start, selection.end],
+                    "selected_text": selected_text,
+                    "fixture": self.fixture,
+                }),
+            );
+            return true;
+        }
+        false
+    }
+
     fn step_resize(&mut self, cx: &mut Context<Self>) -> bool {
         if self.step_stage == 0 {
             self.step_marker = self.generations_seen;
@@ -1397,11 +1565,61 @@ impl PrototypeView {
                         "scale_observed",
                         json!({ "scale_percent": 200, "fixture": self.fixture }),
                     );
+                    self.step_stage = 2;
+                    if matches!(self.source, Source::Pattern { .. }) {
+                        self.step_marker = self.generations_seen;
+                        self.scale_override = None;
+                        cx.notify();
+                    } else {
+                        let (x, y) = (160, 120);
+                        self.step_marker = self.fixture_counter("clicks");
+                        self.input(InputEvent::MouseMove { x, y, modifiers: 0 }, cx);
+                        self.input(
+                            InputEvent::MouseButton {
+                                x,
+                                y,
+                                button: MouseButton::Left,
+                                down: true,
+                                clicks: 1,
+                                modifiers: MODIFIER_LEFT_MOUSE,
+                            },
+                            cx,
+                        );
+                        self.input(
+                            InputEvent::MouseButton {
+                                x,
+                                y,
+                                button: MouseButton::Left,
+                                down: false,
+                                clicks: 1,
+                                modifiers: 0,
+                            },
+                            cx,
+                        );
+                        self.log.emit(
+                            "scale_coordinate_sent",
+                            json!({ "scale_percent": 200, "x": x, "y": y }),
+                        );
+                    }
+                }
+                false
+            }
+            2 => {
+                if !matches!(self.source, Source::Pattern { .. }) {
+                    let clicks = self.fixture_counter("clicks");
+                    let pointer = self.fixture_pointer();
+                    if clicks <= self.step_marker || pointer != Some((160, 120)) {
+                        return false;
+                    }
+                    self.log.emit(
+                        "scale_coordinate_observed",
+                        json!({ "scale_percent": 200, "clicks": clicks, "last_pointer": pointer }),
+                    );
                     self.step_marker = self.generations_seen;
                     self.scale_override = None;
                     cx.notify();
-                    self.step_stage = 2;
                 }
+                self.step_stage = 3;
                 false
             }
             _ => {
@@ -1599,81 +1817,26 @@ impl Render for PrototypeView {
                 );
             }))
             .on_key_down(cx.listener(|view, event: &KeyDownEvent, _, cx| {
-                let keystroke = &event.keystroke;
-                let code = key_code(&keystroke.key);
-                let flags = modifiers(&keystroke.modifiers);
-                view.input(
-                    InputEvent::Key {
-                        kind: KeyKind::RawDown,
-                        key_code: code,
-                        native_key_code: 0,
-                        character: 0,
-                        unmodified_character: 0,
-                        modifiers: flags,
-                    },
-                    cx,
-                );
-                if let Some(character) = keystroke
-                    .key_char
-                    .as_deref()
-                    .and_then(|text| text.chars().next())
-                {
-                    let mut units = [0_u16; 2];
-                    let encoded = character.encode_utf16(&mut units);
-                    if encoded.len() == 1 {
-                        view.input(
-                            InputEvent::Key {
-                                kind: KeyKind::Char,
-                                key_code: code,
-                                native_key_code: 0,
-                                character: encoded[0],
-                                unmodified_character: encoded[0],
-                                modifiers: flags,
-                            },
-                            cx,
-                        );
-                    }
-                } else if keystroke.key == "enter"
-                    || keystroke.key == "tab"
-                    || keystroke.key == "space"
-                {
-                    let character = match keystroke.key.as_str() {
-                        "enter" => 13,
-                        "tab" => 9,
-                        _ => 32,
-                    };
-                    view.input(
-                        InputEvent::Key {
-                            kind: KeyKind::Char,
-                            key_code: code,
-                            native_key_code: 0,
-                            character,
-                            unmodified_character: character,
-                            modifiers: flags,
-                        },
-                        cx,
-                    );
+                if view.ime_composing {
+                    return;
+                }
+                for input in consume_key_down(event, cx) {
+                    view.input(input, cx);
                 }
             }))
             .on_key_up(cx.listener(|view, event: &KeyUpEvent, _, cx| {
-                let keystroke = &event.keystroke;
-                view.input(
-                    InputEvent::Key {
-                        kind: KeyKind::Up,
-                        key_code: key_code(&keystroke.key),
-                        native_key_code: 0,
-                        character: 0,
-                        unmodified_character: 0,
-                        modifiers: modifiers(&keystroke.modifiers),
-                    },
-                    cx,
-                );
+                for input in key_events(&event.keystroke, false) {
+                    view.input(input, cx);
+                }
+                cx.stop_propagation();
             }));
         if inset {
             root = root.p(px(RESIZE_INSET));
         }
         if let Some(surface) = surface {
             let frame = self.current_frame.clone();
+            let view = cx.entity();
+            let focus = self.focus.clone();
             root = root.child(
                 gpui::canvas(
                     |_, _, _| (),
@@ -1682,12 +1845,119 @@ impl Render for PrototypeView {
                         if let Some(frame) = frame {
                             browser_qualification::browser_painted(frame, window, cx);
                         }
+                        if focus.is_focused(window) {
+                            window.handle_input(
+                                &focus,
+                                PrototypeInputHandler {
+                                    view: view.clone(),
+                                    bounds,
+                                },
+                                cx,
+                            );
+                        }
                     },
                 )
                 .size_full(),
             );
         }
         root
+    }
+}
+
+struct PrototypeInputHandler {
+    view: Entity<PrototypeView>,
+    bounds: Bounds<Pixels>,
+}
+
+impl gpui::InputHandler for PrototypeInputHandler {
+    fn selected_text_range(
+        &mut self,
+        _ignore_disabled_input: bool,
+        _window: &mut Window,
+        cx: &mut App,
+    ) -> Option<gpui::UTF16Selection> {
+        let range = self.view.read(cx).ime.selection.clone()?;
+        Some(gpui::UTF16Selection {
+            range: range.start.min(range.end)..range.start.max(range.end),
+            reversed: range.start > range.end,
+        })
+    }
+
+    fn marked_text_range(&mut self, _window: &mut Window, cx: &mut App) -> Option<Range<usize>> {
+        self.view.read(cx).ime.marked.clone()
+    }
+
+    fn text_for_range(
+        &mut self,
+        range_utf16: Range<usize>,
+        adjusted_range: &mut Option<Range<usize>>,
+        _window: &mut Window,
+        cx: &mut App,
+    ) -> Option<String> {
+        let text = self.view.read(cx).ime.text_for_range(range_utf16.clone())?;
+        *adjusted_range = Some(range_utf16);
+        Some(text)
+    }
+
+    fn replace_text_in_range(
+        &mut self,
+        replacement_range: Option<Range<usize>>,
+        text: &str,
+        _window: &mut Window,
+        cx: &mut App,
+    ) {
+        self.view
+            .update(cx, |view, cx| view.ime_commit(text, replacement_range, cx));
+    }
+
+    fn replace_and_mark_text_in_range(
+        &mut self,
+        range_utf16: Option<Range<usize>>,
+        new_text: &str,
+        new_selected_range: Option<Range<usize>>,
+        _window: &mut Window,
+        cx: &mut App,
+    ) {
+        self.view.update(cx, |view, cx| {
+            view.ime_compose(new_text, new_selected_range, range_utf16, cx)
+        });
+    }
+
+    fn unmark_text(&mut self, _window: &mut Window, cx: &mut App) {
+        self.view.update(cx, |view, cx| {
+            if view.ime_composing {
+                view.ime_composing = false;
+                view.ime.finish();
+                view.log.emit("ime_finish_forwarded", json!({}));
+                view.input(InputEvent::ImeFinish, cx);
+            }
+        });
+    }
+
+    fn bounds_for_range(
+        &mut self,
+        range_utf16: Range<usize>,
+        _window: &mut Window,
+        cx: &mut App,
+    ) -> Option<Bounds<Pixels>> {
+        let view = self.view.read(cx);
+        let [x, y, w, h] = view.ime.caret_bounds(range_utf16.start)?;
+        let geometry = view.presented.as_ref()?;
+        let scale_x = f32::from(self.bounds.size.width) / geometry.width.max(1) as f32;
+        let scale_y = f32::from(self.bounds.size.height) / geometry.height.max(1) as f32;
+        Some(Bounds::new(
+            self.bounds.origin + gpui::point(px(x as f32 * scale_x), px(y as f32 * scale_y)),
+            gpui::size(px(w.max(1) as f32 * scale_x), px(h.max(1) as f32 * scale_y)),
+        ))
+    }
+
+    fn character_index_for_point(
+        &mut self,
+        _point: gpui::Point<Pixels>,
+        _window: &mut Window,
+        _cx: &mut App,
+    ) -> Option<usize> {
+        None
     }
 }
 
@@ -1898,6 +2168,7 @@ pub(crate) fn open_m1_window(cx: &mut App) -> Result<(), String> {
     ])
     .map_err(|error| error.to_string())?;
     options.m1 = true;
+    options.x11 = std::env::var("XDG_SESSION_TYPE").is_ok_and(|value| value == "x11");
     let coordinate = |name: &str| -> Result<f32, String> {
         match std::env::var(name) {
             Ok(value) => value
@@ -1915,7 +2186,7 @@ pub(crate) fn open_m1_window(cx: &mut App) -> Result<(), String> {
     log.emit(
         "started",
         json!({"schema_version":1,"pid":std::process::id(),
-        "source":"cef","url":url,"ozone":"wayland","clock":"CLOCK_MONOTONIC",
+        "source":"cef","url":url,"ozone":if options.x11 {"x11"} else {"wayland"},"clock":"CLOCK_MONOTONIC",
         "configuration":"C","terminal_layout":"unchanged normal application window",
         "browser_physical_width":1920,"browser_physical_height":1080,
         "profile":if cfg!(debug_assertions) {"debug"} else {"release"}}),

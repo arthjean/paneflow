@@ -14,6 +14,7 @@ pub struct BrowserAuthority {
     profiles: Result<ProfileStore, ProfileError>,
     host_binary: Option<PathBuf>,
     runtime_root: Option<PathBuf>,
+    repair: Option<String>,
     next_operation: u64,
 }
 
@@ -26,21 +27,31 @@ impl BrowserAuthority {
 
     fn detect() -> Self {
         let target = format!("{}-{}", std::env::consts::ARCH, std::env::consts::OS);
-        let runtime_root = if cfg!(target_os = "linux") {
-            std::env::var_os(super::RUNTIME_ENV).map(PathBuf::from)
-        } else {
-            None
+        #[cfg(target_os = "linux")]
+        let (availability, host_binary, runtime_root, repair) = match super::install::detect() {
+            super::install::Readiness::Ready(layout, sandbox) => {
+                log::info!("browser: {} sandbox in effect", sandbox.label());
+                (
+                    super::install::declared_availability(),
+                    Some(layout.host_binary),
+                    Some(layout.runtime_root),
+                    None,
+                )
+            }
+            super::install::Readiness::Unusable(reason) => {
+                log::warn!("browser: {reason}");
+                (Availability::Absent, None, None, Some(reason))
+            }
+            super::install::Readiness::Absent => (Availability::Absent, None, None, None),
         };
-        let host_binary = runtime_root.as_ref().and_then(|_| {
-            std::env::var_os(super::HOST_ENV)
-                .map(PathBuf::from)
-                .or_else(|| {
-                    std::env::current_exe()
-                        .ok()
-                        .and_then(|exe| exe.parent().map(|dir| dir.join("paneflow-browser-host")))
-                })
-        });
-        let development = runtime_root.is_some() && host_binary.is_some();
+        #[cfg(not(target_os = "linux"))]
+        let (availability, host_binary, runtime_root, repair) = (
+            Availability::Absent,
+            None::<PathBuf>,
+            None::<PathBuf>,
+            None::<String>,
+        );
+        let development = availability != Availability::Absent;
         let profiles = if development {
             match profile::default_root() {
                 Some(root) => ProfileStore::open(root),
@@ -59,15 +70,12 @@ impl BrowserAuthority {
             log::warn!("browser: profile root unavailable: {error:?}");
         }
         Self {
-            availability: if development {
-                Availability::Development
-            } else {
-                Availability::Absent
-            },
+            availability,
             controller: Controller::new(target, development),
             profiles,
             host_binary,
             runtime_root,
+            repair,
             next_operation: 1,
         }
     }
@@ -80,6 +88,7 @@ impl BrowserAuthority {
             profiles: ProfileStore::open(root),
             host_binary: None,
             runtime_root: None,
+            repair: None,
             next_operation: 1,
         }
     }
@@ -91,6 +100,10 @@ impl BrowserAuthority {
 
     pub fn profiles(&self) -> Result<&ProfileStore, ProfileError> {
         self.profiles.as_ref().map_err(Clone::clone)
+    }
+
+    pub fn repair(cx: &App) -> Option<String> {
+        cx.try_global::<Self>()?.repair.clone()
     }
 
     pub fn host_paths(&self) -> Option<(PathBuf, PathBuf)> {

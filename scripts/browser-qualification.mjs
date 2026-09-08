@@ -24,9 +24,9 @@ async function main() {
       if (args.length > 1 || (args.length === 1 && !/^\d+$/.test(args[0]))) throw new Error("serve accepts an optional port");
       const port = Number(args[0] ?? 0);
       if (!Number.isSafeInteger(port) || port < 0 || port > 65535) throw new Error("port must be between 0 and 65535");
-      const { server, url, manifest } = await serveFixtures(port);
-      process.stdout.write(`${JSON.stringify({ url, ...manifest })}\n`);
-      const stop = () => { server.close(); server.closeAllConnections(); };
+      const { close, url, websocket, manifest } = await serveFixtures(port);
+      process.stdout.write(`${JSON.stringify({ url, websocket, ...manifest })}\n`);
+      const stop = () => close();
       process.once("SIGINT", stop);
       process.once("SIGTERM", stop);
       break;

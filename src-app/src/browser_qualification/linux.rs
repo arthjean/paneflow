@@ -41,6 +41,10 @@ pub(crate) fn enabled() -> bool {
     logger().is_some()
 }
 
+fn input_only() -> bool {
+    std::env::var("PANEFLOW_M1_INPUT_ONLY").is_ok_and(|value| value == "1")
+}
+
 pub(crate) fn now_ns() -> u64 {
     clock_ns(libc::CLOCK_MONOTONIC).unwrap_or(0)
 }
@@ -253,6 +257,10 @@ impl BrowserTracker {
             self.native_attempted = true;
             match NativeObserver::start(window, logger.clone(), "browser") {
                 Ok(native) => self.native = Some(native),
+                Err(error) if input_only() => logger.emit(json!({
+                    "event":"presentation_unavailable","role":"browser","at_ns":now_ns(),
+                    "reason":error,"scope":"input_isolation_only"
+                })),
                 Err(error) => logger.fatal(error),
             }
         }
@@ -452,6 +460,10 @@ pub(crate) fn painted<'a>(
             tracker.native_attempted = true;
             match NativeObserver::start(window, logger.clone(), "terminal") {
                 Ok(native) => tracker.native = Some(native),
+                Err(error) if input_only() => logger.emit(json!({
+                    "event":"presentation_unavailable","role":"terminal","at_ns":now_ns(),
+                    "reason":error,"scope":"input_isolation_only"
+                })),
                 Err(error) => logger.fatal(error),
             }
         }

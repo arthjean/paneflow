@@ -31,14 +31,30 @@ allowlist are served; files elsewhere in the repository are not exposed.
 | `/ime` | Labeled input with composition/input event observation |
 | `/popup` | User-initiated local 640x480 popup containing the input fixture |
 | `/download` | User-initiated download of the fixed 1,024-byte payload |
+| `/serviceworker` | Registers `/sw.js` at scope `/`, waits for control, then checks that `/service-worker-probe` is answered by the worker |
+| `/websocket` | Eight masked text round trips against the loopback echo endpoint published by `/websocket.json` |
+| `/iframe` | Same-origin `/frame` read through `contentDocument`, next to `/embedded` refusing to be framed by `X-Frame-Options: DENY` |
+| `/auth` | HTTP Basic realm on `/private`: a credential-less fetch must be refused with 401 before the native prompt is answered |
+
+The WebSocket echo listens on its own loopback port because the qualification
+CLI runs under Bun, whose `node:http` upgrade socket does not write back. The
+port is published by `/websocket.json` and allowed by each page's
+`connect-src`. The `/auth` credential exists only in
+`scripts/browser-qualification/fixtures.mjs`; no external token is imported.
 
 Fixtures use no third-party services, fonts or randomness. Timed work is driven
 by elapsed time so a dropped frame does not reduce the intended motion speed.
 The empty fixture remains idle. WebGL/network failures set
 `document.documentElement.dataset.fixtureState` to `failed`; captures must
 retain that failure and be rejected. This flag and requestAnimationFrame are
-diagnostics only, never evidence that a frame reached presentation. IME, popup
-and download require native observation; HTTP tests do not qualify their UI.
+diagnostics only, never evidence that a frame reached presentation. IME, popup,
+download, the service-worker probe, the WebSocket round trips, frame reachability
+and the authentication prompt require native observation; HTTP tests exercise the
+server side only and do not qualify their UI.
+
+Adding or removing a fixture changes the bundle SHA-256 that every archived M1
+capture carries, so a capture stays bound to the corpus it ran against. The
+current corpus is `schema_version: 2`.
 
 ## Freeze the experiment before comparing
 

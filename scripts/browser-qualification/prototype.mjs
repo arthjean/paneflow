@@ -138,7 +138,7 @@ export async function runPrototype(options) {
   const directory = resolve(output);
   await mkdir(directory, { mode: 0o700 });
   const logPath = join(directory, "prototype.jsonl");
-  const env = { ...process.env, PANEFLOW_CEF_ROOT: runtime, PANEFLOW_BROWSER_HOST: resolve(host), RUST_LOG: "warn" };
+  const env = { ...process.env, PANEFLOW_CEF_ROOT: runtime, PANEFLOW_BROWSER_HOST: resolve(host), RUST_LOG: process.env.RUST_LOG ?? "warn" };
   if (display === "x11") delete env.WAYLAND_DISPLAY;
   const args = ["browser-prototype", "--source", source, "--log", logPath, "--hold", String(hold)];
   if (source === "cef") args.push("--url", `${fixtures.url}/${scenario}`);
@@ -170,8 +170,7 @@ export async function runPrototype(options) {
     }
   }
   if (exit === null) { child.kill("SIGKILL"); await pause(500); }
-  fixtures.server.close();
-  fixtures.server.closeAllConnections();
+  fixtures.close();
   const shutdown = await observeShutdown(snapshots);
   const log = await events();
   const summary = log.find(event => event.event === "summary") ?? null;

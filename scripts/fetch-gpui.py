@@ -154,8 +154,8 @@ def create_checkout(manifest, series, pristine):
                 raise SystemExit(f"upstream tree lacks {relative}")
         if not pristine:
             for item in series:
-                git(staging, "apply", "--check", "--whitespace=nowarn", str(item["path"]))
-                git(staging, "apply", "--whitespace=nowarn", str(item["path"]))
+                git(staging, "apply", "--check", "--unidiff-zero", "--whitespace=nowarn", str(item["path"]))
+                git(staging, "apply", "--unidiff-zero", "--whitespace=nowarn", str(item["path"]))
         rewrite_workspace_members(staging, package_directories(staging, manifest["checkout_paths"]))
         with open(staging / STAMP_NAME, "w", encoding="utf-8") as handle:
             json.dump(expected_stamp(manifest, series, pristine), handle, indent=2, sort_keys=True)

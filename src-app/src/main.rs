@@ -1782,6 +1782,9 @@ fn main() {
     if args.get(1).map(String::as_str) == Some(browser::PROTOTYPE_VERB) {
         std::process::exit(browser::run_prototype(&args));
     }
+    if args.get(1).map(String::as_str) == Some(browser::SECURITY_CORPUS_VERB) {
+        std::process::exit(browser::run_security_corpus());
+    }
     let is_cli_subcommand = cli::is_cli_verb(args.get(1).map(String::as_str));
     let is_hooks_subcommand = args.get(1).map(String::as_str) == Some("hooks");
     let is_global_help = !is_msi_relay

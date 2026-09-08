@@ -31,6 +31,14 @@ pub struct FixtureState {
     keys: u64,
     #[serde(default)]
     wheel: u64,
+    #[serde(default)]
+    pointerdowns: u64,
+    #[serde(default)]
+    pointermoves: u64,
+    #[serde(default)]
+    pointerups: u64,
+    #[serde(default)]
+    last_pointer: Option<[i32; 2]>,
 }
 
 #[derive(Deserialize, Serialize)]

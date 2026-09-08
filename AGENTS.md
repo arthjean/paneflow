@@ -187,6 +187,7 @@ changes.
 | Module layout, thread model, keystroke-to-pixel path, agent lifecycle, IPC, self-update | [ARCHITECTURE.md](ARCHITECTURE.md) |
 | Visual thesis, color roles, geometry, motion, component contracts, UI delivery gate | [DESIGN.md](DESIGN.md) |
 | Per-platform signing runbooks | [docs/release/linux-signing.md](docs/release/linux-signing.md), [docs/release/macos-signing.md](docs/release/macos-signing.md), [docs/release/windows-signing.md](docs/release/windows-signing.md) |
+| Linux browser runtime packaging, sandbox rights per format and engine maintenance | [docs/release/browser-linux.md](docs/release/browser-linux.md) |
 | libghostty engine build and qualification per platform | [docs/release/libghostty-linux.md](docs/release/libghostty-linux.md), [docs/release/macos-libghostty.md](docs/release/macos-libghostty.md), [docs/release/windows-libghostty.md](docs/release/windows-libghostty.md) |
 | Rust toolchain pin | [docs/release/rustfmt.md](docs/release/rustfmt.md) |
 | Public user docs, a mirror of paneflow.dev/docs synced from the site repo | [docs/user/](docs/user/README.md) |

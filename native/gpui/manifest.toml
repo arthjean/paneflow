@@ -66,3 +66,7 @@ sha256 = "2c37d9f65553968fd5a9e4c66396d955279611cdc59ccbf0a5915a0a6578469f"
 [[patches]]
 file = "0008-gpui-synthetic-accessibility-focus.patch"
 sha256 = "7293b34071aede66531f482aba616f71e047760db0c016c163d986fdd0a20c1e"
+
+[[patches]]
+file = "0009-gpui-x11-xim-focus.patch"
+sha256 = "c375210e5969226ff71317bfd62545a1667e67b9673f0f112f34b1d74411c11f"

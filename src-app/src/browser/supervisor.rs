@@ -779,6 +779,11 @@ impl HostSupervisor {
 
 fn start(inner: &Arc<Inner>, config: &HostConfig) -> Result<HostInfo, String> {
     verify_runtime(&config.runtime_root, config.check)?;
+    let sandbox = super::install::sandbox_mechanism(&config.runtime_root)?;
+    log::info!(
+        "browser: host starting with the {} sandbox",
+        sandbox.label()
+    );
     let host_digest = verify_host_binary(&config.host_binary)?;
     let staged = stage(config, &host_digest)?;
     let bin = staged.join("bin");

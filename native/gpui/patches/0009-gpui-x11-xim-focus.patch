@@ -1,0 +1,93 @@
+diff --git a/crates/gpui_linux/src/linux/x11/client.rs b/crates/gpui_linux/src/linux/x11/client.rs
+index 9b35125..acb576a 100644
+--- a/crates/gpui_linux/src/linux/x11/client.rs
++++ b/crates/gpui_linux/src/linux/x11/client.rs
+@@ -678,0 +679,2 @@ impl X11Client {
++                let activate_ime =
++                    !xim_connected && xim_handler.connected && xim_handler.focused;
+@@ -683,0 +686,3 @@ impl X11Client {
++                if activate_ime {
++                    self.enable_ime();
++                }
+@@ -737,6 +737,10 @@ impl X11Client {
+         let Some((mut ximc, xim_handler)) = state.take_xim() else {
+             return;
+         };
++        if !xim_handler.connected {
++            state.restore_xim(ximc, xim_handler);
++            return;
++        }
+         let mut ic_attributes = ximc
+             .build_ic_attributes()
+             .push(AttributeName::InputStyle, InputStyle::PREEDIT_CALLBACKS)
+@@ -766,7 +770,14 @@ impl X11Client {
+                     });
+             }
+         }
+-        ximc.create_ic(xim_handler.im_id, ic_attributes.build())
++        ximc.set_ic_values(
++            xim_handler.im_id,
++            xim_handler.ic_id,
++            ic_attributes.build(),
++        )
++        .ok();
++        ximc
++            .set_focus(xim_handler.im_id, xim_handler.ic_id)
+             .ok();
+         let mut state = self.0.borrow_mut();
+         state.restore_xim(ximc, xim_handler);
+@@ -787,0 +804,18 @@ impl X11Client {
++    pub fn disable_ime(&self) {
++        let mut state = self.0.borrow_mut();
++        let Some(mut ximc) = state.ximc.take() else {
++            return;
++        };
++        if let Some(xim_handler) = state.xim_handler.as_mut() {
++            xim_handler.focused = false;
++            if xim_handler.connected {
++                ximc
++                    .unset_focus(xim_handler.im_id, xim_handler.ic_id)
++                    .ok();
++            }
++        } else {
++            log::error!("bug: xim handler not set in disable_ime");
++        }
++        state.ximc = Some(ximc);
++    }
++
+@@ -979,6 +1008,7 @@ impl X11Client {
+                 state.keyboard_focused_window = Some(event.event);
+                 if let Some(handler) = state.xim_handler.as_mut() {
+                     handler.window = event.event;
++                    handler.focused = true;
+                 }
+                 drop(state);
+                 self.enable_ime();
+@@ -996,6 +1026,7 @@ impl X11Client {
+                 state.pre_edit_text.take();
+                 state.restore_cursor_after_hide();
+                 drop(state);
++                self.disable_ime();
+                 self.reset_ime();
+                 window.handle_ime_delete();
+             }
+diff --git a/crates/gpui_linux/src/linux/x11/xim_handler.rs b/crates/gpui_linux/src/linux/x11/xim_handler.rs
+index 82b7c96..2028a95 100644
+--- a/crates/gpui_linux/src/linux/x11/xim_handler.rs
++++ b/crates/gpui_linux/src/linux/x11/xim_handler.rs
+@@ -13,6 +13,7 @@ pub struct XimHandler {
+     pub im_id: u16,
+     pub ic_id: u16,
+     pub connected: bool,
++    pub focused: bool,
+     pub window: xproto::Window,
+     pub last_callback_event: Option<XimCallbackEvent>,
+ }
+@@ -23,6 +24,7 @@ impl XimHandler {
+             im_id: Default::default(),
+             ic_id: Default::default(),
+             connected: false,
++            focused: false,
+             window: Default::default(),
+             last_callback_event: None,
+         }

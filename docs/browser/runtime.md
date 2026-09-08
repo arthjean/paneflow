@@ -55,9 +55,11 @@ codec redistribution verdict.
 
 The archive inventories are 1,556,438,625 uncompressed bytes x86_64 and
 2,639,771,835 bytes aarch64. These include upstream unstripped libraries. They
-do not meet the 600 MiB installed release budget as-is. Packaging/stripping and
-all compressed/installed deltas remain a later release qualification, with no
-change to that budget.
+do not meet the 600 MiB installed release budget as-is. Stripping is not a way
+out: packaging copies the pinned bytes verbatim so `verify_runtime` can refuse a
+tampered runtime, and the budget therefore has to be met by the upstream build.
+See [docs/release/browser-linux.md](../release/browser-linux.md) for the
+installed layout, the per-format sandbox rights and the packaging verification.
 
 ## Explicit fetch and ABI inspection
 

@@ -55,6 +55,19 @@ install -m 644 "$REPO_ROOT/native/libghostty/THIRD_PARTY_NOTICES.md" \
                "$APP/THIRD_PARTY_NOTICES.md"
 install -m 755 "$SCRIPT_DIR/tarball-install.sh" "$APP/install.sh"
 
+if [ -n "${PANEFLOW_BROWSER_STAGE:-}" ]; then
+    if [ ! -d "$PANEFLOW_BROWSER_STAGE/lib/paneflow/browser" ]; then
+        echo "error: PANEFLOW_BROWSER_STAGE has no lib/paneflow/browser (run scripts/browser-package.py stage)" >&2
+        exit 1
+    fi
+    cp -a "$PANEFLOW_BROWSER_STAGE/lib" "$APP/lib"
+    cp -a "$PANEFLOW_BROWSER_STAGE/share/doc" "$APP/share/doc"
+    chmod 0755 "$APP/lib/paneflow/browser/Release/chrome-sandbox"
+    python3 "$SCRIPT_DIR/browser-package.py" sbom --prefix "$APP" --format targz \
+            --output "$APP/share/doc/paneflow/browser-sbom.json" >/dev/null
+    python3 "$SCRIPT_DIR/browser-package.py" verify --prefix "$APP" --format targz >&2
+fi
+
 MTIME="${SOURCE_DATE_EPOCH:-$(date +%s)}"
 ( cd "$BUNDLE_DIR" \
   && tar \

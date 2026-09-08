@@ -201,6 +201,20 @@ fn private_directory(dir: &Path) -> Result<(), ProfileError> {
     }
 }
 
+pub fn engine_ordinals(version: &str) -> Vec<u64> {
+    version
+        .split(['+', '-'])
+        .next()
+        .unwrap_or_default()
+        .split('.')
+        .map(|part| part.parse::<u64>().unwrap_or(0))
+        .collect()
+}
+
+pub fn engine_is_newer(recorded: &str, running: &str) -> bool {
+    engine_ordinals(recorded) > engine_ordinals(running)
+}
+
 fn check_marker(path: &Path) -> Result<(), ProfileError> {
     match File::open(path) {
         Ok(mut file) => {
@@ -218,31 +232,55 @@ fn check_marker(path: &Path) -> Result<(), ProfileError> {
             if schema > u64::from(PROFILE_SCHEMA) {
                 return Err(ProfileError::NeedsNewerRuntime);
             }
+            let recorded = value
+                .get("engine")
+                .and_then(serde_json::Value::as_str)
+                .ok_or_else(|| ProfileError::Corrupted(format!("{}: no engine", path.display())))?;
+            if engine_is_newer(recorded, engine_version()) {
+                return Err(ProfileError::NeedsNewerRuntime);
+            }
+            if recorded != engine_version() {
+                let migrated = serde_json::json!({
+                    "schema": PROFILE_SCHEMA,
+                    "engine": engine_version(),
+                    "migrated_from": recorded,
+                });
+                write_marker(path, &migrated)?;
+            }
             Ok(())
         }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            let marker =
-                serde_json::json!({ "schema": PROFILE_SCHEMA, "engine": engine_version() });
-            let mut options = OpenOptions::new();
-            options.write(true).create_new(true);
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::OpenOptionsExt;
-                options.mode(0o600);
-            }
-            let mut file = options.open(path).map_err(|error| {
-                ProfileError::Inaccessible(format!("cannot create {}: {error}", path.display()))
-            })?;
-            file.write_all(marker.to_string().as_bytes())
-                .map_err(|error| {
-                    ProfileError::Inaccessible(format!("cannot write {}: {error}", path.display()))
-                })
-        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => write_marker(
+            path,
+            &serde_json::json!({ "schema": PROFILE_SCHEMA, "engine": engine_version() }),
+        ),
         Err(error) => Err(ProfileError::Inaccessible(format!(
             "cannot read {}: {error}",
             path.display()
         ))),
     }
+}
+
+fn write_marker(path: &Path, marker: &serde_json::Value) -> Result<(), ProfileError> {
+    let temporary = path.with_extension("json.new");
+    let mut options = OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options.open(&temporary).map_err(|error| {
+        ProfileError::Inaccessible(format!("cannot create {}: {error}", temporary.display()))
+    })?;
+    file.write_all(marker.to_string().as_bytes())
+        .and_then(|()| file.sync_all())
+        .map_err(|error| {
+            ProfileError::Inaccessible(format!("cannot write {}: {error}", temporary.display()))
+        })?;
+    drop(file);
+    fs::rename(&temporary, path).map_err(|error| {
+        ProfileError::Inaccessible(format!("cannot publish {}: {error}", path.display()))
+    })
 }
 
 #[cfg(test)]
@@ -343,6 +381,49 @@ mod tests {
         assert!(moved.join("Cookies").is_file());
         assert!(!store.has_data(&profile("p-gone")));
         assert_eq!(store.erase_profile(&profile("p-gone")).unwrap(), None);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn a_profile_written_by_a_newer_engine_is_refused_and_an_older_one_is_migrated() {
+        assert!(engine_is_newer(
+            "152.0.1+chromium-152.0.0.1",
+            "151.3.24+chromium-151.0.7922.174"
+        ));
+        assert!(!engine_is_newer(
+            "151.3.24+chromium-151.0.7922.174",
+            "151.3.24+chromium-151.0.7922.174"
+        ));
+        assert!(!engine_is_newer("151.2.9", "151.3.24"));
+
+        let root = scratch("engine");
+        let store = ProfileStore::open(root.clone()).unwrap();
+        let dir = root.join("profiles").join("p-newer");
+        fs::create_dir_all(&dir).unwrap();
+        let newer = r#"{"schema": 1, "engine": "999.0.0+chromium-999.0.0.0"}"#;
+        fs::write(dir.join(MARKER), newer).unwrap();
+        assert_eq!(
+            store.profile_dir(&profile("p-newer")).err(),
+            Some(ProfileError::NeedsNewerRuntime)
+        );
+        assert_eq!(fs::read_to_string(dir.join(MARKER)).unwrap(), newer);
+
+        let older = root.join("profiles").join("p-older");
+        fs::create_dir_all(&older).unwrap();
+        fs::write(older.join(MARKER), r#"{"schema": 1, "engine": "150.0.0"}"#).unwrap();
+        store.profile_dir(&profile("p-older")).unwrap();
+        let migrated: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(older.join(MARKER)).unwrap()).unwrap();
+        assert_eq!(migrated["engine"], engine_version());
+        assert_eq!(migrated["migrated_from"], "150.0.0");
+
+        let unversioned = root.join("profiles").join("p-blank");
+        fs::create_dir_all(&unversioned).unwrap();
+        fs::write(unversioned.join(MARKER), r#"{"schema": 1}"#).unwrap();
+        assert!(matches!(
+            store.profile_dir(&profile("p-blank")),
+            Err(ProfileError::Corrupted(_))
+        ));
         let _ = fs::remove_dir_all(root);
     }
 

@@ -105,11 +105,84 @@ function imeFixture() {
   }
 }
 
+function serviceWorkerFixture() {
+  const status = node("output", "Service worker: registering");
+  if (!navigator.serviceWorker) return fail("Service workers unavailable");
+  navigator.serviceWorker
+    .register("/sw.js", { scope: "/" })
+    .then((registration) => navigator.serviceWorker.ready.then(() => registration))
+    .then(() => fetch("/service-worker-probe", { cache: "no-store" }))
+    .then((response) => response.text())
+    .then((text) => {
+      if (text !== "served-by-service-worker") throw new Error("probe was not served by the worker");
+      status.textContent = "Service worker: controlling and serving the probe";
+    })
+    .catch((error) => fail(`Service worker fixture failed: ${error.message}`));
+}
+
+async function webSocketFixture() {
+  const status = node("output", "WebSocket: connecting");
+  const endpoint = await fetch("/websocket.json", { cache: "no-store" })
+    .then((response) => response.json())
+    .then((body) => body.websocket)
+    .catch(() => null);
+  if (!endpoint) return fail("WebSocket endpoint unavailable");
+  const socket = new WebSocket(endpoint);
+  let echoes = 0;
+  socket.addEventListener("open", () => socket.send("paneflow-fixture-0"));
+  socket.addEventListener("message", (event) => {
+    if (event.data !== `paneflow-fixture-${echoes}`) return fail("WebSocket echo mismatch");
+    echoes += 1;
+    status.textContent = `WebSocket: ${echoes} echoes`;
+    if (echoes < 8) socket.send(`paneflow-fixture-${echoes}`);
+  });
+  socket.addEventListener("error", () => fail("WebSocket fixture failed"));
+  socket.addEventListener("close", (event) => {
+    if (echoes < 8 && !event.wasClean) fail("WebSocket closed before the fixture completed");
+  });
+}
+
+function iframeFixture() {
+  const allowed = node("iframe", "");
+  allowed.src = "/frame";
+  allowed.title = "Same-origin fixture frame";
+  const refused = node("iframe", "");
+  refused.src = "/embedded";
+  refused.title = "Frame refused by X-Frame-Options";
+  const status = node("output", "Frames: pending");
+  allowed.addEventListener("load", () => {
+    const reachable = (() => {
+      try { return allowed.contentDocument?.documentElement.dataset.fixtureState === "ready"; }
+      catch { return false; }
+    })();
+    status.textContent = reachable
+      ? "Frames: same-origin frame reachable, /embedded refuses framing by X-Frame-Options"
+      : "Frames: same-origin frame unreadable";
+    if (!reachable) fail("Same-origin frame was not reachable");
+  });
+}
+
+function authFixture() {
+  const status = node("output", "Auth: requesting /private without credentials");
+  fetch("/private", { cache: "no-store" })
+    .then((response) => {
+      if (response.status !== 401) throw new Error(`expected 401, received ${response.status}`);
+      status.textContent = "Auth: /private refused without credentials; navigate to /private for the native prompt";
+      const link = node("a", "Open /private and answer the authentication prompt");
+      link.href = "/private";
+    })
+    .catch((error) => fail(`Auth fixture failed: ${error.message}`));
+}
+
 if (scenario === "scroll" || scenario === "combined") scrollFixture();
 if (scenario === "animation" || scenario === "combined") animationFixture();
 if (scenario === "webgl" || scenario === "combined") webglFixture();
 if (scenario === "network" || scenario === "combined") networkFixture();
 if (scenario === "ime") imeFixture();
+if (scenario === "serviceworker") serviceWorkerFixture();
+if (scenario === "websocket") webSocketFixture();
+if (scenario === "iframe") iframeFixture();
+if (scenario === "auth") authFixture();
 if (scenario === "popup") {
   node("button", "Open local popup").addEventListener("click", () => {
     const popup = window.open("/ime", "qualification-popup", "width=640,height=480");

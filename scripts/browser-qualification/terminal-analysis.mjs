@@ -6,6 +6,7 @@ import { gzipSync } from "node:zlib";
 import { inspectCapture } from "./measurements.mjs";
 import { inspectBrowserEvents, inspectBrowserLifecycle, inspectVisibility } from "./terminal-capture.mjs";
 import { inspectFullscreenEvidence } from "./fullscreen-evidence.mjs";
+import { FIXTURE_FILES, bundleSuffix } from "./fixtures.mjs";
 
 const hash = bytes => createHash("sha256").update(bytes).digest("hex");
 const digest = /^[a-f0-9]{64}$/;
@@ -202,12 +203,12 @@ export async function analyzeTerminalCapture(captureDir, metadata, outputDir) {
       const manifest = await json(join(source, "fixture-manifest.json"));
       assert(manifest.sha256 === capture.fixture_sha256 && Array.isArray(manifest.scenarios) && manifest.scenarios.includes(capture.scenario), "fixture manifest differs from capture");
       const fixtureHash = createHash("sha256");
-      for (const name of ["empty.html", "page.html", "fixture.js", "fixture.css", "tile.svg"]) {
+      for (const name of FIXTURE_FILES) {
         const content = await bytes(join(source, "fixtures", name));
         fixtureHash.update(name).update("\0").update(content).update("\0");
         await archive(`fixture-${name}.gz`, content, true);
       }
-      fixtureHash.update(JSON.stringify({ scenarios: manifest.scenarios, payload: "0123456789abcdef".repeat(64) }));
+      fixtureHash.update(bundleSuffix(manifest.scenarios));
       assert(fixtureHash.digest("hex") === capture.fixture_sha256, "archived fixture bytes differ from their bundle digest");
       await archive("fixture-manifest.json", encode(manifest));
     }

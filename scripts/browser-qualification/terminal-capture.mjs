@@ -339,6 +339,8 @@ async function captureRepetition(binary, directory, bundle, seconds, interrupted
   await save(join(directory, "replay-plan.json"), bundle);
   const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith("PANEFLOW_")));
   Object.assign(env, { XDG_CONFIG_HOME: paths.config, XDG_DATA_HOME: paths.data, XDG_CACHE_HOME: paths.cache, PANEFLOW_SOCKET_PATH: paths.socket, PANEFLOW_ALLOW_MULTIPLE: "1", PANEFLOW_IPC_ORCHESTRATION: "1", PANEFLOW_IPC_SCRIPTING: "1", PANEFLOW_M1_LOG: paths.native });
+  const inputOnly = process.env.XDG_SESSION_TYPE === "x11";
+  if (inputOnly) env.PANEFLOW_M1_INPUT_ONLY = "1";
   if (displayCondition.fullscreen) Object.assign(env, {
     PANEFLOW_M1_FULLSCREEN: "1", PANEFLOW_M1_TERMINAL_OUTPUT: displayCondition.terminal_output,
     ...(browser ? { PANEFLOW_M1_BROWSER_OUTPUT: displayCondition.browser_output } : {}),
@@ -381,11 +383,13 @@ async function captureRepetition(binary, directory, bundle, seconds, interrupted
         const native = await jsonl(paths.native);
         const fatal = native.find(event => event.event === "fatal");
         if (fatal) throw new Error(`native observer initialization failed: ${JSON.stringify(fatal)}`);
-        if (!native.some(event => event.event === "presentation_ready")) return false;
+        if (!inputOnly && !native.some(event => event.event === "presentation_ready")) return false;
+        if (inputOnly && !native.some(event => event.event === "viewport")) return false;
         if (!browser) return true;
         const lifecycle = await jsonl(join(directory, "browser.jsonl"));
         if (lifecycle.some(event => event.event === "fatal")) throw new Error("Browser failed before terminal replay");
-        return native.some(event => event.event === "browser_presented") && lifecycle.some(event => event.native?.native === "fixture_state" && event.native.state?.state === "ready");
+        const fixtureReady = lifecycle.some(event => event.native?.native === "fixture_state" && event.native.state?.state === "ready");
+        return fixtureReady && (inputOnly || native.some(event => event.event === "browser_presented"));
       } catch (error) {
         if (error.code === "ENOENT" || error instanceof SyntaxError) return false;
         throw error;
@@ -524,7 +528,7 @@ async function captureRepetition(binary, directory, bundle, seconds, interrupted
 }
 
 export async function captureTerminals({ binary, output, configuration = "A", diagnosticSeconds, sourceRoot = root, refreshHz, refreshActualHz, fullscreen = false, terminalOutput, browserOutput, displayEvidence, host, runtime, scenario = "combined", visibilityEvidence, browserX = 0, browserY = 0 }) {
-  if (process.platform !== "linux" || !process.env.WAYLAND_DISPLAY) throw new Error("terminal native capture requires a Linux Wayland session");
+  if (process.platform !== "linux" || (!process.env.WAYLAND_DISPLAY && !process.env.DISPLAY)) throw new Error("terminal native capture requires a Linux display session");
   if (!["A", "C", "PREFEATURE"].includes(configuration)) throw new Error("terminal capture configuration must be A, C or PREFEATURE");
   if (!binary || !output) throw new Error("--binary and --output are required");
   if (diagnosticSeconds !== undefined && (!Number.isInteger(diagnosticSeconds) || diagnosticSeconds < 1 || diagnosticSeconds > 69)) throw new Error("diagnostic duration must be 1..69 seconds");
@@ -586,8 +590,7 @@ export async function captureTerminals({ binary, output, configuration = "A", di
     }
     if (report.repetitions.length === repetitions && report.repetitions.every(item => item.status === "CAPTURED_REQUIRES_ANALYSIS")) report.status = diagnosticSeconds === undefined ? "CAPTURED_REQUIRES_ANALYSIS" : "DIAGNOSTIC_ONLY";
   } finally {
-    fixtures?.server.close();
-    fixtures?.server.closeAllConnections();
+    fixtures?.close();
     process.removeListener("SIGINT", interrupt);
     process.removeListener("SIGTERM", interrupt);
     await save(join(directory, "capture.json"), report);

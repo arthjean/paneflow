@@ -79,12 +79,15 @@ pub(super) fn render_diff_surface_picker(
     cx: &mut Context<PaneFlowApp>,
 ) -> AnyElement {
     let browser = crate::browser::authority::BrowserAuthority::available(cx);
+    let repair = crate::browser::authority::BrowserAuthority::repair(cx);
     div()
         .flex_1()
         .min_h_0()
         .flex()
+        .flex_col()
         .items_center()
         .justify_center()
+        .gap(px(CARD_GAP))
         .p(px(GRID_PADDING))
         .child(
             div()
@@ -128,6 +131,17 @@ pub(super) fn render_diff_surface_picker(
                     ))
                 }),
         )
+        .when_some(repair, |column, reason| {
+            column.child(
+                div()
+                    .max_w(px(CARD_WIDTH * 4.0))
+                    .text_size(px(11.))
+                    .text_color(ui.muted)
+                    .child(format!(
+                        "Browser is unavailable until its installation is repaired: {reason}"
+                    )),
+            )
+        })
         .into_any_element()
 }
 

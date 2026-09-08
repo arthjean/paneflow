@@ -177,6 +177,18 @@ impl PaneFlowApp {
             return;
         }
 
+        #[cfg(target_os = "linux")]
+        if cx
+            .try_global::<crate::browser::BrowserRuntime>()
+            .is_some_and(|runtime| runtime.live_hosts() > 0)
+        {
+            self.show_toast(
+                "Close the open browser pages before updating - the application and its browser runtime are replaced together".to_string(),
+                cx,
+            );
+            return;
+        }
+
         if let update::install_method::InstallMethod::SystemPackage { manager } =
             &self.self_update.install_method
         {
