@@ -421,13 +421,15 @@ fn signal_group(pgid: i32, signal: libc::c_int) {
     }
 }
 
-fn reap_group(pgid: i32, grace: Duration) -> bool {
-    let deadline = Instant::now() + grace;
+fn shutdown_schedule(start: Instant, grace: Duration) -> (Instant, Instant, Instant) {
+    (start + grace / 2, start + grace * 3 / 4, start + grace)
+}
+
+fn reap_group(pgid: i32, kill_at: Instant, deadline: Instant) -> bool {
     while group_alive(pgid) {
-        if Instant::now() >= deadline {
+        if Instant::now() >= kill_at {
             signal_group(pgid, libc::SIGKILL);
-            let hard = Instant::now() + Duration::from_secs(2);
-            while group_alive(pgid) && Instant::now() < hard {
+            while group_alive(pgid) && Instant::now() < deadline {
                 std::thread::sleep(Duration::from_millis(20));
             }
             return !group_alive(pgid);
@@ -435,6 +437,12 @@ fn reap_group(pgid: i32, grace: Duration) -> bool {
         std::thread::sleep(Duration::from_millis(20));
     }
     true
+}
+
+fn reap_group_within(pgid: i32, budget: Duration) -> bool {
+    let start = Instant::now();
+    let (_, kill_at, deadline) = shutdown_schedule(start, budget);
+    reap_group(pgid, kill_at, deadline)
 }
 
 impl Inner {
@@ -626,7 +634,7 @@ impl HostSupervisor {
                             .and_then(|mut running| running.take().map(|running| running.pgid));
                         if let Some(pgid) = pgid {
                             signal_group(pgid, libc::SIGKILL);
-                            reap_group(pgid, Duration::from_secs(2));
+                            reap_group_within(pgid, Duration::from_secs(2));
                         }
                         inner.set_state(HostState::Failed(reason.clone()));
                         inner.emit(HostEvent::Lost(reason));
@@ -750,21 +758,21 @@ impl HostSupervisor {
         };
         let _ = running.outbound.try_send(Outbound::Close);
         let (lock, condvar) = &*running.exited;
-        let deadline = Instant::now() + grace;
+        let (closed_by, kill_at, deadline) = shutdown_schedule(Instant::now(), grace);
         if let Ok(mut exited) = lock.lock() {
             while !*exited {
                 let now = Instant::now();
-                if now >= deadline {
+                if now >= closed_by {
                     break;
                 }
-                match condvar.wait_timeout(exited, deadline - now) {
+                match condvar.wait_timeout(exited, closed_by - now) {
                     Ok((guard, _)) => exited = guard,
                     Err(_) => break,
                 }
             }
         }
         signal_group(running.pgid, libc::SIGTERM);
-        reap_group(running.pgid, grace);
+        reap_group(running.pgid, kill_at, deadline);
         self.inner.finish_shutdown();
     }
 }
@@ -1088,7 +1096,7 @@ fn watch(
     }
     condvar.notify_all();
     signal_group(pgid, libc::SIGTERM);
-    let clean = reap_group(pgid, Duration::from_secs(2));
+    let clean = reap_group_within(pgid, Duration::from_secs(2));
     if let Ok(mut running) = inner.running.lock()
         && running.as_ref().is_some_and(|running| running.pgid == pgid)
     {
@@ -1427,6 +1435,14 @@ while True:
     }
 
     #[test]
+    fn the_shutdown_schedule_never_exceeds_the_stop_budget() {
+        let start = Instant::now();
+        let (closed_by, kill_at, deadline) = shutdown_schedule(start, SHUTDOWN_GRACE);
+        assert!(start < closed_by && closed_by < kill_at && kill_at < deadline);
+        assert_eq!(deadline - start, SHUTDOWN_GRACE);
+    }
+
+    #[test]
     fn shutdown_reaps_every_descendant_of_the_host() {
         let fixture = Fixture::new("descendants", "spawn-child");
         let (supervisor, receiver) = HostSupervisor::channel();
@@ -1439,7 +1455,7 @@ while True:
         assert!(process_alive(child));
         let started = Instant::now();
         supervisor.shutdown(SHUTDOWN_GRACE);
-        assert!(started.elapsed() <= SHUTDOWN_GRACE + Duration::from_secs(3));
+        assert!(started.elapsed() <= SHUTDOWN_GRACE);
         assert!(
             !process_alive(child),
             "the host's descendant survived shutdown"
