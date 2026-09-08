@@ -1,7 +1,7 @@
 use gpui::{AppContext, Context, Entity, Focusable, Window};
 use paneflow_browser_protocol::{
-    BrowserError, BrowserId, Command, Document, Event, MAX_BROWSERS_PER_SESSION, ProfileId,
-    normalize_address, validate_url, zoom_percent_is_valid,
+    AgentAccess, BrowserError, BrowserId, Command, Document, Event, MAX_BROWSERS_PER_SESSION,
+    ProfileId, normalize_address, validate_url, zoom_percent_is_valid,
 };
 use paneflow_config::schema::{BROWSER_DESCRIPTOR_VERSION, BrowserDescriptor};
 
@@ -258,6 +258,40 @@ impl PaneFlowApp {
             }
             if matches!(event, BrowserViewEvent::DescriptorChanged) {
                 this.save_session(cx);
+            }
+            if let BrowserViewEvent::SelectionReady(selection) = event {
+                this.attach_browser_context(session, selection.clone(), cx);
+            }
+            if let BrowserViewEvent::AgentAccessRequested(access) = event
+                && cx.has_global::<BrowserAuthority>()
+            {
+                let permission = cx
+                    .global_mut::<BrowserAuthority>()
+                    .agent_mut()
+                    .set_access(session.workspace_id, *access);
+                let message = match permission.access {
+                    AgentAccess::Disabled => "Browser agent access disabled",
+                    AgentAccess::Read => "Browser agent can read this workspace",
+                    AgentAccess::Interact => {
+                        "Browser agent can read and interact with this workspace"
+                    }
+                };
+                this.show_toast(message, cx);
+                view.update(cx, |_, cx| cx.notify());
+            }
+            if let BrowserViewEvent::AgentOperationCompleted {
+                browser,
+                operation,
+                result,
+            } = event
+            {
+                this.finish_browser_agent_operation(
+                    browser.clone(),
+                    operation.clone(),
+                    result,
+                    &view,
+                    cx,
+                );
             }
         })
         .detach();
@@ -640,7 +674,7 @@ impl PaneFlowApp {
         }
     }
 
-    fn quota_browser_views(&self) -> Vec<Entity<BrowserView>> {
+    pub(crate) fn quota_browser_views(&self) -> Vec<Entity<BrowserView>> {
         self.diff_dock
             .diff_tabs
             .iter()

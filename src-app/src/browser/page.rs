@@ -41,6 +41,18 @@ pub enum PageSignal {
         kind: String,
         value: serde_json::Value,
     },
+    Console {
+        document: paneflow_browser_protocol::Document,
+        value: serde_json::Value,
+    },
+    Network {
+        document: paneflow_browser_protocol::Document,
+        value: serde_json::Value,
+    },
+    OperationCompleted {
+        operation: paneflow_browser_protocol::OperationId,
+        result: Result<paneflow_browser_protocol::Event, paneflow_browser_protocol::BrowserError>,
+    },
     PopupRequested(String),
     Ready,
     Created,
@@ -93,6 +105,7 @@ pub use stub::LivePage;
 
 #[cfg(target_os = "linux")]
 mod linux {
+    use std::collections::BTreeMap;
     use std::sync::Arc;
     use std::time::{Duration, Instant};
 
@@ -100,7 +113,7 @@ mod linux {
     use gpui_platform::gpui_wgpu::{ExternalSurfaceContext, wgpu};
     use paneflow_browser_protocol::{
         BrowserError, BrowserPresentation, BrowserSession, Command, Document, Event, FrameAck,
-        OperationId, SessionState,
+        MAX_AGENT_CAPTURE_BYTES, MAX_AGENT_CAPTURE_CHUNK_BYTES, OperationId, SessionState,
     };
     use serde_json::Value;
 
@@ -116,6 +129,28 @@ mod linux {
         document: Document,
         pool_generation: u64,
         result: Result<Vec<ExternalSurface>, String>,
+    }
+
+    struct ScreenshotAssembly {
+        document: Document,
+        mime: String,
+        width: u32,
+        height: u32,
+        chunks: Vec<Option<String>>,
+        encoded_bytes: usize,
+    }
+
+    fn screenshot_failure_error(reason: &str) -> BrowserError {
+        match reason {
+            "native screenshot dimensions are invalid" | "native screenshot exceeds its bound" => {
+                BrowserError::TooLarge
+            }
+            "native screenshot result is invalid"
+            | "native screenshot data is missing"
+            | "native screenshot data is not base64"
+            | "native screenshot chunk is invalid" => BrowserError::InvalidMessage,
+            _ => BrowserError::Unavailable,
+        }
     }
 
     pub struct GpuCompletion {
@@ -162,6 +197,7 @@ mod linux {
         presentation_generation: u64,
         resize_sent: Option<(u64, Instant)>,
         benchmark_id: String,
+        screenshots: BTreeMap<OperationId, ScreenshotAssembly>,
     }
 
     fn resize_may_be_sent(live_pools: usize, pending: bool) -> bool {
@@ -225,6 +261,7 @@ mod linux {
                     presentation_generation: 0,
                     resize_sent: None,
                     benchmark_id,
+                    screenshots: BTreeMap::new(),
                 },
                 host_events,
                 gpu_completions,
@@ -281,24 +318,37 @@ mod linux {
                     );
                     vec![PageSignal::Ready]
                 }
-                HostEvent::Reply(reply) => match reply.result {
-                    Ok(Event::State { session }) => {
-                        self.last_document = Some(session.document.clone());
-                        self.consumer.set_document(session.document.clone());
-                        if !session.presentation.mounted {
-                            self.presented = None;
-                            self.resize_sent = None;
+                HostEvent::Reply(reply) => {
+                    let operation = reply.operation;
+                    let result = reply.result;
+                    let mut signals = match &result {
+                        Ok(Event::State { session }) | Ok(Event::NavigationStarted { session }) => {
+                            if self
+                                .session
+                                .as_ref()
+                                .is_some_and(|current| current.document != session.document)
+                            {
+                                self.screenshots.clear();
+                            }
+                            self.last_document = Some(session.document.clone());
+                            self.consumer.set_document(session.document.clone());
+                            if !session.presentation.mounted {
+                                self.presented = None;
+                                self.resize_sent = None;
+                            }
+                            self.session = Some(session.clone());
+                            vec![PageSignal::State(session.clone())]
                         }
-                        self.session = Some(session.clone());
-                        vec![PageSignal::State(session)]
-                    }
-                    Ok(Event::Closed { .. }) => {
-                        self.session = None;
-                        vec![PageSignal::Closed]
-                    }
-                    Ok(_) => Vec::new(),
-                    Err(error) => vec![PageSignal::Refused(error)],
-                },
+                        Ok(Event::Closed { .. }) => {
+                            self.session = None;
+                            vec![PageSignal::Closed]
+                        }
+                        Ok(_) => Vec::new(),
+                        Err(error) => vec![PageSignal::Refused(*error)],
+                    };
+                    signals.push(PageSignal::OperationCompleted { operation, result });
+                    signals
+                }
                 HostEvent::Native(value) => self.on_native(&value),
                 HostEvent::Frame(message, fds) => {
                     if let paneflow_browser_protocol::FrameMessage::PoolCreated {
@@ -388,6 +438,104 @@ mod linux {
 
         fn on_native(&mut self, value: &Value) -> Vec<PageSignal> {
             let kind = value.get("native").and_then(Value::as_str).unwrap_or("");
+            if kind == "agent_navigation_committed" {
+                let Some(operation) = value
+                    .get("operation")
+                    .and_then(Value::as_str)
+                    .and_then(|operation| OperationId::try_from(operation.to_owned()).ok())
+                else {
+                    return Vec::new();
+                };
+                let Some(session) = value
+                    .get("session")
+                    .cloned()
+                    .and_then(|session| serde_json::from_value::<BrowserSession>(session).ok())
+                    .filter(|session| {
+                        session.document.browser == self.browser
+                            && self.session.as_ref().is_some_and(|current| {
+                                session.document.owner == current.document.owner
+                                    && session.document.generation > current.document.generation
+                            })
+                    })
+                else {
+                    return Vec::new();
+                };
+                self.screenshots.clear();
+                self.last_document = Some(session.document.clone());
+                self.consumer.set_document(session.document.clone());
+                self.presented = None;
+                self.resize_sent = None;
+                self.session = Some(session.clone());
+                return vec![
+                    PageSignal::State(session),
+                    PageSignal::OperationCompleted {
+                        operation: operation.clone(),
+                        result: Ok(Event::Completed { operation }),
+                    },
+                ];
+            }
+            if matches!(
+                kind,
+                "agent_navigation_failed" | "agent_navigation_cancelled"
+            ) {
+                let Some(_document) = value
+                    .get("document")
+                    .cloned()
+                    .and_then(|document| serde_json::from_value::<Document>(document).ok())
+                    .filter(|document| Some(document) == self.document())
+                else {
+                    return Vec::new();
+                };
+                let Some(operation) = value
+                    .get("operation")
+                    .and_then(Value::as_str)
+                    .and_then(|operation| OperationId::try_from(operation.to_owned()).ok())
+                else {
+                    return Vec::new();
+                };
+                let result = Err(BrowserError::Unavailable);
+                return vec![
+                    PageSignal::LoadFailed(
+                        value
+                            .get("reason")
+                            .and_then(Value::as_str)
+                            .filter(|reason| reason.len() <= 256)
+                            .unwrap_or("agent navigation was cancelled")
+                            .to_owned(),
+                    ),
+                    PageSignal::OperationCompleted { operation, result },
+                ];
+            }
+            if kind == "screenshot_chunk" {
+                return self.on_screenshot_chunk(value);
+            }
+            if kind == "screenshot_failed" {
+                let Some(_document) = value
+                    .get("document")
+                    .cloned()
+                    .and_then(|document| serde_json::from_value::<Document>(document).ok())
+                    .filter(|document| Some(document) == self.document())
+                else {
+                    return Vec::new();
+                };
+                let Some(operation) = value
+                    .get("operation")
+                    .and_then(Value::as_str)
+                    .and_then(|operation| OperationId::try_from(operation.to_owned()).ok())
+                else {
+                    return Vec::new();
+                };
+                self.screenshots.remove(&operation);
+                return vec![PageSignal::OperationCompleted {
+                    operation,
+                    result: Err(screenshot_failure_error(
+                        value
+                            .get("reason")
+                            .and_then(Value::as_str)
+                            .unwrap_or_default(),
+                    )),
+                }];
+            }
             if matches!(
                 kind,
                 "external_open" | "renderer_crashed" | "certificate_error"
@@ -551,6 +699,28 @@ mod linux {
                 return Vec::new();
             }
 
+            if matches!(kind, "agent_console" | "agent_network") {
+                let Some(document) = value
+                    .get("document")
+                    .and_then(|value| serde_json::from_value::<Document>(value.clone()).ok())
+                    .filter(|document| Some(document) == self.document())
+                else {
+                    return Vec::new();
+                };
+                let payload = value.get("value").cloned().unwrap_or_else(|| value.clone());
+                return if kind == "agent_console" {
+                    vec![PageSignal::Console {
+                        document,
+                        value: payload,
+                    }]
+                } else {
+                    vec![PageSignal::Network {
+                        document,
+                        value: payload,
+                    }]
+                };
+            }
+
             if matches!(
                 kind,
                 "pool_ready_accepted"
@@ -693,6 +863,149 @@ mod linux {
                 }
                 _ => Vec::new(),
             }
+        }
+
+        fn on_screenshot_chunk(&mut self, value: &Value) -> Vec<PageSignal> {
+            let Some(document) = value
+                .get("document")
+                .cloned()
+                .and_then(|document| serde_json::from_value::<Document>(document).ok())
+                .filter(|document| Some(document) == self.document())
+            else {
+                return Vec::new();
+            };
+            let Some(operation) = value
+                .get("operation")
+                .and_then(Value::as_str)
+                .and_then(|operation| OperationId::try_from(operation.to_owned()).ok())
+            else {
+                return Vec::new();
+            };
+            let Some(index) = value
+                .get("index")
+                .and_then(Value::as_u64)
+                .and_then(|index| usize::try_from(index).ok())
+            else {
+                return Vec::new();
+            };
+            let Some(count) = value
+                .get("count")
+                .and_then(Value::as_u64)
+                .and_then(|count| usize::try_from(count).ok())
+                .filter(|count| *count > 0)
+            else {
+                return Vec::new();
+            };
+            let Some(data) = value.get("data").and_then(Value::as_str) else {
+                return Vec::new();
+            };
+            let width = value
+                .get("width")
+                .and_then(Value::as_u64)
+                .and_then(|width| u32::try_from(width).ok())
+                .filter(|width| *width > 0);
+            let height = value
+                .get("height")
+                .and_then(Value::as_u64)
+                .and_then(|height| u32::try_from(height).ok())
+                .filter(|height| *height > 0);
+            if count
+                > ((MAX_AGENT_CAPTURE_BYTES * 4).div_ceil(3) + 4)
+                    .div_ceil(MAX_AGENT_CAPTURE_CHUNK_BYTES)
+                || index >= count
+                || data.len() > MAX_AGENT_CAPTURE_CHUNK_BYTES
+                || !data.is_ascii()
+                || width.is_none()
+                || height.is_none()
+                || value.get("final").and_then(Value::as_bool).is_none()
+            {
+                self.screenshots.remove(&operation);
+                return vec![PageSignal::OperationCompleted {
+                    operation: operation.clone(),
+                    result: Err(BrowserError::TooLarge),
+                }];
+            }
+            let mime = value
+                .get("mime")
+                .and_then(Value::as_str)
+                .filter(|mime| *mime == "image/png")
+                .unwrap_or_default()
+                .to_owned();
+            if mime.is_empty() {
+                self.screenshots.remove(&operation);
+                return vec![PageSignal::OperationCompleted {
+                    operation: operation.clone(),
+                    result: Err(BrowserError::InvalidMessage),
+                }];
+            }
+            let assembly = self
+                .screenshots
+                .entry(operation.clone())
+                .or_insert_with(|| ScreenshotAssembly {
+                    document: document.clone(),
+                    mime: mime.clone(),
+                    width: width.unwrap_or_default(),
+                    height: height.unwrap_or_default(),
+                    chunks: vec![None; count],
+                    encoded_bytes: 0,
+                });
+            if assembly.document != document
+                || assembly.mime != mime
+                || assembly.width != width.unwrap_or_default()
+                || assembly.height != height.unwrap_or_default()
+                || assembly.chunks.len() != count
+            {
+                self.screenshots.remove(&operation);
+                return vec![PageSignal::OperationCompleted {
+                    operation: operation.clone(),
+                    result: Err(BrowserError::StaleGeneration),
+                }];
+            }
+            if let Some(previous) = &assembly.chunks[index] {
+                if previous != data {
+                    self.screenshots.remove(&operation);
+                    return vec![PageSignal::OperationCompleted {
+                        operation: operation.clone(),
+                        result: Err(BrowserError::InvalidMessage),
+                    }];
+                }
+            } else {
+                assembly.encoded_bytes = assembly.encoded_bytes.saturating_add(data.len());
+                if assembly.encoded_bytes > (MAX_AGENT_CAPTURE_BYTES * 4).div_ceil(3) + 4 {
+                    self.screenshots.remove(&operation);
+                    return vec![PageSignal::OperationCompleted {
+                        operation: operation.clone(),
+                        result: Err(BrowserError::TooLarge),
+                    }];
+                }
+                assembly.chunks[index] = Some(data.to_owned());
+            }
+            let final_chunk = value.get("final").and_then(Value::as_bool).unwrap_or(false);
+            if !final_chunk || assembly.chunks.iter().any(Option::is_none) {
+                return Vec::new();
+            }
+            let Some(assembly) = self.screenshots.remove(&operation) else {
+                return Vec::new();
+            };
+            let mut data = String::with_capacity(assembly.encoded_bytes);
+            for chunk in assembly.chunks {
+                let Some(chunk) = chunk else {
+                    return vec![PageSignal::OperationCompleted {
+                        operation: operation.clone(),
+                        result: Err(BrowserError::InvalidMessage),
+                    }];
+                };
+                data.push_str(&chunk);
+            }
+            vec![PageSignal::OperationCompleted {
+                operation: operation.clone(),
+                result: Ok(Event::Screenshot {
+                    mime: assembly.mime,
+                    width: assembly.width,
+                    height: assembly.height,
+                    data,
+                }),
+            }]
         }
 
         fn acknowledger(&self) -> Result<FrameAcknowledger, String> {
@@ -1040,6 +1353,8 @@ mod linux {
     #[cfg(test)]
     mod tests {
         use super::resize_may_be_sent;
+        use super::screenshot_failure_error;
+        use paneflow_browser_protocol::BrowserError;
         #[test]
         fn resize_requires_both_a_completed_transition_and_a_free_pool_budget() {
             assert!(resize_may_be_sent(0, false));
@@ -1047,6 +1362,22 @@ mod linux {
             assert!(!resize_may_be_sent(1, true));
             assert!(!resize_may_be_sent(2, false));
             assert!(!resize_may_be_sent(2, true));
+        }
+
+        #[test]
+        fn screenshot_failures_preserve_bounded_error_categories() {
+            assert_eq!(
+                screenshot_failure_error("native screenshot exceeds its bound"),
+                BrowserError::TooLarge
+            );
+            assert_eq!(
+                screenshot_failure_error("native screenshot result is invalid"),
+                BrowserError::InvalidMessage
+            );
+            assert_eq!(
+                screenshot_failure_error("native capture adapter unavailable"),
+                BrowserError::Unavailable
+            );
         }
     }
 }
@@ -1089,6 +1420,10 @@ mod stub {
             &self,
             _build: impl FnOnce(Document) -> Command,
         ) -> Result<OperationId, BrowserError> {
+            Err(BrowserError::Unavailable)
+        }
+
+        pub fn agent_screenshot(&self) -> Result<OperationId, BrowserError> {
             Err(BrowserError::Unavailable)
         }
 

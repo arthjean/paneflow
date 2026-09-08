@@ -67,6 +67,13 @@ pub enum Command {
         document: Document,
         url: String,
     },
+    AgentNavigate {
+        document: Document,
+        url: String,
+    },
+    Screenshot {
+        document: Document,
+    },
     Present {
         document: Document,
         presentation: BrowserPresentation,
@@ -501,8 +508,18 @@ pub enum Event {
     Accepted {
         operation: OperationId,
     },
+    NavigationStarted {
+        session: BrowserSession,
+    },
+    ScreenshotAccepted,
     Completed {
         operation: OperationId,
+    },
+    Screenshot {
+        mime: String,
+        width: u32,
+        height: u32,
+        data: String,
     },
     InputAccepted,
     NavigationAccepted,

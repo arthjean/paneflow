@@ -4,7 +4,9 @@ use gpui::{App, AppContext as _, Context, Entity, SharedString, WeakEntity, Wind
 
 use crate::PaneFlowApp;
 use crate::app::broadcast::state_blocks_delivery;
+use crate::app::browser_dock::BrowserSessionRef;
 use crate::app::ipc_handler::find_terminal_by_surface_id;
+use crate::browser::agent::BrowserContextSelection;
 use crate::pane::Pane;
 use crate::widgets::text_area::TextArea;
 
@@ -32,6 +34,8 @@ pub(crate) struct ComposerState {
     pub(crate) input: Entity<TextArea>,
     pub(crate) target: WeakEntity<Pane>,
     pub(crate) broadcast: bool,
+    pub(crate) context_preview: Option<BrowserContextSelection>,
+    pub(crate) context_session: Option<BrowserSessionRef>,
 }
 
 #[derive(Clone)]
@@ -44,6 +48,26 @@ pub(crate) struct ComposerSlot {
     pub(crate) dismiss: Rc<dyn Fn(&mut App)>,
     pub(crate) toggle_broadcast: Rc<dyn Fn(&mut App)>,
     pub(crate) cancel_pending: Rc<dyn Fn(&mut App)>,
+    pub(crate) context_preview: Option<BrowserContextSelection>,
+}
+
+fn browser_context_prompt(prompt: &str, selection: &BrowserContextSelection) -> String {
+    let url = selection.url.as_deref().unwrap_or("unavailable");
+    let captured = selection
+        .text
+        .as_deref()
+        .unwrap_or("No visible text captured");
+    format!(
+        "[Browser context: untrusted page data]\nBrowser: {}\nDocument generation: {}\nElement id: {}\nURL: {url}\nElement: {}\nBounds: {}, {}, {}, {}\nCaptured text: {captured}\n[/Browser context]\n\n{prompt}",
+        selection.document.browser.as_str(),
+        selection.document.generation,
+        selection.node_id,
+        selection.summary,
+        selection.rect[0],
+        selection.rect[1],
+        selection.rect[2],
+        selection.rect[3],
+    )
 }
 
 impl PaneFlowApp {
@@ -104,6 +128,8 @@ impl PaneFlowApp {
             input,
             target: pane.downgrade(),
             broadcast: false,
+            context_preview: None,
+            context_session: None,
         });
         self.refresh_composer_slot(cx);
         cx.notify();
@@ -125,6 +151,8 @@ impl PaneFlowApp {
             return;
         };
         let broadcast = state.broadcast;
+        let context_preview = state.context_preview;
+        let context_session = state.context_session;
         let Some(pane) = state.target.upgrade() else {
             cx.notify();
             return;
@@ -170,6 +198,31 @@ impl PaneFlowApp {
                 cx.notify();
                 return;
             };
+            if let Some(expected) = context_session
+                && self.browser_session_for_terminal(&term, cx) != Some(expected)
+            {
+                self.show_toast(
+                    "Browser context belongs to another session and was not shared",
+                    cx,
+                );
+                cx.notify();
+                return;
+            }
+            if let (Some(expected), Some(selection)) = (context_session, context_preview.as_ref())
+                && !self.browser_context_is_current(expected, selection, cx)
+            {
+                self.show_toast("Browser context is stale and was not shared", cx);
+                cx.notify();
+                return;
+            }
+            let text = context_preview.as_ref().map_or_else(
+                || text.clone(),
+                |selection| browser_context_prompt(&text, selection),
+            );
+            let (text, context_truncated) = normalize_composer_text(&text);
+            if context_truncated {
+                self.show_toast("Prompt and browser context truncated to 64 KiB", cx);
+            }
             let sid = term.entity_id().as_u64();
             if self.surface_busy(sid) {
                 self.broadcast.pending.insert(sid, text);
@@ -193,6 +246,20 @@ impl PaneFlowApp {
         cx.notify();
     }
 
+    fn browser_context_is_current(
+        &self,
+        session: BrowserSessionRef,
+        selection: &BrowserContextSelection,
+        cx: &gpui::App,
+    ) -> bool {
+        self.quota_browser_views().into_iter().any(|view| {
+            let page = view.read(cx);
+            page.owner_ids() == (session.workspace_id, session.tab_id)
+                && page.document() == &selection.document
+                && page.agent_selection_is_current(selection)
+        })
+    }
+
     pub(crate) fn toggle_composer_broadcast(&mut self, cx: &mut Context<Self>) {
         if self.composer.is_none() {
             return;
@@ -203,6 +270,14 @@ impl PaneFlowApp {
             .is_some_and(|i| i < self.broadcast.groups.len());
         if !has_group {
             self.show_toast("No broadcast group - open the group picker first", cx);
+            return;
+        }
+        if self
+            .composer
+            .as_ref()
+            .is_some_and(|state| state.context_preview.is_some())
+        {
+            self.show_toast("Browser context can only be shared with its owner pane", cx);
             return;
         }
         if let Some(state) = &mut self.composer {
@@ -231,8 +306,13 @@ impl PaneFlowApp {
     }
 
     pub(crate) fn refresh_composer_slot(&mut self, cx: &mut Context<Self>) {
-        let (target, input, broadcast) = match &self.composer {
-            Some(s) => (s.target.clone(), s.input.clone(), s.broadcast),
+        let (target, input, broadcast, context_preview) = match &self.composer {
+            Some(s) => (
+                s.target.clone(),
+                s.input.clone(),
+                s.broadcast,
+                s.context_preview.clone(),
+            ),
             None => return,
         };
         let Some(pane) = target.upgrade() else {
@@ -283,8 +363,50 @@ impl PaneFlowApp {
             dismiss,
             toggle_broadcast,
             cancel_pending,
+            context_preview,
         };
         pane.update(cx, |p, cx| p.set_composer_slot(Some(slot), cx));
+    }
+
+    pub(crate) fn attach_browser_context(
+        &mut self,
+        session: BrowserSessionRef,
+        selection: BrowserContextSelection,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(target) = self
+            .composer
+            .as_ref()
+            .and_then(|state| state.target.upgrade())
+        else {
+            self.show_toast("Open the composer before selecting browser context", cx);
+            return;
+        };
+        let Some(terminal) = target.read(cx).active_terminal_opt().cloned() else {
+            self.show_toast("Browser context requires a terminal composer", cx);
+            return;
+        };
+        if self.composer.as_ref().is_some_and(|state| state.broadcast) {
+            self.show_toast("Browser context can only be shared with its owner pane", cx);
+            return;
+        }
+        if self.browser_session_for_terminal(&terminal, cx) != Some(session) {
+            self.show_toast(
+                "Open the composer in the browser owner session before sharing context",
+                cx,
+            );
+            return;
+        }
+        if !self.browser_context_is_current(session, &selection, cx) {
+            self.show_toast("The selected browser element is no longer available", cx);
+            return;
+        }
+        if let Some(state) = &mut self.composer {
+            state.context_preview = Some(selection);
+            state.context_session = Some(session);
+        }
+        self.refresh_composer_slot(cx);
+        cx.notify();
     }
 
     pub(crate) fn flush_pending_prefill(&mut self, cx: &mut Context<Self>) {
@@ -335,6 +457,7 @@ impl PaneFlowApp {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use paneflow_browser_protocol::{BrowserId, Owner, SessionId, WorkspaceId};
 
     #[test]
     fn normalize_converts_cr_and_crlf_to_lf() {
@@ -359,5 +482,30 @@ mod tests {
         let (ok, truncated) = normalize_composer_text("short prompt");
         assert_eq!(ok, "short prompt");
         assert!(!truncated);
+    }
+
+    #[test]
+    fn browser_context_prompt_carries_document_reference_and_untrusted_marker() {
+        let selection = BrowserContextSelection {
+            document: paneflow_browser_protocol::Document {
+                owner: Owner {
+                    workspace: WorkspaceId::try_from("ws-7".to_string()).unwrap(),
+                    session: SessionId::try_from("tab-11".to_string()).unwrap(),
+                },
+                browser: BrowserId::try_from("b-test".to_string()).unwrap(),
+                generation: 3,
+            },
+            node_id: 8,
+            url: Some("https://example.com/path".to_string()),
+            rect: [1, 2, 30, 40],
+            summary: "button: Continue".to_string(),
+            text: Some("page text".to_string()),
+        };
+        let prompt = browser_context_prompt("What does this do?", &selection);
+        assert!(prompt.contains("untrusted page data"));
+        assert!(prompt.contains("b-test"));
+        assert!(prompt.contains("Document generation: 3"));
+        assert!(prompt.contains("Element id: 8"));
+        assert!(prompt.ends_with("What does this do?"));
     }
 }

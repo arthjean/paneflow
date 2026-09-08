@@ -235,6 +235,44 @@ impl<'a, T: IpcTransport + ?Sized> Bridge<'a, T> {
             message: error.to_string(),
         })
     }
+
+    pub fn browser_call(&self, method: &'static str, params: Value) -> Result<Value, BridgeError> {
+        let Some(workspace_id) = self.scope.workspace_id() else {
+            return Err(BridgeError::Target(
+                "browser tools require a workspace-scoped MCP bridge".to_string(),
+            ));
+        };
+        let value = self
+            .transport
+            .call(method, params)
+            .map_err(|message| BridgeError::Transport { method, message })?;
+        let returned_workspace = value
+            .get("workspace_id")
+            .and_then(Value::as_u64)
+            .or_else(|| {
+                value
+                    .get("page")
+                    .and_then(|page| page.get("owner"))
+                    .and_then(|owner| owner.get("workspace_id"))
+                    .and_then(Value::as_u64)
+            });
+        if let Some(returned_workspace) = returned_workspace {
+            if returned_workspace != workspace_id {
+                return Err(BridgeError::Protocol {
+                    method,
+                    message: format!(
+                        "browser response escaped requested workspace_id {workspace_id}"
+                    ),
+                });
+            }
+        } else if value.get("error").is_none() && value.get("_jsonrpc_error").is_none() {
+            return Err(BridgeError::Protocol {
+                method,
+                message: "browser response omitted its workspace owner".to_string(),
+            });
+        }
+        Ok(value)
+    }
 }
 
 #[cfg(test)]
@@ -303,6 +341,46 @@ mod tests {
 
         let error = bridge.surfaces().expect_err("scope escape must fail");
         assert!(error.to_string().contains("escaped requested workspace_id"));
+    }
+
+    #[test]
+    fn browser_calls_require_workspace_scope_and_owner_metadata() {
+        let transport = FakeTransport::new().with(
+            "browser.state",
+            json!({
+                "workspace_id": 42,
+                "page": {"owner": {"workspace_id": 42}},
+                "untrusted": true
+            }),
+        );
+        let bridge = Bridge::new(&transport, BridgeScope::Workspace(42));
+        assert!(bridge.browser_call("browser.state", json!({})).is_ok());
+
+        let global = Bridge::new(&transport, BridgeScope::All);
+        assert!(matches!(
+            global.browser_call("browser.state", json!({})),
+            Err(BridgeError::Target(_))
+        ));
+
+        let foreign = FakeTransport::new().with(
+            "browser.state",
+            json!({
+                "workspace_id": 99,
+                "page": {"owner": {"workspace_id": 99}}
+            }),
+        );
+        let bridge = Bridge::new(&foreign, BridgeScope::Workspace(42));
+        assert!(matches!(
+            bridge.browser_call("browser.state", json!({})),
+            Err(BridgeError::Protocol { .. })
+        ));
+
+        let ownerless = FakeTransport::new().with("browser.state", json!({"value": true}));
+        let bridge = Bridge::new(&ownerless, BridgeScope::Workspace(42));
+        assert!(matches!(
+            bridge.browser_call("browser.state", json!({})),
+            Err(BridgeError::Protocol { .. })
+        ));
     }
 
     #[test]

@@ -1,4 +1,5 @@
 use std::ops::Range;
+use std::time::{Duration, Instant};
 
 mod clipboard;
 mod colors;
@@ -18,8 +19,9 @@ use gpui::{
     prelude::FluentBuilder, px, svg,
 };
 use paneflow_browser_protocol::{
-    BrowserError, BrowserId, Command, Document, HistoryDirection, InputEvent, MAX_TITLE_CHARS,
-    Owner, ProfileId, SessionState, normalize_address, zoom_percent_is_valid,
+    AgentAccess, BrowserError, BrowserId, Command, Document, Event, HistoryDirection, InputEvent,
+    MAX_TITLE_CHARS, OperationId, Owner, ProfileId, SessionState, exported_url, normalize_address,
+    zoom_percent_is_valid,
 };
 use paneflow_config::schema::{BROWSER_DESCRIPTOR_VERSION, BrowserDescriptor};
 
@@ -40,6 +42,9 @@ pub const COMPACT_WIDTH: f32 = 520.0;
 #[cfg(test)]
 const VISIBLE_CONTROLS: f32 = 4.0;
 const MENU_WIDTH: f32 = 220.0;
+const AGENT_DIAGNOSTIC_MAX_BYTES: usize = paneflow_browser_protocol::MAX_AGENT_DIAGNOSTIC_BYTES;
+const AGENT_DIAGNOSTIC_MAX_AGE: Duration =
+    Duration::from_secs(paneflow_browser_protocol::MAX_AGENT_DIAGNOSTIC_AGE_SECS);
 const ZOOM_STEPS: [u32; 17] = [
     25, 33, 50, 67, 75, 80, 90, 100, 110, 125, 150, 175, 200, 250, 300, 400, 500,
 ];
@@ -96,7 +101,7 @@ pub enum Navigation {
     Failed(String),
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 pub enum BrowserViewEvent {
     DescriptorChanged,
     CloseReady,
@@ -104,6 +109,18 @@ pub enum BrowserViewEvent {
     PopupRequested(String),
     QuotaChoicesRequested,
     QuotaSleepRequested(BrowserId),
+    SelectionReady(super::agent::BrowserContextSelection),
+    AgentAccessRequested(AgentAccess),
+    AgentOperationCompleted {
+        browser: BrowserId,
+        operation: OperationId,
+        result: Result<Event, BrowserError>,
+    },
+}
+
+struct AgentDiagnosticEntry {
+    received_at: Instant,
+    value: serde_json::Value,
 }
 
 pub struct BrowserView {
@@ -156,6 +173,13 @@ pub struct BrowserView {
     pending_navigation: Option<String>,
     quota_choices: Option<Vec<(BrowserId, String)>>,
     interaction: InteractionState,
+    console_entries: Vec<AgentDiagnosticEntry>,
+    network_entries: Vec<AgentDiagnosticEntry>,
+    console_diagnostics_enabled: bool,
+    network_diagnostics_enabled: bool,
+    selection_mode: bool,
+    selection_anchor: Option<gpui::Point<Pixels>>,
+    selection_preview: Option<super::agent::BrowserContextSelection>,
 }
 
 impl EventEmitter<BrowserViewEvent> for BrowserView {}
@@ -236,6 +260,13 @@ impl BrowserView {
             pending_navigation: None,
             quota_choices: None,
             interaction: InteractionState::default(),
+            console_entries: Vec::new(),
+            network_entries: Vec::new(),
+            console_diagnostics_enabled: false,
+            network_diagnostics_enabled: false,
+            selection_mode: false,
+            selection_anchor: None,
+            selection_preview: None,
         }
     }
 
@@ -258,6 +289,219 @@ impl BrowserView {
 
     pub fn is_live(&self) -> bool {
         self.live.is_some()
+    }
+
+    pub(crate) fn browser_id(&self) -> &BrowserId {
+        &self.id
+    }
+
+    pub(crate) fn document(&self) -> &Document {
+        &self.local_document
+    }
+
+    pub(crate) fn session_state(&self) -> SessionState {
+        self.state
+    }
+
+    pub(crate) fn is_visible(&self) -> bool {
+        self.visible
+    }
+
+    pub(crate) fn agent_url(&self) -> Option<&str> {
+        self.url.as_deref()
+    }
+
+    pub(crate) fn agent_title(&self) -> &str {
+        &self.title
+    }
+
+    pub(crate) fn agent_snapshot(&self) -> Option<serde_json::Value> {
+        self.accessibility.agent_snapshot()
+    }
+
+    pub(crate) fn agent_selection_at(
+        &self,
+        x: i32,
+        y: i32,
+    ) -> Option<super::agent::BrowserContextSelection> {
+        self.accessibility.agent_selection_at(x, y)
+    }
+
+    pub(crate) fn agent_selection_is_current(
+        &self,
+        selection: &super::agent::BrowserContextSelection,
+    ) -> bool {
+        self.accessibility.agent_selection_is_current(selection)
+    }
+
+    pub(crate) fn agent_diagnostics(&self, network: bool) -> (Vec<serde_json::Value>, bool) {
+        let entries = if network {
+            &self.network_entries
+        } else {
+            &self.console_entries
+        };
+        let mut output = Vec::new();
+        let mut bytes = 0;
+        let mut truncated = false;
+        let cutoff = Instant::now().checked_sub(AGENT_DIAGNOSTIC_MAX_AGE);
+        for entry in entries.iter().rev() {
+            if cutoff.is_some_and(|cutoff| entry.received_at < cutoff) {
+                truncated = true;
+                break;
+            }
+            let size = entry.value.to_string().len();
+            if output.len() >= paneflow_browser_protocol::MAX_AGENT_DIAGNOSTIC_ENTRIES
+                || bytes + size > paneflow_browser_protocol::MAX_AGENT_DIAGNOSTIC_BYTES
+            {
+                truncated = true;
+                break;
+            }
+            bytes += size;
+            output.push(entry.value.clone());
+        }
+        output.reverse();
+        (output, truncated)
+    }
+
+    pub(crate) fn enable_agent_diagnostics(&mut self, network: bool) {
+        if network {
+            self.network_diagnostics_enabled = true;
+        } else {
+            self.console_diagnostics_enabled = true;
+        }
+    }
+
+    fn record_agent_diagnostic(&mut self, network: bool, value: serde_json::Value) {
+        let enabled = if network {
+            self.network_diagnostics_enabled
+        } else {
+            self.console_diagnostics_enabled
+        };
+        if !enabled {
+            return;
+        }
+        let entries = if network {
+            &mut self.network_entries
+        } else {
+            &mut self.console_entries
+        };
+        entries.push(AgentDiagnosticEntry {
+            received_at: Instant::now(),
+            value,
+        });
+        let cutoff = Instant::now().checked_sub(AGENT_DIAGNOSTIC_MAX_AGE);
+        entries.retain(|entry| cutoff.is_none_or(|cutoff| entry.received_at >= cutoff));
+        while entries.len() > paneflow_browser_protocol::MAX_AGENT_DIAGNOSTIC_ENTRIES
+            || entries
+                .iter()
+                .map(|entry| entry.value.to_string().len())
+                .sum::<usize>()
+                > AGENT_DIAGNOSTIC_MAX_BYTES
+        {
+            if entries.is_empty() {
+                break;
+            }
+            entries.remove(0);
+        }
+    }
+
+    pub(crate) fn begin_agent_selection(&mut self, cx: &mut Context<Self>) {
+        self.selection_mode = true;
+        self.selection_anchor = None;
+        self.selection_preview = None;
+        self.notice = Some("Select a page element to preview it in the composer".to_string());
+        cx.notify();
+    }
+
+    pub(crate) fn agent_navigate(
+        &mut self,
+        url: &str,
+        cx: &mut Context<Self>,
+    ) -> Result<OperationId, BrowserError> {
+        let url = normalize_address(url)?;
+        if !self.native_created {
+            return Err(BrowserError::Unavailable);
+        }
+        let Some(live) = &self.live else {
+            return Err(BrowserError::Unavailable);
+        };
+        let operation = live.send_to_document(|document| Command::AgentNavigate {
+            document,
+            url: url.clone(),
+        })?;
+
+        self.url = Some(url.clone());
+        self.address
+            .update(cx, |address, cx| address.set_value(url, cx));
+        self.title.clear();
+        self.navigation = Navigation::Loading;
+        self.notice = None;
+        self.selection_preview = None;
+        cx.emit(BrowserViewEvent::DescriptorChanged);
+        cx.notify();
+        Ok(operation)
+    }
+
+    pub(crate) fn agent_history(
+        &mut self,
+        direction: HistoryDirection,
+        cx: &mut Context<Self>,
+    ) -> Result<OperationId, BrowserError> {
+        if !self.native_created {
+            return Err(BrowserError::Unavailable);
+        }
+        let Some(live) = &self.live else {
+            return Err(BrowserError::Unavailable);
+        };
+        let operation = live.send_to_document(|document| Command::History {
+            document,
+            direction,
+        })?;
+        self.navigation = Navigation::Loading;
+        cx.notify();
+        Ok(operation)
+    }
+
+    pub(crate) fn agent_reload(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> Result<OperationId, BrowserError> {
+        if !self.native_created {
+            return Err(BrowserError::Unavailable);
+        }
+        let Some(live) = &self.live else {
+            return Err(BrowserError::Unavailable);
+        };
+        let operation = live.send_to_document(|document| Command::Reload {
+            document,
+            ignore_cache: false,
+        })?;
+        self.navigation = Navigation::Loading;
+        cx.notify();
+        Ok(operation)
+    }
+
+    pub(crate) fn agent_input(&mut self, input: InputEvent) -> Result<OperationId, BrowserError> {
+        if !input.is_valid() {
+            return Err(BrowserError::InvalidMessage);
+        }
+        if !self.native_created {
+            return Err(BrowserError::Unavailable);
+        }
+        let Some(live) = &self.live else {
+            return Err(BrowserError::Unavailable);
+        };
+        live.send_to_document(|document| Command::Input { document, input })
+    }
+
+    pub(crate) fn agent_screenshot(&mut self) -> Result<OperationId, BrowserError> {
+        if !self.native_created {
+            return Err(BrowserError::Unavailable);
+        }
+        let Some(live) = &self.live else {
+            return Err(BrowserError::Unavailable);
+        };
+        live.send_to_document(|document| Command::Screenshot { document })
     }
 
     pub fn chip_label(&self) -> String {
@@ -354,6 +598,7 @@ impl BrowserView {
     }
 
     pub fn navigate(&mut self, input: &str, window: &mut Window, cx: &mut Context<Self>) {
+        self.cancel_agent_control(cx);
         let url = match super::address::resolve(input) {
             Ok(url) => url,
             Err(error) => {
@@ -414,6 +659,7 @@ impl BrowserView {
     }
 
     pub fn go(&mut self, direction: HistoryDirection, cx: &mut Context<Self>) {
+        self.cancel_agent_control(cx);
         self.forward(
             |document| Command::History {
                 document,
@@ -424,6 +670,7 @@ impl BrowserView {
     }
 
     pub fn reload(&mut self, ignore_cache: bool, window: &mut Window, cx: &mut Context<Self>) {
+        self.cancel_agent_control(cx);
         if self.live.is_none() {
             if self.url.is_some() {
                 self.notice = None;
@@ -443,6 +690,7 @@ impl BrowserView {
     }
 
     pub fn stop(&mut self, cx: &mut Context<Self>) {
+        self.cancel_agent_control(cx);
         self.forward(|document| Command::Stop { document }, cx);
     }
 
@@ -467,6 +715,7 @@ impl BrowserView {
     }
 
     pub fn sleep(&mut self, cx: &mut Context<Self>) {
+        self.cancel_agent_control(cx);
         if self.live.is_none() {
             self.release_live_slot(cx);
             self.state = SessionState::Dormant;
@@ -478,6 +727,7 @@ impl BrowserView {
     }
 
     pub fn request_close(&mut self, cx: &mut Context<Self>) -> bool {
+        self.cancel_agent_control(cx);
         if let Some(inspector) = &self.inspector
             && inspector.read(cx).interaction.focused == Some(true)
         {
@@ -662,6 +912,7 @@ impl BrowserView {
     }
 
     fn retire_live(&mut self, cx: &mut Context<Self>) {
+        self.cancel_agent_control(cx);
         self.native_created = false;
         self.pending_navigation = None;
         self.release_input(cx);
@@ -963,6 +1214,7 @@ impl BrowserView {
                 cx.notify();
             }
             PageSignal::State(session) => {
+                self.local_document = session.document.clone();
                 if self.accessibility_document.as_ref() != Some(&session.document) {
                     self.clear_stale_document_notice();
                     if let Some(inspector) = self.inspector.take() {
@@ -976,6 +1228,11 @@ impl BrowserView {
                     self.permissions_allowed = false;
                     self.fullscreen = false;
                     self.download_progress.clear();
+                    self.console_entries.clear();
+                    self.network_entries.clear();
+                    self.console_diagnostics_enabled = false;
+                    self.network_diagnostics_enabled = false;
+                    self.selection_preview = None;
                 }
                 self.state = session.state;
                 if session.state == SessionState::Dormant
@@ -1081,6 +1338,25 @@ impl BrowserView {
                 if self.accessibility.apply(&document, &kind, &value) {
                     cx.notify();
                 }
+            }
+            PageSignal::Console { document, value } => {
+                if self.local_document == document {
+                    self.record_agent_diagnostic(false, value);
+                    cx.notify();
+                }
+            }
+            PageSignal::Network { document, value } => {
+                if self.local_document == document {
+                    self.record_agent_diagnostic(true, value);
+                    cx.notify();
+                }
+            }
+            PageSignal::OperationCompleted { operation, result } => {
+                cx.emit(BrowserViewEvent::AgentOperationCompleted {
+                    browser: self.id.clone(),
+                    operation,
+                    result,
+                });
             }
             PageSignal::PopupRequested(url) => {
                 cx.emit(BrowserViewEvent::PopupRequested(url));
@@ -1195,6 +1471,7 @@ impl BrowserView {
     }
 
     fn input(&mut self, input: InputEvent, cx: &mut Context<Self>) {
+        self.cancel_agent_control(cx);
         if self.web_dialog.is_some()
             && !matches!(
                 input,
@@ -1226,6 +1503,13 @@ impl BrowserView {
         }
         let _ = live.send_to_document(|document| Command::Input { document, input });
         let _ = cx;
+    }
+
+    fn cancel_agent_control(&self, cx: &mut Context<Self>) {
+        if cx.has_global::<BrowserAuthority>() {
+            cx.global_mut::<BrowserAuthority>()
+                .cancel_agent_for_browser(self.owner.workspace_id, &self.id);
+        }
     }
 
     fn viewport_origin(&self) -> gpui::Point<Pixels> {
@@ -1263,6 +1547,23 @@ impl BrowserView {
         let Some(button) = mouse_button(button) else {
             return;
         };
+        if self.selection_mode && button == paneflow_browser_protocol::MouseButton::Left {
+            if down {
+                self.selection_anchor = Some(point);
+            } else if self.selection_anchor.take().is_some() {
+                let (x, y) = self.browser_position(point);
+                if let Some(selection) = self.agent_selection_at(x, y) {
+                    let mut selection = selection;
+                    selection.url = self.url.as_deref().and_then(exported_url);
+                    self.selection_preview = Some(selection.clone());
+                    cx.emit(BrowserViewEvent::SelectionReady(selection));
+                }
+                self.selection_mode = false;
+                self.notice = None;
+                cx.notify();
+            }
+            return;
+        }
         let (x, y) = self.browser_position(point);
         self.input(
             InputEvent::MouseButton {
@@ -1533,6 +1834,50 @@ impl BrowserView {
                 ),
             )
             .child(
+                row(
+                    "browser-menu-select-context",
+                    "Select page context".to_string(),
+                )
+                .on_click(cx.listener(|this, _: &ClickEvent, _window, cx| {
+                    this.menu_open = false;
+                    this.begin_agent_selection(cx);
+                })),
+            )
+            .child(
+                row(
+                    "browser-menu-agent-read",
+                    "Allow agent to read pages".to_string(),
+                )
+                .on_click(cx.listener(|this, _: &ClickEvent, _window, cx| {
+                    this.menu_open = false;
+                    cx.emit(BrowserViewEvent::AgentAccessRequested(AgentAccess::Read));
+                })),
+            )
+            .child(
+                row(
+                    "browser-menu-agent-interact",
+                    "Allow agent to interact".to_string(),
+                )
+                .on_click(cx.listener(|this, _: &ClickEvent, _window, cx| {
+                    this.menu_open = false;
+                    cx.emit(BrowserViewEvent::AgentAccessRequested(
+                        AgentAccess::Interact,
+                    ));
+                })),
+            )
+            .child(
+                row(
+                    "browser-menu-agent-disabled",
+                    "Disable agent browser access".to_string(),
+                )
+                .on_click(cx.listener(|this, _: &ClickEvent, _window, cx| {
+                    this.menu_open = false;
+                    cx.emit(BrowserViewEvent::AgentAccessRequested(
+                        AgentAccess::Disabled,
+                    ));
+                })),
+            )
+            .child(
                 row("browser-menu-external", "Open externally".to_string()).on_click(cx.listener(
                     |this, _: &ClickEvent, _w, cx| {
                         this.menu_open = false;
@@ -1715,13 +2060,13 @@ impl BrowserView {
                 let tree = self.accessibility.clone();
                 move |builder| tree.append(builder)
             })
-            .cursor(
-                if self.live.is_some() && self.state == SessionState::Visible {
-                    self.page_cursor
-                } else {
-                    CursorStyle::Arrow
-                },
-            )
+            .cursor(if self.selection_mode {
+                CursorStyle::Crosshair
+            } else if self.live.is_some() && self.state == SessionState::Visible {
+                self.page_cursor
+            } else {
+                CursorStyle::Arrow
+            })
             .flex_1()
             .min_h_0()
             .w_full()
@@ -1804,6 +2149,7 @@ impl BrowserView {
                 )
                 .size_full()
             });
+        let selection_overlay = self.render_selection_overlay(ui);
         let viewport = match message {
             Some((icon, text, actionable)) => viewport.child(
                 div()
@@ -1857,7 +2203,51 @@ impl BrowserView {
             ),
             None => viewport,
         };
-        viewport.into_any_element()
+        match selection_overlay {
+            Some(overlay) => viewport.child(overlay).into_any_element(),
+            None => viewport.into_any_element(),
+        }
+    }
+
+    fn render_selection_overlay(&self, ui: crate::theme::UiColors) -> Option<AnyElement> {
+        let selection = self.selection_preview.as_ref()?;
+        let bounds = self.viewport?;
+        let geometry = self.last_geometry?;
+        let scale_x = f32::from(bounds.size.width) / geometry.width.max(1) as f32;
+        let scale_y = f32::from(bounds.size.height) / geometry.height.max(1) as f32;
+        let [x, y, width, height] = selection.rect;
+        let left = (x.max(0) as f32 * scale_x).min(f32::from(bounds.size.width));
+        let top = (y.max(0) as f32 * scale_y).min(f32::from(bounds.size.height));
+        let width =
+            (width.max(1) as f32 * scale_x).min((f32::from(bounds.size.width) - left).max(1.));
+        let height =
+            (height.max(1) as f32 * scale_y).min((f32::from(bounds.size.height) - top).max(1.));
+        Some(
+            div()
+                .id("browser-selection-overlay")
+                .absolute()
+                .left(px(left))
+                .top(px(top))
+                .w(px(width))
+                .h(px(height))
+                .border_1()
+                .border_color(ui.accent)
+                .bg(ui.accent.opacity(0.08))
+                .child(
+                    div()
+                        .absolute()
+                        .left(px(4.))
+                        .top(px(4.))
+                        .max_w(px(320.))
+                        .px(px(6.))
+                        .py(px(4.))
+                        .bg(ui.overlay)
+                        .text_size(px(11.))
+                        .text_color(ui.accent)
+                        .child(selection.summary.clone()),
+                )
+                .into_any_element(),
+        )
     }
 }
 

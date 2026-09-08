@@ -181,6 +181,187 @@ impl AccessibilityTree {
             builder.set_active_descendant(id_for(builder, focus));
         }
     }
+
+    pub(super) fn agent_snapshot(&self) -> Option<Value> {
+        if !self.available {
+            return None;
+        }
+        let root = self.root?;
+        let mut truncated = false;
+        let mut nodes = Vec::new();
+        for (&id, value) in &self.nodes {
+            if hidden_or_protected(value) {
+                continue;
+            }
+            if nodes.len() >= paneflow_browser_protocol::MAX_AGENT_SNAPSHOT_NODES {
+                truncated = true;
+                break;
+            }
+            let attributes = value.get("attributes").and_then(Value::as_object);
+            let mut node = serde_json::Map::new();
+            node.insert("id".to_string(), Value::from(id));
+            node.insert(
+                "role".to_string(),
+                value.get("role").cloned().unwrap_or(Value::Null),
+            );
+            for key in ["name", "description", "value"] {
+                if let Some(text) = attributes
+                    .and_then(|attributes| attributes.get(key))
+                    .and_then(Value::as_str)
+                {
+                    let (text, was_truncated) = paneflow_browser_protocol::cap_text(text, 4096);
+                    truncated |= was_truncated;
+                    node.insert(key.to_string(), Value::String(text));
+                }
+            }
+            if let Some(bounds) = bounds(value) {
+                node.insert("bounds".to_string(), bounds);
+            }
+            let children = children(value)
+                .unwrap_or_default()
+                .into_iter()
+                .filter(|child| {
+                    self.nodes
+                        .get(child)
+                        .is_some_and(|node| !hidden_or_protected(node))
+                })
+                .map(Value::from)
+                .collect::<Vec<_>>();
+            if !children.is_empty() {
+                node.insert("children".to_string(), Value::Array(children));
+            }
+            nodes.push(Value::Object(node));
+        }
+        let snapshot = serde_json::json!({
+            "root": root,
+            "nodes": nodes,
+            "truncated": truncated,
+        });
+        if snapshot.to_string().len() > paneflow_browser_protocol::MAX_AGENT_SNAPSHOT_BYTES {
+            return Some(serde_json::json!({
+                "root": root,
+                "nodes": [],
+                "truncated": true,
+            }));
+        }
+        Some(snapshot)
+    }
+
+    pub(super) fn agent_selection_at(
+        &self,
+        x: i32,
+        y: i32,
+    ) -> Option<crate::browser::agent::BrowserContextSelection> {
+        if !self.available {
+            return None;
+        }
+        let document = self.document.clone()?;
+        self.nodes
+            .iter()
+            .filter(|(_, value)| !hidden_or_protected(value))
+            .filter_map(|(&node_id, value)| {
+                let [left, top, width, height] = bounds_array(&bounds(value)?)?;
+                let right = left.saturating_add(width);
+                let bottom = top.saturating_add(height);
+                (x >= left && x <= right && y >= top && y <= bottom).then(|| {
+                    let attributes = value.get("attributes").and_then(Value::as_object);
+                    let role = value
+                        .get("role")
+                        .and_then(Value::as_str)
+                        .unwrap_or("element");
+                    let name = attributes
+                        .and_then(|attributes| attributes.get("name"))
+                        .and_then(Value::as_str)
+                        .unwrap_or_default();
+                    let summary = if name.is_empty() {
+                        role.to_string()
+                    } else {
+                        format!("{role}: {name}")
+                    };
+                    let summary = paneflow_browser_protocol::cap_text(&summary, 512).0;
+                    let text = attributes
+                        .and_then(|attributes| attributes.get("value"))
+                        .and_then(Value::as_str)
+                        .or_else(|| {
+                            attributes
+                                .and_then(|attributes| attributes.get("name"))
+                                .and_then(Value::as_str)
+                        })
+                        .map(|text| paneflow_browser_protocol::cap_text(text, 8192).0)
+                        .filter(|text| !text.is_empty());
+                    crate::browser::agent::BrowserContextSelection {
+                        document: document.clone(),
+                        node_id,
+                        url: None,
+                        rect: [left, top, width, height],
+                        summary,
+                        text,
+                    }
+                })
+            })
+            .min_by_key(|selection| {
+                i64::from(selection.rect[2].max(0)) * i64::from(selection.rect[3].max(0))
+            })
+    }
+
+    pub(super) fn agent_selection_is_current(
+        &self,
+        selection: &crate::browser::agent::BrowserContextSelection,
+    ) -> bool {
+        self.document.as_ref() == Some(&selection.document)
+            && self
+                .nodes
+                .get(&selection.node_id)
+                .and_then(|node| {
+                    if hidden_or_protected(node) {
+                        None
+                    } else {
+                        bounds(node).and_then(|bounds| bounds_array(&bounds))
+                    }
+                })
+                .is_some_and(|bounds| bounds == selection.rect)
+    }
+}
+
+fn hidden_or_protected(value: &Value) -> bool {
+    let attributes = value.get("attributes");
+    value
+        .get("role")
+        .and_then(Value::as_str)
+        .is_some_and(|role| role.eq_ignore_ascii_case("passwordField"))
+        || attributes
+            .and_then(|attributes| attributes.get("restriction"))
+            .and_then(Value::as_str)
+            .is_some_and(|restriction| restriction.eq_ignore_ascii_case("protected"))
+        || attributes
+            .and_then(|attributes| attributes.get("hidden"))
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+        || attributes
+            .and_then(|attributes| attributes.get("invisible"))
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+}
+
+fn bounds(value: &Value) -> Option<Value> {
+    let value = value
+        .get("location")?
+        .get("bounds")
+        .or_else(|| value.get("location"))?;
+    bounds_array(value).map(|bounds| Value::Array(bounds.into_iter().map(Value::from).collect()))
+}
+
+fn bounds_array(value: &Value) -> Option<[i32; 4]> {
+    let array = value.as_array()?;
+    if array.len() != 4 {
+        return None;
+    }
+    Some([
+        i32::try_from(array[0].as_i64()?).ok()?,
+        i32::try_from(array[1].as_i64()?).ok()?,
+        i32::try_from(array[2].as_i64()?).ok()?,
+        i32::try_from(array[3].as_i64()?).ok()?,
+    ])
 }
 
 fn accessible_node(value: &Value) -> Node {
@@ -412,5 +593,36 @@ mod tests {
         );
         assert!(!tree.available);
         assert!(tree.nodes.is_empty());
+    }
+
+    #[test]
+    fn agent_selection_excludes_protected_nodes_and_invalidates_removed_nodes() {
+        let document = document();
+        let mut tree = AccessibilityTree::default();
+        tree.reset(Some(document.clone()));
+        let update = json!({
+            "ax_tree_id": "t",
+            "updates": [{
+                "root_id": 1,
+                "nodes": [
+                    {"id": 1, "role": "rootWebArea", "child_ids": [2, 3, 4], "location": {"bounds": [0, 0, 100, 100]}},
+                    {"id": 2, "role": "button", "attributes": {"name": "Continue", "value": "go"}, "location": {"bounds": [10, 10, 20, 20]}},
+                    {"id": 3, "role": "passwordField", "attributes": {"name": "Secret"}, "location": {"bounds": [10, 10, 20, 20]}},
+                    {"id": 4, "role": "button", "attributes": {"name": "Hidden", "hidden": true}, "location": {"bounds": [10, 10, 20, 20]}}
+                ]
+            }]
+        });
+        assert!(tree.apply(&document, "accessibility_tree", &update));
+        let selection = tree.agent_selection_at(15, 15).expect("visible selection");
+        assert_eq!(selection.node_id, 2);
+        assert_eq!(selection.summary, "button: Continue");
+        assert!(tree.agent_selection_is_current(&selection));
+
+        assert!(tree.apply(
+            &document,
+            "accessibility_tree",
+            &json!({"ax_tree_id":"t", "updates":[{"node_id_to_clear":2, "nodes":[]}]}),
+        ));
+        assert!(!tree.agent_selection_is_current(&selection));
     }
 }

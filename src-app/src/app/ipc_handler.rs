@@ -1061,7 +1061,13 @@ impl PaneFlowApp {
             }
             req.started
                 .store(true, std::sync::atomic::Ordering::Release);
-            let result = self.handle_ipc(&req.method, &req.params, req.caller_pid, cx);
+            let result = self.handle_ipc(
+                &req.method,
+                &req.params,
+                req.caller_pid,
+                req.scope_workspace_id,
+                cx,
+            );
             if req.method.starts_with("ai.")
                 && result.get("error").is_none()
                 && result.get("_jsonrpc_error").is_none()
@@ -1119,7 +1125,8 @@ impl PaneFlowApp {
             message.as_deref(),
             active_tool.as_deref(),
         );
-        self.event_bus.broadcast(method, surface_id, &event);
+        self.event_bus
+            .broadcast(method, surface_id, workspace_id, &event);
     }
 
     pub(crate) fn broadcast_surface_changes(&mut self, cx: &mut Context<Self>) {
@@ -1139,7 +1146,7 @@ impl PaneFlowApp {
                     "ts": crate::ipc_events::now_ms(),
                 });
                 self.event_bus
-                    .broadcast("surface_changed", Some(*sid), &event);
+                    .broadcast("surface_changed", Some(*sid), None, &event);
             }
         }
         self.last_broadcast_gen.retain(|k, _| seen.contains(k));
@@ -2023,9 +2030,13 @@ impl PaneFlowApp {
         method: &str,
         params: &serde_json::Value,
         caller_pid: Option<i64>,
+        scope_workspace_id: Option<u64>,
         cx: &mut Context<Self>,
     ) -> serde_json::Value {
         match method {
+            method if method.starts_with("browser.") => {
+                self.handle_browser_agent(method, params, scope_workspace_id, cx)
+            }
             "workspace.list" => {
                 let list: Vec<_> = self
                     .workspaces
@@ -3585,6 +3596,7 @@ mod tests {
             cancelled: Arc::new(AtomicBool::new(cancelled)),
             started: Arc::new(AtomicBool::new(false)),
             caller_pid: None,
+            scope_workspace_id: None,
         }
     }
 

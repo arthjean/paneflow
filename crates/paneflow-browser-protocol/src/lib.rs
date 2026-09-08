@@ -1,3 +1,4 @@
+mod agent;
 #[cfg(unix)]
 mod channel;
 mod controller;
@@ -5,6 +6,15 @@ mod domain;
 mod frames;
 mod wire;
 
+pub use agent::{
+    cap_text, exported_origin, exported_url, is_sensitive_header, is_sensitive_query_parameter,
+    redact_headers, redact_query_parameters, AgentAccess, MAX_AGENT_ACTION_MS,
+    MAX_AGENT_CAPTURE_BYTES, MAX_AGENT_CAPTURE_CHUNK_BYTES, MAX_AGENT_CAPTURE_PIXELS,
+    MAX_AGENT_DIAGNOSTIC_AGE_SECS, MAX_AGENT_DIAGNOSTIC_BYTES, MAX_AGENT_DIAGNOSTIC_ENTRIES,
+    MAX_AGENT_LEASE_MS, MAX_AGENT_OPERATIONS_PER_WORKSPACE, MAX_AGENT_OPERATIONS_TOTAL,
+    MAX_AGENT_OPERATION_RECORDS, MAX_AGENT_SNAPSHOT_BYTES, MAX_AGENT_SNAPSHOT_NODES,
+    MAX_AGENT_TYPING_BYTES,
+};
 #[cfg(unix)]
 pub use channel::{FrameChannel, FRAME_CHANNEL_ENV, MAX_CHANNEL_FDS};
 pub use controller::Controller;

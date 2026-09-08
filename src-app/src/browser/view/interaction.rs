@@ -96,6 +96,10 @@ impl BrowserView {
     pub(super) fn pointer_move(&mut self, event: &MouseMoveEvent, cx: &mut Context<Self>) {
         self.interaction.point = event.position;
         self.interaction.modifiers = event.modifiers;
+        if self.selection_mode {
+            cx.notify();
+            return;
+        }
         let (x, y) = self.browser_position(event.position);
         self.input(
             InputEvent::MouseMove {

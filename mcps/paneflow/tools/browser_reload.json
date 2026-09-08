@@ -1,0 +1,30 @@
+{
+  "name": "browser_reload",
+  "description": "Reload one browser page without taking keyboard focus.",
+  "annotations": {
+    "destructiveHint": false,
+    "idempotentHint": false,
+    "openWorldHint": true,
+    "readOnlyHint": false
+  },
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "browser_id": {
+        "maxLength": 64,
+        "minLength": 1,
+        "type": "string"
+      },
+      "generation": {
+        "maximum": 9007199254740991,
+        "minimum": 1,
+        "type": "integer"
+      }
+    },
+    "required": [
+      "browser_id",
+      "generation"
+    ],
+    "type": "object"
+  }
+}

@@ -9,6 +9,7 @@ license.workspace = true
 cef-runtime = ["dep:cef", "dep:ash"]
 
 [dependencies]
+base64 = "0.22"
 paneflow-browser-protocol = { path = "../paneflow-browser-protocol" }
 serde.workspace = true
 serde_json.workspace = true

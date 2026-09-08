@@ -1,0 +1,36 @@
+{
+  "name": "browser_navigate",
+  "description": "Navigate one browser page without taking keyboard focus. The URL must be an http or https URL.",
+  "annotations": {
+    "destructiveHint": false,
+    "idempotentHint": false,
+    "openWorldHint": true,
+    "readOnlyHint": false
+  },
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "browser_id": {
+        "maxLength": 64,
+        "minLength": 1,
+        "type": "string"
+      },
+      "generation": {
+        "maximum": 9007199254740991,
+        "minimum": 1,
+        "type": "integer"
+      },
+      "url": {
+        "maxLength": 8192,
+        "minLength": 1,
+        "type": "string"
+      }
+    },
+    "required": [
+      "browser_id",
+      "generation",
+      "url"
+    ],
+    "type": "object"
+  }
+}

@@ -168,6 +168,10 @@ wrap_load_handler! {
         fn on_load_end(&self, _browser: Option<&mut Browser>, frame: Option<&mut Frame>, http_status_code: i32) {
             let _context = super::Context::browser(_browser.as_deref());
             if let Some(frame) = frame.filter(|frame| frame.is_main() != 0) {
+                if !super::devtools::is_inspector() {
+                    let url = CefString::from(&frame.url()).to_string();
+                    super::agent_navigation_committed(&url);
+                }
                 emit(json!({ "native": "loaded", "http_status": http_status_code }));
                 if super::devtools::is_inspector() { return; }
                 frame.execute_java_script(Some(&r#"(() => {
@@ -189,11 +193,18 @@ wrap_load_handler! {
             }
         }
 
-        fn on_load_error(&self, _browser: Option<&mut Browser>, frame: Option<&mut Frame>, error_code: Errorcode, error_text: Option<&CefString>, _failed_url: Option<&CefString>) {
+        fn on_load_error(&self, _browser: Option<&mut Browser>, frame: Option<&mut Frame>, error_code: Errorcode, error_text: Option<&CefString>, failed_url: Option<&CefString>) {
             let _context = super::Context::browser(_browser.as_deref());
             let main = frame.is_none_or(|frame| frame.is_main() != 0);
             let text: String = error_text.map(ToString::to_string).unwrap_or_default().chars().take(256).collect();
-            emit(json!({ "native": "load_failed", "main": main, "error_code": error_code.get_raw(), "error_text": text }));
+            let failed_url = failed_url.map(ToString::to_string);
+            let agent_pending = main && super::agent_navigation_failure_matches(None);
+            if main && !super::devtools::is_inspector() && super::agent_navigation_failure_matches(failed_url.as_deref()) {
+                super::agent_navigation_failed(&text);
+            }
+            if !(agent_pending && error_code.get_raw() == -3) {
+                emit(json!({ "native": "load_failed", "main": main, "error_code": error_code.get_raw(), "error_text": text }));
+            }
         }
 
         fn on_loading_state_change(&self, _browser: Option<&mut Browser>, is_loading: i32, can_go_back: i32, can_go_forward: i32) {
@@ -254,8 +265,22 @@ wrap_display_handler! {
 
         fn on_console_message(&self, _browser: Option<&mut Browser>, _level: LogSeverity, message: Option<&CefString>, _source: Option<&CefString>, _line: i32) -> i32 {
             let _context = super::Context::browser(_browser.as_deref());
+            let Some(document) = super::current_document() else {
+                return 0;
+            };
+            let message_text = message.map(ToString::to_string).unwrap_or_default();
+            emit(json!({
+                "native": "agent_console",
+                "document": document,
+                "value": {
+                    "level": _level.get_raw(),
+                    "message": message_text.chars().take(4096).collect::<String>(),
+                    "source": _source.map(ToString::to_string).unwrap_or_default().chars().take(1024).collect::<String>(),
+                    "line": _line.max(0),
+                }
+            }));
             if super::devtools::is_inspector() && HOST.with(|state| state.borrow().as_ref().is_some_and(|host| host.tracing)) {
-                emit(json!({ "native": "devtools_console", "message": message.map(ToString::to_string).unwrap_or_default().chars().take(1024).collect::<String>() }));
+                emit(json!({ "native": "devtools_console", "message": message_text.chars().take(1024).collect::<String>() }));
             }
             if let Some(report) = message.and_then(|message| message.as_slice()).and_then(crate::qualification::fixture_report) {
                 match report {
@@ -274,7 +299,11 @@ wrap_request_handler! {
 
     impl RequestHandler {
         fn resource_request_handler(&self, _browser: Option<&mut Browser>, _frame: Option<&mut Frame>, _request: Option<&mut Request>, _is_navigation: i32, _is_download: i32, _request_initiator: Option<&CefString>, _disable_default_handling: Option<&mut i32>) -> Option<ResourceRequestHandler> {
-            self.inspector.then(super::devtools::Resources::new)
+            if self.inspector {
+                Some(super::devtools::Resources::new())
+            } else {
+                Some(AgentResources::new())
+            }
         }
 
         fn on_certificate_error(&self, browser: Option<&mut Browser>, cert_error: Errorcode, _request_url: Option<&CefString>, _ssl_info: Option<&mut Sslinfo>, _callback: Option<&mut Callback>) -> i32 {
@@ -319,6 +348,62 @@ wrap_request_handler! {
                 }
             }
             0
+        }
+    }
+}
+
+fn emit_network_event(
+    browser: Option<&mut Browser>,
+    request: Option<&mut Request>,
+    response: Option<&mut Response>,
+    status: Option<u32>,
+    received_content_length: Option<i64>,
+) {
+    let _context = super::Context::browser(browser.as_deref());
+    let Some(document) = super::current_document() else {
+        return;
+    };
+    let Some(request) = request else {
+        return;
+    };
+    let raw_url = CefString::from(&request.url()).to_string();
+    let Some(url) = paneflow_browser_protocol::exported_url(&raw_url) else {
+        return;
+    };
+    let mut value = json!({
+        "request_id": request.identifier(),
+        "method": CefString::from(&request.method()).to_string(),
+        "resource_type": request.resource_type().get_raw(),
+        "url": url,
+    });
+    if let Some(status) = status {
+        value["status"] = status.into();
+    }
+    if let Some(received_content_length) = received_content_length {
+        value["received_content_length"] = received_content_length.into();
+    }
+    if let Some(response) = response {
+        value["mime_type"] = CefString::from(&response.mime_type())
+            .to_string()
+            .chars()
+            .take(256)
+            .collect::<String>()
+            .into();
+    }
+    emit(json!({ "native": "agent_network", "document": document, "value": value }));
+}
+
+wrap_resource_request_handler! {
+    struct AgentResources;
+
+    impl ResourceRequestHandler {
+        fn on_before_resource_load(&self, browser: Option<&mut Browser>, _frame: Option<&mut Frame>, request: Option<&mut Request>, _callback: Option<&mut Callback>) -> ReturnValue {
+            emit_network_event(browser, request, None, None, None);
+            ReturnValue::CONTINUE
+        }
+
+        fn on_resource_load_complete(&self, browser: Option<&mut Browser>, _frame: Option<&mut Frame>, request: Option<&mut Request>, response: Option<&mut Response>, status: UrlrequestStatus, received_content_length: i64) {
+            emit_network_event(browser, request, response, Some(status.get_raw()), Some(received_content_length.max(0)));
         }
     }
 }

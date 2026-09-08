@@ -450,6 +450,22 @@ impl Pane {
 
         let dismiss_backdrop = slot.dismiss.clone();
         let dismiss_out = slot.dismiss.clone();
+        let context_preview = slot.context_preview.as_ref().map(|selection| {
+            let url = selection.url.as_deref().unwrap_or("unavailable");
+            let captured = selection
+                .text
+                .as_deref()
+                .unwrap_or("No visible text captured");
+            format!(
+                "Browser context · {url}\n{}\n{}\nBounds: {}, {}, {}, {}",
+                selection.summary,
+                captured,
+                selection.rect[0],
+                selection.rect[1],
+                selection.rect[2],
+                selection.rect[3],
+            )
+        });
         Some(
             deferred(
                 div()
@@ -488,6 +504,22 @@ impl Pane {
                                 dismiss_out(cx);
                             })
                             .child(header)
+                            .when_some(context_preview, |panel, preview| {
+                                panel.child(
+                                    div()
+                                        .id("composer-browser-context")
+                                        .max_h(px(112.))
+                                        .overflow_y_scroll()
+                                        .p(px(6.))
+                                        .bg(ui.accent.opacity(0.08))
+                                        .border_1()
+                                        .border_color(ui.accent.opacity(0.35))
+                                        .rounded(px(4.))
+                                        .text_size(px(10.))
+                                        .text_color(ui.text)
+                                        .child(preview),
+                                )
+                            })
                             .child(div().max_h(px(180.)).child(slot.input.clone()))
                             .child(div().text_size(px(10.)).text_color(ui.muted).child(hint)),
                     ),

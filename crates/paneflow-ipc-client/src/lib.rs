@@ -59,12 +59,24 @@ impl IpcTransport for IpcClient {
 }
 
 pub(crate) fn build_request(id: u64, method: &str, params: Value) -> Value {
-    json!({
+    let mut request = json!({
         "jsonrpc": "2.0",
         "id": id,
         "method": method,
         "params": params,
-    })
+    });
+    if let Some(workspace_id) = std::env::var("PANEFLOW_WORKSPACE_ID")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+    {
+        if let Some(object) = request.as_object_mut() {
+            object.insert(
+                "_paneflow_context".to_string(),
+                json!({"workspace_id": workspace_id}),
+            );
+        }
+    }
+    request
 }
 
 pub(crate) fn parse_response(line: &str) -> Result<Value, String> {

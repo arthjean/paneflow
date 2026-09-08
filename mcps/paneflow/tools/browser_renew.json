@@ -1,0 +1,30 @@
+{
+  "name": "browser_renew",
+  "description": "Renew one pending browser operation lease for up to 30 seconds.",
+  "annotations": {
+    "destructiveHint": false,
+    "idempotentHint": false,
+    "openWorldHint": true,
+    "readOnlyHint": false
+  },
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "operation_id": {
+        "maxLength": 64,
+        "minLength": 1,
+        "type": "string"
+      },
+      "extension_ms": {
+        "default": 30000,
+        "maximum": 30000,
+        "minimum": 1,
+        "type": "integer"
+      }
+    },
+    "required": [
+      "operation_id"
+    ],
+    "type": "object"
+  }
+}

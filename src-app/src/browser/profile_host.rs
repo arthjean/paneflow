@@ -5,6 +5,7 @@ use std::sync::{Arc, Mutex, OnceLock, Weak};
 use paneflow_browser_protocol::{
     BrowserError, BrowserId, Command, Document, Event, FrameAck, FrameMessage, OperationId,
 };
+use serde_json::Value;
 
 use super::supervisor::{HostConfig, HostEvent, HostInfo, HostSupervisor, SHUTDOWN_GRACE};
 
@@ -157,7 +158,12 @@ impl ProfileHost {
         }
         let browser = match &event {
             HostEvent::Reply(reply) => {
-                let operation_browser = routes.operations.remove(&reply.operation);
+                let operation_browser =
+                    if matches!(&reply.result, Ok(Event::NavigationStarted { .. })) {
+                        routes.operations.get(&reply.operation).cloned()
+                    } else {
+                        routes.operations.remove(&reply.operation)
+                    };
                 match &reply.result {
                     Ok(Event::State { session }) => {
                         if !routes.pages.contains_key(&session.document.browser) {
@@ -180,10 +186,34 @@ impl ProfileHost {
                     _ => operation_browser,
                 }
             }
-            HostEvent::Native(value) => value
-                .get("document")
-                .and_then(|value| serde_json::from_value::<Document>(value.clone()).ok())
-                .map(|document| document.browser),
+            HostEvent::Native(value) => {
+                let document = value
+                    .get("document")
+                    .and_then(|value| serde_json::from_value::<Document>(value.clone()).ok());
+                if matches!(
+                    value.get("native").and_then(Value::as_str),
+                    Some(
+                        "agent_navigation_committed"
+                            | "agent_navigation_failed"
+                            | "agent_navigation_cancelled"
+                    )
+                ) && let Some(operation) = value
+                    .get("operation")
+                    .and_then(Value::as_str)
+                    .and_then(|operation| OperationId::try_from(operation.to_owned()).ok())
+                {
+                    routes.operations.remove(&operation);
+                }
+                if let Some(document) = &document
+                    && value.get("native").and_then(Value::as_str)
+                        == Some("agent_navigation_committed")
+                {
+                    routes
+                        .documents
+                        .insert(document.browser.clone(), document.clone());
+                }
+                document.map(|document| document.browser)
+            }
             HostEvent::Frame(message, _) => Some(match message {
                 FrameMessage::PoolCreated { document, .. }
                 | FrameMessage::Frame { document, .. }

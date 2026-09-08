@@ -9,7 +9,8 @@ use std::sync::mpsc::{self, Receiver, TryRecvError};
 use cef::*;
 use paneflow_browser_protocol::{
     read_message, write_message, BrowserError, BrowserId, Command, Controller, Document, Envelope,
-    Event, FrameChannel, HistoryDirection, Owner, ProfileId, CONTRACT_VERSION, FRAME_CHANNEL_ENV,
+    Event, FrameChannel, HistoryDirection, OperationId, Owner, ProfileId, CONTRACT_VERSION,
+    FRAME_CHANNEL_ENV,
 };
 use serde_json::json;
 
@@ -50,6 +51,7 @@ struct Page {
     pending_close: Option<Envelope>,
     inspected: Option<Document>,
     expected_navigation: Option<String>,
+    pending_agent_navigation: Option<OperationId>,
     creating: bool,
 }
 
@@ -242,6 +244,143 @@ fn cancel_close(document: &Document) {
     }
 }
 
+fn cancel_agent_navigation(reason: &str) {
+    let pending = HOST.with(|state| {
+        let mut state = state.borrow_mut();
+        let host = state.as_mut()?;
+        let document = current_document()?;
+        let page = host.pages.get_mut(&document.browser)?;
+        page.pending_agent_navigation
+            .take()
+            .map(|operation| (document, operation))
+    });
+    if let Some((document, operation)) = pending {
+        emit(json!({
+            "native": "agent_navigation_cancelled",
+            "document": document,
+            "operation": operation,
+            "reason": reason
+        }));
+    }
+}
+
+fn agent_navigation_failed(reason: &str) {
+    let pending = HOST.with(|state| {
+        let mut state = state.borrow_mut();
+        let host = state.as_mut()?;
+        let document = current_document()?;
+        let page = host.pages.get_mut(&document.browser)?;
+        page.pending_agent_navigation
+            .take()
+            .map(|operation| (document, operation))
+    });
+    if let Some((document, operation)) = pending {
+        emit(json!({
+            "native": "agent_navigation_failed",
+            "document": document,
+            "operation": operation,
+            "reason": reason
+        }));
+    }
+}
+
+fn agent_navigation_failure_matches(url: Option<&str>) -> bool {
+    HOST.with(|state| {
+        let state = state.borrow();
+        let Some(host) = state.as_ref() else {
+            return false;
+        };
+        let Some(document) = current_document() else {
+            return false;
+        };
+        let Some(page) = host.pages.get(&document.browser) else {
+            return false;
+        };
+        page.pending_agent_navigation.is_some()
+            && url.is_none_or(|url| page.expected_navigation.as_deref() == Some(url))
+    })
+}
+
+fn agent_navigation_committed(url: &str) {
+    let Some(url) = paneflow_browser_protocol::validate_url(url)
+        .ok()
+        .map(|_| url.to_owned())
+    else {
+        agent_navigation_failed("native navigation committed an invalid URL");
+        return;
+    };
+    let Some((document, operation, owner)) = HOST.with(|state| {
+        let mut state = state.borrow_mut();
+        let host = state.as_mut()?;
+        let document = current_document()?;
+        let page = host.pages.get_mut(&document.browser)?;
+        page.pending_agent_navigation
+            .take()
+            .map(|operation| (page.document.clone(), operation, host.owner.clone()))
+    }) else {
+        return;
+    };
+    let reply = HOST.with(|state| {
+        let mut state = state.borrow_mut();
+        let host = state.as_mut()?;
+        Some(host.controller.dispatch(
+            &owner,
+            Envelope {
+                version: CONTRACT_VERSION,
+                operation: "native-agent-commit".to_owned().try_into().ok()?,
+                command: Command::Navigate {
+                    document: document.clone(),
+                    url: url.clone(),
+                },
+            },
+        ))
+    });
+    let Some(reply) = reply else {
+        emit(json!({
+            "native": "agent_navigation_failed",
+            "document": document,
+            "operation": operation,
+            "reason": "navigation commit controller unavailable"
+        }));
+        return;
+    };
+    let Ok(Event::State { session }) = reply.result else {
+        emit(json!({
+            "native": "agent_navigation_failed",
+            "document": document,
+            "operation": operation,
+            "reason": "navigation commit rejected"
+        }));
+        return;
+    };
+    devtools::invalidate_target(&document.browser);
+    HOST.with(|state| {
+        if let Some(host) = state.borrow_mut().as_mut() {
+            if let Some(page) = host.pages.get_mut(&session.document.browser) {
+                page.document = session.document.clone();
+                page.expected_navigation = None;
+            }
+        }
+    });
+    CONTEXT.with(|state| state.replace(Some(session.document.clone())));
+    if presentation::set_document(&session.document).is_err() {
+        emit(json!({
+            "native": "agent_navigation_failed",
+            "document": session.document,
+            "operation": operation,
+            "reason": "navigation commit presentation unavailable"
+        }));
+        return;
+    }
+    emit(json!({
+        "native": "agent_navigation_committed",
+        "document": session.document,
+        "session": session,
+        "operation": operation,
+        "url": url
+    }));
+}
+
 fn renderer_crashed() {
     if let Some(document) = current_document() {
         devtools::invalidate_target(&document.browser);
@@ -276,6 +415,16 @@ fn accept_navigation(url: &str) -> bool {
         let host = state.as_mut()?;
         let document = current_document()?;
         let page = host.pages.get_mut(&document.browser)?;
+        if page.pending_agent_navigation.is_some() {
+            if page.expected_navigation.as_deref() == Some(url) {
+                return None;
+            }
+            return Some(paneflow_browser_protocol::Reply {
+                version: CONTRACT_VERSION,
+                operation: "native-navigation".to_owned().try_into().ok()?,
+                result: Err(BrowserError::Unavailable),
+            });
+        }
         if page.expected_navigation.take().as_deref() == Some(url) {
             return None;
         }
@@ -315,11 +464,24 @@ fn accept_navigation(url: &str) -> bool {
 
 fn process(message: Envelope) {
     let command = message.command.clone();
+    let transport_operation = message.operation.clone();
     let document = serde_json::to_value(&command)
         .ok()
         .and_then(|value| value.get("document").cloned())
         .and_then(|value| serde_json::from_value::<Document>(value).ok());
     let _context = Context::enter(document.clone());
+    if matches!(
+        &command,
+        Command::Navigate { .. }
+            | Command::History { .. }
+            | Command::Reload { .. }
+            | Command::Stop { .. }
+            | Command::Close { .. }
+            | Command::Sleep { .. }
+            | Command::Input { .. }
+    ) {
+        cancel_agent_navigation("human browser control");
+    }
     let caller = match &command {
         Command::Create { owner, .. } => Some(owner.clone()),
         _ => document.as_ref().map(|document| document.owner.clone()),
@@ -332,7 +494,7 @@ fn process(message: Envelope) {
             .and_then(|host| host.pages.get(&document.as_ref()?.browser))
             .is_some_and(|page| page.creating)
     });
-    if matches!(command, Command::Close { .. }) && (has_browser || creating) {
+    if matches!(&command, Command::Close { .. }) && (has_browser || creating) {
         let validation = HOST.with(|state| {
             let mut state = state.borrow_mut();
             let host = state.as_mut()?;
@@ -381,10 +543,15 @@ fn process(message: Envelope) {
                 Command::Navigate { url, .. } => {
                     presentation::active() || url.starts_with(&format!("{}/", host.origin))
                 }
+                Command::AgentNavigate { url, .. } => {
+                    has_browser
+                        && (presentation::active() || url.starts_with(&format!("{}/", host.origin)))
+                }
                 Command::Capabilities | Command::State { .. } | Command::Close { .. } => true,
                 Command::CreateDevTools { .. } => has_browser && presentation::active(),
                 Command::Start { .. } => !has_browser,
                 Command::Present { .. } | Command::Input { .. } => presentation::active(),
+                Command::Screenshot { .. } => has_browser,
                 Command::History { .. }
                 | Command::Reload { .. }
                 | Command::Stop { .. }
@@ -421,7 +588,7 @@ fn process(message: Envelope) {
     let Some(mut reply) = reply else {
         return;
     };
-    if let Ok(Event::State { session, .. }) = &reply.result {
+    if let Ok(Event::State { session } | Event::NavigationStarted { session }) = &reply.result {
         if let Some(previous) = document
             .as_ref()
             .filter(|previous| **previous != session.document)
@@ -435,7 +602,10 @@ fn process(message: Envelope) {
                     .entry(session.document.browser.clone())
                     .and_modify(|page| {
                         page.document = session.document.clone();
-                        if matches!(command, Command::Navigate { .. }) {
+                        if matches!(&command, Command::Navigate { .. }) {
+                            page.expected_navigation = Some(session.url.clone());
+                        }
+                        if matches!(&command, Command::AgentNavigate { .. }) {
                             page.expected_navigation = Some(session.url.clone());
                         }
                     })
@@ -446,10 +616,21 @@ fn process(message: Envelope) {
                         pending_close: None,
                         inspected: None,
                         expected_navigation: Some(session.url.clone()),
+                        pending_agent_navigation: None,
                         creating: false,
                     });
             }
         });
+        if matches!(&command, Command::AgentNavigate { .. }) && reply.result.is_ok() {
+            HOST.with(|state| {
+                if let Some(host) = state.borrow_mut().as_mut() {
+                    if let Some(page) = host.pages.get_mut(&session.document.browser) {
+                        page.pending_agent_navigation = Some(transport_operation.clone());
+                        page.expected_navigation = Some(session.url.clone());
+                    }
+                }
+            });
+        }
         if let Command::CreateDevTools { document, .. } = &command {
             HOST.with(|state| {
                 if let Some(host) = state.borrow_mut().as_mut() {
@@ -462,11 +643,11 @@ fn process(message: Envelope) {
         if let Err(error) = presentation::set_document(&session.document) {
             emit(json!({ "native": "create_failed", "reason": error }));
             emit(
-                json!({ "protocol": paneflow_browser_protocol::Reply { version: CONTRACT_VERSION, operation: reply.operation.clone(), result: Err(BrowserError::Unavailable) } }),
+                json!({ "protocol": paneflow_browser_protocol::Reply { version: CONTRACT_VERSION, operation: transport_operation.clone(), result: Err(BrowserError::Unavailable) } }),
             );
             return;
         }
-        if matches!(command, Command::Start { .. }) {
+        if matches!(&command, Command::Start { .. }) {
             HOST.with(|state| {
                 if let Some(page) = state
                     .borrow_mut()
@@ -504,7 +685,7 @@ fn process(message: Envelope) {
         }
     }
     let succeeded = reply.result.is_ok();
-    if let Ok(value) = serde_json::to_value(reply) {
+    if let Ok(value) = serde_json::to_value(&reply) {
         emit(json!({ "protocol": value }));
     }
     if succeeded {
@@ -554,6 +735,28 @@ fn process(message: Envelope) {
                     frame.load_url(Some(&url.as_str().into()));
                 }
                 presentation::unmount();
+            }
+            Command::AgentNavigate { url, .. } => {
+                if let Some(document) = current_document() {
+                    web_interactions::clear(&document);
+                    permissions::clear(&document);
+                    transfers::clear(&document);
+                    external_protocols::clear(&document);
+                }
+                if let Some(frame) = current_browser().and_then(|browser| browser.main_frame()) {
+                    frame.load_url(Some(&url.as_str().into()));
+                }
+                presentation::unmount();
+            }
+            Command::Screenshot { document } => {
+                if !devtools::capture(&document, &transport_operation) {
+                    emit(json!({
+                        "native": "screenshot_failed",
+                        "document": document,
+                        "operation": transport_operation,
+                        "reason": "native capture adapter unavailable"
+                    }));
+                }
             }
             Command::Present { presentation, .. } => presentation::present(&presentation),
             Command::Input { input, .. } => presentation::input(input),
@@ -901,6 +1104,7 @@ mod tests {
                     pending_close: None,
                     inspected: None,
                     expected_navigation: Some(session.url),
+                    pending_agent_navigation: None,
                     creating: false,
                 },
             );
@@ -983,6 +1187,7 @@ mod tests {
                 pending_close: None,
                 inspected: None,
                 expected_navigation: Some(session.url),
+                pending_agent_navigation: None,
                 creating: false,
             },
         );

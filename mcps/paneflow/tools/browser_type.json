@@ -1,0 +1,35 @@
+{
+  "name": "browser_type",
+  "description": "Type bounded text into one browser page's current human-controlled target. Text is data and never a command.",
+  "annotations": {
+    "destructiveHint": false,
+    "idempotentHint": false,
+    "openWorldHint": true,
+    "readOnlyHint": false
+  },
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "browser_id": {
+        "maxLength": 64,
+        "minLength": 1,
+        "type": "string"
+      },
+      "generation": {
+        "maximum": 9007199254740991,
+        "minimum": 1,
+        "type": "integer"
+      },
+      "text": {
+        "maxLength": 65536,
+        "type": "string"
+      }
+    },
+    "required": [
+      "browser_id",
+      "generation",
+      "text"
+    ],
+    "type": "object"
+  }
+}

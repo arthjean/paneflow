@@ -2,10 +2,11 @@ use std::path::PathBuf;
 
 use gpui::App;
 use paneflow_browser_protocol::{
-    Availability, BrowserError, CONTRACT_VERSION, Command, Controller, Envelope, Event,
+    Availability, BrowserError, BrowserId, CONTRACT_VERSION, Command, Controller, Envelope, Event,
     MAX_BROWSERS_PER_SESSION, MAX_LIVE_BROWSERS, OperationId, Owner, SessionId, WorkspaceId,
 };
 
+use super::agent::AgentService;
 use super::profile::{self, ProfileError, ProfileStore};
 
 pub struct BrowserAuthority {
@@ -16,6 +17,7 @@ pub struct BrowserAuthority {
     runtime_root: Option<PathBuf>,
     repair: Option<String>,
     next_operation: u64,
+    agent: AgentService,
 }
 
 impl gpui::Global for BrowserAuthority {}
@@ -77,6 +79,7 @@ impl BrowserAuthority {
             runtime_root,
             repair,
             next_operation: 1,
+            agent: AgentService::default(),
         }
     }
 
@@ -90,6 +93,7 @@ impl BrowserAuthority {
             runtime_root: None,
             repair: None,
             next_operation: 1,
+            agent: AgentService::default(),
         }
     }
 
@@ -133,6 +137,24 @@ impl BrowserAuthority {
                 },
             )
             .result
+    }
+
+    pub(crate) fn agent(&self) -> &AgentService {
+        &self.agent
+    }
+
+    pub(crate) fn agent_mut(&mut self) -> &mut AgentService {
+        &mut self.agent
+    }
+
+    pub(crate) fn agent_scope(
+        scope_workspace_id: Option<u64>,
+    ) -> Result<u64, super::agent::AgentError> {
+        AgentService::require_scope(scope_workspace_id)
+    }
+
+    pub(crate) fn cancel_agent_for_browser(&mut self, workspace_id: u64, browser: &BrowserId) {
+        self.agent.cancel_browser(workspace_id, browser);
     }
 }
 

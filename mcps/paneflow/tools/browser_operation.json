@@ -1,0 +1,35 @@
+{
+  "name": "browser_operation",
+  "description": "Read the terminal status of an accepted browser operation by operation_id.",
+  "annotations": {
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": true,
+    "readOnlyHint": true
+  },
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "operation_id": {
+        "maxLength": 64,
+        "minLength": 1,
+        "type": "string"
+      },
+      "offset": {
+        "maximum": 9007199254740991,
+        "minimum": 0,
+        "type": "integer"
+      },
+      "limit": {
+        "default": 131072,
+        "maximum": 9007199254740991,
+        "minimum": 1,
+        "type": "integer"
+      }
+    },
+    "required": [
+      "operation_id"
+    ],
+    "type": "object"
+  }
+}

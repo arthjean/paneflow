@@ -175,6 +175,7 @@ impl Controller {
     }
 
     fn apply(&mut self, scope: &Owner, command: Command) -> Result<Event, BrowserError> {
+        let agent_navigation = matches!(&command, Command::AgentNavigate { .. });
         match command {
             Command::Capabilities => Ok(Event::Capabilities {
                 target: self.target.clone(),
@@ -267,7 +268,7 @@ impl Controller {
                 }
                 Ok(Event::State { session })
             }
-            Command::Navigate { document, url } => {
+            Command::Navigate { document, url } | Command::AgentNavigate { document, url } => {
                 if self.inspectors.contains_key(&document.browser) {
                     return Err(BrowserError::AccessDenied);
                 }
@@ -287,7 +288,18 @@ impl Controller {
                 self.pending
                     .retain(|_, (target, _)| target.browser != document.browser);
                 self.sessions.insert(document.browser, session.clone());
-                Ok(Event::State { session })
+                if agent_navigation {
+                    Ok(Event::NavigationStarted { session })
+                } else {
+                    Ok(Event::State { session })
+                }
+            }
+            Command::Screenshot { document } => {
+                let session = self.session(scope, &document)?;
+                if matches!(session.state, SessionState::Dormant | SessionState::Crashed) {
+                    return Err(BrowserError::Unavailable);
+                }
+                Ok(Event::ScreenshotAccepted)
             }
             Command::Present {
                 document,

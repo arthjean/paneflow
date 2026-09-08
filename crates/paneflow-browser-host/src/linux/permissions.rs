@@ -338,6 +338,7 @@ mod tests {
                         pending_close: None,
                         inspected: None,
                         expected_navigation: None,
+                        pending_agent_navigation: None,
                         creating: false,
                     },
                 )]),

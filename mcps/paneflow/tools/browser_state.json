@@ -1,0 +1,30 @@
+{
+  "name": "browser_state",
+  "description": "Read one browser page state by browser_id and document generation. No active-page fallback is used.",
+  "annotations": {
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": true,
+    "readOnlyHint": true
+  },
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "browser_id": {
+        "maxLength": 64,
+        "minLength": 1,
+        "type": "string"
+      },
+      "generation": {
+        "maximum": 9007199254740991,
+        "minimum": 1,
+        "type": "integer"
+      }
+    },
+    "required": [
+      "browser_id",
+      "generation"
+    ],
+    "type": "object"
+  }
+}

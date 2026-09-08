@@ -4584,6 +4584,7 @@ name = "paneflow-browser-host"
 version = "0.12.0"
 dependencies = [
  "ash",
+ "base64 0.22.1",
  "cef",
  "libc",
  "paneflow-browser-protocol",

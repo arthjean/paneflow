@@ -2,6 +2,7 @@ use clap::{Parser, Subcommand, ValueEnum};
 use paneflow_ipc_client::IpcClient;
 use serde_json::Value;
 
+mod browser_cmd;
 mod control_cmds;
 mod flow_cmd;
 mod flow_spec;
@@ -37,6 +38,7 @@ const VERBS: &[&str] = &[
     "list_panes",
     "read_pane",
     "search_pane",
+    "browser",
 ];
 
 pub fn is_cli_verb(arg: Option<&str>) -> bool {
@@ -62,6 +64,8 @@ struct Cli {
 
 #[derive(Subcommand, Debug)]
 enum Commands {
+    #[command(subcommand, about = "Inspect and control scoped browser pages")]
+    Browser(browser_cmd::BrowserCommand),
     #[command(alias = "list_panes", about = "List terminal surfaces")]
     Ls {
         #[arg(long, help = "Human-readable table instead of the default JSON")]
@@ -369,6 +373,7 @@ fn connect() -> Result<IpcClient, String> {
 
 fn dispatch(command: Commands, client: &IpcClient) -> Result<i32, CliError> {
     match command {
+        Commands::Browser(command) => browser_cmd::run(command, client),
         Commands::Ls { human } => read_cmds::ls(client, human),
         Commands::Read {
             target,

@@ -22,12 +22,14 @@ pub const KNOWN_EVENT_TYPES: &[&str] = &[
     METHOD_EXIT,
     METHOD_SESSION_END,
     "surface_changed",
+    "browser_operation",
 ];
 
 #[derive(Clone, Default, Debug, PartialEq, Eq)]
 pub struct EventFilter {
     pub surfaces: Option<HashSet<u64>>,
     pub types: Option<HashSet<String>>,
+    workspace_id: Option<u64>,
 }
 
 impl EventFilter {
@@ -77,7 +79,16 @@ impl EventFilter {
             None => None,
         };
 
-        Ok(Self { surfaces, types })
+        Ok(Self {
+            surfaces,
+            types,
+            workspace_id: None,
+        })
+    }
+
+    pub fn with_workspace(mut self, workspace_id: Option<u64>) -> Self {
+        self.workspace_id = workspace_id;
+        self
     }
 
     pub fn matches(&self, type_: &str, surface_id: Option<u64>) -> bool {
@@ -90,6 +101,13 @@ impl EventFilter {
             return surface_id.is_some_and(|sid| surfaces.contains(&sid));
         }
         true
+    }
+
+    fn matches_workspace(&self, type_: &str, workspace_id: Option<u64>) -> bool {
+        if type_ == "browser_operation" {
+            return self.workspace_id.is_some() && self.workspace_id == workspace_id;
+        }
+        self.workspace_id.is_none() || self.workspace_id == workspace_id
     }
 }
 
@@ -165,7 +183,13 @@ impl EventBus {
             .unwrap_or(false)
     }
 
-    pub fn broadcast(&self, type_: &str, surface_id: Option<u64>, event: &Value) {
+    pub fn broadcast(
+        &self,
+        type_: &str,
+        surface_id: Option<u64>,
+        workspace_id: Option<u64>,
+        event: &Value,
+    ) {
         let Ok(subs) = self.subscribers.lock() else {
             return;
         };
@@ -178,7 +202,9 @@ impl EventBus {
         };
         line.push('\n');
         for sub in subs.iter() {
-            if !sub.filter.matches(type_, surface_id) {
+            if !sub.filter.matches(type_, surface_id)
+                || !sub.filter.matches_workspace(type_, workspace_id)
+            {
                 continue;
             }
             if let Err(TrySendError::Full(_)) = sub.tx.try_send(line.clone()) {
@@ -266,10 +292,36 @@ mod tests {
     fn broadcast_delivers_to_matching_and_filters_others() {
         let bus = EventBus::new();
         let sub = bus.subscribe(EventFilter::from_params(&json!({"types":["ai.stop"]})).unwrap());
-        bus.broadcast("ai.stop", Some(1), &json!({"type":"ai.stop"}));
+        bus.broadcast("ai.stop", Some(1), None, &json!({"type":"ai.stop"}));
         assert!(sub.rx.try_recv().is_ok(), "matching event delivered");
-        bus.broadcast("ai.tool_use", Some(1), &json!({"type":"ai.tool_use"}));
+        bus.broadcast("ai.tool_use", Some(1), None, &json!({"type":"ai.tool_use"}));
         assert!(sub.rx.try_recv().is_err(), "non-matching type filtered out");
+    }
+
+    #[test]
+    fn browser_operation_events_are_workspace_scoped() {
+        let bus = EventBus::new();
+        let matching = bus.subscribe(
+            EventFilter::from_params(&json!({"types":["browser_operation"]}))
+                .unwrap()
+                .with_workspace(Some(42)),
+        );
+        let unscoped = bus.subscribe(EventFilter::default());
+        bus.broadcast(
+            "browser_operation",
+            None,
+            Some(42),
+            &json!({"type":"browser_operation","workspace_id":42}),
+        );
+        assert!(matching.rx.try_recv().is_ok());
+        assert!(unscoped.rx.try_recv().is_err());
+        bus.broadcast(
+            "browser_operation",
+            None,
+            Some(99),
+            &json!({"type":"browser_operation","workspace_id":99}),
+        );
+        assert!(matching.rx.try_recv().is_err());
     }
 
     #[test]
@@ -277,7 +329,7 @@ mod tests {
         let bus = EventBus::new();
         let sub = bus.subscribe(EventFilter::default());
         for _ in 0..SUBSCRIBER_QUEUE_CAP + 5 {
-            bus.broadcast("ai.stop", Some(1), &json!({"type":"ai.stop"}));
+            bus.broadcast("ai.stop", Some(1), None, &json!({"type":"ai.stop"}));
         }
         assert_eq!(sub.take_dropped(), 5, "5 events past the cap were dropped");
         assert_eq!(sub.take_dropped(), 0, "counter resets after a read");

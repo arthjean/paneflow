@@ -1,8 +1,13 @@
+use std::cell::Cell;
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 
+use base64::Engine;
 use cef::*;
-use paneflow_browser_protocol::{BrowserId, Document};
+use paneflow_browser_protocol::{
+    BrowserId, Document, OperationId, MAX_AGENT_CAPTURE_BYTES, MAX_AGENT_CAPTURE_CHUNK_BYTES,
+    MAX_AGENT_CAPTURE_PIXELS,
+};
 
 use super::HOST;
 
@@ -16,8 +21,16 @@ struct Binding {
     _registration: Registration,
 }
 
+struct CaptureBinding {
+    target: Document,
+    operation: OperationId,
+    _registration: Registration,
+}
+
 thread_local! {
     static OBSERVERS: RefCell<BTreeMap<BrowserId, Binding>> = const { RefCell::new(BTreeMap::new()) };
+    static CAPTURES: RefCell<BTreeMap<(BrowserId, i32), CaptureBinding>> = const { RefCell::new(BTreeMap::new()) };
+    static NEXT_CAPTURE_MESSAGE_ID: Cell<i32> = const { Cell::new(1) };
 }
 
 pub(super) fn is_inspector() -> bool {
@@ -90,6 +103,11 @@ pub(super) fn invalidate_target(target: &BrowserId) {
             .collect::<Vec<_>>()
     });
     drop(removed);
+    CAPTURES.with(|state| {
+        state
+            .borrow_mut()
+            .retain(|_, binding| &binding.target.browser != target);
+    });
     for frontend in frontends {
         if let Some(host) = frontend.host() {
             host.close_browser(1);
@@ -116,7 +134,100 @@ fn document_is_live(document: &Document) -> bool {
 pub(super) fn closed() {
     if let Some(document) = super::current_document() {
         OBSERVERS.with(|state| state.borrow_mut().remove(&document.browser));
+        CAPTURES.with(|state| {
+            state
+                .borrow_mut()
+                .retain(|_, binding| binding.target.browser != document.browser);
+        });
     }
+}
+
+pub(super) fn capture(document: &Document, operation: &OperationId) -> bool {
+    if !document_is_live(document) {
+        return false;
+    }
+    let browser = HOST.with(|state| {
+        state
+            .borrow()
+            .as_ref()?
+            .pages
+            .get(&document.browser)?
+            .browser
+            .clone()
+    });
+    let Some(browser) = browser else {
+        return false;
+    };
+    let Some(host) = browser.host() else {
+        return false;
+    };
+    let message_id = NEXT_CAPTURE_MESSAGE_ID.with(|next| {
+        let current = next.get();
+        next.set(current.wrapping_add(1).max(1));
+        current
+    });
+    let Some(registration) = host.add_dev_tools_message_observer(Some(&mut CaptureMessages::new(
+        document.clone(),
+        operation.clone(),
+    ))) else {
+        return false;
+    };
+    CAPTURES.with(|state| {
+        state.borrow_mut().insert(
+            (document.browser.clone(), message_id),
+            CaptureBinding {
+                target: document.clone(),
+                operation: operation.clone(),
+                _registration: registration,
+            },
+        );
+    });
+    let mut params = dictionary_value_create();
+    let Some(params) = params.as_mut() else {
+        CAPTURES.with(|state| {
+            state
+                .borrow_mut()
+                .remove(&(document.browser.clone(), message_id));
+        });
+        return false;
+    };
+    params.set_string(Some(&"format".into()), Some(&"png".into()));
+    params.set_bool(Some(&"fromSurface".into()), 1);
+    params.set_bool(Some(&"captureBeyondViewport".into()), 0);
+    let accepted = host.execute_dev_tools_method(
+        message_id,
+        Some(&"Page.captureScreenshot".into()),
+        Some(params),
+    ) != 0;
+    if !accepted {
+        CAPTURES.with(|state| {
+            state
+                .borrow_mut()
+                .remove(&(document.browser.clone(), message_id));
+        });
+    }
+    accepted
+}
+
+fn png_dimensions(bytes: &[u8]) -> Option<(u32, u32)> {
+    if bytes.len() < 24 || !bytes.starts_with(b"\x89PNG\r\n\x1a\n") || &bytes[12..16] != b"IHDR" {
+        return None;
+    }
+    let width = u32::from_be_bytes(bytes[16..20].try_into().ok()?);
+    let height = u32::from_be_bytes(bytes[20..24].try_into().ok()?);
+    (width > 0
+        && height > 0
+        && u64::from(width).saturating_mul(u64::from(height)) <= MAX_AGENT_CAPTURE_PIXELS)
+        .then_some((width, height))
+}
+
+fn capture_failure(binding: &CaptureBinding, reason: &str) {
+    super::emit(serde_json::json!({
+        "native": "screenshot_failed",
+        "document": binding.target,
+        "operation": binding.operation,
+        "reason": reason
+    }));
 }
 
 pub(super) fn receive(
@@ -223,6 +334,73 @@ wrap_dev_tools_message_observer! {
     }
 }
 
+wrap_dev_tools_message_observer! {
+    struct CaptureMessages { target: Document, operation: OperationId }
+
+    impl DevToolsMessageObserver {
+        fn on_dev_tools_method_result(&self, _browser: Option<&mut Browser>, message_id: i32, success: i32, result: Option<&[u8]>) {
+            let key = Some((self.target.browser.clone(), message_id));
+            let binding = CAPTURES.with(|state| {
+                let mut state = state.borrow_mut();
+                let key = key.or_else(|| state.keys().find(|(_, id)| *id == message_id).cloned());
+                key.and_then(|key| state.remove(&key))
+            });
+            let Some(binding) = binding else { return; };
+            if success == 0 {
+                capture_failure(&binding, "Page.captureScreenshot was rejected");
+                return;
+            }
+            let Some(result) = result
+                .filter(|result| result.len() <= (MAX_AGENT_CAPTURE_BYTES * 4).div_ceil(3) + 1024)
+                .and_then(|result| serde_json::from_slice::<serde_json::Value>(result).ok())
+            else {
+                capture_failure(&binding, "native screenshot result is invalid");
+                return;
+            };
+            let Some(data) = result.get("data").and_then(serde_json::Value::as_str) else {
+                capture_failure(&binding, "native screenshot data is missing");
+                return;
+            };
+            let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(data) else {
+                capture_failure(&binding, "native screenshot data is not base64");
+                return;
+            };
+            let Some((width, height)) = png_dimensions(&bytes)
+                .filter(|(width, height)| u64::from(*width).saturating_mul(u64::from(*height)) <= MAX_AGENT_CAPTURE_PIXELS)
+            else {
+                capture_failure(&binding, "native screenshot dimensions are invalid");
+                return;
+            };
+            if bytes.len() > MAX_AGENT_CAPTURE_BYTES
+                || data.len() > (MAX_AGENT_CAPTURE_BYTES * 4).div_ceil(3) + 4
+                || data.is_empty()
+            {
+                capture_failure(&binding, "native screenshot exceeds its bound");
+                return;
+            }
+            let count = data.len().div_ceil(MAX_AGENT_CAPTURE_CHUNK_BYTES);
+            for (index, chunk) in data.as_bytes().chunks(MAX_AGENT_CAPTURE_CHUNK_BYTES).enumerate() {
+                let Ok(chunk) = std::str::from_utf8(chunk) else {
+                    capture_failure(&binding, "native screenshot chunk is invalid");
+                    return;
+                };
+                super::emit(serde_json::json!({
+                    "native": "screenshot_chunk",
+                    "document": binding.target.clone(),
+                    "operation": binding.operation.clone(),
+                    "mime": "image/png",
+                    "width": width,
+                    "height": height,
+                    "index": index,
+                    "count": count,
+                    "data": chunk,
+                    "final": index + 1 == count
+                }));
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -306,5 +484,21 @@ mod tests {
             assert!(!valid_command(payload));
         }
         assert!(!valid_command(&" ".repeat(MAX_MESSAGE + 1)));
+    }
+
+    #[test]
+    fn screenshot_dimensions_are_checked_before_chunking() {
+        let mut valid = vec![0; 24];
+        valid[..8].copy_from_slice(b"\x89PNG\r\n\x1a\n");
+        valid[12..16].copy_from_slice(b"IHDR");
+        valid[16..20].copy_from_slice(&1920u32.to_be_bytes());
+        valid[20..24].copy_from_slice(&1080u32.to_be_bytes());
+        assert_eq!(png_dimensions(&valid), Some((1920, 1080)));
+
+        valid[16..20].copy_from_slice(&5000u32.to_be_bytes());
+        valid[20..24].copy_from_slice(&5000u32.to_be_bytes());
+        assert_eq!(png_dimensions(&valid), None);
+        valid[0] = 0;
+        assert_eq!(png_dimensions(&valid), None);
     }
 }

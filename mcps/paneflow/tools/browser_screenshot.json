@@ -1,0 +1,30 @@
+{
+  "name": "browser_screenshot",
+  "description": "Request a bounded viewport PNG capture of one browser page. Poll browser_operation and page the base64 result with offset and limit.",
+  "annotations": {
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": true,
+    "readOnlyHint": true
+  },
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "browser_id": {
+        "maxLength": 64,
+        "minLength": 1,
+        "type": "string"
+      },
+      "generation": {
+        "maximum": 9007199254740991,
+        "minimum": 1,
+        "type": "integer"
+      }
+    },
+    "required": [
+      "browser_id",
+      "generation"
+    ],
+    "type": "object"
+  }
+}

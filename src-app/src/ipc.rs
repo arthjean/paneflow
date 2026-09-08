@@ -24,6 +24,7 @@ pub struct IpcRequest {
     pub cancelled: Arc<AtomicBool>,
     pub started: Arc<AtomicBool>,
     pub caller_pid: Option<i64>,
+    pub scope_workspace_id: Option<u64>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -673,6 +674,10 @@ fn handle_connection(
                     Some(method) => {
                         let method = method.to_string();
                         let params = req.get("params").cloned().unwrap_or(json!({}));
+                        let scope_workspace_id = req
+                            .get("_paneflow_context")
+                            .and_then(|context| context.get("workspace_id"))
+                            .and_then(Value::as_u64);
 
                         if method == "events.subscribe" {
                             let Some(_subscription_guard) = ActiveCountGuard::try_acquire(
@@ -685,7 +690,12 @@ fn handle_connection(
                                 );
                                 return;
                             };
-                            serve_subscription(&mut writer, &params, &event_bus);
+                            serve_subscription(
+                                &mut writer,
+                                &params,
+                                &event_bus,
+                                scope_workspace_id,
+                            );
                             return;
                         }
 
@@ -724,6 +734,21 @@ fn handle_connection(
                                     "surface.focus",
                                     "surface.status",
                                     "fleet.list",
+                                    "browser.list",
+                                    "browser.state",
+                                    "browser.operation",
+                                    "browser.snapshot",
+                                    "browser.screenshot",
+                                    "browser.renew",
+                                    "browser.console",
+                                    "browser.network",
+                                    "browser.navigate",
+                                    "browser.back",
+                                    "browser.forward",
+                                    "browser.reload",
+                                    "browser.click",
+                                    "browser.type",
+                                    "browser.scroll",
                                     "events.subscribe",
                                 ];
                                 methods.extend_from_slice(paneflow_ipc_client::ai_hook::METHODS);
@@ -750,6 +775,7 @@ fn handle_connection(
                                 params,
                                 response_id,
                                 caller_pid,
+                                scope_workspace_id,
                             ),
                         }
                     }
@@ -773,12 +799,19 @@ fn handle_connection(
     }
 }
 
-fn serve_subscription(writer: &mut Stream, params: &Value, bus: &Arc<crate::ipc_events::EventBus>) {
+fn serve_subscription(
+    writer: &mut Stream,
+    params: &Value,
+    bus: &Arc<crate::ipc_events::EventBus>,
+    workspace_id: Option<u64>,
+) {
     use std::sync::mpsc::RecvTimeoutError;
 
     const HEARTBEAT: Duration = Duration::from_secs(30);
 
-    let filter = match crate::ipc_events::EventFilter::from_params(params) {
+    let filter = match crate::ipc_events::EventFilter::from_params(params)
+        .map(|filter| filter.with_workspace(workspace_id))
+    {
         Ok(f) => f,
         Err(msg) => {
             let err = json!({
@@ -1080,6 +1113,7 @@ fn dispatch_to_gpui(
     params: Value,
     id: Value,
     caller_pid: Option<i64>,
+    scope_workspace_id: Option<u64>,
 ) -> Value {
     let (resp_tx, resp_rx) = mpsc::channel();
     let cancelled = Arc::new(AtomicBool::new(false));
@@ -1092,6 +1126,7 @@ fn dispatch_to_gpui(
         cancelled: Arc::clone(&cancelled),
         started: Arc::clone(&started),
         caller_pid,
+        scope_workspace_id,
     };
 
     match request_tx.try_send(ipc_req) {
@@ -1370,6 +1405,7 @@ mod dispatch_tests {
             cancelled: Arc::new(AtomicBool::new(false)),
             started: Arc::new(AtomicBool::new(false)),
             caller_pid: None,
+            scope_workspace_id: None,
         }
     }
 
@@ -1383,6 +1419,7 @@ mod dispatch_tests {
             "surface.read".to_string(),
             json!({ "surface_id": 1 }),
             json!("req-overload"),
+            None,
             None,
         );
 
@@ -1401,6 +1438,7 @@ mod dispatch_tests {
             "surface.read".to_string(),
             json!({ "surface_id": 1 }),
             json!("req-closed"),
+            None,
             None,
         );
 
