@@ -639,6 +639,7 @@ struct DiffDockState {
 struct PaneFlowApp {
     workspaces: Vec<Workspace>,
     active_idx: usize,
+    browser_terminal_focus: std::collections::HashMap<(u64, u64), gpui::WeakEntity<TerminalView>>,
     renaming_tab: Option<(usize, usize)>,
     rename_input: gpui::Entity<crate::widgets::text_input::TextInput>,
     rename_focus_live: bool,
@@ -1156,6 +1157,12 @@ impl Render for PaneFlowApp {
         });
 
         let mut app_content = div()
+            .when(self.browser_dock_is_active(), |root| {
+                root.key_context("BrowserDock")
+            })
+            .capture_any_mouse_down(cx.listener(|this, _: &gpui::MouseDownEvent, window, cx| {
+                this.remember_browser_terminal(window, cx)
+            }))
             .font_family("Geist")
             .relative()
             .flex()
@@ -1247,6 +1254,8 @@ impl Render for PaneFlowApp {
             .on_action(cx.listener(Self::handle_browser_new_tab))
             .on_action(cx.listener(Self::handle_browser_close))
             .on_action(cx.listener(Self::handle_browser_focus_terminal))
+            .on_action(cx.listener(Self::handle_browser_focus_next))
+            .on_action(cx.listener(Self::handle_browser_focus_prev))
             .capture_key_down(cx.listener(|_this, e: &gpui::KeyDownEvent, window, cx| {
                 if cx.has_active_drag() && e.keystroke.key == "escape" {
                     cx.stop_active_drag(window);

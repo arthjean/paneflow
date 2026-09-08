@@ -135,6 +135,9 @@ pub fn refusal_message(error: BrowserError) -> String {
             "This address is not supported".to_string()
         }
         BrowserError::Unavailable => "The browser is unavailable".to_string(),
+        BrowserError::EmbeddedDevToolsUnavailable => {
+            "Embedded DevTools is unavailable in this CEF runtime".to_string()
+        }
         BrowserError::AccessDenied | BrowserError::UnknownIdentity => {
             "This page no longer belongs to an open session".to_string()
         }

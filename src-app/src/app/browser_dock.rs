@@ -1,4 +1,4 @@
-use gpui::{AppContext, Context, Entity, Window};
+use gpui::{AppContext, Context, Entity, Focusable, Window};
 use paneflow_browser_protocol::{
     BrowserError, BrowserId, Command, Document, Event, MAX_BROWSERS_PER_SESSION, ProfileId,
     normalize_address, validate_url, zoom_percent_is_valid,
@@ -199,7 +199,63 @@ impl PaneFlowApp {
             _ => return Err(refusal_message(BrowserError::InvalidMessage)),
         };
         let view = cx.new(|cx| BrowserView::new(owner, id, local_document, &descriptor, cx));
-        cx.subscribe(&view, |this, _view, event: &BrowserViewEvent, cx| {
+        cx.subscribe(&view, move |this, view, event: &BrowserViewEvent, cx| {
+            if matches!(event, BrowserViewEvent::QuotaChoicesRequested) {
+                let choices = this
+                    .quota_browser_views()
+                    .into_iter()
+                    .filter(|candidate| candidate.read(cx).is_live())
+                    .filter_map(|candidate| {
+                        let page = candidate.read(cx);
+                        Some((
+                            BrowserId::try_from(page.descriptor(false).id).ok()?,
+                            page.chip_label().chars().take(48).collect(),
+                        ))
+                    })
+                    .collect();
+                view.update(cx, |view, cx| view.set_quota_choices(choices, cx));
+            }
+            if let BrowserViewEvent::QuotaSleepRequested(id) = event {
+                this.sleep_chosen_quota_browser(id, cx);
+            }
+            if let BrowserViewEvent::PopupRequested(url) = event {
+                let descriptor = BrowserDescriptor {
+                    version: BROWSER_DESCRIPTOR_VERSION,
+                    id: new_browser_id().as_str().to_string(),
+                    url: Some(url.clone()),
+                    title: String::new(),
+                    zoom: 100,
+                    muted: false,
+                    active: false,
+                };
+                match this.create_browser_view(session, descriptor, cx) {
+                    Ok(popup) => {
+                        if this.diff_dock.owner == Some(session.tab_id) {
+                            this.diff_dock.diff_tabs.push(DiffDockTab::Browser(popup));
+                        } else {
+                            this.diff_dock
+                                .parked
+                                .entry(session.tab_id)
+                                .or_insert_with(|| DiffDockSlot::with_browsers(Vec::new()))
+                                .push_browser(popup);
+                        }
+                        this.save_session(cx);
+                        cx.notify();
+                    }
+                    Err(message) => this.show_toast(message, cx),
+                }
+            }
+            if matches!(event, BrowserViewEvent::CloseReady) {
+                if let Some(index) = this.diff_dock.diff_tabs.iter().position(
+                    |tab| matches!(tab, DiffDockTab::Browser(candidate) if candidate == &view),
+                ) {
+                    this.close_diff_tab(index, cx);
+                } else if let Some(slot) = this.diff_dock.parked.get_mut(&session.tab_id) {
+                    slot.remove_browser(&view);
+                    view.update(cx, |view, cx| view.close(cx));
+                    this.save_session(cx);
+                }
+            }
             if matches!(event, BrowserViewEvent::DescriptorChanged) {
                 this.save_session(cx);
             }
@@ -214,6 +270,7 @@ impl PaneFlowApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.remember_browser_terminal(window, cx);
         let Some(session) = self.active_browser_session() else {
             return;
         };
@@ -460,6 +517,38 @@ impl PaneFlowApp {
             .browser_profile
             .clone()
             .and_then(|id| ProfileId::try_from(id).ok());
+        let views: Vec<_> = tab_ids
+            .iter()
+            .flat_map(|tab_id| {
+                if self.diff_dock.owner == Some(*tab_id) {
+                    self.diff_dock
+                        .diff_tabs
+                        .iter()
+                        .filter_map(|tab| match tab {
+                            DiffDockTab::Browser(view) => Some(view.clone()),
+                            _ => None,
+                        })
+                        .collect::<Vec<_>>()
+                } else {
+                    self.diff_dock
+                        .parked
+                        .get(tab_id)
+                        .map(DiffDockSlot::browsers)
+                        .unwrap_or_default()
+                }
+            })
+            .collect();
+        let mut pending = false;
+        for view in views {
+            pending |= !view.update(cx, |view, cx| view.request_close(cx));
+        }
+        if pending {
+            self.show_toast(
+                "Confirm closing the browser pages, then clear their data again",
+                cx,
+            );
+            return;
+        }
         for tab_id in tab_ids {
             if self.diff_dock.owner == Some(tab_id) {
                 let indexes: Vec<usize> = self
@@ -551,14 +640,172 @@ impl PaneFlowApp {
         }
     }
 
+    fn quota_browser_views(&self) -> Vec<Entity<BrowserView>> {
+        self.diff_dock
+            .diff_tabs
+            .iter()
+            .filter_map(|tab| match tab {
+                DiffDockTab::Browser(view) => Some(view.clone()),
+                _ => None,
+            })
+            .chain(
+                self.diff_dock
+                    .parked
+                    .values()
+                    .flat_map(DiffDockSlot::browsers),
+            )
+            .collect()
+    }
+
+    fn sleep_chosen_quota_browser(&mut self, id: &BrowserId, cx: &mut Context<Self>) {
+        let Some(target) = self.quota_browser_views().into_iter().find(|candidate| {
+            candidate.read(cx).descriptor(false).id == id.as_str() && candidate.read(cx).is_live()
+        }) else {
+            return;
+        };
+        let (workspace_id, tab_id) = target.read(cx).owner_ids();
+        let Some(workspace_index) = self
+            .workspaces
+            .iter()
+            .position(|workspace| workspace.id == workspace_id)
+        else {
+            return;
+        };
+        let Some(tab_index) = self.workspaces[workspace_index]
+            .tabs()
+            .iter()
+            .position(|tab| tab.id == tab_id)
+        else {
+            return;
+        };
+        self.workspaces[workspace_index].set_active_tab(tab_index);
+        self.activate_workspace_without_window(workspace_index, cx);
+        self.diff_dock.open = true;
+        if let Some(index) = self
+            .diff_dock
+            .diff_tabs
+            .iter()
+            .position(|tab| matches!(tab, DiffDockTab::Browser(view) if view == &target))
+        {
+            self.select_diff_tab(index, cx);
+            target.update(cx, |view, cx| view.sleep(cx));
+        }
+        self.save_session(cx);
+        cx.notify();
+    }
+
+    pub(crate) fn browser_dock_is_active(&self) -> bool {
+        self.diff_dock_visible()
+            && matches!(
+                self.diff_dock.diff_tabs.get(self.diff_dock.diff_active_tab),
+                Some(DiffDockTab::Browser(_))
+            )
+    }
+
+    pub(crate) fn remember_browser_terminal(&mut self, window: &Window, cx: &gpui::App) {
+        let Some(session) = self.active_browser_session() else {
+            return;
+        };
+        let Some(workspace) = self.active_workspace() else {
+            return;
+        };
+        let terminal = workspace.active_tab().root.as_ref().and_then(|root| {
+            root.collect_leaves().into_iter().find_map(|pane| {
+                pane.read(cx)
+                    .active_terminal_opt()
+                    .filter(|terminal| terminal.read(cx).focus_handle(cx).is_focused(window))
+                    .cloned()
+            })
+        });
+        if let Some(terminal) = terminal {
+            self.browser_terminal_focus
+                .insert((session.workspace_id, session.tab_id), terminal.downgrade());
+        }
+    }
+
+    fn browser_focus_from_terminal(
+        &mut self,
+        forward: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let terminal_focused = self
+            .active_workspace()
+            .and_then(|workspace| workspace.active_tab().root.as_ref())
+            .is_some_and(|root| {
+                root.collect_leaves().iter().any(|pane| {
+                    pane.read(cx).active_terminal_opt().is_some_and(|terminal| {
+                        terminal.read(cx).focus_handle(cx).is_focused(window)
+                    })
+                })
+            });
+        if !self.browser_dock_is_active() || !terminal_focused {
+            cx.propagate();
+            return;
+        }
+        self.remember_browser_terminal(window, cx);
+        if let Some(DiffDockTab::Browser(view)) = self
+            .diff_dock
+            .diff_tabs
+            .get(self.diff_dock.diff_active_tab)
+            .cloned()
+        {
+            view.update(cx, |view, cx| view.focus_from_terminal(forward, window, cx));
+        }
+    }
+
+    pub(crate) fn handle_browser_focus_next(
+        &mut self,
+        _: &crate::BrowserFocusNext,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.browser_focus_from_terminal(true, window, cx);
+    }
+
+    pub(crate) fn handle_browser_focus_prev(
+        &mut self,
+        _: &crate::BrowserFocusPrev,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.browser_focus_from_terminal(false, window, cx);
+    }
+
     pub(crate) fn handle_browser_focus_terminal(
         &mut self,
         _: &crate::BrowserFocusTerminal,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(ws) = self.workspaces.get(self.active_idx) {
-            ws.focus_first(window, cx);
+        let Some(session) = self.active_browser_session() else {
+            return;
+        };
+        let remembered = self
+            .browser_terminal_focus
+            .get(&(session.workspace_id, session.tab_id))
+            .and_then(gpui::WeakEntity::upgrade);
+        if let Some(workspace) = self.active_workspace() {
+            let visible = workspace
+                .active_tab()
+                .root
+                .as_ref()
+                .map(|root| root.collect_leaves())
+                .unwrap_or_default();
+            let terminal = remembered
+                .filter(|terminal| {
+                    visible
+                        .iter()
+                        .any(|pane| pane.read(cx).active_terminal_opt() == Some(terminal))
+                })
+                .or_else(|| {
+                    visible
+                        .iter()
+                        .find_map(|pane| pane.read(cx).active_terminal_opt().cloned())
+                });
+            if let Some(terminal) = terminal {
+                terminal.read(cx).focus_handle(cx).focus(window, cx);
+            }
         }
     }
 }
@@ -776,6 +1023,14 @@ mod tests {
                 )
             })
         };
+        let refusal = start_ninth(cx).unwrap_err();
+        assert_eq!(refusal, BrowserError::LimitReached);
+        ninth.update(cx, |view, cx| {
+            let descriptor = view.descriptor(true);
+            view.start_refused(refusal, cx);
+            view.cancel_quota(cx);
+            assert_eq!(view.descriptor(true), descriptor);
+        });
         assert_eq!(start_ninth(cx).err(), Some(BrowserError::LimitReached));
         views[0].update(cx, |view, cx| view.sleep(cx));
         assert!(start_ninth(cx).is_ok());

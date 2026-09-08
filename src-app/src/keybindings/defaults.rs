@@ -411,6 +411,11 @@ pub(super) const DEFAULTS: &[DefaultBinding] = &[
         context: Some("Browser"),
     },
     DefaultBinding {
+        key: "secondary-f",
+        action_name: "browser_find",
+        context: Some("Browser"),
+    },
+    DefaultBinding {
         key: "secondary-=",
         action_name: "browser_zoom_in",
         context: Some("Browser"),
@@ -433,12 +438,12 @@ pub(super) const DEFAULTS: &[DefaultBinding] = &[
     DefaultBinding {
         key: "f6",
         action_name: "browser_focus_next",
-        context: Some("Browser"),
+        context: Some("Browser || (BrowserDock > Terminal)"),
     },
     DefaultBinding {
         key: "shift-f6",
         action_name: "browser_focus_prev",
-        context: Some("Browser"),
+        context: Some("Browser || (BrowserDock > Terminal)"),
     },
     DefaultBinding {
         key: "secondary-shift-space",

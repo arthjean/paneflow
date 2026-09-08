@@ -1,3 +1,4 @@
+mod accessibility;
 mod address;
 pub mod authority;
 mod benchmark;
@@ -11,6 +12,8 @@ pub mod page;
 #[cfg(target_os = "linux")]
 pub mod presentation;
 pub mod profile;
+#[cfg(target_os = "linux")]
+mod profile_host;
 #[cfg(target_os = "linux")]
 pub mod prototype;
 #[cfg(target_os = "linux")]

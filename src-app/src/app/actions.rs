@@ -97,6 +97,7 @@ actions!(
         BrowserReloadIgnoreCache,
         BrowserBack,
         BrowserForward,
+        BrowserFind,
         BrowserZoomIn,
         BrowserZoomOut,
         BrowserZoomReset,

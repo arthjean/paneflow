@@ -1,8 +1,12 @@
 use std::ops::Range;
 
 mod clipboard;
+mod colors;
 mod context_menu;
+mod devtools;
+mod dialogs;
 mod interaction;
+mod transfers;
 
 use interaction::InteractionState;
 
@@ -95,6 +99,11 @@ pub enum Navigation {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum BrowserViewEvent {
     DescriptorChanged,
+    CloseReady,
+    InspectorUnavailable,
+    PopupRequested(String),
+    QuotaChoicesRequested,
+    QuotaSleepRequested(BrowserId),
 }
 
 pub struct BrowserView {
@@ -111,6 +120,24 @@ pub struct BrowserView {
     can_go_forward: bool,
     notice: Option<String>,
     address: Entity<TextInput>,
+    find: Entity<TextInput>,
+    find_open: bool,
+    find_submitted: Option<String>,
+    web_dialog: Option<dialogs::WebDialog>,
+    inspector: Option<Entity<BrowserView>>,
+    inspector_target: Option<Document>,
+    inspector_parent_focus: Option<FocusHandle>,
+    inspector_ratio: f32,
+    download_progress: std::collections::BTreeMap<u64, (i64, i64)>,
+    fullscreen: bool,
+    permissions_allowed: bool,
+    find_result: Option<(i32, i32)>,
+    dialog_input: Entity<TextInput>,
+    close_requested: bool,
+    sleep_requested: bool,
+    close_ready: bool,
+    accessibility: super::accessibility::AccessibilityTree,
+    accessibility_document: Option<Document>,
     focus: FocusHandle,
     live: Option<LivePage>,
     live_generation: u64,
@@ -125,6 +152,9 @@ pub struct BrowserView {
     menu_open: bool,
     address_dirty: bool,
     wake_pending: bool,
+    native_created: bool,
+    pending_navigation: Option<String>,
+    quota_choices: Option<Vec<(BrowserId, String)>>,
     interaction: InteractionState,
 }
 
@@ -170,6 +200,24 @@ impl BrowserView {
             can_go_forward: false,
             notice: None,
             address,
+            find: cx.new(|cx| TextInput::new("", "Find in page", cx)),
+            find_open: false,
+            find_submitted: None,
+            web_dialog: None,
+            inspector: None,
+            inspector_target: None,
+            inspector_parent_focus: None,
+            inspector_ratio: 0.6,
+            download_progress: std::collections::BTreeMap::new(),
+            fullscreen: false,
+            permissions_allowed: false,
+            find_result: None,
+            dialog_input: cx.new(|cx| TextInput::new("", "Response", cx)),
+            close_requested: false,
+            sleep_requested: false,
+            close_ready: false,
+            accessibility: super::accessibility::AccessibilityTree::default(),
+            accessibility_document: None,
             focus: cx.focus_handle(),
             live: None,
             live_generation: 0,
@@ -184,6 +232,9 @@ impl BrowserView {
             menu_open: false,
             address_dirty: false,
             wake_pending: false,
+            native_created: false,
+            pending_navigation: None,
+            quota_choices: None,
             interaction: InteractionState::default(),
         }
     }
@@ -199,6 +250,10 @@ impl BrowserView {
 
     pub fn navigation(&self) -> &Navigation {
         &self.navigation
+    }
+
+    pub(crate) fn owner_ids(&self) -> (u64, u64) {
+        (self.owner.workspace_id, self.owner.tab_id)
     }
 
     pub fn is_live(&self) -> bool {
@@ -257,6 +312,9 @@ impl BrowserView {
     }
 
     pub fn set_visible(&mut self, visible: bool, cx: &mut Context<Self>) {
+        if let Some(inspector) = &self.inspector {
+            inspector.update(cx, |view, cx| view.set_visible(visible, cx));
+        }
         if self.visible == visible {
             return;
         }
@@ -319,6 +377,11 @@ impl BrowserView {
         self.title.clear();
         self.navigation = Navigation::Loading;
         cx.emit(BrowserViewEvent::DescriptorChanged);
+        if self.defer_startup_navigation(&url) {
+            self.focus_document(window, cx);
+            cx.notify();
+            return;
+        }
         if reusable {
             if let Some(live) = &self.live {
                 match live.send_to_document(|document| Command::Navigate { document, url }) {
@@ -334,6 +397,15 @@ impl BrowserView {
         self.retire_live(cx);
         self.state = SessionState::Dormant;
         self.wake(window, cx);
+    }
+
+    fn defer_startup_navigation(&mut self, url: &str) -> bool {
+        if !self.native_created && (self.live.is_some() || self.state == SessionState::Starting) {
+            self.pending_navigation = Some(url.to_owned());
+            true
+        } else {
+            false
+        }
     }
 
     pub fn submit_address(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -395,26 +467,145 @@ impl BrowserView {
     }
 
     pub fn sleep(&mut self, cx: &mut Context<Self>) {
-        self.retire_live(cx);
-        self.state = SessionState::Dormant;
-        self.navigation = Navigation::Idle;
-        self.can_go_back = false;
-        self.can_go_forward = false;
-        cx.notify();
+        if self.live.is_none() {
+            self.release_live_slot(cx);
+            self.state = SessionState::Dormant;
+            cx.notify();
+            return;
+        }
+        self.sleep_requested = true;
+        self.forward(|document| Command::Close { document }, cx);
+    }
+
+    pub fn request_close(&mut self, cx: &mut Context<Self>) -> bool {
+        if let Some(inspector) = &self.inspector
+            && inspector.read(cx).interaction.focused == Some(true)
+        {
+            inspector.update(cx, |view, cx| {
+                view.close_requested = true;
+                view.forward(|document| Command::Close { document }, cx);
+            });
+            return false;
+        }
+        if self.live.is_none() || self.close_ready {
+            return true;
+        }
+        if !self.close_requested {
+            self.close_requested = true;
+            self.forward(|document| Command::Close { document }, cx);
+        }
+        false
     }
 
     pub fn close(&mut self, cx: &mut Context<Self>) {
         self.retire_live(cx);
         self.state = SessionState::Closing;
         if cx.has_global::<BrowserAuthority>() {
-            let authority = cx.global_mut::<BrowserAuthority>();
-            let _ = authority.dispatch(
+            let _ = cx.global_mut::<BrowserAuthority>().dispatch(
                 &self.owner.scope(),
                 Command::Close {
                     document: self.local_document.clone(),
                 },
             );
         }
+    }
+
+    fn open_find(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.find_open = true;
+        self.menu_open = false;
+        self.find.read(cx).focus_handle.clone().focus(window, cx);
+        cx.notify();
+    }
+
+    fn submit_find(&mut self, forward: bool, cx: &mut Context<Self>) {
+        let text = self.find.read(cx).value();
+        let find_next = self.find_submitted.as_ref() == Some(&text);
+        self.find_submitted = Some(text.clone());
+        self.forward(
+            |document| Command::Find {
+                document,
+                text,
+                forward,
+                find_next,
+            },
+            cx,
+        );
+    }
+
+    fn close_find(&mut self, cx: &mut Context<Self>) {
+        self.find_open = false;
+        self.find_submitted = None;
+        self.forward(|document| Command::StopFinding { document }, cx);
+        cx.notify();
+    }
+
+    fn render_find(&mut self, ui: crate::theme::UiColors, cx: &mut Context<Self>) -> AnyElement {
+        div()
+            .id("browser-find")
+            .text_color(ui.text)
+            .text_size(px(12.))
+            .flex()
+            .items_center()
+            .gap(px(CONTROL_GAP))
+            .px(px(TOOLBAR_PADDING))
+            .h(px(TOOLBAR_HEIGHT))
+            .flex_none()
+            .border_b_1()
+            .border_color(ui.border)
+            .child(
+                div()
+                    .id("browser-find-input")
+                    .aria_label("Find in page")
+                    .flex_1()
+                    .min_w_0()
+                    .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
+                        match event.keystroke.key.as_str() {
+                            "enter" => {
+                                this.submit_find(!event.keystroke.modifiers.shift, cx);
+                                cx.stop_propagation();
+                            }
+                            "escape" => {
+                                this.close_find(cx);
+                                this.focus_document(window, cx);
+                                cx.stop_propagation();
+                            }
+                            _ => {}
+                        }
+                    }))
+                    .child(self.find.clone()),
+            )
+            .child(control_button(
+                "browser-find-prev",
+                "icons/arrow_left.svg",
+                "Previous match",
+                true,
+                false,
+                ui,
+                cx.listener(|this, _: &ClickEvent, _w, cx| this.submit_find(false, cx)),
+            ))
+            .child(control_button(
+                "browser-find-next",
+                "icons/arrow_left.svg",
+                "Next match",
+                true,
+                true,
+                ui,
+                cx.listener(|this, _: &ClickEvent, _w, cx| this.submit_find(true, cx)),
+            ))
+            .children(
+                self.find_result
+                    .map(|(active, count)| format!("{active}/{count}")),
+            )
+            .child(text_button(
+                "browser-find-close",
+                "Close",
+                ui,
+                cx.listener(|this, _: &ClickEvent, window, cx| {
+                    this.close_find(cx);
+                    this.focus_document(window, cx);
+                }),
+            ))
+            .into_any_element()
     }
 
     pub fn escape(&mut self, cx: &mut Context<Self>) {
@@ -425,6 +616,33 @@ impl BrowserView {
             cx.notify();
         } else if self.ime_composing {
             self.ime_cancel(cx);
+        } else if self.fullscreen {
+            self.fullscreen = false;
+            self.input(
+                InputEvent::Key {
+                    kind: paneflow_browser_protocol::KeyKind::RawDown,
+                    key_code: 27,
+                    native_key_code: 9,
+                    character: 0,
+                    unmodified_character: 0,
+                    modifiers: 0,
+                },
+                cx,
+            );
+            self.input(
+                InputEvent::Key {
+                    kind: paneflow_browser_protocol::KeyKind::Up,
+                    key_code: 27,
+                    native_key_code: 9,
+                    character: 0,
+                    unmodified_character: 0,
+                    modifiers: 0,
+                },
+                cx,
+            );
+            cx.notify();
+        } else if self.find_open {
+            self.close_find(cx);
         } else if self.navigation == Navigation::Loading {
             self.stop(cx);
         }
@@ -444,10 +662,21 @@ impl BrowserView {
     }
 
     fn retire_live(&mut self, cx: &mut Context<Self>) {
+        self.native_created = false;
+        self.pending_navigation = None;
         self.release_input(cx);
         self.input(InputEvent::Focus { focused: false }, cx);
         self.interaction.focused = None;
         self.live_generation += 1;
+        if let Some(inspector) = self.inspector.take() {
+            inspector.update(cx, |view, cx| view.retire_live(cx));
+        }
+        self.web_dialog = None;
+        self.permissions_allowed = false;
+        self.fullscreen = false;
+        self.download_progress.clear();
+        self.accessibility.reset(None);
+        self.accessibility_document = None;
         self.ime_composing = false;
         self.ime = super::ime::ImeState::default();
         self.last_geometry = None;
@@ -461,7 +690,7 @@ impl BrowserView {
     }
 
     fn release_live_slot(&mut self, cx: &mut Context<Self>) {
-        if !cx.has_global::<BrowserAuthority>() {
+        if self.inspector_target.is_some() || !cx.has_global::<BrowserAuthority>() {
             return;
         }
         let scope = self.owner.scope();
@@ -471,8 +700,46 @@ impl BrowserView {
             .dispatch(&scope, Command::Sleep { document });
     }
 
+    pub(crate) fn start_refused(&mut self, error: BrowserError, cx: &mut Context<Self>) {
+        if error == BrowserError::LimitReached {
+            self.state = SessionState::Dormant;
+            self.wake_pending = false;
+            self.quota_choices = Some(Vec::new());
+            self.notice = None;
+            cx.emit(BrowserViewEvent::QuotaChoicesRequested);
+        } else {
+            self.notice = Some(refusal_message(error));
+        }
+        cx.notify();
+    }
+
+    pub(crate) fn set_quota_choices(
+        &mut self,
+        choices: Vec<(BrowserId, String)>,
+        cx: &mut Context<Self>,
+    ) {
+        if self.quota_choices.is_some() {
+            self.quota_choices = Some(
+                choices
+                    .into_iter()
+                    .take(paneflow_browser_protocol::MAX_LIVE_BROWSERS)
+                    .collect(),
+            );
+            cx.notify();
+        }
+    }
+
+    pub(crate) fn cancel_quota(&mut self, cx: &mut Context<Self>) {
+        self.quota_choices = None;
+        self.notice = None;
+        self.wake_pending = false;
+        self.navigation = Navigation::Idle;
+        cx.notify();
+    }
+
     fn wake(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.wake_pending = false;
+        self.quota_choices = None;
         let Some(url) = self.url.clone() else {
             return;
         };
@@ -506,26 +773,20 @@ impl BrowserView {
                     return;
                 }
             };
-            let profile_dir = match profiles.page_dir(&self.owner.profile, &self.id) {
-                Ok(dir) => dir,
-                Err(error) => {
-                    self.notice = Some(error.message());
-                    cx.notify();
-                    return;
-                }
-            };
+            let profile_dir = profiles
+                .root()
+                .join("profiles")
+                .join(self.owner.profile.as_str());
             let stage_root = profiles.root().to_path_buf();
-            if let Err(error) = authority.dispatch(
-                &scope,
-                Command::Start {
-                    document: local_document,
-                },
-            ) {
-                self.notice = Some(match error {
-                    BrowserError::LimitReached => refusal_message(BrowserError::Busy),
-                    other => refusal_message(other),
-                });
-                cx.notify();
+            if self.inspector_target.is_none()
+                && let Err(error) = authority.dispatch(
+                    &scope,
+                    Command::Start {
+                        document: local_document,
+                    },
+                )
+            {
+                self.start_refused(error, cx);
                 return;
             }
             (paths, profile_dir, stage_root)
@@ -665,16 +926,24 @@ impl BrowserView {
     fn on_signal(&mut self, signal: PageSignal, cx: &mut Context<Self>) {
         match signal {
             PageSignal::Ready => {
+                self.pending_navigation = None;
                 let Some(url) = self.url.clone() else {
                     return;
                 };
                 let scope = self.owner.scope();
-                let command = Command::Create {
-                    owner: scope,
-                    browser: self.id.clone(),
-                    profile: self.owner.profile.clone(),
-                    url,
-                    title: self.title.clone(),
+                let command = if let Some(document) = &self.inspector_target {
+                    Command::CreateDevTools {
+                        document: document.clone(),
+                        browser: self.id.clone(),
+                    }
+                } else {
+                    Command::Create {
+                        owner: scope,
+                        browser: self.id.clone(),
+                        profile: self.owner.profile.clone(),
+                        url,
+                        title: self.title.clone(),
+                    }
                 };
                 if let Some(live) = &self.live
                     && let Err(error) = live.send(command)
@@ -682,7 +951,32 @@ impl BrowserView {
                     self.fail(format!("host refused the page: {error:?}"), cx);
                 }
             }
+            PageSignal::Created => {
+                self.native_created = true;
+                if let Some(url) = self.pending_navigation.take()
+                    && let Some(live) = &self.live
+                    && let Err(error) =
+                        live.send_to_document(|document| Command::Navigate { document, url })
+                {
+                    self.notice = Some(refusal_message(error));
+                }
+                cx.notify();
+            }
             PageSignal::State(session) => {
+                if self.accessibility_document.as_ref() != Some(&session.document) {
+                    self.clear_stale_document_notice();
+                    if let Some(inspector) = self.inspector.take() {
+                        inspector.update(cx, |view, cx| view.retire_live(cx));
+                    }
+                    self.accessibility.reset(Some(session.document.clone()));
+                    self.accessibility_document = Some(session.document.clone());
+                    self.web_dialog = None;
+                    self.find_submitted = None;
+                    self.find_result = None;
+                    self.permissions_allowed = false;
+                    self.fullscreen = false;
+                    self.download_progress.clear();
+                }
                 self.state = session.state;
                 if session.state == SessionState::Dormant
                     && let Some(live) = &self.live
@@ -699,9 +993,106 @@ impl BrowserView {
             }
             PageSignal::Closed => {
                 self.retire_live(cx);
+                self.can_go_back = false;
+                self.can_go_forward = false;
+                self.navigation = Navigation::Idle;
+                self.sleep_requested = false;
+                if self.close_requested {
+                    self.close_ready = true;
+                    cx.emit(BrowserViewEvent::CloseReady);
+                }
             }
+            PageSignal::WebDialog {
+                document,
+                request,
+                kind,
+                origin,
+                message,
+                default_text,
+            } => {
+                if self.web_dialog.is_some() {
+                    self.input(
+                        InputEvent::WebResponse {
+                            request,
+                            accept: false,
+                            text: String::new(),
+                        },
+                        cx,
+                    );
+                    return;
+                }
+                self.dismiss_context_menu(cx);
+                self.dialog_input
+                    .update(cx, |input, cx| input.set_value(default_text, cx));
+                self.web_dialog = Some(dialogs::WebDialog {
+                    document,
+                    request,
+                    kind,
+                    origin,
+                    message,
+                });
+                cx.notify();
+            }
+            PageSignal::CloseCancelled => {
+                self.close_requested = false;
+                self.sleep_requested = false;
+                self.notice = Some("Closing cancelled".to_string());
+                cx.notify();
+            }
+            PageSignal::Fullscreen(enabled) => {
+                self.fullscreen = enabled;
+                cx.notify();
+            }
+            PageSignal::FindResult { count, active } => {
+                self.find_result = Some((active, count));
+                cx.notify();
+            }
+            PageSignal::ExternalOpen(url) => {
+                cx.spawn(async move |this, cx| {
+                    if let Err(error) =
+                        smol::unblock(move || crate::external_open::open_url(&url)).await
+                    {
+                        let _ = this.update(cx, |view, cx| {
+                            view.notice = Some(format!("Could not open externally: {error}"));
+                            cx.notify();
+                        });
+                    }
+                })
+                .detach();
+            }
+            PageSignal::Transfer(value) => {
+                self.handle_transfer(&value, cx);
+            }
+            PageSignal::WebDialogClosed { request } => {
+                if self
+                    .web_dialog
+                    .as_ref()
+                    .is_some_and(|dialog| dialog.request == request)
+                {
+                    self.web_dialog = None;
+                }
+                cx.notify();
+            }
+            PageSignal::Accessibility {
+                document,
+                kind,
+                value,
+            } => {
+                if self.accessibility.apply(&document, &kind, &value) {
+                    cx.notify();
+                }
+            }
+            PageSignal::PopupRequested(url) => {
+                cx.emit(BrowserViewEvent::PopupRequested(url));
+            }
+
             PageSignal::Refused(error) => {
-                if self.state == SessionState::Starting {
+                if error == paneflow_browser_protocol::BrowserError::EmbeddedDevToolsUnavailable
+                    && self.inspector_target.is_some()
+                {
+                    self.retire_live(cx);
+                    cx.emit(BrowserViewEvent::InspectorUnavailable);
+                } else if self.state == SessionState::Starting {
                     self.fail(format!("host refused the page: {error:?}"), cx);
                 } else {
                     self.notice = Some(refusal_message(error));
@@ -716,6 +1107,7 @@ impl BrowserView {
                 self.can_go_back = can_go_back;
                 self.can_go_forward = can_go_forward;
                 if loading {
+                    self.clear_stale_document_notice();
                     self.release_input(cx);
                     self.interaction.focused = None;
                     self.navigation = Navigation::Loading;
@@ -744,6 +1136,7 @@ impl BrowserView {
                 }
             }
             PageSignal::Loaded => {
+                self.clear_stale_document_notice();
                 self.interaction.focused = None;
                 if self.navigation == Navigation::Loading {
                     self.navigation = Navigation::Idle;
@@ -802,6 +1195,16 @@ impl BrowserView {
     }
 
     fn input(&mut self, input: InputEvent, cx: &mut Context<Self>) {
+        if self.web_dialog.is_some()
+            && !matches!(
+                input,
+                InputEvent::WebResponse { .. }
+                    | InputEvent::TransferResponse { .. }
+                    | InputEvent::CancelDownload { .. }
+            )
+        {
+            return;
+        }
         let Some(live) = &self.live else {
             return;
         };
@@ -1117,6 +1520,19 @@ impl BrowserView {
                 }),
             )
             .child(
+                row("browser-menu-inspect", "Inspect".to_string()).on_click(cx.listener(
+                    |this, _: &ClickEvent, window, cx| {
+                        this.menu_open = false;
+                        this.open_devtools(window, cx);
+                    },
+                )),
+            )
+            .child(
+                row("browser-menu-find", "Find in page".to_string()).on_click(
+                    cx.listener(|this, _: &ClickEvent, window, cx| this.open_find(window, cx)),
+                ),
+            )
+            .child(
                 row("browser-menu-external", "Open externally".to_string()).on_click(cx.listener(
                     |this, _: &ClickEvent, _w, cx| {
                         this.menu_open = false;
@@ -1175,6 +1591,18 @@ impl BrowserView {
                     this.toggle_mute(cx);
                 })),
             )
+            .when(self.permissions_allowed, |menu| {
+                menu.child(
+                    row(
+                        "browser-permissions-revoke",
+                        "Revoke permissions and sleep".to_string(),
+                    )
+                    .on_click(cx.listener(|this, _: &ClickEvent, _w, cx| {
+                        this.menu_open = false;
+                        this.sleep(cx);
+                    })),
+                )
+            })
             .child(
                 row("browser-menu-sleep", "Put to sleep".to_string()).on_click(cx.listener(
                     |this, _: &ClickEvent, _w, cx| {
@@ -1206,6 +1634,42 @@ impl BrowserView {
     }
 
     fn render_body(&mut self, ui: crate::theme::UiColors, cx: &mut Context<Self>) -> AnyElement {
+        if let Some(choices) = &self.quota_choices {
+            return div()
+                .id("browser-live-limit")
+                .role(gpui::accesskit::Role::Group)
+                .aria_label("Browser live page limit")
+                .track_focus(&self.focus)
+                .flex()
+                .flex_col()
+                .items_center()
+                .size_full()
+                .min_h_0()
+                .overflow_y_scroll()
+                .gap(px(10.))
+                .p(px(16.))
+                .child("Eight browser pages are already live")
+                .child("Choose a page to put to sleep, then return here and Reload.")
+                .children(choices.iter().map(|(id, title)| {
+                    let target = id.clone();
+                    text_button(
+                        SharedString::from(format!("browser-quota-{}", id.as_str())),
+                        SharedString::from(format!("Put {title} to sleep")),
+                        ui,
+                        cx.listener(move |view, _: &ClickEvent, _, cx| {
+                            cx.emit(BrowserViewEvent::QuotaSleepRequested(target.clone()));
+                            view.cancel_quota(cx);
+                        }),
+                    )
+                }))
+                .child(text_button(
+                    "browser-quota-cancel",
+                    "Cancel",
+                    ui,
+                    cx.listener(|view, _: &ClickEvent, _, cx| view.cancel_quota(cx)),
+                ))
+                .into_any_element();
+        }
         let surface = self.live.as_ref().and_then(LivePage::surface);
         let message: Option<(&'static str, String, bool)> = match (&self.url, self.state) {
             (None, _) => Some((
@@ -1244,6 +1708,13 @@ impl BrowserView {
         };
         let viewport = div()
             .id("browser-viewport")
+            .role(gpui::accesskit::Role::Pane)
+            .aria_label("Web document")
+            .on_drop(cx.listener(Self::drop_external_files))
+            .a11y_synthetic_children({
+                let tree = self.accessibility.clone();
+                move |builder| tree.append(builder)
+            })
             .cursor(
                 if self.live.is_some() && self.state == SessionState::Visible {
                     self.page_cursor
@@ -1392,7 +1863,7 @@ impl BrowserView {
 
 impl gpui::Render for BrowserView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let ui = crate::theme::ui_colors();
+        let ui = colors::chrome_colors(crate::theme::ui_colors());
         if self.wake_pending && self.visible && self.live.is_none() {
             self.wake(window, cx);
         }
@@ -1410,6 +1881,7 @@ impl gpui::Render for BrowserView {
         div()
             .id(SharedString::from(format!("browser-{}", self.id.as_str())))
             .key_context("Browser")
+            .text_color(ui.text)
             .size_full()
             .flex()
             .flex_col()
@@ -1432,6 +1904,9 @@ impl gpui::Render for BrowserView {
             .on_action(cx.listener(|this, _: &crate::BrowserForward, _w, cx| {
                 this.go(HistoryDirection::Forward, cx);
             }))
+            .on_action(cx.listener(|this, _: &crate::BrowserFind, window, cx| {
+                this.open_find(window, cx);
+            }))
             .on_action(cx.listener(|this, _: &crate::BrowserZoomIn, _w, cx| {
                 this.zoom_by(true, cx);
             }))
@@ -1446,15 +1921,20 @@ impl gpui::Render for BrowserView {
             }))
             .on_action(
                 cx.listener(|this, _: &crate::BrowserFocusNext, window, cx| {
+                    cx.stop_propagation();
                     this.cycle_focus(true, window, cx);
                 }),
             )
             .on_action(
                 cx.listener(|this, _: &crate::BrowserFocusPrev, window, cx| {
+                    cx.stop_propagation();
                     this.cycle_focus(false, window, cx);
                 }),
             )
-            .child(self.render_toolbar(ui, cx))
+            .when(self.inspector_target.is_none(), |root| {
+                root.child(self.render_toolbar(ui, cx))
+            })
+            .when(self.find_open, |root| root.child(self.render_find(ui, cx)))
             .children(notice.map(|notice| {
                 div()
                     .flex_none()
@@ -1466,13 +1946,125 @@ impl gpui::Render for BrowserView {
                     .border_color(ui.border)
                     .child(notice)
             }))
-            .child(self.render_body(ui, cx))
+            .when(self.fullscreen, |root| {
+                root.child(
+                    div()
+                        .px(px(TOOLBAR_PADDING))
+                        .text_size(px(12.))
+                        .child(format!(
+                            "{} · Fullscreen in dock · Escape to exit",
+                            self.url
+                                .as_deref()
+                                .and_then(|url| super::origin_of(url).ok())
+                                .unwrap_or_default()
+                        )),
+                )
+            })
+            .when(self.permissions_allowed, |root| {
+                root.child(
+                    div()
+                        .px(px(TOOLBAR_PADDING))
+                        .text_size(px(12.))
+                        .child("Permissions allowed for this page"),
+                )
+            })
+            .children(self.render_web_dialog(ui, cx))
+            .children(
+                self.download_progress
+                    .iter()
+                    .map(|(&request, &(received, total))| {
+                        div()
+                            .id(SharedString::from(format!("browser-download-{request}")))
+                            .flex()
+                            .items_center()
+                            .gap(px(CONTROL_GAP))
+                            .child(format!("Download: {received} / {total} bytes"))
+                            .child(text_button(
+                                "browser-download-cancel",
+                                "Cancel",
+                                ui,
+                                cx.listener(move |this, _: &ClickEvent, _w, cx| {
+                                    this.cancel_download(request, cx)
+                                }),
+                            ))
+                    }),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .flex_1()
+                    .min_h_0()
+                    .flex_grow(if self.inspector.is_some() && !self.fullscreen {
+                        self.inspector_ratio
+                    } else {
+                        1.0
+                    })
+                    .child(self.render_body(ui, cx)),
+            )
+            .when(!self.fullscreen, |root| {
+                root.children(self.render_inspector(ui, cx))
+            })
             .children(self.render_context_menu(ui, window, cx))
     }
 }
 
 impl BrowserView {
+    fn clear_stale_document_notice(&mut self) {
+        if self.notice.as_deref()
+            == Some(
+                refusal_message(paneflow_browser_protocol::BrowserError::StaleGeneration).as_str(),
+            )
+        {
+            self.notice = None;
+        }
+    }
+
+    pub(crate) fn focus_from_terminal(
+        &mut self,
+        forward: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if forward {
+            self.focus_address(window, cx);
+        } else if let Some(inspector) = &self.inspector {
+            inspector.update(cx, |view, cx| view.focus_document(window, cx));
+        } else if self.url.is_some() {
+            self.focus_document(window, cx);
+        } else {
+            self.focus_address(window, cx);
+        }
+    }
+
     fn cycle_focus(&mut self, forward: bool, window: &mut Window, cx: &mut Context<Self>) {
+        super::benchmark::record(
+            self.id.as_str(),
+            "focus_cycle",
+            serde_json::json!({"forward": forward, "address": self.address_focus_handle(cx).is_focused(window), "document": self.focus.is_focused(window)}),
+        );
+        if let Some(parent) = &self.inspector_parent_focus {
+            if forward {
+                window.dispatch_action(Box::new(crate::BrowserFocusTerminal), cx);
+            } else {
+                parent.focus(window, cx);
+            }
+            return;
+        }
+        if let Some(inspector) = &self.inspector {
+            if forward && self.focus.is_focused(window) {
+                inspector.update(cx, |view, cx| view.focus_document(window, cx));
+                return;
+            }
+            if inspector.read(cx).focus.is_focused(window) {
+                if forward {
+                    window.dispatch_action(Box::new(crate::BrowserFocusTerminal), cx);
+                } else {
+                    self.focus_document(window, cx);
+                }
+                return;
+            }
+        }
         let address_focused = self.address_focus_handle(cx).is_focused(window);
         let document_focused = self.focus.is_focused(window);
         match (forward, address_focused, document_focused) {
@@ -1604,6 +2196,15 @@ fn control_button(
     }
     div()
         .id(id)
+        .role(gpui::accesskit::Role::Button)
+        .aria_label(label)
+        .when(enabled, |button| button.tab_index(0))
+        .a11y_synthetic_children(move |builder| {
+            if !enabled {
+                builder.parent_node().set_disabled();
+            }
+        })
+        .focus_visible(|style| style.border_1().border_color(ui.text))
         .flex_none()
         .size(px(CONTROL_SIZE))
         .flex()
@@ -1631,13 +2232,19 @@ fn control_button(
 }
 
 fn text_button(
-    id: &'static str,
-    label: &'static str,
+    id: impl Into<SharedString>,
+    label: impl Into<SharedString>,
     ui: crate::theme::UiColors,
     on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
 ) -> AnyElement {
+    let id: SharedString = id.into();
+    let label: SharedString = label.into();
     div()
         .id(id)
+        .role(gpui::accesskit::Role::Button)
+        .aria_label(label.clone())
+        .tab_index(0)
+        .focus_visible(|style| style.border_1().border_color(ui.text))
         .flex_none()
         .h(px(26.))
         .px(px(10.))
@@ -1659,6 +2266,153 @@ fn text_button(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[gpui::test]
+    fn quota_cancellation_preserves_the_dormant_descriptor(cx: &mut gpui::TestAppContext) {
+        let view = test_view(cx);
+        view.update(cx, |view, cx| {
+            let descriptor = view.descriptor(true);
+            view.start_refused(BrowserError::LimitReached, cx);
+            assert!(view.quota_choices.is_some());
+            view.cancel_quota(cx);
+            assert!(view.quota_choices.is_none());
+            assert_eq!(view.state, SessionState::Dormant);
+            assert_eq!(view.descriptor(true), descriptor);
+            assert!(!view.wake_pending);
+        });
+    }
+
+    #[gpui::test]
+    fn startup_navigation_coalesces_until_native_browser_exists(cx: &mut gpui::TestAppContext) {
+        let view = test_view(cx);
+        view.update(cx, |view, cx| {
+            view.state = SessionState::Starting;
+            let generation = view.live_generation;
+            assert!(view.defer_startup_navigation("https://example.com/first"));
+            assert!(view.defer_startup_navigation("https://example.com/latest"));
+            assert_eq!(
+                view.pending_navigation.as_deref(),
+                Some("https://example.com/latest")
+            );
+            assert_eq!(view.live_generation, generation);
+            view.on_signal(PageSignal::Created, cx);
+            assert!(view.native_created);
+            assert!(view.pending_navigation.is_none());
+            assert!(!view.defer_startup_navigation("https://example.com/after"));
+        });
+    }
+
+    #[gpui::test]
+    fn successful_navigation_clears_stale_generation_notice_only(cx: &mut gpui::TestAppContext) {
+        let view = test_view(cx);
+        view.update(cx, |view, cx| {
+            view.notice = Some(refusal_message(
+                paneflow_browser_protocol::BrowserError::StaleGeneration,
+            ));
+            view.on_signal(PageSignal::Loaded, cx);
+            assert!(view.notice.is_none());
+            view.notice = Some("Current failure".to_string());
+            view.on_signal(PageSignal::Loaded, cx);
+            assert_eq!(view.notice.as_deref(), Some("Current failure"));
+        });
+    }
+
+    fn test_view(cx: &mut gpui::TestAppContext) -> Entity<BrowserView> {
+        let owner = BrowserOwner {
+            workspace_id: 1,
+            tab_id: 1,
+            profile: "p-test".to_string().try_into().unwrap(),
+        };
+        let id: BrowserId = "b-test".to_string().try_into().unwrap();
+        let document = Document {
+            owner: owner.scope(),
+            browser: id.clone(),
+            generation: 1,
+        };
+        let descriptor = BrowserDescriptor {
+            version: BROWSER_DESCRIPTOR_VERSION,
+            id: id.as_str().to_string(),
+            url: Some("http://127.0.0.1/".to_string()),
+            title: "Test".to_string(),
+            zoom: 100,
+            muted: false,
+            active: true,
+        };
+        cx.new(|cx| BrowserView::new(owner, id, document, &descriptor, cx))
+    }
+
+    #[gpui::test]
+    fn document_close_clears_permissions_fullscreen_and_all_transfers(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let view = test_view(cx);
+        view.update(cx, |view, cx| {
+            view.permissions_allowed = true;
+            view.fullscreen = true;
+            view.download_progress.insert(1, (10, 100));
+            view.download_progress.insert(2, (20, 100));
+            view.on_signal(PageSignal::Closed, cx);
+            assert!(!view.permissions_allowed);
+            assert!(!view.fullscreen);
+            assert!(view.download_progress.is_empty());
+        });
+    }
+
+    #[gpui::test]
+    fn concurrent_web_request_does_not_displace_the_visible_request(cx: &mut gpui::TestAppContext) {
+        let view = test_view(cx);
+        view.update(cx, |view, cx| {
+            for request in [1, 2] {
+                view.on_signal(
+                    PageSignal::WebDialog {
+                        document: view.local_document.clone(),
+                        request,
+                        kind: "permission".to_string(),
+                        origin: "http://127.0.0.1".to_string(),
+                        message: "Microphone".to_string(),
+                        default_text: String::new(),
+                    },
+                    cx,
+                );
+            }
+            assert_eq!(view.web_dialog.as_ref().unwrap().request, 1);
+            view.on_signal(PageSignal::WebDialogClosed { request: 2 }, cx);
+            assert_eq!(view.web_dialog.as_ref().unwrap().request, 1);
+            view.on_signal(PageSignal::WebDialogClosed { request: 1 }, cx);
+            assert!(view.web_dialog.is_none());
+        });
+    }
+
+    #[test]
+    fn browser_chrome_meets_wcag_contrast_on_all_bundled_themes() {
+        fn luminance(color: gpui::Hsla) -> f64 {
+            let c: gpui::Rgba = color.into();
+            let linear = |x: f32| {
+                let x = f64::from(x);
+                if x <= 0.04045 {
+                    x / 12.92
+                } else {
+                    ((x + 0.055) / 1.055).powf(2.4)
+                }
+            };
+            0.2126 * linear(c.r) + 0.7152 * linear(c.g) + 0.0722 * linear(c.b)
+        }
+        for (name, theme) in crate::theme::THEMES {
+            let ui = colors::chrome_colors(crate::theme::ui_colors_with(&theme()));
+            for (label, foreground, minimum) in [
+                ("text", ui.text, 4.5),
+                ("muted", ui.muted, 4.5),
+                ("error", ui.vc_deleted, 4.5),
+            ] {
+                for background in [ui.base, ui.surface, ui.overlay] {
+                    let a = luminance(foreground);
+                    let b = luminance(background);
+                    let ratio = (a.max(b) + 0.05) / (a.min(b) + 0.05);
+                    assert!(ratio >= minimum, "{name} {label}: {ratio}");
+                }
+            }
+        }
+    }
 
     #[test]
     fn the_address_field_keeps_at_least_160_px_at_the_narrowest_dock() {

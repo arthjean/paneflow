@@ -629,6 +629,13 @@ pub(super) const ACTIONS: &[ActionMeta] = &[
         group: ShortcutGroup::Browser,
     },
     ActionMeta {
+        name: "browser_find",
+        factory: || Box::new(crate::BrowserFind),
+        context: "Browser",
+        description: "Browser: find in page",
+        group: ShortcutGroup::Browser,
+    },
+    ActionMeta {
         name: "browser_zoom_in",
         factory: || Box::new(crate::BrowserZoomIn),
         context: "Browser",
@@ -659,14 +666,14 @@ pub(super) const ACTIONS: &[ActionMeta] = &[
     ActionMeta {
         name: "browser_focus_next",
         factory: || Box::new(crate::BrowserFocusNext),
-        context: "Browser",
+        context: "Browser || (BrowserDock > Terminal)",
         description: "Browser: cycle focus forward",
         group: ShortcutGroup::Browser,
     },
     ActionMeta {
         name: "browser_focus_prev",
         factory: || Box::new(crate::BrowserFocusPrev),
-        context: "Browser",
+        context: "Browser || (BrowserDock > Terminal)",
         description: "Browser: cycle focus backward",
         group: ShortcutGroup::Browser,
     },

@@ -666,9 +666,15 @@ impl Render for TextInput {
         let selection = hsla(ui.accent.h, ui.accent.s, ui.accent.l, 0.28);
 
         div()
+            .id("text-input")
+            .role(gpui::accesskit::Role::TextInput)
+            .aria_label(self.placeholder.clone())
+            .aria_placeholder(self.placeholder.clone())
+            .aria_value(self.content.clone())
             .w_full()
             .key_context("TextInput")
             .track_focus(&self.focus_handle(cx))
+            .focus_visible(move |style| style.bg(selection))
             .cursor(CursorStyle::IBeam)
             .on_action(cx.listener(Self::backspace))
             .on_action(cx.listener(Self::delete))
@@ -691,7 +697,7 @@ impl Render for TextInput {
                 input: cx.entity(),
                 caret_color: ui.text,
                 selection_color: selection,
-                placeholder_color: ui.muted,
+                placeholder_color: ui.text,
             })
     }
 }

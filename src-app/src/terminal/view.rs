@@ -1358,6 +1358,8 @@ impl Render for TerminalView {
 
         let mut el = div()
             .id("terminal-view")
+            .role(gpui::accesskit::Role::Terminal)
+            .aria_label("Terminal")
             .key_context(self.dispatch_context())
             .track_focus(&self.focus_handle)
             .cursor(if self.ctrl_hovered_link.is_some() {

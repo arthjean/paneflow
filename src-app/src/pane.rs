@@ -1683,9 +1683,10 @@ fn cached_surface_style() -> StyleRefinement {
 }
 
 impl Render for Pane {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let terminal_selected = matches!(self.surface(), PaneSurface::Terminal(_));
         let body = match self.surface() {
+            PaneSurface::Terminal(t) if window.is_a11y_active() => t.clone().into_any_element(),
             PaneSurface::Terminal(t) => t.clone().cached(cached_surface_style()).into_any_element(),
             PaneSurface::Markdown(m) => m.clone().into_any_element(),
             PaneSurface::Diff(d) => d.clone().into_any_element(),

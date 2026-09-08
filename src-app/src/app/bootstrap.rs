@@ -536,6 +536,7 @@ impl PaneFlowApp {
         let mut app = Self {
             workspaces,
             active_idx,
+            browser_terminal_focus: std::collections::HashMap::new(),
             renaming_tab: None,
             rename_input,
             rename_focus_live: false,

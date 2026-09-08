@@ -79,6 +79,33 @@ impl DiffDockSlot {
         self.picked = true;
     }
 
+    pub(crate) fn browsers(&self) -> Vec<gpui::Entity<crate::browser::view::BrowserView>> {
+        self.tabs
+            .iter()
+            .filter_map(|tab| match tab {
+                DiffDockTab::Browser(view) => Some(view.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    pub(crate) fn remove_browser(
+        &mut self,
+        view: &gpui::Entity<crate::browser::view::BrowserView>,
+    ) {
+        if let Some(index) = self
+            .tabs
+            .iter()
+            .position(|tab| matches!(tab, DiffDockTab::Browser(candidate) if candidate == view))
+        {
+            self.tabs.remove(index);
+            self.active_tab = self
+                .active_tab
+                .saturating_sub(usize::from(index < self.active_tab))
+                .min(self.tabs.len().saturating_sub(1));
+        }
+    }
+
     pub(crate) fn take_browsers(&mut self) -> Vec<gpui::Entity<crate::browser::view::BrowserView>> {
         let mut taken = Vec::new();
         let mut kept = Vec::new();

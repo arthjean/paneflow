@@ -17,7 +17,33 @@ pub struct Geometry {
 
 #[derive(Clone, Debug)]
 pub enum PageSignal {
+    ExternalOpen(String),
+    CloseCancelled,
+    Fullscreen(bool),
+    FindResult {
+        count: i32,
+        active: i32,
+    },
+    Transfer(serde_json::Value),
+    WebDialog {
+        document: paneflow_browser_protocol::Document,
+        request: u64,
+        kind: String,
+        origin: String,
+        message: String,
+        default_text: String,
+    },
+    WebDialogClosed {
+        request: u64,
+    },
+    Accessibility {
+        document: paneflow_browser_protocol::Document,
+        kind: String,
+        value: serde_json::Value,
+    },
+    PopupRequested(String),
     Ready,
+    Created,
     State(paneflow_browser_protocol::BrowserSession),
     Closed,
     Refused(paneflow_browser_protocol::BrowserError),
@@ -83,8 +109,7 @@ mod linux {
     use crate::browser::presentation::{FrameConsumer, Intake, PoolLayout, TextureImporter};
     use crate::browser::prototype::wait_for_gpu_completion;
     use crate::browser::supervisor::{
-        FrameAcknowledger, HostConfig, HostEvent, HostSupervisor, Ozone, RuntimeCheck,
-        SHUTDOWN_GRACE,
+        FrameAcknowledger, HostConfig, HostEvent, Ozone, RuntimeCheck,
     };
 
     struct PoolImportCompletion {
@@ -99,6 +124,25 @@ mod linux {
         imported: Option<PoolImportCompletion>,
     }
 
+    impl Drop for GpuCompletion {
+        fn drop(&mut self) {
+            let Some(acknowledger) = &self.acknowledger else {
+                return;
+            };
+            if let Ok(acks) = &self.result {
+                for ack in acks {
+                    let _ = acknowledger.ack(ack.clone());
+                }
+            }
+            if let Some(imported) = &self.imported {
+                let _ = acknowledger.ack(FrameAck::PoolRejected {
+                    document: imported.document.clone(),
+                    pool_generation: imported.pool_generation,
+                });
+            }
+        }
+    }
+
     pub struct PageStart {
         pub page: LivePage,
         pub host_events: smol::channel::Receiver<HostEvent>,
@@ -106,12 +150,14 @@ mod linux {
     }
 
     pub struct LivePage {
-        supervisor: HostSupervisor,
+        host: Arc<crate::browser::profile_host::ProfileHost>,
+        browser: paneflow_browser_protocol::BrowserId,
         context: Arc<ExternalSurfaceContext>,
         importer: DmabufImporter,
         consumer: FrameConsumer<ExternalSurface>,
         completions: smol::channel::Sender<GpuCompletion>,
         session: Option<BrowserSession>,
+        last_document: Option<Document>,
         presented: Option<(Geometry, bool)>,
         presentation_generation: u64,
         resize_sent: Option<(u64, Instant)>,
@@ -157,20 +203,24 @@ mod linux {
                 frames: true,
                 check: RuntimeCheck::Manifest,
             };
-            let (supervisor, host_events) = HostSupervisor::channel();
+            let browser = paneflow_browser_protocol::BrowserId::try_from(benchmark_id.clone())
+                .map_err(str::to_owned)?;
+            let (host, host_events, new_host) =
+                crate::browser::profile_host::ProfileHost::subscribe(config, browser.clone())?;
             let (completions, gpu_completions) = smol::channel::bounded(64);
-            if let Some(runtime) = cx.try_global::<crate::browser::BrowserRuntime>() {
-                runtime.register_page(supervisor.clone());
+            if new_host && let Some(runtime) = cx.try_global::<crate::browser::BrowserRuntime>() {
+                runtime.register_page(host.supervisor.clone());
             }
-            supervisor.activate(config);
             Ok(PageStart {
                 page: Self {
-                    supervisor,
+                    host,
+                    browser,
                     context,
                     importer,
                     consumer: FrameConsumer::default(),
                     completions,
                     session: None,
+                    last_document: None,
                     presented: None,
                     presentation_generation: 0,
                     resize_sent: None,
@@ -192,7 +242,7 @@ mod linux {
         }
 
         pub fn send(&self, command: Command) -> Result<OperationId, BrowserError> {
-            self.supervisor.send(command)
+            self.host.send(&self.browser, command)
         }
 
         pub fn send_to_document(
@@ -233,6 +283,7 @@ mod linux {
                 }
                 HostEvent::Reply(reply) => match reply.result {
                     Ok(Event::State { session }) => {
+                        self.last_document = Some(session.document.clone());
                         self.consumer.set_document(session.document.clone());
                         if !session.presentation.mounted {
                             self.presented = None;
@@ -326,7 +377,6 @@ mod linux {
                     self.on_intake(outcome, cx)
                 }
                 HostEvent::Lost(reason) => {
-                    self.consumer.host_lost();
                     self.session = None;
                     self.presented = None;
                     self.resize_sent = None;
@@ -338,6 +388,181 @@ mod linux {
 
         fn on_native(&mut self, value: &Value) -> Vec<PageSignal> {
             let kind = value.get("native").and_then(Value::as_str).unwrap_or("");
+            if matches!(
+                kind,
+                "external_open" | "renderer_crashed" | "certificate_error"
+            ) {
+                let document = value
+                    .get("document")
+                    .and_then(|value| serde_json::from_value::<Document>(value.clone()).ok());
+                if document.is_none() || document.as_ref() != self.document() {
+                    return Vec::new();
+                }
+                return match kind {
+                    "renderer_crashed" => vec![PageSignal::Lost(
+                        "Renderer crashed; reload the page to recover".into(),
+                    )],
+                    "certificate_error" => vec![PageSignal::LoadFailed(
+                        "The page certificate could not be verified".into(),
+                    )],
+                    _ => value
+                        .get("url")
+                        .and_then(Value::as_str)
+                        .filter(|url| {
+                            !url.is_empty()
+                                && url.len() <= paneflow_browser_protocol::MAX_URL_BYTES
+                                && !url.contains('\0')
+                        })
+                        .map(|url| PageSignal::ExternalOpen(url.to_owned()))
+                        .into_iter()
+                        .collect(),
+                };
+            }
+
+            if matches!(kind, "close_cancelled" | "fullscreen" | "find_result") {
+                let document = value
+                    .get("document")
+                    .and_then(|value| serde_json::from_value::<Document>(value.clone()).ok());
+                if document.is_none() || document.as_ref() != self.document() {
+                    return Vec::new();
+                }
+                return match kind {
+                    "close_cancelled" => vec![PageSignal::CloseCancelled],
+                    "fullscreen" => value
+                        .get("enabled")
+                        .and_then(Value::as_bool)
+                        .map(PageSignal::Fullscreen)
+                        .into_iter()
+                        .collect(),
+                    _ => value
+                        .get("count")
+                        .and_then(Value::as_i64)
+                        .and_then(|count| i32::try_from(count).ok())
+                        .zip(
+                            value
+                                .get("active")
+                                .and_then(Value::as_i64)
+                                .and_then(|active| i32::try_from(active).ok()),
+                        )
+                        .map(|(count, active)| PageSignal::FindResult { count, active })
+                        .into_iter()
+                        .collect(),
+                };
+            }
+
+            if matches!(
+                kind,
+                "file_picker" | "download_destination" | "download_progress"
+            ) {
+                let document = value
+                    .get("document")
+                    .and_then(|value| serde_json::from_value::<Document>(value.clone()).ok());
+                if document.is_none()
+                    || document.as_ref() != self.document()
+                    || value
+                        .get("request")
+                        .and_then(Value::as_u64)
+                        .is_none_or(|request| request == 0)
+                {
+                    return Vec::new();
+                }
+                if value.get("suggested_name").is_some_and(|name| {
+                    name.as_str()
+                        .is_none_or(|name| name.len() > 1024 || name.contains('\0'))
+                }) {
+                    return Vec::new();
+                }
+                return vec![PageSignal::Transfer(value.clone())];
+            }
+
+            if matches!(
+                kind,
+                "web_dialog"
+                    | "web_dialog_closed"
+                    | "accessibility_tree"
+                    | "accessibility_location"
+                    | "accessibility_unavailable"
+                    | "popup_requested"
+            ) {
+                let Some(document) = value
+                    .get("document")
+                    .and_then(|value| serde_json::from_value::<Document>(value.clone()).ok())
+                    .filter(|document| Some(document) == self.document())
+                else {
+                    return Vec::new();
+                };
+                if kind == "web_dialog_closed" {
+                    return value
+                        .get("request")
+                        .and_then(serde_json::Value::as_u64)
+                        .filter(|request| *request > 0)
+                        .map(|request| PageSignal::WebDialogClosed { request })
+                        .into_iter()
+                        .collect();
+                }
+                if kind.starts_with("accessibility_") {
+                    return vec![PageSignal::Accessibility {
+                        document,
+                        kind: kind.to_owned(),
+                        value: value.clone(),
+                    }];
+                }
+                if kind == "popup_requested" {
+                    return value
+                        .get("url")
+                        .and_then(Value::as_str)
+                        .filter(|url| paneflow_browser_protocol::validate_url(url).is_ok())
+                        .map(|url| PageSignal::PopupRequested(url.to_owned()))
+                        .into_iter()
+                        .collect();
+                }
+                let bounded_text = |key: &str| {
+                    value
+                        .get(key)
+                        .and_then(Value::as_str)
+                        .filter(|text| text.len() <= 8192 && !text.contains('\0'))
+                        .map(str::to_owned)
+                };
+                if let (
+                    Some(request),
+                    Some(kind),
+                    Some(origin),
+                    Some(message),
+                    Some(default_text),
+                ) = (
+                    value
+                        .get("request")
+                        .and_then(Value::as_u64)
+                        .filter(|request| *request > 0),
+                    bounded_text("kind"),
+                    bounded_text("origin"),
+                    bounded_text("message"),
+                    bounded_text("default_text"),
+                ) {
+                    return vec![PageSignal::WebDialog {
+                        document,
+                        request,
+                        kind,
+                        origin,
+                        message,
+                        default_text,
+                    }];
+                }
+                return Vec::new();
+            }
+
+            if matches!(
+                kind,
+                "pool_ready_accepted"
+                    | "pool_ready_rejected"
+                    | "frame_ack_received"
+                    | "drop_enter"
+                    | "drop_ack"
+                    | "drop_dispatched"
+                    | "drop_timeout"
+            ) {
+                crate::browser::benchmark::record(&self.benchmark_id, kind, value.clone());
+            }
             if matches!(kind, "resize_host" | "resize_capture" | "resize_pool") {
                 crate::browser::benchmark::record(
                     &self.benchmark_id,
@@ -442,6 +667,7 @@ mod linux {
                 _ => {}
             }
             match kind {
+                "created" => vec![PageSignal::Created],
                 "loading" => vec![PageSignal::Loading {
                     loading: flag("is_loading"),
                     can_go_back: flag("can_go_back"),
@@ -470,7 +696,8 @@ mod linux {
         }
 
         fn acknowledger(&self) -> Result<FrameAcknowledger, String> {
-            self.supervisor
+            self.host
+                .supervisor
                 .frame_acknowledger()
                 .map_err(|error| format!("no host connection for GPU acknowledgement: {error:?}"))
         }
@@ -569,18 +796,18 @@ mod linux {
             }
         }
 
-        pub fn on_gpu_completion(&mut self, completion: GpuCompletion) -> Result<(), String> {
+        pub fn on_gpu_completion(&mut self, mut completion: GpuCompletion) -> Result<(), String> {
             if let Some(acknowledger) = &completion.acknowledger
-                && !self.supervisor.has_frame_connection(acknowledger)
+                && !self.host.supervisor.has_frame_connection(acknowledger)
             {
                 return Ok(());
             }
-            let mut acks = completion.result?;
+            let mut acks = std::mem::replace(&mut completion.result, Ok(Vec::new()))?;
             if let Some(PoolImportCompletion {
                 document,
                 pool_generation,
                 result,
-            }) = completion.imported
+            }) = completion.imported.take()
             {
                 match self
                     .consumer
@@ -611,6 +838,7 @@ mod linux {
             }
             let acknowledger = completion
                 .acknowledger
+                .take()
                 .ok_or("GPU acknowledgement has no host connection")?;
             for ack in acks {
                 if let FrameAck::PoolReady {
@@ -620,9 +848,14 @@ mod linux {
                 {
                     self.consumer.initialized(document, *pool_generation)?;
                 }
+                let benchmark_ack =
+                    crate::browser::benchmark::enabled().then(|| serde_json::json!(&ack));
                 acknowledger
                     .ack(ack)
                     .map_err(|error| format!("GPU acknowledgement not delivered: {error:?}"))?;
+                if let Some(ack) = benchmark_ack {
+                    crate::browser::benchmark::record(&self.benchmark_id, "gpu_ack_sent", ack);
+                }
             }
             Ok(())
         }
@@ -749,16 +982,57 @@ mod linux {
             Ok(true)
         }
 
-        pub fn shutdown(self) {
-            let supervisor = self.supervisor;
-            let grace = if std::env::var_os("PANEFLOW_BROWSER_TRACE_DIR").is_some() {
-                Duration::from_secs(60)
+        pub fn shutdown(mut self) {
+            let document = self.document().cloned();
+            let mut acks = self.consumer.take_releases();
+            if let (Some(document), Some((_, identity, _))) =
+                (&self.last_document, self.consumer.current())
+            {
+                acks.push(FrameAck::Release {
+                    document: document.clone(),
+                    pool_generation: identity.pool_generation,
+                    buffer: identity.buffer,
+                    sequence: identity.sequence,
+                });
+            }
+            let surfaces = self.importer.release_surfaces(&acks);
+            let context = self.context.clone();
+            let acknowledger = self.acknowledger().ok();
+            let released = if surfaces.is_empty() {
+                true
             } else {
-                SHUTDOWN_GRACE
+                external_sync::barrier(&context, &surfaces, external_sync::Transfer::Release)
+                    .map(|command| {
+                        context.queue.submit([command]);
+                    })
+                    .is_ok()
             };
+            let retiring_host = self.host.supervisor.clone();
+            context.queue.on_submitted_work_done(move || {
+                if released && let Some(acknowledger) = acknowledger {
+                    for ack in acks {
+                        let _ = acknowledger.ack(ack);
+                    }
+                }
+                drop(surfaces);
+                self.host.clone().unsubscribe(&self.browser, document);
+                drop(self);
+            });
             std::thread::Builder::new()
-                .name("browser-page-shutdown".into())
-                .spawn(move || supervisor.shutdown(grace))
+                .name("browser-page-gpu-retire".into())
+                .spawn(move || {
+                    if let Err(error) = context.device.poll(wgpu::PollType::Wait {
+                        submission_index: None,
+                        timeout: Some(Duration::from_millis(
+                            paneflow_browser_protocol::RETIRE_DEADLINE_MS,
+                        )),
+                    }) {
+                        log::error!(
+                            "browser GPU retirement timed out; resources remain retained: {error}"
+                        );
+                        retiring_host.terminate();
+                    }
+                })
                 .ok();
         }
     }

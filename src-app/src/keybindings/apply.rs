@@ -123,6 +123,57 @@ mod tests {
     use crate::SplitHorizontally;
 
     #[test]
+    fn browser_focus_keys_match_descendant_terminal_only_with_visible_browser_dock() {
+        use super::super::defaults::DEFAULTS;
+        use gpui::{KeyContext, Keymap};
+
+        let mut keymap = Keymap::default();
+        for binding in DEFAULTS.iter().filter(|binding| {
+            matches!(
+                binding.action_name,
+                "browser_focus_next" | "browser_focus_prev"
+            )
+        }) {
+            keymap.add_bindings([make_binding(
+                binding.key,
+                action_from_name(binding.action_name).unwrap(),
+                binding.context,
+            )
+            .unwrap()]);
+        }
+        for key in ["f6", "shift-f6"] {
+            let input = [Keystroke::parse(key).unwrap()];
+            for contexts in [
+                vec!["BrowserDock", "Terminal"],
+                vec!["BrowserDock", "Pane", "Terminal"],
+                vec!["Browser", "TextInput"],
+            ] {
+                let stack = contexts
+                    .into_iter()
+                    .map(|context| KeyContext::parse(context).unwrap())
+                    .collect::<Vec<_>>();
+                let (bindings, pending) = keymap.bindings_for_input(&input, &stack);
+                assert_eq!(bindings.len(), 1, "{key} with {stack:?}");
+                assert!(!pending);
+            }
+            for contexts in [
+                vec!["Terminal"],
+                vec!["BrowserDock", "TextInput"],
+                vec!["Terminal", "BrowserDock"],
+            ] {
+                let stack = contexts
+                    .into_iter()
+                    .map(|context| KeyContext::parse(context).unwrap())
+                    .collect::<Vec<_>>();
+                assert!(
+                    keymap.bindings_for_input(&input, &stack).0.is_empty(),
+                    "{key} with {stack:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn normalize_keystroke_converts_plus_to_dash() {
         assert_eq!(normalize_keystroke("ctrl+shift+d"), "ctrl-shift-d");
         assert_eq!(normalize_keystroke("alt+left"), "alt-left");

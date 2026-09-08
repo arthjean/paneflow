@@ -2,7 +2,9 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
-use paneflow_browser_protocol::{BrowserId, ProfileId};
+#[cfg(test)]
+use paneflow_browser_protocol::BrowserId;
+use paneflow_browser_protocol::ProfileId;
 
 const MANIFEST: &str = include_str!("../../../native/browser/manifest.toml");
 const PROFILE_SCHEMA: u32 = 1;
@@ -61,13 +63,14 @@ impl ProfileStore {
         &self.root
     }
 
+    #[cfg(test)]
     pub fn profile_dir(&self, profile: &ProfileId) -> Result<PathBuf, ProfileError> {
         let dir = self.root.join("profiles").join(profile.as_str());
-        private_directory(&dir)?;
-        check_marker(&dir.join(MARKER))?;
+        prepare_profile_dir(&dir)?;
         Ok(dir)
     }
 
+    #[cfg(test)]
     pub fn page_dir(
         &self,
         profile: &ProfileId,
@@ -106,6 +109,11 @@ impl ProfileStore {
         })?;
         Ok(Some(target))
     }
+}
+
+pub(super) fn prepare_profile_dir(dir: &Path) -> Result<(), ProfileError> {
+    private_directory(dir)?;
+    check_marker(&dir.join(MARKER))
 }
 
 fn acquire_lock(path: &Path) -> Result<File, ProfileError> {

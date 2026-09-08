@@ -141,16 +141,34 @@ impl BrowserView {
     pub(super) fn render_context_menu(
         &self,
         ui: crate::theme::UiColors,
-        window: &Window,
+        _window: &Window,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
+        if self.web_dialog.is_some() {
+            return None;
+        }
         let state = self.interaction.menu.as_ref()?;
+        let viewport = self.viewport?;
+        let height = px(state.items.len() as f32 * 28. + 10.).min(viewport.size.height);
+        let width = px(MENU_WIDTH).min(viewport.size.width);
+        let position = gpui::point(
+            state
+                .position
+                .x
+                .max(viewport.left())
+                .min(viewport.right() - width),
+            state
+                .position
+                .y
+                .max(viewport.top())
+                .min(viewport.bottom() - height),
+        );
         let mut menu = menu_surface(div().id("browser-document-menu"), ui)
             .flex()
             .flex_col()
             .p(px(4.))
-            .w(px(MENU_WIDTH))
-            .max_h((window.window_bounds().get_bounds().size.height - px(16.)).max(px(36.)))
+            .w(width)
+            .max_h(height)
             .overflow_y_scroll()
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .on_mouse_down(MouseButton::Right, |_, _, cx| cx.stop_propagation())
@@ -202,14 +220,9 @@ impl BrowserView {
             menu = menu.child(row);
         }
         Some(
-            deferred(
-                anchored()
-                    .position(state.position)
-                    .snap_to_window()
-                    .child(menu),
-            )
-            .priority(3)
-            .into_any_element(),
+            deferred(anchored().position(position).snap_to_window().child(menu))
+                .priority(3)
+                .into_any_element(),
         )
     }
 }

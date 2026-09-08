@@ -273,6 +273,11 @@ impl PaneFlowApp {
         if index >= self.diff_dock.diff_tabs.len() {
             return;
         }
+        if let DiffDockTab::Browser(view) = &self.diff_dock.diff_tabs[index]
+            && !view.update(cx, |view, cx| view.request_close(cx))
+        {
+            return;
+        }
         let closed = self.diff_dock.diff_tabs.remove(index);
         if let DiffDockTab::Browser(view) = &closed {
             view.update(cx, |view, cx| view.close(cx));

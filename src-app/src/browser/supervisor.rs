@@ -1,12 +1,12 @@
 use std::collections::BTreeMap;
 use std::fs::{self, File};
-use std::io::{self, BufReader, Read};
+use std::io::{self, BufRead, BufReader, Read};
 use std::os::fd::{AsRawFd, OwnedFd};
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::process::CommandExt;
 use std::path::{Component, Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{self, RecvTimeoutError, SyncSender};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
@@ -123,6 +123,7 @@ struct Running {
     outbound: SyncSender<Outbound>,
     frame_connection: Arc<()>,
     exited: Arc<(Mutex<bool>, Condvar)>,
+    stop_requested: Arc<AtomicBool>,
 }
 
 #[derive(Clone)]
@@ -144,6 +145,8 @@ impl FrameAcknowledger {
 
 struct Inner {
     state: Mutex<HostState>,
+    startup_finished: Mutex<bool>,
+    startup_changed: Condvar,
     running: Mutex<Option<Running>>,
     failure: Mutex<Option<String>>,
     events: smol::channel::Sender<HostEvent>,
@@ -408,17 +411,6 @@ fn stage(config: &HostConfig, host_digest: &str) -> Result<PathBuf, String> {
     }
 }
 
-fn private_directory(path: &Path) -> Result<(), String> {
-    fs::create_dir_all(path).map_err(|error| format!("{}: {error}", path.display()))?;
-    fs::set_permissions(path, fs::Permissions::from_mode(0o700))
-        .map_err(|error| format!("{}: {error}", path.display()))?;
-    let metadata = fs::symlink_metadata(path).map_err(|error| error.to_string())?;
-    if !metadata.is_dir() || metadata.permissions().mode() & 0o077 != 0 {
-        return Err(format!("{} is not a private directory", path.display()));
-    }
-    Ok(())
-}
-
 fn group_alive(pgid: i32) -> bool {
     unsafe { libc::kill(-pgid, 0) == 0 }
 }
@@ -446,6 +438,22 @@ fn reap_group(pgid: i32, grace: Duration) -> bool {
 }
 
 impl Inner {
+    fn finish_startup(&self) {
+        if let Ok(mut finished) = self.startup_finished.lock() {
+            *finished = true;
+        }
+        self.startup_changed.notify_all();
+    }
+
+    fn wait_for_startup(&self) {
+        if let Ok(finished) = self.startup_finished.lock() {
+            drop(
+                self.startup_changed
+                    .wait_while(finished, |finished| !*finished),
+            );
+        }
+    }
+
     fn set_state(&self, state: HostState) {
         if let Ok(mut current) = self.state.lock() {
             *current = state;
@@ -537,6 +545,8 @@ impl HostSupervisor {
             Self {
                 inner: Arc::new(Inner {
                     state: Mutex::new(HostState::Inactive),
+                    startup_finished: Mutex::new(false),
+                    startup_changed: Condvar::new(),
                     running: Mutex::new(None),
                     failure: Mutex::new(None),
                     events,
@@ -583,40 +593,46 @@ impl HostSupervisor {
         if let Ok(mut failure) = self.inner.failure.lock() {
             *failure = None;
         }
+        if let Ok(mut finished) = self.inner.startup_finished.lock() {
+            *finished = false;
+        }
         let inner = self.inner.clone();
         let spawned = std::thread::Builder::new()
             .name("browser-host-start".into())
-            .spawn(move || match start(&inner, &config) {
-                Ok(info) => {
-                    let ready = inner
-                        .state
-                        .lock()
-                        .map(|mut state| {
-                            if *state == HostState::Starting {
-                                *state = HostState::Ready;
-                                true
-                            } else {
-                                false
-                            }
-                        })
-                        .unwrap_or(false);
-                    if ready {
-                        inner.emit(HostEvent::Ready(info));
+            .spawn(move || {
+                match start(&inner, &config) {
+                    Ok(info) => {
+                        let ready = inner
+                            .state
+                            .lock()
+                            .map(|mut state| {
+                                if *state == HostState::Starting {
+                                    *state = HostState::Ready;
+                                    true
+                                } else {
+                                    false
+                                }
+                            })
+                            .unwrap_or(false);
+                        if ready {
+                            inner.emit(HostEvent::Ready(info));
+                        }
+                    }
+                    Err(reason) => {
+                        let pgid = inner
+                            .running
+                            .lock()
+                            .ok()
+                            .and_then(|mut running| running.take().map(|running| running.pgid));
+                        if let Some(pgid) = pgid {
+                            signal_group(pgid, libc::SIGKILL);
+                            reap_group(pgid, Duration::from_secs(2));
+                        }
+                        inner.set_state(HostState::Failed(reason.clone()));
+                        inner.emit(HostEvent::Lost(reason));
                     }
                 }
-                Err(reason) => {
-                    let pgid = inner
-                        .running
-                        .lock()
-                        .ok()
-                        .and_then(|mut running| running.take().map(|running| running.pgid));
-                    if let Some(pgid) = pgid {
-                        signal_group(pgid, libc::SIGKILL);
-                        reap_group(pgid, Duration::from_secs(2));
-                    }
-                    inner.set_state(HostState::Failed(reason.clone()));
-                    inner.emit(HostEvent::Lost(reason));
-                }
+                inner.finish_startup();
             });
         if let Err(error) = spawned {
             let reason = format!("host start thread: {error}");
@@ -724,6 +740,7 @@ impl HostSupervisor {
                 }
                 return;
             };
+            running.stop_requested.store(true, Ordering::Release);
             *state = if *failed {
                 self.inner.transport_failure_state()
             } else {
@@ -758,7 +775,7 @@ fn start(inner: &Arc<Inner>, config: &HostConfig) -> Result<HostInfo, String> {
     let staged = stage(config, &host_digest)?;
     let bin = staged.join("bin");
     let profile = config.profile_dir();
-    private_directory(&profile)?;
+    super::profile::prepare_profile_dir(&profile).map_err(|error| error.message())?;
     let (parent_channel, child_channel) = if config.frames {
         let (parent, child) =
             FrameChannel::pair().map_err(|error| format!("frame channel: {error}"))?;
@@ -835,6 +852,7 @@ fn start(inner: &Arc<Inner>, config: &HostConfig) -> Result<HostInfo, String> {
     let stdout = child.stdout.take().ok_or("host stdout unavailable")?;
     let (outbound, outbound_receiver) = mpsc::sync_channel::<Outbound>(256);
     let exited = Arc::new((Mutex::new(false), Condvar::new()));
+    let stop_requested = Arc::new(AtomicBool::new(false));
     if let Ok(mut running) = inner.running.lock() {
         *running = Some(Running {
             pid,
@@ -842,6 +860,7 @@ fn start(inner: &Arc<Inner>, config: &HostConfig) -> Result<HostInfo, String> {
             outbound: outbound.clone(),
             frame_connection: Arc::new(()),
             exited: exited.clone(),
+            stop_requested: stop_requested.clone(),
         });
     }
     let writer_inner = inner.clone();
@@ -878,6 +897,9 @@ fn start(inner: &Arc<Inner>, config: &HostConfig) -> Result<HostInfo, String> {
             let mut stdout = BufReader::new(stdout);
             let mut handshake = Some(handshake);
             loop {
+                let header = stdout.fill_buf().ok().and_then(|bytes| {
+                    bytes.get(..4).and_then(|bytes| <[u8; 4]>::try_from(bytes).ok())
+                });
                 match read_value(&mut stdout) {
                     Ok(Some(value)) => {
                         if let Some(sender) = &handshake {
@@ -919,7 +941,7 @@ fn start(inner: &Arc<Inner>, config: &HostConfig) -> Result<HostInfo, String> {
                     Ok(None) => return,
                     Err(error) => {
                         reader_inner.abort(format!(
-                            "host event stream violates the contract: {error:?}"
+                            "host event stream violates the contract: {error:?} (header {header:02x?})"
                         ));
                         return;
                     }
@@ -959,7 +981,7 @@ fn start(inner: &Arc<Inner>, config: &HostConfig) -> Result<HostInfo, String> {
     let watcher_inner = inner.clone();
     std::thread::Builder::new()
         .name("browser-host-watch".into())
-        .spawn(move || watch(watcher_inner, child, pgid, exited))
+        .spawn(move || watch(watcher_inner, child, pgid, exited, stop_requested))
         .map_err(|error| format!("host watch thread: {error}"))?;
     let hello = Envelope {
         version: CONTRACT_VERSION,
@@ -1051,9 +1073,15 @@ fn start(inner: &Arc<Inner>, config: &HostConfig) -> Result<HostInfo, String> {
     }
 }
 
-fn watch(inner: Arc<Inner>, mut child: Child, pgid: i32, exited: Arc<(Mutex<bool>, Condvar)>) {
+fn watch(
+    inner: Arc<Inner>,
+    mut child: Child,
+    pgid: i32,
+    exited: Arc<(Mutex<bool>, Condvar)>,
+    stop_requested: Arc<AtomicBool>,
+) {
     let status = child.wait();
-    let stopping = inner.state() == HostState::Stopping;
+
     let (lock, condvar) = &*exited;
     if let Ok(mut flag) = lock.lock() {
         *flag = true;
@@ -1066,7 +1094,11 @@ fn watch(inner: Arc<Inner>, mut child: Child, pgid: i32, exited: Arc<(Mutex<bool
     {
         *running = None;
     }
-    if stopping {
+    inner.wait_for_startup();
+    if matches!(inner.state(), HostState::Failed(_)) {
+        return;
+    }
+    if stop_requested.load(Ordering::Acquire) {
         inner.finish_shutdown();
         inner.emit(HostEvent::Stopped);
         return;
@@ -1083,11 +1115,8 @@ fn watch(inner: Arc<Inner>, mut child: Child, pgid: i32, exited: Arc<(Mutex<bool
     if !clean {
         reason.push_str("; host descendants survived the group cleanup");
     }
-    let starting = inner.state() == HostState::Starting;
-    if !starting {
-        inner.set_state(HostState::Failed(reason.clone()));
-        inner.emit(HostEvent::Lost(reason));
-    }
+    inner.set_state(HostState::Failed(reason.clone()));
+    inner.emit(HostEvent::Lost(reason));
 }
 
 #[cfg(test)]
@@ -1108,6 +1137,7 @@ mod tests {
                 outbound,
                 frame_connection: Arc::new(()),
                 exited: Arc::new((Mutex::new(false), Condvar::new())),
+                stop_requested: Arc::new(AtomicBool::new(false)),
             });
         };
         let (old_sender, old_receiver) = mpsc::sync_channel(2);
@@ -1379,8 +1409,10 @@ while True:
         let (supervisor, receiver) = HostSupervisor::channel();
         supervisor.activate(fixture.config.clone());
         let event = next_event(&receiver, Duration::from_secs(20));
-        assert!(matches!(event, HostEvent::Ready(_)), "{event:?}");
-        let event = next_event(&receiver, Duration::from_secs(10));
+        let event = match event {
+            HostEvent::Ready(_) => next_event(&receiver, Duration::from_secs(10)),
+            event => event,
+        };
         let HostEvent::Lost(reason) = event else {
             panic!("expected Lost, got {event:?}");
         };
