@@ -16,11 +16,11 @@ pub use domain::{
 };
 pub use frames::FrameLedger;
 pub use wire::{
-    clipboard_text_is_valid, encode_message, read_message, read_value, write_message,
-    zoom_percent_is_valid, BufferLayout, Command, DirtyRect, EditAction, Envelope, Event, FrameAck,
-    FrameFailure, FrameFormat, FrameMessage, HistoryDirection, InputEvent, KeyKind, MouseButton,
-    PlaneLayout, Reply, CONTRACT_VERSION, MAX_CLIPBOARD_TEXT_BYTES, MAX_FRAME_PLANES,
-    MAX_MESSAGE_BYTES, MAX_PENDING_FRAMES, MODIFIER_ALT, MODIFIER_COMMAND, MODIFIER_CONTROL,
-    MODIFIER_LEFT_MOUSE, MODIFIER_MIDDLE_MOUSE, MODIFIER_RIGHT_MOUSE, MODIFIER_SHIFT, POOL_BUFFERS,
-    RETIRE_DEADLINE_MS,
+    clipboard_text_is_valid, encode_message, find_text_is_valid, read_message, read_value,
+    write_message, zoom_percent_is_valid, BufferLayout, Command, DirtyRect, EditAction, Envelope,
+    Event, FrameAck, FrameFailure, FrameFormat, FrameMessage, HistoryDirection, InputEvent,
+    KeyKind, MouseButton, PlaneLayout, Reply, CONTRACT_VERSION, MAX_CLIPBOARD_TEXT_BYTES,
+    MAX_FIND_TEXT_BYTES, MAX_FRAME_PLANES, MAX_MESSAGE_BYTES, MAX_PENDING_FRAMES, MODIFIER_ALT,
+    MODIFIER_COMMAND, MODIFIER_CONTROL, MODIFIER_LEFT_MOUSE, MODIFIER_MIDDLE_MOUSE,
+    MODIFIER_RIGHT_MOUSE, MODIFIER_SHIFT, POOL_BUFFERS, RETIRE_DEADLINE_MS,
 };

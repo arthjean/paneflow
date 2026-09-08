@@ -118,6 +118,7 @@ pub enum BrowserError {
     AccessDenied,
     StaleGeneration,
     Unavailable,
+    EmbeddedDevToolsUnavailable,
     Busy,
     LimitReached,
     InvalidUrl,

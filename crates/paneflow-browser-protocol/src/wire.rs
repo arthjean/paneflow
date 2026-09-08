@@ -50,6 +50,10 @@ pub enum Command {
         url: String,
         title: String,
     },
+    CreateDevTools {
+        document: Document,
+        browser: BrowserId,
+    },
     State {
         document: Document,
     },
@@ -80,6 +84,15 @@ pub enum Command {
         ignore_cache: bool,
     },
     Stop {
+        document: Document,
+    },
+    Find {
+        document: Document,
+        text: String,
+        forward: bool,
+        find_next: bool,
+    },
+    StopFinding {
         document: Document,
     },
     Zoom {
@@ -145,6 +158,12 @@ pub enum KeyKind {
     Char,
 }
 
+pub const MAX_FIND_TEXT_BYTES: usize = 8 * 1024;
+
+pub fn find_text_is_valid(text: &str) -> bool {
+    text.len() <= MAX_FIND_TEXT_BYTES && !text.contains('\0')
+}
+
 pub const MAX_CLIPBOARD_TEXT_BYTES: usize = 32 * 1024;
 
 pub fn clipboard_text_is_valid(text: &str) -> bool {
@@ -165,6 +184,18 @@ pub enum EditAction {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum InputEvent {
+    DropFiles {
+        paths: Vec<String>,
+        x: i32,
+        y: i32,
+    },
+    TransferResponse {
+        request: u64,
+        paths: Vec<String>,
+    },
+    CancelDownload {
+        request: u64,
+    },
     MouseMove {
         x: i32,
         y: i32,
@@ -224,6 +255,11 @@ pub enum InputEvent {
         request: u64,
         command: Option<i32>,
     },
+    WebResponse {
+        request: u64,
+        accept: bool,
+        text: String,
+    },
     CaptureLost,
     ClipboardWritten {
         request: u64,
@@ -235,6 +271,25 @@ impl InputEvent {
         let coordinate = |value: i32| (-MAX_COORDINATE..=MAX_COORDINATE).contains(&value);
         let known = |modifiers: u32| modifiers & !KNOWN_MODIFIERS == 0;
         match self {
+            Self::TransferResponse { request, paths } => {
+                *request != 0
+                    && paths.len() <= 64
+                    && paths
+                        .iter()
+                        .all(|path| !path.is_empty() && path.len() <= 4096 && !path.contains('\0'))
+                    && paths.iter().map(String::len).sum::<usize>() <= 128 * 1024
+            }
+            Self::DropFiles { paths, x, y } => {
+                (0..=MAX_COORDINATE).contains(x)
+                    && (0..=MAX_COORDINATE).contains(y)
+                    && !paths.is_empty()
+                    && paths.len() <= 64
+                    && paths
+                        .iter()
+                        .all(|path| !path.is_empty() && path.len() <= 4096 && !path.contains('\0'))
+                    && paths.iter().map(String::len).sum::<usize>() <= 128 * 1024
+            }
+            Self::CancelDownload { request } => *request != 0,
             Self::MouseMove { x, y, modifiers } | Self::MouseLeave { x, y, modifiers } => {
                 coordinate(*x) && coordinate(*y) && known(*modifiers)
             }
@@ -260,6 +315,9 @@ impl InputEvent {
             }
             Self::Key { modifiers, .. } => known(*modifiers),
             Self::Focus { .. } | Self::ImeCancel | Self::ImeFinish | Self::CaptureLost => true,
+            Self::WebResponse { request, text, .. } => {
+                *request != 0 && text.len() <= 8192 && !text.contains('\0')
+            }
             Self::ClipboardWritten { request } => *request != 0,
             Self::Edit { action, request } => {
                 *request != 0
