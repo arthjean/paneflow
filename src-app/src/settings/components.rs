@@ -169,17 +169,35 @@ pub fn setting_text(
         )
 }
 
+pub fn text_field(
+    input: gpui::Entity<crate::widgets::text_input::TextInput>,
+    ui: crate::theme::UiColors,
+) -> impl IntoElement {
+    div()
+        .flex_1()
+        .min_w(px(180.))
+        .max_w(px(320.))
+        .px(px(10.))
+        .py(px(6.))
+        .rounded(SETTINGS_CONTROL_CORNER_RADIUS)
+        .bg(ui.subtle)
+        .text_size(px(12.))
+        .text_color(ui.text)
+        .child(input)
+}
+
 pub fn secondary_button(
-    id: &'static str,
+    id: impl Into<SharedString>,
     label: &'static str,
     ui: crate::theme::UiColors,
     on_click: impl Fn(&ClickEvent, &mut gpui::Window, &mut gpui::App) + 'static,
 ) -> impl IntoElement {
     let hover_bg = lerp_color(ui.subtle, ui.text, 0.06);
+    let id = id.into();
 
     squircle_skin(
         div()
-            .id(id)
+            .id(id.clone())
             .px(px(10.))
             .py(px(4.))
             .cursor(CursorStyle::PointingHand)

@@ -431,7 +431,7 @@ impl PaneFlowApp {
         let telemetry = std::sync::Arc::new(telemetry_client);
         if telemetry_config_snapshot.ai_unrestricted_enabled() {
             tracing::debug!(
-                "ai.unrestricted is ON; same-UID callers may auto-submit prompts to agent panes without PANEFLOW_IPC_SCRIPTING (toggle in Settings -> AI Agent)"
+                "ai.unrestricted is ON; same-UID callers may auto-submit prompts to agent panes without PANEFLOW_IPC_SCRIPTING (toggle in Settings -> Agents)"
             );
         }
         let pending_update = update::checker::spawn_check(std::sync::Arc::clone(&telemetry));
@@ -522,6 +522,15 @@ impl PaneFlowApp {
         cx.observe(&workspace_pane_prompt_input, |_, _, cx| cx.notify())
             .detach();
 
+        let agent_profile_name_input =
+            cx.new(|cx| crate::widgets::text_input::TextInput::new("", "Claude perso", cx));
+        cx.observe(&agent_profile_name_input, |_, _, cx| cx.notify())
+            .detach();
+        let agent_profile_args_input =
+            cx.new(|cx| crate::widgets::text_input::TextInput::new("", "--model opus", cx));
+        cx.observe(&agent_profile_args_input, |_, _, cx| cx.notify())
+            .detach();
+
         let rename_input = cx.new(|cx| crate::widgets::text_input::TextInput::new("", "Name", cx));
         cx.observe(&rename_input, |_, _, cx| cx.notify()).detach();
 
@@ -571,6 +580,11 @@ impl PaneFlowApp {
             workspace_pane_cwd_input,
             workspace_pane_command_input,
             workspace_pane_prompt_input,
+            agent_profile_editor: None,
+            agents_list_expanded: false,
+            agents_list_animation: None,
+            agent_profile_name_input,
+            agent_profile_args_input,
             mcp_status: None,
             mcp_install: None,
             mcp_busy: false,

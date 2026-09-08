@@ -28,12 +28,12 @@ remain available in [`paneflow.json`](/docs/configuration/schema).
 | Notifications | Native OS notifications for waiting agents. | `agent_panel.notify_when_agent_waiting` | Hot-reloads. |
 | Terminal | Cursor shape and color, font family, font size, font weight, line height, cell width, integrated glyphs, color emoji, minimum contrast, and Windows terminal material. | `terminal.cursor_shape`, `terminal.cursor_color`, `font_family`, `font_size`, `font_weight`, `line_height`, `cell_width`, `terminal.integrated_glyphs`, `terminal.color_emoji`, `terminal.minimum_contrast`, `windows_terminal_material` | Display controls hot-reload. Cursor shape applies to the next new terminal. |
 | Workspaces | Reusable workspace templates with panes, agents, shell commands, cwd, env, and prompt prefill. | `commands[].workspace` | Templates run through the same workspace launch path as `paneflow up`. |
-| AI Agent | Launcher button visibility, Claude Code bypass mode, AI free access, and the injection fence. | `*_button_visible`, `claude_code_bypass_permissions`, `ai_unrestricted`, `ai_injection_fence` | Launcher and access changes hot-reload. |
+| Agents | Which agents the launcher shows, with their installed version, custom agent profiles, Claude Code full access, AI free access, and the injection fence. | `*_button_visible`, `agent_profiles`, `claude_code_bypass_permissions`, `ai_unrestricted`, `ai_injection_fence` | Launcher and access changes hot-reload. |
 | MCP Servers | Installs or repairs the bundled `paneflow-mcp` bridge for Claude Code, Codex, Gemini, and opencode. | Agent config files, not `paneflow.json` | Re-run after a Paneflow update or when an agent config changes. |
 
 ## AI access vs MCP
 
-The AI Agent page controls how Paneflow launches agents and how much
+The Agents page controls how Paneflow launches agents and how much
 automation a trusted conductor can perform.
 
 `claude_code_bypass_permissions` only affects Claude Code launches. When

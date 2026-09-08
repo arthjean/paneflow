@@ -137,6 +137,73 @@ Profile entries under `agent_panel.profiles` use this shape:
 | `agent_panel.profiles.*.effort` | string/null | none | Preferred reasoning-effort label. |
 | `agent_panel.profiles.*.tools` | string array | `[]` | Preferred tool-kind keys shown by the profile. |
 
+## `agent_profiles`
+
+`agent_profiles` is a list. Each entry adds a launcher item that runs one of
+the built-in agents with extra environment variables and arguments. Profiles
+show up in the pane palette and the worktree launch pad next to the built-in
+agents, and keep the base agent's status tracking, hooks, and sessions.
+Settings > Agents > Profiles edits the same list.
+
+| Key | Type | Default | Notes |
+| --- | --- | --- | --- |
+| `agent_profiles.*.name` | string | required | Label shown in the launcher. |
+| `agent_profiles.*.agent` | string | required | Tag of the base agent: `claude_code`, `codex`, `opencode`, `pi`, `hermes`, `grok`, `amp`, `cursor`, `gemini`, `kiro`, `antigravity`, `copilot`, `codebuddy`, `factory`, `qoder`, or `openclaw`. |
+| `agent_profiles.*.env` | object | `{}` | Environment variables set on the agent process. A value starting with `~/` expands to the home directory. |
+| `agent_profiles.*.args` | string array | `[]` | Extra arguments appended after the base agent's own flags. Each token must be a plain word: letters, digits, `-`, `_`, `.`, `=`. |
+
+An entry with an unknown agent tag, a blank name, or an unsafe token is skipped
+with a warning; the other profiles still load.
+
+```json
+{
+  "agent_profiles": [
+    {
+      "name": "Claude perso",
+      "agent": "claude_code",
+      "env": { "CLAUDE_CONFIG_DIR": "~/.claude-perso" },
+      "args": ["--model", "opus"]
+    }
+  ]
+}
+```
+
+## `worktrees`
+
+Paneflow creates a git worktree when you open a branch from the "New pane"
+palette, the Launch Pad, or `paneflow up`. Nothing is written inside the
+checkout: the ownership marker lives in the worktree's own git dir
+(`.git/worktrees/<name>/` in the main repository), so `git status` stays
+clean and the marker disappears with the worktree. Settings > Worktrees edits
+the same keys and lists the worktrees Paneflow manages.
+
+Leaving the branch name empty in the palette creates a detached checkout at
+the chosen base, named `<base>-<sha7>`; "Create branch here…" in the tab's
+context menu turns it into a branch later, keeping any uncommitted changes.
+
+A `.worktreeinclude` file at the repository root lists the git-ignored files
+and directories to copy into every new worktree, one path per line relative to
+the root, `#` for comments, trailing `/` optional for directories. Without the
+file, Paneflow copies the top-level `.env*` files and `AGENTS.override.md`
+when they exist. A file that already exists in the worktree is never
+overwritten.
+
+| Key | Type | Default | Notes |
+| --- | --- | --- | --- |
+| `worktrees.dir` | string/null | `~/.paneflow/worktrees` | Root directory for managed worktrees. Each repository gets a subdirectory named `<repo>-<hash>`, each branch a directory under it. The default is `~/.paneflow/worktrees` on every platform (`%USERPROFILE%\.paneflow\worktrees` on Windows). `~` expands to the home directory. Worktrees created under an earlier root, including the old `<repo>.worktrees/` sibling, keep working where they are. |
+| `worktrees.auto_remove` | boolean/null | `true` | Remove a managed worktree when its workspace closes if it has no uncommitted changes, and trim the oldest managed worktrees past `keep_limit`. The branch is never deleted. `false` keeps every worktree until you remove it from Settings > Worktrees or the tab menu. |
+| `worktrees.keep_limit` | integer/null | `15` | Number of managed worktrees to keep before the oldest clean ones that no open tab uses are removed. `0` to `200`. |
+
+```json
+{
+  "worktrees": {
+    "dir": "~/worktrees",
+    "auto_remove": true,
+    "keep_limit": 15
+  }
+}
+```
+
 ## `tool_permissions`
 
 `tool_permissions` is keyed by tool kind, for example `read`, `edit`,

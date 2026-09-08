@@ -3,7 +3,7 @@ use super::{
     TerminalConfig,
 };
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -108,6 +108,12 @@ pub struct PaneFlowConfig {
         deserialize_with = "lenient_value_or_default"
     )]
     pub tool_permissions: HashMap<String, ToolPermissionsEntry>,
+    #[serde(
+        default,
+        skip_serializing_if = "Vec::is_empty",
+        deserialize_with = "lenient_value_or_default"
+    )]
+    pub agent_profiles: Vec<AgentProfileConfig>,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -393,6 +399,17 @@ where
             },
         )
         .collect())
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct AgentProfileConfig {
+    pub name: String,
+    pub agent: String,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub env: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub args: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]

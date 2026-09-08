@@ -6,7 +6,8 @@ use gpui::{
 use paneflow_config::schema::{ButtonCommand, PaneFlowConfig, TerminalSurfaceProfile};
 
 use crate::PaneFlowApp;
-use crate::agent_launcher::TerminalAgent;
+use crate::agent_launcher::AgentLaunch;
+use crate::app::workspace_ops::SurfaceLaunch;
 use crate::layout::SplitDirection;
 use crate::pane::Pane;
 use crate::settings::components::{select_item, select_menu, with_alpha};
@@ -43,7 +44,7 @@ struct BranchOption {
 #[derive(Debug, Clone)]
 pub(crate) enum PresetSource {
     Shell,
-    Agent(TerminalAgent),
+    Agent(AgentLaunch),
     Custom(ButtonCommand),
 }
 
@@ -57,7 +58,7 @@ impl Preset {
     fn icon_path(&self) -> SharedString {
         match &self.source {
             PresetSource::Shell => "icons/terminal.svg".into(),
-            PresetSource::Agent(agent) => agent.icon_path().into(),
+            PresetSource::Agent(launch) => launch.agent().icon_path().into(),
             PresetSource::Custom(button) => {
                 if button.icon.is_empty() {
                     "icons/terminal.svg".into()
@@ -69,12 +70,12 @@ impl Preset {
     }
 
     fn icon_multicolor(&self) -> bool {
-        matches!(&self.source, PresetSource::Agent(agent) if agent.icon_multicolor())
+        matches!(&self.source, PresetSource::Agent(launch) if launch.agent().icon_multicolor())
     }
 
     fn accent(&self) -> Option<u32> {
         match &self.source {
-            PresetSource::Agent(agent) => agent.accent(),
+            PresetSource::Agent(launch) => launch.agent().accent(),
             _ => None,
         }
     }
@@ -89,16 +90,23 @@ impl Preset {
     fn command(&self, config: &PaneFlowConfig) -> Option<String> {
         match &self.source {
             PresetSource::Shell => None,
-            PresetSource::Agent(agent) => Some(agent.launch_command(config)),
+            PresetSource::Agent(launch) => Some(launch.launch_command(config)),
             PresetSource::Custom(button) => Some(button.command.clone()),
+        }
+    }
+
+    fn env(&self) -> Option<std::collections::HashMap<String, String>> {
+        match &self.source {
+            PresetSource::Agent(launch) => launch.process_env(),
+            _ => None,
         }
     }
 
     fn ensure_launchable(&self) -> Result<(), String> {
         match &self.source {
-            PresetSource::Agent(agent) if !agent.is_installed() => Err(format!(
-                "{} is not installed - install its CLI, or hide it in Settings > AI Agent",
-                agent.display_name()
+            PresetSource::Agent(launch) if !launch.is_installed() => Err(format!(
+                "{} is not installed - install its CLI, or hide it in Settings > Agents",
+                launch.agent().display_name()
             )),
             _ => Ok(()),
         }
@@ -122,11 +130,11 @@ impl PaneFlowApp {
             source: PresetSource::Shell,
         }];
         presets.extend(
-            TerminalAgent::visible(&self.cached_config)
+            AgentLaunch::visible(&self.cached_config)
                 .into_iter()
-                .map(|agent| Preset {
-                    label: agent.display_name().to_string(),
-                    source: PresetSource::Agent(agent),
+                .map(|launch| Preset {
+                    label: launch.label(),
+                    source: PresetSource::Agent(launch),
                 }),
         );
         if let Some(ws) = self.workspaces.get(ws_idx) {
@@ -306,7 +314,10 @@ impl PaneFlowApp {
             self.pane_palette_set_error(message, cx);
             return;
         }
-        let command = preset.command(&self.cached_config);
+        let launch = SurfaceLaunch {
+            command: preset.command(&self.cached_config),
+            env: preset.env(),
+        };
         let profile = preset.profile();
         let title = preset.label.clone();
         let placement = match self.pane_palette.as_ref() {
@@ -320,21 +331,14 @@ impl PaneFlowApp {
         match placement {
             None => {
                 self.discard_pane_palette(cx);
-                self.open_tab_with_surface(ws_idx, title, profile, command, window, cx);
+                self.open_tab_with_surface(ws_idx, title, profile, launch, window, cx);
             }
             Some((target, direction)) => {
                 let Some(target) = target.upgrade() else {
                     self.pane_palette_set_error("That pane no longer exists", cx);
                     return;
                 };
-                match self.split_with_target(
-                    target,
-                    direction,
-                    profile,
-                    command.as_deref(),
-                    window,
-                    cx,
-                ) {
+                match self.split_with_target(target, direction, profile, launch, window, cx) {
                     Err(message) => self.pane_palette_set_error(message, cx),
                     Ok(()) => self.discard_pane_palette(cx),
                 }

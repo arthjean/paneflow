@@ -2,6 +2,7 @@ use gpui::{App, AppContext, Context, Entity, Window};
 use paneflow_config::schema::{TabTitleSource, TerminalSurfaceProfile};
 
 use crate::PaneFlowApp;
+use crate::app::workspace_ops::SurfaceLaunch;
 use crate::layout::LayoutTree;
 use crate::terminal::TerminalView;
 use crate::workspace::Tab;
@@ -44,7 +45,7 @@ impl PaneFlowApp {
         ws_idx: usize,
         title: String,
         profile: TerminalSurfaceProfile,
-        command: Option<String>,
+        launch: SurfaceLaunch,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
@@ -59,8 +60,9 @@ impl PaneFlowApp {
             .flatten()
             .or_else(|| (!ws.cwd.is_empty()).then(|| std::path::PathBuf::from(&ws.cwd)));
         let title = crate::sidebar_title::clean_sidebar_title(&title).unwrap_or_default();
-        let terminal =
-            cx.new(|cx| TerminalView::with_cwd_and_profile(ws_id, cwd, None, profile, cx));
+        let terminal = cx.new(|cx| {
+            TerminalView::with_cwd_env_and_profile(ws_id, cwd, None, launch.env, profile, cx)
+        });
         cx.subscribe(&terminal, Self::handle_terminal_event)
             .detach();
         let pane = self.create_pane(terminal.clone(), ws_id, cx);
@@ -79,9 +81,9 @@ impl PaneFlowApp {
             self.show_toast("Tab limit reached for this workspace", cx);
             return false;
         }
-        if let Some(command) = command {
-            terminal.read(cx).send_command(&command);
-            terminal.update(cx, |view, _cx| view.declare_agent_from_command(&command));
+        if let Some(command) = launch.command.as_deref() {
+            terminal.read(cx).send_command(command);
+            terminal.update(cx, |view, _cx| view.declare_agent_from_command(command));
         }
         if let Some(ws) = self.workspaces.get_mut(ws_idx) {
             ws.sidebar_expanded = true;

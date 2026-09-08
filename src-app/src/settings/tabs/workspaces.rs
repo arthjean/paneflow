@@ -18,7 +18,7 @@ use crate::layout::MAX_PANES;
 use crate::settings::components::{
     SETTINGS_CONTROL_CORNER_RADIUS, card_color, card_tint, deferred_select_menu, hairline,
     section_header_with_action, select_chevron, select_item, select_menu, select_trigger,
-    setting_card, with_alpha,
+    setting_card, text_field, with_alpha,
 };
 use crate::terminal::TerminalView;
 use crate::ui_primitives::{AnimatedHover, AnimatedHoverExt};
@@ -1556,7 +1556,7 @@ impl PaneFlowApp {
                 if pane.agent.is_none() {
                     let Some(agent) = TerminalAgent::visible(&self.cached_config).first().copied()
                     else {
-                        return Err("enable at least one AI Agent first".to_string());
+                        return Err("enable at least one agent first".to_string());
                     };
                     pane.agent = Some(agent.tag().to_string());
                 }
@@ -1633,7 +1633,7 @@ impl PaneFlowApp {
                 };
                 if !visible_agents.contains(&agent) {
                     return Err(format!(
-                        "enable {} in AI Agent settings before running",
+                        "enable {} in Agents settings before running",
                         agent.display_name()
                     ));
                 }
@@ -1729,23 +1729,6 @@ fn quiet_card() -> gpui::Div {
         .bg(bg)
         .rounded(px(8.))
         .overflow_hidden()
-}
-
-fn text_field(
-    input: gpui::Entity<crate::widgets::text_input::TextInput>,
-    ui: crate::theme::UiColors,
-) -> impl IntoElement {
-    div()
-        .flex_1()
-        .min_w(px(180.))
-        .max_w(px(320.))
-        .px(px(10.))
-        .py(px(6.))
-        .rounded(SETTINGS_CONTROL_CORNER_RADIUS)
-        .bg(ui.subtle)
-        .text_size(px(12.))
-        .text_color(ui.text)
-        .child(input)
 }
 
 fn project_path_picker(

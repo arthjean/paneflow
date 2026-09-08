@@ -97,11 +97,19 @@ const NAV_GROUPS: &[NavGroup] = &[
         label: "Integrations",
         items: &[
             NavItem {
-                section: SettingsSection::AiAgent,
-                label: "AI Agent",
-                icon: "icons/sparkles.svg",
+                section: SettingsSection::Agents,
+                label: "Agents",
+                icon: "icons/pointer-2.svg",
                 keywords: &[
-                    "ai", "agent", "claude", "codex", "gemini", "launcher", "tab bar",
+                    "ai",
+                    "agent",
+                    "agents",
+                    "claude",
+                    "codex",
+                    "gemini",
+                    "launcher",
+                    "profile",
+                    "permissions",
                 ],
             },
             NavItem {
@@ -120,7 +128,7 @@ pub(crate) fn section_title(section: SettingsSection) -> &'static str {
         SettingsSection::Appearance => "Appearance",
         SettingsSection::Shortcuts => "Keyboard Shortcuts",
         SettingsSection::Terminal => "Terminal",
-        SettingsSection::AiAgent => "AI Agent",
+        SettingsSection::Agents => "Agents",
         SettingsSection::McpServers => "MCP Servers",
         SettingsSection::Workspaces => "Workspaces",
     }
@@ -353,7 +361,7 @@ impl PaneFlowApp {
             SettingsSection::General => self.render_general_content(cx).into_any_element(),
             SettingsSection::Appearance => self.render_appearance_content(cx).into_any_element(),
             SettingsSection::Terminal => self.render_terminal_content(cx).into_any_element(),
-            SettingsSection::AiAgent => self.render_ai_agent_content(cx).into_any_element(),
+            SettingsSection::Agents => self.render_agents_content(cx).into_any_element(),
             SettingsSection::McpServers => self.render_mcp_servers_content(cx).into_any_element(),
             SettingsSection::Workspaces => self.render_workspaces_content(cx).into_any_element(),
             SettingsSection::Shortcuts => gpui::Empty.into_any_element(),

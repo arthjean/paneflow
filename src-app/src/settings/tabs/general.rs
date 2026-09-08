@@ -9,7 +9,7 @@ use crate::GeneralDropdown;
 use crate::PaneFlowApp;
 use crate::settings::components::{
     Logo, deferred_select_menu, hairline, render_logo, section_header, select_chevron, select_item,
-    select_menu, select_trigger, setting_card, setting_text, toggle_row, toggle_row_with,
+    select_menu, select_trigger, setting_card, setting_text, toggle_row_with,
 };
 
 type SelectOption = (String, Option<Logo>, Value, bool);
@@ -121,9 +121,7 @@ impl PaneFlowApp {
         div()
             .flex()
             .flex_col()
-            .child(self.render_permissions_section(ui, cx))
-            .child(self.render_ai_access_section(ui, cx))
-            .child(div().mt(px(24.)).child(defaults_section))
+            .child(defaults_section)
             .child(self.render_notifications_section(ui, cx))
     }
 
@@ -163,89 +161,6 @@ impl PaneFlowApp {
                     }))
                     .child(crate::settings::components::toggle_pill(enabled, ui)),
             )))
-            .into_any_element()
-    }
-
-    fn render_permissions_section(
-        &self,
-        ui: crate::theme::UiColors,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        let bypass = self
-            .cached_config
-            .claude_code_bypass_permissions
-            .unwrap_or(false);
-
-        div()
-            .flex()
-            .flex_col()
-            .child(section_header(ui, "Permissions"))
-            .child(setting_card(ui).child(toggle_row(
-                "row-claude-bypass",
-                "Full access",
-                "Claude Code edits any file and runs networked commands without \
-                 asking. No protection against prompt injection.",
-                None,
-                bypass,
-                "claude_code_bypass_permissions",
-                ui,
-                cx,
-            )))
-            .into_any_element()
-    }
-
-    fn render_ai_access_section(
-        &self,
-        ui: crate::theme::UiColors,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        let unrestricted = self.cached_config.ai_unrestricted_enabled();
-        let fence = self.cached_config.ai_injection_fence_enabled();
-
-        let mut access_card = setting_card(ui).child(toggle_row(
-            "row-ai-unrestricted",
-            "AI free access",
-            "Lets an agent auto-submit prompts to your other panes, without the \
-             PANEFLOW_IPC_SCRIPTING gate. Every write is logged.",
-            None,
-            unrestricted,
-            "ai_unrestricted",
-            ui,
-            cx,
-        ));
-        if unrestricted {
-            access_card = access_card.child(hairline(ui)).child(toggle_row(
-                "row-ai-injection-fence",
-                "Injection fence",
-                "Marks peer-pane output as untrusted when an agent reads it, so a \
-                 malicious repo cannot hijack it.",
-                None,
-                fence,
-                "ai_injection_fence",
-                ui,
-                cx,
-            ));
-            if !fence {
-                access_card = access_card.child(hairline(ui)).child(
-                    div()
-                        .px(px(12.))
-                        .py(px(8.))
-                        .text_size(px(12.))
-                        .text_color(gpui::rgb(0xE0_6C_75))
-                        .child(
-                            "Fence off: a malicious pane can silently redirect \
-                             your agent.",
-                        ),
-                );
-            }
-        }
-
-        div()
-            .mt(px(24.))
-            .flex()
-            .flex_col()
-            .child(section_header(ui, "AI access"))
-            .child(access_card)
             .into_any_element()
     }
 

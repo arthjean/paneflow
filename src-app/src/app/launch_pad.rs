@@ -6,7 +6,7 @@ use gpui::{
 use paneflow_config::schema::TerminalSurfaceProfile;
 
 use crate::PaneFlowApp;
-use crate::agent_launcher::TerminalAgent;
+use crate::agent_launcher::AgentLaunch;
 use crate::layout::{MAX_PANES, SplitDirection};
 use crate::pane::Pane;
 use crate::terminal::TerminalView;
@@ -30,7 +30,7 @@ struct LaunchPlan {
     repo_root: std::path::PathBuf,
     worktree_path: std::path::PathBuf,
     branch: String,
-    agent: TerminalAgent,
+    agent: AgentLaunch,
     prompt: String,
 }
 
@@ -120,9 +120,9 @@ impl PaneFlowApp {
         });
         let branch_focus = branch_input.read(cx).focus_handle.clone();
 
-        let agent_idx = TerminalAgent::ALL
+        let agent_idx = AgentLaunch::all(&self.cached_config)
             .iter()
-            .position(|a| a.is_installed())
+            .position(AgentLaunch::is_installed)
             .unwrap_or(0);
 
         self.launch_pad = Some(LaunchPadState {
@@ -167,12 +167,18 @@ impl PaneFlowApp {
         let (prompt, _truncated) =
             crate::app::composer::normalize_composer_text(&lp.prompt_input.read(cx).value());
 
-        let Some(agent) = TerminalAgent::ALL.get(agent_idx).copied() else {
+        let Some(agent) = AgentLaunch::all(&self.cached_config)
+            .into_iter()
+            .nth(agent_idx)
+        else {
             self.launch_pad_set_error("No agent selected", cx);
             return;
         };
         if !agent.is_installed() {
-            self.launch_pad_set_error(format!("{} is not installed", agent.display_name()), cx);
+            self.launch_pad_set_error(
+                format!("{} is not installed", agent.agent().display_name()),
+                cx,
+            );
             return;
         }
         if branch.is_empty() {
@@ -301,7 +307,7 @@ impl PaneFlowApp {
                 plan.ws_id,
                 Some(plan.worktree_path.clone()),
                 None,
-                None,
+                plan.agent.process_env(),
                 TerminalSurfaceProfile::Agent,
                 cx,
             )
@@ -323,7 +329,7 @@ impl PaneFlowApp {
         new_terminal
             .read(cx)
             .send_command(&plan.agent.launch_command(&self.cached_config));
-        new_terminal.update(cx, |view, _cx| view.declare_agent(plan.agent));
+        new_terminal.update(cx, |view, _cx| view.declare_agent(plan.agent.agent()));
         if !plan.prompt.trim().is_empty() {
             Self::schedule_prompt_prefill(&new_terminal, plan.prompt, usize::MAX, cx);
         }
@@ -376,8 +382,9 @@ impl PaneFlowApp {
             .border_1()
             .border_color(ui.border)
             .rounded(px(6.));
-        for (idx, agent) in TerminalAgent::ALL.iter().enumerate() {
-            let installed = agent.is_installed();
+        for (idx, launch) in AgentLaunch::all(&self.cached_config).iter().enumerate() {
+            let agent = launch.agent();
+            let installed = launch.is_installed();
             let is_selected = idx == lp.agent_idx;
             let resting_background = if is_selected {
                 ui.subtle
@@ -387,7 +394,7 @@ impl PaneFlowApp {
             let row = div()
                 .id(SharedString::from(format!(
                     "launch-pad-agent-{}",
-                    agent.tag()
+                    launch.key()
                 )))
                 .flex()
                 .flex_row()
@@ -416,7 +423,7 @@ impl PaneFlowApp {
                         .flex_1()
                         .text_color(if installed { ui.text } else { ui.muted })
                         .when(!installed, |d| d.opacity(0.5))
-                        .child(agent.display_name()),
+                        .child(launch.label()),
                 );
             if installed {
                 agent_list = agent_list.child(

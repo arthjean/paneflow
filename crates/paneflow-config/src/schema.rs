@@ -13,7 +13,7 @@ pub use terminal::*;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::{BTreeSet, HashMap};
+    use std::collections::{BTreeMap, BTreeSet, HashMap};
 
     fn object_keys(value: &serde_json::Value) -> BTreeSet<String> {
         value
@@ -143,6 +143,15 @@ mod tests {
                 notify_when_agent_waiting: Some(NotifyWhenAgentWaiting::PrimaryScreen),
             }),
             tool_permissions: permissions,
+            agent_profiles: vec![AgentProfileConfig {
+                name: "Claude perso".to_string(),
+                agent: "claude_code".to_string(),
+                env: BTreeMap::from([(
+                    "CLAUDE_CONFIG_DIR".to_string(),
+                    "~/.claude-perso".to_string(),
+                )]),
+                args: vec!["--model".to_string(), "opus".to_string()],
+            }],
         };
 
         let schema_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -198,6 +207,11 @@ mod tests {
             object_keys(&serialized["tool_permissions"]["read"]),
             object_keys(&schema["definitions"]["toolPermissionsEntry"]["properties"]),
             "ToolPermissionsEntry and public JSON Schema drifted"
+        );
+        assert_eq!(
+            object_keys(&serialized["agent_profiles"][0]),
+            object_keys(&schema["definitions"]["agentProfile"]["properties"]),
+            "AgentProfileConfig and public JSON Schema drifted"
         );
 
         let command = CommandDefinition {

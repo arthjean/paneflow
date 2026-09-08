@@ -91,7 +91,7 @@ pub(crate) enum SettingsSection {
     Appearance,
     Shortcuts,
     Terminal,
-    AiAgent,
+    Agents,
     McpServers,
     Workspaces,
 }
@@ -241,10 +241,10 @@ const STARTUP_SPLASH_SHIMMER_MS: u64 = 2600;
 const STARTUP_SPLASH_MIN_VISIBLE_MS: u64 = 900;
 
 #[derive(Clone, Copy)]
-struct SidebarWidthAnimation {
-    from_width: f32,
-    to_width: f32,
-    started_at: std::time::Instant,
+pub(crate) struct SidebarWidthAnimation {
+    pub(crate) from_width: f32,
+    pub(crate) to_width: f32,
+    pub(crate) started_at: std::time::Instant,
 }
 
 struct StartupSplashView {
@@ -572,7 +572,7 @@ impl Render for StartupSplashView {
 }
 
 impl SidebarWidthAnimation {
-    fn width_at(self, now: std::time::Instant) -> f32 {
+    pub(crate) fn width_at(self, now: std::time::Instant) -> f32 {
         let duration = std::time::Duration::from_millis(PRIMARY_SIDEBAR_ANIMATION_MS);
         let progress = (now.duration_since(self.started_at).as_secs_f32() / duration.as_secs_f32())
             .clamp(0., 1.);
@@ -580,7 +580,7 @@ impl SidebarWidthAnimation {
         self.from_width + (self.to_width - self.from_width) * eased
     }
 
-    fn is_finished(self, now: std::time::Instant) -> bool {
+    pub(crate) fn is_finished(self, now: std::time::Instant) -> bool {
         now.duration_since(self.started_at)
             >= std::time::Duration::from_millis(PRIMARY_SIDEBAR_ANIMATION_MS)
     }
@@ -674,6 +674,11 @@ struct PaneFlowApp {
     workspace_pane_cwd_input: gpui::Entity<crate::widgets::text_input::TextInput>,
     workspace_pane_command_input: gpui::Entity<crate::widgets::text_input::TextInput>,
     workspace_pane_prompt_input: gpui::Entity<crate::widgets::text_input::TextInput>,
+    agent_profile_editor: Option<crate::settings::tabs::agents::AgentProfileEditor>,
+    agents_list_expanded: bool,
+    agents_list_animation: Option<SidebarWidthAnimation>,
+    agent_profile_name_input: gpui::Entity<crate::widgets::text_input::TextInput>,
+    agent_profile_args_input: gpui::Entity<crate::widgets::text_input::TextInput>,
     mcp_status: Option<Vec<paneflow_mcp_install::StatusReport>>,
     mcp_install: Option<Result<Vec<paneflow_mcp_install::InstallReport>, String>>,
     mcp_busy: bool,
@@ -1037,6 +1042,7 @@ impl Render for PaneFlowApp {
         }
         self.prune_stale_split_palette(cx);
         let main_content = if self.settings_section.is_some() {
+            self.tick_agents_list_animation(window);
             self.render_settings_content_panel(cx).into_any_element()
         } else if matches!(self.mode, paneflow_config::schema::AppMode::Diff) {
             self.render_review_main(pane_grid_left_gutter, window, cx)

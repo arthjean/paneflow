@@ -136,6 +136,12 @@ fn restore_closed_surface_record(
     }
 }
 
+#[derive(Debug, Default)]
+pub(crate) struct SurfaceLaunch {
+    pub(crate) command: Option<String>,
+    pub(crate) env: Option<std::collections::HashMap<String, String>>,
+}
+
 impl PaneFlowApp {
     pub(crate) fn apply_git_state_for_cwd(
         &mut self,
@@ -456,7 +462,7 @@ impl PaneFlowApp {
             focused,
             direction,
             TerminalSurfaceProfile::Normal,
-            None,
+            SurfaceLaunch::default(),
             window,
             cx,
         ) {
@@ -469,7 +475,7 @@ impl PaneFlowApp {
         target: Entity<crate::pane::Pane>,
         direction: SplitDirection,
         profile: TerminalSurfaceProfile,
-        command: Option<&str>,
+        launch: SurfaceLaunch,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Result<(), String> {
@@ -492,8 +498,9 @@ impl PaneFlowApp {
             .active_terminal_opt()
             .and_then(|tv| tv.read(cx).terminal.cwd_now());
         let source_cwd = self.new_terminal_cwd(source_cwd);
-        let new_terminal =
-            cx.new(|cx| TerminalView::with_cwd_and_profile(ws_id, source_cwd, None, profile, cx));
+        let new_terminal = cx.new(|cx| {
+            TerminalView::with_cwd_env_and_profile(ws_id, source_cwd, None, launch.env, profile, cx)
+        });
         let new_pane = self.create_pane(new_terminal.clone(), ws_id, cx);
         let inserted = if let Some(ws) = self.active_workspace_mut()
             && let Some(root) = &mut ws.active_tab_mut().root
@@ -505,7 +512,7 @@ impl PaneFlowApp {
         if !inserted {
             return Err("That pane no longer exists".to_string());
         }
-        if let Some(command) = command {
+        if let Some(command) = launch.command.as_deref() {
             new_terminal.read(cx).send_command(command);
             new_terminal.update(cx, |view, _cx| view.declare_agent_from_command(command));
         }

@@ -21,6 +21,7 @@ impl PaneFlowApp {
         self.general_dropdown = None;
         self.workspace_template_dropdown = None;
         self.workspace_template_detail_open = false;
+        self.agent_profile_editor = None;
         self.font_dropdown_open = false;
         self.font_search.clear();
         self.theme_dropdown_open = false;
@@ -29,6 +30,9 @@ impl PaneFlowApp {
             self.rebuild_shortcut_rows(cx);
         }
         self.refresh_mcp_status(cx);
+        if section == SettingsSection::Agents {
+            self.probe_agent_versions(cx);
+        }
         self.settings_focus.focus(window, cx);
         cx.notify();
     }
@@ -67,6 +71,7 @@ impl PaneFlowApp {
         self.general_dropdown = None;
         self.workspace_template_dropdown = None;
         self.workspace_template_detail_open = false;
+        self.agent_profile_editor = None;
         self.clear_settings_search(cx);
         if self.recording_shortcut_idx.is_some() {
             self.recording_shortcut_idx = None;
@@ -213,6 +218,8 @@ impl PaneFlowApp {
                 self.general_dropdown = None;
             } else if self.workspace_template_dropdown.is_some() {
                 self.workspace_template_dropdown = None;
+            } else if self.agent_profile_editor.is_some() {
+                self.close_agent_profile_editor(cx);
             } else {
                 self.close_settings(cx);
             }

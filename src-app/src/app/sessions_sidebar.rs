@@ -248,7 +248,7 @@ impl PaneFlowApp {
                     div()
                         .text_size(px(12.))
                         .text_color(ui.muted)
-                        .child("No AI agents enabled. Enable one in Settings → AI Agent."),
+                        .child("No agents enabled. Enable one in Settings → Agents."),
                 )
                 .into_any_element();
         }

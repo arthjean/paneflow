@@ -5,6 +5,25 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
 
 ## [Unreleased]
 
+### Added
+
+- Custom agent profiles. Settings > Agents > Profiles (or the
+  `agent_profiles` list in `paneflow.json`) adds launcher entries that run one
+  of the built-in agents with extra environment variables and arguments, for
+  example a second Claude Code account through `CLAUDE_CONFIG_DIR`. A profile
+  shows up in the pane palette and the worktree launch pad next to the built-in
+  agents and keeps the base agent's status tracking, hooks, and sessions.
+  Environment variables are set on the agent process, not typed on the shell
+  line, so the same profile works in bash, zsh, fish, and PowerShell.
+- The AI Agent settings page is now Agents and reads like the Codex app.
+  The agent list leads with Claude Code, Codex, OpenCode, Pi, and Grok and
+  folds the other eleven behind "Show 11 more"; each row states whether the
+  CLI is installed, its binary, and its version (probed off-thread with
+  `--version`), and the toggle stays inert for agents that are not on PATH.
+  Profiles are rows with hover actions and an editor that opens in place,
+  with one key/value line per environment variable. Full access, AI free
+  access, and the injection fence moved here from General.
+
 ### Fixed
 
 - The shim now honors `CLAUDE_CONFIG_DIR` when it checks for a persistent

@@ -1,8 +1,8 @@
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
-use paneflow_config::schema::PaneFlowConfig;
+use paneflow_config::schema::{AgentProfileConfig, PaneFlowConfig};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TerminalAgent {
@@ -43,6 +43,68 @@ impl TerminalAgent {
         TerminalAgent::Qoder,
         TerminalAgent::Openclaw,
     ];
+
+    pub const PRIMARY: [TerminalAgent; 5] = [
+        TerminalAgent::ClaudeCode,
+        TerminalAgent::Codex,
+        TerminalAgent::OpenCode,
+        TerminalAgent::Pi,
+        TerminalAgent::Grok,
+    ];
+
+    pub fn secondary() -> impl Iterator<Item = TerminalAgent> {
+        Self::ALL
+            .into_iter()
+            .filter(|agent| !Self::PRIMARY.contains(agent))
+    }
+
+    pub fn visibility_config_key(self) -> &'static str {
+        match self {
+            TerminalAgent::ClaudeCode => "claude_code_button_visible",
+            TerminalAgent::Codex => "codex_button_visible",
+            TerminalAgent::OpenCode => "opencode_button_visible",
+            TerminalAgent::Pi => "pi_button_visible",
+            TerminalAgent::Hermes => "hermes_agent_button_visible",
+            TerminalAgent::Grok => "grok_button_visible",
+            TerminalAgent::Amp => "amp_button_visible",
+            TerminalAgent::Cursor => "cursor_button_visible",
+            TerminalAgent::Gemini => "gemini_button_visible",
+            TerminalAgent::Kiro => "kiro_button_visible",
+            TerminalAgent::Antigravity => "antigravity_button_visible",
+            TerminalAgent::Copilot => "copilot_button_visible",
+            TerminalAgent::CodeBuddy => "codebuddy_button_visible",
+            TerminalAgent::Factory => "factory_button_visible",
+            TerminalAgent::Qoder => "qoder_button_visible",
+            TerminalAgent::Openclaw => "openclaw_button_visible",
+        }
+    }
+
+    pub fn cached_version(self) -> Option<String> {
+        version_cache()
+            .lock()
+            .ok()
+            .and_then(|cache| cache.get(&self).cloned().flatten())
+    }
+
+    pub fn probe_missing_versions() {
+        let pending: Vec<TerminalAgent> = {
+            let Ok(cache) = version_cache().lock() else {
+                return;
+            };
+            TerminalAgent::ALL
+                .into_iter()
+                .filter(|agent| agent.is_installed() && !cache.contains_key(agent))
+                .collect()
+        };
+        for agent in pending {
+            let version = which::which(agent.binary())
+                .ok()
+                .and_then(|path| probe_version(&path));
+            if let Ok(mut cache) = version_cache().lock() {
+                cache.insert(agent, version);
+            }
+        }
+    }
 
     pub fn display_rank(self) -> usize {
         Self::ALL
@@ -273,12 +335,7 @@ impl TerminalAgent {
     }
 
     pub fn launch_command(self, config: &PaneFlowConfig) -> String {
-        let shell = config
-            .default_shell
-            .as_deref()
-            .map(str::trim)
-            .filter(|s| !s.is_empty());
-        crate::terminal::shell::clear_then(&self.command(config), shell)
+        wrap_for_shell(&self.command(config), config)
     }
 
     pub fn visible(config: &PaneFlowConfig) -> Vec<TerminalAgent> {
@@ -380,6 +437,69 @@ fn installed_binaries_contains(binary: &'static str) -> bool {
     cache.found.contains(binary)
 }
 
+fn version_cache() -> &'static Mutex<HashMap<TerminalAgent, Option<String>>> {
+    static CACHE: OnceLock<Mutex<HashMap<TerminalAgent, Option<String>>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+const VERSION_PROBE_TIMEOUT: Duration = Duration::from_secs(3);
+
+fn probe_version(binary: &std::path::Path) -> Option<String> {
+    use std::io::Read;
+    use std::process::{Command, Stdio};
+    let mut child = Command::new(binary)
+        .arg("--version")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .ok()?;
+    let started = Instant::now();
+    let exited = loop {
+        match child.try_wait() {
+            Ok(Some(_)) => break true,
+            Ok(None) if started.elapsed() < VERSION_PROBE_TIMEOUT => {
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            _ => break false,
+        }
+    };
+    if !exited {
+        let _ = child.kill();
+        let _ = child.wait();
+        return None;
+    }
+    let mut output = String::new();
+    child
+        .stdout
+        .take()?
+        .take(4096)
+        .read_to_string(&mut output)
+        .ok()?;
+    parse_version(&output)
+}
+
+fn parse_version(output: &str) -> Option<String> {
+    output
+        .lines()
+        .take(3)
+        .flat_map(str::split_whitespace)
+        .map(|token| {
+            token
+                .trim_start_matches(['v', 'V'])
+                .trim_end_matches([',', ')', ';'])
+        })
+        .find(|token| {
+            token.starts_with(|c: char| c.is_ascii_digit())
+                && token.contains('.')
+                && token.len() <= 32
+                && token
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '+'))
+        })
+        .map(str::to_string)
+}
+
 fn is_env_assignment(token: &str) -> bool {
     match token.split_once('=') {
         Some((key, _)) => {
@@ -401,6 +521,174 @@ fn strip_windows_exec_suffix(base: &str) -> &str {
         }
     }
     base
+}
+
+fn wrap_for_shell(command: &str, config: &PaneFlowConfig) -> String {
+    let shell = config
+        .default_shell
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+    crate::terminal::shell::clear_then(command, shell)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgentProfile {
+    pub name: String,
+    pub agent: TerminalAgent,
+    pub env: BTreeMap<String, String>,
+    pub args: Vec<String>,
+}
+
+impl AgentProfile {
+    pub fn from_config(entry: &AgentProfileConfig) -> Result<AgentProfile, String> {
+        let name = entry.name.trim();
+        if name.is_empty() {
+            return Err("profile name is empty".to_string());
+        }
+        let Some(agent) = TerminalAgent::from_tag(entry.agent.trim()) else {
+            return Err(format!("unknown base agent '{}'", entry.agent));
+        };
+        if let Some(key) = entry.env.keys().find(|key| !is_env_key(key)) {
+            return Err(format!("invalid environment variable name '{key}'"));
+        }
+        if let Some(arg) = entry.args.iter().find(|arg| !is_plain_shell_token(arg)) {
+            return Err(format!(
+                "argument '{arg}' may only contain letters, digits, '-', '_', '.', and '='"
+            ));
+        }
+        Ok(AgentProfile {
+            name: name.to_string(),
+            agent,
+            env: entry.env.clone(),
+            args: entry.args.clone(),
+        })
+    }
+
+    pub fn all(config: &PaneFlowConfig) -> Vec<AgentProfile> {
+        config
+            .agent_profiles
+            .iter()
+            .filter_map(|entry| match Self::from_config(entry) {
+                Ok(profile) => Some(profile),
+                Err(reason) => {
+                    log::warn!("agent_profiles: skipping '{}': {reason}", entry.name);
+                    None
+                }
+            })
+            .collect()
+    }
+
+    pub fn launch_command(&self, config: &PaneFlowConfig) -> String {
+        let mut spec = self.agent.launch_spec(config);
+        for arg in &self.args {
+            spec.push_arg(arg.clone());
+        }
+        wrap_for_shell(&spec.render_shell_command(), config)
+    }
+
+    pub fn process_env(&self) -> HashMap<String, String> {
+        let home = dirs::home_dir();
+        self.env
+            .iter()
+            .map(|(key, value)| (key.clone(), expand_home(value, home.as_deref())))
+            .collect()
+    }
+}
+
+fn is_env_key(key: &str) -> bool {
+    !key.is_empty()
+        && !key.starts_with(|c: char| c.is_ascii_digit())
+        && key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+fn expand_home(value: &str, home: Option<&std::path::Path>) -> String {
+    let Some(home) = home else {
+        return value.to_string();
+    };
+    if value == "~" {
+        return home.display().to_string();
+    }
+    match value
+        .strip_prefix("~/")
+        .or_else(|| value.strip_prefix("~\\"))
+    {
+        Some(rest) => home.join(rest).display().to_string(),
+        None => value.to_string(),
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AgentLaunch {
+    Builtin(TerminalAgent),
+    Profile(AgentProfile),
+}
+
+impl AgentLaunch {
+    pub fn all(config: &PaneFlowConfig) -> Vec<AgentLaunch> {
+        TerminalAgent::ALL
+            .into_iter()
+            .map(AgentLaunch::Builtin)
+            .chain(
+                AgentProfile::all(config)
+                    .into_iter()
+                    .map(AgentLaunch::Profile),
+            )
+            .collect()
+    }
+
+    pub fn visible(config: &PaneFlowConfig) -> Vec<AgentLaunch> {
+        TerminalAgent::visible(config)
+            .into_iter()
+            .map(AgentLaunch::Builtin)
+            .chain(
+                AgentProfile::all(config)
+                    .into_iter()
+                    .map(AgentLaunch::Profile),
+            )
+            .collect()
+    }
+
+    pub fn agent(&self) -> TerminalAgent {
+        match self {
+            AgentLaunch::Builtin(agent) => *agent,
+            AgentLaunch::Profile(profile) => profile.agent,
+        }
+    }
+
+    pub fn label(&self) -> String {
+        match self {
+            AgentLaunch::Builtin(agent) => agent.display_name().to_string(),
+            AgentLaunch::Profile(profile) => profile.name.clone(),
+        }
+    }
+
+    pub fn key(&self) -> String {
+        match self {
+            AgentLaunch::Builtin(agent) => agent.tag().to_string(),
+            AgentLaunch::Profile(profile) => format!("profile-{}", profile.name),
+        }
+    }
+
+    pub fn is_installed(&self) -> bool {
+        self.agent().is_installed()
+    }
+
+    pub fn launch_command(&self, config: &PaneFlowConfig) -> String {
+        match self {
+            AgentLaunch::Builtin(agent) => agent.launch_command(config),
+            AgentLaunch::Profile(profile) => profile.launch_command(config),
+        }
+    }
+
+    pub fn process_env(&self) -> Option<HashMap<String, String>> {
+        match self {
+            AgentLaunch::Builtin(_) => None,
+            AgentLaunch::Profile(profile) => {
+                Some(profile.process_env()).filter(|env| !env.is_empty())
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -632,5 +920,121 @@ mod tests {
         let cfg = PaneFlowConfig::default();
         assert_eq!(TerminalAgent::Kiro.command(&cfg), "kiro-cli chat");
         assert_eq!(TerminalAgent::Openclaw.command(&cfg), "openclaw tui");
+    }
+
+    fn profile_entry(name: &str, agent: &str) -> AgentProfileConfig {
+        AgentProfileConfig {
+            name: name.to_string(),
+            agent: agent.to_string(),
+            env: BTreeMap::from([(
+                "CLAUDE_CONFIG_DIR".to_string(),
+                "~/.claude-perso".to_string(),
+            )]),
+            args: vec!["--model".to_string(), "opus".to_string()],
+        }
+    }
+
+    #[test]
+    fn profile_launch_command_extends_base_agent_and_declares_it() {
+        let config = PaneFlowConfig {
+            claude_code_bypass_permissions: Some(true),
+            ..PaneFlowConfig::default()
+        };
+        let profile =
+            AgentProfile::from_config(&profile_entry("Claude perso", "claude_code")).unwrap();
+        let command = profile.launch_command(&config);
+        assert!(
+            command.ends_with("claude --permission-mode bypassPermissions --model opus"),
+            "{command}"
+        );
+        assert_eq!(
+            TerminalAgent::from_launch_command(&command),
+            Some(TerminalAgent::ClaudeCode)
+        );
+    }
+
+    #[test]
+    fn profile_rejects_unknown_agent_blank_name_and_unsafe_tokens() {
+        assert!(AgentProfile::from_config(&profile_entry("x", "claude")).is_err());
+        assert!(AgentProfile::from_config(&profile_entry("  ", "claude_code")).is_err());
+        let mut bad_arg = profile_entry("x", "claude_code");
+        bad_arg.args = vec!["--model opus; rm -rf /".to_string()];
+        assert!(AgentProfile::from_config(&bad_arg).is_err());
+        let mut bad_env = profile_entry("x", "claude_code");
+        bad_env.env = BTreeMap::from([("1BAD KEY".to_string(), "v".to_string())]);
+        assert!(AgentProfile::from_config(&bad_env).is_err());
+    }
+
+    #[test]
+    fn invalid_profiles_are_skipped_not_fatal() {
+        let config = PaneFlowConfig {
+            agent_profiles: vec![profile_entry("Good", "codex"), profile_entry("Bad", "nope")],
+            ..PaneFlowConfig::default()
+        };
+        let profiles = AgentProfile::all(&config);
+        assert_eq!(profiles.len(), 1);
+        assert_eq!(profiles[0].agent, TerminalAgent::Codex);
+        assert_eq!(
+            AgentLaunch::all(&config).len(),
+            TerminalAgent::ALL.len() + 1
+        );
+    }
+
+    #[test]
+    fn profile_env_expands_leading_tilde_only() {
+        let home = std::path::Path::new("/home/u");
+        assert_eq!(
+            expand_home("~/.claude-perso", Some(home)),
+            home.join(".claude-perso").display().to_string()
+        );
+        assert_eq!(expand_home("~", Some(home)), "/home/u");
+        assert_eq!(expand_home("~user/x", Some(home)), "~user/x");
+        assert_eq!(expand_home("/abs/~/x", Some(home)), "/abs/~/x");
+        assert_eq!(expand_home("~/x", None), "~/x");
+    }
+
+    #[test]
+    fn profile_keeps_name_env_and_args_from_config() {
+        let entry = profile_entry("  Claude perso ", "claude_code");
+        let profile = AgentProfile::from_config(&entry).unwrap();
+        assert_eq!(profile.name, "Claude perso");
+        assert_eq!(profile.agent, TerminalAgent::ClaudeCode);
+        assert_eq!(profile.env, entry.env);
+        assert_eq!(profile.args, entry.args);
+    }
+
+    #[test]
+    fn parse_version_takes_the_first_dotted_number() {
+        assert_eq!(parse_version("2.1.0 (Claude Code)"), Some("2.1.0".into()));
+        assert_eq!(parse_version("codex-cli 0.58.0"), Some("0.58.0".into()));
+        assert_eq!(
+            parse_version("v1.2.4-beta.1\n"),
+            Some("1.2.4-beta.1".into())
+        );
+        assert_eq!(
+            parse_version("Gemini CLI version: 0.22.1,"),
+            Some("0.22.1".into())
+        );
+        assert_eq!(parse_version("no numbers here"), None);
+        assert_eq!(parse_version("build 20260908"), None);
+    }
+
+    #[test]
+    fn primary_and_secondary_agents_partition_all() {
+        let mut seen: Vec<TerminalAgent> = TerminalAgent::PRIMARY.to_vec();
+        seen.extend(TerminalAgent::secondary());
+        assert_eq!(seen.len(), TerminalAgent::ALL.len());
+        for agent in TerminalAgent::ALL {
+            assert!(seen.contains(&agent));
+        }
+    }
+
+    #[test]
+    fn visibility_config_key_matches_is_visible_field() {
+        for agent in TerminalAgent::ALL {
+            let json = serde_json::json!({ agent.visibility_config_key(): false });
+            let config: PaneFlowConfig = serde_json::from_value(json).unwrap();
+            assert!(!agent.is_visible(&config), "{}", agent.display_name());
+        }
     }
 }

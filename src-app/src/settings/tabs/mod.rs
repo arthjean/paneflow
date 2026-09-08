@@ -1,4 +1,4 @@
-pub mod ai_agent;
+pub mod agents;
 pub mod appearance;
 pub mod general;
 pub mod mcp;

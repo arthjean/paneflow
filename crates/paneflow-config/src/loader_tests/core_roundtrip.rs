@@ -64,6 +64,7 @@ fn test_serialization_roundtrip() {
         agent_panel: None,
         external_editor: None,
         tool_permissions: HashMap::new(),
+        agent_profiles: Vec::new(),
     };
 
     let json = serde_json::to_string_pretty(&config).unwrap();

@@ -410,6 +410,12 @@
       "additionalProperties": { "$ref": "#/definitions/toolPermissionsEntry" },
       "default": {}
     },
+    "agent_profiles": {
+      "type": "array",
+      "description": "Custom launcher entries. Each profile launches one of the built-in agents with extra environment variables and arguments, for example a second Claude Code account through CLAUDE_CONFIG_DIR. Profiles appear in the pane palette and the worktree launch pad next to the built-in agents and inherit the base agent's status tracking, hooks, and sessions.",
+      "items": { "$ref": "#/definitions/agentProfile" },
+      "default": []
+    },
     "telemetry": {
       "type": ["object", "null"],
       "description": "Opt-in desktop telemetry consent. The first-run consent modal only appears when 'enabled' is unanswered.",
@@ -423,6 +429,36 @@
     }
   },
   "definitions": {
+    "agentProfile": {
+      "type": "object",
+      "required": ["name", "agent"],
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "\\S",
+          "description": "Label shown in the launcher."
+        },
+        "agent": {
+          "type": "string",
+          "enum": ["claude_code", "codex", "opencode", "pi", "hermes", "grok", "amp", "cursor", "gemini", "kiro", "antigravity", "copilot", "codebuddy", "factory", "qoder", "openclaw"],
+          "description": "Tag of the built-in agent this profile launches."
+        },
+        "env": {
+          "type": "object",
+          "additionalProperties": { "type": "string" },
+          "propertyNames": { "pattern": "^[A-Za-z_][A-Za-z0-9_]*$" },
+          "description": "Environment variables set on the agent process, not on the shell line. A value starting with ~/ expands to the home directory.",
+          "default": {}
+        },
+        "args": {
+          "type": "array",
+          "items": { "type": "string", "pattern": "^[A-Za-z0-9._=-]+$" },
+          "description": "Extra arguments appended after the base agent's own flags. Each token must be a plain shell word: letters, digits, '-', '_', '.', '='.",
+          "default": []
+        }
+      }
+    },
     "profileConfig": {
       "type": "object",
       "additionalProperties": false,
