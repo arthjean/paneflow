@@ -1,0 +1,58 @@
+--- a/crates/gpui/src/window/a11y.rs
++++ b/crates/gpui/src/window/a11y.rs
+@@ -356,6 +356,18 @@
+         pushed
+     }
+ 
++    #[allow(missing_docs)]
++    pub fn set_active_descendant(&mut self, id: NodeId) -> bool {
++        if id == self.parent_id
++            || !self.nodes.node_is_focused(self.parent_id)
++            || !self.nodes.has_node(id)
++        {
++            return false;
++        }
++        self.nodes.set_active_descendant(id);
++        true
++    }
++
+     /// A mutable reference to the parent node.
+     pub fn parent_node(&mut self) -> &mut accesskit::Node {
+         self.nodes
+@@ -633,7 +645,7 @@
+ mod tests {
+     // Import specific items rather than glob-importing `super`, which would pull
+     // in gpui's own `test` attribute macro and shadow the standard one.
+-    use super::{A11y, A11yNodeBuilder, ROOT_NODE_ID};
++    use super::{A11y, A11yNodeBuilder, A11ySubtreeBuilder, ROOT_NODE_ID};
+     use crate::FocusId;
+     use accesskit::{NodeId, Role};
+     use std::sync::{Arc, atomic::AtomicBool};
+@@ -652,6 +664,27 @@
+         let mut a11y = A11y::new(Arc::new(AtomicBool::new(true)), false, None);
+         a11y.begin_frame();
+         a11y
++    }
++
++    #[test]
++    fn synthetic_focus_requires_a_focused_parent_and_existing_child() {
++        for focused in [false, true] {
++            let mut nodes = new_builder();
++            let parent = accesskit::NodeId(1);
++            let child = accesskit::NodeId(2);
++            assert!(nodes.push(parent, test_node()));
++            if focused {
++                nodes.set_focus(parent);
++            }
++            let mut subtree = A11ySubtreeBuilder::new(parent, &mut nodes);
++            assert!(!subtree.set_active_descendant(child));
++            assert!(subtree.push_child(child, test_node()));
++            assert!(!subtree.set_active_descendant(parent));
++            assert_eq!(subtree.set_active_descendant(child), focused);
++            nodes.pop();
++            let update = nodes.finalize();
++            assert_eq!(update.focus, if focused { child } else { ROOT_NODE_ID });
++        }
+     }
+ 
+     #[test]

@@ -15,8 +15,6 @@ dependencies = [
 [[package]]
 name = "accesskit_atspi_common"
 version = "0.18.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1e8c61bee90b42a772d39d06a740207dc71a4e780004ace1db8d99fb1baaa954"
 dependencies = [
  "accesskit",
  "accesskit_consumer 0.36.0",
