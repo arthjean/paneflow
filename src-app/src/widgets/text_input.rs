@@ -697,7 +697,7 @@ impl Render for TextInput {
                 input: cx.entity(),
                 caret_color: ui.text,
                 selection_color: selection,
-                placeholder_color: ui.text,
+                placeholder_color: crate::theme::readable_placeholder(&ui),
             })
     }
 }
@@ -730,5 +730,24 @@ mod tests {
             TextInput::byte_range_from_utf16_in_text(text, &(0..99)),
             0..2
         );
+    }
+
+    #[test]
+    fn the_placeholder_stays_readable_without_impersonating_typed_content() {
+        for (name, theme) in crate::theme::THEMES {
+            let ui = crate::theme::ui_colors_with(&theme());
+            let placeholder = crate::theme::readable_placeholder(&ui);
+            for background in [ui.base, ui.surface, ui.overlay] {
+                assert!(
+                    crate::theme::contrast_ratio(placeholder, background)
+                        >= crate::theme::WCAG_AA_TEXT_RATIO,
+                    "{name}: placeholder contrast"
+                );
+            }
+            assert!(
+                crate::theme::contrast_ratio(placeholder, ui.text) > 1.0,
+                "{name}: placeholder is indistinguishable from typed content"
+            );
+        }
     }
 }

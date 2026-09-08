@@ -2385,30 +2385,19 @@ mod tests {
 
     #[test]
     fn browser_chrome_meets_wcag_contrast_on_all_bundled_themes() {
-        fn luminance(color: gpui::Hsla) -> f64 {
-            let c: gpui::Rgba = color.into();
-            let linear = |x: f32| {
-                let x = f64::from(x);
-                if x <= 0.04045 {
-                    x / 12.92
-                } else {
-                    ((x + 0.055) / 1.055).powf(2.4)
-                }
-            };
-            0.2126 * linear(c.r) + 0.7152 * linear(c.g) + 0.0722 * linear(c.b)
-        }
         for (name, theme) in crate::theme::THEMES {
             let ui = colors::chrome_colors(crate::theme::ui_colors_with(&theme()));
-            for (label, foreground, minimum) in [
-                ("text", ui.text, 4.5),
-                ("muted", ui.muted, 4.5),
-                ("error", ui.vc_deleted, 4.5),
+            for (label, foreground) in [
+                ("text", ui.text),
+                ("muted", ui.muted),
+                ("error", ui.vc_deleted),
             ] {
                 for background in [ui.base, ui.surface, ui.overlay] {
-                    let a = luminance(foreground);
-                    let b = luminance(background);
-                    let ratio = (a.max(b) + 0.05) / (a.min(b) + 0.05);
-                    assert!(ratio >= minimum, "{name} {label}: {ratio}");
+                    let ratio = crate::theme::contrast_ratio(foreground, background);
+                    assert!(
+                        ratio >= crate::theme::WCAG_AA_TEXT_RATIO,
+                        "{name} {label}: {ratio}"
+                    );
                 }
             }
         }

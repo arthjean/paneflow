@@ -522,6 +522,53 @@ impl UiColors {
     }
 }
 
+pub const WCAG_AA_TEXT_RATIO: f64 = 4.5;
+
+pub fn relative_luminance(color: Hsla) -> f64 {
+    let channels: Rgba = color.into();
+    let linear = |value: f32| {
+        let value = f64::from(value);
+        if value <= 0.04045 {
+            value / 12.92
+        } else {
+            ((value + 0.055) / 1.055).powf(2.4)
+        }
+    };
+    0.2126 * linear(channels.r) + 0.7152 * linear(channels.g) + 0.0722 * linear(channels.b)
+}
+
+pub fn contrast_ratio(foreground: Hsla, background: Hsla) -> f64 {
+    let foreground = relative_luminance(foreground);
+    let background = relative_luminance(background);
+    (foreground.max(background) + 0.05) / (foreground.min(background) + 0.05)
+}
+
+pub fn readable_on(mut color: Hsla, backgrounds: [Hsla; 3], ratio: f64) -> Hsla {
+    let direction = if relative_luminance(backgrounds[0]) > 0.5 {
+        -0.01
+    } else {
+        0.01
+    };
+    for _ in 0..100 {
+        if backgrounds
+            .iter()
+            .all(|background| contrast_ratio(color, *background) >= ratio)
+        {
+            break;
+        }
+        color.l = (color.l + direction).clamp(0.0, 1.0);
+    }
+    color
+}
+
+pub fn readable_placeholder(ui: &UiColors) -> Hsla {
+    readable_on(
+        ui.muted,
+        [ui.base, ui.surface, ui.overlay],
+        WCAG_AA_TEXT_RATIO,
+    )
+}
+
 pub fn ui_colors() -> UiColors {
     let theme = super::watcher::active_theme();
     ui_colors_with(&theme)

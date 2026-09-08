@@ -8,7 +8,10 @@ pub use builtin::{
     claude_light, cursor_dark, cursor_light, paneflow_dark, paneflow_light, preset_by_name,
     preset_for_theme, theme_by_name, theme_name_is_light, vercel_dark, vercel_light,
 };
-pub use model::{DiffColors, SyntaxPalette, TerminalTheme, UiColors, ui_colors, ui_colors_with};
+pub use model::{
+    DiffColors, SyntaxPalette, TerminalTheme, UiColors, WCAG_AA_TEXT_RATIO, contrast_ratio,
+    readable_on, readable_placeholder, ui_colors, ui_colors_with,
+};
 pub use signal::{
     ThemeSignal, ThemeSignalGlobal, install_theme_signal, publish_theme_generation, theme_signal,
 };
