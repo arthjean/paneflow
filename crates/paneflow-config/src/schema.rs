@@ -91,6 +91,12 @@ mod tests {
             automation: AutomationConfig {
                 tab_auto_naming: Some(true),
             },
+            worktrees: WorktreesConfig {
+                dir: Some("/tmp/worktrees".to_string()),
+                auto_remove: Some(true),
+                keep_limit: Some(15),
+                for_new_branches: Some(true),
+            },
             line_height: Some(1.0),
             cell_width: Some(1.0),
             font_family: Some("Geist Mono".to_string()),
@@ -187,6 +193,11 @@ mod tests {
             object_keys(&serialized["automation"]),
             object_keys(&schema["properties"]["automation"]["properties"]),
             "AutomationConfig and public JSON Schema drifted"
+        );
+        assert_eq!(
+            object_keys(&serialized["worktrees"]),
+            object_keys(&schema["properties"]["worktrees"]["properties"]),
+            "WorktreesConfig and public JSON Schema drifted"
         );
         assert_eq!(
             object_keys(&serialized["terminal"]),

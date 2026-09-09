@@ -125,6 +125,9 @@ impl PaneFlowApp {
         if !nested && key == "editor" {
             self.apply_editor_display(cx);
         }
+        if !nested && key == "worktrees" {
+            crate::workspace::worktree::set_worktrees_root(self.cached_config.worktrees.dir_path());
+        }
         if default_shell_changed {
             self.handle_default_shell_changed(cx);
         }

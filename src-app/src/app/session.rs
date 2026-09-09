@@ -1331,12 +1331,21 @@ mod tests {
     #[test]
     fn restored_managed_worktree_must_match_paneflow_worktree_dir() {
         let tmp = tempfile::tempdir().expect("tempdir");
+        let _root =
+            crate::workspace::worktree::test_support::scoped_root(tmp.path().join("worktrees"));
         let repo_root = tmp.path().join("repo");
         let branch = "feat/session-hardening";
         let owned_path = crate::workspace::worktree::worktree_dir(&repo_root, branch);
+        let git_dir = repo_root.join(".git/worktrees/feat-session-hardening");
         std::fs::create_dir_all(&owned_path).expect("owned worktree dir");
+        std::fs::create_dir_all(&git_dir).expect("worktree git dir");
         std::fs::write(
-            crate::workspace::worktree::owner_marker_path(&owned_path),
+            owned_path.join(".git"),
+            format!("gitdir: {}\n", git_dir.display()),
+        )
+        .expect("gitdir pointer");
+        std::fs::write(
+            crate::workspace::worktree::owner_marker_path(&owned_path).expect("marker path"),
             "owner=paneflow\n",
         )
         .expect("owner marker");

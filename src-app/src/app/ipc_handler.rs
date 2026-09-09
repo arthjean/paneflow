@@ -1163,6 +1163,7 @@ impl PaneFlowApp {
             self.effective_shortcuts = keybindings::effective_shortcuts(&config.shortcuts);
             crate::theme::invalidate_theme_cache();
             self.reconcile_telemetry_consent(&config, cx);
+            crate::workspace::worktree::set_worktrees_root(config.worktrees.dir_path());
             self.cached_config = config;
             self.theme_mode = theme_mode;
             crate::ui_primitives::set_reduce_motion(self.cached_config.reduce_motion_enabled());
@@ -2139,7 +2140,7 @@ impl PaneFlowApp {
                             self.unwatch_git_dir(&dir);
                         }
                         let worktrees = std::mem::take(&mut self.workspaces[idx].managed_worktrees);
-                        Self::spawn_worktree_teardown(worktrees, cx);
+                        self.spawn_worktree_teardown(worktrees, cx);
                         self.workspaces.remove(idx);
                         if self.active_idx >= self.workspaces.len() {
                             self.active_idx = self.workspaces.len() - 1;

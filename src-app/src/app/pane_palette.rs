@@ -10,9 +10,10 @@ use crate::agent_launcher::AgentLaunch;
 use crate::app::workspace_ops::SurfaceLaunch;
 use crate::layout::SplitDirection;
 use crate::pane::Pane;
-use crate::settings::components::{select_item, select_menu, with_alpha};
+use crate::settings::components::{menu_divider_color, select_item, select_menu, with_alpha};
 use crate::ui_primitives::squircle::squircle_fill;
 use crate::ui_primitives::{ROW_RADIUS, squircle_skin};
+use crate::widgets::text_input::TextInput;
 
 pub(crate) const PALETTE_TAB_TITLE: &str = "New pane";
 
@@ -113,6 +114,13 @@ impl Preset {
     }
 }
 
+pub(crate) struct NewBranchDraft {
+    pub(crate) name: Entity<TextInput>,
+    pub(crate) base: Option<String>,
+    pub(crate) base_open: bool,
+    pub(crate) worktree: bool,
+}
+
 pub(crate) struct PanePaletteState {
     pub(crate) ws_id: u64,
     pub(crate) placement: PalettePlacement,
@@ -121,6 +129,8 @@ pub(crate) struct PanePaletteState {
     pub(crate) restore_focus: Option<FocusHandle>,
     pub(crate) scroll: ScrollHandle,
     pub(crate) branch_picker_open: bool,
+    pub(crate) new_branch: Option<NewBranchDraft>,
+    pub(crate) pending_launch: Option<usize>,
 }
 
 impl PaneFlowApp {
@@ -188,6 +198,8 @@ impl PaneFlowApp {
             restore_focus,
             scroll: ScrollHandle::new(),
             branch_picker_open: false,
+            new_branch: None,
+            pending_launch: None,
         });
         let tab_idx = self.workspaces[ws_idx].active_tab_idx();
         self.focus_workspace_tab(ws_idx, tab_idx, window, cx);
@@ -215,6 +227,8 @@ impl PaneFlowApp {
             restore_focus: None,
             scroll: ScrollHandle::new(),
             branch_picker_open: false,
+            new_branch: None,
+            pending_launch: None,
         });
         self.pending_palette_focus = true;
         cx.notify();
@@ -298,7 +312,12 @@ impl PaneFlowApp {
         }
     }
 
-    fn pane_palette_launch(&mut self, idx: usize, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn pane_palette_launch(
+        &mut self,
+        idx: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let Some(ws_idx) = self.pane_palette_ws_idx() else {
             self.pane_palette_set_error("This project is no longer open", cx);
             return;
@@ -312,6 +331,9 @@ impl PaneFlowApp {
         };
         if let Err(message) = preset.ensure_launchable() {
             self.pane_palette_set_error(message, cx);
+            return;
+        }
+        if self.pane_palette_create_branch_then_launch(idx, cx) {
             return;
         }
         let launch = SurfaceLaunch {
@@ -360,6 +382,16 @@ impl PaneFlowApp {
             .pane_palette
             .as_ref()
             .is_some_and(|palette| palette.branch_picker_open);
+        let base_open = self.pane_palette.as_ref().is_some_and(|palette| {
+            palette
+                .new_branch
+                .as_ref()
+                .is_some_and(|draft| draft.base_open)
+        });
+        let draft_open = self
+            .pane_palette
+            .as_ref()
+            .is_some_and(|palette| palette.new_branch.is_some());
         match event.keystroke.key.as_str() {
             "escape" if picker_open => {
                 if let Some(palette) = self.pane_palette.as_mut() {
@@ -367,6 +399,17 @@ impl PaneFlowApp {
                 }
                 cx.notify();
             }
+            "escape" if base_open => {
+                if let Some(draft) = self
+                    .pane_palette
+                    .as_mut()
+                    .and_then(|palette| palette.new_branch.as_mut())
+                {
+                    draft.base_open = false;
+                }
+                cx.notify();
+            }
+            "escape" if draft_open => self.pane_palette_close_new_branch(window, cx),
             "escape" => self.close_pane_palette(window, cx),
             "enter" => {
                 if selected < len {
@@ -381,6 +424,114 @@ impl PaneFlowApp {
             }
             _ => {}
         }
+    }
+
+    pub(crate) fn pane_palette_open_new_branch(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(palette) = self.pane_palette.as_ref() else {
+            return;
+        };
+        if palette.new_branch.is_some() {
+            return;
+        }
+        let base = self
+            .pane_palette_tab(palette)
+            .map(|(ws_idx, _)| self.workspace_checkout_label(ws_idx))
+            .filter(|label| !label.is_empty() && label != "Project root");
+        let name = cx.new(|cx| TextInput::new("", "Branch name (optional)", cx));
+        let focus = name.read(cx).focus_handle.clone();
+        if let Some(palette) = self.pane_palette.as_mut() {
+            palette.branch_picker_open = false;
+            palette.error = None;
+            palette.new_branch = Some(NewBranchDraft {
+                name,
+                base,
+                base_open: false,
+                worktree: self.cached_config.worktrees.new_branches_use_worktrees(),
+            });
+        }
+        window.focus(&focus, cx);
+        cx.notify();
+    }
+
+    fn pane_palette_close_new_branch(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(palette) = self.pane_palette.as_mut() {
+            palette.new_branch = None;
+            palette.error = None;
+        }
+        window.focus(&self.pane_palette_focus, cx);
+        cx.notify();
+    }
+
+    fn pane_palette_create_branch_then_launch(
+        &mut self,
+        preset_idx: usize,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(palette) = self.pane_palette.as_ref() else {
+            return false;
+        };
+        let Some(draft) = palette.new_branch.as_ref() else {
+            return false;
+        };
+        let Some((ws_idx, tab_idx)) = self.pane_palette_tab(palette) else {
+            return false;
+        };
+        let branch = draft.name.read(cx).value().trim().to_string();
+        let base = draft.base.clone();
+        let worktree = draft.worktree;
+        if let Some(palette) = self.pane_palette.as_mut() {
+            palette.error = None;
+        }
+        if worktree {
+            self.create_branch_for_tab(ws_idx, tab_idx, branch, base, Some(preset_idx), cx);
+        } else {
+            self.switch_checkout_for_tab(ws_idx, tab_idx, branch, base, Some(preset_idx), cx);
+        }
+        true
+    }
+
+    pub(crate) fn pane_palette_branch_created(
+        &mut self,
+        tab_id: u64,
+        launch_preset: Option<usize>,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(palette) = self.pane_palette.as_mut() else {
+            return;
+        };
+        if !matches!(palette.placement, PalettePlacement::Tab { tab_id: id } if id == tab_id) {
+            return;
+        }
+        palette.new_branch = None;
+        palette.error = None;
+        palette.pending_launch = launch_preset;
+        cx.notify();
+    }
+
+    pub(crate) fn pane_palette_branch_failed(
+        &mut self,
+        tab_id: u64,
+        message: String,
+        cx: &mut Context<Self>,
+    ) {
+        let owns_tab = self.pane_palette.as_ref().is_some_and(|palette| {
+            matches!(palette.placement, PalettePlacement::Tab { tab_id: id } if id == tab_id)
+        });
+        if owns_tab {
+            self.pane_palette_set_error(message, cx);
+        } else {
+            self.show_toast(message, cx);
+        }
+    }
+
+    pub(crate) fn take_pane_palette_pending_launch(&mut self) -> Option<usize> {
+        self.pane_palette
+            .as_mut()
+            .and_then(|palette| palette.pending_launch.take())
     }
 
     fn pane_palette_select(&mut self, idx: usize, cx: &mut Context<Self>) {
@@ -401,13 +552,49 @@ impl PaneFlowApp {
             .map(|ws_idx| self.pane_palette_presets(ws_idx))
             .unwrap_or_default();
 
-        let title = div()
+        let draft_open = palette.new_branch.is_some();
+        let mut title = div()
             .flex_none()
+            .relative()
+            .w(px(PICKER_WIDTH))
             .pb(px(14.))
+            .flex()
+            .justify_center()
             .text_size(px(13.))
             .font_weight(gpui::FontWeight::SEMIBOLD)
             .text_color(ui.text)
-            .child(PALETTE_TAB_TITLE);
+            .child(if draft_open {
+                "New branch"
+            } else {
+                PALETTE_TAB_TITLE
+            });
+        if draft_open {
+            title = title.child(
+                div()
+                    .id("palette-new-branch-back")
+                    .absolute()
+                    .left(px(0.))
+                    .top(px(-2.))
+                    .size(px(20.))
+                    .rounded(px(6.))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .cursor(CursorStyle::PointingHand)
+                    .hover(|style| style.bg(with_alpha(ui.text, 0.06)))
+                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                    .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+                        this.pane_palette_close_new_branch(window, cx);
+                        cx.stop_propagation();
+                    }))
+                    .child(
+                        svg()
+                            .size(px(12.))
+                            .path("icons/chevron-left.svg")
+                            .text_color(ui.muted),
+                    ),
+            );
+        }
 
         let mut buttons = div()
             .id("pane-palette-list")
@@ -526,6 +713,9 @@ impl PaneFlowApp {
         let current = current
             .or(on_branch)
             .unwrap_or_else(|| self.workspace_checkout_label(ws_idx));
+        if let Some(draft) = palette.new_branch.as_ref() {
+            return Some(self.render_new_branch_form(draft, ws_idx, ui, cx));
+        }
         let open = palette.branch_picker_open;
         let fill = with_alpha(ui.text, 0.05);
 
@@ -594,20 +784,286 @@ impl PaneFlowApp {
                         }
                     }),
                 );
+            menu = menu
+                .child(
+                    select_item("palette-branch-new", false, ui)
+                        .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+                            this.pane_palette_open_new_branch(window, cx);
+                            cx.stop_propagation();
+                        }))
+                        .child(
+                            svg()
+                                .size(px(12.))
+                                .flex_none()
+                                .path("icons/plus.svg")
+                                .text_color(ui.text),
+                        )
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .text_color(ui.text)
+                                .child("New branch…"),
+                        ),
+                )
+                .child(
+                    div()
+                        .h(px(1.))
+                        .mx(px(8.))
+                        .my(px(4.))
+                        .bg(menu_divider_color(ui)),
+                );
             for option in options {
                 menu =
                     menu.child(self.render_palette_branch_option(option, ws_idx, tab_idx, ui, cx));
             }
-            trigger.child(deferred(menu).with_priority(3))
+            trigger.child(
+                deferred(crate::ui_primitives::menu_reveal(
+                    "palette-branch-menu-reveal",
+                    menu,
+                ))
+                .with_priority(3),
+            )
         });
 
-        Some(
-            div()
-                .flex_none()
-                .pb(px(10.))
-                .child(trigger)
-                .into_any_element(),
-        )
+        Some(crate::ui_primitives::menu_reveal(
+            "palette-branch-row-reveal",
+            div().flex_none().pb(px(10.)).child(trigger),
+        ))
+    }
+
+    fn render_new_branch_form(
+        &self,
+        draft: &NewBranchDraft,
+        ws_idx: usize,
+        ui: crate::theme::UiColors,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let base_label = draft.base.clone().unwrap_or_else(|| "HEAD".to_string());
+        let base_open = draft.base_open;
+        let worktree = draft.worktree;
+        let branches: Vec<String> = self.workspace_branches(ws_idx).to_vec();
+
+        let branch_field = div()
+            .h(px(28.))
+            .w(px(PICKER_WIDTH))
+            .px(px(8.))
+            .flex()
+            .items_center()
+            .gap(px(6.))
+            .rounded(px(6.))
+            .bg(ui.subtle)
+            .child(
+                svg()
+                    .size(px(11.))
+                    .flex_none()
+                    .path("icons/git-branch-sidebar.svg")
+                    .text_color(ui.muted),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .text_size(px(11.))
+                    .text_color(ui.text)
+                    .child(draft.name.clone()),
+            )
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation());
+
+        let mut base_trigger = div()
+            .id("palette-new-branch-base")
+            .relative()
+            .h(px(28.))
+            .w(px(PICKER_WIDTH))
+            .mt(px(4.))
+            .px(px(8.))
+            .flex()
+            .items_center()
+            .gap(px(6.))
+            .rounded(px(6.))
+            .when(base_open, |row| row.bg(with_alpha(ui.text, 0.05)))
+            .hover(|style| style.bg(with_alpha(ui.text, 0.05)))
+            .child(
+                div()
+                    .flex_none()
+                    .text_size(px(11.))
+                    .text_color(ui.muted)
+                    .child("from"),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .overflow_x_hidden()
+                    .whitespace_nowrap()
+                    .text_ellipsis()
+                    .text_size(px(11.))
+                    .text_color(ui.text)
+                    .child(base_label.clone()),
+            )
+            .child(
+                svg()
+                    .size(px(11.))
+                    .flex_none()
+                    .path("icons/chevron-down.svg")
+                    .text_color(ui.muted),
+            )
+            .cursor(CursorStyle::PointingHand)
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
+                if let Some(draft) = this
+                    .pane_palette
+                    .as_mut()
+                    .and_then(|palette| palette.new_branch.as_mut())
+                {
+                    draft.base_open = !base_open;
+                    cx.notify();
+                }
+            }));
+        if base_open {
+            let mut menu = select_menu("palette-new-branch-base-menu", ui)
+                .absolute()
+                .top(px(32.))
+                .left(px(0.))
+                .w(px(PICKER_WIDTH))
+                .occlude()
+                .on_mouse_up_out(
+                    MouseButton::Left,
+                    cx.listener(|this, _: &MouseUpEvent, _w, cx| {
+                        if let Some(draft) = this
+                            .pane_palette
+                            .as_mut()
+                            .and_then(|palette| palette.new_branch.as_mut())
+                        {
+                            draft.base_open = false;
+                            cx.notify();
+                        }
+                    }),
+                );
+            for branch in branches {
+                let selected = draft.base.as_deref() == Some(branch.as_str());
+                let pick = branch.clone();
+                menu = menu.child(
+                    select_item(
+                        SharedString::from(format!("palette-new-branch-base-{branch}")),
+                        selected,
+                        ui,
+                    )
+                    .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
+                        if let Some(draft) = this
+                            .pane_palette
+                            .as_mut()
+                            .and_then(|palette| palette.new_branch.as_mut())
+                        {
+                            draft.base = Some(pick.clone());
+                            draft.base_open = false;
+                            cx.notify();
+                        }
+                        cx.stop_propagation();
+                    }))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .overflow_x_hidden()
+                            .whitespace_nowrap()
+                            .text_ellipsis()
+                            .text_color(ui.text)
+                            .child(branch),
+                    )
+                    .child(div().w(px(13.)).flex_none().child(if selected {
+                        svg()
+                            .size(px(13.))
+                            .path("icons/check.svg")
+                            .text_color(ui.text)
+                            .into_any_element()
+                    } else {
+                        div().size(px(13.)).into_any_element()
+                    })),
+                );
+            }
+            base_trigger = base_trigger.child(
+                deferred(crate::ui_primitives::menu_reveal(
+                    "palette-new-branch-base-menu-reveal",
+                    menu,
+                ))
+                .with_priority(3),
+            );
+        }
+
+        let worktree_row = div()
+            .id("palette-new-branch-worktree")
+            .h(px(28.))
+            .w(px(PICKER_WIDTH))
+            .px(px(8.))
+            .flex()
+            .items_center()
+            .gap(px(6.))
+            .rounded(px(6.))
+            .hover(|style| style.bg(with_alpha(ui.text, 0.05)))
+            .cursor(CursorStyle::PointingHand)
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
+                if let Some(draft) = this
+                    .pane_palette
+                    .as_mut()
+                    .and_then(|palette| palette.new_branch.as_mut())
+                {
+                    draft.worktree = !worktree;
+                }
+                let mut next = this.cached_config.worktrees.clone();
+                next.for_new_branches = Some(!worktree);
+                this.persist_worktrees(next, cx);
+                cx.stop_propagation();
+            }))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .text_size(px(11.))
+                    .text_color(ui.text)
+                    .child("Worktree"),
+            )
+            .child(
+                div()
+                    .flex_none()
+                    .text_size(px(10.))
+                    .text_color(ui.muted)
+                    .child(if worktree {
+                        "own folder"
+                    } else {
+                        "switch this checkout"
+                    }),
+            )
+            .child(compact_toggle(worktree, ui));
+
+        let form = div()
+            .flex_none()
+            .w(px(PICKER_WIDTH))
+            .pb(px(4.))
+            .flex()
+            .flex_col()
+            .child(branch_field)
+            .child(base_trigger)
+            .child(worktree_row)
+            .child(
+                div()
+                    .h(px(1.))
+                    .mx(px(2.))
+                    .mt(px(12.))
+                    .mb(px(10.))
+                    .bg(menu_divider_color(ui)),
+            )
+            .child(
+                div()
+                    .pb(px(4.))
+                    .px(px(8.))
+                    .text_size(px(10.))
+                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                    .text_color(ui.muted)
+                    .child("Open with"),
+            );
+        crate::ui_primitives::menu_reveal("palette-new-branch-form-reveal", form)
     }
 
     fn render_palette_branch_option(
@@ -729,4 +1185,23 @@ impl PaneFlowApp {
 
         button.into_any_element()
     }
+}
+
+fn compact_toggle(on: bool, ui: crate::theme::UiColors) -> impl IntoElement {
+    let track_bg = if on {
+        gpui::Hsla::from(gpui::rgb(0x339cff))
+    } else {
+        with_alpha(ui.muted, 0.30)
+    };
+    div()
+        .flex_none()
+        .flex()
+        .items_center()
+        .w(px(26.))
+        .h(px(16.))
+        .rounded_full()
+        .px(px(2.))
+        .bg(track_bg)
+        .when(on, |track| track.justify_end())
+        .child(div().size(px(12.)).rounded_full().bg(gpui::white()))
 }

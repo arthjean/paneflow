@@ -32,6 +32,7 @@ pub fn up(client: &impl IpcTransport, file: &str, dry_run: bool) -> Result<i32, 
     let offsets = allocate_port_offsets(&port_refs, port_base, port_is_free)?;
 
     let config = paneflow_config::loader::load_config();
+    worktree::set_worktrees_root(config.worktrees.dir_path());
     let mut panes = Vec::with_capacity(spec.panes.len());
     for (idx, pane) in spec.panes.iter().enumerate() {
         let command = resolve_command(idx, pane, &config)?;
@@ -136,6 +137,7 @@ pub(super) struct WorktreePlan {
     pub(super) path: PathBuf,
     branch: String,
     create: Option<bool>,
+    base: Option<String>,
     copy_env: bool,
     setup: Option<String>,
     setup_timeout: Duration,
@@ -215,6 +217,7 @@ pub(super) fn plan_worktree(idx: usize, pane: &PaneSpec) -> Result<Option<Worktr
         path,
         branch: branch.to_string(),
         create,
+        base: pane.from.clone(),
         copy_env: pane.copy_env.unwrap_or(true),
         setup: pane.setup.clone(),
         setup_timeout: Duration::from_secs(
@@ -348,11 +351,17 @@ pub(super) fn execute_worktree_plan(plan: &WorktreePlan) -> Result<(), CliError>
     let Some(create_branch) = plan.create else {
         return Ok(());
     };
-    worktree::add_worktree(&plan.repo_root, &plan.path, &plan.branch, create_branch)
-        .map_err(|e| CliError::runtime(format!("pane {}: {e}", plan.pane_idx)))?;
+    worktree::add_worktree(
+        &plan.repo_root,
+        &plan.path,
+        &plan.branch,
+        create_branch,
+        plan.base.as_deref(),
+    )
+    .map_err(|e| CliError::runtime(format!("pane {}: {e}", plan.pane_idx)))?;
 
     if plan.copy_env {
-        let copied = worktree::copy_env_files(&plan.repo_root, &plan.path);
+        let copied = worktree::copy_include_files(&plan.repo_root, &plan.path);
         if !copied.is_empty() {
             eprintln!(
                 "pane {}: copied {} into {}",
@@ -603,6 +612,7 @@ mod tests {
             env: None,
             name: None,
             worktree: None,
+            from: None,
             copy_env: None,
             setup: None,
             setup_timeout_secs: None,
@@ -728,6 +738,7 @@ mod tests {
             path: PathBuf::from(path),
             branch: branch.to_string(),
             create: Some(true),
+            base: None,
             copy_env: true,
             setup: None,
             setup_timeout: Duration::from_secs(1),
@@ -759,6 +770,8 @@ mod tests {
 
     #[test]
     fn slug_collision_branches_move_to_hashed_fallback() {
+        let _root =
+            worktree::test_support::scoped_root(PathBuf::from("/home/a/paneflow-worktrees"));
         let tmp = tempfile::tempdir().expect("tempdir");
         let repo_root = tmp.path().join("repo");
         std::fs::create_dir(&repo_root).expect("repo dir");
@@ -779,6 +792,7 @@ mod tests {
                 path: legacy.clone(),
                 branch: branch_a.to_string(),
                 create: Some(true),
+                base: None,
                 copy_env: true,
                 setup: None,
                 setup_timeout: Duration::from_secs(1),
@@ -790,6 +804,7 @@ mod tests {
                 path: legacy.clone(),
                 branch: branch_b.to_string(),
                 create: Some(true),
+                base: None,
                 copy_env: true,
                 setup: None,
                 setup_timeout: Duration::from_secs(1),

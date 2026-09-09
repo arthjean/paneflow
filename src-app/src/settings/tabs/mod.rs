@@ -5,3 +5,4 @@ pub mod mcp;
 pub mod shortcuts;
 pub mod terminal;
 pub mod workspaces;
+pub mod worktrees;

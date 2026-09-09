@@ -620,7 +620,8 @@ bar color, padding 8 by 6, small text, shown after 800 ms through
 
 Launch Pad is the one modal with a filled accent button: 520 wide, radius
 10, an `Agent` list with disabled rows marked `not installed`, a `New
-branch` field, an optional `Prompt` field, and a footer hint
+branch` field, a `From` select listing the repository's branches, an optional
+`Prompt` field, and a footer hint
 `Enter creates · Tab switches fields · Esc cancels`. The Composer dims the
 whole pane under a 0.25 black scrim and docks a bordered panel at the bottom:
 a `Composer` label at 11 px Medium, then 10 px chips on radius 4 for the
@@ -631,7 +632,22 @@ Enter submits, Escape closes. The pane palette fills an empty tab named
 `New pane` with a centered 260 px column: a 13 px Semibold title, an
 optional branch row, one 34 px row per preset with its 14 px agent mark and
 a `not installed` marker at 10 px where the binary is missing, and an inline
-error in `vc_deleted` at 11 px.
+error in `vc_deleted` at 11 px. The branch row's menu opens with a
+`New branch…` item above a hairline; picking it retitles the column `New
+branch` with a 20 px back chevron at its left edge and replaces the row with
+an unlabeled form: a 28 px `subtle` field on radius 6 with an 11 px branch
+mark and the `Branch name (optional)` input, under it a 28 px quiet row
+`from <branch>` with a chevron (filled at `text` 0.05 on hover or while its
+select of the repository's branches is open, defaulting to the project's
+checkout), a `Worktree` row of the same shape with a 26 by 16 toggle and a
+10 px muted caption (`own folder`, or `switch this checkout` when off,
+persisted as `worktrees.for_new_branches`), a hairline, and the eyebrow
+`Open with` over the presets. Escape or the chevron folds the form back; a preset
+creates the branch and its worktree, then opens there. An empty name starts
+a detached checkout at the base. The `Create branch
+here…` prompt that names it is a 420 wide card on the Launch Pad pattern: a
+title, one line of context, the name field, an accent `Create branch`
+button, and the hint `Enter creates · Esc cancels`.
 
 ### 5.8 Feedback
 

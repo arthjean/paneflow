@@ -39,6 +39,8 @@ pub struct PaneFlowConfig {
     #[serde(default, deserialize_with = "lenient_value_or_default")]
     pub automation: AutomationConfig,
     #[serde(default, deserialize_with = "lenient_value_or_default")]
+    pub worktrees: WorktreesConfig,
+    #[serde(default, deserialize_with = "lenient_value_or_default")]
     pub line_height: Option<f32>,
     #[serde(default, deserialize_with = "lenient_value_or_default")]
     pub cell_width: Option<f32>,
@@ -158,6 +160,54 @@ pub struct AutomationConfig {
 impl AutomationConfig {
     pub fn tab_auto_naming_enabled(&self) -> bool {
         self.tab_auto_naming.unwrap_or(false)
+    }
+}
+
+pub const WORKTREES_KEEP_LIMIT_DEFAULT: u32 = 15;
+pub const WORKTREES_KEEP_LIMIT_MAX: u32 = 200;
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct WorktreesConfig {
+    #[serde(default, deserialize_with = "lenient_value_or_default")]
+    pub dir: Option<String>,
+    #[serde(default, deserialize_with = "lenient_value_or_default")]
+    pub auto_remove: Option<bool>,
+    #[serde(default, deserialize_with = "lenient_value_or_default")]
+    pub keep_limit: Option<u32>,
+    #[serde(default, deserialize_with = "lenient_value_or_default")]
+    pub for_new_branches: Option<bool>,
+}
+
+impl WorktreesConfig {
+    pub fn new_branches_use_worktrees(&self) -> bool {
+        self.for_new_branches.unwrap_or(true)
+    }
+
+    pub fn dir_path(&self) -> Option<std::path::PathBuf> {
+        let raw = self.dir.as_deref()?.trim();
+        if raw.is_empty() {
+            return None;
+        }
+        let expanded =
+            if let Some(rest) = raw.strip_prefix("~/").or_else(|| raw.strip_prefix("~\\")) {
+                dirs::home_dir()?.join(rest)
+            } else if raw == "~" {
+                dirs::home_dir()?
+            } else {
+                std::path::PathBuf::from(raw)
+            };
+        expanded.is_absolute().then_some(expanded)
+    }
+
+    pub fn auto_remove_enabled(&self) -> bool {
+        self.auto_remove.unwrap_or(true)
+    }
+
+    pub fn keep_limit(&self) -> u32 {
+        self.keep_limit
+            .unwrap_or(WORKTREES_KEEP_LIMIT_DEFAULT)
+            .min(WORKTREES_KEEP_LIMIT_MAX)
     }
 }
 

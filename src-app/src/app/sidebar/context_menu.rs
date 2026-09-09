@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use gpui::{
     AnyElement, App, ClickEvent, ClipboardItem, Context, CursorStyle, InteractiveElement,
     IntoElement, MouseButton, ParentElement, Pixels, SharedString, Styled, Window, deferred, div,
-    point, prelude::*, px,
+    point, prelude::*, px, svg,
 };
 
 use crate::app::files_tree;
@@ -475,17 +475,31 @@ impl PaneFlowApp {
         );
         let show_worktrees = branches.len() > 1;
         let worktree_rows = if show_worktrees {
-            1. + branches.len() as f32
+            2. + branches.len() as f32
         } else {
             0.
         };
-        let remove_rows = if is_bound { 1. } else { 0. };
+        let detached = self.tab_detached_checkout(ws_idx, tab_idx);
+        let remove_rows = if is_bound { 1. } else { 0. } + if detached.is_some() { 1. } else { 0. };
         let rows = if can_reset_name { 3. } else { 2. } + worktree_rows + remove_rows;
         let menu_height = px(8. + rows * 28.);
         let menu_pos = clamped_context_menu_position(position, px(248.), menu_height, window);
         let close_shortcut = self
             .shortcut_for_action("close_tab")
             .map(|key| SharedString::from(key.to_string()));
+        let create_branch_item = detached.map(|path| {
+            self.render_select_menu_item(
+                "tab-context-create-branch".into(),
+                "Create branch here…",
+                None,
+                ui,
+                cx.listener(move |this, _: &ClickEvent, window, cx| {
+                    this.tab_menu_open = None;
+                    this.open_branch_prompt(ws_idx, path.clone(), window, cx);
+                    cx.stop_propagation();
+                }),
+            )
+        });
         let remove_worktree_item = is_bound.then(|| {
             self.render_select_menu_item(
                 "tab-context-remove-worktree".into(),
@@ -500,7 +514,7 @@ impl PaneFlowApp {
             )
         });
 
-        select_menu("tab-context-menu", ui)
+        let context_menu = select_menu("tab-context-menu", ui)
             .occlude()
             .absolute()
             .left(menu_pos.x)
@@ -554,6 +568,30 @@ impl PaneFlowApp {
                         .text_size(px(10.))
                         .text_color(ui.muted)
                         .child("Branch"),
+                );
+                menu = menu.child(
+                    select_item("tab-branch-new", false, ui)
+                        .cursor(CursorStyle::Arrow)
+                        .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                            this.tab_menu_open = None;
+                            this.open_pane_palette(ws_idx, window, cx);
+                            this.pane_palette_open_new_branch(window, cx);
+                            cx.stop_propagation();
+                        }))
+                        .child(
+                            svg()
+                                .size(px(12.))
+                                .flex_none()
+                                .path("icons/plus.svg")
+                                .text_color(ui.text),
+                        )
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .text_color(ui.text)
+                                .child("New branch…"),
+                        ),
                 );
                 for (detached, label, selected) in branches {
                     let branch = label.clone();

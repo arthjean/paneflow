@@ -4,6 +4,7 @@ pub mod agent_status;
 pub mod attention_queue;
 pub mod auto_naming;
 pub mod bootstrap;
+pub mod branch_prompt;
 pub mod broadcast;
 pub mod cli_diff_dock;
 pub mod composer;

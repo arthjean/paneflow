@@ -35,13 +35,65 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
   leaves the originals in place for older builds. Run `paneflow mcp install`
   again if an agent's MCP config points at the old helper path; Settings >
   MCP Servers reports it.
+- Worktrees live in a Paneflow directory, not beside your repository. Managed
+  worktrees now go under `~/.paneflow/worktrees/`, one subdirectory per
+  repository, where they used to fill `<repo>.worktrees/` next to the checkout.
+  A new Settings > Worktrees page sets that root, toggles automatic removal,
+  sets how many managed worktrees to keep before the oldest unopened ones are
+  trimmed (15 by default), and lists every worktree Paneflow manages with a
+  remove action. The same keys are `worktrees.dir`, `worktrees.auto_remove`,
+  and `worktrees.keep_limit` in `paneflow.json`. Worktrees created under the
+  old sibling directory keep working where they are.
+- A "Worktree" toggle in the New branch form. Off, the palette switches the
+  workspace's own checkout to the branch instead of creating a worktree
+  (`git switch -c`, or `git switch` for an existing branch, `--detach` with no
+  name), and the pane opens at the repository root. The last choice is
+  remembered as `worktrees.for_new_branches`. Paneflow refuses the switch
+  while an agent is working in that checkout, since the worktree exists for
+  exactly that case.
 - Menus fade into place. Every menu, select popup, context menu, and submenu
   now opens with a 140 ms fade and a 4 px drop, the same easing as the sidebar
   slide, and the "New branch" form in the pane palette folds in and out the
   same way. "Reduce motion" in Settings > Appearance turns it off.
+- Snapshots before removal. Removing a managed worktree, whether from the
+  keep limit, a closing workspace, the tab menu, or Settings, first saves its
+  uncommitted changes as a snapshot commit under `refs/paneflow/snapshots/`
+  in the main repository: tracked edits, new files, and the branch it was on.
+  Settings > Worktrees lists the snapshots with Restore, which recreates the
+  worktree with those changes uncommitted on the same branch, and Delete. A
+  clean worktree leaves no snapshot, and the branch is never deleted.
+- Detached worktrees and "Create branch here…". Leaving the branch name empty
+  in the palette starts a worktree detached at the chosen base, named
+  `<base>-<sha7>`, so an experiment that goes nowhere leaves no branch behind.
+  The tab's context menu then offers "Create branch here…" to name it, keeping
+  uncommitted changes.
+- `.worktreeinclude`. A file at the repository root lists the git-ignored files
+  and directories to copy into every new worktree, one path per line. Without
+  it Paneflow copies the top-level `.env*` files as before, plus
+  `AGENTS.override.md` when present.
+- New branch from the "New pane" palette. The branch picker starts with a
+  "New branch…" item that unfolds a name field and a "From" select, defaulting
+  to the branch the project is on; picking a preset then creates the branch
+  and its worktree from that base and opens the pane there. The tab context menu offers the same entry, and the Launch Pad gains
+  the same "From" select. `paneflow up` and flows take a matching `from` field
+  next to `worktree`. A branch that is already checked out is reused by every
+  path, where the Launch Pad used to refuse it, and typing the name of a
+  branch that already exists checks that branch out instead of failing.
 
 ### Fixed
 
+- Nothing of Paneflow's sits inside a worktree any more. The owner marker that
+  identified a Paneflow-created checkout was written as `.paneflow-worktree` at
+  the checkout root, untracked, so `git status` never came back clean: "Remove
+  worktree" refused every checkout as dirty, the automatic teardown on close
+  never fired, and `git worktree remove` itself needed `--force`. The marker
+  now lives in the worktree's own git dir (`.git/worktrees/<name>/` in the main
+  repository), invisible to `git status` and gone with the worktree. Existing
+  markers are moved there and deleted from the checkout the first time the
+  repository's worktrees are listed.
+- Worktrees created from the branch picker are now tracked like those from the
+  Launch Pad and `paneflow up`: a clean one is removed when its workspace
+  closes, a dirty one is kept.
 
 - The shim now honors `CLAUDE_CONFIG_DIR` when it checks for a persistent
   Claude Code hook, so a second config directory without one still receives the

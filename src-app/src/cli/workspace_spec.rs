@@ -58,6 +58,8 @@ pub struct PaneSpec {
     #[serde(default)]
     pub worktree: Option<String>,
     #[serde(default)]
+    pub from: Option<String>,
+    #[serde(default)]
     pub copy_env: Option<bool>,
     #[serde(default)]
     pub setup: Option<String>,
@@ -122,9 +124,17 @@ fn validate_worktree_fields(i: usize, pane: &PaneSpec) -> Result<(), String> {
                     "pane {i}: `worktree` requires `cwd` (to locate the git repository)"
                 ));
             }
+            if let Some(from) = pane.from.as_deref()
+                && (from.trim().is_empty() || from.starts_with('-'))
+            {
+                return Err(format!(
+                    "pane {i}: `from` must name a branch or commit and must not start with '-'"
+                ));
+            }
         }
         None => {
             for (field, set) in [
+                ("from", pane.from.is_some()),
                 ("copy_env", pane.copy_env.is_some()),
                 ("setup", pane.setup.is_some()),
                 ("setup_timeout_secs", pane.setup_timeout_secs.is_some()),
@@ -207,12 +217,13 @@ mod tests {
     #[test]
     fn parses_worktree_fields() {
         let spec = load(
-            "port_base = 4000\n[[panes]]\ncwd = \"/tmp\"\nagent = \"claude\"\nworktree = \"feat/x\"\ncopy_env = false\nsetup = \"bun install\"\nworktree_teardown = \"keep\"\n",
+            "port_base = 4000\n[[panes]]\ncwd = \"/tmp\"\nagent = \"claude\"\nworktree = \"feat/x\"\nfrom = \"develop\"\ncopy_env = false\nsetup = \"bun install\"\nworktree_teardown = \"keep\"\n",
         )
         .expect("valid");
         assert_eq!(spec.port_base, Some(4000));
         let p = &spec.panes[0];
         assert_eq!(p.worktree.as_deref(), Some("feat/x"));
+        assert_eq!(p.from.as_deref(), Some("develop"));
         assert_eq!(p.copy_env, Some(false));
         assert_eq!(p.setup.as_deref(), Some("bun install"));
         assert_eq!(p.worktree_teardown.as_deref(), Some("keep"));

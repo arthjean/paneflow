@@ -34,6 +34,7 @@ pub fn run(
     let plan = flow_spec::load(&src).map_err(CliError::runtime)?;
 
     let config = paneflow_config::loader::load_config();
+    crate::workspace::worktree::set_worktrees_root(config.worktrees.dir_path());
     let runs = prepare_runs(&plan, &config, up_cmd::port_is_free)?;
 
     if !dry_run {
@@ -1050,6 +1051,7 @@ mod tests {
                     env: None,
                     name: Some("custom".to_string()),
                     worktree: None,
+                    from: None,
                     copy_env: None,
                     setup: None,
                     setup_timeout_secs: None,

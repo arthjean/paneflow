@@ -14,11 +14,12 @@ fn test_config_path_is_some() {
     let path = config_path();
     assert!(path.is_some());
     let p = path.unwrap();
-    let suffix_unix = format!("{APP_SUBDIR}/paneflow.json");
-    let suffix_win = format!("{APP_SUBDIR}\\paneflow.json");
-    assert!(
-        p.ends_with(&suffix_unix) || p.ends_with(&suffix_win),
-        "config path {p:?} does not end with {suffix_unix}"
+    assert_eq!(
+        p,
+        paneflow_home::paneflow_home()
+            .expect("home")
+            .join("paneflow.json"),
+        "the config file sits directly in the Paneflow home"
     );
 }
 

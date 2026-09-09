@@ -20,6 +20,8 @@ pub(crate) struct LaunchPadState {
     pub(crate) target: WeakEntity<Pane>,
     pub(crate) agent_idx: usize,
     pub(crate) branch_input: Entity<TextInput>,
+    pub(crate) base: Option<String>,
+    pub(crate) base_open: bool,
     pub(crate) prompt_input: Entity<TextArea>,
     pub(crate) running: bool,
     pub(crate) error: Option<String>,
@@ -34,41 +36,34 @@ struct LaunchPlan {
     prompt: String,
 }
 
+enum LaunchCheckout {
+    Reuse(std::path::PathBuf),
+    Create {
+        path: std::path::PathBuf,
+        new_branch: bool,
+    },
+}
+
 fn launch_pad_worktree_plan(
     repo_root: &std::path::Path,
     branch: &str,
-) -> Result<(std::path::PathBuf, bool), String> {
-    let legacy_path = worktree::worktree_dir(repo_root, branch);
-    let hashed_path = worktree::worktree_dir_hashed(repo_root, branch);
+) -> Result<LaunchCheckout, String> {
     let entries = worktree::list_worktrees(repo_root)?;
-    let mut path = legacy_path.clone();
-    for entry in &entries {
-        if entry.branch.as_deref() == Some(branch) {
-            return Err(format!(
-                "branch '{branch}' is already checked out at {}",
-                entry.path.display()
-            ));
-        }
-        if entry.path == legacy_path {
-            path = hashed_path.clone();
-        }
-    }
-    for entry in &entries {
-        if entry.path == path {
-            return Err(format!(
-                "{} exists but holds another branch ({})",
-                path.display(),
-                entry.branch.as_deref().unwrap_or("detached")
-            ));
+    match worktree::plan_branch_checkout(&entries, repo_root, branch)? {
+        worktree::BranchCheckout::Existing(path) => Ok(LaunchCheckout::Reuse(path)),
+        worktree::BranchCheckout::Create(path) => {
+            if path.exists() {
+                return Err(format!(
+                    "{} exists but is not a registered worktree; remove it first",
+                    path.display()
+                ));
+            }
+            Ok(LaunchCheckout::Create {
+                path,
+                new_branch: !worktree::branch_exists(repo_root, branch),
+            })
         }
     }
-    if path.exists() {
-        return Err(format!(
-            "{} exists but is not a registered worktree; remove it first",
-            path.display()
-        ));
-    }
-    Ok((path, !worktree::branch_exists(repo_root, branch)))
 }
 
 impl PaneFlowApp {
@@ -125,11 +120,20 @@ impl PaneFlowApp {
             .position(AgentLaunch::is_installed)
             .unwrap_or(0);
 
+        let ws_idx = self.workspaces.iter().position(|w| w.id == ws_id);
+        let base = ws_idx
+            .map(|idx| self.workspace_checkout_label(idx))
+            .filter(|label| !label.is_empty() && label != "Project root");
+        if let Some(idx) = ws_idx {
+            self.spawn_worktree_listing(idx, cx);
+        }
         self.launch_pad = Some(LaunchPadState {
             ws_id,
             target,
             agent_idx,
             branch_input,
+            base,
+            base_open: false,
             prompt_input,
             running: false,
             error: None,
@@ -163,6 +167,7 @@ impl PaneFlowApp {
         }
         let ws_id = lp.ws_id;
         let agent_idx = lp.agent_idx;
+        let base = lp.base.clone();
         let branch = lp.branch_input.read(cx).value().trim().to_string();
         let (prompt, _truncated) =
             crate::app::composer::normalize_composer_text(&lp.prompt_input.read(cx).value());
@@ -215,14 +220,26 @@ impl PaneFlowApp {
         };
         cx.spawn(
             async move |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
-                let result = smol::unblock(move || {
-                    let (worktree_path, create_branch) =
-                        launch_pad_worktree_plan(&repo_root, &branch)?;
-                    worktree::add_worktree(&repo_root, &worktree_path, &branch, create_branch)?;
-                    let _ = worktree::copy_env_files(&repo_root, &worktree_path);
-                    Ok::<std::path::PathBuf, String>(worktree_path)
-                })
-                .await;
+                let result =
+                    smol::unblock(
+                        move || match launch_pad_worktree_plan(&repo_root, &branch)? {
+                            LaunchCheckout::Reuse(path) => {
+                                Ok::<(std::path::PathBuf, bool), String>((path, false))
+                            }
+                            LaunchCheckout::Create { path, new_branch } => {
+                                worktree::add_worktree(
+                                    &repo_root,
+                                    &path,
+                                    &branch,
+                                    new_branch,
+                                    base.as_deref(),
+                                )?;
+                                let _ = worktree::copy_include_files(&repo_root, &path);
+                                Ok((path, true))
+                            }
+                        },
+                    )
+                    .await;
                 cx.update(|cx| {
                     let _ = this.update(cx, |app, cx| {
                         app.launch_pad_finish(result, plan, cx);
@@ -235,12 +252,12 @@ impl PaneFlowApp {
 
     fn launch_pad_finish(
         &mut self,
-        result: Result<std::path::PathBuf, String>,
+        result: Result<(std::path::PathBuf, bool), String>,
         mut plan: LaunchPlan,
         cx: &mut Context<Self>,
     ) {
-        let worktree_path = match result {
-            Ok(path) => path,
+        let (worktree_path, created) = match result {
+            Ok(created) => created,
             Err(e) => {
                 if self.launch_pad.is_some() {
                     self.launch_pad_set_error(e, cx);
@@ -269,14 +286,17 @@ impl PaneFlowApp {
             return;
         };
 
-        self.workspaces[ws_idx]
-            .managed_worktrees
-            .push(ManagedWorktree {
-                path: plan.worktree_path.clone(),
-                repo_root: plan.repo_root.clone(),
-                branch: plan.branch.clone(),
-                teardown: Default::default(),
-            });
+        if created {
+            self.workspaces[ws_idx]
+                .managed_worktrees
+                .push(ManagedWorktree {
+                    path: plan.worktree_path.clone(),
+                    repo_root: plan.repo_root.clone(),
+                    branch: plan.branch.clone(),
+                    teardown: Default::default(),
+                });
+            self.enforce_worktree_limit(cx);
+        }
 
         if self.workspaces[ws_idx].active_tab().root.is_none()
             || !self.workspaces[ws_idx].active_tab().can_add_pane()
@@ -350,6 +370,12 @@ impl PaneFlowApp {
             return;
         };
         match key {
+            "escape" if lp.base_open => {
+                if let Some(lp) = self.launch_pad.as_mut() {
+                    lp.base_open = false;
+                }
+                cx.notify();
+            }
             "escape" => self.launch_pad_cancel(cx),
             "enter" => self.launch_pad_confirm(cx),
             "tab" => {
@@ -364,6 +390,124 @@ impl PaneFlowApp {
             }
             _ => {}
         }
+    }
+
+    fn render_launch_pad_base(
+        &self,
+        lp: &LaunchPadState,
+        ui: crate::theme::UiColors,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let open = lp.base_open;
+        let label = lp.base.clone().unwrap_or_else(|| "HEAD".to_string());
+        let branches: Vec<String> = self
+            .workspaces
+            .iter()
+            .position(|w| w.id == lp.ws_id)
+            .map(|idx| self.workspace_branches(idx).to_vec())
+            .unwrap_or_default();
+        let mut trigger = div()
+            .id("launch-pad-base")
+            .relative()
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap(px(6.))
+            .border_1()
+            .border_color(ui.border)
+            .rounded(px(6.))
+            .px(px(8.))
+            .py(px(4.))
+            .text_size(px(12.))
+            .cursor_pointer()
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
+                if let Some(lp) = this.launch_pad.as_mut()
+                    && !lp.running
+                {
+                    lp.base_open = !open;
+                    cx.notify();
+                }
+                cx.stop_propagation();
+            }))
+            .child(
+                svg()
+                    .size(px(11.))
+                    .flex_none()
+                    .path("icons/git-branch-sidebar.svg")
+                    .text_color(ui.muted),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .overflow_x_hidden()
+                    .whitespace_nowrap()
+                    .text_ellipsis()
+                    .text_color(ui.text)
+                    .child(label),
+            )
+            .child(
+                svg()
+                    .size(px(11.))
+                    .flex_none()
+                    .path("icons/chevron-down.svg")
+                    .text_color(ui.muted),
+            );
+        if open {
+            let mut menu = crate::settings::components::select_menu("launch-pad-base-menu", ui)
+                .absolute()
+                .top(px(30.))
+                .left(px(0.))
+                .w(px(240.))
+                .occlude()
+                .on_mouse_up_out(
+                    MouseButton::Left,
+                    cx.listener(|this, _: &gpui::MouseUpEvent, _w, cx| {
+                        if let Some(lp) = this.launch_pad.as_mut() {
+                            lp.base_open = false;
+                            cx.notify();
+                        }
+                    }),
+                );
+            for branch in branches {
+                let selected = lp.base.as_deref() == Some(branch.as_str());
+                let pick = branch.clone();
+                menu = menu.child(
+                    crate::settings::components::select_item(
+                        SharedString::from(format!("launch-pad-base-{branch}")),
+                        selected,
+                        ui,
+                    )
+                    .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
+                        if let Some(lp) = this.launch_pad.as_mut() {
+                            lp.base = Some(pick.clone());
+                            lp.base_open = false;
+                            cx.notify();
+                        }
+                        cx.stop_propagation();
+                    }))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .overflow_x_hidden()
+                            .whitespace_nowrap()
+                            .text_ellipsis()
+                            .text_color(ui.text)
+                            .child(branch),
+                    ),
+                );
+            }
+            trigger = trigger.child(
+                deferred(crate::ui_primitives::menu_reveal(
+                    "launch-pad-base-menu-reveal",
+                    menu,
+                ))
+                .with_priority(9),
+            );
+        }
+        trigger.into_any_element()
     }
 
     pub(crate) fn render_launch_pad(&self, cx: &mut Context<Self>) -> AnyElement {
@@ -476,6 +620,8 @@ impl PaneFlowApp {
                     .py(px(4.))
                     .child(lp.branch_input.clone()),
             )
+            .child(field_label("From"))
+            .child(self.render_launch_pad_base(lp, ui, cx))
             .child(field_label("Prompt"))
             .child(
                 div()
@@ -602,6 +748,7 @@ mod tests {
     #[test]
     fn launch_pad_plan_uses_hashed_path_when_slug_path_is_claimed() {
         let tmp = tempfile::tempdir().expect("tempdir");
+        let _root = worktree::test_support::scoped_root(tmp.path().join("worktrees"));
         let repo_root = tmp.path().join("repo");
         std::fs::create_dir(&repo_root).expect("repo dir");
         if !test_git(&repo_root, &["init"]) {
@@ -640,9 +787,20 @@ mod tests {
             return;
         }
 
-        let (path, create_branch) = launch_pad_worktree_plan(&repo_root, branch_b).expect("plan");
-        assert_eq!(path, worktree::worktree_dir_hashed(&repo_root, branch_b));
-        assert!(create_branch);
+        match launch_pad_worktree_plan(&repo_root, branch_b).expect("plan") {
+            LaunchCheckout::Create { path, new_branch } => {
+                assert_eq!(path, worktree::worktree_dir_hashed(&repo_root, branch_b));
+                assert!(new_branch);
+            }
+            LaunchCheckout::Reuse(path) => panic!("nothing to reuse yet: {}", path.display()),
+        }
+        match launch_pad_worktree_plan(&repo_root, branch_a).expect("plan") {
+            LaunchCheckout::Reuse(path) => assert_eq!(path, legacy),
+            LaunchCheckout::Create { path, .. } => panic!(
+                "a checked-out branch is reused, never recreated: {}",
+                path.display()
+            ),
+        }
     }
 
     fn test_git(cwd: &std::path::Path, args: &[&str]) -> bool {

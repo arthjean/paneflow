@@ -151,6 +151,35 @@
         }
       }
     },
+    "worktrees": {
+      "type": ["object", "null"],
+      "description": "Where Paneflow keeps the git worktrees it creates for branches, and how it cleans them up.",
+      "additionalProperties": false,
+      "properties": {
+        "dir": {
+          "type": ["string", "null"],
+          "description": "Root directory for managed worktrees. Each repository gets a subdirectory named after it, and each branch a directory under that. Empty or null uses the default, ~/.paneflow/worktrees (%USERPROFILE%\\.paneflow\\worktrees on Windows). '~' expands to the home directory.",
+          "default": null
+        },
+        "auto_remove": {
+          "type": ["boolean", "null"],
+          "description": "Remove a managed worktree when its workspace closes, and trim the oldest managed worktrees past keep_limit. Uncommitted changes are saved as a snapshot first, and the branch is never deleted. Default true.",
+          "default": true
+        },
+        "keep_limit": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "maximum": 200,
+          "description": "Number of managed worktrees to keep before the oldest unopened ones are removed. Default 15.",
+          "default": 15
+        },
+        "for_new_branches": {
+          "type": ["boolean", "null"],
+          "description": "Default state of the Worktree toggle in the pane palette's New branch form. true creates a worktree for the branch; false switches the workspace checkout to it instead. The toggle rewrites this key. Default true.",
+          "default": true
+        }
+      }
+    },
     "window_decorations": {
       "type": ["string", "null"],
       "description": "Window decoration mode. 'client' = client-side decorations (custom title bar). 'server' = server-side decorations (compositor-drawn). Read once at startup; changes require a restart.",

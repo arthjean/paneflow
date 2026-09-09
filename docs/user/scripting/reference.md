@@ -149,8 +149,9 @@ tracked agent returns idle state, not an error.
 | `focus` | bool | `false` | Gives initial focus to this pane |
 | `env` | table | none | Merged over `terminal.env`; supports `${port_offset}` |
 | `name` | string | none | Stable selector name |
-| `worktree` | string | none | Branch name for a managed worktree under `<repo>.worktrees/` |
-| `copy_env` | bool | `true` | Copies gitignored `.env*` files into the worktree |
+| `worktree` | string | none | Branch name for a managed worktree under the `worktrees.dir` root (see the configuration schema) |
+| `from` | string | `HEAD` | Branch or commit the worktree branch starts from when `up` creates it |
+| `copy_env` | bool | `true` | Copies the repository's `.worktreeinclude` entries into the worktree, or the top-level `.env*` files and `AGENTS.override.md` without that file |
 | `setup` | string | none | Command run before launch |
 | `setup_timeout_secs` | integer | `300` | Setup timeout |
 | `worktree_teardown` | string | `"auto"` | `auto` removes clean worktrees on close; `keep` leaves them |

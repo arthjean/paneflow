@@ -360,6 +360,7 @@ impl PaneFlowApp {
                                 cx.notify();
                             }
                             app.refresh_pull_requests(cx);
+                            app.enforce_worktree_limit(cx);
                         })
                     });
                     if apply.is_err() {
@@ -535,6 +536,7 @@ impl PaneFlowApp {
         cx.observe(&rename_input, |_, _, cx| cx.notify()).detach();
 
         let cached_config = paneflow_config::loader::load_config();
+        crate::workspace::worktree::set_worktrees_root(cached_config.worktrees.dir_path());
         let effective_shortcuts = keybindings::effective_shortcuts(&cached_config.shortcuts);
         let theme_mode = crate::ThemeMode::from_config(
             cached_config.theme_mode.as_deref(),
@@ -668,6 +670,8 @@ impl PaneFlowApp {
             fleet_search_pending_focus: false,
             launch_pad: None,
             launch_pad_focus: cx.focus_handle(),
+            branch_prompt: None,
+            branch_prompt_focus: cx.focus_handle(),
             pane_palette: None,
             pane_palette_focus: cx.focus_handle(),
             pending_palette_focus: false,

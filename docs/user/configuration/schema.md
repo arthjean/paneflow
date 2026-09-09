@@ -63,6 +63,7 @@ JetBrains IDEs, Helix, and other JSON Schema-aware editors:
 | `sidebar_show` | object/null | all off | Hot reload | What a session tab row shows beyond its name: `branch` adds its git branch, `diffstat` adds its insertion and deletion counts, `pr` turns the branch icon into a pull-request glyph colored by the request's state when one exists, `indent_guide` draws a hairline under a workspace's folder icon down its tab rows. The first two read the tab's bound worktree, or its workspace's checkout when the tab is unbound; `pr` needs the `gh` CLI and answers for GitHub remotes only. Toggled from the rail's Customize Sidebar menu. |
 | `editor` | object/null | minimap off, scrollbar on | Hot reload | What the code editor draws beside the text: `minimap` adds a minimap along the right edge, `scrollbar` keeps the vertical scrollbar. Toggled from the editor's controls menu; the choice applies to every open file. |
 | `automation` | object/null | all off | Hot reload | Background work run after an agent turn: `tab_auto_naming` summarizes the session's recent exchange into a 2-5 word tab name through the agent's own CLI (`claude -p`, `codex exec`, `opencode run`, `pi --print`) with tools disabled, at most once per three minutes per session and only when the conversation grew. A name you typed is never replaced; "Reset name" reopens the tab to it. |
+| `worktrees` | object/null | see below | Hot reload | Where Paneflow keeps the git worktrees it creates for branches and how it cleans them up: `dir`, `auto_remove`, `keep_limit`, `for_new_branches`. Settings > Worktrees edits the same keys. |
 | `window_decorations` | string/null | `client` | Startup | `client` draws Paneflow chrome; `server` delegates to the OS compositor. |
 | `window_backdrop` | string/null | `auto` | Startup | `auto`, `mica`, `blurred`, `acrylic`, `transparent`, `opaque`, or `off`. `PANEFLOW_WINDOW_BACKDROP` overrides for one launch. |
 | `windows_terminal_material` | boolean/null | `false` | Window/terminal render | Windows-only terminal background material toggle. Ignored on other platforms. |
@@ -192,11 +193,19 @@ file, Paneflow copies the top-level `.env*` files and `AGENTS.override.md`
 when they exist. A file that already exists in the worktree is never
 overwritten.
 
+Before a managed worktree is removed, automatically or by hand, its
+uncommitted changes are saved as a snapshot commit under
+`refs/paneflow/snapshots/` in the main repository: tracked edits, new files,
+and the branch it was on. Settings > Worktrees lists the snapshots; Restore
+recreates the worktree with those changes uncommitted on the same branch,
+Delete drops the ref. A clean worktree leaves no snapshot.
+
 | Key | Type | Default | Notes |
 | --- | --- | --- | --- |
 | `worktrees.dir` | string/null | `~/.paneflow/worktrees` | Root directory for managed worktrees. Each repository gets a subdirectory named `<repo>-<hash>`, each branch a directory under it. The default is `~/.paneflow/worktrees` on every platform (`%USERPROFILE%\.paneflow\worktrees` on Windows). `~` expands to the home directory. Worktrees created under an earlier root, including the old `<repo>.worktrees/` sibling, keep working where they are. |
-| `worktrees.auto_remove` | boolean/null | `true` | Remove a managed worktree when its workspace closes if it has no uncommitted changes, and trim the oldest managed worktrees past `keep_limit`. The branch is never deleted. `false` keeps every worktree until you remove it from Settings > Worktrees or the tab menu. |
-| `worktrees.keep_limit` | integer/null | `15` | Number of managed worktrees to keep before the oldest clean ones that no open tab uses are removed. `0` to `200`. |
+| `worktrees.auto_remove` | boolean/null | `true` | Remove a managed worktree when its workspace closes, and trim the oldest managed worktrees past `keep_limit`. Uncommitted changes are saved as a snapshot first, and the branch is never deleted. `false` keeps every worktree until you remove it from Settings > Worktrees or the tab menu. |
+| `worktrees.keep_limit` | integer/null | `15` | Number of managed worktrees to keep before the oldest ones that no open tab uses are removed. `0` to `200`. |
+| `worktrees.for_new_branches` | boolean/null | `true` | Default state of the Worktree toggle in the New branch form. `true` creates a worktree for the branch; `false` switches the workspace checkout to it instead, and the pane opens at the repository root. The toggle rewrites this key, and the switch is refused while an agent is working in that checkout. |
 
 ```json
 {

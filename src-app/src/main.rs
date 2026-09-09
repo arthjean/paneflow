@@ -94,6 +94,7 @@ pub(crate) enum SettingsSection {
     Agents,
     McpServers,
     Workspaces,
+    Worktrees,
 }
 
 impl SettingsSection {
@@ -748,6 +749,8 @@ struct PaneFlowApp {
     fleet_search_pending_focus: bool,
     launch_pad: Option<app::launch_pad::LaunchPadState>,
     launch_pad_focus: FocusHandle,
+    branch_prompt: Option<app::branch_prompt::BranchPromptState>,
+    branch_prompt_focus: FocusHandle,
     pane_palette: Option<app::pane_palette::PanePaletteState>,
     pane_palette_focus: FocusHandle,
     pending_palette_focus: bool,
@@ -1024,6 +1027,9 @@ impl Render for PaneFlowApp {
         }
         if std::mem::take(&mut self.pending_palette_focus) {
             window.focus(&self.pane_palette_focus, cx);
+        }
+        if let Some(idx) = self.take_pane_palette_pending_launch() {
+            self.pane_palette_launch(idx, window, cx);
         }
         let rename_focus = self.rename_input.read(cx).focus_handle.clone();
         let rename_live = self.renaming_tab.is_some();
@@ -1497,6 +1503,9 @@ impl Render for PaneFlowApp {
         let in_cli_mode = matches!(self.mode, paneflow_config::schema::AppMode::Cli);
         if self.attention_queue_open && in_cli_mode {
             app_content = app_content.child(self.render_attention_queue(cx));
+        }
+        if self.branch_prompt.is_some() && in_cli_mode {
+            app_content = app_content.child(self.render_branch_prompt(cx));
         }
         if self.launch_pad.is_some() && in_cli_mode {
             app_content = app_content.child(self.render_launch_pad(cx));

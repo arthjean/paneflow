@@ -299,10 +299,11 @@ impl PaneFlowApp {
     }
 
     pub(crate) fn spawn_worktree_teardown(
+        &self,
         worktrees: Vec<crate::workspace::worktree::ManagedWorktree>,
         cx: &mut Context<Self>,
     ) {
-        if worktrees.is_empty() {
+        if worktrees.is_empty() || !self.cached_config.worktrees.auto_remove_enabled() {
             return;
         }
         cx.spawn(async move |_this, _cx: &mut gpui::AsyncApp| {
@@ -756,7 +757,7 @@ impl PaneFlowApp {
         }
         let worktrees = std::mem::take(&mut self.workspaces[idx].managed_worktrees);
         self.prune_worktree_states();
-        Self::spawn_worktree_teardown(worktrees, cx);
+        self.spawn_worktree_teardown(worktrees, cx);
         self.workspaces.remove(idx);
         if self.workspaces.is_empty() {
             self.active_idx = 0;

@@ -310,6 +310,7 @@ fn validate_tokens(
             ("pane.cwd", pane.cwd.as_deref()),
             ("pane.name", pane.name.as_deref()),
             ("pane.worktree", pane.worktree.as_deref()),
+            ("pane.from", pane.from.as_deref()),
         ] {
             if let Some(v) = value {
                 item_only.push((label, v));
@@ -561,6 +562,7 @@ fn instantiate(spec: &FlowSpec, step: &StepSpec, item: Option<&str>) -> Result<U
         pane.prompt = pane.prompt.map(|v| sub(&v));
         pane.name = pane.name.map(|v| sub(&v));
         pane.worktree = pane.worktree.map(|v| sub(&v));
+        pane.from = pane.from.map(|v| sub(&v));
         pane.env = pane
             .env
             .map(|env| env.into_iter().map(|(k, v)| (k, sub(&v))).collect());
