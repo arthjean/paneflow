@@ -88,6 +88,33 @@ pub(crate) fn reduce_motion() -> bool {
     REDUCE_MOTION.load(std::sync::atomic::Ordering::Relaxed)
 }
 
+pub(crate) const MENU_REVEAL_MS: u64 = 140;
+const MENU_REVEAL_DROP: f32 = 4.;
+
+pub(crate) fn ease_out_cubic(delta: f32) -> f32 {
+    1. - (1. - delta).powi(3)
+}
+
+pub(crate) fn menu_reveal<E>(id: impl Into<ElementId>, element: E) -> AnyElement
+where
+    E: IntoElement + Styled + 'static,
+{
+    if reduce_motion() {
+        return element.into_any_element();
+    }
+    element
+        .with_animation(
+            id,
+            gpui::Animation::new(Duration::from_millis(MENU_REVEAL_MS)).with_easing(ease_out_cubic),
+            |element, delta| {
+                element
+                    .opacity(delta)
+                    .mt(px(-MENU_REVEAL_DROP * (1. - delta)))
+            },
+        )
+        .into_any_element()
+}
+
 type StyleAnimator = dyn for<'a> Fn(&mut AnimatedStyle<'a>, f32);
 type ElementAnimator = dyn for<'a> FnOnce(&mut AnimatedElement<'a>, f32);
 

@@ -383,6 +383,7 @@ to `icons/languages/`.
 | Pane header buttons | 120 ms | ease-out quint | Tint of the action buttons and the close glyph; the close slot itself toggles with the header hover |
 | Unfocused pane dim | 130 ms, scaled by distance | ease-out quint | Overlay of the terminal background |
 | Primary sidebar slide | 280 ms | cubic ease-out | Panel inset and gutter follow the width |
+| Menu reveal | 140 ms | cubic ease-out | `menu_reveal`: every menu, select popup, context menu, and submenu fades in from 0 while dropping 4 px into place; the pane palette's `New branch` form and the branch row it folds back to use the same reveal. No exit animation |
 | Toast | 180 ms in, 1440 ms hold, 180 ms out | ease-in-out | 8 px lift on entry, 8 px drop on exit |
 | Status spinner | 1 s loop | linear rotate | Sidebar update banner while downloading or installing, empty states |
 | Sidebar thinking matrix | 720 ms cycle | stepped | 3 by 3 dots of 3 px, gap 1, trailing opacities 0.81, 0.49, 0.26 over a 0.06 base |
@@ -390,9 +391,9 @@ to `icons/languages/`.
 | Startup splash | 2600 ms shimmer, 900 ms minimum on screen | linear | Letters at 0.54 alpha, shimmer to 0.82 |
 | Tooltip | 800 ms delay | none | `delayed_tooltip` |
 
-`reduce_motion` (Settings, Appearance) is honored in two places today:
-`animated_hover` settles instantly and the primary sidebar toggles without
-the slide. The dim fade, toasts, spinners, the thinking matrix, and the
+`reduce_motion` (Settings, Appearance) is honored in three places today:
+`animated_hover` settles instantly, the primary sidebar toggles without
+the slide, and `menu_reveal` mounts menus at rest. The dim fade, toasts, spinners, the thinking matrix, and the
 shimmers keep animating. The config description promises a static frame for
 decorative animations; that promise is **Proposed** until the remaining
 animations read the flag. Feedback is never removed, only its interpolation.

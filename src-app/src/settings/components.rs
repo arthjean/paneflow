@@ -324,7 +324,9 @@ pub fn menu_surface<E: Styled + ParentElement>(el: E, ui: crate::theme::UiColors
 pub fn select_menu(id: impl Into<ElementId>, ui: crate::theme::UiColors) -> SelectMenu {
     let id: ElementId = id.into();
     let list_id: ElementId = (id.clone(), "list").into();
+    let reveal_id: ElementId = (id.clone(), "reveal").into();
     SelectMenu {
+        reveal_id,
         shell: menu_surface(div().id(id), ui)
             .flex()
             .flex_col()
@@ -344,6 +346,7 @@ pub fn select_menu(id: impl Into<ElementId>, ui: crate::theme::UiColors) -> Sele
 }
 
 pub struct SelectMenu {
+    reveal_id: ElementId,
     shell: Stateful<Div>,
     list: Stateful<Div>,
 }
@@ -415,14 +418,16 @@ pub fn select_item(
 }
 
 pub fn deferred_select_menu(menu: SelectMenu) -> AnyElement {
-    deferred(
+    let reveal_id = menu.reveal_id.clone();
+    deferred(crate::ui_primitives::menu_reveal(
+        reveal_id,
         div()
             .absolute()
             .top(px(36.))
             .right(px(0.))
             .occlude()
             .child(menu),
-    )
+    ))
     .with_priority(1)
     .into_any_element()
 }

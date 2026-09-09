@@ -79,14 +79,15 @@ pub(super) fn render_diff_new_tab_menu(
             })),
         );
 
-    deferred(
+    deferred(crate::ui_primitives::menu_reveal(
+        "diff-dock-new-tab-menu-reveal",
         div()
             .absolute()
             .top(px(30.))
             .left(px(0.))
             .occlude()
             .child(menu),
-    )
+    ))
     .with_priority(3)
     .into_any_element()
 }

@@ -414,7 +414,12 @@ impl PaneFlowApp {
                 })
         });
 
-        deferred(context_menu).priority(3).into_any_element()
+        deferred(crate::ui_primitives::menu_reveal(
+            "workspace-context-menu-reveal",
+            context_menu,
+        ))
+        .priority(3)
+        .into_any_element()
     }
 
     pub(crate) fn render_tab_context_menu(
@@ -585,10 +590,13 @@ impl PaneFlowApp {
                 }
                 menu
             })
-            .when_some(remove_worktree_item, |menu, item| {
+            .when_some(create_branch_item, |menu, item| {
                 menu.child(context_menu_divider(ui)).child(item)
             })
-            .into_any_element()
+            .when_some(remove_worktree_item, |menu, item| {
+                menu.child(context_menu_divider(ui)).child(item)
+            });
+        crate::ui_primitives::menu_reveal("tab-context-menu-reveal", context_menu)
     }
 
     pub(crate) fn render_pane_context_menu(
@@ -721,7 +729,12 @@ impl PaneFlowApp {
             }),
         ));
 
-        deferred(context_menu).priority(3).into_any_element()
+        deferred(crate::ui_primitives::menu_reveal(
+            "pane-context-menu-reveal",
+            context_menu,
+        ))
+        .priority(3)
+        .into_any_element()
     }
 
     fn render_disabled_select_menu_item(

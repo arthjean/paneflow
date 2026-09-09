@@ -301,12 +301,9 @@ impl DiffView {
                     }))
                     .child(div().text_color(ui.text).child(mode_label)),
             );
-        deferred(
-            anchored()
-                .position(menu.position)
-                .snap_to_window()
-                .child(panel),
-        )
+        deferred(anchored().position(menu.position).snap_to_window().child(
+            crate::ui_primitives::menu_reveal("diff-body-context-menu-reveal", panel),
+        ))
         .priority(3)
         .into_any_element()
     }

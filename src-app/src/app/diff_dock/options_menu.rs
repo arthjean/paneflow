@@ -361,14 +361,15 @@ pub(crate) fn render_diff_options_menu(
             .child(menu_label("Refresh Changes", ui)),
     );
 
-    deferred(
+    deferred(crate::ui_primitives::menu_reveal(
+        "diff-options-menu-reveal",
         div()
             .absolute()
             .top(px(top))
             .right(px(0.))
             .occlude()
             .child(menu),
-    )
+    ))
     .with_priority(3)
     .into_any_element()
 }
@@ -465,14 +466,15 @@ fn render_submenu(
         menu = menu.child(render_option_entry(entry, choose.clone(), ui));
     }
 
-    deferred(
+    deferred(crate::ui_primitives::menu_reveal(
+        gpui::SharedString::from(format!("{id}-reveal")),
         div()
             .absolute()
             .top(px(-5.))
             .right(px(MENU_WIDTH - 12.))
             .occlude()
             .child(menu),
-    )
+    ))
     .with_priority(4)
     .into_any_element()
 }

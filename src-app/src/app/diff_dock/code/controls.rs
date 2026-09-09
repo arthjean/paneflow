@@ -176,14 +176,15 @@ impl EditorControls {
             );
         }
 
-        deferred(
+        deferred(crate::ui_primitives::menu_reveal(
+            "code-editor-controls-menu-reveal",
             div()
                 .absolute()
                 .top(px(32.))
                 .right_0()
                 .occlude()
                 .child(menu),
-        )
+        ))
         .with_priority(3)
         .into_any_element()
     }

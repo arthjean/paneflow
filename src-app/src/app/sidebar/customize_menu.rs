@@ -145,14 +145,15 @@ fn render_menu(
             .child(render_expand_all_row(all_expanded, ui, cx))
         });
 
-    deferred(
+    deferred(crate::ui_primitives::menu_reveal(
+        "sidebar-customize-menu-reveal",
         div()
             .absolute()
             .top(px(32.))
             .left(px(0.))
             .occlude()
             .child(menu),
-    )
+    ))
     .with_priority(3)
     .into_any_element()
 }
@@ -259,14 +260,15 @@ fn render_show_submenu(
             cx,
         ));
 
-    deferred(
+    deferred(crate::ui_primitives::menu_reveal(
+        "sidebar-show-submenu-reveal",
         div()
             .absolute()
             .top(px(-5.))
             .left(px(MENU_WIDTH - 12.))
             .occlude()
             .child(menu),
-    )
+    ))
     .with_priority(4)
     .into_any_element()
 }

@@ -2546,7 +2546,10 @@ impl CodeView {
                 anchored()
                     .anchor(anchor)
                     .position(point(px(anchor_x), px(anchor_y)))
-                    .child(panel),
+                    .child(crate::ui_primitives::menu_reveal(
+                        "code-marker-popup-reveal",
+                        panel,
+                    )),
             )
             .with_priority(3)
             .into_any_element(),

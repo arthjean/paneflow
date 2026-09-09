@@ -289,7 +289,7 @@ impl PaneFlowApp {
             );
         }
 
-        menu_surface(div().id("diff-base-picker"), ui)
+        let picker = menu_surface(div().id("diff-base-picker"), ui)
             .occlude()
             .absolute()
             .top(px(CONTROLS_ROW_HEIGHT))
@@ -305,7 +305,7 @@ impl PaneFlowApp {
             }))
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .child(filter_field)
-            .child(list)
-            .into_any_element()
+            .child(list);
+        crate::ui_primitives::menu_reveal("diff-base-picker-reveal", picker)
     }
 }

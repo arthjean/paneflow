@@ -71,7 +71,8 @@ impl PaneFlowApp {
             })),
         );
 
-        deferred(
+        deferred(crate::ui_primitives::menu_reveal(
+            "title-bar-files-menu-reveal",
             select_menu("title-bar-files-menu", ui)
                 .occlude()
                 .absolute()
@@ -85,7 +86,7 @@ impl PaneFlowApp {
                 .on_mouse_down(MouseButton::Right, |_, _, cx| cx.stop_propagation())
                 .child(new_workspace)
                 .child(settings),
-        )
+        ))
         .with_priority(4)
         .into_any_element()
     }
@@ -182,7 +183,8 @@ impl PaneFlowApp {
             })),
         );
 
-        deferred(
+        deferred(crate::ui_primitives::menu_reveal(
+            "title-bar-help-menu-reveal",
             select_menu("title-bar-help-menu", ui)
                 .occlude()
                 .absolute()
@@ -208,7 +210,7 @@ impl PaneFlowApp {
                         .bg(menu_divider_color(ui)),
                 )
                 .child(about),
-        )
+        ))
         .with_priority(4)
         .into_any_element()
     }
@@ -296,7 +298,8 @@ impl PaneFlowApp {
             }),
         );
 
-        deferred(
+        deferred(crate::ui_primitives::menu_reveal(
+            "profile-menu-reveal",
             div()
                 .id("profile-menu")
                 .occlude()
@@ -328,7 +331,7 @@ impl PaneFlowApp {
                 .child(settings_item)
                 .child(themes_item)
                 .child(about_item),
-        )
+        ))
         .with_priority(4)
         .into_any_element()
     }

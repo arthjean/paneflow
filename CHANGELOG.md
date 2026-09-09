@@ -35,6 +35,10 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
   leaves the originals in place for older builds. Run `paneflow mcp install`
   again if an agent's MCP config points at the old helper path; Settings >
   MCP Servers reports it.
+- Menus fade into place. Every menu, select popup, context menu, and submenu
+  now opens with a 140 ms fade and a 4 px drop, the same easing as the sidebar
+  slide, and the "New branch" form in the pane palette folds in and out the
+  same way. "Reduce motion" in Settings > Appearance turns it off.
 
 ### Fixed
 

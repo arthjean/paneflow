@@ -303,14 +303,15 @@ fn render_diff_branch_menu(
         }
     }
 
-    deferred(
+    deferred(crate::ui_primitives::menu_reveal(
+        "diff-branch-menu-reveal",
         div()
             .absolute()
             .top(px(28.))
             .left(px(0.))
             .occlude()
             .child(menu),
-    )
+    ))
     .with_priority(3)
     .into_any_element()
 }
