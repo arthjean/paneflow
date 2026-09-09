@@ -54,9 +54,8 @@ fn is_translocated_path(path: &Path) -> bool {
 }
 
 fn dmg_cache_dir(home: &Path) -> PathBuf {
-    dirs::cache_dir()
-        .unwrap_or_else(|| home.join("Library").join("Caches"))
-        .join(crate::runtime_paths::APP_SUBDIR)
+    crate::runtime_paths::cache_dir()
+        .unwrap_or_else(|| home.join(paneflow_home::HOME_DIR_NAME).join("cache"))
 }
 
 #[cfg(target_os = "macos")]

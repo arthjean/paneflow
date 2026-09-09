@@ -13,7 +13,7 @@
       the multi-resolution icon at `packaging/wix/paneflow.ico`.
     - GPL license and libghostty provenance/compliance files beside the
       executable, with no runtime Ghostty DLL.
-    - User config at %APPDATA%\paneflow\ is preserved on uninstall
+    - User state at %USERPROFILE%\.paneflow\ is preserved on uninstall
       (AC-6); WiX only removes the files it installed.
 
   GUIDs baked in here MUST match `[package.metadata.wix]` in

@@ -150,7 +150,7 @@ fn load() -> Option<PersistedWindowSize> {
 }
 
 fn state_path() -> Option<PathBuf> {
-    dirs::config_dir().map(|directory| directory.join("paneflow").join("window-state.json"))
+    paneflow_home::window_state_path()
 }
 
 fn is_valid_size(state: PersistedWindowSize) -> bool {

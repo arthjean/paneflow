@@ -71,12 +71,9 @@ fn ensure_binaries_extracted_uncached() -> Result<PathBuf> {
 
     #[cfg(any(not(windows), debug_assertions))]
     {
-        let cache_root = dirs::cache_dir()
-            .ok_or_else(|| anyhow!("US-008: dirs::cache_dir() returned None; cannot extract"))?;
-        let target_dir = cache_root
-            .join(crate::runtime_paths::APP_SUBDIR)
-            .join("bin")
-            .join(VERSION);
+        let cache_root = crate::runtime_paths::cache_dir()
+            .ok_or_else(|| anyhow!("US-008: cache dir unresolvable; cannot extract"))?;
+        let target_dir = cache_root.join("bin").join(VERSION);
 
         let suffix = exe_suffix();
         let plan = extract_plan();

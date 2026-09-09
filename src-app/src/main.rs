@@ -1758,6 +1758,9 @@ fn mount_paneflow_app(window: &mut Window, cx: &mut App) -> Entity<PaneFlowApp> 
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
+    for migrated in paneflow_home::migrate_legacy_home() {
+        eprintln!("paneflow: moved user state to {}", migrated.display());
+    }
     #[cfg(unix)]
     if args.get(1).map(String::as_str) == Some(agents::parent_guard::PTY_GUARD_SUBCOMMAND) {
         std::process::exit(agents::parent_guard::run_pty_guard_from_args(&args));

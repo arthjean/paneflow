@@ -6,6 +6,7 @@ members = [
     "crates/paneflow-config",
     "crates/paneflow-ipc-client",
     "crates/paneflow-ghostty-smoke",
+    "crates/paneflow-home",
     "crates/paneflow-libghostty-sys",
     "crates/paneflow-mcp",
     "crates/paneflow-mcp-install",
@@ -60,6 +61,7 @@ widestring = "1"
 # Internal crates
 paneflow-agent-config = { path = "crates/paneflow-agent-config" }
 paneflow-config = { path = "crates/paneflow-config" }
+paneflow-home = { path = "crates/paneflow-home" }
 paneflow-ipc-client = { path = "crates/paneflow-ipc-client" }
 paneflow-process = { path = "crates/paneflow-process" }
 paneflow-telemetry = { path = "crates/paneflow-telemetry" }

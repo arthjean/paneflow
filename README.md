@@ -64,7 +64,7 @@ paneflow watch --type ai.stop
 
 ### 4. Configure
 
-Themes, shell, keybindings, and shortcuts live in `~/.config/paneflow/paneflow.json` (`%APPDATA%\paneflow` on Windows) and hot-reload while the app runs. Everything is also editable in Settings.
+Themes, shell, keybindings, and shortcuts live in `~/.paneflow/paneflow.json` (`%USERPROFILE%\.paneflow` on Windows) and hot-reload while the app runs. Everything is also editable in Settings.
 
 [Learn more →](docs/user/configuration.md)
 

@@ -34,16 +34,11 @@ pub enum ConfigError {
 }
 
 pub fn config_path() -> Option<PathBuf> {
-    dirs::config_dir().map(|dir| dir.join(APP_SUBDIR).join("paneflow.json"))
+    paneflow_home::config_path()
 }
 
 pub fn session_path() -> Option<PathBuf> {
-    let filename = if cfg!(debug_assertions) {
-        "session-dev.json"
-    } else {
-        "session.json"
-    };
-    dirs::cache_dir().map(|dir| dir.join(APP_SUBDIR).join(filename))
+    paneflow_home::session_path()
 }
 
 pub fn load_config() -> PaneFlowConfig {

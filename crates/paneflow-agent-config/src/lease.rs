@@ -71,13 +71,13 @@ impl LastConfigLease {
 }
 
 fn lease_path(resource: &Path) -> Result<PathBuf> {
-    let config_dir = dirs::config_dir().ok_or_else(|| {
+    let home = paneflow_home::paneflow_home().ok_or_else(|| {
         Error::new(
             ErrorKind::NotFound,
-            "could not resolve the user configuration directory",
+            "could not resolve the Paneflow home directory",
         )
     })?;
-    let directory = config_dir.join("paneflow").join("agent-config-leases");
+    let directory = home.join("agent-config-leases");
     std::fs::create_dir_all(&directory)?;
     Ok(directory.join(format!("{:016x}.lock", resource_hash(resource))))
 }

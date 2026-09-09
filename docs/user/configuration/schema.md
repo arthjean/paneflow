@@ -23,9 +23,13 @@ logs a warning.
 
 | Platform | Path |
 | --- | --- |
-| Linux | `~/.config/paneflow/paneflow.json` |
-| macOS | `~/Library/Application Support/paneflow/paneflow.json` |
-| Windows | `%APPDATA%\paneflow\paneflow.json` |
+| Linux and macOS | `~/.paneflow/paneflow.json` |
+| Windows | `%USERPROFILE%\.paneflow\paneflow.json` |
+
+`PANEFLOW_HOME` moves the whole directory (config, session, worktrees, cache,
+helper binaries). Configuration found at the previous locations
+(`~/.config/paneflow`, `~/Library/Application Support/paneflow`,
+`%APPDATA%\paneflow`) is copied into `~/.paneflow` on first launch.
 
 ## Editor schema
 

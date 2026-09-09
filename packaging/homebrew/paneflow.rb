@@ -47,12 +47,14 @@ cask "paneflow" do
   # `zap trash:` is Homebrew's opt-in deep-clean; `brew uninstall --zap`
   # moves these directories to the user's Trash. The paths match what
   # PaneFlow writes at runtime:
-  #   ~/Library/Application Support/paneflow   → session.json, config.json
-  #   ~/Library/Caches/paneflow                → scrollback, update-check cache
+  #   ~/.paneflow                              → paneflow.json, session.json, worktrees, bin, cache
+  #   ~/Library/Application Support/paneflow   → config written by releases before the ~/.paneflow home
+  #   ~/Library/Caches/paneflow                → caches written by those releases
   # We intentionally do NOT zap ~/Library/Preferences/* - those may hold
   # Apple-system-managed state (window sizes, traffic-light geometry)
   # that shouldn't be nuked on an uninstall.
   zap trash: [
+    "~/.paneflow",
     "~/Library/Application Support/paneflow",
     "~/Library/Caches/paneflow",
   ]

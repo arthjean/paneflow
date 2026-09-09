@@ -129,5 +129,6 @@ reports a corrupt or tampered download, install 0.7.9 manually from the
 MSI once. Future Windows updates should work from inside Paneflow again.
 
 Uninstall Paneflow from Windows Settings. The uninstall removes the app
-but keeps user configuration at `%APPDATA%\paneflow\paneflow.json`.
-Helper binaries can also live under `%LOCALAPPDATA%\paneflow\bin`.
+but keeps `%USERPROFILE%\.paneflow`, which holds the configuration
+(`paneflow.json`), the session, managed worktrees, and the helper binaries
+under `bin`.

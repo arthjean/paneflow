@@ -4388,6 +4388,7 @@ name = "paneflow-agent-config"
 version = "0.13.0"
 dependencies = [
  "dirs",
+ "paneflow-home",
  "serde_json",
  "tempfile",
 ]
@@ -4434,6 +4435,7 @@ dependencies = [
  "objc2-metal 0.3.2",
  "open",
  "paneflow-config",
+ "paneflow-home",
  "paneflow-ipc-client",
  "paneflow-mcp-install",
  "paneflow-process",
@@ -4499,6 +4501,7 @@ version = "0.13.0"
 dependencies = [
  "dirs",
  "notify",
+ "paneflow-home",
  "serde",
  "serde_json",
  "tempfile",
@@ -4514,6 +4517,14 @@ dependencies = [
  "libc",
  "paneflow-terminal-ghostty",
  "portable-pty",
+]
+
+[[package]]
+name = "paneflow-home"
+version = "0.1.0"
+dependencies = [
+ "dirs",
+ "tempfile",
 ]
 
 [[package]]

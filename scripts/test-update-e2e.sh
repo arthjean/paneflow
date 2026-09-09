@@ -156,7 +156,7 @@ cat > "${LATEST_JSON}" <<EOF
 EOF
 
 reset_install() {
-    rm -rf "${INSTALL_DIR}" "${HOME}/.cache/paneflow"
+    rm -rf "${INSTALL_DIR}" "${HOME}/.cache/paneflow" "${HOME}/.paneflow/cache"
     mkdir -p "${INSTALL_DIR}/bin"
     cp "${OLD_BIN_SRC}" "${INSTALL_BIN}"
 }

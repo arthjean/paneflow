@@ -46,9 +46,8 @@ The config file lives at:
 
 | OS | Path |
 | --- | --- |
-| Linux | `~/.config/paneflow/paneflow.json` |
-| macOS | `~/Library/Application Support/paneflow/paneflow.json` |
-| Windows | `%APPDATA%\paneflow\paneflow.json` |
+| Linux and macOS | `~/.paneflow/paneflow.json` |
+| Windows | `%USERPROFILE%\.paneflow\paneflow.json` |
 
 The schema lists the canonical spellings. Runtime lookup is
 case-insensitive, but using the canonical names keeps editor

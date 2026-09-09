@@ -1,0 +1,15 @@
+[package]
+name = "paneflow-home"
+version = "0.1.0"
+edition = "2024"
+license = "GPL-3.0-or-later"
+description = "Resolves the per-user Paneflow home directory and its layout"
+
+[dependencies]
+dirs.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

@@ -92,6 +92,18 @@ pub(crate) fn shell_integration_dir() -> Option<PathBuf> {
     data_dir().map(|dir| dir.join("shell"))
 }
 
+pub fn cache_dir() -> Option<PathBuf> {
+    let dir = paneflow_home::cache_dir()?;
+    if let Err(e) = std::fs::create_dir_all(&dir) {
+        log::debug!(
+            "paneflow: cache_dir {} is unwritable ({e}); callers will skip caching",
+            dir.display()
+        );
+        return None;
+    }
+    Some(dir)
+}
+
 fn socket_path_from_env(raw: Option<std::ffi::OsString>) -> Option<PathBuf> {
     let path = PathBuf::from(raw?);
     path.is_absolute().then_some(path)
@@ -171,7 +183,7 @@ pub fn augment_path_for_gui_launch() {
 }
 
 pub fn data_dir() -> Option<PathBuf> {
-    let dir = dirs::data_local_dir()?.join(APP_SUBDIR);
+    let dir = paneflow_home::paneflow_home()?;
     if let Err(e) = std::fs::create_dir_all(&dir) {
         log::debug!(
             "paneflow: data_dir {} is unwritable ({e}); callers will use ephemeral state",

@@ -79,24 +79,23 @@ verify the kernel module matches the running kernel.
 
 ### Why is my paneflow.json not loading?
 
-Paneflow reads one config file per platform:
+Paneflow reads one config file, `paneflow.json`, in its home directory:
 
 | Platform | Path |
 | --- | --- |
-| Linux | `~/.config/paneflow/paneflow.json` |
-| macOS | `~/Library/Application Support/paneflow/paneflow.json` |
-| Windows | `%APPDATA%\\paneflow\\paneflow.json` |
+| Linux and macOS | `~/.paneflow/paneflow.json` |
+| Windows | `%USERPROFILE%\\.paneflow\\paneflow.json` |
 
 Validate the file:
 
 ```bash
-python3 -m json.tool ~/.config/paneflow/paneflow.json
+python3 -m json.tool ~/.paneflow/paneflow.json
 ```
 
 On Windows:
 
 ```powershell
-Get-Content $env:APPDATA\paneflow\paneflow.json -Raw |
+Get-Content $env:USERPROFILE\.paneflow\paneflow.json -Raw |
   ConvertFrom-Json | Out-Null
 ```
 

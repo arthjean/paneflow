@@ -108,7 +108,7 @@ pub fn state_file_path() -> Option<PathBuf> {
     } else {
         "markdown_state.json"
     };
-    dirs::cache_dir().map(|dir| dir.join(crate::runtime_paths::APP_SUBDIR).join(filename))
+    crate::runtime_paths::cache_dir().map(|dir| dir.join(filename))
 }
 
 pub fn load() -> MarkdownState {

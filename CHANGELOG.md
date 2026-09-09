@@ -23,8 +23,21 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
   Profiles are rows with hover actions and an editor that opens in place,
   with one key/value line per environment variable. Full access, AI free
   access, and the injection fence moved here from General.
+- One home directory, `~/.paneflow`. Everything Paneflow keeps for you now
+  sits in one place, the way `~/.claude` and `~/.codex` do:
+  `paneflow.json`, `session.json`, `window-state.json`, the managed
+  `worktrees/`, the helper binaries under `bin/`, shell integration, and
+  caches. On Windows that is `%USERPROFILE%\.paneflow`; `PANEFLOW_HOME`
+  moves the whole directory, for a second profile or a test machine. The
+  first launch copies the configuration, session, and window state from the
+  previous locations (`~/.config/paneflow`, `~/.cache/paneflow`,
+  `~/.local/share/paneflow` and their macOS and Windows equivalents), and
+  leaves the originals in place for older builds. Run `paneflow mcp install`
+  again if an agent's MCP config points at the old helper path; Settings >
+  MCP Servers reports it.
 
 ### Fixed
+
 
 - The shim now honors `CLAUDE_CONFIG_DIR` when it checks for a persistent
   Claude Code hook, so a second config directory without one still receives the

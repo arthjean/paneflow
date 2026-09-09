@@ -10,13 +10,12 @@ pub struct ConfigLock {
 }
 
 fn lock_path() -> Result<PathBuf> {
-    let config_dir = dirs::config_dir().ok_or_else(|| {
+    let paneflow_dir = paneflow_home::paneflow_home().ok_or_else(|| {
         Error::new(
             ErrorKind::NotFound,
-            "could not resolve the user configuration directory",
+            "could not resolve the Paneflow home directory",
         )
     })?;
-    let paneflow_dir = config_dir.join("paneflow");
     std::fs::create_dir_all(&paneflow_dir)?;
     Ok(paneflow_dir.join("agent-config.lock"))
 }

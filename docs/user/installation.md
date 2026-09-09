@@ -20,11 +20,11 @@ ends with a verify step so you know it worked.
 
 ## What you get
 
-A single `paneflow` binary plus a shell launcher. The default config
-lives at `~/.config/paneflow/paneflow.json` on Linux,
-`~/Library/Application Support/paneflow/paneflow.json` on macOS, and
-`%APPDATA%\paneflow\paneflow.json` on Windows. No services, no daemons,
-no background processes.
+A single `paneflow` binary plus a shell launcher. Everything Paneflow keeps
+for you (config, session, worktrees, helper binaries) lives in one directory,
+`~/.paneflow` (`%USERPROFILE%\.paneflow` on Windows), the way `~/.claude`
+and `~/.codex` do; `PANEFLOW_HOME` moves it. No services, no daemons, no
+background processes.
 
 ## Need help?
 

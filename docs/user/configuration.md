@@ -19,8 +19,13 @@ timing, and runtime notes, lives on the [schema page](/docs/configuration/schema
 
 | OS | Path |
 | --- | --- |
-| Linux | `~/.config/paneflow/paneflow.json` (or `$XDG_CONFIG_HOME/paneflow/paneflow.json`) |
-| macOS | `~/Library/Application Support/paneflow/paneflow.json` |
+| Linux and macOS | `~/.paneflow/paneflow.json` |
+| Windows | `%USERPROFILE%\.paneflow\paneflow.json` |
+
+`PANEFLOW_HOME` moves the whole directory (config, session, worktrees, cache,
+helper binaries). Configuration found at the previous locations
+(`~/.config/paneflow`, `~/Library/Application Support/paneflow`,
+`%APPDATA%\paneflow`) is copied into `~/.paneflow` on first launch.
 
 If the file does not exist on first launch, Paneflow boots with all
 defaults. Create the file at the path above to start customizing.
