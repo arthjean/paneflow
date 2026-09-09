@@ -865,15 +865,21 @@ impl PaneFlowApp {
         };
 
         let tab_group = SharedString::from(format!("tab-row-group-{tab_id}"));
+        let indent_guide = self.cached_config.sidebar_show.indent_guide_enabled();
+        let title_indent = SIDEBAR_FOLDER_ICON_WIDTH + SIDEBAR_TITLE_ROW_GAP;
+        let row_inset = if indent_guide { title_indent } else { 0. };
+        let content_width = SIDEBAR_WORKSPACE_ROW_CONTENT_WIDTH - row_inset;
         let mut title_row = div()
             .flex()
             .flex_row()
             .items_center()
             .gap(px(SIDEBAR_TITLE_ROW_GAP))
-            .w(px(SIDEBAR_WORKSPACE_ROW_CONTENT_WIDTH))
-            .max_w(px(SIDEBAR_WORKSPACE_ROW_CONTENT_WIDTH))
+            .w(px(content_width))
+            .max_w(px(content_width))
             .min_w_0()
-            .child(div().flex_none().w(px(SIDEBAR_FOLDER_ICON_WIDTH)))
+            .when(!indent_guide, |row| {
+                row.child(div().flex_none().w(px(SIDEBAR_FOLDER_ICON_WIDTH)))
+            })
             .child(title_el)
             .child(render_lane_slot(
                 lane,
@@ -921,6 +927,7 @@ impl PaneFlowApp {
         );
 
         let row_shell = sidebar_row_shell()
+            .ml(px(row_inset))
             .id(SharedString::from(format!("tab-row-{tab_id}")))
             .group(tab_group.clone())
             .on_drag(
@@ -980,8 +987,13 @@ impl PaneFlowApp {
                 }
             }));
 
-        let indent = SIDEBAR_FOLDER_ICON_WIDTH + SIDEBAR_TITLE_ROW_GAP;
-        let body = match self.render_tab_checkout_meta(ws, tab, indent, ui) {
+        let body = match self.render_tab_checkout_meta(
+            ws,
+            tab,
+            title_indent - row_inset,
+            content_width,
+            ui,
+        ) {
             Some(meta) => div()
                 .flex()
                 .flex_col()
@@ -1002,10 +1014,7 @@ impl PaneFlowApp {
             .flex_col()
             .relative()
             .rounded(ROW_RADIUS)
-            .when(
-                self.cached_config.sidebar_show.indent_guide_enabled(),
-                |el| el.child(render_sidebar_indent_guide(ui)),
-            )
+            .when(indent_guide, |el| el.child(render_sidebar_indent_guide(ui)))
             .child(row)
     }
 
@@ -1065,6 +1074,7 @@ impl PaneFlowApp {
         ws: &Workspace,
         tab: &Tab,
         indent: f32,
+        width: f32,
         ui: crate::theme::UiColors,
     ) -> Option<AnyElement> {
         let show = self.cached_config.sidebar_show;
@@ -1143,8 +1153,8 @@ impl PaneFlowApp {
                 .gap(px(6.))
                 .h(px(SIDEBAR_ROW_LINE_HEIGHT))
                 .pl(px(indent))
-                .w(px(SIDEBAR_WORKSPACE_ROW_CONTENT_WIDTH))
-                .max_w(px(SIDEBAR_WORKSPACE_ROW_CONTENT_WIDTH))
+                .w(px(width))
+                .max_w(px(width))
                 .overflow_x_hidden()
                 .when_some(branch, |row, branch| row.child(branch))
                 .when_some(counts, |row, counts| row.child(counts))
