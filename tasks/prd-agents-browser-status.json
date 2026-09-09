@@ -1,0 +1,844 @@
+{
+  "prd": {
+    "file": "tasks/prd-agents-browser.md",
+    "title": "Navigateur intégré au dock Agents",
+    "created_at": "2026-09-05",
+    "status": "IN_PROGRESS",
+    "started_at": "2026-09-05T16:32:18Z",
+    "updated_at": "2026-09-05T16:45:03Z",
+    "active": false,
+    "lifecycle": "SUPERSEDED",
+    "superseded_at": "2026-09-05T18:17:32Z",
+    "superseded_by": [
+      "tasks/prd-agents-browser-linux.md",
+      "tasks/prd-agents-browser-windows.md",
+      "tasks/prd-agents-browser-macos.md"
+    ],
+    "archive": "tasks/archive/agents-browser-global-2026-09-05",
+    "historical_status_preserved": true
+  },
+  "epics": [
+    {
+      "id": "EP-001",
+      "title": "Qualifier le moteur, le GPU et les plateformes",
+      "status": "IN_PROGRESS",
+      "priority": "P0",
+      "stories_total": 5,
+      "stories_done": 0,
+      "started_at": "2026-09-05T16:32:18Z",
+      "updated_at": "2026-09-05T16:45:03Z",
+      "completed_at": null,
+      "baseline": {
+        "branch": "feat/agents-browser",
+        "head": "fbfefd250a3f3c8d9968a23f8c358712859bc904",
+        "worktree": "clean"
+      },
+      "profile": "DEEP",
+      "implementation_outcome": "BLOCKED",
+      "qualification_verdict": "NO-GO",
+      "stories_in_review": 0,
+      "report": "docs/browser/qualification.md",
+      "blockers": [
+        "Pinned GPUI lacks a usable external-surface composition entry on Linux and Windows; macOS surface renderer accepts only a specific bi-planar video format. A planned GPUI extension or architecture decision is required.",
+        "No native CEF host, tested runtime pin, presentation instrumentation or M1 A/B/C raw baselines exists yet.",
+        "Linux Mesa, ARM GPU, macOS and Windows native execution access is not established; sandbox, signing, IME and screen-reader evidence is missing."
+      ],
+      "source_needs": {
+        "protocol_and_fixtures": "none",
+        "gpu_entry_points": "codebase: inspected exact pinned Cargo checkout",
+        "cef_api_and_binary_compatibility": "docs: deferred until the GPUI plan and native qualification path are resolved"
+      },
+      "review_invocation": "/review-epic tasks/prd-agents-browser.md EP-001",
+      "review_ready": false,
+      "validation": {
+        "checked_at": "2026-09-05T16:47:09Z",
+        "command": "bun test scripts/browser-qualification/qualification.test.mjs",
+        "tests_passed": 27,
+        "tests_failed": 0,
+        "assertions": 140,
+        "runtime": "Bun 1.3.14 on Linux x86_64",
+        "tracker": "Equivalent invariants of scripts/validate-task-artifacts.ps1 verified with Python; pwsh unavailable, original script not executed.",
+        "diff": "Tracked and new-file whitespace checks pass; local documentation links resolve; existing tracked changes limited to bench/README.md.",
+        "cargo_gates": "Not applicable: no Rust, manifest, lockfile, dependency or application change.",
+        "native": "NOT_EXECUTED; graphical, CEF, sandbox, platform, M1 and accessibility criteria remain missing."
+      },
+      "changed_files": [
+        "bench/README.md",
+        "bench/browser/README.md",
+        "bench/browser/evidence/preflight.json",
+        "bench/browser/fixtures/empty.html",
+        "bench/browser/fixtures/fixture.css",
+        "bench/browser/fixtures/fixture.js",
+        "bench/browser/fixtures/page.html",
+        "bench/browser/fixtures/tile.svg",
+        "docs/browser/qualification.md",
+        "scripts/browser-qualification.mjs",
+        "scripts/browser-qualification/fixtures.mjs",
+        "scripts/browser-qualification/measurements.mjs",
+        "scripts/browser-qualification/qualification.test.mjs",
+        "tasks/prd-agents-browser.md",
+        "tasks/prd-agents-browser-status.json"
+      ]
+    },
+    {
+      "id": "EP-002",
+      "title": "Construire la frontière navigateur et ses adaptateurs",
+      "status": "TODO",
+      "priority": "P0",
+      "stories_total": 6,
+      "stories_done": 0
+    },
+    {
+      "id": "EP-003",
+      "title": "Intégrer le navigateur au dock Agents",
+      "status": "TODO",
+      "priority": "P0",
+      "stories_total": 6,
+      "stories_done": 0
+    },
+    {
+      "id": "EP-004",
+      "title": "Compléter les comportements web et la récupération",
+      "status": "TODO",
+      "priority": "P0",
+      "stories_total": 6,
+      "stories_done": 0
+    },
+    {
+      "id": "EP-005",
+      "title": "Distribuer et qualifier les packages",
+      "status": "TODO",
+      "priority": "P0",
+      "stories_total": 5,
+      "stories_done": 0
+    },
+    {
+      "id": "EP-006",
+      "title": "Ajouter les interactions agent sous contrôle du workspace",
+      "status": "TODO",
+      "priority": "P1",
+      "stories_total": 4,
+      "stories_done": 0
+    }
+  ],
+  "stories": [
+    {
+      "id": "US-001",
+      "title": "Établir le protocole de mesure et les fixtures",
+      "epic": "EP-001",
+      "priority": "P0",
+      "size": "M",
+      "blocked_by": [],
+      "status": "IN_PROGRESS",
+      "started_at": "2026-09-05T16:32:18Z",
+      "completed_at": null,
+      "reviewed_at": null,
+      "updated_at": "2026-09-05T16:45:03Z",
+      "implementation_note": "Partial: protocol, nine fixture routes and raw-capture validation implemented. No native baseline archive or graphical fixture proof. Status remains IN_PROGRESS, not IN_REVIEW.",
+      "evidence": [
+        {
+          "criterion": 1,
+          "implementation": "bench/browser/README.md:42",
+          "entry_point": "scripts/browser-qualification.mjs:13",
+          "proof": "Protocol fixes A/B/C, loads, 1920x1080, 60/120 Hz and percentile calculation. bench/browser/evidence/preflight.json contains local NVIDIA driver inventory. Other machine/driver references missing.",
+          "status": "PARTIAL"
+        },
+        {
+          "criterion": 2,
+          "implementation": "bench/browser/fixtures/fixture.js:1",
+          "entry_point": "scripts/browser-qualification.mjs:16 -> scripts/browser-qualification/fixtures.mjs:18",
+          "proof": "scripts/browser-qualification/qualification.test.mjs:90 exercises every route over HTTP from the real CLI. Native IME/popup/download/WebGL execution is manual and NOT_EXECUTED.",
+          "status": "PARTIAL"
+        },
+        {
+          "criterion": 3,
+          "implementation": "bench/browser/README.md:163",
+          "entry_point": "native A/B harnesses not available",
+          "proof": "Explicit per-target missing-baseline inventory; no raw M1 baseline claimed.",
+          "status": "MISSING"
+        },
+        {
+          "criterion": 4,
+          "implementation": "scripts/browser-qualification/measurements.mjs:47",
+          "entry_point": "scripts/browser-qualification.mjs:32",
+          "proof": "scripts/browser-qualification/qualification.test.mjs:174 distinguishes CPU kinds and rejects a screen-latency claim on CPU samples; native timestamp collection still missing.",
+          "status": "PARTIAL"
+        },
+        {
+          "criterion": 5,
+          "implementation": "scripts/browser-qualification/measurements.mjs:47",
+          "entry_point": "scripts/browser-qualification.mjs:32 and :38",
+          "proof": "scripts/browser-qualification/qualification.test.mjs:163 and :192 exercise rejection of timestamps, load changes, missing/tampered traces and unpaired configurations through CLI.",
+          "status": "AUTOMATED_PROOF"
+        }
+      ]
+    },
+    {
+      "id": "US-002",
+      "title": "Valider l’hypothèse GPU sur Linux natif",
+      "epic": "EP-001",
+      "priority": "P0",
+      "size": "L",
+      "blocked_by": [
+        "US-001"
+      ],
+      "status": "TODO",
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null,
+      "implementation_note": "Not implemented. Dependency US-001 lacks native baselines; source obstacles and missing native proof documented in docs/browser/qualification.md.",
+      "evidence": [
+        {
+          "criterion": 1,
+          "entry_point": "native prototype or qualification report required",
+          "implementation": "docs/browser/qualification.md",
+          "proof": "No native runtime evidence. Source inspection and partial comparison do not satisfy this criterion.",
+          "status": "MISSING"
+        },
+        {
+          "criterion": 2,
+          "entry_point": "native prototype or qualification report required",
+          "implementation": "docs/browser/qualification.md",
+          "proof": "No native runtime evidence. Source inspection and partial comparison do not satisfy this criterion.",
+          "status": "MISSING"
+        },
+        {
+          "criterion": 3,
+          "entry_point": "native prototype or qualification report required",
+          "implementation": "docs/browser/qualification.md",
+          "proof": "No native runtime evidence. Source inspection and partial comparison do not satisfy this criterion.",
+          "status": "MISSING"
+        },
+        {
+          "criterion": 4,
+          "entry_point": "native prototype or qualification report required",
+          "implementation": "docs/browser/qualification.md",
+          "proof": "No native runtime evidence. Source inspection and partial comparison do not satisfy this criterion.",
+          "status": "MISSING"
+        },
+        {
+          "criterion": 5,
+          "entry_point": "native prototype or qualification report required",
+          "implementation": "docs/browser/qualification.md",
+          "proof": "No native runtime evidence. Source inspection and partial comparison do not satisfy this criterion.",
+          "status": "MISSING"
+        },
+        {
+          "criterion": 6,
+          "entry_point": "native prototype or qualification report required",
+          "implementation": "docs/browser/qualification.md",
+          "proof": "No native runtime evidence. Source inspection and partial comparison do not satisfy this criterion.",
+          "status": "MISSING"
+        }
+      ]
+    },
+    {
+      "id": "US-003",
+      "title": "Valider l’hypothèse GPU et sandbox sur macOS",
+      "epic": "EP-001",
+      "priority": "P0",
+      "size": "L",
+      "blocked_by": [
+        "US-001"
+      ],
+      "status": "TODO",
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null,
+      "implementation_note": "Not implemented. Dependency US-001 lacks native baselines; source obstacles and missing native proof documented in docs/browser/qualification.md.",
+      "evidence": [
+        {
+          "criterion": 1,
+          "entry_point": "native prototype or qualification report required",
+          "implementation": "docs/browser/qualification.md",
+          "proof": "No native runtime evidence. Source inspection and partial comparison do not satisfy this criterion.",
+          "status": "MISSING"
+        },
+        {
+          "criterion": 2,
+          "entry_point": "native prototype or qualification report required",
+          "implementation": "docs/browser/qualification.md",
+          "proof": "No native runtime evidence. Source inspection and partial comparison do not satisfy this criterion.",
+          "status": "MISSING"
+        },
+        {
+          "criterion": 3,
+          "entry_point": "native prototype or qualification report required",
+          "implementation": "docs/browser/qualification.md",
+          "proof": "No native runtime evidence. Source inspection and partial comparison do not satisfy this criterion.",
+          "status": "MISSING"
+        },
+        {
+          "criterion": 4,
+          "entry_point": "native prototype or qualification report required",
+          "implementation": "docs/browser/qualification.md",
+          "proof": "No native runtime evidence. Source inspection and partial comparison do not satisfy this criterion.",
+          "status": "MISSING"
+        },
+        {
+          "criterion": 5,
+          "entry_point": "native prototype or qualification report required",
+          "implementation": "docs/browser/qualification.md",
+          "proof": "No native runtime evidence. Source inspection and partial comparison do not satisfy this criterion.",
+          "status": "MISSING"
+        },
+        {
+          "criterion": 6,
+          "entry_point": "native prototype or qualification report required",
+          "implementation": "docs/browser/qualification.md",
+          "proof": "No native runtime evidence. Source inspection and partial comparison do not satisfy this criterion.",
+          "status": "MISSING"
+        }
+      ]
+    },
+    {
+      "id": "US-004",
+      "title": "Valider l’hypothèse GPU et bootstrap Windows",
+      "epic": "EP-001",
+      "priority": "P0",
+      "size": "L",
+      "blocked_by": [
+        "US-001"
+      ],
+      "status": "TODO",
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null,
+      "implementation_note": "Not implemented. Dependency US-001 lacks native baselines; source obstacles and missing native proof documented in docs/browser/qualification.md.",
+      "evidence": [
+        {
+          "criterion": 1,
+          "entry_point": "native prototype or qualification report required",
+          "implementation": "docs/browser/qualification.md",
+          "proof": "No native runtime evidence. Source inspection and partial comparison do not satisfy this criterion.",
+          "status": "MISSING"
+        },
+        {
+          "criterion": 2,
+          "entry_point": "native prototype or qualification report required",
+          "implementation": "docs/browser/qualification.md",
+          "proof": "No native runtime evidence. Source inspection and partial comparison do not satisfy this criterion.",
+          "status": "MISSING"
+        },
+        {
+          "criterion": 3,
+          "entry_point": "native prototype or qualification report required",
+          "implementation": "docs/browser/qualification.md",
+          "proof": "No native runtime evidence. Source inspection and partial comparison do not satisfy this criterion.",
+          "status": "MISSING"
+        },
+        {
+          "criterion": 4,
+          "entry_point": "native prototype or qualification report required",
+          "implementation": "docs/browser/qualification.md",
+          "proof": "No native runtime evidence. Source inspection and partial comparison do not satisfy this criterion.",
+          "status": "MISSING"
+        },
+        {
+          "criterion": 5,
+          "entry_point": "native prototype or qualification report required",
+          "implementation": "docs/browser/qualification.md",
+          "proof": "No native runtime evidence. Source inspection and partial comparison do not satisfy this criterion.",
+          "status": "MISSING"
+        },
+        {
+          "criterion": 6,
+          "entry_point": "native prototype or qualification report required",
+          "implementation": "docs/browser/qualification.md",
+          "proof": "No native runtime evidence. Source inspection and partial comparison do not satisfy this criterion.",
+          "status": "MISSING"
+        }
+      ]
+    },
+    {
+      "id": "US-005",
+      "title": "Prononcer le GO et figer le contrat de compatibilité",
+      "epic": "EP-001",
+      "priority": "P0",
+      "size": "M",
+      "blocked_by": [
+        "US-002",
+        "US-003",
+        "US-004"
+      ],
+      "status": "TODO",
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null,
+      "implementation_note": "Not implemented. Dependency US-001 lacks native baselines; source obstacles and missing native proof documented in docs/browser/qualification.md.",
+      "evidence": [
+        {
+          "criterion": 1,
+          "entry_point": "native prototype or qualification report required",
+          "implementation": "docs/browser/qualification.md",
+          "proof": "No native runtime evidence. Source inspection and partial comparison do not satisfy this criterion.",
+          "status": "MISSING"
+        },
+        {
+          "criterion": 2,
+          "entry_point": "native prototype or qualification report required",
+          "implementation": "docs/browser/qualification.md",
+          "proof": "No native runtime evidence. Source inspection and partial comparison do not satisfy this criterion.",
+          "status": "MISSING"
+        },
+        {
+          "criterion": 3,
+          "entry_point": "native prototype or qualification report required",
+          "implementation": "docs/browser/qualification.md",
+          "proof": "No native runtime evidence. Source inspection and partial comparison do not satisfy this criterion.",
+          "status": "MISSING"
+        },
+        {
+          "criterion": 4,
+          "entry_point": "native prototype or qualification report required",
+          "implementation": "docs/browser/qualification.md",
+          "proof": "No native runtime evidence. Source inspection and partial comparison do not satisfy this criterion.",
+          "status": "MISSING"
+        },
+        {
+          "criterion": 5,
+          "entry_point": "native prototype or qualification report required",
+          "implementation": "docs/browser/qualification.md",
+          "proof": "No native runtime evidence. Source inspection and partial comparison do not satisfy this criterion.",
+          "status": "MISSING"
+        },
+        {
+          "criterion": 6,
+          "entry_point": "native prototype or qualification report required",
+          "implementation": "docs/browser/qualification.md",
+          "proof": "No native runtime evidence. Source inspection and partial comparison do not satisfy this criterion.",
+          "status": "MISSING"
+        },
+        {
+          "criterion": 7,
+          "entry_point": "native prototype or qualification report required",
+          "implementation": "docs/browser/qualification.md",
+          "proof": "No native runtime evidence. Source inspection and partial comparison do not satisfy this criterion.",
+          "status": "MISSING"
+        }
+      ]
+    },
+    {
+      "id": "US-006",
+      "title": "Définir les identités et le protocole privé navigateur",
+      "epic": "EP-002",
+      "priority": "P0",
+      "size": "M",
+      "blocked_by": [
+        "US-005"
+      ],
+      "status": "TODO",
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-007",
+      "title": "Superviser le host et le cycle CEF",
+      "epic": "EP-002",
+      "priority": "P0",
+      "size": "L",
+      "blocked_by": [
+        "US-006"
+      ],
+      "status": "TODO",
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-008",
+      "title": "Industrialiser la présentation GPU Linux",
+      "epic": "EP-002",
+      "priority": "P0",
+      "size": "L",
+      "blocked_by": [
+        "US-006",
+        "US-007"
+      ],
+      "status": "TODO",
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-009",
+      "title": "Industrialiser la présentation GPU macOS",
+      "epic": "EP-002",
+      "priority": "P0",
+      "size": "L",
+      "blocked_by": [
+        "US-006",
+        "US-007"
+      ],
+      "status": "TODO",
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-010",
+      "title": "Industrialiser la présentation GPU Windows",
+      "epic": "EP-002",
+      "priority": "P0",
+      "size": "L",
+      "blocked_by": [
+        "US-006",
+        "US-007"
+      ],
+      "status": "TODO",
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-011",
+      "title": "Gérer les profils persistants et leur verrouillage",
+      "epic": "EP-002",
+      "priority": "P0",
+      "size": "M",
+      "blocked_by": [
+        "US-006",
+        "US-007"
+      ],
+      "status": "TODO",
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-012",
+      "title": "Ouvrir le dock indépendamment de Git",
+      "epic": "EP-003",
+      "priority": "P0",
+      "size": "M",
+      "blocked_by": [
+        "US-006"
+      ],
+      "status": "TODO",
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-013",
+      "title": "Construire les onglets et la barre de navigation",
+      "epic": "EP-003",
+      "priority": "P0",
+      "size": "L",
+      "blocked_by": [
+        "US-008",
+        "US-009",
+        "US-010",
+        "US-011",
+        "US-012"
+      ],
+      "status": "TODO",
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-014",
+      "title": "Router les URL et les services vers le bon propriétaire",
+      "epic": "EP-003",
+      "priority": "P0",
+      "size": "M",
+      "blocked_by": [
+        "US-012",
+        "US-013"
+      ],
+      "status": "TODO",
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-015",
+      "title": "Transmettre input, IME et raccourcis sans fuite de focus",
+      "epic": "EP-003",
+      "priority": "P0",
+      "size": "L",
+      "blocked_by": [
+        "US-013"
+      ],
+      "status": "TODO",
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-016",
+      "title": "Rendre la navigation accessible et adaptée au zoom",
+      "epic": "EP-003",
+      "priority": "P0",
+      "size": "L",
+      "blocked_by": [
+        "US-013",
+        "US-015"
+      ],
+      "status": "TODO",
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-017",
+      "title": "Sauvegarder les onglets et restaurer à la demande",
+      "epic": "EP-003",
+      "priority": "P0",
+      "size": "M",
+      "blocked_by": [
+        "US-011",
+        "US-012",
+        "US-013"
+      ],
+      "status": "TODO",
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-018",
+      "title": "Gérer visibilité, limites et mise en veille explicite",
+      "epic": "EP-004",
+      "priority": "P0",
+      "size": "M",
+      "blocked_by": [
+        "US-013",
+        "US-017"
+      ],
+      "status": "TODO",
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-019",
+      "title": "Récupérer les pannes et borner la fermeture",
+      "epic": "EP-004",
+      "priority": "P0",
+      "size": "M",
+      "blocked_by": [
+        "US-007",
+        "US-008",
+        "US-009",
+        "US-010",
+        "US-018"
+      ],
+      "status": "TODO",
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-020",
+      "title": "Appliquer la politique d’origines et de permissions",
+      "epic": "EP-004",
+      "priority": "P0",
+      "size": "L",
+      "blocked_by": [
+        "US-011",
+        "US-013",
+        "US-019"
+      ],
+      "status": "TODO",
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-021",
+      "title": "Prendre en charge les dialogues, fichiers et fenêtres web",
+      "epic": "EP-004",
+      "priority": "P0",
+      "size": "L",
+      "blocked_by": [
+        "US-015",
+        "US-018",
+        "US-020"
+      ],
+      "status": "TODO",
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-022",
+      "title": "Exposer DevTools avec les API publiques CEF",
+      "epic": "EP-004",
+      "priority": "P1",
+      "size": "L",
+      "blocked_by": [
+        "US-013",
+        "US-015",
+        "US-020"
+      ],
+      "status": "TODO",
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-023",
+      "title": "Qualifier les parcours web et les frontières de sécurité",
+      "epic": "EP-004",
+      "priority": "P0",
+      "size": "M",
+      "blocked_by": [
+        "US-016",
+        "US-017",
+        "US-018",
+        "US-019",
+        "US-020",
+        "US-021",
+        "US-022"
+      ],
+      "status": "TODO",
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-024",
+      "title": "Embarquer le runtime dans les packages Linux",
+      "epic": "EP-005",
+      "priority": "P0",
+      "size": "L",
+      "blocked_by": [
+        "US-005",
+        "US-007",
+        "US-008"
+      ],
+      "status": "TODO",
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-025",
+      "title": "Signer et notariser le bundle macOS complet",
+      "epic": "EP-005",
+      "priority": "P0",
+      "size": "L",
+      "blocked_by": [
+        "US-005",
+        "US-007",
+        "US-009"
+      ],
+      "status": "TODO",
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-026",
+      "title": "Installer le bootstrap et le runtime Windows",
+      "epic": "EP-005",
+      "priority": "P0",
+      "size": "L",
+      "blocked_by": [
+        "US-005",
+        "US-007",
+        "US-010"
+      ],
+      "status": "TODO",
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-027",
+      "title": "Versionner le runtime et organiser ses mises à jour",
+      "epic": "EP-005",
+      "priority": "P0",
+      "size": "M",
+      "blocked_by": [
+        "US-024",
+        "US-025",
+        "US-026"
+      ],
+      "status": "TODO",
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-028",
+      "title": "Certifier la matrice et préparer la sortie navigateur",
+      "epic": "EP-005",
+      "priority": "P0",
+      "size": "L",
+      "blocked_by": [
+        "US-023",
+        "US-024",
+        "US-025",
+        "US-026",
+        "US-027"
+      ],
+      "status": "TODO",
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-029",
+      "title": "Exposer la découverte et les diagnostics en lecture",
+      "epic": "EP-006",
+      "priority": "P1",
+      "size": "M",
+      "blocked_by": [
+        "US-006",
+        "US-022",
+        "US-028"
+      ],
+      "status": "TODO",
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-030",
+      "title": "Autoriser les commandes d’interaction bornées",
+      "epic": "EP-006",
+      "priority": "P1",
+      "size": "L",
+      "blocked_by": [
+        "US-029"
+      ],
+      "status": "TODO",
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-031",
+      "title": "Joindre un élément ou une capture au contexte de l’agent",
+      "epic": "EP-006",
+      "priority": "P2",
+      "size": "M",
+      "blocked_by": [
+        "US-029"
+      ],
+      "status": "TODO",
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-032",
+      "title": "Certifier l’isolation et la concurrence des outils agent",
+      "epic": "EP-006",
+      "priority": "P1",
+      "size": "M",
+      "blocked_by": [
+        "US-030",
+        "US-031"
+      ],
+      "status": "TODO",
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    }
+  ]
+}

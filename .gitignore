@@ -49,8 +49,19 @@ LOG_*.text
 # Local-only PRDs, spikes, and task-tracking notes (kept out of the public repo)
 /paneflow-site/tasks/
 
-# Local PRD and story-status scratch area (see AGENTS.md): never tracked.
-/tasks/
+# Versioned PRDs and their references; generated task runs remain local.
+/tasks/*
+!/tasks/prd-agents-browser.md
+!/tasks/prd-agents-browser-linux.md
+!/tasks/prd-agents-browser-macos.md
+!/tasks/prd-agents-browser-windows.md
+!/tasks/prd-agents-browser-status.json
+!/tasks/prd-agents-browser-linux-status.json
+!/tasks/prd-agents-browser-macos-status.json
+!/tasks/prd-agents-browser-windows-status.json
+!/tasks/prd-agents-browser-assets/
+!/tasks/prd-agents-browser-assets/reference-1.png
+!/tasks/prd-agents-browser-assets/reference-2.png
 
 # Local-only logo explorations (kept out of the public repo)
 /logo-concepts/

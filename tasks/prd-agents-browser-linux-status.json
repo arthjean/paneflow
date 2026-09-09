@@ -1,0 +1,2837 @@
+{
+  "prd": {
+    "file": "tasks/prd-agents-browser-linux.md",
+    "title": "Navigateur Agents sur Linux : socle commun, distributions, Wayland et X11",
+    "created_at": "2026-09-05",
+    "status": "IN_PROGRESS",
+    "active": true,
+    "platform": "LINUX",
+    "supersedes": "tasks/prd-agents-browser.md",
+    "baseline_commit": "fbfefd250a3f3c8d9968a23f8c358712859bc904",
+    "updated_at": "2026-09-09T07:05:56+00:00",
+    "plan_revision": "1.9"
+  },
+  "epics": [
+    {
+      "id": "EP-001",
+      "title": "Préparer les références Linux et les contrats partagés",
+      "status": "DONE",
+      "priority": "P0",
+      "stories_total": 5,
+      "stories_done": 5,
+      "release": "R0",
+      "started_at": "2026-09-05T20:36:10.684108+00:00",
+      "baseline_commit": "fbfefd250a3f3c8d9968a23f8c358712859bc904",
+      "profile": "DEEP",
+      "evidence_map": [
+        {
+          "story": "US-001",
+          "criterion": "AC-1",
+          "status": "PASS",
+          "path": "scripts/browser-qualification/fixtures.mjs:18",
+          "entry_point": "browser-qualification.mjs serve / manifest",
+          "proof": "HTTP/digest tests through the CLI; all nine original fixtures retained"
+        },
+        {
+          "story": "US-001",
+          "criterion": "AC-2",
+          "status": "PASS",
+          "path": "bench/browser/README.md:43",
+          "entry_point": "browser-qualification.mjs inspect / compare",
+          "proof": "A/B/C/PRE_FEATURE protocol, five repetitions, physical viewport and separate60/120Hz conditions; qualification.test.mjs"
+        },
+        {
+          "story": "US-001",
+          "criterion": "AC-3",
+          "status": "PASS",
+          "path": "scripts/browser-qualification/replay.mjs:4",
+          "entry_point": "replay CLI -> terminal-capture CLI -> real PTY worker",
+          "proof": "Frozen replay digest4eb27e5ac4d4ba29bd1070817e39eeb3d01e8f3e954b33d63c168b44ff168504;29,750 conforming events per terminal reference"
+        },
+        {
+          "story": "US-001",
+          "criterion": "AC-4",
+          "status": "PASS",
+          "path": "bench/browser/evidence/m1/index.json:1",
+          "entry_point": "actual release native capture and environment inventory",
+          "proof": "Fedora/GNOME/NVIDIA local60Hz observed; missing references explicitly listed"
+        },
+        {
+          "story": "US-001",
+          "criterion": "AC-5",
+          "status": "PASS",
+          "path": "scripts/browser-qualification/measurements.mjs:50",
+          "entry_point": "inspect / compare CLI",
+          "proof": "Timestamp, tamper, uncontrolled workload and calibration rejection tests; native rejected runs retained"
+        },
+        {
+          "story": "US-002",
+          "criterion": "AC-1",
+          "status": "PASS",
+          "path": "native/browser/manifest.toml:1",
+          "entry_point": "fetch-browser.py --target",
+          "proof": "Exact CEF/Chromium/cef-rs pin, archive/file/header hashes and actual notices"
+        },
+        {
+          "story": "US-002",
+          "criterion": "AC-2",
+          "status": "PASS",
+          "path": "scripts/fetch-browser.py:42",
+          "entry_point": "fetch and verify-only for Linux x86_64 / aarch64",
+          "proof": "linux64-elf.json and linuxarm64-elf.json; GLIBC 2.25 maximum and 32 SONAMEs confronted with official Jammy package file lists"
+        },
+        {
+          "story": "US-002",
+          "criterion": "AC-3",
+          "status": "PASS",
+          "path": "scripts/fetch-browser.py:22",
+          "entry_point": "explicit fetch CLI",
+          "proof": "Archive digest, traversal/links/special files/size rejection tests; no native download from build.rs"
+        },
+        {
+          "story": "US-002",
+          "criterion": "AC-4",
+          "status": "PASS",
+          "path": "crates/paneflow-browser-protocol/src/wire.rs:10",
+          "entry_point": "versioned harness and native witness handshake",
+          "proof": "Manifest and shared wire contract version 1; incompatible-version real-harness rejection"
+        },
+        {
+          "story": "US-002",
+          "criterion": "AC-5",
+          "status": "PASS",
+          "path": "scripts/browser-qualification/fetch.test.mjs:1",
+          "entry_point": "fetch CLI subprocess",
+          "proof": "Unavailable target, wrong hash and incompatible ELF refuse installation while preserving existing components"
+        },
+        {
+          "story": "US-003",
+          "criterion": "AC-1",
+          "status": "PASS",
+          "path": "crates/paneflow-browser-protocol/src/domain.rs:26",
+          "entry_point": "paneflow-browser-harness -> Controller::dispatch",
+          "proof": "Portable identities, owner and document generations, operation IDs and explicit errors; scope integration tests"
+        },
+        {
+          "story": "US-003",
+          "criterion": "AC-2",
+          "status": "PASS",
+          "path": "crates/paneflow-browser-protocol/src/controller.rs:10",
+          "entry_point": "framed harness single / batch trusted channels",
+          "proof": "Descriptor8/64, live8 and operations4/16/1 limits tested through the executable"
+        },
+        {
+          "story": "US-003",
+          "criterion": "AC-3",
+          "status": "PASS",
+          "path": "crates/paneflow-browser-protocol/src/frames.rs:1",
+          "entry_point": "harness presentation and frame commands",
+          "proof": "Visibility/lifetime separation; bounded frame pools and exact generation-aware acknowledgements"
+        },
+        {
+          "story": "US-003",
+          "criterion": "AC-4",
+          "status": "PASS",
+          "path": "crates/paneflow-browser-protocol/src/domain.rs:41",
+          "entry_point": "harness capabilities with absent/deterministic backend",
+          "proof": "Absent/development/human-qualified/agent-qualified model; unavailable backend preserves terminal availability"
+        },
+        {
+          "story": "US-003",
+          "criterion": "AC-5",
+          "status": "PASS",
+          "path": "crates/paneflow-browser-protocol/src/wire.rs:105",
+          "entry_point": "harness framing / dispatch / bounded reply writer",
+          "proof": "Oversize, unknown identity, version and stale generation reject; no active-page fallback; outgoing oversize emits no partial frame"
+        },
+        {
+          "story": "US-004",
+          "criterion": "AC-1",
+          "status": "PASS",
+          "path": "scripts/browser-qualification.mjs:18",
+          "entry_point": "witness CLI -> runWitness -> linux::run",
+          "proof": "30 full native B lifecycles from private CEF Views/ALLOY hosts, fixture load, message loop and shutdown observed"
+        },
+        {
+          "story": "US-004",
+          "criterion": "AC-2",
+          "status": "PASS",
+          "path": "scripts/browser-qualification/witness.mjs:22",
+          "entry_point": "live topology plus Chromium process_name metadata",
+          "proof": "Renderer/GPU PIDs joined to live seccomp2 and no_new_privs1; renderer namespace isolation; normalized sandbox-disable switches rejected"
+        },
+        {
+          "story": "US-004",
+          "criterion": "AC-3",
+          "status": "PASS",
+          "path": "crates/paneflow-browser-host/src/qualification.rs:45",
+          "entry_point": "private framed stdin/stdout and native console callback",
+          "proof": "0700 isolated profiles, four queued controls, 256 KiB wire and 1,024 UTF-16 report bounds; no page-callable control API"
+        },
+        {
+          "story": "US-004",
+          "criterion": "AC-4",
+          "status": "PASS",
+          "path": "crates/paneflow-browser-host/src/linux.rs:175",
+          "entry_point": "native host create -> close -> OnBeforeClose -> Shutdown",
+          "proof": "Every accepted B raw native log records separate process creation and orderly closure; app/helpers remain separate"
+        },
+        {
+          "story": "US-004",
+          "criterion": "AC-5",
+          "status": "PASS",
+          "path": "scripts/browser-qualification/host.test.mjs:1",
+          "entry_point": "native host executable and witness cleanup",
+          "proof": "Nine native handshake/sandbox negative cases; historical bootstrap failures retained with owned-process cleanup"
+        },
+        {
+          "story": "US-005",
+          "criterion": "AC-1",
+          "status": "PASS",
+          "path": "scripts/browser-qualification/terminal-capture.mjs:247",
+          "entry_point": "terminal capture CLI and browser-capture.mjs CLI",
+          "proof": "A/PRE_FEATURE four real PTYs; B empty,scroll,animation,WebGL,network,combined on the exact same CEF pin"
+        },
+        {
+          "story": "US-005",
+          "criterion": "AC-2",
+          "status": "PASS",
+          "path": "scripts/browser-qualification/terminal-analysis.mjs:149",
+          "entry_point": "terminal analyzer CLI / Chromium-Wayland native parser",
+          "proof": "Release receipts and raw input->PTY echo->paint->native presentation; B exact DrawAndSwap/presentation match; clock calibration"
+        },
+        {
+          "story": "US-005",
+          "criterion": "AC-3",
+          "status": "PASS",
+          "path": "bench/browser/evidence/m1/index.json:1",
+          "entry_point": "eight completed native capture sets",
+          "proof": "Five 10+60 s repetitions per set;1,500 post-warmup inputs each in A/PRE; hardware, versions, raw traces and calibration archived"
+        },
+        {
+          "story": "US-005",
+          "criterion": "AC-4",
+          "status": "PASS",
+          "path": "bench/browser/evidence/m1/cpu/index.json:1",
+          "entry_point": "existing terminal/editor benchmark scripts and thread-CPU logs",
+          "proof": "Supplemental CPU data separate from presentation; existing baselines unchanged; other environments explicitly unexecuted"
+        },
+        {
+          "story": "US-005",
+          "criterion": "AC-5",
+          "status": "PASS",
+          "path": "scripts/browser-qualification/browser-trace.mjs:141",
+          "entry_point": "native analyzers, inspect/compare and early-refresh guard",
+          "proof": "Clock/feedback/replay failure tests; observed GC and 144 Hz runs rejected; deliberate 120 Hz request at 59.951 Hz rejected during warmup; no GO emitted"
+        }
+      ],
+      "updated_at": "2026-09-05T23:38:57.806408+00:00",
+      "completed_at": "2026-09-05T23:38:57.806408+00:00",
+      "handoff_status": "DONE",
+      "stories_in_review": 0,
+      "scope_corrections": [
+        "Keep EP-001 scoped to shared contracts and measured local Linux references; additional distributions and hardware remain later qualification work.",
+        "Native CEF Views with ALLOY and Wayland supplies the standalone B reference. No GPUI pin change or EP-002 dependency is required for EP-001.",
+        "Terminal latency starts at the normal GPUI input handler and ends at native compositor presentation of the actual PTY echo marker."
+      ],
+      "validation": "bench/browser/evidence/m1/validation/gates.json",
+      "remaining_work": [],
+      "progress_note": "All 25 criteria certified from real entry points. Local references complete; integrated GPU presentation and distribution qualification remain later epics.",
+      "reviewed_at": "2026-09-05T23:38:57.806408+00:00",
+      "certification": "bench/browser/evidence/m1/validation/review.json"
+    },
+    {
+      "id": "EP-002",
+      "title": "Établir la présentation GPU Linux et le cycle du host",
+      "status": "DONE",
+      "priority": "P0",
+      "stories_total": 5,
+      "stories_done": 5,
+      "release": "R0",
+      "started_at": "2026-09-06T09:14:08.707937+00:00",
+      "updated_at": "2026-09-07T06:38:43.208065+00:00",
+      "profile": "DEEP",
+      "baseline_commit": "fbfefd250a3f3c8d9968a23f8c358712859bc904",
+      "stories_in_review": 0,
+      "reviewed_at": "2026-09-07T06:38:43.208065+00:00",
+      "evidence_map": [
+        {
+          "story": "US-006",
+          "criterion": "AC-1",
+          "status": "PASS",
+          "path": "docs/browser/gpui-external-surfaces.md:9",
+          "entry_point": "ADR read by reviewers; obstacles table maps each pinned file",
+          "proof": "Surface type, ownership, scene dispatch, import and presentation points bounded; seven obstacle rows name files at pin fecc3273"
+        },
+        {
+          "story": "US-006",
+          "criterion": "AC-2",
+          "status": "PASS",
+          "path": "native/gpui/manifest.toml:1",
+          "entry_point": "scripts/fetch-gpui.py -> Cargo [patch] table -> .github/actions/fetch-gpui on every cargo job",
+          "proof": "Four digest-pinned patches applied to a sparse checkout; --verify-only exit 0; Cargo cache untouched (checkout is gitignored)"
+        },
+        {
+          "story": "US-006",
+          "criterion": "AC-3",
+          "status": "PASS",
+          "path": "src-app/Cargo.toml:45",
+          "entry_point": "cargo clippy/test --locked through the patched checkout",
+          "proof": "Four rev values equal upstream_sha; font-kit, wayland, x11 features kept; PlatformWindow::external_surface_context defaults to None; browser::run_prototype non-Linux stub exits 2 with an unavailable message"
+        },
+        {
+          "story": "US-006",
+          "criterion": "AC-4",
+          "status": "PASS",
+          "path": "src-app/src/browser/presentation.rs:411",
+          "entry_point": "cargo test -p paneflow-app browser::presentation",
+          "proof": "Generation change, resource removal and UI-thread nonblocking tests pass; delta table in the ADR (457 insertions, 20 deletions over 13 files)"
+        },
+        {
+          "story": "US-006",
+          "criterion": "AC-5",
+          "status": "PASS",
+          "path": "docs/browser/gpui-external-surfaces.md:150",
+          "entry_point": "ADR escalation conditions",
+          "proof": "Terminal refactor, private API and shell change named as plan-revision triggers; none applies to the series"
+        },
+        {
+          "story": "US-007",
+          "criterion": "AC-1",
+          "status": "PASS",
+          "path": "crates/paneflow-browser-host/src/linux/vulkan.rs:446",
+          "entry_point": "CEF OnAcceleratedPaint -> presentation::accelerated_paint -> Engine::copy_frame",
+          "proof": "Revised internal scope: GENERAL/FOREIGN ownership barriers and PoolReady are wired in host and GPUI;26 current Browser Rust files match r4 release receipts, prior focused tests and archived AMD/NVIDIA functional observations. Pixel-content qualification remains Q-LNX-02, not passed."
+        },
+        {
+          "story": "US-007",
+          "criterion": "AC-2",
+          "status": "PASS",
+          "path": "bench/browser/evidence/prototype/cef-tsync-20260906-nvidia-xwayland-r3/prototype/native.json",
+          "entry_point": "SCM_RIGHTS seqpacket channel -> HostSupervisor frame thread -> FrameConsumer::intake -> DmabufImporter::import",
+          "proof": "Revised internal scope: GENERAL/FOREIGN ownership barriers and PoolReady are wired in host and GPUI;26 current Browser Rust files match r4 release receipts, prior focused tests and archived AMD/NVIDIA functional observations. Pixel-content qualification remains Q-LNX-02, not passed."
+        },
+        {
+          "story": "US-007",
+          "criterion": "AC-3",
+          "status": "PASS",
+          "path": "src-app/src/browser/presentation.rs:245",
+          "entry_point": "cargo test -p paneflow-app browser::presentation; protocol frame ledger tests",
+          "proof": "3 slots per pool, 2 pools max on both ends, acks only after on_submitted_work_done + Device::poll off-thread. Review fix: pending budget is 3 per live pool (6 during a replacement) instead of a fatal at 4 while an old pool drains"
+        },
+        {
+          "story": "US-007",
+          "criterion": "AC-4",
+          "status": "PASS",
+          "path": "src-app/src/browser/prototype.rs:782",
+          "entry_point": "Render -> schedule_releases -> Window::defer -> mandatory GPU callback -> nonblocking background Poll",
+          "proof": "Scene replacement is proven before deferred completion registration; no ACK without callback. r9 diagnostic had360 complete releases and zero starvation in the final3s at120Hz."
+        },
+        {
+          "story": "US-007",
+          "criterion": "AC-5",
+          "status": "PASS",
+          "path": "crates/paneflow-browser-host/src/linux/presentation.rs:333",
+          "entry_point": "CEF OnPaint/OnAcceleratedPaint failure paths -> FrameMessage::Failed -> Intake::Fatal",
+          "proof": "unsupported_modifier, wrong_device, invalid_handle refused before import; software OnPaint refused (evidence x11-20260906T111214Z). Review fix: retire_timeout now raises the Browser error instead of being ignored, and the host announces PoolRetired for the leaked pool"
+        },
+        {
+          "story": "US-008",
+          "criterion": "AC-1",
+          "status": "MANUAL_PROVEN",
+          "path": "bench/browser/evidence/prototype/cef-tsync-20260906-mesa-wayland-r2/prototype/native.json",
+          "entry_point": "bun scripts/browser-qualification/prototype.mjs --display wayland",
+          "proof": "Source-built CEF on AMD Raphael/Mesa 26.1.8, headless native Wayland: page in GPUI, no X11 connections, input/resize/scale/host-loss PASS. Both GPU processes have all 32 observed threads filtered, renderer sandbox passes, all 26 observed processes exit. Physical M1 and shipping artifact qualification remain open."
+        },
+        {
+          "story": "US-008",
+          "criterion": "AC-2",
+          "status": "MANUAL_PROVEN",
+          "path": "bench/browser/evidence/prototype/cef-tsync-20260906-mesa-wayland-r2/prototype/native.json",
+          "entry_point": "prototype runner snapshot",
+          "proof": "Source-built CEF on AMD Raphael/Mesa 26.1.8, headless native Wayland: page in GPUI, no X11 connections, input/resize/scale/host-loss PASS. Both GPU processes have all 32 observed threads filtered, renderer sandbox passes, all 26 observed processes exit. Physical M1 and shipping artifact qualification remain open."
+        },
+        {
+          "story": "US-008",
+          "criterion": "AC-3",
+          "status": "PASS",
+          "path": "bench/browser/evidence/missed-frames-20260907/receipt.json",
+          "entry_point": "prototype runner m1_presentation_feedback",
+          "proof": "Revised AC: diagnostics and rejected B pilot archived;217 targeted tests passed. Full M1 explicitly transferred to Q-LNX-03 under US-026, not declared passed."
+        },
+        {
+          "story": "US-008",
+          "criterion": "AC-4",
+          "status": "PASS",
+          "path": "scripts/browser-qualification/prototype.mjs:150",
+          "entry_point": "prototype.mjs verdict",
+          "proof": "MEASURED / NOT_MEASURED / NOT_EXECUTED / FAILED distinguished per criterion in native.json"
+        },
+        {
+          "story": "US-008",
+          "criterion": "AC-5",
+          "status": "PASS",
+          "path": "docs/browser/runtime.md:205",
+          "entry_point": "runtime.md local outcome table",
+          "proof": "Wayland path left non-qualified with cause; X11 study ran independently"
+        },
+        {
+          "story": "US-009",
+          "criterion": "AC-1",
+          "status": "PASS",
+          "path": "bench/browser/evidence/prototype/cef-tsync-20260906-nvidia-xwayland-r3/prototype/native.json",
+          "entry_point": "paneflow browser-prototype --x11",
+          "proof": "Shared BrowserPresentation and host Ozone X11 path inspected; native qualification not claimed.",
+          "scope_revision": "1.3"
+        },
+        {
+          "story": "US-009",
+          "criterion": "AC-2",
+          "status": "PASS",
+          "path": "bench/browser/evidence/prototype/cef-tsync-20260906-nvidia-xwayland-r3/prototype/native.json",
+          "entry_point": "prototype.mjs --display x11 with sandbox enforced",
+          "proof": "Historical NVIDIA XWayland evidence retained under its actual topology; Xorg explicitly NOT_EXECUTED.",
+          "scope_revision": "1.3"
+        },
+        {
+          "story": "US-009",
+          "criterion": "AC-3",
+          "status": "PASS",
+          "path": "bench/browser/evidence/prototype/cef-tsync-20260906-nvidia-xwayland-r3/prototype/native.json",
+          "entry_point": "prototype.mjs frame_chain_us",
+          "proof": "Q-LNX-04 carries all original native Xorg functional/M1/resource requirements under US-026.",
+          "scope_revision": "1.3"
+        },
+        {
+          "story": "US-009",
+          "criterion": "AC-4",
+          "status": "PASS",
+          "path": "crates/paneflow-browser-host/src/linux/handlers.rs:8",
+          "entry_point": "PANEFLOW_BROWSER_OZONE read once in on_before_command_line_processing",
+          "proof": "Native TTY prerequisites and diagnostic path documented in handoff and diagnostics/run-native-xorg.py.",
+          "scope_revision": "1.3"
+        },
+        {
+          "story": "US-009",
+          "criterion": "AC-5",
+          "status": "PASS",
+          "path": "docs/browser/runtime.md:205",
+          "entry_point": "runtime.md local outcome table",
+          "proof": "X11 release remains unqualified; internal Wayland integration may proceed.",
+          "scope_revision": "1.3"
+        },
+        {
+          "story": "US-010",
+          "criterion": "AC-1",
+          "status": "PASS",
+          "path": "src-app/src/browser/supervisor.rs:371",
+          "entry_point": "main.rs BrowserRuntime::install -> HostSupervisor::activate (paneflow browser-prototype)",
+          "proof": "Runtime stamp, required files, manifest spot digests and host binary verified before spawn; handshake checks contract version, availability and presentation. Review fix: send() no longer nests running->state locks against shutdown()'s state->running order"
+        },
+        {
+          "story": "US-010",
+          "criterion": "AC-2",
+          "status": "PASS",
+          "path": "src-app/src/browser/supervisor.rs:977",
+          "entry_point": "cargo test -p paneflow-app browser::supervisor",
+          "proof": "nothing_runs_and_no_libcef_is_mapped_before_activation; non-Linux run_prototype reports unavailable and exits 2"
+        },
+        {
+          "story": "US-010",
+          "criterion": "AC-3",
+          "status": "PASS",
+          "path": "src-app/src/browser/supervisor.rs:85",
+          "entry_point": "HostState Inactive/Starting/Ready/Stopping/Failed",
+          "proof": "Verification, staging and launch on browser-host-start thread; app quit shuts down through smol::unblock"
+        },
+        {
+          "story": "US-010",
+          "criterion": "AC-4",
+          "status": "PASS",
+          "path": "src-app/src/browser/supervisor.rs:996",
+          "entry_point": "cargo test -p paneflow-app browser::supervisor",
+          "proof": "concurrent_activation_starts_exactly_one_host, a_garbage_handshake_fails_once_and_never_restarts_on_its_own, shutdown_reaps_every_descendant_of_the_host, a_dead_host_is_reported_without_relaunch, runtime_verification_rejects_a_foreign_or_altered_runtime, a_missing_presentation_is_a_handshake_failure"
+        },
+        {
+          "story": "US-010",
+          "criterion": "AC-5",
+          "status": "PASS",
+          "path": "src-app/src/browser/supervisor.rs:414",
+          "entry_point": "HostSupervisor::retry",
+          "proof": "Failed state persists until an explicit retry; process-group signals only; no kill by process name"
+        }
+      ],
+      "validation": "tasks/ep002-scope-revision-1.3-validation.json",
+      "certification": "tasks/ep002-scope-decision-1.3.md",
+      "remaining_work": [],
+      "progress_note": "DONE under explicitly revised internal scope1.3. Full native/performance/release qualification remains open under EP-005.",
+      "scope_history": [
+        {
+          "revision": "<=1.2",
+          "status": "IN_PROGRESS",
+          "stories_done": 2,
+          "snapshot": "ep002-before-scope-revision-1.3.json",
+          "reason": "Original full native qualification scope not certified"
+        }
+      ],
+      "completed_at": "2026-09-07T06:38:43.208065+00:00",
+      "verification_scope": "certified-internal-development-foundation",
+      "plan_revision": "1.3",
+      "scope_decision": {
+        "authorized_by": "Arthur Jean",
+        "at": "2026-09-07T06:38:43.208065+00:00",
+        "request": "Trouver un juste milieu pour certifier EP-002 DONE et avancer à EP-003 dans une autre session",
+        "meaning": "DONE for internal development foundation; native/performance/shipping qualifications transferred, not passed",
+        "deferred_release_gates": [
+          "Q-LNX-01",
+          "Q-LNX-02",
+          "Q-LNX-03",
+          "Q-LNX-04",
+          "Q-LNX-05"
+        ],
+        "accepted_validation": "Existing release r4, targeted tests and bounded native functional evidence; current Browser Rust sources match26 files in build receipts. Full workspace final bundle remains Q-LNX-05, not run."
+      },
+      "next_actions": [
+        "Start EP-003 on internal fixtures using the shared controller and presentation contracts.",
+        "Keep all Q-LNX release gates open under EP-005; do not publish Browser capability."
+      ],
+      "prior_qualification_history": {
+        "diagnostic_followup": {
+          "captured_at": "2026-09-06T12:58:44.833283+00:00",
+          "kind": "kernel-tsync-feasibility-only",
+          "evidence": "bench/browser/evidence/prototype/tsync-20260906/summary.json",
+          "analysis": "docs/browser/gpu-sandbox-tsync.md",
+          "cef_qualification": "NOT_EXECUTED",
+          "full_epic_recertification": "NOT_EXECUTED"
+        },
+        "source_experiment": {
+          "updated_at": "2026-09-06T18:21:44.466522+00:00",
+          "status": "FUNCTIONAL_PARTIAL",
+          "patch": "native/browser/experiments/tsync/0001-prepare-gpu-broker-before-driver-threads.patch",
+          "provenance": "native/browser/experiments/tsync/experiment.json",
+          "real_chromium_gpu_policy": "PASS_AMD_AND_NVIDIA_WITH_NATIVE_CACHES_DISABLED",
+          "evidence": "bench/browser/evidence/prototype/cef-tsync-integrated-20260906/summary.json",
+          "cef_qualification": "LOCAL_FUNCTIONAL_AMD_NVIDIA_WAYLAND_AND_NVIDIA_XWAYLAND",
+          "full_epic_recertification": "NOT_EXECUTED",
+          "cache_enabled_followup": {
+            "mesa": "FAIL_SCHED_SETSCHEDULER_9_OF_10_ADDITIONAL_RUNS",
+            "nvidia": "PASS",
+            "evidence": "bench/browser/evidence/prototype/real-policy-tsync-cache-20260906",
+            "real_cef": "PASS_120_SHADERS_FRESH_CACHES_AMD_WAYLAND_AND_NVIDIA_XWAYLAND"
+          },
+          "patch_series": "native/browser/experiments/tsync/experiment.json",
+          "additional_evidence": "bench/browser/evidence/prototype/cef-tsync-nvidia-wayland-20260906/summary.json"
+        },
+        "active_certification": {
+          "updated_at": "2026-09-06T21:59:22.896725+00:00",
+          "instruction": "Superseded by explicit scope revision1.3: internal EP-002 DONE, remaining qualification owned by EP-005.",
+          "functional_evidence": "bench/browser/evidence/prototype/nvidia-wayland-native-size-20260906",
+          "nvidia_shader_evidence": "bench/browser/evidence/prototype/nvidia-wayland-native-shaders-20260906",
+          "open": [
+            "Native physical M1 A/B/C at60 and120Hz",
+            "Native Xorg functional and M1 proof",
+            "Official CFI/ThinLTO/PGO build and requalification",
+            "Final required validation and DEEP certification"
+          ],
+          "m1_diagnostic": "/tmp/pf-m1-c-0906k/capture.json",
+          "m1_diagnostic_verdict": "r9 120Hz diagnostic: zero starvation,360 releases, median completion scheduling0.287ms, submitmax0.075ms; rejected replay2.09ms and discarded presentation. Trace export completed; incomplete request born after observation needs bounded parser handling. Never qualification."
+        },
+        "security_revalidation": {
+          "status": "OPEN_VULKAN_CONTENT_OWNERSHIP_FINDING",
+          "review": "independent DEEP review",
+          "findings": [
+            "GPU completion callback required before ACK",
+            "bounded event queue with permanent overflow latch",
+            "full runtime and reused staging integrity",
+            "US-007 reopened: UNDEFINED import transition and missing external queue ownership transfer"
+          ],
+          "validation": "Original three findings passed26 release browser tests. Nonblocking callback polling and bounded trace export added;31 targeted browser tests passed r7. Final Finished-phase error propagation patch reviewed and consolidated for r8 build; final workspace/native validation remains pending.",
+          "updated_at": "2026-09-06T21:59:22.896725+00:00"
+        },
+        "native_revalidation": {
+          "status": "FAILED_AMD_RETRY",
+          "at": "2026-09-06T20:48:13.277129+00:00",
+          "path": "bench/browser/evidence/prototype/security-r5-amd-wayland-20260906/prototype/native.json",
+          "passed": [
+            "input",
+            "resize",
+            "scale",
+            "sandbox observed",
+            "observed descendants exited"
+          ],
+          "failed": "host-loss retry: Mesa scheduling syscall targeting another TID is denied by GPU sandbox, subsequent GPU restarts fail",
+          "runtime_archive_sha256": "624db7056dfd66487a64aab08e9dcd1b3264777724df34f29b74ed8abe4e546b",
+          "diagnosis": "Mesa shader disk-cache queue grows after sandbox and attempts optional foreign-TID SCHED_BATCH. Patch 0008 denies with EPERM only for kGpu, preserving all other policies; integrated runtime retry remains pending.",
+          "policy_revalidation": {
+            "at": "2026-09-06T21:20:41.387267+00:00",
+            "status": "PASS_27_NATIVE_KERNEL_CASES",
+            "evidence": "bench/browser/evidence/tsync-sched-policy-20260906/receipt.json",
+            "patch_sha256": "f59838f30fd0c404e16f8c8f7001157c8cf7481b5d274aab295118fac2bd5919",
+            "independent_review": "source, oracle and 61 evidence hashes verified; no remaining finding on this scope",
+            "integrated_mesa_runtime": "NOT_EXECUTED"
+          },
+          "historical_scope": "pre_revision_1.3; see scope_decision and deferred release gates"
+        },
+        "latest_review_progress": {
+          "at": "2026-09-07T06:25:23.351001+00:00",
+          "profile": "DEEP",
+          "status": "NOT_CERTIFIED",
+          "evidence": "bench/browser/evidence/missed-frames-20260907/receipt.json",
+          "implemented": "Common strict native refresh-slot accounting B/C; fullscreen discard termination separated from measured slot budget; raw loss cohorts retained.",
+          "validation": "217 targeted tests pass; 28 archived prior evidence hashes verified. Diagnostic C 3s has360/360 slots,358 latency samples,10 pre-measurement discards retained.",
+          "B": "70s animation pilot rejected for untagged Wayland protocol; process proof passes.",
+          "runtime": "Official r4 interrupted before this session; official r5 resumed incrementally, PID/PGID9401, source remains frozen.",
+          "pending": [
+            "Hardened runtime completion and qualification",
+            "Presented-content pixel oracle",
+            "Complete paired M1 A/B/C and CPU/copy/resource gates",
+            "Native Xorg TTY evidence and Xorg M1",
+            "Final workspace validation bundle"
+          ],
+          "historical_scope": "pre_revision_1.3; see scope_decision and deferred release gates"
+        }
+      }
+    },
+    {
+      "id": "EP-003",
+      "title": "Intégrer la navigation et la persistance au dock",
+      "status": "DONE",
+      "priority": "P0",
+      "stories_total": 6,
+      "stories_done": 6,
+      "release": "R1",
+      "entry_gate": "EP002 internal scope1.3 DONE; ready to implement on fixtures",
+      "handoff": "tasks/ep003-start-handoff.md",
+      "started_at": "2026-09-07T07:05:53.933495+00:00",
+      "updated_at": "2026-09-07T19:09:17.879090+00:00",
+      "profile": "DEEP",
+      "baseline_commit": "fbfefd250a3f3c8d9968a23f8c358712859bc904",
+      "stories_in_review": 0,
+      "implementation_validated_at": "2026-09-07T07:33:34.257978+00:00",
+      "validation": {
+        "fmt": "cargo fmt --check PASS",
+        "clippy": "cargo clippy --workspace --all-targets --locked -- -D warnings PASS",
+        "tests": "cargo test --workspace --locked PASS: 2731 passed, 0 failed, 6 ignored",
+        "host": "cargo clippy --locked -p paneflow-browser-host --all-targets --features cef-runtime -- -D warnings PASS with verified local runtime",
+        "deny": "Not rerun: no dependency changes in this closure; release supply-chain gate retained",
+        "logs": "tasks/prd-agents-browser-assets/ep003-final"
+      },
+      "limitations": [
+        "live pages of one workspace use separate engine roots (no shared cookies between concurrently live pages)",
+        "DevTools, find in page, dialogs, favicons out of EP-003",
+        "DONE is an internal Wayland milestone, not a release verdict.",
+        "US-015 X11 native observation remains required in US-026/Q-LNX-04.",
+        "IME surrounding-text reconversion beyond known selected/composing text is not certified."
+      ],
+      "stories_blocked": 0,
+      "reviewed_at": "2026-09-07T19:09:17.879090+00:00",
+      "review_fixes": [
+        "Command::Sleep added to the protocol; BrowserView::retire_live/Lost/start-failure release the local live slot so the 8-live cap no longer ratchets after sleep (harness + browser_dock tests)",
+        "BrowserView::wake books the live slot only after host paths and profile directory are verified",
+        "open_url_from_terminal refuses a terminal without an owning session instead of routing to the active session",
+        "set_visible(false) cancels the IME composition on the host, not only locally",
+        "Host vulkan.rs: frame copy uses vkCmdCopyImage instead of vkCmdBlitImage; on NVIDIA 610.57 the 3D-class blit faulted (Xid 69) for viewport widths not multiple of 32 px (880, 1000) with block-linear CEF frames, killing the host with ERROR_DEVICE_LOST; the copy engine has no such constraint and the blit never scaled. Verified with the prototype at 880x1034, 1000x700, 1280x800, 1088x608 (input/resize/scale steps), host unit round trip test, clippy cef-runtime",
+        "Host presentation.rs: removed a redundant u32 cast that failed clippy under --features cef-runtime (never linted by the workspace gate)",
+        "Host linux.rs: the control reader posted at most one message per 10 ms (PollControl processed a single try_recv, reader channel of 4). Mouse-move floods and per-pixel Present commands during a dock resize backed the pipe up until the app's 256-slot outbound channel filled and FrameAcknowledger::ack failed with Busy (fatal 'GPU acknowledgement not delivered: Busy'). PollControl now drains every queued message, the reader thread wakes the UI thread per message, and the reader channel holds 256",
+        "App page.rs: present_if_needed coalesces visible resizes: at most one resize in flight until a frame follows it (250 ms settle timeout as a safety net) and none while the previous pool is still retiring; hidden and show transitions bypass the gate (unit tests on resize_may_be_sent). Mirrors libcef's own one-in-flight resize hold (CefRenderWidgetHostViewOSR::WasResized/ReleaseResizeHold)",
+        "App view.rs: on_gpu_completion success now notifies the view so the released old-pool frame is redrawn and released promptly",
+        "Host presentation.rs: a paint that needs a third pool no longer marks the active pool retiring (it starts a 1 s RetireCheck on a pool the app still displays); the paint is dropped, pool_starved is set, and a refresh is posted when the retiring pool drains",
+        "Host presentation.rs: root cause of the intermittent RetireTimeout on resize: the single CefBrowserHost::Invalidate posted 20 ms after PoolReady is sometimes ignored by the viz capturer, so the new pool never painted while the old one waited on its 1 s deadline. RefreshTask now retries every 50 ms (16 retries) until the active pool has painted. Prototype: 20/20 runs COMPLETED at 880x1034, 1000x700, 1280x800, 1088x608 (input, resize, scale); 3 runs show the retry recovering (65 to 72 ms to the first frame instead of 21 ms); before the fix 1/9 and 2/9 failed",
+        "Host presentation.rs: ime_set_composition and ime_commit_text passed a null replacement_range; the CEF C API marks only text and underlines optional, so the official runtime silently dropped every IME commit and the DCHECK-enabled patched runtime aborted the host on the first keystroke (GPUI on Wayland commits typed text through the IME path). Both calls now pass CefRange::InvalidRange (u32::MAX, u32::MAX) as cefclient does (osr_window_win.cc:401)",
+        "Final closure: collapse two nested conditions in Browser page metrics, initialize IME test state directly, apply cargo fmt."
+      ],
+      "blockers": [
+        "US-015 AC-1/AC-2: native-local input/IME/clipboard observation with the fixture not run (headless review)"
+      ],
+      "non_blocking": [
+        "open_url_in_browser parks a page silently for a non-active session; a toast naming the target workspace would help",
+        "workspace_has_browser_data does one stat() per context-menu render on the UI thread",
+        "PageSignal::Address may store about:blank reported by the host; a later wake refuses it with a clear message"
+      ],
+      "plan_revision": "1.4",
+      "scope_decision": {
+        "authorized_by": "Arthur Jean",
+        "at": "2026-09-07T07:51:40.429157+00:00",
+        "request": "Suivre la recommandation de review: réviser C1 plutôt que refondre le host",
+        "meaning": "Per-page CEF root in R1; intra-workspace cookie sharing deferred to a multi-page host story under EP-005",
+        "deferred": [
+          "multi-page host per profile with a revised one-origin-per-process model (EP-005)"
+        ]
+      },
+      "next_actions": [
+        "Run the native-local US-015 pass on Wayland and X11 with PANEFLOW_CEF_ROOT and the host, then certify EP-003",
+        "Add the multi-page host story under EP-005 before any Browser release"
+      ],
+      "native_local_pass": {
+        "at": "2026-09-07T08:58:41.257824+00:00",
+        "machine": "Fedora 44, GNOME Wayland, NVIDIA RTX 4070 Ti SUPER 610.57.04",
+        "runtime": "tsync bundle-gpu-contract-r1 (64c291f6..., Release_GN_x64, CFI off) installed under native/browser/prebuilt; dev manifest.toml TEMPORARILY swapped to 2fb74430... (official backup at ~/.cache/paneflow-cef-tsync/manifest-official-backup-20260907.toml)",
+        "finding": "The official Spotify CEF pinned by the repository manifest cannot serve the presentation host: it lacks the cef_paneflow_gpu_contract_v1 export. EP-005 must pin a Paneflow-built CEF (r5 Official_GN_x64 finished 2026-09-07, exports the symbol) before any Browser release.",
+        "observed": [
+          "dock Browser tab opens, navigates, title and URL round-trip (paneflow.dev/fr)",
+          "prototype presents frames at dock-like geometries after the copy fix",
+          "prototype resize step 20/20 after the refresh retry and the control drain (fix3-*.jsonl in the session scratchpad)",
+          "Arthur 2026-09-07: dock resize and horizontal scrollbar drag work after the control drain, resize coalescing and refresh retry"
+        ],
+        "open": [
+          "US-015 keyboard/IME/clipboard observation in the dock by Arthur",
+          "host aborts at shutdown with CEF CHECK 'handler' in render_widget_host_view_osr.cc:1659 after a presentation failure (render_handler None once presentation is uninstalled); cosmetic, EP-002 host"
+        ]
+      },
+      "completed_at": "2026-09-07T19:09:17.879090+00:00",
+      "verification_scope": "internal-wayland-revision-1.5",
+      "closure_evidence": [
+        "tasks/ep003-ime-implementation.md",
+        "bench/browser/dock/2026-09-07T18-36-38.348Z-optimized-v5-cadence/summary.json",
+        "tasks/prd-agents-browser-assets/ep003-final"
+      ]
+    },
+    {
+      "id": "EP-004",
+      "title": "Compléter les comportements web et les protections",
+      "status": "DONE",
+      "priority": "P0",
+      "stories_total": 6,
+      "stories_done": 0,
+      "release": "R2",
+      "profile": "DEEP",
+      "started_at": "2026-09-07T19:52:24.663168+00:00",
+      "baseline_commit": "007d54c122e434ec4db1f258a91988b11075e2ac",
+      "scope_correction": "Arthur authorized moving the multi-page host and shared CEF profile context from EP-005 to EP-004 in this conversation.",
+      "evidence_map": [
+        {
+          "story": "US-017",
+          "criterion": "AC-1",
+          "requirement": "Recherche, zoom/reset et parcours F6 sont reliés aux actions Browser ; les contrôles GPUI exposent nom, rôle, état et focus visible.",
+          "status": "PASS_IMPLEMENTATION",
+          "path": "src-app/src/browser/view.rs:2040",
+          "entry_point": "Browser actions -> find/zoom/cycle_focus; root terminal focus handlers",
+          "proof": "Native find highlighting, full-focus-*.txt and reverse-focus-*.txt; real keybinding matcher and zoom bounds tests.",
+          "validation": "tasks/ep004-validation/acceptance-final.json",
+          "manual_artifact_root": "tasks/ep004-validation/native"
+        },
+        {
+          "story": "US-017",
+          "criterion": "AC-2",
+          "requirement": "Le pont d’accessibilité du document CEF atteint le lecteur Linux retenu, avec une preuve minimale Orca et navigation entre chrome/document/terminal.",
+          "status": "PASS_IMPLEMENTATION",
+          "path": "src-app/src/browser/accessibility.rs:296",
+          "entry_point": "CEF AccessibilityHandler -> PageSignal -> GPUI active descendant -> AT-SPI -> Orca",
+          "proof": "orca-trace-debug.log, orca-keyboard-alert.png and full/reverse focus dumps; live document child focus and UTF-8 text regressions.",
+          "validation": "tasks/ep004-validation/acceptance-final.json",
+          "manual_artifact_root": "tasks/ep004-validation/native"
+        },
+        {
+          "story": "US-017",
+          "criterion": "AC-3",
+          "requirement": "U1/U2 et NFR-10 sont vérifiés à 800x500, aux scales exposés et sur les huit thèmes ; les captures sont attachées aux preuves.",
+          "status": "PASS_IMPLEMENTATION",
+          "path": "src-app/src/browser/view/colors.rs:1",
+          "entry_point": "Browser render -> UiColors and toolbar/document/inspector layout",
+          "proof": "review-theme-receipt.json: 32 captures, eight themes, 800x500 logical, app scales 100/125/150/200; eight-theme contrast tests. Fractional captures prove geometry, not native Xorg or live fractional input.",
+          "validation": "tasks/ep004-validation/acceptance-final.json",
+          "manual_artifact_root": "tasks/ep004-validation/native"
+        },
+        {
+          "story": "US-017",
+          "criterion": "AC-4",
+          "requirement": "Échec : arbre OSR indisponible ou contrôle inaccessible est un défaut de qualification explicite, jamais validé par une capture visuelle seule.",
+          "status": "PASS_IMPLEMENTATION",
+          "path": "src-app/src/browser/accessibility.rs:345",
+          "entry_point": "Malformed/oversized/stale AX -> unavailable state -> fresh root required",
+          "proof": "AX malformed/cycle/bounds/reset tests and actual Orca evidence; rejected TextRun/AX logs retained. Full iframe/AT action qualification remains EP-005.",
+          "validation": "tasks/ep004-validation/acceptance-final.json",
+          "manual_artifact_root": "tasks/ep004-validation/native"
+        },
+        {
+          "story": "US-018",
+          "criterion": "AC-1",
+          "requirement": "Les limites 8/session, 64 descripteurs/instance et 8 pages vivantes sont appliquées par le contrôleur commun sans affecter fichiers ou terminaux.",
+          "status": "PASS_IMPLEMENTATION",
+          "path": "crates/paneflow-browser-protocol/src/controller.rs:1",
+          "entry_point": "BrowserAuthority -> Controller Create/Start from app browser dock",
+          "proof": "Real controller/harness 8/session, 64/instance and 8 live limits; app eight-live plus ninth-page regression in final workspace suite.",
+          "validation": "tasks/ep004-validation/acceptance-final.json",
+          "manual_artifact_root": "tasks/ep004-validation/native"
+        },
+        {
+          "story": "US-018",
+          "criterion": "AC-2",
+          "requirement": "Un viewport caché ne demande plus de begin-frame après stabilisation et informe CEF de sa visibilité ; aucun arrêt universel de JavaScript n’est promis.",
+          "status": "PASS_IMPLEMENTATION",
+          "path": "crates/paneflow-browser-host/src/linux/presentation.rs:338",
+          "entry_point": "BrowserView visibility -> presentation unmount/Present -> CEF was_hidden",
+          "proof": "hidden-stabilization.json: zero frame/event delta after 1.5s stabilization over 2s; external_begin_frame_enabled=0 and hidden paint rejection. No universal JavaScript suspension claim.",
+          "validation": "tasks/ep004-validation/acceptance-final.json",
+          "manual_artifact_root": "tasks/ep004-validation/native"
+        },
+        {
+          "story": "US-018",
+          "criterion": "AC-3",
+          "requirement": "La mise en veille exige un choix humain et le traitement de beforeunload ; la page devient Dormant en gardant son descripteur.",
+          "status": "PASS_IMPLEMENTATION",
+          "path": "src-app/src/browser/view.rs:469",
+          "entry_point": "Human Sleep -> Close -> CEF beforeunload -> Closed -> Dormant",
+          "proof": "beforeunload-request.png, beforeunload-cancelled.png, beforeunload-sleep.png; veto preserves live page and accept retains descriptor.",
+          "validation": "tasks/ep004-validation/acceptance-final.json",
+          "manual_artifact_root": "tasks/ep004-validation/native"
+        },
+        {
+          "story": "US-018",
+          "criterion": "AC-4",
+          "requirement": "Échec : neuvième page ou quota global propose choix/annulation et ne détruit pas implicitement un document actif.",
+          "status": "PASS_IMPLEMENTATION",
+          "path": "src-app/src/browser/view.rs:2271",
+          "entry_point": "Quota refusal -> inline live-page choices -> chosen page -> human sleep/beforeunload; Cancel",
+          "proof": "quota_cancellation_preserves_the_dormant_descriptor and actual eight-live authority regression pass; cancel keeps slots and document, no auto eviction.",
+          "validation": "tasks/ep004-validation/acceptance-final.json",
+          "manual_artifact_root": "tasks/ep004-validation/native"
+        },
+        {
+          "story": "US-019",
+          "criterion": "AC-1",
+          "requirement": "Crash renderer et crash host sont distingués ; seules les pages concernées deviennent Crashed et toutes leurs generations/opérations sont invalidées.",
+          "status": "PASS_IMPLEMENTATION",
+          "path": "crates/paneflow-browser-protocol/src/controller.rs:1",
+          "entry_point": "CEF renderer callback -> versioned Crashed; supervisor host loss -> owned profile pages",
+          "proof": "Renderer generation invalidation and profile routing tests; earlier native host crash preserved terminals and required explicit wake.",
+          "validation": "tasks/ep004-validation/acceptance-final.json",
+          "manual_artifact_root": "tasks/ep004-validation/native"
+        },
+        {
+          "story": "US-019",
+          "criterion": "AC-2",
+          "requirement": "Le nettoyage arrête uniquement les descendants possédés par le host dans le délai NFR-08 et libère les ressources selon les fences.",
+          "status": "PASS_IMPLEMENTATION",
+          "path": "src-app/src/browser/supervisor.rs:1430",
+          "entry_point": "App shutdown -> HostSupervisor owned process group; page release -> GPU completion -> ACK",
+          "proof": "shutdown_reaps_every_descendant_of_the_host exercises real descendants; fence/retirement deadline tests; cleanup-review.json records current native close. Full matrix NFR budgets remain EP-005.",
+          "validation": "tasks/ep004-validation/acceptance-final.json",
+          "manual_artifact_root": "tasks/ep004-validation/native"
+        },
+        {
+          "story": "US-019",
+          "criterion": "AC-3",
+          "requirement": "La relance est explicite, restaure une URL admissible et ne rejoue ni mutation agent ni POST ; le parent ne fait pas d’I/O bloquante.",
+          "status": "PASS_IMPLEMENTATION",
+          "path": "src-app/src/browser/view.rs:426",
+          "entry_point": "Human Reload -> validated URL -> background host activation -> Created flush",
+          "proof": "Native explicit wake restored fixture; startup URL coalescing regression passes; no automatic restart or POST replay.",
+          "validation": "tasks/ep004-validation/acceptance-final.json",
+          "manual_artifact_root": "tasks/ep004-validation/native"
+        },
+        {
+          "story": "US-019",
+          "criterion": "AC-4",
+          "requirement": "Échec : arrêt incomplet, fence bloquée ou événement tardif produit une erreur bornée sans libération GPU prématurée, kill global ou boucle de reprise infinie.",
+          "status": "PASS_IMPLEMENTATION",
+          "path": "src-app/src/browser/supervisor.rs:1630",
+          "entry_point": "Host timeout/poison/late event -> bounded failure; GPU fence retirement contract",
+          "proof": "Final supervisor, frame ledger and deadline suites cover no restart, stale ACK and retained resources. Native GPU stall injection is not claimed.",
+          "validation": "tasks/ep004-validation/acceptance-final.json",
+          "manual_artifact_root": "tasks/ep004-validation/native"
+        },
+        {
+          "story": "US-020",
+          "criterion": "AC-1",
+          "requirement": "La table P1 est appliquée dans les callbacks moteur : TLS invalide et schémas interdits refusés, permission inconnue refusée, localhost/LAN permis.",
+          "status": "PASS_IMPLEMENTATION",
+          "path": "crates/paneflow-browser-host/src/linux/permissions.rs:1",
+          "entry_point": "CEF RequestPolicy/certificate callback + RequestContext SSL preference + permission callback",
+          "proof": "tls-policy-advanced-final.png and tls-policy-advanced-atspi.txt: no Proceed; tls3-resumed.log no request. Local HTTP works; URL scheme and permission masks tested.",
+          "validation": "tasks/ep004-validation/acceptance-final.json",
+          "manual_artifact_root": "tasks/ep004-validation/native"
+        },
+        {
+          "story": "US-020",
+          "criterion": "AC-2",
+          "requirement": "Chaque demande est liée à l’origine, au profil et au document ; navigation, révocation ou fermeture invalide toute réponse tardive.",
+          "status": "PASS_IMPLEMENTATION",
+          "path": "crates/paneflow-browser-host/src/linux/permissions.rs:314",
+          "entry_point": "Origin/profile/document pending callback -> scoped human WebResponse",
+          "proof": "actual_callbacks_reject_stale_revoked_closed_and_unknown_requests uses actual CEF callback objects; microphone-prompt-current.png.",
+          "validation": "tasks/ep004-validation/acceptance-final.json",
+          "manual_artifact_root": "tasks/ep004-validation/native"
+        },
+        {
+          "story": "US-020",
+          "criterion": "AC-3",
+          "requirement": "Caméra/micro, géolocalisation et clipboard asynchrone suivent les autorisations de session et les protections OS Linux qualifiées ; les capacités v1 exclues restent refusées.",
+          "status": "PASS_IMPLEMENTATION",
+          "path": "crates/paneflow-browser-host/src/linux/permissions.rs:282",
+          "entry_point": "CEF media/permission callbacks and renderer async clipboard -> session grant -> OS backend",
+          "proof": "microphone-result.png confirms allowed microphone; fixture stops tracks immediately. Native deny plus supported/excluded mask, clipboard and missing-backend rejection coverage; broad OS matrix remains EP-005.",
+          "validation": "tasks/ep004-validation/acceptance-final.json",
+          "manual_artifact_root": "tasks/ep004-validation/native"
+        },
+        {
+          "story": "US-020",
+          "criterion": "AC-4",
+          "requirement": "Les pages ne reçoivent ni bridge natif ni accès au canal privé ; les dialogues montrent l’origine et les diagnostics exportés sont réduits.",
+          "status": "PASS_IMPLEMENTATION",
+          "path": "crates/paneflow-browser-host/src/linux/devtools.rs:190",
+          "entry_point": "Origin-visible web dialog; private inspector capability checked on renderer and host",
+          "proof": "Native origin dialogs; trusted_url_alone_never_grants_the_inspector_capability and bounded bridge tests. Ordinary pages have no native capability; drop traces contain no paths.",
+          "validation": "tasks/ep004-validation/acceptance-final.json",
+          "manual_artifact_root": "tasks/ep004-validation/native"
+        },
+        {
+          "story": "US-020",
+          "criterion": "AC-5",
+          "requirement": "Échec : changement d’origine, refus système ou absence de backend n’accorde aucun droit par défaut et ne désactive pas les protections du moteur.",
+          "status": "PASS_IMPLEMENTATION",
+          "path": "crates/paneflow-browser-host/src/linux/permissions.rs:314",
+          "entry_point": "Unknown/excluded/stale/revoked callback -> deny, OS backend authoritative",
+          "proof": "Actual callback rejection suite and native microphone denial; TLS hard refusal retains engine protections.",
+          "validation": "tasks/ep004-validation/acceptance-final.json",
+          "manual_artifact_root": "tasks/ep004-validation/native"
+        },
+        {
+          "story": "US-021",
+          "criterion": "AC-1",
+          "requirement": "Alert/confirm/prompt/beforeunload sont attachés au document ; les popups sur geste rejoignent sa session et son profil dans les quotas.",
+          "status": "PASS_IMPLEMENTATION",
+          "path": "crates/paneflow-browser-host/src/linux/handlers.rs:1",
+          "entry_point": "CEF dialog and gesture popup callbacks -> owning BrowserView -> session/profile authority",
+          "proof": "Native alert/confirm/prompt/beforeunload artifacts, fixed2-popup-selected.png and shared profile persistence; concurrent/stale dialog tests. window.opener relation is not preserved.",
+          "validation": "tasks/ep004-validation/acceptance-final.json",
+          "manual_artifact_root": "tasks/ep004-validation/native"
+        },
+        {
+          "story": "US-021",
+          "criterion": "AC-2",
+          "requirement": "Upload, drag de fichiers et destinations de download passent par une sélection humaine OS ; progression et annulation sont visibles.",
+          "status": "PASS_IMPLEMENTATION",
+          "path": "crates/paneflow-browser-host/src/linux/transfers/drag.rs:44",
+          "entry_point": "OS file selection/drop -> GPUI DropFiles -> CEF Enter ACK -> Over ACK -> Drop",
+          "proof": "upload-selected-complete.png; file-drop-ack-result.png and events-drop-ack-final.jsonl show file received; download-progress.png, download-receipt.json and verified-download.bin prove completed 32MiB save.",
+          "validation": "tasks/ep004-validation/acceptance-final.json",
+          "manual_artifact_root": "tasks/ep004-validation/native"
+        },
+        {
+          "story": "US-021",
+          "criterion": "AC-3",
+          "requirement": "Fullscreen reste dans le dock avec origine et sortie Échap ; menus/IME ne recouvrent pas les protections GPUI.",
+          "status": "PASS_IMPLEMENTATION",
+          "path": "src-app/src/browser/view.rs:1",
+          "entry_point": "CEF fullscreen -> dock origin notice -> Escape; menu clamp and input routes",
+          "proof": "fullscreen-dock.png with Escape exit; menu geometry checks and existing EP-003 IME path preserved.",
+          "validation": "tasks/ep004-validation/acceptance-final.json",
+          "manual_artifact_root": "tasks/ep004-validation/native"
+        },
+        {
+          "story": "US-021",
+          "criterion": "AC-4",
+          "requirement": "Échec : sélection annulée, popup sans geste, transfert interrompu ou document fermé n’expose aucun fichier supplémentaire et n’exécute rien automatiquement.",
+          "status": "PASS_IMPLEMENTATION",
+          "path": "src-app/src/browser/view.rs:2345",
+          "entry_point": "OS picker cancel / document close -> scoped transfer cancellation; popup gesture gate",
+          "proof": "Native upload/download picker cancellation; document_close_clears_permissions_fullscreen_and_all_transfers, bounded transfer and drop ACK tests. No auto execution or extra files.",
+          "validation": "tasks/ep004-validation/acceptance-final.json",
+          "manual_artifact_root": "tasks/ep004-validation/native"
+        },
+        {
+          "story": "US-022",
+          "criterion": "AC-1",
+          "requirement": "L’inspecteur CEF utilise ses API publiques, une présentation secondaire liée à la page et aucun port CDP TCP.",
+          "status": "PASS_IMPLEMENTATION",
+          "path": "crates/paneflow-browser-host/src/linux/devtools.rs:33",
+          "entry_point": "Inspect -> bundled OSR frontend -> AddDevToolsMessageObserver/SendDevToolsMessage",
+          "proof": "integrated-devtools.png, integrated-console-result2.png, integrated-network-expanded.png: actual Elements, evaluated DOM query and HTTP200 fetch. Public CEF API, no CDP TCP or CEF patch.",
+          "validation": "tasks/ep004-validation/acceptance-final.json",
+          "manual_artifact_root": "tasks/ep004-validation/native"
+        },
+        {
+          "story": "US-022",
+          "criterion": "AC-2",
+          "requirement": "Une seule instance DevTools est ouverte par page ; ratio et focus suivent U1/U2, sans duplication de la rangée Browser.",
+          "status": "PASS_IMPLEMENTATION",
+          "path": "src-app/src/browser/view/devtools.rs:1",
+          "entry_point": "Browser Inspect -> singleton inspector Entity -> secondary presentation and ratio",
+          "proof": "Native open/resize, devtools-final-open.png; full/reverse focus-inspector.txt proves F6 round trip; singleton tests/guard.",
+          "validation": "tasks/ep004-validation/acceptance-final.json",
+          "manual_artifact_root": "tasks/ep004-validation/native"
+        },
+        {
+          "story": "US-022",
+          "criterion": "AC-3",
+          "requirement": "Fermeture, navigation et crash nettoient ses références ; DevTools n’est pas restauré automatiquement au démarrage.",
+          "status": "PASS_IMPLEMENTATION",
+          "path": "crates/paneflow-browser-host/src/linux/devtools.rs:72",
+          "entry_point": "Navigation/close/crash -> target invalidation -> inspector close; descriptor excludes inspector",
+          "proof": "devtools-navigation-cleanup.png confirms live inspector removed on navigation; fresh launch drop-ack-ready.png has no inspector; generation/owner tests.",
+          "validation": "tasks/ep004-validation/acceptance-final.json",
+          "manual_artifact_root": "tasks/ep004-validation/native"
+        },
+        {
+          "story": "US-022",
+          "criterion": "AC-4",
+          "requirement": "Échec : API du pin indisponible, page morte ou ouverture répétée donne une erreur sans passthrough privé ni instance orpheline.",
+          "status": "PASS_IMPLEMENTATION",
+          "path": "crates/paneflow-browser-host/src/linux/devtools.rs:231",
+          "entry_point": "CreateDevTools/bridge receive -> live target + exact owner/generation/capability validation",
+          "proof": "an_inspector_binding_never_crosses_target_generation_or_owner, resource allowlist and bounded bridge tests; historical rejected ShowDevTools evidence retained, superseded by public observer route.",
+          "validation": "tasks/ep004-validation/acceptance-final.json",
+          "manual_artifact_root": "tasks/ep004-validation/native"
+        }
+      ],
+      "updated_at": "2026-09-08T06:49:23.392597+00:00",
+      "completed_at": null,
+      "validation_receipt": "tasks/ep004-validation/acceptance-final.json",
+      "handoff_status": "IN_REVIEW",
+      "limitations": [
+        "Native observations are local XWayland on GNOME; native Xorg, distributions, GPU/ARM matrices and release budgets remain EP-005, NOT_QUALIFIED.",
+        "Scale captures use GPUI app overrides; 125/150/200 captures prove geometry, not live fractional input or compositor qualification.",
+        "Minimal Orca path is proven. Complete iframe accessibility and assistive technology action coverage remain release qualification.",
+        "Popup window.opener/postMessage relationship is not preserved; shared profile storage is implemented. Existing per-page data is retained, not merged.",
+        "Standalone upstream GPUI tests unavailable in sparse checkout (missing util dev dependency); app/native integration, GPUI patch verification and standalone AccessKit regression passed.",
+        "Windows/macOS native behavior is unverified. No commit or push."
+      ],
+      "stories_in_review": 6,
+      "reviewed_at": "2026-09-08T06:49:23.392597+00:00",
+      "review_profile": "DEEP"
+    },
+    {
+      "id": "EP-005",
+      "title": "Qualifier la référence Linux x86_64 et préparer le runtime Browser",
+      "status": "DONE",
+      "priority": "P0",
+      "stories_total": 5,
+      "stories_done": 5,
+      "stories_in_review": 0,
+      "release": "R2-reference",
+      "started_at": "2026-09-08T07:00:29.397826+00:00",
+      "updated_at": "2026-09-08T15:10:09+00:00",
+      "completed_at": "2026-09-08T15:10:09+00:00",
+      "reviewed_at": "2026-09-08T15:10:09+00:00",
+      "profile": "DEEP",
+      "review_profile": "DEEP",
+      "verification_scope": "reference-linux-x86_64",
+      "scope_revision": "1.8",
+      "baseline_commit": "1a1775772221a475a107b16ce487b488db3a8293",
+      "evidence_map": [
+        {
+          "story": "US-023",
+          "criterion": "AC-1",
+          "status": "MANUAL_PROVEN",
+          "path": "tasks/ep005-validation/native/hardened-r6-amd-wayland/prototype/native.json",
+          "entry_point": "native Browser qualification on Wayland and Xorg",
+          "proof": "Real x86_64 reference opens and presents a page, accepts input, resize and scale, survives host loss and shuts down cleanly on AMD RADV Wayland, NVIDIA Wayland and native Xorg/Openbox."
+        },
+        {
+          "story": "US-023",
+          "criterion": "AC-2",
+          "status": "PASS",
+          "path": "scripts/browser-qualification/fixtures.mjs:7",
+          "entry_point": "bun test scripts/browser-qualification/",
+          "proof": "The CLI and fixtures cover service worker, WebSocket, WebGL, iframe, local authentication and embedded-content refusal; 280 pass, 9 skip, 0 fail."
+        },
+        {
+          "story": "US-023",
+          "criterion": "AC-3",
+          "status": "MANUAL_PROVEN",
+          "path": "src-app/src/browser/security_corpus.rs:16",
+          "entry_point": "paneflow browser-security-corpus and native runtime qualification",
+          "proof": "SEC-01, SEC-03, SEC-06, SEC-07 and SEC-08 are covered by the automated corpus and the native reference proves renderer/GPU sandbox plus refusal of disabling switches. SEC-02, SEC-04 and SEC-05 remain native-only EP-007 work."
+        },
+        {
+          "story": "US-023",
+          "criterion": "AC-4",
+          "status": "PASS",
+          "path": "docs/browser/security-corpus.md:1",
+          "entry_point": "security corpus scope and release documentation",
+          "proof": "The three unexecuted native-only scenarios are explicitly not promoted and remain assigned to EP-007."
+        },
+        {
+          "story": "US-024",
+          "criterion": "AC-1",
+          "status": "PASS",
+          "path": "tasks/ep005-validation/hardened-r6-receipt.json",
+          "entry_point": "hardened runtime receipt and package verification",
+          "proof": "The x86_64 CEF candidate has CFI, icall CFI, ThinLTO, PGO phase 2, pinned provenance and native renderer/GPU sandbox evidence."
+        },
+        {
+          "story": "US-024",
+          "criterion": "AC-2",
+          "status": "PASS",
+          "path": "tasks/ep005-validation/packages",
+          "entry_point": "browser package staging and extraction checks",
+          "proof": "deb, rpm, AppImage and tar.gz x86_64 variants contain the host, runtime, resources, CREDITS, notices and SBOM; no aarch64 promise is attached."
+        },
+        {
+          "story": "US-024",
+          "criterion": "AC-3",
+          "status": "PASS",
+          "path": "scripts/browser-package.py:164",
+          "entry_point": "python3 scripts/browser-package.py verify --format <fmt>",
+          "proof": "Layout, stamp, 233/233 digests, RUNPATH, ELF dependencies and per-format sandbox rights pass; the AppImage was mounted read-only and run with APPIMAGE_EXTRACT_AND_RUN=1."
+        },
+        {
+          "story": "US-024",
+          "criterion": "AC-4",
+          "status": "PASS",
+          "path": "src-app/src/browser/install.rs:162",
+          "entry_point": "BrowserAuthority::detect via install::detect",
+          "proof": "Runtime resolution is prefix-relative, has no checkout, Chrome or first-use download dependency, and refuses missing sandbox capability without touching the terminal."
+        },
+        {
+          "story": "US-024",
+          "criterion": "AC-5",
+          "status": "PASS",
+          "path": "src-app/Cargo.toml:642",
+          "entry_point": "cargo deb --variant browser / cargo generate-rpm --variant browser",
+          "proof": "Browser variants stay separate from the existing apt, dnf and zypper paths and base terminal artifacts."
+        },
+        {
+          "story": "US-024",
+          "criterion": "AC-6",
+          "status": "PASS",
+          "path": "src-app/src/browser/install.rs:124",
+          "entry_point": "BrowserAuthority::detect via install::classify and browser host qualification",
+          "proof": "The installer classifies an unusable sandbox as unavailable and the host rejects sandbox-disabling switches."
+        },
+        {
+          "story": "US-024",
+          "criterion": "NFR-13",
+          "status": "PASS",
+          "path": "tasks/ep005-validation/packages",
+          "entry_point": "package verification receipts",
+          "proof": "394206862 installed bytes stay below 629145600 and every x86_64 compressed overhead stays below 262144000."
+        },
+        {
+          "story": "US-025",
+          "criterion": "AC-1..AC-5",
+          "status": "PASS",
+          "path": "src-app/src/app/self_update_flow.rs:180",
+          "entry_point": "self-update, profile and package SBOM paths",
+          "proof": "App and runtime update together, live Browser prevents unsafe replacement, profiles migrate or refuse explicitly, SBOM/notices/codecs are inventoried, and rollback/error paths preserve the operational version."
+        },
+        {
+          "story": "US-026",
+          "criterion": "AC-1",
+          "status": "MANUAL_PROVEN",
+          "path": "tasks/ep005-validation/native/hardened-r6-amd-wayland/prototype/native.json",
+          "entry_point": "native reference qualification",
+          "proof": "Native Wayland evidence covers AMD RADV and NVIDIA; native Xorg/Openbox evidence covers the same functional surface on the named NVIDIA reference."
+        },
+        {
+          "story": "US-026",
+          "criterion": "AC-2",
+          "status": "MANUAL_PROVEN",
+          "path": "tasks/ep005-validation/native/q-lnx-04-xorg-owner-acceptance.json",
+          "entry_point": "Q-LNX-04 owner acceptance",
+          "proof": "Arthur accepted Q-LNX-04 from Xorg functional r14, interactive IME r7 and bounded PTY-isolation r6; XWayland was not substituted."
+        },
+        {
+          "story": "US-026",
+          "criterion": "AC-3",
+          "status": "MANUAL_PROVEN",
+          "path": "tasks/ep005-validation/native/q-lnx-04-xorg-owner-acceptance.json",
+          "entry_point": "owner receipt m1_x11",
+          "proof": "m1_x11.measured is false and status is WAIVED_BY_OWNER; no X11 M1 value is used to close Q-LNX-03."
+        },
+        {
+          "story": "US-026",
+          "criterion": "AC-4",
+          "status": "PASS",
+          "path": "tasks/prd-agents-browser-linux.md:621",
+          "entry_point": "EP-005 and EP-007 scope decision",
+          "proof": "Q-LNX-02, Q-LNX-03 and the extended distro/compositor/GPU/LSM matrix are explicitly assigned to EP-007 with TODO stories and no executed status."
+        },
+        {
+          "story": "US-028",
+          "criterion": "AC-1..AC-5",
+          "status": "PASS",
+          "path": "tasks/ep005-validation/final-review-receipt.json",
+          "entry_point": "final review receipt and capability manifest",
+          "proof": "Reference gates, evidence, counters, limitations, rejected attempts and non-release status are recorded; availability remains development and both release verdicts remain NOT_QUALIFIED."
+        }
+      ],
+      "validation": {
+        "cargo fmt --check": "PASS: exit 0",
+        "cargo clippy --workspace --all-targets --locked -- -D warnings": "PASS: exit 0",
+        "cargo test --workspace --locked": "PASS: 34 suites, 2785 passed, 6 ignored, 0 failed",
+        "bun test scripts/browser-qualification/": "PASS: 289 tests, 280 pass, 9 skip, 0 fail",
+        "git diff --check": "PASS: clean",
+        "cargo deny check advisories licenses sources": "SKIPPED: no Cargo dependency or Cargo.lock change",
+        "Q-LNX-01": "PASS: hardened x86_64 candidate, provenance and native sandbox evidence",
+        "Q-LNX-04": "PASS_OWNER_ACCEPTED: native Xorg/Openbox r14, IME r7 and bounded PTY isolation r6; X11 M1 explicitly waived and not measured",
+        "Q-LNX-05": "PASS: final batch completed after the GPUI XIM formatting correction"
+      },
+      "validation_receipt": "tasks/ep005-validation/final-review-receipt.json",
+      "certification_receipt": "tasks/ep005-validation/final-review-receipt.json",
+      "handoff_status": "DONE",
+      "scope_correction": {
+        "authorized_by": "Arthur Jean",
+        "revision": "1.8",
+        "retained": "real Linux x86_64 reference, local packages, Browser function, automated security baseline, native sandbox, Q-LNX-04 owner acceptance and Q-LNX-05",
+        "transferred_to_ep007": "ARM, exhaustive M1/presented-pixel/resource gates, distro/compositor/GPU/LSM matrix, native SEC-02/04/05 and public release verdict",
+        "us_027": "TRANSFERRED"
+      },
+      "manual_proof": [
+        "tasks/ep005-validation/native/hardened-r6-amd-wayland/prototype/native.json",
+        "tasks/ep005-validation/native/hardened-r6-nvidia-wayland/prototype/native.json",
+        "tasks/ep005-validation/native/xorg-q4-functional-r14/native.json",
+        "tasks/ep005-validation/native/xorg-q4-interactive-r7",
+        "tasks/x11pty-r6",
+        "tasks/ep005-validation/native/q-lnx-04-xorg-owner-acceptance.json"
+      ],
+      "limitations": [
+        "Q-LNX-02 presented-pixel and resource-bound proof is transferred to EP-007/US-033 and was not executed here.",
+        "Q-LNX-03 full physical M1 A/B/C, NFR-02/03/04 and CPU proof is transferred to EP-007/US-033 and was not executed here.",
+        "The extended Ubuntu, Debian, Fedora, Arch, openSUSE, compositor, GPU and LSM matrix is transferred to EP-007/US-034 and was not executed here.",
+        "ARM aarch64 has no pinned candidate or real GPU proof and is transferred to EP-007/US-027.",
+        "Native SEC-02, SEC-04 and SEC-05 remain unexecuted and are transferred to EP-007/US-034.",
+        "The manifest remains availability=development and native_qualification=hardened_candidate_not_qualified; this is an internal reference qualification, not a release."
+      ],
+      "wiring_defects": [],
+      "fixed_findings": [
+        {
+          "finding": "clippy::collapsible_if",
+          "path": "src-app/src/browser/prototype.rs:1483",
+          "fix": "collapsed the nested selection condition and ran cargo fmt"
+        }
+      ],
+      "unapplied_findings": [],
+      "blockers": [],
+      "progress_note": "EP-005 is DONE as an internal Linux x86_64 reference qualification. EP-007 is the explicit TODO backlog for extended release qualification. No commit, push, tag, upload or real release was performed."
+    },
+    {
+      "id": "EP-007",
+      "title": "Préparer et verrouiller la qualification Linux étendue",
+      "status": "DONE",
+      "priority": "P0",
+      "stories_total": 4,
+      "stories_done": 4,
+      "stories_in_review": 0,
+      "stories_blocked": 0,
+      "release": "R2-extended",
+      "profile": "DEEP",
+      "verification_scope": "internal-linux-qualification-readiness",
+      "baseline_commit": "1a1775772221a475a107b16ce487b488db3a8293",
+      "updated_at": "2026-09-09T07:15:48+00:00",
+      "completed_at": "2026-09-09T07:15:48+00:00",
+      "reviewed_at": "2026-09-09T07:15:48+00:00",
+      "handoff_status": "DONE",
+      "scope_note": "Périmètre 1.9 autorisé : readiness interne par GitHub Actions ARM64 et contrats code/tests stricts. La qualification native ARM, le M1 physique, la matrice distro/compositor/GPU/LSM et SEC-02/04/05 restent des gates de release différés; public release reste NOT_QUALIFIED.",
+      "evidence_map": [
+        {
+          "story": "US-027",
+          "criterion": "AC-1..AC-4",
+          "status": "PASS",
+          "path": "scripts/verify-arm64-ci-runtime.py:1",
+          "entry_point": "linux_aarch64_check -> verifier -> CEF host tests, Clippy and release build",
+          "proof": "The pinned upstream CEF ARM64 archive is verified by size, SHA-256, SHA-1, safe extraction and AArch64 ELF checks; the workflow records CI_CODE_TEST_BUILD and keeps native qualification separate."
+        },
+        {
+          "story": "US-033",
+          "criterion": "AC-1..AC-3",
+          "status": "PASS",
+          "path": "scripts/browser-qualification/missed-frames.test.mjs:1",
+          "entry_point": "qualification analyzers and rejection tests",
+          "proof": "The analyzer tests reject wrong refresh, discarded events, missing provenance and inferred presentation; the accepted local witness keeps presentation_measurement=NOT_EXECUTED."
+        },
+        {
+          "story": "US-034",
+          "criterion": "AC-1..AC-4",
+          "status": "PASS",
+          "path": "native/browser/linux-qualification-contract.toml:1",
+          "entry_point": "verify-linux-qualification-contract.py -> matrix and SEC proof status validation",
+          "proof": "The contract enumerates the extended target families and SEC-01 through SEC-08, requires explicit proof metadata, and rejects native promotion or missing rows. SEC-02, SEC-04 and SEC-05 remain NATIVE_DEFERRED."
+        },
+        {
+          "story": "US-035",
+          "criterion": "AC-1..AC-3",
+          "status": "PASS",
+          "path": "docs/release/browser-linux.md:197",
+          "entry_point": "manifest capability resolution and release documentation",
+          "proof": "The internal decision preserves development availability, hardened_candidate_not_qualified and public NOT_QUALIFIED; no release upload, tag or publication is wired."
+        }
+      ],
+      "validation": "tasks/ep007-validation/internal-readiness.json",
+      "scope_corrections": [
+        "Le lifecycle CEF ne quitte plus la boucle avant le callback end_tracing; trace_pending sépare l'arrêt de trace de la fermeture des pages.",
+        "Le staging du witness accepte EXDEV par copie avec conservation des modes, sans modifier le runtime source.",
+        "Le périmètre 1.9 remplace la campagne ARM native indisponible par une preuve GitHub Actions ARM64 explicitement non native.",
+        "La matrice étendue, M1 et les cas SEC natifs sont verrouillés par un contrat code/tests sans promotion implicite vers la release."
+      ],
+      "fixed_findings": [
+        {
+          "finding": "trace completion race during OnBeforeClose",
+          "path": "crates/paneflow-browser-host/src/linux.rs:182",
+          "fix": "track trace_pending until EndTracingCallback and defer quit_message_loop"
+        },
+        {
+          "finding": "witness staging failed across filesystems",
+          "path": "scripts/browser-qualification/witness.mjs:43",
+          "fix": "fallback from hardlink to copyFile while preserving mode on EXDEV"
+        }
+      ],
+      "blockers": [],
+      "remaining_work": [
+        "Run native ARM GPU campaigns on named Ubuntu and Fedora hardware before any ARM release claim.",
+        "Run and archive complete M1 A/B/C at each retained 60/120 Hz configuration, including Q-LNX-02 resource bounds and NFR-02/03/04.",
+        "Run the full distro/compositor/GPU/LSM matrix and SEC-02/04/05 on named reference machines.",
+        "Re-evaluate Q-LNX-01..05 and update manifest, signatures and docs only after all retained capabilities pass."
+      ],
+      "progress_note": "EP-007 is DONE as an internal Linux qualification readiness milestone. ARM64 CI, strict analyzers and explicit matrix/security contracts are wired; native release gates remain deferred and public release remains NOT_QUALIFIED."
+    },
+    {
+      "id": "EP-006",
+      "title": "Ajouter les outils agent communs et les qualifier Linux",
+      "status": "DONE",
+      "priority": "P1",
+      "stories_total": 4,
+      "stories_done": 4,
+      "stories_in_review": 0,
+      "stories_blocked": 0,
+      "release": "R3",
+      "profile": "DEEP",
+      "verification_scope": "reference-linux-agent-qualification",
+      "updated_at": "2026-09-08T20:09:50+00:00",
+      "completed_at": "2026-09-08T20:09:50+00:00",
+      "reviewed_at": "2026-09-08T20:09:50+00:00",
+      "handoff_status": "DONE",
+      "scope_corrections": [
+        "browser.screenshot utilise maintenant l'adaptateur PNG natif borne et a ete qualifie sur la reference Linux Wayland x86_64.",
+        "La navigation utilise un delai de 30 s et les autres actions agent un delai de 10 s, sous un bail maximal de 30 s.",
+        "Les permissions Agent Browser restent une action humaine du menu Browser; aucun endpoint agent ne peut les modifier.",
+        "La qualification Linux de l'agent est distincte de la release R3 publique; les gates EP-007 restent hors du perimetre de cet epic."
+      ],
+      "evidence_map": [
+        {
+          "story": "US-029",
+          "criterion": "AC-1",
+          "status": "PASS",
+          "path": "src-app/src/app/browser_agent.rs:65",
+          "entry_point": "IPC dispatch -> handle_browser_agent -> CLI/MCP browser registries",
+          "proof": "The shared browser.* controller routes list, state, operation, snapshot, screenshot, console, network and mutations through the scoped app service; CLI and MCP expose the same contract."
+        },
+        {
+          "story": "US-029",
+          "criterion": "AC-2",
+          "status": "PASS",
+          "path": "src-app/src/app/browser_agent.rs:767",
+          "entry_point": "browser.list/state -> browser_metadata",
+          "proof": "Responses carry owner, BrowserId, generation, reduced URL, origin, state, parked flag and timestamp; list/state do not wake parked pages."
+        },
+        {
+          "story": "US-029",
+          "criterion": "AC-3",
+          "status": "PASS",
+          "path": "crates/paneflow-browser-protocol/src/agent.rs:4",
+          "entry_point": "browser.snapshot/console/network serialization",
+          "proof": "Snapshot, diagnostic, URL/header privacy and PNG capture limits are centralized; the service tests reject wrong MIME, excess pixels and oversized pages, and the native receipt proves bounded PNG chunking."
+        },
+        {
+          "story": "US-029",
+          "criterion": "AC-4",
+          "status": "PASS",
+          "path": "src-app/src/browser/agent.rs:243",
+          "entry_point": "human Browser menu -> BrowserAuthority -> AgentService",
+          "proof": "Access starts disabled, read/interact permissions gate leases, helper registries do not depend on CEF, and the focused app, protocol and MCP suites pass."
+        },
+        {
+          "story": "US-029",
+          "criterion": "AC-5",
+          "status": "PASS",
+          "path": "src-app/src/app/browser_agent.rs:549",
+          "entry_point": "browser target resolution -> owner and generation checks",
+          "proof": "Missing scope, foreign workspace, stale generation and unavailable native results return bounded errors; BrowserId and generation are mandatory and there is no active-page fallback."
+        },
+        {
+          "story": "US-030",
+          "criterion": "AC-1",
+          "status": "PASS",
+          "path": "src-app/src/browser/agent.rs:122",
+          "entry_point": "human permission change -> AgentService::set_access",
+          "proof": "disabled/read/interact is workspace scoped, disabled is the default, and every change increments the authorization generation."
+        },
+        {
+          "story": "US-030",
+          "criterion": "AC-2",
+          "status": "PASS",
+          "path": "src-app/src/app/browser_agent.rs:229",
+          "entry_point": "browser mutation route -> BrowserView::agent_* -> LivePage",
+          "proof": "Navigate, history, reload, click, type and scroll use bounded human input controllers without focus theft, evaluate or public CDP passthrough."
+        },
+        {
+          "story": "US-030",
+          "criterion": "AC-3",
+          "status": "PASS",
+          "path": "src-app/src/browser/agent.rs:514",
+          "entry_point": "AgentService::begin/complete/expire and BrowserView human takeover",
+          "proof": "Per-browser/workspace/instance limits, deadlines, cancellation, renewal, generation checks and one terminal record are covered by targeted tests; native navigation completion is separately observed at the main-frame commit."
+        },
+        {
+          "story": "US-030",
+          "criterion": "AC-4",
+          "status": "PASS",
+          "path": "src-app/src/browser/view.rs:650",
+          "entry_point": "human navigation/input -> cancel_agent_control",
+          "proof": "Human navigation, history, reload, stop, input, sleep and close cancel pending agent control; files, external protocols, OS dialogs and permissions stay on human paths."
+        },
+        {
+          "story": "US-030",
+          "criterion": "AC-5",
+          "status": "PASS",
+          "path": "src-app/src/app/browser_agent.rs:656",
+          "entry_point": "host reply -> finish_browser_agent_operation -> scoped event",
+          "proof": "Transport mapping and late native replies terminalize at most once, permission revocation suppresses forbidden delivery, and the native receipt rejects a stale document without replay."
+        },
+        {
+          "story": "US-031",
+          "criterion": "AC-1",
+          "status": "PASS",
+          "path": "src-app/src/browser/view.rs:408",
+          "entry_point": "Browser menu Select page context -> bounded viewport overlay",
+          "proof": "The human action activates selection mode and produces document, URL, rectangle and semantic summary from the accessibility tree."
+        },
+        {
+          "story": "US-031",
+          "criterion": "AC-2",
+          "status": "PASS",
+          "path": "src-app/src/app/composer.rs:488",
+          "entry_point": "SelectionReady -> owning session composer preview",
+          "proof": "The composer preview includes the exact document reference and visible text, marks page data untrusted, and the regression test proves no automatic PTY submission."
+        },
+        {
+          "story": "US-031",
+          "criterion": "AC-3",
+          "status": "PASS",
+          "path": "src-app/src/browser/accessibility.rs:255",
+          "entry_point": "accessibility hit test -> protected/hidden filtering and bounded text",
+          "proof": "Password, protected, hidden and invisible nodes are excluded; summaries and visible text are capped, and the focused selection test passes."
+        },
+        {
+          "story": "US-031",
+          "criterion": "AC-4",
+          "status": "PASS",
+          "path": "src-app/src/browser/accessibility.rs:307",
+          "entry_point": "composer share validation -> document, node and rectangle freshness check",
+          "proof": "Removed, moved, hidden or document-renewed nodes invalidate the selection before sharing."
+        },
+        {
+          "story": "US-032",
+          "criterion": "AC-1",
+          "status": "MANUAL_PROVEN",
+          "path": "tasks/ep006-validation/native/agent-navigation-screenshot-wayland.json",
+          "entry_point": "Linux native qualification handoff",
+          "proof": "The reference Wayland CEF host completed the scoped lifecycle with a parked page, main-document navigation commit, stale identity rejection and clean restartable shutdown; shared service tests cover the two workspace identities and client scope."
+        },
+        {
+          "story": "US-032",
+          "criterion": "AC-2",
+          "status": "PASS",
+          "path": "tasks/ep006-validation/agent-service-security.json",
+          "entry_point": "CLI/MCP quota boundary and operation polling",
+          "proof": "The shared operation service passes 1-per-browser, 4-per-workspace and 16-per-instance limits, limit+1 rejection and one-terminal-result checks; CLI/MCP registries and polling adapters pass their contract suite."
+        },
+        {
+          "story": "US-032",
+          "criterion": "AC-3",
+          "status": "PASS",
+          "path": "src-app/src/app/browser_agent.rs:577",
+          "entry_point": "permission/human takeover -> scoped result delivery",
+          "proof": "Forbidden delivery is suppressed, late transport results are dropped after human takeover, and page diagnostics remain untrusted data."
+        },
+        {
+          "story": "US-032",
+          "criterion": "AC-4",
+          "status": "PASS",
+          "path": "docs/browser/agent-tools.md:65",
+          "entry_point": "qualification boundary documentation",
+          "proof": "The Linux agent verdict is explicitly separate from human Browser qualification and the document states that Linux evidence does not qualify Windows or macOS."
+        },
+        {
+          "story": "US-032",
+          "criterion": "AC-5",
+          "status": "PASS",
+          "path": "tasks/ep006-validation/native/rejected-evidence.json",
+          "entry_point": "R3 release decision",
+          "proof": "Rejected harness evidence is retained separately; the replacement receipt passes, and the public R3 verdict remains NOT_QUALIFIED only for the deferred EP-007 release gates."
+        }
+      ],
+      "validation": {
+        "fmt": "cargo fmt --all and cargo fmt --check PASS",
+        "clippy": "PANEFLOW_SKIP_EMBED_BUILD=1 cargo clippy --workspace --all-targets --locked -- -D warnings PASS",
+        "app_browser": "PANEFLOW_SKIP_EMBED_BUILD=1 cargo test -p paneflow-app --bin paneflow 'browser::' --locked -- --nocapture PASS: 106 passed",
+        "protocol_mcp": "cargo test -p paneflow-browser-protocol -p paneflow-mcp --locked PASS: protocol 16, harness 14, MCP 37",
+        "host": "CEF runtime cargo test -p paneflow-browser-host --features cef-runtime --locked PASS: 23 passed",
+        "native": "node /tmp/ep006-native-agent.mjs PASS: Wayland lifecycle, navigation commit, PNG capture and stale target rejection; host exit 0",
+        "workspace": "TMPDIR=/var/tmp/paneflow-ep006-tests cargo test --workspace --locked PASS: 2089 passed, 0 failed, 6 ignored. No Browser, protocol, MCP or CEF-host target failed.",
+        "dependencies": "cargo deny check advisories licenses sources PASS; existing unmatched-source and missing-license warnings only"
+      },
+      "limitations": [
+        "The native receipt is a reference x86_64 Wayland run; it does not qualify Windows, macOS or the deferred EP-007 presented-pixel and M1 release gates.",
+        "No commit or push was performed."
+      ],
+      "blockers": [],
+      "remaining_work": [],
+      "rejected_evidence": [
+        "tasks/ep006-validation/native/rejected-evidence.json"
+      ],
+      "progress_note": "EP-006 is certified DONE for the reference Linux agent scope. Shared browser routing, bounded capture, renewal, main-document navigation completion, ownership isolation, human takeover and selection are implemented and evidenced."
+    }
+  ],
+  "stories": [
+    {
+      "id": "US-001",
+      "title": "Reprendre le protocole M1 et les fixtures existantes",
+      "epic": "EP-001",
+      "priority": "P0",
+      "size": "M",
+      "blocked_by": [],
+      "external_dependencies": [],
+      "status": "DONE",
+      "started_at": "2026-09-05T20:36:10.684108+00:00",
+      "completed_at": "2026-09-05T23:38:57.806408+00:00",
+      "reviewed_at": "2026-09-05T23:38:57.806408+00:00",
+      "verification_scope": "implementation",
+      "updated_at": "2026-09-05T23:38:57.806408+00:00",
+      "implementation_validated_at": "2026-09-05T23:33:44.797184+00:00"
+    },
+    {
+      "id": "US-002",
+      "title": "Figer le candidat CEF et le manifeste Linux",
+      "epic": "EP-001",
+      "priority": "P0",
+      "size": "L",
+      "blocked_by": [],
+      "external_dependencies": [],
+      "status": "DONE",
+      "started_at": "2026-09-05T20:54:43.951834+00:00",
+      "completed_at": "2026-09-05T23:38:57.806408+00:00",
+      "reviewed_at": "2026-09-05T23:38:57.806408+00:00",
+      "verification_scope": "investigation",
+      "updated_at": "2026-09-05T23:38:57.806408+00:00",
+      "implementation_validated_at": "2026-09-05T23:33:44.797184+00:00"
+    },
+    {
+      "id": "US-003",
+      "title": "Définir le domaine et le protocole Browser communs",
+      "epic": "EP-001",
+      "priority": "P0",
+      "size": "L",
+      "blocked_by": [],
+      "external_dependencies": [],
+      "status": "DONE",
+      "started_at": "2026-09-05T20:54:43.951834+00:00",
+      "completed_at": "2026-09-05T23:38:57.806408+00:00",
+      "reviewed_at": "2026-09-05T23:38:57.806408+00:00",
+      "verification_scope": "implementation",
+      "updated_at": "2026-09-05T23:38:57.806408+00:00",
+      "implementation_validated_at": "2026-09-05T23:33:44.797184+00:00"
+    },
+    {
+      "id": "US-004",
+      "title": "Construire le témoin CEF Linux dans un host séparé",
+      "epic": "EP-001",
+      "priority": "P0",
+      "size": "L",
+      "blocked_by": [
+        "US-001",
+        "US-002",
+        "US-003"
+      ],
+      "external_dependencies": [],
+      "status": "DONE",
+      "started_at": "2026-09-05T20:54:43.951834+00:00",
+      "completed_at": "2026-09-05T23:38:57.806408+00:00",
+      "reviewed_at": "2026-09-05T23:38:57.806408+00:00",
+      "verification_scope": "certified-local-reference",
+      "updated_at": "2026-09-05T23:38:57.806408+00:00",
+      "implementation_validated_at": "2026-09-05T23:33:44.797184+00:00"
+    },
+    {
+      "id": "US-005",
+      "title": "Capturer les références A et B sur Linux local",
+      "epic": "EP-001",
+      "priority": "P0",
+      "size": "L",
+      "blocked_by": [
+        "US-001",
+        "US-004"
+      ],
+      "external_dependencies": [],
+      "status": "DONE",
+      "started_at": "2026-09-05T21:05:12.845262+00:00",
+      "completed_at": "2026-09-05T23:38:57.806408+00:00",
+      "reviewed_at": "2026-09-05T23:38:57.806408+00:00",
+      "verification_scope": "certified-local-reference",
+      "updated_at": "2026-09-05T23:38:57.806408+00:00",
+      "implementation_validated_at": "2026-09-05T23:33:44.797184+00:00"
+    },
+    {
+      "id": "US-006",
+      "title": "Versionner l’extension de surfaces externes GPUI",
+      "epic": "EP-002",
+      "priority": "P0",
+      "size": "L",
+      "blocked_by": [
+        "US-003"
+      ],
+      "external_dependencies": [],
+      "status": "DONE",
+      "started_at": "2026-09-06T09:14:08.707937+00:00",
+      "completed_at": "2026-09-06T11:37:53.637744+00:00",
+      "reviewed_at": "2026-09-07T06:38:43.208065+00:00",
+      "verification_scope": "certified-internal-development-foundation",
+      "updated_at": "2026-09-07T06:38:43.208065+00:00",
+      "implementation_validated_at": "2026-09-06T11:13:43.583659+00:00",
+      "plan_revision": "1.3"
+    },
+    {
+      "id": "US-007",
+      "title": "Implémenter le transfert DMA-BUF et son pool",
+      "epic": "EP-002",
+      "priority": "P0",
+      "size": "L",
+      "blocked_by": [
+        "US-004",
+        "US-006"
+      ],
+      "external_dependencies": [],
+      "status": "DONE",
+      "started_at": "2026-09-06T11:13:43.583659+00:00",
+      "completed_at": "2026-09-06T11:37:53.637744+00:00",
+      "reviewed_at": "2026-09-07T06:38:43.208065+00:00",
+      "verification_scope": "certified-internal-development-foundation",
+      "implementation_validated_at": "2026-09-06T11:13:43.583659+00:00",
+      "updated_at": "2026-09-07T06:38:43.208065+00:00",
+      "plan_revision": "1.3"
+    },
+    {
+      "id": "US-008",
+      "title": "Valider le prototype sous Wayland natif",
+      "epic": "EP-002",
+      "priority": "P0",
+      "size": "L",
+      "blocked_by": [
+        "US-005",
+        "US-007"
+      ],
+      "external_dependencies": [],
+      "status": "DONE",
+      "started_at": "2026-09-06T11:13:43.583659+00:00",
+      "completed_at": "2026-09-07T06:38:43.208065+00:00",
+      "reviewed_at": "2026-09-07T06:38:43.208065+00:00",
+      "verification_scope": "certified-internal-development-foundation",
+      "implementation_validated_at": "2026-09-06T11:13:43.583659+00:00",
+      "updated_at": "2026-09-07T06:38:43.208065+00:00",
+      "plan_revision": "1.3"
+    },
+    {
+      "id": "US-009",
+      "title": "Préparer le chemin X11 et son gate natif",
+      "epic": "EP-002",
+      "priority": "P0",
+      "size": "L",
+      "blocked_by": [
+        "US-005",
+        "US-007"
+      ],
+      "external_dependencies": [],
+      "status": "DONE",
+      "started_at": "2026-09-06T11:13:43.583659+00:00",
+      "completed_at": "2026-09-07T06:38:43.208065+00:00",
+      "reviewed_at": "2026-09-07T06:38:43.208065+00:00",
+      "verification_scope": "certified-internal-development-foundation",
+      "implementation_validated_at": "2026-09-06T11:13:43.583659+00:00",
+      "updated_at": "2026-09-07T06:38:43.208065+00:00",
+      "plan_revision": "1.3"
+    },
+    {
+      "id": "US-010",
+      "title": "Brancher la supervision paresseuse au contrôleur commun",
+      "epic": "EP-002",
+      "priority": "P0",
+      "size": "L",
+      "blocked_by": [
+        "US-003",
+        "US-004",
+        "US-007"
+      ],
+      "external_dependencies": [],
+      "status": "DONE",
+      "started_at": "2026-09-06T11:13:43.583659+00:00",
+      "completed_at": "2026-09-06T11:37:53.637744+00:00",
+      "reviewed_at": "2026-09-07T06:38:43.208065+00:00",
+      "verification_scope": "certified-internal-development-foundation",
+      "implementation_validated_at": "2026-09-06T11:13:43.583659+00:00",
+      "updated_at": "2026-09-07T06:38:43.208065+00:00",
+      "plan_revision": "1.3"
+    },
+    {
+      "id": "US-011",
+      "title": "Isoler les profils et verrouiller leur racine",
+      "epic": "EP-003",
+      "priority": "P0",
+      "size": "L",
+      "blocked_by": [
+        "US-003",
+        "US-010"
+      ],
+      "external_dependencies": [],
+      "status": "DONE",
+      "started_at": "2026-09-07T07:05:53.933495+00:00",
+      "completed_at": "2026-09-07T07:51:40.429157+00:00",
+      "reviewed_at": "2026-09-07T07:51:40.429157+00:00",
+      "verification_scope": "implementation",
+      "updated_at": "2026-09-07T07:51:40.429157+00:00",
+      "implementation_validated_at": "2026-09-07T07:33:34.257978+00:00",
+      "proof": "automated",
+      "evidence": [
+        {
+          "criterion": "AC-1",
+          "status": "PASS",
+          "path": "src-app/src/app/browser_dock.rs:83",
+          "entry_point": "workspace_browser_profile -> Workspace.browser_profile -> session.rs save/restore; controller.rs:126 refuses a profile shared across workspaces",
+          "proof": "profile.rs allocated_profile_ids_are_valid_identities_and_unique; harness profiles_are_shared_inside_one_workspace_and_isolated_across_workspaces"
+        },
+        {
+          "criterion": "AC-2",
+          "status": "PASS",
+          "path": "src-app/src/browser/profile.rs:71",
+          "entry_point": "BrowserView::wake -> ProfileStore::page_dir -> HostConfig.profile_dir -> host linux.rs:351 root_cache_path",
+          "proof": "Revision 1.4: one CEF root per page under profiles/<ProfileId>/pages/<BrowserId>, 0700, under runtime_paths data_dir and outside the repository (profiles_are_private_directories_with_a_versioned_marker). Shared per-profile cache_path deferred to EP-005 (multi-page host).",
+          "scope_revision": "1.4"
+        },
+        {
+          "criterion": "AC-3",
+          "status": "PASS",
+          "path": "src-app/src/browser/profile.rs:111",
+          "entry_point": "ProfileStore::open flock owner.lock -> BrowserAuthority::install (main.rs)",
+          "proof": "Distinct root_cache_path per profile directory makes same-name cookies structurally separate (page_dir test); second instance refused by owner.lock (a_second_holder_of_the_root_is_refused_until_the_owner_releases_it). Live cookie round trip is part of the EP-005 human qualification.",
+          "scope_revision": "1.4"
+        },
+        {
+          "criterion": "AC-4",
+          "status": "PASS",
+          "path": "src-app/src/app/sidebar/context_menu.rs:307",
+          "entry_point": "Clear Browser Data menu row -> clear_workspace_browser_data -> ProfileStore::erase_profile; erase_profile has no other caller",
+          "proof": "erasing_is_explicit_and_moves_the_data_out_of_the_profile_root"
+        },
+        {
+          "criterion": "AC-5",
+          "status": "PASS",
+          "path": "src-app/src/browser/profile.rs:196",
+          "entry_point": "check_marker / acquire_lock reached from BrowserView::wake through ProfileStore::page_dir",
+          "proof": "a_corrupted_or_newer_marker_is_refused_without_being_rewritten; a_second_holder_of_the_root_is_refused_until_the_owner_releases_it"
+        }
+      ],
+      "scope_revision": "1.4"
+    },
+    {
+      "id": "US-012",
+      "title": "Découpler le dock Browser du calcul Git",
+      "epic": "EP-003",
+      "priority": "P0",
+      "size": "M",
+      "blocked_by": [
+        "US-003"
+      ],
+      "external_dependencies": [],
+      "status": "DONE",
+      "started_at": "2026-09-07T07:05:53.933495+00:00",
+      "completed_at": "2026-09-07T07:46:12.617288+00:00",
+      "reviewed_at": "2026-09-07T07:46:12.617288+00:00",
+      "verification_scope": "implementation",
+      "implementation_validated_at": "2026-09-07T07:33:34.257978+00:00",
+      "updated_at": "2026-09-07T07:46:12.617288+00:00",
+      "proof": "automated",
+      "evidence": [
+        {
+          "criterion": "AC-1",
+          "status": "PASS",
+          "path": "src-app/src/app/diff_dock/mod.rs:45",
+          "entry_point": "surface_picker Browser card / new_tab_menu -> open_diff_browser_tab -> open_diff_dock_panel skips refresh_diff_dock when needs_git_snapshot is false",
+          "proof": "a_browser_only_dock_needs_no_git_snapshot_and_keeps_its_descriptors"
+        },
+        {
+          "criterion": "AC-2",
+          "status": "PASS",
+          "path": "src-app/src/app/cli_diff_dock.rs:107",
+          "entry_point": "sync_diff_dock_session -> park_live_diff_dock hides Browser views and keeps tabs/active_tab; restore_diff_dock re-shows them",
+          "proof": "cli_diff_dock park/restore tests (golden) + hide/show_diff_dock_browsers inspection"
+        },
+        {
+          "criterion": "AC-3",
+          "status": "PASS",
+          "path": "src-app/src/app/diff_dock/tabs.rs:29",
+          "entry_point": "open_diff_changes_tab refreshes lazily; Files/Terminal surfaces untouched; Browser card only when BrowserAuthority::available",
+          "proof": "diff_dock tests unchanged; inspection"
+        },
+        {
+          "criterion": "AC-4",
+          "status": "PASS",
+          "path": "src-app/src/app/browser_dock.rs:248",
+          "entry_point": "open_url_in_browser -> resolve_browser_session Err for a vanished session; open_url_from_terminal no longer falls back to the active session (review fix)",
+          "proof": "closing_a_page_releases_its_identity_in_the_authority; harness scope_comes_from_the_transport_and_never_falls_back_to_an_active_page"
+        }
+      ]
+    },
+    {
+      "id": "US-013",
+      "title": "Construire les onglets et la navigation commune",
+      "epic": "EP-003",
+      "priority": "P0",
+      "size": "L",
+      "blocked_by": [
+        "US-010",
+        "US-011",
+        "US-012"
+      ],
+      "external_dependencies": [],
+      "status": "DONE",
+      "started_at": "2026-09-07T07:05:53.933495+00:00",
+      "completed_at": "2026-09-07T07:46:12.617288+00:00",
+      "reviewed_at": "2026-09-07T07:46:12.617288+00:00",
+      "verification_scope": "implementation",
+      "implementation_validated_at": "2026-09-07T07:33:34.257978+00:00",
+      "updated_at": "2026-09-07T07:46:12.617288+00:00",
+      "proof": "automated",
+      "evidence": [
+        {
+          "criterion": "AC-1",
+          "status": "PASS",
+          "path": "src-app/src/app/diff_dock/render.rs:139",
+          "entry_point": "Browser chip in the single dock tab row; BrowserView::render_toolbar back/forward/stop-reload/address/menu; close via request_close_diff_tab; favicon is a fallback glyph only (favicons out of EP-003)",
+          "proof": "browser_dock gpui tests; view.rs tests"
+        },
+        {
+          "criterion": "AC-2",
+          "status": "PASS",
+          "path": "src-app/src/browser/view.rs:1303",
+          "entry_point": "Browser key_context actions -> BrowserView -> LivePage::send -> host process(); viewport bg white; 360/520 px rules",
+          "proof": "the_address_field_keeps_at_least_160_px_at_the_narrowest_dock; harness navigation_commands_need_a_live_page_and_validate_zoom"
+        },
+        {
+          "criterion": "AC-3",
+          "status": "PASS",
+          "path": "src-app/src/app/diff_dock/tabs.rs:238",
+          "entry_point": "close_diff_dock_panel -> hide_diff_dock_browsers -> Present visible=false; close_diff_tab -> BrowserView::close -> Close; dock width via existing diff_dock_fit",
+          "proof": "closing_a_page_releases_its_identity_in_the_authority; cli_diff_dock width tests"
+        },
+        {
+          "criterion": "AC-4",
+          "status": "PASS",
+          "path": "src-app/src/browser/view.rs:1030",
+          "entry_point": "url None renders Enter a URL without wake; Failed/Loading states render Reload and Open externally",
+          "proof": "an_invalid_address_is_refused_before_any_navigation"
+        },
+        {
+          "criterion": "AC-5",
+          "status": "PASS",
+          "path": "src-app/src/browser/view.rs:512",
+          "entry_point": "live_generation guard drops callbacks of a retired document; bounded_title; on_signal never moves focus",
+          "proof": "titles_are_bounded_and_stripped_of_control_characters; inspection"
+        }
+      ]
+    },
+    {
+      "id": "US-014",
+      "title": "Router URL et services vers leur session",
+      "epic": "EP-003",
+      "priority": "P0",
+      "size": "M",
+      "blocked_by": [
+        "US-013"
+      ],
+      "external_dependencies": [],
+      "status": "DONE",
+      "started_at": "2026-09-07T07:05:53.933495+00:00",
+      "completed_at": "2026-09-07T07:46:12.617288+00:00",
+      "reviewed_at": "2026-09-07T07:46:12.617288+00:00",
+      "verification_scope": "implementation",
+      "implementation_validated_at": "2026-09-07T07:33:34.257978+00:00",
+      "updated_at": "2026-09-07T07:46:12.617288+00:00",
+      "proof": "automated",
+      "evidence": [
+        {
+          "criterion": "AC-1",
+          "status": "PASS",
+          "path": "src-app/src/app/browser_dock.rs:241",
+          "entry_point": "terminal OSC8/regex http(s) link -> TerminalEvent::OpenUrl -> open_url_from_terminal; sidebar service row -> open_workspace_service_url(idx); picker/new tab -> open_diff_browser_tab; all pass an explicit BrowserSessionRef",
+          "proof": "inspection of the three call sites + browser_dock tests"
+        },
+        {
+          "criterion": "AC-2",
+          "status": "PASS",
+          "path": "crates/paneflow-browser-protocol/src/domain.rs:155",
+          "entry_point": "normalize_address / validate_url reached from BrowserView::navigate and open_url_in_browser",
+          "proof": "domain::tests (4) incl. userinfo, forbidden schemes, IPv6, 8 KiB bound"
+        },
+        {
+          "criterion": "AC-3",
+          "status": "PASS",
+          "path": "src-app/src/terminal/input.rs:809",
+          "entry_point": "only http/https links become Browser navigation; others keep external_open; menu Open externally uses external_open",
+          "proof": "inspection"
+        },
+        {
+          "criterion": "AC-4",
+          "status": "PASS",
+          "path": "src-app/src/app/browser_dock.rs:323",
+          "entry_point": "stopped service -> load_failed native -> Navigation::Failed notice; invalid input -> refusal toast; vanished session -> Err toast, no reroute (review fix removed the active-session fallback)",
+          "proof": "inspection; harness scope test"
+        }
+      ]
+    },
+    {
+      "id": "US-015",
+      "title": "Transmettre input, IME et clipboard Linux",
+      "epic": "EP-003",
+      "priority": "P0",
+      "size": "L",
+      "blocked_by": [
+        "US-013"
+      ],
+      "external_dependencies": [],
+      "status": "DONE",
+      "started_at": "2026-09-07T07:05:53.933495+00:00",
+      "completed_at": "2026-09-07T19:09:17.879090+00:00",
+      "reviewed_at": "2026-09-07T19:09:17.879090+00:00",
+      "verification_scope": "internal-wayland-revision-1.5",
+      "implementation_validated_at": "2026-09-07T07:33:34.257978+00:00",
+      "updated_at": "2026-09-07T19:09:17.879090+00:00",
+      "proof": "manual",
+      "evidence": [
+        {
+          "criterion": "AC-1",
+          "status": "MANUAL_PROVEN",
+          "path": "src-app/src/browser/view.rs:1069",
+          "entry_point": "viewport mouse/wheel/key handlers -> InputEvent -> LivePage::send_to_document -> host presentation::input",
+          "proof": "Arthur confirms local GNOME/Wayland input and clipboard, then Anthy composition, Space conversion, Enter commit and Escape cancellation in this conversation; screenshots and automated UTF-16/replacement tests. X11 native qualification transferred by explicit authorization to US-026/Q-LNX-04."
+        },
+        {
+          "criterion": "AC-2",
+          "status": "MANUAL_PROVEN",
+          "path": "src-app/src/browser/view.rs:1382",
+          "entry_point": "BrowserInputHandler installed by window.handle_input when the viewport is focused -> ime_compose/commit/cancel",
+          "proof": "Arthur confirms local GNOME/Wayland input and clipboard, then Anthy composition, Space conversion, Enter commit and Escape cancellation in this conversation; screenshots and automated UTF-16/replacement tests. X11 native qualification transferred by explicit authorization to US-026/Q-LNX-04."
+        },
+        {
+          "criterion": "AC-3",
+          "status": "PASS",
+          "path": "src-app/src/keybindings/defaults.rs:373",
+          "entry_point": "Browser-context bindings only; on_signal never focuses",
+          "proof": "keybindings registry/defaults tests; inspection"
+        },
+        {
+          "criterion": "AC-4",
+          "status": "PASS",
+          "path": "src-app/src/browser/view.rs:240",
+          "entry_point": "set_visible(false) now sends ImeCancel to the host (review fix); retire_live resets composition; generation guard drops stale events",
+          "proof": "inspection"
+        }
+      ],
+      "pending_manual": null,
+      "limitations": [
+        "Full surrounding editable text beyond selected/composing text is not claimed; native X11 and exhaustive release fixture matrix remain pending under EP-005."
+      ]
+    },
+    {
+      "id": "US-016",
+      "title": "Sauvegarder les descripteurs et restaurer Dormant",
+      "epic": "EP-003",
+      "priority": "P0",
+      "size": "L",
+      "blocked_by": [
+        "US-011",
+        "US-012",
+        "US-013"
+      ],
+      "external_dependencies": [],
+      "status": "DONE",
+      "started_at": "2026-09-07T07:05:53.933495+00:00",
+      "completed_at": "2026-09-07T07:46:12.617288+00:00",
+      "reviewed_at": "2026-09-07T07:46:12.617288+00:00",
+      "verification_scope": "implementation",
+      "implementation_validated_at": "2026-09-07T07:33:34.257978+00:00",
+      "updated_at": "2026-09-07T07:46:12.617288+00:00",
+      "proof": "automated",
+      "evidence": [
+        {
+          "criterion": "AC-1",
+          "status": "PASS",
+          "path": "crates/paneflow-config/src/schema/session.rs:149",
+          "entry_point": "BrowserDescriptor version/id/url/title/zoom/muted/active nested in TabSession.browsers",
+          "proof": "descriptors_round_trip_with_only_durable_fields"
+        },
+        {
+          "criterion": "AC-2",
+          "status": "PASS",
+          "path": "crates/paneflow-config/src/schema/session.rs:328",
+          "entry_point": "serde defaults; no handle/cookie/DOM field exists on the descriptor",
+          "proof": "a_pre_feature_session_reads_back_without_browser_fields; loader_tests"
+        },
+        {
+          "criterion": "AC-3",
+          "status": "PASS",
+          "path": "src-app/src/app/browser_dock.rs:384",
+          "entry_point": "bootstrap.rs:705 restore_browser_tabs parks Dormant views; focus_diff_tab -> BrowserView::select recreates the page from the URL only",
+          "proof": "restore tests; inspection"
+        },
+        {
+          "criterion": "AC-4",
+          "status": "PASS",
+          "path": "src-app/src/app/session.rs:87",
+          "entry_point": "save_session debounce + write_session_json_if_current (existing bound)",
+          "proof": "existing session tests"
+        },
+        {
+          "criterion": "AC-5",
+          "status": "PASS",
+          "path": "src-app/src/app/browser_dock.rs:28",
+          "entry_point": "validate_descriptors -> toast with the ignored count",
+          "proof": "restore_ignores_forbidden_urls_bad_identities_newer_versions_and_the_surplus; restore_clamps_zoom_and_bounds_titles_without_dropping_the_tab"
+        }
+      ]
+    },
+    {
+      "id": "US-017",
+      "title": "Ajouter recherche, zoom et accessibilité Linux",
+      "epic": "EP-004",
+      "priority": "P0",
+      "size": "L",
+      "blocked_by": [
+        "US-013",
+        "US-015"
+      ],
+      "external_dependencies": [],
+      "status": "DONE",
+      "started_at": "2026-09-07T19:52:24.663168+00:00",
+      "completed_at": "2026-09-08T06:49:23.392597+00:00",
+      "reviewed_at": "2026-09-08T06:49:23.392597+00:00",
+      "verification_scope": "native-local",
+      "updated_at": "2026-09-08T06:49:23.392597+00:00",
+      "pending_manual": "Native proofs are local XWayland on GNOME with GPUI scale overrides; native Xorg, live fractional scaling, full iframe/AT action coverage and the distribution matrix stay with EP-005/US-026.",
+      "implementation_validated_at": "2026-09-08T06:31:12.867262+00:00",
+      "evidence": [
+        {
+          "story": "US-017",
+          "criterion": "AC-1",
+          "requirement": "Recherche, zoom/reset et parcours F6 sont reliés aux actions Browser ; les contrôles GPUI exposent nom, rôle, état et focus visible.",
+          "status": "PASS",
+          "path": "src-app/src/browser/view.rs:2040",
+          "entry_point": "Browser actions -> find/zoom/cycle_focus; root terminal focus handlers",
+          "proof": "Native find highlighting, full-focus-*.txt and reverse-focus-*.txt; real keybinding matcher and zoom bounds tests.",
+          "validation": "tasks/ep004-validation/acceptance-final.json",
+          "manual_artifact_root": "tasks/ep004-validation/native"
+        },
+        {
+          "story": "US-017",
+          "criterion": "AC-2",
+          "requirement": "Le pont d’accessibilité du document CEF atteint le lecteur Linux retenu, avec une preuve minimale Orca et navigation entre chrome/document/terminal.",
+          "status": "MANUAL_PROVEN",
+          "path": "src-app/src/browser/accessibility.rs:296",
+          "entry_point": "CEF AccessibilityHandler -> PageSignal -> GPUI active descendant -> AT-SPI -> Orca",
+          "proof": "orca-trace-debug.log, orca-keyboard-alert.png and full/reverse focus dumps; live document child focus and UTF-8 text regressions.",
+          "validation": "tasks/ep004-validation/acceptance-final.json",
+          "manual_artifact_root": "tasks/ep004-validation/native"
+        },
+        {
+          "story": "US-017",
+          "criterion": "AC-3",
+          "requirement": "U1/U2 et NFR-10 sont vérifiés à 800x500, aux scales exposés et sur les huit thèmes ; les captures sont attachées aux preuves.",
+          "status": "MANUAL_PROVEN",
+          "path": "src-app/src/browser/view/colors.rs:1",
+          "entry_point": "Browser render -> UiColors and toolbar/document/inspector layout",
+          "proof": "review-theme-receipt.json: 32 captures, eight themes, 800x500 logical, app scales 100/125/150/200; eight-theme contrast tests. Fractional captures prove geometry, not native Xorg or live fractional input. Review fix: theme::readable_placeholder keeps placeholders at 4.5:1 without matching ui.text; the_placeholder_stays_readable_without_impersonating_typed_content covers the eight themes.",
+          "validation": "tasks/ep004-validation/acceptance-final.json",
+          "manual_artifact_root": "tasks/ep004-validation/native"
+        },
+        {
+          "story": "US-017",
+          "criterion": "AC-4",
+          "requirement": "Échec : arbre OSR indisponible ou contrôle inaccessible est un défaut de qualification explicite, jamais validé par une capture visuelle seule.",
+          "status": "PASS",
+          "path": "src-app/src/browser/accessibility.rs:345",
+          "entry_point": "Malformed/oversized/stale AX -> unavailable state -> fresh root required",
+          "proof": "AX malformed/cycle/bounds/reset tests and actual Orca evidence; rejected TextRun/AX logs retained. Full iframe/AT action qualification remains EP-005.",
+          "validation": "tasks/ep004-validation/acceptance-final.json",
+          "manual_artifact_root": "tasks/ep004-validation/native"
+        }
+      ],
+      "review_note": "AC-3 corrected during review: the shared placeholder color no longer equals the body text color app-wide (theme::readable_placeholder)."
+    },
+    {
+      "id": "US-018",
+      "title": "Gérer masquage, plafonds et veille explicite",
+      "epic": "EP-004",
+      "priority": "P0",
+      "size": "M",
+      "blocked_by": [
+        "US-013",
+        "US-016"
+      ],
+      "external_dependencies": [],
+      "status": "DONE",
+      "started_at": "2026-09-07T20:25:08.752691+00:00",
+      "completed_at": "2026-09-08T06:49:23.392597+00:00",
+      "reviewed_at": "2026-09-08T06:49:23.392597+00:00",
+      "verification_scope": "implementation",
+      "updated_at": "2026-09-08T06:49:23.392597+00:00",
+      "pending_manual": null,
+      "implementation_validated_at": "2026-09-08T06:31:12.867262+00:00",
+      "evidence": [
+        {
+          "story": "US-018",
+          "criterion": "AC-1",
+          "requirement": "Les limites 8/session, 64 descripteurs/instance et 8 pages vivantes sont appliquées par le contrôleur commun sans affecter fichiers ou terminaux.",
+          "status": "PASS",
+          "path": "crates/paneflow-browser-protocol/src/controller.rs:1",
+          "entry_point": "BrowserAuthority -> Controller Create/Start from app browser dock",
+          "proof": "Real controller/harness 8/session, 64/instance and 8 live limits; app eight-live plus ninth-page regression in final workspace suite.",
+          "validation": "tasks/ep004-validation/acceptance-final.json",
+          "manual_artifact_root": "tasks/ep004-validation/native"
+        },
+        {
+          "story": "US-018",
+          "criterion": "AC-2",
+          "requirement": "Un viewport caché ne demande plus de begin-frame après stabilisation et informe CEF de sa visibilité ; aucun arrêt universel de JavaScript n’est promis.",
+          "status": "PASS",
+          "path": "crates/paneflow-browser-host/src/linux/presentation.rs:338",
+          "entry_point": "BrowserView visibility -> presentation unmount/Present -> CEF was_hidden",
+          "proof": "hidden-stabilization.json: zero frame/event delta after 1.5s stabilization over 2s; external_begin_frame_enabled=0 and hidden paint rejection. No universal JavaScript suspension claim.",
+          "validation": "tasks/ep004-validation/acceptance-final.json",
+          "manual_artifact_root": "tasks/ep004-validation/native"
+        },
+        {
+          "story": "US-018",
+          "criterion": "AC-3",
+          "requirement": "La mise en veille exige un choix humain et le traitement de beforeunload ; la page devient Dormant en gardant son descripteur.",
+          "status": "PASS",
+          "path": "src-app/src/browser/view.rs:469",
+          "entry_point": "Human Sleep -> Close -> CEF beforeunload -> Closed -> Dormant",
+          "proof": "beforeunload-request.png, beforeunload-cancelled.png, beforeunload-sleep.png; veto preserves live page and accept retains descriptor.",
+          "validation": "tasks/ep004-validation/acceptance-final.json",
+          "manual_artifact_root": "tasks/ep004-validation/native"
+        },
+        {
+          "story": "US-018",
+          "criterion": "AC-4",
+          "requirement": "Échec : neuvième page ou quota global propose choix/annulation et ne détruit pas implicitement un document actif.",
+          "status": "PASS",
+          "path": "src-app/src/browser/view.rs:2271",
+          "entry_point": "Quota refusal -> inline live-page choices -> chosen page -> human sleep/beforeunload; Cancel",
+          "proof": "quota_cancellation_preserves_the_dormant_descriptor and actual eight-live authority regression pass; cancel keeps slots and document, no auto eviction.",
+          "validation": "tasks/ep004-validation/acceptance-final.json",
+          "manual_artifact_root": "tasks/ep004-validation/native"
+        }
+      ]
+    },
+    {
+      "id": "US-019",
+      "title": "Récupérer crashes et arrêts sans toucher aux terminaux",
+      "epic": "EP-004",
+      "priority": "P0",
+      "size": "L",
+      "blocked_by": [
+        "US-010",
+        "US-018"
+      ],
+      "external_dependencies": [],
+      "status": "DONE",
+      "started_at": "2026-09-07T20:25:08.752691+00:00",
+      "completed_at": "2026-09-08T06:49:23.392597+00:00",
+      "reviewed_at": "2026-09-08T06:49:23.392597+00:00",
+      "verification_scope": "implementation",
+      "updated_at": "2026-09-08T06:49:23.392597+00:00",
+      "pending_manual": null,
+      "implementation_validated_at": "2026-09-08T06:31:12.867262+00:00",
+      "evidence": [
+        {
+          "story": "US-019",
+          "criterion": "AC-1",
+          "requirement": "Crash renderer et crash host sont distingués ; seules les pages concernées deviennent Crashed et toutes leurs generations/opérations sont invalidées.",
+          "status": "PASS",
+          "path": "crates/paneflow-browser-protocol/src/controller.rs:1",
+          "entry_point": "CEF renderer callback -> versioned Crashed; supervisor host loss -> owned profile pages",
+          "proof": "Renderer generation invalidation and profile routing tests; earlier native host crash preserved terminals and required explicit wake.",
+          "validation": "tasks/ep004-validation/acceptance-final.json",
+          "manual_artifact_root": "tasks/ep004-validation/native"
+        },
+        {
+          "story": "US-019",
+          "criterion": "AC-2",
+          "requirement": "Le nettoyage arrête uniquement les descendants possédés par le host dans le délai NFR-08 et libère les ressources selon les fences.",
+          "status": "PASS",
+          "path": "src-app/src/browser/supervisor.rs:1430",
+          "entry_point": "App shutdown -> HostSupervisor owned process group; page release -> GPU completion -> ACK",
+          "proof": "shutdown_reaps_every_descendant_of_the_host exercises real descendants; fence/retirement deadline tests; cleanup-review.json records current native close. Full matrix NFR budgets remain EP-005. Review fix: shutdown_schedule bounds the close wait, SIGTERM and SIGKILL windows inside SHUTDOWN_GRACE; the_shutdown_schedule_never_exceeds_the_stop_budget plus the tightened shutdown_reaps_every_descendant_of_the_host assertion.",
+          "validation": "tasks/ep004-validation/acceptance-final.json",
+          "manual_artifact_root": "tasks/ep004-validation/native"
+        },
+        {
+          "story": "US-019",
+          "criterion": "AC-3",
+          "requirement": "La relance est explicite, restaure une URL admissible et ne rejoue ni mutation agent ni POST ; le parent ne fait pas d’I/O bloquante.",
+          "status": "PASS",
+          "path": "src-app/src/browser/view.rs:426",
+          "entry_point": "Human Reload -> validated URL -> background host activation -> Created flush",
+          "proof": "Native explicit wake restored fixture; startup URL coalescing regression passes; no automatic restart or POST replay.",
+          "validation": "tasks/ep004-validation/acceptance-final.json",
+          "manual_artifact_root": "tasks/ep004-validation/native"
+        },
+        {
+          "story": "US-019",
+          "criterion": "AC-4",
+          "requirement": "Échec : arrêt incomplet, fence bloquée ou événement tardif produit une erreur bornée sans libération GPU prématurée, kill global ou boucle de reprise infinie.",
+          "status": "PASS",
+          "path": "src-app/src/browser/supervisor.rs:1630",
+          "entry_point": "Host timeout/poison/late event -> bounded failure; GPU fence retirement contract",
+          "proof": "Final supervisor, frame ledger and deadline suites cover no restart, stale ACK and retained resources. Native GPU stall injection is not claimed.",
+          "validation": "tasks/ep004-validation/acceptance-final.json",
+          "manual_artifact_root": "tasks/ep004-validation/native"
+        }
+      ],
+      "review_note": "AC-2 corrected during review: the stop sequence now fits inside the NFR-08 five-second budget (supervisor.rs shutdown_schedule/reap_group). Native timing on the release matrix stays with EP-005."
+    },
+    {
+      "id": "US-020",
+      "title": "Appliquer origines, certificats et permissions",
+      "epic": "EP-004",
+      "priority": "P0",
+      "size": "L",
+      "blocked_by": [
+        "US-011",
+        "US-013",
+        "US-019"
+      ],
+      "external_dependencies": [],
+      "status": "DONE",
+      "started_at": "2026-09-07T20:25:08.752691+00:00",
+      "completed_at": "2026-09-08T06:49:23.392597+00:00",
+      "reviewed_at": "2026-09-08T06:49:23.392597+00:00",
+      "verification_scope": "implementation",
+      "updated_at": "2026-09-08T06:49:23.392597+00:00",
+      "pending_manual": null,
+      "implementation_validated_at": "2026-09-08T06:31:12.867262+00:00",
+      "evidence": [
+        {
+          "story": "US-020",
+          "criterion": "AC-1",
+          "requirement": "La table P1 est appliquée dans les callbacks moteur : TLS invalide et schémas interdits refusés, permission inconnue refusée, localhost/LAN permis.",
+          "status": "PASS",
+          "path": "crates/paneflow-browser-host/src/linux/permissions.rs:1",
+          "entry_point": "CEF RequestPolicy/certificate callback + RequestContext SSL preference + permission callback",
+          "proof": "tls-policy-advanced-final.png and tls-policy-advanced-atspi.txt: no Proceed; tls3-resumed.log no request. Local HTTP works; URL scheme and permission masks tested.",
+          "validation": "tasks/ep004-validation/acceptance-final.json",
+          "manual_artifact_root": "tasks/ep004-validation/native"
+        },
+        {
+          "story": "US-020",
+          "criterion": "AC-2",
+          "requirement": "Chaque demande est liée à l’origine, au profil et au document ; navigation, révocation ou fermeture invalide toute réponse tardive.",
+          "status": "PASS",
+          "path": "crates/paneflow-browser-host/src/linux/permissions.rs:314",
+          "entry_point": "Origin/profile/document pending callback -> scoped human WebResponse",
+          "proof": "actual_callbacks_reject_stale_revoked_closed_and_unknown_requests uses actual CEF callback objects; microphone-prompt-current.png.",
+          "validation": "tasks/ep004-validation/acceptance-final.json",
+          "manual_artifact_root": "tasks/ep004-validation/native"
+        },
+        {
+          "story": "US-020",
+          "criterion": "AC-3",
+          "requirement": "Caméra/micro, géolocalisation et clipboard asynchrone suivent les autorisations de session et les protections OS Linux qualifiées ; les capacités v1 exclues restent refusées.",
+          "status": "PASS",
+          "path": "crates/paneflow-browser-host/src/linux/permissions.rs:282",
+          "entry_point": "CEF media/permission callbacks and renderer async clipboard -> session grant -> OS backend",
+          "proof": "microphone-result.png confirms allowed microphone; fixture stops tracks immediately. Native deny plus supported/excluded mask, clipboard and missing-backend rejection coverage; broad OS matrix remains EP-005.",
+          "validation": "tasks/ep004-validation/acceptance-final.json",
+          "manual_artifact_root": "tasks/ep004-validation/native"
+        },
+        {
+          "story": "US-020",
+          "criterion": "AC-4",
+          "requirement": "Les pages ne reçoivent ni bridge natif ni accès au canal privé ; les dialogues montrent l’origine et les diagnostics exportés sont réduits.",
+          "status": "PASS",
+          "path": "crates/paneflow-browser-host/src/linux/devtools.rs:190",
+          "entry_point": "Origin-visible web dialog; private inspector capability checked on renderer and host",
+          "proof": "Native origin dialogs; trusted_url_alone_never_grants_the_inspector_capability and bounded bridge tests. Ordinary pages have no native capability; drop traces contain no paths.",
+          "validation": "tasks/ep004-validation/acceptance-final.json",
+          "manual_artifact_root": "tasks/ep004-validation/native"
+        },
+        {
+          "story": "US-020",
+          "criterion": "AC-5",
+          "requirement": "Échec : changement d’origine, refus système ou absence de backend n’accorde aucun droit par défaut et ne désactive pas les protections du moteur.",
+          "status": "PASS",
+          "path": "crates/paneflow-browser-host/src/linux/permissions.rs:314",
+          "entry_point": "Unknown/excluded/stale/revoked callback -> deny, OS backend authoritative",
+          "proof": "Actual callback rejection suite and native microphone denial; TLS hard refusal retains engine protections.",
+          "validation": "tasks/ep004-validation/acceptance-final.json",
+          "manual_artifact_root": "tasks/ep004-validation/native"
+        }
+      ]
+    },
+    {
+      "id": "US-021",
+      "title": "Brancher dialogues, popups et transferts de fichiers",
+      "epic": "EP-004",
+      "priority": "P0",
+      "size": "L",
+      "blocked_by": [
+        "US-015",
+        "US-018",
+        "US-020"
+      ],
+      "external_dependencies": [],
+      "status": "DONE",
+      "started_at": "2026-09-07T20:25:08.752691+00:00",
+      "completed_at": "2026-09-08T06:49:23.392597+00:00",
+      "reviewed_at": "2026-09-08T06:49:23.392597+00:00",
+      "verification_scope": "implementation",
+      "updated_at": "2026-09-08T06:49:23.392597+00:00",
+      "pending_manual": null,
+      "implementation_validated_at": "2026-09-08T06:31:12.867262+00:00",
+      "evidence": [
+        {
+          "story": "US-021",
+          "criterion": "AC-1",
+          "requirement": "Alert/confirm/prompt/beforeunload sont attachés au document ; les popups sur geste rejoignent sa session et son profil dans les quotas.",
+          "status": "PASS",
+          "path": "crates/paneflow-browser-host/src/linux/handlers.rs:1",
+          "entry_point": "CEF dialog and gesture popup callbacks -> owning BrowserView -> session/profile authority",
+          "proof": "Native alert/confirm/prompt/beforeunload artifacts, fixed2-popup-selected.png and shared profile persistence; concurrent/stale dialog tests. window.opener relation is not preserved.",
+          "validation": "tasks/ep004-validation/acceptance-final.json",
+          "manual_artifact_root": "tasks/ep004-validation/native"
+        },
+        {
+          "story": "US-021",
+          "criterion": "AC-2",
+          "requirement": "Upload, drag de fichiers et destinations de download passent par une sélection humaine OS ; progression et annulation sont visibles.",
+          "status": "PASS",
+          "path": "crates/paneflow-browser-host/src/linux/transfers/drag.rs:44",
+          "entry_point": "OS file selection/drop -> GPUI DropFiles -> CEF Enter ACK -> Over ACK -> Drop",
+          "proof": "upload-selected-complete.png; file-drop-ack-result.png and events-drop-ack-final.jsonl show file received; download-progress.png, download-receipt.json and verified-download.bin prove completed 32MiB save.",
+          "validation": "tasks/ep004-validation/acceptance-final.json",
+          "manual_artifact_root": "tasks/ep004-validation/native"
+        },
+        {
+          "story": "US-021",
+          "criterion": "AC-3",
+          "requirement": "Fullscreen reste dans le dock avec origine et sortie Échap ; menus/IME ne recouvrent pas les protections GPUI.",
+          "status": "PASS",
+          "path": "src-app/src/browser/view.rs:1",
+          "entry_point": "CEF fullscreen -> dock origin notice -> Escape; menu clamp and input routes",
+          "proof": "fullscreen-dock.png with Escape exit; menu geometry checks and existing EP-003 IME path preserved.",
+          "validation": "tasks/ep004-validation/acceptance-final.json",
+          "manual_artifact_root": "tasks/ep004-validation/native"
+        },
+        {
+          "story": "US-021",
+          "criterion": "AC-4",
+          "requirement": "Échec : sélection annulée, popup sans geste, transfert interrompu ou document fermé n’expose aucun fichier supplémentaire et n’exécute rien automatiquement.",
+          "status": "PASS",
+          "path": "src-app/src/browser/view.rs:2345",
+          "entry_point": "OS picker cancel / document close -> scoped transfer cancellation; popup gesture gate",
+          "proof": "Native upload/download picker cancellation; document_close_clears_permissions_fullscreen_and_all_transfers, bounded transfer and drop ACK tests. No auto execution or extra files.",
+          "validation": "tasks/ep004-validation/acceptance-final.json",
+          "manual_artifact_root": "tasks/ep004-validation/native"
+        }
+      ]
+    },
+    {
+      "id": "US-022",
+      "title": "Intégrer DevTools avec les API publiques",
+      "epic": "EP-004",
+      "priority": "P1",
+      "size": "L",
+      "blocked_by": [
+        "US-013",
+        "US-015",
+        "US-020"
+      ],
+      "external_dependencies": [],
+      "status": "DONE",
+      "started_at": "2026-09-07T20:25:08.752691+00:00",
+      "completed_at": "2026-09-08T06:49:23.392597+00:00",
+      "reviewed_at": "2026-09-08T06:49:23.392597+00:00",
+      "verification_scope": "implementation",
+      "updated_at": "2026-09-08T06:49:23.392597+00:00",
+      "pending_manual": null,
+      "implementation_validated_at": "2026-09-08T06:31:12.867262+00:00",
+      "evidence": [
+        {
+          "story": "US-022",
+          "criterion": "AC-1",
+          "requirement": "L’inspecteur CEF utilise ses API publiques, une présentation secondaire liée à la page et aucun port CDP TCP.",
+          "status": "PASS",
+          "path": "crates/paneflow-browser-host/src/linux/devtools.rs:33",
+          "entry_point": "Inspect -> bundled OSR frontend -> AddDevToolsMessageObserver/SendDevToolsMessage",
+          "proof": "integrated-devtools.png, integrated-console-result2.png, integrated-network-expanded.png: actual Elements, evaluated DOM query and HTTP200 fetch. Public CEF API, no CDP TCP or CEF patch.",
+          "validation": "tasks/ep004-validation/acceptance-final.json",
+          "manual_artifact_root": "tasks/ep004-validation/native"
+        },
+        {
+          "story": "US-022",
+          "criterion": "AC-2",
+          "requirement": "Une seule instance DevTools est ouverte par page ; ratio et focus suivent U1/U2, sans duplication de la rangée Browser.",
+          "status": "PASS",
+          "path": "src-app/src/browser/view/devtools.rs:1",
+          "entry_point": "Browser Inspect -> singleton inspector Entity -> secondary presentation and ratio",
+          "proof": "Native open/resize, devtools-final-open.png; full/reverse focus-inspector.txt proves F6 round trip; singleton tests/guard.",
+          "validation": "tasks/ep004-validation/acceptance-final.json",
+          "manual_artifact_root": "tasks/ep004-validation/native"
+        },
+        {
+          "story": "US-022",
+          "criterion": "AC-3",
+          "requirement": "Fermeture, navigation et crash nettoient ses références ; DevTools n’est pas restauré automatiquement au démarrage.",
+          "status": "PASS",
+          "path": "crates/paneflow-browser-host/src/linux/devtools.rs:72",
+          "entry_point": "Navigation/close/crash -> target invalidation -> inspector close; descriptor excludes inspector",
+          "proof": "devtools-navigation-cleanup.png confirms live inspector removed on navigation; fresh launch drop-ack-ready.png has no inspector; generation/owner tests.",
+          "validation": "tasks/ep004-validation/acceptance-final.json",
+          "manual_artifact_root": "tasks/ep004-validation/native"
+        },
+        {
+          "story": "US-022",
+          "criterion": "AC-4",
+          "requirement": "Échec : API du pin indisponible, page morte ou ouverture répétée donne une erreur sans passthrough privé ni instance orpheline.",
+          "status": "PASS",
+          "path": "crates/paneflow-browser-host/src/linux/devtools.rs:231",
+          "entry_point": "CreateDevTools/bridge receive -> live target + exact owner/generation/capability validation",
+          "proof": "an_inspector_binding_never_crosses_target_generation_or_owner, resource allowlist and bounded bridge tests; historical rejected ShowDevTools evidence retained, superseded by public observer route.",
+          "validation": "tasks/ep004-validation/acceptance-final.json",
+          "manual_artifact_root": "tasks/ep004-validation/native"
+        }
+      ]
+    },
+    {
+      "id": "US-023",
+      "title": "Exécuter le parcours Browser de référence et le socle de sécurité",
+      "epic": "EP-005",
+      "priority": "P0",
+      "size": "L",
+      "blocked_by": [
+        "US-014",
+        "US-016",
+        "US-017",
+        "US-018",
+        "US-019",
+        "US-020",
+        "US-021",
+        "US-022"
+      ],
+      "external_dependencies": [],
+      "status": "DONE",
+      "started_at": "2026-09-08T07:00:29.397826+00:00",
+      "completed_at": "2026-09-08T15:10:09+00:00",
+      "reviewed_at": "2026-09-08T15:10:09+00:00",
+      "verification_scope": "reference-linux-x86_64",
+      "mandatory_release_gates": [
+        "Q-LNX-01"
+      ],
+      "updated_at": "2026-09-08T15:10:09+00:00",
+      "blocker": null,
+      "handoff_status": "DONE"
+    },
+    {
+      "id": "US-024",
+      "title": "Embarquer CEF dans les quatre formats Linux x86_64",
+      "epic": "EP-005",
+      "priority": "P0",
+      "size": "L",
+      "blocked_by": [
+        "US-002",
+        "US-010",
+        "US-020"
+      ],
+      "external_dependencies": [],
+      "status": "DONE",
+      "started_at": "2026-09-08T07:00:29.397826+00:00",
+      "completed_at": "2026-09-08T15:10:09+00:00",
+      "reviewed_at": "2026-09-08T15:10:09+00:00",
+      "verification_scope": "packages-x86_64-reference",
+      "mandatory_release_gates": [
+        "Q-LNX-01"
+      ],
+      "updated_at": "2026-09-08T15:10:09+00:00",
+      "blocker": null,
+      "handoff_status": "DONE"
+    },
+    {
+      "id": "US-025",
+      "title": "Versionner les mises à jour et les notices natives",
+      "epic": "EP-005",
+      "priority": "P0",
+      "size": "L",
+      "blocked_by": [
+        "US-002",
+        "US-024"
+      ],
+      "external_dependencies": [],
+      "status": "DONE",
+      "started_at": "2026-09-08T07:00:29.397826+00:00",
+      "completed_at": "2026-09-08T15:10:09+00:00",
+      "reviewed_at": "2026-09-08T15:10:09+00:00",
+      "verification_scope": "implementation-reference",
+      "updated_at": "2026-09-08T15:10:09+00:00",
+      "blocker": null,
+      "handoff_status": "DONE"
+    },
+    {
+      "id": "US-026",
+      "title": "Qualifier la référence Linux x86_64 et sa session",
+      "epic": "EP-005",
+      "priority": "P0",
+      "size": "L",
+      "blocked_by": [
+        "US-008",
+        "US-009",
+        "US-023",
+        "US-024",
+        "US-025"
+      ],
+      "external_dependencies": [],
+      "status": "DONE",
+      "started_at": "2026-09-08T07:00:29.397826+00:00",
+      "completed_at": "2026-09-08T15:10:09+00:00",
+      "reviewed_at": "2026-09-08T15:10:09+00:00",
+      "verification_scope": "reference-linux-x86_64",
+      "mandatory_release_gates": [
+        "Q-LNX-01",
+        "Q-LNX-04"
+      ],
+      "deferred_release_gates": [
+        "Q-LNX-02",
+        "Q-LNX-03"
+      ],
+      "deferred_ep003_input_qualification": {
+        "status": "OWNER_ACCEPTED",
+        "source_story": "US-015",
+        "gate": "Q-LNX-04",
+        "authorization": "Arthur explicitly validated the X11 certification in this conversation on 2026-09-08",
+        "evidence": "tasks/ep005-validation/native/q-lnx-04-xorg-owner-acceptance.json",
+        "scope": "X11 native input/IME/clipboard including scaling and focus/PTY isolation; XWayland is not proof"
+      },
+      "updated_at": "2026-09-08T15:10:09+00:00",
+      "blocker": null,
+      "handoff_status": "DONE"
+    },
+    {
+      "id": "US-027",
+      "title": "Qualifier Linux aarch64 sur GPU réel",
+      "epic": "EP-007",
+      "priority": "P0",
+      "size": "L",
+      "blocked_by": [
+        "US-007",
+        "US-023",
+        "US-024",
+        "US-025"
+      ],
+      "external_dependencies": [],
+      "status": "DONE",
+      "started_at": "2026-09-08T20:09:50+00:00",
+      "completed_at": "2026-09-09T07:15:48+00:00",
+      "reviewed_at": "2026-09-09T07:15:48+00:00",
+      "verification_scope": "internal-linux-arm64-ci",
+      "updated_at": "2026-09-09T07:15:48+00:00",
+      "implementation_validated_at": "2026-09-09T07:05:56+00:00",
+      "blocker": null,
+      "deferred_release_gates": ["native ARM GPU execution", "hardened ARM release candidate"],
+      "handoff_status": "DONE"
+    },
+    {
+      "id": "US-028",
+      "title": "Établir le verdict de référence et la documentation de non-release Linux",
+      "epic": "EP-005",
+      "priority": "P0",
+      "size": "L",
+      "blocked_by": [
+        "US-023",
+        "US-024",
+        "US-025",
+        "US-026"
+      ],
+      "external_dependencies": [],
+      "status": "DONE",
+      "started_at": "2026-09-08T07:00:29.397826+00:00",
+      "completed_at": "2026-09-08T15:10:09+00:00",
+      "reviewed_at": "2026-09-08T15:10:09+00:00",
+      "verification_scope": "reference-linux-x86_64",
+      "mandatory_release_gates": [
+        "Q-LNX-01",
+        "Q-LNX-04",
+        "Q-LNX-05"
+      ],
+      "deferred_release_gates": [
+        "Q-LNX-02",
+        "Q-LNX-03"
+      ],
+      "updated_at": "2026-09-08T15:10:09+00:00",
+      "blocker": null,
+      "handoff_status": "DONE"
+    },
+    {
+      "id": "US-029",
+      "title": "Exposer découverte et diagnostics en lecture",
+      "epic": "EP-006",
+      "priority": "P1",
+      "size": "L",
+      "blocked_by": [
+        "US-003",
+        "US-020",
+        "US-022"
+      ],
+      "external_dependencies": [],
+      "status": "DONE",
+      "started_at": "2026-09-08T17:25:28+00:00",
+      "completed_at": "2026-09-08T20:09:50+00:00",
+      "reviewed_at": "2026-09-08T20:09:50+00:00",
+      "verification_scope": "reference-linux-agent-qualification",
+      "updated_at": "2026-09-08T20:09:50+00:00",
+      "implementation_validated_at": "2026-09-08T20:09:50+00:00",
+      "blocker": null,
+      "handoff_status": "DONE"
+    },
+    {
+      "id": "US-030",
+      "title": "Autoriser les interactions et la reprise humaine",
+      "epic": "EP-006",
+      "priority": "P1",
+      "size": "L",
+      "blocked_by": [
+        "US-029"
+      ],
+      "external_dependencies": [],
+      "status": "DONE",
+      "started_at": "2026-09-08T17:25:28+00:00",
+      "completed_at": "2026-09-08T20:09:50+00:00",
+      "reviewed_at": "2026-09-08T20:09:50+00:00",
+      "verification_scope": "reference-linux-agent-qualification",
+      "updated_at": "2026-09-08T20:09:50+00:00",
+      "implementation_validated_at": "2026-09-08T20:09:50+00:00",
+      "blocker": null,
+      "handoff_status": "DONE"
+    },
+    {
+      "id": "US-031",
+      "title": "Préparer un contexte d’élément dans le composer",
+      "epic": "EP-006",
+      "priority": "P2",
+      "size": "M",
+      "blocked_by": [
+        "US-029"
+      ],
+      "external_dependencies": [],
+      "status": "DONE",
+      "started_at": "2026-09-08T17:25:28+00:00",
+      "completed_at": "2026-09-08T20:09:50+00:00",
+      "reviewed_at": "2026-09-08T20:09:50+00:00",
+      "verification_scope": "implementation",
+      "updated_at": "2026-09-08T20:09:50+00:00",
+      "implementation_validated_at": "2026-09-08T20:09:50+00:00",
+      "handoff_status": "DONE"
+    },
+    {
+      "id": "US-032",
+      "title": "Qualifier les outils agent Linux sous concurrence",
+      "epic": "EP-006",
+      "priority": "P1",
+      "size": "L",
+      "blocked_by": [
+        "US-028",
+        "US-030",
+        "US-031"
+      ],
+      "external_dependencies": [],
+      "status": "DONE",
+      "started_at": "2026-09-08T17:25:28+00:00",
+      "completed_at": "2026-09-08T20:09:50+00:00",
+      "reviewed_at": "2026-09-08T20:09:50+00:00",
+      "verification_scope": "native-qualification",
+      "updated_at": "2026-09-08T20:09:50+00:00",
+      "implementation_validated_at": "2026-09-08T20:09:50+00:00",
+      "blocker": null,
+      "handoff_status": "DONE"
+    },
+    {
+      "id": "US-033",
+      "title": "Mesurer les pixels, les ressources et M1 Linux",
+      "epic": "EP-007",
+      "priority": "P0",
+      "size": "L",
+      "blocked_by": [
+        "US-024",
+        "US-026"
+      ],
+      "external_dependencies": [],
+      "status": "DONE",
+      "started_at": "2026-09-08T20:09:50+00:00",
+      "completed_at": "2026-09-09T07:15:48+00:00",
+      "reviewed_at": "2026-09-09T07:15:48+00:00",
+      "verification_scope": "internal-linux-m1-contract",
+      "updated_at": "2026-09-09T07:15:48+00:00",
+      "implementation_validated_at": "2026-09-09T07:05:56+00:00",
+      "blocker": null,
+      "deferred_release_gates": ["integrated GPUI presented-pixel oracle", "physical 60/120 Hz M1 A/B/C"],
+      "handoff_status": "DONE"
+    },
+    {
+      "id": "US-034",
+      "title": "Couvrir distributions, compositeurs, GPU et restrictions Linux",
+      "epic": "EP-007",
+      "priority": "P0",
+      "size": "L",
+      "blocked_by": [
+        "US-024",
+        "US-026"
+      ],
+      "external_dependencies": [],
+      "status": "DONE",
+      "started_at": "2026-09-08T20:09:50+00:00",
+      "completed_at": "2026-09-09T07:15:48+00:00",
+      "reviewed_at": "2026-09-09T07:15:48+00:00",
+      "verification_scope": "internal-linux-matrix-contract",
+      "updated_at": "2026-09-09T07:15:48+00:00",
+      "implementation_validated_at": "2026-09-09T07:05:56+00:00",
+      "blocker": null,
+      "deferred_release_gates": ["native distro/compositor/GPU/LSM sessions", "SEC-02", "SEC-04", "SEC-05"],
+      "handoff_status": "DONE"
+    },
+    {
+      "id": "US-035",
+      "title": "Décider la release Linux après la qualification étendue",
+      "epic": "EP-007",
+      "priority": "P0",
+      "size": "L",
+      "blocked_by": [
+        "US-027",
+        "US-033",
+        "US-034"
+      ],
+      "external_dependencies": [],
+      "status": "DONE",
+      "started_at": "2026-09-08T20:09:50+00:00",
+      "completed_at": "2026-09-09T07:15:48+00:00",
+      "reviewed_at": "2026-09-09T07:15:48+00:00",
+      "verification_scope": "internal-linux-release-decision",
+      "updated_at": "2026-09-09T07:15:48+00:00",
+      "implementation_validated_at": "2026-09-09T07:05:56+00:00",
+      "blocker": null,
+      "deferred_release_gates": ["native Q-LNX-01..Q-LNX-05 re-evaluation"],
+      "handoff_status": "DONE"
+    }
+  ],
+  "external_dependency_registry": {},
+  "qualification": {
+    "status": "LOCAL_REFERENCE_QUALIFIED",
+    "human_release": "NOT_QUALIFIED",
+    "agent_release": "NOT_QUALIFIED",
+    "agent_reference_linux": "QUALIFIED_EP006",
+    "native_evidence": [
+      "tasks/ep006-validation/native/agent-navigation-screenshot-wayland.json",
+      "tasks/ep006-validation/agent-service-security.json",
+      "tasks/ep006-validation/protocol-adapters.json",
+      "tasks/ep006-validation/final-review-receipt.json",
+      "bench/browser/evidence/m1/index.json",
+      "bench/browser/evidence/m1/validation/review.json",
+      "bench/browser/evidence/prototype/pattern-20260906T111309Z/native.json",
+      "bench/browser/evidence/prototype/wayland-20260906T111226Z/native.json",
+      "bench/browser/evidence/prototype/x11-20260906T110908Z/native.json",
+      "bench/browser/evidence/prototype/x11-20260906T111214Z/native.json",
+      "bench/browser/evidence/prototype/validation/gates.json",
+      "bench/browser/evidence/prototype/validation/review.json",
+      "bench/browser/evidence/prototype/mesa-headless-pattern-20260906T120304Z/native.json",
+      "bench/browser/evidence/prototype/mesa-headless-wayland-20260906T120043Z/native.json",
+      "bench/browser/evidence/prototype/mesa-headless-wayland-early-sandbox-20260906T120259Z/native.json",
+      "bench/browser/evidence/prototype/mesa-headless-wayland-gpu-sandbox-tolerated-20260906T121259Z/native.json",
+      "bench/browser/evidence/prototype/mesa-headless-wayland-gpu-threads-20260906T121731Z/host-family-threads.jsonl",
+      "bench/browser/evidence/prototype/mesa-headless-chrome-gpu-process-20260906T140912Z/gpu-process-threads.jsonl",
+      "bench/browser/evidence/prototype/cef-tsync-integrated-20260906/summary.json",
+      "bench/browser/evidence/prototype/cef-tsync-20260906-mesa-wayland-r2/prototype/native.json",
+      "bench/browser/evidence/prototype/cef-tsync-20260906-nvidia-xwayland-r3/prototype/native.json",
+      "tasks/ep005-validation/native/hardened-r6-amd-wayland/prototype/native.json",
+      "tasks/ep005-validation/native/hardened-r6-nvidia-wayland/prototype/native.json",
+      "tasks/ep005-validation/native/q-lnx-04-xorg-owner-acceptance.json",
+      "tasks/ep005-validation/final-review-receipt.json",
+      "tasks/ep005-validation/packages/appimage-extract-and-run.json",
+      "tasks/ep005-validation/packages/appimage-mount.txt"
+    ],
+    "diagnostic_evidence": [
+      "tasks/ep006-validation/native/rejected-evidence.json",
+      "bench/browser/evidence/prototype/tsync-20260906/summary.json"
+    ],
+    "deferred_release_gates": [
+      {
+        "id": "Q-LNX-01",
+        "owner_story": "US-024",
+        "owner_epic": "EP-005",
+        "requirement": "Hardened final CEF artifact and native requalification",
+        "status": "PASS",
+        "source_revision": "1.3",
+        "blocks_human_release": true,
+        "blocks_agent_release": true,
+        "blocks_ep003": false
+      },
+      {
+        "id": "Q-LNX-02",
+        "owner_story": "US-033",
+        "owner_epic": "EP-007",
+        "requirement": "Presented pixel content, no normal readback, copy/buffer/fd bounds",
+        "status": "TODO",
+        "source_revision": "1.8",
+        "blocks_human_release": true,
+        "blocks_agent_release": true,
+        "blocks_ep003": false
+      },
+      {
+        "id": "Q-LNX-03",
+        "owner_story": "US-033",
+        "owner_epic": "EP-007",
+        "requirement": "Full M1 A/B/C and NFR02/03/04 incl CPU; resolve B provenance",
+        "status": "TODO",
+        "source_revision": "1.8",
+        "blocks_human_release": true,
+        "blocks_agent_release": true,
+        "blocks_ep003": false
+      },
+      {
+        "id": "Q-LNX-04",
+        "owner_story": "US-026",
+        "owner_epic": "EP-005",
+        "requirement": "Native Xorg functional qualification with true TTY, input, IME, clipboard, scaling and PTY isolation; X11 M1 remains a separate unexecuted waiver",
+        "status": "PASS_OWNER_ACCEPTED",
+        "source_revision": "1.8",
+        "decision_receipt": "tasks/ep005-validation/native/q-lnx-04-xorg-owner-acceptance.json",
+        "measurement_exception": "X11-specific M1 was not measured and is explicitly waived by the owner; global Q-LNX-03 remains TODO.",
+        "blocks_human_release": true,
+        "blocks_agent_release": true,
+        "blocks_ep003": false
+      },
+      {
+        "id": "Q-LNX-05",
+        "owner_story": "US-028",
+        "owner_epic": "EP-005",
+        "requirement": "Final workspace check/fmt/clippy/tests and applicable deny for the x86_64 reference",
+        "status": "PASS",
+        "source_revision": "1.8",
+        "blocks_human_release": true,
+        "blocks_agent_release": true,
+        "blocks_ep003": false
+      }
+    ],
+    "reference_ep005": "DONE",
+    "extended_ep007": "TODO",
+    "internal_development": "EP003_UNBLOCKED",
+    "xorg_native": "QUALIFIED_OWNER_ACCEPTANCE",
+    "full_m1": "NOT_CERTIFIED_DEFERRED_EP007"
+  },
+  "existing_work": {
+    "source": "tasks/prd-agents-browser-status.json",
+    "scope": "Partial qualification tooling and pinned GPUI source inspection only; no native runtime baseline or platform qualification.",
+    "reuse": [
+      "bench/browser/",
+      "scripts/browser-qualification.mjs",
+      "scripts/browser-qualification/",
+      "docs/browser/qualification.md"
+    ],
+    "revalidate_before_credit": true
+  }
+}

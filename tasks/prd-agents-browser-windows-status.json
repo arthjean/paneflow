@@ -1,0 +1,435 @@
+{
+  "prd": {
+    "file": "tasks/prd-agents-browser-windows.md",
+    "title": "Navigateur Agents sur Windows : port natif et qualification indépendante",
+    "created_at": "2026-09-05",
+    "status": "READY",
+    "active": true,
+    "platform": "WINDOWS",
+    "supersedes": "tasks/prd-agents-browser.md",
+    "baseline_commit": "fbfefd250a3f3c8d9968a23f8c358712859bc904",
+    "updated_at": "2026-09-06T12:58:44.833283+00:00",
+    "plan_revision": "1.1"
+  },
+  "epics": [
+    {
+      "id": "EP-001",
+      "title": "Préparer le host Windows et reprendre les contrats communs",
+      "status": "TODO",
+      "priority": "P0",
+      "stories_total": 4,
+      "stories_done": 0,
+      "release": "R0"
+    },
+    {
+      "id": "EP-002",
+      "title": "Implémenter le GPU et obtenir une première preuve Windows",
+      "status": "TODO",
+      "priority": "P0",
+      "stories_total": 4,
+      "stories_done": 0,
+      "release": "R0"
+    },
+    {
+      "id": "EP-003",
+      "title": "Compléter les intégrations OS et préparer le package Windows",
+      "status": "TODO",
+      "priority": "P0",
+      "stories_total": 4,
+      "stories_done": 0,
+      "release": "R1/R2"
+    },
+    {
+      "id": "EP-004",
+      "title": "Qualifier et préparer les livraisons Windows",
+      "status": "TODO",
+      "priority": "P0",
+      "stories_total": 4,
+      "stories_done": 0,
+      "release": "R2/R3"
+    }
+  ],
+  "stories": [
+    {
+      "id": "US-001",
+      "title": "Figer les artefacts et minima Windows",
+      "epic": "EP-001",
+      "priority": "P0",
+      "size": "L",
+      "blocked_by": [],
+      "external_dependencies": [
+        "CORE-RUNTIME"
+      ],
+      "status": "TODO",
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null,
+      "verification_scope": "investigation"
+    },
+    {
+      "id": "US-002",
+      "title": "Préparer le bootstrap EXE et la DLL cliente sandboxée",
+      "epic": "EP-001",
+      "priority": "P0",
+      "size": "L",
+      "blocked_by": [
+        "US-001"
+      ],
+      "external_dependencies": [],
+      "status": "TODO",
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null,
+      "verification_scope": "implementation"
+    },
+    {
+      "id": "US-003",
+      "title": "Adapter supervision, IPC et profils Windows",
+      "epic": "EP-001",
+      "priority": "P0",
+      "size": "L",
+      "blocked_by": [
+        "US-002"
+      ],
+      "external_dependencies": [
+        "CORE-CONTROL"
+      ],
+      "status": "TODO",
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null,
+      "verification_scope": "implementation"
+    },
+    {
+      "id": "US-004",
+      "title": "Brancher le backend Windows au dock partagé",
+      "epic": "EP-001",
+      "priority": "P0",
+      "size": "L",
+      "blocked_by": [
+        "US-003"
+      ],
+      "external_dependencies": [
+        "CORE-DOCK"
+      ],
+      "status": "TODO",
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null,
+      "verification_scope": "implementation"
+    },
+    {
+      "id": "US-005",
+      "title": "Étendre la composition DirectX de GPUI",
+      "epic": "EP-002",
+      "priority": "P0",
+      "size": "L",
+      "blocked_by": [
+        "US-001"
+      ],
+      "external_dependencies": [
+        "CORE-GPU"
+      ],
+      "status": "TODO",
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null,
+      "verification_scope": "implementation"
+    },
+    {
+      "id": "US-006",
+      "title": "Transférer les textures partagées D3D avec ownership",
+      "epic": "EP-002",
+      "priority": "P0",
+      "size": "L",
+      "blocked_by": [
+        "US-002",
+        "US-005"
+      ],
+      "external_dependencies": [],
+      "status": "TODO",
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null,
+      "verification_scope": "implementation"
+    },
+    {
+      "id": "US-007",
+      "title": "Adapter le clavier, l’IME et les changements DPI",
+      "epic": "EP-002",
+      "priority": "P0",
+      "size": "L",
+      "blocked_by": [
+        "US-004",
+        "US-006"
+      ],
+      "external_dependencies": [],
+      "status": "TODO",
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null,
+      "verification_scope": "implementation"
+    },
+    {
+      "id": "US-008",
+      "title": "Exécuter le prototype sur la première machine Windows",
+      "epic": "EP-002",
+      "priority": "P0",
+      "size": "L",
+      "blocked_by": [
+        "US-004",
+        "US-006",
+        "US-007"
+      ],
+      "external_dependencies": [],
+      "status": "TODO",
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null,
+      "verification_scope": "native-local"
+    },
+    {
+      "id": "US-009",
+      "title": "Brancher l’accessibilité Windows et les contrôles du dock",
+      "epic": "EP-003",
+      "priority": "P0",
+      "size": "L",
+      "blocked_by": [
+        "US-004",
+        "US-007"
+      ],
+      "external_dependencies": [
+        "CORE-UX"
+      ],
+      "status": "TODO",
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null,
+      "verification_scope": "implementation"
+    },
+    {
+      "id": "US-010",
+      "title": "Adapter permissions, dialogues et fichiers Windows",
+      "epic": "EP-003",
+      "priority": "P0",
+      "size": "L",
+      "blocked_by": [
+        "US-004",
+        "US-007"
+      ],
+      "external_dependencies": [
+        "CORE-WEB"
+      ],
+      "status": "TODO",
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null,
+      "verification_scope": "implementation"
+    },
+    {
+      "id": "US-011",
+      "title": "Préparer le MSI et la signature des composants",
+      "epic": "EP-003",
+      "priority": "P0",
+      "size": "L",
+      "blocked_by": [
+        "US-001",
+        "US-002",
+        "US-003"
+      ],
+      "external_dependencies": [],
+      "status": "TODO",
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null,
+      "verification_scope": "implementation"
+    },
+    {
+      "id": "US-012",
+      "title": "Adapter les mises à jour et le rollback Windows",
+      "epic": "EP-003",
+      "priority": "P0",
+      "size": "L",
+      "blocked_by": [
+        "US-011"
+      ],
+      "external_dependencies": [
+        "CORE-UPDATE"
+      ],
+      "status": "TODO",
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null,
+      "verification_scope": "implementation"
+    },
+    {
+      "id": "US-013",
+      "title": "Qualifier installation, parcours web et accessibilité Windows",
+      "epic": "EP-004",
+      "priority": "P0",
+      "size": "L",
+      "blocked_by": [
+        "US-008",
+        "US-009",
+        "US-010",
+        "US-011",
+        "US-012"
+      ],
+      "external_dependencies": [],
+      "status": "TODO",
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null,
+      "verification_scope": "native-qualification"
+    },
+    {
+      "id": "US-014",
+      "title": "Mesurer performances, ressources et récupération Windows",
+      "epic": "EP-004",
+      "priority": "P0",
+      "size": "L",
+      "blocked_by": [
+        "US-008",
+        "US-012"
+      ],
+      "external_dependencies": [],
+      "status": "TODO",
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null,
+      "verification_scope": "native-qualification"
+    },
+    {
+      "id": "US-015",
+      "title": "Préparer le verdict humain et les docs Windows",
+      "epic": "EP-004",
+      "priority": "P0",
+      "size": "L",
+      "blocked_by": [
+        "US-013",
+        "US-014"
+      ],
+      "external_dependencies": [],
+      "status": "TODO",
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null,
+      "verification_scope": "native-qualification"
+    },
+    {
+      "id": "US-016",
+      "title": "Qualifier les outils agent communs sur Windows",
+      "epic": "EP-004",
+      "priority": "P1",
+      "size": "L",
+      "blocked_by": [
+        "US-015"
+      ],
+      "external_dependencies": [
+        "CORE-AGENT"
+      ],
+      "status": "TODO",
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null,
+      "verification_scope": "native-qualification"
+    }
+  ],
+  "external_dependency_registry": {
+    "CORE-RUNTIME": {
+      "prd": "tasks/prd-agents-browser-linux.md",
+      "stories": [
+        "US-002",
+        "US-003"
+      ],
+      "resolution": "Verify the actual required interface and compatible source commit; no Linux platform qualification or overall DONE prerequisite.",
+      "contract": "Manifeste versionné, identités et version de protocole."
+    },
+    "CORE-CONTROL": {
+      "prd": "tasks/prd-agents-browser-linux.md",
+      "stories": [
+        "US-003",
+        "US-010",
+        "US-011"
+      ],
+      "resolution": "Verify the actual required interface and compatible source commit; no Linux platform qualification or overall DONE prerequisite.",
+      "contract": "Contrôleur/superviseur, racine et profils : interfaces réellement consommées par le port."
+    },
+    "CORE-DOCK": {
+      "prd": "tasks/prd-agents-browser-linux.md",
+      "stories": [
+        "US-012",
+        "US-013",
+        "US-014",
+        "US-016"
+      ],
+      "resolution": "Verify the actual required interface and compatible source commit; no Linux platform qualification or overall DONE prerequisite.",
+      "contract": "Picker, dock, routage URL, propriétaires et schéma de restauration."
+    },
+    "CORE-GPU": {
+      "prd": "tasks/prd-agents-browser-linux.md",
+      "stories": [
+        "US-003",
+        "US-006"
+      ],
+      "resolution": "Verify the actual required interface and compatible source commit; no Linux platform qualification or overall DONE prerequisite.",
+      "contract": "Contrat des frames et extension de scène GPUI versionnée."
+    },
+    "CORE-UX": {
+      "prd": "tasks/prd-agents-browser-linux.md",
+      "stories": [
+        "US-017",
+        "US-018",
+        "US-019",
+        "US-022"
+      ],
+      "resolution": "Verify the actual required interface and compatible source commit; no Linux platform qualification or overall DONE prerequisite.",
+      "contract": "Contrôles recherche/zoom, visibilité/reprise et DevTools communs ; aucune preuve Orca n’est requise pour un autre OS."
+    },
+    "CORE-WEB": {
+      "prd": "tasks/prd-agents-browser-linux.md",
+      "stories": [
+        "US-020",
+        "US-021"
+      ],
+      "resolution": "Verify the actual required interface and compatible source commit; no Linux platform qualification or overall DONE prerequisite.",
+      "contract": "Contrôleurs communs de permissions, dialogues, popups et fichiers."
+    },
+    "CORE-UPDATE": {
+      "prd": "tasks/prd-agents-browser-linux.md",
+      "stories": [
+        "US-002",
+        "US-025"
+      ],
+      "resolution": "Verify the actual required interface and compatible source commit; no Linux platform qualification or overall DONE prerequisite.",
+      "contract": "Manifeste de compatibilité, état de migration profil et contrats d’update."
+    },
+    "CORE-AGENT": {
+      "prd": "tasks/prd-agents-browser-linux.md",
+      "stories": [
+        "US-029",
+        "US-030",
+        "US-031"
+      ],
+      "resolution": "Verify the actual required interface and compatible source commit; no Linux platform qualification or overall DONE prerequisite.",
+      "contract": "Implémentation browser.*, autorisations/leases et sélection dans le composer ; pas de dépendance à la qualification Linux US-032."
+    }
+  },
+  "qualification": {
+    "status": "NOT_EXECUTED",
+    "human_release": "NOT_QUALIFIED",
+    "agent_release": "NOT_QUALIFIED",
+    "native_evidence": []
+  },
+  "existing_work": {
+    "source": "tasks/prd-agents-browser-status.json",
+    "scope": "Partial qualification tooling and pinned GPUI source inspection only; no native runtime baseline or platform qualification.",
+    "reuse": [
+      "bench/browser/",
+      "scripts/browser-qualification.mjs",
+      "scripts/browser-qualification/",
+      "docs/browser/qualification.md"
+    ],
+    "revalidate_before_credit": true
+  }
+}
