@@ -147,7 +147,7 @@ wrap_life_span_handler! {
             presentation::detach();
             emit(json!({ "native": "closed" }));
             if !presentation::active() { super::close(); }
-            if HOST.with(|state| state.borrow().as_ref().is_some_and(|host| host.closing && host.pages.values().all(|page| page.browser.is_none()))) { quit_message_loop(); }
+            if HOST.with(|state| state.borrow().as_ref().is_some_and(|host| host.closing && !host.trace_pending && host.pages.values().all(|page| page.browser.is_none()))) { quit_message_loop(); }
         }
 
         fn on_before_popup(&self, browser: Option<&mut Browser>, _frame: Option<&mut Frame>, _popup_id: i32, target_url: Option<&CefString>, _target_frame_name: Option<&CefString>, _target_disposition: WindowOpenDisposition, user_gesture: i32, _popup_features: Option<&PopupFeatures>, _window_info: Option<&mut WindowInfo>, _client: Option<&mut Option<Client>>, _settings: Option<&mut BrowserSettings>, _extra_info: Option<&mut Option<DictionaryValue>>, _no_javascript_access: Option<&mut i32>) -> i32 {

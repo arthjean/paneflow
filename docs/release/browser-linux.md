@@ -175,6 +175,31 @@ GPU hardware. The manifest declares no `aarch64-unknown-linux-gnu` candidate,
 so no ARM artifact can be staged today. No upload, tag, push or release was
 performed for EP-005.
 
+## EP-007 internal qualification contract
+
+The tracked contract at
+[`native/browser/linux-qualification-contract.toml`](../../native/browser/linux-qualification-contract.toml)
+closes the implementation part of EP-007 without promoting a release. It
+requires every extended target and every SEC-01 through SEC-08 case to carry an
+explicit proof kind and status. Missing native evidence is represented as
+`NATIVE_DEFERRED`; it is never inferred from a build, an emulator, a CI runner
+or an unrelated Linux reference.
+
+The ARM64 development path is verified by
+`ubuntu-22.04-arm` in GitHub Actions with the pinned upstream CEF archive,
+archive digests, safe extraction, ELF architecture, CEF-host tests, Clippy and
+release builds. Its artifact is `CI_CODE_TEST_BUILD`, not native ARM GPU
+qualification. The workflow is wired and its local runtime verifier passes;
+the first hosted receipt still requires a pushed branch. The strict M1 and
+presentation analyzers remain covered by rejection tests and preserve
+`NOT_EXECUTED` when a physical compositor oracle is absent.
+
+EP-007 being internally complete therefore does not change
+`availability = "development"`,
+`native_qualification = "hardened_candidate_not_qualified"`, or the public
+release verdict `NOT_QUALIFIED`. A future native campaign must replace the
+deferred statuses before those capabilities can be announced.
+
 The capability the application reports comes from the manifest's per-target
 `availability` field. Raising it above `development` requires the separate
 release verdict and does not happen as a side effect of epic certification.

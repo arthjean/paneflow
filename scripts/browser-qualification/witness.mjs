@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { spawn, spawnSync } from "node:child_process";
-import { copyFile, link, mkdir, readFile, readdir, readlink, stat, writeFile } from "node:fs/promises";
+import { chmod, copyFile, link, mkdir, readFile, readdir, readlink, stat, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { serveFixtures } from "./fixtures.mjs";
@@ -41,6 +41,16 @@ async function topology(hostPid) {
 }
 
 async function stage(directory, runtime, binary) {
+  const linkOrCopy = async (from, to) => {
+    try {
+      await link(from, to);
+    } catch (error) {
+      if (error.code !== "EXDEV") throw error;
+      await copyFile(from, to);
+      const mode = (await stat(from)).mode & 0o7777;
+      await chmod(to, mode);
+    }
+  };
   await mkdir(directory, { mode: 0o700 });
   for (const source of [join(runtime, "Release"), join(runtime, "Resources")]) {
     for (const name of await readdir(source)) {
@@ -48,9 +58,9 @@ async function stage(directory, runtime, binary) {
       const to = join(directory, name);
       if ((await stat(from)).isDirectory()) {
         await mkdir(to);
-        for (const child of await readdir(from)) await link(join(from, child), join(to, child));
+        for (const child of await readdir(from)) await linkOrCopy(join(from, child), join(to, child));
       } else {
-        await link(from, to);
+        await linkOrCopy(from, to);
       }
     }
   }

@@ -41,6 +41,7 @@ struct Host {
     origin: String,
     closing: bool,
     tracing: bool,
+    trace_pending: bool,
     trace_path: PathBuf,
 }
 
@@ -196,9 +197,19 @@ fn close() {
     if let Some(path) = trace_path {
         let path = CefString::from(path.to_string_lossy().as_ref());
         emit(json!({ "native": "trace_stop_requested" }));
+        HOST.with(|state| {
+            if let Some(host) = state.borrow_mut().as_mut() {
+                host.trace_pending = true;
+            }
+        });
         if end_tracing(Some(&path), Some(&mut TraceFinished::new())) == 1 {
             return;
         }
+        HOST.with(|state| {
+            if let Some(host) = state.borrow_mut().as_mut() {
+                host.trace_pending = false;
+            }
+        });
         emit(json!({ "native": "trace_failed", "reason": "end_tracing rejected" }));
     }
     close_browser();
@@ -220,6 +231,11 @@ wrap_end_tracing_callback! {
 
     impl EndTracingCallback {
         fn on_end_tracing_complete(&self, tracing_file: Option<&CefString>) {
+            HOST.with(|state| {
+                if let Some(host) = state.borrow_mut().as_mut() {
+                    host.trace_pending = false;
+                }
+            });
             emit(json!({ "native": "trace_completed", "path": tracing_file.map(ToString::to_string), "trace_us": now_from_system_trace_time() }));
             close_browser();
         }
@@ -929,6 +945,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
             origin,
             closing: false,
             tracing: false,
+            trace_pending: false,
             trace_path: std::env::var_os("PANEFLOW_BROWSER_TRACE_DIR")
                 .map(PathBuf::from)
                 .map(|dir| dir.join(format!("cef-{}.json", std::process::id())))
@@ -1120,6 +1137,7 @@ mod tests {
                 origin: "http://127.0.0.1:3000".to_owned(),
                 closing: false,
                 tracing: false,
+                trace_pending: false,
                 trace_path: PathBuf::new(),
             }))
         });
@@ -1202,6 +1220,7 @@ mod tests {
                 origin: "https://example.com".to_owned(),
                 closing: false,
                 tracing: false,
+                trace_pending: false,
                 trace_path: PathBuf::new(),
             }))
         });

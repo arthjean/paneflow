@@ -1,0 +1,77 @@
+schema_version = 1
+mode = "internal_code_and_tests"
+public_release = "NOT_QUALIFIED"
+native_release_evidence_required = true
+non_inference = true
+
+[[targets]]
+id = "linux-aarch64-ci"
+status = "CI_CODE_TEST_BUILD"
+evidence_kind = "github_actions_arm64_code_test_build"
+native_release_qualified = false
+runner = "ubuntu-22.04-arm"
+
+[[targets]]
+id = "linux-m1-analysis"
+status = "STRICT_ANALYZER_TESTED_NOT_MEASURED"
+evidence_kind = "code_and_rejection_tests"
+native_release_qualified = false
+runner = "local_and_ci"
+
+[[targets]]
+id = "linux-distro-compositor-gpu"
+status = "MATRIX_CONTRACT_TESTED_NOT_NATIVE"
+evidence_kind = "explicit_matrix_and_non_inference_tests"
+native_release_qualified = false
+runner = "local_and_ci"
+distributions = ["Ubuntu", "Debian", "Fedora", "Arch", "openSUSE"]
+compositors = ["GNOME/Mutter", "KDE/KWin", "wlroots"]
+gpu_families = ["NVIDIA proprietary", "Intel or AMD Mesa"]
+restrictions = ["SELinux/AppArmor", "user namespaces", "FUSE", "loader and libraries"]
+
+[[targets]]
+id = "linux-native-security"
+status = "AUTOMATED_BASELINE_WITH_NATIVE_DEFERRED"
+evidence_kind = "security_corpus_contract"
+native_release_qualified = false
+runner = "local_and_ci"
+
+[[security]]
+id = "SEC-01"
+proof = "automated"
+status = "AUTOMATED_TEST"
+
+[[security]]
+id = "SEC-02"
+proof = "native"
+status = "NATIVE_DEFERRED"
+
+[[security]]
+id = "SEC-03"
+proof = "automated"
+status = "AUTOMATED_TEST"
+
+[[security]]
+id = "SEC-04"
+proof = "native"
+status = "NATIVE_DEFERRED"
+
+[[security]]
+id = "SEC-05"
+proof = "native"
+status = "NATIVE_DEFERRED"
+
+[[security]]
+id = "SEC-06"
+proof = "automated"
+status = "AUTOMATED_TEST"
+
+[[security]]
+id = "SEC-07"
+proof = "automated"
+status = "AUTOMATED_TEST"
+
+[[security]]
+id = "SEC-08"
+proof = "automated"
+status = "AUTOMATED_TEST"

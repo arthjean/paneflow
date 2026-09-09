@@ -96,6 +96,8 @@ jobs:
             ci:
               - '.github/workflows/**'
               - '.github/actions/**'
+              - 'native/browser/arm64-ci-runtime.toml'
+              - 'native/browser/linux-qualification-contract.toml'
               - 'scripts/**'
             security:
               - '**/Cargo.toml'
@@ -209,6 +211,9 @@ jobs:
         with:
           prefix-key: "v1-rust"
           key: run_tests_linux
+
+      - name: Validate Linux extended qualification contract
+        run: python3 scripts/verify-linux-qualification-contract.py --contract native/browser/linux-qualification-contract.toml --output target/ep007-linux-qualification-contract.json
 
       - name: Test
         run: cargo test --workspace --locked
@@ -1141,6 +1146,35 @@ jobs:
           prefix-key: "v1-rust"
           key: aarch64-unknown-linux-gnu
 
+      - name: Validate Linux extended qualification contract
+        run: python3 scripts/verify-linux-qualification-contract.py --contract native/browser/linux-qualification-contract.toml --output target/ep007-linux-qualification-contract.json
+
+      - name: Fetch and verify pinned CEF ARM64 development runtime
+        run: |
+          python3 scripts/verify-arm64-ci-runtime.py \
+            --manifest native/browser/arm64-ci-runtime.toml \
+            --archive target/cef-arm64.tar.bz2 \
+            --destination target/cef-arm64 \
+            --download
+
+      - name: Test browser host with CEF ARM64 runtime
+        env:
+          LD_LIBRARY_PATH: ${{ github.workspace }}/target/cef-arm64/Release
+          PANEFLOW_CEF_ROOT: ${{ github.workspace }}/target/cef-arm64
+        run: cargo test -p paneflow-browser-host --target aarch64-unknown-linux-gnu --features cef-runtime --locked
+
+      - name: Clippy browser host with CEF ARM64 runtime
+        env:
+          LD_LIBRARY_PATH: ${{ github.workspace }}/target/cef-arm64/Release
+          PANEFLOW_CEF_ROOT: ${{ github.workspace }}/target/cef-arm64
+        run: cargo clippy -p paneflow-browser-host --target aarch64-unknown-linux-gnu --features cef-runtime --all-targets --locked -- -D warnings
+
+      - name: Release build browser host with CEF ARM64 runtime
+        env:
+          LD_LIBRARY_PATH: ${{ github.workspace }}/target/cef-arm64/Release
+          PANEFLOW_CEF_ROOT: ${{ github.workspace }}/target/cef-arm64
+        run: cargo build --release -p paneflow-browser-host --target aarch64-unknown-linux-gnu --features cef-runtime --locked
+
       # fmt runs here too so formatter-version drift between dev boxes
       # (x86_64) and the arm runner is caught at the PR gate.
       - name: cargo fmt --check
@@ -1154,6 +1188,24 @@ jobs:
 
       - name: cargo build --workspace --release (aarch64-unknown-linux-gnu)
         run: cargo build --workspace --release --locked --target aarch64-unknown-linux-gnu
+
+      - name: Record ARM64 CI evidence
+        run: |
+          python3 scripts/verify-arm64-ci-runtime.py \
+            --manifest native/browser/arm64-ci-runtime.toml \
+            --destination target/cef-arm64 \
+            --record-build target/aarch64-unknown-linux-gnu/release/paneflow-browser-host
+
+      - name: Upload ARM64 qualification evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ep007-linux-arm64-ci-${{ github.sha }}
+          path: |
+            target/cef-arm64/arm64-runtime-verification.json
+            target/ep007-linux-qualification-contract.json
+          if-no-files-found: warn
+          retention-days: 14
 
   # ───────────────────────────────────────────────────────────────────────
   # Single aggregator job - mirrors Zed's run_tests.yml `tests_pass`

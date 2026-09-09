@@ -345,6 +345,7 @@ mod tests {
                 origin: "https://example.com".to_owned(),
                 closing: false,
                 tracing: false,
+                trace_pending: false,
                 trace_path: std::path::PathBuf::new(),
             }))
         });

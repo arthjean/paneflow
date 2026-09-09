@@ -1,0 +1,17 @@
+contract_version = 1
+target = "aarch64-unknown-linux-gnu"
+cef_version = "151.3.24+g2384915+chromium-151.0.7922.174"
+chromium_version = "151.0.7922.174"
+archive = "cef_binary_151.3.24+g2384915+chromium-151.0.7922.174_linuxarm64_minimal.tar.bz2"
+url = "https://cef-builds.spotifycdn.com/cef_binary_151.3.24+g2384915+chromium-151.0.7922.174_linuxarm64_minimal.tar.bz2"
+archive_sha256 = "47965b9c36a5958bdd6d6fdb3fe3360f38d17d65914ef636abade14881cdc59b"
+archive_sha1 = "95acd2a46975e2c60afa6b427ec50c0a3be6236f"
+archive_size = 412792128
+source = "cef-builds.spotifycdn.com/index.json"
+availability = "development"
+native_qualification = "upstream_standard_not_qualified"
+evidence_kind = "github_actions_arm64_code_test_build"
+ci_runner = "ubuntu-22.04-arm"
+max_members = 20000
+max_unpacked_size = 4000000000
+max_file_size = 3000000000
