@@ -63,6 +63,17 @@
   <content_rating type="oars-1.1" />
 
   <releases>
+    <release version="0.14.0" date="2026-09-09">
+      <description>
+        <p>Every per-user file lives under one home directory, managed worktrees move there with snapshots before removal, and custom agent profiles run a built-in agent with its own environment.</p>
+        <ul>
+          <li>Configuration, session, window state, worktrees, helper binaries, shell integration, and caches sit under ~/.paneflow (PANEFLOW_HOME overrides it), and the first launch copies the previous files there</li>
+          <li>Managed worktrees go under ~/.paneflow/worktrees with a Settings page for the root, automatic removal, a keep limit, and snapshots that restore uncommitted changes after a removal</li>
+          <li>The New branch form gains a Worktree toggle, a From base, detached worktrees, and .worktreeinclude; the Paneflow owner marker leaves the checkout so git status is clean</li>
+          <li>Custom agent profiles add launcher entries with extra environment variables and arguments, the AI Agent settings page becomes Agents, MCP Servers becomes Plugins, and menus fade into place</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.13.0" date="2026-09-07">
       <description>
         <p>Tabs follow the terminal title and can name themselves from the conversation, every agent state is a word on the row, and the Changes dock can take the whole cockpit.</p>

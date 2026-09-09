@@ -5,6 +5,8 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-09-09
+
 ### Added
 
 - Custom agent profiles. Settings > Agents > Profiles (or the
@@ -34,7 +36,7 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
   `~/.local/share/paneflow` and their macOS and Windows equivalents), and
   leaves the originals in place for older builds. Run `paneflow mcp install`
   again if an agent's MCP config points at the old helper path; Settings >
-  MCP Servers reports it.
+  Plugins reports it.
 - Worktrees live in a Paneflow directory, not beside your repository. Managed
   worktrees now go under `~/.paneflow/worktrees/`, one subdirectory per
   repository, where they used to fill `<repo>.worktrees/` next to the checkout.
@@ -80,8 +82,16 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
   path, where the Launch Pad used to refuse it, and typing the name of a
   branch that already exists checks that branch out instead of failing.
 
+### Changed
+
+- Settings > AI Agent is now Settings > Agents and Settings > MCP Servers is
+  Settings > Plugins. No configuration key changed for either rename.
+
 ### Fixed
 
+- With the indent guide on, tab title and checkout meta rows in the sidebar
+  sit under the guide instead of reserving a blank icon slot, and the ellipsis
+  lands at the right edge.
 - Nothing of Paneflow's sits inside a worktree any more. The owner marker that
   identified a Paneflow-created checkout was written as `.paneflow-worktree` at
   the checkout root, untracked, so `git status` never came back clean: "Remove
