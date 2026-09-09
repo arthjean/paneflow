@@ -14,7 +14,7 @@ often: editor, shell, theme, shortcuts, notifications, terminal display,
 workspace templates, agent launchers, AI access, and MCP setup.
 
 **TL;DR.** Most Settings rows write to `paneflow.json` and hot-reload
-after the file is saved. MCP Servers is different: it installs or
+after the file is saved. Plugins is different: it installs or
 repairs Paneflow's MCP bridge in supported agent configs. Advanced keys
 remain available in [`paneflow.json`](/docs/configuration/schema).
 
@@ -30,7 +30,7 @@ remain available in [`paneflow.json`](/docs/configuration/schema).
 | Workspaces | Reusable workspace templates with panes, agents, shell commands, cwd, env, and prompt prefill. | `commands[].workspace` | Templates run through the same workspace launch path as `paneflow up`. |
 | Worktrees | Root directory for the worktrees Paneflow creates, automatic removal with a keep limit, the list of managed worktrees with a remove action, and the snapshots taken before a removal with restore and delete actions. | `worktrees.dir`, `worktrees.auto_remove`, `worktrees.keep_limit` | Hot-reloads. The root applies to worktrees created from then on. |
 | Agents | Which agents the launcher shows, with their installed version, custom agent profiles, Claude Code full access, AI free access, and the injection fence. | `*_button_visible`, `agent_profiles`, `claude_code_bypass_permissions`, `ai_unrestricted`, `ai_injection_fence` | Launcher and access changes hot-reload. |
-| MCP Servers | Installs or repairs the bundled `paneflow-mcp` bridge for Claude Code, Codex, Gemini, and opencode. | Agent config files, not `paneflow.json` | Re-run after a Paneflow update or when an agent config changes. |
+| Plugins | Installs or repairs the bundled `paneflow-mcp` bridge for Claude Code, Codex, Gemini, and opencode. | Agent config files, not `paneflow.json` | Re-run after a Paneflow update or when an agent config changes. |
 
 ## AI access vs MCP
 
@@ -42,7 +42,7 @@ enabled, Paneflow launches Claude Code with
 `--permission-mode bypassPermissions`. It does not change Codex,
 OpenCode, Gemini, or MCP behavior.
 
-MCP Servers is a separate operational page. It registers the bundled
+Plugins is a separate operational page. It registers the bundled
 `paneflow-mcp` server so supported agents can list, read, and search
 Paneflow panes. It touches the agents' own config files and can be run
 again safely.

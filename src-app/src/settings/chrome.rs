@@ -60,7 +60,7 @@ const NAV_GROUPS: &[NavGroup] = &[
             NavItem {
                 section: SettingsSection::Shortcuts,
                 label: "Keyboard Shortcuts",
-                icon: "icons/bolt.svg",
+                icon: "icons/square-slash.svg",
                 keywords: &["keyboard", "shortcuts", "keys", "bindings", "hotkey"],
             },
         ],
@@ -128,9 +128,16 @@ const NAV_GROUPS: &[NavGroup] = &[
             },
             NavItem {
                 section: SettingsSection::McpServers,
-                label: "MCP Servers",
-                icon: "icons/server.svg",
-                keywords: &["mcp", "bridge", "server", "integration"],
+                label: "Plugins",
+                icon: "icons/at-sign.svg",
+                keywords: &[
+                    "mcp",
+                    "bridge",
+                    "server",
+                    "integration",
+                    "plugin",
+                    "plugins",
+                ],
             },
         ],
     },
@@ -143,7 +150,7 @@ pub(crate) fn section_title(section: SettingsSection) -> &'static str {
         SettingsSection::Shortcuts => "Keyboard Shortcuts",
         SettingsSection::Terminal => "Terminal",
         SettingsSection::Agents => "Agents",
-        SettingsSection::McpServers => "MCP Servers",
+        SettingsSection::McpServers => "Plugins",
         SettingsSection::Workspaces => "Workspaces",
         SettingsSection::Worktrees => "Worktrees",
     }
