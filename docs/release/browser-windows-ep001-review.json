@@ -1,0 +1,107 @@
+{
+  "schema_version": 1,
+  "epic": "EP-001",
+  "prd": "tasks/prd-agents-browser-windows.md",
+  "verdict": "DONE",
+  "reviewed_at": "2026-09-10T10:51:11+02:00",
+  "scope": {
+    "tier": "control-only",
+    "target": "x86_64-pc-windows-msvc",
+    "native_machine": "Windows 11 build 26200.0",
+    "declared_minimum": "Windows 10 1809 build 17763",
+    "out_of_scope": [
+      "Windows 10 execution",
+      "GPU and D3D external-surface presentation",
+      "browser-page rendering qualification",
+      "release Authenticode signing and MSI packaging"
+    ]
+  },
+  "stories": [
+    {
+      "id": "US-001",
+      "verdict": "DONE",
+      "criteria": [
+        { "id": "AC-1", "status": "PASS", "evidence": "native/browser/manifest.toml pins the Windows target, CEF/Chromium/cef-rs versions, archive hashes, ABI, protocol and notices." },
+        { "id": "AC-2", "status": "MANUAL_PROVEN", "evidence": "The signed runtime and same-version development archive were verified on Windows 11 build 26200.0; the manifest declares the Windows 10 1809 floor and bootstrap, sandbox and control-only contracts." },
+        { "id": "AC-3", "status": "PASS", "evidence": "scripts/fetch-browser.py returned VERIFIED for the pinned signed archive and the fetch security suite passed 12/12." },
+        { "id": "AC-4", "status": "PASS", "evidence": "The common browser contract commit and protocol version are recorded in the target manifest." },
+        { "id": "AC-5", "status": "PASS", "evidence": "Fetch negative-path tests cover absent, mismatched, unsafe and incompatible artifacts while preserving an existing verified runtime." }
+      ]
+    },
+    {
+      "id": "US-002",
+      "verdict": "DONE",
+      "criteria": [
+        { "id": "AC-1", "status": "PASS", "evidence": "The Windows client exports RunWinMain, receives sandbox_info, keeps sandboxing enabled and does not use browser_subprocess_path." },
+        { "id": "AC-2", "status": "PASS", "evidence": "Bootstrap/client roles, PE checks, export checks and unknown-DLL refusal are wired in the Windows readiness contract." },
+        { "id": "AC-3", "status": "MANUAL_PROVEN", "evidence": "The pinned client was built with the same-version CEF development archive, staged with the signed runtime, locally signed for qualification, and executed through the real bootstrap handshake." },
+        { "id": "AC-4", "status": "PASS", "evidence": "CEF remains absent from terminal startup and is loaded only through Browser activation and the Windows supervisor." },
+        { "id": "AC-5", "status": "PASS", "evidence": "Missing runtime, incompatible ABI, invalid PE and missing export paths fail closed as Browser unavailable." }
+      ]
+    },
+    {
+      "id": "US-003",
+      "verdict": "DONE",
+      "criteria": [
+        { "id": "AC-1", "status": "PASS", "evidence": "Named-pipe ACLs are owner-scoped and descendant ownership uses a KILL_ON_JOB_CLOSE Job Object without inherited control handles or process-name kills." },
+        { "id": "AC-2", "status": "MANUAL_PROVEN", "evidence": "Windows profile tests passed 6/6; production profile creation applies protected SYSTEM, administrators and owner ACLs, and the native receipt reports exactly those entries." },
+        { "id": "AC-3", "status": "PASS", "evidence": "Root locking, ownership, routing, handshake, closure and refused readiness paths are wired and the Windows supervisor contract tests passed 4/4; the native control round trip completed successfully." },
+        { "id": "AC-4", "status": "PASS", "evidence": "Process handles and the owned Job Object control the lifetime; shutdown is bounded and does not elevate privileges or kill by process name." },
+        { "id": "AC-5", "status": "PASS", "evidence": "Readiness, parent-loss and supervisor failures route to Browser errors while preserving terminal startup and existing profile state." }
+      ]
+    },
+    {
+      "id": "US-004",
+      "verdict": "DONE",
+      "criteria": [
+        { "id": "AC-1", "status": "PASS", "evidence": "The platform registry selects the Windows adapters while reusing the shared Browser controller, dock, owners, profiles, descriptors and lifecycle." },
+        { "id": "AC-2", "status": "PASS", "evidence": "The deterministic shared controller path is wired to the Windows ProfileHost and native v3 create/close protocol; no Windows-specific dock rewrite exists." },
+        { "id": "AC-3", "status": "PASS", "evidence": "The target remains development-only and control-only; invalid or absent runtime data leaves public activation unavailable." },
+        { "id": "AC-4", "status": "PASS", "evidence": "The Windows adapters consume the recorded common contract and protocol rather than duplicating the Linux dock implementation." }
+      ]
+    }
+  ],
+  "native_evidence": {
+    "fetch_result": "VERIFIED",
+    "runtime": "native/browser/prebuilt/x86_64-pc-windows-msvc/db354cc1c8a639628e8ab362eb6f6c11e213fb69e2199f8eae604f0a0d389315",
+    "runtime_manifest_stamp": "9d7cab48ae67d7d13fae9088f0699af789c6513228d5e03fa547c55d2a4246e5",
+    "qualification_receipt": "target/windows-browser-qualification/windows-bootstrap-qualification.json",
+    "handshake": "initialized, contract v3, sandbox_requested=true, presentation=false",
+    "control_round_trip": "qualification-create and qualification-close returned Ok",
+    "profile_acl": "SYSTEM, BUILTIN administrators and DESKTOP-UL3AE08\\Arthur only",
+    "signature": "The qualification copy of chrome_elf.dll, bootstrap EXE and client DLL shared one short-lived test certificate",
+    "cleanup": "exit_code=1 and forced_termination=true after the successful control round trip; the bounded cleanup fallback reclaimed the process tree"
+  },
+  "wiring_defects_fixed": [
+    "Windows CEF import-library and libcef_dll_wrapper link emission",
+    "archive_sha1 fetch regression",
+    "missing Linux LivePage screenshot contract",
+    "Windows profile ACL hardening",
+    "native_qualification fetch output propagation",
+    "runtime digest exclusion for staged host binaries"
+  ],
+  "unapplied_maintenance": [
+    "Release packaging must align Authenticode signing for chrome_elf.dll, bootstrap and client artifacts.",
+    "browser-package.py can make RunWinMain export validation unconditional when release packaging is brought into scope."
+  ],
+  "validation": [
+    "cargo fmt --all -- --check: passed",
+    "cargo clippy -p paneflow-app --all-targets --target x86_64-pc-windows-msvc --locked -- -D warnings: passed",
+    "cargo clippy -p paneflow-browser-host --features cef-runtime --lib --target x86_64-pc-windows-msvc --locked -- -D warnings: passed",
+    "cargo test profile Windows filter: 6 passed",
+    "cargo test supervisor Windows filter: 4 passed",
+    "cargo test browser host Windows target: 2 passed",
+    "bun test scripts/browser-qualification/fetch.test.mjs: 12 passed",
+    "python -m py_compile scripts/fetch-browser.py scripts/browser-package.py: passed",
+    "cargo deny check advisories licenses sources: passed with pre-existing unmatched-source and license-field warnings",
+    "git diff --check: passed"
+  ],
+  "status_transition": {
+    "from": "IN_REVIEW",
+    "to": "DONE",
+    "stories_done": 4,
+    "stories_in_review": 0,
+    "remaining_work": []
+  },
+  "blockers": []
+}

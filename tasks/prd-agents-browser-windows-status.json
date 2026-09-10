@@ -8,18 +8,191 @@
     "platform": "WINDOWS",
     "supersedes": "tasks/prd-agents-browser.md",
     "baseline_commit": "fbfefd250a3f3c8d9968a23f8c358712859bc904",
-    "updated_at": "2026-09-06T12:58:44.833283+00:00",
+    "updated_at": "2026-09-10T10:51:11+02:00",
     "plan_revision": "1.1"
   },
   "epics": [
     {
       "id": "EP-001",
       "title": "Préparer le host Windows et reprendre les contrats communs",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "stories_total": 4,
-      "stories_done": 0,
-      "release": "R0"
+      "stories_done": 4,
+      "release": "R0",
+      "stories_in_review": 0,
+      "profile": "DEEP",
+      "updated_at": "2026-09-10T10:51:11+02:00",
+      "reviewed_at": "2026-09-10T10:51:11+02:00",
+      "handoff_status": "DONE",
+      "evidence_map": [
+        {
+          "story": "US-001",
+          "criterion": "AC-1",
+          "status": "PASS",
+          "path": "native/browser/manifest.toml:292",
+          "entry_point": "scripts/fetch-browser.py --target x86_64-pc-windows-msvc",
+          "proof": "Windows target, CEF/Chromium/cef-rs pins, archive hashes, provenance, protocol version and notices are declared."
+        },
+        {
+          "story": "US-001",
+          "criterion": "AC-2",
+          "status": "MANUAL_PROVEN",
+          "path": "native/browser/manifest.toml:307",
+          "entry_point": "runtime metadata and Windows native qualification",
+          "proof": "The signed runtime and same-version development archive were verified on Windows 11 build 26200.0; the manifest declares the Windows 10 1809 floor and bootstrap, sandbox and control-only contracts."
+        },
+        {
+          "story": "US-001",
+          "criterion": "AC-3",
+          "status": "PASS",
+          "path": "scripts/fetch-browser.py:22",
+          "entry_point": "explicit fetch and safe extraction CLI",
+          "proof": "HTTPS provenance, size/SHA-1 when declared/SHA-256 checks, traversal and special-file rejection, bounded extraction and no build.rs or first-use download; fetch security suite passes."
+        },
+        {
+          "story": "US-001",
+          "criterion": "AC-4",
+          "status": "PASS",
+          "path": "native/browser/manifest.toml:319",
+          "entry_point": "embedded common contract metadata",
+          "proof": "The consumed browser contract commit and protocol version are recorded independently of Linux or another OS qualification."
+        },
+        {
+          "story": "US-001",
+          "criterion": "AC-5",
+          "status": "PASS",
+          "path": "scripts/fetch-browser.py:123",
+          "entry_point": "fetch verification failure path",
+          "proof": "Absent targets, archive mismatches and unsafe candidates fail closed while an existing runtime is preserved; negative fetch tests pass."
+        },
+        {
+          "story": "US-002",
+          "criterion": "AC-1",
+          "status": "PASS",
+          "path": "crates/paneflow-browser-host/src/windows.rs:85",
+          "entry_point": "RunWinMain -> execute_process -> initialize",
+          "proof": "The exported Windows entry point passes sandbox_info, executes subprocess roles before browser initialization, keeps no_sandbox disabled and does not set browser_subprocess_path."
+        },
+        {
+          "story": "US-002",
+          "criterion": "AC-2",
+          "status": "PASS",
+          "path": "src-app/src/browser/install_windows.rs:85",
+          "entry_point": "Windows readiness and supervisor activation",
+          "proof": "Bootstrap and client roles are separated, x64 PE headers and a real RunWinMain export are required, and unknown client DLLs remain unavailable in contract tests."
+        },
+        {
+          "story": "US-002",
+          "criterion": "AC-3",
+          "status": "MANUAL_PROVEN",
+          "path": "scripts/build-browser-host.ps1:34",
+          "entry_point": "Windows client build, staging and signature script",
+          "proof": "The pinned client was built with the same-version CEF development archive, staged with the signed runtime, locally signed for qualification, and executed through the real bootstrap handshake."
+        },
+        {
+          "story": "US-002",
+          "criterion": "AC-4",
+          "status": "PASS",
+          "path": "src-app/src/browser/authority.rs:30",
+          "entry_point": "application startup and BrowserAuthority::detect",
+          "proof": "Windows runtime discovery is file/manifest based and BrowserRuntime is installed without loading CEF; CEF starts only from a Browser page activation."
+        },
+        {
+          "story": "US-002",
+          "criterion": "AC-5",
+          "status": "PASS",
+          "path": "src-app/src/browser/supervisor_windows.rs:286",
+          "entry_point": "runtime readiness and staged host verification",
+          "proof": "Missing or incompatible runtime, bootstrap PE or client export returns unavailable; the supervisor launches the bootstrap executable rather than a DLL and the host requests sandboxing."
+        },
+        {
+          "story": "US-003",
+          "criterion": "AC-1",
+          "status": "PASS",
+          "path": "src-app/src/browser/supervisor_windows.rs:424",
+          "entry_point": "named-pipe listener and Job Object ownership",
+          "proof": "The pipe uses owner-scoped SDDL and the bootstrap process is assigned to KILL_ON_JOB_CLOSE; no inherited control handle or kill-by-name path is used."
+        },
+        {
+          "story": "US-003",
+          "criterion": "AC-2",
+          "status": "MANUAL_PROVEN",
+          "path": "src-app/src/browser/profile.rs:50",
+          "entry_point": "runtime_paths::data_dir and ProfileStore",
+          "proof": "Windows profile tests pass 6/6; production profile creation applies protected SYSTEM, administrators and owner ACLs, and the native receipt reports exactly those entries."
+        },
+        {
+          "story": "US-003",
+          "criterion": "AC-3",
+          "status": "PASS",
+          "path": "src-app/src/browser/profile_host_windows.rs:39",
+          "entry_point": "ProfileHost::subscribe -> HostSupervisor::activate",
+          "proof": "Root locking, ownership, routing, handshake, closure and refused readiness paths are wired; Windows supervisor contract tests pass 4/4 and the native control round trip completed successfully."
+        },
+        {
+          "story": "US-003",
+          "criterion": "AC-4",
+          "status": "PASS",
+          "path": "src-app/src/browser/supervisor_windows.rs:505",
+          "entry_point": "HostSupervisor::abort/terminate/shutdown and watch",
+          "proof": "Resource release is tied to the owned Job Object and process handles; shutdown has a bounded grace period and no privilege elevation or process-name kill."
+        },
+        {
+          "story": "US-003",
+          "criterion": "AC-5",
+          "status": "PASS",
+          "path": "src-app/src/browser/authority.rs:51",
+          "entry_point": "readiness failure -> Browser unavailable",
+          "proof": "Readiness, parent-loss and supervisor failures route to Browser errors while preserving terminal startup and existing profile state."
+        },
+        {
+          "story": "US-004",
+          "criterion": "AC-1",
+          "status": "PASS",
+          "path": "src-app/src/browser/mod.rs:62",
+          "entry_point": "shared BrowserRuntime, authority, ProfileHost and BrowserView",
+          "proof": "Windows selects target-specific install/supervisor/page adapters while reusing the common controller, dock actions, owners, profiles, descriptors and lifecycle."
+        },
+        {
+          "story": "US-004",
+          "criterion": "AC-2",
+          "status": "PASS",
+          "path": "src-app/src/browser/page.rs:1424",
+          "entry_point": "picker/controller -> LivePage::start -> ProfileHost",
+          "proof": "The deterministic shared controller path is wired to the Windows ProfileHost and native v3 create/close protocol; no Windows-specific dock rewrite exists."
+        },
+        {
+          "story": "US-004",
+          "criterion": "AC-3",
+          "status": "PASS",
+          "path": "native/browser/manifest.toml:297",
+          "entry_point": "BrowserAuthority::detect and development availability",
+          "proof": "The target is explicitly development-only, native qualification is not executed, and missing or invalid runtime data leaves public activation unavailable."
+        },
+        {
+          "story": "US-004",
+          "criterion": "AC-4",
+          "status": "PASS",
+          "path": "native/browser/manifest.toml:319",
+          "entry_point": "shared contract metadata and target adapters",
+          "proof": "The consumed common commit and protocol contract are recorded; the Windows path depends on the shared interfaces, not Linux DONE status or a divergent dock copy."
+        }
+      ],
+      "scope_corrections": [
+        "Keep EP-001 control-only until EP-002; no native GPU, browser creation or public qualification is claimed.",
+        "The review fixed the Windows CEF import-library link emission in build.rs and the common fetch regression caused by an unconditional archive_sha1 lookup.",
+        "Runtime packaging remains development-only and must not be treated as Windows sandbox or GPU qualification.",
+        "The pinned signed archive and same-version development headers/import library were integrated and qualified through the control-only Windows 11 harness; release signing alignment remains later packaging work."
+      ],
+      "unapplied_maintenance": [
+        "Release packaging must align Authenticode signing for chrome_elf.dll, bootstrap and client artifacts.",
+        "browser-package.py can make RunWinMain export validation unconditional when release packaging is brought into scope."
+      ],
+      "validation": "cargo fmt --all -- --check; cargo clippy -p paneflow-app --all-targets --target x86_64-pc-windows-msvc --locked -- -D warnings; cargo clippy -p paneflow-browser-host --features cef-runtime --lib --target x86_64-pc-windows-msvc --locked -- -D warnings; Windows profile tests 6/6; Windows supervisor tests 4/4; browser host tests 2/2; bun test scripts/browser-qualification/fetch.test.mjs 12/12; python -m py_compile; cargo deny check advisories licenses sources; git diff --check; native Windows 11 build 26200 control-only receipt with handshake, sandbox, create and close",
+      "remaining_work": [],
+      "progress_note": "EP-001 is certified DONE at the control-only tier. The pinned runtime is integrated, the Windows host contracts are tested, and the real CEF bootstrap/control round trip is recorded on Windows 11; GPU, browser-page and release-package qualification remain in later epics.",
+      "certification": "docs/release/browser-windows-ep001-review.json"
     },
     {
       "id": "EP-002",
@@ -60,11 +233,15 @@
       "external_dependencies": [
         "CORE-RUNTIME"
       ],
-      "status": "TODO",
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null,
-      "verification_scope": "investigation"
+      "status": "DONE",
+      "started_at": "2026-09-10T00:03:19+02:00",
+      "completed_at": "2026-09-10T10:51:11+02:00",
+      "reviewed_at": "2026-09-10T10:51:11+02:00",
+      "verification_scope": "investigation",
+      "updated_at": "2026-09-10T10:51:11+02:00",
+      "implementation_validated_at": "2026-09-10T10:51:11+02:00",
+      "blocker": null,
+      "handoff_status": "DONE"
     },
     {
       "id": "US-002",
@@ -76,11 +253,15 @@
         "US-001"
       ],
       "external_dependencies": [],
-      "status": "TODO",
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null,
-      "verification_scope": "implementation"
+      "status": "DONE",
+      "started_at": "2026-09-10T00:03:19+02:00",
+      "completed_at": "2026-09-10T10:51:11+02:00",
+      "reviewed_at": "2026-09-10T10:51:11+02:00",
+      "verification_scope": "implementation",
+      "updated_at": "2026-09-10T10:51:11+02:00",
+      "implementation_validated_at": "2026-09-10T10:51:11+02:00",
+      "blocker": null,
+      "handoff_status": "DONE"
     },
     {
       "id": "US-003",
@@ -94,11 +275,15 @@
       "external_dependencies": [
         "CORE-CONTROL"
       ],
-      "status": "TODO",
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null,
-      "verification_scope": "implementation"
+      "status": "DONE",
+      "started_at": "2026-09-10T00:03:19+02:00",
+      "completed_at": "2026-09-10T10:51:11+02:00",
+      "reviewed_at": "2026-09-10T10:51:11+02:00",
+      "verification_scope": "implementation",
+      "updated_at": "2026-09-10T10:51:11+02:00",
+      "implementation_validated_at": "2026-09-10T10:51:11+02:00",
+      "blocker": null,
+      "handoff_status": "DONE"
     },
     {
       "id": "US-004",
@@ -112,11 +297,15 @@
       "external_dependencies": [
         "CORE-DOCK"
       ],
-      "status": "TODO",
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null,
-      "verification_scope": "implementation"
+      "status": "DONE",
+      "started_at": "2026-09-10T00:03:19+02:00",
+      "completed_at": "2026-09-10T10:51:11+02:00",
+      "reviewed_at": "2026-09-10T10:51:11+02:00",
+      "verification_scope": "implementation",
+      "updated_at": "2026-09-10T10:51:11+02:00",
+      "implementation_validated_at": "2026-09-10T10:51:11+02:00",
+      "blocker": null,
+      "handoff_status": "DONE"
     },
     {
       "id": "US-005",
