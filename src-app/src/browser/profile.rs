@@ -180,6 +180,8 @@ fn private_directory(dir: &Path) -> Result<(), ProfileError> {
                     )?;
                 }
             }
+            #[cfg(windows)]
+            protect_directory(dir)?;
             Ok(())
         }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
@@ -192,13 +194,74 @@ fn private_directory(dir: &Path) -> Result<(), ProfileError> {
             }
             builder.create(dir).map_err(|error| {
                 ProfileError::Inaccessible(format!("cannot create {}: {error}", dir.display()))
-            })
+            })?;
+            #[cfg(windows)]
+            protect_directory(dir)?;
+            Ok(())
         }
         Err(error) => Err(ProfileError::Inaccessible(format!(
             "cannot inspect {}: {error}",
             dir.display()
         ))),
     }
+}
+
+#[cfg(windows)]
+fn protect_directory(dir: &Path) -> Result<(), ProfileError> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Foundation::LocalFree;
+    use windows_sys::Win32::Security::Authorization::{
+        ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1,
+    };
+    use windows_sys::Win32::Security::{
+        DACL_SECURITY_INFORMATION, PROTECTED_DACL_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR,
+        SetFileSecurityW,
+    };
+
+    let descriptor_text: Vec<u16> = std::ffi::OsStr::new("D:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;GA;;;OW)")
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+    let path: Vec<u16> = dir
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+    let mut descriptor: PSECURITY_DESCRIPTOR = std::ptr::null_mut();
+    let mut descriptor_size = 0;
+    let converted = unsafe {
+        ConvertStringSecurityDescriptorToSecurityDescriptorW(
+            descriptor_text.as_ptr(),
+            SDDL_REVISION_1,
+            &mut descriptor,
+            &mut descriptor_size,
+        )
+    };
+    if converted == 0 {
+        return Err(ProfileError::Inaccessible(format!(
+            "cannot build ACL for {}: {}",
+            dir.display(),
+            std::io::Error::last_os_error()
+        )));
+    }
+    let result = unsafe {
+        SetFileSecurityW(
+            path.as_ptr(),
+            DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
+            descriptor,
+        )
+    };
+    unsafe {
+        let _ = LocalFree(descriptor);
+    }
+    if result == 0 {
+        return Err(ProfileError::Inaccessible(format!(
+            "cannot apply ACL to {}: {}",
+            dir.display(),
+            std::io::Error::last_os_error()
+        )));
+    }
+    Ok(())
 }
 
 pub fn engine_ordinals(version: &str) -> Vec<u64> {

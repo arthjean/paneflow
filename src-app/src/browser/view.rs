@@ -501,7 +501,7 @@ impl BrowserView {
         let Some(live) = &self.live else {
             return Err(BrowserError::Unavailable);
         };
-        live.send_to_document(|document| Command::Screenshot { document })
+        live.agent_screenshot()
     }
 
     pub fn chip_label(&self) -> String {
@@ -1171,7 +1171,18 @@ impl BrowserView {
         }
     }
 
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(target_os = "windows")]
+    fn on_host_event(&mut self, event: super::supervisor::HostEvent, cx: &mut Context<Self>) {
+        let Some(live) = &mut self.live else {
+            return;
+        };
+        let signals = live.on_host_event(event, cx);
+        for signal in signals {
+            self.on_signal(signal, cx);
+        }
+    }
+
+    #[cfg(all(not(target_os = "linux"), not(target_os = "windows")))]
     fn on_host_event(&mut self, _event: (), _cx: &mut Context<Self>) {}
 
     fn on_signal(&mut self, signal: PageSignal, cx: &mut Context<Self>) {
@@ -2015,7 +2026,10 @@ impl BrowserView {
                 ))
                 .into_any_element();
         }
+        #[cfg(any(target_os = "linux", target_os = "windows"))]
         let surface = self.live.as_ref().and_then(LivePage::surface);
+        #[cfg(all(not(target_os = "linux"), not(target_os = "windows")))]
+        let surface: Option<()> = None;
         let message: Option<(&'static str, String, bool)> = match (&self.url, self.state) {
             (None, _) => Some((
                 "icons/world.svg",
@@ -2132,6 +2146,7 @@ impl BrowserView {
                     },
                     move |bounds, (), window, cx| {
                         Self::install_pointer_capture(&view, window);
+                        #[cfg(target_os = "linux")]
                         if let Some(surface) = surface.clone() {
                             window.paint_external_surface(bounds, surface);
                         }

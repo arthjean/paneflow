@@ -5,6 +5,9 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 
+[lib]
+crate-type = ["cdylib"]
+
 [features]
 cef-runtime = ["dep:cef", "dep:ash"]
 
@@ -18,6 +21,13 @@ serde_json.workspace = true
 ash = { version = "0.38", optional = true }
 cef = { git = "https://github.com/tauri-apps/cef-rs", rev = "71a3eba55bb46957b7bdd627ef7caf5c70acf4bb", default-features = false, features = ["dox", "sandbox"], optional = true }
 libc.workspace = true
+
+[target.'cfg(target_os = "windows")'.dependencies]
+cef = { git = "https://github.com/tauri-apps/cef-rs", rev = "71a3eba55bb46957b7bdd627ef7caf5c70acf4bb", default-features = false, features = ["dox", "sandbox"], optional = true }
+interprocess.workspace = true
+
+[target.'cfg(target_os = "windows")'.build-dependencies]
+cmake = "0.1"
 
 [lints]
 workspace = true

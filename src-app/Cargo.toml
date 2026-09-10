@@ -352,6 +352,7 @@ windows-sys = { version = "0.59", features = [
     # Publisher pinning reads the leaf signer cert from WinTrust provider
     # state, which gates WTHelper* helpers behind Catalog + Sip.
     "Win32_Security_WinTrust",
+    "Win32_Security_Authorization",
     "Win32_Security_Cryptography",
     "Win32_Security_Cryptography_Catalog",
     "Win32_Security_Cryptography_Sip",

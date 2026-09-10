@@ -15,6 +15,13 @@ pub struct Geometry {
     pub scale_percent: u32,
 }
 
+#[cfg_attr(
+    target_os = "windows",
+    allow(
+        dead_code,
+        reason = "Windows native event mapping is completed by EP-002"
+    )
+)]
 #[derive(Clone, Debug)]
 pub enum PageSignal {
     ExternalOpen(String),
@@ -100,7 +107,10 @@ pub struct ContextMenuItem {
 #[cfg(target_os = "linux")]
 pub use linux::LivePage;
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(target_os = "windows")]
+pub use windows::LivePage;
+
+#[cfg(all(not(target_os = "linux"), not(target_os = "windows")))]
 pub use stub::LivePage;
 
 #[cfg(target_os = "linux")]
@@ -288,6 +298,10 @@ mod linux {
         ) -> Result<OperationId, BrowserError> {
             let document = self.document().cloned().ok_or(BrowserError::Unavailable)?;
             self.send(build(document))
+        }
+
+        pub fn agent_screenshot(&self) -> Result<OperationId, BrowserError> {
+            self.send_to_document(|document| Command::Screenshot { document })
         }
 
         pub fn on_host_event(&mut self, event: HostEvent, cx: &mut App) -> Vec<PageSignal> {
@@ -1382,7 +1396,216 @@ mod linux {
     }
 }
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(target_os = "windows")]
+mod windows {
+    use std::sync::Arc;
+
+    use gpui::{App, Window};
+    use paneflow_browser_protocol::{
+        BrowserError, BrowserSession, Command, Document, Event, OperationId,
+    };
+    use serde_json::Value;
+
+    use super::{Geometry, PageConfig, PageSignal};
+    use crate::browser::supervisor::{HostConfig, HostEvent, RuntimeCheck};
+
+    pub struct GpuCompletion;
+
+    pub struct PageStart {
+        pub page: LivePage,
+        pub host_events: smol::channel::Receiver<HostEvent>,
+        pub gpu_completions: smol::channel::Receiver<GpuCompletion>,
+    }
+
+    pub struct LivePage {
+        host: Arc<crate::browser::profile_host::ProfileHost>,
+        browser: paneflow_browser_protocol::BrowserId,
+        session: Option<BrowserSession>,
+        benchmark_id: String,
+    }
+
+    impl LivePage {
+        pub fn start(_window: &Window, cx: &App, page: PageConfig) -> Result<PageStart, String> {
+            let PageConfig {
+                benchmark_id,
+                host_binary,
+                runtime_root,
+                stage_root,
+                profile_dir,
+                origin,
+                owner,
+            } = page;
+            let browser = paneflow_browser_protocol::BrowserId::try_from(benchmark_id.clone())
+                .map_err(str::to_owned)?;
+            let config = HostConfig {
+                tracing: std::env::var_os("PANEFLOW_BROWSER_TRACE_DIR").is_some(),
+                host_binary,
+                runtime_root,
+                stage_root,
+                profile_dir,
+                origin,
+                owner,
+                frames: false,
+                check: RuntimeCheck::Manifest,
+            };
+            let (host, host_events, new_host) =
+                crate::browser::profile_host::ProfileHost::subscribe(config, browser.clone())?;
+            if new_host && let Some(runtime) = cx.try_global::<crate::browser::BrowserRuntime>() {
+                runtime.register_page(host.supervisor.clone());
+            }
+            let (_completions, gpu_completions) = smol::channel::bounded(1);
+            Ok(PageStart {
+                page: Self {
+                    host,
+                    browser,
+                    session: None,
+                    benchmark_id,
+                },
+                host_events,
+                gpu_completions,
+            })
+        }
+
+        pub fn document(&self) -> Option<&Document> {
+            self.session.as_ref().map(|session| &session.document)
+        }
+
+        pub fn surface(&self) -> Option<()> {
+            None
+        }
+
+        pub fn send(&self, command: Command) -> Result<OperationId, BrowserError> {
+            self.host.send(&self.browser, command)
+        }
+
+        pub fn send_to_document(
+            &self,
+            build: impl FnOnce(Document) -> Command,
+        ) -> Result<OperationId, BrowserError> {
+            let document = self.document().cloned().ok_or(BrowserError::Unavailable)?;
+            self.send(build(document))
+        }
+
+        pub fn agent_screenshot(&self) -> Result<OperationId, BrowserError> {
+            self.send_to_document(|document| Command::Screenshot { document })
+        }
+
+        pub fn on_host_event(&mut self, event: HostEvent, _cx: &mut App) -> Vec<PageSignal> {
+            match event {
+                HostEvent::Ready(info) => {
+                    crate::browser::benchmark::record(
+                        &self.benchmark_id,
+                        "host_ready",
+                        serde_json::json!({
+                            "pid": info.pid,
+                            "availability": format!("{:?}", info.availability),
+                            "contract_version": info.contract_version,
+                            "presentation": info.presentation,
+                            "initialized": info.initialized,
+                        }),
+                    );
+                    vec![PageSignal::Ready]
+                }
+                HostEvent::Reply(reply) => {
+                    let operation = reply.operation;
+                    let result = reply.result;
+                    let signals = match &result {
+                        Ok(Event::State { session }) | Ok(Event::NavigationStarted { session }) => {
+                            self.session = Some(session.clone());
+                            vec![PageSignal::State(session.clone())]
+                        }
+                        Ok(Event::Closed { .. }) => {
+                            self.session = None;
+                            vec![PageSignal::Closed]
+                        }
+                        Ok(_) => Vec::new(),
+                        Err(error) => vec![PageSignal::Refused(*error)],
+                    };
+                    let mut signals = signals;
+                    signals.push(PageSignal::OperationCompleted { operation, result });
+                    signals
+                }
+                HostEvent::Native(value) => self.on_native(&value),
+                HostEvent::Lost(reason) => {
+                    self.session = None;
+                    vec![PageSignal::Lost(reason)]
+                }
+                HostEvent::Stopped => Vec::new(),
+            }
+        }
+
+        fn on_native(&self, value: &Value) -> Vec<PageSignal> {
+            let kind = value.get("native").and_then(Value::as_str).unwrap_or("");
+            match kind {
+                "created" => vec![PageSignal::Created],
+                "loading" => vec![PageSignal::Loading {
+                    loading: value
+                        .get("is_loading")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false),
+                    can_go_back: value
+                        .get("can_go_back")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false),
+                    can_go_forward: value
+                        .get("can_go_forward")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false),
+                }],
+                "title" => vec![PageSignal::Title(
+                    value
+                        .get("title")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_string(),
+                )],
+                "address" => vec![PageSignal::Address(
+                    value
+                        .get("url")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_string(),
+                )],
+                "loaded" => vec![PageSignal::Loaded],
+                "load_failed" => vec![PageSignal::LoadFailed(
+                    value
+                        .get("error_text")
+                        .and_then(Value::as_str)
+                        .unwrap_or("The page failed to load")
+                        .to_string(),
+                )],
+                _ => Vec::new(),
+            }
+        }
+
+        pub fn on_gpu_completion(&mut self, _completion: GpuCompletion) -> Result<(), String> {
+            Ok(())
+        }
+
+        pub fn schedule_releases(
+            &mut self,
+            _window: &mut Window,
+            _cx: &mut App,
+        ) -> Result<(), String> {
+            Ok(())
+        }
+
+        pub fn present_if_needed(
+            &mut self,
+            _geometry: Geometry,
+            _visible: bool,
+        ) -> Result<bool, BrowserError> {
+            Ok(false)
+        }
+
+        pub fn shutdown(self) {
+            let document = self.document().cloned();
+            self.host.unsubscribe(&self.browser, document);
+        }
+    }
+}
+
+#[cfg(all(not(target_os = "linux"), not(target_os = "windows")))]
 mod stub {
     use gpui::{App, Window};
     use paneflow_browser_protocol::{BrowserError, Command, Document, OperationId};
@@ -1408,7 +1631,7 @@ mod stub {
             None
         }
 
-        pub fn surface(&self) -> Option<gpui::ExternalSurface> {
+        pub fn surface(&self) -> Option<()> {
             None
         }
 

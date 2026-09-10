@@ -1954,7 +1954,7 @@ fn main() {
         .run(|cx: &mut App| {
             let launch = |cx: &mut App| {
             let config = paneflow_config::loader::load_config();
-            #[cfg(target_os = "linux")]
+            #[cfg(any(target_os = "linux", target_os = "windows"))]
             browser::BrowserRuntime::install(cx);
             browser::authority::BrowserAuthority::install(cx);
             cx.set_text_rendering_mode(gpui::TextRenderingMode::Grayscale);

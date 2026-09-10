@@ -288,3 +288,47 @@ vorbis = true
 "Resources/locales/zh-TW_MASCULINE.pak" = "ca73097bd968b363b7145e86b64f3c595e533808b0763dc8863a27fc363cfa51"
 "Resources/locales/zh-TW_NEUTER.pak" = "ca73097bd968b363b7145e86b64f3c595e533808b0763dc8863a27fc363cfa51"
 "Resources/resources.pak" = "9fe6068212942209286c286c4c441176bd8abb41ae21ec5a53d1155e688dfff9"
+
+[targets."x86_64-pc-windows-msvc"]
+platform = "windows"
+unpacked_size = 433941095
+max_file_size = 285412224
+runtime_files = 240
+availability = "development"
+native_qualification = "control_only_windows11"
+archive = "cef_binary_151.3.24+g2384915+chromium-151.0.7922.174_windows64_signed.tar.xz"
+archive_root = ""
+url = "https://cef-builds.spotifycdn.com/cef_binary_151.3.24+g2384915+chromium-151.0.7922.174_windows64_signed.tar.xz"
+sha256 = "db354cc1c8a639628e8ab362eb6f6c11e213fb69e2199f8eae604f0a0d389315"
+archive_sha1 = "2568e631194b94de0e46ef70e956853f8ccaf5f7"
+size = 135715176
+runtime_sha256 = "31b3c577f0de51548a27a131f7831bf4c066caa790da878963419ead0b286361"
+abi_hash = "1671cc913eeb4ecf"
+minimum_windows = "10.0.17763"
+minimum_windows_label = "Windows 10 version 1809 and Windows 11 x64"
+bootstrap_contract = "cef-rs sandbox bootstrap.exe invokes the client DLL RunWinMain export with sandbox_info"
+presentation_contract = "control_only_until_ep002"
+
+[targets."x86_64-pc-windows-msvc".provenance]
+source_index_url = "https://cef-builds.spotifycdn.com/index.json"
+archive_sha1 = "2568e631194b94de0e46ef70e956853f8ccaf5f7"
+archive_sha256 = "db354cc1c8a639628e8ab362eb6f6c11e213fb69e2199f8eae604f0a0d389315"
+cef_source_sha = "2384915b7b1f0fe5ad1107e48d80c34e86b698d7"
+cef_rs_source_sha = "71a3eba55bb46957b7bdd627ef7caf5c70acf4bb"
+cef_version_json_sha256 = "20e693732d2321ee054c52b270c476bd7cf737ef0c87b3ea64d5a67619124b89"
+paneflow_browser_contract_commit = "93d4d3c0c4b07de547a5c45a28a84810febc9da8"
+protocol_contract_version = 3
+headers_contract = "cef-rs bindings at the pinned commit; signed runtime archive has no CEF include tree"
+sandbox_contract = "bootstrap.exe plus client DLL RunWinMain(sandbox_info); browser_subprocess_path is not used"
+
+[targets."x86_64-pc-windows-msvc".files]
+"CREDITS.html" = "1416a21a4ffd4be3344afa38d791424fd97cc71a8c1a4b85ac8cb2ce28741624"
+"LICENSE.txt" = "2e69c36a7eaa4fa153426eab635c607ea0356cbc7a68a70f42a49e8ab8eb8106"
+"cef_version.json" = "20e693732d2321ee054c52b270c476bd7cf737ef0c87b3ea64d5a67619124b89"
+"Release/chrome_100_percent.pak" = "3d212fe1c5a583397c967bddb7720693f7fecd5c7a16d4592335adf92adfc72c"
+"Release/chrome_200_percent.pak" = "a6926a16d6f76647fb38b18de9e3fe2f1cc9a062e062607de5fc1d0a65c55807"
+"Release/chrome_elf.dll" = "79ff85a0bb1537afc1c5c543934b030a0285f6cf5ed0030527968a9376df0c23"
+"Release/icudtl.dat" = "9f48c7f9c7c94d516a14870707e910ab94d75ae640ff6842c4af53276cd26ebe"
+"Release/libcef.dll" = "45624fc624e40f07698b6c0f21de7e7427b2704bb37593a4d35b5ac96ea356f4"
+"Release/libEGL.dll" = "cfabc8bfd50a55c104e11d4c70b11e287014edc15e0f83e2a1aa14424acc08fe"
+"Release/libGLESv2.dll" = "293e0d3b9c7996650fe4adc49cf9c823d289987b3f41a131c41382ebf0c81a51"

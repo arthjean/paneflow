@@ -28,6 +28,11 @@ impl BrowserAuthority {
     }
 
     fn detect() -> Self {
+        #[cfg(target_os = "linux")]
+        let target = format!("{}-unknown-linux-gnu", std::env::consts::ARCH);
+        #[cfg(target_os = "windows")]
+        let target = format!("{}-pc-windows-msvc", std::env::consts::ARCH);
+        #[cfg(not(any(target_os = "linux", target_os = "windows")))]
         let target = format!("{}-{}", std::env::consts::ARCH, std::env::consts::OS);
         #[cfg(target_os = "linux")]
         let (availability, host_binary, runtime_root, repair) = match super::install::detect() {
@@ -46,7 +51,24 @@ impl BrowserAuthority {
             }
             super::install::Readiness::Absent => (Availability::Absent, None, None, None),
         };
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(target_os = "windows")]
+        let (availability, host_binary, runtime_root, repair) = match super::install::detect() {
+            super::install::Readiness::Ready(layout, sandbox) => {
+                log::info!("browser: {} in effect", sandbox.label());
+                (
+                    super::install::declared_availability(),
+                    Some(layout.host_binary),
+                    Some(layout.runtime_root),
+                    None,
+                )
+            }
+            super::install::Readiness::Unusable(reason) => {
+                log::warn!("browser: {reason}");
+                (Availability::Absent, None, None, Some(reason))
+            }
+            super::install::Readiness::Absent => (Availability::Absent, None, None, None),
+        };
+        #[cfg(not(any(target_os = "linux", target_os = "windows")))]
         let (availability, host_binary, runtime_root, repair) = (
             Availability::Absent,
             None::<PathBuf>,

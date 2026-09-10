@@ -11,6 +11,7 @@ pub struct ImeSnapshot {
 }
 
 impl ImeSnapshot {
+    #[cfg(target_os = "linux")]
     pub fn valid(&self) -> bool {
         self.start != u32::MAX
             && self.end != u32::MAX

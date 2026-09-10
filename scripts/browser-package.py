@@ -50,6 +50,21 @@ def digest(path):
         return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
+def runtime_digest(root):
+    result = hashlib.sha256()
+    excluded = {"verified-manifest.sha256", "elf-audit.json", "windows-audit.json"}
+    paths = (
+        item for item in root.rglob("*")
+        if item.is_file() and not item.is_symlink()
+        and not (len(item.relative_to(root).parts) == 1 and item.name in excluded)
+    )
+    for path in sorted(paths, key=lambda item: item.relative_to(root).as_posix()):
+        result.update(path.relative_to(root).as_posix().encode() + b"\0")
+        result.update(str(path.stat().st_size).encode() + b"\0")
+        result.update(digest(path).encode() + b"\n")
+    return result.hexdigest()
+
+
 def load_manifest(path):
     text = path.read_text()
     manifest = tomllib.loads(text)
@@ -69,10 +84,13 @@ def verified_runtime(target, entry, prebuilt):
     root = prebuilt / target / entry["sha256"]
     if not root.is_dir():
         raise ValueError(f"runtime absent: run scripts/fetch-browser.py --target {target} first")
-    for name, expected in entry["files"].items():
+    for name, expected in entry.get("files", {}).items():
         path = root / name
         if not path.is_file() or digest(path) != expected:
             raise ValueError(f"runtime file missing or checksum mismatch: {name}")
+    expected_runtime = entry.get("runtime_sha256")
+    if expected_runtime and runtime_digest(root) != expected_runtime:
+        raise ValueError("runtime tree checksum mismatch")
     return root
 
 
@@ -126,28 +144,41 @@ def stage(args):
     entry = target_entry(manifest, args.target)
     source = verified_runtime(args.target, entry, args.prebuilt)
     host = args.host or default_host(args.target)
-    if not host.is_file() or not os.access(host, os.X_OK):
+    windows = entry.get("platform") == "windows"
+    client = host.with_suffix(".dll") if windows else None
+    if not host.is_file() or (not windows and not os.access(host, os.X_OK)):
         raise ValueError(
             f"host binary absent at {host}: build it with "
             f"cargo build --release --locked -p paneflow-browser-host --features cef-runtime"
         )
+    if windows and (client is None or not client.is_file()):
+        raise ValueError(f"Windows client DLL absent next to host binary: {host}")
     destination = args.destination.resolve()
     runtime = destination / RUNTIME_SUBDIR
     if destination.exists():
         shutil.rmtree(destination)
-    for name in entry["files"]:
+    runtime_names = tree_files(source) if windows else [source / name for name in entry.get("files", {})]
+    for source_path in runtime_names:
+        name = source_path.relative_to(source) if windows else source_path.relative_to(source)
         target_path = runtime / name
         target_path.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(source / name, target_path)
-        target_path.chmod(0o755 if is_elf(target_path) else 0o644)
+        shutil.copyfile(source_path, target_path)
+        if not windows:
+            target_path.chmod(0o755 if is_elf(target_path) else 0o644)
     (runtime / STAMP).write_text(manifest_digest + "\n")
-    (runtime / STAMP).chmod(0o644)
-    sandbox = runtime / "Release/chrome-sandbox"
-    sandbox.chmod(0o4755)
-    host_target = destination / HOST_SUBDIR
+    if not windows:
+        (runtime / STAMP).chmod(0o644)
+        sandbox = runtime / "Release/chrome-sandbox"
+        sandbox.chmod(0o4755)
+    host_target = destination / (HOST_SUBDIR.with_suffix(".exe") if windows else HOST_SUBDIR)
     host_target.parent.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(host, host_target)
-    host_target.chmod(0o755)
+    if not windows:
+        host_target.chmod(0o755)
+    client_target = None
+    if windows:
+        client_target = destination / HOST_SUBDIR.with_suffix(".dll")
+        shutil.copyfile(client, client_target)
     docs = destination / DOC_SUBDIR
     docs.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(ROOT / "native/browser/BROWSER_THIRD_PARTY_NOTICES.md", docs / "BROWSER_THIRD_PARTY_NOTICES.md")
@@ -160,11 +191,12 @@ def stage(args):
         "cef_version": manifest["cef_version"],
         "chromium_version": manifest["chromium_version"],
         "manifest_sha256": manifest_digest,
-        "runtime_sha256": entry["sha256"],
+        "runtime_sha256": entry.get("runtime_sha256", entry["sha256"]),
         "availability": entry["availability"],
         "native_qualification": entry["native_qualification"],
         "host_sha256": digest(host_target),
-        "runtime_files": len(entry["files"]),
+        "client_sha256": digest(client_target) if client_target else None,
+        "runtime_files": len(tree_files(runtime)),
         "installed_bytes": installed_bytes(destination),
         "prefix": str(destination),
     }
@@ -183,6 +215,12 @@ def stage(args):
 
 
 def default_host(target):
+    if target.endswith("-pc-windows-msvc"):
+        candidates = (
+            ROOT / "target" / target / "release/paneflow-browser-host.exe",
+            ROOT / "target/release/paneflow-browser-host.exe",
+        )
+        return next((candidate for candidate in candidates if candidate.is_file()), candidates[0])
     triple = ROOT / "target" / target / "release/paneflow-browser-host"
     return triple if triple.is_file() else ROOT / "target/release/paneflow-browser-host"
 
@@ -234,7 +272,74 @@ def verify(args):
         raise SystemExit(1)
 
 
+def inspect_windows(prefix, package_format, target, manifest, entry, manifest_digest):
+    runtime = prefix / RUNTIME_SUBDIR
+    host = prefix / HOST_SUBDIR.with_suffix(".exe")
+    client = prefix / HOST_SUBDIR.with_suffix(".dll")
+    report = []
+    required = entry.get("files", {})
+    mismatched = [name for name, expected in required.items()
+                  if not (runtime / name).is_file() or digest(runtime / name) != expected]
+    check(report, "layout", runtime.is_dir() and host.is_file() and client.is_file(),
+          f"runtime {runtime}, bootstrap {host}, client {client}")
+    check(report, "runtime_digests", not mismatched,
+          f"{len(required) - len(mismatched)}/{len(required)} pinned files match"
+          + (f"; first mismatch {mismatched[0]}" if mismatched else ""))
+    expected_runtime = entry.get("runtime_sha256")
+    actual_runtime = runtime_digest(runtime) if runtime.is_dir() else ""
+    check(report, "runtime_tree_digest", not expected_runtime or actual_runtime == expected_runtime,
+          f"runtime tree {actual_runtime or 'absent'} against {expected_runtime or 'not pinned'}")
+    stamp = (runtime / STAMP).read_text().strip() if (runtime / STAMP).is_file() else ""
+    check(report, "manifest_stamp", stamp == manifest_digest,
+          f"stamp {stamp or 'absent'} against embedded manifest {manifest_digest}")
+    if host.is_file():
+        with host.open("rb") as stream:
+            pe = stream.read(2) == b"MZ"
+        check(report, "bootstrap_executable", host.suffix.lower() == ".exe" and pe,
+              f"host {host} uses the Windows bootstrap executable contract")
+    if client.is_file():
+        with client.open("rb") as stream:
+            pe = stream.read(2) == b"MZ"
+        check(report, "client_library", client.suffix.lower() == ".dll" and pe,
+              f"client {client} uses the Windows DLL contract")
+    metadata_path = runtime / "cef_version.json"
+    metadata = json.loads(metadata_path.read_text()) if metadata_path.is_file() else {}
+    check(report, "runtime_metadata",
+          metadata.get("platform") == "windows64" and metadata.get("version_full") == manifest["cef_version"],
+          f"cef_version.json {metadata.get('version_full', 'absent')}")
+    expected_abi = entry.get("abi_hash")
+    check(report, "runtime_abi", not expected_abi or metadata.get("abi_hash") == expected_abi,
+          f"ABI {metadata.get('abi_hash', 'absent')} against {expected_abi or 'not pinned'}")
+    credits = runtime / "CREDITS.html"
+    license_path = runtime / "LICENSE.txt"
+    check(report, "chromium_credits", credits.is_file(), f"Chromium credits document {credits}")
+    check(report, "runtime_license", license_path.is_file(), f"CEF license document {license_path}")
+    checkout = str(ROOT).encode()
+    leaking = [str(path.relative_to(prefix)) for path in tree_files(prefix)
+               if path.suffix not in {".pak", ".dat", ".bin", ".json", ".md", ".html", ".txt"}
+               and contains(path, checkout)]
+    check(report, "no_checkout_dependency", not leaking,
+          f"binaries referencing {ROOT}: {leaking or 'none'}")
+    total = browser_bytes(prefix)
+    check(report, "installed_budget", total <= INSTALLED_BUDGET,
+          f"{total} bytes of browser payload against the NFR-13 {INSTALLED_BUDGET} byte ceiling")
+    notices = prefix / DOC_SUBDIR / "BROWSER_THIRD_PARTY_NOTICES.md"
+    check(report, "notices", notices.is_file(), f"{notices}")
+    check(report, "capability_manifest", entry["availability"] != "absent",
+          f"availability {entry['availability']}, native qualification {entry['native_qualification']}")
+    return {
+        "schema_version": 1,
+        "target": target,
+        "format": package_format,
+        "prefix": str(prefix),
+        "status": "PASS" if all(item["status"] == "PASS" for item in report) else "FAIL",
+        "checks": report,
+    }
+
+
 def inspect(prefix, package_format, target, manifest, entry, manifest_digest, archive=None, baseline=None):
+    if entry.get("platform") == "windows":
+        return inspect_windows(prefix, package_format, target, manifest, entry, manifest_digest)
     runtime = prefix / RUNTIME_SUBDIR
     host = prefix / HOST_SUBDIR
     report = []
@@ -351,10 +456,10 @@ def inspect(prefix, package_format, target, manifest, entry, manifest_digest, ar
 
 def sbom_document(prefix, target, package_format, manifest, entry, manifest_digest):
     runtime = prefix / RUNTIME_SUBDIR
-    libcef = runtime / "Release/libcef.so"
+    libcef = runtime / ("Release/libcef.dll" if entry.get("platform") == "windows" else "Release/libcef.so")
     if not libcef.is_file():
         raise ValueError(f"no staged runtime under {runtime}")
-    codecs = entry["codecs"]
+    codecs = entry.get("codecs", {})
     restricted = sorted(name for name in RESTRICTED_CODECS if codecs.get(name))
     files = [
         {
@@ -369,11 +474,11 @@ def sbom_document(prefix, target, package_format, manifest, entry, manifest_dige
         "target": target,
         "format": package_format,
         "manifest_sha256": manifest_digest,
-        "runtime_sha256": entry["sha256"],
+        "runtime_sha256": entry.get("runtime_sha256", entry["sha256"]),
         "availability": entry["availability"],
         "native_qualification": entry["native_qualification"],
-        "hardening": entry["hardening"],
-        "provenance": entry["provenance"],
+        "hardening": entry.get("hardening", {}),
+        "provenance": entry.get("provenance", {}),
         "components": [
             {"name": "Chromium Embedded Framework", "version": manifest["cef_version"], "license": manifest["cef_license"], "commit": manifest["cef_commit"]},
             {"name": "Chromium", "version": manifest["chromium_version"], "license": "BSD-3-Clause AND LicenseRef-Chromium-Credits"},
@@ -407,7 +512,7 @@ def sbom(args):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Stage, verify and inventory the distributed Linux browser runtime")
+    parser = argparse.ArgumentParser(description="Stage, verify and inventory the distributed browser runtime")
     parser.add_argument("--manifest", type=Path, default=ROOT / "native/browser/manifest.toml")
     parser.add_argument("--target", default="x86_64-unknown-linux-gnu")
     commands = parser.add_subparsers(dest="command", required=True)

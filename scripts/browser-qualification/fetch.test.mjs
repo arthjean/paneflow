@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 
 const script = fileURLToPath(new URL("../fetch-browser.py", import.meta.url));
 
-for (const attack of ["traversal", "absolute", "symlink", "hardlink", "fifo", "duplicate", "oversize", "hash", "glibc"]) {
+for (const attack of ["traversal", "absolute", "symlink", "hardlink", "fifo", "duplicate", "oversize", "hash", "sha1", "glibc"]) {
   test(`fetch CLI rejects ${attack} without touching an existing runtime`, async () => {
     const directory = await mkdtemp(join(tmpdir(), "paneflow-fetch-test-"));
     try {
@@ -29,13 +29,14 @@ with tarfile.open(sys.argv[1], 'w:bz2') as t:
       const bytes = await readFile(archive);
       const manifest = join(directory, "manifest.toml");
       const sha = createHash("sha256").update(bytes).digest("hex");
+      const archiveSha1 = attack === "sha1" ? `archive_sha1 = "${"0".repeat(40)}"\n` : "";
       const contentSha = createHash("sha256").update(attack === "glibc" ? Buffer.from("\x7fELFmalformed") : "x").digest("hex");
       await writeFile(manifest, `contract_version = 3
 maximum_glibc = "2.35"
 [targets.test]
 availability = "development"
-archive = "candidate.tar.bz2"
-sha256 = "${attack === "hash" ? "0".repeat(64) : sha}"
+  archive = "candidate.tar.bz2"
+${archiveSha1}sha256 = "${attack === "hash" ? "0".repeat(64) : sha}"
 size = ${bytes.length}
 unpacked_size = ${attack === "oversize" ? 0 : 100}
 max_file_size = 100
@@ -56,9 +57,27 @@ max_file_size = 100
 }
 
 test("fetch CLI refuses unqualified platforms and absent runtime without downloading", () => {
-  for (const target of ["missing", "x86_64-pc-windows-msvc", "aarch64-apple-darwin"]) {
+  for (const target of ["missing", "aarch64-apple-darwin"]) {
     const result = spawnSync("python3", [script, "--target", target, "--verify-only"], { encoding: "utf8" });
     expect(result.status).toBe(1);
     expect(JSON.parse(result.stderr).error).toContain("unavailable");
+  }
+});
+
+test("fetch CLI recognizes the pinned Windows candidate without treating an absent runtime as unavailable", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "paneflow-fetch-windows-test-"));
+  try {
+    const result = spawnSync("python3", [
+      script,
+      "--target",
+      "x86_64-pc-windows-msvc",
+      "--verify-only",
+      "--destination",
+      join(directory, "installed"),
+    ], { encoding: "utf8" });
+    expect(result.status).toBe(1);
+    expect(JSON.parse(result.stderr).error).toContain("runtime absent");
+  } finally {
+    await rm(directory, { recursive: true, force: true });
   }
 });
