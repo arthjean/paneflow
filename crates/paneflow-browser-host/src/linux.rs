@@ -19,6 +19,7 @@ mod clipboard;
 mod clipboard_renderer;
 mod devtools;
 mod devtools_renderer;
+mod drag;
 mod editing;
 mod external_protocols;
 mod gpu_contract;

@@ -1,5 +1,3 @@
-mod drag;
-
 use cef::*;
 use paneflow_browser_protocol::{Document, InputEvent};
 use serde_json::json;
@@ -61,7 +59,8 @@ fn cancel_matching(matches: impl Fn(&Download) -> bool) {
     }
 }
 pub fn clear(document: &Document) {
-    drag::cancel(document);
+    #[cfg(target_os = "linux")]
+    super::drag::cancel(document);
     let removed = PENDING.with(|pending| {
         let mut pending = pending.borrow_mut();
         let ids: Vec<_> = pending
@@ -169,16 +168,19 @@ wrap_download_handler! {
     }
 }
 
+#[cfg(target_os = "linux")]
 pub fn drop_files(host: &BrowserHost, paths: &[String], x: i32, y: i32) {
-    drag::begin(host, paths, x, y);
+    super::drag::begin(host, paths, x, y);
 }
 
+#[cfg(target_os = "linux")]
 pub fn update_drag_cursor(browser: &Browser, operation: DragOperationsMask) {
-    drag::cursor(browser, operation);
+    super::drag::cursor(browser, operation);
 }
 
+#[cfg(target_os = "linux")]
 pub fn closed_drag(browser: &Browser) {
-    drag::closed(browser);
+    super::drag::closed(browser);
 }
 
 #[cfg(test)]

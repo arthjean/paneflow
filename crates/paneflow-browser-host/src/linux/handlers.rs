@@ -139,7 +139,7 @@ wrap_life_span_handler! {
             });
             if let Some(reply) = reply { emit(json!({ "protocol": reply })); }
             if let Some(document) = super::current_document() { super::web_interactions::clear(&document);
-                super::permissions::revoke(&document);
+                super::permissions::clear(&document);
                 super::transfers::clear(&document);
                     super::external_protocols::clear(&document); }
             super::editing::clear();

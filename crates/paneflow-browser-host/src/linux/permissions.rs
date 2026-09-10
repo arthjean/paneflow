@@ -56,14 +56,23 @@ thread_local! {
     static STATE: RefCell<State> = RefCell::new(State::default());
 }
 
+fn media_mask(value: MediaAccessPermissionTypes) -> i64 {
+    i64::from(value.get_raw())
+}
+
+fn prompt_mask(value: PermissionRequestTypes) -> i64 {
+    i64::from(value.get_raw())
+}
+
 fn allowed_mask(mask: u32, media: bool) -> bool {
     let allowed = if media {
-        MediaAccessPermissionTypes::DEVICE_AUDIO_CAPTURE.get_raw()
-            | MediaAccessPermissionTypes::DEVICE_VIDEO_CAPTURE.get_raw()
+        media_mask(MediaAccessPermissionTypes::DEVICE_AUDIO_CAPTURE)
+            | media_mask(MediaAccessPermissionTypes::DEVICE_VIDEO_CAPTURE)
     } else {
-        PermissionRequestTypes::GEOLOCATION.get_raw() | PermissionRequestTypes::CLIPBOARD.get_raw()
+        prompt_mask(PermissionRequestTypes::GEOLOCATION)
+            | prompt_mask(PermissionRequestTypes::CLIPBOARD)
     };
-    mask != 0 && mask & !allowed == 0
+    mask != 0 && i64::from(mask) & !allowed == 0
 }
 
 struct ParsedUrlParts(cef::sys::_cef_urlparts_t);
@@ -143,19 +152,20 @@ fn request(
         reply.finish(false, mask);
         return;
     };
+    let requested = i64::from(mask);
     let message = if media {
-        match mask {
-            value if value == MediaAccessPermissionTypes::DEVICE_AUDIO_CAPTURE.get_raw() => {
+        match requested {
+            value if value == media_mask(MediaAccessPermissionTypes::DEVICE_AUDIO_CAPTURE) => {
                 "Autoriser le microphone pour ce document ?"
             }
-            value if value == MediaAccessPermissionTypes::DEVICE_VIDEO_CAPTURE.get_raw() => {
+            value if value == media_mask(MediaAccessPermissionTypes::DEVICE_VIDEO_CAPTURE) => {
                 "Autoriser la caméra pour ce document ?"
             }
             _ => "Autoriser la caméra et le microphone pour ce document ?",
         }
-    } else if mask == PermissionRequestTypes::GEOLOCATION.get_raw() {
+    } else if requested == prompt_mask(PermissionRequestTypes::GEOLOCATION) {
         "Autoriser la géolocalisation pour ce document ?"
-    } else if mask == PermissionRequestTypes::CLIPBOARD.get_raw() {
+    } else if requested == prompt_mask(PermissionRequestTypes::CLIPBOARD) {
         "Autoriser l’accès au presse-papiers pour ce document ?"
     } else {
         "Autoriser la géolocalisation et le presse-papiers pour ce document ?"
@@ -232,10 +242,6 @@ pub(super) fn clear(document: &Document) {
     }
 }
 
-pub(super) fn revoke(document: &Document) {
-    clear(document);
-}
-
 wrap_permission_handler! {
     pub struct Permissions { document: Document }
 
@@ -256,9 +262,17 @@ wrap_permission_handler! {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, target_os = "linux"))]
 mod tests {
     use super::*;
+
+    fn media_raw(value: MediaAccessPermissionTypes) -> u32 {
+        u32::try_from(media_mask(value)).unwrap_or(0)
+    }
+
+    fn prompt_raw(value: PermissionRequestTypes) -> u32 {
+        u32::try_from(prompt_mask(value)).unwrap_or(0)
+    }
 
     #[test]
     fn parses_native_origin_output_without_discarding_parts() {
@@ -281,19 +295,19 @@ mod tests {
     #[test]
     fn only_explicit_supported_permissions_are_allowed() {
         assert!(allowed_mask(
-            MediaAccessPermissionTypes::DEVICE_AUDIO_CAPTURE.get_raw(),
+            media_raw(MediaAccessPermissionTypes::DEVICE_AUDIO_CAPTURE),
             true
         ));
         assert!(allowed_mask(
-            PermissionRequestTypes::GEOLOCATION.get_raw(),
+            prompt_raw(PermissionRequestTypes::GEOLOCATION),
             false
         ));
         assert!(allowed_mask(
-            PermissionRequestTypes::CLIPBOARD.get_raw(),
+            prompt_raw(PermissionRequestTypes::CLIPBOARD),
             false
         ));
         assert!(!allowed_mask(
-            MediaAccessPermissionTypes::DESKTOP_VIDEO_CAPTURE.get_raw(),
+            media_raw(MediaAccessPermissionTypes::DESKTOP_VIDEO_CAPTURE),
             true
         ));
         assert!(!allowed_mask(0, false));
@@ -363,7 +377,7 @@ mod tests {
         };
         let callback: PermissionPromptCallback = (&raw mut raw).wrap_result();
         let origin = CefString::from("https://example.com/path");
-        let mask = PermissionRequestTypes::GEOLOCATION.get_raw();
+        let mask = prompt_raw(PermissionRequestTypes::GEOLOCATION);
         let enqueue = |mask| {
             request(
                 &document,
@@ -413,7 +427,7 @@ mod tests {
                 .document = document.clone();
         });
         let id = enqueue(mask).unwrap();
-        revoke(&document);
+        clear(&document);
         handle(
             &document,
             &InputEvent::WebResponse {

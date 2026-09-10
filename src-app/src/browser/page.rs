@@ -21,7 +21,7 @@ pub struct Geometry {
     target_os = "windows",
     allow(
         dead_code,
-        reason = "dock controls, web dialogs and accessibility signals are emitted by EP-003"
+        reason = "agent console/network diagnostics and the renderer clipboard round trip stay Linux-only until their own stories"
     )
 )]
 #[derive(Clone, Debug)]
@@ -1464,6 +1464,263 @@ mod windows {
         live_pools <= 1 && !pending
     }
 
+    fn bounded_text(value: &Value, key: &str) -> Option<String> {
+        value
+            .get(key)
+            .and_then(Value::as_str)
+            .filter(|text| text.len() <= 8192 && !text.contains('\0'))
+            .map(str::to_owned)
+    }
+
+    fn context_menu_signals(value: &Value, kind: &str) -> Vec<PageSignal> {
+        let Some(request) = value
+            .get("request")
+            .and_then(Value::as_u64)
+            .filter(|request| *request != 0)
+        else {
+            return Vec::new();
+        };
+        if kind == "context_menu_closed" {
+            return vec![PageSignal::ContextMenuClosed { request }];
+        }
+        let parsed = (|| {
+            let x = i32::try_from(value.get("x")?.as_i64()?).ok()?;
+            let y = i32::try_from(value.get("y")?.as_i64()?).ok()?;
+            let items: Vec<super::ContextMenuItem> =
+                serde_json::from_value(value.get("items")?.clone()).ok()?;
+            if items.len() > 64
+                || items.iter().any(|item| {
+                    item.command < 0
+                        || item.label.chars().count() > 256
+                        || item.label.chars().any(char::is_control)
+                })
+            {
+                return None;
+            }
+            Some(PageSignal::ContextMenu {
+                request,
+                x,
+                y,
+                items,
+            })
+        })();
+        parsed.into_iter().collect()
+    }
+
+    fn transfer_signals(value: &Value) -> Vec<PageSignal> {
+        if value
+            .get("request")
+            .and_then(Value::as_u64)
+            .is_none_or(|request| request == 0)
+        {
+            return Vec::new();
+        }
+        if value.get("suggested_name").is_some_and(|name| {
+            name.as_str()
+                .is_none_or(|name| name.len() > 1024 || name.contains('\0'))
+        }) {
+            return Vec::new();
+        }
+        vec![PageSignal::Transfer(value.clone())]
+    }
+
+    fn web_signals(value: &Value, kind: &str, document: Document) -> Vec<PageSignal> {
+        if kind == "web_dialog_closed" {
+            return value
+                .get("request")
+                .and_then(Value::as_u64)
+                .filter(|request| *request > 0)
+                .map(|request| PageSignal::WebDialogClosed { request })
+                .into_iter()
+                .collect();
+        }
+        if kind.starts_with("accessibility_") {
+            return vec![PageSignal::Accessibility {
+                document,
+                kind: kind.to_owned(),
+                value: value.clone(),
+            }];
+        }
+        if kind == "popup_requested" {
+            return value
+                .get("url")
+                .and_then(Value::as_str)
+                .filter(|url| paneflow_browser_protocol::validate_url(url).is_ok())
+                .map(|url| PageSignal::PopupRequested(url.to_owned()))
+                .into_iter()
+                .collect();
+        }
+        let (Some(request), Some(dialog_kind), Some(origin), Some(message), Some(default_text)) = (
+            value
+                .get("request")
+                .and_then(Value::as_u64)
+                .filter(|request| *request > 0),
+            bounded_text(value, "kind"),
+            bounded_text(value, "origin"),
+            bounded_text(value, "message"),
+            bounded_text(value, "default_text"),
+        ) else {
+            return Vec::new();
+        };
+        vec![PageSignal::WebDialog {
+            document,
+            request,
+            kind: dialog_kind,
+            origin,
+            message,
+            default_text,
+        }]
+    }
+
+    fn native_signals(value: &Value, live: Option<&Document>) -> Vec<PageSignal> {
+        let kind = value.get("native").and_then(Value::as_str).unwrap_or("");
+        let scoped = matches!(
+            kind,
+            "context_menu"
+                | "context_menu_closed"
+                | "ime_selection"
+                | "ime_bounds"
+                | "file_picker"
+                | "download_destination"
+                | "download_progress"
+                | "web_dialog"
+                | "web_dialog_closed"
+                | "accessibility_tree"
+                | "accessibility_location"
+                | "accessibility_unavailable"
+                | "popup_requested"
+                | "external_open"
+                | "renderer_crashed"
+                | "certificate_error"
+                | "close_cancelled"
+                | "fullscreen"
+                | "find_result"
+        );
+        let document = value
+            .get("document")
+            .and_then(|value| serde_json::from_value::<Document>(value.clone()).ok())
+            .filter(|document| Some(document) == live);
+        let Some(document) = document else {
+            return if scoped {
+                Vec::new()
+            } else {
+                unscoped_signals(value, kind)
+            };
+        };
+        match kind {
+            "context_menu" | "context_menu_closed" => context_menu_signals(value, kind),
+            "ime_selection" | "ime_bounds" => value
+                .get("snapshot")
+                .and_then(|value| {
+                    serde_json::from_value::<super::super::ime::ImeSnapshot>(value.clone()).ok()
+                })
+                .filter(|snapshot| snapshot.valid())
+                .map(|snapshot| {
+                    vec![if kind == "ime_selection" {
+                        PageSignal::ImeSelection(snapshot)
+                    } else {
+                        PageSignal::ImeBounds(snapshot)
+                    }]
+                })
+                .unwrap_or_default(),
+            "file_picker" | "download_destination" | "download_progress" => transfer_signals(value),
+            "web_dialog"
+            | "web_dialog_closed"
+            | "accessibility_tree"
+            | "accessibility_location"
+            | "accessibility_unavailable"
+            | "popup_requested" => web_signals(value, kind, document),
+            "renderer_crashed" => vec![PageSignal::Lost(
+                "Renderer crashed; reload the page to recover".into(),
+            )],
+            "certificate_error" => vec![PageSignal::LoadFailed(
+                "The page certificate could not be verified".into(),
+            )],
+            "external_open" => value
+                .get("url")
+                .and_then(Value::as_str)
+                .filter(|url| {
+                    !url.is_empty()
+                        && url.len() <= paneflow_browser_protocol::MAX_URL_BYTES
+                        && !url.contains('\0')
+                })
+                .map(|url| PageSignal::ExternalOpen(url.to_owned()))
+                .into_iter()
+                .collect(),
+            "close_cancelled" => vec![PageSignal::CloseCancelled],
+            "fullscreen" => value
+                .get("enabled")
+                .and_then(Value::as_bool)
+                .map(PageSignal::Fullscreen)
+                .into_iter()
+                .collect(),
+            "find_result" => value
+                .get("count")
+                .and_then(Value::as_i64)
+                .and_then(|count| i32::try_from(count).ok())
+                .zip(
+                    value
+                        .get("active")
+                        .and_then(Value::as_i64)
+                        .and_then(|active| i32::try_from(active).ok()),
+                )
+                .map(|(count, active)| PageSignal::FindResult { count, active })
+                .into_iter()
+                .collect(),
+            _ => unscoped_signals(value, kind),
+        }
+    }
+
+    fn unscoped_signals(value: &Value, kind: &str) -> Vec<PageSignal> {
+        match kind {
+            "cursor" => value
+                .get("style")
+                .cloned()
+                .and_then(|style| serde_json::from_value(style).ok())
+                .map(PageSignal::Cursor)
+                .into_iter()
+                .collect(),
+            "created" => vec![PageSignal::Created],
+            "loading" => vec![PageSignal::Loading {
+                loading: value
+                    .get("is_loading")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false),
+                can_go_back: value
+                    .get("can_go_back")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false),
+                can_go_forward: value
+                    .get("can_go_forward")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false),
+            }],
+            "title" => vec![PageSignal::Title(
+                value
+                    .get("title")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string(),
+            )],
+            "address" => vec![PageSignal::Address(
+                value
+                    .get("url")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string(),
+            )],
+            "loaded" => vec![PageSignal::Loaded],
+            "load_failed" => vec![PageSignal::LoadFailed(
+                value
+                    .get("error_text")
+                    .and_then(Value::as_str)
+                    .unwrap_or("The page failed to load")
+                    .to_string(),
+            )],
+            _ => Vec::new(),
+        }
+    }
+
     impl LivePage {
         pub fn start(window: &Window, cx: &App, page: PageConfig) -> Result<PageStart, String> {
             let PageConfig {
@@ -1662,109 +1919,7 @@ mod windows {
         }
 
         fn on_native(&self, value: &Value) -> Vec<PageSignal> {
-            let kind = value.get("native").and_then(Value::as_str).unwrap_or("");
-            if matches!(kind, "context_menu" | "context_menu_closed") {
-                let document = value
-                    .get("document")
-                    .and_then(|value| serde_json::from_value::<Document>(value.clone()).ok());
-                if document.is_none() || document.as_ref() != self.document() {
-                    return Vec::new();
-                }
-                let Some(request) = value
-                    .get("request")
-                    .and_then(Value::as_u64)
-                    .filter(|request| *request != 0)
-                else {
-                    return Vec::new();
-                };
-                if kind == "context_menu_closed" {
-                    return vec![PageSignal::ContextMenuClosed { request }];
-                }
-                let parsed = (|| {
-                    let x = i32::try_from(value.get("x")?.as_i64()?).ok()?;
-                    let y = i32::try_from(value.get("y")?.as_i64()?).ok()?;
-                    let items: Vec<super::ContextMenuItem> =
-                        serde_json::from_value(value.get("items")?.clone()).ok()?;
-                    if items.len() > 64
-                        || items.iter().any(|item| {
-                            item.command < 0
-                                || item.label.chars().count() > 256
-                                || item.label.chars().any(char::is_control)
-                        })
-                    {
-                        return None;
-                    }
-                    Some(PageSignal::ContextMenu {
-                        request,
-                        x,
-                        y,
-                        items,
-                    })
-                })();
-                return parsed.into_iter().collect();
-            }
-            if matches!(kind, "ime_selection" | "ime_bounds") {
-                let document = value
-                    .get("document")
-                    .and_then(|value| serde_json::from_value::<Document>(value.clone()).ok());
-                if document.is_none() || document.as_ref() != self.document() {
-                    return Vec::new();
-                }
-                return value
-                    .get("snapshot")
-                    .and_then(|value| {
-                        serde_json::from_value::<super::super::ime::ImeSnapshot>(value.clone()).ok()
-                    })
-                    .filter(|snapshot| snapshot.valid())
-                    .map(|snapshot| {
-                        vec![if kind == "ime_selection" {
-                            PageSignal::ImeSelection(snapshot)
-                        } else {
-                            PageSignal::ImeBounds(snapshot)
-                        }]
-                    })
-                    .unwrap_or_default();
-            }
-            match kind {
-                "created" => vec![PageSignal::Created],
-                "loading" => vec![PageSignal::Loading {
-                    loading: value
-                        .get("is_loading")
-                        .and_then(Value::as_bool)
-                        .unwrap_or(false),
-                    can_go_back: value
-                        .get("can_go_back")
-                        .and_then(Value::as_bool)
-                        .unwrap_or(false),
-                    can_go_forward: value
-                        .get("can_go_forward")
-                        .and_then(Value::as_bool)
-                        .unwrap_or(false),
-                }],
-                "title" => vec![PageSignal::Title(
-                    value
-                        .get("title")
-                        .and_then(Value::as_str)
-                        .unwrap_or_default()
-                        .to_string(),
-                )],
-                "address" => vec![PageSignal::Address(
-                    value
-                        .get("url")
-                        .and_then(Value::as_str)
-                        .unwrap_or_default()
-                        .to_string(),
-                )],
-                "loaded" => vec![PageSignal::Loaded],
-                "load_failed" => vec![PageSignal::LoadFailed(
-                    value
-                        .get("error_text")
-                        .and_then(Value::as_str)
-                        .unwrap_or("The page failed to load")
-                        .to_string(),
-                )],
-                _ => Vec::new(),
-            }
+            native_signals(value, self.document())
         }
 
         fn acknowledger(&self) -> Result<FrameAcknowledger, String> {
@@ -1928,6 +2083,262 @@ mod windows {
             }
             let document = self.document().cloned();
             self.host.unsubscribe(&self.browser, document);
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::{native_signals, resize_may_be_sent};
+        use crate::browser::accessibility::AccessibilityTree;
+        use crate::browser::page::PageSignal;
+        use paneflow_browser_protocol::Document;
+        use serde_json::{Value, json};
+
+        fn document(generation: u64) -> Document {
+            serde_json::from_value(json!({
+                "owner": {"workspace": "w", "session": "s"},
+                "browser": "b",
+                "generation": generation,
+            }))
+            .unwrap()
+        }
+
+        fn signals(value: &Value) -> Vec<PageSignal> {
+            native_signals(value, Some(&document(1)))
+        }
+
+        #[test]
+        fn resize_requires_both_a_completed_transition_and_a_free_pool_budget() {
+            assert!(resize_may_be_sent(0, false));
+            assert!(resize_may_be_sent(1, false));
+            assert!(!resize_may_be_sent(1, true));
+            assert!(!resize_may_be_sent(2, false));
+        }
+
+        #[test]
+        fn accessibility_updates_reach_the_shared_tree_for_the_live_document() {
+            let live = document(1);
+            let update = json!({
+                "native": "accessibility_tree",
+                "document": live,
+                "value": {
+                    "ax_tree_id": "tree",
+                    "updates": [{
+                        "root_id": 1,
+                        "tree_data": {"focus_id": 1},
+                        "nodes": [{"id": 1, "role": "rootWebArea", "child_ids": []}],
+                    }],
+                },
+            });
+            let produced = signals(&update);
+            let Some(PageSignal::Accessibility {
+                document: signalled,
+                kind,
+                value,
+            }) = produced.into_iter().next()
+            else {
+                panic!("the Windows host event produced no accessibility signal");
+            };
+            assert_eq!(signalled, live);
+            assert_eq!(kind, "accessibility_tree");
+            let mut tree = AccessibilityTree::default();
+            tree.reset(Some(live.clone()));
+            assert!(tree.apply(&live, &kind, &value));
+            assert!(tree.agent_snapshot().is_some());
+        }
+
+        #[test]
+        fn accessibility_updates_for_a_replaced_document_are_dropped() {
+            let stale = json!({
+                "native": "accessibility_tree",
+                "document": document(2),
+                "value": {"ax_tree_id": "tree"},
+            });
+            assert!(signals(&stale).is_empty());
+            let unavailable = json!({
+                "native": "accessibility_unavailable",
+                "document": document(1),
+                "reason": "tree_update_limit",
+            });
+            assert!(matches!(
+                signals(&unavailable).as_slice(),
+                [PageSignal::Accessibility { kind, .. }] if kind == "accessibility_unavailable"
+            ));
+        }
+
+        #[test]
+        fn permission_and_script_dialogs_carry_their_origin_and_close_by_request() {
+            let request = json!({
+                "native": "web_dialog",
+                "document": document(1),
+                "request": 9,
+                "kind": "permission",
+                "origin": "https://example.com/",
+                "message": "Autoriser la géolocalisation pour ce document ?",
+                "default_text": "",
+            });
+            assert!(matches!(
+                signals(&request).as_slice(),
+                [PageSignal::WebDialog { request: 9, kind, origin, .. }]
+                    if kind == "permission" && origin == "https://example.com/"
+            ));
+            let closed = json!({
+                "native": "web_dialog_closed",
+                "document": document(1),
+                "request": 9,
+            });
+            assert!(matches!(
+                signals(&closed).as_slice(),
+                [PageSignal::WebDialogClosed { request: 9 }]
+            ));
+            let stale = json!({
+                "native": "web_dialog",
+                "document": document(2),
+                "request": 9,
+                "kind": "permission",
+                "origin": "https://example.com/",
+                "message": "m",
+                "default_text": "",
+            });
+            assert!(signals(&stale).is_empty());
+        }
+
+        #[test]
+        fn file_pickers_and_downloads_require_a_bounded_request_and_name() {
+            for kind in ["file_picker", "download_destination", "download_progress"] {
+                let event = json!({
+                    "native": kind,
+                    "document": document(1),
+                    "request": 3,
+                    "suggested_name": "report.pdf",
+                });
+                assert!(matches!(
+                    signals(&event).as_slice(),
+                    [PageSignal::Transfer(_)]
+                ));
+                assert!(
+                    signals(&json!({
+                        "native": kind,
+                        "document": document(1),
+                        "request": 0,
+                    }))
+                    .is_empty()
+                );
+                assert!(
+                    signals(&json!({
+                        "native": kind,
+                        "document": document(1),
+                        "request": 3,
+                        "suggested_name": "a".repeat(1025),
+                    }))
+                    .is_empty()
+                );
+            }
+        }
+
+        #[test]
+        fn external_protocols_popups_and_certificates_refuse_unsupported_targets() {
+            assert!(matches!(
+                signals(&json!({
+                    "native": "external_open",
+                    "document": document(1),
+                    "url": "mailto:user@example.com",
+                }))
+                .as_slice(),
+                [PageSignal::ExternalOpen(url)] if url == "mailto:user@example.com"
+            ));
+            assert!(
+                signals(&json!({
+                    "native": "external_open",
+                    "document": document(1),
+                    "url": "",
+                }))
+                .is_empty()
+            );
+            assert!(matches!(
+                signals(&json!({
+                    "native": "popup_requested",
+                    "document": document(1),
+                    "url": "https://example.com/",
+                }))
+                .as_slice(),
+                [PageSignal::PopupRequested(_)]
+            ));
+            assert!(
+                signals(&json!({
+                    "native": "popup_requested",
+                    "document": document(1),
+                    "url": "file:///etc/passwd",
+                }))
+                .is_empty()
+            );
+            assert!(matches!(
+                signals(&json!({
+                    "native": "certificate_error",
+                    "document": document(1),
+                    "error_code": -202,
+                }))
+                .as_slice(),
+                [PageSignal::LoadFailed(_)]
+            ));
+            assert!(matches!(
+                signals(&json!({
+                    "native": "renderer_crashed",
+                    "document": document(1),
+                    "status": 2,
+                    "error_code": 0,
+                }))
+                .as_slice(),
+                [PageSignal::Lost(_)]
+            ));
+        }
+
+        #[test]
+        fn dock_controls_reach_the_view_from_the_live_document_only() {
+            assert!(matches!(
+                signals(&json!({
+                    "native": "find_result",
+                    "document": document(1),
+                    "count": 4,
+                    "active": 2,
+                    "final": true,
+                }))
+                .as_slice(),
+                [PageSignal::FindResult {
+                    count: 4,
+                    active: 2
+                }]
+            ));
+            assert!(matches!(
+                signals(&json!({
+                    "native": "fullscreen",
+                    "document": document(1),
+                    "enabled": true,
+                }))
+                .as_slice(),
+                [PageSignal::Fullscreen(true)]
+            ));
+            assert!(matches!(
+                signals(&json!({
+                    "native": "close_cancelled",
+                    "document": document(1),
+                }))
+                .as_slice(),
+                [PageSignal::CloseCancelled]
+            ));
+            assert!(
+                signals(&json!({
+                    "native": "find_result",
+                    "document": document(2),
+                    "count": 4,
+                    "active": 2,
+                }))
+                .is_empty()
+            );
+            assert!(matches!(
+                signals(&json!({"native": "cursor", "style": "PointingHand"})).as_slice(),
+                [PageSignal::Cursor(_)]
+            ));
         }
     }
 }

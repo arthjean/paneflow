@@ -51,7 +51,7 @@ pub(super) fn begin(host: &BrowserHost, paths: &[String], x: i32, y: i32) {
     {
         return;
     }
-    let (Some(document), Some(browser)) = (super::super::current_document(), host.browser()) else {
+    let (Some(document), Some(browser)) = (super::current_document(), host.browser()) else {
         return;
     };
     let id = browser.identifier();
@@ -82,9 +82,7 @@ pub(super) fn begin(host: &BrowserHost, paths: &[String], x: i32, y: i32) {
             },
         )
     });
-    super::super::emit(
-        json!({"native":"drop_enter","document":document,"count":paths.len(),"x":x,"y":y}),
-    );
+    super::emit(json!({"native":"drop_enter","document":document,"count":paths.len(),"x":x,"y":y}));
     host.drag_target_drag_enter(
         Some(&mut data),
         Some(&event),
@@ -98,14 +96,14 @@ pub(super) fn cursor(browser: &Browser, operation: DragOperationsMask) {
     let Some(mut pending) = PENDING.with(|state| state.borrow_mut().remove(&id)) else {
         return;
     };
-    let current = super::super::current_document();
+    let current = super::current_document();
     if current.as_ref() != Some(&pending.document) {
         pending.phase = Phase::Cancelled;
     }
     let accepted =
         operation.as_ref().0 & cef::sys::cef_drag_operations_mask_t::DRAG_OPERATION_COPY.0 != 0;
     let step = pending.phase.acknowledge(accepted);
-    super::super::emit(
+    super::emit(
         json!({"native":"drop_ack","document":pending.document,"accepted":accepted,"phase":format!("{:?}", pending.phase)}),
     );
     match step {
@@ -121,7 +119,7 @@ pub(super) fn cursor(browser: &Browser, operation: DragOperationsMask) {
         }
         Step::Drop => {
             pending.host.drag_target_drop(Some(&pending.event));
-            super::super::emit(json!({"native":"drop_dispatched","document":pending.document}));
+            super::emit(json!({"native":"drop_dispatched","document":pending.document}));
         }
         Step::Leave => pending.host.drag_target_drag_leave(),
     }
@@ -161,7 +159,7 @@ wrap_task! {
             });
             if let Some((host, document)) = expired {
                 host.drag_target_drag_leave();
-                super::super::emit(json!({"native":"drop_timeout","document":document}));
+                super::emit(json!({"native":"drop_timeout","document":document}));
             }
         }
     }

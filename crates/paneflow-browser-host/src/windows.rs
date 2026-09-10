@@ -15,11 +15,21 @@ use paneflow_browser_protocol::{
 };
 use serde_json::{json, Value};
 
+#[path = "linux/accessibility.rs"]
+mod accessibility;
 mod devtools;
 #[path = "linux/devtools_renderer.rs"]
 mod devtools_renderer;
 mod editing;
+#[path = "linux/external_protocols.rs"]
+mod external_protocols;
+#[path = "linux/permissions.rs"]
+mod permissions;
 mod presentation;
+#[path = "linux/transfers.rs"]
+mod transfers;
+#[path = "linux/web_interactions.rs"]
+mod web_interactions;
 
 use presentation::Presenter;
 
@@ -91,7 +101,7 @@ pub(super) fn now_ns() -> u64 {
     ((counter as u128 * 1_000_000_000) / frequency as u128) as u64
 }
 
-fn emit(value: Value) -> io::Result<()> {
+fn write_control(value: Value) -> io::Result<()> {
     let Some(output) = CONTROL_OUTPUT.get() else {
         return Err(io::Error::new(
             io::ErrorKind::NotConnected,
@@ -104,8 +114,50 @@ fn emit(value: Value) -> io::Result<()> {
     write_message(&mut *output, &value)
 }
 
+fn emit(value: Value) {
+    let _ = write_control(value);
+}
+
 pub(super) fn emit_frame(message: &paneflow_browser_protocol::FrameMessage) -> io::Result<()> {
-    emit(json!({ "frame": message }))
+    write_control(json!({ "frame": message }))
+}
+
+fn latest_document(document: &Document) -> Option<Document> {
+    PAGES.with(|pages| {
+        pages
+            .borrow()
+            .get(&document.browser)
+            .map(|page| page.document.clone())
+    })
+}
+
+fn cancel_close(document: &Document) {
+    emit(json!({ "native": "close_cancelled", "document": document }));
+}
+
+fn clear_web_state(document: &Document) {
+    web_interactions::clear(document);
+    permissions::clear(document);
+    transfers::clear(document);
+    external_protocols::clear(document);
+}
+
+fn enforce_certificate_policy(browser: &Browser) -> bool {
+    let Some(context) = browser.host().and_then(|host| host.request_context()) else {
+        return false;
+    };
+    let Some(mut denied) = value_create() else {
+        return false;
+    };
+    denied.set_bool(0);
+    let name: CefString = "ssl.error_override_allowed".into();
+    let mut error = CefString::from("certificate policy preference");
+    if context.set_preference(Some(&name), Some(&mut denied), Some(&mut error)) == 0 {
+        return false;
+    }
+    context
+        .preference(Some(&name))
+        .is_some_and(|value| value.get_type() == ValueType::BOOL && value.bool() == 0)
 }
 
 fn owner() -> Result<Owner, String> {
@@ -245,7 +297,7 @@ fn run_control(stream: Stream, owner: Owner) {
         let command = message.command.clone();
         let reply = dispatch(&mut controller, &owner, message);
         let result = reply.result.clone();
-        if emit(json!({ "protocol": reply })).is_err() {
+        if write_control(json!({ "protocol": reply })).is_err() {
             quit_message_loop();
             break;
         }
@@ -275,7 +327,7 @@ fn create_page(session: paneflow_browser_protocol::BrowserSession, inspected: Op
     let presenter = match Presenter::new(session.document.clone(), client_pid) {
         Ok(presenter) => Rc::new(RefCell::new(presenter)),
         Err(error) => {
-            let _ = emit(json!({
+            emit(json!({
                 "native": "create_failed",
                 "document": session.document,
                 "reason": error,
@@ -303,7 +355,7 @@ fn create_page(session: paneflow_browser_protocol::BrowserSession, inspected: Op
     if let Some(target_document) = &inspected {
         let Some(target) = page_browser(target_document) else {
             remove_page(&session.document);
-            let _ = emit(json!({
+            emit(json!({
                 "native": "create_failed",
                 "document": session.document,
                 "reason": "inspected browser is not available",
@@ -346,7 +398,7 @@ fn create_page(session: paneflow_browser_protocol::BrowserSession, inspected: Op
     ) == 1;
     if !created {
         remove_page(&session.document);
-        let _ = emit(json!({
+        emit(json!({
             "native": "create_failed",
             "document": session.document,
             "reason": "CEF rejected the windowless browser",
@@ -393,6 +445,7 @@ fn present(document: Document, presentation: BrowserPresentation) {
 fn navigate(document: Document, url: String) {
     devtools::closed(&document.browser);
     editing::cancel(&document.browser);
+    clear_web_state(&document);
     let browser = PAGES.with(|pages| {
         let mut pages = pages.borrow_mut();
         let page = pages.get_mut(&document.browser)?;
@@ -541,11 +594,15 @@ fn input(document: Document, input: InputEvent) {
         InputEvent::ContextMenu { request, command } => {
             editing::choose(&document, request, command)
         }
-        InputEvent::DropFiles { .. }
-        | InputEvent::TransferResponse { .. }
-        | InputEvent::CancelDownload { .. }
-        | InputEvent::WebResponse { .. }
-        | InputEvent::ClipboardWritten { .. } => {}
+        response @ InputEvent::WebResponse { .. } => {
+            web_interactions::handle(&document, &response);
+            permissions::handle(&document, &response);
+            external_protocols::handle(&document, &response);
+        }
+        response @ (InputEvent::TransferResponse { .. } | InputEvent::CancelDownload { .. }) => {
+            transfers::handle(&document, &response);
+        }
+        InputEvent::DropFiles { .. } | InputEvent::ClipboardWritten { .. } => {}
     }
 }
 
@@ -605,7 +662,7 @@ fn action(document: Document, command: Command) {
             }
         }
         Command::Screenshot { document } => {
-            let _ = emit(json!({
+            emit(json!({
                 "native": "screenshot_failed",
                 "document": document,
                 "reason": "native capture adapter unavailable",
@@ -751,8 +808,16 @@ wrap_client! {
         fn load_handler(&self) -> Option<LoadHandler> { Some(Load::new(self.document.clone())) }
         fn display_handler(&self) -> Option<DisplayHandler> { Some(Display::new(self.document.clone())) }
         fn context_menu_handler(&self) -> Option<ContextMenuHandler> { Some(editing::Menus::new(self.presenter.clone())) }
+        fn dialog_handler(&self) -> Option<DialogHandler> { Some(transfers::Uploads::new(self.document.clone())) }
+        fn download_handler(&self) -> Option<DownloadHandler> { Some(transfers::Downloads::new(self.document.clone())) }
+        fn permission_handler(&self) -> Option<PermissionHandler> { Some(permissions::Permissions::new(self.document.clone())) }
+        fn jsdialog_handler(&self) -> Option<JsdialogHandler> { Some(web_interactions::Dialogs::new(self.document.clone())) }
+        fn find_handler(&self) -> Option<FindHandler> { Some(FindResults::new(self.document.clone())) }
         fn request_handler(&self) -> Option<RequestHandler> {
-            devtools::target(&self.document.browser).map(|_| devtools::Requests::new())
+            match devtools::target(&self.document.browser) {
+                Some(_) => Some(devtools::Requests::new()),
+                None => Some(RequestPolicy::new(self.document.clone())),
+            }
         }
         fn on_process_message_received(&self, browser: Option<&mut Browser>, frame: Option<&mut Frame>, source: ProcessId, message: Option<&mut ProcessMessage>) -> i32 {
             message.is_some_and(|message| devtools::message(&self.document, browser.as_deref(), frame.as_deref(), source, message)) as i32
@@ -775,7 +840,17 @@ wrap_life_span_handler! {
                 if let Some(host) = browser.host() { host.close_browser(1); }
                 return;
             }
+            if devtools::target(&self.document.browser).is_none() && !enforce_certificate_policy(browser) {
+                emit(json!({
+                    "native": "create_failed",
+                    "document": self.document,
+                    "reason": "Strict certificate policy unavailable",
+                }));
+                if let Some(host) = browser.host() { host.close_browser(1); }
+                return;
+            }
             if let Some(host) = browser.host() {
+                host.set_accessibility_state(State::ENABLED);
                 host.was_hidden(0);
                 host.notify_screen_info_changed();
                 host.was_resized();
@@ -783,7 +858,7 @@ wrap_life_span_handler! {
                 host.send_external_begin_frame();
             }
             schedule_frame_pump();
-            let _ = emit(json!({
+            emit(json!({
                 "native": "created",
                 "document": self.document,
                 "cef_browser_id": browser.identifier().to_string(),
@@ -792,13 +867,25 @@ wrap_life_span_handler! {
 
         fn do_close(&self, _browser: Option<&mut Browser>) -> i32 { 0 }
 
+        fn on_before_popup(&self, _browser: Option<&mut Browser>, _frame: Option<&mut Frame>, _popup_id: i32, target_url: Option<&CefString>, _target_frame_name: Option<&CefString>, _target_disposition: WindowOpenDisposition, user_gesture: i32, _popup_features: Option<&PopupFeatures>, _window_info: Option<&mut WindowInfo>, _client: Option<&mut Option<Client>>, _settings: Option<&mut BrowserSettings>, _extra_info: Option<&mut Option<DictionaryValue>>, _no_javascript_access: Option<&mut i32>) -> i32 {
+            let url = target_url.map(ToString::to_string).unwrap_or_default();
+            let allowed = user_gesture != 0
+                && devtools::target(&self.document.browser).is_none()
+                && paneflow_browser_protocol::validate_url(&url).is_ok();
+            if let Some(document) = latest_document(&self.document).filter(|_| allowed) {
+                emit(json!({ "native": "popup_requested", "document": document, "url": url }));
+            }
+            1
+        }
+
         fn on_before_close(&self, _browser: Option<&mut Browser>) {
             devtools::closed(&self.document.browser);
             editing::cancel(&self.document.browser);
+            clear_web_state(&self.document);
             PAGES.with(|pages| {
                 pages.borrow_mut().remove(&self.document.browser);
             });
-            let _ = emit(json!({ "native": "closed", "document": self.document }));
+            emit(json!({ "native": "closed", "document": self.document }));
             let remaining = PAGES.with(|pages| pages.borrow().values().any(|page| page.browser.is_some()));
             if !remaining {
                 quit_message_loop();
@@ -812,7 +899,7 @@ wrap_load_handler! {
 
     impl LoadHandler {
         fn on_loading_state_change(&self, _browser: Option<&mut Browser>, is_loading: i32, can_go_back: i32, can_go_forward: i32) {
-            let _ = emit(json!({
+            emit(json!({
                 "native": "loading",
                 "document": self.document,
                 "is_loading": is_loading != 0,
@@ -823,7 +910,7 @@ wrap_load_handler! {
 
         fn on_load_end(&self, _browser: Option<&mut Browser>, frame: Option<&mut Frame>, http_status_code: i32) {
             if frame.is_some_and(|frame| frame.is_main() != 0) {
-                let _ = emit(json!({
+                emit(json!({
                     "native": "loaded",
                     "document": self.document,
                     "http_status": http_status_code,
@@ -834,7 +921,7 @@ wrap_load_handler! {
         fn on_load_error(&self, _browser: Option<&mut Browser>, frame: Option<&mut Frame>, error_code: Errorcode, error_text: Option<&CefString>, _failed_url: Option<&CefString>) {
             if frame.is_none_or(|frame| frame.is_main() != 0) {
                 let error_text = error_text.map(ToString::to_string).unwrap_or_default();
-                let _ = emit(json!({
+                emit(json!({
                     "native": "load_failed",
                     "document": self.document,
                     "error_code": error_code.get_raw(),
@@ -850,24 +937,29 @@ wrap_display_handler! {
 
     impl DisplayHandler {
         fn on_title_change(&self, _browser: Option<&mut Browser>, title: Option<&CefString>) {
-            let _ = emit(json!({ "native": "title", "document": self.document, "title": title.map(ToString::to_string).unwrap_or_default() }));
+            emit(json!({ "native": "title", "document": self.document, "title": title.map(ToString::to_string).unwrap_or_default() }));
         }
 
         fn on_address_change(&self, _browser: Option<&mut Browser>, frame: Option<&mut Frame>, url: Option<&CefString>) {
             if frame.is_some_and(|frame| frame.is_main() != 0) {
-                let _ = emit(json!({ "native": "address", "document": self.document, "url": url.map(ToString::to_string).unwrap_or_default() }));
+                emit(json!({ "native": "address", "document": self.document, "url": url.map(ToString::to_string).unwrap_or_default() }));
             }
         }
 
         fn on_fullscreen_mode_change(&self, _browser: Option<&mut Browser>, fullscreen: i32) {
-            let _ = emit(json!({ "native": "fullscreen", "document": self.document, "enabled": fullscreen != 0 }));
+            emit(json!({ "native": "fullscreen", "document": self.document, "enabled": fullscreen != 0 }));
+        }
+
+        fn on_cursor_change(&self, _browser: Option<&mut Browser>, _cursor: sys::HCURSOR, type_: CursorType, _custom_cursor_info: Option<&CursorInfo>) -> i32 {
+            emit(json!({ "native": "cursor", "document": self.document, "style": cursor_style(type_) }));
+            1
         }
 
         fn on_console_message(&self, _browser: Option<&mut Browser>, _level: LogSeverity, message: Option<&CefString>, _source: Option<&CefString>, _line: i32) -> i32 {
             let text = message.map(ToString::to_string).unwrap_or_default();
             if let Some(state) = text.strip_prefix("PANEFLOW_FIXTURE:") {
                 if let Ok(value) = serde_json::from_str::<Value>(state) {
-                    let _ = emit(json!({ "native": "fixture_state", "document": self.document, "state": value }));
+                    emit(json!({ "native": "fixture_state", "document": self.document, "state": value }));
                 }
             }
             0
@@ -882,6 +974,11 @@ wrap_render_handler! {
     }
 
     impl RenderHandler {
+        fn accessibility_handler(&self) -> Option<AccessibilityHandler> {
+            let Ok(presenter) = self.presenter.try_borrow() else { return None };
+            Some(accessibility::Accessibility::new(presenter.document().clone()))
+        }
+
         fn view_rect(&self, _browser: Option<&mut Browser>, rect: Option<&mut Rect>) {
             let Some(rect) = rect else { return };
             if let Ok(view) = self.view.lock() {
@@ -919,7 +1016,7 @@ wrap_render_handler! {
         fn on_text_selection_changed(&self, _browser: Option<&mut Browser>, selected_text: Option<&CefString>, selected_range: Option<&Range>) {
             let Some(range) = selected_range else { return };
             let Ok(presenter) = self.presenter.try_borrow() else { return };
-            let _ = emit(json!({
+            emit(json!({
                 "native": "ime_selection",
                 "document": presenter.document(),
                 "snapshot": { "start": range.from, "end": range.to, "text": selected_text.map(ToString::to_string).filter(|text| text.len() <= 65536) },
@@ -930,11 +1027,86 @@ wrap_render_handler! {
             let Some(range) = selected_range else { return };
             let Ok(presenter) = self.presenter.try_borrow() else { return };
             let bounds = character_bounds.unwrap_or_default().iter().take(4096).map(|rect| [rect.x, rect.y, rect.width, rect.height]).collect::<Vec<_>>();
-            let _ = emit(json!({
+            emit(json!({
                 "native": "ime_bounds",
                 "document": presenter.document(),
                 "snapshot": { "start": range.from, "end": range.to, "bounds": bounds },
             }));
+        }
+    }
+}
+
+fn cursor_style(type_: CursorType) -> &'static str {
+    match type_ {
+        CursorType::HAND => "PointingHand",
+        CursorType::IBEAM => "IBeam",
+        CursorType::CROSS | CursorType::CELL => "Crosshair",
+        CursorType::GRAB | CursorType::MOVE => "OpenHand",
+        CursorType::GRABBING => "ClosedHand",
+        CursorType::EASTRESIZE => "ResizeRight",
+        CursorType::WESTRESIZE => "ResizeLeft",
+        CursorType::NORTHRESIZE => "ResizeUp",
+        CursorType::SOUTHRESIZE => "ResizeDown",
+        CursorType::NORTHSOUTHRESIZE => "ResizeUpDown",
+        CursorType::EASTWESTRESIZE => "ResizeLeftRight",
+        CursorType::NORTHEASTRESIZE
+        | CursorType::SOUTHWESTRESIZE
+        | CursorType::NORTHEASTSOUTHWESTRESIZE => "ResizeUpRightDownLeft",
+        CursorType::NORTHWESTRESIZE
+        | CursorType::SOUTHEASTRESIZE
+        | CursorType::NORTHWESTSOUTHEASTRESIZE => "ResizeUpLeftDownRight",
+        CursorType::COLUMNRESIZE => "ResizeColumn",
+        CursorType::ROWRESIZE => "ResizeRow",
+        CursorType::VERTICALTEXT => "IBeamCursorForVerticalLayout",
+        CursorType::NODROP | CursorType::NOTALLOWED => "OperationNotAllowed",
+        CursorType::ALIAS => "DragLink",
+        CursorType::COPY => "DragCopy",
+        CursorType::CONTEXTMENU => "ContextualMenu",
+        _ => "Arrow",
+    }
+}
+
+wrap_find_handler! {
+    struct FindResults { document: Document }
+
+    impl FindHandler {
+        fn on_find_result(&self, _browser: Option<&mut Browser>, _identifier: i32, count: i32, _selection_rect: Option<&Rect>, active_match_ordinal: i32, final_update: i32) {
+            emit(json!({ "native": "find_result", "document": self.document, "count": count, "active": active_match_ordinal, "final": final_update != 0 }));
+        }
+    }
+}
+
+wrap_request_handler! {
+    struct RequestPolicy { document: Document }
+
+    impl RequestHandler {
+        fn on_certificate_error(&self, _browser: Option<&mut Browser>, cert_error: Errorcode, _request_url: Option<&CefString>, _ssl_info: Option<&mut Sslinfo>, callback: Option<&mut Callback>) -> i32 {
+            emit(json!({ "native": "certificate_error", "document": self.document, "error_code": cert_error.get_raw() }));
+            if let Some(callback) = callback { callback.cancel(); }
+            1
+        }
+
+        fn on_render_process_terminated(&self, _browser: Option<&mut Browser>, status: TerminationStatus, error_code: i32, _error_string: Option<&CefString>) {
+            editing::cancel(&self.document.browser);
+            clear_web_state(&self.document);
+            emit(json!({ "native": "renderer_crashed", "document": self.document, "status": status.get_raw(), "error_code": error_code }));
+        }
+
+        fn on_before_browse(&self, browser: Option<&mut Browser>, frame: Option<&mut Frame>, request: Option<&mut Request>, user_gesture: i32, is_redirect: i32) -> i32 {
+            let url = request.map(|request| CefString::from(&request.url()).to_string()).unwrap_or_default();
+            let Some(document) = latest_document(&self.document) else { return 1 };
+            if paneflow_browser_protocol::validate_url(&url).is_err() {
+                if user_gesture != 0 && is_redirect == 0 {
+                    let origin = browser.and_then(|browser| browser.main_frame()).map(|frame| CefString::from(&frame.url()).to_string()).unwrap_or_default();
+                    external_protocols::request(&document, &origin, &url);
+                }
+                return 1;
+            }
+            if frame.is_some_and(|frame| frame.is_main() != 0) {
+                editing::cancel(&document.browser);
+                clear_web_state(&document);
+            }
+            0
         }
     }
 }
@@ -1040,7 +1212,7 @@ fn run(instance: sys::HINSTANCE, sandbox_info: *mut u8) -> i32 {
         shutdown();
         return 1;
     }
-    if emit(json!({
+    if write_control(json!({
         "native": "initialized",
         "pid": std::process::id(),
         "sandbox_requested": true,

@@ -22,7 +22,7 @@ pub(super) fn cancel(browser: &BrowserId) {
     let pending = MENUS.with(|menus| menus.borrow_mut().remove(browser));
     if let Some(pending) = pending {
         pending.callback.cancel();
-        let _ = emit(
+        emit(
             json!({"native":"context_menu_closed", "document":pending.document, "request":pending.request}),
         );
     }
@@ -45,8 +45,7 @@ pub(super) fn choose(document: &Document, request: u64, command: Option<i32>) {
             Some(command) => pending.callback.cont(command, EventFlags::default()),
             None => pending.callback.cancel(),
         }
-        let _ =
-            emit(json!({"native":"context_menu_closed", "document":document, "request":request}));
+        emit(json!({"native":"context_menu_closed", "document":document, "request":request}));
     }
 }
 
@@ -86,9 +85,7 @@ wrap_context_menu_handler! {
             MENUS.with(|menus| menus.borrow_mut().insert(document.browser.clone(), PendingMenu {
                 document:document.clone(), request, commands, callback:callback.clone(),
             }));
-            if emit(json!({"native":"context_menu","document":document,"request":request,"x":params.xcoord(),"y":params.ycoord(),"items":items})).is_err() {
-                cancel(&document.browser);
-            }
+            emit(json!({"native":"context_menu","document":document,"request":request,"x":params.xcoord(),"y":params.ycoord(),"items":items}));
             1
         }
     }
