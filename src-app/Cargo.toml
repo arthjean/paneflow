@@ -484,6 +484,16 @@ path-guid = "49700ADE-7E1B-466E-A25E-A138A2FC96F3"
 # (`-x86_64-pc-windows-msvc.msi`).
 name = "paneflow"
 
+# Browser variant of the MSI (prd-agents-browser-windows.md US-011). There is no
+# second wxs: main.wxs carries a `BrowserRuntimeFeature` behind
+# `<?ifdef BrowserStage ?>`, and the component group it references is generated
+# from the staged payload into target/browser-stage/browser-components.wxs.
+# Build it through the signing chain rather than by hand:
+#   python scripts/browser-package.py --target x86_64-pc-windows-msvc stage
+#   pwsh scripts/browser-msi.ps1 -Stage target/browser-stage -Sign
+# Without -dBrowserStage, `cargo wix` produces the terminal-only installer
+# unchanged and never references the CEF runtime.
+
 # Debian packaging (US-003) - explicit deps, never `$auto` (cargo-deb issue #170).
 # Build: cargo deb -p paneflow-app --target x86_64-unknown-linux-gnu
 [package.metadata.deb]

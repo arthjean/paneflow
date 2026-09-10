@@ -785,6 +785,18 @@ impl HostSupervisor {
     }
 }
 
+fn host_search_path(runtime_release: &Path, system_root: Option<&Path>) -> Vec<PathBuf> {
+    let system_root = system_root
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| PathBuf::from(r"C:\Windows"));
+    vec![
+        runtime_release.to_path_buf(),
+        system_root.join("System32"),
+        system_root.clone(),
+        system_root.join("System32/Wbem"),
+    ]
+}
+
 fn start(inner: &Arc<Inner>, config: &HostConfig) -> Result<HostInfo, String> {
     verify_runtime(&config.runtime_root, config.check)?;
     let host_digest = verify_host_binary(&config.host_binary)?;
@@ -797,11 +809,11 @@ fn start(inner: &Arc<Inner>, config: &HostConfig) -> Result<HostInfo, String> {
     let listener = listener(&pipe)?;
     let stderr = File::create(profile.join("host.stderr"))
         .map_err(|error| format!("host stderr log: {error}"))?;
-    let mut path = vec![bin.join("Release")];
-    if let Some(current) = std::env::var_os("PATH") {
-        path.extend(std::env::split_paths(&current));
-    }
-    let path = std::env::join_paths(path).map_err(|error| format!("browser DLL path: {error}"))?;
+    let path = std::env::join_paths(host_search_path(
+        &bin.join("Release"),
+        std::env::var_os("SystemRoot").map(PathBuf::from).as_deref(),
+    ))
+    .map_err(|error| format!("browser DLL path: {error}"))?;
     let mut command = Command::new(bin.join("Release/paneflow-browser-host.exe"));
     command
         .current_dir(bin.join("Release"))
@@ -1093,6 +1105,29 @@ fn watch(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_host_dll_search_path_excludes_the_user_environment() {
+        let release = PathBuf::from(r"C:\Program Files\PaneFlow\lib\paneflow\browser\Release");
+        let path = host_search_path(&release, Some(Path::new(r"C:\Windows")));
+        assert_eq!(path.first(), Some(&release));
+        assert_eq!(
+            path,
+            vec![
+                release,
+                PathBuf::from(r"C:\Windows\System32"),
+                PathBuf::from(r"C:\Windows"),
+                PathBuf::from(r"C:\Windows\System32/Wbem"),
+            ]
+        );
+        let hostile = PathBuf::from(r"C:\Users\someone\Downloads");
+        assert!(!path.contains(&hostile));
+        assert!(!path.contains(&PathBuf::from(".")));
+        assert_eq!(
+            host_search_path(Path::new("bundle"), None).get(1),
+            Some(&PathBuf::from(r"C:\Windows\System32"))
+        );
+    }
 
     #[test]
     fn qualification_requires_an_exact_digest_and_preserves_it() {

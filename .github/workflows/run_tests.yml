@@ -215,6 +215,9 @@ jobs:
       - name: Validate Linux extended qualification contract
         run: python3 scripts/verify-linux-qualification-contract.py --contract native/browser/linux-qualification-contract.toml --output target/ep007-linux-qualification-contract.json
 
+      - name: Validate the Windows browser bundle plan
+        run: python3 scripts/browser-package.test.py
+
       - name: Test
         run: cargo test --workspace --locked
 

@@ -207,6 +207,26 @@
             <ComponentRef Id='HelperBinaries'/>
             <ComponentRef Id='ApplicationShortcut'/>
 
+            <!-- Browser variant (US-011 - prd-agents-browser-windows.md). The
+                 component group is generated from the staged payload by
+                 `python scripts/browser-package.py msi-plan`, which writes
+                 target/browser-stage/browser-components.wxs. Without
+                 -dBrowserStage=<staged prefix> this MSI is exactly the
+                 terminal-only installer it has always been, and the CEF runtime
+                 is neither referenced nor downloaded on first use. The payload
+                 lands under %ProgramFiles%\PaneFlow\lib\paneflow\, which a
+                 standard user cannot modify. -->
+            <?ifdef BrowserStage ?>
+            <Feature
+                Id='BrowserRuntimeFeature'
+                Title='Agents browser runtime'
+                Description='Installs the pinned CEF runtime, the browser bootstrap executable and its sandboxed client DLL beside PaneFlow.'
+                Level='1'
+                Absent='disallow'>
+                <ComponentGroupRef Id='BrowserRuntime'/>
+            </Feature>
+            <?endif ?>
+
             <Feature
                 Id='Environment'
                 Title='PATH Environment Variable'
