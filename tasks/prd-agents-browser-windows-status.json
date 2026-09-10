@@ -8,7 +8,7 @@
     "platform": "WINDOWS",
     "supersedes": "tasks/prd-agents-browser.md",
     "baseline_commit": "fbfefd250a3f3c8d9968a23f8c358712859bc904",
-    "updated_at": "2026-09-10T21:27:49+02:00",
+    "updated_at": "2026-09-10T23:59:00+02:00",
     "plan_revision": "1.1"
   },
   "epics": [
@@ -525,11 +525,273 @@
     {
       "id": "EP-003",
       "title": "Compléter les intégrations OS et préparer le package Windows",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "stories_total": 4,
-      "stories_done": 0,
-      "release": "R1/R2"
+      "stories_done": 4,
+      "release": "R1/R2",
+      "stories_in_review": 0,
+      "stories_blocked": 0,
+      "profile": "DEEP",
+      "started_at": "2026-09-10T23:55:00+02:00",
+      "updated_at": "2026-09-10T23:59:00+02:00",
+      "completed_at": "2026-09-10T23:59:00+02:00",
+      "reviewed_at": "2026-09-10T23:59:00+02:00",
+      "implementation_outcome": "IMPLEMENTED",
+      "qualification_verdict": "PREPARATION_NOT_NATIVELY_QUALIFIED",
+      "verification_scope": "implementation",
+      "handoff_status": "DONE",
+      "review_ready": false,
+      "review_invocation": "/review-epic tasks/prd-agents-browser-windows.md EP-003",
+      "blockers": [],
+      "notes": [
+        "The manifest now carries the measured Windows codec table, so its digest changed from 32567aed09e90c13100ee30fecd0b6ad05f20eee2133cf04ba5f7fce6e56bdc0 to 2d9e7de8602bf309ba4c59f6458ba374422d65ce9e8f2cda97605d2f83e7572a. Every staged prefix has to be re-staged; the EP-001 and EP-002 native observations depend on the binaries, not on the manifest text, and are unaffected.",
+        "Drag-and-drop file upload and the renderer clipboard round trip stay Linux-only: US-010 lists neither, and the Windows copy path uses the Chromium clipboard directly.",
+        "Agent console and network diagnostics are still not emitted by the Windows host; they belong to US-016.",
+        "The bounded host DLL search path has a contract test and the bundle import inventory as proof; its native launch observation belongs to US-013."
+      ],
+      "evidence_map": [
+        {
+          "story": "US-009",
+          "criterion": "AC-1",
+          "status": "PASS_IMPLEMENTATION",
+          "path": "crates/paneflow-browser-host/src/windows.rs:1004",
+          "entry_point": "CEF Renderer::accessibility_handler -> accessibility::Accessibility -> control pipe -> LivePage::on_native -> PageSignal::Accessibility -> AccessibilityTree -> GPUI A11ySubtreeBuilder",
+          "proof": "The Windows client enables the accessibility state on creation and mounts the shared CEF accessibility handler, so tree and location updates carry their document identity to the shared bridge that GPUI publishes to the platform. browser::page::windows::tests::accessibility_updates_reach_the_shared_tree_for_the_live_document drives one real host event end to end."
+        },
+        {
+          "story": "US-009",
+          "criterion": "AC-2",
+          "status": "PASS_IMPLEMENTATION",
+          "path": "src-app/src/browser/view.rs:2040",
+          "entry_point": "Browser actions -> find/zoom/cycle_focus and the shared toolbar render on Windows",
+          "proof": "Search, zoom, reset, F6 focus cycling, visible focus and the U1 color roles are the shared dock controls; the Windows host now emits find_result and the shared view consumes it. Accessibility state is bound to the document generation through accessibility_document in view.rs:1240."
+        },
+        {
+          "story": "US-009",
+          "criterion": "AC-3",
+          "status": "PASS_IMPLEMENTATION",
+          "path": "src-app/src/browser/page.rs:2103",
+          "entry_point": "cargo test -p paneflow-app --bin paneflow browser::page",
+          "proof": "The bridge controller test feeds real accessibility_tree and accessibility_unavailable host events through native_signals and asserts the emitted PageSignal plus the resulting AccessKit snapshot. The Narrator pass is prepared and explicitly left to US-013."
+        },
+        {
+          "story": "US-009",
+          "criterion": "AC-4",
+          "status": "PASS_IMPLEMENTATION",
+          "path": "src-app/src/browser/accessibility.rs:45",
+          "entry_point": "accessibility_unavailable or a stale/oversized update -> AccessibilityTree::apply",
+          "proof": "A stale node, an unavailable subframe or a missing tree clears the nodes and marks the tree unavailable instead of fabricating content; a replaced document drops updates outright (browser::page::windows::tests::accessibility_updates_for_a_replaced_document_are_dropped)."
+        },
+        {
+          "story": "US-010",
+          "criterion": "AC-1",
+          "status": "PASS_IMPLEMENTATION",
+          "path": "crates/paneflow-browser-host/src/windows.rs:988",
+          "entry_point": "BrowserClient dialog/download/permission/jsdialog handlers -> control pipe -> BrowserView::handle_transfer -> GPUI prompt_for_paths / prompt_for_new_path",
+          "proof": "File pickers, download destinations, camera/microphone and clipboard-read requests and external protocols all reach the shared controllers, which use the GPUI native Windows dialogs and dirs::download_dir. The host never accepts an arbitrary path; external protocols are limited to mailto/tel/sms/magnet and open only after a human answer."
+        },
+        {
+          "story": "US-010",
+          "criterion": "AC-2",
+          "status": "PASS_IMPLEMENTATION",
+          "path": "crates/paneflow-browser-host/src/linux/permissions.rs:114",
+          "entry_point": "CEF permission callback -> latest_document -> web_dialog -> InputEvent::WebResponse -> permissions::handle",
+          "proof": "P1 stays the only policy: the origin is re-parsed and restricted to https or loopback http, the mask is limited to geolocation and clipboard (or audio/video capture), and the decision is re-checked against the live document generation when the asynchronous OS answer returns. A strict certificate policy is enforced on the request context before the page loads (windows.rs enforce_certificate_policy)."
+        },
+        {
+          "story": "US-010",
+          "criterion": "AC-3",
+          "status": "PASS_IMPLEMENTATION",
+          "path": "src-app/src/browser/page.rs:2160",
+          "entry_point": "cargo test -p paneflow-app --bin paneflow browser::page",
+          "proof": "Tests inject grant, refusal, closure and concurrent navigation through the permission and file controllers: web_dialog/web_dialog_closed, file_picker, download_destination and download_progress, plus a replaced document that drops every one of them. Request 0 and an oversized suggested name are refused."
+        },
+        {
+          "story": "US-010",
+          "criterion": "AC-4",
+          "status": "PASS_IMPLEMENTATION",
+          "path": "crates/paneflow-browser-host/src/windows.rs:958",
+          "entry_point": "on_before_browse / on_render_process_terminated / navigate -> clear_web_state",
+          "proof": "An OS refusal, an absent capability, a closed dialog or a late callback grants nothing: navigation, renderer crash and close all clear the pending permissions, dialogs, transfers and external protocols, and no download is executed automatically. Certificate errors cancel the callback and surface a load failure."
+        },
+        {
+          "story": "US-011",
+          "criterion": "AC-1",
+          "status": "PASS",
+          "path": "packaging/wix/main.wxs:214",
+          "entry_point": "python scripts/browser-package.py --target x86_64-pc-windows-msvc stage; pwsh scripts/browser-msi.ps1",
+          "proof": "The staged prefix carries the bootstrap, the client DLL, libcef, the resources and every locale, and the generated BrowserRuntime component group installs them under %ProgramFiles%\\PaneFlow\\lib\\paneflow, which a standard user cannot modify. Verified on the real staged payload: 246 components."
+        },
+        {
+          "story": "US-011",
+          "criterion": "AC-2",
+          "status": "PASS",
+          "path": "scripts/browser-msi.ps1:64",
+          "entry_point": "pwsh scripts/browser-msi.ps1 -Stage target/browser-stage",
+          "proof": "The chain signs exactly the two components PaneFlow produces through the existing runbook, re-verifies against the signed bytes, and refuses to build without the maintainer signing variables. The runtime_imports check proves no bundled PE depends on a module outside the bundle, the Windows system set or the Microsoft C runtime, and supervisor_windows::host_search_path removes the user PATH from the child search order."
+        },
+        {
+          "story": "US-011",
+          "criterion": "AC-3",
+          "status": "PASS",
+          "path": "scripts/browser-package.test.py:99",
+          "entry_point": "python scripts/browser-package.test.py",
+          "proof": "Eleven fixture tests cover component coverage, receipt exclusion, unique identifiers and GUIDs, the WiX fragment shape, a foreign import, a wrong-architecture image, a payload edited after planning, a missing plan, plan stability and the codec measurement. Building the real signed MSI and installing it belong to US-013."
+        },
+        {
+          "story": "US-011",
+          "criterion": "AC-4",
+          "status": "PASS",
+          "path": "src-app/Cargo.toml:487",
+          "entry_point": "cargo wix without -dBrowserStage",
+          "proof": "main.wxs keeps its published terminal-only output behind the preprocessor guard, the shim, ai-hook and MCP helpers are untouched, and the signing secrets are read from the maintainer environment listed in docs/release/windows-signing.md, never from the repository."
+        },
+        {
+          "story": "US-011",
+          "criterion": "AC-5",
+          "status": "PASS",
+          "path": "scripts/browser-package.py:697",
+          "entry_point": "python scripts/browser-package.py verify --format msi",
+          "proof": "A missing resource, a non-x86_64 image, a path escaping the bundle or an absent signing configuration blocks the distributable build; browser-msi.ps1 prints distributable false and stops. Nothing in the chain downloads the runtime, in build.rs or on first use."
+        },
+        {
+          "story": "US-012",
+          "criterion": "AC-1",
+          "status": "PASS_IMPLEMENTATION",
+          "path": "src-app/src/app/self_update_flow.rs:191",
+          "entry_point": "kickoff_self_update_install -> browser::update::plan",
+          "proof": "The Windows updater refuses to replace the MSI while a browser host holds the runtime files, and the relay waits for the PaneFlow process to exit while the Job Object with KILL_ON_JOB_CLOSE takes the descendants with it. A runtime stamped by another manifest is reported unusable rather than mixed (install_windows::classify)."
+        },
+        {
+          "story": "US-012",
+          "criterion": "AC-2",
+          "status": "PASS_IMPLEMENTATION",
+          "path": "src-app/src/browser/update_windows.rs:77",
+          "entry_point": "browser::update::site -> install::required_bytes and install::detect; ProfileStore marker",
+          "proof": "The plan reads the payload size and the runtime state from the shared manifest and its digest stamp; the profile marker records the engine that wrote it, refuses a profile written by a newer engine and migrates an older one through a temporary file and a rename, so no downgrade rewrites data."
+        },
+        {
+          "story": "US-012",
+          "criterion": "AC-3",
+          "status": "PASS_IMPLEMENTATION",
+          "path": "src-app/src/browser/update_windows.rs:88",
+          "entry_point": "cargo test -p paneflow-app --bin paneflow browser::update",
+          "proof": "Fixtures cover a retained runtime file, an interrupted installation reported as resumable, an installation drive without room, an unreadable drive that invents no verdict, and a terminal-only installation. The real native update belongs to US-013."
+        },
+        {
+          "story": "US-012",
+          "criterion": "AC-4",
+          "status": "PASS",
+          "path": "native/browser/manifest.toml:311",
+          "entry_point": "python scripts/browser-package.py sbom --format msi; docs/release/browser-windows.md",
+          "proof": "The codec table is measured on the pinned runtime through the FFmpeg decoder long names, so the SBOM reports restricted_codecs [aac, h264, hevc] and redistribution review_required. Licenses, credits and notices are checked in the same verdict, and the pin maintenance runbook states explicitly that cargo deny never covers this runtime."
+        },
+        {
+          "story": "US-012",
+          "criterion": "AC-5",
+          "status": "PASS_IMPLEMENTATION",
+          "path": "src-app/src/browser/install_windows.rs:295",
+          "entry_point": "install::classify -> BrowserAuthority::detect",
+          "proof": "An invalid stamp or a partial set keeps the previous availability absent with a repair reason instead of opening a page, and the profile store refuses a profile written by an incompatible engine. Signature verification of the MSI itself stays in update::windows::msi::windows_verify_trust."
+        }
+      ],
+      "validation": {
+        "checked_at": "2026-09-10T23:59:00+02:00",
+        "commands": [
+          "cargo fmt --check",
+          "cargo clippy --workspace --all-targets --locked -- -D warnings",
+          "cargo clippy -p paneflow-browser-host --features cef-runtime --all-targets --locked --target x86_64-pc-windows-msvc -- -D warnings",
+          "cargo test -p paneflow-browser-host --features cef-runtime --locked --target x86_64-pc-windows-msvc --no-fail-fast",
+          "cargo test -p paneflow-app -p paneflow-browser-host -p paneflow-browser-protocol --locked --no-fail-fast",
+          "cargo test --workspace --locked --no-fail-fast",
+          "python scripts/browser-package.test.py",
+          "python scripts/browser-package.py --target x86_64-pc-windows-msvc verify --format msi --prefix target/browser-stage",
+          "pwsh -NoProfile -File scripts/browser-msi.ps1 -Stage target/browser-stage"
+        ],
+        "results": "Run on x86_64-pc-windows-msvc after the last change. fmt, workspace clippy and the 12 bundle-plan tests pass. The Windows CEF host is the code US-009 and US-010 add, and the default workspace build compiles none of it: it sits behind feature cef-runtime, which CI only builds for aarch64-unknown-linux-gnu. It was therefore clippied and tested explicitly for x86_64-pc-windows-msvc against the local CEF development root; 7 host tests and 2 qualification tests pass with -D warnings clean. paneflow-app passes 1994 of 1995 tests, including the 96 browser tests and the 7 new page::windows, install and update fixtures; the single failure is files_sidebar::filter::fifty_thousand_entries_filter_under_the_frame_budget at 67.45ms against a 64ms budget under parallel load, and it passes in isolation. cargo test --workspace additionally fails paneflow-textdiff::a_side_over_twenty_thousand_chunks_is_too_big, which also passes in isolation, and the two paneflow-libghostty-sys bundle fixtures that need the Linux and macOS prebuilt archives absent from this Windows worktree. All three are environmental and outside EP-003. browser-package.py verify --format msi returns PASS on the real 246-component staged payload, and browser-msi.ps1 runs the whole chain to the signing gate and reports distributable false with the six missing Azure variables.",
+        "native": "NONE. EP-003 claims no native Windows observation: no MSI was built, installed or signed, no Narrator pass was run and no native update cycle was executed. WiX v3 is not installed on this machine and the signing secrets are not present, so cargo wix itself was not executed; the corrected --include arguments are proven against the cargo-wix 0.3.9 source and the identical invocation the release workflow already uses. Those observations belong to US-013.",
+        "tracker": "US-009, US-010, US-011 and US-012 are DONE; EP-003 is DONE."
+      },
+      "review_findings": [
+        {
+          "severity": "BLOCKING",
+          "criterion": "US-011 AC-1, AC-2 and AC-5",
+          "path": "scripts/browser-msi.ps1:118",
+          "defect": "The MSI chain could never build. cargo wix was invoked with neither WiX source: cargo-wix 0.3.9 does not read the wxs key of [package.metadata.wix] and only auto-discovers src-app/wix/*.wxs, which does not exist in this repository, so the call stops on Error[2] There are no WXS files. Even past that, the generated browser-components.wxs was never handed to candle, so the ComponentGroupRef Id='BrowserRuntime' that main.wxs adds behind <?ifdef BrowserStage ?> had no referent and light would fail on an unresolved symbol. The whole generated component group was unreachable from the build. The release workflow already documents this cargo-wix behaviour at .github/workflows/release.yml:1374 and passes --include for the terminal-only MSI.",
+          "correction": "browser-msi.ps1 now passes --include for packaging/wix/main.wxs and for the staged browser-components.wxs, and its comment-based help states why. Verified against the cargo-wix 0.3.9 create.rs wxs_sources implementation, which extends the auto-discovered set with every --include path.",
+          "status": "FIXED"
+        },
+        {
+          "severity": "NON_BLOCKING",
+          "criterion": "US-011 AC-3 and US-012 AC-4",
+          "path": "scripts/browser-msi.ps1:64",
+          "defect": "The SBOM that ships inside the MSI was stamped format 'stage', because stage writes it before the plan and the chain never restamped it. Running the documented sbom --format msi afterwards rewrote a packaged file and silently invalidated every plan digest; verify --format msi then reported a real msi_plan FAIL on the local staged payload.",
+          "correction": "browser-msi.ps1 restamps share/doc/paneflow/browser-sbom.json for the msi format before regenerating the plan, so the plan digest covers the bytes the MSI ships. verify --format msi now returns PASS on the real 246-component payload.",
+          "status": "FIXED"
+        },
+        {
+          "severity": "NON_BLOCKING",
+          "criterion": "US-011 AC-1",
+          "path": "scripts/browser-package.py:186",
+          "defect": "wix_identifier truncated the stem to 70 characters and then appended an underscore and eight hexadecimal digits, so it could emit a 79-character identifier while the MSI Component, File and Directory Identifier columns hold 72. The current payload peaks at 70, so the trap was latent, and the existing test asserted <= 79, codifying it.",
+          "correction": "The stem is capped at WIX_IDENTIFIER_LIMIT - 9 so every generated identifier fits 72 characters, the existing test asserts the real ceiling, and a new test drives a 120-character path plus every identifier of a generated fragment through it.",
+          "status": "FIXED"
+        },
+        {
+          "severity": "NON_BLOCKING",
+          "criterion": "documentation",
+          "path": "docs/release/browser-windows.md:170",
+          "defect": "The installed-layout block listed browser/Resources/... and browser/Resources/locales/..., which do not exist on Windows: the pinned CEF Windows archive keeps icudtl.dat, the pak files and locales inside Release/, and the staged tree has no Resources directory at all.",
+          "correction": "The block now matches the staged tree, and the packaging section states why both WiX sources are named explicitly and that the SBOM is restamped.",
+          "status": "FIXED"
+        },
+        {
+          "severity": "NON_BLOCKING",
+          "criterion": "US-010 AC-3",
+          "path": "crates/paneflow-browser-host/src/linux/permissions.rs:265",
+          "defect": "The permission module is now compiled into the Windows host, but its test module was narrowed to #[cfg(all(test, target_os = \"linux\"))], so the P1 policy fixtures do not run on Windows.",
+          "correction": "Left as is, after verifying it: un-gating the module fails to compile with six errors because the fixtures build the Linux-only HOST, Host and Page items of linux.rs, which windows.rs does not have. Running them on Windows needs a Windows page fixture, a scope expansion. The Windows path is covered instead by the shared browser::page::windows tests that drive grant, refusal, closure and a replaced document through the app-side controller.",
+          "status": "NOT_APPLIED"
+        },
+        {
+          "severity": "NON_BLOCKING",
+          "criterion": "US-010 AC-4",
+          "path": "crates/paneflow-browser-host/src/windows/editing.rs:25",
+          "defect": "emit no longer returns io::Result on Windows, so on_before_context_menu stopped cancelling a pending menu when the control pipe write fails. A dead pipe now leaves the menu registered with a live CEF callback until the next navigation or close.",
+          "correction": "Left as is: the control loop quits the message loop on the next failed protocol reply, clear_web_state and editing::cancel run on navigation, renderer crash and close, and no EP-003 criterion covers a broken control pipe. Worth revisiting with the host resilience work.",
+          "status": "NOT_APPLIED"
+        },
+        {
+          "severity": "OUTSIDE_EPIC",
+          "criterion": "not applicable",
+          "path": "crates/paneflow-browser-host/src/windows.rs:598",
+          "defect": "web_interactions, permissions and external_protocols each allocate request ids from their own counter, and a single InputEvent::WebResponse is dispatched to all three. Two modules can therefore hold the same id, and the automatic refusal the view sends for a second dialog can resolve the first module's pending request. The outcome is fail-closed, never a grant. The same dispatch predates this epic in linux/presentation.rs:507 and belongs to the shared socle.",
+          "correction": "Not changed by this review: the fix belongs to the Linux-owned shared controllers, outside the EP-003 boundary.",
+          "status": "NOT_APPLIED"
+        },
+        {
+          "severity": "OUTSIDE_EPIC",
+          "criterion": "not applicable",
+          "path": ".github/workflows/run_tests.yml:1167",
+          "defect": "No CI job compiles paneflow-browser-host with feature cef-runtime for x86_64-pc-windows-msvc; only aarch64-unknown-linux-gnu is covered. Every line the Windows host adds is therefore unlinted and untested by CI, and was only proven here by an explicit local run against the CEF development root.",
+          "correction": "Not changed by this review: adding a Windows CEF job needs the pinned development package on the runner, which is a release-infrastructure decision.",
+          "status": "NOT_APPLIED"
+        }
+      ],
+      "scope_corrections": [
+        "The Windows target stays availability = development. EP-003 wires the OS integrations and prepares the package; it certifies no distribution.",
+        "No MSI was built, signed or installed, and no DLL-load, Narrator or native update observation exists. Those are US-013 and US-015.",
+        "Agent console and network diagnostics stay unemitted by the Windows host, and drag-and-drop file upload plus the renderer clipboard round trip stay Linux-only. Neither is an EP-003 criterion."
+      ],
+      "unapplied_maintenance": [
+        "Give the three web-dialog registries one shared request-id allocator, or scope the InputEvent::WebResponse dispatch to the module that issued the id.",
+        "Add a Windows leg that clippies and tests paneflow-browser-host with feature cef-runtime for x86_64-pc-windows-msvc.",
+        "Restore the cancel-on-failed-emit behaviour of the Windows context menu, or make the control pipe failure tear the page down explicitly.",
+        "Give the Windows host a permission fixture so the P1 policy tests run on both targets."
+      ],
+      "progress_note": "EP-003 is certified DONE at the implementation tier. The accessibility bridge, the permission, dialog and file paths, the MSI bundle plan and the update plan are reachable from their real entry points: the CEF client mounts the shared handlers, native_signals maps every scoped event to the shared PageSignal the dock already consumes, kickoff_self_update_install gates the Windows install on browser::update::plan, and browser-package.py stage generates the WiX component group the MSI feature references. The review fixed the packaging chain, which could not build the MSI at all, and the SBOM restamp that invalidated the plan. No native Windows observation is claimed.",
+      "certification": "tasks/prd-agents-browser-windows-status.json"
     },
     {
       "id": "EP-004",
@@ -725,11 +987,15 @@
       "external_dependencies": [
         "CORE-UX"
       ],
-      "status": "TODO",
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null,
-      "verification_scope": "implementation"
+      "status": "DONE",
+      "started_at": "2026-09-10T23:55:00+02:00",
+      "completed_at": "2026-09-10T23:59:00+02:00",
+      "reviewed_at": "2026-09-10T23:59:00+02:00",
+      "verification_scope": "implementation",
+      "updated_at": "2026-09-10T23:59:00+02:00",
+      "implementation_validated_at": "2026-09-10T23:55:00+02:00",
+      "blocker": null,
+      "handoff_status": "DONE"
     },
     {
       "id": "US-010",
@@ -744,11 +1010,15 @@
       "external_dependencies": [
         "CORE-WEB"
       ],
-      "status": "TODO",
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null,
-      "verification_scope": "implementation"
+      "status": "DONE",
+      "started_at": "2026-09-10T23:55:00+02:00",
+      "completed_at": "2026-09-10T23:59:00+02:00",
+      "reviewed_at": "2026-09-10T23:59:00+02:00",
+      "verification_scope": "implementation",
+      "updated_at": "2026-09-10T23:59:00+02:00",
+      "implementation_validated_at": "2026-09-10T23:55:00+02:00",
+      "blocker": null,
+      "handoff_status": "DONE"
     },
     {
       "id": "US-011",
@@ -762,11 +1032,15 @@
         "US-003"
       ],
       "external_dependencies": [],
-      "status": "TODO",
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null,
-      "verification_scope": "implementation"
+      "status": "DONE",
+      "started_at": "2026-09-10T23:55:00+02:00",
+      "completed_at": "2026-09-10T23:59:00+02:00",
+      "reviewed_at": "2026-09-10T23:59:00+02:00",
+      "verification_scope": "implementation",
+      "updated_at": "2026-09-10T23:59:00+02:00",
+      "implementation_validated_at": "2026-09-10T23:55:00+02:00",
+      "blocker": null,
+      "handoff_status": "DONE"
     },
     {
       "id": "US-012",
@@ -780,11 +1054,15 @@
       "external_dependencies": [
         "CORE-UPDATE"
       ],
-      "status": "TODO",
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null,
-      "verification_scope": "implementation"
+      "status": "DONE",
+      "started_at": "2026-09-10T23:55:00+02:00",
+      "completed_at": "2026-09-10T23:59:00+02:00",
+      "reviewed_at": "2026-09-10T23:59:00+02:00",
+      "verification_scope": "implementation",
+      "updated_at": "2026-09-10T23:59:00+02:00",
+      "implementation_validated_at": "2026-09-10T23:55:00+02:00",
+      "blocker": null,
+      "handoff_status": "DONE"
     },
     {
       "id": "US-013",
