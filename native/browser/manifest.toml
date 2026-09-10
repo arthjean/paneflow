@@ -309,6 +309,20 @@ minimum_windows_label = "Windows 10 version 1809 and Windows 11 x64"
 bootstrap_contract = "cef-rs sandbox bootstrap.exe invokes the client DLL RunWinMain export with sandbox_info"
 presentation_contract = "control_only_until_ep002"
 
+# Measured on the pinned signed archive by `browser-package.py verify`, which
+# reads each FFmpeg decoder's AVCodec.long_name out of Release/libcef.dll. The
+# archive is stripped, so the ff_*_decoder symbol names the Linux probe uses are
+# not present; the long name is compiled in only when its decoder is enabled.
+# H.264, HEVC and AAC are present, so this artifact carries restricted codecs
+# and its SBOM reports redistribution = review_required.
+[targets."x86_64-pc-windows-msvc".codecs]
+h264 = true
+hevc = true
+aac = true
+mp3 = true
+flac = true
+vorbis = true
+
 [targets."x86_64-pc-windows-msvc".provenance]
 source_index_url = "https://cef-builds.spotifycdn.com/index.json"
 archive_sha1 = "2568e631194b94de0e46ef70e956853f8ccaf5f7"

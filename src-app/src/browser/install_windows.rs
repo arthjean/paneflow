@@ -29,6 +29,24 @@ pub fn declared_availability() -> Availability {
     declared_availability_in(MANIFEST, &target_triple())
 }
 
+pub fn required_bytes() -> u64 {
+    required_bytes_in(MANIFEST, &target_triple())
+}
+
+pub fn required_bytes_in(manifest: &str, target: &str) -> u64 {
+    toml::from_str::<toml::Value>(manifest)
+        .ok()
+        .and_then(|value| {
+            value
+                .get("targets")?
+                .get(target)?
+                .get("unpacked_size")?
+                .as_integer()
+                .and_then(|size| u64::try_from(size).ok())
+        })
+        .unwrap_or(0)
+}
+
 pub fn declared_availability_in(manifest: &str, target: &str) -> Availability {
     let Ok(value) = toml::from_str::<toml::Value>(manifest) else {
         return Availability::Absent;
@@ -354,6 +372,29 @@ mod tests {
     #[test]
     fn the_windows_manifest_exposes_development_without_native_qualification() {
         assert_eq!(declared_availability(), Availability::Development);
+    }
+
+    #[test]
+    fn the_windows_manifest_declares_the_unpacked_payload_size() {
+        assert!(required_bytes() > 128 * 1024 * 1024);
+        assert_eq!(required_bytes_in("", &target_triple()), 0);
+        assert_eq!(required_bytes_in(MANIFEST, "x86_64-unknown-none"), 0);
+    }
+
+    #[test]
+    fn a_runtime_stamped_by_another_manifest_is_refused_instead_of_mixed() {
+        let root = scratch("mixed");
+        let exe = install(&root.join("usr"));
+        let layout = from_prefix(&exe).unwrap();
+        let Readiness::Unusable(reason) = classify(layout.clone(), "expected-digest") else {
+            panic!("a stamp written by another manifest must keep the runtime unusable");
+        };
+        assert!(reason.contains("expected-digest"));
+        assert!(matches!(
+            classify(layout, "digest"),
+            Readiness::Ready(_, Sandbox::Bootstrap)
+        ));
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]

@@ -38,6 +38,9 @@ pub mod supervisor;
 #[cfg(target_os = "windows")]
 #[path = "supervisor_windows.rs"]
 pub mod supervisor;
+#[cfg(target_os = "windows")]
+#[path = "update_windows.rs"]
+pub mod update;
 pub mod view;
 #[cfg(target_os = "windows")]
 pub mod windows;
@@ -125,7 +128,6 @@ impl BrowserRuntime {
         &self.supervisor
     }
 
-    #[cfg(target_os = "linux")]
     pub fn live_hosts(&self) -> usize {
         let live = |supervisor: &supervisor::HostSupervisor| {
             supervisor.state() != supervisor::HostState::Inactive

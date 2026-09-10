@@ -189,6 +189,26 @@ impl PaneFlowApp {
             return;
         }
 
+        #[cfg(target_os = "windows")]
+        {
+            use crate::browser::update::{InstallPlan, plan, site};
+            let live_hosts = cx
+                .try_global::<crate::browser::BrowserRuntime>()
+                .map_or(0, crate::browser::BrowserRuntime::live_hosts);
+            match plan(&site(live_hosts)) {
+                InstallPlan::Blocked(reason) => {
+                    log::info!("self-update/windows: browser payload blocks the install: {reason}");
+                    self.show_toast(reason, cx);
+                    return;
+                }
+                InstallPlan::Resume(reason) => {
+                    log::warn!("self-update/windows: {reason}");
+                    self.push_toast(reason, Vec::new(), TOAST_HOLD_MS * 2, cx);
+                }
+                InstallPlan::Ready => {}
+            }
+        }
+
         if let update::install_method::InstallMethod::SystemPackage { manager } =
             &self.self_update.install_method
         {
