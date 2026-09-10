@@ -1,0 +1,43 @@
+diff --git a/crates/gpui_windows/src/directx_renderer.rs b/crates/gpui_windows/src/directx_renderer.rs
+--- a/crates/gpui_windows/src/directx_renderer.rs
++++ b/crates/gpui_windows/src/directx_renderer.rs
+@@ -44,6 +44,7 @@
+ pub struct ExternalD3D11Surface {
+     pub(crate) view: ID3D11ShaderResourceView,
++    mutex: IDXGIKeyedMutex,
+     pub(crate) width: u32,
+     pub(crate) height: u32,
+ }
+ 
+@@ -89,6 +90,7 @@
+         }
+         Ok(ExternalD3D11Surface {
++            mutex: texture.cast().context("Opening external surface keyed mutex")?,
+             view: view.context("Creating external surface view")?,
+             width,
+             height,
+         })
+@@ -902,12 +904,21 @@
+                 &[instance],
+             )?;
+-            self.pipelines.external_surface.draw_with_texture(
++            let acquired = unsafe {
++                (external.mutex.vtable().AcquireSync)(external.mutex.as_raw(), 0, 0)
++            };
++            if acquired.0 == 258 {
++                continue;
++            }
++            anyhow::ensure!(acquired.0 == 0, "external surface synchronization failed: {acquired:?}");
++            let drawn = self.pipelines.external_surface.draw_with_texture(
+                 &devices.device_context,
+                 std::slice::from_ref(&Some(external.view.clone())),
+                 std::slice::from_ref(&self.globals.sampler),
+                 1,
+-            )?;
++            );
++            unsafe { external.mutex.ReleaseSync(0) }.context("Releasing external surface")?;
++            drawn?;
+         }
+         Ok(())
+     }
+ 

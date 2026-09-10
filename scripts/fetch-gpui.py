@@ -5,9 +5,11 @@ import json
 import os
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
+import time
 import tomllib
 from pathlib import Path
 
@@ -134,6 +136,13 @@ def members_block(packages):
     return f"members = [\n{entries}]\n"
 
 
+def remove_readonly(function, path, error):
+    if os.name != "nt" or not isinstance(error, PermissionError):
+        raise error
+    os.chmod(path, stat.S_IWRITE | stat.S_IREAD)
+    function(path)
+
+
 def create_checkout(manifest, series, pristine):
     target = ROOT / manifest["checkout_directory"]
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -161,8 +170,15 @@ def create_checkout(manifest, series, pristine):
             json.dump(expected_stamp(manifest, series, pristine), handle, indent=2, sort_keys=True)
             handle.write("\n")
         if target.exists():
-            shutil.rmtree(target)
-        os.replace(staging, target)
+            shutil.rmtree(target, onexc=remove_readonly)
+        for attempt in range(10):
+            try:
+                os.replace(staging, target)
+                break
+            except PermissionError as error:
+                if getattr(error, "winerror", None) != 32 or attempt == 9:
+                    raise
+                time.sleep(0.5)
     except BaseException:
         shutil.rmtree(staging, ignore_errors=True)
         raise

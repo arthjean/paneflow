@@ -1,10 +1,16 @@
 use std::collections::BTreeMap;
+#[cfg(unix)]
 use std::os::fd::OwnedFd;
 
 use paneflow_browser_protocol::{
     BrowserError, BufferLayout, Document, FrameAck, FrameFormat, FrameLedger, FrameMessage,
     MAX_PENDING_FRAMES, POOL_BUFFERS,
 };
+
+#[cfg(unix)]
+pub type NativeFrameHandles = Vec<OwnedFd>;
+#[cfg(windows)]
+pub type NativeFrameHandles = Vec<u64>;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PoolLayout {
@@ -26,7 +32,7 @@ pub trait TextureImporter {
     fn import(
         &mut self,
         pool: &PoolLayout,
-        fds: Vec<OwnedFd>,
+        handles: NativeFrameHandles,
     ) -> Result<Vec<Self::Texture>, String>;
 }
 
@@ -74,6 +80,7 @@ pub struct ConsumerStats {
 struct ImportedPool<T> {
     document: Document,
     ready: bool,
+    #[cfg_attr(target_os = "windows", allow(dead_code))]
     layout: PoolLayout,
     textures: Vec<T>,
 }
@@ -101,6 +108,7 @@ impl<T> Default for FrameConsumer<T> {
 }
 
 impl<T> FrameConsumer<T> {
+    #[cfg_attr(target_os = "windows", allow(dead_code))]
     pub fn stats(&self) -> ConsumerStats {
         self.stats
     }
@@ -124,6 +132,7 @@ impl<T> FrameConsumer<T> {
         Some((texture, identity, timing))
     }
 
+    #[cfg_attr(target_os = "windows", allow(dead_code))]
     pub fn current_size(&self) -> Option<(u32, u32)> {
         let (identity, _) = self.current?;
         let pool = self.pools.get(&identity.pool_generation)?;
@@ -138,6 +147,7 @@ impl<T> FrameConsumer<T> {
         self.pools.len()
     }
 
+    #[cfg_attr(target_os = "windows", allow(dead_code))]
     pub fn outstanding(&self) -> usize {
         self.ledger.outstanding()
     }
@@ -261,7 +271,7 @@ impl<T> FrameConsumer<T> {
     pub fn intake(
         &mut self,
         message: FrameMessage,
-        fds: Vec<OwnedFd>,
+        handles: NativeFrameHandles,
         importer: &mut impl TextureImporter<Texture = T>,
     ) -> Intake {
         match message {
@@ -273,6 +283,7 @@ impl<T> FrameConsumer<T> {
                 format,
                 modifier,
                 buffers,
+                ..
             } => {
                 let layout = PoolLayout {
                     generation: pool_generation,
@@ -289,7 +300,7 @@ impl<T> FrameConsumer<T> {
                 ) {
                     return outcome;
                 }
-                let result = importer.import(&layout, fds);
+                let result = importer.import(&layout, handles);
                 self.complete_pool(
                     &document,
                     pool_generation,
@@ -423,6 +434,7 @@ impl<T> FrameConsumer<T> {
         !self.replaced.is_empty()
     }
 
+    #[cfg_attr(target_os = "windows", allow(dead_code))]
     pub fn pool_textures(&self, document: &Document, generation: u64) -> Option<&[T]> {
         self.pools
             .get(&generation)
@@ -446,6 +458,7 @@ impl<T> FrameConsumer<T> {
         Ok(())
     }
 
+    #[cfg_attr(target_os = "windows", allow(dead_code))]
     pub fn pool_layout(&self, generation: u64) -> Option<&PoolLayout> {
         self.pools.get(&generation).map(|pool| &pool.layout)
     }
@@ -476,9 +489,13 @@ mod tests {
             self.requires_ready
         }
 
-        fn import(&mut self, pool: &PoolLayout, fds: Vec<OwnedFd>) -> Result<Vec<String>, String> {
+        fn import(
+            &mut self,
+            pool: &PoolLayout,
+            handles: NativeFrameHandles,
+        ) -> Result<Vec<String>, String> {
             assert!(!self.forbid, "import must not run during frame intake");
-            assert!(fds.is_empty());
+            assert!(handles.is_empty());
             if self.fail {
                 return Err("import refused".to_string());
             }
@@ -508,6 +525,7 @@ mod tests {
             height: 480,
             format: FrameFormat::Bgra8,
             modifier: 0,
+            shared_handles: Vec::new(),
             buffers: (0..POOL_BUFFERS)
                 .map(|slot| BufferLayout {
                     slot,

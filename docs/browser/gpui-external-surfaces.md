@@ -1,8 +1,9 @@
 # ADR: GPUI external surfaces for the Browser dock
 
-Status: accepted for R0 (2026-09-06). Owner: US-006 of the Linux browser
-plan. Consumers: the Linux DMA-BUF adapter (US-007), the Wayland and X11
-prototypes (US-008, US-009), later the Windows and macOS adapters.
+Status: accepted for R0 (2026-09-06). Owners: US-006 of the Linux browser
+plan and EP-002 of the Windows browser plan. Consumers: the Linux DMA-BUF
+adapter (US-007), the Wayland and X11 prototypes (US-008, US-009), and the
+Windows D3D11 adapter (EP-002).
 
 ## Context
 
@@ -18,7 +19,7 @@ that pin, all still true before this extension:
 | `WgpuRenderer::record_frame` | `crates/gpui_wgpu/src/wgpu_renderer.rs` | `PrimitiveBatch::Surfaces` is an empty arm; the existing `surfaces` pipeline samples a two-plane YCbCr layout and is dead code |
 | `WgpuContext::create_device` | `crates/gpui_wgpu/src/wgpu_context.rs` | `request_device` lets wgpu-hal enable `VK_KHR_external_memory_fd` and `VK_EXT_external_memory_dma_buf` when present, but never `VK_EXT_image_drm_format_modifier` or `VK_KHR_external_semaphore_fd`, so a DMA-BUF with a vendor modifier cannot be imported into the window's device |
 | `PlatformWindow` | `crates/gpui/src/platform.rs` | Nothing exposes the window's wgpu device, queue or adapter; `gpu_specs` only reports names |
-| `DirectXRenderer::draw_surfaces` | `crates/gpui_windows/src/directx_renderer.rs` | Returns without drawing; untouched by this ADR |
+| `DirectXRenderer::draw_surfaces` | `crates/gpui_windows/src/directx_renderer.rs` | The pinned Windows path now needs a typed D3D11 surface context and composition pipeline |
 | `MetalRenderer::draw_surfaces` | `crates/gpui_apple/src/metal_renderer.rs` | Asserts a biplanar YCbCr pixel format; untouched by this ADR |
 
 Paneflow pins GPUI through four `rev` values in `src-app/Cargo.toml`
@@ -67,17 +68,19 @@ accessor and one renderer path. Nothing else in GPUI changes.
 | Ownership | The handle is reference counted; the scene stores a clone per painted frame and the producer keeps its own. Dropping the last clone releases the renderer resource on the renderer's own schedule (wgpu defers destruction until the GPU is done). The generation is producer state the renderer never interprets; adapters must not paint a surface older than the generation they were told is current | `ExternalSurface::generation`, adapter code |
 | Scene dispatch | `Window::paint_external_surface(bounds, external)` inserts a `PaintSurface` on non-macOS targets; batching, clipping and z-order reuse the existing `Primitive::Surface` path | `crates/gpui/src/window.rs`, unchanged `scene.rs` batching |
 | Import point | `PlatformWindow::external_surface_context()` (default `None`) and `Window::external_surface_context()` return the renderer objects an adapter must create its resources with; Wayland and X11 windows return `gpui_wgpu::ExternalSurfaceContext { instance, adapter, device, queue }` | `crates/gpui/src/platform.rs`, `crates/gpui_linux/src/linux/{wayland,x11}/window.rs` |
-| Presentation point | `WgpuRenderer::record_frame` composes every `PaintSurface` whose handle downcasts to `gpui_wgpu::ExternalWgpuSurface` with a dedicated `external_surfaces` pipeline: one uniform record per surface (bounds and content mask), the surface texture view and the atlas sampler, premultiplied blending, at most 64 surfaces per frame. Unknown handles draw nothing | `crates/gpui_wgpu/src/wgpu_renderer.rs`, `crates/gpui_wgpu/src/shaders.wgsl` |
+| Presentation point | `WgpuRenderer::record_frame` and `DirectXRenderer::draw_surfaces` compose every `PaintSurface` whose handle downcasts to the platform external surface with a dedicated pipeline: one instance record per surface (bounds and content mask), the surface texture view and the atlas sampler, premultiplied blending, at most 64 surfaces per frame. Unknown handles draw nothing | `crates/gpui_wgpu/src/wgpu_renderer.rs`, `crates/gpui_wgpu/src/shaders.wgsl`, `crates/gpui_windows/src/directx_renderer.rs`, `crates/gpui_windows/src/shaders.hlsl` |
 | Device creation | On Linux and FreeBSD Vulkan adapters, `WgpuContext::create_device` opens the device through `wgpu-hal` `open_with_callback` and adds, when the physical device supports them, `VK_KHR_external_memory_fd`, `VK_EXT_external_memory_dma_buf`, `VK_EXT_image_drm_format_modifier`, `VK_KHR_image_format_list`, `VK_KHR_bind_memory2`, `VK_KHR_sampler_ycbcr_conversion`, `VK_KHR_external_semaphore_fd` and `VK_EXT_queue_family_foreign`. Other backends and targets keep `request_device` | `crates/gpui_wgpu/src/wgpu_context.rs` |
-| Re-export | `gpui_linux` and `gpui_platform` re-export `gpui_wgpu` on Linux and FreeBSD so Paneflow reaches `wgpu`, `ExternalSurfaceContext` and `ExternalWgpuSurface` without a fifth pin | `crates/gpui_linux/src/gpui_linux.rs`, `crates/gpui_platform/src/gpui_platform.rs` |
+| Re-export | `gpui_linux` and `gpui_platform` re-export `gpui_wgpu` on Linux and FreeBSD, while `gpui_platform` re-exports the Windows D3D11 surface types, so Paneflow reaches the platform context without a fifth pin | `crates/gpui_linux/src/gpui_linux.rs`, `crates/gpui_platform/src/gpui_platform.rs`, `crates/gpui_windows/src/gpui_windows.rs` |
 
 ### Explicit unavailability
 
 - macOS keeps `SurfaceSource::Surface(CVPixelBuffer)`; `External` does not
   exist there and `external_surface_context()` returns `None`.
-- Windows compiles `External` and `paint_external_surface` but
-  `DirectXRenderer` still ignores surfaces and `external_surface_context()`
-  returns `None`, so an adapter reports `unavailable` before creating a page.
+- Windows composes `External` and `paint_external_surface` through the typed
+  `ExternalSurfaceContext` and `ExternalD3D11Surface` path. The adapter opens
+  only authenticated consumer handles and closes them after import. Native
+  device, fence, input, resize and sandbox evidence remains required before
+  the target becomes qualified.
 - Headless Linux and the web target return `None` for the same reason.
 - A GPU device recovery replaces the `ExternalSurfaceContext`; resources
   created for the previous device must be dropped and re-imported. Adapters
@@ -148,11 +151,13 @@ Measured on the committed series (`git diff --stat` of the checkout after
 | `0002-gpui-wgpu-external-surface-composition.patch` | 5 | 311 | 15 |
 | `0003-gpui-linux-external-surface-context.patch` | 3 | 9 | 0 |
 | `0004-gpui-platform-external-surface-reexport.patch` | 1 | 2 | 0 |
+| `0010-gpui-windows-directx-external-surface.patch` | 6 | 196 | 3 |
 
 The series touches no rendering path other than the surface batch, no text
 system, no event loop and no public type Paneflow already used. Upstream
-changes to `PaintSurface`, `PrimitiveBatch::Surfaces`, `WgpuContext::create_device`
-or the `PlatformWindow` trait are the conflict points to expect at a pin bump.
+changes to `PaintSurface`, `PrimitiveBatch::Surfaces`,
+`WgpuContext::create_device`, `DirectXRenderer::draw_surfaces` or the
+`PlatformWindow` trait are the conflict points to expect at a pin bump.
 The `perf`, `zlog` and `ztracing` crates are checked out only because the
 lockfile already carried them from the git pin; they are unpatched.
 
@@ -173,5 +178,5 @@ lockfile already carried them from the git pin; they are unpatched.
 Per US-006 the following would require a plan revision before any scope
 expansion: a renderer change that forces terminal or text pipeline changes, a
 dependency on a private or non-distributable API, or a change of application
-shell. None applies to this series; the Windows DirectX and macOS Metal
-composition paths remain open work owned by their platform plans.
+shell. None applies to this series; the macOS Metal composition path remains
+open work owned by its platform plan.

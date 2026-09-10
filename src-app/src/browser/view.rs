@@ -1042,6 +1042,15 @@ impl BrowserView {
             }
             (paths, profile_dir, stage_root)
         };
+        #[cfg(target_os = "windows")]
+        let runtime_check = match super::supervisor::RuntimeCheck::dock_session() {
+            Ok(check) => check,
+            Err(error) => {
+                self.notice = Some(error);
+                cx.notify();
+                return;
+            }
+        };
         let page = super::page::PageConfig {
             benchmark_id: self.id.as_str().to_owned(),
             host_binary: paths.0,
@@ -1050,6 +1059,8 @@ impl BrowserView {
             profile_dir,
             origin,
             owner: scope,
+            #[cfg(target_os = "windows")]
+            runtime_check,
         };
         match LivePage::start(window, cx, page) {
             Ok(start) => {
@@ -2146,7 +2157,7 @@ impl BrowserView {
                     },
                     move |bounds, (), window, cx| {
                         Self::install_pointer_capture(&view, window);
-                        #[cfg(target_os = "linux")]
+                        #[cfg(any(target_os = "linux", target_os = "windows"))]
                         if let Some(surface) = surface.clone() {
                             window.paint_external_surface(bounds, surface);
                         }
@@ -2561,13 +2572,13 @@ impl gpui::InputHandler for BrowserInputHandler {
         cx: &mut App,
     ) -> Option<Bounds<Pixels>> {
         let view = self.view.read(cx);
-        let [x, y, w, h] = view.ime.caret_bounds(range_utf16.start)?;
+        let rect = view.ime.caret_bounds(range_utf16.start)?;
         let geometry = view.last_geometry?;
-        let scale_x = f32::from(self.bounds.size.width) / geometry.width.max(1) as f32;
-        let scale_y = f32::from(self.bounds.size.height) / geometry.height.max(1) as f32;
-        Some(Bounds::new(
-            self.bounds.origin + gpui::point(px(x as f32 * scale_x), px(y as f32 * scale_y)),
-            gpui::size(px(w.max(1) as f32 * scale_x), px(h.max(1) as f32 * scale_y)),
+        Some(super::ime::candidate_bounds(
+            rect,
+            self.bounds.origin,
+            self.bounds.size,
+            geometry,
         ))
     }
 

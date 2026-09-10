@@ -23,8 +23,18 @@ cef = { git = "https://github.com/tauri-apps/cef-rs", rev = "71a3eba55bb46957b7b
 libc.workspace = true
 
 [target.'cfg(target_os = "windows")'.dependencies]
-cef = { git = "https://github.com/tauri-apps/cef-rs", rev = "71a3eba55bb46957b7bdd627ef7caf5c70acf4bb", default-features = false, features = ["dox", "sandbox"], optional = true }
+cef = { git = "https://github.com/tauri-apps/cef-rs", rev = "71a3eba55bb46957b7bdd627ef7caf5c70acf4bb", default-features = false, features = ["dox", "sandbox", "accelerated_osr"], optional = true }
 interprocess.workspace = true
+windows = { version = "0.61", features = [
+    "Win32_System_Performance",
+    "Win32_Foundation",
+    "Win32_Graphics_Direct3D",
+    "Win32_Graphics_Direct3D11",
+    "Win32_Graphics_Dxgi",
+    "Win32_Graphics_Dxgi_Common",
+    "Win32_Security",
+    "Win32_System_Threading",
+] }
 
 [target.'cfg(target_os = "windows")'.build-dependencies]
 cmake = "0.1"

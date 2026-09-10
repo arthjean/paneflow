@@ -3,6 +3,9 @@ mod address;
 pub(crate) mod agent;
 pub mod authority;
 mod benchmark;
+#[cfg(target_os = "windows")]
+#[path = "display_scale_windows.rs"]
+pub mod display_scale;
 mod ime;
 pub mod input;
 #[cfg(test)]
@@ -15,7 +18,7 @@ pub mod install;
 #[cfg(target_os = "linux")]
 pub mod linux;
 pub mod page;
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "windows"))]
 pub mod presentation;
 pub mod profile;
 #[cfg(target_os = "linux")]
@@ -25,6 +28,9 @@ mod profile_host;
 mod profile_host;
 #[cfg(target_os = "linux")]
 pub mod prototype;
+#[cfg(target_os = "windows")]
+#[path = "prototype_windows.rs"]
+pub mod prototype;
 #[cfg(target_os = "linux")]
 pub mod security_corpus;
 #[cfg(target_os = "linux")]
@@ -33,6 +39,8 @@ pub mod supervisor;
 #[path = "supervisor_windows.rs"]
 pub mod supervisor;
 pub mod view;
+#[cfg(target_os = "windows")]
+pub mod windows;
 
 pub const PROTOTYPE_VERB: &str = "browser-prototype";
 pub const SECURITY_CORPUS_VERB: &str = "browser-security-corpus";
@@ -40,6 +48,8 @@ pub const HOST_ENV: &str = "PANEFLOW_BROWSER_HOST";
 pub const RUNTIME_ENV: &str = "PANEFLOW_CEF_ROOT";
 
 #[cfg(target_os = "linux")]
+pub use prototype::run as run_prototype;
+#[cfg(target_os = "windows")]
 pub use prototype::run as run_prototype;
 #[cfg(target_os = "linux")]
 pub use security_corpus::run as run_security_corpus;
@@ -50,7 +60,7 @@ pub fn run_security_corpus() -> i32 {
     2
 }
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(all(not(target_os = "linux"), not(target_os = "windows")))]
 pub fn run_prototype(_args: &[String]) -> i32 {
     eprintln!(
         "browser unavailable: the GPU presentation prototype has a Linux adapter only; external URL opening and terminals are unaffected"

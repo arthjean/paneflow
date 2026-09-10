@@ -33,7 +33,7 @@ pub fn paint_text_runs(
             &[text_run],
             Some(geom.cell_width),
         );
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "windows"))]
         if crate::browser_qualification::enabled()
             && run.text.contains("pf-input:")
             && shaped.runs.iter().all(|run| run.glyphs.is_empty())
@@ -75,7 +75,7 @@ pub(super) fn paint_shaped_line(
                 window.paint_glyph(origin, run.font_id, glyph.id, layout.font_size, color)
             };
             if let Err(error) = painted {
-                #[cfg(target_os = "linux")]
+                #[cfg(any(target_os = "linux", target_os = "windows"))]
                 crate::browser_qualification::paint_failed(&error);
 
                 log::debug!("terminal glyph paint failed: {error:#}");

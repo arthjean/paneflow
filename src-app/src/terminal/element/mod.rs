@@ -1333,11 +1333,11 @@ impl Element for TerminalElement {
         window: &mut Window,
         cx: &mut App,
     ) -> Self::PrepaintState {
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "windows"))]
         let qualification_start =
             crate::browser_qualification::enabled().then(crate::browser_qualification::cpu_started);
         let layout = self.build_layout(bounds, window, cx);
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "windows"))]
         if let Some(start) = qualification_start {
             crate::browser_qualification::cpu_finished(
                 self.terminal_view.entity_id().as_u64(),
@@ -1358,7 +1358,7 @@ impl Element for TerminalElement {
         window: &mut Window,
         cx: &mut App,
     ) {
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "windows"))]
         let qualification_start =
             crate::browser_qualification::enabled().then(crate::browser_qualification::cpu_started);
 
@@ -1495,7 +1495,7 @@ impl Element for TerminalElement {
             );
         });
 
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "windows"))]
         if let Some(start) = qualification_start {
             crate::browser_qualification::cpu_finished(
                 self.terminal_view.entity_id().as_u64(),

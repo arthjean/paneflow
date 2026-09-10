@@ -323,6 +323,7 @@ objc2-metal = { version = "0.3.2", default-features = false, features = [
 [target.'cfg(windows)'.dependencies]
 raw-window-handle = "0.6"
 windows-sys = { version = "0.59", features = [
+    "Win32_System_Performance",
     "Win32_System_Threading",
     "Win32_Foundation",
     # `timeBeginPeriod` / `timeEndPeriod`: hold the process timer resolution at
@@ -331,6 +332,14 @@ windows-sys = { version = "0.59", features = [
     "Win32_Media",
     # Native fixed-pitch font discovery for the Terminal settings picker.
     "Win32_Graphics_Gdi",
+    # EP-002 US-007: QueryDisplayConfig plus the DPI scale device-info packets
+    # drive the 150%/200% transitions of the browser qualification prototype on
+    # a secondary display, and restore the previous scale on the way out.
+    "Win32_Devices_Display",
+    # EP-002 US-008: GetDpiForMonitor reports the effective per-monitor scale
+    # recorded in the native evidence, next to the OS identity read from the
+    # CurrentVersion registry key.
+    "Win32_UI_HiDpi",
     "Win32_System_Diagnostics",
     "Win32_System_Diagnostics_Debug",
     "Win32_System_Diagnostics_ToolHelp",

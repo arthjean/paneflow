@@ -34,16 +34,29 @@ pub enum ConfigError {
 }
 
 pub fn config_path() -> Option<PathBuf> {
+    if let Some(root) = qualification_root() {
+        return Some(root.join("config/paneflow.json"));
+    }
     dirs::config_dir().map(|dir| dir.join(APP_SUBDIR).join("paneflow.json"))
 }
 
 pub fn session_path() -> Option<PathBuf> {
+    if let Some(root) = qualification_root() {
+        return Some(root.join("cache/session.json"));
+    }
     let filename = if cfg!(debug_assertions) {
         "session-dev.json"
     } else {
         "session.json"
     };
     dirs::cache_dir().map(|dir| dir.join(APP_SUBDIR).join(filename))
+}
+
+pub fn qualification_root() -> Option<PathBuf> {
+    std::env::var_os("PANEFLOW_M1_LOG")?;
+    std::env::var_os("PANEFLOW_M1_STATE_ROOT")
+        .map(PathBuf::from)
+        .filter(|path| path.is_absolute())
 }
 
 pub fn load_config() -> PaneFlowConfig {

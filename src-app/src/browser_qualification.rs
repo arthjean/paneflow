@@ -7,12 +7,18 @@ pub(crate) use linux::{
     enabled, input_key, input_text, now_ns, paint_failed, painted,
 };
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(target_os = "windows")]
+mod windows;
+
+#[cfg(target_os = "windows")]
+pub(crate) use windows::*;
+
+#[cfg(not(any(target_os = "linux", target_os = "windows")))]
 pub(crate) fn enabled() -> bool {
     false
 }
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", target_os = "windows")))]
 pub(crate) fn now_ns() -> u64 {
     0
 }

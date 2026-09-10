@@ -3,10 +3,13 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex, OnceLock, Weak};
 use std::time::Duration;
 
-use paneflow_browser_protocol::{BrowserError, BrowserId, Command, Document, Event, OperationId};
+use paneflow_browser_protocol::{
+    BrowserError, BrowserId, Command, Document, Event, FrameAck, FrameMessage, OperationId,
+};
 use serde_json::Value;
 
 use super::supervisor::{HostConfig, HostEvent, HostInfo, HostSupervisor, SHUTDOWN_GRACE};
+use super::windows::D3dImporter;
 
 const EVENT_CAPACITY: usize = 256;
 const OPERATION_CAPACITY: usize = 4096;
@@ -123,6 +126,7 @@ impl ProfileHost {
 
     fn route(&self, event: HostEvent) -> bool {
         let Ok(mut routes) = self.routes.lock() else {
+            close_frame_handles(event);
             return false;
         };
         match &event {
@@ -211,15 +215,60 @@ impl ProfileHost {
                 }
                 document.map(|document| document.browser)
             }
+            HostEvent::Frame(message, _) => Some(match message {
+                FrameMessage::PoolCreated { document, .. }
+                | FrameMessage::Frame { document, .. }
+                | FrameMessage::PoolRetired { document, .. }
+                | FrameMessage::Failed { document, .. } => document.browser.clone(),
+            }),
             HostEvent::Ready(_) | HostEvent::Lost(_) | HostEvent::Stopped => None,
         };
         let Some(page) = browser
             .as_ref()
             .and_then(|browser| routes.pages.get(browser))
         else {
+            if let HostEvent::Frame(message, handles) = event {
+                D3dImporter::close_handles(handles);
+                let ack = match message {
+                    FrameMessage::PoolCreated {
+                        document,
+                        pool_generation,
+                        ..
+                    } => Some(FrameAck::PoolRejected {
+                        document,
+                        pool_generation,
+                    }),
+                    FrameMessage::Frame {
+                        document,
+                        pool_generation,
+                        buffer,
+                        sequence,
+                        ..
+                    } => Some(FrameAck::Release {
+                        document,
+                        pool_generation,
+                        buffer,
+                        sequence,
+                    }),
+                    _ => None,
+                };
+                if let Some(ack) = ack {
+                    return self
+                        .supervisor
+                        .frame_acknowledger()
+                        .and_then(|acknowledger| acknowledger.ack(ack))
+                        .is_ok();
+                }
+            }
             return true;
         };
-        page.sender.try_send(event).is_ok()
+        match page.sender.try_send(event) {
+            Ok(()) => true,
+            Err(error) => {
+                close_frame_handles(error.into_inner());
+                false
+            }
+        }
     }
 
     fn fail_queues(&self) {
@@ -227,7 +276,9 @@ impl ProfileHost {
             routes.stopping = true;
             routes.ready = None;
             for page in routes.pages.values() {
-                while page.receiver.try_recv().is_ok() {}
+                while let Ok(event) = page.receiver.try_recv() {
+                    close_frame_handles(event);
+                }
                 let _ = page.sender.try_send(HostEvent::Lost(
                     "browser profile event queue saturated".into(),
                 ));
@@ -261,5 +312,11 @@ impl ProfileHost {
                 })
                 .ok();
         }
+    }
+}
+
+fn close_frame_handles(event: HostEvent) {
+    if let HostEvent::Frame(_, handles) = event {
+        D3dImporter::close_handles(handles);
     }
 }

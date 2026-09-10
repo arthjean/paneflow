@@ -1050,6 +1050,7 @@ impl Presenter {
             height,
             format,
             modifier,
+            shared_handles: Vec::new(),
             buffers,
         };
         if let Err(error) = self.channel.send(&message, &borrowed) {

@@ -171,7 +171,10 @@ pub fn augment_path_for_gui_launch() {
 }
 
 pub fn data_dir() -> Option<PathBuf> {
-    let dir = dirs::data_local_dir()?.join(APP_SUBDIR);
+    let dir = match paneflow_config::loader::qualification_root() {
+        Some(root) => root.join("data"),
+        None => dirs::data_local_dir()?.join(APP_SUBDIR),
+    };
     if let Err(e) = std::fs::create_dir_all(&dir) {
         log::debug!(
             "paneflow: data_dir {} is unwritable ({e}); callers will use ephemeral state",

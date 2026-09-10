@@ -2375,6 +2375,77 @@ impl PaneFlowApp {
                     .into_value(),
                 }
             }
+            #[cfg(target_os = "windows")]
+            "qualification.browser.open" | "qualification.window" => {
+                if !ipc_scripting_enabled()
+                    || !crate::browser_qualification::enabled()
+                    || paneflow_config::loader::qualification_root().is_none()
+                {
+                    return JsonRpcError::method_not_enabled(
+                        "isolated M1 qualification is required",
+                    )
+                    .into_value();
+                }
+                let url = params.get("url").and_then(|value| value.as_str());
+                if method == "qualification.browser.open" && url.is_none() {
+                    return JsonRpcError::invalid_params("URL is required").into_value();
+                }
+                if url.is_some_and(|url| {
+                    !paneflow_browser_protocol::normalize_address(url).is_ok_and(|url| {
+                        url.starts_with("http://127.0.0.1:") || url.starts_with("http://127.0.0.1/")
+                    })
+                }) {
+                    return JsonRpcError::invalid_params(
+                        "qualification requires a loopback fixture",
+                    )
+                    .into_value();
+                }
+                let url = url.map(str::to_owned);
+                cx.spawn(async move |this, cx| {
+                    cx.update(|cx| {
+                        for handle in cx.windows() {
+                            let opened = handle
+                                .update(cx, |_, window, cx| {
+                                    if window.root::<PaneFlowApp>().flatten().is_none() {
+                                        return false;
+                                    }
+                                    let scale = window.scale_factor();
+                                    window.resize(gpui::size(
+                                        gpui::px(1920.0 / scale),
+                                        gpui::px(1080.0 / scale),
+                                    ));
+                                    this.update(cx, |this, cx| {
+                                        if let Some(url) = &url {
+                                            if !this.browser_available(cx) {
+                                                crate::browser_qualification::paint_failed(
+                                                    "browser runtime is unavailable",
+                                                );
+                                                return;
+                                            }
+                                            if let Some(session) = this.active_browser_session()
+                                                && let Err(error) = this.open_url_in_browser(
+                                                    session,
+                                                    url,
+                                                    Some(window),
+                                                    cx,
+                                                )
+                                            {
+                                                crate::browser_qualification::paint_failed(error);
+                                            }
+                                        }
+                                    })
+                                    .is_ok()
+                                })
+                                .unwrap_or(false);
+                            if opened {
+                                break;
+                            }
+                        }
+                    });
+                })
+                .detach();
+                serde_json::json!({"queued":true})
+            }
             "qualification.input" => {
                 static PENDING: std::sync::atomic::AtomicUsize =
                     std::sync::atomic::AtomicUsize::new(0);

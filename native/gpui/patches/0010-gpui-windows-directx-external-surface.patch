@@ -1,0 +1,374 @@
+diff --git a/crates/gpui_platform/src/gpui_platform.rs b/crates/gpui_platform/src/gpui_platform.rs
+index 62b0bf7d2f..bb3e76e21f 100644
+--- a/crates/gpui_platform/src/gpui_platform.rs
++++ b/crates/gpui_platform/src/gpui_platform.rs
+@@ -4,6 +4,8 @@
+ pub use gpui::Platform;
+ #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+ pub use gpui_linux::gpui_wgpu;
++#[cfg(target_os = "windows")]
++pub use gpui_windows;
+ 
+ use std::rc::Rc;
+ 
+diff --git a/crates/gpui_windows/build.rs b/crates/gpui_windows/build.rs
+index 1db95715e2..aae11a0d42 100644
+--- a/crates/gpui_windows/build.rs
++++ b/crates/gpui_windows/build.rs
+@@ -38,6 +38,7 @@ mod shader_compilation {
+             "monochrome_sprite",
+             "subpixel_sprite",
+             "polychrome_sprite",
++            "external_surface",
+         ];
+ 
+         let rust_binding_path = format!("{}/shaders_bytes.rs", out_dir);
+diff --git a/crates/gpui_windows/src/directx_renderer.rs b/crates/gpui_windows/src/directx_renderer.rs
+index 8590407e61..904c06dda6 100644
+--- a/crates/gpui_windows/src/directx_renderer.rs
++++ b/crates/gpui_windows/src/directx_renderer.rs
+@@ -7,7 +7,7 @@ use anyhow::{Context, Result};
+ use gpui_util::ResultExt;
+ use windows::{
+     Win32::{
+-        Foundation::HWND,
++        Foundation::{CloseHandle, HANDLE, HWND},
+         Graphics::{
+             Direct3D::*,
+             Direct3D11::*,
+@@ -36,6 +36,65 @@ pub(crate) struct FontInfo {
+     pub is_bgr: bool,
+ }
+ 
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++pub enum ExternalSurfaceFormat {
++    Bgra8,
++    Rgba8,
++}
++
++pub struct ExternalD3D11Surface {
++    pub(crate) view: ID3D11ShaderResourceView,
++    pub(crate) width: u32,
++    pub(crate) height: u32,
++}
++
++#[derive(Clone)]
++pub struct ExternalSurfaceContext {
++    device: ID3D11Device,
++}
++
++impl ExternalSurfaceContext {
++    pub fn import_shared_texture(
++        &self,
++        handle: u64,
++        width: u32,
++        height: u32,
++        format: ExternalSurfaceFormat,
++    ) -> Result<ExternalD3D11Surface> {
++        anyhow::ensure!(handle != 0, "external surface handle is null");
++        anyhow::ensure!(width > 0 && height > 0, "external surface size is empty");
++        let device: ID3D11Device1 = self.device.cast().context("Opening D3D11 device")?;
++        let shared_handle = HANDLE(handle as usize as _);
++        let texture_result = unsafe { device.OpenSharedResource1(shared_handle) };
++        unsafe {
++            let _ = CloseHandle(shared_handle);
++        }
++        let texture: ID3D11Texture2D = texture_result.context("Opening shared external surface")?;
++        let mut desc = D3D11_TEXTURE2D_DESC::default();
++        unsafe { texture.GetDesc(&mut desc) };
++        let expected_format = match format {
++            ExternalSurfaceFormat::Bgra8 => DXGI_FORMAT_B8G8R8A8_UNORM,
++            ExternalSurfaceFormat::Rgba8 => DXGI_FORMAT_R8G8B8A8_UNORM,
++        };
++        anyhow::ensure!(desc.Width == width, "external surface width changed");
++        anyhow::ensure!(desc.Height == height, "external surface height changed");
++        anyhow::ensure!(desc.Format == expected_format, "external surface format changed");
++        anyhow::ensure!(desc.MipLevels == 1, "external surface has mip levels");
++        anyhow::ensure!(desc.ArraySize == 1, "external surface is an array");
++        anyhow::ensure!(desc.SampleDesc.Count == 1, "external surface is multisampled");
++        let mut view = None;
++        unsafe {
++            self.device
++                .CreateShaderResourceView(&texture, None, Some(&mut view))?;
++        }
++        Ok(ExternalD3D11Surface {
++            view: view.context("Creating external surface view")?,
++            width,
++            height,
++        })
++    }
++}
++
+ pub(crate) struct DirectXRenderer {
+     hwnd: HWND,
+     atlas: Arc<DirectXAtlas>,
+@@ -45,6 +104,7 @@ pub(crate) struct DirectXRenderer {
+     pipelines: DirectXRenderPipelines,
+     direct_composition: Option<DirectComposition>,
+     font_info: &'static FontInfo,
++    external_surface_context: Arc<ExternalSurfaceContext>,
+ 
+     width: u32,
+     height: u32,
+@@ -92,6 +152,7 @@ struct DirectXRenderPipelines {
+     mono_sprites: PipelineState<MonochromeSprite>,
+     subpixel_sprites: PipelineState<SubpixelSprite>,
+     poly_sprites: PipelineState<PolychromeSprite>,
++    external_surface: PipelineState<ExternalSurfaceInstance>,
+ }
+ 
+ struct DirectXGlobalElements {
+@@ -170,6 +231,9 @@ impl DirectXRenderer {
+             .context("Creating DirectX global elements")?;
+         let pipelines = DirectXRenderPipelines::new(&devices.device)
+             .context("Creating DirectX render pipelines")?;
++        let external_surface_context = Arc::new(ExternalSurfaceContext {
++            device: devices.device.clone(),
++        });
+ 
+         let direct_composition = if disable_direct_composition {
+             None
+@@ -191,6 +255,7 @@ impl DirectXRenderer {
+             pipelines,
+             direct_composition,
+             font_info: Self::get_font_info(),
++            external_surface_context,
+             width: 1,
+             height: 1,
+             skip_draws: false,
+@@ -201,6 +266,10 @@ impl DirectXRenderer {
+         self.atlas.clone()
+     }
+ 
++    pub fn external_surface_context(&self) -> Arc<ExternalSurfaceContext> {
++        self.external_surface_context.clone()
++    }
++
+     fn pre_draw(&self, clear_color: &[f32; 4]) -> Result<()> {
+         let resources = self.resources.as_ref().expect("resources missing");
+         let device_context = &self
+@@ -300,6 +369,9 @@ impl DirectXRenderer {
+             .context("Creating DirectXGlobalElements")?;
+         let pipelines = DirectXRenderPipelines::new(&devices.device)
+             .context("Creating DirectXRenderPipelines")?;
++        let external_surface_context = Arc::new(ExternalSurfaceContext {
++            device: devices.device.clone(),
++        });
+ 
+         let direct_composition = if disable_direct_composition {
+             None
+@@ -323,6 +395,7 @@ impl DirectXRenderer {
+         self.globals = globals;
+         self.pipelines = pipelines;
+         self.direct_composition = direct_composition;
++        self.external_surface_context = external_surface_context;
+         self.skip_draws = true;
+         Ok(())
+     }
+@@ -808,8 +881,31 @@ impl DirectXRenderer {
+     }
+ 
+     fn draw_surfaces(&mut self, surfaces: &[PaintSurface]) -> Result<()> {
+-        if surfaces.is_empty() {
+-            return Ok(());
++        for surface in surfaces {
++            let Some(external) = surface
++                .external
++                .handle()
++                .downcast_ref::<ExternalD3D11Surface>()
++            else {
++                continue;
++            };
++            anyhow::ensure!(
++                external.width > 0 && external.height > 0,
++                "external surface is empty"
++            );
++            let instance = ExternalSurfaceInstance::from_paint_surface(surface);
++            let devices = self.devices.as_ref().context("devices missing")?;
++            self.pipelines.external_surface.update_buffer(
++                &devices.device,
++                &devices.device_context,
++                &[instance],
++            )?;
++            self.pipelines.external_surface.draw_with_texture(
++                &devices.device_context,
++                std::slice::from_ref(&Some(external.view.clone())),
++                std::slice::from_ref(&self.globals.sampler),
++                1,
++            )?;
+         }
+         Ok(())
+     }
+@@ -991,6 +1087,13 @@ impl DirectXRenderPipelines {
+             16,
+             create_blend_state(device)?,
+         )?;
++        let external_surface = PipelineState::new(
++            device,
++            "external_surface_pipeline",
++            ShaderModule::ExternalSurface,
++            1,
++            create_blend_state_for_external_surface(device)?,
++        )?;
+ 
+         Ok(Self {
+             shadow_pipeline,
+@@ -1001,6 +1104,7 @@ impl DirectXRenderPipelines {
+             mono_sprites,
+             subpixel_sprites,
+             poly_sprites,
++            external_surface,
+         })
+     }
+ }
+@@ -1260,6 +1364,32 @@ impl<T> PipelineState<T> {
+     }
+ }
+ 
++#[derive(Clone, Copy, Debug, Default)]
++#[repr(C)]
++struct ExternalSurfaceInstance {
++    bounds_origin: [f32; 2],
++    bounds_size: [f32; 2],
++    content_mask_origin: [f32; 2],
++    content_mask_size: [f32; 2],
++}
++
++impl ExternalSurfaceInstance {
++    fn from_paint_surface(surface: &PaintSurface) -> Self {
++        Self {
++            bounds_origin: [surface.bounds.origin.x.0, surface.bounds.origin.y.0],
++            bounds_size: [surface.bounds.size.width.0, surface.bounds.size.height.0],
++            content_mask_origin: [
++                surface.content_mask.bounds.origin.x.0,
++                surface.content_mask.bounds.origin.y.0,
++            ],
++            content_mask_size: [
++                surface.content_mask.bounds.size.width.0,
++                surface.content_mask.bounds.size.height.0,
++            ],
++        }
++    }
++}
++
+ #[derive(Clone, Copy)]
+ #[repr(C)]
+ struct PathRasterizationSprite {
+@@ -1503,6 +1633,26 @@ fn create_blend_state(device: &ID3D11Device) -> Result<ID3D11BlendState> {
+     }
+ }
+ 
++#[inline]
++fn create_blend_state_for_external_surface(
++    device: &ID3D11Device,
++) -> Result<ID3D11BlendState> {
++    let mut desc = D3D11_BLEND_DESC::default();
++    desc.RenderTarget[0].BlendEnable = true.into();
++    desc.RenderTarget[0].BlendOp = D3D11_BLEND_OP_ADD;
++    desc.RenderTarget[0].BlendOpAlpha = D3D11_BLEND_OP_ADD;
++    desc.RenderTarget[0].SrcBlend = D3D11_BLEND_ONE;
++    desc.RenderTarget[0].SrcBlendAlpha = D3D11_BLEND_ONE;
++    desc.RenderTarget[0].DestBlend = D3D11_BLEND_INV_SRC_ALPHA;
++    desc.RenderTarget[0].DestBlendAlpha = D3D11_BLEND_INV_SRC_ALPHA;
++    desc.RenderTarget[0].RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL.0 as u8;
++    unsafe {
++        let mut state = None;
++        device.CreateBlendState(&desc, Some(&mut state))?;
++        Ok(state.unwrap())
++    }
++}
++
+ #[inline]
+ fn create_blend_state_for_subpixel_rendering(device: &ID3D11Device) -> Result<ID3D11BlendState> {
+     let mut desc = D3D11_BLEND_DESC::default();
+@@ -1710,6 +1860,7 @@ pub(crate) mod shader_resources {
+         MonochromeSprite,
+         SubpixelSprite,
+         PolychromeSprite,
++        ExternalSurface,
+         EmojiRasterization,
+     }
+ 
+@@ -1784,6 +1935,10 @@ pub(crate) mod shader_resources {
+                     ShaderTarget::Vertex => POLYCHROME_SPRITE_VERTEX_BYTES,
+                     ShaderTarget::Fragment => POLYCHROME_SPRITE_FRAGMENT_BYTES,
+                 },
++                ShaderModule::ExternalSurface => match target {
++                    ShaderTarget::Vertex => EXTERNAL_SURFACE_VERTEX_BYTES,
++                    ShaderTarget::Fragment => EXTERNAL_SURFACE_FRAGMENT_BYTES,
++                },
+                 ShaderModule::EmojiRasterization => match target {
+                     ShaderTarget::Vertex => EMOJI_RASTERIZATION_VERTEX_BYTES,
+                     ShaderTarget::Fragment => EMOJI_RASTERIZATION_FRAGMENT_BYTES,
+@@ -1874,6 +2029,7 @@ pub(crate) mod shader_resources {
+                 ShaderModule::MonochromeSprite => "monochrome_sprite",
+                 ShaderModule::SubpixelSprite => "subpixel_sprite",
+                 ShaderModule::PolychromeSprite => "polychrome_sprite",
++                ShaderModule::ExternalSurface => "external_surface",
+                 ShaderModule::EmojiRasterization => "emoji_rasterization",
+             }
+         }
+diff --git a/crates/gpui_windows/src/gpui_windows.rs b/crates/gpui_windows/src/gpui_windows.rs
+index 692d0dbbfd..dd0cfd5e86 100644
+--- a/crates/gpui_windows/src/gpui_windows.rs
++++ b/crates/gpui_windows/src/gpui_windows.rs
+@@ -25,6 +25,7 @@ pub(crate) use direct_write::*;
+ pub(crate) use directx_atlas::*;
+ pub(crate) use directx_devices::*;
+ pub(crate) use directx_renderer::*;
++pub use directx_renderer::{ExternalD3D11Surface, ExternalSurfaceContext, ExternalSurfaceFormat};
+ pub(crate) use dispatcher::*;
+ pub(crate) use display::*;
+ pub(crate) use events::*;
+diff --git a/crates/gpui_windows/src/shaders.hlsl b/crates/gpui_windows/src/shaders.hlsl
+index d20cb317db..0f7432b8ca 100644
+--- a/crates/gpui_windows/src/shaders.hlsl
++++ b/crates/gpui_windows/src/shaders.hlsl
+@@ -1266,3 +1266,32 @@ float4 polychrome_sprite_fragment(PolychromeSpriteFragmentInput input): SV_Targe
+     color.a *= sprite.opacity * saturate(0.5 - distance);
+     return color;
+ }
++
++struct ExternalSurface {
++    Bounds bounds;
++    Bounds content_mask;
++};
++
++struct ExternalSurfaceVertexOutput {
++    float4 position: SV_Position;
++    float2 texture_coords: TEXCOORD0;
++    float4 clip_distance: SV_ClipDistance;
++};
++
++StructuredBuffer<ExternalSurface> external_surfaces: register(t1);
++Texture2D<float4> t_external_surface: register(t0);
++SamplerState s_external_surface: register(s0);
++
++ExternalSurfaceVertexOutput external_surface_vertex(uint vertex_id: SV_VertexID, uint instance_id: SV_InstanceID) {
++    float2 unit_vertex = float2(float(vertex_id & 1u), 0.5 * float(vertex_id & 2u));
++    ExternalSurface surface = external_surfaces[instance_id];
++    ExternalSurfaceVertexOutput output;
++    output.position = to_device_position(unit_vertex, surface.bounds);
++    output.texture_coords = unit_vertex;
++    output.clip_distance = distance_from_clip_rect(unit_vertex, surface.bounds, surface.content_mask);
++    return output;
++}
++
++float4 external_surface_fragment(ExternalSurfaceVertexOutput input): SV_Target {
++    return t_external_surface.Sample(s_external_surface, input.texture_coords);
++}
+diff --git a/crates/gpui_windows/src/window.rs b/crates/gpui_windows/src/window.rs
+index 37e9d9a176..fead2845aa 100644
+--- a/crates/gpui_windows/src/window.rs
++++ b/crates/gpui_windows/src/window.rs
+@@ -1011,6 +1011,10 @@ impl PlatformWindow for WindowsWindow {
+         self.state.renderer.borrow().gpu_specs().log_err()
+     }
+ 
++    fn external_surface_context(&self) -> Option<Arc<dyn std::any::Any + Send + Sync>> {
++        Some(self.state.renderer.borrow().external_surface_context())
++    }
++
+     fn update_ime_position(&self, bounds: Bounds<Pixels>) {
+         let scale_factor = self.state.scale_factor.get();
+         let caret_position = POINT {

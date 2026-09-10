@@ -742,7 +742,7 @@ impl TerminalView {
     }
 
     pub fn commit_text(&mut self, text: &str, _cx: &mut Context<Self>) {
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "windows"))]
         crate::browser_qualification::input_text(_cx.entity_id().as_u64(), text);
 
         let was_composing = !self.ime_marked_text.is_empty();

@@ -411,6 +411,8 @@ pub enum FrameMessage {
         format: FrameFormat,
         modifier: u64,
         buffers: Vec<BufferLayout>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        shared_handles: Vec<u64>,
     },
     Frame {
         document: Document,
@@ -441,6 +443,7 @@ impl FrameMessage {
                 width,
                 height,
                 buffers,
+                shared_handles,
                 ..
             } => {
                 (1..=16384).contains(width)
@@ -454,6 +457,9 @@ impl FrameMessage {
                                 .iter()
                                 .all(|plane| plane.stride > 0 && plane.size > 0)
                     })
+                    && (shared_handles.is_empty()
+                        || (shared_handles.len() == usize::from(POOL_BUFFERS)
+                            && shared_handles.iter().all(|handle| *handle != 0)))
             }
             Self::Frame { buffer, .. } => *buffer < POOL_BUFFERS,
             Self::PoolRetired { .. } => true,
@@ -622,6 +628,35 @@ pub fn write_message(output: &mut impl Write, value: &impl Serialize) -> io::Res
 mod tests {
     use super::*;
 
+    fn pool_message(shared_handles: Vec<u64>) -> FrameMessage {
+        FrameMessage::PoolCreated {
+            document: Document {
+                owner: Owner {
+                    workspace: "workspace".to_string().try_into().unwrap(),
+                    session: "session".to_string().try_into().unwrap(),
+                },
+                browser: "browser".to_string().try_into().unwrap(),
+                generation: 1,
+            },
+            pool_generation: 1,
+            width: 1280,
+            height: 720,
+            format: FrameFormat::Bgra8,
+            modifier: 0,
+            buffers: (0..POOL_BUFFERS)
+                .map(|slot| BufferLayout {
+                    slot,
+                    planes: vec![PlaneLayout {
+                        stride: 5120,
+                        offset: 0,
+                        size: 3_686_400,
+                    }],
+                })
+                .collect(),
+            shared_handles,
+        }
+    }
+
     #[test]
     fn clipboard_accepts_multiline_text_and_rejects_nul_and_oversize() {
         assert!(clipboard_text_is_valid("first\tcolumn\nsecond\r\n"));
@@ -663,5 +698,13 @@ mod tests {
             command: None
         }
         .is_valid());
+    }
+
+    #[test]
+    fn shared_texture_handles_are_bounded_and_nonzero() {
+        assert!(pool_message(vec![1, 2, 3]).is_valid());
+        assert!(!pool_message(vec![1, 2]).is_valid());
+        assert!(!pool_message(vec![1, 0, 3]).is_valid());
+        assert!(pool_message(Vec::new()).is_valid());
     }
 }

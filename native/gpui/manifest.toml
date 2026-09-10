@@ -4,8 +4,8 @@ upstream_repository = "https://github.com/zed-industries/zed"
 upstream_sha = "fecc3273ed32643c2ea1b04a74c8780e2c9ffaf8"
 checkout_directory = "native/gpui/checkout"
 patch_directory = "native/gpui/patches"
-external_surface_platforms = ["linux-wayland", "linux-x11"]
-unavailable_platforms = ["macos", "windows", "web", "linux-headless"]
+external_surface_platforms = ["linux-wayland", "linux-x11", "windows"]
+unavailable_platforms = ["macos", "web", "linux-headless"]
 
 checkout_paths = [
     "Cargo.toml",
@@ -70,3 +70,15 @@ sha256 = "7293b34071aede66531f482aba616f71e047760db0c016c163d986fdd0a20c1e"
 [[patches]]
 file = "0009-gpui-x11-xim-focus.patch"
 sha256 = "c375210e5969226ff71317bfd62545a1667e67b9673f0f112f34b1d74411c11f"
+
+[[patches]]
+file = "0010-gpui-windows-directx-external-surface.patch"
+sha256 = "fba00f432db011c7f5eae15ad0f0ccf2b52b08fdff5bfc0d3d9620864c391210"
+
+[[patches]]
+file = "0011-gpui-windows-external-surface-synchronization.patch"
+sha256 = "1720ea269911295fe5662cdcbb18c70777615f7214d197dfb7822b36cd8bff0e"
+
+[[patches]]
+file = "0012-gpui-windows-presentation-timing.patch"
+sha256 = "13afd45b6746f785f253f64d1bce4daa0e5260324e19c7b16ce42cfbfdce20bf"

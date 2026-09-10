@@ -40,6 +40,10 @@ pub(super) fn enabled() -> bool {
 }
 
 pub(super) fn now_ns() -> u64 {
+    #[cfg(target_os = "windows")]
+    {
+        crate::browser_qualification::now_ns()
+    }
     #[cfg(target_os = "linux")]
     {
         let mut time = libc::timespec {
@@ -52,7 +56,10 @@ pub(super) fn now_ns() -> u64 {
                 .saturating_add(time.tv_nsec as u64);
         }
     }
-    0
+    #[cfg(not(target_os = "windows"))]
+    {
+        0
+    }
 }
 
 pub(super) fn record(page: &str, event: &str, fields: serde_json::Value) {

@@ -268,7 +268,7 @@ impl TerminalView {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "windows"))]
         crate::browser_qualification::input_key(cx.entity_id().as_u64(), &event.keystroke.key);
 
         if crate::SWAP_MODE.load(std::sync::atomic::Ordering::Relaxed)

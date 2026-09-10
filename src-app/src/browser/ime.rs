@@ -11,7 +11,6 @@ pub struct ImeSnapshot {
 }
 
 impl ImeSnapshot {
-    #[cfg(target_os = "linux")]
     pub fn valid(&self) -> bool {
         self.start != u32::MAX
             && self.end != u32::MAX
@@ -88,6 +87,28 @@ impl ImeState {
     }
 }
 
+pub fn candidate_bounds(
+    rect: [i32; 4],
+    origin: gpui::Point<gpui::Pixels>,
+    viewport: gpui::Size<gpui::Pixels>,
+    geometry: super::page::Geometry,
+) -> gpui::Bounds<gpui::Pixels> {
+    let horizontal = f32::from(viewport.width) / geometry.width.max(1) as f32;
+    let vertical = f32::from(viewport.height) / geometry.height.max(1) as f32;
+    let [x, y, width, height] = rect;
+    gpui::Bounds::new(
+        origin
+            + gpui::point(
+                gpui::px(x as f32 * horizontal),
+                gpui::px(y as f32 * vertical),
+            ),
+        gpui::size(
+            gpui::px(width.max(1) as f32 * horizontal),
+            gpui::px(height.max(1) as f32 * vertical),
+        ),
+    )
+}
+
 pub fn replacement_range(range: Option<Range<usize>>) -> Result<Option<[u32; 2]>, ()> {
     range
         .map(|range| {
@@ -120,6 +141,58 @@ mod tests {
         state.finish();
         assert_eq!(state.marked, None);
         assert_eq!(state.text_for_range(7..9), None);
+    }
+
+    #[test]
+    fn candidate_rectangles_keep_their_page_position_at_every_windows_scale() {
+        let origin = gpui::point(gpui::px(24.0), gpui::px(48.0));
+        for scale_percent in [100_u32, 125, 150, 200] {
+            let scale = scale_percent as f32 / 100.0;
+            let logical_width = (1920.0 / scale).round();
+            let logical_height = (1080.0 / scale).round();
+            let geometry = crate::browser::page::Geometry {
+                width: logical_width as u32,
+                height: logical_height as u32,
+                scale_percent,
+            };
+            let caret = [
+                (logical_width * 0.25) as i32,
+                (logical_height * 0.5) as i32,
+                12,
+                20,
+            ];
+            let bounds = candidate_bounds(
+                caret,
+                origin,
+                gpui::size(gpui::px(logical_width), gpui::px(logical_height)),
+                geometry,
+            );
+            let horizontal = (f32::from(bounds.origin.x) - 24.0) / logical_width;
+            let vertical = (f32::from(bounds.origin.y) - 48.0) / logical_height;
+            assert!((horizontal - 0.25).abs() < 0.001, "{scale_percent}");
+            assert!((vertical - 0.5).abs() < 0.001, "{scale_percent}");
+            assert_eq!(f32::from(bounds.size.width), 12.0);
+            assert_eq!(f32::from(bounds.size.height), 20.0);
+        }
+    }
+
+    #[test]
+    fn a_stale_geometry_rescales_the_candidate_rect_onto_the_current_viewport() {
+        let before = crate::browser::page::Geometry {
+            width: 1920,
+            height: 1080,
+            scale_percent: 100,
+        };
+        let bounds = candidate_bounds(
+            [960, 540, 12, 20],
+            gpui::point(gpui::px(0.0), gpui::px(0.0)),
+            gpui::size(gpui::px(960.0), gpui::px(540.0)),
+            before,
+        );
+        assert_eq!(f32::from(bounds.origin.x), 480.0);
+        assert_eq!(f32::from(bounds.origin.y), 270.0);
+        assert_eq!(f32::from(bounds.size.width), 6.0);
+        assert_eq!(f32::from(bounds.size.height), 10.0);
     }
 
     #[test]

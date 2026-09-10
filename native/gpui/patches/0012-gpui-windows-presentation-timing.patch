@@ -1,0 +1,84 @@
+diff --git a/crates/gpui_windows/src/directx_renderer.rs b/crates/gpui_windows/src/directx_renderer.rs
+index bf842b70..cdc0318f 100644
+--- a/crates/gpui_windows/src/directx_renderer.rs
++++ b/crates/gpui_windows/src/directx_renderer.rs
+@@ -107,6 +107,8 @@ pub(crate) struct DirectXRenderer {
+     direct_composition: Option<DirectComposition>,
+     font_info: &'static FontInfo,
+     external_surface_context: Arc<ExternalSurfaceContext>,
++    timing_observer: Option<Arc<dyn gpui::RendererTimingObserver>>,
++    presentation_attempt: u64,
+ 
+     width: u32,
+     height: u32,
+@@ -258,6 +260,8 @@ impl DirectXRenderer {
+             direct_composition,
+             font_info: Self::get_font_info(),
+             external_surface_context,
++            timing_observer: None,
++            presentation_attempt: 0,
+             width: 1,
+             height: 1,
+             skip_draws: false,
+@@ -272,6 +276,10 @@ impl DirectXRenderer {
+         self.external_surface_context.clone()
+     }
+ 
++    pub(crate) fn set_timing_observer(&mut self, observer: Option<Arc<dyn gpui::RendererTimingObserver>>) {
++        self.timing_observer = observer;
++    }
++
+     fn pre_draw(&self, clear_color: &[f32; 4]) -> Result<()> {
+         let resources = self.resources.as_ref().expect("resources missing");
+         let device_context = &self
+@@ -314,6 +322,7 @@ impl DirectXRenderer {
+ 
+     #[inline]
+     fn present(&mut self) -> Result<()> {
++        let start_ns = self.timing_observer.as_ref().and_then(|observer| observer.now_ns());
+         let result = unsafe {
+             self.resources
+                 .as_ref()
+@@ -321,6 +330,27 @@ impl DirectXRenderer {
+                 .swap_chain
+                 .Present(0, DXGI_PRESENT(0))
+         };
++        if let Some(observer) = &self.timing_observer {
++            self.presentation_attempt = self.presentation_attempt.wrapping_add(1);
++            observer.record(gpui::RendererTiming {
++                identity: gpui::RendererTimingIdentity {
++                    window_id: self.hwnd.0 as u64,
++                    ..Default::default()
++                },
++                surface_epoch: 0,
++                attempt: self.presentation_attempt,
++                stage: "dxgi_present_call",
++                start_ns,
++                end_ns: observer.now_ns(),
++                outcome: if result.is_ok() { "ok" } else { "failed" },
++                present_mode: 0,
++                requested_present_mode: None,
++                supported_present_modes_mask: None,
++                desired_maximum_frame_latency: 0,
++                width: self.width,
++                height: self.height,
++            });
++        }
+         result.ok().context("Presenting swap chain failed")
+     }
+ 
+diff --git a/crates/gpui_windows/src/window.rs b/crates/gpui_windows/src/window.rs
+index a99244b7..f25422f5 100644
+--- a/crates/gpui_windows/src/window.rs
++++ b/crates/gpui_windows/src/window.rs
+@@ -1015,6 +1015,10 @@ impl PlatformWindow for WindowsWindow {
+         Some(self.state.renderer.borrow().external_surface_context())
+     }
+ 
++    fn set_renderer_timing_observer(&self, observer: Option<Arc<dyn gpui::RendererTimingObserver>>) {
++        self.state.renderer.borrow_mut().set_timing_observer(observer);
++    }
++
+     fn update_ime_position(&self, bounds: Bounds<Pixels>) {
+         let scale_factor = self.state.scale_factor.get();
+         let caret_position = POINT {

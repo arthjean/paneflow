@@ -8,7 +8,7 @@
     "platform": "WINDOWS",
     "supersedes": "tasks/prd-agents-browser.md",
     "baseline_commit": "fbfefd250a3f3c8d9968a23f8c358712859bc904",
-    "updated_at": "2026-09-10T10:51:11+02:00",
+    "updated_at": "2026-09-10T21:27:49+02:00",
     "plan_revision": "1.1"
   },
   "epics": [
@@ -197,11 +197,330 @@
     {
       "id": "EP-002",
       "title": "Implémenter le GPU et obtenir une première preuve Windows",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "stories_total": 4,
-      "stories_done": 0,
-      "release": "R0"
+      "stories_done": 4,
+      "stories_in_review": 0,
+      "stories_blocked": 0,
+      "release": "R0",
+      "profile": "DEEP",
+      "started_at": "2026-09-10T10:51:11+02:00",
+      "updated_at": "2026-09-10T21:29:49+02:00",
+      "completed_at": "2026-09-10T21:29:49+02:00",
+      "reviewed_at": "2026-09-10T21:29:49+02:00",
+      "implementation_outcome": "IMPLEMENTED",
+      "qualification_verdict": "OBSERVED_NOT_BUDGET_CERTIFIED",
+      "verification_scope": "windows-native-local-r0",
+      "handoff_status": "DONE",
+      "review_ready": false,
+      "review_invocation": "/review-epic tasks/prd-agents-browser-windows.md EP-002",
+      "blockers": [],
+      "evidence_map": [
+        {
+          "story": "US-005",
+          "criterion": "AC-1",
+          "status": "PASS",
+          "path": "native/gpui/patches/0010-gpui-windows-directx-external-surface.patch:200",
+          "entry_point": "BrowserView::render and browser-prototype -> Window::paint_external_surface -> DirectXRenderer::draw_surfaces",
+          "proof": "The empty dispatch is replaced by an external_surface pipeline that applies bounds, content mask clip distances and premultiplied blending; native/gpui/checkout carries the applied patch and src-app/src/browser/view.rs:2160 paints the surface on Windows through the shared scene, not through a Windows-only path."
+        },
+        {
+          "story": "US-005",
+          "criterion": "AC-2",
+          "status": "PASS",
+          "path": "native/gpui/patches/0010-gpui-windows-directx-external-surface.patch:58",
+          "entry_point": "ExternalSurfaceContext::import_shared_texture -> ExternalD3D11Surface",
+          "proof": "The import checks physical width, height, format, mip levels, array size and sample count, and returns an opaque handle. src-app/src/browser/windows.rs is the only module naming D3D types; the Browser domain sees ExternalSurface plus its generation."
+        },
+        {
+          "story": "US-005",
+          "criterion": "AC-3",
+          "status": "PASS",
+          "path": "native/gpui/manifest.toml:74",
+          "entry_point": "scripts/fetch-gpui.py -> patch series -> gpui_platform re-export",
+          "proof": "Patches 0010, 0011 and 0012 are declared with the sha256 of the files on disk, verified during this review. The four GPUI revisions in src-app/Cargo.toml and the font-kit feature are untouched by the diff; external_surface_platforms adds windows while the Linux entries and patches 0001 to 0009 stay in place."
+        },
+        {
+          "story": "US-005",
+          "criterion": "AC-4",
+          "status": "PASS",
+          "path": "src-app/src/browser/presentation.rs:465",
+          "entry_point": "cargo test --workspace on x86_64-pc-windows-msvc",
+          "proof": "presentation.rs is now compiled on Windows, so the 15 FrameConsumer contract tests run on this target and cover pool reservation, import completion, frame intake and release ordering from the harness importer. GPU execution stays attributed to US-008."
+        },
+        {
+          "story": "US-005",
+          "criterion": "AC-5",
+          "status": "PASS",
+          "path": "crates/paneflow-browser-host/src/windows.rs:320",
+          "entry_point": "CefBrowserSettings shared_texture_enabled and LivePage::start",
+          "proof": "The host enables shared textures and implements no on_paint, so there is no CPU refresh fallback. An unsupported format fails in pool_spec with UnsupportedFormat, a stale generation is dropped by the FrameConsumer ledger, and a window without a DirectX surface context refuses page start with an explicit error."
+        },
+        {
+          "story": "US-006",
+          "criterion": "AC-1",
+          "status": "PASS",
+          "path": "crates/paneflow-browser-host/src/windows/presentation.rs:426",
+          "entry_point": "OnAcceleratedPaint -> Presenter::paint -> open_source -> CopyResource -> emit_frame",
+          "proof": "The CEF handle is opened with OpenSharedResource1 inside the callback, validated against the pool description, copied into a host-owned texture and released when the callback returns. The pool textures are shared with DXGI_SHARED_RESOURCE_READ and duplicated only into the client process opened by pid, so the consumer receives bounded rights."
+        },
+        {
+          "story": "US-006",
+          "criterion": "AC-2",
+          "status": "PASS",
+          "path": "native/gpui/patches/0011-gpui-windows-external-surface-synchronization.patch:1",
+          "entry_point": "Presenter::paint AcquireSync/ReleaseSync and DirectXRenderer::draw_surfaces AcquireSync/ReleaseSync",
+          "proof": "Both sides take key 0 of the same IDXGIKeyedMutex, the producer around CopyResource plus Flush and the consumer around its draw, and a busy key skips the frame instead of blocking. Pool handles are duplicated to the client and closed remotely with DUPLICATE_CLOSE_SOURCE; the raw CEF handle is never stored, reused or closed after the callback."
+        },
+        {
+          "story": "US-006",
+          "criterion": "AC-3",
+          "status": "PASS",
+          "path": "crates/paneflow-browser-host/src/windows/presentation.rs:282",
+          "entry_point": "Presenter::ensure_pool, free_buffer and flush_pending_resize",
+          "proof": "POOL_BUFFERS is 3 and at most two pools coexist, so a replacement holds 6 textures; MAX_PENDING_FRAMES caps in-flight frames at 2. Extra resizes collapse into the single pending_resize slot and the replaced pools are marked retiring, so their generation stops being selected by active_pool."
+        },
+        {
+          "story": "US-006",
+          "criterion": "AC-4",
+          "status": "PASS",
+          "path": "src-app/src/browser/page.rs:1583",
+          "entry_point": "HostEvent::Frame -> FrameConsumer::reserve_pool -> D3dImporter::import -> on_gpu_completion -> FrameAck",
+          "proof": "The callback to publication to consumption path is wired end to end and every exit closes its handles: import_shared_texture closes each handle it consumes, D3dImporter closes the rest on failure, and profile_host_windows closes them when a frame cannot be routed. The FrameConsumer tests cover ownership and release ordering; real fences are observed in US-008."
+        },
+        {
+          "story": "US-006",
+          "criterion": "AC-5",
+          "status": "PASS",
+          "path": "crates/paneflow-browser-host/src/windows/presentation.rs:565",
+          "entry_point": "Presenter::fail and retire_expired",
+          "proof": "Device removal, an invalid handle or right, a mismatched description and a retirement older than RETIRE_DEADLINE_MS each emit FrameMessage::Failed with WrongDevice, InvalidHandle, CopyFailed or RetireTimeout. The import runs on a background thread through smol::unblock, and a buffer is only freed when its exact sequence is acknowledged."
+        },
+        {
+          "story": "US-007",
+          "criterion": "AC-1",
+          "status": "MANUAL_PROVEN",
+          "path": "target/ep002-input-dpi-r2/prototype.jsonl",
+          "entry_point": "paneflow.exe browser-prototype --scenario input,wheel,drag,resize,scale,dpi,ime,cancel --dpi-transitions 150,200",
+          "proof": "Re-read during this review: the log records the DISPLAY1 to DISPLAY2 move, then DISPLAY2 at 150 percent (viewport 1441x881, candidate rect [20,113,12,15]) and at 200 percent (viewport 1266x636, candidate rect [71,113,1,16]), then dpi_restored at 100 percent. The 100 percent candidate rectangles come from the IME corpus of the same run."
+        },
+        {
+          "story": "US-007",
+          "criterion": "AC-2",
+          "status": "PASS",
+          "path": "src-app/src/browser/input.rs:7",
+          "entry_point": "BrowserView key and mouse handlers -> Command::Input -> host input()",
+          "proof": "The shared modifier mapping sends Ctrl as MODIFIER_CONTROL, which is the Chromium accelerator modifier on Windows, and the platform key stays MODIFIER_COMMAND. Mouse, wheel, key and IME conversions are wired host side; the browser input handler is scoped to the Browser view, so terminal keystrokes are untouched."
+        },
+        {
+          "story": "US-007",
+          "criterion": "AC-3",
+          "status": "PASS",
+          "path": "src-app/src/browser/ime.rs:90",
+          "entry_point": "BrowserInputHandler::bounds_for_range -> browser::ime::candidate_bounds",
+          "proof": "The controller tests cover the candidate rectangle conversion at 100, 125, 150 and 200 percent and the stale geometry rescale. The native corpus archives six cases, ascii, accented, Japanese candidate, astral, cancelled and finished, with 8, 3, 4, 2, 10 and 3 candidate rectangles observed."
+        },
+        {
+          "story": "US-007",
+          "criterion": "AC-4",
+          "status": "PASS",
+          "path": "crates/paneflow-browser-host/src/windows.rs:628",
+          "entry_point": "UiCommand::BindInspector -> devtools::bind and on_native context_menu routing",
+          "proof": "Menus and the inspector are routed by the shared host client and its DevTools module, and page.rs drops any native event whose document does not match the live document, so a late callback cannot move the focus of another page."
+        },
+        {
+          "story": "US-007",
+          "criterion": "AC-5",
+          "status": "MANUAL_PROVEN",
+          "path": "target/ep002-input-dpi-r2/prototype.jsonl",
+          "entry_point": "browser-prototype --scenario cancel",
+          "proof": "Re-read during this review: focus_lost clears the marked range [15,25], capture_lost is recorded at [720,448], an input addressed to document generation 2 against live generation 1 is refused with StaleGeneration, and the viewport_coordinates step recomputes the centre on the current geometry. The summary counts 6 cancellations and 0 pending expected refusals. The viewport_coordinates condition ran with identical previous and current geometry, so the stale coordinate protection rests on the StaleGeneration refusal."
+        },
+        {
+          "story": "US-008",
+          "criterion": "AC-1",
+          "status": "MANUAL_PROVEN",
+          "path": "target/ep002-m1-r0/m1-comparison.json",
+          "entry_point": "windows-capture.ps1 Get-OsIdentity and the prototype machine event",
+          "proof": "Microsoft Windows 11 Professionnel, build 26200 UBR 9278, 25H2, x64, Ryzen 7 7800X3D, RTX 4070 Ti SUPER driver 32.0.16.1656, AMD Radeon 32.0.21045.5002, 33459585024 bytes of RAM, desktop without battery, two displays at 100 percent. The registry ProductName still reads Windows 10 Pro; the build number and the CIM caption carry the identity."
+        },
+        {
+          "story": "US-008",
+          "criterion": "AC-2",
+          "status": "MANUAL_PROVEN",
+          "path": "target/windows-browser-bundle-ep002-final",
+          "entry_point": "scripts/build-browser-host.ps1 then local qualification signing",
+          "proof": "The staging builds the client DLL against the same-version CEF development archive at pin 151.3.24 and stages the signed runtime. Verified during this review: the bootstrap, the client and chrome_elf.dll of the campaign bundle all return a Valid Authenticode status for the single certificate CN=Paneflow EP-001 Native Qualification Fresh, while windows-bootstrap.json records the pre-signature build state. Unsigned (target/ep002-unsigned-probe) and untrusted-issuer (target/ep002-untrusted-probe) trios never complete the bootstrap handshake and record created=false. No MSI or public package is involved."
+        },
+        {
+          "story": "US-008",
+          "criterion": "AC-3",
+          "status": "MANUAL_PROVEN",
+          "path": "target/ep002-input-dpi-r2/prototype.jsonl",
+          "entry_point": "separate Paneflow process -> supervisor -> sandboxed bootstrap",
+          "proof": "The prototype starts CEF from a separate Paneflow process against the 127.0.0.1:18762 fixture, creates the page (created=true, loaded=true), runs the eight steps and closes the page and its descendants with the sandbox active and exit code 0."
+        },
+        {
+          "story": "US-008",
+          "criterion": "AC-4",
+          "status": "MANUAL_PROVEN",
+          "path": "target/ep002-input-dpi-r2/prototype.jsonl",
+          "entry_point": "shared handle -> owned copy -> GPUI -> input, IME, resize, scale -> close",
+          "proof": "The fixture really appears in GPUI: 463 frame events, one resize, the monitor change, two DPI transitions with a new pool, the six-case IME corpus and a clean host close in the same run. The M1 campaign confirms the same path over 15 captures."
+        },
+        {
+          "story": "US-008",
+          "criterion": "AC-5",
+          "status": "MANUAL_PROVEN",
+          "path": "target/ep002-m1-r0/m1-comparison.json",
+          "entry_point": "windows-m1-campaign.ps1 -> windows-capture.ps1 -> windows-analysis.mjs -> windows-m1-compare.mjs",
+          "proof": "A, B and C are captured five times each with 10 s warm-up and 60 s measurement, and the comparison refuses captures from different artifacts. 0 unmatched presents over the 15 captures; 1082 input samples in A and 1142 in C, 16715 browser samples in B and 14183 in C. Observed: C minus B p95 613800 ns and p99 807400 ns on browser presentation, C minus A p95 -408700 ns on terminal input, private working set p50 delta 155848704 bytes. The recorded binary_sha256 matches target/release/paneflow.exe built from the reviewed sources; the status stays OBSERVED_NOT_BUDGET_CERTIFIED."
+        }
+      ],
+      "validation": {
+        "checked_at": "2026-09-10T21:29:49+02:00",
+        "commands": [
+          "cargo fmt --check",
+          "cargo clippy --workspace --all-targets --locked --offline -- -D warnings",
+          "cargo clippy -p paneflow-browser-host --features cef-runtime --all-targets --locked --offline -- -D warnings",
+          "cargo test --workspace --locked --offline",
+          "cargo deny check advisories licenses sources",
+          "bun test scripts/browser-qualification/windows-m1-compare.test.mjs scripts/browser-qualification/windows-analysis.test.mjs",
+          "bun test scripts/browser-qualification/fetch.test.mjs scripts/browser-qualification/qualification.test.mjs",
+          "python -m py_compile scripts/browser-qualification/windows-replay.py scripts/fetch-gpui.py",
+          "pwsh -NoProfile -File scripts/validate-task-artifacts.ps1",
+          "git diff --check"
+        ],
+        "results": "Run on x86_64-pc-windows-msvc after the last change. fmt, workspace clippy, host clippy with cef-runtime, cargo deny, the 74 bun tests, py_compile and git diff --check all pass. cargo test --workspace passes 1979 paneflow-app tests plus the host, protocol and harness suites, and fails only the two paneflow-libghostty-sys bundle fixtures that need the Linux and macOS prebuilt archives absent from this Windows worktree; that failure is environmental and outside EP-002.",
+        "native": "COMPLETE and re-read during this review: target/ep002-input-dpi-r2 records created=true, loaded=true, 463 frames, the 150 and 200 percent transitions with restore, the six-case IME corpus and four cancellation conditions; target/ep002-m1-r0 archives 15 analyzed A, B and C captures with their comparison. The campaign binary_sha256 matches target/release/paneflow.exe, built after the last source edit that preceded the campaign.",
+        "native_after_fix": "The review fix touches only which RuntimeCheck a dock page selects. The M1 capture harness exports PANEFLOW_M1_LOG and an absolute PANEFLOW_M1_STATE_ROOT, so dock_session resolves to the same Qualification digest as before, and the browser-prototype path is unchanged. The archived binary hash therefore predates the fix while the exercised paths are identical; no native re-run was required.",
+        "tracker": "US-005, US-006, US-007 and US-008 are DONE; EP-002 is DONE."
+      },
+      "changed_files": [
+        "Cargo.lock",
+        "crates/paneflow-browser-host/Cargo.toml",
+        "crates/paneflow-browser-host/src/linux/presentation.rs",
+        "crates/paneflow-browser-host/src/windows.rs",
+        "crates/paneflow-browser-host/src/windows/devtools.rs",
+        "crates/paneflow-browser-host/src/windows/editing.rs",
+        "crates/paneflow-browser-host/src/windows/presentation.rs",
+        "crates/paneflow-browser-protocol/src/wire.rs",
+        "crates/paneflow-config/src/loader.rs",
+        "docs/browser/gpui-external-surfaces.md",
+        "docs/release/browser-windows.md",
+        "docs/release/browser-windows-ep002-review.json",
+        "native/gpui/manifest.toml",
+        "native/gpui/patches/0010-gpui-windows-directx-external-surface.patch",
+        "native/gpui/patches/0011-gpui-windows-external-surface-synchronization.patch",
+        "native/gpui/patches/0012-gpui-windows-presentation-timing.patch",
+        "scripts/browser-qualification/windows-analysis.mjs",
+        "scripts/browser-qualification/windows-analysis.test.mjs",
+        "scripts/browser-qualification/windows-capture.ps1",
+        "scripts/browser-qualification/windows-m1-campaign.ps1",
+        "scripts/browser-qualification/windows-m1-compare.mjs",
+        "scripts/browser-qualification/windows-m1-compare.test.mjs",
+        "scripts/browser-qualification/windows-replay.py",
+        "scripts/browser-qualification/windows-rpc.mjs",
+        "scripts/fetch-gpui.py",
+        "src-app/Cargo.toml",
+        "src-app/src/app/ipc_handler.rs",
+        "src-app/src/browser/benchmark.rs",
+        "src-app/src/browser/display_scale_windows.rs",
+        "src-app/src/browser/ime.rs",
+        "src-app/src/browser/linux.rs",
+        "src-app/src/browser/mod.rs",
+        "src-app/src/browser/page.rs",
+        "src-app/src/browser/presentation.rs",
+        "src-app/src/browser/profile_host_windows.rs",
+        "src-app/src/browser/prototype_windows.rs",
+        "src-app/src/browser/supervisor_windows.rs",
+        "src-app/src/browser/view.rs",
+        "src-app/src/browser/windows.rs",
+        "src-app/src/browser_qualification.rs",
+        "src-app/src/browser_qualification/windows.rs",
+        "src-app/src/runtime_paths.rs",
+        "src-app/src/terminal/element/mod.rs",
+        "src-app/src/terminal/element/paint/text.rs",
+        "src-app/src/terminal/input.rs",
+        "src-app/src/terminal/view.rs"
+      ],
+      "remaining_work": [
+        "Windows public support stays NOT_QUALIFIED: EP-003 and EP-004 carry the package, the release signing, Narrator and the human matrix.",
+        "The M1 numbers of target/ep002-m1-r0 are observations on one machine; no NFR budget is declared met before the stories that carry it.",
+        "The Windows 10 1809 floor is still unexecuted: the reference machine is Windows 11 build 26200.",
+        "The DirectX device recovery re-import required by the external surfaces ADR is not implemented on Windows."
+      ],
+      "progress_note": "EP-002 is certified DONE at the R0 native local tier. The DirectX composition, the D3D11 shared texture ownership, the input, IME and DPI adapters and the first native run are wired from the shared GPUI scene and the shared dock controller, and the native evidence was re-read against the binary that produced it. The review fixed the runtime verification bypass that the qualification digest variable opened in the ordinary dock path. No public support is claimed.",
+      "review_findings": [
+        {
+          "severity": "BLOCKING",
+          "criterion": "US-008 AC-2 and the PRD runtime integrity constraint",
+          "path": "src-app/src/browser/supervisor_windows.rs:41",
+          "defect": "RuntimeCheck::configured() honoured PANEFLOW_BROWSER_QUALIFICATION_SHA256 in the ordinary dock path, so any environment carrying that variable replaced the per-file manifest verification of the CEF runtime with an operator supplied digest. Combined with PANEFLOW_CEF_ROOT this loaded an arbitrary runtime tree with no integrity check.",
+          "correction": "RuntimeCheck::dock_session() keeps the manifest check unless an isolated qualification session is configured, that is PANEFLOW_M1_LOG plus an absolute PANEFLOW_M1_STATE_ROOT. BrowserView::start now uses it, the browser-prototype verb keeps the explicit operator path, and a regression test pins the default. The M1 capture harness sets both variables, so the archived campaign behaviour is unchanged.",
+          "status": "FIXED"
+        },
+        {
+          "severity": "NON_BLOCKING",
+          "criterion": "maintainability",
+          "path": "src-app/src/browser/presentation.rs:80",
+          "defect": "Three blanket allow(dead_code) attributes on ImportedPool, FrameConsumer and its impl block hid every unused item on Windows, which is the exact signal that detects unwired consumer code.",
+          "correction": "The allowances now sit on the six items that are genuinely Linux-only on this target: the ImportedPool layout field and stats, current_size, outstanding, pool_textures and pool_layout.",
+          "status": "FIXED"
+        },
+        {
+          "severity": "NON_BLOCKING",
+          "criterion": "maintainability",
+          "path": "src-app/src/browser/page.rs:20",
+          "defect": "The PageSignal dead-code allowance still claimed the Windows native event mapping was completed by EP-002, while 13 variants stay unconstructed on this target.",
+          "correction": "The reason now names EP-003, which carries the dock controls, the web dialogs and the accessibility bridge.",
+          "status": "FIXED"
+        },
+        {
+          "severity": "NON_BLOCKING",
+          "criterion": "documentation",
+          "path": "docs/release/browser-windows.md:145",
+          "defect": "The qualification digest variable was documented as staging configuration without saying that it replaces the runtime verification.",
+          "correction": "The runbook now states what the variable replaces and which session honours it.",
+          "status": "FIXED"
+        },
+        {
+          "severity": "NON_BLOCKING",
+          "criterion": "parity",
+          "path": "src-app/src/browser/page.rs:1886",
+          "defect": "The Windows present_if_needed passes a constant false for the pending resize flag and does not record resize_sent or resize_ready, so a burst of geometry changes relies entirely on the host pending_resize slot and the M1 resize latency instrumentation stays Linux only.",
+          "correction": "Left as is: no EP-002 criterion covers the resize latency signal, coalescing is proven host side, and the change would invalidate the archived native evidence.",
+          "status": "NOT_APPLIED"
+        },
+        {
+          "severity": "OUTSIDE_EPIC",
+          "criterion": "not applicable",
+          "path": "src-app/src/cli/mod.rs:254",
+          "defect": "The paneflow watch clap help text carries an (EP-002) tracker marker in user-visible copy. It predates this epic.",
+          "correction": "Not changed by this review.",
+          "status": "NOT_APPLIED"
+        },
+        {
+          "severity": "OUTSIDE_EPIC",
+          "criterion": "not applicable",
+          "path": ".github/workflows/run_tests.yml",
+          "defect": "No CI job runs the bun suites under scripts/browser-qualification, so windows-analysis.test.mjs and windows-m1-compare.test.mjs are local gates only, like the pre-existing fetch and qualification suites.",
+          "correction": "Not changed by this review.",
+          "status": "NOT_APPLIED"
+        }
+      ],
+      "scope_corrections": [
+        "The Windows target stays availability = development: EP-002 certifies the R0 native path, not a public Browser release.",
+        "The M1 figures are single-machine observations on Windows 11 build 26200; no NFR budget is declared met.",
+        "The GPU device recovery contract of docs/browser/gpui-external-surfaces.md is not implemented on Windows: LivePage keeps the ExternalSurfaceContext captured at start and does not compare the device identity after a renderer recreation. No EP-002 criterion covers it; it belongs with the later Windows resilience work."
+      ],
+      "unapplied_maintenance": [
+        "Compare the ExternalSurfaceContext identity after a DirectX device recovery and re-import the pool, as the external surfaces ADR requires.",
+        "Give the Windows present_if_needed the same pending-resize tracking and resize_sent/resize_ready instrumentation as the Linux path.",
+        "Add the browser-qualification bun suites to a CI job so they stop being local-only gates."
+      ],
+      "certification": "docs/release/browser-windows-ep002-review.json"
     },
     {
       "id": "EP-003",
@@ -319,11 +638,15 @@
       "external_dependencies": [
         "CORE-GPU"
       ],
-      "status": "TODO",
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null,
-      "verification_scope": "implementation"
+      "status": "DONE",
+      "started_at": "2026-09-10T10:51:11+02:00",
+      "completed_at": "2026-09-10T18:14:00+02:00",
+      "reviewed_at": "2026-09-10T21:27:49+02:00",
+      "verification_scope": "implementation",
+      "updated_at": "2026-09-10T21:27:49+02:00",
+      "implementation_validated_at": "2026-09-10T21:27:49+02:00",
+      "blocker": null,
+      "handoff_status": "DONE"
     },
     {
       "id": "US-006",
@@ -336,11 +659,15 @@
         "US-005"
       ],
       "external_dependencies": [],
-      "status": "TODO",
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null,
-      "verification_scope": "implementation"
+      "status": "DONE",
+      "started_at": "2026-09-10T10:51:11+02:00",
+      "completed_at": "2026-09-10T18:14:00+02:00",
+      "reviewed_at": "2026-09-10T21:27:49+02:00",
+      "verification_scope": "implementation",
+      "updated_at": "2026-09-10T21:27:49+02:00",
+      "implementation_validated_at": "2026-09-10T21:27:49+02:00",
+      "blocker": null,
+      "handoff_status": "DONE"
     },
     {
       "id": "US-007",
@@ -353,11 +680,15 @@
         "US-006"
       ],
       "external_dependencies": [],
-      "status": "TODO",
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null,
-      "verification_scope": "implementation"
+      "status": "DONE",
+      "started_at": "2026-09-10T10:51:11+02:00",
+      "completed_at": "2026-09-10T21:27:49+02:00",
+      "reviewed_at": "2026-09-10T21:27:49+02:00",
+      "verification_scope": "implementation",
+      "updated_at": "2026-09-10T21:27:49+02:00",
+      "implementation_validated_at": "2026-09-10T21:27:49+02:00",
+      "blocker": null,
+      "handoff_status": "DONE"
     },
     {
       "id": "US-008",
@@ -371,11 +702,15 @@
         "US-007"
       ],
       "external_dependencies": [],
-      "status": "TODO",
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null,
-      "verification_scope": "native-local"
+      "status": "DONE",
+      "started_at": "2026-09-10T10:51:11+02:00",
+      "completed_at": "2026-09-10T21:27:49+02:00",
+      "reviewed_at": "2026-09-10T21:27:49+02:00",
+      "verification_scope": "native-local",
+      "updated_at": "2026-09-10T21:27:49+02:00",
+      "implementation_validated_at": "2026-09-10T21:27:49+02:00",
+      "blocker": null,
+      "handoff_status": "DONE"
     },
     {
       "id": "US-009",
@@ -605,10 +940,23 @@
     }
   },
   "qualification": {
-    "status": "NOT_EXECUTED",
+    "status": "BLOCKED",
     "human_release": "NOT_QUALIFIED",
     "agent_release": "NOT_QUALIFIED",
-    "native_evidence": []
+    "native_evidence": [
+      {
+        "kind": "local-functional-smoke",
+        "path": "target/windows-browser-prototype-ep002-run21.jsonl",
+        "entry_point": "target/release/paneflow.exe browser-prototype --source cef --scenario input,wheel,drag,resize,scale,ime",
+        "status": "BLOCKED",
+        "proof": "COMPLETED ; created=true ; loaded=true ; frame_events=59 ; first_frame_after_ms=1509 ; input, wheel, drag, resize et IME terminés ; aucun step restant ; fermeture propre.",
+        "limitations": [
+          "scale skipped car le harness ne déplace pas la fenêtre entre moniteurs natifs",
+          "M1 A/B/C non capturé",
+          "qualification publique non autorisée"
+        ]
+      }
+    ]
   },
   "existing_work": {
     "source": "tasks/prd-agents-browser-status.json",

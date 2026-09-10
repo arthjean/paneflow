@@ -18,13 +18,14 @@ use interprocess::os::windows::{
 };
 use paneflow_browser_protocol::{
     Availability, BrowserError, CONTRACT_VERSION, Command as BrowserCommand, Envelope, Event,
-    OperationId, Owner, Reply, read_value, write_message,
+    FrameAck, FrameMessage, OperationId, Owner, Reply, read_value, write_message,
 };
-use serde_json::Value;
+use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use win32job::{ExtendedLimitInfo, Job};
 
 pub use super::RUNTIME_ENV;
+use super::windows::D3dImporter;
 pub const OWNER_ENV: &str = "PANEFLOW_BROWSER_OWNER";
 pub const SHUTDOWN_GRACE: Duration = Duration::from_secs(5);
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(15);
@@ -34,6 +35,45 @@ const EMBEDDED_MANIFEST: &str = include_str!("../../../native/browser/manifest.t
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RuntimeCheck {
     Manifest,
+    Qualification([u8; 32]),
+}
+
+impl RuntimeCheck {
+    pub fn configured() -> Result<Self, String> {
+        let Some(value) = std::env::var_os("PANEFLOW_BROWSER_QUALIFICATION_SHA256") else {
+            return Ok(Self::Manifest);
+        };
+        let value = value.to_str().ok_or("qualification digest is not UTF-8")?;
+        Self::qualification(value)
+    }
+
+    pub fn dock_session() -> Result<Self, String> {
+        if paneflow_config::loader::qualification_root().is_none() {
+            return Ok(Self::Manifest);
+        }
+        Self::configured()
+    }
+
+    fn qualification(value: &str) -> Result<Self, String> {
+        if value.len() != 64 || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            return Err("qualification runtime requires an exact SHA-256 digest".into());
+        }
+        let mut digest = [0; 32];
+        for (index, byte) in digest.iter_mut().enumerate() {
+            *byte = u8::from_str_radix(&value[index * 2..index * 2 + 2], 16)
+                .map_err(|error| error.to_string())?;
+        }
+        Ok(Self::Qualification(digest))
+    }
+
+    fn runtime_digest(self) -> Result<Option<String>, String> {
+        match self {
+            Self::Manifest => manifest_runtime_digest().map(Some),
+            Self::Qualification(digest) => Ok(Some(
+                digest.iter().map(|byte| format!("{byte:02x}")).collect(),
+            )),
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -78,18 +118,38 @@ pub enum HostEvent {
     Ready(HostInfo),
     Reply(Reply),
     Native(Value),
+    Frame(FrameMessage, Vec<u64>),
     Lost(String),
     Stopped,
 }
 
 enum Outbound {
     Control(Envelope),
+    Ack(FrameAck),
     Close,
+}
+
+#[derive(Clone)]
+pub struct FrameAcknowledger {
+    outbound: SyncSender<Outbound>,
+    connection: Arc<()>,
+}
+
+impl FrameAcknowledger {
+    pub fn ack(&self, ack: FrameAck) -> Result<(), BrowserError> {
+        self.outbound
+            .try_send(Outbound::Ack(ack))
+            .map_err(|error| match error {
+                mpsc::TrySendError::Full(_) => BrowserError::Busy,
+                mpsc::TrySendError::Disconnected(_) => BrowserError::Unavailable,
+            })
+    }
 }
 
 struct Running {
     pid: u32,
     outbound: SyncSender<Outbound>,
+    frame_connection: Arc<()>,
     exited: Arc<(Mutex<bool>, Condvar)>,
     stop_requested: Arc<AtomicBool>,
     job: Arc<Mutex<Option<Job>>>,
@@ -258,7 +318,7 @@ fn verify_files(root: &Path, files: &BTreeMap<PathBuf, String>) -> Result<(), St
     Ok(())
 }
 
-pub fn verify_runtime(root: &Path, _check: RuntimeCheck) -> Result<(), String> {
+pub fn verify_runtime(root: &Path, check: RuntimeCheck) -> Result<(), String> {
     let stamp = fs::read_to_string(root.join("verified-manifest.sha256"))
         .map_err(|error| format!("runtime verification stamp: {error}"))?;
     if stamp.trim() != manifest_digest() {
@@ -274,7 +334,9 @@ pub fn verify_runtime(root: &Path, _check: RuntimeCheck) -> Result<(), String> {
             return Err(format!("runtime is missing {name}"));
         }
     }
-    verify_files(root, &manifest_files()?)?;
+    if matches!(check, RuntimeCheck::Manifest) {
+        verify_files(root, &manifest_files()?)?;
+    }
     let metadata: Value = serde_json::from_str(
         &fs::read_to_string(root.join("cef_version.json"))
             .map_err(|error| format!("runtime version metadata: {error}"))?,
@@ -283,10 +345,11 @@ pub fn verify_runtime(root: &Path, _check: RuntimeCheck) -> Result<(), String> {
     if metadata.get("abi_hash").and_then(Value::as_str) != Some(manifest_abi_hash()?.as_str()) {
         return Err("runtime ABI hash does not match the Windows browser manifest".to_string());
     }
-    let expected = manifest_runtime_digest()?;
-    let actual = runtime_digest(root).map_err(|error| format!("runtime tree: {error}"))?;
-    if actual != expected {
-        return Err("runtime tree does not match the Windows browser manifest".to_string());
+    if let Some(expected) = check.runtime_digest()? {
+        let actual = runtime_digest(root).map_err(|error| format!("runtime tree: {error}"))?;
+        if actual != expected {
+            return Err("runtime tree does not match the Windows browser manifest".to_string());
+        }
     }
     Ok(())
 }
@@ -348,6 +411,7 @@ fn verify_staged_runtime(
     directory: &Path,
     host_digest: &str,
     client_digest: &str,
+    check: RuntimeCheck,
 ) -> Result<(), String> {
     let stamp = fs::read_to_string(directory.join(".complete"))
         .map_err(|error| format!("staging stamp: {error}"))?;
@@ -355,18 +419,34 @@ fn verify_staged_runtime(
         return Err("staging stamp differs from the host binary digest".to_string());
     }
     let bin = directory.join("bin");
-    verify_files(&bin, &manifest_files()?)?;
-    let expected_runtime = manifest_runtime_digest()?;
-    let actual_runtime = runtime_digest_excluding(
-        &bin,
-        &[
-            "Release/paneflow-browser-host.exe",
-            "Release/paneflow-browser-host.dll",
-        ],
-    )
-    .map_err(|error| format!("staged runtime tree: {error}"))?;
-    if actual_runtime != expected_runtime {
-        return Err("staged runtime tree differs from the Windows browser manifest".to_string());
+    if let Some(expected_runtime) = check.runtime_digest()? {
+        if matches!(check, RuntimeCheck::Manifest) {
+            verify_files(&bin, &manifest_files()?)?;
+        }
+        let actual_runtime = runtime_digest_excluding(
+            &bin,
+            &[
+                "Release/paneflow-browser-host.exe",
+                "Release/paneflow-browser-host.dll",
+            ],
+        )
+        .map_err(|error| format!("staged runtime tree: {error}"))?;
+        if actual_runtime != expected_runtime {
+            return Err(
+                "staged runtime tree differs from the Windows browser manifest".to_string(),
+            );
+        }
+    } else {
+        for name in [
+            "Release/libcef.dll",
+            "Release/chrome_elf.dll",
+            "Release/libEGL.dll",
+            "Release/libGLESv2.dll",
+        ] {
+            if !bin.join(name).is_file() {
+                return Err(format!("staged runtime is missing {name}"));
+            }
+        }
     }
     let host = bin.join("Release/paneflow-browser-host.exe");
     let actual = verify_host_binary(&host)?;
@@ -384,17 +464,18 @@ fn verify_staged_runtime(
 fn stage(config: &HostConfig, host_digest: &str, client_digest: &str) -> Result<PathBuf, String> {
     let key = hex_digest(
         format!(
-            "{}\n{}\n{}\n{}",
+            "{}\n{}\n{}\n{}\n{:?}",
             config.runtime_root.display(),
             host_digest,
             client_digest,
-            manifest_digest()
+            manifest_digest(),
+            config.check
         )
         .as_bytes(),
     );
     let directory = config.stage_root.join(format!("host-{}", &key[..16]));
     if directory.join(".complete").is_file() {
-        verify_staged_runtime(&directory, host_digest, client_digest)?;
+        verify_staged_runtime(&directory, host_digest, client_digest, config.check)?;
         return Ok(directory);
     }
     let scratch = config
@@ -429,7 +510,7 @@ fn stage(config: &HostConfig, host_digest: &str, client_digest: &str) -> Result<
     })();
     match result {
         Ok(()) => {
-            verify_staged_runtime(&directory, host_digest, client_digest)?;
+            verify_staged_runtime(&directory, host_digest, client_digest, config.check)?;
             Ok(directory)
         }
         Err(error) => {
@@ -499,8 +580,13 @@ impl Inner {
     }
 
     fn emit(&self, event: HostEvent) -> bool {
-        if self.events.try_send(event).is_ok() {
-            return true;
+        match self.events.try_send(event) {
+            Ok(()) => return true,
+            Err(error) => {
+                if let HostEvent::Frame(_, handles) = error.into_inner() {
+                    D3dImporter::close_handles(handles);
+                }
+            }
         }
         if let Ok(mut failed) = self.event_delivery_failed.lock() {
             *failed = true;
@@ -624,6 +710,29 @@ impl HostSupervisor {
         Ok(operation)
     }
 
+    pub fn frame_acknowledger(&self) -> Result<FrameAcknowledger, BrowserError> {
+        let running = self
+            .inner
+            .running
+            .lock()
+            .map_err(|_| BrowserError::Unavailable)?;
+        let Some(running) = running.as_ref() else {
+            return Err(BrowserError::Unavailable);
+        };
+        Ok(FrameAcknowledger {
+            outbound: running.outbound.clone(),
+            connection: running.frame_connection.clone(),
+        })
+    }
+
+    pub fn has_frame_connection(&self, acknowledger: &FrameAcknowledger) -> bool {
+        self.inner.running.lock().is_ok_and(|running| {
+            running.as_ref().is_some_and(|running| {
+                Arc::ptr_eq(&running.frame_connection, &acknowledger.connection)
+            })
+        })
+    }
+
     pub fn terminate(&self) -> bool {
         let Some(running) = self
             .inner
@@ -677,9 +786,6 @@ impl HostSupervisor {
 }
 
 fn start(inner: &Arc<Inner>, config: &HostConfig) -> Result<HostInfo, String> {
-    if config.frames {
-        return Err("Windows browser presentation is not qualified until EP-002".to_string());
-    }
     verify_runtime(&config.runtime_root, config.check)?;
     let host_digest = verify_host_binary(&config.host_binary)?;
     let client_digest = verify_client_binary(&super::install::client_binary(&config.host_binary))?;
@@ -723,6 +829,14 @@ fn start(inner: &Arc<Inner>, config: &HostConfig) -> Result<HostInfo, String> {
             if config.tracing { "1" } else { "0" },
         )
         .env("PANEFLOW_CEF_SANDBOX", "required")
+        .env(
+            "PANEFLOW_BROWSER_FRAMES",
+            if config.frames { "1" } else { "0" },
+        )
+        .env(
+            "PANEFLOW_BROWSER_CLIENT_PID",
+            std::process::id().to_string(),
+        )
         .env_remove("PANEFLOW_BROWSER_SUBPROCESS_PATH")
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -752,12 +866,14 @@ fn start(inner: &Arc<Inner>, config: &HostConfig) -> Result<HostInfo, String> {
         .try_clone()
         .map_err(|error| format!("browser named-pipe clone: {error}"))?;
     let (outbound, outbound_receiver) = mpsc::sync_channel::<Outbound>(256);
+    let frame_connection = Arc::new(());
     let exited = Arc::new((Mutex::new(false), Condvar::new()));
     let stop_requested = Arc::new(AtomicBool::new(false));
     if let Ok(mut running) = inner.running.lock() {
         *running = Some(Running {
             pid,
             outbound: outbound.clone(),
+            frame_connection: frame_connection.clone(),
             exited: exited.clone(),
             stop_requested: stop_requested.clone(),
             job: job.clone(),
@@ -771,6 +887,7 @@ fn start(inner: &Arc<Inner>, config: &HostConfig) -> Result<HostInfo, String> {
             while let Ok(message) = outbound_receiver.recv() {
                 let result = match message {
                     Outbound::Control(envelope) => write_message(&mut stream, &envelope),
+                    Outbound::Ack(ack) => write_message(&mut stream, &json!({ "frame": ack })),
                     Outbound::Close => return,
                 };
                 if let Err(error) = result {
@@ -815,6 +932,39 @@ fn start(inner: &Arc<Inner>, config: &HostConfig) -> Result<HostInfo, String> {
                                     ));
                                     return;
                                 }
+                            }
+                        } else if let Some(frame) = value.get("frame") {
+                            let message = serde_json::from_value::<FrameMessage>(frame.clone())
+                                .map_err(|error| {
+                                    format!("host frame violates the contract: {error}")
+                                });
+                            let Ok(message) = message else {
+                                reader_inner.abort(message.unwrap_err());
+                                return;
+                            };
+                            if !message.is_valid() {
+                                reader_inner.abort(
+                                    "host frame violates the contract: invalid payload".to_string(),
+                                );
+                                return;
+                            }
+                            let handles = match &message {
+                                FrameMessage::PoolCreated { shared_handles, .. }
+                                    if shared_handles.len() == 3 =>
+                                {
+                                    shared_handles.clone()
+                                }
+                                FrameMessage::PoolCreated { .. } => {
+                                    reader_inner.abort(
+                                        "Windows frame pool did not contain three shared handles"
+                                            .to_string(),
+                                    );
+                                    return;
+                                }
+                                _ => Vec::new(),
+                            };
+                            if !reader_inner.emit(HostEvent::Frame(message, handles)) {
+                                return;
                             }
                         } else if value.get("native").is_some() {
                             if !reader_inner.emit(HostEvent::Native(value)) {
@@ -886,7 +1036,10 @@ fn start(inner: &Arc<Inner>, config: &HostConfig) -> Result<HostInfo, String> {
                 pid: reported as u32,
                 availability,
                 contract_version,
-                presentation: false,
+                presentation: value
+                    .get("presentation")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false),
                 initialized: value,
             })
         }
@@ -940,6 +1093,27 @@ fn watch(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn qualification_requires_an_exact_digest_and_preserves_it() {
+        for value in ["", "true", "stamp-only", &"0".repeat(63), &"g".repeat(64)] {
+            assert!(RuntimeCheck::qualification(value).is_err());
+        }
+        let digest = "ab".repeat(32);
+        assert_eq!(
+            RuntimeCheck::qualification(&digest)
+                .unwrap()
+                .runtime_digest()
+                .unwrap(),
+            Some(digest)
+        );
+    }
+
+    #[test]
+    fn a_dock_page_outside_an_isolated_qualification_keeps_the_manifest_check() {
+        assert!(paneflow_config::loader::qualification_root().is_none());
+        assert_eq!(RuntimeCheck::dock_session(), Ok(RuntimeCheck::Manifest));
+    }
 
     #[test]
     fn manifest_digest_is_stable_for_the_embedded_contract() {

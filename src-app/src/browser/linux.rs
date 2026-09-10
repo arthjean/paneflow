@@ -416,6 +416,7 @@ impl PatternProducer {
             height,
             format: FrameFormat::Bgra8,
             modifier: DRM_FORMAT_MOD_LINEAR,
+            shared_handles: Vec::new(),
             buffers: (0..POOL_BUFFERS)
                 .map(|slot| BufferLayout {
                     slot,
