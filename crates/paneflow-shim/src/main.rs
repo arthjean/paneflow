@@ -28,8 +28,9 @@ use hooks::CodexHookConfigGuard;
 use hooks::{
     merge_codebuddy_hooks, merge_cursor_hooks, merge_gemini_hooks, merge_qoder_hooks,
     remove_cursor_hooks, remove_gemini_hooks, remove_paneflow_hooks, remove_qoder_hooks,
-    GrokHookFileGuard, HermesHookConfigGuard, HookConfigGuard, HookInstall, HookInstallSkip,
-    ManagedHookConfigGuard, ManagedHookSpec, OpenCodePluginGuard, PiExtensionGuard,
+    DshOverlayGuard, GrokHookFileGuard, HermesHookConfigGuard, HookConfigGuard, HookInstall,
+    HookInstallSkip, ManagedHookConfigGuard, ManagedHookSpec, OpenCodePluginGuard,
+    PiExtensionGuard,
 };
 #[cfg(not(unix))]
 use hooks::{merge_codex_hooks, remove_codex_hooks};
@@ -65,7 +66,7 @@ fn main() -> ExitCode {
         return ExitCode::from(127);
     };
 
-    let _hook_guard = match install_hook_guard(tool) {
+    let hook_guard = match install_hook_guard(tool) {
         Ok(HookInstall::Installed(guard)) => {
             diagnose(&format!("install_hook_guard({tool}) = installed"));
             Some(guard)
@@ -83,6 +84,10 @@ fn main() -> ExitCode {
     };
 
     let args: Vec<OsString> = env::args_os().skip(1).collect();
+    let args = match hook_guard.as_ref() {
+        Some(ToolHookGuard::Dsh(guard)) => with_dsh_patch_overlay(args, guard.overlay_path()),
+        _ => args,
+    };
 
     notify_session_start(tool);
 
@@ -108,6 +113,7 @@ enum ToolHookGuard {
     OpenCode(OpenCodePluginGuard),
     Hermes(HermesHookConfigGuard),
     Grok(GrokHookFileGuard),
+    Dsh(DshOverlayGuard),
 }
 
 fn install_hook_guard(tool: &str) -> std::io::Result<HookInstall<ToolHookGuard>> {
@@ -164,6 +170,7 @@ fn install_hook_guard(tool: &str) -> std::io::Result<HookInstall<ToolHookGuard>>
             HermesHookConfigGuard::install().map(|outcome| outcome.map(ToolHookGuard::Hermes))
         }
         "grok" => GrokHookFileGuard::install().map(|outcome| outcome.map(ToolHookGuard::Grok)),
+        "dsh" => DshOverlayGuard::install().map(|outcome| outcome.map(ToolHookGuard::Dsh)),
         _ => Ok(HookInstall::Skipped(HookInstallSkip::UnsupportedTool)),
     }
 }
@@ -252,6 +259,38 @@ pub(crate) fn locate_sibling_hook_binary() -> Option<PathBuf> {
     let name = "paneflow-ai-hook.exe";
     let candidate = dir.join(name);
     candidate.is_file().then_some(candidate)
+}
+
+const DSH_LAUNCHER_OPT_OUT: &[&str] = &[
+    "--help",
+    "-h",
+    "--version",
+    "-V",
+    "--dump-config",
+    "--dump-default-config",
+];
+
+fn with_dsh_patch_overlay(args: Vec<OsString>, overlay: &std::path::Path) -> Vec<OsString> {
+    if !dsh_accepts_patch_overlay(&args) {
+        return args;
+    }
+    let mut patched = Vec::with_capacity(args.len() + 2);
+    patched.push(OsString::from("--patch"));
+    patched.push(overlay.as_os_str().to_owned());
+    patched.extend(args);
+    patched
+}
+
+fn dsh_accepts_patch_overlay(args: &[OsString]) -> bool {
+    let first_positional = args
+        .iter()
+        .find(|arg| !arg.to_string_lossy().starts_with('-'));
+    if first_positional.is_some_and(|arg| arg == "plugin") {
+        return false;
+    }
+    !args
+        .iter()
+        .any(|arg| DSH_LAUNCHER_OPT_OUT.iter().any(|opt| arg == opt))
 }
 
 #[cfg(test)]

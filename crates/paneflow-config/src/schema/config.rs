@@ -99,6 +99,8 @@ pub struct PaneFlowConfig {
     #[serde(default, deserialize_with = "lenient_value_or_default")]
     pub openclaw_button_visible: Option<bool>,
     #[serde(default, deserialize_with = "lenient_value_or_default")]
+    pub deepseek_harness_button_visible: Option<bool>,
+    #[serde(default, deserialize_with = "lenient_value_or_default")]
     pub telemetry: Option<TelemetryConfig>,
     #[serde(default, deserialize_with = "lenient_value_or_default")]
     pub terminal: Option<TerminalConfig>,

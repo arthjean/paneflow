@@ -22,10 +22,11 @@ pub enum TerminalAgent {
     Factory,
     Qoder,
     Openclaw,
+    DeepSeekHarness,
 }
 
 impl TerminalAgent {
-    pub const ALL: [TerminalAgent; 16] = [
+    pub const ALL: [TerminalAgent; 17] = [
         TerminalAgent::ClaudeCode,
         TerminalAgent::Codex,
         TerminalAgent::OpenCode,
@@ -42,6 +43,7 @@ impl TerminalAgent {
         TerminalAgent::Factory,
         TerminalAgent::Qoder,
         TerminalAgent::Openclaw,
+        TerminalAgent::DeepSeekHarness,
     ];
 
     pub const PRIMARY: [TerminalAgent; 5] = [
@@ -76,6 +78,7 @@ impl TerminalAgent {
             TerminalAgent::Factory => "factory_button_visible",
             TerminalAgent::Qoder => "qoder_button_visible",
             TerminalAgent::Openclaw => "openclaw_button_visible",
+            TerminalAgent::DeepSeekHarness => "deepseek_harness_button_visible",
         }
     }
 
@@ -131,6 +134,7 @@ impl TerminalAgent {
             TerminalAgent::Factory => "Factory",
             TerminalAgent::Qoder => "Qoder",
             TerminalAgent::Openclaw => "Openclaw",
+            TerminalAgent::DeepSeekHarness => "DeepSeek Harness",
         }
     }
 
@@ -152,6 +156,7 @@ impl TerminalAgent {
             TerminalAgent::Factory => "agents/factory.svg",
             TerminalAgent::Qoder => "agents/qoder-color.svg",
             TerminalAgent::Openclaw => "agents/openclaw-color.svg",
+            TerminalAgent::DeepSeekHarness => "agents/deepseek-color.svg",
         }
     }
 
@@ -160,6 +165,7 @@ impl TerminalAgent {
             TerminalAgent::ClaudeCode => Some(0xd97757),
             TerminalAgent::Amp => Some(0xF34E3F),
             TerminalAgent::Qoder => Some(0x2ADB5C),
+            TerminalAgent::DeepSeekHarness => Some(0x4D6BFE),
             TerminalAgent::Codex
             | TerminalAgent::OpenCode
             | TerminalAgent::Pi
@@ -205,6 +211,7 @@ impl TerminalAgent {
             TerminalAgent::Factory => "factory",
             TerminalAgent::Qoder => "qoder",
             TerminalAgent::Openclaw => "openclaw",
+            TerminalAgent::DeepSeekHarness => "deepseek_harness",
         }
     }
 
@@ -243,6 +250,7 @@ impl TerminalAgent {
             "factory" => Some(TerminalAgent::Factory),
             "qoder" => Some(TerminalAgent::Qoder),
             "openclaw" => Some(TerminalAgent::Openclaw),
+            "deepseek_harness" => Some(TerminalAgent::DeepSeekHarness),
             _ => None,
         }
     }
@@ -265,6 +273,7 @@ impl TerminalAgent {
             TerminalAgent::Factory => config.factory_button_visible,
             TerminalAgent::Qoder => config.qoder_button_visible,
             TerminalAgent::Openclaw => config.openclaw_button_visible,
+            TerminalAgent::DeepSeekHarness => config.deepseek_harness_button_visible,
         };
         explicit.unwrap_or_else(|| self.is_installed())
     }
@@ -287,6 +296,7 @@ impl TerminalAgent {
             TerminalAgent::Factory => "droid",
             TerminalAgent::Qoder => "qodercli",
             TerminalAgent::Openclaw => "openclaw",
+            TerminalAgent::DeepSeekHarness => "dsh",
         }
     }
 
@@ -298,6 +308,7 @@ impl TerminalAgent {
         match self {
             TerminalAgent::Kiro => &["chat"],
             TerminalAgent::Openclaw => &["tui"],
+            TerminalAgent::DeepSeekHarness => &["--profile", "tui"],
             _ => &[],
         }
     }
@@ -913,6 +924,7 @@ mod tests {
         assert_eq!(TerminalAgent::Factory.session_agent(), None);
         assert_eq!(TerminalAgent::Qoder.session_agent(), None);
         assert_eq!(TerminalAgent::Openclaw.session_agent(), None);
+        assert_eq!(TerminalAgent::DeepSeekHarness.session_agent(), None);
     }
 
     #[test]
@@ -920,6 +932,10 @@ mod tests {
         let cfg = PaneFlowConfig::default();
         assert_eq!(TerminalAgent::Kiro.command(&cfg), "kiro-cli chat");
         assert_eq!(TerminalAgent::Openclaw.command(&cfg), "openclaw tui");
+        assert_eq!(
+            TerminalAgent::DeepSeekHarness.command(&cfg),
+            "dsh --profile tui"
+        );
     }
 
     fn profile_entry(name: &str, agent: &str) -> AgentProfileConfig {

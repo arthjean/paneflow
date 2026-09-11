@@ -555,6 +555,7 @@ mod tests {
                 "droid",
                 "qodercli",
                 "openclaw",
+                "dsh",
             ],
         );
     }

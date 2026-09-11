@@ -486,7 +486,8 @@ jobs:
             'codebuddy.exe',
             'droid.exe',
             'qodercli.exe',
-            'openclaw.exe'
+            'openclaw.exe',
+            'dsh.exe'
           )) {
             Copy-Item -LiteralPath $shim -Destination (Join-Path $packagedHelperDir $name) -Force
           }

@@ -5,6 +5,21 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
 
 ## [Unreleased]
 
+### Added
+
+- DeepSeek Harness joins the built-in agents, with live state. The tab-bar
+  button runs `dsh --profile tui`, the profile the
+  [deepseek-harness-tui](https://github.com/gxinxing/deepseek-harness-tui)
+  plugin mounts, and `deepseek_harness_button_visible` controls the button
+  the way every other agent's key does. The shim wraps `dsh` and boots it
+  through a patch overlay that mounts the harness's own
+  `@deepseek-ai/dsh-hooks-claude-code` bridge, so the sidebar spins while a
+  turn runs, names the active tool, and settles on Done or Error. The
+  overlay and its hook config live under the harness home and are removed
+  when the last session exits; `dsh plugin`, `--help`, `--version`, and
+  the config dumps reach `dsh` untouched. A harness install without the
+  bridge package falls back to start, exit code, and end. Refs #60.
+
 ## [0.14.0] - 2026-09-09
 
 ### Added
