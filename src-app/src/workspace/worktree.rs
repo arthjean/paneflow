@@ -267,6 +267,40 @@ fn worktrees_parent(repo_root: &Path) -> PathBuf {
     }
 }
 
+fn in_paneflow_path_form(repo_root: &Path, path: PathBuf) -> PathBuf {
+    let roots = [
+        worktrees_parent(repo_root),
+        legacy_worktrees_parent(repo_root),
+        repo_root.to_path_buf(),
+    ];
+    for root in roots {
+        if path.starts_with(&root) {
+            return path;
+        }
+        let Ok(resolved) = std::fs::canonicalize(&root) else {
+            continue;
+        };
+        if let Ok(rest) = path.strip_prefix(without_verbatim_prefix(resolved)) {
+            return root.join(rest);
+        }
+    }
+    path
+}
+
+#[cfg(windows)]
+fn without_verbatim_prefix(path: PathBuf) -> PathBuf {
+    let text = path.to_string_lossy();
+    match text.strip_prefix(r"\\?\") {
+        Some(rest) if rest.as_bytes().get(1) == Some(&b':') => PathBuf::from(rest),
+        _ => path,
+    }
+}
+
+#[cfg(not(windows))]
+fn without_verbatim_prefix(path: PathBuf) -> PathBuf {
+    path
+}
+
 pub fn worktree_dir(repo_root: &Path, branch: &str) -> PathBuf {
     worktrees_parent(repo_root).join(branch_slug_or_default(branch))
 }
@@ -656,7 +690,13 @@ pub fn list_worktrees(repo_root: &Path) -> Result<Vec<WorktreeEntry>, String> {
         &["worktree", "list", "--porcelain"],
         GIT_DEADLINE,
     )?;
-    Ok(parse_worktree_porcelain(&stdout))
+    Ok(parse_worktree_porcelain(&stdout)
+        .into_iter()
+        .map(|entry| WorktreeEntry {
+            path: in_paneflow_path_form(repo_root, entry.path),
+            branch: entry.branch,
+        })
+        .collect())
 }
 
 pub fn parse_worktree_porcelain(stdout: &str) -> Vec<WorktreeEntry> {
@@ -1104,6 +1144,36 @@ mod tests {
         assert_eq!(branch_slug("."), "");
         assert_eq!(branch_slug("..."), "");
         assert_eq!(branch_slug("-..-"), "");
+    }
+
+    #[test]
+    fn a_resolved_git_path_comes_back_in_paneflow_path_form() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let _root = test_support::scoped_root(tmp.path().join("worktrees"));
+        let repo_root = tmp.path().join("repo");
+        let dir = worktree_dir(&repo_root, "feat/x");
+        std::fs::create_dir_all(&dir).expect("worktree dir");
+
+        let parent = worktrees_parent(&repo_root);
+        let resolved = without_verbatim_prefix(std::fs::canonicalize(&parent).expect("canonical"));
+        let as_git_reports_it = resolved.join("feat-x");
+
+        assert_eq!(in_paneflow_path_form(&repo_root, as_git_reports_it), dir);
+        assert_eq!(
+            in_paneflow_path_form(&repo_root, dir.clone()),
+            dir,
+            "a path already in Paneflow form is untouched"
+        );
+    }
+
+    #[test]
+    fn a_path_outside_every_paneflow_root_is_left_alone() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let _root = test_support::scoped_root(tmp.path().join("worktrees"));
+        let repo_root = tmp.path().join("repo");
+        let outside = tmp.path().join("somewhere-else").join("checkout");
+
+        assert_eq!(in_paneflow_path_form(&repo_root, outside.clone()), outside);
     }
 
     #[test]
