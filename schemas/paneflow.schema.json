@@ -402,6 +402,11 @@
       "description": "Show the built-in 'Openclaw' command button. Null/omitted auto-detects the CLI binary.",
       "default": null
     },
+    "deepseek_harness_button_visible": {
+      "type": ["boolean", "null"],
+      "description": "Show the built-in 'DeepSeek Harness' command button. Null/omitted auto-detects the CLI binary.",
+      "default": null
+    },
     "agent_panel": {
       "type": ["object", "null"],
       "description": "Agents-view display, profile, and notification settings.",

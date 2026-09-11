@@ -1,6 +1,7 @@
 mod agents;
 mod claude;
 mod codex;
+pub(crate) mod dsh;
 mod hermes;
 mod opencode;
 mod owned_files;
@@ -16,6 +17,7 @@ pub(crate) use codex::CodexHookConfigGuard;
 pub(crate) use codex::{enable_codex_feature_flag, CODEX_HOOK_EVENTS, CODEX_TOML_MARKER};
 #[cfg(not(unix))]
 pub(crate) use codex::{merge_codex_hooks, remove_codex_hooks};
+pub(crate) use dsh::DshOverlayGuard;
 pub(crate) use hermes::HermesHookConfigGuard;
 #[cfg(test)]
 pub(crate) use hermes::{hermes_managed_block, strip_hermes_managed_block, HERMES_BLOCK_BEGIN};
@@ -52,6 +54,7 @@ pub(crate) type HookLease = ConfigLease;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum HookInstallSkip {
     IpcUnavailable,
+    BridgeUnavailable,
     PersistentClaudeHook,
     UnsupportedTool,
 }

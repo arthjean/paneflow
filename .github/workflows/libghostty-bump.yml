@@ -254,7 +254,7 @@ jobs:
           components: rustfmt
 
       - name: Install pinned bindgen
-        run: cargo install bindgen-cli --version 0.72.1 --locked
+        run: cargo install bindgen-cli --version 0.72.1 --locked --force
 
       - name: Regenerate bindings from the target header
         env:

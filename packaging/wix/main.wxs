@@ -135,6 +135,7 @@
                             <File Id='HelperDroid' Name='droid.exe' DiskId='1' Source='$(var.CargoTargetBinDir)\paneflow-helpers\droid.exe'/>
                             <File Id='HelperQodercli' Name='qodercli.exe' DiskId='1' Source='$(var.CargoTargetBinDir)\paneflow-helpers\qodercli.exe'/>
                             <File Id='HelperOpenclaw' Name='openclaw.exe' DiskId='1' Source='$(var.CargoTargetBinDir)\paneflow-helpers\openclaw.exe'/>
+                            <File Id='HelperDsh' Name='dsh.exe' DiskId='1' Source='$(var.CargoTargetBinDir)\paneflow-helpers\dsh.exe'/>
                             <File Id='HelperAiHook' Name='paneflow-ai-hook.exe' DiskId='1' Source='$(var.CargoTargetBinDir)\paneflow-helpers\paneflow-ai-hook.exe'/>
                         </Component>
                     </Directory>

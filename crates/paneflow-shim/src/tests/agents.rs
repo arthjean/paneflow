@@ -1,3 +1,4 @@
+use crate::hooks::dsh::{render_overlay, DSH_HOOKS_BASENAME, DSH_OVERLAY_BASENAME};
 #[cfg(unix)]
 use crate::hooks::{
     enable_codex_feature_flag, CodexHookConfigGuard, CODEX_HOOK_EVENTS, CODEX_TOML_MARKER,
@@ -6,9 +7,9 @@ use crate::hooks::{
     hermes_managed_block, is_paneflow_hook_command, merge_codebuddy_hooks, merge_cursor_hooks,
     merge_gemini_hooks, merge_qoder_hooks, remove_cursor_hooks, remove_gemini_hooks,
     remove_paneflow_hooks, remove_qoder_hooks, resolve_hook_command, strip_hermes_managed_block,
-    GrokHookFileGuard, HermesHookConfigGuard, InvalidJsonPolicy, ManagedHookConfigGuard,
-    ManagedHookSpec, OpenCodePluginGuard, PiExtensionGuard, CLAUDE_HOOK_EVENTS, HERMES_BLOCK_BEGIN,
-    PANEFLOW_TS_BASENAME,
+    DshOverlayGuard, GrokHookFileGuard, HermesHookConfigGuard, InvalidJsonPolicy,
+    ManagedHookConfigGuard, ManagedHookSpec, OpenCodePluginGuard, PiExtensionGuard,
+    CLAUDE_HOOK_EVENTS, HERMES_BLOCK_BEGIN, PANEFLOW_TS_BASENAME,
 };
 use serde_json::json;
 
@@ -587,6 +588,86 @@ fn resolve_hook_command_output_is_recognized_by_detector() {
         assert!(
             command_preserves_event_arg(&cmd, event),
             "resolve_hook_command output must preserve the event name: {cmd:?}"
+        );
+    }
+}
+
+#[test]
+fn dsh_guard_writes_hooks_and_overlay_and_removes_both_on_drop() {
+    let td = tempfile::TempDir::new().unwrap();
+    let dir = td.path().join(".dsh/paneflow");
+    let guard = DshOverlayGuard::install_at(&dir).expect("install must succeed");
+    let hooks_path = dir.join(DSH_HOOKS_BASENAME);
+    let overlay_path = dir.join(DSH_OVERLAY_BASENAME);
+
+    let root: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&hooks_path).unwrap()).unwrap();
+    for event in ["UserPromptSubmit", "PreToolUse", "PostToolUse", "Stop"] {
+        assert!(
+            root["hooks"][event].is_array(),
+            "{event} must be registered for the DeepSeek Harness bridge"
+        );
+    }
+    assert!(
+        root["hooks"].get("Notification").is_none(),
+        "dsh-hooks-claude-code emits no Notification event"
+    );
+    let cmd = root["hooks"]["Stop"][0]["hooks"][0]["command"]
+        .as_str()
+        .unwrap();
+    assert!(command_preserves_event_arg(cmd, "Stop"));
+
+    let overlay = std::fs::read_to_string(&overlay_path).unwrap();
+    assert!(overlay.starts_with("- insert:"));
+    assert!(overlay.contains("name: '@deepseek-ai/dsh-hooks-claude-code'"));
+    assert!(overlay.contains(&hooks_path.to_string_lossy().to_string()));
+    assert_eq!(guard.overlay_path(), overlay_path);
+
+    drop(guard);
+    assert!(!overlay_path.exists(), "drop must delete the overlay");
+    assert!(!hooks_path.exists(), "drop must delete the hook config");
+}
+
+#[test]
+fn dsh_overlay_escapes_a_single_quote_in_the_config_path() {
+    let overlay = render_overlay(std::path::Path::new("/it's/hooks.json"));
+    assert!(
+        overlay.contains("configPath: '/it''s/hooks.json'"),
+        "a single quote must be doubled inside a single-quoted YAML scalar, got {overlay}"
+    );
+}
+
+#[test]
+fn dsh_patch_overlay_leads_the_launcher_flags() {
+    let overlay = std::path::Path::new("/tmp/overlay.yml");
+    let args = vec![
+        std::ffi::OsString::from("--profile"),
+        std::ffi::OsString::from("tui"),
+    ];
+    let patched = crate::with_dsh_patch_overlay(args, overlay);
+    assert_eq!(patched[0], "--patch");
+    assert_eq!(patched[1], overlay.as_os_str());
+    assert_eq!(patched[2], "--profile");
+    assert_eq!(patched[3], "tui");
+}
+
+#[test]
+fn dsh_patch_overlay_stays_out_of_plugin_help_version_and_dumps() {
+    let overlay = std::path::Path::new("/tmp/overlay.yml");
+    for argv in [
+        vec!["plugin", "--profile", "tui", "add", "pkg"],
+        vec!["--help"],
+        vec!["-h"],
+        vec!["--version"],
+        vec!["-V"],
+        vec!["--profile", "tui", "--dump-config"],
+        vec!["--profile", "tui", "--dump-default-config"],
+    ] {
+        let args: Vec<std::ffi::OsString> = argv.iter().map(std::ffi::OsString::from).collect();
+        assert_eq!(
+            crate::with_dsh_patch_overlay(args.clone(), overlay),
+            args,
+            "{argv:?} must reach dsh untouched"
         );
     }
 }

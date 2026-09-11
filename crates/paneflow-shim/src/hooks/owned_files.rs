@@ -85,7 +85,7 @@ impl Drop for GrokHookFileGuard {
     }
 }
 
-fn sweep_owned_file(path: &Path) {
+pub(super) fn sweep_owned_file(path: &Path) {
     let _ = with_orphan_lease(path, path, |_| match std::fs::remove_file(path) {
         Ok(()) => Ok(()),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
@@ -93,7 +93,7 @@ fn sweep_owned_file(path: &Path) {
     });
 }
 
-fn cleanup_owned_file(path: &Path, lease: &mut HookLease) {
+pub(super) fn cleanup_owned_file(path: &Path, lease: &mut HookLease) {
     let _ = with_last_lease(path, lease, |_| match std::fs::remove_file(path) {
         Ok(()) => Ok(()),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),

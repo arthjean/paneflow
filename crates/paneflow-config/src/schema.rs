@@ -126,6 +126,7 @@ mod tests {
             factory_button_visible: Some(true),
             qoder_button_visible: Some(true),
             openclaw_button_visible: Some(true),
+            deepseek_harness_button_visible: Some(true),
             telemetry: Some(TelemetryConfig {
                 enabled: Some(false),
             }),
