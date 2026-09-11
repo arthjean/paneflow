@@ -364,7 +364,7 @@ jobs:
             sleep $((attempt * 10))
           done
           sudo apt-get install -y clang elfutils libclang-dev
-          cargo install bindgen-cli --version 0.72.1 --locked
+          cargo install bindgen-cli --version 0.72.1 --locked --force
       - name: Regenerate and compare bindings
         env:
           PANEFLOW_GHOSTTY_SOURCE_DIR: ${{ github.workspace }}/.ghostty-source
