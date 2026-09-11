@@ -1,0 +1,18 @@
+diff --git a/crates/gpui_windows/src/directx_renderer.rs b/crates/gpui_windows/src/directx_renderer.rs
+index cdc0318..a7a02ee 100644
+--- a/crates/gpui_windows/src/directx_renderer.rs
++++ b/crates/gpui_windows/src/directx_renderer.rs
+@@ -55,6 +55,13 @@ pub struct ExternalSurfaceContext {
+ }
+ 
+ impl ExternalSurfaceContext {
++    pub fn adapter_luid(&self) -> Option<(i32, u32)> {
++        let dxgi: IDXGIDevice = self.device.cast().ok()?;
++        let adapter = unsafe { dxgi.GetAdapter() }.ok()?;
++        let description = unsafe { adapter.GetDesc() }.ok()?;
++        Some((description.AdapterLuid.HighPart, description.AdapterLuid.LowPart))
++    }
++
+     pub fn import_shared_texture(
+         &self,
+         handle: u64,

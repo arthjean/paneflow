@@ -1,0 +1,42 @@
+{
+  "recorded_at": "2026-09-11T15:00:11.5012433+02:00",
+  "os": {
+    "Caption": "Microsoft Windows 11 Professionnel",
+    "Version": "10.0.26200",
+    "BuildNumber": "26200"
+  },
+  "cpu": {
+    "Name": "AMD Ryzen 7 7800X3D 8-Core Processor           "
+  },
+  "gpu": [
+    {
+      "Name": "NVIDIA GeForce RTX 4070 Ti SUPER",
+      "DriverVersion": "32.0.16.1656",
+      "CurrentHorizontalResolution": 2560,
+      "CurrentVerticalResolution": 1440,
+      "CurrentRefreshRate": 119
+    },
+    {
+      "Name": "AMD Radeon(TM) Graphics",
+      "DriverVersion": "32.0.21045.5002",
+      "CurrentHorizontalResolution": null,
+      "CurrentVerticalResolution": null,
+      "CurrentRefreshRate": null
+    }
+  ],
+  "app": "133A13D2A8F8717CB6C881052441790672C7337C024DE5D2FACAC173C0161425",
+  "client": "C28CB7B99782D02AC260CB023A89407929755D41734C6F5382A26DA26E0FD3AD",
+  "after_fix": {
+    "recorded_at": "2026-09-11T20:21:36.3315337+02:00",
+    "display": {
+      "Name": "NVIDIA GeForce RTX 4070 Ti SUPER",
+      "DriverVersion": "32.0.16.1656",
+      "CurrentHorizontalResolution": 2560,
+      "CurrentVerticalResolution": 1440,
+      "CurrentRefreshRate": 119
+    },
+    "app": "F5EF6CD1C98BBBB8A44A38427CDC19E29897AB5D4D20B9FEBFD8ACFF9468F134",
+    "client": "6C20D9BED18DA9FFE4E844ED2908D6978CA348138AC7354392F3B25EC848FE57",
+    "app_before_fix": "F623151D9F06F1B416A8D1070B3C91CC268D572A4DF8F31FC056B18DAE97253D"
+  }
+}

@@ -1,0 +1,646 @@
+{
+  "runs": [
+    {
+      "directory": "C:\\dev\\paneflow-agents-browser\\target\\browser-lag-baseline2-20260911\\r1",
+      "observed_span_seconds": 70.0306181,
+      "presentation_gaps_over_50ms": 33,
+      "presentation_gap_ms": {
+        "count": 33,
+        "p50": 131.2797,
+        "p95": 141.8684,
+        "p99": 153.4969,
+        "max": 153.4969
+      },
+      "gap_recurrence_ms": {
+        "count": 32,
+        "p50": 2127.634,
+        "p95": 2139.5147,
+        "p99": 2151.1487,
+        "max": 2151.1487
+      },
+      "late_frames_over_50ms": 46,
+      "late_frames_coincident_with_presentation_gap": 46,
+      "resizes_over_100ms": 54,
+      "long_resizes_overlapping_presentation_gap": 9,
+      "agent_binary_scan_ms": {
+        "count": 0,
+        "p50": null,
+        "p95": null,
+        "p99": null,
+        "max": null
+      },
+      "scans_overlapping_presentation_gap": 0,
+      "scan_threads": [],
+      "resize_send_to_host_ms": {
+        "count": 0,
+        "p50": null,
+        "p95": null,
+        "p99": null,
+        "max": null
+      },
+      "resize_host_to_publication_ms": {
+        "count": 0,
+        "p50": null,
+        "p95": null,
+        "p99": null,
+        "max": null
+      },
+      "resize_stages": [],
+      "gaps": [
+        {
+          "start_ns": 25279610763800,
+          "end_ns": 25279738165300,
+          "duration_ms": 127.4015
+        },
+        {
+          "start_ns": 25281732325100,
+          "end_ns": 25281874193500,
+          "duration_ms": 141.8684
+        },
+        {
+          "start_ns": 25283871839800,
+          "end_ns": 25284002486500,
+          "duration_ms": 130.6467
+        },
+        {
+          "start_ns": 25285999084500,
+          "end_ns": 25286132571400,
+          "duration_ms": 133.4869
+        },
+        {
+          "start_ns": 25288132354200,
+          "end_ns": 25288262827600,
+          "duration_ms": 130.4734
+        },
+        {
+          "start_ns": 25290259639000,
+          "end_ns": 25290390023300,
+          "duration_ms": 130.3843
+        },
+        {
+          "start_ns": 25292386571900,
+          "end_ns": 25292520799400,
+          "duration_ms": 134.2275
+        },
+        {
+          "start_ns": 25294520120700,
+          "end_ns": 25294658663800,
+          "duration_ms": 138.5431
+        },
+        {
+          "start_ns": 25296653322000,
+          "end_ns": 25296786229400,
+          "duration_ms": 132.9074
+        },
+        {
+          "start_ns": 25298780961300,
+          "end_ns": 25298912241000,
+          "duration_ms": 131.2797
+        },
+        {
+          "start_ns": 25300908432600,
+          "end_ns": 25301035203900,
+          "duration_ms": 126.7713
+        },
+        {
+          "start_ns": 25303029255000,
+          "end_ns": 25303167655200,
+          "duration_ms": 138.4002
+        },
+        {
+          "start_ns": 25305162785500,
+          "end_ns": 25305291434700,
+          "duration_ms": 128.6492
+        },
+        {
+          "start_ns": 25307290299800,
+          "end_ns": 25307424750500,
+          "duration_ms": 134.4507
+        },
+        {
+          "start_ns": 25309423581800,
+          "end_ns": 25309550472200,
+          "duration_ms": 126.8904
+        },
+        {
+          "start_ns": 25311545068300,
+          "end_ns": 25311679011600,
+          "duration_ms": 133.9433
+        },
+        {
+          "start_ns": 25313678436800,
+          "end_ns": 25313809280100,
+          "duration_ms": 130.8433
+        },
+        {
+          "start_ns": 25315805069000,
+          "end_ns": 25315934793900,
+          "duration_ms": 129.7249
+        },
+        {
+          "start_ns": 25317933179200,
+          "end_ns": 25318060039500,
+          "duration_ms": 126.8603
+        },
+        {
+          "start_ns": 25320053978600,
+          "end_ns": 25320183084400,
+          "duration_ms": 129.1058
+        },
+        {
+          "start_ns": 25322180931800,
+          "end_ns": 25322317938300,
+          "duration_ms": 137.0065
+        },
+        {
+          "start_ns": 25324314279300,
+          "end_ns": 25324443652200,
+          "duration_ms": 129.3729
+        },
+        {
+          "start_ns": 25326442031900,
+          "end_ns": 25326567829600,
+          "duration_ms": 125.7977
+        },
+        {
+          "start_ns": 25328563003000,
+          "end_ns": 25328699670400,
+          "duration_ms": 136.6674
+        },
+        {
+          "start_ns": 25330696202700,
+          "end_ns": 25330830707100,
+          "duration_ms": 134.5044
+        },
+        {
+          "start_ns": 25332830427100,
+          "end_ns": 25332967177200,
+          "duration_ms": 136.7501
+        },
+        {
+          "start_ns": 25334963642900,
+          "end_ns": 25335092110500,
+          "duration_ms": 128.4676
+        },
+        {
+          "start_ns": 25337090359600,
+          "end_ns": 25337225151500,
+          "duration_ms": 134.7919
+        },
+        {
+          "start_ns": 25339223831200,
+          "end_ns": 25339353944500,
+          "duration_ms": 130.1133
+        },
+        {
+          "start_ns": 25341351465200,
+          "end_ns": 25341483795800,
+          "duration_ms": 132.3306
+        },
+        {
+          "start_ns": 25343479039500,
+          "end_ns": 25343632536400,
+          "duration_ms": 153.4969
+        },
+        {
+          "start_ns": 25345630188200,
+          "end_ns": 25345760951200,
+          "duration_ms": 130.763
+        },
+        {
+          "start_ns": 25347757357400,
+          "end_ns": 25347893656300,
+          "duration_ms": 136.2989
+        }
+      ]
+    },
+    {
+      "directory": "C:\\dev\\paneflow-agents-browser\\target\\browser-lag-baseline2-20260911\\r2",
+      "observed_span_seconds": 70.0283078,
+      "presentation_gaps_over_50ms": 33,
+      "presentation_gap_ms": {
+        "count": 33,
+        "p50": 132.0515,
+        "p95": 146.5147,
+        "p99": 153.4439,
+        "max": 153.4439
+      },
+      "gap_recurrence_ms": {
+        "count": 32,
+        "p50": 2127.6415,
+        "p95": 2145.5302,
+        "p99": 2151.1769,
+        "max": 2151.1769
+      },
+      "late_frames_over_50ms": 46,
+      "late_frames_coincident_with_presentation_gap": 46,
+      "resizes_over_100ms": 52,
+      "long_resizes_overlapping_presentation_gap": 8,
+      "agent_binary_scan_ms": {
+        "count": 0,
+        "p50": null,
+        "p95": null,
+        "p99": null,
+        "max": null
+      },
+      "scans_overlapping_presentation_gap": 0,
+      "scan_threads": [],
+      "resize_send_to_host_ms": {
+        "count": 0,
+        "p50": null,
+        "p95": null,
+        "p99": null,
+        "max": null
+      },
+      "resize_host_to_publication_ms": {
+        "count": 0,
+        "p50": null,
+        "p95": null,
+        "p99": null,
+        "max": null
+      },
+      "resize_stages": [],
+      "gaps": [
+        {
+          "start_ns": 25370176400600,
+          "end_ns": 25370308792800,
+          "duration_ms": 132.3922
+        },
+        {
+          "start_ns": 25372303164600,
+          "end_ns": 25372445702800,
+          "duration_ms": 142.5382
+        },
+        {
+          "start_ns": 25374442586200,
+          "end_ns": 25374582510600,
+          "duration_ms": 139.9244
+        },
+        {
+          "start_ns": 25376581724000,
+          "end_ns": 25376715089100,
+          "duration_ms": 133.3651
+        },
+        {
+          "start_ns": 25378708788200,
+          "end_ns": 25378837323200,
+          "duration_ms": 128.535
+        },
+        {
+          "start_ns": 25380836920000,
+          "end_ns": 25380970777200,
+          "duration_ms": 133.8572
+        },
+        {
+          "start_ns": 25382970335000,
+          "end_ns": 25383101896700,
+          "duration_ms": 131.5617
+        },
+        {
+          "start_ns": 25385097531500,
+          "end_ns": 25385227193500,
+          "duration_ms": 129.662
+        },
+        {
+          "start_ns": 25387224231500,
+          "end_ns": 25387354256600,
+          "duration_ms": 130.0251
+        },
+        {
+          "start_ns": 25389352306600,
+          "end_ns": 25389488227000,
+          "duration_ms": 135.9204
+        },
+        {
+          "start_ns": 25391485279600,
+          "end_ns": 25391616236400,
+          "duration_ms": 130.9568
+        },
+        {
+          "start_ns": 25393612894100,
+          "end_ns": 25393743308700,
+          "duration_ms": 130.4146
+        },
+        {
+          "start_ns": 25395739855300,
+          "end_ns": 25395874174200,
+          "duration_ms": 134.3189
+        },
+        {
+          "start_ns": 25397873047900,
+          "end_ns": 25398000513900,
+          "duration_ms": 127.466
+        },
+        {
+          "start_ns": 25400000056800,
+          "end_ns": 25400135825600,
+          "duration_ms": 135.7688
+        },
+        {
+          "start_ns": 25402133331400,
+          "end_ns": 25402263673700,
+          "duration_ms": 130.3423
+        },
+        {
+          "start_ns": 25404261074100,
+          "end_ns": 25404386619100,
+          "duration_ms": 125.545
+        },
+        {
+          "start_ns": 25406382319300,
+          "end_ns": 25406512872700,
+          "duration_ms": 130.5534
+        },
+        {
+          "start_ns": 25408509220700,
+          "end_ns": 25408649460600,
+          "duration_ms": 140.2399
+        },
+        {
+          "start_ns": 25410642560100,
+          "end_ns": 25410773525300,
+          "duration_ms": 130.9652
+        },
+        {
+          "start_ns": 25412770201600,
+          "end_ns": 25412896072500,
+          "duration_ms": 125.8709
+        },
+        {
+          "start_ns": 25414891524900,
+          "end_ns": 25415020476900,
+          "duration_ms": 128.952
+        },
+        {
+          "start_ns": 25417018396800,
+          "end_ns": 25417145349500,
+          "duration_ms": 126.9527
+        },
+        {
+          "start_ns": 25419140387500,
+          "end_ns": 25419272439000,
+          "duration_ms": 132.0515
+        },
+        {
+          "start_ns": 25421266917600,
+          "end_ns": 25421399291100,
+          "duration_ms": 132.3735
+        },
+        {
+          "start_ns": 25423394784000,
+          "end_ns": 25423533520900,
+          "duration_ms": 138.7369
+        },
+        {
+          "start_ns": 25425528215800,
+          "end_ns": 25425674730500,
+          "duration_ms": 146.5147
+        },
+        {
+          "start_ns": 25427673746000,
+          "end_ns": 25427816595400,
+          "duration_ms": 142.8494
+        },
+        {
+          "start_ns": 25429813234800,
+          "end_ns": 25429947567800,
+          "duration_ms": 134.333
+        },
+        {
+          "start_ns": 25431946801200,
+          "end_ns": 25432078110000,
+          "duration_ms": 131.3088
+        },
+        {
+          "start_ns": 25434073467200,
+          "end_ns": 25434204169900,
+          "duration_ms": 130.7027
+        },
+        {
+          "start_ns": 25436201019200,
+          "end_ns": 25436354463100,
+          "duration_ms": 153.4439
+        },
+        {
+          "start_ns": 25438352196100,
+          "end_ns": 25438484890000,
+          "duration_ms": 132.6939
+        }
+      ]
+    },
+    {
+      "directory": "C:\\dev\\paneflow-agents-browser\\target\\browser-lag-baseline2-20260911\\r3",
+      "observed_span_seconds": 70.0336458,
+      "presentation_gaps_over_50ms": 33,
+      "presentation_gap_ms": {
+        "count": 33,
+        "p50": 130.5004,
+        "p95": 138.6487,
+        "p99": 141.5084,
+        "max": 141.5084
+      },
+      "gap_recurrence_ms": {
+        "count": 32,
+        "p50": 2127.2589,
+        "p95": 2133.9658,
+        "p99": 2139.9163,
+        "max": 2139.9163
+      },
+      "late_frames_over_50ms": 47,
+      "late_frames_coincident_with_presentation_gap": 47,
+      "resizes_over_100ms": 52,
+      "long_resizes_overlapping_presentation_gap": 10,
+      "agent_binary_scan_ms": {
+        "count": 0,
+        "p50": null,
+        "p95": null,
+        "p99": null,
+        "max": null
+      },
+      "scans_overlapping_presentation_gap": 0,
+      "scan_threads": [],
+      "resize_send_to_host_ms": {
+        "count": 0,
+        "p50": null,
+        "p95": null,
+        "p99": null,
+        "max": null
+      },
+      "resize_host_to_publication_ms": {
+        "count": 0,
+        "p50": null,
+        "p95": null,
+        "p99": null,
+        "max": null
+      },
+      "resize_stages": [],
+      "gaps": [
+        {
+          "start_ns": 25462940662100,
+          "end_ns": 25463076965100,
+          "duration_ms": 136.303
+        },
+        {
+          "start_ns": 25465074002700,
+          "end_ns": 25465204455300,
+          "duration_ms": 130.4526
+        },
+        {
+          "start_ns": 25467201078400,
+          "end_ns": 25467330091200,
+          "duration_ms": 129.0128
+        },
+        {
+          "start_ns": 25469328047300,
+          "end_ns": 25469458547700,
+          "duration_ms": 130.5004
+        },
+        {
+          "start_ns": 25471456003200,
+          "end_ns": 25471585259800,
+          "duration_ms": 129.2566
+        },
+        {
+          "start_ns": 25473583487300,
+          "end_ns": 25473717263700,
+          "duration_ms": 133.7764
+        },
+        {
+          "start_ns": 25475716358900,
+          "end_ns": 25475848931400,
+          "duration_ms": 132.5725
+        },
+        {
+          "start_ns": 25477843694500,
+          "end_ns": 25477970758500,
+          "duration_ms": 127.064
+        },
+        {
+          "start_ns": 25479965085400,
+          "end_ns": 25480092050500,
+          "duration_ms": 126.9651
+        },
+        {
+          "start_ns": 25482086207400,
+          "end_ns": 25482213171500,
+          "duration_ms": 126.9641
+        },
+        {
+          "start_ns": 25484207911400,
+          "end_ns": 25484341608900,
+          "duration_ms": 133.6975
+        },
+        {
+          "start_ns": 25486341013000,
+          "end_ns": 25486471851000,
+          "duration_ms": 130.838
+        },
+        {
+          "start_ns": 25488468173900,
+          "end_ns": 25488594573800,
+          "duration_ms": 126.3999
+        },
+        {
+          "start_ns": 25490589383100,
+          "end_ns": 25490719312100,
+          "duration_ms": 129.929
+        },
+        {
+          "start_ns": 25492716969200,
+          "end_ns": 25492845591400,
+          "duration_ms": 128.6222
+        },
+        {
+          "start_ns": 25494843935800,
+          "end_ns": 25494976254300,
+          "duration_ms": 132.3185
+        },
+        {
+          "start_ns": 25496971375900,
+          "end_ns": 25497100561200,
+          "duration_ms": 129.1853
+        },
+        {
+          "start_ns": 25499098574400,
+          "end_ns": 25499228922300,
+          "duration_ms": 130.3479
+        },
+        {
+          "start_ns": 25501225874500,
+          "end_ns": 25501355870100,
+          "duration_ms": 129.9956
+        },
+        {
+          "start_ns": 25503353083700,
+          "end_ns": 25503479415000,
+          "duration_ms": 126.3313
+        },
+        {
+          "start_ns": 25505474460700,
+          "end_ns": 25505606913100,
+          "duration_ms": 132.4524
+        },
+        {
+          "start_ns": 25507601719600,
+          "end_ns": 25507727741700,
+          "duration_ms": 126.0221
+        },
+        {
+          "start_ns": 25509722478000,
+          "end_ns": 25509861126700,
+          "duration_ms": 138.6487
+        },
+        {
+          "start_ns": 25511856443800,
+          "end_ns": 25511992511700,
+          "duration_ms": 136.0679
+        },
+        {
+          "start_ns": 25513990023200,
+          "end_ns": 25514121824000,
+          "duration_ms": 131.8008
+        },
+        {
+          "start_ns": 25516117266200,
+          "end_ns": 25516246667600,
+          "duration_ms": 129.4014
+        },
+        {
+          "start_ns": 25518244694300,
+          "end_ns": 25518379437500,
+          "duration_ms": 134.7432
+        },
+        {
+          "start_ns": 25520377807300,
+          "end_ns": 25520513017300,
+          "duration_ms": 135.21
+        },
+        {
+          "start_ns": 25522511204000,
+          "end_ns": 25522637743100,
+          "duration_ms": 126.5391
+        },
+        {
+          "start_ns": 25524632065800,
+          "end_ns": 25524773574200,
+          "duration_ms": 141.5084
+        },
+        {
+          "start_ns": 25526771982100,
+          "end_ns": 25526905207700,
+          "duration_ms": 133.2256
+        },
+        {
+          "start_ns": 25528898691500,
+          "end_ns": 25529029851700,
+          "duration_ms": 131.1602
+        },
+        {
+          "start_ns": 25531026522900,
+          "end_ns": 25531158136500,
+          "duration_ms": 131.6136
+        }
+      ]
+    }
+  ]
+}

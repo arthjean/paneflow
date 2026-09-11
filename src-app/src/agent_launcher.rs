@@ -1,5 +1,6 @@
 use std::collections::HashSet;
-use std::sync::{Mutex, OnceLock};
+use std::sync::mpsc::{self, SyncSender};
+use std::sync::{Mutex, MutexGuard, OnceLock};
 use std::time::{Duration, Instant};
 
 use paneflow_config::schema::PaneFlowConfig;
@@ -333,22 +334,61 @@ pub(crate) fn is_plain_shell_token(token: &str) -> bool {
 struct InstalledBinaryCache {
     checked_at: Option<Instant>,
     found: HashSet<&'static str>,
+    scanning: bool,
+}
+
+enum Refresh {
+    Idle,
+    Blocking,
+    Background,
 }
 
 impl InstalledBinaryCache {
-    fn refresh(&mut self) {
-        self.found = TerminalAgent::ALL
-            .into_iter()
-            .map(TerminalAgent::binary)
-            .filter(|bin| which::which(bin).is_ok())
-            .collect();
+    fn plan(&self) -> Refresh {
+        if self.checked_at.is_none() {
+            Refresh::Blocking
+        } else if self.scanning || !self.is_stale() {
+            Refresh::Idle
+        } else {
+            Refresh::Background
+        }
+    }
+
+    fn store(&mut self, found: HashSet<&'static str>) {
+        self.found = found;
         self.checked_at = Some(Instant::now());
+        self.scanning = false;
     }
 
     fn is_stale(&self) -> bool {
         self.checked_at
             .is_none_or(|checked_at| checked_at.elapsed() >= INSTALLED_BINARIES_TTL)
     }
+}
+
+fn scan_installed_binaries() -> HashSet<&'static str> {
+    #[cfg(target_os = "windows")]
+    let started =
+        crate::browser_qualification::enabled().then(crate::browser_qualification::now_ns);
+    let found: HashSet<&'static str> = TerminalAgent::ALL
+        .into_iter()
+        .map(TerminalAgent::binary)
+        .filter(|bin| which::which(bin).is_ok())
+        .collect();
+    #[cfg(target_os = "windows")]
+    if let Some(started) = started {
+        crate::browser_qualification::record(
+            "agent_binary_scan",
+            serde_json::json!({
+                "start_ns": started,
+                "end_ns": crate::browser_qualification::now_ns(),
+                "thread": format!("{:?}", std::thread::current().id()),
+                "thread_name": std::thread::current().name(),
+                "found": found.len(),
+            }),
+        );
+    }
+    found
 }
 
 const INSTALLED_BINARIES_TTL: Duration = Duration::from_secs(2);
@@ -359,27 +399,53 @@ fn installed_binary_cache() -> &'static Mutex<InstalledBinaryCache> {
         Mutex::new(InstalledBinaryCache {
             checked_at: None,
             found: HashSet::new(),
+            scanning: false,
         })
     })
 }
 
+fn lock_installed_binary_cache() -> MutexGuard<'static, InstalledBinaryCache> {
+    installed_binary_cache().lock().unwrap_or_else(|poisoned| {
+        tracing::warn!(
+            target: "paneflow_app::agent_launcher",
+            "installed binary cache mutex poisoned; refreshing recovered state"
+        );
+        poisoned.into_inner()
+    })
+}
+
+fn request_background_scan() -> bool {
+    static SCANNER: OnceLock<Option<SyncSender<()>>> = OnceLock::new();
+    SCANNER
+        .get_or_init(|| {
+            let (sender, receiver) = mpsc::sync_channel::<()>(1);
+            std::thread::Builder::new()
+                .name("paneflow-agent-scan".to_owned())
+                .spawn(move || {
+                    while receiver.recv().is_ok() {
+                        let found = scan_installed_binaries();
+                        lock_installed_binary_cache().store(found);
+                    }
+                })
+                .ok()?;
+            Some(sender)
+        })
+        .as_ref()
+        .is_some_and(|sender| sender.try_send(()).is_ok())
+}
+
 fn installed_binaries_contains(binary: &'static str) -> bool {
-    let mut cache = match installed_binary_cache().lock() {
-        Ok(cache) => cache,
-        Err(poisoned) => {
-            tracing::warn!(
-                target: "paneflow_app::agent_launcher",
-                "installed binary cache mutex poisoned; refreshing recovered state"
-            );
-            poisoned.into_inner()
+    let mut cache = lock_installed_binary_cache();
+    match cache.plan() {
+        Refresh::Idle => {}
+        Refresh::Background if request_background_scan() => cache.scanning = true,
+        Refresh::Blocking | Refresh::Background => {
+            let found = scan_installed_binaries();
+            cache.store(found);
         }
-    };
-    if cache.is_stale() {
-        cache.refresh();
     }
     cache.found.contains(binary)
 }
-
 fn is_env_assignment(token: &str) -> bool {
     match token.split_once('=') {
         Some((key, _)) => {
@@ -406,6 +472,58 @@ fn strip_windows_exec_suffix(base: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn cache(age: Option<Duration>, scanning: bool) -> InstalledBinaryCache {
+        InstalledBinaryCache {
+            checked_at: age.map(|age| Instant::now() - age),
+            found: HashSet::from(["claude"]),
+            scanning,
+        }
+    }
+
+    #[test]
+    fn a_cache_that_never_scanned_answers_only_after_its_first_scan() {
+        assert!(matches!(cache(None, false).plan(), Refresh::Blocking));
+    }
+
+    #[test]
+    fn a_fresh_cache_answers_from_its_snapshot_without_scanning() {
+        let cache = cache(Some(INSTALLED_BINARIES_TTL / 2), false);
+        assert!(matches!(cache.plan(), Refresh::Idle));
+        assert!(cache.found.contains("claude"));
+    }
+
+    #[test]
+    fn a_stale_cache_scans_in_the_background_and_still_answers_now() {
+        let cache = cache(Some(INSTALLED_BINARIES_TTL), false);
+        assert!(matches!(cache.plan(), Refresh::Background));
+        assert!(cache.found.contains("claude"));
+    }
+
+    #[test]
+    fn a_scan_already_running_is_not_queued_again() {
+        assert!(matches!(
+            cache(Some(INSTALLED_BINARIES_TTL * 4), true).plan(),
+            Refresh::Idle
+        ));
+    }
+
+    #[test]
+    fn a_stored_scan_replaces_the_snapshot_and_ends_the_refresh() {
+        let mut cache = cache(Some(INSTALLED_BINARIES_TTL * 4), true);
+        cache.store(HashSet::from(["codex"]));
+        assert!(!cache.scanning);
+        assert!(cache.found.contains("codex"));
+        assert!(matches!(cache.plan(), Refresh::Idle));
+    }
+
+    #[test]
+    fn the_installed_binary_cache_answers_every_agent_without_a_panic() {
+        for agent in TerminalAgent::ALL {
+            let _ = agent.is_installed();
+        }
+        assert!(!lock_installed_binary_cache().is_stale());
+    }
 
     #[test]
     fn launch_command_declares_its_own_agent() {

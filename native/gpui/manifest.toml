@@ -82,3 +82,7 @@ sha256 = "1720ea269911295fe5662cdcbb18c70777615f7214d197dfb7822b36cd8bff0e"
 [[patches]]
 file = "0012-gpui-windows-presentation-timing.patch"
 sha256 = "13afd45b6746f785f253f64d1bce4daa0e5260324e19c7b16ce42cfbfdce20bf"
+
+[[patches]]
+file = "0013-gpui-windows-external-surface-adapter.patch"
+sha256 = "1a0c79646c8adcd8f99e5cbc7bbd086c1dcdedbf7aa4b56a95d5737b6798055b"

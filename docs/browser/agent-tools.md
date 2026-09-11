@@ -78,3 +78,11 @@ verdict remains independent and `NOT_QUALIFIED` while the deferred EP-007
 presented-pixel, M1 and platform-matrix gates remain open. Human Browser
 qualification is independent of this agent verdict. Windows and macOS may reuse
 these contracts, but this Linux evidence does not qualify either port.
+
+The Windows client emits the same `agent_console` and `agent_network` shapes and
+terminalizes an agent navigation at the main-document commit, so the shared
+`browser.*` controller is the only controller on that target as well. Its agent
+verdict is tracked separately in
+[windows-qualification-contract.toml](../../native/browser/windows-qualification-contract.toml)
+and stays `NOT_QUALIFIED` until SEC-09 to SEC-12, the C3 quotas, a host restart
+and a human takeover have been observed on a live Windows page.

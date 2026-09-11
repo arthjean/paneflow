@@ -1,0 +1,47 @@
+[
+  {
+    "name": "prepare_steady",
+    "clock": "QPC",
+    "at_ns": 26146513736500
+  },
+  {
+    "name": "steady",
+    "clock": "QPC",
+    "at_ns": 26151520919000
+  },
+  {
+    "name": "end_steady",
+    "clock": "QPC",
+    "at_ns": 26156521128200
+  },
+  {
+    "name": "prepare_scroll",
+    "clock": "QPC",
+    "at_ns": 26156521482700
+  },
+  {
+    "name": "scroll",
+    "clock": "QPC",
+    "at_ns": 26161530286100
+  },
+  {
+    "name": "end_scroll",
+    "clock": "QPC",
+    "at_ns": 26166530626600
+  },
+  {
+    "name": "prepare_resize",
+    "clock": "QPC",
+    "at_ns": 26166531078000
+  },
+  {
+    "name": "resize",
+    "clock": "QPC",
+    "at_ns": 26171541888700
+  },
+  {
+    "name": "end_resize",
+    "clock": "QPC",
+    "at_ns": 26176542388900
+  }
+]

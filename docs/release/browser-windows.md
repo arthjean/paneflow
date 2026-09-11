@@ -81,6 +81,15 @@ The resulting receipt is
 The process is reclaimed by the bounded cleanup fallback after the control
 round trip; the receipt records that exit status explicitly.
 
+The cleanup path deletes that test certificate from `Cert:\CurrentUser\My` and
+`Cert:\CurrentUser\Root` unless `-KeepTestCertificate` is passed. The binaries
+stay signed, so any tree signed with it becomes unloadable the moment the script
+returns: the CEF bootstrap aborts with `Failed <bootstrap> certificate checks:
+Certificate 0: WinVerifyTrust failed (-2146762487)` in the profile's
+`host.stderr`, the control pipe never opens, and the dock reports a lost host.
+Pass `-KeepTestCertificate` when the signed tree has to outlive the harness run,
+and sign a staging meant for later runs with `windows-sign-staging.ps1`.
+
 ## M1 capture campaign
 
 `scripts/browser-qualification/windows-capture.ps1` records one M1 repetition.
@@ -106,7 +115,9 @@ per-monitor scale from `GetDpiForMonitor`.
 
 `scripts/browser-qualification/windows-m1-campaign.ps1` runs the whole protocol:
 it serves the fixture, captures every configuration five times, analyzes each
-repetition and writes `campaign.json` next to the comparison report.
+repetition and writes `campaign.json` next to the comparison report. Leave the
+machine alone while it runs: a capture whose window loses the foreground is
+refused, for the reason given in "Foreground ownership is part of the protocol".
 
 ```powershell
 pwsh scripts/browser-qualification/windows-m1-campaign.ps1 `
@@ -126,7 +137,24 @@ budget verdict.
 `paneflow browser-prototype` carries the Windows input steps. It reads the same
 staging environment as the capture harness, so point it at a signed staging and
 serve the fixture first with
-`bun scripts/browser-qualification.mjs serve 18762`:
+`bun scripts/browser-qualification.mjs serve 18762`.
+
+`windows-sign-staging.ps1` produces that signed staging. It signs
+`chrome_elf.dll`, the bootstrap and the client with one code-signing certificate
+that it keeps in `Cert:\CurrentUser\Root`, reuses that certificate while it
+remains valid instead of minting one per run, refuses any signature the machine
+does not trust back, and prints the runtime digest to pin. It needs Windows
+PowerShell for the certificate cmdlets:
+
+```powershell
+powershell -NoProfile -File scripts/browser-qualification/windows-sign-staging.ps1 `
+  -Runtime target/ep002-staging-final/browser `
+  -Bootstrap target/ep002-staging-final/browser/Release/paneflow-browser-host.exe
+```
+
+Re-signing `chrome_elf.dll` changes the runtime tree, so
+`PANEFLOW_BROWSER_QUALIFICATION_SHA256` has to be taken from that run, either
+from the printed value or from the digest helper below:
 
 ```powershell
 $staging = 'target/ep002-staging-final'
@@ -348,17 +376,172 @@ dock, permission and accessibility controllers are reused rather than copied:
 - Drag-and-drop file upload and the renderer clipboard round trip stay Linux-only
   for now. Windows copy and cut go through the Chromium clipboard path, and the
   asynchronous clipboard read is governed by the shared permission policy.
-- Agent console and network diagnostics are not emitted by the Windows host yet;
-  they belong to the agent-tools story.
+- Agent console and network diagnostics are emitted by the Windows client through
+  the same `agent_console` and `agent_network` shapes the Linux host uses, and an
+  agent navigation terminalizes at the main-document commit through
+  `agent_navigation_committed`, `agent_navigation_failed` and
+  `agent_navigation_cancelled`. The Windows control thread shares its
+  `Controller` with the CEF UI thread so the commit produces the new document
+  generation the application requires. No native Windows agent session has been
+  observed yet, so the agent verdict stays `NOT_QUALIFIED`.
+
+## S1-W qualification matrix and release verdict
+
+The Windows verdict is declared in
+[windows-qualification-contract.toml](../../native/browser/windows-qualification-contract.toml)
+and validated at every CI run on the release-packaging job:
+
+```sh
+python3 scripts/verify-windows-qualification-contract.py --contract native/browser/windows-qualification-contract.toml
+python3 scripts/verify-windows-qualification-contract.test.py
+```
+
+The contract carries the seven S1-W rows, SEC-01 through SEC-12, the ten NFR
+budgets this release gates on, and the documents the report depends on. Row
+statuses use the plan vocabulary: `NOT_EXECUTED`, `WORKS_NOT_MEASURED`,
+`WORKS_MEASURED` and `FAILED`. The verifier refuses a row that claims execution
+without an evidence path and a machine identity, a security case promoted past
+its proof kind, a budget declared measured without evidence, and a document that
+does not resolve to a written file. It also cross-checks the distribution
+manifest: while `human_release` is `NOT_QUALIFIED`, `availability` for
+`x86_64-pc-windows-msvc` may only be `absent` or `development`.
+
+The application enforces the same ceiling at its own entry point.
+`browser::install_windows::declared_availability`, the function
+`BrowserAuthority::detect` calls on Windows, clamps whatever the manifest
+declares to what the contract's verdicts allow, so a promoted manifest alone
+never exposes a qualified capability.
+
+Current state: `human_release = NOT_QUALIFIED`, `agent_release = NOT_QUALIFIED`.
+The `first-smoke` row is executed as `WORKS_NOT_MEASURED` on Windows 11 build
+26200 UBR 9278 with an NVIDIA GeForce RTX 4070 Ti SUPER, `minimum-product` is
+`WAIVED_BY_OWNER`, and every other row is `NOT_EXECUTED` and names what is
+missing. No Linux or macOS result is accepted
+as evidence for this target, and the contract records that refusal explicitly.
+
+### The Windows 10 1809 waiver
+
+The owner accepted, on 2026-09-11, that the declared floor rests on code and
+tests rather than on a native Windows 10 1809 run. The `minimum-product` row
+carries status `WAIVED_BY_OWNER` with the decider, the date, the reason, the
+code that enforces the floor and the residual risk. The verifier refuses a
+waiver that omits any of those fields and refuses one that presents native
+evidence it does not have.
+
+What now enforces the floor:
+`browser::install_windows::floor_verdict` reads `minimum_windows` from the
+manifest, reads `CurrentBuildNumber` from the host, and `detect` applies that
+verdict before classifying the runtime. A host below build 17763 is refused, and
+so is a host whose build number cannot be read, so no CEF payload opens under
+the declared floor. The terminals are unaffected in both cases.
+
+What the waiver does not buy: nothing on 1809 has been observed. The CEF pin,
+the bootstrap sandbox, the D3D presentation path and the installed journey are
+unproven on that build. The refusal path itself is proven by test, not by a
+1809 machine.
+
+### Which GPU drove the presentation
+
+The application chooses the adapter and the browser follows it. GPUI takes the
+first DXGI adapter that satisfies its feature level, which is the one Windows
+assigned to `paneflow.exe`, and that device draws every pane, so the browser is
+in no position to move it. The application reads the LUID of that device from
+its external surface context and passes it to the host in
+`PANEFLOW_BROWSER_ADAPTER_LUID`. The host opens exactly that adapter through
+`IDXGIFactory4::EnumAdapterByLuid` for its own D3D11 device, and hands the same
+LUID to Chromium as `--use-adapter-luid`, which ANGLE turns into the
+`EGL_PLATFORM_ANGLE_D3D_LUID_HIGH_ANGLE` and `EGL_PLATFORM_ANGLE_D3D_LUID_LOW_ANGLE`
+attributes of the D3D11 display the GPU process creates. The CEF GPU process,
+the host and the renderer therefore hold devices on one adapter, which is what a
+keyed-mutex D3D11 shared texture requires: it cannot be opened from a device on
+another adapter, and the attempt returns `0x80070057`.
+
+The host emits one `paneflow-browser-adapter` line on its standard error at
+device creation, carrying the description, the vendor and device identifiers,
+the dedicated video memory, the adapter LUID and whether the pin was applied.
+That line is what turns a GPU claim into a verifiable one.
+
+Both remaining failure paths stay legible instead of silent. When the host
+cannot open the application's adapter, the page never starts and the reason
+names the adapter it wanted and the adapters the host can see. When Chromium
+ignores the switch and offers a texture from another adapter, the host reports
+the adapter that owns that texture, read back with
+`IDXGIFactory2::GetSharedResourceAdapterLuid`, beside the import error.
+
+Measured on the reference machine, a Ryzen 7 7800X3D carrying an AMD Radeon
+integrated adapter (`0x1002:0x164e`, LUID `0-16920`) and an NVIDIA GeForce RTX
+4070 Ti SUPER (`0x10de:0x2705`, LUID `0-1474d`), with the preference set per
+executable image through `UserGpuPreferences`:
+
+| Application image | Staged host image | Presentation ran on | Frames | First frame | Log |
+|---|---|---|---|---|---|
+| integrated, forced | unset, resolved to discrete | nothing, `0x80070057` | 0 | none | `target/ep004-gpu-amd` |
+| integrated, forced | unset, resolved to discrete | integrated, pinned | 277 | 2787 ms | `target/ep004-gpu-split-pin` |
+| integrated, forced | discrete, forced | integrated, pinned | 276 | 2793 ms | `target/ep004-gpu-split-forced` |
+| unset, resolved to discrete | unset | discrete, pinned | 272 | 2859 ms | `target/ep004-gpu-default-pin` |
+
+The first row is the defect, observed on 2026-09-11 before the pin existed. The
+third row is the adversarial case: the two images carry opposite explicit
+preferences and the presentation still runs on the application's adapter. The
+two single-adapter runs that first recorded an adapter identity,
+`target/ep004-gpu-nvidia2` and `target/ep004-gpu-amd-run`, each reached 167
+frame events and a clean exit before the pin existed and still stand for that
+claim.
+
+What the pin does not prove: a switchable-graphics laptop. The reference machine
+is a desktop whose two adapters are both enumerable from either process, and a
+muxless or Optimus laptop can expose the pair differently. No hardware here
+reproduces an application adapter the host cannot open either, so that refusal
+is covered by code, not by a run.
+
+The user-facing behavior this target implements is described in
+[windows-usage.md](../browser/windows-usage.md).
+
+### Foreground ownership is part of the protocol
+
+An M1 capture is only readable if the benchmark window held the foreground for
+the whole capture. Windows throttles the presentation of a background window,
+and the terminal then waits for the next frame of a slowed redraw loop, so the
+metric that moves is exactly the one M1 exists to measure.
+
+The effect is large and was measured directly. A capture that keeps the
+foreground presents about 445 frames per two-second slice; stealing the
+foreground with a maximized Notepad twelve seconds into a capture drops it to 74
+per slice for the remainder, with nothing else changed:
+
+```
+445, 445, 427, 74, 74, 74, 74, 74, 74, 74
+```
+
+Across separate captures the split is just as clean: 550 presents and 56.0 ms
+`terminal_input_to_present` p95 when the window was backgrounded for 47 of 69
+polled samples, against 3252 presents and 35.6 ms when it held the foreground
+throughout. The latency decomposes the same way every time: scene to displayed
+stays at 14.0 to 14.7 ms p95 whatever happens, and only input to scene moves.
+
+Three changes now keep this out of the numbers:
+
+- `windows-capture.ps1` samples the foreground window every second and records
+  `foreground_pid` and `foreground_owned` in `resources.jsonl`.
+- `windows-analysis.mjs` reports `window_foreground` and sets the capture status
+  to `INVALID_WINDOW_NOT_FOREGROUND` when ownership is not complete. A capture
+  recorded before this change reports a null ratio and claims nothing.
+- `windows-m1-compare.mjs` refuses a campaign that contains a capture its own
+  analysis rejected, rather than averaging it in.
+
+When running a campaign, leave the machine alone: do not click into another
+window, and expect notifications to invalidate a repetition.
 
 ## Qualification still required
 
-EP-002 owns the first browser-page execution and the D3D external-surface path;
-EP-003 prepares the remaining OS integrations and the package. The following
-evidence has to be collected on real hardware before this target changes to a
-qualified availability:
+EP-002 executed the first browser page and the D3D external-surface path, and
+EP-003 prepared the remaining OS integrations and the package. EP-004 owns the
+qualification itself. The following evidence has to be collected on real
+hardware before this target changes to a qualified availability, and each item
+maps to a row of the contract above:
 
-- Windows 10 1809 and Windows 11 x64 bootstrap and sandbox harness results.
+- A Windows 11 x64 bootstrap and sandbox harness result on a frozen reference
+  build. Windows 10 1809 is covered by the owner waiver described above.
 - Authenticode and client export verification on the release artifacts, plus a
   real signed MSI, a standard-user installation and a loaded-DLL check on the
   installed machine (US-013).
@@ -370,8 +553,28 @@ qualified availability:
   permission, download, file-picker and external-protocol dialogs driven by a
   human (US-013).
 - A real interrupted-update and resume cycle on an installed machine (US-013).
+- A resolution good enough to settle NFR-02 at 120 Hz (US-014). Both campaigns
+  were re-run under the corrected harness as `target/ep004-m1-120hz-v2` and
+  `target/ep004-m1-60hz-v2`, thirty captures, every one holding the foreground
+  for its whole duration. NFR-03 is within budget at both rates. NFR-02 is
+  within budget at 60 Hz and 0.106 ms over its 1 ms p95 budget at 120 Hz, on a
+  delta whose p99 is negative: the two configurations measure 42.90 and
+  44.00 ms, and medians of per-repetition percentiles do not resolve a
+  difference that small. Paired per-repetition deltas or more repetitions would
+  settle it; a correction designed on this figure would not.
+- The rest of the M1 budget evaluation (US-014): GPU memory sampling and the
+  separation of interop allocations from internal Chromium VRAM; the C over B
+  integration delta NFR-07 needs, which the comparison tool does not compute;
+  and any campaign at all for NFR-01, NFR-04, NFR-05, NFR-06, NFR-08 and
+  NFR-11.
+- A hybrid-GPU run on a switchable-graphics laptop (US-013). The adapter pin
+  described above is proven on the reference desktop, including with opposite
+  explicit preferences per image, but no muxless or Optimus machine has run it.
+- A native Windows agent session covering SEC-09 to SEC-12, the C3 quotas at
+  their limit and limit plus one, two workspaces, two clients, stale
+  generations, a host restart and a human takeover (US-016).
 
-The accessibility bridge, the permission and file paths, the bundle plan and the
-update plan implemented by EP-003 are proven by contract tests reached from their
-real entry points on a development host. None of them claims a native Windows
-observation.
+The accessibility bridge, the permission and file paths, the bundle plan, the
+update plan and the agent diagnostics and navigation completion are proven by
+contract tests reached from their real entry points on a development host. None
+of them claims a native Windows observation.

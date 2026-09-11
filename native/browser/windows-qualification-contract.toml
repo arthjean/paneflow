@@ -1,0 +1,412 @@
+schema_version = 1
+mode = "internal_code_and_tests"
+target = "x86_64-pc-windows-msvc"
+distribution_manifest = "native/browser/manifest.toml"
+human_release = "NOT_QUALIFIED"
+agent_release = "NOT_QUALIFIED"
+native_release_evidence_required = true
+non_inference = true
+foreign_platform_evidence_accepted = false
+
+[[targets]]
+id = "first-smoke"
+release = "human"
+owner = "US-008"
+status = "WORKS_NOT_MEASURED"
+evidence_kind = "native_prototype_session"
+evidence = "target/ep002-input-dpi-r2/prototype.jsonl"
+observed_on = "Windows 11 Professionnel 10.0.26200 UBR 9278 25H2 x64, Ryzen 7 7800X3D, NVIDIA GeForce RTX 4070 Ti SUPER driver 32.0.16.1656"
+native_release_qualified = false
+requires = [
+    "sandboxed bootstrap",
+    "GPU page",
+    "input",
+    "scale and resize",
+    "clean shutdown",
+]
+
+[[targets]]
+id = "minimum-product"
+release = "human"
+owner = "US-013"
+status = "WAIVED_BY_OWNER"
+evidence_kind = "code_and_tests"
+native_release_qualified = false
+requires = [
+    "Windows 10 version 1809 build 17763 exact build",
+    "Windows 11 x64 exact build",
+    "installed package journey on each",
+]
+waived_by = "Arthur Jean"
+waived_at = "2026-09-11"
+waiver_reason = "The owner accepted the declared floor on code and tests instead of a native Windows 10 1809 run."
+code_evidence = [
+    "src-app/src/browser/install_windows.rs:81 floor_verdict refuses a host below the declared build and refuses an unreadable build number",
+    "src-app/src/browser/install_windows.rs:343 detect applies that verdict before classifying the runtime, so no CEF payload opens under the floor",
+    "src-app/src/browser/install.rs the_declared_windows_floor_is_the_1809_build_and_gates_detection covers 17763, 26200, 17134, an unreadable host and a manifest without a floor",
+    "native/browser/manifest.toml:307 declares minimum_windows 10.0.17763 and the label the verdict reads",
+]
+residual_risk = [
+    "No Windows 10 1809 execution proves the CEF pin, the bootstrap sandbox, the D3D presentation path or the installed journey on that build.",
+    "The floor is enforced, not demonstrated: a 1809 host is refused nothing and accepted nothing by observation.",
+]
+missing = [
+    "the Windows 11 side of this row still needs a frozen reference build and its installed package journey",
+]
+
+[[targets]]
+id = "current-reference"
+release = "human"
+owner = "US-013"
+status = "NOT_EXECUTED"
+evidence_kind = "native_reference_journey"
+native_release_qualified = false
+requires = [
+    "C0",
+    "U1",
+    "U2",
+    "SEC-01..SEC-08",
+    "IME",
+    "clipboard",
+    "files",
+    "permissions",
+    "DevTools",
+    "Narrator document reading",
+    "Dormant restoration",
+    "light and dark plus the eight themes",
+    "800x500 and the exposed scales",
+    "update from the previous version and its errors",
+]
+missing = [
+    "the reference build is not frozen",
+    "no Narrator pass has been driven by a human",
+    "no installed-package journey has been run",
+]
+
+[[targets]]
+id = "gpu-displays"
+release = "human"
+owner = "US-013"
+status = "NOT_EXECUTED"
+evidence_kind = "native_gpu_and_display_matrix"
+native_release_qualified = false
+requires = [
+    "Windows 10 1809 exact build",
+    "Windows 11 exact build",
+    "NVIDIA",
+    "at least one Intel or AMD GPU",
+    "multi-display DPI",
+]
+covered = [
+    "Windows 11 build 26200 UBR 9278 on NVIDIA GeForce RTX 4070 Ti SUPER driver 32.0.16.1656",
+    "two 2560x1440 displays at 100 percent with a monitor change and two DPI transitions",
+    "NVIDIA GeForce RTX 4070 Ti SUPER (0x10de:0x2705) drove the presentation path: 167 frame events, first frame after 3360 ms, target/ep004-gpu-nvidia2/prototype.jsonl with target/ep004-gpu-nvidia2/adapter.txt",
+    "AMD Radeon(TM) Graphics (0x1002:0x164e) drove the presentation path: 167 frame events, first frame after 2726 ms, target/ep004-gpu-amd-run/prototype.jsonl with target/ep004-gpu-amd-run/host.stderr",
+    "a split adapter assignment now presents: with paneflow.exe forced onto the AMD iGPU and the staged host image left unset, the host pinned itself to the application adapter 0-16920 and the scenario completed with 277 frame events, first frame after 2787 ms, target/ep004-gpu-split-pin/prototype.jsonl with target/ep004-gpu-split-pin/host.stderr",
+    "the adversarial split presents: with paneflow.exe forced onto the AMD iGPU and the staged host image forced onto the NVIDIA adapter, the host still pinned itself to 0-16920 and the scenario completed with 276 frame events, first frame after 2793 ms, target/ep004-gpu-split-forced/prototype.jsonl with target/ep004-gpu-split-forced/host.stderr",
+    "the unforced pairing still presents on the discrete adapter: both images left unset, the host pinned itself to 0-1474d and the scenario completed with 272 frame events, first frame after 2859 ms, target/ep004-gpu-default-pin/prototype.jsonl with target/ep004-gpu-default-pin/host.stderr",
+    "the adapter pin was re-confirmed independently against the current binary and the re-signed bundle: target/ep004-gpu-animated on the discrete adapter with 195 frame events and a first frame after 2536 ms, target/ep004-gpu-amd-pinned on the integrated adapter with 194 frame events and a first frame after 2999 ms, both reporting pinned_to_application true",
+]
+waived = [
+    "the Windows 10 1809 run, under the minimum-product waiver of 2026-09-11",
+]
+missing = [
+    "no display pair with different scale factors",
+    "no switchable-graphics laptop, so the adapter pin is proven only on a desktop whose two adapters are both enumerable from either process",
+]
+observed_on = "Windows 11 build 26200 UBR 9445, NVIDIA GeForce RTX 4070 Ti SUPER driver 32.0.16.1656 and AMD Radeon(TM) Graphics of a Ryzen 7 7800X3D, selected per executable image through UserGpuPreferences on 2026-09-11"
+findings = [
+    "A hybrid host that placed the application and the browser host on different adapters used to fail the presentation outright: with paneflow.exe forced onto the AMD iGPU while the staged host stayed on the NVIDIA adapter, the first shared texture import returned 0x80070057 and the pane terminated with zero frame events (target/ep004-gpu-amd/prototype.jsonl, target/ep004-gpu-amd/host.stderr). Windows assigns the adapter per executable image, and the staged host copy does not inherit the preference set on the shipped one, so the split was reachable without any user intent.",
+    "Resolved on 2026-09-11: the application passes the LUID of its own D3D11 device to the host, which opens that adapter with IDXGIFactory4::EnumAdapterByLuid and forwards the LUID to Chromium as --use-adapter-luid, so the CEF GPU process, the host and the renderer share one adapter. The split case now completes (target/ep004-gpu-split-pin), it still completes when the two images carry opposite explicit preferences (target/ep004-gpu-split-forced), and the unforced pairing is unchanged (target/ep004-gpu-default-pin). A host that cannot open the application adapter refuses the page and names both the wanted adapter and the ones it sees; a CEF texture from another adapter is reported with its owning adapter through IDXGIFactory2::GetSharedResourceAdapterLuid.",
+]
+
+[[targets]]
+id = "performance"
+release = "human"
+owner = "US-014"
+status = "NOT_EXECUTED"
+evidence_kind = "native_m1_campaign"
+native_release_qualified = false
+requires = [
+    "M1 A/B/C on the native references",
+    "D3D and OS presentation traces",
+    "native Windows CPU and memory profilers",
+    "1920x1080",
+    "qualified 60 Hz and 120 Hz",
+    "five repetitions",
+    "raw data retained",
+    "Browser tree private working set",
+    "parent delta",
+    "GPU memory",
+    "Windows handles",
+    "interop separated from internal Chromium VRAM",
+]
+partial_evidence = "target/ep002-m1-r0/m1-comparison.json"
+measured = [
+    "target/ep004-m1-120hz-v2: A/B/C, five repetitions each, 1920x1080 physical viewport at the 120 Hz mode, every capture holding the foreground for its whole duration",
+    "target/ep004-m1-60hz-v2: A/B/C, five repetitions each, 1920x1080 physical viewport at the 59.94 Hz mode, every capture holding the foreground for its whole duration",
+    "bench/browser/dock/2026-09-11-windows-lag: three baseline and three corrected repetitions of 20 s idle, 20 s scroll and 20 s resize, one paint-path probe and five resize variants, all on the pinned Linux fixture at a common SHA-256",
+]
+discarded = [
+    "target/ep004-m1-60hz-r3 and target/ep004-m1-120hz-r2 are invalid: the benchmark window lost the foreground during captures, which throttles presentation and inflates terminal latency. They are kept only as the evidence of the harness defect named below.",
+    "target/ep004-m1-60hz and target/ep004-m1-120hz were captured before the harness recorded foreground ownership, so they cannot prove the window held it. Their numbers are unproven rather than wrong.",
+]
+missing = [
+    "NFR-02 at 120 Hz is 0.106 ms over its p95 budget on a delta the method cannot resolve, so the row cannot be closed on it; settling it needs paired per-repetition deltas or more repetitions",
+    "GPU memory is not sampled and interop allocations are not separated from internal Chromium VRAM; the resource samples cover private working set, handles and CPU only",
+    "the integration memory overhead of NFR-07 needs a C over B delta, which the comparison tool does not compute; it reports C over A, the whole Browser tree",
+    "NFR-01, NFR-04, NFR-05, NFR-06, NFR-08 and NFR-11 have no campaign",
+]
+findings = [
+    "The M1 harness accepted captures in which the benchmark window was not in the foreground, and Windows throttles a background window's presentation. The symptom read as a latency regression: configuration A, terminals with the Browser never started, measured 43.67 ms terminal_input_to_present p95 in one campaign and 62.36 ms in another on the same machine. It is not a product change. The foreground state was the only variable.",
+    "Proven by a controlled experiment. A capture that holds the foreground presents about 445 frames per two-second slice; stealing the foreground with a maximized Notepad twelve seconds in drops it to 74 per slice for the rest of the capture, with no other change: 445, 445, 427, 74, 74, 74, 74, 74, 74, 74 (target/probe-steal-01). Polling the foreground window every 500 ms across separate captures gives a clean split: 550 presents and 56.0 ms p95 with the window backgrounded 47 samples out of 69, against 3252 presents and 35.6 ms p95 with the window foreground for all of them (target/probe-09, target/probe-10, target/probe-11).",
+    "The latency decomposes accordingly. Scene to displayed stays at 14.0 to 14.7 ms p95 in every capture, fast or slow; only input to scene moves, from 25 to 32 ms when the app presents about 6700 frames per minute to 51 to 56 ms when it presents about 1800. The input simply waits for the next frame of a throttled redraw loop.",
+    "The earlier bisect across preserved binaries was an artifact of the same defect: the per-repetition p95 is bimodal in every run, and the binary that was supposed to be clean also produced a slow repetition (target/ep004-m1-120hz-prefixA measures 38.0, 66.1 and 43.9 ms). A median over three repetitions hid it. No binary difference was ever demonstrated.",
+    "Corrected in the harness. scripts/browser-qualification/windows-capture.ps1 samples the foreground window every second and records foreground_pid and foreground_owned in resources.jsonl; windows-analysis.mjs reports window_foreground and sets status INVALID_WINDOW_NOT_FOREGROUND when ownership is not complete; windows-m1-compare.mjs refuses a campaign containing a capture its own analysis rejected, instead of averaging it. A capture recorded before this change reports a null ratio and claims nothing.",
+    "Re-run under the corrected harness on an untouched machine, both campaigns are clean: thirty captures, every one reporting window_foreground ratio 1, zero unmatched presents and at most one dropped present. The per-repetition spread that made the earlier campaigns look bimodal is gone: configuration A p95 at 120 Hz lands between 41.2 and 45.4 ms across its five repetitions. NFR-02 and NFR-03 are readable again and both land near zero, which also shows the morning campaigns had been right without being able to prove it.",
+]
+established = [
+    "the analyzer already refuses any capture whose presentation viewport is not 1920x1080 physical pixels",
+    "browser_callback_to_present carries 16715 samples in configuration B and 14183 in configuration C; configuration A has none by construction since it runs without Browser",
+]
+
+[[targets]]
+id = "distribution"
+release = "human"
+owner = "US-013"
+status = "NOT_EXECUTED"
+evidence_kind = "native_signed_artifact"
+native_release_qualified = false
+requires = [
+    "Authenticode-signed MSI built from the release chain",
+    "standard-user installation",
+    "start from a protected directory",
+    "only the expected DLLs are loaded",
+    "a hostile DLL dropped in the working directory is not loaded",
+    "offline start after download",
+    "signature chain verification",
+]
+missing = [
+    "no release signing certificate is available on this machine",
+    "no clean machine has received a standard-user installation",
+]
+
+[[targets]]
+id = "agent"
+release = "agent"
+owner = "US-016"
+status = "NOT_EXECUTED"
+evidence_kind = "native_agent_session"
+native_release_qualified = false
+requires = [
+    "SEC-09..SEC-12",
+    "C3 quotas at their limit and limit plus one",
+    "two workspaces",
+    "two clients",
+    "stale generations",
+    "host restart",
+    "human takeover",
+]
+covered = [
+    "the shared browser.* controller, its ownership checks and its C3 bounds are executed by the workspace test suite run natively on Windows 11 build 26200",
+    "the whole agent lifecycle replays against the current application binary: target/ep004-agent-r11/prototype.jsonl ends on status COMPLETED with op-4 leaving AwaitCommit on Ok(Completed), op-5 refused with Err(StaleGeneration) and op-6 cancelled by the human takeover with Err(Unavailable)",
+    "the native agent navigation terminalizes at the main-document commit: target/ep004-agent-r9/prototype.jsonl and target/ep004-agent-r10/prototype.jsonl both end on status COMPLETED, and op-4 leaves AwaitCommit on Ok(Completed) at document generation 3 once the CEF main frame commits http://127.0.0.1:18762/scroll",
+    "stale generations are refused natively: op-5 carries document generation 4 against the live generation 3 and the controller answers Err(StaleGeneration)",
+    "human takeover cancels a pending agent navigation natively: op-6 is superseded by a human Command::Navigate and terminalizes as Err(Unavailable) with the reason human browser control",
+    "the defect that kept the agent operation pending was in src-app/src/browser/page.rs: the Windows LivePage carried no branch for agent_navigation_committed, agent_navigation_failed or agent_navigation_cancelled, so native_signals dropped the whole family through the unscoped_signals fallback",
+    "the D3D11 retire deadline that fired on every navigation was in crates/paneflow-browser-host/src/windows.rs: FrameAck routing demanded page.document == document, so every frame release belonging to a superseded generation was discarded and its pool never drained",
+]
+observed_on = "Windows 11 build 26200 UBR 9445 25H2, two 2560x1440 monitors at 100 percent; cargo test --workspace --locked and the browser-prototype agent scenario against the test-signed EP-004 bundle, run natively on 2026-09-11"
+missing = [
+    "no host restart has been observed natively",
+    "the C3 quotas at their limit and limit plus one, two workspaces and two clients are not exercised natively",
+    "SEC-12 has no native proof",
+]
+
+[[security]]
+id = "SEC-01"
+release = "human"
+proof = "automated"
+status = "AUTOMATED_TEST"
+
+[[security]]
+id = "SEC-02"
+release = "human"
+proof = "native"
+status = "NATIVE_DEFERRED"
+
+[[security]]
+id = "SEC-03"
+release = "human"
+proof = "automated"
+status = "AUTOMATED_TEST"
+
+[[security]]
+id = "SEC-04"
+release = "human"
+proof = "native"
+status = "NATIVE_DEFERRED"
+
+[[security]]
+id = "SEC-05"
+release = "human"
+proof = "native"
+status = "NATIVE_DEFERRED"
+
+[[security]]
+id = "SEC-06"
+release = "human"
+proof = "automated"
+status = "AUTOMATED_TEST"
+
+[[security]]
+id = "SEC-07"
+release = "human"
+proof = "automated"
+status = "AUTOMATED_TEST"
+
+[[security]]
+id = "SEC-08"
+release = "human"
+proof = "automated"
+status = "AUTOMATED_TEST"
+
+[[security]]
+id = "SEC-09"
+release = "agent"
+proof = "automated"
+status = "AUTOMATED_TEST"
+
+[[security]]
+id = "SEC-10"
+release = "agent"
+proof = "automated"
+status = "AUTOMATED_TEST"
+
+[[security]]
+id = "SEC-11"
+release = "agent"
+proof = "automated"
+status = "AUTOMATED_TEST"
+
+[[security]]
+id = "SEC-12"
+release = "agent"
+proof = "native"
+status = "NATIVE_DEFERRED"
+
+[[budgets]]
+id = "NFR-01"
+release = "human"
+owner = "US-014"
+status = "NOT_MEASURED"
+subject = "cost without usage"
+
+[[budgets]]
+id = "NFR-02"
+release = "human"
+owner = "US-014"
+status = "MEASURED"
+subject = "terminal under web load"
+evidence = "target/ep004-m1-60hz-v2/m1-comparison.json and target/ep004-m1-120hz-v2/m1-comparison.json"
+observed = "terminal_input_to_present overhead of configuration C over configuration A: at 60 Hz p95 6000 ns and p99 61000 ns; at 120 Hz p95 1106000 ns and p99 -32000 ns, against a p95 budget of 1 ms and a p99 budget of 2 ms"
+observed_on = "Windows 11 build 26200 UBR 9445, NVIDIA GeForce RTX 4070 Ti SUPER driver 32.0.16.1656, 1920x1080 physical viewport, 59.94 Hz and 120 Hz modes, five repetitions per configuration, application binary sha256 f5ef6cd1c98bbbb8a44a38427cdc19e29897ab5d4d20b9febfd8acff9468f134, captured 2026-09-12"
+foreground = "every one of the thirty captures reports window_foreground ratio 1, so no repetition was throttled by Windows for losing the foreground"
+verdict = "WITHIN_BUDGET at 60 Hz. At 120 Hz the p95 overhead of 1.106 ms exceeds the 1 ms budget by 0.106 ms while the p99 overhead is negative."
+uncertainty = "the 120 Hz excess is below what this method resolves. The deltas are medians of per-repetition percentiles of two separate configurations, not paired samples, and the two configurations measure 42.90 ms and 44.00 ms p95; a p95 delta that exceeds its own p99 delta describes no single distribution. Settling whether the budget is met needs paired per-repetition deltas or more repetitions, not a correction designed on this figure."
+caveat = "the campaign reports OBSERVED_NOT_BUDGET_CERTIFIED; the comparison tool states observations and never pronounces a budget verdict"
+
+[[budgets]]
+id = "NFR-03"
+release = "human"
+owner = "US-014"
+status = "MEASURED"
+subject = "web presentation overhead and missed frames"
+evidence = "target/ep004-m1-60hz-v2/m1-comparison.json and target/ep004-m1-120hz-v2/m1-comparison.json"
+observed = "integrated browser overhead of configuration C over configuration B: at 60 Hz p95 100000 ns and p99 144000 ns; at 120 Hz p95 -122000 ns and p99 -121000 ns, against a 2 ms p95 budget. Present accounting: zero unmatched presents in all thirty captures, and at most one dropped present, in a single 120 Hz configuration A repetition of 7200"
+observed_on = "Windows 11 build 26200 UBR 9445, NVIDIA GeForce RTX 4070 Ti SUPER driver 32.0.16.1656, 1920x1080 physical viewport, 59.94 Hz and 120 Hz modes, five repetitions per configuration, application binary sha256 f5ef6cd1c98bbbb8a44a38427cdc19e29897ab5d4d20b9febfd8acff9468f134, captured 2026-09-12"
+foreground = "every one of the thirty captures reports window_foreground ratio 1, so no repetition was throttled by Windows for losing the foreground"
+verdict = "WITHIN_BUDGET on both modes; at 120 Hz the integrated configuration presents marginally faster than the Browser-alone witness"
+uncertainty = "at 120 Hz the minimal CEF witness of configuration B presents about 4332 frames per capture against exactly 7200 for configurations A and C, so the C over B overhead compares two different presentation cadences at that mode. At 59.94 Hz all three configurations present about 3595 frames and the comparison is like for like."
+caveat = "the campaign reports OBSERVED_NOT_BUDGET_CERTIFIED; the comparison tool states observations and never pronounces a budget verdict"
+
+[[budgets]]
+id = "NFR-04"
+release = "human"
+owner = "US-014"
+status = "NOT_MEASURED"
+subject = "refresh copies and interop buffers"
+
+[[budgets]]
+id = "NFR-05"
+release = "human"
+owner = "US-014"
+status = "NOT_MEASURED"
+subject = "opening latency"
+
+[[budgets]]
+id = "NFR-06"
+release = "human"
+owner = "US-014"
+status = "NOT_MEASURED"
+subject = "background cost"
+
+[[budgets]]
+id = "NFR-07"
+release = "human"
+owner = "US-014"
+status = "NOT_MEASURED"
+subject = "resources over 200 open and close cycles"
+
+[[budgets]]
+id = "NFR-08"
+release = "human"
+owner = "US-014"
+status = "NOT_MEASURED"
+subject = "response and bounded shutdown"
+
+[[budgets]]
+id = "NFR-11"
+release = "human"
+owner = "US-014"
+status = "NOT_MEASURED"
+subject = "reliability over sessions, resizes and injected crashes"
+
+[[budgets]]
+id = "NFR-13"
+release = "human"
+owner = "US-014"
+status = "NOT_MEASURED"
+subject = "distributed package size"
+
+[[documents]]
+id = "release-report"
+path = "docs/release/browser-windows.md"
+covers = [
+    "S1-W matrix",
+    "effective minima",
+    "GPU evidence",
+    "sandbox evidence",
+    "input evidence",
+    "accessibility evidence",
+    "M1",
+    "SEC",
+    "package provenance",
+]
+
+[[documents]]
+id = "usage-guide"
+path = "docs/browser/windows-usage.md"
+covers = [
+    "journey",
+    "errors",
+    "local data",
+    "permissions",
+    "DevTools",
+    "installation",
+]
+
+[[documents]]
+id = "agent-tools"
+path = "docs/browser/agent-tools.md"
+covers = ["agent scope", "access", "bounds", "privacy", "qualification boundary"]

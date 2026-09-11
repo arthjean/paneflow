@@ -1,0 +1,24 @@
+{
+  "schema": 1,
+  "clock": "QPC",
+  "platform": "win32",
+  "arch": "x64",
+  "date": "2026-09-11T18:16:13.156Z",
+  "seconds": 20,
+  "qpc_frequency": 10000000,
+  "fixture_sha256": "d1db2b507209e238d1c3d757ddd1f0560d51bcf316ec733af220c1cfcacd81a0",
+  "app_sha256": "f5ef6cd1c98bbbb8a44a38427cdc19e29897ab5d4d20b9febfd8acff9468f134",
+  "host_sha256": "ecae4e096783e2bd638c42db082a29df7ffa154920e6e6aa7c4141e8347ff748",
+  "client_sha256": "6c20d9bed18da9ffe4e844ed2908d6978ca348138ac7354392f3b25ec848fe57",
+  "runtime_sha256": "9da6cf4f0868960ed152b3bfb569bbad6b12acb80da2feeb5e3c62b913f07145",
+  "frame_rate": "60",
+  "git_head": "61bd37c3b475077180e7e07322e2ede5c48ca108",
+  "tracked_diff_sha256": "fecc006ae985c4880f958bc28d4c1965ae9fe6dec8327e228b80dc7cdf829923",
+  "input": "Native wheel 15Hz, alternating direction every 5s; native dock drag 60Hz, 180 logical pixels, 2s period",
+  "limitations": [
+    "Same Linux fixture and phase durations; automated gestures differ from Linux manual input.",
+    "No direct cross-platform regression verdict; screen and driver conditions differ.",
+    "PresentMon is OS display timing, not input-to-photon measurement."
+  ],
+  "pid": 420
+}

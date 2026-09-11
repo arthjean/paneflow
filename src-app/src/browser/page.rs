@@ -1456,12 +1456,26 @@ mod windows {
         completions: smol::channel::Sender<GpuCompletion>,
         session: Option<BrowserSession>,
         presented: Option<(Geometry, bool)>,
+        pending_resize: Option<Geometry>,
+        resize_started_ns: Option<u64>,
         presentation_generation: u64,
         benchmark_id: String,
     }
 
     fn resize_may_be_sent(live_pools: usize, pending: bool) -> bool {
         live_pools <= 1 && !pending
+    }
+
+    fn complete_resize(pending: &mut Option<Geometry>, frame_size: Option<(u32, u32)>) {
+        if pending.is_some_and(|geometry| {
+            frame_size
+                == Some((
+                    (geometry.width * geometry.scale_percent).div_ceil(100),
+                    (geometry.height * geometry.scale_percent).div_ceil(100),
+                ))
+        }) {
+            *pending = None;
+        }
     }
 
     fn bounded_text(value: &Value, key: &str) -> Option<String> {
@@ -1671,6 +1685,67 @@ mod windows {
         }
     }
 
+    fn native_operation(value: &Value) -> Option<OperationId> {
+        value
+            .get("operation")
+            .and_then(Value::as_str)
+            .and_then(|operation| OperationId::try_from(operation.to_owned()).ok())
+    }
+
+    fn agent_commit(
+        value: &Value,
+        browser: &paneflow_browser_protocol::BrowserId,
+        live: Option<&Document>,
+    ) -> Option<(OperationId, BrowserSession)> {
+        let operation = native_operation(value)?;
+        let session = value
+            .get("session")
+            .cloned()
+            .and_then(|session| serde_json::from_value::<BrowserSession>(session).ok())
+            .filter(|session| {
+                &session.document.browser == browser
+                    && live.is_some_and(|current| {
+                        session.document.owner == current.owner
+                            && session.document.generation > current.generation
+                    })
+            })?;
+        Some((operation, session))
+    }
+
+    fn agent_navigation_ended(value: &Value, live: Option<&Document>) -> Vec<PageSignal> {
+        let scoped = value
+            .get("document")
+            .cloned()
+            .and_then(|document| serde_json::from_value::<Document>(document).ok())
+            .is_some_and(|document| {
+                live.is_some_and(|live| {
+                    document.browser == live.browser
+                        && document.owner == live.owner
+                        && document.generation <= live.generation
+                })
+            });
+        if !scoped {
+            return Vec::new();
+        }
+        let Some(operation) = native_operation(value) else {
+            return Vec::new();
+        };
+        vec![
+            PageSignal::LoadFailed(
+                value
+                    .get("reason")
+                    .and_then(Value::as_str)
+                    .filter(|reason| reason.len() <= 256)
+                    .unwrap_or("agent navigation was cancelled")
+                    .to_owned(),
+            ),
+            PageSignal::OperationCompleted {
+                operation,
+                result: Err(BrowserError::Unavailable),
+            },
+        ]
+    }
+
     fn unscoped_signals(value: &Value, kind: &str) -> Vec<PageSignal> {
         match kind {
             "cursor" => value
@@ -1738,6 +1813,7 @@ mod windows {
                 .external_surface_context()
                 .and_then(|context| context.downcast::<ExternalSurfaceContext>().ok())
                 .ok_or("this window exposes no DirectX external surface context")?;
+            let adapter_luid = context.adapter_luid();
             let importer = D3dImporter::new(context.clone());
             let browser = paneflow_browser_protocol::BrowserId::try_from(benchmark_id.clone())
                 .map_err(str::to_owned)?;
@@ -1751,6 +1827,7 @@ mod windows {
                 owner,
                 frames: true,
                 check: runtime_check,
+                adapter_luid,
             };
             let (host, host_events, new_host) =
                 crate::browser::profile_host::ProfileHost::subscribe(config, browser.clone())?;
@@ -1768,6 +1845,8 @@ mod windows {
                     completions,
                     session: None,
                     presented: None,
+                    pending_resize: None,
+                    resize_started_ns: None,
                     presentation_generation: 0,
                     benchmark_id,
                 },
@@ -1811,6 +1890,26 @@ mod windows {
         }
 
         pub fn on_host_event(&mut self, event: HostEvent, cx: &mut App) -> Vec<PageSignal> {
+            let bench = crate::browser::benchmark::enabled();
+            if bench
+                && let HostEvent::Frame(
+                    FrameMessage::Frame {
+                        sequence,
+                        pool_generation,
+                        callback_ns,
+                        ready_ns,
+                        ..
+                    },
+                    _,
+                ) = &event
+            {
+                crate::browser::benchmark::record(
+                    &self.benchmark_id,
+                    "frame_received",
+                    serde_json::json!({"sequence": sequence, "pool_generation": pool_generation,
+                        "callback_ns": callback_ns, "ready_ns": ready_ns}),
+                );
+            }
             match event {
                 HostEvent::Ready(info) => {
                     crate::browser::benchmark::record(
@@ -1834,12 +1933,14 @@ mod windows {
                             self.consumer.set_document(session.document.clone());
                             if !session.presentation.mounted {
                                 self.presented = None;
+                                self.pending_resize = None;
                             }
                             self.session = Some(session.clone());
                             vec![PageSignal::State(session.clone())]
                         }
                         Ok(Event::Closed { .. }) => {
                             self.session = None;
+                            self.pending_resize = None;
                             vec![PageSignal::Closed]
                         }
                         Ok(_) => Vec::new(),
@@ -1885,9 +1986,20 @@ mod windows {
                         };
                         let sender = self.completions.clone();
                         let mut importer = D3dImporter::new(self.context.clone());
+                        let benchmark_id = self.benchmark_id.clone();
                         cx.background_spawn(async move {
-                            let result =
-                                smol::unblock(move || importer.import(&layout, handles)).await;
+                            let result = smol::unblock(move || {
+                                let started = if bench { crate::browser::benchmark::now_ns() } else { 0 };
+                                let result = importer.import(&layout, handles);
+                                if bench {
+                                    crate::browser::benchmark::record(
+                                        &benchmark_id,
+                                        "pool_import",
+                                        serde_json::json!({"duration_ns": crate::browser::benchmark::now_ns().saturating_sub(started)}),
+                                    );
+                                }
+                                result
+                            }).await;
                             let _ = sender
                                 .send(GpuCompletion {
                                     acknowledger: Some(acknowledger),
@@ -1912,13 +2024,57 @@ mod windows {
                     self.session = None;
                     self.consumer.host_lost();
                     self.presented = None;
+                    self.pending_resize = None;
                     vec![PageSignal::Lost(reason)]
                 }
                 HostEvent::Stopped => Vec::new(),
             }
         }
 
-        fn on_native(&self, value: &Value) -> Vec<PageSignal> {
+        fn on_native(&mut self, value: &Value) -> Vec<PageSignal> {
+            let kind = value.get("native").and_then(Value::as_str).unwrap_or("");
+            if crate::browser::benchmark::enabled()
+                && matches!(
+                    kind,
+                    "resize_host"
+                        | "resize_capture"
+                        | "resize_pool"
+                        | "pool_ready"
+                        | "paint_probe"
+                        | "ui_span"
+                        | "ui_gap"
+                        | "loaded"
+                        | "loading"
+                )
+            {
+                crate::browser::benchmark::record(&self.benchmark_id, kind, value.clone());
+            }
+            if kind == "agent_navigation_committed" {
+                let Some((operation, session)) =
+                    agent_commit(value, &self.browser, self.document())
+                else {
+                    return Vec::new();
+                };
+                self.consumer.set_document(session.document.clone());
+                if !session.presentation.mounted {
+                    self.presented = None;
+                    self.pending_resize = None;
+                }
+                self.session = Some(session.clone());
+                return vec![
+                    PageSignal::State(session),
+                    PageSignal::OperationCompleted {
+                        operation: operation.clone(),
+                        result: Ok(Event::Completed { operation }),
+                    },
+                ];
+            }
+            if matches!(
+                kind,
+                "agent_navigation_failed" | "agent_navigation_cancelled"
+            ) {
+                return agent_navigation_ended(value, self.document());
+            }
             native_signals(value, self.document())
         }
 
@@ -1945,7 +2101,23 @@ mod windows {
                     Ok(()) => Vec::new(),
                     Err(error) => vec![PageSignal::Fatal(error)],
                 },
-                Intake::Presented(_) | Intake::Ignored("pool imported") => {
+                Intake::Presented(_) => {
+                    let pending = self.pending_resize;
+                    complete_resize(&mut self.pending_resize, self.consumer.current_size());
+                    if pending.is_some()
+                        && self.pending_resize.is_none()
+                        && let Some(started) = self.resize_started_ns.take()
+                    {
+                        crate::browser::benchmark::record(
+                            &self.benchmark_id,
+                            "resize_ready",
+                            serde_json::json!({"generation": self.presentation_generation,
+                                "duration_ns": crate::browser::benchmark::now_ns().saturating_sub(started)}),
+                        );
+                    }
+                    vec![PageSignal::Repaint]
+                }
+                Intake::Ignored("pool imported") => {
                     vec![PageSignal::Repaint]
                 }
                 Intake::Ignored(_) => Vec::new(),
@@ -2055,7 +2227,10 @@ mod windows {
             let resize = self
                 .presented
                 .is_none_or(|(previous, _)| previous != geometry);
-            if resize && visible && !resize_may_be_sent(self.consumer.pool_count(), false) {
+            if resize
+                && visible
+                && !resize_may_be_sent(self.consumer.pool_count(), self.pending_resize.is_some())
+            {
                 return Ok(false);
             }
             let generation = self.presentation_generation + 1;
@@ -2072,6 +2247,18 @@ mod windows {
             })?;
             self.presentation_generation = generation;
             self.presented = Some((geometry, visible));
+            if resize {
+                self.pending_resize = Some(geometry);
+                if crate::browser::benchmark::enabled() {
+                    self.resize_started_ns = Some(crate::browser::benchmark::now_ns());
+                    crate::browser::benchmark::record(
+                        &self.benchmark_id,
+                        "resize_sent",
+                        serde_json::json!({"generation": generation, "width": geometry.width,
+                            "height": geometry.height, "scale": geometry.scale_percent}),
+                    );
+                }
+            }
             Ok(true)
         }
 
@@ -2088,10 +2275,13 @@ mod windows {
 
     #[cfg(test)]
     mod tests {
-        use super::{native_signals, resize_may_be_sent};
+        use super::{
+            Geometry, agent_commit, agent_navigation_ended, complete_resize, native_signals,
+            resize_may_be_sent,
+        };
         use crate::browser::accessibility::AccessibilityTree;
         use crate::browser::page::PageSignal;
-        use paneflow_browser_protocol::Document;
+        use paneflow_browser_protocol::{BrowserError, BrowserId, Document};
         use serde_json::{Value, json};
 
         fn document(generation: u64) -> Document {
@@ -2101,6 +2291,95 @@ mod windows {
                 "generation": generation,
             }))
             .unwrap()
+        }
+
+        fn browser() -> BrowserId {
+            BrowserId::try_from("b".to_owned()).unwrap()
+        }
+
+        fn commit(generation: u64) -> Value {
+            json!({
+                "native": "agent_navigation_committed",
+                "document": document(generation),
+                "session": {
+                    "document": document(generation),
+                    "profile": "p",
+                    "url": "http://127.0.0.1/scroll",
+                    "title": "fixture",
+                    "state": "hidden",
+                    "presentation": {
+                        "mounted": false,
+                        "visible": false,
+                        "width": 0,
+                        "height": 0,
+                        "generation": 0,
+                        "scale_percent": 100,
+                    },
+                },
+                "operation": "op-4",
+                "url": "http://127.0.0.1/scroll",
+            })
+        }
+
+        #[test]
+        fn an_agent_navigation_commit_carries_its_operation_and_the_newer_session() {
+            let (operation, session) =
+                agent_commit(&commit(2), &browser(), Some(&document(1))).unwrap();
+            assert_eq!(operation.as_str(), "op-4");
+            assert_eq!(session.document.generation, 2);
+        }
+
+        #[test]
+        fn an_agent_navigation_commit_needs_a_live_document_it_supersedes() {
+            assert!(agent_commit(&commit(2), &browser(), Some(&document(2))).is_none());
+            assert!(agent_commit(&commit(1), &browser(), Some(&document(2))).is_none());
+            assert!(agent_commit(&commit(2), &browser(), None).is_none());
+            let other = BrowserId::try_from("other".to_owned()).unwrap();
+            assert!(agent_commit(&commit(2), &other, Some(&document(1))).is_none());
+        }
+
+        #[test]
+        fn a_human_takeover_cancellation_terminalizes_the_superseded_operation() {
+            let value = json!({
+                "native": "agent_navigation_cancelled",
+                "document": document(4),
+                "operation": "op-6",
+                "reason": "human browser control",
+            });
+            let signals = agent_navigation_ended(&value, Some(&document(5)));
+            assert!(
+                matches!(signals.first(), Some(PageSignal::LoadFailed(reason)) if reason == "human browser control")
+            );
+            assert!(matches!(
+                signals.get(1),
+                Some(PageSignal::OperationCompleted {
+                    result: Err(BrowserError::Unavailable),
+                    ..
+                })
+            ));
+        }
+
+        #[test]
+        fn an_agent_navigation_end_stays_inside_its_own_page() {
+            let future = json!({
+                "native": "agent_navigation_failed",
+                "document": document(6),
+                "operation": "op-6",
+                "reason": "boom",
+            });
+            assert!(agent_navigation_ended(&future, Some(&document(5))).is_empty());
+            assert!(agent_navigation_ended(&future, None).is_empty());
+            let foreign = json!({
+                "native": "agent_navigation_failed",
+                "document": {
+                    "owner": {"workspace": "w", "session": "s"},
+                    "browser": "other",
+                    "generation": 1,
+                },
+                "operation": "op-6",
+                "reason": "boom",
+            });
+            assert!(agent_navigation_ended(&foreign, Some(&document(5))).is_empty());
         }
 
         fn signals(value: &Value) -> Vec<PageSignal> {
@@ -2113,6 +2392,26 @@ mod windows {
             assert!(resize_may_be_sent(1, false));
             assert!(!resize_may_be_sent(1, true));
             assert!(!resize_may_be_sent(2, false));
+        }
+
+        #[test]
+        fn resize_waits_for_its_frame_even_before_the_new_pool_arrives() {
+            let geometry = Geometry {
+                width: 801,
+                height: 601,
+                scale_percent: 125,
+            };
+            let mut pending = Some(geometry);
+            assert!(!resize_may_be_sent(1, pending.is_some()));
+            complete_resize(&mut pending, None);
+            assert_eq!(pending, Some(geometry));
+            complete_resize(&mut pending, Some((1000, 750)));
+            assert_eq!(pending, Some(geometry));
+            assert!(!resize_may_be_sent(1, pending.is_some()));
+            complete_resize(&mut pending, Some((1002, 752)));
+            assert_eq!(pending, None);
+            assert!(!resize_may_be_sent(2, pending.is_some()));
+            assert!(resize_may_be_sent(1, pending.is_some()));
         }
 
         #[test]

@@ -9,6 +9,13 @@ const percentile = (values, fraction) => {
 const stats = (values) => ({ count: values.length, p50: percentile(values, 0.5), p95: percentile(values, 0.95), p99: percentile(values, 0.99), max: values.length ? Math.max(...values) : null });
 const jsonLines = async (path) => (await readFile(path, "utf8")).trim().split(/\r?\n/).filter(Boolean).map(JSON.parse);
 
+export function foregroundOwnership(resources) {
+  const known = resources.filter((sample) => typeof sample.foreground_owned === "boolean");
+  if (!resources.length || known.length !== resources.length) return { samples: resources.length, owned: null, ratio: null };
+  const owned = known.filter((sample) => sample.foreground_owned).length;
+  return { samples: known.length, owned, ratio: owned / known.length };
+}
+
 export function correlate(events, csv, metadata) {
   const [header, ...lines] = csv.trim().split(/\r?\n/);
   const names = header.split(",");
@@ -86,9 +93,16 @@ export async function analyze(directory) {
     }
   }
   const total = (field) => resources.map((sample) => sample.memory.reduce((sum, process) => sum + Number(process[field]), 0));
+  const foreground = foregroundOwnership(resources);
+  const status = result.unmatched
+    ? "INVALID_UNMATCHED_PRESENTS"
+    : foreground.ratio !== null && foreground.ratio < 1
+      ? "INVALID_WINDOW_NOT_FOREGROUND"
+      : "OBSERVED_NOT_BUDGET_CERTIFIED";
   const report = {
     configuration: metadata.configuration, scenario: metadata.scenario,
-    status: result.unmatched ? "INVALID_UNMATCHED_PRESENTS" : "OBSERVED_NOT_BUDGET_CERTIFIED",
+    status,
+    window_foreground: foreground,
     protocol_duration_matches: metadata.warmup_seconds === 10 && metadata.duration_seconds === 60,
     presentation: "PresentMon ETW TimeInQPC plus MsUntilDisplayed, matched inside GPUI DXGI call; not a photonic measurement",
     clock: "Shared Windows QPC", qpc_resolution_ns: 1e9 / metadata.qpc_frequency,

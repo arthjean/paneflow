@@ -27,8 +27,10 @@ use win32job::{ExtendedLimitInfo, Job};
 pub use super::RUNTIME_ENV;
 use super::windows::D3dImporter;
 pub const OWNER_ENV: &str = "PANEFLOW_BROWSER_OWNER";
+pub const ADAPTER_LUID_ENV: &str = "PANEFLOW_BROWSER_ADAPTER_LUID";
 pub const SHUTDOWN_GRACE: Duration = Duration::from_secs(5);
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(15);
+const STDERR_SUMMARY_LIMIT: usize = 400;
 const EVENT_QUEUE_CAPACITY: usize = 64;
 const EMBEDDED_MANIFEST: &str = include_str!("../../../native/browser/manifest.toml");
 
@@ -87,6 +89,7 @@ pub struct HostConfig {
     pub owner: Owner,
     pub frames: bool,
     pub check: RuntimeCheck,
+    pub adapter_luid: Option<(i32, u32)>,
 }
 
 impl HostConfig {
@@ -565,6 +568,29 @@ fn accept_with_timeout(listener: &Listener) -> Result<interprocess::local_socket
     }
 }
 
+fn stderr_summary(content: &str) -> Option<String> {
+    let line = content.lines().rev().find(|line| !line.trim().is_empty())?;
+    let line = line.trim();
+    if line.chars().count() <= STDERR_SUMMARY_LIMIT {
+        return Some(line.to_string());
+    }
+    let mut summary: String = line.chars().take(STDERR_SUMMARY_LIMIT).collect();
+    summary.push_str("...");
+    Some(summary)
+}
+
+fn bootstrap_failure(profile: &Path, error: String) -> String {
+    let path = profile.join("host.stderr");
+    match fs::read_to_string(&path)
+        .ok()
+        .as_deref()
+        .and_then(stderr_summary)
+    {
+        Some(summary) => format!("{error}; host stderr: {summary}"),
+        None => format!("{error}; no host stderr in {}", path.display()),
+    }
+}
+
 impl Inner {
     fn state(&self) -> HostState {
         self.state
@@ -853,6 +879,11 @@ fn start(inner: &Arc<Inner>, config: &HostConfig) -> Result<HostInfo, String> {
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::from(stderr));
+    if let Some((high, low)) = config.adapter_luid {
+        command.env(ADAPTER_LUID_ENV, format!("{high},{low}"));
+    } else {
+        command.env_remove(ADAPTER_LUID_ENV);
+    }
     let mut child = command
         .spawn()
         .map_err(|error| format!("spawning the browser bootstrap: {error}"))?;
@@ -873,7 +904,8 @@ fn start(inner: &Arc<Inner>, config: &HostConfig) -> Result<HostInfo, String> {
         ));
     }
     let job = Arc::new(Mutex::new(Some(job)));
-    let stream = accept_with_timeout(&listener)?;
+    let stream =
+        accept_with_timeout(&listener).map_err(|error| bootstrap_failure(&profile, error))?;
     let writer_stream = stream
         .try_clone()
         .map_err(|error| format!("browser named-pipe clone: {error}"))?;
@@ -1012,13 +1044,13 @@ fn start(inner: &Arc<Inner>, config: &HostConfig) -> Result<HostInfo, String> {
     outbound
         .try_send(Outbound::Control(hello))
         .map_err(|_| "host control queue is full before the handshake".to_string())?;
-    let value =
-        handshake_receiver
-            .recv_timeout(HANDSHAKE_TIMEOUT)
-            .map_err(|error| match error {
-                RecvTimeoutError::Timeout => "host handshake timed out".to_string(),
-                RecvTimeoutError::Disconnected => "host ended before the handshake".to_string(),
-            })?;
+    let value = handshake_receiver
+        .recv_timeout(HANDSHAKE_TIMEOUT)
+        .map_err(|error| match error {
+            RecvTimeoutError::Timeout => "host handshake timed out".to_string(),
+            RecvTimeoutError::Disconnected => "host ended before the handshake".to_string(),
+        })
+        .map_err(|error| bootstrap_failure(&profile, error))?;
     match value.get("native").and_then(Value::as_str) {
         Some("initialized") => {
             let reply: Reply =
@@ -1163,6 +1195,44 @@ mod tests {
     #[test]
     fn browser_pipe_acl_is_owner_scoped() {
         assert!(security_descriptor().is_ok());
+    }
+
+    #[test]
+    fn a_bootstrap_failure_carries_the_last_host_stderr_line() {
+        assert_eq!(stderr_summary(""), None);
+        assert_eq!(stderr_summary("  \r\n\n\t"), None);
+        assert_eq!(
+            stderr_summary(
+                "[0911/130920.654:INFO] starting\n[0911/130920.654:FATAL] certificate checks failed\n\n"
+            ),
+            Some("[0911/130920.654:FATAL] certificate checks failed".to_string())
+        );
+        let summary = stderr_summary(&"x".repeat(STDERR_SUMMARY_LIMIT + 10)).unwrap();
+        assert_eq!(summary.chars().count(), STDERR_SUMMARY_LIMIT + 3);
+        assert!(summary.ends_with("..."));
+
+        let profile = std::env::temp_dir().join(format!(
+            "paneflow-browser-stderr-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|moment| moment.as_nanos())
+                .unwrap_or(0)
+        ));
+        let absent = bootstrap_failure(&profile, "handshake timed out".to_string());
+        assert!(absent.starts_with("handshake timed out; no host stderr in "));
+        assert!(absent.ends_with("host.stderr"));
+        fs::create_dir_all(&profile).unwrap();
+        fs::write(
+            profile.join("host.stderr"),
+            b"[FATAL] WinVerifyTrust failed\n",
+        )
+        .unwrap();
+        assert_eq!(
+            bootstrap_failure(&profile, "handshake timed out".to_string()),
+            "handshake timed out; host stderr: [FATAL] WinVerifyTrust failed".to_string()
+        );
+        let _ = fs::remove_dir_all(&profile);
     }
 
     #[test]

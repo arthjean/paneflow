@@ -2152,8 +2152,26 @@ impl BrowserView {
                 let prepaint_view = view.clone();
                 let focus = self.focus.clone();
                 canvas(
-                    move |bounds, _window, cx| {
-                        prepaint_view.update(cx, |view, _| view.viewport = Some(bounds));
+                    move |bounds, window, cx| {
+                        prepaint_view.update(cx, |view, cx| {
+                            if view.viewport != Some(bounds) {
+                                view.viewport = Some(bounds);
+                                if super::benchmark::enabled() {
+                                    super::benchmark::record(
+                                        view.id.as_str(),
+                                        "viewport",
+                                        serde_json::json!({
+                                            "x": f32::from(bounds.origin.x),
+                                            "y": f32::from(bounds.origin.y),
+                                            "width": f32::from(bounds.size.width),
+                                            "height": f32::from(bounds.size.height),
+                                            "scale": window.scale_factor(),
+                                        }),
+                                    );
+                                }
+                                view.present(window, cx);
+                            }
+                        });
                     },
                     move |bounds, (), window, cx| {
                         Self::install_pointer_capture(&view, window);

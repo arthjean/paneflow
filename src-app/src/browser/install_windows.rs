@@ -3,6 +3,8 @@ use std::path::{Path, PathBuf};
 use paneflow_browser_protocol::Availability;
 
 const MANIFEST: &str = include_str!("../../../native/browser/manifest.toml");
+const QUALIFICATION: &str =
+    include_str!("../../../native/browser/windows-qualification-contract.toml");
 
 pub const RUNTIME_SUBDIR: &str = "lib/paneflow/browser";
 pub const HOST_SUBDIR: &str = "lib/paneflow/paneflow-browser-host.exe";
@@ -26,11 +28,85 @@ pub fn target_triple() -> String {
 }
 
 pub fn declared_availability() -> Availability {
-    declared_availability_in(MANIFEST, &target_triple())
+    qualified_availability_in(
+        QUALIFICATION,
+        declared_availability_in(MANIFEST, &target_triple()),
+    )
+}
+
+pub fn qualified_availability_in(contract: &str, declared: Availability) -> Availability {
+    let parsed = toml::from_str::<toml::Value>(contract).ok();
+    let qualified = |key: &str| {
+        parsed
+            .as_ref()
+            .and_then(|value| value.get(key))
+            .and_then(toml::Value::as_str)
+            == Some("QUALIFIED")
+    };
+    let human = qualified("human_release");
+    let agent = human && qualified("agent_release");
+    match declared {
+        Availability::Absent | Availability::Development => declared,
+        Availability::HumanQualified if human => declared,
+        Availability::AgentQualified if agent => declared,
+        Availability::AgentQualified if human => Availability::HumanQualified,
+        _ => Availability::Development,
+    }
 }
 
 pub fn required_bytes() -> u64 {
     required_bytes_in(MANIFEST, &target_triple())
+}
+
+pub fn minimum_build() -> Option<u32> {
+    minimum_build_in(MANIFEST, &target_triple())
+}
+
+pub fn minimum_build_in(manifest: &str, target: &str) -> Option<u32> {
+    toml::from_str::<toml::Value>(manifest)
+        .ok()
+        .and_then(|value| {
+            value
+                .get("targets")?
+                .get(target)?
+                .get("minimum_windows")?
+                .as_str()?
+                .rsplit('.')
+                .next()?
+                .parse()
+                .ok()
+        })
+}
+
+pub fn floor_verdict(declared: Option<u32>, host: Option<u32>) -> Result<(), String> {
+    let Some(declared) = declared else {
+        return Err("the browser manifest declares no minimum Windows build".to_string());
+    };
+    match host {
+        Some(build) if build >= declared => Ok(()),
+        Some(build) => Err(format!(
+            "the browser runtime requires Windows build {declared} or later, but this host reports build {build}"
+        )),
+        None => Err(
+            "the Windows build number is unreadable, so the browser minimum cannot be honored"
+                .to_string(),
+        ),
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn host_build() -> Option<u32> {
+    let key = windows_registry::LOCAL_MACHINE
+        .open(r"SOFTWARE\Microsoft\Windows NT\CurrentVersion")
+        .ok()?;
+    key.get_string("CurrentBuildNumber")
+        .ok()
+        .and_then(|value| value.trim().parse().ok())
+}
+
+#[cfg(not(target_os = "windows"))]
+fn host_build() -> Option<u32> {
+    None
 }
 
 pub fn required_bytes_in(manifest: &str, target: &str) -> u64 {
@@ -266,7 +342,10 @@ pub enum Readiness {
 
 pub fn detect() -> Readiness {
     match locate() {
-        Some(layout) => classify(layout, &super::supervisor::manifest_digest()),
+        Some(layout) => match floor_verdict(minimum_build(), host_build()) {
+            Ok(()) => classify(layout, &super::supervisor::manifest_digest()),
+            Err(reason) => Readiness::Unusable(reason),
+        },
         None => Readiness::Absent,
     }
 }
@@ -372,6 +451,74 @@ mod tests {
     #[test]
     fn the_windows_manifest_exposes_development_without_native_qualification() {
         assert_eq!(declared_availability(), Availability::Development);
+        assert_eq!(
+            declared_availability_in(MANIFEST, &target_triple()),
+            Availability::Development
+        );
+    }
+
+    #[test]
+    fn a_promoted_manifest_stays_development_until_the_windows_verdict_changes() {
+        let contract = |human: &str, agent: &str| {
+            format!("human_release = \"{human}\"\nagent_release = \"{agent}\"\n")
+        };
+        let pending = contract("NOT_QUALIFIED", "NOT_QUALIFIED");
+        assert_eq!(
+            qualified_availability_in(&pending, Availability::HumanQualified),
+            Availability::Development
+        );
+        assert_eq!(
+            qualified_availability_in(&pending, Availability::AgentQualified),
+            Availability::Development
+        );
+        assert_eq!(
+            qualified_availability_in(&pending, Availability::Absent),
+            Availability::Absent
+        );
+        assert_eq!(
+            qualified_availability_in(QUALIFICATION, Availability::AgentQualified),
+            Availability::Development
+        );
+        let human = contract("QUALIFIED", "NOT_QUALIFIED");
+        assert_eq!(
+            qualified_availability_in(&human, Availability::HumanQualified),
+            Availability::HumanQualified
+        );
+        assert_eq!(
+            qualified_availability_in(&human, Availability::AgentQualified),
+            Availability::HumanQualified
+        );
+        let both = contract("QUALIFIED", "QUALIFIED");
+        assert_eq!(
+            qualified_availability_in(&both, Availability::AgentQualified),
+            Availability::AgentQualified
+        );
+        assert_eq!(
+            qualified_availability_in("not a contract", Availability::HumanQualified),
+            Availability::Development
+        );
+    }
+
+    #[test]
+    fn the_declared_windows_floor_is_the_1809_build_and_gates_detection() {
+        assert_eq!(minimum_build(), Some(17763));
+        assert_eq!(minimum_build_in(MANIFEST, "x86_64-unknown-none"), None);
+        assert_eq!(minimum_build_in("", &target_triple()), None);
+        assert_eq!(floor_verdict(Some(17763), Some(17763)), Ok(()));
+        assert_eq!(floor_verdict(Some(17763), Some(26200)), Ok(()));
+        let refused = floor_verdict(Some(17763), Some(17134))
+            .expect_err("a pre-1809 build must not reach the runtime");
+        assert!(refused.contains("17763"), "{refused}");
+        assert!(refused.contains("17134"), "{refused}");
+        let unreadable = floor_verdict(Some(17763), None)
+            .expect_err("an unreadable build number must not be treated as compatible");
+        assert!(unreadable.contains("unreadable"), "{unreadable}");
+        let undeclared = floor_verdict(None, Some(26200))
+            .expect_err("a manifest without a floor must not open the runtime");
+        assert!(
+            undeclared.contains("no minimum Windows build"),
+            "{undeclared}"
+        );
     }
 
     #[test]

@@ -98,6 +98,7 @@ jobs:
               - '.github/actions/**'
               - 'native/browser/arm64-ci-runtime.toml'
               - 'native/browser/linux-qualification-contract.toml'
+              - 'native/browser/windows-qualification-contract.toml'
               - 'scripts/**'
             security:
               - '**/Cargo.toml'
@@ -214,6 +215,11 @@ jobs:
 
       - name: Validate Linux extended qualification contract
         run: python3 scripts/verify-linux-qualification-contract.py --contract native/browser/linux-qualification-contract.toml --output target/ep007-linux-qualification-contract.json
+
+      - name: Validate the Windows browser qualification contract
+        run: |
+          python3 scripts/verify-windows-qualification-contract.py --contract native/browser/windows-qualification-contract.toml --output target/ep004-windows-qualification-contract.json
+          python3 scripts/verify-windows-qualification-contract.test.py
 
       - name: Validate the Windows browser bundle plan
         run: python3 scripts/browser-package.test.py

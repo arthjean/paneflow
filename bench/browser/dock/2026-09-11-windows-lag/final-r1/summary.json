@@ -1,0 +1,235 @@
+{
+  "status": "OBSERVED_NOT_BUDGET_CERTIFIED",
+  "phases": [
+    {
+      "resize_ready_ms": {
+        "count": 0,
+        "p50": null,
+        "p95": null,
+        "p99": null,
+        "max": null
+      },
+      "load_event_after_submit_ms": {
+        "count": 0,
+        "p50": null,
+        "p95": null,
+        "p99": null,
+        "max": null
+      },
+      "phase": "steady",
+      "frames": 1200,
+      "host_prepare_ms": {
+        "count": 1200,
+        "p50": 0.1538,
+        "p95": 0.2576,
+        "p99": 0.3168,
+        "max": 0.4683
+      },
+      "ready_to_receive_ms": {
+        "count": 1200,
+        "p50": 0.0782,
+        "p95": 1.2597,
+        "p99": 1.6477,
+        "max": 1.8871
+      },
+      "arrival_gap_ms": {
+        "count": 1199,
+        "p50": 15.8438,
+        "p95": 29.7031,
+        "p99": 30.8205,
+        "max": 33.0739
+      },
+      "pool_import_ms": {
+        "count": 0,
+        "p50": null,
+        "p95": null,
+        "p99": null,
+        "max": null
+      },
+      "resizes": 0,
+      "wheels": 0,
+      "recording_dropped": 0
+    },
+    {
+      "resize_ready_ms": {
+        "count": 0,
+        "p50": null,
+        "p95": null,
+        "p99": null,
+        "max": null
+      },
+      "load_event_after_submit_ms": {
+        "count": 0,
+        "p50": null,
+        "p95": null,
+        "p99": null,
+        "max": null
+      },
+      "phase": "scroll",
+      "frames": 1200,
+      "host_prepare_ms": {
+        "count": 1200,
+        "p50": 0.1501,
+        "p95": 0.255,
+        "p99": 0.3098,
+        "max": 0.4278
+      },
+      "ready_to_receive_ms": {
+        "count": 1200,
+        "p50": 0.0784,
+        "p95": 1.3306,
+        "p99": 1.6471,
+        "max": 2.094
+      },
+      "arrival_gap_ms": {
+        "count": 1199,
+        "p50": 15.8754,
+        "p95": 29.5551,
+        "p99": 31.1758,
+        "max": 32.8875
+      },
+      "pool_import_ms": {
+        "count": 0,
+        "p50": null,
+        "p95": null,
+        "p99": null,
+        "max": null
+      },
+      "resizes": 0,
+      "wheels": 301,
+      "recording_dropped": 0
+    },
+    {
+      "resize_ready_ms": {
+        "count": 255,
+        "p50": 27.3896,
+        "p95": 241.3676,
+        "p99": 250.5858,
+        "max": 253.3512
+      },
+      "load_event_after_submit_ms": {
+        "count": 0,
+        "p50": null,
+        "p95": null,
+        "p99": null,
+        "max": null
+      },
+      "phase": "resize",
+      "frames": 420,
+      "host_prepare_ms": {
+        "count": 420,
+        "p50": 0.1736,
+        "p95": 0.2752,
+        "p99": 0.3499,
+        "max": 0.5174
+      },
+      "ready_to_receive_ms": {
+        "count": 420,
+        "p50": 0.0787,
+        "p95": 1.5185,
+        "p99": 1.9596,
+        "max": 2.7751
+      },
+      "arrival_gap_ms": {
+        "count": 419,
+        "p50": 27.7402,
+        "p95": 242.2875,
+        "p99": 254.327,
+        "max": 262.4649
+      },
+      "pool_import_ms": {
+        "count": 256,
+        "p50": 0.1136,
+        "p95": 0.2383,
+        "p99": 0.3071,
+        "max": 0.5139
+      },
+      "resizes": 256,
+      "wheels": 0,
+      "recording_dropped": 0
+    }
+  ],
+  "presentation": [
+    {
+      "phase": "steady",
+      "matched": 2399,
+      "unmatched": 0,
+      "dropped": 901,
+      "callback_to_display_ms": {
+        "count": 1170,
+        "p50": 16.6512,
+        "p95": 20.1305,
+        "p99": 21.768,
+        "max": 22.6405
+      },
+      "scene_to_display_ms": {
+        "count": 1170,
+        "p50": 10.7392,
+        "p95": 13.8799,
+        "p99": 14.1629,
+        "max": 14.5623
+      },
+      "display_gap_ms": {
+        "count": 2398,
+        "p50": 8.334,
+        "p95": 8.3593,
+        "p99": 8.3805,
+        "max": 8.6995
+      }
+    },
+    {
+      "phase": "scroll",
+      "matched": 2400,
+      "unmatched": 0,
+      "dropped": 900,
+      "callback_to_display_ms": {
+        "count": 1144,
+        "p50": 15.9631,
+        "p95": 20.6328,
+        "p99": 21.5877,
+        "max": 22.8989
+      },
+      "scene_to_display_ms": {
+        "count": 1144,
+        "p50": 10.5872,
+        "p95": 13.9705,
+        "p99": 14.1826,
+        "max": 14.3058
+      },
+      "display_gap_ms": {
+        "count": 2399,
+        "p50": 8.3338,
+        "p95": 8.3622,
+        "p99": 8.382,
+        "max": 8.4742
+      }
+    },
+    {
+      "phase": "resize",
+      "matched": 2400,
+      "unmatched": 0,
+      "dropped": 900,
+      "callback_to_display_ms": {
+        "count": 346,
+        "p50": 15.461,
+        "p95": 20.178,
+        "p99": 22.3475,
+        "max": 22.8724
+      },
+      "scene_to_display_ms": {
+        "count": 346,
+        "p50": 10.7373,
+        "p95": 13.8687,
+        "p99": 14.1553,
+        "max": 14.2848
+      },
+      "display_gap_ms": {
+        "count": 2399,
+        "p50": 8.3342,
+        "p95": 8.3597,
+        "p99": 8.3758,
+        "max": 8.4603
+      }
+    }
+  ]
+}

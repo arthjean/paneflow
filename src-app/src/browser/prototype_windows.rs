@@ -15,8 +15,8 @@ use gpui::{
     WindowBounds, WindowOptions, div, prelude::*, px, size,
 };
 use paneflow_browser_protocol::{
-    BrowserError, BrowserId, BrowserSession, Command, InputEvent, KeyKind, MODIFIER_LEFT_MOUSE,
-    MouseButton, Owner, ProfileId, SessionId, SessionState, WorkspaceId,
+    BrowserError, BrowserId, BrowserSession, Command, Event, InputEvent, KeyKind,
+    MODIFIER_LEFT_MOUSE, MouseButton, Owner, ProfileId, SessionId, SessionState, WorkspaceId,
 };
 use serde_json::{Value, json};
 
@@ -276,9 +276,14 @@ struct Options {
     source: String,
     #[arg(
         long,
-        help = "Comma-separated steps: input,wheel,drag,resize,scale,dpi,ime,cancel"
+        help = "Comma-separated steps: input,wheel,drag,resize,scale,dpi,ime,cancel,agent"
     )]
     scenario: Option<String>,
+    #[arg(
+        long,
+        help = "Second absolute http or https URL the agent step navigates to; required by that step"
+    )]
+    agent_url: Option<String>,
     #[arg(
         long,
         help = "Comma-separated display scales in percent for the dpi step; the step refuses a primary monitor and restores the previous scale"
@@ -314,6 +319,7 @@ enum Step {
     Dpi,
     Ime,
     Cancel,
+    Agent,
 }
 
 impl Step {
@@ -327,6 +333,7 @@ impl Step {
             "dpi" => Some(Self::Dpi),
             "ime" => Some(Self::Ime),
             "cancel" => Some(Self::Cancel),
+            "agent" => Some(Self::Agent),
             _ => None,
         }
     }
@@ -341,6 +348,7 @@ impl Step {
             Self::Dpi => "dpi",
             Self::Ime => "ime",
             Self::Cancel => "cancel",
+            Self::Agent => "agent",
         }
     }
 }
@@ -490,6 +498,28 @@ enum CancelPhase {
     Viewport,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum AgentPhase {
+    Navigate,
+    AwaitCommit,
+    Stale,
+    AwaitStale,
+    Cancel,
+    Takeover,
+    AwaitCancel,
+}
+
+struct AgentRun {
+    phase: AgentPhase,
+    operation: Option<paneflow_browser_protocol::OperationId>,
+    committed_generation: Option<u64>,
+    committed_url: Option<String>,
+    stale_refused: bool,
+    cancelled: bool,
+    takeover_after: Option<u64>,
+    deadline: Instant,
+}
+
 struct PrototypeView {
     options: Arc<Options>,
     log: Logger,
@@ -511,6 +541,7 @@ struct PrototypeView {
     dpi: Option<DpiRun>,
     ime_run: Option<ImeRun>,
     cancel_phase: Option<CancelPhase>,
+    agent_run: Option<AgentRun>,
     text_focus_sent: bool,
     expected_failures: Vec<paneflow_browser_protocol::OperationId>,
     expected_refusals: usize,
@@ -570,6 +601,7 @@ impl PrototypeView {
             dpi: None,
             ime_run: None,
             cancel_phase: None,
+            agent_run: None,
             text_focus_sent: false,
             expected_failures: Vec::new(),
             expected_refusals: 0,
@@ -824,6 +856,43 @@ impl PrototypeView {
                 cx.notify();
             }
             PageSignal::OperationCompleted { operation, result } => {
+                if let Some(run) = &mut self.agent_run
+                    && run.operation.as_ref() == Some(&operation)
+                {
+                    match (run.phase, &result) {
+                        (AgentPhase::AwaitCommit, Ok(Event::Completed { .. })) => {
+                            run.committed_generation = self
+                                .session
+                                .as_ref()
+                                .map(|session| session.document.generation);
+                            run.committed_url = self.options.agent_url.clone();
+                        }
+                        (AgentPhase::AwaitStale, Err(_)) => run.stale_refused = true,
+                        (AgentPhase::AwaitStale, Ok(Event::Completed { .. })) => {
+                            self.fail(
+                                "a stale agent document reached a document commit".to_string(),
+                                cx,
+                            );
+                            return;
+                        }
+                        (AgentPhase::AwaitCancel, Err(_)) => run.cancelled = true,
+                        (AgentPhase::AwaitCancel, Ok(Event::Completed { .. })) => {
+                            self.fail(
+                                "a human takeover did not cancel the pending agent navigation"
+                                    .to_string(),
+                                cx,
+                            );
+                            return;
+                        }
+                        _ => {}
+                    }
+                    self.log.emit(
+                        "agent_operation",
+                        json!({ "operation": operation.as_str(), "phase": format!("{:?}", run.phase), "result": format!("{result:?}") }),
+                    );
+                    cx.notify();
+                    return;
+                }
                 let expected = self
                     .expected_failures
                     .iter()
@@ -1358,6 +1427,165 @@ impl PrototypeView {
         }
     }
 
+    fn step_agent(&mut self) -> Result<bool, String> {
+        let Some(url) = self.options.agent_url.clone() else {
+            return Err("the agent step requires --agent-url".to_string());
+        };
+        let Some(page) = &self.page else {
+            return Err("the browser page closed before the agent step".to_string());
+        };
+        let run = self.agent_run.get_or_insert_with(|| AgentRun {
+            phase: AgentPhase::Navigate,
+            operation: None,
+            committed_generation: None,
+            committed_url: None,
+            stale_refused: false,
+            cancelled: false,
+            takeover_after: None,
+            deadline: Instant::now() + Duration::from_secs(30),
+        });
+        if Instant::now() > run.deadline {
+            return Err(format!("the agent step timed out in phase {:?}", run.phase));
+        }
+        match run.phase {
+            AgentPhase::Navigate => {
+                let operation = page
+                    .send_to_document(|document| Command::AgentNavigate {
+                        document,
+                        url: url.clone(),
+                    })
+                    .map_err(|error| format!("agent navigation refused: {error:?}"))?;
+                self.log.emit(
+                    "agent_navigate",
+                    json!({ "operation": operation.as_str(), "url": url }),
+                );
+                run.operation = Some(operation);
+                run.phase = AgentPhase::AwaitCommit;
+                Ok(false)
+            }
+            AgentPhase::AwaitCommit => {
+                if run.committed_generation.is_none() {
+                    return Ok(false);
+                }
+                self.log.emit(
+                    "agent_committed",
+                    json!({
+                        "generation": run.committed_generation,
+                        "url": run.committed_url,
+                    }),
+                );
+                run.phase = AgentPhase::Stale;
+                run.deadline = Instant::now() + Duration::from_secs(30);
+                Ok(false)
+            }
+            AgentPhase::Stale => {
+                let Some(document) = page.document().cloned() else {
+                    return Err(
+                        "the browser page has no document for the stale agent case".to_string()
+                    );
+                };
+                let mut stale = document.clone();
+                stale.generation = document.generation.saturating_add(1);
+                match page.send(Command::AgentNavigate {
+                    document: stale,
+                    url: url.clone(),
+                }) {
+                    Ok(operation) => {
+                        self.log.emit(
+                            "agent_stale_sent",
+                            json!({ "operation": operation.as_str(), "generation": document.generation.saturating_add(1) }),
+                        );
+                        run.operation = Some(operation);
+                        run.phase = AgentPhase::AwaitStale;
+                        run.deadline = Instant::now() + Duration::from_secs(30);
+                        self.expected_refusals += 1;
+                    }
+                    Err(error) => {
+                        run.stale_refused = true;
+                        self.log.emit(
+                            "agent_stale_refused",
+                            json!({ "error": format!("{error:?}"), "refused_by": "local scope check" }),
+                        );
+                        run.phase = AgentPhase::Cancel;
+                        run.deadline = Instant::now() + Duration::from_secs(30);
+                    }
+                }
+                Ok(false)
+            }
+            AgentPhase::AwaitStale => {
+                if !run.stale_refused {
+                    return Ok(false);
+                }
+                run.phase = AgentPhase::Cancel;
+                run.deadline = Instant::now() + Duration::from_secs(30);
+                Ok(false)
+            }
+            AgentPhase::Cancel => {
+                let Some(document) = page.document().cloned() else {
+                    return Err(
+                        "the browser page has no document for the human takeover".to_string()
+                    );
+                };
+                let operation = page
+                    .send(Command::AgentNavigate {
+                        document: document.clone(),
+                        url: url.clone(),
+                    })
+                    .map_err(|error| format!("second agent navigation refused: {error:?}"))?;
+                self.log.emit(
+                    "agent_second_navigate",
+                    json!({ "operation": operation.as_str(), "generation": document.generation }),
+                );
+                run.operation = Some(operation);
+                run.cancelled = false;
+                run.takeover_after = Some(document.generation);
+                run.phase = AgentPhase::Takeover;
+                run.deadline = Instant::now() + Duration::from_secs(30);
+                Ok(false)
+            }
+            AgentPhase::Takeover => {
+                let Some(document) = page.document().cloned() else {
+                    return Err(
+                        "the browser page has no document for the human takeover".to_string()
+                    );
+                };
+                if run
+                    .takeover_after
+                    .is_none_or(|generation| document.generation <= generation)
+                {
+                    return Ok(false);
+                }
+                let human = self
+                    .options
+                    .url
+                    .clone()
+                    .ok_or("the agent step needs the human --url to take the page back")?;
+                page.send(Command::Navigate {
+                    document: document.clone(),
+                    url: human.clone(),
+                })
+                .map_err(|error| format!("human takeover refused: {error:?}"))?;
+                self.log.emit(
+                    "agent_takeover",
+                    json!({ "generation": document.generation, "human_url": human }),
+                );
+                run.phase = AgentPhase::AwaitCancel;
+                run.deadline = Instant::now() + Duration::from_secs(30);
+                Ok(false)
+            }
+            AgentPhase::AwaitCancel => {
+                if !run.cancelled {
+                    return Ok(false);
+                }
+                self.log.emit(
+                    "agent_cancelled",
+                    json!({ "stale_refused": run.stale_refused }),
+                );
+                Ok(true)
+            }
+        }
+    }
+
     fn step_cancel(&mut self, window: &Window, cx: &mut Context<Self>) -> Result<bool, String> {
         let geometry = self.geometry(window);
         match self.cancel_phase {
@@ -1569,6 +1797,13 @@ impl PrototypeView {
                 Ok(completed) => completed,
                 Err(error) => {
                     self.fail(format!("Windows input cancellation failed: {error}"), cx);
+                    return;
+                }
+            },
+            Step::Agent => match self.step_agent() {
+                Ok(completed) => completed,
+                Err(error) => {
+                    self.fail(format!("Windows agent control failed: {error}"), cx);
                     return;
                 }
             },

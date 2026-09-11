@@ -8,7 +8,7 @@
     "platform": "WINDOWS",
     "supersedes": "tasks/prd-agents-browser.md",
     "baseline_commit": "fbfefd250a3f3c8d9968a23f8c358712859bc904",
-    "updated_at": "2026-09-10T23:59:00+02:00",
+    "updated_at": "2026-09-10T23:10:00+02:00",
     "plan_revision": "1.1"
   },
   "epics": [
@@ -796,11 +796,217 @@
     {
       "id": "EP-004",
       "title": "Qualifier et préparer les livraisons Windows",
-      "status": "TODO",
+      "status": "IN_PROGRESS",
       "priority": "P0",
       "stories_total": 4,
       "stories_done": 0,
-      "release": "R2/R3"
+      "release": "R2/R3",
+      "stories_in_review": 1,
+      "stories_in_progress": 3,
+      "profile": "DEEP",
+      "verification_scope": "windows-qualification-readiness",
+      "started_at": "2026-09-10T23:10:00+02:00",
+      "updated_at": "2026-09-12T03:30:00+02:00",
+      "handoff_status": "BLOCKED",
+      "scope_note": "The qualification contract, its verifier, the CI wiring, the code-level availability ceiling, the Windows 10 floor enforcement, the Windows agent diagnostics and navigation lifecycle, the adapter identity trace and its LUID pin, and the report and usage documents are implemented and wired. Native work on record: the agent navigation lifecycle with stale refusal and human takeover, the adapter pin on both adapters including the split assignment, and two M1 campaigns under the corrected harness whose thirty captures all prove foreground ownership. The owner waived the Windows 10 1809 run on 2026-09-11. NFR-03 is within budget at both refresh rates and NFR-02 at 60 Hz; NFR-02 at 120 Hz sits 0.106 ms over budget on a delta the method cannot resolve. Both release verdicts stay NOT_QUALIFIED and the epic remains IN_PROGRESS.",
+      "evidence_map": [
+        {
+          "story": "US-013",
+          "criterion": "AC-1",
+          "status": "PARTIAL",
+          "path": "native/browser/windows-qualification-contract.toml:87",
+          "entry_point": "python3 scripts/verify-windows-qualification-contract.py --contract native/browser/windows-qualification-contract.toml",
+          "proof": "The gpu-displays row records two adapters that each drove the presentation path natively on Windows 11 build 26200: NVIDIA GeForce RTX 4070 Ti SUPER 0x10de:0x2705 with 167 frame events and a first frame after 3360 ms (target/ep004-gpu-nvidia2), and AMD Radeon(TM) Graphics 0x1002:0x164e with 167 frame events and a first frame after 2726 ms (target/ep004-gpu-amd-run). The adapter identity comes from the paneflow-browser-adapter line the host now emits at D3D11 device creation. The split adapter assignment that used to fail with 0x80070057 now presents: the application passes its D3D11 adapter LUID to the host, which opens that adapter with EnumAdapterByLuid and forwards the LUID to Chromium as --use-adapter-luid. target/ep004-gpu-split-pin COMPLETED with 277 frame events and a first frame after 2787 ms, target/ep004-gpu-split-forced COMPLETED with 276 frame events under opposite explicit preferences per image, and target/ep004-gpu-default-pin COMPLETED with 272 frame events with no preference at all. The row stays NOT_EXECUTED: no display pair with different scale factors and no switchable-graphics laptop has been covered."
+        },
+        {
+          "story": "US-013",
+          "criterion": "AC-2",
+          "status": "NOT_EXECUTED",
+          "path": "native/browser/windows-qualification-contract.toml:155",
+          "entry_point": "python3 scripts/verify-windows-qualification-contract.py --contract native/browser/windows-qualification-contract.toml",
+          "proof": "The distribution row names an Authenticode-signed MSI, a standard-user installation, a protected-directory start, the loaded-DLL check and the hostile-DLL refusal, and declares that no release signing certificate exists on this machine. native_release_qualified stays false."
+        },
+        {
+          "story": "US-013",
+          "criterion": "AC-3",
+          "status": "WAIVED_BY_OWNER",
+          "path": "native/browser/windows-qualification-contract.toml:29",
+          "entry_point": "python3 scripts/verify-windows-qualification-contract.py --contract native/browser/windows-qualification-contract.toml",
+          "proof": "The owner waived the native Windows 10 1809 run on 2026-09-11 in favor of code and tests. The minimum-product row carries the decider, the date, the reason, four code-evidence entries and two residual risks; the verifier refuses a waiver missing any of those and refuses one presenting native evidence it does not have. The floor itself is enforced at src-app/src/browser/install_windows.rs:81 and applied by detect before the runtime is classified."
+        },
+        {
+          "story": "US-013",
+          "criterion": "AC-4",
+          "status": "NOT_EXECUTED",
+          "path": "native/browser/windows-qualification-contract.toml:58",
+          "entry_point": "python3 scripts/verify-windows-qualification-contract.py --contract native/browser/windows-qualification-contract.toml",
+          "proof": "The current-reference row still needs a frozen reference build, a human Narrator pass and an installed-package journey. None of the three is reachable from this machine without a human driving a rendered session."
+        },
+        {
+          "story": "US-013",
+          "criterion": "AC-5",
+          "status": "PASS",
+          "path": "scripts/verify-windows-qualification-contract.py:57",
+          "entry_point": "python3 scripts/verify-windows-qualification-contract.test.py",
+          "proof": "A row that claims execution without an evidence path and a machine identity is rejected, and so is a row that claims partial coverage without a machine identity. Eight tests pass."
+        },
+        {
+          "story": "US-014",
+          "criterion": "AC-1",
+          "status": "PARTIAL",
+          "path": "native/browser/windows-qualification-contract.toml:118",
+          "entry_point": "python3 scripts/verify-windows-qualification-contract.py --contract native/browser/windows-qualification-contract.toml",
+          "proof": "Both M1 A/B/C campaigns were re-run under the corrected harness on an untouched machine: target/ep004-m1-120hz-v2 at the 120 Hz mode and target/ep004-m1-60hz-v2 at the 59.94 Hz mode, five repetitions per configuration at a 1920x1080 physical viewport. All thirty captures report window_foreground ratio 1, zero unmatched presents and at most one dropped present. They carry NFR-02 and NFR-03. The performance row stays NOT_EXECUTED: NFR-02 at 120 Hz sits 0.106 ms over its p95 budget on a delta the method cannot resolve, GPU memory is not sampled, interop allocations are not separated from internal Chromium VRAM, and six NFR rows have no campaign."
+        },
+        {
+          "story": "US-014",
+          "criterion": "AC-2",
+          "status": "PARTIAL",
+          "path": "native/browser/windows-qualification-contract.toml:284",
+          "entry_point": "python3 scripts/verify-windows-qualification-contract.py --contract native/browser/windows-qualification-contract.toml",
+          "proof": "NFR-02 and NFR-03 are MEASURED again from captures that can prove foreground ownership. NFR-03 is WITHIN_BUDGET at both rates: C over B p95 0.100 ms at 60 Hz and -0.122 ms at 120 Hz against a 2 ms budget. NFR-02 is WITHIN_BUDGET at 60 Hz at 0.006 ms p95 and 0.106 ms over the 1 ms budget at 120 Hz, where the p99 delta is negative and the two configurations measure 42.90 and 44.00 ms, so the excess is below what medians of per-repetition percentiles resolve. The eight remaining NFR rows stay NOT_MEASURED."
+        },
+        {
+          "story": "US-014",
+          "criterion": "AC-3",
+          "status": "NOT_EXECUTED",
+          "path": "native/browser/windows-qualification-contract.toml:176",
+          "entry_point": "python3 scripts/verify-windows-qualification-contract.py --contract native/browser/windows-qualification-contract.toml",
+          "proof": "Recovery after a host restart has no native receipt. Recovery after a human takeover is now proven: target/ep004-agent-r11 cancels the pending agent operation with Err(Unavailable) when a human navigation supersedes it."
+        },
+        {
+          "story": "US-014",
+          "criterion": "AC-4",
+          "status": "PASS",
+          "path": "scripts/verify-windows-qualification-contract.py:109",
+          "entry_point": "python3 scripts/verify-windows-qualification-contract.test.py",
+          "proof": "A budget declared MEASURED without an evidence path is rejected."
+        },
+        {
+          "story": "US-014",
+          "criterion": "AC-5",
+          "status": "PASS",
+          "path": "scripts/verify-windows-qualification-contract.py:136",
+          "entry_point": "python3 scripts/verify-windows-qualification-contract.test.py",
+          "proof": "The verdict rule keeps human_release NOT_QUALIFIED while any matrix row is neither WORKS_MEASURED nor WAIVED_BY_OWNER, any security case is unproven, or any budget is unmeasured."
+        },
+        {
+          "story": "US-015",
+          "criterion": "AC-1",
+          "status": "PASS_IMPLEMENTATION",
+          "path": "docs/release/browser-windows.md:360",
+          "entry_point": "the versioned Windows release report and its contract",
+          "proof": "The report carries the S1-W matrix and release verdict section, the Windows 10 1809 waiver, the adapter results of the Which GPU drove the presentation section, and a Qualification still required list that matches the contract rows. No Linux or macOS result is offered as Windows evidence."
+        },
+        {
+          "story": "US-015",
+          "criterion": "AC-2",
+          "status": "PASS",
+          "path": "src-app/src/browser/install_windows.rs:30",
+          "entry_point": "BrowserAuthority::detect -> install_windows::declared_availability",
+          "proof": "The Windows availability the application exposes is clamped by the contract verdicts, so a promoted manifest alone never exposes a qualified capability. Covered by a_promoted_manifest_stays_development_until_the_windows_verdict_changes."
+        },
+        {
+          "story": "US-015",
+          "criterion": "AC-3",
+          "status": "PASS",
+          "path": "docs/browser/windows-usage.md:1",
+          "entry_point": "python3 scripts/verify-windows-qualification-contract.py --contract native/browser/windows-qualification-contract.toml",
+          "proof": "The usage guide documents the installation layout, the page journey, the default keys, the errors, the local data location, the permission dialogs, DevTools, agent access and what is not qualified yet. The verifier refuses a contract whose documents do not resolve to written files."
+        },
+        {
+          "story": "US-015",
+          "criterion": "AC-4",
+          "status": "PASS",
+          "path": "native/browser/windows-qualification-contract.toml:5",
+          "entry_point": "python3 scripts/verify-windows-qualification-contract.py --contract native/browser/windows-qualification-contract.toml",
+          "proof": "human_release and agent_release are both NOT_QUALIFIED, native_release_evidence_required is true, foreign_platform_evidence_accepted is false, and the manifest availability for x86_64-pc-windows-msvc stays development under the ceiling the verifier enforces."
+        },
+        {
+          "story": "US-016",
+          "criterion": "AC-1",
+          "status": "PASS",
+          "path": "crates/paneflow-browser-host/src/windows.rs:1123",
+          "entry_point": "CEF client handlers -> agent_console, agent_network and agent_navigation_committed -> the control thread Controller",
+          "proof": "The Windows client emits agent console messages and network events and terminalizes an agent navigation at the main-document commit rather than at acknowledgement, and the whole lifecycle is now observed natively against the current binary: target/ep004-agent-r11/prototype.jsonl ends on status COMPLETED with op-4 leaving AwaitCommit on Ok(Completed), op-5 refused with Err(StaleGeneration) and op-6 cancelled by the human takeover with Err(Unavailable)."
+        },
+        {
+          "story": "US-016",
+          "criterion": "AC-2",
+          "status": "NOT_EXECUTED",
+          "path": "native/browser/windows-qualification-contract.toml:176",
+          "entry_point": "python3 scripts/verify-windows-qualification-contract.py --contract native/browser/windows-qualification-contract.toml",
+          "proof": "The agent row stays NOT_EXECUTED. The navigation lifecycle, stale generations and human takeover now carry a native receipt, but a host restart, the C3 quotas at their limit and limit plus one, two workspaces, two clients and SEC-12 do not. Those need a session where a human has granted agent access, which src-app/src/browser/browser_dock.rs reaches only from the Browser menu: no IPC or qualification path grants it."
+        },
+        {
+          "story": "US-016",
+          "criterion": "AC-3",
+          "status": "PASS",
+          "path": "crates/paneflow-browser-protocol/src/agent.rs:4",
+          "entry_point": "cargo test --workspace --locked on Windows 11 build 26200",
+          "proof": "Identities, origin, generation and timestamps travel with every agent event on the Windows path as on the others."
+        },
+        {
+          "story": "US-016",
+          "criterion": "AC-4",
+          "status": "PASS",
+          "path": "src-app/src/browser/agent.rs:122",
+          "entry_point": "human Browser menu -> AgentService::set_access",
+          "proof": "Access starts disabled per workspace, read authorizes no mutation, and any revocation is immediate."
+        },
+        {
+          "story": "US-016",
+          "criterion": "AC-5",
+          "status": "PASS",
+          "path": "scripts/verify-windows-qualification-contract.py:151",
+          "entry_point": "python3 scripts/verify-windows-qualification-contract.test.py",
+          "proof": "An invalid scope, a lost lease or an unproven agent matrix keeps agent_release NOT_QUALIFIED, and the manifest may not declare agent_qualified under that verdict."
+        }
+      ],
+      "scope_corrections": [
+        "The Windows client emitted no agent console or network diagnostics and never terminalized an agent navigation; both are now implemented, and the Windows control thread shares its Controller with the CEF UI thread so the main-document commit can produce a new document generation.",
+        "The Windows availability ceiling is now enforced in code at install_windows::declared_availability, the function BrowserAuthority::detect calls, instead of resting on documentation alone.",
+        "The declared Windows 10 floor was a dead declaration: the manifest named minimum_windows 10.0.17763 and nothing read it. install_windows::floor_verdict now refuses a host below the declared build and refuses an unreadable build number, and detect applies that verdict before the runtime is classified.",
+        "The host created its D3D11 device with no explicit adapter and never recorded which GPU Windows handed it, so every GPU claim was unfalsifiable. The host now emits one paneflow-browser-adapter line at device creation carrying the description, the vendor and device identifiers, the dedicated video memory and the LUID.",
+        "Two claims first written into this contract were wrong and were corrected against the data: the retained EP-002 campaign does not need a viewport assertion because the analyzer already refuses any capture that is not 1920x1080 physical, and browser_callback_to_present is not empty, it carries 16715 samples in configuration B and 14183 in configuration C, only the no-Browser witness having none by construction.",
+        "The owner waived the native Windows 10 1809 run on 2026-09-11. The waiver is a first-class contract status, WAIVED_BY_OWNER, with mandatory decider, date, reason, code evidence and residual risk, not a silently relaxed row.",
+        "Two M1 A/B/C campaigns were run natively after the owner authorized the display-mode changes they require, which the first handoff had listed as a blocker.",
+        "The native GPU matrix was partially closed by forcing each adapter per executable image, which exposed a split-adapter presentation failure that is now fixed by pinning the browser host and the CEF GPU process to the application adapter, and re-proven on the split, the adversarial split and the unforced pairing.",
+        "The agent navigation never terminalized because the Windows LivePage in src-app/src/browser/page.rs carried no branch for agent_navigation_committed, agent_navigation_failed or agent_navigation_cancelled: native_signals dropped the whole family through its unscoped_signals fallback, silently. The Linux adapter had always handled them. The Windows branches are now present and unit-covered, and a cancellation is scoped to the page rather than to the exact live document, because a human takeover always supersedes the generation the pending operation was issued against.",
+        "Every navigation also fired a D3D11 RetireTimeout one second later, because the FrameAck routing in crates/paneflow-browser-host/src/windows.rs demanded page.document == document: each frame release belonging to the superseded generation was discarded, so the retiring pool never drained. Routing now accepts an acknowledgement from the same owner at or below the live generation, and the presenter still validates the pool document and sequence before freeing a slot.",
+        "The prototype agent step itself had two sequencing faults: its deliberately stale navigation never armed expected_refusals, so the expected StaleGeneration refusal failed the run, and its human takeover was built from the document captured before the second agent navigation was acknowledged, which made the takeover itself stale. The step now arms the refusal and waits for the acknowledged generation before taking the page back.",
+        "The terminal latency regression reported earlier in this epic does not exist. Re-measuring it found that the M1 per-repetition p95 is bimodal in every campaign, including the binary that was supposed to be clean, and that the discriminator is whether the benchmark window held the foreground: a background window is throttled by Windows, so the input waits for the next frame of a slowed redraw loop. A controlled experiment stealing the foreground mid-capture reproduces the drop exactly (445, 445, 427, 74, 74, 74, ... presents per slice, target/probe-steal-01). The defect was in the measurement harness, which accepted such captures silently, and it is now refused at three levels."
+      ],
+      "blockers": [
+        "NFR-02 at 120 Hz cannot be closed on the current method: the p95 overhead exceeds its budget by 0.106 ms while the p99 overhead is negative, which describes no single distribution. Settling it needs paired per-repetition deltas or more repetitions, not a correction designed on this figure.",
+        "No release signing certificate is available here, so the signed MSI, the standard-user installation, the protected-directory start and the loaded-DLL checks of the distribution row cannot be executed.",
+        "The C0 and U1/U2 reference journey, the native SEC-02, SEC-04 and SEC-05 cases and the Narrator pass need a human driving a rendered session on frozen reference builds.",
+        "The rest of the agent row needs a human to grant agent access first: access starts disabled per workspace by design and is reachable only from the Browser menu, with no IPC or qualification path. Until an operator grants it in a live session, the C3 quotas, two workspaces, two clients, the host restart and SEC-12 cannot be exercised natively."
+      ],
+      "remaining_work": [
+        "Change the M1 comparison to pair repetitions before taking a delta, or raise the repetition count, then re-read NFR-02 at 120 Hz.",
+        "Complete the campaigns for NFR-01, NFR-04, NFR-05, NFR-06, NFR-08, NFR-11 and NFR-13, add GPU memory sampling, separate interop allocations from internal Chromium VRAM, and compute the C over B integration delta NFR-07 needs.",
+        "Run a native agent session in which an operator has granted agent access, covering the C3 quotas at their limit and limit plus one, two workspaces, two clients, a host restart and SEC-12, then promote the agent row from its receipt.",
+        "Run the journey, accessibility and update campaigns on a frozen Windows 11 reference with a human Narrator pass, and cover a display pair with different scale factors.",
+        "Sign a real MSI through the release chain, install it as a standard user on a clean machine and verify the loaded modules and the hostile-DLL refusal.",
+        "Run the adapter pin on a switchable-graphics laptop, which is the only pairing the desktop cannot represent.",
+        "Only after every row is measured or waived, change human_release and then agent_release in the contract and raise the manifest availability; the verifier and install_windows::declared_availability enforce that order."
+      ],
+      "validation": {
+        "cargo fmt --check": "PASS: exit 0",
+        "cargo clippy --workspace --all-targets --locked -- -D warnings": "PASS: exit 0 on Windows 11 build 26200",
+        "cargo test --workspace --locked --no-fail-fast": "PASS: 2708 passed, 0 failed, natively on Windows 11 build 26200",
+        "python3 scripts/verify-windows-qualification-contract.py --contract native/browser/windows-qualification-contract.toml": "PASS: CONTRACT_VALID, human_release and agent_release NOT_QUALIFIED, declared_availability development",
+        "python3 scripts/verify-windows-qualification-contract.test.py": "PASS: 8 tests",
+        "bun test scripts/browser-qualification/windows-analysis.test.mjs": "PASS: 5 tests, two of them covering the foreground split",
+        "bun test scripts/browser-qualification/windows-m1-compare.test.mjs": "PASS: 5 tests, two of them covering the refusal of a rejected capture",
+        "native agent scenario": "target/ep004-agent-r11: COMPLETED against the current binary, commit then stale refusal then human takeover cancellation",
+        "native GPU adapter pin": "target/ep004-gpu-animated on the discrete adapter and target/ep004-gpu-amd-pinned on the integrated adapter, both COMPLETED with pinned_to_application true",
+        "foreground defect reproduction": "target/probe-steal-01 drops from 445 to 74 presents per slice at the moment the foreground is stolen; target/probe-09, -10 and -11 split cleanly on polled foreground ownership",
+        "foreground refusal end to end": "target/probe-fix-clean reports ratio 1 and OBSERVED_NOT_BUDGET_CERTIFIED; target/probe-fix-stolen reports ratio 0.077 and INVALID_WINDOW_NOT_FOREGROUND",
+        "native M1 campaign at 120 Hz, corrected harness": "target/ep004-m1-120hz-v2: fifteen captures, every window_foreground ratio 1; NFR-02 C over A p95 1.106 ms, NFR-03 C over B p95 -0.122 ms",
+        "native M1 campaign at 59.94 Hz, corrected harness": "target/ep004-m1-60hz-v2: fifteen captures, every window_foreground ratio 1; NFR-02 C over A p95 0.006 ms, NFR-03 C over B p95 0.100 ms"
+      }
     }
   ],
   "stories": [
@@ -1078,8 +1284,8 @@
         "US-012"
       ],
       "external_dependencies": [],
-      "status": "TODO",
-      "started_at": null,
+      "status": "IN_PROGRESS",
+      "started_at": "2026-09-10T23:10:00+02:00",
       "completed_at": null,
       "reviewed_at": null,
       "verification_scope": "native-qualification"
@@ -1095,8 +1301,8 @@
         "US-012"
       ],
       "external_dependencies": [],
-      "status": "TODO",
-      "started_at": null,
+      "status": "IN_PROGRESS",
+      "started_at": "2026-09-10T23:10:00+02:00",
       "completed_at": null,
       "reviewed_at": null,
       "verification_scope": "native-qualification"
@@ -1112,11 +1318,12 @@
         "US-014"
       ],
       "external_dependencies": [],
-      "status": "TODO",
-      "started_at": null,
+      "status": "IN_REVIEW",
+      "started_at": "2026-09-10T23:10:00+02:00",
       "completed_at": null,
       "reviewed_at": null,
-      "verification_scope": "native-qualification"
+      "verification_scope": "native-qualification",
+      "updated_at": "2026-09-12T00:20:00+02:00"
     },
     {
       "id": "US-016",
@@ -1130,8 +1337,8 @@
       "external_dependencies": [
         "CORE-AGENT"
       ],
-      "status": "TODO",
-      "started_at": null,
+      "status": "IN_PROGRESS",
+      "started_at": "2026-09-10T23:10:00+02:00",
       "completed_at": null,
       "reviewed_at": null,
       "verification_scope": "native-qualification"
@@ -1234,7 +1441,9 @@
           "qualification publique non autorisée"
         ]
       }
-    ]
+    ],
+    "contract": "native/browser/windows-qualification-contract.toml",
+    "verifier": "scripts/verify-windows-qualification-contract.py"
   },
   "existing_work": {
     "source": "tasks/prd-agents-browser-status.json",

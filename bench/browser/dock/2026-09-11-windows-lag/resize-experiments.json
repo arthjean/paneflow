@@ -1,0 +1,121 @@
+{
+  "conclusion": "aucune des cinq variantes ne deplace la queue de resize",
+  "runs": [
+    {
+      "experiment": "reference",
+      "change": "fenetre de reference, glissement a 60 Hz, sondes de peinture actives",
+      "environment": {},
+      "seconds_per_phase": 6,
+      "app_sha256": "f5ef6cd1c98bbbb8a44a38427cdc19e29897ab5d4d20b9febfd8acff9468f134",
+      "client_sha256": "c9be6bd1886e2296a360a42882a5f53950175ac442e75a5cafb226fbedddb94a",
+      "resize_ready_ms": {
+        "count": 74,
+        "p50": 28.4778,
+        "p95": 244.4822,
+        "p99": 256.1192,
+        "max": 256.1192
+      },
+      "resizes": 75,
+      "resizes_over_100ms": 17,
+      "share_over_100ms": 0.221
+    },
+    {
+      "experiment": "was_hidden_on_visibility_change_only",
+      "change": "was_hidden reserve aux changements de visibilite, comme Linux",
+      "environment": {},
+      "seconds_per_phase": 6,
+      "app_sha256": "f5ef6cd1c98bbbb8a44a38427cdc19e29897ab5d4d20b9febfd8acff9468f134",
+      "client_sha256": "8104e102063a413dfbaac58adeaa0e82a437cf2c1487c162ace8b7d1b88cb2c5",
+      "resize_ready_ms": {
+        "count": 75,
+        "p50": 27.8438,
+        "p95": 248.2743,
+        "p99": 260.5659,
+        "max": 260.5659
+      },
+      "resizes": 76,
+      "resizes_over_100ms": 17,
+      "share_over_100ms": 0.218
+    },
+    {
+      "experiment": "drag_15hz",
+      "change": "glissement du separateur a 15 Hz au lieu de 60 Hz",
+      "environment": {
+        "PANEFLOW_DOCK_DRAG_HZ": "15"
+      },
+      "seconds_per_phase": 8,
+      "app_sha256": "f5ef6cd1c98bbbb8a44a38427cdc19e29897ab5d4d20b9febfd8acff9468f134",
+      "client_sha256": "7b715309a8d9886ef8588feeb49267bda1daa71411a0e9fb2001f958b0a01dee",
+      "resize_ready_ms": {
+        "count": 78,
+        "p50": 28.983,
+        "p95": 248.919,
+        "p99": 261.812,
+        "max": 261.812
+      },
+      "resizes": 79,
+      "resizes_over_100ms": 22,
+      "share_over_100ms": 0.275
+    },
+    {
+      "experiment": "drag_5hz",
+      "change": "glissement du separateur a 5 Hz au lieu de 60 Hz",
+      "environment": {
+        "PANEFLOW_DOCK_DRAG_HZ": "5"
+      },
+      "seconds_per_phase": 8,
+      "app_sha256": "f5ef6cd1c98bbbb8a44a38427cdc19e29897ab5d4d20b9febfd8acff9468f134",
+      "client_sha256": "7b715309a8d9886ef8588feeb49267bda1daa71411a0e9fb2001f958b0a01dee",
+      "resize_ready_ms": {
+        "count": 38,
+        "p50": 35.4865,
+        "p95": 267.0268,
+        "p99": 277.7126,
+        "max": 277.7126
+      },
+      "resizes": 39,
+      "resizes_over_100ms": 20,
+      "share_over_100ms": 0.5
+    },
+    {
+      "experiment": "no_resize_invalidate",
+      "change": "la pompe de resize n'appelle plus invalidate",
+      "environment": {
+        "PANEFLOW_BROWSER_RESIZE_REFRESH": "0"
+      },
+      "seconds_per_phase": 6,
+      "app_sha256": "f5ef6cd1c98bbbb8a44a38427cdc19e29897ab5d4d20b9febfd8acff9468f134",
+      "client_sha256": "2f790d1f2d21ba17c4cb373f4a2d250a9b460422e9ef45807d152ab695ebe198",
+      "resize_ready_ms": {
+        "count": 69,
+        "p50": 28.8284,
+        "p95": 275.679,
+        "p99": 302.3157,
+        "max": 302.3157
+      },
+      "resizes": 70,
+      "resizes_over_100ms": 16,
+      "share_over_100ms": 0.222
+    },
+    {
+      "experiment": "no_120hz_boost",
+      "change": "pas d'acceleration de cadence a 120 Hz pendant le resize",
+      "environment": {
+        "PANEFLOW_BROWSER_RESIZE_BOOST": "0"
+      },
+      "seconds_per_phase": 6,
+      "app_sha256": "f5ef6cd1c98bbbb8a44a38427cdc19e29897ab5d4d20b9febfd8acff9468f134",
+      "client_sha256": "2f790d1f2d21ba17c4cb373f4a2d250a9b460422e9ef45807d152ab695ebe198",
+      "resize_ready_ms": {
+        "count": 71,
+        "p50": 30.3413,
+        "p95": 237.8736,
+        "p99": 255.5102,
+        "max": 255.5102
+      },
+      "resizes": 72,
+      "resizes_over_100ms": 17,
+      "share_over_100ms": 0.23
+    }
+  ]
+}

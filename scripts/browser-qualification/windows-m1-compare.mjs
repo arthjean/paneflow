@@ -51,13 +51,20 @@ export function compare(runs) {
   if (!runs.length) throw new Error("the M1 comparison requires at least one capture directory");
   const identities = new Set(runs.map((run) => `${run.capture.binary_sha256}:${run.capture.host_sha256}:${run.capture.runtime_sha256}:${run.capture.manifest_sha256}`));
   if (identities.size !== 1) throw new Error("the M1 comparison refuses captures produced by different application or runtime artifacts");
+  const invalid = runs.filter((run) => run.analysis.status !== "OBSERVED_NOT_BUDGET_CERTIFIED");
+  if (invalid.length) {
+    const named = invalid.map((run) => `${basename(run.directory)} ${run.analysis.status}`).join(", ");
+    throw new Error(`the M1 comparison refuses captures their own analysis rejected: ${named}`);
+  }
   const protocol = runs.every((run) => run.analysis.protocol_duration_matches);
   const configurations = {};
   for (const configuration of ["A", "B", "C"]) {
     const selected = runs.filter((run) => run.capture.configuration === configuration);
     if (selected.length) {
+      const ratios = selected.map((run) => run.analysis.window_foreground?.ratio ?? null);
       configurations[configuration] = {
         ...summarize(selected),
+        window_foreground_ratio: ratios.every((ratio) => typeof ratio === "number") ? Math.min(...ratios) : null,
         scenarios: [...new Set(selected.map((run) => run.capture.scenario))],
         directories: selected.map((run) => run.directory),
       };

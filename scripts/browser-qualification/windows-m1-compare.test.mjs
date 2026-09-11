@@ -14,7 +14,9 @@ const capture = (configuration, scenario = "animation") => ({
   paneflow_commit: "commit",
 });
 
-const analysis = (browser, terminal) => ({
+const analysis = (browser, terminal, status = "OBSERVED_NOT_BUDGET_CERTIFIED") => ({
+  status,
+  window_foreground: { samples: 60, owned: 60, ratio: 1 },
   protocol_duration_matches: true,
   matched_presents: 600,
   unmatched_presents: 0,
@@ -29,7 +31,7 @@ const runs = (values, configuration, scenario) =>
   values.map((value, index) => ({
     directory: `${configuration}-r${index + 1}`,
     capture: capture(configuration, scenario),
-    analysis: analysis(value.browser ?? null, value.terminal ?? null),
+    analysis: analysis(value.browser ?? null, value.terminal ?? null, value.status),
   }));
 
 test("a configuration reports the median repetition next to its worst repetition", () => {
@@ -60,4 +62,24 @@ test("captures from different artifacts are refused instead of averaged", () => 
   const mixed = [...runs([{ browser: 10 }], "B"), ...runs([{ browser: 10 }], "C")];
   mixed[1].capture.binary_sha256 = "other";
   assert.throws(() => compare(mixed), /different application or runtime artifacts/);
+});
+
+test("a capture its own analysis rejected is refused instead of averaged", () => {
+  const five = [1, 2, 3, 4, 5];
+  const polluted = [
+    ...runs(five.map((index) => ({ terminal: 10, status: index === 3 ? "INVALID_WINDOW_NOT_FOREGROUND" : undefined })), "A"),
+    ...runs(five.map(() => ({ browser: 4 })), "B"),
+    ...runs(five.map(() => ({ browser: 6, terminal: 11 })), "C"),
+  ];
+  assert.throws(() => compare(polluted), /refuses captures their own analysis rejected/);
+});
+
+test("a campaign reports the worst foreground ownership it observed", () => {
+  const five = [1, 2, 3, 4, 5];
+  const report = compare([
+    ...runs(five.map(() => ({ terminal: 10 })), "A"),
+    ...runs(five.map(() => ({ browser: 4 })), "B"),
+    ...runs(five.map(() => ({ browser: 6, terminal: 11 })), "C"),
+  ]);
+  assert.equal(report.configurations.A.window_foreground_ratio, 1);
 });

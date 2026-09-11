@@ -2,16 +2,18 @@ use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::io::{self, BufReader};
 use std::rc::Rc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, SyncSender, TryRecvError};
 use std::sync::{Arc, Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
 use cef::*;
 use interprocess::local_socket::{prelude::*, GenericFilePath, Stream};
 use interprocess::TryClone;
 use paneflow_browser_protocol::{
     read_value, write_message, BrowserPresentation, Command, Controller, Document, EditAction,
-    Envelope, Event, FrameAck, InputEvent, KeyKind, MouseButton, Owner, Reply, CONTRACT_VERSION,
+    Envelope, Event, FrameAck, InputEvent, KeyKind, MouseButton, OperationId, Owner, Reply,
+    CONTRACT_VERSION,
 };
 use serde_json::{json, Value};
 
@@ -34,8 +36,10 @@ mod web_interactions;
 use presentation::Presenter;
 
 static CONTROL_OUTPUT: OnceLock<Arc<Mutex<Stream>>> = OnceLock::new();
+static CONTROL_SESSION: OnceLock<(Arc<Mutex<Controller>>, Owner)> = OnceLock::new();
 static UI_COMMANDS: OnceLock<SyncSender<UiCommand>> = OnceLock::new();
-static FRAME_PUMP_SCHEDULED: AtomicBool = AtomicBool::new(false);
+static RESIZE_PUMP_SCHEDULED: AtomicBool = AtomicBool::new(false);
+static LAST_PUMP: AtomicU64 = AtomicU64::new(0);
 
 thread_local! {
     static UI_RECEIVER: RefCell<Option<Receiver<UiCommand>>> = const { RefCell::new(None) };
@@ -47,6 +51,78 @@ struct ViewState {
     width: u32,
     height: u32,
     scale_percent: u32,
+    visible: bool,
+    refresh_ticks: u8,
+    base_frame_rate: i32,
+    resize_rate_until: Option<Instant>,
+}
+
+const RESIZE_REFRESH_TICKS: u8 = 16;
+
+fn benchmark_enabled() -> bool {
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| std::env::var_os("PANEFLOW_BROWSER_BENCH").is_some())
+}
+
+fn resize_refresh_enabled() -> bool {
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| std::env::var("PANEFLOW_BROWSER_RESIZE_REFRESH").as_deref() != Ok("0"))
+}
+
+fn paint_probe_enabled() -> bool {
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| std::env::var_os("PANEFLOW_BROWSER_PAINT_PROBE").is_some())
+}
+
+pub(super) fn record_span(label: &str, start_ns: u64, threshold_ms: u64) {
+    if !paint_probe_enabled() {
+        return;
+    }
+    let end_ns = now_ns();
+    if end_ns.saturating_sub(start_ns) < threshold_ms * 1_000_000 {
+        return;
+    }
+    emit(json!({"native":"ui_span", "label":label,
+        "start_ns":start_ns, "end_ns":end_ns}));
+}
+
+impl ViewState {
+    fn begin_resize(&mut self, now: Instant) -> bool {
+        self.refresh_ticks = RESIZE_REFRESH_TICKS;
+        if !self.visible || self.base_frame_rate >= 120 {
+            return false;
+        }
+        let boost = self.resize_rate_until.is_none();
+        self.resize_rate_until = Some(now + Duration::from_millis(200));
+        boost
+    }
+
+    fn tick(&mut self, now: Instant) -> (bool, Option<i32>) {
+        let refresh = self.visible && self.refresh_ticks > 0;
+        self.refresh_ticks = if self.visible {
+            self.refresh_ticks.saturating_sub(1)
+        } else {
+            0
+        };
+        let restore = self
+            .resize_rate_until
+            .is_some_and(|deadline| !self.visible || now >= deadline);
+        if restore {
+            self.resize_rate_until = None;
+        }
+        (refresh, restore.then_some(self.base_frame_rate))
+    }
+
+    fn needs_tick(&self) -> bool {
+        (self.visible && self.refresh_ticks > 0) || self.resize_rate_until.is_some()
+    }
+
+    fn physical_size(&self) -> (u32, u32) {
+        (
+            (self.width.max(1) * self.scale_percent.max(1)).div_ceil(100),
+            (self.height.max(1) * self.scale_percent.max(1)).div_ceil(100),
+        )
+    }
 }
 
 struct UiPage {
@@ -54,6 +130,8 @@ struct UiPage {
     browser: Option<Browser>,
     presenter: Rc<RefCell<Presenter>>,
     view: Arc<Mutex<ViewState>>,
+    pending_agent_navigation: Option<OperationId>,
+    expected_navigation: Option<String>,
 }
 
 enum UiCommand {
@@ -72,6 +150,7 @@ enum UiCommand {
     Navigate {
         document: Document,
         url: String,
+        operation: Option<OperationId>,
     },
     Input {
         document: Document,
@@ -120,6 +199,27 @@ fn emit(value: Value) {
 
 pub(super) fn emit_frame(message: &paneflow_browser_protocol::FrameMessage) -> io::Result<()> {
     write_control(json!({ "frame": message }))
+}
+
+pub(super) fn emit_adapter(
+    name: &str,
+    vendor: u32,
+    device: u32,
+    dedicated_video_memory: u64,
+    luid_high: i64,
+    luid_low: u32,
+    pinned: bool,
+) {
+    let value = json!({
+        "description": name,
+        "vendor_id": format!("0x{vendor:04x}"),
+        "device_id": format!("0x{device:04x}"),
+        "dedicated_video_memory_bytes": dedicated_video_memory,
+        "luid": format!("{luid_high:x}-{luid_low:x}"),
+        "pinned_to_application": pinned,
+    });
+    eprintln!("paneflow-browser-adapter {value}");
+    emit(json!({ "native": "adapter", "value": value }));
 }
 
 fn latest_document(document: &Document) -> Option<Document> {
@@ -189,13 +289,13 @@ fn enqueue(command: UiCommand) -> bool {
     true
 }
 
-fn schedule_frame_pump() {
-    if FRAME_PUMP_SCHEDULED.swap(true, Ordering::AcqRel) {
+fn schedule_resize_pump() {
+    if RESIZE_PUMP_SCHEDULED.swap(true, Ordering::AcqRel) {
         return;
     }
-    let mut task = FramePump::new();
+    let mut task = ResizePump::new();
     if post_delayed_task(ThreadId::UI, Some(&mut task), 16) == 0 {
-        FRAME_PUMP_SCHEDULED.store(false, Ordering::Release);
+        RESIZE_PUMP_SCHEDULED.store(false, Ordering::Release);
     }
 }
 
@@ -205,12 +305,14 @@ fn dispatch(controller: &mut Controller, caller: &Owner, message: Envelope) -> R
 
 fn queue_after_reply(
     command: Command,
+    operation: OperationId,
     result: &Result<Event, paneflow_browser_protocol::BrowserError>,
 ) {
     if result.is_err() {
         return;
     }
     let queued_command = command.clone();
+    let agent = matches!(command, Command::AgentNavigate { .. });
     match command {
         Command::Start { .. } => {
             if let Ok(Event::State { session }) = result {
@@ -233,6 +335,7 @@ fn queue_after_reply(
                 let _ = enqueue(UiCommand::Navigate {
                     document: session.document.clone(),
                     url,
+                    operation: agent.then_some(operation),
                 });
             }
         }
@@ -269,7 +372,11 @@ fn queue_after_reply(
 
 fn run_control(stream: Stream, owner: Owner) {
     let mut input = BufReader::new(stream);
-    let mut controller = Controller::new(format!("{}-windows", std::env::consts::ARCH), true);
+    let controller = Arc::new(Mutex::new(Controller::new(
+        format!("{}-windows", std::env::consts::ARCH),
+        true,
+    )));
+    let _ = CONTROL_SESSION.set((controller.clone(), owner.clone()));
     loop {
         let value = match read_value(&mut input) {
             Ok(Some(value)) => value,
@@ -295,13 +402,20 @@ fn run_control(stream: Stream, owner: Owner) {
             break;
         };
         let command = message.command.clone();
-        let reply = dispatch(&mut controller, &owner, message);
+        let operation = message.operation.clone();
+        let reply = {
+            let Ok(mut controller) = controller.lock() else {
+                quit_message_loop();
+                break;
+            };
+            dispatch(&mut controller, &owner, message)
+        };
         let result = reply.result.clone();
         if write_control(json!({ "protocol": reply })).is_err() {
             quit_message_loop();
             break;
         }
-        queue_after_reply(command, &result);
+        queue_after_reply(command, operation, &result);
     }
 }
 
@@ -320,6 +434,26 @@ fn create_page(session: paneflow_browser_protocol::BrowserSession, inspected: Op
     if CONTROL_OUTPUT.get().is_none() {
         return;
     }
+    let frame_rate = match std::env::var("PANEFLOW_BROWSER_FRAME_RATE") {
+        Ok(value) => match value.parse::<i32>() {
+            Ok(rate @ (60 | 120)) => rate,
+            _ => {
+                emit(json!({
+                    "native": "create_failed", "document": session.document,
+                    "reason": "browser frame rate must be 60 or 120",
+                }));
+                return;
+            }
+        },
+        Err(std::env::VarError::NotPresent) => 60,
+        Err(_) => {
+            emit(json!({
+                "native": "create_failed", "document": session.document,
+                "reason": "browser frame rate is not Unicode",
+            }));
+            return;
+        }
+    };
     let client_pid = std::env::var("PANEFLOW_BROWSER_CLIENT_PID")
         .ok()
         .and_then(|value| value.parse::<u32>().ok())
@@ -339,6 +473,10 @@ fn create_page(session: paneflow_browser_protocol::BrowserSession, inspected: Op
         width: session.presentation.width.max(1),
         height: session.presentation.height.max(1),
         scale_percent: session.presentation.scale_percent.max(1),
+        visible: true,
+        refresh_ticks: RESIZE_REFRESH_TICKS,
+        base_frame_rate: frame_rate,
+        resize_rate_until: None,
     }));
     let browser_id = session.document.browser.clone();
     PAGES.with(|pages| {
@@ -349,6 +487,8 @@ fn create_page(session: paneflow_browser_protocol::BrowserSession, inspected: Op
                 browser: None,
                 presenter: presenter.clone(),
                 view: view.clone(),
+                pending_agent_navigation: None,
+                expected_navigation: None,
             },
         );
     });
@@ -370,12 +510,12 @@ fn create_page(session: paneflow_browser_protocol::BrowserSession, inspected: Op
     let window_info = WindowInfo {
         windowless_rendering_enabled: 1,
         shared_texture_enabled: 1,
-        external_begin_frame_enabled: 1,
+        external_begin_frame_enabled: 0,
         runtime_style: RuntimeStyle::ALLOY,
         ..Default::default()
     };
     let settings = BrowserSettings {
-        windowless_frame_rate: 60,
+        windowless_frame_rate: frame_rate,
         ..Default::default()
     };
     let mut client = BrowserClient::new(session.document.clone(), presenter, view);
@@ -404,7 +544,7 @@ fn create_page(session: paneflow_browser_protocol::BrowserSession, inspected: Op
             "reason": "CEF rejected the windowless browser",
         }));
     } else {
-        schedule_frame_pump();
+        schedule_resize_pump();
     }
 }
 
@@ -415,34 +555,81 @@ fn remove_page(document: &Document) {
 }
 
 fn present(document: Document, presentation: BrowserPresentation) {
-    let (browser, view) = PAGES.with(|pages| {
+    let started_ns = now_ns();
+    let (browser, view, presenter) = PAGES.with(|pages| {
         let pages = pages.borrow();
         let Some(page) = pages.get(&document.browser) else {
-            return (None, None);
+            return (None, None, None);
         };
         if page.document != document {
-            return (None, None);
+            return (None, None, None);
         }
-        (page.browser.clone(), Some(page.view.clone()))
+        (
+            page.browser.clone(),
+            Some(page.view.clone()),
+            Some(page.presenter.clone()),
+        )
     });
+    let mut resized = false;
+    let mut rescaled = false;
+    let mut revealed = false;
+    let mut boost = false;
+    let mut physical_size = None;
     if let Some(view) = view {
         if let Ok(mut view) = view.lock() {
+            resized = view.width != presentation.width.max(1)
+                || view.height != presentation.height.max(1);
+            rescaled = view.scale_percent != presentation.scale_percent.max(1);
+            revealed = presentation.visible && !view.visible;
             view.width = presentation.width.max(1);
             view.height = presentation.height.max(1);
             view.scale_percent = presentation.scale_percent.max(1);
+            view.visible = presentation.visible;
+            if resized || rescaled {
+                boost = view.begin_resize(Instant::now());
+            } else if revealed {
+                view.refresh_ticks = RESIZE_REFRESH_TICKS;
+            }
+            if view.visible && (resized || rescaled || revealed) {
+                physical_size = Some(view.physical_size());
+            }
         }
     }
     if let Some(browser) = browser {
         if let Some(host) = browser.host() {
             host.was_hidden(if presentation.visible { 0 } else { 1 });
-            host.notify_screen_info_changed();
-            host.was_resized();
-            host.send_external_begin_frame();
+            if rescaled {
+                host.notify_screen_info_changed();
+            }
+            if resized || rescaled {
+                if benchmark_enabled() {
+                    emit(json!({"native":"resize_host", "document":document,
+                        "at_ns":now_ns(), "generation":presentation.generation,
+                        "width":presentation.width, "height":presentation.height}));
+                }
+                if boost {
+                    host.set_windowless_frame_rate(120);
+                }
+                host.was_resized();
+            }
+            if let (Some(presenter), Some((width, height))) = (&presenter, physical_size) {
+                if let Ok(mut presenter) = presenter.try_borrow_mut() {
+                    presenter.prepare_resize(width, height);
+                }
+            }
+            if presentation.visible && (resized || rescaled || revealed) {
+                host.invalidate(PaintElementType::VIEW);
+            }
         }
     }
+    schedule_resize_pump();
+    record_span("present", started_ns, 5);
 }
 
-fn navigate(document: Document, url: String) {
+fn navigate(document: Document, url: String, operation: Option<OperationId>) {
+    if operation.is_none() {
+        cancel_agent_navigation(&document, "human browser control");
+    }
     devtools::closed(&document.browser);
     editing::cancel(&document.browser);
     clear_web_state(&document);
@@ -450,6 +637,8 @@ fn navigate(document: Document, url: String) {
         let mut pages = pages.borrow_mut();
         let page = pages.get_mut(&document.browser)?;
         page.document = document.clone();
+        page.pending_agent_navigation = operation;
+        page.expected_navigation = Some(url.clone());
         if let Ok(mut presenter) = page.presenter.try_borrow_mut() {
             presenter.update_document(document.clone());
         }
@@ -460,7 +649,116 @@ fn navigate(document: Document, url: String) {
     }
 }
 
+fn take_pending_agent_navigation(document: &Document) -> Option<(Document, OperationId)> {
+    PAGES.with(|pages| {
+        let mut pages = pages.borrow_mut();
+        let page = pages.get_mut(&document.browser)?;
+        page.expected_navigation = None;
+        page.pending_agent_navigation
+            .take()
+            .map(|operation| (page.document.clone(), operation))
+    })
+}
+
+fn agent_navigation_failure_matches(document: &Document, url: Option<&str>) -> bool {
+    PAGES.with(|pages| {
+        let pages = pages.borrow();
+        let Some(page) = pages.get(&document.browser) else {
+            return false;
+        };
+        page.pending_agent_navigation.is_some()
+            && url.is_none_or(|url| page.expected_navigation.as_deref() == Some(url))
+    })
+}
+
+fn cancel_agent_navigation(document: &Document, reason: &str) {
+    if let Some((document, operation)) = take_pending_agent_navigation(document) {
+        emit(json!({
+            "native": "agent_navigation_cancelled",
+            "document": document,
+            "operation": operation,
+            "reason": reason
+        }));
+    }
+}
+
+fn agent_navigation_failed(document: &Document, reason: &str) {
+    if let Some((document, operation)) = take_pending_agent_navigation(document) {
+        emit(json!({
+            "native": "agent_navigation_failed",
+            "document": document,
+            "operation": operation,
+            "reason": reason
+        }));
+    }
+}
+
+fn agent_navigation_committed(document: &Document, url: &str) {
+    if !agent_navigation_failure_matches(document, None) {
+        return;
+    }
+    if paneflow_browser_protocol::validate_url(url).is_err() {
+        agent_navigation_failed(document, "native navigation committed an invalid URL");
+        return;
+    }
+    let Some((committed, operation)) = take_pending_agent_navigation(document) else {
+        return;
+    };
+    let Some((controller, owner)) = CONTROL_SESSION.get() else {
+        emit(json!({
+            "native": "agent_navigation_failed",
+            "document": committed,
+            "operation": operation,
+            "reason": "navigation commit controller unavailable"
+        }));
+        return;
+    };
+    let Ok(commit) = "native-agent-commit".to_owned().try_into() else {
+        return;
+    };
+    let reply = controller.lock().ok().map(|mut controller| {
+        controller.dispatch(
+            owner,
+            Envelope {
+                version: CONTRACT_VERSION,
+                operation: commit,
+                command: Command::Navigate {
+                    document: committed.clone(),
+                    url: url.to_owned(),
+                },
+            },
+        )
+    });
+    let Some(Ok(Event::State { session })) = reply.map(|reply| reply.result) else {
+        emit(json!({
+            "native": "agent_navigation_failed",
+            "document": committed,
+            "operation": operation,
+            "reason": "navigation commit rejected"
+        }));
+        return;
+    };
+    PAGES.with(|pages| {
+        let mut pages = pages.borrow_mut();
+        if let Some(page) = pages.get_mut(&session.document.browser) {
+            page.document = session.document.clone();
+            page.expected_navigation = None;
+            if let Ok(mut presenter) = page.presenter.try_borrow_mut() {
+                presenter.update_document(session.document.clone());
+            }
+        }
+    });
+    emit(json!({
+        "native": "agent_navigation_committed",
+        "document": session.document,
+        "session": session,
+        "operation": operation,
+        "url": url
+    }));
+}
+
 fn input(document: Document, input: InputEvent) {
+    cancel_agent_navigation(&document, "human browser control");
     let Some(browser) = page_browser(&document) else {
         return;
     };
@@ -615,6 +913,16 @@ fn mouse_button(button: MouseButton) -> MouseButtonType {
 }
 
 fn action(document: Document, command: Command) {
+    if matches!(
+        command,
+        Command::History { .. }
+            | Command::Reload { .. }
+            | Command::Stop { .. }
+            | Command::Close { .. }
+            | Command::Sleep { .. }
+    ) {
+        cancel_agent_navigation(&document, "human browser control");
+    }
     let Some(browser) = page_browser(&document) else {
         return;
     };
@@ -688,14 +996,18 @@ fn apply_ui_command(command: UiCommand) {
             document,
             presentation,
         } => present(document, presentation),
-        UiCommand::Navigate { document, url } => navigate(document, url),
+        UiCommand::Navigate {
+            document,
+            url,
+            operation,
+        } => navigate(document, url, operation),
         UiCommand::Input {
             document,
             input: event,
         } => input(document, event),
         UiCommand::Action { document, command } => action(document, command),
         UiCommand::FrameAck(ack) => {
-            let refresh = matches!(ack, FrameAck::PoolReady { .. });
+            let mut refresh = matches!(ack, FrameAck::PoolReady { .. });
             let document = match &ack {
                 FrameAck::PoolReady { document, .. }
                 | FrameAck::PoolRejected { document, .. }
@@ -705,15 +1017,16 @@ fn apply_ui_command(command: UiCommand) {
             PAGES.with(|pages| {
                 let pages = pages.borrow();
                 if let Some(page) = pages.get(&document.browser) {
-                    if page.document == document {
+                    if page.document.owner == document.owner
+                        && page.document.generation >= document.generation
+                    {
                         if let Ok(mut presenter) = page.presenter.try_borrow_mut() {
-                            presenter.handle_ack(ack);
+                            refresh |= presenter.handle_ack(ack);
                         }
                         if refresh {
                             if let Some(browser) = &page.browser {
                                 if let Some(host) = browser.host() {
                                     host.invalidate(PaintElementType::VIEW);
-                                    host.send_external_begin_frame();
                                 }
                             }
                         }
@@ -769,27 +1082,46 @@ wrap_task! {
 }
 
 wrap_task! {
-    struct FramePump;
+    struct ResizePump;
 
     impl Task {
         fn execute(&self) {
-            FRAME_PUMP_SCHEDULED.store(false, Ordering::Release);
+            RESIZE_PUMP_SCHEDULED.store(false, Ordering::Release);
+            if paint_probe_enabled() {
+                let now = now_ns();
+                let previous = LAST_PUMP.swap(now, Ordering::AcqRel);
+                if previous > 0 && now.saturating_sub(previous) > 25_000_000 {
+                    emit(json!({"native":"ui_gap", "label":"resize_pump",
+                        "start_ns":previous, "end_ns":now}));
+                }
+            }
             let active = PAGES.with(|pages| {
                 let pages = pages.borrow();
                 let mut active = false;
                 for page in pages.values() {
                     if let Some(browser) = &page.browser {
                         if let Some(host) = browser.host() {
-                            host.invalidate(PaintElementType::VIEW);
-                            host.send_external_begin_frame();
-                            active = true;
+                            let (refresh, restore) = match page.view.lock() {
+                                Ok(mut view) => {
+                                    let actions = view.tick(Instant::now());
+                                    active |= view.needs_tick();
+                                    actions
+                                }
+                                Err(_) => (false, None),
+                            };
+                            if let Some(rate) = restore {
+                                host.set_windowless_frame_rate(rate);
+                            }
+                            if refresh && resize_refresh_enabled() {
+                                host.invalidate(PaintElementType::VIEW);
+                            }
                         }
                     }
                 }
                 active
             });
             if active {
-                schedule_frame_pump();
+                schedule_resize_pump();
             }
         }
     }
@@ -855,9 +1187,8 @@ wrap_life_span_handler! {
                 host.notify_screen_info_changed();
                 host.was_resized();
                 host.invalidate(PaintElementType::VIEW);
-                host.send_external_begin_frame();
             }
-            schedule_frame_pump();
+            schedule_resize_pump();
             emit(json!({
                 "native": "created",
                 "document": self.document,
@@ -909,7 +1240,8 @@ wrap_load_handler! {
         }
 
         fn on_load_end(&self, _browser: Option<&mut Browser>, frame: Option<&mut Frame>, http_status_code: i32) {
-            if frame.is_some_and(|frame| frame.is_main() != 0) {
+            if let Some(frame) = frame.filter(|frame| frame.is_main() != 0) {
+                agent_navigation_committed(&self.document, &CefString::from(&frame.url()).to_string());
                 emit(json!({
                     "native": "loaded",
                     "document": self.document,
@@ -918,15 +1250,22 @@ wrap_load_handler! {
             }
         }
 
-        fn on_load_error(&self, _browser: Option<&mut Browser>, frame: Option<&mut Frame>, error_code: Errorcode, error_text: Option<&CefString>, _failed_url: Option<&CefString>) {
+        fn on_load_error(&self, _browser: Option<&mut Browser>, frame: Option<&mut Frame>, error_code: Errorcode, error_text: Option<&CefString>, failed_url: Option<&CefString>) {
             if frame.is_none_or(|frame| frame.is_main() != 0) {
-                let error_text = error_text.map(ToString::to_string).unwrap_or_default();
-                emit(json!({
-                    "native": "load_failed",
-                    "document": self.document,
-                    "error_code": error_code.get_raw(),
-                    "error_text": error_text,
-                }));
+                let error_text: String = error_text.map(ToString::to_string).unwrap_or_default().chars().take(256).collect();
+                let failed_url = failed_url.map(ToString::to_string);
+                let agent_pending = agent_navigation_failure_matches(&self.document, None);
+                if agent_navigation_failure_matches(&self.document, failed_url.as_deref()) {
+                    agent_navigation_failed(&self.document, &error_text);
+                }
+                if !(agent_pending && error_code.get_raw() == -3) {
+                    emit(json!({
+                        "native": "load_failed",
+                        "document": self.document,
+                        "error_code": error_code.get_raw(),
+                        "error_text": error_text,
+                    }));
+                }
             }
         }
     }
@@ -955,8 +1294,20 @@ wrap_display_handler! {
             1
         }
 
-        fn on_console_message(&self, _browser: Option<&mut Browser>, _level: LogSeverity, message: Option<&CefString>, _source: Option<&CefString>, _line: i32) -> i32 {
+        fn on_console_message(&self, _browser: Option<&mut Browser>, level: LogSeverity, message: Option<&CefString>, source: Option<&CefString>, line: i32) -> i32 {
             let text = message.map(ToString::to_string).unwrap_or_default();
+            if let Some(document) = latest_document(&self.document) {
+                emit(json!({
+                    "native": "agent_console",
+                    "document": document,
+                    "value": {
+                        "level": level.get_raw(),
+                        "message": text.chars().take(4096).collect::<String>(),
+                        "source": source.map(ToString::to_string).unwrap_or_default().chars().take(1024).collect::<String>(),
+                        "line": line.max(0),
+                    }
+                }));
+            }
             if let Some(state) = text.strip_prefix("PANEFLOW_FIXTURE:") {
                 if let Ok(value) = serde_json::from_str::<Value>(state) {
                     emit(json!({ "native": "fixture_state", "document": self.document, "state": value }));
@@ -1008,8 +1359,28 @@ wrap_render_handler! {
 
         fn on_accelerated_paint(&self, _browser: Option<&mut Browser>, type_: PaintElementType, dirty_rects: Option<&[Rect]>, info: Option<&AcceleratedPaintInfo>) {
             let Some(info) = info else { return };
-            if let Ok(mut presenter) = self.presenter.try_borrow_mut() {
-                presenter.paint(type_, dirty_rects, info);
+            let started_ns = now_ns();
+            let published = match self.presenter.try_borrow_mut() {
+                Ok(mut presenter) => presenter.paint(type_, dirty_rects, info),
+                Err(_) => false,
+            };
+            record_span("paint", started_ns, 5);
+            if !published {
+                return;
+            }
+            if let Ok(mut view) = self.view.lock() {
+                let (width, height) = view.physical_size();
+                if u32::try_from(info.extra.coded_size.width).unwrap_or(0) == width
+                    && u32::try_from(info.extra.coded_size.height).unwrap_or(0) == height
+                {
+                    if view.refresh_ticks > 0 && benchmark_enabled() {
+                        if let Ok(presenter) = self.presenter.try_borrow() {
+                            emit(json!({"native":"resize_capture", "document":presenter.document(),
+                                "at_ns":now_ns(), "width":width, "height":height}));
+                        }
+                    }
+                    view.refresh_ticks = 0;
+                }
             }
         }
 
@@ -1076,10 +1447,69 @@ wrap_find_handler! {
     }
 }
 
+fn agent_network_event(
+    document: &Document,
+    request: Option<&mut Request>,
+    response: Option<&mut Response>,
+    status: Option<i32>,
+    received_content_length: Option<i64>,
+) {
+    let Some(document) = latest_document(document) else {
+        return;
+    };
+    let Some(request) = request else {
+        return;
+    };
+    let raw_url = CefString::from(&request.url()).to_string();
+    let Some(url) = paneflow_browser_protocol::exported_url(&raw_url) else {
+        return;
+    };
+    let mut value = json!({
+        "request_id": request.identifier(),
+        "method": CefString::from(&request.method()).to_string(),
+        "resource_type": request.resource_type().get_raw(),
+        "url": url,
+    });
+    if let Some(status) = status {
+        value["status"] = status.into();
+    }
+    if let Some(received_content_length) = received_content_length {
+        value["received_content_length"] = received_content_length.into();
+    }
+    if let Some(response) = response {
+        value["mime_type"] = CefString::from(&response.mime_type())
+            .to_string()
+            .chars()
+            .take(256)
+            .collect::<String>()
+            .into();
+    }
+    emit(json!({ "native": "agent_network", "document": document, "value": value }));
+}
+
+wrap_resource_request_handler! {
+    struct AgentResources { document: Document }
+
+    impl ResourceRequestHandler {
+        fn on_before_resource_load(&self, _browser: Option<&mut Browser>, _frame: Option<&mut Frame>, request: Option<&mut Request>, _callback: Option<&mut Callback>) -> ReturnValue {
+            agent_network_event(&self.document, request, None, None, None);
+            ReturnValue::CONTINUE
+        }
+
+        fn on_resource_load_complete(&self, _browser: Option<&mut Browser>, _frame: Option<&mut Frame>, request: Option<&mut Request>, response: Option<&mut Response>, status: UrlrequestStatus, received_content_length: i64) {
+            agent_network_event(&self.document, request, response, Some(status.get_raw()), Some(received_content_length.max(0)));
+        }
+    }
+}
+
 wrap_request_handler! {
     struct RequestPolicy { document: Document }
 
     impl RequestHandler {
+        fn resource_request_handler(&self, _browser: Option<&mut Browser>, _frame: Option<&mut Frame>, _request: Option<&mut Request>, _is_navigation: i32, _is_download: i32, _request_initiator: Option<&CefString>, _disable_default_handling: Option<&mut i32>) -> Option<ResourceRequestHandler> {
+            Some(AgentResources::new(self.document.clone()))
+        }
+
         fn on_certificate_error(&self, _browser: Option<&mut Browser>, cert_error: Errorcode, _request_url: Option<&CefString>, _ssl_info: Option<&mut Sslinfo>, callback: Option<&mut Callback>) -> i32 {
             emit(json!({ "native": "certificate_error", "document": self.document, "error_code": cert_error.get_raw() }));
             if let Some(callback) = callback { callback.cancel(); }
@@ -1236,6 +1666,12 @@ wrap_app! {
 
     impl App {
         fn render_process_handler(&self) -> Option<RenderProcessHandler> { Some(devtools::Renderer::new()) }
+        fn on_before_command_line_processing(&self, _process_type: Option<&CefString>, command_line: Option<&mut CommandLine>) {
+            let Some(adapter) = presentation::requested_adapter_switch() else { return };
+            if let Some(command_line) = command_line {
+                command_line.append_switch_with_value(Some(&"use-adapter-luid".into()), Some(&adapter.as_str().into()));
+            }
+        }
     }
 }
 
@@ -1247,4 +1683,64 @@ pub unsafe extern "C" fn RunWinMain(
     sandbox_info: *mut u8,
 ) -> i32 {
     run(instance, sandbox_info)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Duration, Instant, ViewState};
+
+    fn view(frame_rate: i32) -> ViewState {
+        ViewState {
+            width: 800,
+            height: 600,
+            scale_percent: 100,
+            visible: true,
+            refresh_ticks: 0,
+            base_frame_rate: frame_rate,
+            resize_rate_until: None,
+        }
+    }
+
+    #[test]
+    fn an_idle_page_needs_no_resize_pump() {
+        let mut view = view(60);
+        assert!(!view.needs_tick());
+        assert_eq!(view.tick(Instant::now()), (false, None));
+    }
+
+    #[test]
+    fn a_resize_burst_extends_the_boost_until_the_latest_size_settles() {
+        let mut view = view(60);
+        let start = Instant::now();
+        assert!(view.begin_resize(start));
+        assert!(!view.begin_resize(start + Duration::from_millis(150)));
+        view.refresh_ticks = 0;
+        assert_eq!(view.tick(start + Duration::from_millis(200)), (false, None));
+        assert!(view.needs_tick());
+        assert_eq!(
+            view.tick(start + Duration::from_millis(350)),
+            (false, Some(60))
+        );
+        assert!(!view.needs_tick());
+    }
+
+    #[test]
+    fn hiding_a_page_cancels_refresh_and_restores_its_base_rate() {
+        let mut view = view(60);
+        let start = Instant::now();
+        assert!(view.begin_resize(start));
+        view.visible = false;
+        assert_eq!(view.tick(start), (false, Some(60)));
+        assert!(!view.needs_tick());
+    }
+
+    #[test]
+    fn a_120_hz_page_only_refreshes_until_the_matching_capture_arrives() {
+        let mut view = view(120);
+        let start = Instant::now();
+        assert!(!view.begin_resize(start));
+        assert_eq!(view.tick(start), (true, None));
+        view.refresh_ticks = 0;
+        assert!(!view.needs_tick());
+    }
 }

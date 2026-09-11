@@ -71,6 +71,31 @@ function Get-OsIdentity {
     }
 }
 
+function Get-ForegroundProcessId {
+    if (-not ('PaneflowForeground' -as [type])) {
+        Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+
+public static class PaneflowForeground
+{
+    [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+    [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr window, out uint processId);
+
+    public static uint OwnerProcessId()
+    {
+        IntPtr window = GetForegroundWindow();
+        if (window == IntPtr.Zero) return 0;
+        uint processId = 0;
+        GetWindowThreadProcessId(window, out processId);
+        return processId;
+    }
+}
+"@
+    }
+    return [PaneflowForeground]::OwnerProcessId()
+}
+
 function Get-MonitorScales {
     if (-not ('PaneflowMonitorScale' -as [type])) {
         Add-Type -TypeDefinition @"
@@ -227,7 +252,8 @@ try {
         } while ($added)
         $memory = @(Get-CimInstance Win32_PerfFormattedData_PerfProc_Process | Where-Object { $ids.Contains([uint32]$_.IDProcess) } | Select-Object IDProcess,WorkingSetPrivate,HandleCount,PercentProcessorTime)
         $gpu = @(Get-CimInstance Win32_PerfFormattedData_GPUPerformanceCounters_GPUProcessMemory | Where-Object { $_.Name -match '^pid_(\d+)_' -and $ids.Contains([uint32]$Matches[1]) } | Select-Object Name,DedicatedUsage,SharedUsage,TotalCommitted)
-        $resources.WriteLine((@{at_ns=(Now-Ns); processes=@($processes | Where-Object { $ids.Contains([uint32]$_.ProcessId) }); memory=$memory; gpu=$gpu} | ConvertTo-Json -Depth 8 -Compress))
+        $foreground = Get-ForegroundProcessId
+        $resources.WriteLine((@{at_ns=(Now-Ns); processes=@($processes | Where-Object { $ids.Contains([uint32]$_.ProcessId) }); memory=$memory; gpu=$gpu; foreground_pid=[uint32]$foreground; foreground_owned=$ids.Contains([uint32]$foreground)} | ConvertTo-Json -Depth 8 -Compress))
         $resources.Flush()
         Start-Sleep -Milliseconds 1000
     }
