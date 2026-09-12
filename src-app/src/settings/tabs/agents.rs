@@ -20,6 +20,7 @@ use crate::widgets::text_input::TextInput;
 
 const ROW_ICON: f32 = 18.;
 const CONTROL_WIDTH: f32 = 300.;
+const ENV_NAME_WIDTH: f32 = 200.;
 const INPUT_HEIGHT: f32 = 28.;
 const ICON_BUTTON_SIZE: f32 = 26.;
 const AGENT_ROW_HEIGHT: f32 = 44.;
@@ -486,81 +487,86 @@ impl PaneFlowApp {
     ) -> AnyElement {
         let base_select = self.render_agent_profile_base_select(editor, ui, cx);
 
-        let mut env_column = div()
-            .flex()
-            .flex_col()
-            .items_end()
-            .gap(px(6.))
-            .w(px(CONTROL_WIDTH));
+        let home = dirs::home_dir();
+        let row_values: Vec<String> = editor
+            .env_rows
+            .iter()
+            .map(|row| row.value.read(cx).value())
+            .collect();
+
+        let mut env_column = div().flex().flex_col().gap(px(6.)).w_full();
         for (row_idx, row) in editor.env_rows.iter().enumerate() {
             let removable = editor.env_rows.len() > 1;
+            let hint = row_values
+                .get(row_idx)
+                .and_then(|value| env_value_hint(value, home.as_deref(), ui));
             env_column = env_column.child(
                 div()
                     .flex()
-                    .flex_row()
-                    .items_center()
-                    .gap(px(6.))
+                    .flex_col()
+                    .gap(px(3.))
                     .w_full()
                     .child(
                         div()
-                            .flex_1()
-                            .min_w_0()
-                            .child(input_box(row.key.clone(), true, ui)),
-                    )
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .relative()
-                            .child(input_box(row.value.clone(), true, ui))
+                            .flex()
+                            .flex_row()
+                            .items_center()
+                            .gap(px(6.))
+                            .w_full()
+                            .child(div().w(px(ENV_NAME_WIDTH)).flex_none().child(input_box(
+                                row.key.clone(),
+                                true,
+                                ui,
+                            )))
+                            .child(div().flex_1().min_w_0().child(input_box(
+                                row.value.clone(),
+                                true,
+                                ui,
+                            )))
                             .when(removable, |d| {
                                 d.child(
-                                    div()
-                                        .absolute()
-                                        .top(px((INPUT_HEIGHT - ICON_BUTTON_SIZE) / 2.))
-                                        .right(px(1.))
-                                        .child(
-                                            icon_button(
-                                                SharedString::from(format!(
-                                                    "agent-profile-env-remove-{row_idx}"
-                                                )),
-                                                "icons/trash.svg",
-                                                ui.muted,
-                                                destructive_color(),
-                                                ui,
-                                            )
-                                            .on_click(
-                                                cx.listener(move |this, _: &ClickEvent, _w, cx| {
-                                                    if let Some(editor) =
-                                                        this.agent_profile_editor.as_mut()
-                                                        && row_idx < editor.env_rows.len()
-                                                    {
-                                                        editor.env_rows.remove(row_idx);
-                                                        cx.notify();
-                                                    }
-                                                }),
-                                            ),
-                                        ),
+                                    icon_button(
+                                        SharedString::from(format!(
+                                            "agent-profile-env-remove-{row_idx}"
+                                        )),
+                                        "icons/trash.svg",
+                                        ui.muted,
+                                        destructive_color(),
+                                        ui,
+                                    )
+                                    .on_click(cx.listener(
+                                        move |this, _: &ClickEvent, _w, cx| {
+                                            if let Some(editor) = this.agent_profile_editor.as_mut()
+                                                && row_idx < editor.env_rows.len()
+                                            {
+                                                editor.env_rows.remove(row_idx);
+                                                cx.notify();
+                                            }
+                                        },
+                                    )),
                                 )
                             }),
-                    ),
+                    )
+                    .when_some(hint, |d, hint| d.child(hint)),
             );
         }
         env_column = env_column.child(
-            div()
-                .id("agent-profile-env-add")
-                .flex_none()
-                .px(px(6.))
-                .py(px(2.))
-                .rounded(SETTINGS_CONTROL_CORNER_RADIUS)
-                .cursor(CursorStyle::PointingHand)
-                .text_size(LABEL_SM)
-                .text_color(ui.muted)
-                .animated_hover_bg(with_alpha(ui.text, 0.0), with_alpha(ui.text, 0.05))
-                .on_click(cx.listener(|this, _: &ClickEvent, _w, cx| {
-                    this.add_agent_profile_env_row(cx);
-                }))
-                .child("+ Add variable"),
+            div().flex().flex_row().child(
+                div()
+                    .id("agent-profile-env-add")
+                    .flex_none()
+                    .px(px(6.))
+                    .py(px(2.))
+                    .rounded(SETTINGS_CONTROL_CORNER_RADIUS)
+                    .cursor(CursorStyle::PointingHand)
+                    .text_size(LABEL_SM)
+                    .text_color(ui.muted)
+                    .animated_hover_bg(with_alpha(ui.text, 0.0), with_alpha(ui.text, 0.05))
+                    .on_click(cx.listener(|this, _: &ClickEvent, _w, cx| {
+                        this.add_agent_profile_env_row(cx);
+                    }))
+                    .child("+ Add variable"),
+            ),
         );
 
         let footer_text: AnyElement = match editor.error.as_ref() {
@@ -630,9 +636,10 @@ impl PaneFlowApp {
                 ui,
             ))
             .child(hairline(ui))
-            .child(editor_row(
+            .child(editor_stacked_row(
                 "Environment variables",
-                "Set on the agent process. A leading ~ expands to your home.",
+                "Set on the agent process. A leading ~ is your home, and $NAME, ${NAME} or \
+                 %NAME% takes the value from your environment.",
                 env_column,
                 ui,
             ))
@@ -907,7 +914,9 @@ impl PaneFlowApp {
             .map(|row| (row.key.read(cx).value(), row.value.read(cx).value()))
             .collect();
 
+        let home = dirs::home_dir();
         let draft = collect_env(&raw_env).and_then(|env| {
+            validate_env_values(&env, home.as_deref())?;
             let entry = AgentProfileConfig {
                 name: name.trim().to_string(),
                 agent: agent.tag().to_string(),
@@ -974,6 +983,20 @@ fn new_env_row(key: &str, value: &str, cx: &mut Context<PaneFlowApp>) -> EnvRowI
     EnvRowInputs { key, value }
 }
 
+fn validate_env_values(
+    env: &BTreeMap<String, String>,
+    home: Option<&std::path::Path>,
+) -> Result<(), String> {
+    for (key, value) in env {
+        if let Err(name) = crate::env_expand::expand_with_process_env(value, home) {
+            return Err(format!(
+                "'{key}' references {name}, which is not set in your environment"
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn collect_env(rows: &[(String, String)]) -> Result<BTreeMap<String, String>, String> {
     let mut env = BTreeMap::new();
     for (key, value) in rows {
@@ -1007,6 +1030,56 @@ fn editor_row(
         .py(px(10.))
         .child(setting_text(ui, title, description))
         .child(div().flex_shrink_0().child(control))
+}
+
+fn editor_stacked_row(
+    title: &'static str,
+    description: &'static str,
+    control: impl IntoElement,
+    ui: crate::theme::UiColors,
+) -> impl IntoElement {
+    div()
+        .flex()
+        .flex_col()
+        .gap(px(10.))
+        .px(px(12.))
+        .py(px(10.))
+        .child(
+            div()
+                .flex()
+                .flex_row()
+                .child(setting_text(ui, title, description)),
+        )
+        .child(control)
+}
+
+fn env_value_hint(
+    value: &str,
+    home: Option<&std::path::Path>,
+    ui: crate::theme::UiColors,
+) -> Option<AnyElement> {
+    let value = value.trim();
+    if value.is_empty() {
+        return None;
+    }
+    let base = div()
+        .pl(px(ENV_NAME_WIDTH + 6.))
+        .text_size(LABEL_XS)
+        .truncate();
+    match crate::env_expand::expand_with_process_env(value, home) {
+        Ok(expanded) if expanded == value => None,
+        Ok(expanded) => Some(
+            base.font_family(mono_family())
+                .text_color(ui.muted)
+                .child(expanded)
+                .into_any_element(),
+        ),
+        Err(name) => Some(
+            base.text_color(destructive_color())
+                .child(format!("{name} is not set in your environment"))
+                .into_any_element(),
+        ),
+    }
 }
 
 fn mono_family() -> SharedString {
@@ -1125,5 +1198,20 @@ mod tests {
             ])
             .is_err()
         );
+    }
+
+    #[test]
+    fn validate_env_values_rejects_a_name_the_environment_does_not_define() {
+        let known = BTreeMap::from([("A".to_string(), "$PATH".to_string())]);
+        assert!(validate_env_values(&known, None).is_ok());
+        let literal = BTreeMap::from([("A".to_string(), "~/.claude-perso".to_string())]);
+        assert!(validate_env_values(&literal, None).is_ok());
+        let unknown = BTreeMap::from([(
+            "CLAUDE_CONFIG_DIR".to_string(),
+            "$PANEFLOW_NOT_A_REAL_VARIABLE/x".to_string(),
+        )]);
+        let error = validate_env_values(&unknown, None).unwrap_err();
+        assert!(error.contains("CLAUDE_CONFIG_DIR"), "{error}");
+        assert!(error.contains("PANEFLOW_NOT_A_REAL_VARIABLE"), "{error}");
     }
 }

@@ -26,6 +26,7 @@ mod command_sessions;
 mod config_writer;
 mod diff;
 mod editor;
+mod env_expand;
 mod external_open;
 mod file_icons;
 mod fonts;

@@ -119,7 +119,7 @@ CLI binary. `false` hides the button. `true` forces it visible.
 | `terminal.scrollback_lines` | integer/null | `10000` | New terminal | Range `100` to `100000`. Review terminals cap at `2000`; cached terminals cap at `1000`. |
 | `terminal.cursor_shape` | string/null | `block` | New terminal | `vintage`, `block`, `beam`, `underline`, `double_underline`, or `hollow`. |
 | `terminal.cursor_blink` | string/null | `terminal_controlled` | New terminal | `on`, `off`, or `terminal_controlled`. |
-| `terminal.env` | object/null | none | New terminal | Environment variables injected into every new terminal. Per-surface `env` wins. |
+| `terminal.env` | object/null | none | New terminal | Environment variables injected into every new terminal. Per-surface `env` wins. Values are passed through verbatim: no `~` and no `$NAME` expansion, unlike `agent_profiles.*.env`. |
 | `terminal.scroll_multiplier` | number/null | `1.0` | New terminal view | Range `0.1` to `10.0`. Ignored in mouse-reporting and alternate-screen scroll paths. |
 | `terminal.minimum_contrast` | number/null | `0.0` | Hot reload | Minimum APCA lightness contrast (Lc) enforced between text and its cell background, on the theme's ANSI colors only. `0` leaves theme colors untouched; Zed uses `45`. Range `0` to `90`. |
 
@@ -155,7 +155,7 @@ Settings > Agents > Profiles edits the same list.
 | --- | --- | --- | --- |
 | `agent_profiles.*.name` | string | required | Label shown in the launcher. |
 | `agent_profiles.*.agent` | string | required | Tag of the base agent: `claude_code`, `codex`, `opencode`, `pi`, `hermes`, `grok`, `amp`, `cursor`, `gemini`, `kiro`, `antigravity`, `copilot`, `codebuddy`, `factory`, `qoder`, or `openclaw`. |
-| `agent_profiles.*.env` | object | `{}` | Environment variables set on the agent process. A value starting with `~/` expands to the home directory. |
+| `agent_profiles.*.env` | object | `{}` | Environment variables set on the agent process. A leading `~` expands to the home directory, and `$NAME`, `${NAME}` or `%NAME%` anywhere in a value takes that variable from Paneflow's own environment. A `$` or `%` that names nothing stays literal; a name the environment does not define is refused by the Settings editor and, in a hand-written config, leaves the whole value untouched with a warning in the log. |
 | `agent_profiles.*.args` | string array | `[]` | Extra arguments appended after the base agent's own flags. Each token must be a plain word: letters, digits, `-`, `_`, `.`, `=`. |
 
 An entry with an unknown agent tag, a blank name, or an unsafe token is skipped
