@@ -403,7 +403,7 @@ pub(super) const DEFAULTS: &[DefaultBinding] = &[
 ];
 
 #[cfg(target_os = "macos")]
-pub(super) const MACOS_ONLY_DEFAULTS: &[DefaultBinding] = &[
+pub(super) const PLATFORM_DEFAULTS: &[DefaultBinding] = &[
     DefaultBinding {
         key: "cmd-c",
         action_name: "terminal_copy",
@@ -422,7 +422,11 @@ pub(super) const MACOS_ONLY_DEFAULTS: &[DefaultBinding] = &[
 ];
 
 #[cfg(not(target_os = "macos"))]
-pub(super) const MACOS_ONLY_DEFAULTS: &[DefaultBinding] = &[];
+pub(super) const PLATFORM_DEFAULTS: &[DefaultBinding] = &[DefaultBinding {
+    key: "ctrl-v",
+    action_name: "terminal_paste",
+    context: Some("Terminal"),
+}];
 
 #[cfg(test)]
 mod tests {
@@ -509,14 +513,14 @@ mod tests {
     #[cfg(target_os = "macos")]
     #[test]
     fn us010_cmd_c_cmd_v_bound_on_macos() {
-        let copy = MACOS_ONLY_DEFAULTS
+        let copy = PLATFORM_DEFAULTS
             .iter()
             .find(|d| d.key == "cmd-c")
             .expect("cmd-c must be a macOS default");
         assert_eq!(copy.action_name, "terminal_copy");
         assert_eq!(copy.context, Some("Terminal"));
 
-        let paste = MACOS_ONLY_DEFAULTS
+        let paste = PLATFORM_DEFAULTS
             .iter()
             .find(|d| d.key == "cmd-v")
             .expect("cmd-v must be a macOS default");
@@ -537,19 +541,21 @@ mod tests {
 
     #[cfg(not(target_os = "macos"))]
     #[test]
-    fn us010_no_cmd_bindings_on_linux() {
-        assert!(
-            MACOS_ONLY_DEFAULTS.is_empty(),
-            "Linux build should carry zero macOS-only defaults, got {} entries",
-            MACOS_ONLY_DEFAULTS.len()
-        );
+    fn non_macos_defaults_bind_ctrl_v_without_cmd_bindings() {
+        let paste = PLATFORM_DEFAULTS
+            .iter()
+            .find(|d| d.key == "ctrl-v")
+            .expect("ctrl-v must be a non-macOS default");
+        assert_eq!(paste.action_name, "terminal_paste");
+        assert_eq!(paste.context, Some("Terminal"));
+        assert!(PLATFORM_DEFAULTS.iter().all(|d| !d.key.starts_with("cmd-")));
     }
 
     #[test]
     fn us010_ctrl_c_never_bound_to_terminal_copy() {
         let leaked_actions: Vec<&'static str> = DEFAULTS
             .iter()
-            .chain(MACOS_ONLY_DEFAULTS.iter())
+            .chain(PLATFORM_DEFAULTS.iter())
             .filter(|d| d.key == "ctrl-c")
             .map(|d| d.action_name)
             .collect();
@@ -574,6 +580,6 @@ mod tests {
 
     #[test]
     fn us012_quit_is_not_also_a_platform_default() {
-        assert!(MACOS_ONLY_DEFAULTS.iter().all(|d| d.action_name != "quit"));
+        assert!(PLATFORM_DEFAULTS.iter().all(|d| d.action_name != "quit"));
     }
 }

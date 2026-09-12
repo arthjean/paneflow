@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 use gpui::Keystroke;
 
 use super::apply::canonical_keystroke;
-use super::defaults::{DEFAULTS, MACOS_ONLY_DEFAULTS};
+use super::defaults::{DEFAULTS, PLATFORM_DEFAULTS};
 use super::registry::{ACTIONS, action_description};
 
 pub struct ShortcutEntry {
@@ -134,12 +134,12 @@ pub fn effective_shortcuts(user_shortcuts: &HashMap<String, String>) -> Vec<Shor
     let mut entries = Vec::new();
     let mut seen_actions: HashSet<&'static str> = HashSet::new();
 
-    let macos_key_by_action: HashMap<&str, &str> = MACOS_ONLY_DEFAULTS
+    let platform_key_by_action: HashMap<&str, &str> = PLATFORM_DEFAULTS
         .iter()
         .map(|d| (d.action_name, d.key))
         .collect();
 
-    for d in DEFAULTS.iter().chain(MACOS_ONLY_DEFAULTS.iter()) {
+    for d in DEFAULTS.iter().chain(PLATFORM_DEFAULTS.iter()) {
         let Some(meta) = ACTIONS.iter().find(|a| a.name == d.action_name) else {
             continue;
         };
@@ -148,7 +148,7 @@ pub fn effective_shortcuts(user_shortcuts: &HashMap<String, String>) -> Vec<Shor
             continue;
         }
 
-        let default_key = match macos_key_by_action.get(d.action_name).copied() {
+        let default_key = match platform_key_by_action.get(d.action_name).copied() {
             Some(native) if !is_unbound(native) && !is_user_claimed(native) => native,
             _ => d.key,
         };
@@ -156,7 +156,7 @@ pub fn effective_shortcuts(user_shortcuts: &HashMap<String, String>) -> Vec<Shor
         let key = if let Some(user_key) = user_by_action.get(d.action_name) {
             format_keystroke(user_key)
         } else {
-            if is_unbound(d.key) || is_user_claimed(d.key) {
+            if is_unbound(default_key) || is_user_claimed(default_key) {
                 continue;
             }
             format_keystroke(default_key)
@@ -219,6 +219,47 @@ pub fn is_bare_modifier(keystroke: &Keystroke) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn paste_shortcut_display_tracks_available_bindings() {
+        let native = if cfg!(target_os = "macos") {
+            "cmd-v"
+        } else {
+            "ctrl-v"
+        };
+        let alternate = "ctrl-shift-v";
+        let cases = [
+            (vec![], Some(native)),
+            (vec![(native, "none")], Some(alternate)),
+            (vec![(alternate, "none")], Some(native)),
+            (vec![(native, "none"), (alternate, "none")], None),
+            (vec![(native, "split_horizontally")], Some(alternate)),
+            (vec![(alternate, "split_horizontally")], Some(native)),
+            (vec![("ctrl-alt-v", "terminal_paste")], Some("ctrl-alt-v")),
+        ];
+        for (overrides, expected) in cases {
+            let overrides = overrides
+                .into_iter()
+                .map(|(key, action)| (key.to_string(), action.to_string()))
+                .collect();
+            let entries = effective_shortcuts(&overrides);
+            let paste: Vec<_> = entries
+                .iter()
+                .filter(|entry| entry.action_name == "terminal_paste")
+                .collect();
+            assert_eq!(paste.len(), 1);
+            assert_eq!(
+                paste[0].key,
+                expected.map_or_else(|| "Unassigned".to_string(), format_keystroke),
+                "overrides: {overrides:?}"
+            );
+            assert_eq!(
+                paste[0].search_key,
+                expected.map_or_else(String::new, ascii_key_forms),
+                "overrides: {overrides:?}"
+            );
+        }
+    }
 
     #[test]
     fn effective_shortcuts_defaults_include_core_actions() {
@@ -336,7 +377,7 @@ mod tests {
 
     #[test]
     fn every_default_chord_round_trips_through_parse() {
-        for d in DEFAULTS.iter().chain(MACOS_ONLY_DEFAULTS.iter()) {
+        for d in DEFAULTS.iter().chain(PLATFORM_DEFAULTS.iter()) {
             let parsed = Keystroke::parse(d.key)
                 .unwrap_or_else(|_| panic!("default chord {} does not parse", d.key));
             let round_tripped = Keystroke::parse(&parsed.unparse())
