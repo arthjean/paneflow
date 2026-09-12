@@ -5,7 +5,6 @@ mod tab;
 
 use gpui::{App, AppContext, ClipboardItem, Context, Entity, Focusable, PathPromptOptions, Window};
 use paneflow_config::schema::{TabTitleSource, TerminalSurfaceProfile};
-use paneflow_process::spawn_detached;
 
 use crate::layout::{LayoutTree, MAX_PANES, SplitDirection};
 use crate::terminal::TerminalView;
@@ -825,11 +824,15 @@ impl PaneFlowApp {
         let cwd = ws.cwd.clone();
         self.workspace_menu_open = None;
 
-        if let Err(msg) = reveal_in_file_manager(std::path::Path::new(&cwd)) {
-            log::warn!("failed to reveal workspace path in file manager: {msg}");
-            self.show_toast(msg, cx);
-        }
-
+        let task = cx
+            .background_executor()
+            .spawn(async move { reveal_in_file_manager(std::path::Path::new(&cwd)).await });
+        cx.spawn(async move |this, cx| {
+            if let Err(message) = task.await {
+                let _ = this.update(cx, |app, cx| app.show_toast(message, cx));
+            }
+        })
+        .detach();
         cx.notify();
     }
 
@@ -845,15 +848,34 @@ impl PaneFlowApp {
         };
         let cwd = ws.cwd.clone();
 
-        let bin = resolve_editor_binary(command);
-
-        let toast_label = editor_toast_label(label);
-        let mut cmd = std::process::Command::new(&bin);
-        cmd.current_dir(&cwd).arg(".");
-        if let Err(err) = spawn_detached(&mut cmd) {
-            log::warn!("failed to open workspace in {toast_label}: {err}");
-            self.show_toast(format!("Couldn't open in {toast_label}: {err}"), cx);
-        }
+        let command = command.to_owned();
+        let toast_label = editor_toast_label(label).to_owned();
+        let task = cx.background_executor().spawn(async move {
+            let cmd = smol::unblock(move || {
+                let bin = resolve_editor_binary(&command);
+                log::info!(
+                    "workspace editor resolved: editor={command:?} binary={bin:?} cwd={cwd:?}"
+                );
+                let mut cmd = std::process::Command::new(bin);
+                cmd.current_dir(cwd).arg(".");
+                cmd
+            })
+            .await;
+            match crate::external_open::run_workspace_command(cmd).await {
+                Ok(status) if status.success() => Ok(()),
+                Ok(status) => Err(format!(
+                    "Couldn't open in {toast_label}: launcher exited with {status}"
+                )),
+                Err(error) => Err(format!("Couldn't open in {toast_label}: {error}")),
+            }
+        });
+        cx.spawn(async move |this, cx| {
+            if let Err(message) = task.await {
+                log::warn!("{message}");
+                let _ = this.update(cx, |app, cx| app.show_toast(message, cx));
+            }
+        })
+        .detach();
 
         self.workspace_menu_open = None;
         cx.notify();
@@ -973,10 +995,10 @@ impl PaneFlowApp {
 }
 
 #[allow(clippy::needless_return)]
-pub(crate) fn reveal_in_file_manager(path: &std::path::Path) -> Result<(), String> {
+pub(crate) async fn reveal_in_file_manager(path: &std::path::Path) -> Result<(), String> {
     #[cfg(target_os = "linux")]
     {
-        let result = spawn_detached(std::process::Command::new("xdg-open").arg(path));
+        let result = open_workspace_folder("xdg-open", path).await;
         return result.map_err(|err| {
             if err.kind() == std::io::ErrorKind::NotFound {
                 "xdg-open not found - install xdg-utils to use this feature".to_string()
@@ -987,21 +1009,38 @@ pub(crate) fn reveal_in_file_manager(path: &std::path::Path) -> Result<(), Strin
     }
     #[cfg(target_os = "macos")]
     {
-        let result = spawn_detached(std::process::Command::new("open").arg(path));
+        let result = open_workspace_folder("open", path).await;
         return result.map_err(|err| format!("Could not open Finder: {err}"));
     }
     #[cfg(target_os = "windows")]
     {
-        let mut flag = std::ffi::OsString::from("/select,");
-        flag.push(path.as_os_str());
-        let result = spawn_detached(std::process::Command::new("explorer").arg(flag));
+        let result = open_workspace_folder("explorer.exe", path).await;
         return result.map_err(|err| format!("Could not open Explorer: {err}"));
     }
     #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
     {
-        spawn_detached(std::process::Command::new("xdg-open").arg(path))
+        open_workspace_folder("xdg-open", path)
+            .await
             .map_err(|err| format!("Could not open file manager: {err}"))
     }
+}
+
+pub(crate) async fn open_workspace_folder(
+    command: &str,
+    path: &std::path::Path,
+) -> std::io::Result<()> {
+    let mut cmd = std::process::Command::new(command);
+    cmd.arg(path);
+    let status = crate::external_open::run_workspace_command(cmd).await?;
+    #[cfg(not(target_os = "windows"))]
+    if !status.success() {
+        return Err(std::io::Error::other(format!(
+            "{command} exited with {status}"
+        )));
+    }
+    #[cfg(target_os = "windows")]
+    let _ = status;
+    Ok(())
 }
 
 pub(crate) fn resolve_editor_binary(command: &str) -> std::path::PathBuf {
@@ -1146,13 +1185,6 @@ mod tests {
             format!("Could not open file manager: {err}")
         };
         assert!(msg.contains("xdg-utils"), "unhappy-path AC text: {msg}");
-    }
-
-    #[test]
-    fn reveal_accepts_regular_path() {
-        let tmp = tempfile::TempDir::new().unwrap();
-        let _callable: fn(&std::path::Path) -> Result<(), String> = reveal_in_file_manager;
-        let _ = tmp.path();
     }
 
     const EXE_SUFFIX: &str = if cfg!(windows) { ".exe" } else { "" };

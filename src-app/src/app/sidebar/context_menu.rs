@@ -294,7 +294,11 @@ impl PaneFlowApp {
             .map(|s| SharedString::from(s.to_string()));
         context_menu = context_menu.child(self.render_select_menu_item(
             "workspace-context-reveal".into(),
-            "Reveal in File Manager",
+            if cfg!(target_os = "windows") {
+                "Open in File Explorer"
+            } else {
+                "Reveal in File Manager"
+            },
             reveal_shortcut,
             ui,
             cx.listener(move |this, _: &ClickEvent, _window, cx| {
