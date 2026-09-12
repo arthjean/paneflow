@@ -20,6 +20,18 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
   the config dumps reach `dsh` untouched. A harness install without the
   bridge package falls back to start, exit code, and end. Refs #60.
 
+### Fixed
+
+- Agent profile environment variables are readable and expand shell-style
+  names. The Environment variables control in Settings > Agents now takes the
+  full width of the editor instead of sharing a 300px column, so a name and a
+  path are both legible, and the remove button sits beside the value rather
+  than on top of its last characters. A value can now use `$NAME`, `${NAME}`,
+  or `%NAME%` alongside the existing leading `~`, each resolved against
+  Paneflow's own environment, with the resolved value shown under the row as
+  you type. A name your environment does not define is refused on save instead
+  of silently pointing the agent at a junk path. Refs #68.
+
 ## [0.14.0] - 2026-09-09
 
 ### Added

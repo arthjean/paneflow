@@ -600,9 +600,15 @@ impl AgentProfile {
 
     pub fn process_env(&self) -> HashMap<String, String> {
         let home = dirs::home_dir();
+        let lookup = |name: &str| std::env::var(name).ok();
         self.env
             .iter()
-            .map(|(key, value)| (key.clone(), expand_home(value, home.as_deref())))
+            .map(|(key, value)| {
+                (
+                    key.clone(),
+                    expand_profile_value(key, value, home.as_deref(), &lookup),
+                )
+            })
             .collect()
     }
 }
@@ -613,19 +619,20 @@ fn is_env_key(key: &str) -> bool {
         && key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
-fn expand_home(value: &str, home: Option<&std::path::Path>) -> String {
-    let Some(home) = home else {
-        return value.to_string();
-    };
-    if value == "~" {
-        return home.display().to_string();
-    }
-    match value
-        .strip_prefix("~/")
-        .or_else(|| value.strip_prefix("~\\"))
-    {
-        Some(rest) => home.join(rest).display().to_string(),
-        None => value.to_string(),
+fn expand_profile_value(
+    key: &str,
+    value: &str,
+    home: Option<&std::path::Path>,
+    lookup: &dyn Fn(&str) -> Option<String>,
+) -> String {
+    match crate::env_expand::expand_env_value(value, home, lookup) {
+        Ok(expanded) => expanded,
+        Err(name) => {
+            log::warn!(
+                "agent_profiles: '{key}' references '{name}', which is not set; passing the value through unchanged"
+            );
+            value.to_string()
+        }
     }
 }
 
@@ -997,16 +1004,35 @@ mod tests {
     }
 
     #[test]
-    fn profile_env_expands_leading_tilde_only() {
+    fn profile_env_expands_the_home_prefix_and_known_placeholders() {
         let home = std::path::Path::new("/home/u");
+        let lookup = |name: &str| (name == "BASE").then(|| "/opt/base".to_string());
         assert_eq!(
-            expand_home("~/.claude-perso", Some(home)),
+            expand_profile_value("K", "~/.claude-perso", Some(home), &lookup),
             home.join(".claude-perso").display().to_string()
         );
-        assert_eq!(expand_home("~", Some(home)), "/home/u");
-        assert_eq!(expand_home("~user/x", Some(home)), "~user/x");
-        assert_eq!(expand_home("/abs/~/x", Some(home)), "/abs/~/x");
-        assert_eq!(expand_home("~/x", None), "~/x");
+        assert_eq!(
+            expand_profile_value("K", "$BASE/x", Some(home), &lookup),
+            "/opt/base/x"
+        );
+        assert_eq!(
+            expand_profile_value("K", "%BASE%/x", Some(home), &lookup),
+            "/opt/base/x"
+        );
+    }
+
+    #[test]
+    fn profile_env_passes_an_unresolvable_value_through_unchanged() {
+        let home = std::path::Path::new("/home/u");
+        let lookup = |_: &str| None;
+        assert_eq!(
+            expand_profile_value("K", "$NOPE/.claude-perso", Some(home), &lookup),
+            "$NOPE/.claude-perso"
+        );
+        assert_eq!(
+            expand_profile_value("K", "a%b%c", Some(home), &lookup),
+            "a%b%c"
+        );
     }
 
     #[test]
