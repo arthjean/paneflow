@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use gpui::{Action, App, DummyKeyboardMapper, KeyBinding, KeyBindingContextPredicate, Keystroke};
 
-use super::defaults::{DEFAULTS, MACOS_ONLY_DEFAULTS};
+use super::defaults::{DEFAULTS, PLATFORM_DEFAULTS};
 use super::registry::{action_from_name, context_for_action};
 
 pub(super) fn normalize_keystroke(keystrokes: &str) -> String {
@@ -87,7 +87,7 @@ pub fn apply_keybindings(cx: &mut App, user_shortcuts: &HashMap<String, String>)
 
     let default_bindings: Vec<KeyBinding> = DEFAULTS
         .iter()
-        .chain(MACOS_ONLY_DEFAULTS.iter())
+        .chain(PLATFORM_DEFAULTS.iter())
         .filter(|d| !is_unbound(d.key))
         .filter(|d| !remapped_actions.contains(d.action_name))
         .filter(|d| !is_user_claimed(d.key))
@@ -241,7 +241,7 @@ mod tests {
 
             let claimants: Vec<&str> = DEFAULTS
                 .iter()
-                .chain(MACOS_ONLY_DEFAULTS.iter())
+                .chain(PLATFORM_DEFAULTS.iter())
                 .filter(|d| keystrokes_conflict(d.key, key))
                 .map(|d| d.action_name)
                 .collect();
