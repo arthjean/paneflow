@@ -144,6 +144,12 @@ pub struct GhosttyRenderStateRowCellsImpl {
 pub type GhosttyRenderStateRowCells = *mut GhosttyRenderStateRowCellsImpl;
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
+pub struct GhosttySearchImpl {
+    _unused: [u8; 0],
+}
+pub type GhosttySearch = *mut GhosttySearchImpl;
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
 pub struct GhosttySgrParserImpl {
     _unused: [u8; 0],
 }
@@ -918,6 +924,25 @@ const _: () = {
         [::core::mem::offset_of!(GhosttySelection, end) - 32usize];
     ["Offset of field: GhosttySelection::rectangle"]
         [::core::mem::offset_of!(GhosttySelection, rectangle) - 56usize];
+};
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct GhosttySelectionBuffer {
+    pub ptr: *mut GhosttySelection,
+    pub cap: usize,
+    pub len: usize,
+}
+#[allow(clippy::unnecessary_operation, clippy::identity_op)]
+const _: () = {
+    ["Size of GhosttySelectionBuffer"][::core::mem::size_of::<GhosttySelectionBuffer>() - 24usize];
+    ["Alignment of GhosttySelectionBuffer"]
+        [::core::mem::align_of::<GhosttySelectionBuffer>() - 8usize];
+    ["Offset of field: GhosttySelectionBuffer::ptr"]
+        [::core::mem::offset_of!(GhosttySelectionBuffer, ptr) - 0usize];
+    ["Offset of field: GhosttySelectionBuffer::cap"]
+        [::core::mem::offset_of!(GhosttySelectionBuffer, cap) - 8usize];
+    ["Offset of field: GhosttySelectionBuffer::len"]
+        [::core::mem::offset_of!(GhosttySelectionBuffer, len) - 16usize];
 };
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
@@ -3672,6 +3697,76 @@ unsafe extern "C" {
         bracketed: bool,
         buf: *mut core::ffi::c_char,
         buf_len: usize,
+        out_written: *mut usize,
+    ) -> GhosttyResult;
+}
+pub const GhosttySearchStatus_GHOSTTY_SEARCH_STATUS_RUNNING: GhosttySearchStatus = 0;
+pub const GhosttySearchStatus_GHOSTTY_SEARCH_STATUS_FEED_REQUIRED: GhosttySearchStatus = 1;
+pub const GhosttySearchStatus_GHOSTTY_SEARCH_STATUS_COMPLETE: GhosttySearchStatus = 2;
+pub const GhosttySearchStatus_GHOSTTY_SEARCH_STATUS_MAX_VALUE: GhosttySearchStatus = 2147483647;
+pub type GhosttySearchStatus = core::ffi::c_int;
+pub const GhosttySearchScroll_GHOSTTY_SEARCH_SCROLL_IF_NEEDED: GhosttySearchScroll = 0;
+pub const GhosttySearchScroll_GHOSTTY_SEARCH_SCROLL_NONE: GhosttySearchScroll = 1;
+pub const GhosttySearchScroll_GHOSTTY_SEARCH_SCROLL_MAX_VALUE: GhosttySearchScroll = 2147483647;
+pub type GhosttySearchScroll = core::ffi::c_int;
+pub const GhosttySearchData_GHOSTTY_SEARCH_DATA_STATUS: GhosttySearchData = 0;
+pub const GhosttySearchData_GHOSTTY_SEARCH_DATA_NEEDLE: GhosttySearchData = 1;
+pub const GhosttySearchData_GHOSTTY_SEARCH_DATA_TOTAL_MATCHES: GhosttySearchData = 2;
+pub const GhosttySearchData_GHOSTTY_SEARCH_DATA_SELECTED_INDEX: GhosttySearchData = 3;
+pub const GhosttySearchData_GHOSTTY_SEARCH_DATA_SELECTED_MATCH: GhosttySearchData = 4;
+pub const GhosttySearchData_GHOSTTY_SEARCH_DATA_MATCHES: GhosttySearchData = 5;
+pub const GhosttySearchData_GHOSTTY_SEARCH_DATA_VIEWPORT_MATCHES: GhosttySearchData = 6;
+pub const GhosttySearchData_GHOSTTY_SEARCH_DATA_SELECT_SCROLL: GhosttySearchData = 7;
+pub const GhosttySearchData_GHOSTTY_SEARCH_DATA_MAX_VALUE: GhosttySearchData = 2147483647;
+pub type GhosttySearchData = core::ffi::c_int;
+pub const GhosttySearchOption_GHOSTTY_SEARCH_OPT_NEEDLE: GhosttySearchOption = 0;
+pub const GhosttySearchOption_GHOSTTY_SEARCH_OPT_SELECT_NEXT: GhosttySearchOption = 1;
+pub const GhosttySearchOption_GHOSTTY_SEARCH_OPT_SELECT_PREV: GhosttySearchOption = 2;
+pub const GhosttySearchOption_GHOSTTY_SEARCH_OPT_SELECT_SCROLL: GhosttySearchOption = 3;
+pub const GhosttySearchOption_GHOSTTY_SEARCH_OPT_MAX_VALUE: GhosttySearchOption = 2147483647;
+pub type GhosttySearchOption = core::ffi::c_int;
+unsafe extern "C" {
+    pub fn ghostty_search_new(
+        allocator: *const GhosttyAllocator,
+        out_search: *mut GhosttySearch,
+        terminal: GhosttyTerminal,
+    ) -> GhosttyResult;
+}
+unsafe extern "C" {
+    pub fn ghostty_search_free(search: GhosttySearch);
+}
+unsafe extern "C" {
+    pub fn ghostty_search_tick(
+        search: GhosttySearch,
+        out_status: *mut GhosttySearchStatus,
+    ) -> GhosttyResult;
+}
+unsafe extern "C" {
+    pub fn ghostty_search_feed(search: GhosttySearch) -> GhosttyResult;
+}
+unsafe extern "C" {
+    pub fn ghostty_search_run(search: GhosttySearch) -> GhosttyResult;
+}
+unsafe extern "C" {
+    pub fn ghostty_search_set(
+        search: GhosttySearch,
+        option: GhosttySearchOption,
+        value: *const core::ffi::c_void,
+    ) -> GhosttyResult;
+}
+unsafe extern "C" {
+    pub fn ghostty_search_get(
+        search: GhosttySearch,
+        data: GhosttySearchData,
+        value: *mut core::ffi::c_void,
+    ) -> GhosttyResult;
+}
+unsafe extern "C" {
+    pub fn ghostty_search_get_multi(
+        search: GhosttySearch,
+        count: usize,
+        keys: *const GhosttySearchData,
+        values: *mut *mut core::ffi::c_void,
         out_written: *mut usize,
     ) -> GhosttyResult;
 }

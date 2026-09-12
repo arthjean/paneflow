@@ -2145,6 +2145,14 @@ ghostty_render_state_set
 ghostty_render_state_update
 ghostty_row_get
 ghostty_row_get_multi
+ghostty_search_feed
+ghostty_search_free
+ghostty_search_get
+ghostty_search_get_multi
+ghostty_search_new
+ghostty_search_run
+ghostty_search_set
+ghostty_search_tick
 ghostty_selection_gesture_event
 ghostty_selection_gesture_event_free
 ghostty_selection_gesture_event_new
