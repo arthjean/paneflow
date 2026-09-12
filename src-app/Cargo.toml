@@ -323,6 +323,7 @@ objc2-metal = { version = "0.3.2", default-features = false, features = [
 raw-window-handle = "0.6"
 windows-sys = { version = "0.59", features = [
     "Win32_System_Threading",
+    "Win32_System_JobObjects",
     "Win32_Foundation",
     # `timeBeginPeriod` / `timeEndPeriod`: hold the process timer resolution at
     # 1 ms for the GUI's lifetime so the terminal loops' millisecond timeouts
