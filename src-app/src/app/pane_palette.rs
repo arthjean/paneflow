@@ -207,6 +207,61 @@ impl PaneFlowApp {
         cx.notify();
     }
 
+    pub(crate) fn ensure_pane_palette_for_empty_workspace(&mut self, cx: &mut Context<Self>) {
+        if self.settings_section.is_some()
+            || !matches!(self.mode, paneflow_config::schema::AppMode::Cli)
+        {
+            return;
+        }
+        let ws_idx = self.active_idx;
+        let Some(ws) = self.workspaces.get(ws_idx) else {
+            return;
+        };
+        let tab = ws.active_tab();
+        if tab.root.is_some() || tab.saved_layout.is_some() {
+            return;
+        }
+        let ws_id = ws.id;
+        let tab_id = tab.id;
+        if self
+            .pane_palette
+            .as_ref()
+            .is_some_and(|palette| palette.ws_id == ws_id)
+        {
+            return;
+        }
+        self.spawn_worktree_listing(ws_idx, cx);
+        self.pane_palette = Some(PanePaletteState {
+            ws_id,
+            placement: PalettePlacement::Tab { tab_id },
+            selected: 0,
+            error: None,
+            restore_focus: None,
+            scroll: ScrollHandle::new(),
+            branch_picker_open: false,
+            new_branch: None,
+            pending_launch: None,
+        });
+        self.pending_palette_focus = true;
+        cx.notify();
+    }
+
+    fn pane_palette_holds_last_surface(&self) -> bool {
+        let Some(palette) = self.pane_palette.as_ref() else {
+            return false;
+        };
+        let PalettePlacement::Tab { tab_id } = &palette.placement else {
+            return false;
+        };
+        self.workspaces
+            .iter()
+            .find(|ws| ws.id == palette.ws_id)
+            .is_some_and(|ws| match ws.tabs() {
+                [tab] => tab.id == *tab_id && tab.root.is_none(),
+                _ => false,
+            })
+    }
+
     pub(crate) fn open_split_palette(
         &mut self,
         target: Entity<Pane>,
@@ -273,6 +328,9 @@ impl PaneFlowApp {
     }
 
     pub(crate) fn close_pane_palette(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.pane_palette_holds_last_surface() {
+            return;
+        }
         let Some(palette) = self.pane_palette.take() else {
             return;
         };

@@ -752,6 +752,15 @@ struct PaneFlowApp {
     launch_pad_focus: FocusHandle,
     branch_prompt: Option<app::branch_prompt::BranchPromptState>,
     branch_prompt_focus: FocusHandle,
+    recent_workspaces: Vec<app::recents::RecentWorkspace>,
+    welcome_focus: FocusHandle,
+    clone_repo: Option<app::clone_repo::CloneRepoState>,
+    clone_repo_focus: FocusHandle,
+    command_palette_open: bool,
+    command_palette_query: String,
+    command_palette_selected: usize,
+    command_palette_focus: FocusHandle,
+    command_palette_scroll: gpui::ScrollHandle,
     pane_palette: Option<app::pane_palette::PanePaletteState>,
     pane_palette_focus: FocusHandle,
     pending_palette_focus: bool,
@@ -1048,6 +1057,13 @@ impl Render for PaneFlowApp {
             self.rename_focus_live = false;
         }
         self.prune_stale_split_palette(cx);
+        self.ensure_pane_palette_for_empty_workspace(cx);
+        if self.workspaces.is_empty()
+            && self.settings_section.is_none()
+            && window.focused(cx).is_none()
+        {
+            window.focus(&self.welcome_focus, cx);
+        }
         let main_content = if self.settings_section.is_some() {
             self.tick_agents_list_animation(window);
             self.render_settings_content_panel(cx).into_any_element()
@@ -1097,54 +1113,17 @@ impl Render for PaneFlowApp {
                     .child(self.render_pane_palette(cx))
                     .into_any_element()
             } else {
-                div()
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .size_full()
-                    .child(div().text_color(ui.text).child("No terminal panes open"))
-                    .into_any_element()
+                div().size_full().into_any_element()
             }
         } else {
             div()
                 .flex()
-                .items_center()
-                .justify_center()
                 .size_full()
-                .child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .items_center()
-                        .text_center()
-                        .gap(px(10.))
-                        .w(px(460.))
-                        .px(px(24.))
-                        .child(
-                            div()
-                                .text_color(ui.text)
-                                .text_size(px(20.))
-                                .font_weight(gpui::FontWeight::SEMIBOLD)
-                                .child("Welcome to PaneFlow"),
-                        )
-                        .child(
-                            div()
-                                .text_color(ui.muted)
-                                .text_size(px(13.))
-                                .child(
-                                    "The next-generation IDE for the AI era - \
-                                     a GPU-native terminal with workspace-aware panes, \
-                                     live git status, and first-class support for Claude Code and Codex.",
-                                ),
-                        )
-                        .child(
-                            div()
-                                .mt(px(6.))
-                                .text_color(ui.muted)
-                                .text_size(px(12.))
-                                .child("Click + in the sidebar to create your first workspace."),
-                        ),
-                )
+                .pl(px(pane_grid_left_gutter))
+                .pr(px(crate::layout::PANE_GUTTER_PX))
+                .pt(px(crate::layout::PANE_GUTTER_PX))
+                .pb(px(crate::layout::PANE_GUTTER_PX))
+                .child(self.render_welcome(cx))
                 .into_any_element()
         };
         let main_content = self.wrap_cli_diff_dock(main_content, main_panel_width, window, cx);
@@ -1253,6 +1232,8 @@ impl Render for PaneFlowApp {
             .on_action(cx.listener(Self::handle_open_broadcast_groups))
             .on_action(cx.listener(Self::handle_open_attention_queue))
             .on_action(cx.listener(Self::handle_open_launch_pad))
+            .on_action(cx.listener(Self::handle_open_command_palette))
+            .on_action(cx.listener(Self::handle_clone_repository))
             .on_action(cx.listener(Self::handle_diff_new_file_tab))
             .on_action(cx.listener(Self::handle_diff_new_terminal_tab))
             .capture_key_down(cx.listener(|_this, e: &gpui::KeyDownEvent, window, cx| {
@@ -1518,6 +1499,12 @@ impl Render for PaneFlowApp {
             app_content = app_content.child(self.render_fleet_search(cx));
         }
 
+        if self.clone_repo.is_some() {
+            app_content = app_content.child(self.render_clone_repo(cx));
+        }
+        if self.command_palette_open {
+            app_content = app_content.child(self.render_command_palette(cx));
+        }
         if self.custom_buttons_modal.is_some() {
             app_content = app_content.child(self.render_custom_buttons_modal(cx));
         }

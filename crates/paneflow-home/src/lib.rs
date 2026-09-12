@@ -32,6 +32,10 @@ pub fn session_path() -> Option<PathBuf> {
     paneflow_home().map(|home| home.join("session.json"))
 }
 
+pub fn recents_path() -> Option<PathBuf> {
+    paneflow_home().map(|home| home.join("recents.json"))
+}
+
 pub fn window_state_path() -> Option<PathBuf> {
     paneflow_home().map(|home| home.join("window-state.json"))
 }

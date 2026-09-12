@@ -89,6 +89,8 @@ actions!(
         OpenAttentionQueue,
         OpenLaunchPad,
         DiffNewFileTab,
-        DiffNewTerminalTab
+        DiffNewTerminalTab,
+        OpenCommandPalette,
+        CloneRepository
     ]
 );

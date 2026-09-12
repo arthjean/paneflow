@@ -618,6 +618,20 @@ pub(super) const ACTIONS: &[ActionMeta] = &[
         description: "Launch Pad",
         group: ShortcutGroup::Agents,
     },
+    ActionMeta {
+        name: "open_command_palette",
+        factory: || Box::new(crate::OpenCommandPalette),
+        context: "",
+        description: "Command palette",
+        group: ShortcutGroup::Application,
+    },
+    ActionMeta {
+        name: "clone_repository",
+        factory: || Box::new(crate::CloneRepository),
+        context: "",
+        description: "Clone repository",
+        group: ShortcutGroup::Workspaces,
+    },
 ];
 
 fn find(name: &str) -> Option<&'static ActionMeta> {
@@ -632,6 +646,10 @@ pub(super) fn context_for_action(name: &str) -> Option<&'static str> {
     find(name)
         .map(|meta| meta.context)
         .filter(|ctx| !ctx.is_empty())
+}
+
+pub fn action_is_global(name: &str) -> bool {
+    find(name).is_some_and(|meta| meta.context.is_empty())
 }
 
 pub(super) fn action_description(name: &str) -> &'static str {
