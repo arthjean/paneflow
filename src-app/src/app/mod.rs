@@ -16,6 +16,7 @@ pub mod diff_dock;
 pub mod diff_sidebar;
 pub mod drag;
 pub mod event_handlers;
+pub mod files_git;
 pub mod files_sidebar;
 pub mod files_tree;
 pub mod fleet_search;

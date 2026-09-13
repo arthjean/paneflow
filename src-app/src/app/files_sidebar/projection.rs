@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 
 use gpui::SharedString;
 
+use crate::app::files_git::{GitStatuses, GitSummary};
 use crate::app::files_tree::{self, FileNode, FilesTreeState};
 
 #[derive(Clone, Debug)]
@@ -16,6 +17,7 @@ pub(super) struct FileRow {
     pub icon: &'static str,
     pub id: SharedString,
     pub group: SharedString,
+    pub status: GitSummary,
 }
 
 impl FileRow {
@@ -25,6 +27,7 @@ impl FileRow {
         expanded: bool,
         label: String,
         highlight: Option<Range<usize>>,
+        git: &GitStatuses,
     ) -> Self {
         Self {
             node: node.clone(),
@@ -32,6 +35,7 @@ impl FileRow {
             expanded,
             label: label.into(),
             highlight,
+            status: git.summary(&node.path),
             icon: crate::file_icons::language_icon_path(&files_tree::node_name(node)),
             id: format!("files-row-{}", node.path.display()).into(),
             group: format!("files-row-group-{}", node.path.display()).into(),
@@ -46,7 +50,12 @@ pub(super) struct FilesProjection {
 }
 
 impl FilesProjection {
-    pub fn build(tree: &FilesTreeState, expanded: &HashSet<PathBuf>, query: &str) -> Self {
+    pub fn build(
+        tree: &FilesTreeState,
+        expanded: &HashSet<PathBuf>,
+        query: &str,
+        git: &GitStatuses,
+    ) -> Self {
         let rows: Vec<FileRow> = if query.is_empty() {
             files_tree::flatten_visible_refs(&tree.root, expanded, &tree.children)
                 .into_iter()
@@ -57,13 +66,14 @@ impl FilesProjection {
                         row.expanded,
                         files_tree::node_name(row.node),
                         None,
+                        git,
                     )
                 })
                 .collect()
         } else {
             super::filter::filter_rows(&tree.root, &tree.children, query)
                 .into_iter()
-                .map(|row| FileRow::new(row.node, 0, false, row.rel, row.highlight))
+                .map(|row| FileRow::new(row.node, 0, false, row.rel, row.highlight, git))
                 .collect()
         };
         let indices = rows
