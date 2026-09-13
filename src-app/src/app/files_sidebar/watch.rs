@@ -24,6 +24,7 @@ impl FilesSidebar {
                         return;
                     }
                     this.expanded = update.tree.expanded.clone();
+                    this.git = update.git;
                     if !update.watcher_available {
                         tracing::debug!(target: "paneflow_app::files_sidebar", "files watcher unavailable; background polling remains active");
                     }
@@ -47,11 +48,14 @@ impl FilesSidebar {
         let revision = self.projection_revision;
         let epoch = self.epoch;
         let tree = self.tree.clone();
+        let git = self.git.clone();
         let expanded = self.expanded.clone();
         let query = self.query.clone();
         self.projection_task = Some(cx.spawn(async move |this, cx| {
             let projection = cx
-                .background_spawn(async move { FilesProjection::build(&tree, &expanded, &query) })
+                .background_spawn(
+                    async move { FilesProjection::build(&tree, &expanded, &query, &git) },
+                )
                 .await;
             let _ = this.update(cx, |this, cx| {
                 if !this.active || this.epoch != epoch || this.projection_revision != revision {

@@ -563,6 +563,16 @@ rows are 28 px tall with 13 px labels, 14 px icons, 18 px indentation and
 6 px selection corners. These dimensions follow the Codex App reference
 provided for this surface and are contextual exceptions to the rail skin.
 
+Tree rows carry Zed's version control decoration, summed from
+`git status` over the tree root. The label takes `vc_conflict`, then
+`vc_deleted`, then `vc_modified`, then `vc_added` for an addition or an
+untracked path, and falls back to `text`. A file also shows a status letter at
+the right of the row, 11 px bold in a 14 px slot: `!` for a conflict, `U` for
+untracked, then `D` and `M` for the worktree side before the same two for the
+index, and `A` for a staged addition. A directory shows a 6 px dot at 0.5
+opacity in that slot instead, rolling up every descendant. Ignored paths never
+reach the tree, so they never carry a status.
+
 The tree button sits immediately after Editor Controls in the file toolbar.
 It and `secondary-alt-f` toggle the embedded tree.
 Opening it selects an existing file tab or creates a file picker tab. Closing

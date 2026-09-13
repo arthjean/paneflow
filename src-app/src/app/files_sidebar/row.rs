@@ -6,9 +6,10 @@ use gpui::{
 use super::panel::{FilesEvent, FilesSidebar};
 use super::projection::FileRow;
 use super::{DIMMED_OPACITY, INDENT_STEP, ROW_GAP, ROW_HEIGHT, ROW_SLOT};
+use crate::app::files_git;
 use crate::app::files_tree;
 use crate::app::sidebar::{SIDEBAR_ROW_LINE_HEIGHT, SIDEBAR_ROW_PADDING_X};
-use crate::ui_primitives::squircle_skin;
+use crate::ui_primitives::{LABEL_SM, squircle_skin};
 
 impl FilesSidebar {
     pub(super) fn files_row(
@@ -21,7 +22,12 @@ impl FilesSidebar {
         let node = &row.node;
         let refused = files_tree::editor_refuses(node);
         let dimmed = node.is_ignored || node.is_hidden;
-        let text_color = if refused { ui.muted } else { ui.text };
+        let text_color = files_git::label_color(row.status, ui).unwrap_or(if refused {
+            ui.muted
+        } else {
+            ui.text
+        });
+        let indicator = files_git::status_indicator(row.status, ui);
         let indent = px(SIDEBAR_ROW_PADDING_X + row.depth as f32 * INDENT_STEP);
         let path = node.path.clone();
         let is_dir = node.is_dir;
@@ -130,18 +136,45 @@ impl FilesSidebar {
             None => row.label.clone().into_any_element(),
         };
 
-        let el = el.child(slot).child(
-            div()
-                .flex_1()
-                .min_w_0()
-                .text_size(px(13.))
-                .line_height(px(SIDEBAR_ROW_LINE_HEIGHT))
-                .text_color(text_color)
-                .overflow_x_hidden()
-                .whitespace_nowrap()
-                .text_ellipsis()
-                .child(name),
-        );
+        let el = el
+            .child(slot)
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .text_size(px(13.))
+                    .line_height(px(SIDEBAR_ROW_LINE_HEIGHT))
+                    .text_color(text_color)
+                    .overflow_x_hidden()
+                    .whitespace_nowrap()
+                    .text_ellipsis()
+                    .child(name),
+            )
+            .when_some(indicator, |el, (letter, color)| {
+                el.child(
+                    div()
+                        .flex_none()
+                        .w(px(ROW_SLOT))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .child(if is_dir {
+                            div()
+                                .size(px(6.))
+                                .rounded_full()
+                                .bg(color.opacity(0.5))
+                                .into_any_element()
+                        } else {
+                            div()
+                                .text_size(LABEL_SM)
+                                .line_height(px(SIDEBAR_ROW_LINE_HEIGHT))
+                                .font_weight(FontWeight::BOLD)
+                                .text_color(color)
+                                .child(letter)
+                                .into_any_element()
+                        }),
+                )
+            });
 
         el.into_any_element()
     }

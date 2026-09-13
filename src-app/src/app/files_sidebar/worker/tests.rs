@@ -1,12 +1,7 @@
 use super::*;
 
 fn scanner(root: PathBuf, expanded: Vec<PathBuf>) -> Scanner {
-    let mut scanner = Scanner {
-        tree: FilesTreeState::root_shell(root),
-        watcher: None,
-        watched: HashSet::new(),
-        dirty: HashSet::new(),
-    };
+    let mut scanner = Scanner::new(root);
     scanner.set_expanded(expanded);
     assert!(scanner.scan(|| false));
     scanner

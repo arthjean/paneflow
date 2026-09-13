@@ -10,6 +10,7 @@ use gpui::{
 
 use super::FilesSidebar;
 use super::projection::FilesProjection;
+use crate::app::files_git::GitStatuses;
 use crate::app::files_tree::{FileNode, FilesTreeState};
 
 fn node(path: PathBuf, is_dir: bool) -> FileNode {
@@ -37,7 +38,12 @@ fn tree(count: usize) -> FilesTreeState {
 fn install(panel: &mut FilesSidebar, tree: FilesTreeState) {
     panel.active = true;
     panel.expanded = tree.expanded.clone();
-    panel.projection = Arc::new(FilesProjection::build(&tree, &panel.expanded, ""));
+    panel.projection = Arc::new(FilesProjection::build(
+        &tree,
+        &panel.expanded,
+        "",
+        &GitStatuses::default(),
+    ));
     panel.tree = Arc::new(tree);
 }
 
@@ -265,6 +271,38 @@ fn panel_discards_pending_projection_on_close_and_keeps_latest_filter(cx: &mut T
 }
 
 #[test]
+fn projection_stamps_git_status_onto_files_and_their_parent_directories() {
+    let mut snapshot = tree(2);
+    let root = snapshot.root.clone();
+    let dir = root.join("src");
+    let child = dir.join("main.rs");
+    snapshot
+        .children
+        .get_mut(&root)
+        .unwrap()
+        .insert(0, node(dir.clone(), true));
+    snapshot
+        .children
+        .insert(dir.clone(), vec![node(child.clone(), false)]);
+    snapshot.expanded.insert(dir.clone());
+    let git = GitStatuses::parse(&root, "", b" M src/main.rs\0");
+
+    let projection = FilesProjection::build(&snapshot, &snapshot.expanded, "", &git);
+
+    let status = |path: &PathBuf| {
+        projection
+            .rows
+            .iter()
+            .find(|row| &row.node.path == path)
+            .expect("row")
+            .status
+    };
+    assert_eq!(status(&child).worktree.modified, 1);
+    assert_eq!(status(&dir).worktree.modified, 1);
+    assert!(status(&root.join("file-0000.rs")).is_unchanged());
+}
+
+#[test]
 fn projection_keeps_selection_on_insert_and_recovers_visible_ancestor_on_collapse() {
     let mut snapshot = tree(3);
     let root = snapshot.root.clone();
@@ -274,7 +312,8 @@ fn projection_keeps_selection_on_insert_and_recovers_visible_ancestor_on_collaps
         .get_mut(&root)
         .unwrap()
         .insert(0, node(root.join("a.rs"), false));
-    let projection = FilesProjection::build(&snapshot, &snapshot.expanded, "");
+    let projection =
+        FilesProjection::build(&snapshot, &snapshot.expanded, "", &GitStatuses::default());
     assert_eq!(
         projection.reconcile_selection(Some(&selected), 1),
         Some(selected)
@@ -285,7 +324,8 @@ fn projection_keeps_selection_on_insert_and_recovers_visible_ancestor_on_collaps
         .get_mut(&root)
         .unwrap()
         .insert(0, node(dir.clone(), true));
-    let projection = FilesProjection::build(&snapshot, &snapshot.expanded, "");
+    let projection =
+        FilesProjection::build(&snapshot, &snapshot.expanded, "", &GitStatuses::default());
     assert_eq!(
         projection.reconcile_selection(Some(&dir.join("nested/main.rs")), 3),
         Some(dir)
