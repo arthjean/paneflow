@@ -63,6 +63,18 @@
   <content_rating type="oars-1.1" />
 
   <releases>
+    <release version="0.15.0" date="2026-09-13">
+      <description>
+        <p>Paneflow opens in under a third of a second onto a welcome screen with a command palette and a clone modal, the file tree carries git status, a toast announces each update, and Muse Code and DeepSeek Harness join the built-in agents with live state.</p>
+        <ul>
+          <li>The splash screen is gone and two startup stalls left the critical path: the first frame moves from about 1.5 s to 0.3 s on the reference machine</li>
+          <li>A welcome screen with Get started, recent workspaces, and the agent CLIs found on the machine, a command palette on secondary-shift-p, and a clone modal that takes a URL, an owner/name shorthand, or a repository from gh</li>
+          <li>The file tree colors rows by git status with a status letter on files and a summary dot on directories, following the active theme</li>
+          <li>A release notes toast on the first launch after an update, Ctrl+V pastes into terminals on Windows and Linux, and Muse Code and DeepSeek Harness get tab-bar buttons and live sidebar state</li>
+          <li>Windows editor and File Explorer launches are hardened, worktree paths reported by git match Paneflow's own, and agent profile environment variables expand $NAME and take the full editor width</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.14.0" date="2026-09-09">
       <description>
         <p>Every per-user file lives under one home directory, managed worktrees move there with snapshots before removal, and custom agent profiles run a built-in agent with its own environment.</p>

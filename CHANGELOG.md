@@ -5,6 +5,8 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-09-13
+
 ### Added
 
 - Muse Code joins the built-in agents, with live state. The tab-bar button
@@ -32,6 +34,46 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
   when the last session exits; `dsh plugin`, `--help`, `--version`, and
   the config dumps reach `dsh` untouched. A harness install without the
   bridge package falls back to start, exit code, and end. Refs #60.
+- A welcome screen, a command palette, and a clone modal. With no session to
+  restore, Paneflow no longer fabricates a workspace from the launch
+  directory: it opens a welcome screen with Get started (open folder, clone
+  repository, command palette), the recent workspaces, and one line naming the
+  agent CLIs found on the machine. Recent workspaces answer `secondary-1` to
+  `secondary-5`, live in `~/.paneflow/recents.json`, and cap at eight. An
+  empty workspace lands on the pane palette instead of a blank panel. The
+  command palette on `secondary-shift-p` lists every action with its binding.
+  Clone repository accepts a URL or an `owner/name` shorthand, lists your
+  GitHub repositories through `gh repo list`, clones through `gh repo clone`
+  when gh is signed in and through `git clone` otherwise, and shows git's
+  progress while it runs. Refs #69.
+- The file tree is colored by git status, ported from Zed's project panel:
+  conflict, deleted, modified, and created hues on the row label, a status
+  letter (`!`, `U`, `D`, `M`, `A`) on files, a summary dot on directories, all
+  taken from the `vc_*` roles of the active theme. The read runs on the files
+  worker thread and follows the git directory, so a commit or checkout run by
+  an agent in another pane recolors the tree. Refs #75.
+- A release notes toast on the first launch after an update: "Updated to
+  Paneflow X.Y.Z" with a View release notes button that opens that version's
+  changelog page. It covers every update path (in-app, DMG, AppImage, tar.gz,
+  packages) by comparing a version marker under the Paneflow home cache, and
+  it is the one toast that never auto-closes. Refs #77.
+
+### Changed
+
+- Paneflow opens straight into the workspace. The splash screen and its 900 ms
+  floor are gone, the Windows singleton guard no longer sleeps on a missing
+  named pipe, and the agent CLI probe runs off the render thread with a warm
+  cache. On the reference Windows machine the first presented frame moves from
+  about 1.5 s to 0.3 s (release build, medians of 10 launches).
+  `PANEFLOW_STARTUP_TRACE=<file>` and `scripts/bench-startup.sh` measure it.
+  Refs #79.
+- Launching `paneflow` from a terminal inside a project no longer opens that
+  project as a workspace; it opens the welcome screen. Refs #69.
+- Ctrl+V pastes into terminal panes on Windows and Linux, alongside the
+  existing Ctrl+Shift+V, and tools that finish dictation by simulating Ctrl+V
+  now reach the terminal. Cmd+V stays on macOS and Ctrl+C still reaches the
+  shell. Set `"shortcuts": { "ctrl-v": "none" }` to hand Ctrl+V back to the
+  program in the pane. Refs #64.
 
 ### Fixed
 
@@ -44,6 +86,16 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
   Paneflow's own environment, with the resolved value shown under the row as
   you type. A name your environment does not define is refused on save instead
   of silently pointing the agent at a junk path. Refs #68.
+- On Windows, "Open in File Explorer" opens the workspace directory, including
+  paths with spaces, and editor and folder launches run detached from
+  Paneflow's process job and standard streams, off the UI thread, with the
+  resolved command, PID, and exit status logged and a toast on a failed
+  launcher. Refs #67.
+- Worktree paths reported by git are translated back into Paneflow's own form,
+  so a worktrees root reached through a symlink (`/var` on macOS) or a Windows
+  8.3 short name no longer makes Paneflow plan a duplicate checkout for a
+  branch it created a moment earlier, or lose track of a managed worktree on
+  session restore.
 
 ## [0.14.0] - 2026-09-09
 
