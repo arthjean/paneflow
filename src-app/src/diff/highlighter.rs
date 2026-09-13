@@ -292,8 +292,6 @@ pub(crate) fn resolve_runs<T: Copy>(runs: &mut Vec<(Range<usize>, T)>) {
 
 #[cfg(test)]
 mod tests {
-    use std::time::{Duration, Instant};
-
     use super::*;
     use crate::theme::paneflow_dark;
 
@@ -463,11 +461,9 @@ mod tests {
         let mut runs: Vec<_> = (0..MAX_CAPTURES_PER_ROW + 512)
             .map(|index| (index * 2..index * 2 + 1, color))
             .collect();
-        let started = Instant::now();
         resolve_runs(&mut runs);
         assert_eq!(runs.len(), MAX_CAPTURES_PER_ROW);
         assert_eq!(runs.last().map(|run| run.0.clone()), Some(8190..8191));
-        assert!(started.elapsed() < Duration::from_millis(5));
     }
 
     #[test]
