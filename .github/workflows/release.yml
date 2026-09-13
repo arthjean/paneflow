@@ -2571,10 +2571,20 @@ jobs:
 
               $stdout = Join-Path $env:SMOKE_DIR 'backend-ghostty.stdout.log'
               $stderr = Join-Path $env:SMOKE_DIR 'backend-ghostty.stderr.log'
+              $smokeHome = Join-Path $env:SMOKE_DIR 'backend-ghostty-home'
+              New-Item -ItemType Directory -Force -Path $smokeHome | Out-Null
+              $cwd = $env:SMOKE_DIR.Replace('\', '\\')
+              $session = '{"version":2,"active_workspace":0,"workspaces":[{"title":"smoke","cwd":"' + $cwd + '","tabs":[{"title":"","title_source":"preset","layout":{"type":"pane","surfaces":[{"surface_type":"terminal","name":"Terminal","command":null,"cwd":"' + $cwd + '","env":null,"focus":true}]}}]}]}'
+              Set-Content -LiteralPath (Join-Path $smokeHome 'session.json') -Encoding utf8 -Value $session
+              Set-Content -LiteralPath (Join-Path $smokeHome 'paneflow.json') -Encoding utf8 -Value '{}'
+              Set-Content -LiteralPath (Join-Path $smokeHome 'window-state.json') -Encoding utf8 -Value '{"width":1400.0,"height":900.0}'
+              Set-Content -LiteralPath (Join-Path $smokeHome 'telemetry_id') -Encoding utf8 -Value 'msi-smoke'
               $previousRustLog = $env:RUST_LOG
+              $previousHome = $env:PANEFLOW_HOME
               $process = $null
               try {
                   $env:RUST_LOG = 'paneflow::terminal::backend=info'
+                  $env:PANEFLOW_HOME = $smokeHome
                   $process = Start-Process -FilePath $Exe `
                       -PassThru `
                       -RedirectStandardOutput $stdout `
@@ -2594,6 +2604,12 @@ jobs:
                   }
                   else {
                       $env:RUST_LOG = $previousRustLog
+                  }
+                  if ($null -eq $previousHome) {
+                      Remove-Item Env:PANEFLOW_HOME -ErrorAction SilentlyContinue
+                  }
+                  else {
+                      $env:PANEFLOW_HOME = $previousHome
                   }
               }
 
