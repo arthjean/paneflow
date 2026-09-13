@@ -1,6 +1,8 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+#[cfg(test)]
+use gpui::AppContext;
 use gpui::{AsyncApp, Context, WeakEntity};
 
 use crate::diff::{
@@ -125,7 +127,12 @@ where
     F: FnOnce(&mut V, u64, Base, &mut Context<V>) + 'static,
 {
     cx.spawn(async move |this: WeakEntity<V>, cx: &mut AsyncApp| {
+        #[cfg(not(test))]
         let base = smol::unblock(move || load_base_blocking(&path)).await;
+        #[cfg(test)]
+        let base = cx
+            .background_spawn(async move { load_base_blocking(&path) })
+            .await;
         cx.update(|cx| {
             let _ = this.update(cx, |view: &mut V, cx: &mut Context<V>| {
                 apply(view, generation, base, cx);

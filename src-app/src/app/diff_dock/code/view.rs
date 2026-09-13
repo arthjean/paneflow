@@ -3847,7 +3847,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn opening_a_file_shows_its_text_first_and_colors_it_when_the_tree_lands(
+    fn opening_a_file_shows_its_text_first_and_colors_it_when_the_tree_lands(
         cx: &mut TestAppContext,
     ) {
         let dir = tempfile::tempdir().expect("tempdir");
@@ -3866,18 +3866,7 @@ mod tests {
 
         let spawn_path = path.clone();
         let (view, cx) = cx.add_window_view(move |_window, cx| CodeView::new(spawn_path, cx));
-        cx.executor().allow_parking();
-        for _ in 0..300 {
-            cx.run_until_parked();
-            if view.update(cx, |view, _cx| {
-                view.state
-                    .highlighter()
-                    .is_some_and(CodeHighlighter::has_tree)
-            }) {
-                break;
-            }
-            smol::Timer::after(Duration::from_millis(10)).await;
-        }
+        cx.run_until_parked();
 
         view.update(cx, |view, _cx| {
             let (doc, highlighter) = view.state.editable().expect("the file loaded");
@@ -3901,6 +3890,56 @@ mod tests {
             }
             view._watcher = None;
         });
+    }
+
+    #[gpui::test]
+    fn initial_parse_keeps_the_loaded_text_available_until_its_tree_arrives(
+        cx: &mut TestAppContext,
+    ) {
+        let text = "fn main() {\n    let value = 1;\n}\n";
+        let path = PathBuf::from("main.rs");
+        let document = build_document(path.clone(), text, false);
+        let highlighter = CodeHighlighter::new(
+            &document,
+            DiffSyntax::from_theme(&crate::theme::paneflow_dark()),
+        );
+        let state = CodeLoadState::Ready(Box::new(LoadedCode {
+            document,
+            highlighter,
+            indent: IndentUnit::Spaces(4),
+            stamp: None,
+        }));
+        let (view, cx) =
+            cx.add_window_view(move |_window, cx| CodeView::with_state(path, state, None, cx));
+
+        view.update(cx, |view, cx| {
+            view.start_initial_parse(cx);
+            assert_eq!(text_of(view), text);
+            assert!(!view.highlighter().expect("highlighter").has_tree());
+        });
+        cx.run_until_parked();
+        view.update(cx, |view, _cx| {
+            assert_eq!(text_of(view), text);
+            assert!(view.highlighter().expect("highlighter").has_tree());
+        });
+    }
+
+    #[gpui::test]
+    fn a_git_base_from_an_older_load_cannot_replace_the_current_base(cx: &mut TestAppContext) {
+        let (view, cx) = view(cx, "current\n");
+        view.update(cx, |view, cx| {
+            view.path = PathBuf::from("relative-only.rs");
+            view.base = Base::Untracked;
+            view.start_base_load(cx);
+            view.slot.begin();
+        });
+        cx.run_until_parked();
+        view.update(cx, |view, cx| {
+            assert_eq!(view.base, Base::Untracked);
+            view.start_base_load(cx);
+        });
+        cx.run_until_parked();
+        view.update(cx, |view, _cx| assert_eq!(view.base, Base::None));
     }
 
     #[gpui::test]
