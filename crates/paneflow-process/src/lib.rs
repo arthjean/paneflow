@@ -10,6 +10,9 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 const STDERR_CAP: u64 = 64 * 1024;
+const TAP_CHUNK: usize = 4 * 1024;
+
+pub type StderrTap = Box<dyn FnMut(&[u8]) + Send>;
 
 const POLL_INTERVAL: Duration = Duration::from_millis(10);
 
@@ -102,9 +105,27 @@ impl Error for ProcError {
 }
 
 pub fn run_with_timeout(
+    cmd: Command,
+    deadline: Duration,
+    stdout_cap: u64,
+) -> Result<BoundedOutput, ProcError> {
+    run_supervised(cmd, deadline, stdout_cap, None)
+}
+
+pub fn run_with_timeout_tapping_stderr(
+    cmd: Command,
+    deadline: Duration,
+    stdout_cap: u64,
+    stderr_tap: impl FnMut(&[u8]) + Send + 'static,
+) -> Result<BoundedOutput, ProcError> {
+    run_supervised(cmd, deadline, stdout_cap, Some(Box::new(stderr_tap)))
+}
+
+fn run_supervised(
     mut cmd: Command,
     deadline: Duration,
     stdout_cap: u64,
+    stderr_tap: Option<StderrTap>,
 ) -> Result<BoundedOutput, ProcError> {
     let stdout_cap = validate_capture_cap(stdout_cap)?;
     let stderr_cap = validate_capture_cap(STDERR_CAP)?;
@@ -143,8 +164,15 @@ pub fn run_with_timeout(
         stdout_cap,
         OutputStream::Stdout,
         reader_tx.clone(),
+        None,
     )?;
-    spawn_bounded_reader(stderr_pipe, stderr_cap, OutputStream::Stderr, reader_tx)?;
+    spawn_bounded_reader(
+        stderr_pipe,
+        stderr_cap,
+        OutputStream::Stderr,
+        reader_tx,
+        stderr_tap,
+    )?;
 
     let mut capture = CaptureState::default();
     let status = loop {
@@ -422,6 +450,7 @@ fn spawn_bounded_reader<R>(
     cap: usize,
     stream: OutputStream,
     sender: mpsc::Sender<ReaderMessage>,
+    tap: Option<StderrTap>,
 ) -> Result<(), ProcError>
 where
     R: Read + Send + 'static,
@@ -429,7 +458,10 @@ where
     thread::Builder::new()
         .name(format!("paneflow-process-{stream}"))
         .spawn(move || {
-            let result = read_bounded(pipe, cap);
+            let result = match tap {
+                Some(tap) => read_tapped_tail(pipe, cap, tap),
+                None => read_bounded(pipe, cap),
+            };
             let _ = sender.send(ReaderMessage { stream, result });
         })
         .map(|_| ())
@@ -449,6 +481,30 @@ where
         return Err(ReaderFailure::LimitExceeded { cap: cap as u64 });
     }
     Ok(bytes)
+}
+
+fn read_tapped_tail<R>(
+    mut pipe: R,
+    cap: usize,
+    mut tap: StderrTap,
+) -> Result<Vec<u8>, ReaderFailure>
+where
+    R: Read,
+{
+    let mut tail = Vec::new();
+    let mut chunk = [0u8; TAP_CHUNK];
+    loop {
+        let read = pipe.read(&mut chunk).map_err(ReaderFailure::Read)?;
+        if read == 0 {
+            return Ok(tail);
+        }
+        tap(&chunk[..read]);
+        tail.extend_from_slice(&chunk[..read]);
+        if tail.len() > cap {
+            let excess = tail.len() - cap;
+            tail.drain(..excess);
+        }
+    }
 }
 
 #[derive(Default)]
@@ -669,6 +725,20 @@ mod tests {
         let _ = std::fs::remove_file(marker.with_extension("started"));
         let _ = std::fs::remove_file(marker.with_extension("stdout"));
         let _ = std::fs::remove_file(marker.with_extension("stderr"));
+    }
+
+    #[test]
+    fn tapped_reader_streams_every_chunk_and_keeps_only_the_tail() {
+        let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let sink = seen.clone();
+        let tail = read_tapped_tail(
+            std::io::Cursor::new(b"abcdef".to_vec()),
+            3,
+            Box::new(move |chunk: &[u8]| sink.lock().unwrap().extend_from_slice(chunk)),
+        )
+        .unwrap();
+        assert_eq!(seen.lock().unwrap().as_slice(), b"abcdef");
+        assert_eq!(tail, b"def");
     }
 
     #[test]

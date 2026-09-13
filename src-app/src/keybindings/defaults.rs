@@ -400,6 +400,11 @@ pub(super) const DEFAULTS: &[DefaultBinding] = &[
         action_name: "open_launch_pad",
         context: None,
     },
+    DefaultBinding {
+        key: "secondary-shift-p",
+        action_name: "open_command_palette",
+        context: None,
+    },
 ];
 
 #[cfg(target_os = "macos")]

@@ -370,6 +370,7 @@ impl PaneFlowApp {
         if !opened {
             return;
         }
+        self.record_recent_workspaces(paths, cx);
         self.save_session(cx);
         cx.notify();
         self.reconcile_diff_after_workspace_change(cx);
@@ -917,6 +918,10 @@ impl PaneFlowApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.workspaces.is_empty() {
+            self.open_recent_workspace(idx, window, cx);
+            return;
+        }
         self.select_workspace(idx, window, cx);
     }
 

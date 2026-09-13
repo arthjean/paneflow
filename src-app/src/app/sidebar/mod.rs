@@ -20,6 +20,17 @@ use crate::{
     workspace::{Tab, Workspace},
 };
 
+const SIDEBAR_EMPTY_STATE_WIDTH: f32 = 192.0;
+
+fn sidebar_empty_state_button(
+    id: &'static str,
+    ui: crate::theme::UiColors,
+) -> gpui::Stateful<gpui::Div> {
+    crate::settings::components::select_item(SharedString::from(id), false, ui)
+        .w_full()
+        .justify_center()
+}
+
 #[derive(Default)]
 pub(crate) struct SidebarOrderCache {
     signature: Option<u64>,
@@ -467,56 +478,88 @@ impl PaneFlowApp {
             .pb(px(4.));
 
         if self.workspaces.is_empty() {
-            list = list.child(
-                div()
-                    .flex_1()
-                    .flex()
-                    .flex_col()
-                    .items_center()
-                    .justify_center()
-                    .gap(px(10.))
-                    .px(px(16.))
-                    .child(
-                        div()
-                            .text_size(px(11.))
-                            .text_color(ui.muted)
-                            .child("Open a project folder"),
-                    )
-                    .child({
-                        let hover_bg = crate::app::constants::sidebar_tab_active_background();
-                        div()
-                            .id("empty-new-ws")
-                            .flex()
-                            .flex_row()
-                            .items_center()
-                            .gap(px(6.))
-                            .px(px(10.))
-                            .py(px(5.))
-                            .rounded(px(6.))
-                            .bg(ui.subtle)
-                            .text_color(ui.text)
-                            .text_size(px(11.))
-                            .font_weight(FontWeight::MEDIUM)
-                            .hover(move |style| style.bg(hover_bg))
-                            .on_click(cx.listener(|this, _: &ClickEvent, w, cx| {
-                                this.create_workspace_with_picker(w, cx);
-                            }))
-                            .child(
-                                svg()
-                                    .size(px(12.))
-                                    .flex_none()
-                                    .path("icons/folder_open.svg")
-                                    .text_color(ui.muted),
-                            )
-                            .child("Open folder")
-                    }),
-            );
+            list = list.child(self.render_sidebar_empty_state(ui, cx));
         }
 
         list = self.render_workspace_rows(list, ui, cx);
         sidebar = sidebar.child(self.sidebar_list_wrapper(list, cx));
         sidebar = sidebar.child(self.render_sidebar_settings_footer(cx));
         sidebar
+    }
+
+    fn render_sidebar_empty_state(
+        &self,
+        ui: crate::theme::UiColors,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let open_key = self
+            .shortcut_for_action("new_workspace")
+            .map(str::to_string);
+        let divider = || div().flex_1().h(px(1.)).bg(ui.border);
+
+        div()
+            .flex_1()
+            .flex()
+            .flex_col()
+            .items_center()
+            .justify_center()
+            .px(px(16.))
+            .child(
+                div()
+                    .w(px(SIDEBAR_EMPTY_STATE_WIDTH))
+                    .max_w_full()
+                    .flex()
+                    .flex_col()
+                    .gap(px(4.))
+                    .child(
+                        div()
+                            .pb(px(8.))
+                            .text_center()
+                            .text_size(px(11.))
+                            .text_color(ui.muted)
+                            .child("Choose one of the options below to use the Workspaces rail"),
+                    )
+                    .child(
+                        sidebar_empty_state_button("sidebar-empty-open-folder", ui)
+                            .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+                                this.create_workspace_with_picker(window, cx);
+                            }))
+                            .child(div().text_color(ui.text).child("Open folder"))
+                            .when_some(open_key, |button, key| {
+                                button.child(
+                                    div()
+                                        .flex_none()
+                                        .text_size(px(11.))
+                                        .text_color(ui.muted)
+                                        .child(key),
+                                )
+                            }),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .flex_row()
+                            .items_center()
+                            .gap(px(8.))
+                            .py(px(2.))
+                            .child(divider())
+                            .child(
+                                div()
+                                    .flex_none()
+                                    .text_size(px(10.))
+                                    .text_color(ui.muted)
+                                    .child("or"),
+                            )
+                            .child(divider()),
+                    )
+                    .child(
+                        sidebar_empty_state_button("sidebar-empty-clone-repo", ui)
+                            .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+                                this.open_clone_repo(window, cx);
+                            }))
+                            .child(div().text_color(ui.text).child("Clone repository")),
+                    ),
+            )
     }
 
     fn sidebar_rows(&self) -> Vec<SidebarRow> {

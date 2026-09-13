@@ -1,31 +1,12 @@
 use gpui::{AppContext, Context};
 use notify::Watcher;
 
-use crate::launch_cwd;
-use crate::pane::Pane;
 use crate::telemetry;
-use crate::terminal::TerminalView;
 use crate::terminal::blink::{BlinkPhase, BlinkPhaseGlobal, CURSOR_BLINK_INTERVAL};
 use crate::window_chrome::title_bar;
-use crate::workspace::{Workspace, next_workspace_id};
 use crate::{PaneFlowApp, ipc, keybindings, update};
 
 impl PaneFlowApp {
-    fn default_workspace(cx: &mut Context<Self>) -> Workspace {
-        let ws_id = next_workspace_id();
-        let cwd = launch_cwd::implicit_launch_cwd();
-        let terminal_cwd = cwd.clone();
-        let terminal = cx.new(|cx| TerminalView::with_cwd(ws_id, Some(terminal_cwd), None, cx));
-        cx.subscribe(&terminal, Self::handle_terminal_event)
-            .detach();
-        let pane = cx.new(|cx| Pane::new(terminal, ws_id, cx));
-        cx.subscribe(&pane, Self::handle_pane_event).detach();
-        let dir_name = launch_cwd::title_for_cwd_or(&cwd, "Terminal 1");
-        let ws = Workspace::with_cwd_and_id(ws_id, dir_name, cwd, pane);
-        Self::spawn_initial_git_stats(ws_id, ws.cwd.clone(), cx);
-        ws
-    }
-
     pub(crate) fn spawn_telemetry_flusher(
         telemetry: std::sync::Arc<telemetry::client::TelemetryClient>,
         cx: &mut Context<Self>,
@@ -119,7 +100,7 @@ impl PaneFlowApp {
             .unwrap_or_default();
 
         let mut pull_request_seeds = Vec::new();
-        let (workspaces, active_idx) = match saved_session {
+        let (workspaces, active_idx, session_restored) = match saved_session {
             Some(session) => {
                 log::info!(
                     "restoring session: {} workspace(s), mode={:?}",
@@ -129,15 +110,15 @@ impl PaneFlowApp {
                 let (workspaces, active_idx) = Self::restore_workspaces(&session, cx);
                 pull_request_seeds = Self::pull_request_seeds(&session, &workspaces);
                 if workspaces.is_empty() {
-                    log::warn!(
-                        "session restore: session contained no restorable workspaces; creating default workspace"
+                    log::info!(
+                        "session restore: no restorable workspace; opening the welcome screen"
                     );
-                    (vec![Self::default_workspace(cx)], 0)
+                    (workspaces, 0, false)
                 } else {
-                    (workspaces, active_idx)
+                    (workspaces, active_idx, true)
                 }
             }
-            None => (vec![Self::default_workspace(cx)], 0),
+            None => (Vec::new(), 0, false),
         };
 
         let (git_event_tx, git_event_rx) = std::sync::mpsc::channel();
@@ -672,6 +653,15 @@ impl PaneFlowApp {
             launch_pad_focus: cx.focus_handle(),
             branch_prompt: None,
             branch_prompt_focus: cx.focus_handle(),
+            recent_workspaces: crate::app::recents::load_pruned(),
+            welcome_focus: cx.focus_handle(),
+            clone_repo: None,
+            clone_repo_focus: cx.focus_handle(),
+            command_palette_open: false,
+            command_palette_query: String::new(),
+            command_palette_selected: 0,
+            command_palette_focus: cx.focus_handle(),
+            command_palette_scroll: gpui::ScrollHandle::new(),
             pane_palette: None,
             pane_palette_focus: cx.focus_handle(),
             pending_palette_focus: false,
@@ -725,6 +715,12 @@ impl PaneFlowApp {
             },
             sidebar_order_cache: std::cell::RefCell::new(Default::default()),
         };
+
+        if session_restored {
+            let restored_paths =
+                crate::app::recents::restored_session_paths(&app.workspaces, app.active_idx);
+            app.record_recent_workspaces(&restored_paths, cx);
+        }
 
         if let Some(node) = restored_review_layout {
             app.restore_review_layout(&node, cx);

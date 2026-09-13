@@ -647,7 +647,36 @@ creates the branch and its worktree, then opens there. An empty name starts
 a detached checkout at the base. The `Create branch
 here…` prompt that names it is a 420 wide card on the Launch Pad pattern: a
 title, one line of context, the name field, an accent `Create branch`
-button, and the hint `Enter creates · Esc cancels`.
+button, and the hint `Enter creates · Esc cancels`. The command palette and
+the `Clone repository` modal share one shell: the menu surface of 5.6, 544
+wide, docked 96 from the top of the window over a 0.4 black scrim. The
+command palette is a 13 px query line over a hairline, then 28 px rows, one
+per action that carries no key context, each showing the Settings
+description and its binding at 11 px muted; typing filters on whole words,
+arrows move, Enter dispatches, and the palette never lists itself. The clone
+modal is the same quick pick: a field reading `Provide repository URL or pick
+a repository source.` over the hairline, then rows on the `select_item` skin
+with a 14 px glyph, the label, and a group name at 11 px muted on the trailing
+edge. With nothing typed the single row is `Clone from GitHub` in the `remote
+sources` group; a typed URL becomes a `Clone <url>` row and Enter clones it.
+Picking GitHub swaps the field for `Repository name (type to search)` and
+lists the repositories `gh repo list` returns, one row per `owner/name`,
+filtered on whole words; Escape steps back to the sources, then closes.
+An error replaces the rows with one 12 px red line. A running clone replaces
+them with a progress block: `Cloning <name>` at 12 px with the percentage at
+11 px muted on the trailing edge, a 4 px full-radius track in the 0.10 `text`
+tint filled in `#3fa266` from the left, and an 11 px muted line naming git's
+phase and throughput. Before git reports anything a 30% `#3fa266` segment
+sweeps the track on a 1.4 s ease-in-out loop. The percentage weights git's
+phases: enumerating and counting 0 to 5, compressing 5 to 10, receiving
+objects 10 to 80, resolving deltas 80 to 95, updating files 95 to 100. Enter
+asks for a destination folder and clones into it; Escape is ignored while a
+clone runs. A target on GitHub, whether a `github.com` URL, an `owner/name`
+shorthand, or a row of the list, clones through `gh repo clone`, which
+carries gh's credentials for private repositories and adds an `upstream`
+remote on a fork; when gh is missing or signed out the clone falls back to
+`git clone`, expanding the shorthand to `https://github.com/owner/name.git`.
+Every other target clones with git.
 
 ### 5.8 Feedback
 
@@ -658,6 +687,36 @@ Semibold title, 13 muted description, with `accent` for info and the fixed
 warning and error hues. Empty states (`panel_empty_state`) center an 18 px
 muted glyph, an optional 14 Semibold title, and a 12 px muted message; the
 glyph spins while scanning.
+
+### 5.9 Welcome and empty states
+
+Paneflow opens on this screen whenever it has no workspace to show: a first
+run, or a session that restored nothing. It never fabricates a workspace from
+the directory it was launched in.
+
+With no workspace open, the main panel holds one pane card, the 20 px squircle
+of 5.3 filled with the terminal background inside the 8 px grid gutter, so the
+work surface never flattens into the rail. It centers a 460 wide column: a 44 px app
+icon beside a 16 px Semibold headline and an 11 px muted line, `Welcome back
+to Paneflow` when the machine has recent workspaces and `Welcome to
+Paneflow` otherwise, then `Get started`, then either `Recent workspaces` or
+`Configure`, then one 11 px muted line naming the agent CLIs found on the
+machine. A section is an 11 px Semibold muted eyebrow followed by a hairline
+that fills the rest of the row, then 28 px rows on the `select_item` skin,
+each a 14 px muted glyph, the label, and the binding at 11 px muted on the
+trailing edge. Recent workspaces cap at five rows and answer `secondary-1` to
+`secondary-5`, which are free precisely because no workspace is open; the
+list lives in `~/.paneflow/recents.json`, is capped at eight, and drops
+folders that no longer exist.
+
+The Workspaces rail states the same choice in 192 px: an 11 px muted caption,
+an `Open folder` row with its binding, an `or` at 10 px between two
+hairlines, and a `Clone repository` row.
+
+A workspace with no pane shows the pane palette of 5.7 in place of its grid,
+attached to the tab the workspace already owns, so a new or emptied workspace
+is never an inert panel. That palette cannot be dismissed while it is the
+workspace's only surface.
 
 ## 6. Interaction
 
@@ -682,6 +741,7 @@ with Tab.
 | Broadcast groups, toggle member | `secondary-shift-m`, `secondary-shift-b` |
 | Jump to next waiting agent | `secondary-shift-j` |
 | Layout presets | `secondary-alt-1` to `secondary-alt-4` |
+| Command palette | `secondary-shift-p` |
 
 ### 6.2 Pointer
 
