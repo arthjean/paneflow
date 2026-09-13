@@ -745,13 +745,22 @@ impl AgentLaunch {
 }
 
 #[cfg(test)]
+fn prime_installed_binary_cache(found: HashSet<&'static str>) {
+    let mut cache = lock_installed_binary_cache();
+    cache.found = found;
+    cache.checked_at = Some(Instant::now());
+    cache.refreshing = false;
+}
+
+#[cfg(test)]
 mod tests {
     #[test]
     fn installed_binary_reads_never_scan_on_the_caller_thread_once_warm() {
-        super::refresh_installed_binaries();
+        super::prime_installed_binary_cache(std::collections::HashSet::from(["claude"]));
         assert!(!super::installed_binary_scan_pending());
         let started = std::time::Instant::now();
         for _ in 0..1_000 {
+            assert!(super::installed_binaries_contains("claude"));
             assert!(!super::installed_binaries_contains(
                 "paneflow-no-such-agent-binary"
             ));
