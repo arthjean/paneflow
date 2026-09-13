@@ -35,7 +35,7 @@ impl PaneFlowApp {
         let url = crate::update::release_notes::changelog_url(version);
         self.enqueue_toast(
             Toast {
-                message: format!("Updated to PaneFlow {version}"),
+                message: format!("Updated to Paneflow {version}"),
                 actions: vec![ToastAction::OpenReleaseNotes(url.clone())],
                 hold_ms: 0,
                 click_url: Some(url),
