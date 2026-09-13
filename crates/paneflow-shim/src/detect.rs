@@ -25,6 +25,7 @@ pub(crate) const WRAPPED_TOOLS: &[&str] = &[
     "qodercli",
     "openclaw",
     "dsh",
+    "muse",
 ];
 
 pub(crate) fn detect_tool_from_stem(stem: &str) -> Option<&'static str> {

@@ -92,6 +92,7 @@ pub(crate) struct FrameContext {
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum DropReason {
     InformationalNotification(Option<String>),
+    LlmCallContinuesWithToolCalls(u64),
 }
 
 impl fmt::Display for DropReason {
@@ -99,6 +100,12 @@ impl fmt::Display for DropReason {
         match self {
             Self::InformationalNotification(kind) => {
                 write!(formatter, "dropping notification_type={kind:?}")
+            }
+            Self::LlmCallContinuesWithToolCalls(count) => {
+                write!(
+                    formatter,
+                    "dropping PostLLMCall with tool_call_count={count}"
+                )
             }
         }
     }
@@ -162,7 +169,14 @@ pub(crate) fn build_frame(
             }
             AiHookMethod::Notification
         }
-        HookEvent::Stop | HookEvent::SubagentStop => AiHookMethod::Stop,
+        HookEvent::Stop | HookEvent::SubagentStop => {
+            if let Some(count) = pending_tool_calls_after_llm_call(&hook_payload) {
+                return Ok(BuildOutcome::Drop(
+                    DropReason::LlmCallContinuesWithToolCalls(count),
+                ));
+            }
+            AiHookMethod::Stop
+        }
         HookEvent::PreToolUse | HookEvent::PostToolUse => AiHookMethod::ToolUse,
         HookEvent::PermissionRequest => AiHookMethod::Notification,
         HookEvent::Exit => AiHookMethod::Exit,
@@ -194,6 +208,16 @@ pub(crate) fn build_frame(
     }
 
     Ok(BuildOutcome::Send(AiHookFrame::new(method, params)))
+}
+
+fn pending_tool_calls_after_llm_call(payload: &Value) -> Option<u64> {
+    if payload.get("hook_event_name").and_then(Value::as_str) != Some("PostLLMCall") {
+        return None;
+    }
+    payload
+        .get("tool_call_count")
+        .and_then(Value::as_u64)
+        .filter(|count| *count > 0)
 }
 
 fn compact_hook_payload(event: HookEvent, payload: &Value) -> Value {
@@ -305,6 +329,11 @@ mod tests {
                 "ai.notification",
             ),
             (HookEvent::Stop, json!({}), "ai.stop"),
+            (
+                HookEvent::Stop,
+                json!({"hook_event_name": "PostLLMCall", "tool_call_count": 0}),
+                "ai.stop",
+            ),
             (HookEvent::SubagentStop, json!({}), "ai.stop"),
             (
                 HookEvent::PreToolUse,
@@ -324,6 +353,22 @@ mod tests {
             let frame =
                 sent_frame(build_frame(event, test_context(), payload).expect("valid frame"));
             assert_eq!(frame["method"], expected_method, "event={}", event.name());
+        }
+    }
+
+    #[test]
+    fn stop_from_a_post_llm_call_with_tool_calls_is_dropped() {
+        let outcome = build_frame(
+            HookEvent::Stop,
+            test_context(),
+            json!({"hook_event_name": "PostLLMCall", "tool_call_count": 2}),
+        )
+        .expect("valid payload");
+        match outcome {
+            BuildOutcome::Drop(reason) => {
+                assert_eq!(reason, DropReason::LlmCallContinuesWithToolCalls(2));
+            }
+            BuildOutcome::Send(frame) => panic!("unexpected frame: {:?}", frame.to_value()),
         }
     }
 

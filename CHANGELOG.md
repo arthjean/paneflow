@@ -7,6 +7,19 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
 
 ### Added
 
+- Muse Code joins the built-in agents, with live state. The tab-bar button
+  runs `muse`, `muse_button_visible` controls it the way every other agent's
+  key does, and the shim wraps `muse` so the sidebar spins while a turn runs,
+  names the active tool, shows the approval wait, and settles on Done or
+  Error. Muse Code speaks the Claude Code hook format but runs hooks with a
+  cleared environment, so the shim registers a Paneflow-owned hook file
+  through `managed_hooks_path` in `~/.config/muse/settings.json` and forwards
+  the `PANEFLOW_*` variables through `managed_hooks_env_vars`; both entries
+  are removed when the last session exits, and a settings file that already
+  points `managed_hooks_path` elsewhere is left untouched. Muse Code 1.2 does
+  not run its `Stop` hook on the Meta provider, so the turn end is also taken
+  from `PostLLMCall`: `paneflow-ai-hook` treats a call that ends without tool
+  calls as the stop and drops one that schedules tools. Refs #62.
 - DeepSeek Harness joins the built-in agents, with live state. The tab-bar
   button runs `dsh --profile tui`, the profile the
   [deepseek-harness-tui](https://github.com/gxinxing/deepseek-harness-tui)

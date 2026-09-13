@@ -127,6 +127,7 @@ mod tests {
             qoder_button_visible: Some(true),
             openclaw_button_visible: Some(true),
             deepseek_harness_button_visible: Some(true),
+            muse_button_visible: Some(true),
             telemetry: Some(TelemetryConfig {
                 enabled: Some(false),
             }),

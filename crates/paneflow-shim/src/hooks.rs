@@ -3,6 +3,7 @@ mod claude;
 mod codex;
 pub(crate) mod dsh;
 mod hermes;
+pub(crate) mod muse;
 mod opencode;
 mod owned_files;
 
@@ -21,6 +22,7 @@ pub(crate) use dsh::DshOverlayGuard;
 pub(crate) use hermes::HermesHookConfigGuard;
 #[cfg(test)]
 pub(crate) use hermes::{hermes_managed_block, strip_hermes_managed_block, HERMES_BLOCK_BEGIN};
+pub(crate) use muse::MuseHookConfigGuard;
 pub(crate) use opencode::OpenCodePluginGuard;
 #[cfg(test)]
 pub(crate) use owned_files::PANEFLOW_TS_BASENAME;
@@ -326,7 +328,7 @@ pub(crate) fn remove_paneflow_hooks(root: &mut serde_json::Value) {
     paneflow_agent_config::claude_hooks::remove_hooks_lenient(root);
 }
 
-fn plain_hook_handler(event: &str) -> serde_json::Value {
+pub(super) fn plain_hook_handler(event: &str) -> serde_json::Value {
     serde_json::json!({
         "type": "command",
         "command": resolve_plain_hook_command(event),

@@ -1,4 +1,8 @@
 use crate::hooks::dsh::{render_overlay, DSH_HOOKS_BASENAME, DSH_OVERLAY_BASENAME};
+use crate::hooks::muse::{
+    remove_muse_settings, MuseHookConfigGuard, MUSE_HOOKS_BASENAME, MUSE_HOOK_ENV_VARS,
+    MUSE_HOOK_EVENTS, MUSE_SETTINGS_BASENAME,
+};
 #[cfg(unix)]
 use crate::hooks::{
     enable_codex_feature_flag, CodexHookConfigGuard, CODEX_HOOK_EVENTS, CODEX_TOML_MARKER,
@@ -670,4 +674,128 @@ fn dsh_patch_overlay_stays_out_of_plugin_help_version_and_dumps() {
             "{argv:?} must reach dsh untouched"
         );
     }
+}
+
+fn read_json(path: &std::path::Path) -> serde_json::Value {
+    serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap()
+}
+
+#[test]
+fn muse_guard_writes_hooks_file_and_managed_settings_and_removes_both_on_drop() {
+    let td = tempfile::TempDir::new().unwrap();
+    let dir = td.path().join(".config/muse");
+    let guard = MuseHookConfigGuard::install_at(&dir).expect("install must succeed");
+    let hooks_path = dir.join(MUSE_HOOKS_BASENAME);
+    let settings_path = dir.join(MUSE_SETTINGS_BASENAME);
+    assert_eq!(guard.hooks_path(), hooks_path);
+
+    let hooks = read_json(&hooks_path);
+    for (event, canonical) in MUSE_HOOK_EVENTS {
+        let cmd = hooks["hooks"][*event][0]["hooks"][0]["command"]
+            .as_str()
+            .unwrap_or_else(|| panic!("{event} must be registered for Muse Code"));
+        assert!(
+            command_preserves_event_arg(cmd, canonical),
+            "{event} must dispatch as {canonical}, got {cmd}"
+        );
+    }
+    assert!(
+        hooks["hooks"].get("Notification").is_none(),
+        "Muse Code documents no Notification event"
+    );
+    let settings = read_json(&settings_path);
+    assert_eq!(settings["schema_version"], json!(1));
+    assert_eq!(
+        settings["managed_hooks_path"].as_str().unwrap(),
+        hooks_path.to_str().unwrap()
+    );
+    let env_vars = settings["managed_hooks_env_vars"].as_array().unwrap();
+    for name in MUSE_HOOK_ENV_VARS {
+        assert!(
+            env_vars.iter().any(|entry| entry.as_str() == Some(name)),
+            "{name} must be forwarded to managed hooks"
+        );
+    }
+
+    drop(guard);
+    assert!(!hooks_path.exists(), "drop must delete the hook file");
+    assert!(
+        !settings_path.exists(),
+        "drop must delete a settings file Paneflow created"
+    );
+    assert!(
+        !dir.exists(),
+        "drop must delete a config dir Paneflow created"
+    );
+}
+
+#[test]
+fn muse_guard_preserves_user_settings_and_env_vars() {
+    let td = tempfile::TempDir::new().unwrap();
+    let dir = td.path().join(".config/muse");
+    std::fs::create_dir_all(&dir).unwrap();
+    let settings_path = dir.join(MUSE_SETTINGS_BASENAME);
+    let original = json!({
+        "schema_version": 1,
+        "model": "muse-spark-1.3-contributor",
+        "managed_hooks_env_vars": ["MY_VAR"],
+        "hooks": {"Stop": []}
+    });
+    std::fs::write(&settings_path, original.to_string()).unwrap();
+
+    let guard = MuseHookConfigGuard::install_at(&dir).expect("install must succeed");
+    let merged = read_json(&settings_path);
+    assert_eq!(merged["model"], json!("muse-spark-1.3-contributor"));
+    assert_eq!(merged["hooks"], json!({"Stop": []}));
+    let env_vars = merged["managed_hooks_env_vars"].as_array().unwrap();
+    assert_eq!(env_vars[0], json!("MY_VAR"));
+    assert_eq!(env_vars.len(), 1 + MUSE_HOOK_ENV_VARS.len());
+
+    drop(guard);
+    assert_eq!(read_json(&settings_path), original);
+    assert!(dir.exists(), "a pre-existing config dir must survive");
+}
+
+#[test]
+fn muse_guard_refuses_a_foreign_managed_hooks_path() {
+    let td = tempfile::TempDir::new().unwrap();
+    let dir = td.path().join(".config/muse");
+    std::fs::create_dir_all(&dir).unwrap();
+    let settings_path = dir.join(MUSE_SETTINGS_BASENAME);
+    let original = json!({
+        "schema_version": 1,
+        "managed_hooks_path": "/etc/muse/enterprise-hooks.json"
+    });
+    std::fs::write(&settings_path, original.to_string()).unwrap();
+
+    assert!(MuseHookConfigGuard::install_at(&dir).is_err());
+    assert_eq!(read_json(&settings_path), original);
+    assert!(!dir.join(MUSE_HOOKS_BASENAME).exists());
+}
+
+#[test]
+fn muse_guard_refuses_invalid_settings_json() {
+    let td = tempfile::TempDir::new().unwrap();
+    let dir = td.path().join(".config/muse");
+    std::fs::create_dir_all(&dir).unwrap();
+    let settings_path = dir.join(MUSE_SETTINGS_BASENAME);
+    std::fs::write(&settings_path, "{not json").unwrap();
+
+    assert!(MuseHookConfigGuard::install_at(&dir).is_err());
+    assert_eq!(
+        std::fs::read_to_string(&settings_path).unwrap(),
+        "{not json"
+    );
+}
+
+#[test]
+fn muse_remove_leaves_a_foreign_managed_hooks_path_alone() {
+    let mut root = json!({
+        "schema_version": 1,
+        "managed_hooks_path": "/etc/muse/enterprise-hooks.json",
+        "managed_hooks_env_vars": ["PANEFLOW_SURFACE_ID"]
+    });
+    let before = root.clone();
+    remove_muse_settings(&mut root);
+    assert_eq!(root, before);
 }
