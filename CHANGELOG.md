@@ -5,6 +5,14 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
 
 ## [Unreleased]
 
+## [0.15.1] - 2026-09-14
+
+The v0.15.0 tag was never published: its release pipeline stopped at the
+Windows MSI smoke test, which launched a fresh install and waited for a
+terminal backend diagnostic that the new welcome screen never emits. The
+smoke test now seeds a one-terminal session before launching. Everything
+below is what 0.15.0 was meant to ship.
+
 ## [0.15.0] - 2026-09-13
 
 ### Added
