@@ -1,6 +1,8 @@
 name: Startup comparison (Paneflow vs cmux)
 
 on:
+  push:
+    branches: [bench/startup-compare]
   workflow_dispatch:
     inputs:
       runs:
@@ -33,8 +35,8 @@ jobs:
           key: aarch64-apple-darwin
       - name: Run the comparison
         env:
-          CMUX_VERSION: ${{ inputs.cmux_version }}
-          RUNS: ${{ inputs.runs }}
+          CMUX_VERSION: ${{ inputs.cmux_version || '' }}
+          RUNS: ${{ inputs.runs || '10' }}
         run: |
           set -euo pipefail
           scripts/bench-startup-compare.sh --runs "$RUNS" | tee bench-startup-compare.log
