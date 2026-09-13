@@ -637,6 +637,19 @@ jobs:
           set -euo pipefail
           bash scripts/bundle-macos.sh --version "0.0.0-ci" --arch aarch64
 
+      - name: Seed a session with one terminal pane
+        # Since the welcome screen (#74) a fresh home opens without a
+        # terminal, and the `font: resolved family=` gate below only fires
+        # when a terminal pane renders. Seed the same one-terminal session
+        # the startup bench uses so the gate keeps checking the terminal
+        # rendering path rather than the welcome screen.
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.paneflow"
+          cat > "$HOME/.paneflow/session.json" <<EOF_SESSION
+          {"version":2,"active_workspace":0,"workspaces":[{"title":"smoke","cwd":"$GITHUB_WORKSPACE","tabs":[{"title":"","title_source":"preset","layout":{"type":"pane","surfaces":[{"surface_type":"terminal","name":"Terminal","command":null,"cwd":"$GITHUB_WORKSPACE","env":null,"focus":true}]}}]}]}
+          EOF_SESSION
+
       - name: Launch .app and capture screenshot
         run: |
           set -euo pipefail
@@ -986,6 +999,40 @@ jobs:
         with:
           name: paneflow-x86_64-pc-windows-msvc
           path: target/x86_64-pc-windows-msvc/release/
+
+      - name: Seed a session with one terminal pane
+        # Same reason as the macOS smoke: the welcome screen (#74) renders
+        # no terminal, and the font gate needs one.
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $home_dir = Join-Path $env:USERPROFILE '.paneflow'
+          New-Item -ItemType Directory -Force -Path $home_dir | Out-Null
+          $cwd = $env:GITHUB_WORKSPACE
+          $session = @{
+            version = 2
+            active_workspace = 0
+            workspaces = @(@{
+              title = 'smoke'
+              cwd = $cwd
+              tabs = @(@{
+                title = ''
+                title_source = 'preset'
+                layout = @{
+                  type = 'pane'
+                  surfaces = @(@{
+                    surface_type = 'terminal'
+                    name = 'Terminal'
+                    command = $null
+                    cwd = $cwd
+                    env = $null
+                    focus = $true
+                  })
+                }
+              })
+            })
+          }
+          $session | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath (Join-Path $home_dir 'session.json') -Encoding utf8
 
       - name: Launch paneflow.exe and capture screenshot
         shell: pwsh
