@@ -304,6 +304,13 @@ impl TerminalAgent {
         installed_binaries_contains(self.binary())
     }
 
+    pub fn is_installed_now(self) -> bool {
+        if installed_binary_scan_pending() {
+            refresh_installed_binaries();
+        }
+        installed_binaries_contains(self.binary())
+    }
+
     fn command_args(self) -> &'static [&'static str] {
         match self {
             TerminalAgent::Kiro => &["chat"],
@@ -400,19 +407,11 @@ pub(crate) fn is_plain_shell_token(token: &str) -> bool {
 
 struct InstalledBinaryCache {
     checked_at: Option<Instant>,
+    refreshing: bool,
     found: HashSet<&'static str>,
 }
 
 impl InstalledBinaryCache {
-    fn refresh(&mut self) {
-        self.found = TerminalAgent::ALL
-            .into_iter()
-            .map(TerminalAgent::binary)
-            .filter(|bin| which::which(bin).is_ok())
-            .collect();
-        self.checked_at = Some(Instant::now());
-    }
-
     fn is_stale(&self) -> bool {
         self.checked_at
             .is_none_or(|checked_at| checked_at.elapsed() >= INSTALLED_BINARIES_TTL)
@@ -426,24 +425,60 @@ fn installed_binary_cache() -> &'static Mutex<InstalledBinaryCache> {
     CACHE.get_or_init(|| {
         Mutex::new(InstalledBinaryCache {
             checked_at: None,
+            refreshing: false,
             found: HashSet::new(),
         })
     })
 }
 
-fn installed_binaries_contains(binary: &'static str) -> bool {
-    let mut cache = match installed_binary_cache().lock() {
+fn lock_installed_binary_cache() -> std::sync::MutexGuard<'static, InstalledBinaryCache> {
+    match installed_binary_cache().lock() {
         Ok(cache) => cache,
         Err(poisoned) => {
             tracing::warn!(
                 target: "paneflow_app::agent_launcher",
-                "installed binary cache mutex poisoned; refreshing recovered state"
+                "installed binary cache mutex poisoned; using recovered state"
             );
             poisoned.into_inner()
         }
-    };
-    if cache.is_stale() {
-        cache.refresh();
+    }
+}
+
+fn scan_installed_binaries() -> HashSet<&'static str> {
+    TerminalAgent::ALL
+        .into_iter()
+        .map(TerminalAgent::binary)
+        .filter(|bin| which::which(bin).is_ok())
+        .collect()
+}
+
+pub(crate) fn refresh_installed_binaries() {
+    let found = scan_installed_binaries();
+    let mut cache = lock_installed_binary_cache();
+    cache.found = found;
+    cache.checked_at = Some(Instant::now());
+    cache.refreshing = false;
+}
+
+pub(crate) fn installed_binary_scan_pending() -> bool {
+    let cache = lock_installed_binary_cache();
+    cache.checked_at.is_none() || cache.refreshing
+}
+
+fn installed_binaries_contains(binary: &'static str) -> bool {
+    let mut cache = lock_installed_binary_cache();
+    if cache.is_stale() && !cache.refreshing {
+        cache.refreshing = true;
+        let spawned = std::thread::Builder::new()
+            .name("paneflow-agent-scan".into())
+            .spawn(refresh_installed_binaries);
+        if let Err(error) = spawned {
+            cache.refreshing = false;
+            tracing::warn!(
+                target: "paneflow_app::agent_launcher",
+                "installed binary scan thread failed to start: {error}"
+            );
+        }
     }
     cache.found.contains(binary)
 }
@@ -710,7 +745,32 @@ impl AgentLaunch {
 }
 
 #[cfg(test)]
+fn prime_installed_binary_cache(found: HashSet<&'static str>) {
+    let mut cache = lock_installed_binary_cache();
+    cache.found = found;
+    cache.checked_at = Some(Instant::now());
+    cache.refreshing = false;
+}
+
+#[cfg(test)]
 mod tests {
+    #[test]
+    fn installed_binary_reads_never_scan_on_the_caller_thread_once_warm() {
+        super::prime_installed_binary_cache(std::collections::HashSet::from(["claude"]));
+        assert!(!super::installed_binary_scan_pending());
+        let started = std::time::Instant::now();
+        for _ in 0..1_000 {
+            assert!(super::installed_binaries_contains("claude"));
+            assert!(!super::installed_binaries_contains(
+                "paneflow-no-such-agent-binary"
+            ));
+        }
+        assert!(
+            started.elapsed() < std::time::Duration::from_millis(50),
+            "warm reads must not walk PATH"
+        );
+    }
+
     use super::*;
 
     #[test]

@@ -429,8 +429,10 @@ fn detect_existing_instance(socket_path: &std::path::Path) -> Option<String> {
             std::thread::sleep(Duration::from_millis(70));
         }
 
-        let Ok(mut stream) = Stream::connect(name.clone()) else {
-            continue;
+        let mut stream = match Stream::connect(name.clone()) {
+            Ok(stream) => stream,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return None,
+            Err(_) => continue,
         };
 
         if stream
@@ -1349,6 +1351,27 @@ mod framing_tests {
         std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o1777))
             .expect("chmod sticky tempdir");
         assert!(super::unowned_socket_parent_is_safe(dir.path()));
+    }
+}
+
+#[cfg(test)]
+mod singleton_guard_tests {
+    use super::detect_existing_instance;
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn absent_endpoint_is_reported_without_retry_sleeps() {
+        let path = if cfg!(windows) {
+            std::path::PathBuf::from(format!(r"\\.\pipe\paneflow-absent-{}", std::process::id()))
+        } else {
+            std::env::temp_dir().join(format!("paneflow-absent-{}.sock", std::process::id()))
+        };
+        let started = Instant::now();
+        assert!(detect_existing_instance(&path).is_none());
+        assert!(
+            started.elapsed() < Duration::from_millis(60),
+            "a missing endpoint must not pay the inter-attempt sleeps"
+        );
     }
 }
 

@@ -29,6 +29,14 @@ impl PaneFlowApp {
         cx.subscribe(&title_bar, Self::handle_title_bar_event)
             .detach();
         let (ipc_rx, ipc_status, event_bus) = ipc::start_server();
+        crate::startup_trace::mark("ipc_server_started");
+        cx.spawn(
+            async |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
+                smol::unblock(crate::agent_launcher::refresh_installed_binaries).await;
+                let _ = this.update(cx, |_app: &mut Self, cx: &mut Context<Self>| cx.notify());
+            },
+        )
+        .detach();
 
         let blink_phase = cx.new(|_| BlinkPhase::default());
         cx.set_global(BlinkPhaseGlobal(blink_phase.clone()));
@@ -91,6 +99,7 @@ impl PaneFlowApp {
         }
 
         let (saved_session, session_corruption) = Self::load_session();
+        crate::startup_trace::mark("session_loaded");
 
         let restored_mode = saved_session.as_ref().map(|s| s.mode).unwrap_or_default();
         let restored_review_layout = saved_session.as_ref().and_then(|s| s.review_layout.clone());
@@ -120,6 +129,7 @@ impl PaneFlowApp {
             }
             None => (Vec::new(), 0, false),
         };
+        crate::startup_trace::mark("workspaces_restored");
 
         let (git_event_tx, git_event_rx) = std::sync::mpsc::channel();
         let mut git_watcher = match notify::recommended_watcher(git_event_tx) {
@@ -542,6 +552,7 @@ impl PaneFlowApp {
             cached_config.theme.as_deref(),
         );
 
+        crate::startup_trace::mark("app_fields_prepared");
         let mut app = Self {
             workspaces,
             active_idx,

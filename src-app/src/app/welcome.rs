@@ -82,6 +82,9 @@ fn welcome_section_header(label: &'static str, ui: crate::theme::UiColors) -> im
 
 impl PaneFlowApp {
     pub(crate) fn installed_agent_summary(&self) -> String {
+        if crate::agent_launcher::installed_binary_scan_pending() {
+            return "Looking for agent CLIs on this machine.".to_string();
+        }
         let mut names: Vec<&str> = AgentLaunch::all(&self.cached_config)
             .iter()
             .filter(|launch| launch.is_installed())
