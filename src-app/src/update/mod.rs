@@ -3,6 +3,7 @@ pub mod error;
 pub mod install_method;
 pub mod linux;
 pub mod macos;
+pub mod release_notes;
 pub mod signature;
 pub(crate) mod verified_download;
 pub mod windows;

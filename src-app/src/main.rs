@@ -1459,7 +1459,7 @@ impl Render for PaneFlowApp {
         }
 
         if let Some(toast) = &self.toast {
-            app_content = app_content.child(self.render_toast(toast, ui));
+            app_content = app_content.child(self.render_toast(toast, ui, cx));
         }
 
         if let Some(anchor) = self.title_bar_files_menu_open {
