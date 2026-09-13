@@ -556,6 +556,7 @@ mod tests {
                 "qodercli",
                 "openclaw",
                 "dsh",
+                "muse",
             ],
         );
     }

@@ -29,8 +29,8 @@ use hooks::{
     merge_codebuddy_hooks, merge_cursor_hooks, merge_gemini_hooks, merge_qoder_hooks,
     remove_cursor_hooks, remove_gemini_hooks, remove_paneflow_hooks, remove_qoder_hooks,
     DshOverlayGuard, GrokHookFileGuard, HermesHookConfigGuard, HookConfigGuard, HookInstall,
-    HookInstallSkip, ManagedHookConfigGuard, ManagedHookSpec, OpenCodePluginGuard,
-    PiExtensionGuard,
+    HookInstallSkip, ManagedHookConfigGuard, ManagedHookSpec, MuseHookConfigGuard,
+    OpenCodePluginGuard, PiExtensionGuard,
 };
 #[cfg(not(unix))]
 use hooks::{merge_codex_hooks, remove_codex_hooks};
@@ -114,6 +114,7 @@ enum ToolHookGuard {
     Hermes(HermesHookConfigGuard),
     Grok(GrokHookFileGuard),
     Dsh(DshOverlayGuard),
+    Muse(MuseHookConfigGuard),
 }
 
 fn install_hook_guard(tool: &str) -> std::io::Result<HookInstall<ToolHookGuard>> {
@@ -171,6 +172,7 @@ fn install_hook_guard(tool: &str) -> std::io::Result<HookInstall<ToolHookGuard>>
         }
         "grok" => GrokHookFileGuard::install().map(|outcome| outcome.map(ToolHookGuard::Grok)),
         "dsh" => DshOverlayGuard::install().map(|outcome| outcome.map(ToolHookGuard::Dsh)),
+        "muse" => MuseHookConfigGuard::install().map(|outcome| outcome.map(ToolHookGuard::Muse)),
         _ => Ok(HookInstall::Skipped(HookInstallSkip::UnsupportedTool)),
     }
 }

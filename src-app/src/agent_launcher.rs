@@ -23,10 +23,11 @@ pub enum TerminalAgent {
     Qoder,
     Openclaw,
     DeepSeekHarness,
+    Muse,
 }
 
 impl TerminalAgent {
-    pub const ALL: [TerminalAgent; 17] = [
+    pub const ALL: [TerminalAgent; 18] = [
         TerminalAgent::ClaudeCode,
         TerminalAgent::Codex,
         TerminalAgent::OpenCode,
@@ -44,6 +45,7 @@ impl TerminalAgent {
         TerminalAgent::Qoder,
         TerminalAgent::Openclaw,
         TerminalAgent::DeepSeekHarness,
+        TerminalAgent::Muse,
     ];
 
     pub const PRIMARY: [TerminalAgent; 5] = [
@@ -79,6 +81,7 @@ impl TerminalAgent {
             TerminalAgent::Qoder => "qoder_button_visible",
             TerminalAgent::Openclaw => "openclaw_button_visible",
             TerminalAgent::DeepSeekHarness => "deepseek_harness_button_visible",
+            TerminalAgent::Muse => "muse_button_visible",
         }
     }
 
@@ -135,6 +138,7 @@ impl TerminalAgent {
             TerminalAgent::Qoder => "Qoder",
             TerminalAgent::Openclaw => "Openclaw",
             TerminalAgent::DeepSeekHarness => "DeepSeek Harness",
+            TerminalAgent::Muse => "Muse Code",
         }
     }
 
@@ -157,6 +161,7 @@ impl TerminalAgent {
             TerminalAgent::Qoder => "agents/qoder-color.svg",
             TerminalAgent::Openclaw => "agents/openclaw-color.svg",
             TerminalAgent::DeepSeekHarness => "agents/deepseek-color.svg",
+            TerminalAgent::Muse => "agents/muse-color.svg",
         }
     }
 
@@ -166,6 +171,7 @@ impl TerminalAgent {
             TerminalAgent::Amp => Some(0xF34E3F),
             TerminalAgent::Qoder => Some(0x2ADB5C),
             TerminalAgent::DeepSeekHarness => Some(0x4D6BFE),
+            TerminalAgent::Muse => Some(0x0081FB),
             TerminalAgent::Codex
             | TerminalAgent::OpenCode
             | TerminalAgent::Pi
@@ -212,6 +218,7 @@ impl TerminalAgent {
             TerminalAgent::Qoder => "qoder",
             TerminalAgent::Openclaw => "openclaw",
             TerminalAgent::DeepSeekHarness => "deepseek_harness",
+            TerminalAgent::Muse => "muse",
         }
     }
 
@@ -251,6 +258,7 @@ impl TerminalAgent {
             "qoder" => Some(TerminalAgent::Qoder),
             "openclaw" => Some(TerminalAgent::Openclaw),
             "deepseek_harness" => Some(TerminalAgent::DeepSeekHarness),
+            "muse" => Some(TerminalAgent::Muse),
             _ => None,
         }
     }
@@ -274,6 +282,7 @@ impl TerminalAgent {
             TerminalAgent::Qoder => config.qoder_button_visible,
             TerminalAgent::Openclaw => config.openclaw_button_visible,
             TerminalAgent::DeepSeekHarness => config.deepseek_harness_button_visible,
+            TerminalAgent::Muse => config.muse_button_visible,
         };
         explicit.unwrap_or_else(|| self.is_installed())
     }
@@ -297,6 +306,7 @@ impl TerminalAgent {
             TerminalAgent::Qoder => "qodercli",
             TerminalAgent::Openclaw => "openclaw",
             TerminalAgent::DeepSeekHarness => "dsh",
+            TerminalAgent::Muse => "muse",
         }
     }
 
@@ -992,6 +1002,7 @@ mod tests {
         assert_eq!(TerminalAgent::Qoder.session_agent(), None);
         assert_eq!(TerminalAgent::Openclaw.session_agent(), None);
         assert_eq!(TerminalAgent::DeepSeekHarness.session_agent(), None);
+        assert_eq!(TerminalAgent::Muse.session_agent(), None);
     }
 
     #[test]
@@ -1003,6 +1014,7 @@ mod tests {
             TerminalAgent::DeepSeekHarness.command(&cfg),
             "dsh --profile tui"
         );
+        assert_eq!(TerminalAgent::Muse.command(&cfg), "muse");
     }
 
     fn profile_entry(name: &str, agent: &str) -> AgentProfileConfig {

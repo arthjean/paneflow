@@ -107,6 +107,7 @@ CLI binary. `false` hides the button. `true` forces it visible.
 | `qoder_button_visible` | Qoder |
 | `openclaw_button_visible` | OpenClaw |
 | `deepseek_harness_button_visible` | DeepSeek Harness |
+| `muse_button_visible` | Muse Code |
 
 ## `terminal`
 
