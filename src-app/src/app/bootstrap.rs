@@ -460,6 +460,24 @@ impl PaneFlowApp {
             }
         }
 
+        if let Some(version) = update::release_notes::upgraded_version() {
+            log::info!("paneflow: first launch on {version} - raising the release toast");
+            cx.spawn(
+                async move |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
+                    smol::Timer::after(std::time::Duration::from_millis(
+                        crate::app::constants::RELEASE_TOAST_DELAY_MS,
+                    ))
+                    .await;
+                    let _ = cx.update(|cx| {
+                        this.update(cx, |app: &mut Self, cx: &mut Context<Self>| {
+                            app.show_release_notes_toast(&version, cx);
+                        })
+                    });
+                },
+            )
+            .detach();
+        }
+
         let agents_filter_input =
             cx.new(|cx| crate::widgets::text_input::TextInput::new("", "Search threads", cx));
         cx.observe(&agents_filter_input, |_, _, cx| cx.notify())

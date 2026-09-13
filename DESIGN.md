@@ -105,8 +105,9 @@ Nerd Font as the default.
 2. Depth comes from the surface ramp (`base`, `surface`, `overlay`, `subtle`)
    and from inset cards with masked corners. Drop shadows were removed in
    0.5.4 and MUST NOT return on chrome outside the contextual Zed Editor
-   Controls menu in 5.4; the other shadows are the client-side window, the
-   drag ghost, and the About dialog, which is Migration.
+   Controls menu in 5.4 and the release toast in 5.8; the other shadows are the
+   client-side window, the drag ghost, and the About dialog, which is
+   Migration.
 3. One highlight material. Hovered, active, and selected states are alpha
    tints of one color per theme lightness, never a per-component fill.
 4. Every rounded surface takes its radius from section 4.4. New radii are not
@@ -318,7 +319,7 @@ controls at 10 px or below, where the superellipse is invisible.
 | Icon buttons | small 20 outer with 12 icon, medium 24 outer with 13 icon |
 | Toolbar pill | height 24, padding 8, gap 5 |
 | Filter field | padding 10 by 6, gap 6, 13 px search icon, 16 px clear button with a 10 px glyph |
-| Toast | inset 18, padding 12 / 14 by 11, minimum width 220, action buttons 26 tall |
+| Toast | inset 18, padding 12 / 14 by 11, minimum width 220, action buttons 26 tall; the release toast is inset 12, padding 12, width 448, close button 20, action button 26 tall |
 | Scrollbar | width 6, gutter 10, minimum thumb 24, inset 2 |
 | Diff | row 18, file header 32, fold row 32, sticky header 24, gutter 36, change bar 4, split divider 3, column header 30, minimum split column 360, revert chip 56 by 16 inset 10 |
 | Code editor | 12 px mono, caret 2, scrollbar 15, minimum thumb 25; git marker column 6 left of the numbers, bar 4 radius 2 inset 1, deleted dot 8, hover grows 3 to the left |
@@ -692,7 +693,18 @@ Every other target clones with git.
 
 Toasts stack bottom right on `subtle` with a 15 px icon, 12.5 px text, and
 26 px action buttons on `text` at 0.08 to 0.12. Error messages are detected
-and get the error icon. Callouts (`widgets/callout.rs`) are 16 px icon, 14
+and get the error icon. The release toast is **Contextual** and does not
+follow that shape: it is a Zed notification frame, 448 wide, inset 12,
+padding 12, gap 8, radius 8, a 1 px `text` hairline at 0.10 on the title bar
+color, the same fill as the sidebar, and Zed's four-layer elevation shadow. No
+icon, a 14 px `text` line reading `Updated to PaneFlow x.y.z`, a 20 px close
+button on its right with an 11 px `muted` glyph and a `text` wash at 0.08 on
+hover, and one 26 px squircle button on `text` at 0.08 to 0.12. The button and
+the whole surface open `paneflow.dev/docs/changelog/<tag>`, then dismiss it.
+It lands 1500 ms after boot, once the window is painted, and it is the one
+toast that never auto-closes: only the close button, the surface click, or
+another toast in the queue removes it. Callouts (`widgets/callout.rs`) are 16
+px icon, 14
 Semibold title, 13 muted description, with `accent` for info and the fixed
 warning and error hues. Empty states (`panel_empty_state`) center an 18 px
 muted glyph, an optional 14 Semibold title, and a 12 px muted message; the
@@ -803,8 +815,9 @@ These are the Paneflow-specific bans, in addition to the generic ones a
 design review would raise anywhere.
 
 - Drop shadows on chrome, cards, rows, menus, or toasts outside the contextual
-  Editor Controls menu in 5.4. The window and drag ghost retain their shadows;
-  the About dialog's shadow is Migration, not a precedent.
+  Editor Controls menu in 5.4 and the release toast in 5.8. The window and drag
+  ghost retain their shadows; the About dialog's shadow is Migration, not a
+  precedent.
 - Separators between tabs, chips, or toolbar buttons. The floating chip
   language replaced full-height bordered tabs in 0.5.5.
 - Identity pills, badges, or logos in the pane header. The sidebar owns
