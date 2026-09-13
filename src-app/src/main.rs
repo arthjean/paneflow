@@ -48,6 +48,9 @@ mod runtime_paths;
 mod search;
 mod settings;
 mod sidebar_title;
+#[cfg(test)]
+mod startup_bench;
+mod startup_trace;
 mod system_info;
 mod telemetry;
 mod terminal;
@@ -63,9 +66,9 @@ mod workspace;
 use crate::window_chrome::title_bar;
 
 use gpui::{
-    Animation, AnimationExt, App, Context, CursorStyle, Entity, FocusHandle, Focusable,
-    InteractiveElement, IntoElement, PathBuilder, Pixels, Point, Render, SharedString, Styled,
-    Window, WindowBounds, WindowDecorations, WindowOptions, canvas, div, point, prelude::*, px,
+    App, Context, CursorStyle, Entity, FocusHandle, Focusable, InteractiveElement, IntoElement,
+    PathBuilder, Pixels, Point, Render, Styled, Window, WindowBounds, WindowDecorations,
+    WindowOptions, canvas, div, point, prelude::*, px,
 };
 use gpui_platform::application;
 use notify::Watcher;
@@ -234,35 +237,12 @@ struct SelfUpdateState {
 
 const PRIMARY_SIDEBAR_ANIMATION_MS: u64 = 280;
 const PRIMARY_SIDEBAR_MIN_ANIMATION_DELTA: f32 = 0.5;
-const STARTUP_SPLASH_TEXT_WIDTH: f32 = 198.;
-const STARTUP_SPLASH_TEXT: [&str; 8] = ["P", "a", "n", "e", "f", "l", "o", "w"];
-const STARTUP_SPLASH_LETTER_COUNT: f32 = STARTUP_SPLASH_TEXT.len() as f32;
-const STARTUP_SPLASH_TEXT_ALPHA: f32 = 0.54;
-const STARTUP_SPLASH_SHIMMER_ALPHA: f32 = 0.82;
-const STARTUP_SPLASH_SHIMMER_MS: u64 = 2600;
-const STARTUP_SPLASH_MIN_VISIBLE_MS: u64 = 900;
 
 #[derive(Clone, Copy)]
 pub(crate) struct SidebarWidthAnimation {
     pub(crate) from_width: f32,
     pub(crate) to_width: f32,
     pub(crate) started_at: std::time::Instant,
-}
-
-struct StartupSplashView {
-    mount_scheduled: bool,
-    native_material_active: bool,
-}
-
-impl StartupSplashView {
-    fn new(_: &mut Context<Self>) -> Self {
-        let config = paneflow_config::loader::load_config();
-        Self {
-            mount_scheduled: false,
-            native_material_active: config.cockpit_chrome_material_enabled()
-                || config.windows_terminal_material_enabled(),
-        }
-    }
 }
 
 fn native_backdrop_material_active(
@@ -473,104 +453,6 @@ fn panel_corner_mask(corner: PanelCorner, background: gpui::Hsla) -> impl IntoEl
         },
     )
     .size_full()
-}
-
-fn startup_splash_letter(
-    label: &'static str,
-    index: usize,
-    base_color: gpui::Hsla,
-) -> gpui::AnyElement {
-    div()
-        .text_size(px(34.))
-        .font_weight(gpui::FontWeight::MEDIUM)
-        .text_color(base_color)
-        .child(label)
-        .with_animation(
-            SharedString::from(format!("startup-splash-shimmer-letter-{index}")),
-            Animation::new(std::time::Duration::from_millis(STARTUP_SPLASH_SHIMMER_MS)).repeat(),
-            move |letter, delta| {
-                let color = startup_splash_shimmer_color(base_color, index, delta);
-                letter.text_color(color)
-            },
-        )
-        .into_any_element()
-}
-
-fn startup_splash_shimmer_color(base_color: gpui::Hsla, index: usize, delta: f32) -> gpui::Hsla {
-    let active_delta = if delta < 0.78 {
-        delta / 0.78
-    } else {
-        return base_color;
-    };
-    let center = -1.8 + active_delta * (STARTUP_SPLASH_LETTER_COUNT + 3.6);
-    let distance = (index as f32 - center).abs();
-    let sigma = 0.86;
-    let strength = (-(distance * distance) / (2. * sigma * sigma)).exp();
-    let lightness = (base_color.l + (1. - base_color.l) * strength * 0.86).min(0.97);
-    let saturation = base_color.s * (1. - strength * 0.85).max(0.);
-    let alpha = base_color.a + (STARTUP_SPLASH_SHIMMER_ALPHA - base_color.a) * strength;
-
-    gpui::hsla(base_color.h, saturation, lightness, alpha)
-}
-
-impl Render for StartupSplashView {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        if !self.mount_scheduled {
-            self.mount_scheduled = true;
-            cx.spawn_in(window, async move |_, cx| {
-                smol::Timer::after(std::time::Duration::from_millis(
-                    STARTUP_SPLASH_MIN_VISIBLE_MS,
-                ))
-                .await;
-                let _ = cx.update(|window, cx| {
-                    mount_paneflow_app(window, cx);
-                });
-            })
-            .detach();
-        }
-
-        let ui = crate::theme::ui_colors();
-        let splash_text_color = gpui::Hsla {
-            a: STARTUP_SPLASH_TEXT_ALPHA,
-            ..ui.muted
-        };
-        let theme = crate::theme::active_theme();
-        let is_window_active = window.is_window_active();
-        let shell_color = if is_window_active {
-            theme.title_bar_background
-        } else {
-            theme.title_bar_inactive_background
-        };
-        let background = crate::app::constants::cockpit_backdrop_background(
-            shell_color,
-            is_window_active,
-            self.native_material_active,
-        );
-        let content = div()
-            .font_family("Geist")
-            .size_full()
-            .flex()
-            .items_center()
-            .justify_center()
-            .child(
-                div()
-                    .relative()
-                    .w(px(STARTUP_SPLASH_TEXT_WIDTH))
-                    .h(px(58.))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .children(
-                        STARTUP_SPLASH_TEXT
-                            .iter()
-                            .enumerate()
-                            .map(|(index, label)| {
-                                startup_splash_letter(label, index, splash_text_color)
-                            }),
-                    ),
-            );
-        crate::window_chrome::csd::client_side_window_shell(content, window, background, ui.border)
-    }
 }
 
 impl SidebarWidthAnimation {
@@ -926,6 +808,7 @@ impl PaneFlowApp {
 
 impl Render for PaneFlowApp {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        startup_trace::on_app_render(window);
         let ui = crate::theme::ui_colors();
         let theme = crate::theme::active_theme();
         #[cfg(target_os = "windows")]
@@ -1545,7 +1428,7 @@ impl Render for PaneFlowApp {
             app_content = app_content.child(self.render_files_context_menu(menu, ui, window, cx));
         }
 
-        crate::window_chrome::csd::client_side_window_shell(
+        let shell = crate::window_chrome::csd::client_side_window_shell(
             app_content,
             window,
             app_backdrop_bg,
@@ -1554,7 +1437,9 @@ impl Render for PaneFlowApp {
             } else {
                 ui.border
             },
-        )
+        );
+        startup_trace::on_app_render_built();
+        shell
     }
 }
 
@@ -1677,7 +1562,8 @@ mod windows_startup_console_tests {
 }
 
 fn mount_paneflow_app(window: &mut Window, cx: &mut App) -> Entity<PaneFlowApp> {
-    let view = window.replace_root(cx, |_, cx| PaneFlowApp::new(cx));
+    let view = cx.new(PaneFlowApp::new);
+    startup_trace::mark("app_state_built");
     view.update(cx, |_, cx| {
         let weak = cx.weak_entity();
         cx.intercept_keystrokes(move |event, window, cx| {
@@ -1750,14 +1636,17 @@ fn mount_paneflow_app(window: &mut Window, cx: &mut App) -> Entity<PaneFlowApp> 
             ws.focus_first(window, cx);
         }
     });
+    startup_trace::mark("app_mounted");
     view
 }
 
 fn main() {
+    startup_trace::begin();
     let args: Vec<String> = std::env::args().collect();
     for migrated in paneflow_home::migrate_legacy_home() {
         eprintln!("paneflow: moved user state to {}", migrated.display());
     }
+    startup_trace::mark("home_migrated");
     #[cfg(unix)]
     if args.get(1).map(String::as_str) == Some(agents::parent_guard::PTY_GUARD_SUBCOMMAND) {
         std::process::exit(agents::parent_guard::run_pty_guard_from_args(&args));
@@ -1864,6 +1753,7 @@ fn main() {
             );
         }
     }
+    startup_trace::mark("process_job_installed");
 
     if should_load_login_shell_env_for_startup(
         is_msi_relay,
@@ -1875,6 +1765,7 @@ fn main() {
     ) {
         login_shell_env::load_login_shell_env();
     }
+    startup_trace::mark("login_shell_env_loaded");
 
     runtime_paths::augment_path_for_gui_launch();
 
@@ -1927,6 +1818,7 @@ fn main() {
             "paneflow: MCP bridge extraction failed ({e:#}); `paneflow mcp install` will be unavailable until resolved"
         ),
     }
+    startup_trace::mark("bridge_extracted");
 
     #[cfg(target_os = "windows")]
     if let Err(err) = windows_app_identity::ensure_process_app_user_model_id() {
@@ -1938,7 +1830,9 @@ fn main() {
     application()
         .with_assets(assets::Assets)
         .run(|cx: &mut App| {
+            startup_trace::mark("gpui_app_ready");
             let config = paneflow_config::loader::load_config();
+            startup_trace::mark("config_loaded");
             cx.set_text_rendering_mode(gpui::TextRenderingMode::Grayscale);
             keybindings::apply_keybindings(cx, &config.shortcuts);
 
@@ -1948,6 +1842,7 @@ fn main() {
                      systems without a system monospace font"
                 );
             }
+            startup_trace::mark("fonts_loaded");
 
             #[cfg(target_os = "macos")]
             {
@@ -1977,6 +1872,7 @@ fn main() {
                 ..Default::default()
             };
 
+            startup_trace::mark("window_requested");
             let window_result = cx.open_window(
                 WindowOptions {
                     window_bounds: Some(WindowBounds::Windowed(bounds)),
@@ -2012,10 +1908,12 @@ fn main() {
                     #[cfg(target_os = "linux")]
                     crate::window_chrome::linux_backdrop::apply_subtle_chrome_material(window);
 
-                    cx.new(StartupSplashView::new)
+                    startup_trace::mark("window_created");
+                    mount_paneflow_app(window, cx)
                 },
             );
 
+            startup_trace::mark("window_open_returned");
             match window_result {
                 Ok(_) => cx.activate(true),
                 Err(e) => {

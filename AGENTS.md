@@ -145,7 +145,10 @@ not measure. For the terminal pipeline, `scripts/bench-terminal.sh` (or
 and prints a comparison against `bench/baseline.json`. For the code editor,
 `scripts/bench-editor.sh` (or `.ps1`) runs the suite in
 `src-app/src/app/diff_dock/code/perf_bench.rs` and compares against
-`bench/editor-baseline.json`. Both share the harness and the single
+`bench/editor-baseline.json`. For the time to first frame,
+`scripts/bench-startup.sh` (or `.ps1`) launches the release binary with the
+startup trace in `src-app/src/startup_trace.rs` and compares against
+`bench/startup-baseline.json`. All three share the harness and the single
 `#[global_allocator]` in `src-app/src/bench_harness.rs`; see
 [bench/README.md](bench/README.md).
 

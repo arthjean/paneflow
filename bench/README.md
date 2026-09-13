@@ -6,14 +6,15 @@ comes from one of the suites below, run with the scripts described here, and
 the raw result of each run is archived next to the baseline it is compared
 against.
 
-There are two suites, two baselines, and two result prefixes:
+There are three suites, three baselines, and three result prefixes:
 
 | Suite | Test | Script | Baseline | Result files |
 |---|---|---|---|---|
 | `paneflow-terminal-bench` | `terminal::perf_bench::terminal_pipeline_benchmark` | `scripts/bench-terminal.sh` / `.ps1` | `bench/baseline.json` | `bench/results/<stamp>-<sha>.json` |
 | `paneflow-editor-bench` | `app::diff_dock::code::perf_bench::editor_pipeline_benchmark` | `scripts/bench-editor.sh` / `.ps1` | `bench/editor-baseline.json` | `bench/results/editor-<stamp>-<sha>.json` |
+| `paneflow-startup-bench` | `startup_bench::startup_first_frame_benchmark` | `scripts/bench-startup.sh` / `.ps1` | `bench/startup-baseline.json` | `bench/results/startup-<stamp>-<sha>.json` |
 
-Both suites share one harness, `src-app/src/bench_harness.rs`: the metric
+All three suites share one harness, `src-app/src/bench_harness.rs`: the metric
 type, the timing helpers, the JSON document, the comparison table, and the
 single `#[global_allocator]` the test binary installs. That allocator counts
 allocated bytes, allocation calls, and live bytes (allocations minus
@@ -388,3 +389,46 @@ The historic baseline predates `open_to_first_tree_300kb`. Its comparison uses
 [the last recorded EP-011 run](results/editor-20260904T210646Z-f76af1ef703c.json):
 43.445 ms before, 45.365 ms after (+4.4%). Other comparisons use the baseline
 selected by `scripts/bench-editor.ps1`.
+
+## Startup suite
+
+The benchmark is the ignored test `startup_first_frame_benchmark` in
+`src-app/src/startup_bench.rs`. Unlike the other two suites it launches the
+real release binary, because the cost it measures is the GPU window, the
+platform text system, and the state the app builds before its first frame,
+none of which exist in a window-free test. The app cooperates through the
+startup trace in `src-app/src/startup_trace.rs`: when `PANEFLOW_STARTUP_TRACE`
+names a file, the app records a mark at each stage of `main` and of
+`PaneFlowApp::new`, writes the timeline as JSON once its first frame has been
+presented, and quits. The probe ships in release builds so the shipping profile
+is what gets measured.
+
+Two scenarios run back to back, each against its own seeded `PANEFLOW_HOME`
+under the system temp directory:
+
+| Scenario | Prefix | Home contents |
+|---|---|---|
+| Welcome | `welcome_` | An empty session, so the first frame is the welcome screen. |
+| Restore | `restore3_` | A session of three workspaces with one terminal pane each, all in a scratch directory. The daily case: a restored layout whose panes spawn shells. |
+
+The seed writes `session.json`, `paneflow.json` (`{}`), `window-state.json`
+(a fixed 1400x900 window) and `telemetry_id` before the first launch. Every
+one of those files must exist: `migrate_legacy_home` copies the developer's
+own files from the legacy `dirs::config_dir()` locations into any home that
+lacks them, which would silently turn the fixture into the developer's real
+session. One untimed warm-up launch per scenario absorbs whatever else the app
+creates on first run; the timed launches that follow
+(`PANEFLOW_BENCH_STARTUP_RUNS`, default 10) therefore measure a second launch.
+The suite refuses a debug binary unless `PANEFLOW_BENCH_ALLOW_DEBUG` is set.
+`PANEFLOW_BENCH_EXE` overrides the binary path, which otherwise resolves to
+`paneflow` next to the test binary's profile directory.
+
+| Metric | Unit | What it captures |
+|---|---|---|
+| `<scenario>_first_frame_total` | ns | From the first line of `main` to the first presented frame of the app window. The headline number of each scenario. |
+| `<scenario>_step_<mark>` | ns | The time between one trace mark and the previous one, one metric per mark in launch order. `step_gpui_app_ready` is the platform and text system initialization inside GPUI, `step_fonts_loaded` the registration of the embedded fonts, `step_window_created` the GPU window, `step_ipc_server_started` the singleton guard and IPC thread, `step_workspaces_restored` the session restore, `step_first_render_built` the element tree construction, and `step_window_open_returned` the first layout and paint of that tree. |
+
+The mark names are the metric names, so adding a mark adds a metric and the
+comparison table reports it as new. The `cpu_share` field is `0.0` for this
+suite: the timed work happens in a child process, so the harness cannot
+attribute a core share to it.
