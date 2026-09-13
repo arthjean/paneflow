@@ -1,8 +1,6 @@
 name: Startup comparison (Paneflow vs cmux)
 
 on:
-  push:
-    branches: [bench/startup-compare]
   workflow_dispatch:
     inputs:
       runs:
