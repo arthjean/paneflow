@@ -564,7 +564,7 @@ pub(super) fn resolve_command(
     };
     let resolved = resolve_agent(agent)
         .ok_or_else(|| CliError::runtime(format!("pane {idx}: unknown agent '{agent}'")))?;
-    if !resolved.is_installed() {
+    if !resolved.is_installed_now() {
         return Err(CliError::runtime(format!(
             "pane {idx}: agent '{agent}' ({}) not found on PATH",
             resolved.binary()
