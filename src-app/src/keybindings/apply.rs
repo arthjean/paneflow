@@ -266,6 +266,48 @@ mod tests {
         }
     }
 
+    #[test]
+    fn terminal_search_chord_is_claimed_only_by_toggle_search() {
+        use super::super::defaults::DEFAULTS;
+
+        let claimants: Vec<&str> = DEFAULTS
+            .iter()
+            .chain(PLATFORM_DEFAULTS.iter())
+            .filter(|d| keystrokes_conflict(d.key, "ctrl-shift-f"))
+            .map(|d| d.action_name)
+            .collect();
+        assert_eq!(claimants, vec!["toggle_search"]);
+    }
+
+    #[test]
+    fn global_defaults_never_share_a_chord_with_another_default() {
+        use super::super::defaults::DEFAULTS;
+
+        let all: Vec<_> = DEFAULTS.iter().chain(PLATFORM_DEFAULTS.iter()).collect();
+        let shadowing: Vec<String> = all
+            .iter()
+            .filter(|d| d.context.is_none())
+            .flat_map(|global| {
+                all.iter()
+                    .filter(move |other| {
+                        other.action_name != global.action_name
+                            && keystrokes_conflict(other.key, global.key)
+                    })
+                    .map(move |other| {
+                        format!(
+                            "{} ({}) shadows {} ({}) on {}",
+                            global.action_name,
+                            global.key,
+                            other.action_name,
+                            other.key,
+                            std::env::consts::OS
+                        )
+                    })
+            })
+            .collect();
+        assert!(shadowing.is_empty(), "{}", shadowing.join("\n"));
+    }
+
     #[cfg(target_os = "macos")]
     #[test]
     fn us010_cmd_c_parses_as_binding() {

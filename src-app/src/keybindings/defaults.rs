@@ -336,7 +336,7 @@ pub(super) const DEFAULTS: &[DefaultBinding] = &[
         context: None,
     },
     DefaultBinding {
-        key: "secondary-shift-f",
+        key: "secondary-alt-m",
         action_name: "toggle_diff_dock_maximize",
         context: None,
     },
@@ -422,6 +422,11 @@ pub(super) const PLATFORM_DEFAULTS: &[DefaultBinding] = &[
     DefaultBinding {
         key: "cmd-k",
         action_name: "clear_scroll_history",
+        context: Some("Terminal"),
+    },
+    DefaultBinding {
+        key: "cmd-f",
+        action_name: "toggle_search",
         context: Some("Terminal"),
     },
 ];
@@ -542,6 +547,17 @@ mod tests {
                 .iter()
                 .any(|d| d.key == "ctrl-shift-v" && d.action_name == "terminal_paste")
         );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn cmd_f_opens_terminal_search_on_macos() {
+        let search = PLATFORM_DEFAULTS
+            .iter()
+            .find(|d| d.key == "cmd-f")
+            .expect("cmd-f must be a macOS default");
+        assert_eq!(search.action_name, "toggle_search");
+        assert_eq!(search.context, Some("Terminal"));
     }
 
     #[cfg(not(target_os = "macos"))]
