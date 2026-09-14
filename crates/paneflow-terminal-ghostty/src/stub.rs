@@ -104,6 +104,14 @@ impl DisplayTerminal {
         Err(GhosttyError::UnsupportedPlatform)
     }
 
+    pub fn select_all(&mut self) -> Result<bool> {
+        Err(GhosttyError::UnsupportedPlatform)
+    }
+
+    pub fn selection_range(&self) -> Result<Option<crate::SelectionRange>> {
+        Err(GhosttyError::UnsupportedPlatform)
+    }
+
     pub fn hyperlink_at(&self, _: Point) -> Result<Option<Hyperlink>> {
         Err(GhosttyError::UnsupportedPlatform)
     }

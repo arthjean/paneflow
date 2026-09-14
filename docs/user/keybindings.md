@@ -77,12 +77,14 @@ diff hunk in the diff view.
 | App views | `open_composer` | `Cmd/Ctrl+Shift+Space` |
 | App views | `toggle_broadcast_member` | `Cmd/Ctrl+Shift+B` |
 | App views | `open_broadcast_groups` | `Cmd/Ctrl+Shift+M` |
-| App views | `open_attention_queue` | `Cmd/Ctrl+Shift+K` |
+| App views | `open_attention_queue` | `Cmd/Ctrl+Shift+U` |
 | App views | `open_launch_pad` | `Cmd/Ctrl+Shift+L` |
 | Terminal pane | `terminal_copy` | `Ctrl+Shift+C` |
 | Terminal pane | `terminal_paste` | `Ctrl+Shift+V` |
 | Terminal pane | `terminal_copy` | `Cmd+C (macOS only)` |
 | Terminal pane | `terminal_paste` | `Cmd+V (macOS only)` |
+| Terminal pane | `terminal_select_all` | `Ctrl+Shift+A` |
+| Terminal pane | `terminal_select_all` | `Cmd+A (macOS only)` |
 | Terminal pane | `scroll_page_up` | `Shift+PageUp` |
 | Terminal pane | `scroll_page_down` | `Shift+PageDown` |
 | Terminal pane | `jump_prev_prompt` | `Cmd/Ctrl+Shift+Up` |

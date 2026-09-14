@@ -5,6 +5,15 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
 
 ## [Unreleased]
 
+### Added
+
+- Select all in a terminal pane. `Ctrl+Shift+A` (`Cmd+A` on macOS) and
+  Edit > Select All on macOS select the whole buffer, scrollback included,
+  the way Ghostty does: leading and trailing blank cells are skipped, the
+  selection stays highlighted, and the text is copied to the clipboard with
+  the usual toast. The buffer is formatted off the render thread, so a long
+  scrollback does not stall a frame. Refs #63.
+
 ### Fixed
 
 - `Ctrl+Shift+F` opens the terminal search again on Windows and Linux. The
@@ -23,6 +32,9 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
 
 - The pinned `libghostty-vt` archive moves to Ghostty `0c2a290d`, which adds
   the `ghostty_search_*` API the terminal search now uses.
+- The attention queue moves from `Cmd/Ctrl+Shift+A` to `Cmd/Ctrl+Shift+U`,
+  freeing the chord every terminal uses for select all. The keybindings page
+  used to list it as `Shift+K`, which is the scrollback clear.
 
 ## [0.15.1] - 2026-09-14
 

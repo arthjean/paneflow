@@ -1370,6 +1370,11 @@ impl Render for TerminalView {
             .on_action(cx.listener(|this, _: &crate::TerminalPaste, window, cx| {
                 this.handle_paste(window, cx);
             }))
+            .on_action(
+                cx.listener(|this, _: &crate::TerminalSelectAll, window, cx| {
+                    this.handle_select_all(window, cx);
+                }),
+            )
             .on_scroll_wheel(cx.listener(Self::handle_scroll_wheel))
             .on_action(cx.listener(|this, _: &crate::ScrollPageUp, window, cx| {
                 this.handle_scroll_page_up(window, cx);
