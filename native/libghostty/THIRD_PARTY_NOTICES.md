@@ -7,7 +7,7 @@ dataset, and generated template distributed through that archive. It is
 included in the tar, AppImage, deb, rpm, and MSI packages.
 
 Pinned Ghostty source:
-`f2d5758f6305867dc36b36293c6165d8152b853e`.
+`0c2a290d3a3e2a599be3a43435d778a5896667ee`.
 
 Reviewed archive fingerprints:
 
@@ -44,7 +44,7 @@ license in addition to the upstream components identified below.
 
 | Component | Pinned version or provenance | Upstream license expression |
 |---|---|---|
-| Ghostty / libghostty-vt | `f2d5758f6305867dc36b36293c6165d8152b853e` | MIT |
+| Ghostty / libghostty-vt | `0c2a290d3a3e2a599be3a43435d778a5896667ee` | MIT |
 | Zig compiler runtime and generated Zig code | `0.16.0` | MIT |
 | uucode | `0.2.0@2826a37a4562284fdacd8fa029d49509cc9bffcd` | MIT |
 | Unicode Character Database | `17.0.0`, bundled through uucode | Unicode-3.0 |
@@ -66,7 +66,7 @@ ISA detection code. Both upstream Highway alternatives are reproduced.
 
 ### Ghostty / libghostty-vt
 
-Source: <https://github.com/ghostty-org/ghostty/tree/f2d5758f6305867dc36b36293c6165d8152b853e>
+Source: <https://github.com/ghostty-org/ghostty/tree/0c2a290d3a3e2a599be3a43435d778a5896667ee>
 
 ```text
 MIT License

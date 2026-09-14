@@ -134,6 +134,7 @@ impl DisplayTerminal {
             mouse_encoder_modes: None,
             mouse_encoder_size: None,
             gesture: None,
+            search: None,
             terminal,
             snapshot_cache: Default::default(),
             callbacks,

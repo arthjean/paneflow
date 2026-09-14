@@ -8,6 +8,15 @@ pub struct SearchMatch {
     pub end: Point,
 }
 
+#[derive(Clone, Debug, Default)]
+pub struct NativeSearchState {
+    pub query: String,
+    pub matches: Vec<SearchMatch>,
+    pub selected: Option<usize>,
+    pub complete: bool,
+    pub error: Option<String>,
+}
+
 pub struct SearchResult {
     pub matches: Vec<SearchMatch>,
     pub regex_error: Option<String>,

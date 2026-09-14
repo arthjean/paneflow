@@ -28,11 +28,24 @@ gh attestation verify prebuilt/<rust-target>/lib/<archive> --repo arthjean/panef
 ```
 
 The pinned source is Ghostty
-`f2d5758f6305867dc36b36293c6165d8152b853e` built with Zig 0.16.0 in
+`0c2a290d3a3e2a599be3a43435d778a5896667ee` built with Zig 0.16.0 in
 `ReleaseFast`. `bindings.rs` is pregenerated from the pinned C header. Its
 normalized UTF-8 checksum is verified both in the workspace and in every
 prepared artifact. Regenerate bindings only from that exact header, then
 update `bindings_sha256` and every reviewed target.
+
+## Terminal search
+
+The local terminal find bar uses the upstream `ghostty_search_*` API for
+plain-text queries. The runtime owns the persistent search handle, drives
+bounded feed/tick steps, and publishes owned match coordinates alongside the
+terminal snapshot. Ghostty tracks the selected match across output, resize,
+reflow, screen switches, and history pruning. Closing the find bar releases the
+handle. Wrapped matches can span multiple rendered rows.
+
+Native matching ignores ASCII case and otherwise compares UTF-8 bytes exactly.
+Regex queries retain Paneflow's regex scanner and its scan limits. Fleet and
+MCP searches retain their existing independent scan path.
 
 ## Linux archives
 
@@ -168,7 +181,7 @@ ordinally sorted members with deterministic `llvm-ar rcD` mode. It deliberately
 does not replay the emitted `build-lib` command.
 Header and symbol inventories use the same ordinal, case-sensitive ordering,
 so hashes do not depend on the Windows locale. The build starts from empty
-caches at the fixed `C:\Users\Public\paneflow-libghostty-f2d5758f` source
+caches at the fixed `C:\Users\Public\paneflow-libghostty-0c2a290d` source
 path, which `build-info.txt` records; the build aborts if that path is
 unavailable or already occupied.
 

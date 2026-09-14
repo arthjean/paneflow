@@ -4,7 +4,7 @@
   "serialNumber": "urn:uuid:4d5095de-df50-4d58-bda5-7102569eca0a",
   "version": 1,
   "metadata": {
-    "timestamp": "2026-07-19T00:00:00Z",
+    "timestamp": "2026-09-14T00:00:00Z",
     "authors": [
       {
         "name": "Strivex"
@@ -14,7 +14,7 @@
       "type": "application",
       "bom-ref": "paneflow-libghostty-windows",
       "name": "Paneflow libghostty Windows integration",
-      "version": "0.1.0-dev+f2d5758f6",
+      "version": "0.1.0-dev+0c2a290d3",
       "properties": [
         {
           "name": "paneflow:rust-target",
@@ -34,14 +34,14 @@
   "components": [
     {
       "type": "library",
-      "bom-ref": "libghostty-vt@f2d5758f6305867dc36b36293c6165d8152b853e",
+      "bom-ref": "libghostty-vt@0c2a290d3a3e2a599be3a43435d778a5896667ee",
       "name": "libghostty-vt",
-      "version": "0.1.0-dev+f2d5758f6",
-      "purl": "pkg:github/ghostty-org/ghostty@f2d5758f6305867dc36b36293c6165d8152b853e",
+      "version": "0.1.0-dev+0c2a290d3",
+      "purl": "pkg:github/ghostty-org/ghostty@0c2a290d3a3e2a599be3a43435d778a5896667ee",
       "hashes": [
         {
           "alg": "SHA-256",
-          "content": "69d3676b4dce995c72b60c9a5b1b0a260e2c1778f623dab82835aa484dd04ac3"
+          "content": "7439dca76f35bb2ec005cd4bfa90c6926c65146bf027210925770ac9a9b2ed8d"
         }
       ],
       "licenses": [
@@ -180,7 +180,7 @@
     {
       "ref": "paneflow-libghostty-windows",
       "dependsOn": [
-        "libghostty-vt@f2d5758f6305867dc36b36293c6165d8152b853e",
+        "libghostty-vt@0c2a290d3a3e2a599be3a43435d778a5896667ee",
         "zig-runtime@0.16.0",
         "uucode@2826a37a4562284fdacd8fa029d49509cc9bffcd",
         "unicode-character-database@17.0.0",

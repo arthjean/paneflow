@@ -156,7 +156,7 @@ re-pins `archive_sha256` once and republishes the release asset; the digest
 below predates it.
 
 ```
-archive_sha256  d81dafad9975987fc582977f24af06c9255b901196c07b00be42b85ffe8dba03
+archive_sha256  65a2cbdec275aa68cefd6a843aa9447a2a037b20a913163a1c90ec217d258639
 ```
 
 That value is pinned as `archive_sha256` on the
@@ -225,7 +225,7 @@ table is stale.
 
 | Input | Manifest key | Value |
 |---|---|---|
-| Ghostty source revision | `source_sha` | `f2d5758f6305867dc36b36293c6165d8152b853e` |
+| Ghostty source revision | `source_sha` | `0c2a290d3a3e2a599be3a43435d778a5896667ee` |
 | Zig | `zig_version` | `0.16.0` |
 | LLVM binutils | `macos_llvm_version` | `22.1.2-rust-1.96.1-stable` |
 | Rust target | `[targets."aarch64-apple-darwin"]` | `aarch64-apple-darwin` |
@@ -234,10 +234,10 @@ table is stale.
 | Build seed | `macos_build_seed` | `0` |
 | Build jobs | `macos_build_jobs` | `1` |
 | Compiler CPUs | build flag (`taskset -c <first allowed CPU>`) | `1` |
-| Canonical source path | `macos_canonical_source_path` | `/tmp/paneflow-libghostty-f2d5758f` |
+| Canonical source path | `macos_canonical_source_path` | `/tmp/paneflow-libghostty-0c2a290d` |
 | Canonical Zig path | `macos_canonical_zig_path` | `/tmp/paneflow-libghostty-zig-0.16.0` |
 | Archive path in the bundle | `archive_path` | `lib/libghostty-vt.a` |
-| Archive digest | `archive_sha256` | `d81dafad9975987fc582977f24af06c9255b901196c07b00be42b85ffe8dba03` |
+| Archive digest | `archive_sha256` | `65a2cbdec275aa68cefd6a843aa9447a2a037b20a913163a1c90ec217d258639` |
 | Header digest | `header_sha256` | `df3997ea5f3df0902df8a80a3db176bda7a0e6c4d389be21b90da8c9fb52be44` |
 | Bindings digest | `bindings_sha256` | `95ecb9889cd5408f88a117f8bbca2cde89b911c3fc06849e99307dd9c172f95f` |
 | Link name | `link_name` | `ghostty-vt` |

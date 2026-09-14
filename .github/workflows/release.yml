@@ -58,7 +58,7 @@ defaults:
 
 env:
   CARGO_TERM_COLOR: always
-  GHOSTTY_SHA: f2d5758f6305867dc36b36293c6165d8152b853e
+  GHOSTTY_SHA: 0c2a290d3a3e2a599be3a43435d778a5896667ee
   ZIG_VERSION: 0.16.0
   # US-003: synthesize the canonical TAG every downstream packaging
   # step already uses as its version source (every `cp`, sha256, .deb,

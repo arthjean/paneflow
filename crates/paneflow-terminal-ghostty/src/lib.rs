@@ -42,6 +42,7 @@ native_modules!(
     kitty,
     modes,
     navigation,
+    native_search,
     options,
     osc,
     persistence,
@@ -95,7 +96,8 @@ pub use modes::{Mode, ModeReportState, encode_mode_report};
 #[cfg(ghostty_native)]
 pub use osc::{OSC_TERMINATOR_BEL, OSC_TERMINATOR_ST, OscCommand, OscCommandType, OscParser};
 pub use search::{
-    MAX_QUERY_LEN, MAX_SEARCH_CELLS, SEARCH_CHUNK_CELLS, SearchChunk, SearchEngine, SearchLine,
+    MAX_QUERY_LEN, MAX_SEARCH_CELLS, NativeSearchSnapshot, SEARCH_CHUNK_CELLS, SearchChunk,
+    SearchEngine, SearchLine,
 };
 #[cfg(ghostty_native)]
 pub use selection::{SelectionAdjust, SelectionOrder};

@@ -70,6 +70,20 @@ impl DisplayTerminal {
         Err(GhosttyError::UnsupportedPlatform)
     }
 
+    pub fn set_search_query(&mut self, _: &str) -> Result<()> {
+        Err(GhosttyError::UnsupportedPlatform)
+    }
+
+    pub fn clear_search(&mut self) {}
+
+    pub fn search_step(&mut self) -> Result<Option<crate::NativeSearchSnapshot>> {
+        Err(GhosttyError::UnsupportedPlatform)
+    }
+
+    pub fn search_select(&mut self, _: bool) -> Result<()> {
+        Err(GhosttyError::UnsupportedPlatform)
+    }
+
     pub fn set_selection(&mut self, _: SelectionRange) -> Result<()> {
         Err(GhosttyError::UnsupportedPlatform)
     }

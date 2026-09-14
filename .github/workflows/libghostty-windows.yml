@@ -18,7 +18,7 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
-  GHOSTTY_SHA: f2d5758f6305867dc36b36293c6165d8152b853e
+  GHOSTTY_SHA: 0c2a290d3a3e2a599be3a43435d778a5896667ee
   ZIG_VERSION: 0.16.0
   TARGET: x86_64-pc-windows-msvc
   NATIVE_PROFILE: ReleaseFast-simd-fixedbase-seed0-j1
