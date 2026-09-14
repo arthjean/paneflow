@@ -5,6 +5,25 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
 
 ## [Unreleased]
 
+### Fixed
+
+- `Ctrl+Shift+F` opens the terminal search again on Windows and Linux. The
+  diff dock maximize shortcut resolved to the same chord there and shadowed
+  it; it now lives on `Cmd/Ctrl+Alt+M`, and macOS also gets `Cmd+F` for the
+  search. A test fails the build whenever a global default shares its
+  resolved chord with any other default. Refs #63.
+- Terminal search highlights stay on their text while the program keeps
+  writing, and the match count follows the buffer. Plain-text queries now run
+  on Ghostty's own incremental search, which tracks matches and the selected
+  one across output, resize, reflow, and history pruning; wrapped matches
+  highlight every row they span. Regex queries keep Paneflow's scanner and are
+  re-anchored and rescanned as the scrollback grows. Refs #63.
+
+### Changed
+
+- The pinned `libghostty-vt` archive moves to Ghostty `0c2a290d`, which adds
+  the `ghostty_search_*` API the terminal search now uses.
+
 ## [0.15.1] - 2026-09-14
 
 The v0.15.0 tag was never published: its release pipeline stopped at the
