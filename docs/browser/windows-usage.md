@@ -138,6 +138,8 @@ and validated by:
 python3 scripts/verify-windows-qualification-contract.py --contract native/browser/windows-qualification-contract.toml
 ```
 
-Until every row of that matrix is measured on real hardware, the distribution
-manifest keeps `availability = "development"` for this target and the verifier
-rejects any promotion beyond it.
+The contract follows PRD revision 1.2 and certifies local use on Windows 11
+x64 from an unsigned build: both release verdicts are `QUALIFIED` since
+2026-09-14 and the manifest declares `agent_qualified` for this target. Its
+`deferred` list and its owner waivers name what a public release still has to
+prove; the verifier rejects any promotion the contract does not support.

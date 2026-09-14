@@ -7,6 +7,7 @@
 |---|---|---|---|
 | 1.0 | 2026-09-05 | Arthur Jean | Scission du plan global par OS ; produit commun conservé, extension GPUI planifiée et qualification native indépendante. |
 | 1.1 | 2026-09-06 | Arthur Jean | Diagnostic TSYNC : preuve noyau séparée de l’intégration CEF, invariant du broker et qualification de sandbox par OS explicités ; aucun gate abaissé. |
+| 1.2 | 2026-09-14 | Arthur Jean | EP-004 reborné à l’usage local Windows 11 x64 sur build non signé : distribution signée, autres matériels, Narrator et budgets NFR non instrumentés déplacés vers un epic de release ultérieur et listés en Non-Goals. Le périmètre est nommé au lieu d’être inatteignable ; aucun seuil existant n’est modifié. Le même jour, le propriétaire a tranché que l’epic certifie sur le travail réalisé : SEC-04, SEC-12 et la session agent live sont waivés avec preuves code et risque résiduel, US-013 AC-3 et US-016 AC-3 admettent ce waiver. |
 
 ## Problem Statement
 
@@ -138,8 +139,8 @@ Les IDs sont locaux à ce PRD ; une référence à un autre plan utilise son lab
 |---|---|---|
 | R0 | EP-001 et EP-002, 8 stories | Préparation puis première exécution native US-008 |
 | R1 | Aperçu des contrats communs sur fixtures | Disponible uniquement après fonctionnement local observé, sans annonce de support public |
-| R2 | EP-003 et US-013 à US-015, 7 stories | Package et navigateur humain qualifiés sur la matrice propre à cet OS |
-| R3 | US-016, 1 story | Qualification locale des outils agent réutilisés |
+| R2 | EP-003 et US-013 à US-015, 7 stories | Package préparé et navigateur humain certifié sur Windows 11 x64 depuis cette machine, build non signé |
+| R3 | US-016, 1 story | Certification locale des outils agent réutilisés |
 
 Les livraisons sont des étapes explicites, pas des échéances garanties. Les stories de code indépendantes peuvent avancer avant une qualification non disponible ; les annonces et activations publiques restent soumises à leurs gates.
 
@@ -357,74 +358,74 @@ Implémenter les ponts accessibles, les interactions système et la chaîne d’
 
 ---
 
-### EP-004: Qualifier et préparer les livraisons Windows
+### EP-004: Certifier le navigateur Windows 11 x64 pour l’usage local
 
-Exécuter la matrice native S1-W, certifier le navigateur humain, puis les outils agent dans une livraison distincte.
+Certifier le navigateur humain puis les outils agent sur la machine de développement Windows 11 x64, à partir d’un build non signé, avec les preuves déjà obtenues par EP-002 et EP-003 et un parcours humain consigné. Le périmètre est l’usage local et celui de testeurs sur une configuration équivalente ; la distribution publique signée, les autres matériels, l’accessibilité certifiée et les budgets NFR non instrumentés appartiennent à un epic de release ultérieur et figurent en Non-Goals.
 
-**Definition of Done:** Les quatre stories ont leurs preuves sur Windows. US-015 constitue le gate humain R2 ; US-016 est le gate agent R3 et ne retarde pas R2.
+**Definition of Done:** Les quatre stories ont leurs preuves sur Windows 11 x64 depuis cette machine, chacune consignée avec build, commit et date. US-015 constitue le gate humain R2 ; US-016 est le gate agent R3 et ne retarde pas R2. Le contrat `native/browser/windows-qualification-contract.toml` ne contient que des lignes exécutées, automatisées ou waivées par le propriétaire ; aucune ligne hors périmètre n’y reste NON_EXÉCUTÉE.
 
-#### US-013: Qualifier installation, parcours web et accessibilité Windows
+#### US-013: Vérifier le parcours web Windows 11 x64
 
-**Description:** En tant que mainteneur, je veux des passages sur les systèmes revendiqués afin de qualifier le port à partir des packages réels.
+**Description:** En tant que mainteneur, je veux un parcours humain consigné sur le build candidat afin de certifier ce que j’utilise réellement, sans généraliser à un matériel ou un OS non couvert.
 
 **Priority:** P0
-**Size:** L (5 pts)
-**Dependencies:** Blocked by US-008, US-009, US-010, US-011, US-012
+**Size:** M (3 pts)
+**Dependencies:** Blocked by US-008, US-009, US-010
 
 **Acceptance Criteria:**
 
-- [ ] Windows 10 au minimum 1809 revendiqué et Windows 11 sont exécutés avec builds exacts ; NVIDIA et au moins un GPU Intel ou AMD sont couverts, avec multi-écran DPI.
-- [ ] Le MSI réellement signé s’installe sous utilisateur standard, démarre depuis un dossier protégé et charge uniquement les DLL attendues ; une DLL hostile déposée dans le cwd n’est pas chargée.
-- [ ] C0, U1/U2, SEC-01 à SEC-08, IME, clipboard, fichiers, permissions, DevTools et lecture du contenu par Narrator sont exécutés ; la restauration reste Dormant.
-- [ ] Le parcours couvre clair/sombre, les huit thèmes, 800x500 et les scales exposés ; une mise à jour depuis la version précédente et ses erreurs préservent les profils.
-- [ ] Échec : configuration obligatoire, signature ou preuve native absente reste NON_EXÉCUTÉE ; une compilation ou le premier smoke test ne certifie pas toute la matrice.
+- [ ] Windows 11 x64 est relevé avec son build exact ; les deux adaptateurs de la machine (NVIDIA discret et AMD intégré) présentent chacun, l’appairage split et l’appairage par défaut sont prouvés, et la fenêtre est utilisée sur deux écrans. Aucune contrainte de scales différents, de portable ou de Windows 10 : le waiver Windows 10 1809 du 2026-09-11 est conservé.
+- [ ] Le parcours C0 est déroulé une fois par le propriétaire sur le build candidat et consigné avec commit, build et date ; les points U1/U2 essentiels sont observés : adresse, historique, recharger/arrêter, fermeture, raccourcis secondary-L/T/W/R, et aucune frappe destinée à la page n’atteint un PTY.
+- [ ] SEC-01 à SEC-08 sont couverts : test automatisé pour ceux qui en ont un, observation native consignée ou waiver du propriétaire (décideur, date, raison, preuves code, risque résiduel) pour SEC-02, SEC-04 et SEC-05.
+- [ ] IME, clipboard, sélecteur de fichiers, dialogues de permission et DevTools sont observés dans la même session ; la restauration après relance de Paneflow laisse les onglets Dormant sous leurs sessions.
+- [ ] Échec : une étape C0 qui échoue, une frappe qui atteint un terminal ou une frontière SEC franchie donne NO-GO ; une compilation ou le premier smoke test ne remplace pas ce parcours.
 
-#### US-014: Mesurer performances, ressources et récupération Windows
+#### US-014: Consigner les mesures déjà instrumentées et la récupération
 
-**Description:** En tant que mainteneur, je veux les mesures propres à Windows afin de vérifier les budgets sans importer un résultat Linux.
+**Description:** En tant que mainteneur, je veux consigner les mesures natives déjà obtenues et la récupération après incident afin de connaître le coût réel du navigateur sans construire de campagne supplémentaire dans cet epic.
 
 **Priority:** P0
-**Size:** L (5 pts)
-**Dependencies:** Blocked by US-008, US-012
+**Size:** S (2 pts)
+**Dependencies:** Blocked by US-008
 
 **Acceptance Criteria:**
 
-- [ ] M1 A/B/C est exécuté sur les références natives avec traces de présentation D3D/OS, profileur CPU et mémoire natifs Windows, 1920x1080, 60/120 Hz qualifiés, cinq répétitions et données brutes conservées.
-- [ ] Les ressources mesurées incluent private working set de l’arbre Browser, delta du parent, mémoire GPU et handles Windows ; interop et VRAM interne Chromium sont séparées avant total, sans comparaison directe entre métriques OS.
-- [ ] NFR-01 à NFR-08 et NFR-11/13 couvrent coût sans usage, terminal actif, copies/buffers, ouverture, background, 200 cycles, resize, crashs et tailles de package.
-- [ ] Les baselines CPU et présentation restent distinctes et aucun seuil n’est modifié pour transformer une régression en PASS.
-- [ ] Échec : incertitude excessive, croissance résiduelle, ressource orpheline ou budget dépassé laisse le verdict concerné négatif et déclenche une correction mesurée.
+- [ ] Les campagnes M1 A/B/C à 60 et 120 Hz déjà capturées sous le harness corrigé (propriété du premier plan prouvée sur chaque capture, cinq répétitions, 1920x1080) constituent la preuve de NFR-02 et NFR-03 ; les données brutes sont conservées.
+- [ ] NFR-03 est rapporté dans son budget aux deux fréquences ; NFR-02 est dans son budget à 60 Hz et consigné à 120 Hz comme « dans l’incertitude de la méthode » avec sa valeur, sans être ni un échec ni un PASS, et sans modification de seuil.
+- [ ] La récupération est prouvée nativement pour la reprise humaine sur une opération agent en attente et pour une relance du host pendant qu’un onglet est ouvert : la page affiche l’erreur, Réessayer fonctionne et les terminaux ne sont pas affectés.
+- [ ] NFR-01, NFR-04 à NFR-08, NFR-11 et NFR-13 ne sont pas mesurés dans cet epic ; le contrat les retire ou les marque observation sans budget, et le rapport le dit explicitement.
+- [ ] Échec : une régression visible en session, une ressource orpheline observée après fermeture ou un seuil modifié laisse le verdict concerné négatif.
 
-#### US-015: Préparer le verdict humain et les docs Windows
+#### US-015: Prononcer le verdict humain et livrer les docs Windows
 
-**Description:** En tant qu’utilisateur Windows, je veux connaître les capacités réellement disponibles afin de choisir le navigateur intégré en connaissance de ses limites.
+**Description:** En tant qu’utilisateur Windows, je veux connaître les capacités réellement disponibles et leur périmètre afin de choisir le navigateur intégré en connaissance de ses limites.
 
 **Priority:** P0
-**Size:** L (5 pts)
+**Size:** M (3 pts)
 **Dependencies:** Blocked by US-013, US-014
 
 **Acceptance Criteria:**
 
-- [ ] Le rapport versionné rassemble la matrice S1-W, minima effectifs, preuves GPU/sandbox/input/accessibilité, M1, SEC et provenance des packages.
-- [ ] La capacité Browser humain x86_64-pc-windows-msvc est autorisée dans le manifeste de distribution seulement après ce verdict ; aucun résultat Linux ou du troisième OS n’est une condition de certification locale.
-- [ ] Les docs décrivent parcours, erreurs, données locales, permissions, DevTools et installation ; la certification du dossier ne publie, commit ou push rien automatiquement.
-- [ ] Échec : case obligatoire manquante ou budget non satisfait donne NO-GO R2 pour cette cible ; les terminaux et les autres plateformes conservent leur état de support.
+- [ ] Le rapport versionné rassemble la matrice S1-W réduite, le build et la machine, les preuves GPU/sandbox/input, M1, SEC et la liste explicite de ce qui n’est pas qualifié : build non signé, autres matériels, Windows 10, Narrator, budgets non mesurés.
+- [ ] `human_release` passe QUALIFIED dans le contrat seulement après ce verdict, le vérificateur l’accepte, et la disponibilité `x86_64-pc-windows-msvc` du manifeste passe human_qualified via `install_windows::declared_availability` ; aucun résultat Linux ou macOS n’est une condition.
+- [ ] Les docs décrivent parcours, erreurs, données locales, permissions, DevTools et installation depuis un build non signé ; la certification ne publie, commit ou push rien automatiquement.
+- [ ] Échec : parcours C0 absent ou une ligne du contrat encore NON_EXÉCUTÉE donne NO-GO R2 ; les terminaux et les autres plateformes conservent leur état de support.
 
-#### US-016: Qualifier les outils agent communs sur Windows
+#### US-016: Certifier les outils agent communs sur Windows
 
 **Description:** En tant qu’utilisateur d’agents sur Windows, je veux les mêmes outils contrôlés afin de vérifier la page du bon workspace.
 
 **Priority:** P1
-**Size:** L (5 pts)
+**Size:** M (3 pts)
 **Dependencies:** Blocked by US-015 ; interfaces externes : CORE-AGENT (résolution dans Technical Considerations).
 
 **Acceptance Criteria:**
 
-- [ ] Les implémentations communes browser.list/state/snapshot/screenshot/console/network et navigate/back/forward/reload/click/type/scroll sont réutilisées, avec sélection et aperçu composer ; aucun namespace ou contrôleur parallèle par OS.
-- [ ] SEC-09 à SEC-12 et les limites C3 sont exécutés sur Windows avec deux workspaces, deux clients, anciennes generations, relance du host et reprise humaine.
-- [ ] Les résultats incluent identités, origine, generation et horodatage ; les captures/sous-frames inaccessibles sont signalées et les secrets réduits selon C3.
-- [ ] Le réglage démarre disabled, read n’autorise aucune mutation et toute révocation bloque les résultats en attente ; le verdict agent est distinct du verdict humain R2.
-- [ ] Échec : socle agent pas encore intégré, scope invalide, lease perdue ou fuite de métadonnée conserve R3 en attente sans rouvrir le chantier R2 déjà qualifié.
+- [ ] Les implémentations communes browser.list/state/snapshot/screenshot/console/network et navigate/back/forward/reload/click/type/scroll sont réutilisées ; aucun namespace ou contrôleur parallèle par OS.
+- [ ] Le cycle de vie d’une navigation agent est prouvé nativement : commit du document, refus d’une generation périmée et annulation par reprise humaine.
+- [ ] Les quotas C3 à la limite et à limite plus un, l’isolation entre deux workspaces et SEC-12 sont exercés dans une session agent avec accès accordé depuis le menu Browser, ou couverts par la suite de tests native et waivés par le propriétaire avec leur risque résiduel ; SEC-09 à SEC-11 restent couverts par tests automatisés.
+- [ ] Le réglage démarre disabled par workspace, read n’autorise aucune mutation et toute révocation bloque les résultats en attente ; `agent_release` passe QUALIFIED après ce verdict, distinct du verdict humain R2.
+- [ ] Échec : scope invalide, lease perdue ou fuite de métadonnée conserve R3 en attente sans rouvrir le chantier R2 déjà qualifié.
 
 ---
 
@@ -722,6 +723,7 @@ L’auto-contradiction principale résolue est de distinguer « code préparé �
 - Discard automatique, restauration de DOM/formulaires/POST/historique moteur après destruction, API evaluate arbitraire ou port CDP public.
 - Nouvelle télémétrie de pages, d’URL ou de DOM ; export de diagnostic volontaire et prévisualisé uniquement.
 - Élargir ici les artefacts terminal à macOS Intel, Windows ARM64 ou Linux musl. L’objectif Linux reste la couverture des distributions dans l’enveloppe explicitée en S1-L, sans claim impossible de compatibilité universelle.
+- Qualification de distribution publique dans EP-004 (v1.2) : MSI signé par certificat release, installation utilisateur standard, contrôle des DLL chargées et DLL hostile, mise à jour depuis N-1, Windows 10 1809, portable à graphiques commutables, paire d’écrans à scales différents, parcours Narrator, deux clients agent simultanés, et les budgets NFR-01, NFR-04 à NFR-08, NFR-11 et NFR-13. Ces preuves restent requises avant toute annonce de support public et reviennent dans un epic de release au moment de la distribution ; la signature appartient à docs/release/windows-signing.md.
 
 ## Files NOT to Modify
 
@@ -833,14 +835,14 @@ Les références au code et contrats versionnés doivent rester autonomes dans A
 | Condition | Référence | Preuve obligatoire | Owner |
 |---|---|---|---|
 | Premier smoke | le Windows 11 du SSD d’Arthur, avec version/build, GPU et pilote réellement relevés | Bootstrap sandboxé, page GPU, input, scale/resize et fermeture ; aucune généralisation | US-008 |
-| Minimum produit | Windows 10 1809+ et Windows 11 x64 | Compatibilité du pin puis installation et parcours réels ; le minimum existant n’est pas relevé en silence | US-001/013 |
-| Référence courante | Version/build natif figé avant tests | C0, U1/U2, SEC-01 à SEC-08, IME, Narrator, dialogues et fichiers | US-013 |
-| GPU / écrans | Windows 10 au minimum 1809 revendiqué et Windows 11 sont exécutés avec builds exacts ; NVIDIA et au moins un GPU Intel ou AMD sont couverts, avec multi-écran DPI. | Import réel, copies/fences, clipping, changement d’écran/scale | US-008/013/014 |
-| Performances | A/B/C du même pin, même matériel et load, 60/120 Hz qualifiés | NFR, M1 et ressources propres à cet OS | US-014 |
-| Distribution | Artefact natif signé de la cible x86_64-pc-windows-msvc | Installation propre, update, offline après téléchargement et vérification de la chaîne | US-013/015 |
-| Agent | Après code commun et R2 local | SEC-09 à SEC-12, quotas, scopes et reprise humaine | US-016 |
+| Minimum produit | Windows 10 1809 waivé par le propriétaire le 2026-09-11 ; plancher appliqué dans le code | Waiver complet (décideur, date, raison, preuves code, risques résiduels) accepté par le vérificateur | US-001/013 |
+| Référence courante | Build Windows 11 x64 relevé, build candidat non signé | C0, U1/U2 essentiels, SEC-01 à SEC-08, IME, clipboard, dialogues, fichiers, DevTools, restauration Dormant | US-013 |
+| GPU / écrans | Windows 11 x64, NVIDIA discret et AMD intégré de cette machine, deux écrans | Présentation sur chaque adaptateur, appairage split et par défaut, LUID épinglée | US-008/013 |
+| Performances | A/B/C du même pin, même matériel, 60 et 120 Hz, harness corrigé | NFR-02 et NFR-03 consignés ; les autres NFR hors périmètre v1.2 | US-014 |
+| Distribution | Hors périmètre v1.2 : build non signé, voir Non-Goals | Aucune, le rapport le déclare | US-015 |
+| Agent | Après code commun et R2 local, accès accordé par le propriétaire | Cycle de vie de navigation, SEC-09 à SEC-12, quotas C3, deux workspaces, reprise humaine | US-016 |
 
-Les cases commencent NON_EXÉCUTÉES. Le Mac futur ou le SSD Windows annoncé constitue un accès prévu, pas une preuve déjà obtenue. US-008 peut attendre l’accès matériel pendant que les préparations indépendantes continuent. Le minimum OS et la référence courante peuvent nécessiter deux environnements distincts ; une version récente ne valide pas rétroactivement le minimum.
+Les cases commencent NON_EXÉCUTÉES et le contrat ne conserve que des lignes exécutées, automatisées ou waivées. Une preuve obtenue sur cette machine certifie Windows 11 x64 sur un matériel équivalent ; elle ne prouve ni Windows 10, ni un matériel non couvert, ni un artefact signé, et le rapport le dit.
 
 Les formats sont ceux du produit existant (docs/user/installation/windows.md:9). Intel macOS et Windows ARM64 ne sont pas des artefacts de ce plan. Aucune case Linux ni de l’autre OS n’est requise pour le verdict natif de ce PRD ; seules les versions des contrats de code commun doivent être compatibles.
 

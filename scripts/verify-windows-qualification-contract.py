@@ -12,16 +12,16 @@ EXPECTED_TARGETS = {
     "current-reference",
     "gpu-displays",
     "performance",
-    "distribution",
     "agent",
 }
 EXPECTED_SECURITY = {f"SEC-{index:02d}" for index in range(1, 13)}
 HUMAN_SECURITY = {f"SEC-{index:02d}" for index in range(1, 9)}
-EXPECTED_BUDGETS = {f"NFR-{index:02d}" for index in (1, 2, 3, 4, 5, 6, 7, 8, 11, 13)}
+EXPECTED_BUDGETS = {"NFR-02", "NFR-03"}
+PLAN_REVISION = "1.2"
 EXPECTED_DOCUMENTS = {"release-report", "usage-guide", "agent-tools"}
 TARGET_STATUS = {"NOT_EXECUTED", "WAIVED_BY_OWNER", "WORKS_NOT_MEASURED", "WORKS_MEASURED", "FAILED"}
 WAIVER_FIELDS = ("waived_by", "waived_at", "waiver_reason", "code_evidence", "residual_risk")
-SECURITY_STATUS = {"AUTOMATED_TEST", "NATIVE_DEFERRED", "NATIVE_PROVEN"}
+SECURITY_STATUS = {"AUTOMATED_TEST", "NATIVE_DEFERRED", "NATIVE_PROVEN", "WAIVED_BY_OWNER"}
 BUDGET_STATUS = {"NOT_MEASURED", "MEASURED"}
 RELEASES = {"human", "agent"}
 AVAILABILITY_CEILING = {
@@ -52,9 +52,27 @@ def verify_header(contract):
         raise ValueError("qualification contract must require non-inference")
     if contract.get("foreign_platform_evidence_accepted") is not False:
         raise ValueError("no Linux or macOS result may condition this Windows verdict")
+    if contract.get("plan_revision") != PLAN_REVISION:
+        raise ValueError(f"qualification contract must follow PRD revision {PLAN_REVISION}")
+    if not contract.get("scope"):
+        raise ValueError("qualification contract must state the scope it certifies")
 
 
-def verify_targets(contract):
+def verify_deferred(contract):
+    deferred = {}
+    for entry in contract.get("deferred", []):
+        identifier = entry.get("id")
+        if not identifier or not entry.get("reason"):
+            raise ValueError("every deferred item must carry an id and a reason")
+        if identifier in deferred:
+            raise ValueError(f"deferred item {identifier} is listed twice")
+        deferred[identifier] = entry
+    if not deferred:
+        raise ValueError("the reduced contract must name what it defers")
+    return deferred
+
+
+def verify_targets(contract, contract_deferred):
     targets = {entry["id"]: entry for entry in contract.get("targets", [])}
     if set(targets) != EXPECTED_TARGETS:
         raise ValueError("S1-W matrix is incomplete or contains an unexpected row")
@@ -84,6 +102,9 @@ def verify_targets(contract):
             raise ValueError(f"matrix row {identifier} claims execution without evidence and a machine identity")
         if entry.get("native_release_qualified") is not False and entry["status"] != "WORKS_MEASURED":
             raise ValueError(f"matrix row {identifier} was promoted without a measured native result")
+        for deferred in entry.get("deferred", []):
+            if deferred not in contract_deferred:
+                raise ValueError(f"matrix row {identifier} defers {deferred} without a contract-level reason")
     return targets
 
 
@@ -101,8 +122,14 @@ def verify_security(contract):
             raise ValueError(f"security case {identifier} has an invalid proof status")
         if entry["proof"] == "automated" and entry["status"] != "AUTOMATED_TEST":
             raise ValueError(f"automated security case {identifier} has an invalid proof status")
-        if entry["status"] == "NATIVE_PROVEN" and not entry.get("evidence"):
-            raise ValueError(f"native security case {identifier} was promoted without evidence")
+        if entry["status"] == "NATIVE_PROVEN" and not (entry.get("evidence") and entry.get("observed_on")):
+            raise ValueError(f"native security case {identifier} was promoted without evidence and a machine identity")
+        if entry["status"] == "WAIVED_BY_OWNER":
+            if entry.get("evidence") or entry.get("observed_on"):
+                raise ValueError(f"security case {identifier} presents native evidence while declared waived")
+            missing_fields = [field for field in WAIVER_FIELDS if not entry.get(field)]
+            if missing_fields:
+                raise ValueError(f"security case {identifier} is waived without {', '.join(missing_fields)}")
     return security
 
 
@@ -140,7 +167,7 @@ def verify_verdicts(contract, targets, security, budgets):
         limits = [entry for entry in budgets.values() if entry["release"] == release]
         proven = (
             all(entry["status"] in {"WORKS_MEASURED", "WAIVED_BY_OWNER"} for entry in rows)
-            and all(entry["status"] in {"AUTOMATED_TEST", "NATIVE_PROVEN"} for entry in cases)
+            and all(entry["status"] in {"AUTOMATED_TEST", "NATIVE_PROVEN", "WAIVED_BY_OWNER"} for entry in cases)
             and all(entry["status"] == "MEASURED" for entry in limits)
         )
         declared = contract[f"{release}_release"]
@@ -167,7 +194,8 @@ def verify_manifest(contract, root):
 
 def verify(contract, root):
     verify_header(contract)
-    targets = verify_targets(contract)
+    deferred = verify_deferred(contract)
+    targets = verify_targets(contract, deferred)
     security = verify_security(contract)
     budgets = verify_budgets(contract)
     documents = verify_documents(contract, root)
@@ -176,6 +204,8 @@ def verify(contract, root):
     return {
         "status": "CONTRACT_VALID",
         "target": TARGET,
+        "plan_revision": PLAN_REVISION,
+        "scope": contract["scope"],
         "human_release": contract["human_release"],
         "agent_release": contract["agent_release"],
         "declared_availability": availability,
@@ -192,9 +222,13 @@ def verify(contract, root):
         "security_native_deferred": sorted(
             identifier for identifier, entry in security.items() if entry["status"] == "NATIVE_DEFERRED"
         ),
+        "security_waived_by_owner": sorted(
+            identifier for identifier, entry in security.items() if entry["status"] == "WAIVED_BY_OWNER"
+        ),
         "budgets_not_measured": sorted(
             identifier for identifier, entry in budgets.items() if entry["status"] == "NOT_MEASURED"
         ),
+        "deferred": sorted(deferred),
         "documents": sorted(documents),
     }
 

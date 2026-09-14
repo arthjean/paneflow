@@ -449,11 +449,11 @@ mod tests {
     }
 
     #[test]
-    fn the_windows_manifest_exposes_development_without_native_qualification() {
-        assert_eq!(declared_availability(), Availability::Development);
+    fn the_windows_manifest_exposes_the_agent_qualified_local_verdict() {
+        assert_eq!(declared_availability(), Availability::AgentQualified);
         assert_eq!(
             declared_availability_in(MANIFEST, &target_triple()),
-            Availability::Development
+            Availability::AgentQualified
         );
     }
 
@@ -477,7 +477,7 @@ mod tests {
         );
         assert_eq!(
             qualified_availability_in(QUALIFICATION, Availability::AgentQualified),
-            Availability::Development
+            Availability::AgentQualified
         );
         let human = contract("QUALIFIED", "NOT_QUALIFIED");
         assert_eq!(

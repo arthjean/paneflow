@@ -396,10 +396,17 @@ python3 scripts/verify-windows-qualification-contract.py --contract native/brows
 python3 scripts/verify-windows-qualification-contract.test.py
 ```
 
-The contract carries the seven S1-W rows, SEC-01 through SEC-12, the ten NFR
-budgets this release gates on, and the documents the report depends on. Row
-statuses use the plan vocabulary: `NOT_EXECUTED`, `WORKS_NOT_MEASURED`,
-`WORKS_MEASURED` and `FAILED`. The verifier refuses a row that claims execution
+The contract follows PRD revision 1.2, which bounds EP-004 to local use on
+Windows 11 x64 from an unsigned build. It carries the six S1-W rows of that
+scope, SEC-01 through SEC-12, the two NFR budgets the M1 campaigns measure, the
+documents the report depends on, and a `deferred` list naming every item the
+revision moved to a later release epic with its reason: the signed
+distribution, the update from the previous version, the Narrator pass, a
+display pair with different scales, a switchable-graphics laptop, two
+simultaneous agent clients and the budgets NFR-01, NFR-04 to NFR-08, NFR-11
+and NFR-13. A deferred item may not reappear as a matrix row. Row statuses use
+the plan vocabulary: `NOT_EXECUTED`, `WORKS_NOT_MEASURED`, `WORKS_MEASURED` and
+`FAILED`. The verifier refuses a row that claims execution
 without an evidence path and a machine identity, a security case promoted past
 its proof kind, a budget declared measured without evidence, and a document that
 does not resolve to a written file. It also cross-checks the distribution
@@ -412,11 +419,21 @@ The application enforces the same ceiling at its own entry point.
 declares to what the contract's verdicts allow, so a promoted manifest alone
 never exposes a qualified capability.
 
-Current state: `human_release = NOT_QUALIFIED`, `agent_release = NOT_QUALIFIED`.
-The `first-smoke` row is executed as `WORKS_NOT_MEASURED` on Windows 11 build
-26200 UBR 9278 with an NVIDIA GeForce RTX 4070 Ti SUPER, `minimum-product` is
-`WAIVED_BY_OWNER`, and every other row is `NOT_EXECUTED` and names what is
-missing. No Linux or macOS result is accepted
+Current state: `human_release = QUALIFIED`, `agent_release = QUALIFIED`, and the
+manifest declares `agent_qualified` for `x86_64-pc-windows-msvc` under the
+revision 1.2 scope: local use on Windows 11 x64 from an unsigned build.
+`first-smoke`, `gpu-displays`, `performance`, `current-reference` and `agent`
+are `WORKS_MEASURED` on Windows 11 build 26200 with the NVIDIA GeForce RTX 4070
+Ti SUPER and the AMD Radeon integrated adapter, and `minimum-product` is
+`WAIVED_BY_OWNER`. SEC-02 and SEC-05 are `NATIVE_PROVEN` from
+`target/ep004-sec-r1`; SEC-04 and SEC-12 are `WAIVED_BY_OWNER` on the owner's
+ruling of 2026-09-14, each with its code evidence and residual risk. The
+`current-reference` row rests on the host-restart recovery run of
+`target/ep004-host-restart-r2` (loss reported 110 ms after the kill, no orphan,
+Reload relaunching a new host in 2.6 s with the terminal untouched), on the two
+SEC receipts, and on the owner's attestation that the C0 journey, the U1/U2
+essentials, IME, clipboard, file pickers, permission dialogs, DevTools and the
+Dormant restoration work in daily use on the candidate build. No Linux or macOS result is accepted
 as evidence for this target, and the contract records that refusal explicitly.
 
 ### The Windows 10 1809 waiver
@@ -532,47 +549,37 @@ Three changes now keep this out of the numbers:
 When running a campaign, leave the machine alone: do not click into another
 window, and expect notifications to invalidate a repetition.
 
-## Qualification still required
+## Deferred to the release epic
 
 EP-002 executed the first browser page and the D3D external-surface path, and
-EP-003 prepared the remaining OS integrations and the package. EP-004 owns the
-qualification itself. The following evidence has to be collected on real
-hardware before this target changes to a qualified availability, and each item
-maps to a row of the contract above:
+EP-003 prepared the remaining OS integrations and the package. EP-004 certified
+the local scope of PRD revision 1.2 on 2026-09-14. The following was not
+exercised in a live session and is carried by the contract's `deferred` list
+and by the owner waivers, to be collected before any public announcement:
 
-- A Windows 11 x64 bootstrap and sandbox harness result on a frozen reference
-  build. Windows 10 1809 is covered by the owner waiver described above.
-- Authenticode and client export verification on the release artifacts, plus a
-  real signed MSI, a standard-user installation and a loaded-DLL check on the
-  installed machine (US-013).
-- Unknown-DLL, wrong-ABI, root-in-use, dead-host and refused-peer tests.
-- Job Object descendant cleanup and profile ACL checks under a normal user.
-- Native browser creation, navigation, renderer crash recovery and presentation
-  smoke results.
-- A Narrator pass over the document and the dock chrome, and the native
-  permission, download, file-picker and external-protocol dialogs driven by a
-  human (US-013).
-- A real interrupted-update and resume cycle on an installed machine (US-013).
-- A resolution good enough to settle NFR-02 at 120 Hz (US-014). Both campaigns
-  were re-run under the corrected harness as `target/ep004-m1-120hz-v2` and
-  `target/ep004-m1-60hz-v2`, thirty captures, every one holding the foreground
-  for its whole duration. NFR-03 is within budget at both rates. NFR-02 is
-  within budget at 60 Hz and 0.106 ms over its 1 ms p95 budget at 120 Hz, on a
-  delta whose p99 is negative: the two configurations measure 42.90 and
-  44.00 ms, and medians of per-repetition percentiles do not resolve a
-  difference that small. Paired per-repetition deltas or more repetitions would
-  settle it; a correction designed on this figure would not.
-- The rest of the M1 budget evaluation (US-014): GPU memory sampling and the
-  separation of interop allocations from internal Chromium VRAM; the C over B
-  integration delta NFR-07 needs, which the comparison tool does not compute;
-  and any campaign at all for NFR-01, NFR-04, NFR-05, NFR-06, NFR-08 and
-  NFR-11.
-- A hybrid-GPU run on a switchable-graphics laptop (US-013). The adapter pin
-  described above is proven on the reference desktop, including with opposite
-  explicit preferences per image, but no muxless or Optimus machine has run it.
-- A native Windows agent session covering SEC-09 to SEC-12, the C3 quotas at
-  their limit and limit plus one, two workspaces, two clients, stale
-  generations, a host restart and a human takeover (US-016).
+- SEC-04 driven natively against an invalid certificate (waived by the owner,
+  code evidence on the permission handler's document scoping).
+- A live agent session with access granted from the Browser menu, covering the
+  C3 quotas at their limit and limit plus one, two workspaces from an agent
+  client and SEC-12 (waived by the owner; the workspace test suite and
+  `target/ep004-agent-r11` cover the same rules natively).
+
+NFR-02 at 120 Hz is recorded, not pending: both campaigns were re-run under
+the corrected harness as `target/ep004-m1-120hz-v2` and
+`target/ep004-m1-60hz-v2`, thirty captures, every one holding the foreground
+for its whole duration. NFR-03 is within budget at both rates. NFR-02 is
+within budget at 60 Hz and 0.106 ms over its 1 ms p95 budget at 120 Hz, on a
+delta whose p99 is negative: the two configurations measure 42.90 and
+44.00 ms, and medians of per-repetition percentiles do not resolve a
+difference that small. Revision 1.2 records it as within the uncertainty of
+the method, neither a pass nor a failure, with no threshold changed.
+
+Everything else the earlier revision listed here, the signed MSI and its
+standard-user installation, the interrupted update, the Narrator pass, the
+switchable-graphics laptop, the display pair with different scales, two
+simultaneous agent clients and the budgets NFR-01, NFR-04 to NFR-08, NFR-11
+and NFR-13, is carried by the contract's `deferred` list and returns with the
+release epic that distributes this target.
 
 The accessibility bridge, the permission and file paths, the bundle plan, the
 update plan and the agent diagnostics and navigation completion are proven by

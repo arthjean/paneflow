@@ -84,5 +84,8 @@ terminalizes an agent navigation at the main-document commit, so the shared
 `browser.*` controller is the only controller on that target as well. Its agent
 verdict is tracked separately in
 [windows-qualification-contract.toml](../../native/browser/windows-qualification-contract.toml)
-and stays `NOT_QUALIFIED` until SEC-09 to SEC-12, the C3 quotas, a host restart
-and a human takeover have been observed on a live Windows page.
+and is `QUALIFIED` since 2026-09-14 for the local Windows 11 x64 scope of PRD
+revision 1.2: the navigation lifecycle, the stale-generation refusal and the
+human takeover are observed natively, SEC-09 to SEC-11 are automated, and the
+live C3 quota, two-client and SEC-12 exercises are deferred or waived by the
+owner in the contract.

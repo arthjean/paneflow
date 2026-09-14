@@ -72,6 +72,9 @@ are optional polish.
   source/patch/build-log provenance. It remains development-only with
   `native_qualification = "hardened_candidate_not_qualified"` until Q-LNX-01
   and the remaining native release gates are executed.
-- The Windows candidate is development-only with
-  `native_qualification = "control_only_windows11"`; the Windows 10 1809
-  matrix, release signing, renderer and presentation gates remain open.
+- The Windows candidate is `agent_qualified` for the local Windows 11 x64
+  scope of PRD revision 1.2 with
+  `native_qualification = "local_windows11_x64_unsigned_build_prd_1_2"`; the
+  Windows 10 1809 run is owner-waived and release signing, the signed
+  installation and the remaining public gates are deferred in
+  `windows-qualification-contract.toml`.

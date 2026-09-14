@@ -41,11 +41,17 @@ class WindowsQualificationContractTests(unittest.TestCase):
         result = self.run_cli(CONTRACT)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn('"status": "CONTRACT_VALID"', result.stdout)
-        self.assertIn('"declared_availability": "development"', result.stdout)
+        self.assertIn('"declared_availability": "agent_qualified"', result.stdout)
+        self.assertIn('"human_release": "QUALIFIED"', result.stdout)
 
     def test_a_promoted_distribution_manifest_is_rejected(self):
         with tempfile.TemporaryDirectory() as name:
-            path, root = self.stage(name, CONTRACT.read_text(encoding="utf-8"), "human_qualified")
+            text = CONTRACT.read_text(encoding="utf-8").replace(
+                'human_release = "QUALIFIED"\nagent_release = "QUALIFIED"',
+                'human_release = "NOT_QUALIFIED"\nagent_release = "NOT_QUALIFIED"',
+                1,
+            )
+            path, root = self.stage(name, text, "human_qualified")
             result = self.run_cli(path, root)
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("while the Windows verdict allows", result.stdout)
@@ -53,7 +59,9 @@ class WindowsQualificationContractTests(unittest.TestCase):
     def test_a_verdict_without_its_matrix_is_rejected(self):
         with tempfile.TemporaryDirectory() as name:
             text = CONTRACT.read_text(encoding="utf-8").replace(
-                'human_release = "NOT_QUALIFIED"', 'human_release = "QUALIFIED"', 1
+                'id = "NFR-03"\nrelease = "human"\nowner = "US-014"\nstatus = "MEASURED"',
+                'id = "NFR-03"\nrelease = "human"\nowner = "US-014"\nstatus = "NOT_MEASURED"',
+                1,
             )
             path, root = self.stage(name, text)
             result = self.run_cli(path, root)
@@ -63,8 +71,8 @@ class WindowsQualificationContractTests(unittest.TestCase):
     def test_an_executed_row_without_evidence_is_rejected(self):
         with tempfile.TemporaryDirectory() as name:
             text = CONTRACT.read_text(encoding="utf-8").replace(
-                'id = "distribution"\nrelease = "human"\nowner = "US-013"\nstatus = "NOT_EXECUTED"',
-                'id = "distribution"\nrelease = "human"\nowner = "US-013"\nstatus = "WORKS_MEASURED"',
+                'evidence_kind = "native_reference_journey"\nevidence = ',
+                'evidence_kind = "native_reference_journey"\nevidence_removed = ',
                 1,
             )
             path, root = self.stage(name, text)
@@ -94,16 +102,39 @@ class WindowsQualificationContractTests(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("presents native evidence while declared waived", result.stdout)
 
-    def test_partial_coverage_without_a_machine_identity_is_rejected(self):
+    def test_an_executed_row_without_a_machine_identity_is_rejected(self):
         with tempfile.TemporaryDirectory() as name:
             lines = CONTRACT.read_text(encoding="utf-8").splitlines(keepends=True)
-            anchor = next(index for index, line in enumerate(lines) if line.startswith("findings = ["))
-            del lines[anchor - 1]
+            agent = next(index for index, line in enumerate(lines) if line == 'id = "agent"\n')
+            anchor = next(index for index, line in enumerate(lines) if index > agent and line.startswith("observed_on = "))
+            del lines[anchor]
             text = "".join(lines)
             path, root = self.stage(name, text)
             result = self.run_cli(path, root)
             self.assertNotEqual(result.returncode, 0)
-            self.assertIn("claims partial coverage without a machine identity", result.stdout)
+            self.assertIn("claims execution without evidence and a machine identity", result.stdout)
+
+    def test_a_security_waiver_without_its_fields_is_rejected(self):
+        with tempfile.TemporaryDirectory() as name:
+            text = CONTRACT.read_text(encoding="utf-8").replace(
+                'status = "WAIVED_BY_OWNER"\nwaived_by = "Arthur Jean"\nwaived_at = "2026-09-14"',
+                'status = "WAIVED_BY_OWNER"\nwaived_at = "2026-09-14"',
+                1,
+            )
+            path, root = self.stage(name, text)
+            result = self.run_cli(path, root)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("security case SEC-04 is waived without waived_by", result.stdout)
+
+    def test_a_deferred_item_without_a_reason_is_rejected(self):
+        with tempfile.TemporaryDirectory() as name:
+            text = CONTRACT.read_text(encoding="utf-8").replace(
+                'id = "two-clients"\nreason = ', 'id = "two-clients"\nnote = ', 1
+            )
+            path, root = self.stage(name, text)
+            result = self.run_cli(path, root)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("must carry an id and a reason", result.stdout)
 
     def test_a_missing_document_is_rejected(self):
         with tempfile.TemporaryDirectory() as name:
