@@ -142,6 +142,7 @@ mod tests {
                 env: Some(HashMap::new()),
                 scroll_multiplier: Some(1.0),
                 minimum_contrast: Some(0.0),
+                scrollbar: Some(true),
             }),
             agent_panel: Some(AgentPanelConfig {
                 max_content_width: Some(760),

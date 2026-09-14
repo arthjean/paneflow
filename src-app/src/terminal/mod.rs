@@ -15,6 +15,7 @@ mod perf_bench;
 mod portable_pty_probe;
 mod pty_session;
 pub(crate) use pty_session::INHERITED_AGENT_SESSION_ENV;
+mod scrollbar_reveal;
 mod search;
 mod service_detector;
 pub mod shell;

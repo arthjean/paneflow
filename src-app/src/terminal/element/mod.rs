@@ -40,6 +40,7 @@ pub use hyperlink::{
 };
 use sprites::{Sprite, is_private_use, sprite_for};
 
+use crate::terminal::scrollbar_reveal::ScrollbarPresence;
 #[allow(unused_imports)]
 pub(crate) use color::apca_contrast;
 pub(crate) use color::ensure_minimum_contrast;
@@ -463,6 +464,7 @@ pub struct LayoutState {
     dimensions: CellDimensions,
     background_color: Hsla,
     scrollbar_thumb: Hsla,
+    scrollbar_track: Hsla,
     exited: Option<i32>,
     exit_signal: Option<String>,
     display_offset: usize,
@@ -525,6 +527,7 @@ pub struct TerminalElement {
     needs_initial_clear: Arc<std::sync::atomic::AtomicBool>,
     terminal_window_size: Arc<Mutex<Option<TerminalWindowSize>>>,
     scrollbar_metrics: Arc<Mutex<Option<ScrollbarMetrics>>>,
+    scrollbar_presence: ScrollbarPresence,
     search_rail_lines: Vec<usize>,
     integrated_glyphs_enabled: bool,
     color_emoji_enabled: bool,
@@ -554,6 +557,7 @@ impl TerminalElement {
         needs_initial_clear: Arc<std::sync::atomic::AtomicBool>,
         terminal_window_size: Arc<Mutex<Option<TerminalWindowSize>>>,
         scrollbar_metrics: Arc<Mutex<Option<ScrollbarMetrics>>>,
+        scrollbar_presence: ScrollbarPresence,
         search_rail_lines: Vec<usize>,
         default_cursor_shape: CursorShape,
         cursor_color_override: Option<Hsla>,
@@ -582,6 +586,7 @@ impl TerminalElement {
             needs_initial_clear,
             terminal_window_size,
             scrollbar_metrics,
+            scrollbar_presence,
             search_rail_lines,
             cursor_color_override,
             integrated_glyphs_enabled,
@@ -1155,6 +1160,7 @@ pub(crate) fn layout_from_snapshot(inputs: LayoutInputs<'_>) -> LayoutState {
         dimensions: dims,
         background_color,
         scrollbar_thumb: theme.scrollbar_thumb,
+        scrollbar_track: theme.scrollbar_track,
         exited,
         exit_signal,
         display_offset,
@@ -1443,7 +1449,13 @@ impl Element for TerminalElement {
 
             paint::cursor::paint_anchor_cursor(&layout, &geom, base_font, font_size, window, cx);
 
-            paint::scrollbar::paint_scrollbar(&layout, &geom, bounds, window);
+            paint::scrollbar::paint_scrollbar(
+                &layout,
+                self.scrollbar_presence,
+                &geom,
+                bounds,
+                window,
+            );
 
             paint::scrollbar::paint_match_ticks(
                 &self.search_rail_lines,
@@ -1769,9 +1781,10 @@ impl LayoutState {
         );
         let _ = writeln!(
             s,
-            "bg={} thumb={} link={}",
+            "bg={} thumb={} track={} link={}",
             hsla_repr(self.background_color),
             hsla_repr(self.scrollbar_thumb),
+            hsla_repr(self.scrollbar_track),
             hsla_repr(self.link_text_color),
         );
         let _ = writeln!(s, "runs[{}]:", self.batched_runs.len());

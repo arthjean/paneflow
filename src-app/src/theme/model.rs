@@ -14,6 +14,7 @@ pub struct TerminalTheme {
     pub selection: Hsla,
     pub selection_foreground: Hsla,
     pub scrollbar_thumb: Hsla,
+    pub scrollbar_track: Hsla,
     pub link_text: Hsla,
     pub title_bar_background: Hsla,
     pub title_bar_inactive_background: Hsla,
@@ -437,6 +438,7 @@ pub(super) fn apply_surface_overrides(mut theme: TerminalTheme) -> TerminalTheme
     theme.dim_foreground = h(0x9ca7b5);
     theme.selection = ha(0x5aa6ff, 0.22);
     theme.scrollbar_thumb = ha(0x9aa8bd, 0.30);
+    theme.scrollbar_track = ha(0x9aa8bd, 0.10);
     theme.link_text = h(0x57d5c4);
     theme.recompute_selection_foreground();
     theme

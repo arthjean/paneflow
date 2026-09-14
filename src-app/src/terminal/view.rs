@@ -181,6 +181,11 @@ pub struct TerminalView {
     layout_cache: crate::terminal::element::SharedLayoutCache,
     pub(super) scrollbar_metrics: Arc<Mutex<Option<super::element::ScrollbarMetrics>>>,
     pub(super) scrollbar_drag: Option<ScrollbarDrag>,
+    pub(super) scrollbar_reveal: super::scrollbar_reveal::ScrollbarReveal,
+    pub(super) scrollbar_repaint_scheduled: bool,
+    pub(super) scrollbar_seen_offset: usize,
+    pub(super) scrollbar_visible: bool,
+    pub(super) scrollbar_enabled: bool,
     pub(super) scroll_remainder: f32,
     pub(super) search_active: bool,
     pub(super) search_input: gpui::Entity<crate::widgets::text_input::TextInput>,
@@ -638,6 +643,7 @@ impl TerminalView {
         let integrated_glyphs_enabled = terminal_config.resolved_integrated_glyphs();
         let color_emoji_enabled = terminal_config.resolved_color_emoji();
         let minimum_contrast = terminal_config.resolved_minimum_contrast();
+        let scrollbar_enabled = terminal_config.resolved_scrollbar_visible();
 
         Self {
             terminal,
@@ -650,6 +656,11 @@ impl TerminalView {
             layout_cache: Arc::new(Mutex::new(None)),
             scrollbar_metrics: Arc::new(Mutex::new(None)),
             scrollbar_drag: None,
+            scrollbar_reveal: super::scrollbar_reveal::ScrollbarReveal::default(),
+            scrollbar_repaint_scheduled: false,
+            scrollbar_seen_offset: 0,
+            scrollbar_visible: false,
+            scrollbar_enabled,
             scroll_remainder: 0.0,
             search_active: false,
             search_input,
@@ -1309,6 +1320,8 @@ impl Render for TerminalView {
             Vec::new()
         };
 
+        let scrollbar_presence = self.scrollbar_presence(cx);
+
         let terminal_element = TerminalElement::new(
             self.terminal.session_backend(),
             cursor_visible,
@@ -1327,6 +1340,7 @@ impl Render for TerminalView {
             self.needs_initial_clear.clone(),
             self.terminal_window_size.clone(),
             self.scrollbar_metrics.clone(),
+            scrollbar_presence,
             search_rail_lines,
             self.default_cursor_shape,
             self.cursor_color_override,
@@ -1358,6 +1372,11 @@ impl Render for TerminalView {
             .on_key_up(cx.listener(Self::handle_key_up))
             .on_any_mouse_down(cx.listener(Self::handle_mouse_down))
             .on_mouse_move(cx.listener(Self::handle_mouse_move))
+            .on_hover(cx.listener(|this, hovered: &bool, _window, cx| {
+                if !*hovered && this.scrollbar_set_hovered(false) {
+                    cx.notify();
+                }
+            }))
             .on_mouse_up(MouseButton::Left, cx.listener(Self::handle_mouse_up))
             .on_mouse_up_out(MouseButton::Left, cx.listener(Self::handle_mouse_up))
             .on_mouse_up(MouseButton::Right, cx.listener(Self::handle_mouse_up))

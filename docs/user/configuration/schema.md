@@ -116,6 +116,7 @@ CLI binary. `false` hides the button. `true` forces it visible.
 | `terminal.ligatures` | boolean/null | `false` | Hot reload cache | Enables programming ligatures when the active font supports them. |
 | `terminal.integrated_glyphs` | boolean/null | `true` | Hot reload | Draws built-in block glyphs as filled quads. |
 | `terminal.color_emoji` | boolean/null | `true` | Hot reload | Uses the platform color-emoji path. |
+| `terminal.scrollbar` | boolean/null | `true` | New terminal view | Overlay scrollbar shown while scrolling or hovering the right edge of a pane. |
 | `terminal.cursor_color` | string/null | theme cursor | Hot reload/new terminal | `#RRGGBB`, `RRGGBB`, `#RGB`, or `RGB`. |
 | `terminal.scrollback_lines` | integer/null | `10000` | New terminal | Range `100` to `100000`. Review terminals cap at `2000`; cached terminals cap at `1000`. |
 | `terminal.cursor_shape` | string/null | `block` | New terminal | `vintage`, `block`, `beam`, `underline`, `double_underline`, or `hollow`. |

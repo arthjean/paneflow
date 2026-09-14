@@ -145,6 +145,8 @@ pub struct TerminalConfig {
     pub scroll_multiplier: Option<f32>,
     #[serde(default, deserialize_with = "lenient_opt_f32")]
     pub minimum_contrast: Option<f32>,
+    #[serde(default, deserialize_with = "lenient_opt_bool")]
+    pub scrollbar: Option<bool>,
 }
 
 impl TerminalConfig {
@@ -167,6 +169,10 @@ impl TerminalConfig {
 
     pub fn resolved_color_emoji(&self) -> bool {
         self.color_emoji.unwrap_or(true)
+    }
+
+    pub fn resolved_scrollbar_visible(&self) -> bool {
+        self.scrollbar.unwrap_or(true)
     }
 
     pub fn resolved_minimum_contrast(&self) -> f32 {

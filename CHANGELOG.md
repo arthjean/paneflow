@@ -13,6 +13,13 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
   selection stays highlighted, and the text is copied to the clipboard with
   the usual toast. The buffer is formatted off the render thread, so a long
   scrollback does not stall a frame. Refs #63.
+- Overlay scrollbar in terminal panes. It shows whenever the viewport moves,
+  wheel, drag, search jump, or output pushed while scrolled back, holds for a
+  second and fades over 200 ms. Hovering the 10 px gutter on the right edge
+  keeps it on screen, widens the 6 px thumb to the gutter and reveals the
+  track; click-jump and drag still work and search match ticks keep their
+  place. `reduce_motion` snaps instead of fading. `terminal.scrollbar: false`
+  (Settings > Terminal > Scrollbar) hides it. Refs #63.
 
 ### Fixed
 

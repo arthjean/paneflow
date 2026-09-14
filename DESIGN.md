@@ -189,9 +189,9 @@ hides the workspace name while Settings is open.
 
 Color resolves in three layers.
 
-1. **Terminal theme**: 36 slots per variant (24 ANSI colors, 5 base colors,
-   cursor, selection and its derived foreground, scrollbar thumb, link text,
-   two title bar colors) plus a syntax palette for the diff and the editor.
+1. **Terminal theme**: 37 slots per variant (24 ANSI colors, 5 base colors,
+   cursor, selection and its derived foreground, scrollbar thumb and track,
+   link text, two title bar colors) plus a syntax palette for the diff and the editor.
    `src-app/src/theme/model.rs`, values in `src-app/src/theme/builtin.rs`.
 2. **UI colors**: the semantic roles the chrome consumes, `UiColors`. A
    preset either ships its own `UiColors` (Vercel, Claude, Cursor) or lets
@@ -320,7 +320,7 @@ controls at 10 px or below, where the superellipse is invisible.
 | Toolbar pill | height 24, padding 8, gap 5 |
 | Filter field | padding 10 by 6, gap 6, 13 px search icon, 16 px clear button with a 10 px glyph |
 | Toast | inset 18, padding 12 / 14 by 11, minimum width 220, action buttons 26 tall; the release toast is inset 12, padding 12, width 448, close button 20, action button 26 tall |
-| Scrollbar | width 6, gutter 10, minimum thumb 24, inset 2 |
+| Scrollbar | width 6, gutter 10, minimum thumb 24, inset 2. Terminal panes overlay it: shown on any viewport move, held 1 s, faded out over 200 ms; hovering the gutter or dragging pins it, grows the thumb to the full gutter and reveals the track over 120 ms; `reduce_motion` snaps both |
 | Diff | row 18, file header 32, fold row 32, sticky header 24, gutter 36, change bar 4, split divider 3, column header 30, minimum split column 360, revert chip 56 by 16 inset 10 |
 | Code editor | 12 px mono, caret 2, scrollbar 15, minimum thumb 25; git marker column 6 left of the numbers, bar 4 radius 2 inset 1, deleted dot 8, hover grows 3 to the left |
 
