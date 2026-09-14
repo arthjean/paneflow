@@ -192,6 +192,10 @@ pub struct TerminalView {
     pub(super) search_regex_mode: bool,
     pub(super) search_regex_error: Option<String>,
     pub(super) search_truncated: bool,
+    pub(super) search_anchor_topmost: Line,
+    pub(super) search_seen_output_generation: u64,
+    pub(super) search_scan_in_flight: bool,
+    pub(super) search_refresh_dirty: bool,
     appearance_theme_generation: u64,
     pub(super) option_as_meta: bool,
     pub(super) cursor_blink_mode: paneflow_config::schema::CursorBlinkConfig,
@@ -654,6 +658,10 @@ impl TerminalView {
             search_regex_mode: false,
             search_regex_error: None,
             search_truncated: false,
+            search_anchor_topmost: Line(0),
+            search_seen_output_generation: 0,
+            search_scan_in_flight: false,
+            search_refresh_dirty: false,
             appearance_theme_generation: crate::theme::theme_generation(),
             option_as_meta: config
                 .option_as_meta
@@ -1237,6 +1245,8 @@ impl Render for TerminalView {
 
         #[cfg(debug_assertions)]
         let keystroke_at = self.terminal.last_keystroke_at.take();
+
+        self.sync_search_with_terminal(cx);
 
         let search_match_rects = if self.search_active && !self.search_matches.is_empty() {
             self.search_matches
