@@ -11,7 +11,7 @@ use crate::{
     SearchNext, SearchPrev, SelectWorkspace1, SelectWorkspace2, SelectWorkspace3, SelectWorkspace4,
     SelectWorkspace5, SelectWorkspace6, SelectWorkspace7, SelectWorkspace8, SelectWorkspace9,
     SplitEqualize, SplitHorizontally, SplitVertically, SwapPane, TerminalCopy, TerminalPaste,
-    ToggleCopyMode, ToggleSearch, ToggleSearchRegex, ToggleZoom, UndoClosePane,
+    TerminalSelectAll, ToggleCopyMode, ToggleSearch, ToggleSearchRegex, ToggleZoom, UndoClosePane,
 };
 use crate::{FontSizeDecrease, FontSizeIncrease, FontSizeReset, ToggleFleetSearch};
 
@@ -287,6 +287,13 @@ pub(super) const ACTIONS: &[ActionMeta] = &[
         factory: || Box::new(TerminalPaste),
         context: "Terminal",
         description: "Paste",
+        group: ShortcutGroup::Terminal,
+    },
+    ActionMeta {
+        name: "terminal_select_all",
+        factory: || Box::new(TerminalSelectAll),
+        context: "Terminal",
+        description: "Select all",
         group: ShortcutGroup::Terminal,
     },
     ActionMeta {

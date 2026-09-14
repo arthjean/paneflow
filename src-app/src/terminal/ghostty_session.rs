@@ -34,6 +34,7 @@ const NFR_005_MAX_PENDING_OUTPUT_BYTES: usize = 8 * 1024 * 1024;
 const NFR_005_MAX_QUEUED_INPUT_BYTES: usize = 1024 * 1024;
 const RECENT_OUTPUT_REFRESH_INTERVAL: Duration = Duration::from_millis(300);
 const MIN_PUBLISH_INTERVAL: Duration = Duration::from_millis(8);
+const SELECT_ALL_TIMEOUT: Duration = Duration::from_secs(10);
 const SYNC_OUTPUT_MAX_HOLD: Duration = Duration::from_millis(150);
 const RUNTIME_IDLE_TICK: Duration = Duration::from_millis(10);
 const RUNTIME_QUIET_TICK: Duration = Duration::from_millis(100);
@@ -387,6 +388,7 @@ enum RuntimeMessage {
         reply: SyncSender<Result<Vec<(i32, String)>, String>>,
     },
     SelectionText(SyncSender<Result<Option<String>, String>>),
+    SelectAll(SyncSender<Result<Option<String>, String>>),
     HyperlinkHover(ghostty::Point),
     ExtractScrollback(SyncSender<Result<Option<String>, String>>),
     CaptureReplay(SyncSender<Result<Vec<u8>, String>>),
@@ -1559,6 +1561,17 @@ impl GhosttySession {
         filter_copyable_selection_text(kind, self.selection_range(), text)
     }
 
+    pub(super) fn select_all_text(&self) -> Option<String> {
+        {
+            let mut gesture = self.lock_gesture();
+            self.invalidate_gesture(&mut gesture);
+            gesture.kind = None;
+        }
+        self.request_within(SELECT_ALL_TIMEOUT, RuntimeMessage::SelectAll)
+            .and_then(Result::ok)
+            .flatten()
+    }
+
     pub(super) fn clear_history(&self) {
         let _ = self
             .inner
@@ -1824,12 +1837,20 @@ impl GhosttySession {
     }
 
     fn request<T>(&self, command: impl FnOnce(SyncSender<T>) -> RuntimeMessage) -> Option<T> {
+        self.request_within(Duration::from_secs(1), command)
+    }
+
+    fn request_within<T>(
+        &self,
+        timeout: Duration,
+        command: impl FnOnce(SyncSender<T>) -> RuntimeMessage,
+    ) -> Option<T> {
         let (reply_tx, reply_rx) = sync_channel(1);
         self.inner
             .mailbox
             .try_send_control(command(reply_tx))
             .ok()?;
-        reply_rx.recv_timeout(Duration::from_secs(1)).ok()
+        reply_rx.recv_timeout(timeout).ok()
     }
 }
 
@@ -2759,6 +2780,9 @@ fn handle_terminal_command(
         }
         RuntimeMessage::SelectionText(reply) => {
             let _ = reply.send(terminal.selection_text().map_err(|error| error.to_string()));
+        }
+        RuntimeMessage::SelectAll(reply) => {
+            let _ = reply.send(select_all_text(inner, terminal));
         }
         RuntimeMessage::HyperlinkHover(point) => {
             let link = match terminal.hyperlink_at(point) {
@@ -3937,6 +3961,29 @@ fn publish_gesture_selection(inner: &SessionInner, range: Option<ghostty::Select
     update_shared_selection(inner, range.map(selection_range_from_ghostty));
 }
 
+fn select_all_text(
+    inner: &SessionInner,
+    terminal: &mut ghostty::DisplayTerminal,
+) -> Result<Option<String>, String> {
+    terminal
+        .gesture_reset()
+        .map_err(|error| error.to_string())?;
+    {
+        let mut gesture = lock_gesture(inner);
+        gesture.in_flight = None;
+        gesture.applied = None;
+    }
+    if !terminal.select_all().map_err(|error| error.to_string())? {
+        update_shared_selection(inner, None);
+        return Ok(None);
+    }
+    let range = terminal
+        .selection_range()
+        .map_err(|error| error.to_string())?;
+    publish_gesture_selection(inner, range);
+    terminal.selection_text().map_err(|error| error.to_string())
+}
+
 fn gesture_behavior(kind: SelectionKind) -> ghostty::GestureBehavior {
     match kind {
         SelectionKind::Simple => ghostty::GestureBehavior::Cell,
@@ -4343,6 +4390,41 @@ mod tests {
         );
         assert!(session.set_native_search(String::new()));
         wait_for_native_search(&session, "", 0);
+        session.shutdown();
+    }
+
+    #[test]
+    fn select_all_publishes_the_whole_buffer_and_returns_its_text() {
+        let size = TerminalWindowSize::new(80, 6, 8, 16);
+        let (session, pending, _events) = GhosttySession::pending(size);
+        session
+            .start_display(pending, 1_000)
+            .expect("display runtime");
+        session.write_output(
+            format!("first-marker\r\n{}last-marker", "filler\r\n".repeat(40)).as_bytes(),
+        );
+        let text = session
+            .select_all_text()
+            .expect("select all must return the buffer text");
+        assert!(text.starts_with("first-marker"), "{text:?}");
+        assert!(text.ends_with("last-marker"), "{text:?}");
+        let range = session
+            .selection_range()
+            .expect("select all must publish a selection");
+        assert!(range.start.line.0 < 0, "{range:?}");
+        assert!(range.end.line.0 >= 0, "{range:?}");
+        session.shutdown();
+    }
+
+    #[test]
+    fn select_all_on_an_empty_terminal_returns_nothing() {
+        let size = TerminalWindowSize::new(80, 6, 8, 16);
+        let (session, pending, _events) = GhosttySession::pending(size);
+        session
+            .start_display(pending, 100)
+            .expect("display runtime");
+        assert_eq!(session.select_all_text(), None);
+        assert_eq!(session.selection_range(), None);
         session.shutdown();
     }
 

@@ -247,6 +247,10 @@ impl TerminalSessionBackend {
         self.ghostty.selection_text()
     }
 
+    pub(crate) fn select_all_text(&self) -> Option<String> {
+        self.ghostty.select_all_text()
+    }
+
     pub(crate) fn finish_selection(&self) -> (bool, Option<String>) {
         let copied = self.ghostty.selection_text();
         let is_empty = copied.as_ref().is_none_or(String::is_empty);

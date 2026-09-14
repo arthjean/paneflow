@@ -88,6 +88,13 @@ impl DisplayTerminal {
         self.install_optional_selection(result, &selection)
     }
 
+    pub fn selection_range(&self) -> Result<Option<SelectionRange>> {
+        self.current_selection()?
+            .as_ref()
+            .map(|selection| self.selection_range_of(selection))
+            .transpose()
+    }
+
     pub fn select_output(&mut self, point: Point) -> Result<bool> {
         let reference = self.grid_ref(point)?;
         let mut selection = empty_selection();

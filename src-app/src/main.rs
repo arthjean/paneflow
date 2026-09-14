@@ -1089,11 +1089,9 @@ impl Render for PaneFlowApp {
             .on_action(cx.listener(|_this: &mut Self, _: &Paste, _window, cx| {
                 cx.dispatch_action(&TerminalPaste);
             }))
-            .on_action(
-                cx.listener(|_this: &mut Self, _: &SelectAll, _window, _cx| {
-                    log::debug!("Edit > Select All dispatched (terminal select-all not yet wired)");
-                }),
-            )
+            .on_action(cx.listener(|_this: &mut Self, _: &SelectAll, _window, cx| {
+                cx.dispatch_action(&TerminalSelectAll);
+            }))
             .on_action(
                 cx.listener(|this: &mut Self, _: &ShowSystemInfo, window, cx| {
                     this.open_system_info_dialog(window, cx);

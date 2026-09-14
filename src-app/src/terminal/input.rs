@@ -893,6 +893,26 @@ impl TerminalView {
         }
     }
 
+    pub(super) fn handle_select_all(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        let backend = self.terminal.session_backend();
+        cx.spawn(
+            async move |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
+                let text = smol::unblock(move || backend.select_all_text()).await;
+                let _ = this.update(cx, |view, cx| {
+                    if let Some(text) = text.filter(|text| !text.is_empty()) {
+                        #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+                        cx.write_to_primary(ClipboardItem::new_string(text.clone()));
+                        cx.write_to_clipboard(ClipboardItem::new_string(text));
+                        cx.emit(TerminalEvent::SelectionCopied);
+                    }
+                    view.terminal.dirty = true;
+                    cx.notify();
+                });
+            },
+        )
+        .detach();
+    }
+
     pub(super) fn handle_paste(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         let Some(clipboard) = cx.read_from_clipboard() else {
             return;

@@ -176,6 +176,11 @@ pub(super) const DEFAULTS: &[DefaultBinding] = &[
         context: Some("Terminal"),
     },
     DefaultBinding {
+        key: "ctrl-shift-a",
+        action_name: "terminal_select_all",
+        context: Some("Terminal"),
+    },
+    DefaultBinding {
         key: "shift-pageup",
         action_name: "scroll_page_up",
         context: Some("Terminal"),
@@ -391,7 +396,7 @@ pub(super) const DEFAULTS: &[DefaultBinding] = &[
         context: None,
     },
     DefaultBinding {
-        key: "secondary-shift-a",
+        key: "secondary-shift-u",
         action_name: "open_attention_queue",
         context: None,
     },
@@ -427,6 +432,11 @@ pub(super) const PLATFORM_DEFAULTS: &[DefaultBinding] = &[
     DefaultBinding {
         key: "cmd-f",
         action_name: "toggle_search",
+        context: Some("Terminal"),
+    },
+    DefaultBinding {
+        key: "cmd-a",
+        action_name: "terminal_select_all",
         context: Some("Terminal"),
     },
 ];
@@ -547,6 +557,34 @@ mod tests {
                 .iter()
                 .any(|d| d.key == "ctrl-shift-v" && d.action_name == "terminal_paste")
         );
+    }
+
+    #[test]
+    fn ctrl_shift_a_selects_the_whole_terminal_like_ghostty() {
+        let select_all = DEFAULTS
+            .iter()
+            .find(|d| d.action_name == "terminal_select_all")
+            .expect("terminal_select_all must have a default");
+        assert_eq!(select_all.key, "ctrl-shift-a");
+        assert_eq!(select_all.context, Some("Terminal"));
+        assert!(
+            DEFAULTS
+                .iter()
+                .all(|d| d.key != "secondary-shift-a" && d.key != "ctrl-shift-a"
+                    || d.action_name == "terminal_select_all"),
+            "no other default may claim the select-all chord"
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn cmd_a_selects_the_whole_terminal_on_macos() {
+        let select_all = PLATFORM_DEFAULTS
+            .iter()
+            .find(|d| d.key == "cmd-a")
+            .expect("cmd-a must be a macOS default");
+        assert_eq!(select_all.action_name, "terminal_select_all");
+        assert_eq!(select_all.context, Some("Terminal"));
     }
 
     #[cfg(target_os = "macos")]
