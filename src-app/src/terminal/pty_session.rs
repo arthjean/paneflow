@@ -298,6 +298,18 @@ impl TerminalSessionBackend {
         self.search_with_cancel(query, regex, &std::sync::atomic::AtomicBool::new(false))
     }
 
+    pub(crate) fn set_native_search(&self, query: String) -> bool {
+        self.ghostty.set_native_search(query)
+    }
+
+    pub(crate) fn select_native_search(&self, previous: bool) -> bool {
+        self.ghostty.select_native_search(previous)
+    }
+
+    pub(crate) fn native_search_state(&self) -> Arc<crate::search::NativeSearchState> {
+        self.ghostty.native_search_state()
+    }
+
     pub(crate) fn search_with_cancel(
         &self,
         query: &str,

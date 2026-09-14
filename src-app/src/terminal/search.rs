@@ -1,7 +1,15 @@
 use gpui::{ClipboardItem, Context, Focusable};
 
 use super::TerminalView;
-use super::types::Point;
+use super::types::{Line, Point};
+
+const SEARCH_REFRESH_DEBOUNCE_MS: u64 = 400;
+
+#[derive(Clone, Copy)]
+enum SearchScanKind {
+    Query,
+    Refresh,
+}
 
 const LOCAL_SEARCH_DEBOUNCE_MS: u64 = 80;
 
@@ -80,6 +88,7 @@ impl TerminalView {
         self.search_active = !self.search_active;
         self.search_generation = self.search_generation.wrapping_add(1);
         self.search_query.clear();
+        self.queue_native_search(String::new(), cx);
         self.search_matches.clear();
         self.search_current = 0;
         self.search_regex_error = None;
@@ -124,6 +133,7 @@ impl TerminalView {
         self.search_active = false;
         self.search_generation = self.search_generation.wrapping_add(1);
         self.search_query.clear();
+        self.queue_native_search(String::new(), cx);
         self.search_matches.clear();
         self.search_current = 0;
         self.search_regex_error = None;
@@ -134,13 +144,15 @@ impl TerminalView {
 
     pub(super) fn toggle_search_regex(&mut self, cx: &mut Context<Self>) {
         self.search_regex_mode = !self.search_regex_mode;
-        if !self.search_query.is_empty() {
-            self.schedule_search(cx);
-        }
+        self.schedule_search(cx);
         cx.notify();
     }
 
     pub(super) fn search_next(&mut self, cx: &mut Context<Self>) {
+        if !self.search_regex_mode {
+            self.navigate_native_search(false, cx);
+            return;
+        }
         if self.search_matches.is_empty() {
             return;
         }
@@ -150,6 +162,10 @@ impl TerminalView {
     }
 
     pub(super) fn search_prev(&mut self, cx: &mut Context<Self>) {
+        if !self.search_regex_mode {
+            self.navigate_native_search(true, cx);
+            return;
+        }
         if self.search_matches.is_empty() {
             return;
         }
@@ -165,38 +181,117 @@ impl TerminalView {
     fn schedule_search(&mut self, cx: &mut Context<Self>) {
         self.cancel_pending_search();
         self.search_generation = self.search_generation.wrapping_add(1);
-        let generation = self.search_generation;
-        if self.search_query.is_empty() {
-            self.search_matches.clear();
-            self.search_regex_error = None;
-            self.search_truncated = false;
-            self.search_current = 0;
+        self.search_refresh_dirty = false;
+        self.search_seen_output_generation = self.terminal.output_generation;
+        self.search_matches.clear();
+        self.search_regex_error = None;
+        self.search_truncated = false;
+        self.search_current = 0;
+        self.search_native_snapshot = None;
+        if !self.search_regex_mode {
+            self.search_scan_in_flight = !self.search_query.is_empty();
+            self.queue_native_search(self.search_query.clone(), cx);
             return;
         }
+        self.queue_native_search(String::new(), cx);
+        if self.search_query.is_empty() {
+            return;
+        }
+        self.spawn_search_scan(LOCAL_SEARCH_DEBOUNCE_MS, SearchScanKind::Query, cx);
+    }
 
+    pub(super) fn sync_search_with_terminal(&mut self, cx: &mut Context<Self>) {
+        if let Some(query) = self.search_native_pending.take() {
+            self.queue_native_search(query, cx);
+        }
+        if !self.search_active || self.search_query.is_empty() {
+            return;
+        }
+        if !self.search_regex_mode {
+            let state = self.terminal.session_backend().native_search_state();
+            if state.query != self.search_query || self.search_native_pending.is_some() {
+                return;
+            }
+            if self
+                .search_native_snapshot
+                .as_ref()
+                .is_some_and(|previous| std::sync::Arc::ptr_eq(previous, &state))
+            {
+                return;
+            }
+            self.search_matches.clone_from(&state.matches);
+            self.search_current = state.selected.unwrap_or(0);
+            self.search_regex_error.clone_from(&state.error);
+            self.search_scan_in_flight = !state.complete && state.error.is_none();
+            self.search_truncated = !state.complete;
+            self.search_native_snapshot = Some(state);
+            return;
+        }
+        let topmost = self.terminal.session_backend().grid_metrics().topmost_line;
+        if topmost != self.search_anchor_topmost {
+            crate::search::shift_matches(
+                &mut self.search_matches,
+                topmost.0 - self.search_anchor_topmost.0,
+            );
+            self.search_anchor_topmost = topmost;
+        }
+        let output_generation = self.terminal.output_generation;
+        if output_generation == self.search_seen_output_generation {
+            return;
+        }
+        self.search_seen_output_generation = output_generation;
+        if self.search_scan_in_flight {
+            self.search_refresh_dirty = true;
+        } else {
+            self.spawn_search_scan(SEARCH_REFRESH_DEBOUNCE_MS, SearchScanKind::Refresh, cx);
+        }
+    }
+
+    fn spawn_search_scan(
+        &mut self,
+        debounce_ms: u64,
+        kind: SearchScanKind,
+        cx: &mut Context<Self>,
+    ) {
+        let generation = self.search_generation;
         let backend = self.terminal.session_backend();
         let query = self.search_query.clone();
         let regex = self.search_regex_mode;
         let cancellation = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         self.search_cancellation = Some(cancellation.clone());
+        self.search_scan_in_flight = true;
         cx.spawn(
             async move |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
-                smol::Timer::after(std::time::Duration::from_millis(LOCAL_SEARCH_DEBOUNCE_MS))
-                    .await;
+                smol::Timer::after(std::time::Duration::from_millis(debounce_ms)).await;
                 let worker_query = query.clone();
-                let result = smol::unblock(move || {
-                    backend.search_with_cancel(&worker_query, regex, &cancellation)
+                let scan = smol::unblock(move || {
+                    let anchor = backend.grid_metrics().topmost_line;
+                    let result = backend.search_with_cancel(&worker_query, regex, &cancellation);
+                    (anchor, result)
                 })
                 .await;
                 let _ = cx.update(|cx| {
                     this.update(cx, |view, cx| {
-                        if view.search_generation == generation
+                        let current = view.search_generation == generation
                             && view.search_active
                             && view.search_query == query
-                            && view.search_regex_mode == regex
-                        {
-                            view.apply_search_result(result);
+                            && view.search_regex_mode == regex;
+                        if current {
+                            view.search_scan_in_flight = false;
+                            let (anchor, result) = scan;
+                            view.apply_search_result(result, anchor, kind);
                             cx.notify();
+                        }
+                        if !view.search_active {
+                            view.search_refresh_dirty = false;
+                        }
+                        if current && view.search_regex_mode && view.search_refresh_dirty {
+                            view.search_refresh_dirty = false;
+                            view.spawn_search_scan(
+                                SEARCH_REFRESH_DEBOUNCE_MS,
+                                SearchScanKind::Refresh,
+                                cx,
+                            );
                         }
                     })
                 });
@@ -205,14 +300,37 @@ impl TerminalView {
         .detach();
     }
 
-    fn apply_search_result(&mut self, result: crate::search::SearchResult) {
+    fn apply_search_result(
+        &mut self,
+        result: crate::search::SearchResult,
+        anchor: Line,
+        kind: SearchScanKind,
+    ) {
         self.search_cancellation = None;
+        let previous = self.search_matches.get(self.search_current).cloned();
         self.search_matches = result.matches;
         self.search_regex_error = result.regex_error;
         self.search_truncated = result.truncated;
-        self.search_current = 0;
-        if !self.search_matches.is_empty() {
-            self.scroll_to_current_match();
+        self.search_anchor_topmost = anchor;
+        let topmost = self.terminal.session_backend().grid_metrics().topmost_line;
+        if topmost != anchor {
+            crate::search::shift_matches(&mut self.search_matches, topmost.0 - anchor.0);
+            self.search_anchor_topmost = topmost;
+        }
+        match kind {
+            SearchScanKind::Query => {
+                self.search_current = 0;
+                if !self.search_matches.is_empty() {
+                    self.scroll_to_current_match();
+                }
+            }
+            SearchScanKind::Refresh => {
+                self.search_current = crate::search::reconcile_current(
+                    previous.as_ref(),
+                    &self.search_matches,
+                    self.search_current,
+                );
+            }
         }
     }
 
@@ -220,6 +338,57 @@ impl TerminalView {
         if let Some(cancellation) = self.search_cancellation.take() {
             cancellation.store(true, std::sync::atomic::Ordering::Release);
         }
+        self.search_scan_in_flight = false;
+        self.search_refresh_dirty = false;
+    }
+
+    fn queue_native_search(&mut self, query: String, cx: &mut Context<Self>) {
+        if self
+            .terminal
+            .session_backend()
+            .set_native_search(query.clone())
+        {
+            self.search_native_pending = None;
+            if !self.search_regex_mode {
+                self.search_regex_error = None;
+            }
+            return;
+        }
+        if !self.search_regex_mode && !query.is_empty() {
+            self.search_regex_error =
+                Some("The terminal could not accept the search; retrying".into());
+        }
+        self.search_native_pending = Some(query);
+        if self.search_native_retry_scheduled {
+            return;
+        }
+        self.search_native_retry_scheduled = true;
+        cx.spawn(
+            async move |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
+                smol::Timer::after(std::time::Duration::from_millis(LOCAL_SEARCH_DEBOUNCE_MS))
+                    .await;
+                let _ = this.update(cx, |view, cx| {
+                    view.search_native_retry_scheduled = false;
+                    cx.notify();
+                });
+            },
+        )
+        .detach();
+    }
+
+    fn navigate_native_search(&mut self, previous: bool, cx: &mut Context<Self>) {
+        if self.search_matches.is_empty() {
+            return;
+        }
+        if !self
+            .terminal
+            .session_backend()
+            .select_native_search(previous)
+        {
+            self.search_regex_error =
+                Some("The terminal could not accept search navigation".into());
+        }
+        cx.notify();
     }
 
     fn scroll_to_current_match(&mut self) {

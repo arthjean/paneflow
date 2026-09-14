@@ -1099,17 +1099,25 @@ pub(crate) fn layout_from_snapshot(inputs: LayoutInputs<'_>) -> LayoutState {
 
     let mut search_rects = Vec::new();
     for highlight in search_highlights {
-        let display_line = highlight.start.line.0 + display_offset as i32;
-
-        if display_line >= 0 && display_line < desired_rows as i32 {
+        let start_line = highlight.start.line.0.saturating_add(display_offset as i32);
+        let end_line = highlight.end.line.0.saturating_add(display_offset as i32);
+        for display_line in start_line.max(0)..=end_line.min(desired_rows as i32 - 1) {
             let color = if highlight.is_active {
                 search_active_color
             } else {
                 search_match_color
             };
 
-            let col_start = highlight.start.column.0;
-            let col_end = highlight.end.column.0;
+            let col_start = if display_line == start_line {
+                highlight.start.column.0
+            } else {
+                0
+            };
+            let col_end = if display_line == end_line {
+                highlight.end.column.0
+            } else {
+                desired_cols.saturating_sub(1)
+            };
             search_rects.push(LayoutRect {
                 line: display_line,
                 num_lines: 1,
@@ -2049,6 +2057,44 @@ mod golden_frame_tests {
             color_emoji_enabled: true,
             minimum_contrast: MIN_APCA_CONTRAST,
         })
+    }
+
+    #[test]
+    fn search_highlights_wrapped_matches_with_start_above_viewport() {
+        let theme = crate::theme::paneflow_dark();
+        let highlights = [SearchHighlight {
+            start: GridPoint::new(-3, 7),
+            end: GridPoint::new(0, 2),
+            is_active: true,
+        }];
+        let layout = layout_from_snapshot(LayoutInputs {
+            cells: Vec::new().into(),
+            cursor: None,
+            selection_range: None,
+            copy_mode_cursor: None,
+            search_highlights: &highlights,
+            display_offset: 1,
+            history_size: 3,
+            desired_cols: COLS,
+            desired_rows: ROWS,
+            first_visible_row: 0,
+            last_visible_row: ROWS as i32,
+            dims: test_dims(),
+            base_font: test_font(),
+            theme: &theme,
+            exited: None,
+            exit_signal: None,
+            integrated_glyphs_enabled: true,
+            color_emoji_enabled: true,
+            minimum_contrast: MIN_APCA_CONTRAST,
+        });
+        assert_eq!(layout.search_rects.len(), 2);
+        assert_eq!(layout.search_rects[0].line, 0);
+        assert_eq!(layout.search_rects[0].col, 0);
+        assert_eq!(layout.search_rects[0].num_cols, COLS);
+        assert_eq!(layout.search_rects[1].line, 1);
+        assert_eq!(layout.search_rects[1].col, 0);
+        assert_eq!(layout.search_rects[1].num_cols, 3);
     }
 
     fn golden_dir() -> std::path::PathBuf {

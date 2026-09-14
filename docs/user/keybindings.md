@@ -73,6 +73,7 @@ diff hunk in the diff view.
 | App views | `open_agents_view` | `Cmd/Ctrl+Shift+A` |
 | App views | `open_diff_view` | `Cmd/Ctrl+Shift+G` |
 | App views | `toggle_files_sidebar` | `Cmd/Ctrl+Alt+F` |
+| App views | `toggle_diff_dock_maximize` | `Cmd/Ctrl+Alt+M` |
 | App views | `open_composer` | `Cmd/Ctrl+Shift+Space` |
 | App views | `toggle_broadcast_member` | `Cmd/Ctrl+Shift+B` |
 | App views | `open_broadcast_groups` | `Cmd/Ctrl+Shift+M` |
@@ -88,6 +89,7 @@ diff hunk in the diff view.
 | Terminal pane | `jump_next_prompt` | `Cmd/Ctrl+Shift+Down` |
 | Terminal pane | `toggle_copy_mode` | `Ctrl+Shift+X` |
 | Terminal pane | `toggle_search` | `Ctrl+Shift+F` |
+| Terminal pane | `toggle_search` | `Cmd+F (macOS only)` |
 | Terminal pane | `font_size_increase` | `Cmd/Ctrl+=` |
 | Terminal pane | `font_size_decrease` | `Cmd/Ctrl+-` |
 | Terminal pane | `font_size_reset` | `Cmd/Ctrl+0` |

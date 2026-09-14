@@ -53,6 +53,7 @@ pub struct DisplayTerminal {
     pub(crate) row_iterator: OwnedHandle<sys::GhosttyRenderStateRowIterator>,
     pub(crate) render_state: OwnedHandle<sys::GhosttyRenderState>,
     pub(crate) gesture: Option<crate::selection_gesture::GestureHandle>,
+    pub(crate) search: Option<crate::native_search::NativeSearch>,
     pub(crate) terminal: OwnedHandle<sys::GhosttyTerminal>,
     pub(crate) snapshot_cache: SnapshotCache,
     pub(crate) mouse_encoder_modes: Option<MouseModes>,

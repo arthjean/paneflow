@@ -7,6 +7,13 @@ const MAX_MATCHES: usize = 10_000;
 pub const MAX_SEARCH_CELLS: usize = 12_000_000;
 pub const SEARCH_CHUNK_CELLS: usize = 64 * 1024;
 
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct NativeSearchSnapshot {
+    pub matches: Vec<SearchMatch>,
+    pub selected: Option<usize>,
+    pub complete: bool,
+}
+
 pub struct SearchLine {
     pub line: i32,
     pub text: String,
@@ -180,6 +187,9 @@ impl crate::engine::DisplayTerminal {
     }
 
     pub fn search(&self, query: &str, regex_mode: bool) -> Result<SearchResult> {
+        if !regex_mode {
+            return self.native_search_once(query);
+        }
         let mut search = SearchEngine::new(query, regex_mode)?;
         if search.is_done() {
             return Ok(search.finish(false));

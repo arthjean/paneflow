@@ -192,6 +192,13 @@ pub struct TerminalView {
     pub(super) search_regex_mode: bool,
     pub(super) search_regex_error: Option<String>,
     pub(super) search_truncated: bool,
+    pub(super) search_anchor_topmost: Line,
+    pub(super) search_seen_output_generation: u64,
+    pub(super) search_scan_in_flight: bool,
+    pub(super) search_refresh_dirty: bool,
+    pub(super) search_native_pending: Option<String>,
+    pub(super) search_native_retry_scheduled: bool,
+    pub(super) search_native_snapshot: Option<Arc<crate::search::NativeSearchState>>,
     appearance_theme_generation: u64,
     pub(super) option_as_meta: bool,
     pub(super) cursor_blink_mode: paneflow_config::schema::CursorBlinkConfig,
@@ -654,6 +661,13 @@ impl TerminalView {
             search_regex_mode: false,
             search_regex_error: None,
             search_truncated: false,
+            search_anchor_topmost: Line(0),
+            search_seen_output_generation: 0,
+            search_scan_in_flight: false,
+            search_refresh_dirty: false,
+            search_native_pending: None,
+            search_native_retry_scheduled: false,
+            search_native_snapshot: None,
             appearance_theme_generation: crate::theme::theme_generation(),
             option_as_meta: config
                 .option_as_meta
@@ -1011,9 +1025,21 @@ impl TerminalView {
         };
 
         let (status_text, status_color) = if has_regex_error {
-            ("Invalid regex".to_string(), ui.agent_error)
+            (
+                if regex_active {
+                    "Invalid regex"
+                } else {
+                    "Search failed"
+                }
+                .to_string(),
+                ui.agent_error,
+            )
         } else if self.search_query.is_empty() {
             (String::new(), ui.muted)
+        } else if !has_matches && self.search_scan_in_flight {
+            ("Searching...".to_string(), ui.muted)
+        } else if !has_matches && self.search_truncated {
+            ("Search incomplete".to_string(), ui.muted)
         } else if !has_matches {
             ("No results".to_string(), ui.muted)
         } else if self.search_truncated {
@@ -1237,6 +1263,8 @@ impl Render for TerminalView {
 
         #[cfg(debug_assertions)]
         let keystroke_at = self.terminal.last_keystroke_at.take();
+
+        self.sync_search_with_terminal(cx);
 
         let search_match_rects = if self.search_active && !self.search_matches.is_empty() {
             self.search_matches
@@ -1818,6 +1846,7 @@ mod tests {
         let (terminal, _host, cx) = hosted_terminal(cx);
         terminal.update(cx, |view, _cx| {
             view.search_active = true;
+            view.search_regex_mode = true;
             view.search_query = "paneflow".into();
             view.search_matches = vec![
                 crate::search::SearchMatch {

@@ -276,6 +276,7 @@ struct SharedState {
     modes: Modes,
     metrics: GridMetrics,
     kitty: Arc<[crate::terminal::kitty::KittyPlacement]>,
+    search: Arc<crate::search::NativeSearchState>,
 }
 
 struct ResizeState {
@@ -379,6 +380,8 @@ enum RuntimeMessage {
         max_cells: usize,
         reply: SyncSender<Result<ghostty::SearchChunk, String>>,
     },
+    SetNativeSearch(String),
+    SelectNativeSearch(bool),
     LineTexts {
         lines: Vec<i32>,
         reply: SyncSender<Result<Vec<(i32, String)>, String>>,
@@ -1084,6 +1087,7 @@ impl GhosttySession {
                     modes: Modes::empty(),
                     metrics: initial_grid_metrics(size.cols.max(1), size.rows.max(1)),
                     kitty: Arc::from([]),
+                    search: Arc::default(),
                 }),
                 kitty_images: Mutex::default(),
                 recent_output_lines: RwLock::new(Arc::from(Vec::<String>::new())),
@@ -1638,6 +1642,24 @@ impl GhosttySession {
 
     pub(super) fn search(&self, query: &str, regex: bool) -> crate::search::SearchResult {
         self.search_with_cancel(query, regex, &AtomicBool::new(false))
+    }
+
+    pub(super) fn set_native_search(&self, query: String) -> bool {
+        self.inner
+            .mailbox
+            .try_send_control(RuntimeMessage::SetNativeSearch(query))
+            .is_ok()
+    }
+
+    pub(super) fn select_native_search(&self, previous: bool) -> bool {
+        self.inner
+            .mailbox
+            .try_send_control(RuntimeMessage::SelectNativeSearch(previous))
+            .is_ok()
+    }
+
+    pub(super) fn native_search_state(&self) -> Arc<crate::search::NativeSearchState> {
+        self.inner.state.read().search.clone()
     }
 
     pub(super) fn search_with_cancel(
@@ -2709,6 +2731,25 @@ fn handle_terminal_command(
                     .map_err(|error| error.to_string()),
             );
         }
+        RuntimeMessage::SetNativeSearch(query) => {
+            gate.search_query = query;
+            gate.search_error = terminal
+                .set_search_query(&gate.search_query)
+                .err()
+                .map(|error| error.to_string());
+            if let Err(error) = gate.publish_now(inner, terminal) {
+                log::warn!(target: "paneflow::terminal::ghostty", "Ghostty search publication failed: {error}");
+            }
+        }
+        RuntimeMessage::SelectNativeSearch(previous) => {
+            gate.search_error = terminal
+                .search_select(previous)
+                .err()
+                .map(|error| error.to_string());
+            if let Err(error) = gate.publish_now(inner, terminal) {
+                log::warn!(target: "paneflow::terminal::ghostty", "Ghostty search navigation publication failed: {error}");
+            }
+        }
         RuntimeMessage::LineTexts { lines, reply } => {
             let _ = reply.send(
                 terminal
@@ -2827,7 +2868,14 @@ fn run_display_runtime(
 
     loop {
         count_runtime_loop_iteration();
-        let message = match mailbox.recv_timeout(DISPLAY_RUNTIME_TICK) {
+        if let Err(error) = publish_gate.poll(&inner, &mut terminal) {
+            log::warn!(target: "paneflow::terminal::ghostty", "Ghostty display publication failed: {error}");
+        }
+        let wait = publish_gate
+            .next_wake(Instant::now())
+            .map(|wake| wake.clamp(Duration::from_millis(1), DISPLAY_RUNTIME_TICK))
+            .unwrap_or(DISPLAY_RUNTIME_TICK);
+        let message = match mailbox.recv_timeout(wait) {
             Ok(message) => message,
             Err(MailboxRecvError::Timeout) => continue,
             Err(MailboxRecvError::Disconnected) => break,
@@ -3242,6 +3290,8 @@ struct PublishGate {
     pending: bool,
     sync_hold_since: Option<Instant>,
     mirror: CellMirror,
+    search_query: String,
+    search_error: Option<String>,
 }
 
 impl PublishGate {
@@ -3253,6 +3303,8 @@ impl PublishGate {
             pending: false,
             sync_hold_since: None,
             mirror: CellMirror::default(),
+            search_query: String::new(),
+            search_error: None,
         }
     }
 
@@ -3325,11 +3377,50 @@ impl PublishGate {
         inner: &SessionInner,
         terminal: &mut ghostty::DisplayTerminal,
     ) -> Result<(), String> {
-        update_shared_state(inner, terminal, &mut self.mirror)?;
+        let search = self.advance_search(terminal);
+        let search_pending = !search.query.is_empty() && !search.complete && search.error.is_none();
+        update_shared_state(inner, terminal, &mut self.mirror, Arc::new(search))?;
         self.last_publish = Instant::now();
-        self.pending = false;
+        self.pending = search_pending;
         queue_wakeup(inner);
         Ok(())
+    }
+
+    fn advance_search(
+        &mut self,
+        terminal: &mut ghostty::DisplayTerminal,
+    ) -> crate::search::NativeSearchState {
+        let mut state = crate::search::NativeSearchState {
+            query: self.search_query.clone(),
+            complete: true,
+            error: self.search_error.clone(),
+            ..Default::default()
+        };
+        if state.query.is_empty() || state.error.is_some() {
+            return state;
+        }
+        match terminal.search_step() {
+            Ok(Some(snapshot)) => {
+                state.matches = snapshot
+                    .matches
+                    .into_iter()
+                    .map(|found| crate::search::SearchMatch {
+                        start: point_from_ghostty(found.start),
+                        end: point_from_ghostty(found.end),
+                    })
+                    .collect();
+                state.selected = snapshot.selected;
+                state.complete = snapshot.complete;
+            }
+            Ok(None) => {}
+            Err(error) => {
+                let error = error.to_string();
+                self.search_error = Some(error.clone());
+                state.error = Some(error);
+                terminal.clear_search();
+            }
+        }
+        state
     }
 }
 
@@ -3341,6 +3432,8 @@ pub(super) fn simulate_gate_trickle(interval: Duration, chunks: usize) -> usize 
         pending: false,
         sync_hold_since: None,
         mirror: CellMirror::default(),
+        search_query: String::new(),
+        search_error: None,
     };
     let mut published = 0usize;
     for index in 0..chunks {
@@ -3367,6 +3460,7 @@ fn update_shared_state(
     inner: &SessionInner,
     terminal: &mut ghostty::DisplayTerminal,
     mirror: &mut CellMirror,
+    search: Arc<crate::search::NativeSearchState>,
 ) -> Result<(), String> {
     let snapshot = terminal.snapshot().map_err(|error| error.to_string())?;
     let modes = terminal.modes().map_err(|error| error.to_string())?;
@@ -3386,6 +3480,7 @@ fn update_shared_state(
             modes,
             metrics,
             kitty,
+            search,
         },
     );
     mirror.recycle(previous.content);
@@ -4199,6 +4294,77 @@ mod tests {
     use super::*;
     use paneflow_config::schema::TerminalSurfaceProfile;
 
+    fn wait_for_native_search(
+        session: &GhosttySession,
+        query: &str,
+        expected_matches: usize,
+    ) -> Arc<crate::search::NativeSearchState> {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let state = session.native_search_state();
+            if state.query == query && state.complete {
+                assert!(state.error.is_none(), "{:?}", state.error);
+                assert_eq!(state.matches.len(), expected_matches);
+                return state;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "native search did not finish: {state:?}"
+            );
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    }
+
+    #[test]
+    fn native_search_completes_in_idle_runtime_and_publishes_scrolled_history() {
+        let size = TerminalWindowSize::new(80, 6, 8, 16);
+        let (session, pending, _events) = GhosttySession::pending(size);
+        session
+            .start_display(pending, 20_000)
+            .expect("display runtime");
+        session.write_output(format!("old-marker\r\n{}", "filler\r\n".repeat(12_000)).as_bytes());
+        assert!(session.set_native_search("old-marker".into()));
+        let before = wait_for_native_search(&session, "old-marker", 1);
+        assert!(before.matches[0].start.line.0 < -11_000);
+        assert_eq!(before.selected, Some(0));
+        {
+            let state = session.inner.state.read();
+            let displayed_line =
+                state.search.matches[0].start.line.0 + state.metrics.display_offset as i32;
+            assert!((0..6).contains(&displayed_line));
+            assert_eq!(state.content.cells[displayed_line as usize * 80].c, 'o');
+        }
+        session.write_output(b"old-marker\r\n");
+        let after = wait_for_native_search(&session, "old-marker", 2);
+        assert_eq!(after.selected, Some(1));
+        assert_eq!(
+            after.matches[1].start.line.0,
+            before.matches[0].start.line.0 - 1
+        );
+        assert!(session.set_native_search(String::new()));
+        wait_for_native_search(&session, "", 0);
+        session.shutdown();
+    }
+
+    #[test]
+    fn native_search_reports_invalid_query_without_failing_the_terminal() {
+        let size = TerminalWindowSize::new(80, 6, 8, 16);
+        let (session, pending, _events) = GhosttySession::pending(size);
+        session
+            .start_display(pending, 100)
+            .expect("display runtime");
+        let query = "x".repeat(ghostty::MAX_QUERY_LEN + 1);
+        assert!(session.set_native_search(query.clone()));
+        session.write_output(b"still alive");
+        let state = session.native_search_state();
+        assert_eq!(state.query, query);
+        assert!(state.complete);
+        assert!(state.error.is_some());
+        assert!(session.set_native_search("alive".into()));
+        wait_for_native_search(&session, "alive", 1);
+        session.shutdown();
+    }
+
     #[test]
     fn nfr_005_terminal_queue_caps_stay_below_budget() {
         assert_eq!(OUTPUT_POOL_BYTES, 128 * 1024);
@@ -4211,6 +4377,8 @@ mod tests {
             pending: false,
             sync_hold_since: None,
             mirror: CellMirror::default(),
+            search_query: String::new(),
+            search_error: None,
         }
     }
 
