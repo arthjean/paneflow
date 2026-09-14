@@ -3,20 +3,21 @@ use std::time::{Duration, Instant};
 pub(crate) const SCROLLBAR_HOLD: Duration = Duration::from_millis(1000);
 pub(crate) const SCROLLBAR_FADE: Duration = Duration::from_millis(200);
 pub(crate) const SCROLLBAR_EXPAND: Duration = Duration::from_millis(120);
-const FRAME: Duration = Duration::from_millis(16);
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct ScrollbarPresence {
     pub(crate) alpha: f32,
     pub(crate) expansion: f32,
-    pub(crate) next_repaint: Option<Duration>,
+    pub(crate) hide_after: Option<Duration>,
+    pub(crate) animating: bool,
 }
 
 impl ScrollbarPresence {
     pub(crate) const HIDDEN: Self = Self {
         alpha: 0.0,
         expansion: 0.0,
-        next_repaint: None,
+        hide_after: None,
+        animating: false,
     };
 
     pub(crate) fn is_visible(&self) -> bool {
@@ -28,7 +29,8 @@ impl ScrollbarPresence {
 pub(crate) struct ScrollbarReveal {
     last_activity: Option<Instant>,
     hovered: bool,
-    hover_changed_at: Option<Instant>,
+    expansion_changed_at: Option<Instant>,
+    expansion_from: f32,
     dragging: bool,
 }
 
@@ -41,74 +43,78 @@ impl ScrollbarReveal {
         if self.hovered == hovered {
             return false;
         }
-        self.hovered = hovered;
-        self.hover_changed_at = Some(now);
-        self.last_activity = Some(now);
+        self.retarget(hovered, self.dragging, now);
         true
     }
 
     pub(crate) fn set_dragging(&mut self, dragging: bool, now: Instant) {
-        self.dragging = dragging;
-        self.last_activity = Some(now);
+        self.retarget(self.hovered, dragging, now);
     }
 
     pub(crate) fn is_pinned(&self) -> bool {
         self.hovered || self.dragging
     }
 
+    fn retarget(&mut self, hovered: bool, dragging: bool, now: Instant) {
+        if self.is_pinned() != (hovered || dragging) {
+            self.expansion_from = self.expansion(now, false).0;
+            self.expansion_changed_at = Some(now);
+        }
+        self.hovered = hovered;
+        self.dragging = dragging;
+        self.last_activity = Some(now);
+    }
+
     pub(crate) fn presence(&self, now: Instant, reduce_motion: bool) -> ScrollbarPresence {
-        let (expansion, expansion_repaint) = self.expansion(now, reduce_motion);
+        let (expansion, expanding) = self.expansion(now, reduce_motion);
         if self.is_pinned() {
             return ScrollbarPresence {
                 alpha: 1.0,
                 expansion,
-                next_repaint: expansion_repaint,
+                hide_after: None,
+                animating: expanding,
             };
         }
         let Some(last_activity) = self.last_activity else {
             return ScrollbarPresence::HIDDEN;
         };
         let elapsed = now.saturating_duration_since(last_activity);
-        let (alpha, alpha_repaint) = if elapsed < SCROLLBAR_HOLD {
-            (1.0, Some(SCROLLBAR_HOLD - elapsed))
+        let (alpha, hide_after, fading) = if elapsed < SCROLLBAR_HOLD {
+            (1.0, Some(SCROLLBAR_HOLD - elapsed), false)
         } else if reduce_motion {
-            (0.0, None)
+            (0.0, None, false)
         } else if elapsed < SCROLLBAR_HOLD + SCROLLBAR_FADE {
             let progress = (elapsed - SCROLLBAR_HOLD).as_secs_f32() / SCROLLBAR_FADE.as_secs_f32();
-            (1.0 - ease_out_quint(progress), Some(FRAME))
+            (1.0 - ease_out_quint(progress), None, true)
         } else {
-            (0.0, None)
+            (0.0, None, false)
         };
         ScrollbarPresence {
             alpha,
             expansion,
-            next_repaint: earliest(alpha_repaint, expansion_repaint),
+            hide_after,
+            animating: expanding || fading,
         }
     }
 
-    fn expansion(&self, now: Instant, reduce_motion: bool) -> (f32, Option<Duration>) {
+    fn expansion(&self, now: Instant, reduce_motion: bool) -> (f32, bool) {
         let target = if self.is_pinned() { 1.0 } else { 0.0 };
-        let Some(changed_at) = self.hover_changed_at else {
-            return (target, None);
+        let Some(changed_at) = self.expansion_changed_at else {
+            return (target, false);
         };
         if reduce_motion {
-            return (target, None);
+            return (target, false);
         }
         let elapsed = now.saturating_duration_since(changed_at);
-        if elapsed >= SCROLLBAR_EXPAND {
-            return (target, None);
+        let duration = SCROLLBAR_EXPAND.mul_f32((target - self.expansion_from).abs());
+        if elapsed >= duration {
+            return (target, false);
         }
-        let progress = ease_out_quint(elapsed.as_secs_f32() / SCROLLBAR_EXPAND.as_secs_f32());
-        let from = 1.0 - target;
-        (from + (target - from) * progress, Some(FRAME))
-    }
-}
-
-fn earliest(a: Option<Duration>, b: Option<Duration>) -> Option<Duration> {
-    match (a, b) {
-        (Some(a), Some(b)) => Some(a.min(b)),
-        (a, None) => a,
-        (None, b) => b,
+        let progress = ease_out_quint(elapsed.as_secs_f32() / duration.as_secs_f32());
+        (
+            self.expansion_from + (target - self.expansion_from) * progress,
+            true,
+        )
     }
 }
 
@@ -141,15 +147,18 @@ mod tests {
 
         let held = reveal.presence(at(base, 500), false);
         assert_eq!(held.alpha, 1.0);
-        assert_eq!(held.next_repaint, Some(Duration::from_millis(500)));
+        assert_eq!(held.hide_after, Some(Duration::from_millis(500)));
+        assert!(!held.animating);
 
         let fading = reveal.presence(at(base, 1100), false);
         assert!(fading.alpha > 0.0 && fading.alpha < 1.0, "{fading:?}");
-        assert_eq!(fading.next_repaint, Some(FRAME));
+        assert!(fading.animating);
+        assert_eq!(fading.hide_after, None);
 
         let gone = reveal.presence(at(base, 1300), false);
         assert_eq!(gone.alpha, 0.0);
-        assert_eq!(gone.next_repaint, None);
+        assert_eq!(gone.hide_after, None);
+        assert!(!gone.animating);
     }
 
     #[test]
@@ -159,7 +168,8 @@ mod tests {
         reveal.touch(base);
         let after_hold = reveal.presence(at(base, 1050), true);
         assert_eq!(after_hold.alpha, 0.0);
-        assert_eq!(after_hold.next_repaint, None);
+        assert_eq!(after_hold.hide_after, None);
+        assert!(!after_hold.animating);
     }
 
     #[test]
@@ -172,12 +182,13 @@ mod tests {
         let mid = reveal.presence(at(base, 60), false);
         assert_eq!(mid.alpha, 1.0);
         assert!(mid.expansion > 0.0 && mid.expansion < 1.0, "{mid:?}");
-        assert_eq!(mid.next_repaint, Some(FRAME));
+        assert!(mid.animating);
 
         let settled = reveal.presence(at(base, 5000), false);
         assert_eq!(settled.expansion, 1.0);
         assert_eq!(settled.alpha, 1.0);
-        assert_eq!(settled.next_repaint, None);
+        assert_eq!(settled.hide_after, None);
+        assert!(!settled.animating);
 
         assert!(reveal.set_hovered(false, at(base, 5000)));
         let collapsing = reveal.presence(at(base, 5060), false);
@@ -205,6 +216,33 @@ mod tests {
         reveal.set_hovered(true, base);
         let presence = reveal.presence(at(base, 1), true);
         assert_eq!(presence.expansion, 1.0);
-        assert_eq!(presence.next_repaint, None);
+        assert_eq!(presence.hide_after, None);
+        assert!(!presence.animating);
+    }
+
+    #[test]
+    fn reversing_hover_preserves_the_current_width() {
+        let base = Instant::now();
+        let mut reveal = ScrollbarReveal::default();
+        reveal.set_hovered(true, base);
+        let before_exit = reveal.presence(at(base, 10), false).expansion;
+        reveal.set_hovered(false, at(base, 10));
+        assert_eq!(reveal.presence(at(base, 10), false).expansion, before_exit);
+        let before_entry = reveal.presence(at(base, 20), false).expansion;
+        reveal.set_hovered(true, at(base, 20));
+        assert_eq!(reveal.presence(at(base, 20), false).expansion, before_entry);
+    }
+
+    #[test]
+    fn leaving_the_gutter_during_drag_does_not_restart_expansion() {
+        let base = Instant::now();
+        let mut reveal = ScrollbarReveal::default();
+        reveal.set_hovered(true, base);
+        reveal.set_dragging(true, at(base, 200));
+        reveal.set_hovered(false, at(base, 300));
+        assert_eq!(reveal.presence(at(base, 300), false).expansion, 1.0);
+        reveal.set_dragging(false, at(base, 400));
+        assert_eq!(reveal.presence(at(base, 400), false).expansion, 1.0);
+        assert_eq!(reveal.presence(at(base, 600), false).expansion, 0.0);
     }
 }

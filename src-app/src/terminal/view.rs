@@ -182,7 +182,7 @@ pub struct TerminalView {
     pub(super) scrollbar_metrics: Arc<Mutex<Option<super::element::ScrollbarMetrics>>>,
     pub(super) scrollbar_drag: Option<ScrollbarDrag>,
     pub(super) scrollbar_reveal: super::scrollbar_reveal::ScrollbarReveal,
-    pub(super) scrollbar_repaint_scheduled: bool,
+    pub(super) scrollbar_hide_scheduled: bool,
     pub(super) scrollbar_seen_offset: usize,
     pub(super) scrollbar_visible: bool,
     pub(super) scrollbar_enabled: bool,
@@ -657,7 +657,7 @@ impl TerminalView {
             scrollbar_metrics: Arc::new(Mutex::new(None)),
             scrollbar_drag: None,
             scrollbar_reveal: super::scrollbar_reveal::ScrollbarReveal::default(),
-            scrollbar_repaint_scheduled: false,
+            scrollbar_hide_scheduled: false,
             scrollbar_seen_offset: 0,
             scrollbar_visible: false,
             scrollbar_enabled,
@@ -1320,7 +1320,7 @@ impl Render for TerminalView {
             Vec::new()
         };
 
-        let scrollbar_presence = self.scrollbar_presence(cx);
+        let scrollbar_presence = self.scrollbar_presence(window, cx);
 
         let terminal_element = TerminalElement::new(
             self.terminal.session_backend(),
@@ -1362,11 +1362,17 @@ impl Render for TerminalView {
             .id("terminal-view")
             .key_context(self.dispatch_context())
             .track_focus(&self.focus_handle)
-            .cursor(if self.ctrl_hovered_link.is_some() {
-                gpui::CursorStyle::PointingHand
-            } else {
-                gpui::CursorStyle::IBeam
-            })
+            .cursor(
+                if self.scrollbar_drag.is_some()
+                    || self.scrollbar_gutter_contains(window.mouse_position())
+                {
+                    gpui::CursorStyle::Arrow
+                } else if self.ctrl_hovered_link.is_some() {
+                    gpui::CursorStyle::PointingHand
+                } else {
+                    gpui::CursorStyle::IBeam
+                },
+            )
             .on_modifiers_changed(cx.listener(Self::handle_modifiers_changed))
             .on_key_down(cx.listener(Self::handle_key_down))
             .on_key_up(cx.listener(Self::handle_key_up))
@@ -1740,6 +1746,46 @@ mod tests {
                 ..Default::default()
             }
         }
+    }
+
+    #[gpui::test]
+    fn scrollbar_hover_requests_a_frame_while_the_hide_timer_is_pending(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let (terminal, _host, cx) = hosted_terminal(cx);
+        terminal.update(cx, |view, cx| {
+            view.terminal.restore_scrollback(&"history\n".repeat(200));
+            view.scrollbar_reveal.touch(std::time::Instant::now());
+            cx.notify();
+        });
+        cx.update(|window, cx| {
+            window.draw(cx).clear(cx);
+            window.simulate_next_frame(cx);
+        });
+        let position = terminal.read_with(cx, |view, _| {
+            assert!(view.scrollbar_hide_scheduled);
+            let metrics = view
+                .scrollbar_metrics
+                .lock()
+                .unwrap()
+                .expect("scrollback has a scrollbar");
+            gpui::point(
+                metrics.strip_left + gpui::px(5.0),
+                metrics.track_top + gpui::px(5.0),
+            )
+        });
+        cx.update(|window, cx| {
+            window.simulate_mouse_move(position, cx);
+            window.draw(cx).clear(cx);
+            assert!(
+                window.simulate_next_frame(cx) > 0,
+                "hover must request a frame without waiting for the hide timer"
+            );
+        });
+        terminal.read_with(cx, |view, _| {
+            assert!(view.scrollbar_reveal.is_pinned());
+            assert!(view.hovered_cell.is_none());
+        });
     }
 
     #[gpui::test]
