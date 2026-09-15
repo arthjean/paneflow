@@ -307,7 +307,7 @@ controls at 10 px or below, where the superellipse is invisible.
 | Panel inset | 4 |
 | Pane gutter | 8 |
 | Pane content inset | 10 horizontal, 6 vertical |
-| Pane header | 28 content plus the vertical inset twice, 40 total; gap 7 |
+| Pane header | One 44 px surface tab and action row; action gap 7 |
 | Pane tab bar | 26 chips plus 6 below, 32 total; gap 3; 8 tabs maximum |
 | Sidebar row | margin 8, padding 8 by 6, gap 4, line height 18, spacing 4 |
 | Sidebar tab icon stack | 16 px icons, cap 4, overlap 11, 24 by 24 icon card |
@@ -462,22 +462,31 @@ Settings share the active row tint; the others take the hover tint.
 
 ### 5.3 Pane card
 
-A 20 px squircle filled with the terminal background, 1 px `border`. The
-header is 40 px: the surface title centered at 14 px, a 6 px status dot, 9 px
+A 32 px squircle filled with the terminal background, 1 px `border`. The
+header shares the 44 px surface tab row, with no repeated pane name: a 6 px status dot, 9 px
 chips for progress and worktree, and on the right 22 px action buttons that
-stay visible at rest (split vertical, split horizontal, the sessions rail,
-the diff dock), a `Z` chip on `accent` when the pane is zoomed, plus a 15 px
-close button that appears only while the header is hovered, its glyph fading
-from 0.16 to 0.92 under the pointer. The identity
+appear only on the focused pane (split vertical, split horizontal,
+the diff dock), and a `Z` chip on `accent` when the pane is zoomed.
+There is no separate pane close button; closing the last surface closes the pane. The identity
 pill was removed in 0.9; the sidebar carries identity, the pane carries
 title and state.
 
-Under the header, a tab bar lists the pane's surfaces as chips with the
-sidebar rail skin: 26 tall on squircle 14, gap 3, padding 8 left and 4
-right, a 13 px kind icon, the surface title at body size Medium, and a 16 px
-close slot with an 11 px glyph that shows on hover. The active chip rests on
-the active row tint in `text`; the others hover into the rail tint in
-`muted`. The chips sit in a strip that scrolls horizontally with the wheel,
+The 44 px tab bar uses the detached-window style: 32 px
+capsules with a 6 px left inset in docked panes, matching the top inset,
+terminal tiles, full titles with ellipsis, and a 16 px circular
+close slot with a 12 px glyph shown on hover. Only the active tab has a
+resting capsule fill; other tabs gain a background on hover. Pane actions
+sit to the right of New tab, separated by a
+1 px by 16 px divider. Agent sessions lives in the right panel header and
+targets the active pane. Diff attribution lives in the surface tab tooltip.
+Dragging a surface tab within the layout uses the gray pane drop preview.
+A center drop moves the tab into the target pane; an edge drop splits the
+target with the same surface entity. Moving the last tab removes the source
+pane. Zoomed layouts and detached windows do not accept these tab transfers.
+In docked panes, New tab uses the same 22 px button and 14 px icon dimensions
+as the actions. New tab, the divider, and the actions hide on unfocused panes
+while retaining their layout space so tabs do not shift when focus changes.
+The chips sit in a strip that scrolls horizontally with the wheel,
 without a scrollbar; the active chip scrolls into view when it changes.
 Where chips are hidden past an edge, a 28 px fade to the card background
 signals them. A 26 by 26 `+` chip is pinned at the visible end of the bar,
@@ -495,11 +504,28 @@ blue border, radius 8, margin 8, and a swap variant with its own tint.
 
 #### Detached pane window
 
-A detached pane has a compact 40px caption containing its title and a persistent
-`Return to workspace` control. The regular pane header is hidden; surface tabs
-remain available. The native shell uses the existing colors, tooltips, window
+A detached pane has one 44px caption and surface-tab row, modeled on the supplied
+Superlogical reference. Closing the native window returns the pane to its
+workspace; there is no separate return button. Tabs are 32px high, up to 208px wide, with ellipsis and
+horizontal overflow. Only the active tab has a capsule background and a small
+elevation shadow. Its outline follows the light-theme accent but stays neutral
+in dark themes. The caption has no bottom divider. The unified new-tab button
+has a 32px square hover surface, 7px horizontal margins, and a 20px icon. This
+capsule is a reference-specific exception to the standard squircle row skin.
+Terminal tab icons use a fixed dark terminal tile with a green prompt,
+independent of the shell theme. The body has
+a 7px inset and 10px corners. The original pane header and tab row are hidden.
+The native shell uses the existing colors, tooltips, window
 controls, and platform decoration policy. macOS reserves space for traffic lights;
 Linux respects server decorations and the system button layout.
+Windows separates the surface tabs from the right window controls with a centered
+1px by 16px vertical divider when those controls are visible.
+Detached windows follow the Chrome material setting for their caption and the
+frame around the terminal, including changes made while the window is open.
+They use the main window's platform backdrop policy, with a separate native
+material per macOS window. Terminal material remains a separate setting.
+Dark Windows terminal cards tint the native backdrop with the theme background
+at 35% opacity, behind the terminal text, to keep wallpaper colors subdued.
 
 The initial window is 800 by 600 logical pixels, with a 420 by 280 minimum.
 These compact dimensions are a contextual exception to the main workspace shell.
@@ -516,10 +542,9 @@ returns to the picker; switching sessions preserves the chosen tabs.
 Tabs are chips with the sidebar rail skin: no separators, active chip on
 the active tint, inactive chips wash in on hover. The Review view uses the
 same `DiffElement` as the dock inside a regular pane card: no toolbar, the
-diff starts directly under the 40 px pane header, which reads a 13 px
-branch icon, the project name in the text color at medium weight, and
-`· branch` muted; the title tooltip carries the full label and the agent
-attribution. No diffstat in the header: the counts live on the file rows. The diff pane header has no split buttons; their slot holds the
+diff starts directly under the shared 44 px tab and action row. The tab tooltip
+carries the full label and agent attribution. No diffstat in the header: the
+counts live on the file rows. The diff pane header has no split buttons; their slot holds the
 same `...` options menu as the dock's Changes tab (layout, highlight,
 whitespace, collapse or expand all, refresh), rendered by the shared
 `render_diff_options_menu` and applied per pane. One pane shows one worktree

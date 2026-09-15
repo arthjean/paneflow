@@ -103,6 +103,18 @@ pub(super) fn render_diff_tab_strip(
         )
         .child(div().flex_1().min_w_0())
         .child(render_diff_header_icon_button(
+            "diff-dock-agent-sessions",
+            "icons/sessions.svg",
+            cx.listener(|this, _: &ClickEvent, window, cx| {
+                if let Some(pane) = this.focused_or_first_pane(window, cx) {
+                    pane.update(cx, |_, cx| {
+                        cx.emit(crate::pane::PaneEvent::ToggleAgentSessions)
+                    });
+                }
+            }),
+            ui.muted,
+        ))
+        .child(render_diff_header_icon_button(
             "diff-dock-maximize",
             if maximized {
                 "icons/minimize.svg"

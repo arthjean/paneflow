@@ -111,9 +111,9 @@ impl PaneFlowApp {
             .flex()
             .size_full()
             .pl(px(left_gutter))
-            .pr(px(crate::layout::PANE_GUTTER_PX))
+            .pr(px(crate::app::constants::PANE_OUTER_GUTTER))
             .pt(px(crate::layout::PANE_GUTTER_PX))
-            .pb(px(crate::layout::PANE_GUTTER_PX))
+            .pb(px(crate::app::constants::PANE_OUTER_GUTTER))
             .child(root.render_with_preview(window, cx, Some(on_resize_end), None))
             .into_any_element()
     }

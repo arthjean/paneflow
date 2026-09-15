@@ -16,7 +16,7 @@ use crate::ui_primitives::{AnimatedHoverExt, lerp_color, squircle_skin};
 use crate::diff::DiffView;
 use crate::markdown::MarkdownView;
 use crate::pane_drag::{
-    DragPreview, DropEdge, PaneDrag, ReviewSubjectDrag, SPLIT_EDGE_BAND, SessionDrag,
+    DragPreview, DropEdge, PaneDrag, ReviewSubjectDrag, SPLIT_EDGE_BAND, SessionDrag, SurfaceDrag,
     compute_drop_edge, split_rect,
 };
 use crate::terminal::{TerminalEvent, TerminalView};
@@ -29,6 +29,13 @@ pub enum PaneSurface {
 }
 
 impl PaneSurface {
+    pub(crate) fn entity_id(&self) -> u64 {
+        match self {
+            Self::Terminal(view) => view.entity_id().as_u64(),
+            Self::Markdown(view) => view.entity_id().as_u64(),
+            Self::Diff(view) => view.entity_id().as_u64(),
+        }
+    }
     pub fn as_terminal(&self) -> Option<&Entity<TerminalView>> {
         match self {
             PaneSurface::Terminal(t) => Some(t),
@@ -60,7 +67,11 @@ fn pane_card_background(
 
     #[cfg(target_os = "windows")]
     {
-        gpui::transparent_black()
+        if theme.background.l <= 0.5 {
+            theme.background.opacity(0.35)
+        } else {
+            gpui::transparent_black()
+        }
     }
 
     #[cfg(not(target_os = "windows"))]
@@ -69,19 +80,9 @@ fn pane_card_background(
     }
 }
 
-const HEADER_CONTENT_HEIGHT: f32 = 28.0;
-const PANE_HEADER_HEIGHT: f32 =
-    HEADER_CONTENT_HEIGHT + crate::app::constants::PANE_CONTENT_INSET_Y * 2.0;
 const HEADER_GAP: f32 = 7.0;
-const SURFACE_TITLE_TOOLTIP_THRESHOLD: usize = 13;
-const HEADER_TEXT_SIZE: f32 = 14.0;
-const HEADER_TEXT_LINE_HEIGHT: f32 = 18.0;
 const SECTION_PX: f32 = crate::app::constants::PANE_CONTENT_INSET_X;
 const ACTION_BUTTON_SIZE: f32 = 22.0;
-const CLOSE_BUTTON_SIZE: f32 = 15.0;
-const CLOSE_GLYPH_SIZE: f32 = 9.0;
-const CLOSE_BASE_ALPHA: f32 = 0.16;
-const CLOSE_HOVER_ALPHA: f32 = 0.92;
 
 const HEADER_GROUP: &str = "pane-header-group";
 const HEADER_HOVER_MS: u64 = 120;
@@ -130,6 +131,11 @@ pub enum PaneEvent {
         agent: crate::agent_sessions::SessionAgent,
         session_id: String,
         cwd: String,
+    },
+    DropSurfaceMove {
+        source_pane_id: u64,
+        surface_id: u64,
+        edge: Option<DropEdge>,
     },
     DropPaneMove {
         source_pane_id: u64,
@@ -274,6 +280,10 @@ impl Pane {
         self.active_surface
     }
 
+    pub(crate) fn reveal_active_surface(&self) {
+        self.tab_scroll.scroll_to_item(self.active_surface);
+    }
+
     pub fn can_add_surface(&self) -> bool {
         self.surfaces.len() < MAX_PANE_TABS
     }
@@ -301,7 +311,7 @@ impl Pane {
         }
     }
 
-    fn close_surface(&mut self, idx: usize, cx: &mut Context<Self>) {
+    pub(crate) fn close_surface(&mut self, idx: usize, cx: &mut Context<Self>) {
         if idx >= self.surfaces.len() {
             return;
         }
@@ -799,7 +809,6 @@ impl Pane {
         id: SharedString,
         icon: AnyElement,
         size: f32,
-        radius: f32,
         base_tint: Hsla,
         hover_tint: Option<Hsla>,
         handler: impl Fn(&gpui::ClickEvent, &mut Window, &mut App) + 'static,
@@ -814,7 +823,6 @@ impl Pane {
         let mouse_up_out_id = id.clone();
         let mouse_up_out_live_progress = live_progress.clone();
         let hover_background = crate::app::constants::sidebar_tab_hover_background();
-        let active_background = crate::app::constants::sidebar_tab_active_background();
         let button = div()
             .id(id.clone())
             .flex()
@@ -823,7 +831,6 @@ impl Pane {
             .justify_center()
             .w(px(size))
             .h(px(size))
-            .rounded(px(radius))
             .on_hover(cx.listener(move |this, hovered: &bool, _window, cx| {
                 let target = if *hovered { 1.0 } else { 0.0 };
                 if this.set_header_hover_target(&hover_id, &hover_live_progress, target) {
@@ -851,14 +858,13 @@ impl Pane {
                 }),
             )
             .on_click(move |e, w, cx| handler(e, w, cx))
-            .active(move |style| style.bg(active_background).opacity(0.82));
+            .active(|style| style.opacity(0.82));
 
         let visual = div()
             .size_full()
             .flex()
             .items_center()
             .justify_center()
-            .rounded(px(radius))
             .text_color(base_tint)
             .child(icon);
 
@@ -868,10 +874,7 @@ impl Pane {
             let tint = hover_tint
                 .map(|hover_tint| base_tint.blend(hover_tint.opacity(target)))
                 .unwrap_or(base_tint);
-            visual
-                .bg(hover_background.opacity(target))
-                .text_color(tint)
-                .into_any_element()
+            visual.text_color(tint).into_any_element()
         } else {
             let animation_id = SharedString::from(format!("pane-action-hover-{id}-{epoch}"));
             let duration = Duration::from_secs_f32(
@@ -887,15 +890,21 @@ impl Pane {
                         let tint = hover_tint
                             .map(|hover_tint| base_tint.blend(hover_tint.opacity(progress)))
                             .unwrap_or(base_tint);
-                        visual
-                            .bg(hover_background.opacity(progress))
-                            .text_color(tint)
+                        visual.text_color(tint)
                     },
                 )
                 .into_any_element()
         };
 
-        button.child(visual).into_any_element()
+        squircle_skin(
+            button,
+            SharedString::from(format!("pane-action-skin-{id}")),
+            crate::ui_primitives::ROW_RADIUS,
+            None,
+            Some(hover_background),
+        )
+        .child(visual)
+        .into_any_element()
     }
 
     fn action_button_shell(
@@ -911,105 +920,11 @@ impl Pane {
             id,
             icon,
             ACTION_BUTTON_SIZE,
-            4.0,
             base_tint,
             hover_tint,
             handler,
             cx,
         )
-    }
-
-    fn close_chip_frame(visual: gpui::Div, progress: f32, ui: crate::theme::UiColors) -> gpui::Div {
-        let alpha = CLOSE_BASE_ALPHA + (CLOSE_HOVER_ALPHA - CLOSE_BASE_ALPHA) * progress;
-        visual
-            .bg(crate::settings::components::with_alpha(ui.text, alpha))
-            .child(
-                svg()
-                    .size(px(CLOSE_GLYPH_SIZE))
-                    .flex_none()
-                    .path("icons/close.svg")
-                    .text_color(ui.text.blend(ui.base.opacity(progress))),
-            )
-    }
-
-    fn render_close_button(&self, cx: &mut Context<Self>) -> AnyElement {
-        let ui = pane_colors();
-        let id = SharedString::from("pane-btn-close");
-        let (live_progress, from, target, epoch) = self.hover_motion_snapshot(&id);
-
-        let hover_id = id.clone();
-        let hover_progress = live_progress.clone();
-        let mouse_up_id = id.clone();
-        let mouse_up_progress = live_progress.clone();
-        let mouse_up_out_id = id.clone();
-        let mouse_up_out_progress = live_progress.clone();
-
-        let visual = div()
-            .size_full()
-            .flex()
-            .items_center()
-            .justify_center()
-            .rounded_full()
-            .shadow_lg();
-        let distance = (target - from).abs();
-        let visual = if epoch == 0 || distance <= f32::EPSILON {
-            live_progress.set(target);
-            Self::close_chip_frame(visual, target, ui).into_any_element()
-        } else {
-            let duration = Duration::from_secs_f32(
-                Duration::from_millis(HEADER_HOVER_MS).as_secs_f32() * distance,
-            );
-            let animated_progress = live_progress.clone();
-            visual
-                .with_animation(
-                    SharedString::from(format!("pane-close-hover-{epoch}")),
-                    Animation::new(duration).with_easing(ease_out_quint()),
-                    move |visual, delta| {
-                        let progress = (from + (target - from) * delta).clamp(0.0, 1.0);
-                        animated_progress.set(progress);
-                        Self::close_chip_frame(visual, progress, ui)
-                    },
-                )
-                .into_any_element()
-        };
-
-        div()
-            .id(id)
-            .flex_none()
-            .size(px(CLOSE_BUTTON_SIZE))
-            .flex()
-            .items_center()
-            .justify_center()
-            .rounded_full()
-            .on_hover(cx.listener(move |this, hovered: &bool, _window, cx| {
-                let target = if *hovered { 1.0 } else { 0.0 };
-                if this.set_header_hover_target(&hover_id, &hover_progress, target) {
-                    cx.notify();
-                }
-            }))
-            .on_mouse_up(
-                MouseButton::Left,
-                cx.listener(move |this, _, _window, cx| {
-                    if this.set_header_hover_target(&mouse_up_id, &mouse_up_progress, 1.0) {
-                        cx.notify();
-                    }
-                }),
-            )
-            .on_mouse_up_out(
-                MouseButton::Left,
-                cx.listener(move |this, _, _window, cx| {
-                    if this.set_header_hover_target(&mouse_up_out_id, &mouse_up_out_progress, 0.0) {
-                        cx.notify();
-                    }
-                }),
-            )
-            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .on_click(cx.listener(|this, _e: &ClickEvent, _window, cx| {
-                this.close(cx);
-                cx.stop_propagation();
-            }))
-            .child(visual)
-            .into_any_element()
     }
 
     pub fn close(&mut self, cx: &mut Context<Self>) {
@@ -1055,83 +970,6 @@ impl Pane {
 
     pub fn active_terminal_opt(&self) -> Option<&Entity<TerminalView>> {
         self.surface().as_terminal()
-    }
-
-    fn render_surface_title(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
-        if let PaneSurface::Diff(diff) = self.surface() {
-            return Self::render_diff_surface_title(diff, cx);
-        }
-        let full_title = Self::surface_full_title(self.surface(), cx);
-        let display_title = Self::surface_title(self.surface(), cx);
-        let show_tooltip = full_title != display_title
-            || full_title.chars().count() > SURFACE_TITLE_TOOLTIP_THRESHOLD;
-        let mut title = div()
-            .id("pane-header-title")
-            .min_w_0()
-            .overflow_x_hidden()
-            .whitespace_nowrap()
-            .text_ellipsis()
-            .text_size(px(HEADER_TEXT_SIZE))
-            .line_height(px(HEADER_TEXT_LINE_HEIGHT))
-            .font_weight(gpui::FontWeight::MEDIUM)
-            .child(display_title);
-        if show_tooltip {
-            title = title.delayed_tooltip(crate::ui_primitives::text_tooltip(full_title));
-        }
-        title.into_any_element()
-    }
-
-    fn render_diff_surface_title(
-        diff: &Entity<crate::diff::DiffView>,
-        cx: &mut Context<Self>,
-    ) -> gpui::AnyElement {
-        let ui = pane_colors();
-        let subject = diff.read(cx).subject();
-        let repo = subject.repo_name();
-        let branch = subject.branch_label();
-        let tooltip = std::iter::once(subject.label().into())
-            .chain(diff.read(cx).attribution_lines())
-            .map(|line: SharedString| line.to_string())
-            .collect::<Vec<_>>()
-            .join("\n");
-        div()
-            .id("pane-header-title")
-            .flex()
-            .flex_row()
-            .items_center()
-            .gap(px(HEADER_GAP))
-            .min_w_0()
-            .overflow_x_hidden()
-            .text_size(px(HEADER_TEXT_SIZE))
-            .line_height(px(HEADER_TEXT_LINE_HEIGHT))
-            .child(
-                svg()
-                    .size(px(13.))
-                    .flex_none()
-                    .path("icons/git-branch.svg")
-                    .text_color(ui.muted),
-            )
-            .child(
-                div()
-                    .min_w_0()
-                    .overflow_x_hidden()
-                    .whitespace_nowrap()
-                    .text_ellipsis()
-                    .font_weight(gpui::FontWeight::MEDIUM)
-                    .text_color(ui.text)
-                    .child(repo),
-            )
-            .when(!branch.is_empty(), |title| {
-                title.child(
-                    div()
-                        .flex_none()
-                        .whitespace_nowrap()
-                        .text_color(ui.muted)
-                        .child(format!("\u{b7} {branch}")),
-                )
-            })
-            .delayed_tooltip(crate::ui_primitives::text_tooltip(tooltip))
-            .into_any_element()
     }
 
     fn render_header(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -1226,30 +1064,10 @@ impl Pane {
                 cx.notify();
                 cx.stop_propagation();
             }))
-            .child(self.render_surface_title(cx))
             .children(status_dot)
             .children(pending_chip)
             .children(progress_chip)
             .children(match_badge);
-
-        let close_tooltip = format!(
-            "Close pane ({})",
-            crate::keybindings::format_keystroke(
-                self.cached_config
-                    .shortcuts
-                    .iter()
-                    .find(|(_, action)| action.as_str() == "close_pane")
-                    .map(|(key, _)| key.as_str())
-                    .unwrap_or("secondary-shift-w"),
-            )
-        );
-        let close_button = div()
-            .id("pane-btn-close-slot")
-            .flex_none()
-            .invisible()
-            .group_hover(HEADER_GROUP, |style| style.visible())
-            .delayed_tooltip(crate::ui_primitives::text_tooltip(close_tooltip))
-            .child(self.render_close_button(cx));
 
         div()
             .id("pane-header")
@@ -1258,9 +1076,8 @@ impl Pane {
             .flex_none()
             .flex_row()
             .items_center()
-            .h(px(PANE_HEADER_HEIGHT))
-            .w_full()
-            .px(px(SECTION_PX))
+            .h_full()
+            .pr(px(SECTION_PX))
             .gap(px(HEADER_GAP))
             .overflow_hidden()
             .on_drag(
@@ -1285,31 +1102,27 @@ impl Pane {
                     cx.stop_propagation();
                 }),
             )
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .h_full()
-                    .child(close_button),
-            )
             .child(identity)
             .child(
                 div()
-                    .flex_1()
+                    .flex_none()
                     .flex()
                     .flex_row()
                     .items_center()
                     .justify_end()
+                    .gap(px(HEADER_GAP))
                     .h_full()
                     .child(self.render_end_section(cx)),
             )
     }
 
-    fn render_tab_bar(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        if matches!(self.surface(), PaneSurface::Diff(_)) {
+    pub(crate) fn render_tab_bar(
+        &self,
+        unified_background: Option<gpui::Hsla>,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        let unified = unified_background.is_some();
+        if !unified && matches!(self.surface(), PaneSurface::Diff(_)) {
             return None;
         }
         let ui = pane_colors();
@@ -1329,7 +1142,18 @@ impl Pane {
 
         for (index, surface) in self.surfaces.iter().enumerate() {
             let active = index == self.active_surface;
-            let full_title = Self::surface_full_title(surface, cx);
+            let full_title = match surface {
+                PaneSurface::Diff(diff) => std::iter::once(Self::surface_full_title(surface, cx))
+                    .chain(
+                        diff.read(cx)
+                            .attribution_lines()
+                            .into_iter()
+                            .map(|line| line.to_string()),
+                    )
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+                _ => Self::surface_full_title(surface, cx),
+            };
             let label = Self::surface_title(surface, cx);
             let (resting, hovered) = if active {
                 (Some(rail_active), None)
@@ -1337,80 +1161,147 @@ impl Pane {
                 (None, Some(rail_hover))
             };
             let text = if active { ui.text } else { ui.muted };
+            let unified_active_border = if ui.base.l > 0.5 {
+                ui.accent.opacity(0.14)
+            } else {
+                ui.text.opacity(0.12)
+            };
+            let unified_active_shadow = if ui.base.l > 0.5 {
+                gpui::BoxShadow::new(px(0.), px(1.), gpui::black().opacity(0.10))
+                    .blur_radius(px(3.))
+            } else {
+                gpui::BoxShadow::new(px(0.), px(1.), gpui::black().opacity(0.24))
+                    .blur_radius(px(2.))
+            };
             let group = SharedString::from(format!("pane-{pane_id}-tab-{index}-group"));
-            let chip = squircle_skin(
-                div()
-                    .id(SharedString::from(format!("pane-{pane_id}-tab-{index}")))
-                    .flex_none()
-                    .h(px(TAB_BAR_HEIGHT))
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .gap(px(6.))
-                    .pl(px(8.))
-                    .pr(px(4.))
-                    .cursor(gpui::CursorStyle::PointingHand),
-                group.clone(),
-                crate::ui_primitives::ROW_RADIUS,
-                resting,
-                hovered,
-            )
-            .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
-                this.activate_surface(index, cx);
-                this.focus_handle(cx).focus(window, cx);
-                cx.stop_propagation();
-            }))
-            .delayed_tooltip(crate::ui_primitives::text_tooltip(full_title))
-            .child(
-                svg()
-                    .size(px(TAB_ICON_SIZE))
-                    .flex_none()
-                    .path(surface.kind_icon())
-                    .text_color(ui.muted),
-            )
-            .child(
-                div()
-                    .flex_none()
-                    .whitespace_nowrap()
-                    .text_size(crate::ui_primitives::BODY)
-                    .font_weight(gpui::FontWeight::MEDIUM)
-                    .text_color(text)
-                    .child(label),
-            )
-            .child(
-                div()
-                    .id(SharedString::from(format!(
-                        "pane-{pane_id}-tab-close-{index}"
-                    )))
-                    .flex_none()
-                    .size(px(TAB_CLOSE_SIZE))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .rounded(px(4.))
-                    .invisible()
-                    .group_hover(group, |style| style.visible())
-                    .hover(|style| style.bg(ui.text.opacity(0.12)))
-                    .on_click(cx.listener(move |this, _: &ClickEvent, _window, cx| {
-                        this.close_surface(index, cx);
-                        cx.stop_propagation();
-                    }))
-                    .child(
-                        svg()
-                            .size(px(TAB_CLOSE_GLYPH_SIZE))
-                            .flex_none()
-                            .path("icons/close.svg")
-                            .text_color(ui.muted),
-                    ),
-            );
+            let chip = div()
+                .id(SharedString::from(format!("pane-{pane_id}-tab-{index}")))
+                .flex_none()
+                .h(px(if unified { 32. } else { TAB_BAR_HEIGHT }))
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap(px(6.))
+                .pl(px(8.))
+                .pr(px(4.))
+                .cursor(gpui::CursorStyle::PointingHand);
+            let chip = if unified {
+                chip.group(group.clone())
+                    .rounded_full()
+                    .border_1()
+                    .border_color(gpui::transparent_black())
+                    .w(px(208.))
+                    .max_w_full()
+                    .min_w(px(96.))
+                    .pl(px(12.))
+                    .pr(px(8.))
+                    .gap(px(10.))
+                    .when(active, |chip| {
+                        chip.bg(if ui.base.l > 0.5 { ui.base } else { ui.overlay })
+                            .border_color(unified_active_border)
+                            .shadow(vec![unified_active_shadow])
+                    })
+                    .when(!active, |chip| chip.hover(|style| style.bg(rail_hover)))
+                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            } else {
+                squircle_skin(
+                    chip,
+                    group.clone(),
+                    crate::ui_primitives::ROW_RADIUS,
+                    resting,
+                    hovered,
+                )
+            };
+            let chip = chip
+                .on_drag(
+                    SurfaceDrag {
+                        pane_id,
+                        surface_id: surface.entity_id(),
+                        title: Self::surface_title(surface, cx).into(),
+                        icon: surface.kind_icon().into(),
+                    },
+                    |drag, _, _, cx| {
+                        cx.new(|_| DragPreview {
+                            title: drag.title.clone(),
+                            icon: drag.icon.clone(),
+                        })
+                    },
+                )
+                .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                    this.activate_surface(index, cx);
+                    this.focus_handle(cx).focus(window, cx);
+                    cx.stop_propagation();
+                }))
+                .delayed_tooltip(crate::ui_primitives::text_tooltip(full_title))
+                .child(if unified && matches!(surface, PaneSurface::Terminal(_)) {
+                    img("icons/terminal-tab.svg")
+                        .w(px(20.))
+                        .h(px(17.))
+                        .flex_none()
+                        .into_any_element()
+                } else {
+                    svg()
+                        .size(px(TAB_ICON_SIZE))
+                        .when(unified, |icon| icon.w(px(20.)).h(px(17.)))
+                        .flex_none()
+                        .path(surface.kind_icon())
+                        .text_color(ui.muted)
+                        .into_any_element()
+                })
+                .child(
+                    div()
+                        .when(unified, |label| label.flex_1().min_w_0().text_ellipsis())
+                        .when(!unified, |label| label.flex_none())
+                        .whitespace_nowrap()
+                        .text_size(crate::ui_primitives::BODY)
+                        .font_weight(gpui::FontWeight::MEDIUM)
+                        .text_color(text)
+                        .child(if unified {
+                            Self::surface_full_title(surface, cx)
+                        } else {
+                            label
+                        }),
+                )
+                .child(
+                    div()
+                        .id(SharedString::from(format!(
+                            "pane-{pane_id}-tab-close-{index}"
+                        )))
+                        .flex_none()
+                        .size(px(TAB_CLOSE_SIZE))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .rounded(px(4.))
+                        .when(unified, |button| button.rounded_full())
+                        .invisible()
+                        .group_hover(group, |style| style.visible())
+                        .hover(|style| style.bg(ui.text.opacity(0.12)))
+                        .on_click(cx.listener(move |this, _: &ClickEvent, _window, cx| {
+                            this.close_surface(index, cx);
+                            cx.stop_propagation();
+                        }))
+                        .child(
+                            svg()
+                                .size(px(TAB_CLOSE_GLYPH_SIZE))
+                                .when(unified, |icon| icon.size(px(12.)))
+                                .flex_none()
+                                .path("icons/close.svg")
+                                .text_color(ui.muted),
+                        ),
+                );
             strip = strip.child(chip);
         }
 
-        let fade_color = pane_card_background(
-            &crate::theme::active_theme(),
-            self.cached_config.windows_terminal_material_enabled(),
-            true,
-        );
+        let fade_color = if let Some(background) = unified_background {
+            background
+        } else {
+            pane_card_background(
+                &crate::theme::active_theme(),
+                self.cached_config.windows_terminal_material_enabled(),
+                true,
+            )
+        };
         let fade_scroll = self.tab_scroll.clone();
         let fades = gpui::canvas(
             |_, _, _| {},
@@ -1461,9 +1352,14 @@ impl Pane {
             .flex_row()
             .items_center()
             .w_full()
-            .h(px(TAB_BAR_HEIGHT + TAB_BAR_BOTTOM_INSET))
-            .pb(px(TAB_BAR_BOTTOM_INSET))
-            .px(px(SECTION_PX))
+            .h(px(if unified {
+                44.
+            } else {
+                TAB_BAR_HEIGHT + TAB_BAR_BOTTOM_INSET
+            }))
+            .pb(px(if unified { 0. } else { TAB_BAR_BOTTOM_INSET }))
+            .px(px(if unified { 2. } else { SECTION_PX }))
+            .when(unified && !self.is_detached(), |bar| bar.pl(px(6.)))
             .gap(px(TAB_BAR_GAP))
             .overflow_hidden()
             .child(
@@ -1483,6 +1379,14 @@ impl Pane {
                         .id(SharedString::from(format!("pane-{pane_id}-tab-new")))
                         .flex_none()
                         .size(px(TAB_BAR_HEIGHT))
+                        .when(unified && self.is_detached(), |button| {
+                            button.size(px(32.)).mx(px(7.))
+                        })
+                        .when(!self.is_detached(), |button| {
+                            button
+                                .size(px(ACTION_BUTTON_SIZE))
+                                .when(self.dimmed, |button| button.invisible())
+                        })
                         .flex()
                         .items_center()
                         .justify_center()
@@ -1493,6 +1397,9 @@ impl Pane {
                     Some(rail_hover),
                 )
                 .delayed_tooltip(crate::ui_primitives::text_tooltip("New tab"))
+                .when(unified, |button| {
+                    button.on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                })
                 .on_click(cx.listener(|_this, _: &ClickEvent, _window, cx| {
                     cx.emit(PaneEvent::NewTab);
                     cx.stop_propagation();
@@ -1500,6 +1407,9 @@ impl Pane {
                 .child(
                     svg()
                         .size(px(TAB_ICON_SIZE))
+                        .when(unified, |icon| {
+                            icon.size(px(if self.is_detached() { 20. } else { 14. }))
+                        })
                         .flex_none()
                         .path("icons/plus.svg")
                         .text_color(ui.muted),
@@ -1507,6 +1417,25 @@ impl Pane {
             );
         }
 
+        if !self.is_detached() {
+            bar = bar
+                .child(
+                    div()
+                        .flex_none()
+                        .w(px(1.))
+                        .h(px(16.))
+                        .mx(px(6.))
+                        .when(self.dimmed, |divider| divider.invisible())
+                        .bg(ui.border),
+                )
+                .child(
+                    div()
+                        .h_full()
+                        .flex_none()
+                        .when(self.dimmed, |actions| actions.invisible())
+                        .child(self.render_header(cx)),
+                );
+        }
         Some(bar.into_any_element())
     }
 
@@ -1545,9 +1474,6 @@ impl Pane {
         }
 
         let is_diff = matches!(self.surface(), PaneSurface::Diff(_));
-        let show_sessions_button = !is_diff
-            && !crate::agent_sessions::enabled_session_agents_from_config(&self.cached_config)
-                .is_empty();
 
         let mut action_cluster = div()
             .flex()
@@ -1595,29 +1521,17 @@ impl Pane {
                     cx,
                 )),
         };
-        action_cluster = action_cluster
-            .when(show_sessions_button, |s| {
-                s.child(self.action_button(
-                    "pane-btn-claude-sessions",
-                    "icons/sessions.svg",
-                    cx.listener(|_this, _e: &ClickEvent, _window, cx| {
-                        cx.emit(PaneEvent::ToggleAgentSessions);
-                        cx.stop_propagation();
-                    }),
-                    cx,
-                ))
-            })
-            .when(!is_diff, |s| {
-                s.child(self.action_button(
-                    "pane-btn-diff-dock",
-                    "icons/layout-sidebar-right.svg",
-                    cx.listener(|_this, _e: &ClickEvent, _window, cx| {
-                        cx.emit(PaneEvent::ToggleDiffDock);
-                        cx.stop_propagation();
-                    }),
-                    cx,
-                ))
-            });
+        action_cluster = action_cluster.when(!is_diff, |s| {
+            s.child(self.action_button(
+                "pane-btn-diff-dock",
+                "icons/layout-sidebar-right.svg",
+                cx.listener(|_this, _e: &ClickEvent, _window, cx| {
+                    cx.emit(PaneEvent::ToggleDiffDock);
+                    cx.stop_propagation();
+                }),
+                cx,
+            ))
+        });
 
         end_section.child(action_cluster.child(detach))
     }
@@ -1818,6 +1732,19 @@ impl Render for Pane {
                     .bg(swap_tint.opacity(SWAP_OVERLAY_FILL_ALPHA))
                     .border_color(swap_tint.opacity(SWAP_OVERLAY_BORDER_ALPHA))
             })
+            .group_drag_over::<SurfaceDrag>(group_name.clone(), move |s| {
+                s.visible()
+                    .bg(swap_tint.opacity(SWAP_OVERLAY_FILL_ALPHA))
+                    .border_color(swap_tint.opacity(SWAP_OVERLAY_BORDER_ALPHA))
+            })
+            .on_drop(cx.listener(|this, drag: &SurfaceDrag, _, cx| {
+                cx.emit(PaneEvent::DropSurfaceMove {
+                    source_pane_id: drag.pane_id,
+                    surface_id: drag.surface_id,
+                    edge: this.drag_split_direction.take(),
+                });
+                cx.notify();
+            }))
             .on_drop(cx.listener(move |this, drag: &PaneDrag, _window, cx| {
                 let edge = this.drag_split_direction.take();
                 cx.emit(PaneEvent::DropPaneMove {
@@ -1892,15 +1819,19 @@ impl Render for Pane {
                     this.apply_drag_edge(e.bounds, e.event.position, cx);
                 },
             ))
+            .on_drag_move::<SurfaceDrag>(cx.listener(
+                |this, e: &DragMoveEvent<SurfaceDrag>, _, cx| {
+                    this.apply_drag_edge(e.bounds, e.event.position, cx);
+                },
+            ))
             .on_drag_move::<ReviewSubjectDrag>(cx.listener(
                 |this, e: &DragMoveEvent<ReviewSubjectDrag>, _window, cx| {
                     this.apply_drag_edge(e.bounds, e.event.position, cx);
                 },
             ))
             .when(!self.is_detached(), |root| {
-                root.child(self.render_header(cx))
+                root.children(self.render_tab_bar(Some(card_background), cx))
             })
-            .children(self.render_tab_bar(cx))
             .child(div().flex_1().min_h_0().w_full().child(body))
             .children(dim_layer)
             .child(overlay);
@@ -1908,7 +1839,11 @@ impl Render for Pane {
         let has_attention = self.attention.is_some();
         let attention_color = pane_colors().vc_conflict;
         let composer = self.render_composer_overlay(cx);
-        let card_radius = crate::app::constants::PANE_CARD_RADIUS;
+        let card_radius = if self.is_detached() {
+            px(10.)
+        } else {
+            crate::app::constants::PANE_CARD_RADIUS
+        };
         div()
             .flex()
             .flex_col()
@@ -2036,6 +1971,28 @@ mod tests {
         assert_eq!(tab_state(&pane, cx), (1, 0));
     }
 
+    #[gpui::test]
+    fn moving_a_surface_keeps_the_terminal_and_routes_its_exit_to_the_destination(
+        cx: &mut TestAppContext,
+    ) {
+        let cx = cx.add_empty_window();
+        let source = tabbed_pane(2, cx);
+        let target = tabbed_pane(1, cx);
+        let surface = cx.update(|_, cx| source.read(cx).surfaces()[0].clone());
+        let terminal = surface.as_terminal().unwrap().clone();
+        target.update(cx, |pane, cx| pane.push_surface(surface, cx));
+        source.update(cx, |pane, cx| pane.close_surface(0, cx));
+        cx.update(|_, cx| {
+            assert!(!source.read(cx).contains_terminal(&terminal));
+            assert_eq!(target.read(cx).active_terminal_opt(), Some(&terminal));
+        });
+        terminal.update(cx, |_, cx| {
+            cx.emit(crate::terminal::TerminalEvent::ChildExited)
+        });
+        assert_eq!(tab_state(&source, cx), (1, 0));
+        assert_eq!(tab_state(&target, cx), (1, 0));
+    }
+
     #[test]
     fn progress_chip_label_prefers_the_percentage_and_names_every_other_state() {
         let label = |state, percent| progress_chip_label(ProgressReport { state, percent });
@@ -2067,7 +2024,7 @@ mod tests {
 
         let material = pane_card_background(&theme, true, true);
         #[cfg(target_os = "windows")]
-        assert_eq!(material.a, 0.0);
+        assert_eq!(material, theme.background.opacity(0.35));
         #[cfg(not(target_os = "windows"))]
         assert_eq!(material, theme.background);
     }

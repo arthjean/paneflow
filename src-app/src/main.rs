@@ -898,7 +898,7 @@ impl Render for PaneFlowApp {
         };
         let panel_edge_share = 1. - primary_sidebar_opacity;
         let main_panel_left_inset = crate::app::constants::PANEL_INSET * panel_edge_share;
-        let pane_grid_left_gutter = crate::layout::PANE_GUTTER_PX * panel_edge_share;
+        let pane_grid_left_gutter = crate::app::constants::PANE_OUTER_GUTTER * panel_edge_share;
         let main_panel_corner_mask_bg = panel_corner_mask_bg;
         let main_panel_width = f32::from(window.viewport_size().width)
             - primary_sidebar_width
@@ -968,9 +968,9 @@ impl Render for PaneFlowApp {
                     .flex()
                     .size_full()
                     .pl(px(pane_grid_left_gutter))
-                    .pr(px(crate::layout::PANE_GUTTER_PX))
+                    .pr(px(crate::app::constants::PANE_OUTER_GUTTER))
                     .pt(px(crate::layout::PANE_GUTTER_PX))
-                    .pb(px(crate::layout::PANE_GUTTER_PX));
+                    .pb(px(crate::app::constants::PANE_OUTER_GUTTER));
                 let preview = self.pending_split_palette().map(|(target, direction)| {
                     crate::layout::SplitPreview {
                         target,
@@ -995,9 +995,9 @@ impl Render for PaneFlowApp {
                     .flex()
                     .size_full()
                     .pl(px(pane_grid_left_gutter))
-                    .pr(px(crate::layout::PANE_GUTTER_PX))
+                    .pr(px(crate::app::constants::PANE_OUTER_GUTTER))
                     .pt(px(crate::layout::PANE_GUTTER_PX))
-                    .pb(px(crate::layout::PANE_GUTTER_PX))
+                    .pb(px(crate::app::constants::PANE_OUTER_GUTTER))
                     .child(self.render_pane_palette(cx))
                     .into_any_element()
             } else {
@@ -1008,9 +1008,9 @@ impl Render for PaneFlowApp {
                 .flex()
                 .size_full()
                 .pl(px(pane_grid_left_gutter))
-                .pr(px(crate::layout::PANE_GUTTER_PX))
+                .pr(px(crate::app::constants::PANE_OUTER_GUTTER))
                 .pt(px(crate::layout::PANE_GUTTER_PX))
-                .pb(px(crate::layout::PANE_GUTTER_PX))
+                .pb(px(crate::app::constants::PANE_OUTER_GUTTER))
                 .child(self.render_welcome(cx))
                 .into_any_element()
         };

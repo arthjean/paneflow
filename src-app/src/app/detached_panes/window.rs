@@ -1,11 +1,10 @@
 use gpui::{
     AppContext, Bounds, Context, Entity, Focusable, IntoElement, MouseButton, ParentElement,
-    Pixels, Render, SharedString, Styled, WeakEntity, Window, WindowBounds, WindowControlArea,
-    WindowDecorations, WindowOptions, div, point, prelude::*, px, size,
+    Pixels, Render, Styled, WeakEntity, Window, WindowBounds, WindowControlArea, WindowDecorations,
+    WindowOptions, div, point, prelude::*, px, size,
 };
 
 use crate::pane::{Pane, PaneEvent};
-use crate::ui_primitives::TooltipDelayExt;
 use crate::{PaneFlowApp, ToggleDetachedPane};
 
 use super::DetachedPanePlacement;
@@ -20,6 +19,13 @@ pub(crate) struct DetachedPaneWindow {
     initial_focus: bool,
     bounds_save: Option<gpui::Task<()>>,
     orphaned: bool,
+    reveal_tabs: bool,
+    chrome_material_enabled: bool,
+    terminal_material_enabled: bool,
+    #[cfg(target_os = "windows")]
+    backdrop_light: Option<bool>,
+    #[cfg(target_os = "macos")]
+    material: Option<crate::window_chrome::macos_backdrop::SidebarMaterial>,
 }
 
 impl PaneFlowApp {
@@ -78,11 +84,36 @@ impl PaneFlowApp {
                 }),
                 app_owns_titlebar_drag: true,
                 app_id: Some("paneflow".into()),
-                window_background: gpui::WindowBackgroundAppearance::Opaque,
+                window_background: crate::app::constants::window_background_appearance(
+                    config.window_backdrop.as_deref(),
+                ),
                 focus: restored_bounds.is_none(),
                 ..Default::default()
             },
             move |window, cx| {
+                #[cfg(target_os = "windows")]
+                if crate::app::constants::window_backdrop_uses_mica(
+                    config.window_backdrop.as_deref(),
+                ) {
+                    crate::window_chrome::backdrop::apply_wallpaper_mica(
+                        window,
+                        crate::theme::active_theme().background.l > 0.5,
+                    );
+                }
+                #[cfg(target_os = "macos")]
+                let material = if crate::app::constants::macos_sidebar_material_enabled(
+                    config.window_backdrop.as_deref(),
+                ) {
+                    crate::window_chrome::macos_backdrop::SidebarMaterial::install(
+                        window,
+                        crate::theme::active_theme().background.l > 0.5,
+                        config.macos_chrome_material_enabled(),
+                    )
+                } else {
+                    None
+                };
+                #[cfg(target_os = "linux")]
+                crate::window_chrome::linux_backdrop::apply_subtle_chrome_material(window);
                 let window_id = window.window_handle().window_id();
                 crate::agents::notifications::set_window_active(
                     window_id,
@@ -92,10 +123,15 @@ impl PaneFlowApp {
                     cx.observe(&content, |_, _, cx| cx.notify()).detach();
                     if let Some(owner) = owner.upgrade() {
                         cx.observe(&owner, |this: &mut DetachedPaneWindow, owner, cx| {
-                            if !owner.read(cx).owns_pane(&this.pane) {
+                            let owner = owner.read(cx);
+                            this.chrome_material_enabled =
+                                owner.cached_config.cockpit_chrome_material_enabled();
+                            this.terminal_material_enabled =
+                                owner.cached_config.windows_terminal_material_enabled();
+                            if !owner.owns_pane(&this.pane) {
                                 this.orphaned = true;
-                                cx.notify();
                             }
+                            cx.notify();
                         })
                         .detach();
                     }
@@ -114,6 +150,13 @@ impl PaneFlowApp {
                         initial_focus: restored_bounds.is_none(),
                         bounds_save: None,
                         orphaned: false,
+                        reveal_tabs: true,
+                        chrome_material_enabled: config.cockpit_chrome_material_enabled(),
+                        terminal_material_enabled: config.windows_terminal_material_enabled(),
+                        #[cfg(target_os = "windows")]
+                        backdrop_light: None,
+                        #[cfg(target_os = "macos")]
+                        material,
                     }
                 });
                 let close_owner = owner.clone();
@@ -129,6 +172,8 @@ impl PaneFlowApp {
                 });
                 view.update(cx, |_, cx| {
                     cx.observe_window_bounds(window, |this, window, cx| {
+                        this.reveal_tabs = true;
+                        cx.notify();
                         if !window.is_maximized() && !window.is_fullscreen() {
                             let bounds = window.window_bounds().get_bounds();
                             this.pane.update(cx, |pane, _| {
@@ -206,9 +251,52 @@ impl Render for DetachedPaneWindow {
             self.initial_focus = false;
             self.pane.read(cx).focus_handle(cx).focus(window, cx);
         }
+        if std::mem::take(&mut self.reveal_tabs) {
+            cx.on_next_frame(window, |this, _, cx| {
+                this.pane.read(cx).reveal_active_surface();
+                cx.notify();
+            });
+        }
         let title = self.pane.read(cx).window_title(cx);
         window.set_window_title(&format!("{title} - Paneflow"));
         let ui = crate::theme::ui_colors();
+        let theme = crate::theme::active_theme();
+        let material_active = self.chrome_material_enabled
+            && !crate::native_material_suppressed_by_fullscreen(window.is_fullscreen());
+        #[cfg(target_os = "macos")]
+        let material_active = material_active && self.material.is_some();
+        #[cfg(target_os = "windows")]
+        if self.backdrop_light != Some(theme.background.l > 0.5) {
+            crate::window_chrome::backdrop::sync_wallpaper_mica_theme(
+                window,
+                theme.background.l > 0.5,
+            );
+            self.backdrop_light = Some(theme.background.l > 0.5);
+        }
+        #[cfg(target_os = "macos")]
+        if let Some(material) = &mut self.material {
+            material.sync(theme.background.l > 0.5, material_active);
+        }
+        let shell_color = if window.is_window_active() {
+            theme.title_bar_background
+        } else {
+            theme.title_bar_inactive_background
+        };
+        let shell_background = crate::app::constants::cockpit_backdrop_background(
+            shell_color,
+            window.is_window_active(),
+            material_active,
+        );
+        let backdrop_background = crate::app::constants::cockpit_backdrop_background(
+            shell_color,
+            window.is_window_active(),
+            material_active
+                || (self.terminal_material_enabled
+                    && matches!(
+                        self.pane.read(cx).surface(),
+                        crate::pane::PaneSurface::Terminal(_)
+                    )),
+        );
         let pane = self.pane.clone();
         let close = move |window: &mut Window, cx: &mut gpui::App| {
             pane.update(cx, |pane, cx| pane.toggle_detached(window, cx));
@@ -228,7 +316,7 @@ impl Render for DetachedPaneWindow {
                     "detached-left",
                     &controls.left,
                     window.is_maximized(),
-                    px(40.),
+                    px(44.),
                     &window.window_controls(),
                     close.clone(),
                 )
@@ -240,44 +328,30 @@ impl Render for DetachedPaneWindow {
                     "detached",
                     &controls.right,
                     window.is_maximized(),
-                    px(40.),
+                    px(44.),
                     &window.window_controls(),
                     close.clone(),
                 )
             })
             .flatten();
-        let back = div()
-            .id("reattach-pane-tooltip")
-            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .on_click(|_, _, cx| cx.stop_propagation())
-            .delayed_tooltip(crate::ui_primitives::text_tooltip(
-                "Return this pane without stopping its terminal",
-            ))
-            .child(crate::settings::components::secondary_button(
-                "reattach-pane",
-                "Return to workspace",
-                ui,
-                move |_, window, cx| close(window, cx),
-            ));
+        let tabs = self.pane.update(cx, |pane, cx| {
+            pane.render_tab_bar(Some(shell_background), cx)
+        });
         let titlebar = div()
             .id("detached-titlebar")
+            .bg(shell_background)
             .window_control_area(WindowControlArea::Drag)
             .flex()
             .items_center()
-            .h(px(40.))
+            .h(px(44.))
             .flex_none()
-            .gap(px(8.))
-            .pl(px(if cfg!(target_os = "macos") { 80. } else { 12. }))
+            .gap(px(12.))
+            .pl(px(if cfg!(target_os = "macos") { 80. } else { 7. }))
             .children(left)
-            .child(
-                div()
-                    .min_w_0()
-                    .flex_1()
-                    .text_ellipsis()
-                    .text_size(px(13.))
-                    .child(SharedString::from(title)),
-            )
-            .child(back)
+            .child(div().min_w_0().flex_1().h_full().children(tabs))
+            .when(cfg!(target_os = "windows") && right.is_some(), |titlebar| {
+                titlebar.child(div().flex_none().w(px(1.)).h(px(16.)).bg(ui.border))
+            })
             .children(right)
             .on_mouse_down(
                 MouseButton::Left,
@@ -328,11 +402,20 @@ impl Render for DetachedPaneWindow {
                 forward_to_workspace(crate::OpenCommandPalette, cx)
             })
             .child(titlebar)
-            .child(div().flex_1().min_h_0().child(self.pane.clone()));
+            .child(
+                div()
+                    .flex_1()
+                    .min_h_0()
+                    .border_l(px(7.))
+                    .border_r(px(7.))
+                    .border_b(px(7.))
+                    .border_color(shell_background)
+                    .child(self.pane.clone()),
+            );
         crate::window_chrome::csd::client_side_window_shell(
             content,
             window,
-            crate::theme::active_theme().background,
+            backdrop_background,
             ui.border,
         )
         .into_any_element()

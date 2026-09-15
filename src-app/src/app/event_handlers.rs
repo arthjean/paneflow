@@ -422,6 +422,15 @@ impl PaneFlowApp {
         event: &pane::PaneEvent,
         cx: &mut Context<Self>,
     ) {
+        if let pane::PaneEvent::DropSurfaceMove {
+            source_pane_id,
+            surface_id,
+            edge,
+        } = event
+        {
+            self.move_surface_to_pane(pane, *source_pane_id, *surface_id, *edge, cx);
+            return;
+        }
         if let pane::PaneEvent::ToggleDetached { window } = event {
             let owner = cx.weak_entity();
             let handle = *window;
@@ -438,6 +447,7 @@ impl PaneFlowApp {
             return;
         }
         match event {
+            pane::PaneEvent::DropSurfaceMove { .. } => {}
             pane::PaneEvent::ToggleDetached { .. } => {}
             pane::PaneEvent::DropSubjectSplit { .. } => {}
             pane::PaneEvent::SurfacesChanged => {
@@ -741,6 +751,107 @@ impl PaneFlowApp {
                 self.open_split_palette(pane, direction, cx);
             }
         }
+    }
+
+    fn move_surface_to_pane(
+        &mut self,
+        target: Entity<Pane>,
+        source_id: u64,
+        surface_id: u64,
+        edge: Option<DropEdge>,
+        cx: &mut Context<Self>,
+    ) {
+        let location = self
+            .workspaces
+            .iter()
+            .enumerate()
+            .find_map(|(w, ws)| ws.tab_index_containing_pane(&target).map(|t| (w, t)));
+        let review = location.is_none() && self.review_contains_pane(&target);
+        let root = if let Some((w, t)) = location {
+            let Some(tab) = self.workspaces[w].tabs().get(t) else {
+                return;
+            };
+            if tab.is_zoomed() {
+                return;
+            }
+            tab.root.as_ref()
+        } else if review && self.review.saved_layout.is_none() {
+            self.review.layout.as_ref()
+        } else {
+            None
+        };
+        let Some(root) = root else {
+            return;
+        };
+        let leaves = root.collect_leaves();
+        let Some(source) = leaves
+            .iter()
+            .find(|p| p.entity_id().as_u64() == source_id)
+            .cloned()
+        else {
+            return;
+        };
+        if source.read(cx).is_detached() || target.read(cx).is_detached() {
+            return;
+        }
+        let Some(index) = source
+            .read(cx)
+            .surfaces()
+            .iter()
+            .position(|s| s.entity_id() == surface_id)
+        else {
+            return;
+        };
+        let last = source.read(cx).surfaces().len() == 1;
+        if source == target && (edge.is_none() || last) {
+            return;
+        }
+        if edge.is_none() && !target.read(cx).can_add_surface() {
+            return;
+        }
+        let max_panes = if review {
+            crate::app::review::MAX_REVIEW_PANES
+        } else {
+            MAX_PANES
+        };
+        if edge.is_some() && !last && leaves.len() >= max_panes {
+            self.show_toast(format!("Maximum pane count reached ({max_panes})"), cx);
+            return;
+        }
+        let surface = source.read(cx).surfaces()[index].clone();
+        let destination = if edge.is_some() {
+            let workspace_id = target.read(cx).workspace_id;
+            self.create_pane_with_existing_surface(surface, workspace_id, cx)
+        } else {
+            target.update(cx, |pane, cx| pane.push_surface(surface, cx));
+            target.clone()
+        };
+        let root = if let Some((w, t)) = location {
+            &mut self.workspaces[w].tab_mut(t).expect("validated tab").root
+        } else {
+            &mut self.review.layout
+        };
+        if let Some(edge) = edge {
+            let Some(tree) = root.as_mut() else {
+                return;
+            };
+            if !split_pane_at_edge(tree, &target, edge, destination.clone()) {
+                return;
+            }
+        }
+        if last {
+            if let Some(tree) = root.take() {
+                *root = tree.remove_pane(&source).0;
+            }
+        } else {
+            source.update(cx, |pane, cx| pane.close_surface(index, cx));
+        }
+        if review {
+            self.review.active_pane = Some(destination.clone());
+        }
+        self.pending_pane_focus = Some(destination);
+        self.save_session(cx);
+        cx.notify();
     }
 
     pub(crate) fn handle_terminal_event(

@@ -17,10 +17,37 @@ thread_local! {
     static SIDEBAR_MATERIAL: RefCell<Option<SidebarMaterial>> = const { RefCell::new(None) };
 }
 
-struct SidebarMaterial {
+pub(crate) struct SidebarMaterial {
     effect_view: id,
     is_light: bool,
     is_enabled: bool,
+}
+
+impl SidebarMaterial {
+    pub(crate) fn install(window: &gpui::Window, is_light: bool, is_enabled: bool) -> Option<Self> {
+        match try_apply_subtle_sidebar_material(window, is_light, is_enabled) {
+            Ok(effect_view) => Some(Self {
+                effect_view,
+                is_light,
+                is_enabled,
+            }),
+            Err(error) => {
+                log::warn!("Could not install the native macOS sidebar material: {error}");
+                None
+            }
+        }
+    }
+
+    pub(crate) fn sync(&mut self, is_light: bool, is_enabled: bool) {
+        if self.is_light != is_light {
+            set_material_appearance(self.effect_view, is_light);
+            self.is_light = is_light;
+        }
+        if self.is_enabled != is_enabled {
+            set_material_enabled(self.effect_view, is_enabled);
+            self.is_enabled = is_enabled;
+        }
+    }
 }
 
 pub(crate) fn apply_subtle_sidebar_material(
@@ -51,14 +78,7 @@ pub(crate) fn sync_subtle_sidebar_material(is_light: bool, is_enabled: bool) {
         let Some(material) = slot.as_mut() else {
             return;
         };
-        if material.is_light != is_light {
-            set_material_appearance(material.effect_view, is_light);
-            material.is_light = is_light;
-        }
-        if material.is_enabled != is_enabled {
-            set_material_enabled(material.effect_view, is_enabled);
-            material.is_enabled = is_enabled;
-        }
+        material.sync(is_light, is_enabled);
     });
 }
 

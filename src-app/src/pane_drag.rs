@@ -27,6 +27,14 @@ pub struct PaneDrag {
     pub icon: SharedString,
 }
 
+#[derive(Clone)]
+pub struct SurfaceDrag {
+    pub pane_id: u64,
+    pub surface_id: u64,
+    pub title: SharedString,
+    pub icon: SharedString,
+}
+
 pub struct DragPreview {
     pub title: SharedString,
     pub icon: SharedString,
