@@ -84,9 +84,6 @@ impl PaneFlowApp {
                     muted: ws.muted,
                 })
                 .collect(),
-            mode: self.mode,
-            review_layout: self.serialize_review_layout(cx),
-            review_collapsed: self.serialize_review_collapsed(),
         }
     }
 

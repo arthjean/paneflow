@@ -17,30 +17,30 @@ const MENU_WIDTH: f32 = 232.0;
 const SUBMENU_WIDTH: f32 = 150.0;
 
 #[derive(Clone, Copy)]
-pub(crate) enum OptionChoice {
+enum OptionChoice {
     Layout(bool),
     Diff(DiffOptions),
 }
 
 #[derive(Clone, Copy)]
-pub(crate) struct DiffOptionsMenuState {
-    pub(crate) split: bool,
-    pub(crate) options: DiffOptions,
-    pub(crate) submenu: Option<DiffOptionsSubmenu>,
-    pub(crate) all_collapsed: Option<bool>,
+struct DiffOptionsMenuState {
+    split: bool,
+    options: DiffOptions,
+    submenu: Option<DiffOptionsSubmenu>,
+    all_collapsed: Option<bool>,
 }
 
-pub(crate) type MenuAction<T> = Rc<dyn Fn(T, &mut App)>;
+type MenuAction<T> = Rc<dyn Fn(T, &mut App)>;
 
 type SubmenuBounds = Rc<Cell<Option<Bounds<Pixels>>>>;
 
 #[derive(Clone)]
-pub(crate) struct DiffOptionsMenuActions {
-    pub(crate) toggle_submenu: MenuAction<DiffOptionsSubmenu>,
-    pub(crate) choose: MenuAction<OptionChoice>,
-    pub(crate) set_all_collapsed: MenuAction<bool>,
-    pub(crate) refresh: Rc<dyn Fn(&mut App)>,
-    pub(crate) dismiss: Rc<dyn Fn(&mut App)>,
+struct DiffOptionsMenuActions {
+    toggle_submenu: MenuAction<DiffOptionsSubmenu>,
+    choose: MenuAction<OptionChoice>,
+    set_all_collapsed: MenuAction<bool>,
+    refresh: Rc<dyn Fn(&mut App)>,
+    dismiss: Rc<dyn Fn(&mut App)>,
 }
 
 struct OptionEntry {
@@ -268,7 +268,7 @@ fn whitespace_label(whitespace: ComparisonPolicy) -> &'static str {
     }
 }
 
-pub(crate) fn render_diff_options_menu(
+fn render_diff_options_menu(
     top: f32,
     state: DiffOptionsMenuState,
     actions: DiffOptionsMenuActions,

@@ -5,13 +5,11 @@ use std::time::SystemTime;
 
 use serde::Deserialize;
 
-use crate::agent_sessions::{AssistantUsage, SessionAgent, SessionMeta, clean_session_label};
+use crate::agent_sessions::{SessionAgent, SessionMeta, clean_session_label};
 
 const TITLE_SCAN_LIMIT: usize = 2048;
 
 const TITLE_SCAN_BYTES: u64 = 1024 * 1024;
-
-const MODEL_USAGE_SCAN_LIMIT: usize = 20_000;
 
 use crate::limits::MAX_LINE_BYTES;
 
@@ -29,8 +27,6 @@ struct FirstLineEnvelope {
     timestamp: String,
     #[serde(default)]
     cwd: String,
-    #[serde(default, rename = "gitBranch")]
-    git_branch: String,
 }
 
 pub fn slug_for_cwd(cwd: &str) -> String {
@@ -81,10 +77,6 @@ fn max_mtime(current: Option<SystemTime>, candidate: Option<SystemTime>) -> Opti
     }
 }
 
-pub fn read_sessions_for_cwd(cwd: &str) -> Vec<SessionMeta> {
-    read_sessions_for_cwd_with_omitted(cwd).0
-}
-
 pub fn read_sessions_for_cwd_with_omitted(cwd: &str) -> (Vec<SessionMeta>, usize) {
     let Some(project_dir) = project_dir_for_cwd(cwd) else {
         return (Vec::new(), 0);
@@ -127,46 +119,6 @@ pub fn read_sessions_for_cwd_with_omitted(cwd: &str) -> (Vec<SessionMeta>, usize
     (sessions, omitted)
 }
 
-pub fn read_sessions_with_usage_for_attribution(cwd: &str, branch: &str) -> Vec<SessionMeta> {
-    let Some(project_dir) = project_dir_for_cwd(cwd) else {
-        return Vec::new();
-    };
-    let Ok(entries) = fs::read_dir(&project_dir) else {
-        return Vec::new();
-    };
-
-    let mut candidates: Vec<(SessionMeta, PathBuf)> = Vec::new();
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if !is_jsonl_file(&path) {
-            continue;
-        }
-        if let Some(meta) = read_session_meta(&path)
-            && crate::agent_sessions::cwd_matches(&meta.cwd, cwd)
-        {
-            crate::agent_sessions::push_ranked_attribution(
-                &mut candidates,
-                meta,
-                path,
-                branch,
-                crate::agent_sessions::DIFF_ATTRIBUTION_MATCH_CAP,
-            );
-        }
-    }
-
-    let enriched: Vec<SessionMeta> = candidates
-        .into_iter()
-        .filter_map(
-            |(fallback, path)| match read_session_meta_inner(&path, true) {
-                Some(meta) if crate::agent_sessions::cwd_matches(&meta.cwd, cwd) => Some(meta),
-                Some(_) => None,
-                None => Some(fallback),
-            },
-        )
-        .collect();
-    crate::agent_sessions::match_sessions_to_column(enriched, cwd, branch)
-}
-
 fn is_jsonl_file(path: &Path) -> bool {
     path.is_file()
         && path
@@ -176,36 +128,27 @@ fn is_jsonl_file(path: &Path) -> bool {
 }
 
 fn read_session_meta(path: &Path) -> Option<SessionMeta> {
-    read_session_meta_inner(path, false)
+    let head = scan_session_head(path)?;
+    Some(SessionMeta {
+        agent: SessionAgent::Claude,
+        session_id: head.envelope.session_id,
+        timestamp: head.envelope.timestamp,
+        cwd: head.envelope.cwd,
+        summary: head.ai_title.or(head.user_fallback),
+    })
 }
 
 pub fn read_generated_title(path: &Path) -> Option<String> {
-    scan_session_head(path, false)?.ai_title
+    scan_session_head(path)?.ai_title
 }
 
 struct SessionHead {
     envelope: FirstLineEnvelope,
     ai_title: Option<String>,
     user_fallback: Option<String>,
-    model: Option<String>,
-    usage: Option<AssistantUsage>,
 }
 
-fn read_session_meta_inner(path: &Path, scan_usage: bool) -> Option<SessionMeta> {
-    let head = scan_session_head(path, scan_usage)?;
-    Some(SessionMeta {
-        agent: SessionAgent::Claude,
-        session_id: head.envelope.session_id,
-        timestamp: head.envelope.timestamp,
-        cwd: head.envelope.cwd,
-        git_branch: head.envelope.git_branch,
-        summary: head.ai_title.or(head.user_fallback),
-        model: head.model,
-        usage: head.usage,
-    })
-}
-
-fn scan_session_head(path: &Path, scan_usage: bool) -> Option<SessionHead> {
+fn scan_session_head(path: &Path) -> Option<SessionHead> {
     let file = fs::File::open(path).ok()?;
     let mut reader = BufReader::new(file);
     let mut buf = String::new();
@@ -213,18 +156,10 @@ fn scan_session_head(path: &Path, scan_usage: bool) -> Option<SessionHead> {
     let mut envelope: Option<FirstLineEnvelope> = None;
     let mut ai_title: Option<String> = None;
     let mut user_fallback: Option<String> = None;
-    let mut model: Option<String> = None;
-    let mut usage = AssistantUsage::default();
-    let mut saw_usage = false;
 
-    let scan_limit = if scan_usage {
-        MODEL_USAGE_SCAN_LIMIT
-    } else {
-        TITLE_SCAN_LIMIT
-    };
     let mut title_budget = TITLE_SCAN_BYTES;
-    for _ in 0..scan_limit {
-        if !scan_usage && title_budget < MAX_LINE_BYTES {
+    for _ in 0..TITLE_SCAN_LIMIT {
+        if title_budget < MAX_LINE_BYTES {
             break;
         }
         buf.clear();
@@ -303,7 +238,7 @@ fn scan_session_head(path: &Path, scan_usage: bool) -> Option<SessionHead> {
                     && let Some(cleaned) = clean_session_label(title, LABEL_MAX_CHARS)
                 {
                     ai_title = Some(cleaned);
-                    if envelope.is_some() && !scan_usage {
+                    if envelope.is_some() {
                         break;
                     }
                 }
@@ -315,33 +250,6 @@ fn scan_session_head(path: &Path, scan_usage: bool) -> Option<SessionHead> {
                     user_fallback = Some(cleaned);
                 }
             }
-            Some("assistant") if scan_usage => {
-                if let Some(message) = value.get("message") {
-                    if let Some(m) = message.get("model").and_then(|v| v.as_str())
-                        && !m.is_empty()
-                    {
-                        model = Some(m.to_string());
-                    }
-                    if let Some(u) = message.get("usage") {
-                        let turn = AssistantUsage {
-                            input: u.get("input_tokens").and_then(|v| v.as_u64()).unwrap_or(0),
-                            output: u.get("output_tokens").and_then(|v| v.as_u64()).unwrap_or(0),
-                            cache_read: u
-                                .get("cache_read_input_tokens")
-                                .and_then(|v| v.as_u64())
-                                .unwrap_or(0),
-                            cache_creation: u
-                                .get("cache_creation_input_tokens")
-                                .and_then(|v| v.as_u64())
-                                .unwrap_or(0),
-                        };
-                        if !turn.is_empty() {
-                            usage.add(&turn);
-                            saw_usage = true;
-                        }
-                    }
-                }
-            }
             _ => {}
         }
     }
@@ -350,8 +258,6 @@ fn scan_session_head(path: &Path, scan_usage: bool) -> Option<SessionHead> {
         envelope: envelope?,
         ai_title,
         user_fallback,
-        model,
-        usage: saw_usage.then_some(usage),
     })
 }
 
@@ -503,7 +409,6 @@ mod tests {
         assert_eq!(meta.session_id, "aaaaaaaa-1111-2222-3333-444444444444");
         assert_eq!(meta.cwd, "/tmp/proj");
         assert_eq!(meta.timestamp, "2026-04-26T13:38:41.095Z");
-        assert_eq!(meta.git_branch, "main");
         assert_eq!(meta.summary.as_deref(), Some("Implement feature X"));
     }
 
@@ -629,42 +534,6 @@ mod tests {
     }
 
     #[test]
-    fn usage_scan_aggregates_across_assistant_turns_and_captures_model() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let path = dir.path().join("usage.jsonl");
-        std::fs::write(
-            &path,
-            concat!(
-                r#"{"parentUuid":null,"type":"user","message":{"role":"user","content":"hi"},"uuid":"u","timestamp":"2026-04-26T13:38:41.095Z","cwd":"/tmp/proj","sessionId":"550e8400-e29b-41d4-a716-446655440000","gitBranch":"main"}"#,
-                "\n",
-                r#"{"type":"assistant","message":{"model":"claude-opus-4-8-20260101","usage":{"input_tokens":100,"output_tokens":40,"cache_read_input_tokens":10,"cache_creation_input_tokens":5}}}"#,
-                "\n",
-                r#"{"type":"ai-title","aiTitle":"Some title"}"#,
-                "\n",
-                r#"{"type":"assistant","message":{"model":"claude-opus-4-8-20260101","usage":{"input_tokens":200,"output_tokens":60,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}}"#,
-                "\n",
-            ),
-        )
-        .expect("write fixture");
-
-        let title_only = read_session_meta_inner(&path, false).expect("meta");
-        assert!(title_only.model.is_none());
-        assert!(title_only.usage.is_none());
-        assert_eq!(title_only.summary.as_deref(), Some("Some title"));
-
-        let with_usage = read_session_meta_inner(&path, true).expect("meta");
-        assert_eq!(
-            with_usage.model.as_deref(),
-            Some("claude-opus-4-8-20260101")
-        );
-        let usage = with_usage.usage.expect("usage aggregated");
-        assert_eq!(usage.input, 300);
-        assert_eq!(usage.output, 100);
-        assert_eq!(usage.cache_read, 10);
-        assert_eq!(usage.cache_creation, 5);
-    }
-
-    #[test]
     fn meta_caveat_record_never_becomes_the_title() {
         assert_eq!(
             clean_user_message(
@@ -726,7 +595,6 @@ mod tests {
             meta.summary.as_deref(),
             Some("Corrige la sidebar agent sessions")
         );
-        assert_eq!(meta.git_branch, "main");
     }
 
     #[test]
@@ -833,10 +701,7 @@ mod tests {
             session_id: "abc".into(),
             timestamp: "2026-04-26T13:00:00Z".into(),
             cwd: cwd.into(),
-            git_branch: String::new(),
             summary: None,
-            model: None,
-            usage: None,
         }];
         cache::store_result(SessionAgent::Claude, cwd, project_dir, &fixture, 7);
 

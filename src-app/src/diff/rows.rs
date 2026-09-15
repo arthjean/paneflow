@@ -53,41 +53,6 @@ pub fn split_offsets(rows: &[SplitRow]) -> Vec<f32> {
     out
 }
 
-pub fn unified_hunk_tops(rows: &[DisplayRow]) -> Vec<f32> {
-    let mut tops = Vec::new();
-    let mut acc = 0.0f32;
-    let mut prev_change = false;
-    for r in rows {
-        let is_change = matches!(r.kind, RowKind::Added | RowKind::Removed);
-        if is_change && !prev_change {
-            tops.push(acc);
-        }
-        prev_change = is_change;
-        acc += display_row_height(r);
-    }
-    tops
-}
-
-pub fn split_hunk_tops(rows: &[SplitRow]) -> Vec<f32> {
-    let mut tops = Vec::new();
-    let mut acc = 0.0f32;
-    let mut prev_change = false;
-    for r in rows {
-        let is_change = matches!(
-            r,
-            SplitRow::Pair { left, right }
-                if matches!(left.kind, CellKind::Added | CellKind::Removed)
-                    || matches!(right.kind, CellKind::Added | CellKind::Removed)
-        );
-        if is_change && !prev_change {
-            tops.push(acc);
-        }
-        prev_change = is_change;
-        acc += split_row_height(r);
-    }
-    tops
-}
-
 pub fn unified_max_line_no(rows: &[DisplayRow]) -> u32 {
     rows.iter()
         .map(|r| r.new_no.unwrap_or(0).max(r.old_no.unwrap_or(0)))
@@ -1635,76 +1600,6 @@ mod tests {
         assert_eq!(open_rows.len(), rows.len() + hidden);
         assert!(matches!(open_rows[fold_idx].kind, RowKind::Fold));
         assert!(matches!(open_rows[fold_idx + 1].kind, RowKind::Context));
-    }
-
-    #[test]
-    fn unified_hunk_tops_marks_each_hunk_start_at_its_row_offset() {
-        let base = "a\nb\nc\nd\ne\n".to_string();
-        let new = "a\nB\nc\nd\nE\n".to_string();
-        let hunks = crate::diff::engine::compute_hunks(&base, &new);
-        let file = FileDiff {
-            path: "a.txt".into(),
-            change: FileChange::Modified,
-            old_path: None,
-            base_text: base,
-            new_text: new,
-            hunks,
-            is_binary: false,
-        };
-        let (rows, _) = build_display_rows(&[file], None);
-        let offsets = unified_offsets(&rows);
-
-        let mut expected = Vec::new();
-        let mut prev_change = false;
-        for (i, r) in rows.iter().enumerate() {
-            let is_change = matches!(r.kind, RowKind::Added | RowKind::Removed);
-            if is_change && !prev_change {
-                expected.push(offsets[i]);
-            }
-            prev_change = is_change;
-        }
-
-        assert_eq!(unified_hunk_tops(&rows), expected);
-        assert_eq!(expected.len(), 2, "fixture has two distinct hunks");
-    }
-
-    #[test]
-    fn split_hunk_tops_marks_each_hunk_start_at_its_row_offset() {
-        let base = "a\nb\nc\nd\ne\n".to_string();
-        let new = "a\nB\nc\nd\nE\n".to_string();
-        let hunks = crate::diff::engine::compute_hunks(&base, &new);
-        let file = FileDiff {
-            path: "a.txt".into(),
-            change: FileChange::Modified,
-            old_path: None,
-            base_text: base,
-            new_text: new,
-            hunks,
-            is_binary: false,
-        };
-        let (rows, _) = build_split_rows(std::slice::from_ref(&file), None);
-        let offsets = split_offsets(&rows);
-
-        let mut expected = Vec::new();
-        let mut prev_change = false;
-        for (i, r) in rows.iter().enumerate() {
-            let is_change = matches!(
-                r,
-                SplitRow::Pair { left, right }
-                    if matches!(left.kind, CellKind::Added | CellKind::Removed)
-                        || matches!(right.kind, CellKind::Added | CellKind::Removed)
-            );
-            if is_change && !prev_change {
-                expected.push(offsets[i]);
-            }
-            prev_change = is_change;
-        }
-
-        assert_eq!(split_hunk_tops(&rows), expected);
-        assert!(
-            !expected.is_empty(),
-            "fixture must produce at least one split hunk for the guard to be meaningful"
-        );
     }
 
     #[test]

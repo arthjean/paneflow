@@ -18,10 +18,6 @@ impl PaneFlowApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if matches!(self.mode, paneflow_config::schema::AppMode::Diff) {
-            self.review_toggle_zoom(window, cx);
-            return;
-        }
         let Some(ws) = self.active_workspace_mut() else {
             return;
         };

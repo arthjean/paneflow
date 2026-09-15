@@ -78,9 +78,6 @@ fn test_session_roundtrip_single_workspace() {
                 surfaces: vec![make_surface("/home/user/project")],
             })],
         )],
-        mode: AppMode::default(),
-        review_layout: None,
-        review_collapsed: Vec::new(),
         detached_panes: Vec::new(),
     };
     let json = serde_json::to_string_pretty(&state).unwrap();
@@ -110,9 +107,6 @@ fn test_session_roundtrip_multiple_workspaces() {
             ),
             make_workspace("devops", "/home/user/infra", vec![TabSession::empty()]),
         ],
-        mode: AppMode::default(),
-        review_layout: None,
-        review_collapsed: Vec::new(),
         detached_panes: Vec::new(),
     };
     let json = serde_json::to_string_pretty(&state).unwrap();
@@ -154,9 +148,6 @@ fn test_session_roundtrip_nested_splits() {
                 ],
             })],
         )],
-        mode: AppMode::default(),
-        review_layout: None,
-        review_collapsed: Vec::new(),
         detached_panes: Vec::new(),
     };
     let json = serde_json::to_string_pretty(&state).unwrap();
@@ -183,9 +174,6 @@ fn test_session_roundtrip_with_scrollback() {
                 }],
             })],
         )],
-        mode: AppMode::default(),
-        review_layout: None,
-        review_collapsed: Vec::new(),
         detached_panes: Vec::new(),
     };
     let json = serde_json::to_string_pretty(&state).unwrap();
@@ -219,12 +207,12 @@ fn test_session_scrollback_none_omitted_from_json() {
 }
 
 #[test]
-fn test_session_with_removed_agents_view_restores_in_cli_mode() {
+fn test_session_ignores_keys_of_retired_views() {
     let legacy = r#"{
-        "version": 1,
+        "version": 2,
         "active_workspace": 0,
         "workspaces": [
-            { "title": "main", "cwd": "/tmp", "layout": null }
+            { "title": "main", "cwd": "/tmp", "tabs": [{}] }
         ],
         "projects": [
             { "id": 1, "title": "Paneflow", "cwd": "/tmp", "threads": [] }
@@ -232,94 +220,19 @@ fn test_session_with_removed_agents_view_restores_in_cli_mode() {
         "active_project": 0,
         "chats": [],
         "agents_target": { "type": "chat", "thread_id": 3 },
-        "mode": "agents"
-    }"#;
-    let restored: SessionState = serde_json::from_str(legacy).unwrap();
-    assert_eq!(restored.workspaces.len(), 1, "the workspaces survive");
-    assert_eq!(
-        restored.mode,
-        AppMode::Cli,
-        "an unknown mode falls back to CLI"
-    );
-}
-
-#[test]
-fn test_session_backward_compat_pre_us007() {
-    let legacy = r#"{
-        "version": 1,
-        "active_workspace": 0,
-        "workspaces": [
-            { "title": "main", "cwd": "/tmp", "layout": null }
-        ]
-    }"#;
-    let restored: SessionState = serde_json::from_str(legacy).unwrap();
-    assert_eq!(restored.workspaces.len(), 1);
-    assert_eq!(
-        restored.mode,
-        AppMode::Cli,
-        "legacy session.json must restore in CLI mode"
-    );
-}
-
-#[test]
-fn test_app_mode_serializes_snake_case() {
-    assert_eq!(serde_json::to_string(&AppMode::Cli).unwrap(), "\"cli\"");
-    assert_eq!(serde_json::to_string(&AppMode::Diff).unwrap(), "\"diff\"");
-}
-
-#[test]
-fn test_app_mode_diff_round_trips() {
-    let json = serde_json::to_string(&AppMode::Diff).unwrap();
-    let back: AppMode = serde_json::from_str(&json).unwrap();
-    assert_eq!(back, AppMode::Diff);
-
-    let session = r#"{
-        "version": 1,
-        "active_workspace": 0,
-        "workspaces": [],
-        "mode": "diff"
-    }"#;
-    let restored: SessionState = serde_json::from_str(session).unwrap();
-    assert_eq!(restored.mode, AppMode::Diff);
-}
-
-#[test]
-fn test_session_review_layout_round_trips_and_defaults() {
-    let legacy = r#"{ "version": 1, "active_workspace": 0, "workspaces": [] }"#;
-    let restored: SessionState = serde_json::from_str(legacy).unwrap();
-    assert_eq!(restored.review_layout, None);
-    assert!(restored.review_collapsed.is_empty());
-
-    let with_layout = r#"{
-        "version": 2,
-        "active_workspace": 0,
-        "workspaces": [],
+        "mode": "diff",
         "review_layout": {
             "type": "pane",
             "surfaces": [ { "surface_type": "diff", "cwd": "/repo", "path": "/repo", "name": "main" } ]
         },
-        "review_collapsed": ["/repo", "/other"]
+        "review_collapsed": ["/repo"]
     }"#;
-    let restored2: SessionState = serde_json::from_str(with_layout).unwrap();
-    let layout = restored2
-        .review_layout
-        .clone()
-        .expect("review layout restored");
-    assert_eq!(layout.leaf_count(), 1);
-    let LayoutNode::Pane { surfaces } = &layout else {
-        panic!("expected a pane node");
-    };
-    assert_eq!(surfaces[0].surface_type.as_deref(), Some("diff"));
-    assert_eq!(surfaces[0].cwd.as_deref(), Some("/repo"));
-    assert_eq!(restored2.review_collapsed, vec!["/repo", "/other"]);
-
-    let round_trip = serde_json::to_string(&restored2).unwrap();
-    let restored3: SessionState = serde_json::from_str(&round_trip).unwrap();
-    assert_eq!(restored3.review_layout, restored2.review_layout);
-    assert_eq!(restored3.review_collapsed, restored2.review_collapsed);
-    assert!(!serde_json::to_string(&restored)
-        .unwrap()
-        .contains("review_collapsed"));
+    let restored: SessionState = serde_json::from_str(legacy).unwrap();
+    assert_eq!(restored.workspaces.len(), 1, "the workspaces survive");
+    let written = serde_json::to_string(&restored).unwrap();
+    assert!(!written.contains("mode"));
+    assert!(!written.contains("review_layout"));
+    assert!(!written.contains("review_collapsed"));
 }
 
 #[test]
@@ -570,9 +483,6 @@ fn test_tab_title_source_survives_a_roundtrip() {
                 },
             ],
         )],
-        mode: AppMode::default(),
-        review_layout: None,
-        review_collapsed: Vec::new(),
         detached_panes: Vec::new(),
     };
     let json = serde_json::to_string(&state).unwrap();
@@ -637,32 +547,21 @@ fn detached_windows_survive_restart_and_older_sessions_remain_docked() {
     assert!(!serde_json::to_string(&state)
         .unwrap()
         .contains("detached_panes"));
-    state.detached_panes = vec![
-        DetachedPaneSession {
-            review_subject: None,
-            layout_leaf_count: Some(4),
-            location: DetachedPaneLocation::Cli {
-                workspace: 1,
-                tab: 2,
-                leaf: 3,
-            },
-            x: -900.0,
-            y: 50.0,
-            width: 800.0,
-            height: 600.0,
+    state.detached_panes = vec![DetachedPaneSession {
+        layout_leaf_count: Some(4),
+        location: DetachedPaneLocation {
+            workspace: 1,
+            tab: 2,
+            leaf: 3,
         },
-        DetachedPaneSession {
-            review_subject: None,
-            layout_leaf_count: Some(4),
-            location: DetachedPaneLocation::Review { leaf: 0 },
-            x: 100.0,
-            y: 50.0,
-            width: 600.0,
-            height: 400.0,
-        },
-    ];
-    let restored: SessionState =
-        serde_json::from_str(&serde_json::to_string(&state).unwrap()).unwrap();
+        x: -900.0,
+        y: 50.0,
+        width: 800.0,
+        height: 600.0,
+    }];
+    let json = serde_json::to_string(&state).unwrap();
+    assert!(json.contains(r#""location":{"mode":"cli","workspace":1,"tab":2,"leaf":3}"#));
+    let restored: SessionState = serde_json::from_str(&json).unwrap();
     assert_eq!(state, restored);
     assert!(restored
         .detached_panes
@@ -676,11 +575,23 @@ fn detached_windows_survive_restart_and_older_sessions_remain_docked() {
 }
 
 #[test]
-fn legacy_detached_locations_parse_without_unverified_subject_identity() {
-    let saved: DetachedPaneSession = serde_json::from_str(
-        r#"{"location":{"mode":"review","leaf":1},"x":0,"y":0,"width":800,"height":600}"#,
+fn a_detached_window_saved_by_a_retired_view_is_dropped_without_losing_the_session() {
+    let restored: SessionState = serde_json::from_str(
+        r#"{"version":2,"active_workspace":0,"workspaces":[{"title":"main","cwd":"/tmp","tabs":[{}]}],
+            "detached_panes":[
+                {"location":{"mode":"review","leaf":1},"review_subject":{"repo_root":"/repo","worktree":"/repo"},"x":0,"y":0,"width":800,"height":600},
+                {"location":{"mode":"cli","workspace":0,"tab":0,"leaf":0},"layout_leaf_count":1,"x":10,"y":20,"width":800,"height":600}
+            ]}"#,
     )
     .unwrap();
-    assert!(saved.review_subject.is_none());
-    assert!(saved.layout_leaf_count.is_none());
+    assert_eq!(restored.workspaces.len(), 1);
+    assert_eq!(restored.detached_panes.len(), 1);
+    assert_eq!(
+        restored.detached_panes[0].location,
+        DetachedPaneLocation {
+            workspace: 0,
+            tab: 0,
+            leaf: 0,
+        }
+    );
 }

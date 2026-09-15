@@ -83,9 +83,6 @@ impl PaneFlowApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !matches!(self.mode, paneflow_config::schema::AppMode::Cli) {
-            return;
-        }
         if self.attention_queue_open {
             self.close_attention_queue_and_restore_focus(window, cx);
             return;

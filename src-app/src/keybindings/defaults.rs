@@ -356,11 +356,6 @@ pub(super) const DEFAULTS: &[DefaultBinding] = &[
         context: Some("MarkdownSearch"),
     },
     DefaultBinding {
-        key: "secondary-shift-g",
-        action_name: "open_diff_view",
-        context: None,
-    },
-    DefaultBinding {
         key: "secondary-alt-f",
         action_name: "toggle_files_sidebar",
         context: None,
@@ -369,31 +364,6 @@ pub(super) const DEFAULTS: &[DefaultBinding] = &[
         key: "secondary-alt-m",
         action_name: "toggle_diff_dock_maximize",
         context: None,
-    },
-    DefaultBinding {
-        key: "ctrl-shift-c",
-        action_name: "copy_diff_hunk",
-        context: Some("DiffView"),
-    },
-    DefaultBinding {
-        key: "]",
-        action_name: "diff_next_hunk",
-        context: Some("DiffView && !Terminal && !TextInput && !PaneflowTextArea"),
-    },
-    DefaultBinding {
-        key: "[",
-        action_name: "diff_prev_hunk",
-        context: Some("DiffView && !Terminal && !TextInput && !PaneflowTextArea"),
-    },
-    DefaultBinding {
-        key: "u",
-        action_name: "diff_toggle_view",
-        context: Some("DiffView && !Terminal && !TextInput && !PaneflowTextArea"),
-    },
-    DefaultBinding {
-        key: "escape",
-        action_name: "diff_dismiss",
-        context: Some("DiffView && !Terminal && !TextInput && !PaneflowTextArea"),
     },
     DefaultBinding {
         key: "secondary-g",

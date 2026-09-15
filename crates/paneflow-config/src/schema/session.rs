@@ -7,84 +7,43 @@ pub const SESSION_SCHEMA_VERSION_V1: u32 = 1;
 
 pub const MAX_SESSION_TABS: usize = 32;
 
-#[derive(Debug, Clone, Copy, Default, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum AppMode {
-    #[default]
-    Cli,
-    Diff,
-}
-
-impl<'de> Deserialize<'de> for AppMode {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        struct ModeVisitor;
-
-        impl serde::de::Visitor<'_> for ModeVisitor {
-            type Value = AppMode;
-
-            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-                f.write_str("a UI mode string")
-            }
-
-            fn visit_str<E>(self, value: &str) -> Result<AppMode, E>
-            where
-                E: serde::de::Error,
-            {
-                Ok(match value {
-                    "diff" => AppMode::Diff,
-                    _ => AppMode::Cli,
-                })
-            }
-        }
-
-        deserializer.deserialize_str(ModeVisitor)
-    }
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct SessionState {
     pub version: u32,
     pub active_workspace: usize,
     pub workspaces: Vec<WorkspaceSession>,
-    #[serde(default)]
-    pub mode: AppMode,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub review_layout: Option<LayoutNode>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub review_collapsed: Vec<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(
+        default,
+        skip_serializing_if = "Vec::is_empty",
+        deserialize_with = "lenient_detached_panes"
+    )]
     pub detached_panes: Vec<DetachedPaneSession>,
 }
 
 pub const MAX_DETACHED_PANE_WINDOWS: usize = 16;
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
-#[serde(tag = "mode", rename_all = "snake_case")]
-pub enum DetachedPaneLocation {
-    Cli {
-        workspace: usize,
-        tab: usize,
-        leaf: usize,
-    },
-    Review {
-        leaf: usize,
-    },
+fn lenient_detached_panes<'de, D>(deserializer: D) -> Result<Vec<DetachedPaneSession>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let entries = Vec::<serde_json::Value>::deserialize(deserializer)?;
+    Ok(entries
+        .into_iter()
+        .filter_map(|entry| serde_json::from_value(entry).ok())
+        .collect())
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct DetachedReviewSubject {
-    pub repo_root: String,
-    pub worktree: String,
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[serde(tag = "mode", rename = "cli")]
+pub struct DetachedPaneLocation {
+    pub workspace: usize,
+    pub tab: usize,
+    pub leaf: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct DetachedPaneSession {
     pub location: DetachedPaneLocation,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub review_subject: Option<DetachedReviewSubject>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub layout_leaf_count: Option<usize>,
     pub x: f32,

@@ -832,7 +832,6 @@ impl PaneFlowApp {
                 .filter(|cwd| !cwd.is_empty())
                 .map(PathBuf::from),
             PaneSurface::Markdown(markdown) => Some(markdown.read(cx).path.clone()),
-            PaneSurface::Diff(diff) => Some(diff.read(cx).worktree_path().clone()),
         }
     }
 }

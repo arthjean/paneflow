@@ -689,7 +689,7 @@ impl PaneFlowApp {
                     this.update(cx, |app: &mut Self, cx: &mut Context<Self>| {
                         match removed {
                             Ok(snapshot) => {
-                                app.forget_removed_worktree(ws_id, &repo_root, &path, cx);
+                                app.forget_removed_worktree(ws_id, &path, cx);
                                 app.forget_managed_paths(std::slice::from_ref(&path), cx);
                                 app.notify_snapshot_kept(snapshot, cx);
                             }
@@ -841,7 +841,7 @@ impl PaneFlowApp {
                     this.update(cx, |app: &mut Self, cx: &mut Context<Self>| {
                         match removed {
                             Ok(snapshot) => {
-                                app.forget_removed_worktree(ws_id, &repo_root, &path, cx);
+                                app.forget_removed_worktree(ws_id, &path, cx);
                                 app.notify_snapshot_kept(snapshot, cx);
                             }
                             Err(message) => app.show_toast(message, cx),
@@ -857,7 +857,6 @@ impl PaneFlowApp {
     fn forget_removed_worktree(
         &mut self,
         ws_id: u64,
-        repo_root: &std::path::Path,
         path: &std::path::Path,
         cx: &mut Context<Self>,
     ) {
@@ -876,7 +875,6 @@ impl PaneFlowApp {
         }
         self.prune_worktree_states();
         self.spawn_worktree_listing(ws_idx, cx);
-        self.review_forget_worktree(repo_root, path, cx);
     }
 }
 

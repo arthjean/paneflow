@@ -143,9 +143,6 @@ impl PaneFlowApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !matches!(self.mode, paneflow_config::schema::AppMode::Cli) {
-            return;
-        }
         let Some(pane) = self.focused_or_first_pane(window, cx) else {
             return;
         };
@@ -166,9 +163,6 @@ impl PaneFlowApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !matches!(self.mode, paneflow_config::schema::AppMode::Cli) {
-            return;
-        }
         if self.broadcast_picker_open {
             self.close_broadcast_picker(cx);
         } else {

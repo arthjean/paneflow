@@ -22,7 +22,6 @@ impl PaneFlowApp {
             .workspaces
             .iter()
             .flat_map(|ws| ws.collect_panes())
-            .chain(self.review_leaves())
             .collect::<Vec<_>>();
         let mut changed = false;
         for pane in panes {
@@ -80,7 +79,6 @@ impl PaneFlowApp {
         self.workspaces
             .iter()
             .any(|ws| ws.tab_for_pane(pane).is_some())
-            || self.review_contains_pane(pane)
     }
 
     fn cancel_pane_layout_resize(&self) {
@@ -94,33 +92,18 @@ impl PaneFlowApp {
                 }
             }
         }
-        for root in [
-            self.review.layout.as_ref(),
-            self.review.saved_layout.as_ref(),
-        ]
-        .into_iter()
-        .flatten()
-        {
-            root.cancel_resize();
-        }
     }
 
     fn prepare_pane_transfer(&mut self, pane: &Entity<Pane>, cx: &mut Context<Self>) {
         self.cancel_pane_layout_resize();
         self.cancel_swap_mode(cx);
         self.dismiss_transient_surfaces();
-        if self.review_contains_pane(pane) {
-            if let Some(saved) = self.review.saved_layout.take() {
-                self.review.layout = Some(saved);
-            }
-        } else {
-            for ws in &mut self.workspaces {
-                if let Some(tab_idx) = ws.tab_index_containing_pane(pane)
-                    && let Some(tab) = ws.tab_mut(tab_idx)
-                {
-                    tab.exit_zoom(cx);
-                    break;
-                }
+        for ws in &mut self.workspaces {
+            if let Some(tab_idx) = ws.tab_index_containing_pane(pane)
+                && let Some(tab) = ws.tab_mut(tab_idx)
+            {
+                tab.exit_zoom(cx);
+                break;
             }
         }
         pane.update(cx, |pane, cx| {
@@ -144,16 +127,12 @@ impl PaneFlowApp {
         });
         if self.owns_pane(pane) {
             self.settings_section = None;
-            if self.review_contains_pane(pane) {
-                self.mode = paneflow_config::schema::AppMode::Diff;
-                self.review.active_pane = Some(pane.clone());
-            } else if let Some((ws_idx, tab_idx)) = self
+            if let Some((ws_idx, tab_idx)) = self
                 .workspaces
                 .iter()
                 .enumerate()
                 .find_map(|(idx, ws)| ws.tab_index_containing_pane(pane).map(|tab| (idx, tab)))
             {
-                self.mode = paneflow_config::schema::AppMode::Cli;
                 self.activate_workspace_without_window(ws_idx, cx);
                 self.workspaces[ws_idx].set_active_tab(tab_idx);
             }

@@ -80,9 +80,6 @@ impl LayoutTree {
                                 font_size: None,
                             }
                         }
-                        crate::pane::PaneSurface::Diff(diff) => {
-                            crate::app::review::surface_for_subject(&diff.read(cx).subject())
-                        }
                     })
                     .collect();
                 LayoutNode::Pane { surfaces }

@@ -1,7 +1,6 @@
 mod align;
 mod element;
 mod engine;
-mod extract;
 mod git;
 mod highlighter;
 mod hit_test;
@@ -10,10 +9,8 @@ mod hscroll;
 pub(crate) mod parity_tests;
 mod rows;
 mod syntax;
-mod view;
 
 pub use git::FileChange;
-pub use view::{DiffView, DiffWorktree, FileEntry, FileListState, ReviewSubject};
 
 pub(crate) use align::CellKind;
 pub(crate) use element::{DiffBody, DiffElement, revert_chip_bounds};

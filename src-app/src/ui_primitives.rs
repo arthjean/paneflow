@@ -452,74 +452,12 @@ pub(crate) fn text_tooltip(
     }
 }
 
-pub(crate) fn toolbar_pill(id: impl Into<ElementId>, ui: UiColors, active: bool) -> AnimatedHover {
-    let resting_bg = if active {
-        ui.subtle
-    } else {
-        ui.subtle.opacity(0.0)
-    };
-
-    div()
-        .id(id.into())
-        .flex_none()
-        .flex()
-        .flex_row()
-        .items_center()
-        .gap(px(5.))
-        .h(px(24.))
-        .px(px(8.))
-        .rounded(px(6.))
-        .bg(resting_bg)
-        .text_size(BODY)
-        .text_color(ui.text)
-        .animated_hover_bg(resting_bg, ui.subtle)
-}
-
 pub(crate) fn filter_pill(
     id: impl Into<ElementId>,
     clear_id: impl Into<ElementId>,
     ui: UiColors,
     input: impl IntoElement,
     show_clear: bool,
-    on_clear: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
-) -> Stateful<Div> {
-    filter_pill_with_clear_cursor(
-        id,
-        clear_id,
-        ui,
-        input,
-        show_clear,
-        CursorStyle::Arrow,
-        on_clear,
-    )
-}
-
-pub(crate) fn filter_pill_with_arrow_clear(
-    id: impl Into<ElementId>,
-    clear_id: impl Into<ElementId>,
-    ui: UiColors,
-    input: impl IntoElement,
-    show_clear: bool,
-    on_clear: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
-) -> Stateful<Div> {
-    filter_pill_with_clear_cursor(
-        id,
-        clear_id,
-        ui,
-        input,
-        show_clear,
-        CursorStyle::Arrow,
-        on_clear,
-    )
-}
-
-fn filter_pill_with_clear_cursor(
-    id: impl Into<ElementId>,
-    clear_id: impl Into<ElementId>,
-    ui: UiColors,
-    input: impl IntoElement,
-    show_clear: bool,
-    clear_cursor: CursorStyle,
     on_clear: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
 ) -> Stateful<Div> {
     let clear_id = clear_id.into();
@@ -560,7 +498,7 @@ fn filter_pill_with_clear_cursor(
                 .items_center()
                 .justify_center()
                 .rounded(px(3.))
-                .cursor(clear_cursor)
+                .cursor(CursorStyle::Arrow)
                 .text_color(ui.muted)
                 .animated_hover_element(move |button, delta| {
                     let icon_color = lerp_color(ui.muted, ui.text, delta);

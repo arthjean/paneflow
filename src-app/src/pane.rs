@@ -13,11 +13,10 @@ use gpui::{
 use crate::ui_primitives::squircle::{squircle_border, squircle_fill};
 use crate::ui_primitives::{AnimatedHoverExt, lerp_color, squircle_skin};
 
-use crate::diff::DiffView;
 use crate::markdown::MarkdownView;
 use crate::pane_drag::{
-    DragPreview, DropEdge, PaneDrag, ReviewSubjectDrag, SPLIT_EDGE_BAND, SessionDrag, SurfaceDrag,
-    compute_drop_edge, split_rect,
+    DragPreview, DropEdge, PaneDrag, SPLIT_EDGE_BAND, SessionDrag, SurfaceDrag, compute_drop_edge,
+    split_rect,
 };
 use crate::terminal::{TerminalEvent, TerminalView};
 
@@ -25,7 +24,6 @@ use crate::terminal::{TerminalEvent, TerminalView};
 pub enum PaneSurface {
     Terminal(Entity<TerminalView>),
     Markdown(Entity<MarkdownView>),
-    Diff(Entity<DiffView>),
 }
 
 impl PaneSurface {
@@ -33,13 +31,12 @@ impl PaneSurface {
         match self {
             Self::Terminal(view) => view.entity_id().as_u64(),
             Self::Markdown(view) => view.entity_id().as_u64(),
-            Self::Diff(view) => view.entity_id().as_u64(),
         }
     }
     pub fn as_terminal(&self) -> Option<&Entity<TerminalView>> {
         match self {
             PaneSurface::Terminal(t) => Some(t),
-            PaneSurface::Markdown(_) | PaneSurface::Diff(_) => None,
+            PaneSurface::Markdown(_) => None,
         }
     }
 
@@ -47,7 +44,6 @@ impl PaneSurface {
         match self {
             PaneSurface::Terminal(_) => "icons/terminal.svg",
             PaneSurface::Markdown(_) => "icons/file-text.svg",
-            PaneSurface::Diff(_) => "icons/git-branch.svg",
         }
     }
 }
@@ -141,10 +137,6 @@ pub enum PaneEvent {
         source_pane_id: u64,
         edge: Option<DropEdge>,
     },
-    DropSubjectSplit {
-        edge: Option<DropEdge>,
-        subject: crate::diff::ReviewSubject,
-    },
 }
 
 struct HeaderHoverMotion {
@@ -190,8 +182,6 @@ pub struct Pane {
     dim_from: f32,
     dim_alpha: Rc<Cell<f32>>,
     dim_seq: usize,
-    diff_options_open: bool,
-    diff_options_submenu: Option<crate::app::diff_dock::DiffOptionsSubmenu>,
 }
 
 impl EventEmitter<PaneEvent> for Pane {}
@@ -249,8 +239,6 @@ impl Pane {
             dim_from: 0.0,
             dim_alpha: Rc::new(Cell::new(0.0)),
             dim_seq: 0,
-            diff_options_open: false,
-            diff_options_submenu: None,
         }
     }
 
@@ -286,10 +274,6 @@ impl Pane {
 
     pub fn can_add_surface(&self) -> bool {
         self.surfaces.len() < MAX_PANE_TABS
-    }
-
-    pub fn set_surface(&mut self, surface: PaneSurface) {
-        self.surfaces[self.active_surface] = surface;
     }
 
     pub fn push_surface(&mut self, surface: PaneSurface, cx: &mut Context<Self>) {
@@ -614,7 +598,6 @@ impl Pane {
     fn surface_full_title(surface: &PaneSurface, cx: &App) -> String {
         match surface {
             PaneSurface::Markdown(md) => md.read(cx).title().to_string(),
-            PaneSurface::Diff(d) => d.read(cx).title(),
             PaneSurface::Terminal(t) => Self::terminal_surface_full_title(t, cx),
         }
     }
@@ -622,7 +605,6 @@ impl Pane {
     fn surface_title(surface: &PaneSurface, cx: &App) -> String {
         let raw = match surface {
             PaneSurface::Markdown(md) => md.read(cx).title().to_string(),
-            PaneSurface::Diff(d) => d.read(cx).title(),
             PaneSurface::Terminal(t) => Self::terminal_surface_title(t, cx),
         };
         truncate_surface_title(&raw)
@@ -1122,9 +1104,6 @@ impl Pane {
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
         let unified = unified_background.is_some();
-        if !unified && matches!(self.surface(), PaneSurface::Diff(_)) {
-            return None;
-        }
         let ui = pane_colors();
         let pane_id = cx.entity().entity_id().as_u64();
         let rail_hover = crate::app::constants::sidebar_tab_hover_background();
@@ -1142,18 +1121,7 @@ impl Pane {
 
         for (index, surface) in self.surfaces.iter().enumerate() {
             let active = index == self.active_surface;
-            let full_title = match surface {
-                PaneSurface::Diff(diff) => std::iter::once(Self::surface_full_title(surface, cx))
-                    .chain(
-                        diff.read(cx)
-                            .attribution_lines()
-                            .into_iter()
-                            .map(|line| line.to_string()),
-                    )
-                    .collect::<Vec<_>>()
-                    .join("\n"),
-                _ => Self::surface_full_title(surface, cx),
-            };
+            let full_title = Self::surface_full_title(surface, cx);
             let label = Self::surface_title(surface, cx);
             let (resting, hovered) = if active {
                 (Some(rail_active), None)
@@ -1473,8 +1441,6 @@ impl Pane {
             return end_section.child(detach);
         }
 
-        let is_diff = matches!(self.surface(), PaneSurface::Diff(_));
-
         let mut action_cluster = div()
             .flex()
             .flex_none()
@@ -1499,30 +1465,24 @@ impl Pane {
             );
         }
 
-        action_cluster = match self.surface() {
-            PaneSurface::Diff(diff) => {
-                action_cluster.child(self.render_diff_options_button(diff.clone(), cx))
-            }
-            _ => action_cluster
-                .child(self.action_button(
-                    "pane-btn-split-v",
-                    "icons/split_vertical.svg",
-                    cx.listener(|_this, _, _window, cx| {
-                        cx.emit(PaneEvent::Split(crate::layout::SplitDirection::Vertical));
-                    }),
-                    cx,
-                ))
-                .child(self.action_button(
-                    "pane-btn-split-h",
-                    "icons/split_horizontal.svg",
-                    cx.listener(|_this, _, _window, cx| {
-                        cx.emit(PaneEvent::Split(crate::layout::SplitDirection::Horizontal));
-                    }),
-                    cx,
-                )),
-        };
-        action_cluster = action_cluster.when(!is_diff, |s| {
-            s.child(self.action_button(
+        action_cluster = action_cluster
+            .child(self.action_button(
+                "pane-btn-split-v",
+                "icons/split_vertical.svg",
+                cx.listener(|_this, _, _window, cx| {
+                    cx.emit(PaneEvent::Split(crate::layout::SplitDirection::Vertical));
+                }),
+                cx,
+            ))
+            .child(self.action_button(
+                "pane-btn-split-h",
+                "icons/split_horizontal.svg",
+                cx.listener(|_this, _, _window, cx| {
+                    cx.emit(PaneEvent::Split(crate::layout::SplitDirection::Horizontal));
+                }),
+                cx,
+            ))
+            .child(self.action_button(
                 "pane-btn-diff-dock",
                 "icons/layout-sidebar-right.svg",
                 cx.listener(|_this, _e: &ClickEvent, _window, cx| {
@@ -1530,98 +1490,9 @@ impl Pane {
                     cx.stop_propagation();
                 }),
                 cx,
-            ))
-        });
+            ));
 
         end_section.child(action_cluster.child(detach))
-    }
-
-    fn render_diff_options_button(
-        &self,
-        diff: Entity<crate::diff::DiffView>,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        use crate::app::diff_dock::{
-            DiffOptionsMenuActions, DiffOptionsMenuState, OptionChoice, render_diff_options_menu,
-        };
-
-        let open = self.diff_options_open;
-        let trigger = self.action_button(
-            "pane-btn-diff-options",
-            "icons/dots.svg",
-            cx.listener(move |this, _: &ClickEvent, _window, cx| {
-                this.diff_options_open = !open;
-                if !this.diff_options_open {
-                    this.diff_options_submenu = None;
-                }
-                cx.stop_propagation();
-                cx.notify();
-            }),
-            cx,
-        );
-        let menu = open.then(|| {
-            let ui = crate::theme::ui_colors();
-            let view = diff.read(cx);
-            let state = DiffOptionsMenuState {
-                split: view.is_split(),
-                options: view.options(),
-                submenu: self.diff_options_submenu,
-                all_collapsed: view.has_changes().then(|| view.all_collapsed()),
-            };
-            let pane = cx.weak_entity();
-            let close: Rc<dyn Fn(&mut App)> = {
-                let pane = pane.clone();
-                Rc::new(move |cx| {
-                    let _ = pane.update(cx, |this, cx| {
-                        this.diff_options_open = false;
-                        this.diff_options_submenu = None;
-                        cx.notify();
-                    });
-                })
-            };
-            let actions = DiffOptionsMenuActions {
-                toggle_submenu: Rc::new(move |submenu, cx| {
-                    let _ = pane.update(cx, |this, cx| {
-                        this.diff_options_submenu = if this.diff_options_submenu == Some(submenu) {
-                            None
-                        } else {
-                            Some(submenu)
-                        };
-                        cx.notify();
-                    });
-                }),
-                choose: {
-                    let diff = diff.clone();
-                    Rc::new(move |choice, cx| {
-                        diff.update(cx, |view, cx| match choice {
-                            OptionChoice::Layout(split) => view.set_split(split, cx),
-                            OptionChoice::Diff(options) => view.set_options(options, cx),
-                        });
-                    })
-                },
-                set_all_collapsed: {
-                    let diff = diff.clone();
-                    Rc::new(move |collapse, cx| {
-                        diff.update(cx, |view, cx| view.set_all_collapsed(collapse, cx));
-                    })
-                },
-                refresh: {
-                    let diff = diff.clone();
-                    Rc::new(move |cx| {
-                        diff.update(cx, |view, cx| view.refresh(cx));
-                    })
-                },
-                dismiss: close,
-            };
-            render_diff_options_menu(ACTION_BUTTON_SIZE + 6., state, actions, ui)
-        });
-
-        div()
-            .relative()
-            .flex_none()
-            .child(trigger)
-            .children(menu)
-            .into_any_element()
     }
 }
 
@@ -1630,7 +1501,6 @@ impl Focusable for Pane {
         match self.surface() {
             PaneSurface::Terminal(t) => t.read(cx).focus_handle(cx),
             PaneSurface::Markdown(m) => m.read(cx).focus_handle(cx),
-            PaneSurface::Diff(d) => d.read(cx).focus_handle(cx),
         }
     }
 }
@@ -1645,7 +1515,6 @@ impl Render for Pane {
         let body = match self.surface() {
             PaneSurface::Terminal(t) => t.clone().cached(cached_surface_style()).into_any_element(),
             PaneSurface::Markdown(m) => m.clone().into_any_element(),
-            PaneSurface::Diff(d) => d.clone().into_any_element(),
         };
         let theme = crate::theme::active_theme();
         let card_background = pane_card_background(
@@ -1726,7 +1595,6 @@ impl Render for Pane {
             .border_color(overlay_blue)
             .invisible()
             .group_drag_over::<SessionDrag>(group_name.clone(), |s| s.visible())
-            .group_drag_over::<ReviewSubjectDrag>(group_name.clone(), |s| s.visible())
             .group_drag_over::<PaneDrag>(group_name.clone(), move |s| {
                 s.visible()
                     .bg(swap_tint.opacity(SWAP_OVERLAY_FILL_ALPHA))
@@ -1763,16 +1631,6 @@ impl Render for Pane {
                 });
                 cx.notify();
             }))
-            .on_drop(
-                cx.listener(move |this, drag: &ReviewSubjectDrag, _window, cx| {
-                    let edge = this.drag_split_direction.take();
-                    cx.emit(PaneEvent::DropSubjectSplit {
-                        edge,
-                        subject: drag.subject.clone(),
-                    });
-                    cx.notify();
-                }),
-            )
             .with_animation(
                 overlay_anim_id,
                 Animation::new(Duration::from_millis(130)).with_easing(ease_out_quint()),
@@ -1821,11 +1679,6 @@ impl Render for Pane {
             ))
             .on_drag_move::<SurfaceDrag>(cx.listener(
                 |this, e: &DragMoveEvent<SurfaceDrag>, _, cx| {
-                    this.apply_drag_edge(e.bounds, e.event.position, cx);
-                },
-            ))
-            .on_drag_move::<ReviewSubjectDrag>(cx.listener(
-                |this, e: &DragMoveEvent<ReviewSubjectDrag>, _window, cx| {
                     this.apply_drag_edge(e.bounds, e.event.position, cx);
                 },
             ))

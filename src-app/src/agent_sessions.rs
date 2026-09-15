@@ -65,34 +65,6 @@ impl SessionAgent {
 pub(crate) const SESSION_AGENT_COUNT: usize = SessionAgent::ALL.len();
 pub(crate) const MAX_SESSION_ID_CHARS: usize = 128;
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct AssistantUsage {
-    pub input: u64,
-    pub output: u64,
-    pub cache_read: u64,
-    pub cache_creation: u64,
-}
-
-impl AssistantUsage {
-    pub fn total(&self) -> u64 {
-        self.input
-            .saturating_add(self.output)
-            .saturating_add(self.cache_read)
-            .saturating_add(self.cache_creation)
-    }
-
-    pub fn add(&mut self, other: &AssistantUsage) {
-        self.input = self.input.saturating_add(other.input);
-        self.output = self.output.saturating_add(other.output);
-        self.cache_read = self.cache_read.saturating_add(other.cache_read);
-        self.cache_creation = self.cache_creation.saturating_add(other.cache_creation);
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.total() == 0
-    }
-}
-
 pub mod cache {
     use std::collections::HashMap;
     use std::path::Path;
@@ -364,10 +336,7 @@ pub mod cache {
                 session_id: "s1".into(),
                 timestamp: "2026-07-03T10:00:00Z".into(),
                 cwd: "/repo".into(),
-                git_branch: "main".into(),
                 summary: Some("old".into()),
-                model: None,
-                usage: None,
             }];
 
             super::store_result_with_mtime(SessionAgent::Claude, "/repo", cached, &sessions, 0);
@@ -393,20 +362,6 @@ pub fn enabled_session_agents_from_config(
         .collect()
 }
 
-pub fn enabled_session_agents() -> Vec<SessionAgent> {
-    let cfg = paneflow_config::loader::load_config();
-    enabled_session_agents_from_config(&cfg)
-}
-
-pub(crate) fn read_sessions_for_cwd(agent: SessionAgent, cwd: &str) -> Vec<SessionMeta> {
-    match agent {
-        SessionAgent::Claude => crate::claude_sessions::read_sessions_for_cwd(cwd),
-        SessionAgent::Codex => crate::codex_sessions::read_sessions_for_cwd(cwd),
-        SessionAgent::OpenCode => crate::opencode_sessions::read_sessions_for_cwd(cwd),
-        _ => read_sessions_for_cwd_with_omitted(agent, cwd).0,
-    }
-}
-
 pub(crate) fn read_sessions_for_cwd_with_omitted(
     agent: SessionAgent,
     cwd: &str,
@@ -425,8 +380,6 @@ pub(crate) fn read_sessions_for_cwd_with_omitted(
 }
 
 pub(crate) const SIDEBAR_SESSION_RETAINED_PER_SOURCE: usize = 100;
-
-pub(crate) const DIFF_ATTRIBUTION_MATCH_CAP: usize = 50;
 
 pub(crate) fn clean_session_label(raw: &str, max_chars: usize) -> Option<String> {
     let filtered: String = raw
@@ -495,10 +448,7 @@ pub struct SessionMeta {
     pub session_id: String,
     pub timestamp: String,
     pub cwd: String,
-    pub git_branch: String,
     pub summary: Option<String>,
-    pub model: Option<String>,
-    pub usage: Option<AssistantUsage>,
 }
 
 pub(crate) fn collect_recent_sessions<I>(sessions: I, cap: usize) -> (Vec<SessionMeta>, usize)
@@ -571,89 +521,6 @@ impl RecentSessionCollector {
         self.retained.shrink_to_fit();
         (self.retained, self.omitted)
     }
-}
-
-fn attribution_branch_rank(session: &SessionMeta, col_branch: &str) -> u8 {
-    u8::from(!col_branch.is_empty() && session.git_branch == col_branch)
-}
-
-fn attribution_ordering(a: &SessionMeta, b: &SessionMeta, col_branch: &str) -> std::cmp::Ordering {
-    attribution_branch_rank(b, col_branch)
-        .cmp(&attribution_branch_rank(a, col_branch))
-        .then_with(|| b.timestamp.cmp(&a.timestamp))
-}
-
-pub(crate) fn push_ranked_attribution<T>(
-    retained: &mut Vec<(SessionMeta, T)>,
-    session: SessionMeta,
-    payload: T,
-    col_branch: &str,
-    cap: usize,
-) {
-    if cap == 0 {
-        return;
-    }
-
-    let insert_at = retained.partition_point(|(existing, _)| {
-        !matches!(
-            attribution_ordering(existing, &session, col_branch),
-            std::cmp::Ordering::Greater
-        )
-    });
-    if insert_at >= cap {
-        return;
-    }
-
-    retained.insert(insert_at, (session, payload));
-    if retained.len() > cap {
-        retained.pop();
-    }
-}
-
-pub fn match_sessions_to_column(
-    sessions: Vec<SessionMeta>,
-    col_path: &str,
-    col_branch: &str,
-) -> Vec<SessionMeta> {
-    let mut matched = Vec::new();
-    for session in sessions
-        .into_iter()
-        .filter(|s| cwd_matches(&s.cwd, col_path))
-    {
-        push_ranked_attribution(
-            &mut matched,
-            session,
-            (),
-            col_branch,
-            DIFF_ATTRIBUTION_MATCH_CAP,
-        );
-    }
-    matched.into_iter().map(|(session, _)| session).collect()
-}
-
-pub fn attribution_for_column(cwd: &str, branch: &str) -> Vec<SessionMeta> {
-    let mut all = Vec::new();
-    for agent in enabled_session_agents() {
-        match agent {
-            SessionAgent::Claude => all.extend(
-                crate::claude_sessions::read_sessions_with_usage_for_attribution(cwd, branch),
-            ),
-            SessionAgent::Codex => all.extend(
-                crate::codex_sessions::read_sessions_with_usage_for_attribution(cwd, branch),
-            ),
-            SessionAgent::OpenCode => {
-                all.extend(crate::opencode_sessions::read_sessions_for_cwd(cwd))
-            }
-            SessionAgent::Pi
-            | SessionAgent::Hermes
-            | SessionAgent::Grok
-            | SessionAgent::Cursor
-            | SessionAgent::Gemini
-            | SessionAgent::Kiro => all.extend(read_sessions_for_cwd(agent, cwd)),
-        }
-        all = match_sessions_to_column(all, cwd, branch);
-    }
-    all
 }
 
 pub fn format_relative_time(iso8601: &str) -> String {
@@ -893,16 +760,13 @@ mod tests {
         assert_eq!(label, "not a real");
     }
 
-    fn meta(id: &str, branch: &str, ts: &str) -> SessionMeta {
+    fn meta(id: &str, ts: &str) -> SessionMeta {
         SessionMeta {
             agent: SessionAgent::Claude,
             session_id: id.into(),
             timestamp: ts.into(),
             cwd: "/repo".into(),
-            git_branch: branch.into(),
             summary: None,
-            model: None,
-            usage: None,
         }
     }
 
@@ -911,35 +775,9 @@ mod tests {
     }
 
     #[test]
-    fn match_ranks_branch_then_recency() {
-        let sessions = vec![
-            meta("old-branch", "feature", "2026-01-01T00:00:00Z"),
-            meta("new-other", "main", "2026-06-01T00:00:00Z"),
-            meta("new-branch", "feature", "2026-05-01T00:00:00Z"),
-        ];
-        let ranked = match_sessions_to_column(sessions, "/repo", "feature");
-        let order: Vec<&str> = ranked.iter().map(|s| s.session_id.as_str()).collect();
-        assert_eq!(order, vec!["new-branch", "old-branch", "new-other"]);
-    }
-
-    #[test]
-    fn match_drops_non_cwd_and_handles_empty_branch() {
-        let mut wrong = meta("wrong", "feature", "2026-06-01T00:00:00Z");
-        wrong.cwd = "/elsewhere".into();
-        let sessions = vec![
-            wrong,
-            meta("older", "", "2026-01-01T00:00:00Z"),
-            meta("newer", "", "2026-06-01T00:00:00Z"),
-        ];
-        let ranked = match_sessions_to_column(sessions, "/repo", "");
-        let order: Vec<&str> = ranked.iter().map(|s| s.session_id.as_str()).collect();
-        assert_eq!(order, vec!["newer", "older"]);
-    }
-
-    #[test]
     fn sidebar_cap_keeps_newest_rows_and_reports_omitted() {
         let sessions: Vec<SessionMeta> = (0..(SIDEBAR_SESSION_RETAINED_PER_SOURCE + 3))
-            .map(|i| meta(&format!("s-{i:03}"), "", &sortable_test_ts(i)))
+            .map(|i| meta(&format!("s-{i:03}"), &sortable_test_ts(i)))
             .collect();
 
         let (capped, omitted) =
@@ -949,75 +787,6 @@ mod tests {
         assert_eq!(omitted, 3);
         assert_eq!(capped[0].session_id, "s-102");
         assert_eq!(capped.last().map(|s| s.session_id.as_str()), Some("s-003"));
-    }
-
-    #[test]
-    fn match_caps_attribution_after_relevance_ranking() {
-        let sessions: Vec<SessionMeta> = (0..(DIFF_ATTRIBUTION_MATCH_CAP + 5))
-            .map(|i| meta(&format!("s-{i:02}"), "feature", &sortable_test_ts(i)))
-            .collect();
-
-        let ranked = match_sessions_to_column(sessions, "/repo", "feature");
-
-        assert_eq!(ranked.len(), DIFF_ATTRIBUTION_MATCH_CAP);
-        assert_eq!(ranked[0].session_id, "s-54");
-        assert_eq!(
-            ranked.last().map(|s| s.session_id.as_str()),
-            Some("s-05"),
-            "the five oldest ranked matches should be omitted"
-        );
-    }
-
-    #[test]
-    fn ranked_attribution_push_caps_before_usage_enrichment() {
-        let mut retained = Vec::new();
-        push_ranked_attribution(
-            &mut retained,
-            meta("new-other", "main", "2026-06-01T00:00:00Z"),
-            "new-other",
-            "feature",
-            2,
-        );
-        push_ranked_attribution(
-            &mut retained,
-            meta("old-branch", "feature", "2026-01-01T00:00:00Z"),
-            "old-branch",
-            "feature",
-            2,
-        );
-        push_ranked_attribution(
-            &mut retained,
-            meta("newer-other", "main", "2026-07-01T00:00:00Z"),
-            "newer-other",
-            "feature",
-            2,
-        );
-
-        let order: Vec<&str> = retained
-            .iter()
-            .map(|(s, _)| s.session_id.as_str())
-            .collect();
-        assert_eq!(order, vec!["old-branch", "newer-other"]);
-        let payloads: Vec<&str> = retained.iter().map(|(_, payload)| *payload).collect();
-        assert_eq!(payloads, vec!["old-branch", "newer-other"]);
-    }
-
-    #[test]
-    fn assistant_usage_total_and_add_saturate() {
-        let mut u = AssistantUsage {
-            input: 10,
-            output: 5,
-            cache_read: 2,
-            cache_creation: 1,
-        };
-        assert_eq!(u.total(), 18);
-        u.add(&AssistantUsage {
-            input: u64::MAX,
-            ..Default::default()
-        });
-        assert_eq!(u.input, u64::MAX, "add must saturate, not overflow-panic");
-        assert!(!u.is_empty());
-        assert!(AssistantUsage::default().is_empty());
     }
 
     #[test]

@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -43,12 +42,6 @@ pub struct WorktreeDiff {
     pub head_sha: Option<String>,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct FileDiffStat {
-    pub added: u32,
-    pub removed: u32,
-}
-
 const GIT_DEADLINE: std::time::Duration = std::time::Duration::from_secs(30);
 
 const GIT_STDOUT_CAP: u64 = 16 * 1024 * 1024;
@@ -75,161 +68,6 @@ fn run_git(dir: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
         });
     }
     Ok(output.stdout)
-}
-
-pub fn ref_exists(worktree_dir: &Path, ref_name: &str) -> bool {
-    run_git(
-        worktree_dir,
-        &["rev-parse", "--verify", "--quiet", ref_name],
-    )
-    .is_ok()
-}
-
-pub fn default_base_ref(worktree_dir: &Path) -> Option<String> {
-    if ref_exists(worktree_dir, "develop") {
-        return Some("develop".to_string());
-    }
-    if let Some(remote_head) = default_origin_head(worktree_dir) {
-        return Some(remote_head);
-    }
-    for candidate in [
-        "main",
-        "master",
-        "origin/develop",
-        "origin/main",
-        "origin/master",
-    ] {
-        if ref_exists(worktree_dir, candidate) {
-            return Some(candidate.to_string());
-        }
-    }
-    None
-}
-
-fn default_origin_head(worktree_dir: &Path) -> Option<String> {
-    let out = run_git(
-        worktree_dir,
-        &["rev-parse", "--abbrev-ref", "refs/remotes/origin/HEAD"],
-    )
-    .ok()?;
-    let branch = String::from_utf8_lossy(&out).trim().to_string();
-    (!branch.is_empty() && branch != "origin/HEAD" && ref_exists(worktree_dir, &branch))
-        .then_some(branch)
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ColumnFingerprint {
-    head: String,
-    base: String,
-    diff_hash: u64,
-    untracked_hash: u64,
-}
-
-pub fn column_fingerprint(worktree_dir: &Path, base_ref: &str) -> ColumnFingerprint {
-    let toplevel = worktree_toplevel(worktree_dir);
-    let worktree_dir = toplevel.as_path();
-    let rev = |r: &str| {
-        run_git(worktree_dir, &["rev-parse", r])
-            .ok()
-            .map(|o| String::from_utf8_lossy(&o).trim().to_string())
-            .unwrap_or_default()
-    };
-    let merge_base = merge_base(worktree_dir, base_ref).unwrap_or_default();
-    let diff_hash = if merge_base.is_empty() {
-        0
-    } else {
-        run_git(
-            worktree_dir,
-            &["diff", "--binary", "--no-color", &merge_base, "--"],
-        )
-        .ok()
-        .map(|out| hash_bytes(&out))
-        .unwrap_or(0)
-    };
-    ColumnFingerprint {
-        head: rev("HEAD"),
-        base: rev(base_ref),
-        diff_hash,
-        untracked_hash: hash_untracked_inputs(worktree_dir),
-    }
-}
-
-fn hash_bytes(bytes: &[u8]) -> u64 {
-    use std::hash::Hasher as _;
-
-    let mut h = std::collections::hash_map::DefaultHasher::new();
-    h.write(bytes);
-    h.finish()
-}
-
-fn hash_untracked_inputs(worktree_dir: &Path) -> u64 {
-    use std::hash::{Hash as _, Hasher as _};
-    use std::io::Read as _;
-
-    let mut h = std::collections::hash_map::DefaultHasher::new();
-    let (paths, truncated) = list_untracked_limited(worktree_dir, MAX_FILE_COUNT + 1);
-    truncated.hash(&mut h);
-    for path in paths {
-        path.hash(&mut h);
-        if is_skipped_name(&path) || is_too_large(worktree_dir, &path) {
-            "stub".hash(&mut h);
-            continue;
-        }
-        let abs = worktree_dir.join(&path);
-        match std::fs::symlink_metadata(&abs) {
-            Ok(meta) if meta.file_type().is_symlink() => {
-                "symlink".hash(&mut h);
-                if let Ok(target) = std::fs::read_link(&abs) {
-                    target.to_string_lossy().hash(&mut h);
-                }
-            }
-            Ok(_) => match std::fs::File::open(&abs) {
-                Ok(file) => {
-                    let mut bytes = Vec::new();
-                    let read_ok = file
-                        .take(MAX_FILE_BYTES + 1)
-                        .read_to_end(&mut bytes)
-                        .is_ok();
-                    read_ok.hash(&mut h);
-                    (bytes.len() as u64 > MAX_FILE_BYTES).hash(&mut h);
-                    h.write(&bytes);
-                }
-                Err(err) => {
-                    err.kind().hash(&mut h);
-                }
-            },
-            Err(err) => {
-                err.kind().hash(&mut h);
-            }
-        }
-    }
-    h.finish()
-}
-
-pub fn list_base_ref_candidates(worktree_dir: &Path) -> Vec<String> {
-    let out = match run_git(
-        worktree_dir,
-        &["branch", "-a", "--format=%(refname:short)", "--list"],
-    ) {
-        Ok(o) => o,
-        Err(_) => return Vec::new(),
-    };
-    let mut names: Vec<String> = String::from_utf8_lossy(&out)
-        .lines()
-        .map(|l| l.trim().to_string())
-        .filter(|l| !l.is_empty() && !l.ends_with("/HEAD"))
-        .collect();
-    if let Ok(out) = run_git(worktree_dir, &["tag", "--list"]) {
-        names.extend(
-            String::from_utf8_lossy(&out)
-                .lines()
-                .map(|l| l.trim().to_string())
-                .filter(|l| !l.is_empty()),
-        );
-    }
-    names.sort();
-    names.dedup();
-    names
 }
 
 pub(crate) fn worktree_toplevel(dir: &Path) -> PathBuf {
@@ -297,15 +135,6 @@ fn list_untracked_limited(dir: &Path, limit: usize) -> (Vec<String>, bool) {
         paths.push(path);
     }
     (paths, truncated)
-}
-
-fn merge_base(worktree_dir: &Path, base_ref: &str) -> Result<String, String> {
-    let out = run_git(worktree_dir, &["merge-base", "HEAD", base_ref])?;
-    let sha = String::from_utf8_lossy(&out).trim().to_string();
-    if sha.is_empty() {
-        return Err(format!("no common ancestor with '{base_ref}'"));
-    }
-    Ok(sha)
 }
 
 fn normalize_git_text(text: String) -> String {
@@ -420,35 +249,6 @@ fn parse_name_status_z(stdout: &[u8]) -> Vec<(FileChange, String, Option<String>
     out
 }
 
-fn parse_numstat_z(stdout: &[u8]) -> HashMap<String, FileDiffStat> {
-    let mut out = HashMap::new();
-    let mut fields = stdout.split(|&b| b == 0).filter(|f| !f.is_empty());
-    while let Some(record) = fields.next() {
-        let Some((added, removed, path)) = split_numstat_record(record) else {
-            continue;
-        };
-        let path = if path.is_empty() {
-            let _old_path = fields.next();
-            let Some(new_path) = fields.next() else {
-                break;
-            };
-            new_path
-        } else {
-            path
-        };
-        let Some(path) = decode_git_path(path, "diff --numstat") else {
-            continue;
-        };
-        let stat = out.entry(path).or_insert(FileDiffStat {
-            added: 0,
-            removed: 0,
-        });
-        stat.added = stat.added.saturating_add(parse_numstat_count(added));
-        stat.removed = stat.removed.saturating_add(parse_numstat_count(removed));
-    }
-    out
-}
-
 fn decode_git_path(path: &[u8], source: &str) -> Option<String> {
     match std::str::from_utf8(path) {
         Ok(path) if !path.is_empty() => Some(path.to_string()),
@@ -458,27 +258,6 @@ fn decode_git_path(path: &[u8], source: &str) -> Option<String> {
             None
         }
     }
-}
-
-fn split_numstat_record(record: &[u8]) -> Option<(&[u8], &[u8], &[u8])> {
-    let first_tab = record.iter().position(|&b| b == b'\t')?;
-    let rest = &record[first_tab + 1..];
-    let second_tab = rest.iter().position(|&b| b == b'\t')?;
-    Some((
-        &record[..first_tab],
-        &rest[..second_tab],
-        &rest[second_tab + 1..],
-    ))
-}
-
-fn parse_numstat_count(raw: &[u8]) -> u32 {
-    if raw == b"-" {
-        return 0;
-    }
-    std::str::from_utf8(raw)
-        .ok()
-        .and_then(|s| s.parse::<u32>().ok())
-        .unwrap_or(0)
 }
 
 pub(crate) const MAX_FILE_BYTES: u64 = 512 * 1024;
@@ -519,45 +298,6 @@ fn stub_file(path: String, change: FileChange) -> FileDiff {
         hunks: Vec::new(),
         is_binary: true,
     }
-}
-
-pub fn compute_worktree_diff(
-    worktree_dir: &Path,
-    base_ref: &str,
-    options: DiffOptions,
-) -> WorktreeDiff {
-    let toplevel = worktree_toplevel(worktree_dir);
-    let worktree_dir = toplevel.as_path();
-    log::debug!(
-        "git: compute_worktree_diff dir={} base={base_ref}",
-        worktree_dir.display()
-    );
-    let merge_base = match merge_base(worktree_dir, base_ref) {
-        Ok(mb) => mb,
-        Err(e) => {
-            log::warn!("git: merge_base failed (base={base_ref}): {e}");
-            return WorktreeDiff {
-                files: Vec::new(),
-                error: Some(e),
-                ..Default::default()
-            };
-        }
-    };
-    log::debug!("git: merge_base={merge_base}");
-
-    compute_diff_against(worktree_dir, &merge_base, options)
-}
-
-pub fn compute_worktree_file_stats(
-    worktree_dir: &Path,
-    base_ref: &str,
-) -> HashMap<String, FileDiffStat> {
-    let toplevel = worktree_toplevel(worktree_dir);
-    let worktree_dir = toplevel.as_path();
-    let Ok(merge_base) = merge_base(worktree_dir, base_ref) else {
-        return HashMap::new();
-    };
-    compute_file_stats_against(worktree_dir, &merge_base)
 }
 
 const EMPTY_TREE_SHA: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
@@ -675,46 +415,6 @@ fn compute_diff_against(worktree_dir: &Path, base: &str, options: DiffOptions) -
     }
 }
 
-fn compute_file_stats_against(worktree_dir: &Path, base: &str) -> HashMap<String, FileDiffStat> {
-    let mut stats = run_git(
-        worktree_dir,
-        &["diff", "--numstat", "-z", "--no-color", base, "--"],
-    )
-    .map(|out| parse_numstat_z(&out))
-    .unwrap_or_default();
-
-    let remaining = MAX_FILE_COUNT.saturating_sub(stats.len());
-    if remaining == 0 {
-        return stats;
-    }
-
-    let (untracked, truncated) = list_untracked_limited(worktree_dir, remaining);
-    if truncated {
-        log::debug!("git: untracked file stats truncated at {remaining}");
-    }
-    for path in untracked {
-        if is_skipped_name(&path) || is_too_large(worktree_dir, &path) {
-            stats.insert(
-                path,
-                FileDiffStat {
-                    added: 0,
-                    removed: 0,
-                },
-            );
-            continue;
-        }
-        let (text, is_binary) = load_working_text(worktree_dir, &path);
-        let added = if is_binary {
-            0
-        } else {
-            u32::try_from(text.lines().count()).unwrap_or(u32::MAX)
-        };
-        stats.insert(path, FileDiffStat { added, removed: 0 });
-    }
-
-    stats
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -768,97 +468,6 @@ mod tests {
     }
 
     #[test]
-    fn numstat_z_parsing() {
-        let raw = b"3\t1\tsrc/main.rs\0-\t-\timage.png\0";
-        let parsed = parse_numstat_z(raw);
-        assert_eq!(
-            parsed.get("src/main.rs"),
-            Some(&FileDiffStat {
-                added: 3,
-                removed: 1
-            })
-        );
-        assert_eq!(
-            parsed.get("image.png"),
-            Some(&FileDiffStat {
-                added: 0,
-                removed: 0
-            })
-        );
-    }
-
-    #[test]
-    fn numstat_z_renames_key_on_destination() {
-        let raw = b"2\t1\t\0src/old.rs\0src/new.rs\0";
-        let parsed = parse_numstat_z(raw);
-        assert_eq!(
-            parsed.get("src/new.rs"),
-            Some(&FileDiffStat {
-                added: 2,
-                removed: 1
-            })
-        );
-        assert!(!parsed.contains_key("src/old.rs"));
-    }
-
-    #[test]
-    fn numstat_z_skips_non_utf8_paths() {
-        let raw = b"1\t0\tsrc/\xff.rs\x002\t0\tsrc/ok.rs\0";
-        let parsed = parse_numstat_z(raw);
-        assert_eq!(
-            parsed.get("src/ok.rs"),
-            Some(&FileDiffStat {
-                added: 2,
-                removed: 0
-            })
-        );
-        assert_eq!(parsed.len(), 1);
-    }
-
-    #[test]
-    fn worktree_file_stats_count_tracked_and_untracked() {
-        let dir = tempfile::tempdir().unwrap();
-        let root = dir.path();
-        if !test_git(root, &["init"]) {
-            return;
-        }
-        assert!(test_git(root, &["config", "core.autocrlf", "false"]));
-        std::fs::write(root.join("tracked.txt"), "one\n").unwrap();
-        assert!(test_git(root, &["add", "tracked.txt"]));
-        assert!(test_git(
-            root,
-            &[
-                "-c",
-                "user.email=paneflow@example.com",
-                "-c",
-                "user.name=Paneflow",
-                "commit",
-                "-m",
-                "init",
-            ],
-        ));
-
-        std::fs::write(root.join("tracked.txt"), "one\ntwo\n").unwrap();
-        std::fs::write(root.join("untracked.txt"), "alpha\nbeta\n").unwrap();
-
-        let stats = compute_worktree_file_stats(root, "HEAD");
-        assert_eq!(
-            stats.get("tracked.txt"),
-            Some(&FileDiffStat {
-                added: 1,
-                removed: 0
-            })
-        );
-        assert_eq!(
-            stats.get("untracked.txt"),
-            Some(&FileDiffStat {
-                added: 2,
-                removed: 0
-            })
-        );
-    }
-
-    #[test]
     fn list_untracked_limited_reports_truncation() {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
@@ -872,37 +481,6 @@ mod tests {
         let (paths, truncated) = list_untracked_limited(root, 2);
         assert_eq!(paths.len(), 2);
         assert!(truncated);
-    }
-
-    #[test]
-    fn column_fingerprint_changes_when_modified_file_content_changes() {
-        let dir = tempfile::tempdir().unwrap();
-        let root = dir.path();
-        if !test_git(root, &["init"]) {
-            return;
-        }
-        assert!(test_git(root, &["config", "core.autocrlf", "false"]));
-        std::fs::write(root.join("tracked.txt"), "one\n").unwrap();
-        assert!(test_git(root, &["add", "tracked.txt"]));
-        assert!(test_git(
-            root,
-            &[
-                "-c",
-                "user.email=paneflow@example.com",
-                "-c",
-                "user.name=Paneflow",
-                "commit",
-                "-m",
-                "init",
-            ],
-        ));
-
-        std::fs::write(root.join("tracked.txt"), "one\ntwo\n").unwrap();
-        let first = column_fingerprint(root, "HEAD");
-        std::fs::write(root.join("tracked.txt"), "one\nthree\n").unwrap();
-        let second = column_fingerprint(root, "HEAD");
-
-        assert_ne!(first, second);
     }
 
     #[test]

@@ -73,9 +73,6 @@ impl PaneFlowApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !matches!(self.mode, paneflow_config::schema::AppMode::Cli) {
-            return;
-        }
         if self.launch_pad.is_some() {
             if !self.launch_pad.as_ref().is_some_and(|lp| lp.running) {
                 self.launch_pad = None;

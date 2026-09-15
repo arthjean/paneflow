@@ -195,10 +195,7 @@ fn parse_session_line(
         session_id,
         timestamp,
         cwd: cwd.to_string(),
-        git_branch: String::new(),
         summary,
-        model: None,
-        usage: None,
     })
 }
 

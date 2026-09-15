@@ -532,13 +532,6 @@ pub(super) const ACTIONS: &[ActionMeta] = &[
         group: ShortcutGroup::Markdown,
     },
     ActionMeta {
-        name: "open_diff_view",
-        factory: || Box::new(crate::OpenDiffView),
-        context: "",
-        description: "Toggle Git Diff view",
-        group: ShortcutGroup::Diff,
-    },
-    ActionMeta {
         name: "toggle_files_sidebar",
         factory: || Box::new(crate::ToggleFilesSidebar),
         context: "",
@@ -553,34 +546,6 @@ pub(super) const ACTIONS: &[ActionMeta] = &[
         group: ShortcutGroup::Diff,
     },
     ActionMeta {
-        name: "copy_diff_hunk",
-        factory: || Box::new(crate::CopyDiffHunk),
-        context: "DiffView",
-        description: "Copy hunk as diff",
-        group: ShortcutGroup::Diff,
-    },
-    ActionMeta {
-        name: "diff_next_hunk",
-        factory: || Box::new(crate::DiffNextHunk),
-        context: "DiffView && !Terminal && !TextInput && !PaneflowTextArea",
-        description: "Diff: next hunk",
-        group: ShortcutGroup::Diff,
-    },
-    ActionMeta {
-        name: "diff_prev_hunk",
-        factory: || Box::new(crate::DiffPrevHunk),
-        context: "DiffView && !Terminal && !TextInput && !PaneflowTextArea",
-        description: "Diff: previous hunk",
-        group: ShortcutGroup::Diff,
-    },
-    ActionMeta {
-        name: "diff_toggle_view",
-        factory: || Box::new(crate::DiffToggleView),
-        context: "DiffView && !Terminal && !TextInput && !PaneflowTextArea",
-        description: "Diff: toggle unified / split",
-        group: ShortcutGroup::Diff,
-    },
-    ActionMeta {
         name: "diff_new_file_tab",
         factory: || Box::new(crate::DiffNewFileTab),
         context: "!Terminal && !TextInput && !PaneflowTextArea && !CodeEditor",
@@ -592,13 +557,6 @@ pub(super) const ACTIONS: &[ActionMeta] = &[
         factory: || Box::new(crate::DiffNewTerminalTab),
         context: "!Terminal && !TextInput && !PaneflowTextArea && !CodeEditor",
         description: "Diff dock: open a terminal tab",
-        group: ShortcutGroup::Diff,
-    },
-    ActionMeta {
-        name: "diff_dismiss",
-        factory: || Box::new(crate::DiffDismiss),
-        context: "DiffView && !Terminal && !TextInput && !PaneflowTextArea",
-        description: "Diff: close popover / refocus body",
         group: ShortcutGroup::Diff,
     },
     ActionMeta {

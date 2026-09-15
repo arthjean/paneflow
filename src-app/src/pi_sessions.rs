@@ -95,10 +95,7 @@ fn read_session_meta(path: &Path) -> Option<SessionMeta> {
         session_id: header.id,
         timestamp: header.timestamp,
         cwd: header.cwd,
-        git_branch: String::new(),
         summary,
-        model: None,
-        usage: None,
     })
 }
 

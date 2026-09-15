@@ -74,7 +74,7 @@ fn capture_closed_pane_record(
     pane: &gpui::Entity<crate::pane::Pane>,
     workspace_idx: usize,
     cx: &App,
-) -> Option<ClosedPaneRecord> {
+) -> ClosedPaneRecord {
     let pane_ref = pane.read(cx);
     let surface = match pane_ref.surface() {
         crate::pane::PaneSurface::Terminal(tv) => {
@@ -94,12 +94,11 @@ fn capture_closed_pane_record(
         crate::pane::PaneSurface::Markdown(markdown) => ClosedSurfaceRecord::Markdown {
             path: markdown.read(cx).path.clone(),
         },
-        crate::pane::PaneSurface::Diff(_) => return None,
     };
-    Some(ClosedPaneRecord {
+    ClosedPaneRecord {
         surface,
         workspace_idx,
-    })
+    }
 }
 
 fn restore_closed_surface_record(
@@ -202,7 +201,6 @@ impl PaneFlowApp {
         self.pane_menu_open = None;
         self.profile_menu_open = None;
         self.files_menu_open = None;
-        self.review.dismiss_popovers();
     }
 
     pub(crate) fn active_workspace(&self) -> Option<&Workspace> {
@@ -271,7 +269,6 @@ impl PaneFlowApp {
             }
         }
         self.save_session(cx);
-        self.reconcile_diff_after_workspace_change(cx);
         self.acknowledge_visible_completions(cx);
         cx.notify();
         changed
@@ -294,7 +291,6 @@ impl PaneFlowApp {
             self.close_sessions_sidebar(cx);
         }
         self.save_session(cx);
-        self.reconcile_diff_after_workspace_change(cx);
         cx.notify();
         changed
     }
@@ -311,10 +307,6 @@ impl PaneFlowApp {
             smol::unblock(move || crate::workspace::worktree::teardown_all(worktrees)).await;
         })
         .detach();
-    }
-
-    pub(crate) fn reconcile_diff_after_workspace_change(&mut self, cx: &mut Context<Self>) {
-        self.review_prune_after_workspace_change(cx);
     }
 
     #[allow(dead_code)]
@@ -375,7 +367,6 @@ impl PaneFlowApp {
         self.record_recent_workspaces(paths, cx);
         self.save_session(cx);
         cx.notify();
-        self.reconcile_diff_after_workspace_change(cx);
     }
 
     pub(crate) fn create_workspace_with_picker(
@@ -427,22 +418,6 @@ impl PaneFlowApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if matches!(self.mode, paneflow_config::schema::AppMode::Diff) {
-            let Some(focused) = self
-                .review
-                .layout
-                .as_ref()
-                .and_then(|root| root.focused_pane(window, cx))
-                .or_else(|| self.review_active_pane())
-            else {
-                self.show_toast("No focused pane to split", cx);
-                return;
-            };
-            if let Err(message) = self.review_split_pane(focused, direction, cx) {
-                self.show_toast(message, cx);
-            }
-            return;
-        }
         let Some(ws) = self.active_workspace() else {
             return;
         };
@@ -548,21 +523,6 @@ impl PaneFlowApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if matches!(self.mode, paneflow_config::schema::AppMode::Diff) {
-            let closing = if self.review.is_zoomed() {
-                self.review.layout.as_ref().and_then(LayoutTree::first_leaf)
-            } else {
-                self.review
-                    .layout
-                    .as_ref()
-                    .and_then(|root| root.focused_pane(window, cx))
-                    .or_else(|| self.review_active_pane())
-            };
-            if let Some(pane) = closing {
-                self.review_close_pane(pane, cx);
-            }
-            return;
-        }
         let workspace_idx = self.active_idx;
         if let Some(ws) = self.active_workspace()
             && let Some(root) = &ws.active_tab().root
@@ -572,9 +532,8 @@ impl PaneFlowApp {
             } else {
                 root.focused_pane(window, cx)
             };
-            if let Some(pane) = closing_pane
-                && let Some(record) = capture_closed_pane_record(&pane, workspace_idx, cx)
-            {
+            if let Some(pane) = closing_pane {
+                let record = capture_closed_pane_record(&pane, workspace_idx, cx);
                 push_closed_pane_record(&mut self.closed_panes, record);
             }
         }
@@ -629,10 +588,6 @@ impl PaneFlowApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if matches!(self.mode, paneflow_config::schema::AppMode::Diff) {
-            self.show_toast("Switch to Agents to restore a closed pane", cx);
-            return;
-        }
         let Some(record) = self.closed_panes.pop() else {
             self.show_toast("No closed pane to restore", cx);
             return;
@@ -777,7 +732,6 @@ impl PaneFlowApp {
         self.sync_broadcast_stripes(cx);
         self.flush_pending_prefill(cx);
         self.sync_pending_chips(cx);
-        self.reconcile_diff_after_workspace_change(cx);
     }
 
     pub(crate) fn reorder_workspace(

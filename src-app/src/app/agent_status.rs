@@ -49,7 +49,6 @@ impl PaneFlowApp {
         }
         let ws = self.workspaces.iter().find(|ws| ws.id == workspace_id)?;
         let main_visible = self.settings_section.is_none()
-            && matches!(self.mode, paneflow_config::schema::AppMode::Cli)
             && self
                 .workspaces
                 .get(self.active_idx)

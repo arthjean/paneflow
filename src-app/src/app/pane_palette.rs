@@ -208,9 +208,7 @@ impl PaneFlowApp {
     }
 
     pub(crate) fn ensure_pane_palette_for_empty_workspace(&mut self, cx: &mut Context<Self>) {
-        if self.settings_section.is_some()
-            || !matches!(self.mode, paneflow_config::schema::AppMode::Cli)
-        {
+        if self.settings_section.is_some() {
             return;
         }
         let ws_idx = self.active_idx;

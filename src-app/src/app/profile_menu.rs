@@ -13,7 +13,6 @@ const TITLE_BAR_HELP_MENU_WIDTH: Pixels = px(220.);
 const DOCUMENTATION_URL: &str = "https://paneflow.dev/docs";
 const RELEASES_URL: &str = "https://paneflow.dev/releases";
 const AUTOMATIONS_URL: &str = "https://paneflow.dev/docs/scripting";
-const REVIEW_URL: &str = "https://paneflow.dev/docs/review";
 const TROUBLESHOOTING_URL: &str = "https://paneflow.dev/docs/troubleshooting";
 type TitleBarMenuClick = Box<dyn Fn(&ClickEvent, &mut Window, &mut gpui::App) + 'static>;
 
@@ -158,15 +157,6 @@ impl PaneFlowApp {
                 cx.stop_propagation();
             })),
         );
-        let review = menu_item(
-            "title-bar-help-review",
-            "Review",
-            Box::new(cx.listener(|this, _: &ClickEvent, _, cx| {
-                this.title_bar_help_menu_open = None;
-                this.open_help_url(REVIEW_URL, cx);
-                cx.stop_propagation();
-            })),
-        );
         let troubleshooting = menu_item(
             "title-bar-help-troubleshooting",
             "Troubleshooting",
@@ -213,7 +203,6 @@ impl PaneFlowApp {
                 .child(whats_new)
                 .child(check_for_updates)
                 .child(automations)
-                .child(review)
                 .child(troubleshooting)
                 .child(system_info)
                 .child(

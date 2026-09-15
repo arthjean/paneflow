@@ -442,14 +442,9 @@ impl PaneFlowApp {
             });
             return;
         }
-        if self.review_contains_pane(&pane) {
-            self.handle_review_pane_event(pane, event, cx);
-            return;
-        }
         match event {
             pane::PaneEvent::DropSurfaceMove { .. } => {}
             pane::PaneEvent::ToggleDetached { .. } => {}
-            pane::PaneEvent::DropSubjectSplit { .. } => {}
             pane::PaneEvent::SurfacesChanged => {
                 self.save_session(cx);
                 cx.notify();
@@ -761,26 +756,21 @@ impl PaneFlowApp {
         edge: Option<DropEdge>,
         cx: &mut Context<Self>,
     ) {
-        let location = self
+        let Some((w, t)) = self
             .workspaces
             .iter()
             .enumerate()
-            .find_map(|(w, ws)| ws.tab_index_containing_pane(&target).map(|t| (w, t)));
-        let review = location.is_none() && self.review_contains_pane(&target);
-        let root = if let Some((w, t)) = location {
-            let Some(tab) = self.workspaces[w].tabs().get(t) else {
-                return;
-            };
-            if tab.is_zoomed() {
-                return;
-            }
-            tab.root.as_ref()
-        } else if review && self.review.saved_layout.is_none() {
-            self.review.layout.as_ref()
-        } else {
-            None
+            .find_map(|(w, ws)| ws.tab_index_containing_pane(&target).map(|t| (w, t)))
+        else {
+            return;
         };
-        let Some(root) = root else {
+        let Some(tab) = self.workspaces[w].tabs().get(t) else {
+            return;
+        };
+        if tab.is_zoomed() {
+            return;
+        }
+        let Some(root) = tab.root.as_ref() else {
             return;
         };
         let leaves = root.collect_leaves();
@@ -809,13 +799,8 @@ impl PaneFlowApp {
         if edge.is_none() && !target.read(cx).can_add_surface() {
             return;
         }
-        let max_panes = if review {
-            crate::app::review::MAX_REVIEW_PANES
-        } else {
-            MAX_PANES
-        };
-        if edge.is_some() && !last && leaves.len() >= max_panes {
-            self.show_toast(format!("Maximum pane count reached ({max_panes})"), cx);
+        if edge.is_some() && !last && leaves.len() >= MAX_PANES {
+            self.show_toast(format!("Maximum pane count reached ({MAX_PANES})"), cx);
             return;
         }
         let surface = source.read(cx).surfaces()[index].clone();
@@ -826,11 +811,7 @@ impl PaneFlowApp {
             target.update(cx, |pane, cx| pane.push_surface(surface, cx));
             target.clone()
         };
-        let root = if let Some((w, t)) = location {
-            &mut self.workspaces[w].tab_mut(t).expect("validated tab").root
-        } else {
-            &mut self.review.layout
-        };
+        let root = &mut self.workspaces[w].tab_mut(t).expect("validated tab").root;
         if let Some(edge) = edge {
             let Some(tree) = root.as_mut() else {
                 return;
@@ -845,9 +826,6 @@ impl PaneFlowApp {
             }
         } else {
             source.update(cx, |pane, cx| pane.close_surface(index, cx));
-        }
-        if review {
-            self.review.active_pane = Some(destination.clone());
         }
         self.pending_pane_focus = Some(destination);
         self.save_session(cx);

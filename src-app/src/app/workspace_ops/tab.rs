@@ -168,16 +168,12 @@ impl PaneFlowApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let checkout_before = self.active_checkout();
         if let Some(ws) = self.workspaces.get_mut(ws_idx) {
             ws.set_active_tab(tab_idx);
         }
         if ws_idx == self.active_idx {
             self.workspaces[ws_idx].focus_first(window, cx);
             self.save_session(cx);
-            if self.active_checkout() != checkout_before {
-                self.reconcile_diff_after_workspace_change(cx);
-            }
         } else {
             self.select_workspace(ws_idx, window, cx);
         }

@@ -8,7 +8,7 @@
 
 The workspace where your coding agents work, and where you read what they changed.
 
-Paneflow is a native workspace for coding agents. The Workspaces rail lists every repository you have open; each tab is an agent session bound to its own branch or worktree, named after its work, with the agent's live state: thinking, waiting, failed, or done. Inside a session, the agent runs in a real Ghostty terminal pane you can read, interrupt, and take over. A dock beside the session holds Changes (the checkout's diff against its base branch), Files (a code editor with git markers in the gutter and the file tree), and a terminal. Review mode lays several worktree diffs side by side in one pane grid.
+Paneflow is a native workspace for coding agents. The Workspaces rail lists every repository you have open; each tab is an agent session bound to its own branch or worktree, named after its work, with the agent's live state: thinking, waiting, failed, or done. Inside a session, the agent runs in a real Ghostty terminal pane you can read, interrupt, and take over. A dock beside the session holds Changes (the checkout's diff against its base branch), Files (a code editor with git markers in the gutter and the file tree), and a terminal.
 
 Works with any CLI agent - Claude Code, Codex, Gemini, opencode, Pi, Hermes, you name it.
 
@@ -71,10 +71,6 @@ Themes, shell, keybindings, and shortcuts live in `~/.paneflow/paneflow.json` (`
 ## Read what the agents changed
 
 The Changes tab shows the session's checkout against its base branch, split or unified, with the words that differ highlighted inside each modified line and a Revert chip on each block of a modified file. Whitespace can be trimmed or ignored so a reformat reads as one change. A file open in the dock carries the same blocks in its gutter, with a popup to read, copy, or revert the previous text.
-
-Review mode puts the Workspaces rail, the Changes rail, and a grid of diff panes in one view. Drag a branch or a worktree onto a pane edge to read diffs side by side, up to six at once, each against the base branch you pick, without checking anything out.
-
-[Review docs →](docs/user/review.md)
 
 ## Telemetry
 

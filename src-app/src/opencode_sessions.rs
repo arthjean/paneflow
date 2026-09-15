@@ -11,10 +11,6 @@ const OPENCODE_DEADLINE: std::time::Duration = std::time::Duration::from_secs(15
 
 const OPENCODE_STDOUT_CAP: u64 = 8 * 1024 * 1024;
 
-pub fn read_sessions_for_cwd(cwd: &str) -> Vec<SessionMeta> {
-    read_sessions_for_cwd_with_omitted(cwd).0
-}
-
 pub fn read_sessions_for_cwd_with_omitted(cwd: &str) -> (Vec<SessionMeta>, usize) {
     read_sessions_with_program("opencode", cwd)
 }
@@ -115,10 +111,7 @@ fn record_to_session(record: &Value, cwd: &str) -> Option<SessionMeta> {
         session_id,
         timestamp,
         cwd: record_cwd,
-        git_branch: String::new(),
         summary,
-        model: None,
-        usage: None,
     })
 }
 
@@ -165,7 +158,6 @@ mod tests {
         assert_eq!(meta.agent, SessionAgent::OpenCode);
         assert_eq!(meta.session_id, "ses_1f80d49aeffeaKV4Lq4mc0c3cu");
         assert_eq!(meta.cwd, "/home/arthur");
-        assert!(meta.git_branch.is_empty());
         assert_eq!(
             meta.summary.as_deref(),
             Some("New session - 2026-05-08T14:16:47.441Z")

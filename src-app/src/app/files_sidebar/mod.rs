@@ -27,7 +27,6 @@ pub(super) const DIMMED_OPACITY: f32 = 0.55;
 impl PaneFlowApp {
     pub(crate) fn files_sidebar_host_visible(&self) -> bool {
         self.settings_section.is_none()
-            && matches!(self.mode, paneflow_config::schema::AppMode::Cli)
     }
 
     pub(crate) fn handle_toggle_files_sidebar(

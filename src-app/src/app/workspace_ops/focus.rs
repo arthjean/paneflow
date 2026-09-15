@@ -1,5 +1,4 @@
 use gpui::{Context, Focusable, Window};
-use paneflow_config::schema::AppMode;
 
 use super::WorkspaceFocusTarget;
 use crate::PaneFlowApp;
@@ -8,53 +7,29 @@ use crate::{FocusDown, FocusLeft, FocusRight, FocusUp, JumpNextWaiting, SWAP_MOD
 
 impl PaneFlowApp {
     pub(crate) fn nav_root(&self) -> Option<&LayoutTree> {
-        match self.mode {
-            AppMode::Diff => self.review.layout.as_ref(),
-            AppMode::Cli => self
-                .active_workspace()
-                .and_then(|ws| ws.active_tab().root.as_ref()),
-        }
+        self.active_workspace()
+            .and_then(|ws| ws.active_tab().root.as_ref())
     }
 
     pub(crate) fn nav_root_mut(&mut self) -> Option<&mut LayoutTree> {
-        match self.mode {
-            AppMode::Diff => self.review.layout.as_mut(),
-            AppMode::Cli => self
-                .active_workspace_mut()
-                .and_then(|ws| ws.active_tab_mut().root.as_mut()),
-        }
+        self.active_workspace_mut()
+            .and_then(|ws| ws.active_tab_mut().root.as_mut())
     }
 
     pub(crate) fn take_nav_root(&mut self) -> Option<LayoutTree> {
-        match self.mode {
-            AppMode::Diff => self.review.layout.take(),
-            AppMode::Cli => self
-                .active_workspace_mut()
-                .and_then(|ws| ws.active_tab_mut().root.take()),
-        }
+        self.active_workspace_mut()
+            .and_then(|ws| ws.active_tab_mut().root.take())
     }
 
     pub(crate) fn put_nav_root(&mut self, root: Option<LayoutTree>) {
-        match self.mode {
-            AppMode::Diff => self.review.layout = root,
-            AppMode::Cli => {
-                if let Some(ws) = self.active_workspace_mut() {
-                    ws.active_tab_mut().root = root;
-                }
-            }
+        if let Some(ws) = self.active_workspace_mut() {
+            ws.active_tab_mut().root = root;
         }
     }
 
     pub(crate) fn exit_nav_zoom(&mut self, cx: &mut Context<Self>) {
-        match self.mode {
-            AppMode::Diff => {
-                self.review_exit_zoom(cx);
-            }
-            AppMode::Cli => {
-                if let Some(ws) = self.active_workspace_mut() {
-                    ws.exit_zoom(cx);
-                }
-            }
+        if let Some(ws) = self.active_workspace_mut() {
+            ws.exit_zoom(cx);
         }
     }
 

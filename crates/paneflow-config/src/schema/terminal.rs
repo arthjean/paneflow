@@ -103,7 +103,6 @@ pub enum TerminalSurfaceProfile {
     #[default]
     Normal,
     Agent,
-    Review,
     Cached,
 }
 
@@ -112,7 +111,6 @@ impl TerminalSurfaceProfile {
         match self {
             Self::Normal => None,
             Self::Agent => Some(TerminalConfig::AGENT_SCROLLBACK_LINES),
-            Self::Review => Some(TerminalConfig::REVIEW_SCROLLBACK_LINES),
             Self::Cached => Some(TerminalConfig::CACHED_SCROLLBACK_LINES),
         }
     }
@@ -152,7 +150,6 @@ pub struct TerminalConfig {
 impl TerminalConfig {
     pub const DEFAULT_SCROLLBACK_LINES: usize = 10_000;
     pub const AGENT_SCROLLBACK_LINES: usize = 10_000;
-    pub const REVIEW_SCROLLBACK_LINES: usize = 2_000;
     pub const CACHED_SCROLLBACK_LINES: usize = 1_000;
     pub const MIN_SCROLLBACK_LINES: usize = 100;
     pub const MAX_SCROLLBACK_LINES: usize = 100_000;

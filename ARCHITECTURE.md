@@ -52,8 +52,8 @@ Returning a pane restores its original logical position without spawning a PTY.
 Terminal and code-view focus subscriptions follow the current native window.
 The child observes ownership changes instead of reading the app during render,
 because native window creation can synchronously render while the app is borrowed.
-Window bounds are debounced before session snapshot construction. Review panes
-restore by subject identity; CLI panes validate the saved layout leaf count.
+Window bounds are debounced before session snapshot construction. A detached
+pane restores only when the saved layout leaf count still matches its tab.
 Closing a child returns its pane; closing the main window still quits the app.
 
 Detachment is exposed through pane controls, the pane context menu, and

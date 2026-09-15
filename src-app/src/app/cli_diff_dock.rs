@@ -265,9 +265,7 @@ impl PaneFlowApp {
     }
 
     pub(crate) fn diff_dock_visible(&self) -> bool {
-        self.diff_dock.open
-            && self.settings_section.is_none()
-            && matches!(self.mode, paneflow_config::schema::AppMode::Cli)
+        self.diff_dock.open && self.settings_section.is_none()
     }
 
     pub(crate) fn wrap_cli_diff_dock(

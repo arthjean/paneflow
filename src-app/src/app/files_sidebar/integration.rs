@@ -65,7 +65,6 @@ impl PaneFlowApp {
         if self.settings_section.is_some() {
             self.close_settings(cx);
         }
-        self.enter_cli_mode(window, cx);
         if !self.diff_dock.open {
             self.open_diff_dock_panel(root.to_string_lossy().into_owned(), cx);
         }

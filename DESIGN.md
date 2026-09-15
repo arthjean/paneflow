@@ -24,7 +24,7 @@ share a lineage, not a stylesheet.
 | `ARCHITECTURE.md` | Thread model, render pipeline, why the render thread never blocks |
 | `src-app/src/theme/` | Concrete palette values for the eight bundled variants |
 | `src-app/src/ui_primitives.rs`, `src-app/src/settings/components.rs`, `src-app/src/app/constants.rs` | The shared primitives and constants every surface must consume |
-| `docs/user/` | User-facing vocabulary (Agents, Review, Workspaces, Settings pages) |
+| `docs/user/` | User-facing vocabulary (Agents, Workspaces, Settings pages) |
 
 When sources disagree: product intent wins, then a **Canonical** rule here,
 then the shared primitives, then any local render code. A visual change that
@@ -56,9 +56,8 @@ Paneflow is a cockpit for coding agents, not an IDE and not a terminal
 emulator with tabs. The dominant idea of the screen is the grid of live pane
 cards, each one a real terminal running a real agent. Everything else is
 instrumentation around that grid: a rail of workspaces and tabs on the left,
-a title bar that is mostly empty, docks that appear only when review or files
-are needed, and a footer switch between the two modes that matter, **Agents**
-and **Review**.
+a title bar that is mostly empty, docks that appear only when changes or files
+are needed, and a footer row that opens **Settings**.
 
 The code calls this shell the cockpit (`cockpit_chrome_background`,
 `cockpit_backdrop_background` in `src-app/src/app/constants.rs`). Keep that
@@ -139,7 +138,7 @@ Nerd Font as the default.
 │ folder rows  │ └───────────────────────────┘ └────────────────┘  │ 360px min         │
 │ tab rows     │              8px gutter, 80px min pane            │                   │
 │ update banner│                                                   │                   │
-│ Agents|Review│                                                   │                   │
+│ Settings     │                                                   │                   │
 └──────────────┴───────────────────────────────────────────────────┴───────────────────┘
 ```
 
@@ -147,23 +146,22 @@ Nerd Font as the default.
 | --- | --- | --- | --- |
 | Window | Client-side decorations on every platform | Default 1200 by 800, minimum 800 by 500, corner radius 10, border 1, resize border 10, shadow black 0.4 blurred 5 when floating | `src-app/src/window_state.rs`, `src-app/src/app/constants.rs`, `src-app/src/window_chrome/csd.rs` |
 | Title bar | Drag region, sidebar toggle, Files and Help menus, workspace name, caption controls | Height max(1.75 rem, 32 px); control size 20; edge inset 8; control spacing 12; macOS brand padding 80 for the traffic lights | `src-app/src/window_chrome/title_bar.rs` |
-| Primary sidebar | Workspaces rail in Agents mode, the Workspaces and Changes rails side by side in Review mode, navigation in Settings | Width 300, 520 in Review (220 + 300); slides in 280 ms | `src-app/src/app/sidebar/mod.rs`, `src-app/src/app/review/rail.rs`, `src-app/src/app/diff_sidebar/mod.rs`, `src-app/src/main.rs` |
-| Main panel | The inset card that holds the pane grid (Agents or Review) or a Settings page | Inset 4 on right and bottom, and on the left only when the sidebar is hidden; radius 10; four corner masks painted in the shell color | `src-app/src/main.rs` |
-| Pane grid | Binary split tree of pane cards; one per workspace tab in Agents, one global grid of diff panes in Review | Gutter 8, divider hit area 7, minimum pane 80; Review caps at 6 panes | `src-app/src/layout/tree.rs`, `src-app/src/layout/render.rs`, `src-app/src/app/review/grid.rs` |
+| Primary sidebar | Workspaces rail in Agents, navigation in Settings | Width 300; slides in 280 ms | `src-app/src/app/sidebar/mod.rs`, `src-app/src/main.rs` |
+| Main panel | The inset card that holds the pane grid or a Settings page | Inset 4 on right and bottom, and on the left only when the sidebar is hidden; radius 10; four corner masks painted in the shell color | `src-app/src/main.rs` |
+| Pane grid | Binary split tree of pane cards, one per workspace tab | Gutter 8, divider hit area 7, minimum pane 80 | `src-app/src/layout/tree.rs`, `src-app/src/layout/render.rs` |
 | Right rail | Sessions rail | Width 300 | `src-app/src/app/sessions_sidebar.rs` |
 | File tree | Inside the file dock, below its shared toolbar, to the right of the editor | Width 250, shrinking to preserve 200 px for the editor | `src-app/src/app/files_sidebar/mod.rs` |
 | Diff dock | Side dock attached to a tab, holding the branch diff and editable file tabs | Width 880 default, 360 minimum, 1400 maximum, clamped to the room the panel has; 8 file tabs maximum | `src-app/src/app/diff_dock/model.rs` |
-| Footer | Mode switch Agents / Review plus the Settings gear, with the IPC offline and update banners stacked above it | Persistent primary navigation | `src-app/src/app/sidebar_actions_menu.rs` |
+| Footer | The Settings row, with the IPC offline and update banners stacked above it | Persistent primary navigation | `src-app/src/app/sidebar_actions_menu.rs` |
 
 ### 3.2 Modes
 
-Paneflow has two modes and one takeover surface.
+Paneflow has one mode and one takeover surface.
 
 | Mode | Sidebar | Main panel | Entry |
 | --- | --- | --- | --- |
-| Agents | Workspaces: folder rows, tab rows with branch, diffstat, and agent icon stack | Pane grid | Footer switch, default |
-| Review | Workspaces: one folder row per open repository that folds its checkouts and worktrees as child rows, then Changes: a plain `Changes` header with the tree toggle, the base branch chip, file rows with status letter, path, and diffstat, plus a filter field | The same pane grid as Agents, each pane card holding one unified or split diff with sticky file headers | Footer switch or `secondary-shift-g` |
-| Settings | Back to the app, search field, three nav groups | One page at a time, centered column, 26 px heading | Footer gear |
+| Agents | Workspaces: folder rows, tab rows with branch, diffstat, and agent icon stack | Pane grid | Default |
+| Settings | Back to the app, search field, three nav groups | One page at a time, centered column, 26 px heading | Footer row |
 
 Settings is not a window. It replaces the main panel and reuses the sidebar
 width for its navigation, so the shell never changes shape. The title bar
@@ -455,10 +453,10 @@ disabled (margin 6, padding 8 by 6, radius 6, 1 px `border` on `subtle`, a
 banner when the last manual check could not reach the feed (margin 6, height
 30, padding 8, radius 8, the active row tint, a 14 px `vc_deleted` alert
 glyph, `Update check failed` at 12 px Medium, a 13 px bold `×` to dismiss;
-0.8 rising to 1.0 on hover, click retries), then the mode row: `Agents` and `Review` as two
-flexible 30 px squircle buttons at small text Medium with a 3 px gap, and a
-30 by 30 gear that opens Settings in one click. The active mode and an open
-Settings share the active row tint; the others take the hover tint.
+0.8 rising to 1.0 on hover, click retries), then the Settings row: one
+flexible 30 px squircle button with the 14 px gear glyph and `Settings` at
+small text Medium, which opens Settings in one click. An open Settings takes
+the active row tint; otherwise the row takes the hover tint.
 
 ### 5.3 Pane card
 
@@ -500,7 +498,7 @@ and bottom), border, composer. Unfocused panes in a multi-pane workspace fade
 under a 0.3 overlay by default. The drop overlay is blue at 0.10 with a 2 px
 blue border, radius 8, margin 8, and a swap variant with its own tint.
 
-### 5.4 Diff dock and Review view
+### 5.4 Diff dock
 
 #### Detached pane window
 
@@ -540,28 +538,7 @@ the picker or the `+` menu, which also offers File and Terminal. Every content
 tab is closable, including Changes and the first tab. Closing the last tab
 returns to the picker; switching sessions preserves the chosen tabs.
 Tabs are chips with the sidebar rail skin: no separators, active chip on
-the active tint, inactive chips wash in on hover. The Review view uses the
-same `DiffElement` as the dock inside a regular pane card: no toolbar, the
-diff starts directly under the shared 44 px tab and action row. The tab tooltip
-carries the full label and agent attribution. No diffstat in the header: the
-counts live on the file rows. The diff pane header has no split buttons; their slot holds the
-same `...` options menu as the dock's Changes tab (layout, highlight,
-whitespace, collapse or expand all, refresh), rendered by the shared
-`render_diff_options_menu` and applied per pane. One pane shows one worktree
-against one base branch. The Workspaces
-rail (220 px) lists the open repositories the way the Agents rail does: a
-folder row per repository, with no active tint, folds and unfolds its
-checkouts and git worktrees as child rows, several rows can stay open at
-once, and the folded set persists in the session like the Agents rail. A click on a child row replaces the focused pane's subject, a drag onto
-a pane edge splits the grid with a new diff pane, a drop on the center
-replaces that pane's subject, and an accent dot marks the subjects already
-in the grid. The Changes rail
-(300 px) follows the focused pane: its 36 px header reads `Changes` in the
-same muted 13 px style as the `Workspaces` header, with only the tree toggle
-on the right, and its second row holds the base branch chip, which opens a
-filterable branch picker. The subject lives on the pane header. `u`
-switches unified and split, `[` and `]` walk the hunks, and the
-diff context menu offers the same. Change bars are 4 px,
+the active tint, inactive chips wash in on hover. Change bars are 4 px,
 dashed for deletions; file headers are 32 px rows that collapse to a 24 px
 sticky header while scrolling, with the file-type icon on the left and the
 diffstat right-aligned.
@@ -575,7 +552,7 @@ scrolls past the cell edge is clipped to the cell. A block whose two sides
 differ only by whitespace is muted: the line wash drops to 0.08, no word
 rectangle is painted, and the 4 px change bar sits at 0.5 alpha. Highlight
 `None` keeps the change bar and gutter tint and drops every wash. Both
-`Highlight` and `Whitespace` live in the Changes and Review options menus
+`Highlight` and `Whitespace` live in the Changes options menu
 next to Layout and are session-scoped like Split and Unified. Highlight is
 applied at paint time to cached word-level rows: switching Words, Lines, or
 None requires no Git work or row rebuild and preserves the scroll position.
@@ -643,7 +620,7 @@ Escape, an outside click, or a second click on the trigger dismisses it.
 Editor scrollbars follow Zed's 15 px tracks, square thumbs with a 25 px
 minimum, and a 1 px left border on the vertical track and thumb. Both axes
 support centered track clicks and dragging. Git change markers occupy the
-vertical track. Changes and Review diffs keep the same vertical track permanently
+vertical track. Changes diffs keep the same vertical track permanently
 enabled, with centered clicks and dragging, without editor controls or a minimap.
 The track occupies its own gutter so it never covers diff content.
 The minimap uses the bundled `.ZedMono` alias at 2 px, Black,
@@ -805,7 +782,6 @@ with Tab.
 | Focus across the grid | `alt-arrow` |
 | New tab, next, previous | `secondary-shift-t`, `secondary-]`, `secondary-[` |
 | Workspaces 1 to 9 | `secondary-1` to `secondary-9` |
-| Diff view | `secondary-shift-g` |
 | File tree in the dock | `secondary-alt-f` |
 | Composer | `secondary-shift-space` |
 | Launch Pad | `secondary-shift-l` |

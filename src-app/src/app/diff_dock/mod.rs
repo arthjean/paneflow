@@ -15,9 +15,6 @@ pub(crate) use model::{
     DIFF_DOCK_PANEL_MIN_WIDTH, DIFF_DOCK_PANEL_WIDTH, DiffDockData, DiffDockHScrollDrag,
     DiffDockTab, DiffHover, DiffOptionsSubmenu,
 };
-pub(crate) use options_menu::{
-    DiffOptionsMenuActions, DiffOptionsMenuState, OptionChoice, render_diff_options_menu,
-};
 
 use gpui::{
     AnyElement, ClickEvent, Context, InteractiveElement, IntoElement, MouseButton, MouseDownEvent,
@@ -340,9 +337,7 @@ impl PaneFlowApp {
         ui: crate::theme::UiColors,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        if (self.diff_dock.picker || self.diff_dock.diff_tabs.is_empty())
-            && matches!(self.mode, paneflow_config::schema::AppMode::Cli)
-        {
+        if self.diff_dock.picker || self.diff_dock.diff_tabs.is_empty() {
             return self.render_diff_dock_picker(width, max_width, ui, cx);
         }
         self.refresh_diff_dock_if_theme_changed(cx);

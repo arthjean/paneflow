@@ -103,24 +103,17 @@ impl PaneFlowApp {
         let (saved_session, session_corruption) = Self::load_session();
         crate::startup_trace::mark("session_loaded");
 
-        let restored_mode = saved_session.as_ref().map(|s| s.mode).unwrap_or_default();
         let pending_detached_panes = saved_session
             .as_ref()
             .map(|session| session.detached_panes.clone())
-            .unwrap_or_default();
-        let restored_review_layout = saved_session.as_ref().and_then(|s| s.review_layout.clone());
-        let restored_review_collapsed = saved_session
-            .as_ref()
-            .map(|s| s.review_collapsed.clone())
             .unwrap_or_default();
 
         let mut pull_request_seeds = Vec::new();
         let (workspaces, active_idx, session_restored) = match saved_session {
             Some(session) => {
                 log::info!(
-                    "restoring session: {} workspace(s), mode={:?}",
-                    session.workspaces.len(),
-                    session.mode
+                    "restoring session: {} workspace(s)",
+                    session.workspaces.len()
                 );
                 let (workspaces, active_idx) = Self::restore_workspaces(&session, cx);
                 pull_request_seeds = Self::pull_request_seeds(&session, &workspaces);
@@ -718,8 +711,6 @@ impl PaneFlowApp {
             launch_instant: std::time::Instant::now(),
             telemetry_enabled_last,
             theme_changed,
-            review: crate::app::review::ReviewState::new(cx),
-            mode: restored_mode,
             diff_dock: crate::DiffDockState {
                 open: false,
                 data: None,
@@ -760,29 +751,11 @@ impl PaneFlowApp {
             app.record_recent_workspaces(&restored_paths, cx);
         }
 
-        if let Some(node) = restored_review_layout {
-            app.restore_review_layout(&node, cx);
-        }
-        app.restore_review_collapsed(&restored_review_collapsed);
         for (repo_root, branch, pr) in pull_request_seeds {
             app.pr_states
                 .seed(&repo_root.to_string_lossy(), &branch, pr);
         }
         app.refresh_pull_requests(cx);
-        if matches!(app.mode, paneflow_config::schema::AppMode::Diff) {
-            if app.review.layout.is_none() {
-                match app.review_default_subject() {
-                    Some(subject) => app.review_show_subject(subject, cx),
-                    None => app.mode = paneflow_config::schema::AppMode::Cli,
-                }
-            }
-            if matches!(app.mode, paneflow_config::schema::AppMode::Diff) {
-                app.review_refresh_worktree_listings(cx);
-            }
-        }
-        if matches!(app.mode, paneflow_config::schema::AppMode::Cli) {
-            app.review_suspend_all(cx);
-        }
 
         app.emit_app_started(is_first_run_for_telemetry);
         if let Some(info) = session_corruption {

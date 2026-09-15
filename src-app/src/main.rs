@@ -43,7 +43,6 @@ mod opencode_sessions;
 mod pane;
 mod pane_drag;
 mod pi_sessions;
-mod pricing;
 mod runtime_paths;
 mod search;
 mod settings;
@@ -248,15 +247,11 @@ pub(crate) struct SidebarWidthAnimation {
 }
 
 fn native_backdrop_material_active(
-    mode: paneflow_config::schema::AppMode,
     settings_open: bool,
     terminal_material_active: bool,
     chrome_material_active: bool,
 ) -> bool {
-    chrome_material_active
-        || (!settings_open
-            && matches!(mode, paneflow_config::schema::AppMode::Cli)
-            && terminal_material_active)
+    chrome_material_active || (!settings_open && terminal_material_active)
 }
 
 fn should_load_login_shell_env_for_startup(
@@ -291,7 +286,6 @@ mod native_material_tests {
         native_backdrop_material_active, native_material_suppressed_by_fullscreen,
         should_extract_mcp_bridge_for_cli, should_load_login_shell_env_for_startup,
     };
-    use paneflow_config::schema::AppMode;
 
     fn args(parts: &[&str]) -> Vec<String> {
         parts.iter().map(|part| (*part).to_string()).collect()
@@ -308,38 +302,17 @@ mod native_material_tests {
 
     #[test]
     fn terminal_material_can_activate_backdrop_without_chrome_material() {
-        assert!(native_backdrop_material_active(
-            AppMode::Cli,
-            false,
-            true,
-            false
-        ));
+        assert!(native_backdrop_material_active(false, true, false));
     }
 
     #[test]
-    fn terminal_material_only_applies_to_visible_cli_terminal() {
-        assert!(!native_backdrop_material_active(
-            AppMode::Cli,
-            true,
-            true,
-            false
-        ));
-        assert!(!native_backdrop_material_active(
-            AppMode::Diff,
-            false,
-            true,
-            false
-        ));
+    fn terminal_material_only_applies_to_a_visible_terminal() {
+        assert!(!native_backdrop_material_active(true, true, false));
     }
 
     #[test]
     fn chrome_material_activates_backdrop_independently() {
-        assert!(native_backdrop_material_active(
-            AppMode::Diff,
-            true,
-            false,
-            true
-        ));
+        assert!(native_backdrop_material_active(true, false, true));
     }
 
     #[test]
@@ -656,8 +629,6 @@ struct PaneFlowApp {
     launch_instant: std::time::Instant,
     telemetry_enabled_last: Option<bool>,
     theme_changed: std::sync::Arc<std::sync::atomic::AtomicBool>,
-    pub(crate) review: crate::app::review::ReviewState,
-    pub(crate) mode: paneflow_config::schema::AppMode,
     pub(crate) diff_dock: DiffDockState,
     pub(crate) sidebar_order_cache: std::cell::RefCell<crate::app::sidebar::SidebarOrderCache>,
 }
@@ -669,10 +640,7 @@ impl PaneFlowApp {
         if self.settings_section.is_some() {
             crate::settings::chrome::SETTINGS_NAV_WIDTH
         } else {
-            match self.mode {
-                paneflow_config::schema::AppMode::Diff => Self::review_rails_width(),
-                paneflow_config::schema::AppMode::Cli => SIDEBAR_WIDTH,
-            }
+            SIDEBAR_WIDTH
         }
     }
 
@@ -850,12 +818,9 @@ impl Render for PaneFlowApp {
         let terminal_surface_mounted = self
             .active_workspace()
             .is_some_and(|ws| ws.active_tab().root.is_some());
-        let terminal_material_visible = !settings_open
-            && matches!(self.mode, paneflow_config::schema::AppMode::Cli)
-            && terminal_surface_mounted
-            && terminal_material_active;
+        let terminal_material_visible =
+            !settings_open && terminal_surface_mounted && terminal_material_active;
         let native_material_active = native_backdrop_material_active(
-            self.mode,
             settings_open,
             terminal_material_active,
             chrome_material_active,
@@ -955,8 +920,6 @@ impl Render for PaneFlowApp {
         let main_content = if self.settings_section.is_some() {
             self.tick_agents_list_animation(window);
             self.render_settings_content_panel(cx).into_any_element()
-        } else if matches!(self.mode, paneflow_config::schema::AppMode::Diff) {
-            self.render_review_main(pane_grid_left_gutter, window, cx)
         } else if let Some(ws) = self.active_workspace() {
             if let Some(root) = &ws.active_tab().root {
                 let app_weak = cx.weak_entity();
@@ -1071,7 +1034,6 @@ impl Render for PaneFlowApp {
             .on_action(cx.listener(Self::handle_split_equalize))
             .on_action(cx.listener(Self::handle_swap_pane))
             .on_action(cx.listener(Self::handle_undo_close_pane))
-            .on_action(cx.listener(Self::handle_open_diff_view))
             .on_action(cx.listener(Self::handle_ws1))
             .on_action(cx.listener(Self::handle_ws2))
             .on_action(cx.listener(Self::handle_ws3))
@@ -1184,8 +1146,8 @@ impl Render for PaneFlowApp {
                                     .into_any_element(),
                             );
                         }
-                        row.child(match self.mode {
-                            paneflow_config::schema::AppMode::Diff => div()
+                        row.child(
+                            div()
                                 .flex()
                                 .flex_col()
                                 .h_full()
@@ -1194,20 +1156,8 @@ impl Render for PaneFlowApp {
                                 .overflow_hidden()
                                 .opacity(primary_sidebar_opacity)
                                 .pt(title_bar_h)
-                                .child(self.render_review_rails(window, cx))
-                                .into_any_element(),
-                            paneflow_config::schema::AppMode::Cli => div()
-                                .flex()
-                                .flex_col()
-                                .h_full()
-                                .w(px(primary_sidebar_width))
-                                .flex_shrink_0()
-                                .overflow_hidden()
-                                .opacity(primary_sidebar_opacity)
-                                .pt(title_bar_h)
-                                .child(self.render_sidebar(window, cx))
-                                .into_any_element(),
-                        })
+                                .child(self.render_sidebar(window, cx)),
+                        )
                     })
                     .child(
                         div()
@@ -1235,10 +1185,6 @@ impl Render for PaneFlowApp {
                                         |this, event: &gpui::MouseDownEvent, _window, cx| {
                                             if event.button == gpui::MouseButton::Left
                                                 && this.settings_section.is_none()
-                                                && matches!(
-                                                    this.mode,
-                                                    paneflow_config::schema::AppMode::Cli
-                                                )
                                             {
                                                 this.acknowledge_visible_completions(cx);
                                             }
@@ -1376,17 +1322,16 @@ impl Render for PaneFlowApp {
             app_content = app_content.child(self.render_broadcast_picker(cx));
         }
 
-        let in_cli_mode = matches!(self.mode, paneflow_config::schema::AppMode::Cli);
-        if self.attention_queue_open && in_cli_mode {
+        if self.attention_queue_open {
             app_content = app_content.child(self.render_attention_queue(cx));
         }
-        if self.branch_prompt.is_some() && in_cli_mode {
+        if self.branch_prompt.is_some() {
             app_content = app_content.child(self.render_branch_prompt(cx));
         }
-        if self.launch_pad.is_some() && in_cli_mode {
+        if self.launch_pad.is_some() {
             app_content = app_content.child(self.render_launch_pad(cx));
         }
-        if self.fleet_search.is_some() && in_cli_mode {
+        if self.fleet_search.is_some() {
             if std::mem::take(&mut self.fleet_search_pending_focus) {
                 self.fleet_search_focus.focus(window, cx);
             }
@@ -1429,10 +1374,6 @@ impl Render for PaneFlowApp {
 
         if let Some(menu) = self.pane_menu_open.clone() {
             app_content = app_content.child(self.render_pane_context_menu(menu, ui, window, cx));
-        }
-
-        if let Some(menu) = self.review.rail_menu.clone() {
-            app_content = app_content.child(self.render_review_rail_menu(menu, ui, window, cx));
         }
 
         if let Some(menu) = self.files_menu_open.clone() {

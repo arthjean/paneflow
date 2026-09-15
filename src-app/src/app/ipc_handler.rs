@@ -61,7 +61,6 @@ fn parse_env_object(value: Option<&serde_json::Value>) -> Option<HashMap<String,
 fn parse_terminal_profile(value: Option<&serde_json::Value>) -> TerminalSurfaceProfile {
     match value.and_then(|v| v.as_str()) {
         Some("agent") => TerminalSurfaceProfile::Agent,
-        Some("review") => TerminalSurfaceProfile::Review,
         Some("cached") => TerminalSurfaceProfile::Cached,
         _ => TerminalSurfaceProfile::Normal,
     }

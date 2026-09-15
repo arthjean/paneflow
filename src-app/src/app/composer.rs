@@ -61,9 +61,6 @@ impl PaneFlowApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !matches!(self.mode, paneflow_config::schema::AppMode::Cli) {
-            return;
-        }
         if self.composer.is_some() {
             self.close_composer(cx);
             return;
