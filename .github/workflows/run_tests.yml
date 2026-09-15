@@ -705,11 +705,7 @@ jobs:
           # for a font, which is upstream of every rendering-correctness
           # property this job exists to verify.
           echo "── Resolved font ──"
-          if grep "font: family=" paneflow.log; then
-            if grep -q "font: family='JetBrains Mono'" paneflow.log; then
-              echo "::warning::Embedded JetBrains Mono fallback was selected - Core Text did not surface a system mono family (Menlo / Monaco / Courier). The fallback is the safety net working as designed, but persistent selection on macos-14 indicates a Core Text drift worth investigating."
-            fi
-          else
+          if ! grep "font: family=" paneflow.log; then
             echo "::error::No 'font: family=' line in app log. The app likely crashed before first render - paneflow.log + screenshot.png artifacts will pin down the exact failure."
             exit 1
           fi
@@ -1113,9 +1109,6 @@ jobs:
             exit 1
           }
           $fontLine | ForEach-Object { Write-Output $_.Line }
-          if ($fontLine.Line -match "family='JetBrains Mono'") {
-            Write-Output "::warning::Embedded JetBrains Mono fallback was selected - DirectWrite did not surface a system mono family (Cascadia Mono / Cascadia Code / Consolas). The fallback is the safety net working as designed, but persistent selection on windows-2022 indicates a DirectWrite drift worth investigating."
-          }
 
       - name: Upload visual smoke artifacts
         if: always()
