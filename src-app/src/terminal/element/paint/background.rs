@@ -96,7 +96,7 @@ pub fn paint_block_quads(
         return;
     }
 
-    for bq in &layout.block_quads {
+    for bq in layout.block_quads() {
         let col_end = bq.col + bq.num_cols;
         if bq.num_cols == 0 || col_end > col_count || bq.line < 0 || (bq.line as usize) >= row_count
         {

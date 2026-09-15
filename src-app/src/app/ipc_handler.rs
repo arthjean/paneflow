@@ -1152,6 +1152,7 @@ impl PaneFlowApp {
             .unwrap_or_else(|e| e.into_inner())
             .take();
         if let Some(config) = new_config {
+            crate::terminal::element::apply_font_config(&config);
             let default_shell_changed =
                 normalized_shell_value(self.cached_config.default_shell.as_deref())
                     != normalized_shell_value(config.default_shell.as_deref());

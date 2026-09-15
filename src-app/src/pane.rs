@@ -541,6 +541,7 @@ impl Pane {
             terminal.set_color_emoji_enabled(color_emoji_enabled, cx);
             terminal.set_minimum_contrast(minimum_contrast, cx);
             terminal.set_cursor_color_override(cursor_color_override, cx);
+            cx.notify();
         });
     }
 

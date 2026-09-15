@@ -34,6 +34,7 @@ const NFR_005_MAX_PENDING_OUTPUT_BYTES: usize = 8 * 1024 * 1024;
 const NFR_005_MAX_QUEUED_INPUT_BYTES: usize = 1024 * 1024;
 const RECENT_OUTPUT_REFRESH_INTERVAL: Duration = Duration::from_millis(300);
 const MIN_PUBLISH_INTERVAL: Duration = Duration::from_millis(8);
+const INTERACTIVE_OUTPUT_WINDOW: Duration = Duration::from_millis(100);
 const SELECT_ALL_TIMEOUT: Duration = Duration::from_secs(10);
 const SYNC_OUTPUT_MAX_HOLD: Duration = Duration::from_millis(150);
 const RUNTIME_IDLE_TICK: Duration = Duration::from_millis(10);
@@ -2179,6 +2180,16 @@ fn run_runtime(
         };
         let received = match mailbox.recv_timeout(wait) {
             Ok(message) => {
+                if matches!(
+                    &message,
+                    RuntimeMessage::Input(_)
+                        | RuntimeMessage::KeyInput(_)
+                        | RuntimeMessage::MouseInput { .. }
+                        | RuntimeMessage::PasteInput { .. }
+                ) {
+                    publish_gate.interactive_until =
+                        Some(Instant::now() + INTERACTIVE_OUTPUT_WINDOW);
+                }
                 match handle_terminal_command(&inner, &mut terminal, &mut publish_gate, message) {
                     CommandOutcome::Handled => Ok(None),
                     CommandOutcome::Unhandled(message) => Ok(Some(message)),
@@ -3312,6 +3323,8 @@ fn handle_engine_events(
 struct PublishGate {
     last_publish: Instant,
     pending: bool,
+    interactive_until: Option<Instant>,
+    urgent: bool,
     sync_hold_since: Option<Instant>,
     mirror: CellMirror,
     search_query: String,
@@ -3326,6 +3339,8 @@ impl PublishGate {
                 .unwrap_or_else(Instant::now),
             pending: false,
             sync_hold_since: None,
+            interactive_until: None,
+            urgent: false,
             mirror: CellMirror::default(),
             search_query: String::new(),
             search_error: None,
@@ -3346,8 +3361,16 @@ impl PublishGate {
         inner: &SessionInner,
         terminal: &mut ghostty::DisplayTerminal,
     ) -> Result<(), String> {
-        self.pending = true;
+        self.note_output(Instant::now());
         self.poll(inner, terminal)
+    }
+
+    fn note_output(&mut self, now: Instant) {
+        self.pending = true;
+        self.urgent |= self
+            .interactive_until
+            .take()
+            .is_some_and(|until| now <= until);
     }
 
     fn poll(
@@ -3374,7 +3397,7 @@ impl PublishGate {
         if self.held_by_synchronized_output(synchronized_output, now) {
             return false;
         }
-        now.duration_since(self.last_publish) >= MIN_PUBLISH_INTERVAL
+        self.urgent || now.duration_since(self.last_publish) >= MIN_PUBLISH_INTERVAL
     }
 
     fn next_wake(&self, now: Instant) -> Option<Duration> {
@@ -3383,6 +3406,9 @@ impl PublishGate {
         }
         if let Some(opened_at) = self.sync_hold_since {
             return Some(SYNC_OUTPUT_MAX_HOLD.saturating_sub(now.duration_since(opened_at)));
+        }
+        if self.urgent {
+            return Some(Duration::ZERO);
         }
         Some(MIN_PUBLISH_INTERVAL.saturating_sub(now.duration_since(self.last_publish)))
     }
@@ -3406,6 +3432,7 @@ impl PublishGate {
         update_shared_state(inner, terminal, &mut self.mirror, Arc::new(search))?;
         self.last_publish = Instant::now();
         self.pending = search_pending;
+        self.urgent = false;
         queue_wakeup(inner);
         Ok(())
     }
@@ -3454,6 +3481,8 @@ pub(super) fn simulate_gate_trickle(interval: Duration, chunks: usize) -> usize 
     let mut gate = PublishGate {
         last_publish: origin,
         pending: false,
+        interactive_until: None,
+        urgent: false,
         sync_hold_since: None,
         mirror: CellMirror::default(),
         search_query: String::new(),
@@ -4084,6 +4113,7 @@ pub(super) fn content_from_ghostty(content: ghostty::Content) -> Content {
     let cursor = cursor_from_ghostty(&content);
     Content {
         generation: next_content_generation(),
+        row_versions: Arc::default(),
         cols: content.cols,
         rows: content.rows,
         cells,
@@ -4153,12 +4183,25 @@ pub(super) struct CellMirror {
     last_dirty: Vec<bool>,
     front_address: usize,
     published_address: usize,
+    row_versions: Vec<u64>,
+    cols: usize,
 }
 
 impl CellMirror {
     pub(super) fn publish(&mut self, snapshot: ghostty::Content) -> Content {
         let cols = snapshot.cols;
         let rows = snapshot.rows;
+        let generation = next_content_generation();
+        if self.cols != cols || self.row_versions.len() != rows {
+            self.row_versions = vec![generation; rows];
+            self.cols = cols;
+        } else {
+            for (row, version) in self.row_versions.iter_mut().enumerate() {
+                if snapshot.dirty_rows.get(row).copied().unwrap_or(true) {
+                    *version = generation;
+                }
+            }
+        }
         let reusable = self.back_valid
             && !self.back.is_empty()
             && self.back.len() == snapshot.cells.len()
@@ -4186,7 +4229,8 @@ impl CellMirror {
         self.last_dirty.extend_from_slice(&snapshot.dirty_rows);
         self.published_address = cells.as_ptr().addr();
         Content {
-            generation: next_content_generation(),
+            generation,
+            row_versions: self.row_versions.as_slice().into(),
             cols,
             rows,
             cells,
@@ -4293,6 +4337,7 @@ fn blank_content(cols: usize, rows: usize) -> Content {
         .into();
     Content {
         generation: next_content_generation(),
+        row_versions: Arc::default(),
         cols,
         rows,
         cells,
@@ -4457,6 +4502,8 @@ mod tests {
         PublishGate {
             last_publish: origin,
             pending: false,
+            interactive_until: None,
+            urgent: false,
             sync_hold_since: None,
             mirror: CellMirror::default(),
             search_query: String::new(),
@@ -5009,6 +5056,58 @@ mod tests {
             second.generation < blank.generation,
             "a blank grid is a frame too"
         );
+    }
+
+    #[test]
+    fn row_versions_preserve_edits_across_skipped_publications() {
+        let mut mirror = CellMirror::default();
+        let first = mirror.publish(empty_ghostty_content(20, 4));
+        let mut second = empty_ghostty_content(20, 4);
+        second.dirty_rows = [false, true, false, false].into();
+        let second = mirror.publish(second);
+        let mut third = empty_ghostty_content(20, 4);
+        third.dirty_rows = [false, false, true, false].into();
+        let third = mirror.publish(third);
+        assert_eq!(first.row_versions[0], third.row_versions[0]);
+        assert_eq!(second.row_versions[1], third.row_versions[1]);
+        assert_ne!(first.row_versions[1], third.row_versions[1]);
+        assert_ne!(first.row_versions[2], third.row_versions[2]);
+        assert_eq!(first.row_versions[3], third.row_versions[3]);
+        let resized = mirror.publish(empty_ghostty_content(21, 4));
+        assert!(
+            resized
+                .row_versions
+                .iter()
+                .zip(third.row_versions.iter())
+                .all(|(new, old)| new != old)
+        );
+    }
+
+    #[test]
+    fn interactive_output_bypasses_only_the_rate_limit() {
+        let now = Instant::now();
+        let mut gate = gate_at(now);
+        gate.interactive_until = Some(now + INTERACTIVE_OUTPUT_WINDOW);
+        gate.note_output(now + Duration::from_millis(1));
+        assert!(!gate.decide(true, now + Duration::from_millis(1)));
+        assert!(gate.decide(false, now + Duration::from_millis(2)));
+        assert_eq!(
+            gate.next_wake(now + Duration::from_millis(2)),
+            Some(Duration::ZERO)
+        );
+        gate.urgent = false;
+        gate.note_output(now + Duration::from_millis(3));
+        assert!(!gate.decide(false, now + Duration::from_millis(3)));
+    }
+
+    #[test]
+    fn expired_interactive_input_does_not_accelerate_unrelated_output() {
+        let now = Instant::now();
+        let mut gate = gate_at(now);
+        gate.interactive_until = Some(now - Duration::from_millis(1));
+        gate.note_output(now);
+        assert!(!gate.decide(false, now));
+        assert_eq!(gate.next_wake(now), Some(MIN_PUBLISH_INTERVAL));
     }
 
     #[test]

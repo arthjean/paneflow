@@ -150,6 +150,8 @@ struct ServiceOutputPerformer {
     completed: VecDeque<String>,
     completed_bytes: usize,
     current: String,
+    current_chars: usize,
+    non_whitespace_chars: usize,
     carriage_return_pending: bool,
 }
 
@@ -157,6 +159,8 @@ impl ServiceOutputPerformer {
     fn prepare_for_write(&mut self) {
         if self.carriage_return_pending {
             self.current.clear();
+            self.current_chars = 0;
+            self.non_whitespace_chars = 0;
             self.carriage_return_pending = false;
         }
     }
@@ -165,26 +169,32 @@ impl ServiceOutputPerformer {
         self.prepare_for_write();
         if self.current.len().saturating_add(character.len_utf8()) <= SERVICE_TAIL_MAX_LINE_BYTES {
             self.current.push(character);
+            self.current_chars += 1;
+            self.non_whitespace_chars += usize::from(!character.is_whitespace());
         }
         self.enforce_caps();
     }
 
     fn push_tab(&mut self) {
         self.prepare_for_write();
-        let column = self.current.chars().count();
+        let column = self.current_chars;
         let spaces = TAB_WIDTH - column % TAB_WIDTH;
         for _ in 0..spaces {
             if self.current.len() == SERVICE_TAIL_MAX_LINE_BYTES {
                 break;
             }
             self.current.push(' ');
+            self.current_chars += 1;
         }
         self.enforce_caps();
     }
 
     fn backspace(&mut self) {
         self.prepare_for_write();
-        self.current.pop();
+        if let Some(character) = self.current.pop() {
+            self.current_chars -= 1;
+            self.non_whitespace_chars -= usize::from(!character.is_whitespace());
+        }
     }
 
     fn finish_line(&mut self) {
@@ -196,11 +206,13 @@ impl ServiceOutputPerformer {
             self.completed.push_back(line);
         }
         self.current.clear();
+        self.current_chars = 0;
+        self.non_whitespace_chars = 0;
         self.enforce_caps();
     }
 
     fn enforce_caps(&mut self) {
-        let current_is_non_empty = !self.current.trim().is_empty();
+        let current_is_non_empty = self.non_whitespace_chars != 0;
         while self.completed.len() + usize::from(current_is_non_empty) > SERVICE_TAIL_MAX_LINES
             || self.completed_bytes.saturating_add(self.current.len())
                 > SERVICE_TAIL_MAX_TOTAL_BYTES
@@ -578,5 +590,44 @@ mod tests {
         assert!(!is_loopback_url("http://127.evil.example/"));
         assert!(!is_loopback_url("file:///etc/passwd"));
         assert!(!is_loopback_url("http://192.168.1.10:3000"));
+    }
+
+    #[test]
+    fn service_tail_counts_survive_unicode_erasure_and_line_resets() {
+        let mut tail = ServiceOutputTail::default();
+        for fragment in [
+            " ", "\u{2003}", "é", "\t", "\x08", "\x08", "\r", "界", "\n", "\x08", "\t", "x", "\r\n",
+        ] {
+            for byte in fragment.as_bytes() {
+                tail.advance(&[*byte]);
+                assert_eq!(
+                    tail.output.current_chars,
+                    tail.output.current.chars().count()
+                );
+                assert_eq!(
+                    tail.output.non_whitespace_chars,
+                    tail.output
+                        .current
+                        .chars()
+                        .filter(|c| !c.is_whitespace())
+                        .count()
+                );
+            }
+        }
+        assert_eq!(tail.recent_lines(), ["        x", "界"]);
+    }
+
+    #[test]
+    fn service_tail_whitespace_does_not_evict_a_completed_line() {
+        let mut tail = ServiceOutputTail::default();
+        for _ in 0..SERVICE_TAIL_MAX_LINES {
+            tail.advance(b"kept\n");
+        }
+        tail.advance(" ".repeat(SERVICE_TAIL_MAX_LINE_BYTES).as_bytes());
+        assert_eq!(tail.recent_lines().len(), SERVICE_TAIL_MAX_LINES);
+        tail.advance(b"\rnew");
+        assert_eq!(tail.recent_lines().len(), SERVICE_TAIL_MAX_LINES);
+        assert_eq!(tail.recent_lines()[0], "new");
+        assert_eq!(tail.output.current_chars, 3);
     }
 }

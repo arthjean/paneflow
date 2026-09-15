@@ -161,6 +161,7 @@ fn metric_from_us(name: &'static str, note: &'static str, samples_us: &mut [u64]
         direction: Direction::LowerIsBetter,
         value: percentile(samples_us, 50) as f64 * 1_000.0,
         p95: Some(percentile(samples_us, 95) as f64 * 1_000.0),
+        p99: Some(percentile(samples_us, 99) as f64 * 1_000.0),
         mean: Some(mean_us * 1_000.0),
         alloc_bytes_per_iter: None,
         allocs_per_iter: None,

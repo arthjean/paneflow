@@ -5,10 +5,10 @@ use super::super::geometry::CellGeometry;
 use super::super::sprites::{Arm, Corner, DashGap, Lines, Powerline, Sprite};
 
 pub fn paint_sprites(layout: &LayoutState, geom: &CellGeometry, window: &mut Window) {
-    if layout.sprites.is_empty() || layout.desired_cols == 0 || layout.desired_rows == 0 {
+    if layout.sprites().next().is_none() || layout.desired_cols == 0 || layout.desired_rows == 0 {
         return;
     }
-    for glyph in &layout.sprites {
+    for glyph in layout.sprites() {
         let col_end = glyph.col + glyph.num_cols;
         if glyph.num_cols == 0
             || col_end > layout.desired_cols

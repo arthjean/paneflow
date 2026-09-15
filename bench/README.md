@@ -28,7 +28,7 @@ The benchmark is the ignored test `terminal_pipeline_benchmark` in
 without a GPU or a window: the libghostty parser and snapshot, the conversion
 into the renderer's neutral `Content`, the window-free layout pass, the
 per-frame lookups the render thread performs, and the runtime loop's idle
-behavior. Timings are wall-clock medians; allocations are counted by the
+behavior. Timings include wall-clock p50, p95 and p99; allocations are counted by the
 shared allocator.
 
 | Metric | Unit | What it captures |
@@ -39,6 +39,9 @@ shared allocator.
 | `publish_echo_220x60` | ns | One keystroke echo on the bottom row, then snapshot plus conversion. Only one row changed. |
 | `publish_scroll_120x40` | ns | The scroll case on a 120x40 grid, the size of a typical split pane. |
 | `layout_220x60` | ns | The layout pass over a full 220x60 snapshot: run batching, background rectangles, contrast checks. |
+| `layout_echo_{uncached,cached}_220x60` | ns | Paired native echo, publication and layout workloads with and without retained row layouts. |
+| `layout_scroll_{uncached,cached}_220x60` | ns | The same pair with full-viewport scrolling; checks the cost when every row changes. |
+| `service_spaces_220x60`, `service_spaces_8192`, `service_text_220x60` | ns | Service-output parsing and extraction for blank redraws, a long blank line and ordinary styled output. |
 | `line_text_at_220x60` | ns | Text of one hovered row extracted from the published snapshot, the input of link detection. |
 | `base_font_resolve` | ns | The base font resolution the renderer performs for every pane on every frame. |
 | `active_theme_read` | ns | The theme read the layout pass performs for every pane on every frame. |
@@ -47,7 +50,11 @@ shared allocator.
 
 The corpus is `deterministic_streams()` in
 `src-app/src/terminal/bench_corpus.rs`, seeded with `CORPUS_SEED`, so every
-run parses byte-identical input.
+run parses byte-identical input. These headless metrics exclude platform text
+shaping, GPU submission and presentation. The cached/uncached layout pairs
+compare paths in the same executable; they do not replace a before/after
+release-app frame trace. `pipeline_corpus_mib_s` still excludes service
+detection, which has separate scenarios above.
 
 `PANEFLOW_BENCH_SKIP_IDLE=1` skips the two idle probes, which spend several
 seconds waiting for a shell to settle; the timed scenarios run first either

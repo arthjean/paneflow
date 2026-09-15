@@ -420,7 +420,7 @@ impl TerminalView {
             self.terminal.last_keystroke_at = Some(start);
             if elapsed.as_millis() > 1 {
                 log::warn!(
-                    "[latency] keystroke→PTY: {:.2}ms",
+                    "[latency] input-handler: {:.2}ms",
                     elapsed.as_secs_f64() * 1000.0
                 );
             }

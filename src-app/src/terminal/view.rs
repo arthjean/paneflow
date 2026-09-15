@@ -653,7 +653,7 @@ impl TerminalView {
             cell_width: gpui::px(8.0),
             line_height: gpui::px(16.0),
             element_origin: Arc::new(Mutex::new(gpui::Point::default())),
-            layout_cache: Arc::new(Mutex::new(None)),
+            layout_cache: Arc::default(),
             scrollbar_metrics: Arc::new(Mutex::new(None)),
             scrollbar_drag: None,
             scrollbar_reveal: super::scrollbar_reveal::ScrollbarReveal::default(),
@@ -1645,13 +1645,18 @@ mod tests {
 
     struct TerminalHost {
         terminal: Option<Entity<TerminalView>>,
+        cached: bool,
     }
 
     impl Render for TerminalHost {
         fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
             let mut root = div().size_full();
             if let Some(terminal) = self.terminal.clone() {
-                root = root.child(terminal);
+                root = if self.cached {
+                    root.child(terminal.cached(gpui::StyleRefinement::default().size_full()))
+                } else {
+                    root.child(terminal)
+                };
             }
             root
         }
@@ -1696,6 +1701,7 @@ mod tests {
             *sink.borrow_mut() = Some(terminal.clone());
             TerminalHost {
                 terminal: Some(terminal),
+                cached: false,
             }
         });
         cx.update(|window, _cx| window.activate_window());
@@ -1786,6 +1792,32 @@ mod tests {
             assert!(view.scrollbar_reveal.is_pinned());
             assert!(view.hovered_cell.is_none());
         });
+    }
+
+    #[gpui::test]
+    fn font_only_pane_config_notifies_a_cached_terminal_view(cx: &mut gpui::TestAppContext) {
+        let (terminal, host, cx) = hosted_terminal(cx);
+        host.update(cx, |host, cx| {
+            host.cached = true;
+            cx.notify();
+        });
+        let pane = cx.new(|cx| crate::pane::Pane::new(terminal.clone(), 1, cx));
+        let config = paneflow_config::schema::PaneFlowConfig::default();
+        pane.update(cx, |pane, cx| pane.apply_config(&config, cx));
+        cx.run_until_parked();
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        let probe = watch_notifications(&terminal, cx);
+        pane.update(cx, |_, cx| cx.notify());
+        assert_eq!(probe.hits(), 0);
+
+        let mut changed = config.clone();
+        changed.font_size = Some(config.font_size.unwrap_or(13.0) + 2.0);
+        pane.update(cx, |pane, cx| pane.apply_config(&changed, cx));
+
+        assert!(
+            probe.hits() > 0,
+            "font-only config changes must invalidate the cached terminal entity"
+        );
     }
 
     #[gpui::test]

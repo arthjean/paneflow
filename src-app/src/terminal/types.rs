@@ -307,6 +307,7 @@ pub struct RenderableCursor {
 #[derive(Clone, Debug)]
 pub struct Content {
     pub generation: u64,
+    pub row_versions: Arc<[u64]>,
     pub cols: usize,
     pub rows: usize,
     pub cells: Arc<[Cell]>,

@@ -4,7 +4,8 @@ use super::super::geometry::CellGeometry;
 use super::super::{DecorationKind, LayoutState, UnderlineKind};
 
 pub fn paint_decorations(layout: &LayoutState, geom: &CellGeometry, window: &mut Window) {
-    if layout.decorations.is_empty() || layout.desired_cols == 0 || layout.desired_rows == 0 {
+    if layout.decorations().next().is_none() || layout.desired_cols == 0 || layout.desired_rows == 0
+    {
         return;
     }
     let m = geom.metrics;
@@ -12,7 +13,7 @@ pub fn paint_decorations(layout: &LayoutState, geom: &CellGeometry, window: &mut
     let cell_h = m.cell_height.max(1);
     let padding = cell_h / 4;
 
-    for d in &layout.decorations {
+    for d in layout.decorations() {
         let col_end = d.col_start + d.num_cols;
         if d.num_cols == 0
             || col_end > layout.desired_cols

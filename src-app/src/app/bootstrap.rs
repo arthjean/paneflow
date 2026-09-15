@@ -98,6 +98,8 @@ impl PaneFlowApp {
             }
         }
 
+        let cached_config = paneflow_config::loader::load_config();
+        crate::terminal::element::apply_font_config(&cached_config);
         let (saved_session, session_corruption) = Self::load_session();
         crate::startup_trace::mark("session_loaded");
 
@@ -544,7 +546,6 @@ impl PaneFlowApp {
         let rename_input = cx.new(|cx| crate::widgets::text_input::TextInput::new("", "Name", cx));
         cx.observe(&rename_input, |_, _, cx| cx.notify()).detach();
 
-        let cached_config = paneflow_config::loader::load_config();
         crate::workspace::worktree::set_worktrees_root(cached_config.worktrees.dir_path());
         let effective_shortcuts = keybindings::effective_shortcuts(&cached_config.shortcuts);
         let theme_mode = crate::ThemeMode::from_config(

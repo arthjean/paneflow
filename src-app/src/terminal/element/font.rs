@@ -1,5 +1,6 @@
 #[cfg(target_os = "macos")]
 use std::collections::HashSet;
+#[cfg(target_os = "macos")]
 use std::sync::LazyLock;
 
 use gpui::{
@@ -43,16 +44,7 @@ fn expand_paneflow_alias(name: &str) -> &str {
 static INSTALLED_MONO_FONTS: LazyLock<HashSet<String>> =
     LazyLock::new(|| crate::fonts::load_mono_fonts().into_iter().collect());
 
-struct CachedFontConfig {
-    settings: FontSettings,
-    family: String,
-    font_weight_key: &'static str,
-    ligatures: bool,
-    mtime: Option<std::time::SystemTime>,
-    last_check: std::time::Instant,
-}
-
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 pub(super) struct FontSettings {
     pub(super) font: Font,
     pub(super) size: f32,
@@ -124,10 +116,8 @@ fn font_weight_from_key(key: &str) -> FontWeight {
     }
 }
 
-static FONT_CONFIG_CACHE: std::sync::Mutex<Option<CachedFontConfig>> = std::sync::Mutex::new(None);
-static DEFAULT_MONO_FAMILY: LazyLock<&'static str> =
-    LazyLock::new(|| select_default_font_family(crate::fonts::load_mono_fonts()));
-
+static FONT_CONFIG_CACHE: std::sync::Mutex<Option<FontSettings>> = std::sync::Mutex::new(None);
+#[cfg(test)]
 fn select_default_font_family<I, S>(_available_families: I) -> &'static str
 where
     I: IntoIterator<Item = S>,
@@ -137,7 +127,7 @@ where
 }
 
 pub(crate) fn default_font_family() -> &'static str {
-    *DEFAULT_MONO_FAMILY
+    EMBEDDED_MONO_FAMILY
 }
 
 pub fn resolve_font_family(configured: Option<&str>) -> String {
@@ -170,25 +160,35 @@ pub fn resolve_font_family(configured: Option<&str>) -> String {
 }
 
 pub(super) fn cached_font_config() -> FontSettings {
-    use std::time::{Duration, Instant};
-    const CHECK_INTERVAL: Duration = Duration::from_millis(500);
-
     let mut cache = FONT_CONFIG_CACHE.lock().unwrap_or_else(|e| e.into_inner());
+    cache
+        .get_or_insert_with(|| FontSettings {
+            font: build_font(EMBEDDED_MONO_FAMILY, FontWeight::NORMAL, false, None),
+            size: DEFAULT_FONT_SIZE,
+            line_height: DEFAULT_LINE_HEIGHT,
+            cell_width: DEFAULT_CELL_WIDTH,
+        })
+        .clone()
+}
 
-    if let Some(c) = cache.as_mut() {
-        if c.last_check.elapsed() < CHECK_INTERVAL {
-            return c.settings.clone();
-        }
-        let mtime = crate::theme::config_mtime();
-        if mtime.is_some() && mtime == c.mtime {
-            c.last_check = Instant::now();
-            return c.settings.clone();
-        }
+pub(crate) fn apply_font_config(config: &paneflow_config::schema::PaneFlowConfig) -> bool {
+    let settings = font_settings_from_config(config);
+    let mut cache = FONT_CONFIG_CACHE.lock().unwrap_or_else(|e| e.into_inner());
+    if cache.as_ref() == Some(&settings) {
+        return false;
     }
+    log::info!(
+        "font: family='{}' size={}pt line_height={} cell_width={}",
+        settings.font.family,
+        settings.size,
+        settings.line_height,
+        settings.cell_width
+    );
+    *cache = Some(settings);
+    true
+}
 
-    let mtime = crate::theme::config_mtime();
-    let config = paneflow_config::loader::load_config();
-
+fn font_settings_from_config(config: &paneflow_config::schema::PaneFlowConfig) -> FontSettings {
     let family = resolve_font_family(config.font_family.as_deref());
 
     let size = config
@@ -248,37 +248,12 @@ pub(super) fn cached_font_config() -> FontSettings {
 
     let fallbacks = sanitize_font_fallbacks(config.font_fallbacks.as_ref());
 
-    let font_changed = cache.as_ref().is_none_or(|prev| {
-        prev.family != family
-            || (prev.settings.size - size).abs() > f32::EPSILON
-            || (prev.settings.line_height - line_height).abs() > f32::EPSILON
-            || (prev.settings.cell_width - cell_width).abs() > f32::EPSILON
-            || prev.font_weight_key != font_weight_key
-            || prev.ligatures != ligatures
-    });
-    if font_changed {
-        let size_px = font_points_to_pixels(size);
-        log::info!(
-            "font: resolved family='{family}' size={size}pt ({:.2}px) line_height={line_height} cell_width={cell_width} font_weight={font_weight_key} ligatures={ligatures}",
-            size_px.as_f32()
-        );
-    }
-
-    let settings = FontSettings {
+    FontSettings {
         font: build_font(&family, font_weight, ligatures, fallbacks),
         size,
         line_height,
         cell_width,
-    };
-    *cache = Some(CachedFontConfig {
-        settings: settings.clone(),
-        family,
-        font_weight_key,
-        ligatures,
-        mtime,
-        last_check: Instant::now(),
-    });
-    settings
+    }
 }
 
 fn build_font(
@@ -662,6 +637,26 @@ fn cell_metrics_for(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn font_configuration_resolves_dimensions_and_fallback_changes() {
+        let mut config = paneflow_config::schema::PaneFlowConfig::default();
+        let initial = font_settings_from_config(&config);
+        config.font_size = Some(18.0);
+        config.line_height = Some(1.4);
+        config.cell_width = Some(1.2);
+        config.font_fallbacks = Some(vec!["Test Fallback".to_owned()]);
+        let changed = font_settings_from_config(&config);
+        assert_eq!(
+            (changed.size, changed.line_height, changed.cell_width),
+            (18.0, 1.4, 1.2)
+        );
+        assert!(initial.font != changed.font);
+        config.font_fallbacks = None;
+        assert!(changed.font != font_settings_from_config(&config).font);
+        config.font_size = Some(f32::NAN);
+        assert_eq!(font_settings_from_config(&config).size, DEFAULT_FONT_SIZE);
+    }
 
     #[test]
     fn round_snap_no_op_for_integer_advance() {

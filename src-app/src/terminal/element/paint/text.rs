@@ -13,7 +13,7 @@ pub fn paint_text_runs(
     window: &mut Window,
     cx: &mut App,
 ) {
-    for run in &layout.batched_runs {
+    for run in layout.batched_runs() {
         let origin = geom.cell_origin(run.line, run.col_start);
 
         #[cfg(debug_assertions)]
@@ -81,7 +81,7 @@ pub fn paint_symbols(
     window: &mut Window,
     cx: &mut App,
 ) {
-    for symbol in &layout.symbols {
+    for symbol in layout.symbols() {
         if symbol.line < 0
             || symbol.line as usize >= layout.desired_rows
             || symbol.col >= layout.desired_cols

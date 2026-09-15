@@ -154,7 +154,8 @@ KeyDownEvent
   → GPU (Vulkan on Linux, Metal on macOS, DirectX on Windows)
 ```
 
-The leading Ghostty wakeup renders immediately on every platform.
+The leading Ghostty wakeup notifies GPUI immediately. Presentation follows the
+platform frame scheduler.
 
 Two gates decide how much of that pipeline actually runs, and both exist
 because the natural rate of each stage is far above the rate a display can
@@ -173,7 +174,11 @@ whether or not more output is queued behind the change, because a program that
 prints a line every couple of milliseconds (which is what ConPTY delivers for
 most output) never builds a backlog yet would otherwise be snapshotted hundreds
 of times a second for frames no display shows. The first change after an idle
-gap always publishes at once, so a keystroke echo pays nothing. A DEC 2026 hold
+gap always publishes at once. Input arms a one-shot interactive publication
+for the next output arriving within 100 ms: it bypasses the ordinary rate
+limit, including while another output stream is active, but still respects
+DEC 2026. This is an input hint, not identification of the echoed character.
+A DEC 2026 hold
 expires after `SYNC_OUTPUT_MAX_HOLD` so a program that opens a frame and dies
 cannot freeze the pane. Resizes, scrolls, other state the user waits on, and
 the last frame before `ChildExited` bypass both, which is also what keeps a
@@ -182,23 +187,31 @@ The conversion behind a publish is incremental: the binding reports which rows
 changed since the previous snapshot (`Content::dirty_rows`), and `CellMirror`
 converts only those, alternating two cell buffers so the one the render thread
 reads is never the one being written. A keystroke echo converts one row; a
-full-viewport scroll converts every row in place without allocating.
+full-viewport scroll converts every row. The neutral snapshot carries stable
+`row_versions` so a renderer that skips publications can still identify every
+changed row. Cell buffers are reused when no reader retains them.
 With nothing pending, the runtime loop blocks for `RUNTIME_QUIET_TICK` once a
 pane has been silent for a second, and drops back to `RUNTIME_IDLE_TICK` while
 output flows, a drag is held, or a child is winding down.
 Because a wakeup is queued only when a frame is actually published, this also
 stops the UI thread being woken for frames it would discard.
 
-**The layout memo (`terminal/element/`), on the render thread.** GPUI marks a
-notifying view's whole ancestor path dirty, and re-rendering an ancestor sets
-`refreshing`, which defeats the per-view element cache for every descendant.
-In a workspace of parallel agents that means one pane's output pays for a full
-re-layout of every other pane. `TerminalElement::build_layout` therefore keys
-a memoized `LayoutState` on `Content::generation` plus the render inputs the
-snapshot cannot know about, so an untouched pane compares a key and clones an
-`Arc` instead of walking its grid again. The memo holds exactly one layout per
-pane, so it cannot grow without bound, but it does keep roughly 1.6 MB alive
-per open pane that would previously have been freed at the end of each frame.
+**The layout memo (`terminal/element/`), on the render thread.** Terminal
+views use GPUI's view cache. Within an active view, `build_layout` first checks
+its complete frame key, then uses a per-row cache when the content generation
+changed. Each retained row owns its prepared text runs, decorations, sprites
+and background regions. Unchanged row versions reuse that data without walking
+the row's cells. Background regions are still merged across rows for painting.
+Theme, font, geometry, selection, search highlights and viewport changes
+invalidate the relevant cache; cursor and other frame metadata are rebuilt
+independently. No cached layout retains the input cell buffer, preserving the
+worker's double-buffer reuse.
+
+Font settings are resolved from the configuration loaded during bootstrap and
+published on configuration reload or an in-app settings change. Rendering reads
+only that in-memory snapshot, with no configuration-file polling. The service
+output detector tracks line length and non-whitespace characters incrementally,
+so whitespace-heavy output does not repeatedly rescan the accumulated line.
 
 On Windows both budgets depend on the process holding a `timeBeginPeriod(1)`
 for the lifetime of the GUI (`app::win_timer`): without it every millisecond
@@ -211,8 +224,9 @@ divs: terminal rendering wants per-cell control over background quads, glyph
 runs, cursor shapes, underlines and hyperlink hitboxes. Everything else in the
 app (sidebar, tabs, settings, diff viewer) is regular GPUI flex layout.
 
-Debug builds can trace the whole pipeline: `PANEFLOW_LATENCY_PROBE=1` stamps a
-keystroke at ingress and reports time-to-pixel.
+The debug `PANEFLOW_LATENCY_PROBE=1` measures input-handler time and time to
+the end of CPU painting. It does not identify the echoed character or observe
+GPU presentation, and therefore does not measure input-to-visible-pixel latency.
 
 ## One terminal engine behind one boundary
 

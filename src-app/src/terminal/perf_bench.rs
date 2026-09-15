@@ -10,7 +10,10 @@ use crate::bench_harness::{
 };
 
 use super::bench_corpus::{CORPUS_SEED, deterministic_streams};
-use super::element::{CellDimensions, LayoutInputs, base_font, layout_from_snapshot};
+use super::element::{
+    CellDimensions, LayoutInputs, RowLayoutCache, base_font, layout_from_snapshot,
+    layout_from_snapshot_cached,
+};
 use super::ghostty_session::{
     CellMirror, RUNTIME_LOOP_ATTENTIVE_REASONS, RUNTIME_LOOP_GATE_WAITS, RUNTIME_LOOP_IDLE_WAITS,
     RUNTIME_LOOP_ITERATIONS, RUNTIME_LOOP_MESSAGES, RUNTIME_LOOP_QUIET_WAITS,
@@ -83,7 +86,17 @@ fn bench_font() -> Font {
 }
 
 fn layout(content: &Content, cols: usize, rows: usize, theme: &crate::theme::TerminalTheme) {
-    let state = layout_from_snapshot(LayoutInputs {
+    let state = layout_from_snapshot(layout_inputs(content, cols, rows, theme));
+    std::hint::black_box(state);
+}
+
+fn layout_inputs<'a>(
+    content: &Content,
+    cols: usize,
+    rows: usize,
+    theme: &'a crate::theme::TerminalTheme,
+) -> LayoutInputs<'a> {
+    LayoutInputs {
         cells: content.cells.clone(),
         cursor: None,
         selection_range: None,
@@ -106,8 +119,7 @@ fn layout(content: &Content, cols: usize, rows: usize, theme: &crate::theme::Ter
         integrated_glyphs_enabled: true,
         color_emoji_enabled: true,
         minimum_contrast: 0.0,
-    });
-    std::hint::black_box(state);
+    }
 }
 
 fn idle_wakeups_per_second(settle: Duration, window: Duration) -> f64 {
@@ -170,6 +182,66 @@ fn layout_scenario(metrics: &mut Vec<Metric>, content: &Content) {
         200,
         || layout(content, 220, 60, &theme),
     ));
+}
+
+fn incremental_layout_scenarios(metrics: &mut Vec<Metric>) {
+    let theme = crate::theme::paneflow_dark();
+    for (name, cached, scrolling) in [
+        ("layout_echo_uncached_220x60", false, false),
+        ("layout_echo_cached_220x60", true, false),
+        ("layout_scroll_uncached_220x60", false, true),
+        ("layout_scroll_cached_220x60", true, true),
+    ] {
+        let mut terminal = terminal(220, 60);
+        fill(&mut terminal, 60);
+        let mut publisher = Publisher::default();
+        let mut cache = RowLayoutCache::default();
+        let mut index = 0;
+        metrics.push(measure(name, "native feed plus snapshot, neutral conversion and layout; paired cached and uncached paths share the workload", 20, 300, || {
+            index += 1;
+            let chunk = if scrolling { scroll_chunk(index) } else { echo_chunk(index, 60) };
+            terminal.feed(&chunk).expect("benchmark output parses");
+            let content = publisher.publish(&mut terminal);
+            let inputs = layout_inputs(content, 220, 60, &theme);
+            let state = if cached {
+                layout_from_snapshot_cached(inputs, &content.row_versions, 0, &mut cache)
+            } else {
+                layout_from_snapshot(inputs)
+            };
+            std::hint::black_box(state);
+        }));
+    }
+}
+
+fn service_tail_scenarios(metrics: &mut Vec<Metric>) {
+    for (name, bytes) in [
+        (
+            "service_spaces_220x60",
+            (" ".repeat(220) + "\r\n").repeat(60).into_bytes(),
+        ),
+        (
+            "service_spaces_8192",
+            (" ".repeat(8192) + "\r\n").into_bytes(),
+        ),
+        (
+            "service_text_220x60",
+            "\x1b[32m INFO  http://localhost:5173/ src/main.rs:42 operation complete\x1b[0m\r\n"
+                .repeat(60)
+                .into_bytes(),
+        ),
+    ] {
+        metrics.push(measure(
+            name,
+            "service-output parser plus extraction, including whitespace-heavy terminal redraws",
+            10,
+            100,
+            || {
+                let mut tail = super::service_detector::ServiceOutputTail::default();
+                tail.advance(std::hint::black_box(&bytes));
+                std::hint::black_box(tail.recent_lines());
+            },
+        ));
+    }
 }
 
 fn line_text_scenario(metrics: &mut Vec<Metric>) {
@@ -312,6 +384,7 @@ fn pipeline_scenario(metrics: &mut Vec<Metric>) {
         direction: Direction::HigherIsBetter,
         value: throughput,
         p95: None,
+            p99: None,
         mean: Some(wall.as_nanos() as f64 / publishes as f64),
         alloc_bytes_per_iter: Some((bytes_after - bytes_before) as f64 / publishes as f64),
         allocs_per_iter: Some((calls_after - calls_before) as f64 / publishes as f64),
@@ -331,6 +404,8 @@ fn terminal_pipeline_benchmark() {
     let cpu_before = process_cpu_time();
     let sample = publish_scenarios(&mut metrics);
     layout_scenario(&mut metrics, &sample);
+    incremental_layout_scenarios(&mut metrics);
+    service_tail_scenarios(&mut metrics);
     line_text_scenario(&mut metrics);
     render_thread_lookups(&mut metrics);
     gate_scenario(&mut metrics);

@@ -31,7 +31,8 @@ pub use font::{
     resolve_frame_metrics, sanitize_font_override,
 };
 pub(crate) use font::{
-    DEFAULT_CELL_WIDTH, DEFAULT_FONT_SIZE, DEFAULT_LINE_HEIGHT, normalize_font_weight_key,
+    DEFAULT_CELL_WIDTH, DEFAULT_FONT_SIZE, DEFAULT_LINE_HEIGHT, apply_font_config,
+    normalize_font_weight_key,
 };
 use geometry::CellGeometry;
 pub use hyperlink::{
@@ -250,6 +251,7 @@ pub(super) struct SymbolGlyph {
     font: Font,
 }
 
+#[derive(Clone, Copy)]
 struct LayoutRect {
     line: i32,
     num_lines: usize,
@@ -449,13 +451,40 @@ pub(crate) struct LayoutInputs<'a> {
     pub minimum_contrast: f32,
 }
 
-pub struct LayoutState {
+struct RowLayout {
     batched_runs: Vec<BatchedTextRun>,
     decorations: Vec<Decoration>,
     symbols: Vec<SymbolGlyph>,
     rects: Vec<LayoutRect>,
     block_quads: Vec<BlockQuad>,
     sprites: Vec<SpriteGlyph>,
+}
+
+#[derive(Clone, PartialEq)]
+struct RowLayoutKey {
+    theme_generation: u64,
+    dimensions: CellDimensions,
+    base_font: Font,
+    selection_range: Option<SelectionRange>,
+    search_highlights: Vec<SearchHighlight>,
+    display_offset: usize,
+    desired_cols: usize,
+    desired_rows: usize,
+    first_visible_row: i32,
+    last_visible_row: i32,
+    integrated_glyphs_enabled: bool,
+    minimum_contrast: f32,
+}
+
+#[derive(Default)]
+pub(crate) struct RowLayoutCache {
+    key: Option<RowLayoutKey>,
+    rows: Vec<Option<(u64, Arc<RowLayout>)>>,
+}
+
+pub struct LayoutState {
+    rows: Vec<Arc<RowLayout>>,
+    rects: Vec<LayoutRect>,
     selection_rects: Vec<LayoutRect>,
     search_rects: Vec<LayoutRect>,
     cursor: Option<CursorInfo>,
@@ -474,6 +503,28 @@ pub struct LayoutState {
     link_text_color: Hsla,
     ime_cursor_bounds: Option<Bounds<Pixels>>,
     color_emoji_enabled: bool,
+}
+
+impl LayoutState {
+    fn batched_runs(&self) -> impl Iterator<Item = &BatchedTextRun> {
+        self.rows.iter().flat_map(|row| row.batched_runs.iter())
+    }
+
+    fn decorations(&self) -> impl Iterator<Item = &Decoration> {
+        self.rows.iter().flat_map(|row| row.decorations.iter())
+    }
+
+    fn symbols(&self) -> impl Iterator<Item = &SymbolGlyph> {
+        self.rows.iter().flat_map(|row| row.symbols.iter())
+    }
+
+    fn block_quads(&self) -> impl Iterator<Item = &BlockQuad> {
+        self.rows.iter().flat_map(|row| row.block_quads.iter())
+    }
+
+    fn sprites(&self) -> impl Iterator<Item = &SpriteGlyph> {
+        self.rows.iter().flat_map(|row| row.sprites.iter())
+    }
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -507,7 +558,13 @@ pub(crate) struct LayoutCacheKey {
     minimum_contrast: f32,
 }
 
-pub(crate) type SharedLayoutCache = Arc<Mutex<Option<(LayoutCacheKey, Arc<LayoutState>)>>>;
+#[derive(Default)]
+pub(crate) struct TerminalRenderCache {
+    layout: Option<(LayoutCacheKey, Arc<LayoutState>)>,
+    rows: RowLayoutCache,
+}
+
+pub(crate) type SharedLayoutCache = Arc<Mutex<TerminalRenderCache>>;
 
 pub struct TerminalElement {
     backend: TerminalSessionBackend,
@@ -710,7 +767,7 @@ impl TerminalElement {
                 .layout_cache
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
-            if let Some((cached_key, cached_layout)) = cache.as_ref()
+            if let Some((cached_key, cached_layout)) = cache.layout.as_ref()
                 && *cached_key == key
             {
                 return cached_layout.clone();
@@ -719,36 +776,72 @@ impl TerminalElement {
 
         let cells = content.cells;
 
-        let layout = Arc::new(layout_from_snapshot(LayoutInputs {
-            cells,
-            cursor: cursor_snapshot,
-            selection_range,
-            copy_mode_cursor,
-            search_highlights: &self.search_highlights,
-            display_offset,
-            history_size,
-            desired_cols: render_cols,
-            desired_rows: render_rows,
-            first_visible_row,
-            last_visible_row,
-            dims,
-            base_font: self.frame_metrics.base_font.clone(),
-            theme: &theme,
-            exited: self.exited,
-            exit_signal: self.exit_signal.clone(),
-            integrated_glyphs_enabled: self.integrated_glyphs_enabled,
-            color_emoji_enabled: self.color_emoji_enabled,
-            minimum_contrast: self.minimum_contrast,
-        }));
-        *self
+        let mut cache = self
             .layout_cache
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some((key, layout.clone()));
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        cache.layout = None;
+        let layout = Arc::new(layout_from_snapshot_cached(
+            LayoutInputs {
+                cells,
+                cursor: cursor_snapshot,
+                selection_range,
+                copy_mode_cursor,
+                search_highlights: &self.search_highlights,
+                display_offset,
+                history_size,
+                desired_cols: render_cols,
+                desired_rows: render_rows,
+                first_visible_row,
+                last_visible_row,
+                dims,
+                base_font: self.frame_metrics.base_font.clone(),
+                theme: &theme,
+                exited: self.exited,
+                exit_signal: self.exit_signal.clone(),
+                integrated_glyphs_enabled: self.integrated_glyphs_enabled,
+                color_emoji_enabled: self.color_emoji_enabled,
+                minimum_contrast: self.minimum_contrast,
+            },
+            &content.row_versions,
+            key.theme_generation,
+            &mut cache.rows,
+        ));
+        cache.layout = Some((key, layout.clone()));
         layout
     }
 }
 
+#[cfg(test)]
 pub(crate) fn layout_from_snapshot(inputs: LayoutInputs<'_>) -> LayoutState {
+    layout_from_snapshot_cached(inputs, &[], 0, &mut RowLayoutCache::default())
+}
+
+pub(crate) fn layout_from_snapshot_cached(
+    inputs: LayoutInputs<'_>,
+    row_versions: &[u64],
+    theme_generation: u64,
+    cache: &mut RowLayoutCache,
+) -> LayoutState {
+    let key = RowLayoutKey {
+        theme_generation,
+        dimensions: inputs.dims,
+        base_font: inputs.base_font.clone(),
+        selection_range: inputs.selection_range,
+        search_highlights: inputs.search_highlights.to_vec(),
+        display_offset: inputs.display_offset,
+        desired_cols: inputs.desired_cols,
+        desired_rows: inputs.desired_rows,
+        first_visible_row: inputs.first_visible_row,
+        last_visible_row: inputs.last_visible_row,
+        integrated_glyphs_enabled: inputs.integrated_glyphs_enabled,
+        minimum_contrast: inputs.minimum_contrast,
+    };
+    if cache.key.as_ref() != Some(&key) {
+        cache.rows.clear();
+        cache.rows.resize_with(inputs.desired_rows, || None);
+        cache.key = Some(key);
+    }
     let LayoutInputs {
         cells,
         cursor: cursor_snapshot,
@@ -814,205 +907,296 @@ pub(crate) fn layout_from_snapshot(inputs: LayoutInputs<'_>) -> LayoutState {
         (cursor_snapshot, None)
     };
 
-    let mut batch = BatchAccumulator::new(base_font.clone());
-    let mut rects: Vec<LayoutRect> = Vec::new();
-    let mut block_quads: Vec<BlockQuad> = Vec::new();
-    let mut sprites: Vec<SpriteGlyph> = Vec::new();
-    let mut symbols: Vec<SymbolGlyph> = Vec::new();
-    let mut current_rect: Option<LayoutRect> = None;
-    let mut last_line: i32 = i32::MIN;
-    let mut previous_cell_had_extras = false;
-    let mut last_symbol: Option<(i32, usize)> = None;
+    let search_match_color = Hsla {
+        h: 0.11,
+        s: 0.9,
+        l: 0.55,
+        a: 0.45,
+    };
+    let search_active_color = Hsla {
+        h: 0.08,
+        s: 1.0,
+        l: 0.6,
+        a: 0.7,
+    };
 
-    for (index, cell) in cells.iter().enumerate() {
-        let Cell {
-            point,
-            c,
-            fg: cell_fg,
-            bg: cell_bg,
-            flags,
-            zerowidth: zw,
-            hyperlink,
-        } = cell;
-        let point = *point;
-        let flags = *flags;
+    let mut search_rects = Vec::new();
+    for highlight in search_highlights {
+        let start_line = highlight.start.line.0.saturating_add(display_offset as i32);
+        let end_line = highlight.end.line.0.saturating_add(display_offset as i32);
+        for display_line in start_line.max(0)..=end_line.min(desired_rows as i32 - 1) {
+            let color = if highlight.is_active {
+                search_active_color
+            } else {
+                search_match_color
+            };
 
-        if point.line.0 < first_visible_row || point.line.0 >= last_visible_row {
-            continue;
+            let col_start = if display_line == start_line {
+                highlight.start.column.0
+            } else {
+                0
+            };
+            let col_end = if display_line == end_line {
+                highlight.end.column.0
+            } else {
+                desired_cols.saturating_sub(1)
+            };
+            search_rects.push(LayoutRect {
+                line: display_line,
+                num_lines: 1,
+                col: col_start,
+                num_cols: col_end.saturating_sub(col_start) + 1,
+                color,
+            });
         }
+    }
 
-        if flags.contains(CellFlags::WIDE_CHAR_SPACER) {
-            continue;
-        }
+    let build_row = |cells: &[Cell]| {
+        let mut batch = BatchAccumulator::new(base_font.clone());
+        let mut rects: Vec<LayoutRect> = Vec::new();
+        let mut block_quads: Vec<BlockQuad> = Vec::new();
+        let mut sprites: Vec<SpriteGlyph> = Vec::new();
+        let mut symbols: Vec<SymbolGlyph> = Vec::new();
+        let mut current_rect: Option<LayoutRect> = None;
+        let mut last_line: i32 = i32::MIN;
+        let mut previous_cell_had_extras = false;
+        let mut last_symbol: Option<(i32, usize)> = None;
 
-        if point.line.0 != last_line {
-            batch.flush();
-            if let Some(rect) = current_rect.take() {
-                rects.push(rect);
+        for (index, cell) in cells.iter().enumerate() {
+            let Cell {
+                point,
+                c,
+                fg: cell_fg,
+                bg: cell_bg,
+                flags,
+                zerowidth: zw,
+                hyperlink,
+            } = cell;
+            let point = *point;
+            let flags = *flags;
+
+            if point.line.0 < first_visible_row || point.line.0 >= last_visible_row {
+                continue;
             }
-            last_line = point.line.0;
-        }
 
-        let (raw_fg, raw_bg) = if flags.contains(CellFlags::INVERSE) {
-            (*cell_bg, *cell_fg)
-        } else {
-            (*cell_fg, *cell_bg)
-        };
-        let mut fg = convert_color(raw_fg, theme);
-        let bg = terminal_panel_background(raw_bg, convert_color(raw_bg, theme), theme);
-
-        if flags.contains(CellFlags::DIM) {
-            fg.a *= 0.5;
-        }
-
-        let skip_contrast = matches!(raw_fg, Color::Spec(_) | Color::Indexed(16..=255));
-        if minimum_contrast > 0.0 && !is_decorative_character(*c) && !skip_contrast {
-            fg = ensure_minimum_contrast(fg, bg, minimum_contrast);
-        }
-
-        if let Some(sel) = &selection_range
-            && !is_decorative_character(*c)
-            && is_cell_in_selection(point, sel, display_offset)
-        {
-            fg = theme.selection_foreground;
-        }
-
-        let cell_cols = if flags.contains(CellFlags::WIDE_CHAR) {
-            2
-        } else {
-            1
-        };
-        let cell_bg_color = resolved_cell_background(*cell_fg, *cell_bg, flags, theme);
-        match &mut current_rect {
-            Some(rect)
-                if rect.line == point.line.0
-                    && rect.color == cell_bg_color
-                    && rect.col + rect.num_cols == point.column.0 =>
-            {
-                rect.num_cols += cell_cols;
+            if flags.contains(CellFlags::WIDE_CHAR_SPACER) {
+                continue;
             }
-            _ => {
+
+            if point.line.0 != last_line {
+                batch.flush();
                 if let Some(rect) = current_rect.take() {
                     rects.push(rect);
                 }
-                current_rect = Some(LayoutRect {
-                    line: point.line.0,
-                    num_lines: 1,
-                    col: point.column.0,
-                    num_cols: cell_cols,
-                    color: cell_bg_color,
-                });
+                last_line = point.line.0;
             }
-        }
 
-        let c = *c;
-        if c == ' ' && previous_cell_had_extras {
-            previous_cell_had_extras = false;
-            continue;
-        }
+            let (raw_fg, raw_bg) = if flags.contains(CellFlags::INVERSE) {
+                (*cell_bg, *cell_fg)
+            } else {
+                (*cell_fg, *cell_bg)
+            };
+            let mut fg = convert_color(raw_fg, theme);
+            let bg = terminal_panel_background(raw_bg, convert_color(raw_bg, theme), theme);
 
-        let has_extras = matches!(zw, Some(chars) if !chars.is_empty());
-
-        if c == ' ' || c == '\0' {
-            previous_cell_had_extras = has_extras;
-            batch.flush();
-            continue;
-        }
-
-        if integrated_glyphs_enabled && let Some(sprite) = sprite_for(c) {
-            batch.flush();
-            sprites.push(SpriteGlyph {
-                line: point.line.0,
-                col: point.column.0,
-                num_cols: cell_cols,
-                color: fg,
-                sprite,
-            });
-            previous_cell_had_extras = false;
-            continue;
-        }
-
-        if integrated_glyphs_enabled && let Some(coverages) = block_char_coverages(c) {
-            batch.flush();
-            for &coverage in coverages {
-                block_quads.push(BlockQuad {
-                    line: point.line.0,
-                    col: point.column.0,
-                    num_cols: cell_cols,
-                    color: fg,
-                    coverage,
-                });
+            if flags.contains(CellFlags::DIM) {
+                fg.a *= 0.5;
             }
-            previous_cell_had_extras = false;
-            continue;
-        }
 
-        if integrated_glyphs_enabled && is_private_use(c) {
-            batch.flush();
-            let next_is_empty = cells.get(index + 1).is_some_and(|next| {
-                next.point.line.0 == point.line.0
-                    && next.point.column.0 == point.column.0 + cell_cols
-                    && (next.c == ' ' || next.c == '\0')
-            });
-            let after_symbol = last_symbol
-                .is_some_and(|(line, col)| line == point.line.0 && col + 1 == point.column.0);
-            let at_line_end = point.column.0 + cell_cols >= desired_cols;
-            let span = if cell_cols == 2 || (next_is_empty && !after_symbol && !at_line_end) {
+            let skip_contrast = matches!(raw_fg, Color::Spec(_) | Color::Indexed(16..=255));
+            if minimum_contrast > 0.0 && !is_decorative_character(*c) && !skip_contrast {
+                fg = ensure_minimum_contrast(fg, bg, minimum_contrast);
+            }
+
+            if let Some(sel) = &selection_range
+                && !is_decorative_character(*c)
+                && is_cell_in_selection(point, sel, display_offset)
+            {
+                fg = theme.selection_foreground;
+            }
+
+            let cell_cols = if flags.contains(CellFlags::WIDE_CHAR) {
                 2
             } else {
                 1
             };
-            symbols.push(SymbolGlyph {
-                line: point.line.0,
-                col: point.column.0,
-                span,
-                color: fg,
-                ch: c,
-                font: base_font.clone(),
-            });
-            last_symbol = Some((point.line.0, point.column.0));
-            previous_cell_had_extras = false;
-            continue;
+            let cell_bg_color = resolved_cell_background(*cell_fg, *cell_bg, flags, theme);
+            match &mut current_rect {
+                Some(rect)
+                    if rect.line == point.line.0
+                        && rect.color == cell_bg_color
+                        && rect.col + rect.num_cols == point.column.0 =>
+                {
+                    rect.num_cols += cell_cols;
+                }
+                _ => {
+                    if let Some(rect) = current_rect.take() {
+                        rects.push(rect);
+                    }
+                    current_rect = Some(LayoutRect {
+                        line: point.line.0,
+                        num_lines: 1,
+                        col: point.column.0,
+                        num_cols: cell_cols,
+                        color: cell_bg_color,
+                    });
+                }
+            }
+
+            let c = *c;
+            if c == ' ' && previous_cell_had_extras {
+                previous_cell_had_extras = false;
+                continue;
+            }
+
+            let has_extras = matches!(zw, Some(chars) if !chars.is_empty());
+
+            if c == ' ' || c == '\0' {
+                previous_cell_had_extras = has_extras;
+                batch.flush();
+                continue;
+            }
+
+            if integrated_glyphs_enabled && let Some(sprite) = sprite_for(c) {
+                batch.flush();
+                sprites.push(SpriteGlyph {
+                    line: point.line.0,
+                    col: point.column.0,
+                    num_cols: cell_cols,
+                    color: fg,
+                    sprite,
+                });
+                previous_cell_had_extras = false;
+                continue;
+            }
+
+            if integrated_glyphs_enabled && let Some(coverages) = block_char_coverages(c) {
+                batch.flush();
+                for &coverage in coverages {
+                    block_quads.push(BlockQuad {
+                        line: point.line.0,
+                        col: point.column.0,
+                        num_cols: cell_cols,
+                        color: fg,
+                        coverage,
+                    });
+                }
+                previous_cell_had_extras = false;
+                continue;
+            }
+
+            if integrated_glyphs_enabled && is_private_use(c) {
+                batch.flush();
+                let next_is_empty = cells.get(index + 1).is_some_and(|next| {
+                    next.point.line.0 == point.line.0
+                        && next.point.column.0 == point.column.0 + cell_cols
+                        && (next.c == ' ' || next.c == '\0')
+                });
+                let after_symbol = last_symbol
+                    .is_some_and(|(line, col)| line == point.line.0 && col + 1 == point.column.0);
+                let at_line_end = point.column.0 + cell_cols >= desired_cols;
+                let span = if cell_cols == 2 || (next_is_empty && !after_symbol && !at_line_end) {
+                    2
+                } else {
+                    1
+                };
+                symbols.push(SymbolGlyph {
+                    line: point.line.0,
+                    col: point.column.0,
+                    span,
+                    color: fg,
+                    ch: c,
+                    font: base_font.clone(),
+                });
+                last_symbol = Some((point.line.0, point.column.0));
+                previous_cell_had_extras = false;
+                continue;
+            }
+
+            let underline = if flags.contains(CellFlags::UNDERCURL) {
+                UnderlineKind::Curly
+            } else if flags.contains(CellFlags::DOUBLE_UNDERLINE) {
+                UnderlineKind::Double
+            } else if flags.contains(CellFlags::DOTTED_UNDERLINE) {
+                UnderlineKind::Dotted
+            } else if flags.contains(CellFlags::DASHED_UNDERLINE) {
+                UnderlineKind::Dashed
+            } else if flags.contains(CellFlags::UNDERLINE) || *hyperlink {
+                UnderlineKind::Single
+            } else {
+                UnderlineKind::None
+            };
+            let style = CellStyle {
+                bold: flags.contains(CellFlags::BOLD) || flags.contains(CellFlags::BOLD_ITALIC),
+                italic: flags.contains(CellFlags::ITALIC) || flags.contains(CellFlags::BOLD_ITALIC),
+                fg,
+                bg,
+                underline,
+                strikethrough: flags.contains(CellFlags::STRIKEOUT),
+            };
+
+            if batch.can_append(style, point.line.0, point.column.0) {
+                batch.append(c, cell_cols);
+            } else {
+                batch.flush();
+                batch.start(c, cell_cols, style, point.line.0, point.column.0);
+            }
+
+            if let Some(chars) = zw {
+                batch.append_zerowidth(chars);
+            }
+            previous_cell_had_extras = has_extras;
         }
 
-        let underline = if flags.contains(CellFlags::UNDERCURL) {
-            UnderlineKind::Curly
-        } else if flags.contains(CellFlags::DOUBLE_UNDERLINE) {
-            UnderlineKind::Double
-        } else if flags.contains(CellFlags::DOTTED_UNDERLINE) {
-            UnderlineKind::Dotted
-        } else if flags.contains(CellFlags::DASHED_UNDERLINE) {
-            UnderlineKind::Dashed
-        } else if flags.contains(CellFlags::UNDERLINE) || *hyperlink {
-            UnderlineKind::Single
-        } else {
-            UnderlineKind::None
-        };
-        let style = CellStyle {
-            bold: flags.contains(CellFlags::BOLD) || flags.contains(CellFlags::BOLD_ITALIC),
-            italic: flags.contains(CellFlags::ITALIC) || flags.contains(CellFlags::BOLD_ITALIC),
-            fg,
-            bg,
-            underline,
-            strikethrough: flags.contains(CellFlags::STRIKEOUT),
-        };
-
-        if batch.can_append(style, point.line.0, point.column.0) {
-            batch.append(c, cell_cols);
-        } else {
-            batch.flush();
-            batch.start(c, cell_cols, style, point.line.0, point.column.0);
+        batch.flush();
+        if let Some(rect) = current_rect {
+            rects.push(rect);
         }
-
-        if let Some(chars) = zw {
-            batch.append_zerowidth(chars);
+        RowLayout {
+            batched_runs: batch.runs,
+            decorations: batch.decorations,
+            symbols,
+            rects,
+            block_quads,
+            sprites,
         }
-        previous_cell_had_extras = has_extras;
+    };
+    let visible_start = first_visible_row.max(0).min(desired_rows as i32) as usize;
+    let visible_end = last_visible_row.max(0).min(desired_rows as i32) as usize;
+    let mut rows = Vec::with_capacity(visible_end.saturating_sub(visible_start));
+    let mut rects = Vec::new();
+    let versions_valid = row_versions.len() == desired_rows;
+    for (row, cached_row) in cache.rows.iter_mut().enumerate() {
+        if !versions_valid
+            || cached_row
+                .as_ref()
+                .is_some_and(|(version, _)| *version != row_versions[row])
+        {
+            *cached_row = None;
+        }
     }
-
-    batch.flush();
-    if let Some(rect) = current_rect {
-        rects.push(rect);
+    for (row, cached_row) in cache
+        .rows
+        .iter_mut()
+        .enumerate()
+        .take(visible_end)
+        .skip(visible_start)
+    {
+        let version = versions_valid.then(|| row_versions[row]);
+        let reused = cached_row
+            .as_ref()
+            .filter(|(cached_version, _)| version == Some(*cached_version));
+        let layout = if let Some((_, layout)) = reused {
+            Arc::clone(layout)
+        } else {
+            let start = cells.partition_point(|cell| cell.point.line.0 < row as i32);
+            let end = cells.partition_point(|cell| cell.point.line.0 <= row as i32);
+            let layout = Arc::new(build_row(&cells[start..end]));
+            *cached_row = version.map(|version| (version, Arc::clone(&layout)));
+            layout
+        };
+        rects.extend_from_slice(&layout.rects);
+        rows.push(layout);
     }
     let rects = merge_background_regions(rects);
 
@@ -1089,50 +1273,6 @@ pub(crate) fn layout_from_snapshot(inputs: LayoutInputs<'_>) -> LayoutState {
         }
     }
 
-    let search_match_color = Hsla {
-        h: 0.11,
-        s: 0.9,
-        l: 0.55,
-        a: 0.45,
-    };
-    let search_active_color = Hsla {
-        h: 0.08,
-        s: 1.0,
-        l: 0.6,
-        a: 0.7,
-    };
-
-    let mut search_rects = Vec::new();
-    for highlight in search_highlights {
-        let start_line = highlight.start.line.0.saturating_add(display_offset as i32);
-        let end_line = highlight.end.line.0.saturating_add(display_offset as i32);
-        for display_line in start_line.max(0)..=end_line.min(desired_rows as i32 - 1) {
-            let color = if highlight.is_active {
-                search_active_color
-            } else {
-                search_match_color
-            };
-
-            let col_start = if display_line == start_line {
-                highlight.start.column.0
-            } else {
-                0
-            };
-            let col_end = if display_line == end_line {
-                highlight.end.column.0
-            } else {
-                desired_cols.saturating_sub(1)
-            };
-            search_rects.push(LayoutRect {
-                line: display_line,
-                num_lines: 1,
-                col: col_start,
-                num_cols: col_end.saturating_sub(col_start) + 1,
-                color,
-            });
-        }
-    }
-
     let ime_cursor_bounds = cursor_snapshot.as_ref().map(|c| {
         let x = dims.cell_width * c.col as f32;
         let y = dims.line_height * c.line as f32;
@@ -1146,12 +1286,8 @@ pub(crate) fn layout_from_snapshot(inputs: LayoutInputs<'_>) -> LayoutState {
     });
 
     LayoutState {
-        batched_runs: batch.runs,
-        decorations: batch.decorations,
-        symbols,
+        rows,
         rects,
-        block_quads,
-        sprites,
         selection_rects,
         search_rects,
         cursor: cursor_snapshot,
@@ -1511,11 +1647,11 @@ impl Element for TerminalElement {
             if let Some(keystroke_at) = self.last_keystroke_at {
                 let total_elapsed = keystroke_at.elapsed();
                 let total_ms = total_elapsed.as_secs_f64() * 1000.0;
-                let pty_to_paint_ms = total_ms - paint_ms;
+                let handler_to_paint_ms = total_ms - paint_ms;
                 if total_ms > 8.0 {
                     log::warn!(
-                        "[latency] keystroke→pixel: {total_ms:.2}ms \
-                         (pty_write→paint_start: {pty_to_paint_ms:.2}ms, \
+                        "[latency] key-handler→paint-cpu: {total_ms:.2}ms \
+                         (key-handler→paint-start: {handler_to_paint_ms:.2}ms, \
                          paint: {paint_ms:.2}ms)"
                     );
                 }
@@ -1787,8 +1923,8 @@ impl LayoutState {
             hsla_repr(self.scrollbar_track),
             hsla_repr(self.link_text_color),
         );
-        let _ = writeln!(s, "runs[{}]:", self.batched_runs.len());
-        for r in &self.batched_runs {
+        let _ = writeln!(s, "runs[{}]:", self.batched_runs().count());
+        for r in self.batched_runs() {
             let bold = r.font.weight == FontWeight::BOLD;
             let italic = r.font.style == FontStyle::Italic;
             let style = match (bold, italic) {
@@ -1807,8 +1943,8 @@ impl LayoutState {
                 style,
             );
         }
-        let _ = writeln!(s, "decorations[{}]:", self.decorations.len());
-        for d in &self.decorations {
+        let _ = writeln!(s, "decorations[{}]:", self.decorations().count());
+        for d in self.decorations() {
             let _ = writeln!(
                 s,
                 "  L{} C{}+{}c {:?} {}",
@@ -1819,8 +1955,8 @@ impl LayoutState {
                 hsla_repr(d.color),
             );
         }
-        let _ = writeln!(s, "symbols[{}]:", self.symbols.len());
-        for g in &self.symbols {
+        let _ = writeln!(s, "symbols[{}]:", self.symbols().count());
+        for g in self.symbols() {
             let _ = writeln!(
                 s,
                 "  L{} C{} span={} U+{:04X} {}",
@@ -1831,8 +1967,8 @@ impl LayoutState {
                 hsla_repr(g.color),
             );
         }
-        let _ = writeln!(s, "sprites[{}]:", self.sprites.len());
-        for g in &self.sprites {
+        let _ = writeln!(s, "sprites[{}]:", self.sprites().count());
+        for g in self.sprites() {
             let _ = writeln!(
                 s,
                 "  L{} C{}+{}c {:?} {}",
@@ -1859,8 +1995,8 @@ impl LayoutState {
             }
         };
         rect_line(&mut s, "rects", &self.rects);
-        let _ = writeln!(s, "blocks[{}]:", self.block_quads.len());
-        for q in &self.block_quads {
+        let _ = writeln!(s, "blocks[{}]:", self.block_quads().count());
+        for q in self.block_quads() {
             let _ = writeln!(
                 s,
                 "  L{} C{}+{}c cov=({:.3},{:.3},{:.3},{:.3}) {}",
@@ -2041,6 +2177,175 @@ mod golden_frame_tests {
             color_emoji_enabled: true,
             minimum_contrast: MIN_APCA_CONTRAST,
         })
+    }
+
+    fn cached_inputs<'a>(
+        cells: Arc<[Cell]>,
+        theme: &'a crate::theme::TerminalTheme,
+    ) -> LayoutInputs<'a> {
+        LayoutInputs {
+            cells,
+            cursor: None,
+            selection_range: None,
+            copy_mode_cursor: None,
+            search_highlights: &[],
+            display_offset: 0,
+            history_size: 0,
+            desired_cols: COLS,
+            desired_rows: ROWS,
+            first_visible_row: 0,
+            last_visible_row: ROWS as i32,
+            dims: test_dims(),
+            base_font: test_font(),
+            theme,
+            exited: None,
+            exit_signal: None,
+            integrated_glyphs_enabled: true,
+            color_emoji_enabled: true,
+            minimum_contrast: MIN_APCA_CONTRAST,
+        }
+    }
+
+    fn cached_test_cells() -> Arc<[Cell]> {
+        [
+            text_row(0, "first", default_fg(), CellFlags::empty()),
+            text_row(1, "second", default_fg(), CellFlags::UNDERLINE),
+            text_row(2, "third", default_fg(), CellFlags::empty()),
+        ]
+        .into_iter()
+        .flatten()
+        .collect()
+    }
+
+    #[test]
+    fn row_cache_rebuilds_only_changed_rows_across_skipped_publications() {
+        let theme = crate::theme::paneflow_dark();
+        let cells = cached_test_cells();
+        let mut cache = RowLayoutCache::default();
+        let first = layout_from_snapshot_cached(
+            cached_inputs(cells.clone(), &theme),
+            &[1; ROWS],
+            1,
+            &mut cache,
+        );
+        let mut changed = cells.to_vec();
+        changed
+            .iter_mut()
+            .find(|cell| cell.point.line.0 == 1)
+            .unwrap()
+            .c = 'X';
+        let changed: Arc<[Cell]> = changed.into();
+        let mut versions = [1; ROWS];
+        versions[1] = 9;
+        let second = layout_from_snapshot_cached(
+            cached_inputs(changed.clone(), &theme),
+            &versions,
+            1,
+            &mut cache,
+        );
+        for row in 0..ROWS {
+            assert_eq!(Arc::ptr_eq(&first.rows[row], &second.rows[row]), row != 1);
+        }
+        let full = layout_from_snapshot(cached_inputs(changed.clone(), &theme));
+        assert_eq!(second.golden_repr(), full.golden_repr());
+        assert_eq!(Arc::strong_count(&cells), 1);
+        assert_eq!(Arc::strong_count(&changed), 1);
+    }
+
+    #[test]
+    fn row_cache_updates_cursor_and_metadata_without_rebuilding_cells() {
+        let theme = crate::theme::paneflow_dark();
+        let cells = cached_test_cells();
+        let mut cache = RowLayoutCache::default();
+        let first = layout_from_snapshot_cached(
+            cached_inputs(cells.clone(), &theme),
+            &[1; ROWS],
+            1,
+            &mut cache,
+        );
+        let mut inputs = cached_inputs(cells, &theme);
+        inputs.cursor = Some(cursor_at(3, CursorShape::Beam, None));
+        inputs.history_size = 100;
+        inputs.exited = Some(0);
+        let second = layout_from_snapshot_cached(inputs, &[1; ROWS], 1, &mut cache);
+        assert!(
+            first
+                .rows
+                .iter()
+                .zip(&second.rows)
+                .all(|(first, second)| Arc::ptr_eq(first, second))
+        );
+        assert_eq!(second.cursor.as_ref().unwrap().col, 3);
+        assert_eq!(second.history_size, 100);
+        assert_eq!(second.exited, Some(0));
+        assert!(second.ime_cursor_bounds.is_some());
+    }
+
+    #[test]
+    fn row_cache_invalidates_selection_search_geometry_theme_and_scroll() {
+        let theme = crate::theme::paneflow_dark();
+        let cells = cached_test_cells();
+        let highlight = [SearchHighlight {
+            start: GridPoint::new(0, 0),
+            end: GridPoint::new(0, 2),
+            is_active: true,
+        }];
+        for scenario in 0..7 {
+            let mut cache = RowLayoutCache::default();
+            let first = layout_from_snapshot_cached(
+                cached_inputs(cells.clone(), &theme),
+                &[1; ROWS],
+                1,
+                &mut cache,
+            );
+            let mut inputs = cached_inputs(cells.clone(), &theme);
+            let mut generation = 1;
+            match scenario {
+                0 => {
+                    inputs.selection_range = Some(SelectionRange {
+                        start: GridPoint::new(0, 0),
+                        end: GridPoint::new(0, 2),
+                        is_block: false,
+                    })
+                }
+                1 => inputs.search_highlights = &highlight,
+                2 => inputs.dims.cell_width += px(1.0),
+                3 => generation = 2,
+                4 => inputs.display_offset = 1,
+                5 => inputs.desired_cols += 1,
+                _ => inputs.minimum_contrast = 0.0,
+            }
+            let second = layout_from_snapshot_cached(inputs, &[1; ROWS], generation, &mut cache);
+            assert!(
+                first
+                    .rows
+                    .iter()
+                    .zip(&second.rows)
+                    .all(|(first, second)| !Arc::ptr_eq(first, second)),
+                "scenario {scenario}"
+            );
+        }
+    }
+
+    #[test]
+    fn row_cache_without_complete_versions_rebuilds_every_row() {
+        let theme = crate::theme::paneflow_dark();
+        let cells = cached_test_cells();
+        let mut cache = RowLayoutCache::default();
+        let first = layout_from_snapshot_cached(
+            cached_inputs(cells.clone(), &theme),
+            &[1; ROWS],
+            1,
+            &mut cache,
+        );
+        let second = layout_from_snapshot_cached(cached_inputs(cells, &theme), &[1], 1, &mut cache);
+        assert!(
+            first
+                .rows
+                .iter()
+                .zip(&second.rows)
+                .all(|(first, second)| !Arc::ptr_eq(first, second))
+        );
     }
 
     fn run_selection_with_visible(
@@ -2360,12 +2665,12 @@ mod golden_frame_tests {
             .collect();
         let state = run(blocks, None, None);
         assert_eq!(
-            state.block_quads.len(),
+            state.block_quads().count(),
             6,
             "block chars should map to filled quads"
         );
         assert!(
-            state.batched_runs.is_empty(),
+            state.batched_runs().next().is_none(),
             "block chars must not produce glyph text runs"
         );
     }
@@ -2380,11 +2685,11 @@ mod golden_frame_tests {
         let state = run_with_integrated_glyphs(blocks, None, None, false);
 
         assert!(
-            state.block_quads.is_empty(),
+            state.block_quads().next().is_none(),
             "integrated glyphs off must not emit block quads"
         );
         assert_eq!(
-            state.batched_runs.len(),
+            state.batched_runs().count(),
             1,
             "block chars should fall back to one normal glyph run"
         );
@@ -2399,9 +2704,9 @@ mod golden_frame_tests {
             .collect();
         let state = run(boxes, None, None);
 
-        assert_eq!(state.sprites.len(), 12);
+        assert_eq!(state.sprites().count(), 12);
         assert!(
-            state.batched_runs.is_empty(),
+            state.batched_runs().next().is_none(),
             "integrated box drawing must not use font glyphs"
         );
     }
@@ -2415,8 +2720,8 @@ mod golden_frame_tests {
             .collect();
         let state = run_with_integrated_glyphs(boxes, None, None, false);
 
-        assert!(state.sprites.is_empty());
-        assert_eq!(state.batched_runs.len(), 1);
+        assert!(state.sprites().next().is_none());
+        assert_eq!(state.batched_runs().count(), 1);
     }
 
     #[test]
@@ -2435,7 +2740,7 @@ mod golden_frame_tests {
             .map(|(i, flag)| cell(0, i, 'a', default_fg(), default_bg(), *flag))
             .collect();
         let state = run(cells, None, None);
-        let kinds: Vec<DecorationKind> = state.decorations.iter().map(|d| d.kind).collect();
+        let kinds: Vec<DecorationKind> = state.decorations().map(|d| d.kind).collect();
         assert_eq!(
             kinds,
             vec![
@@ -2447,10 +2752,10 @@ mod golden_frame_tests {
                 DecorationKind::Strikethrough,
             ]
         );
-        for (i, d) in state.decorations.iter().enumerate() {
+        for (i, d) in state.decorations().enumerate() {
             assert_eq!((d.line, d.col_start, d.num_cols), (0, i, 1));
         }
-        assert_eq!(state.batched_runs.len(), 6);
+        assert_eq!(state.batched_runs().count(), 6);
     }
 
     #[test]
@@ -2458,9 +2763,9 @@ mod golden_frame_tests {
         let mut link = cell(0, 0, 'x', default_fg(), default_bg(), CellFlags::empty());
         link.hyperlink = true;
         let state = run(vec![link], None, None);
-        assert_eq!(state.decorations.len(), 1);
+        assert_eq!(state.decorations().count(), 1);
         assert_eq!(
-            state.decorations[0].kind,
+            state.decorations().next().unwrap().kind,
             DecorationKind::Underline(UnderlineKind::Single)
         );
     }
@@ -2475,30 +2780,36 @@ mod golden_frame_tests {
                 .collect()
         };
         let state = run(row(&format!("{icon} ab")), None, None);
-        assert_eq!(state.symbols.len(), 1);
-        assert_eq!((state.symbols[0].col, state.symbols[0].span), (0, 2));
+        assert_eq!(state.symbols().count(), 1);
         assert_eq!(
-            state.batched_runs.len(),
+            (
+                state.symbols().next().unwrap().col,
+                state.symbols().next().unwrap().span
+            ),
+            (0, 2)
+        );
+        assert_eq!(
+            state.batched_runs().count(),
             1,
             "text after the icon still shapes"
         );
 
         let state = run(row(&format!("{icon}ab")), None, None);
-        assert_eq!(state.symbols[0].span, 1);
+        assert_eq!(state.symbols().next().unwrap().span, 1);
 
         let state = run(row(&format!("{icon}{icon} ")), None, None);
-        assert_eq!(state.symbols.len(), 2);
-        assert_eq!(state.symbols[0].span, 1);
-        assert_eq!(state.symbols[1].span, 1);
+        assert_eq!(state.symbols().count(), 2);
+        assert_eq!(state.symbols().next().unwrap().span, 1);
+        assert_eq!(state.symbols().nth(1).unwrap().span, 1);
 
         let mut last = row(&" ".repeat(COLS));
         last[COLS - 1].c = icon;
         let state = run(last, None, None);
-        assert_eq!(state.symbols[0].span, 1);
+        assert_eq!(state.symbols().next().unwrap().span, 1);
 
         let state = run_with_integrated_glyphs(row(&format!("{icon} ab")), None, None, false);
-        assert!(state.symbols.is_empty());
-        assert_eq!(state.batched_runs.len(), 2);
+        assert!(state.symbols().next().is_none());
+        assert_eq!(state.batched_runs().count(), 2);
     }
 
     #[test]
@@ -2510,10 +2821,16 @@ mod golden_frame_tests {
             .map(|(i, c)| cell(0, i, c, default_fg(), default_bg(), CellFlags::empty()))
             .collect();
         let state = run(cells, None, None);
-        assert_eq!(state.sprites.len(), 8);
-        assert!(state.batched_runs.is_empty());
-        assert!(matches!(state.sprites[5].sprite, Sprite::Shade(_)));
-        assert!(matches!(state.sprites[6].sprite, Sprite::Braille(0xff)));
+        assert_eq!(state.sprites().count(), 8);
+        assert!(state.batched_runs().next().is_none());
+        assert!(matches!(
+            state.sprites().nth(5).unwrap().sprite,
+            Sprite::Shade(_)
+        ));
+        assert!(matches!(
+            state.sprites().nth(6).unwrap().sprite,
+            Sprite::Braille(0xff)
+        ));
     }
 
     #[test]
@@ -2525,7 +2842,10 @@ mod golden_frame_tests {
             None,
         );
         assert!(
-            (state.batched_runs[0].color.a - bright.batched_runs[0].color.a * 0.5).abs() < 1e-6
+            (state.batched_runs().next().unwrap().color.a
+                - bright.batched_runs().next().unwrap().color.a * 0.5)
+                .abs()
+                < 1e-6
         );
     }
 
@@ -2555,7 +2875,10 @@ mod golden_frame_tests {
             color_emoji_enabled: true,
             minimum_contrast: 0.0,
         });
-        assert_eq!(state.batched_runs[0].color, convert_color(low, &theme));
+        assert_eq!(
+            state.batched_runs().next().unwrap().color,
+            convert_color(low, &theme)
+        );
     }
 
     #[test]
@@ -2726,11 +3049,11 @@ mod golden_frame_tests {
         ];
         let state = run(cjk, None, None);
         assert_eq!(
-            state.batched_runs.len(),
+            state.batched_runs().count(),
             1,
             "only the wide glyph produces a run"
         );
-        assert_eq!(state.batched_runs[0].text, "中");
+        assert_eq!(state.batched_runs().next().unwrap().text, "中");
     }
 
     #[test]
@@ -2761,8 +3084,8 @@ mod golden_frame_tests {
             color_emoji_enabled: true,
             minimum_contrast: 0.0,
         });
-        assert_eq!(state.batched_runs.len(), 1, "row 2 is culled");
-        assert_eq!(state.batched_runs[0].text, "a");
+        assert_eq!(state.batched_runs().count(), 1, "row 2 is culled");
+        assert_eq!(state.batched_runs().next().unwrap().text, "a");
     }
 
     #[test]
