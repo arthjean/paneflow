@@ -157,6 +157,7 @@ impl DisplayTerminal {
         }
         if consumed > 0 {
             self.snapshot_cache.invalidate();
+            self.invalidate_search_rail();
         }
         Ok(GroundWrite {
             consumed,

@@ -179,6 +179,7 @@ hides the workspace name while Settings is open.
 | Composer | Scrim over the whole pane, panel docked at its bottom | Black scrim at 0.25 on the 20 px squircle; panel with margin 8, padding 8, gap 6, 1 px border, radius 8; header chips 10 px; input max height 180 | `src-app/src/pane.rs` |
 | Menus and selects | Deferred, anchored under the trigger | Squircle 18, list padding 4, item height 28 | `src-app/src/settings/components.rs` |
 | Tooltip | After 800 ms | Squircle 14 on the title bar color with a 1 px border | `src-app/src/ui_primitives.rs` |
+| Terminal search | Top right of the pane, 8 px inset | Squircle 14 on `subtle` with a 1 px `border`, 325 by 36, padding 14 left and 4 right, gap 8: the field, a `.*` mark only while regex mode is on, the match count, a 1 px divider, then previous, next and close as 28 px squircle icon buttons with the sidebar hover tint | `src-app/src/terminal/view.rs` |
 | Toast | Bottom right, 18 px inset | Radius 8 on `subtle`, minimum width 220, one header row and an optional action row | `src-app/src/app/notifications.rs` |
 | System Info dialog | Centered | Squircle 20, 560 wide, padding 20, label column 116 | `src-app/src/app/system_info_dialog.rs` |
 | About dialog | Centered | 382 wide, radius 10, 1 px border, large shadow, 32 px header band, 225 px body, hardcoded grays; **Migration**, see section 10 | `src-app/src/app/about_dialog.rs` |
@@ -282,7 +283,7 @@ to the surfaces named:
 | Pane card | 20 | squircle | 1 px `border`, or `vc_conflict` at 0.7 with attention |
 | Settings card, System Info dialog, pane palette ground | 20 | squircle | none |
 | Menu, select popup | 18 | squircle | 1 px `border` at 0.6 |
-| Sidebar rows and tab icon cards, footer mode buttons, row skin, secondary button, menu item, tooltip | 14 | squircle | tab icon card and tooltip, 1 px `border` |
+| Sidebar rows and tab icon cards, footer mode buttons, row skin, secondary button, menu item, tooltip, terminal search | 14 | squircle | tab icon card, tooltip and terminal search, 1 px `border` |
 | Theme tile | 10 | round | 2 px `text` at 0.12, 0.32 on hover, 0.85 when selected |
 | About dialog | 10 | round | 1 px, plus a shadow; **Migration** |
 | Sidebar update banner, filter field, settings control, select trigger, title bar menu trigger | 8 | round | none |

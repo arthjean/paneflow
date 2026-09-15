@@ -561,6 +561,7 @@ pub(crate) struct LayoutCacheKey {
 #[derive(Default)]
 pub(crate) struct TerminalRenderCache {
     layout: Option<(LayoutCacheKey, Arc<LayoutState>)>,
+    match_ticks: paint::scrollbar::MatchTickCache,
     rows: RowLayoutCache,
 }
 
@@ -585,7 +586,7 @@ pub struct TerminalElement {
     terminal_window_size: Arc<Mutex<Option<TerminalWindowSize>>>,
     scrollbar_metrics: Arc<Mutex<Option<ScrollbarMetrics>>>,
     scrollbar_presence: ScrollbarPresence,
-    search_rail_lines: Vec<usize>,
+    search_rail_lines: Arc<[usize]>,
     integrated_glyphs_enabled: bool,
     color_emoji_enabled: bool,
     minimum_contrast: f32,
@@ -615,7 +616,7 @@ impl TerminalElement {
         terminal_window_size: Arc<Mutex<Option<TerminalWindowSize>>>,
         scrollbar_metrics: Arc<Mutex<Option<ScrollbarMetrics>>>,
         scrollbar_presence: ScrollbarPresence,
-        search_rail_lines: Vec<usize>,
+        search_rail_lines: Arc<[usize]>,
         default_cursor_shape: CursorShape,
         cursor_color_override: Option<Hsla>,
         integrated_glyphs_enabled: bool,
@@ -908,19 +909,26 @@ pub(crate) fn layout_from_snapshot_cached(
     };
 
     let search_match_color = Hsla {
-        h: 0.11,
-        s: 0.9,
+        h: 0.14,
+        s: 0.95,
         l: 0.55,
-        a: 0.45,
+        a: 1.0,
     };
     let search_active_color = Hsla {
-        h: 0.08,
+        h: 0.10,
         s: 1.0,
-        l: 0.6,
-        a: 0.7,
+        l: 0.55,
+        a: 1.0,
+    };
+    let search_foreground = Hsla {
+        h: 0.0,
+        s: 0.0,
+        l: 0.1,
+        a: 1.0,
     };
 
     let mut search_rects = Vec::new();
+    let mut search_cover: Vec<Vec<(usize, usize)>> = vec![Vec::new(); desired_rows];
     for highlight in search_highlights {
         let start_line = highlight.start.line.0.saturating_add(display_offset as i32);
         let end_line = highlight.end.line.0.saturating_add(display_offset as i32);
@@ -948,6 +956,9 @@ pub(crate) fn layout_from_snapshot_cached(
                 num_cols: col_end.saturating_sub(col_start) + 1,
                 color,
             });
+            if let Some(spans) = search_cover.get_mut(display_line as usize) {
+                spans.push((col_start, col_end));
+            }
         }
     }
 
@@ -1013,6 +1024,18 @@ pub(crate) fn layout_from_snapshot_cached(
                 && is_cell_in_selection(point, sel, display_offset)
             {
                 fg = theme.selection_foreground;
+            }
+
+            if !is_decorative_character(*c)
+                && search_cover
+                    .get(point.line.0 as usize)
+                    .is_some_and(|spans| {
+                        spans
+                            .iter()
+                            .any(|(start, end)| (*start..=*end).contains(&point.column.0))
+                    })
+            {
+                fg = search_foreground;
             }
 
             let cell_cols = if flags.contains(CellFlags::WIDE_CHAR) {
@@ -1595,6 +1618,7 @@ impl Element for TerminalElement {
 
             paint::scrollbar::paint_match_ticks(
                 &self.search_rail_lines,
+                &self.layout_cache,
                 crate::theme::ui_colors().vc_modified,
                 &layout,
                 &geom,

@@ -306,8 +306,8 @@ impl TerminalSessionBackend {
         self.ghostty.set_native_search(query)
     }
 
-    pub(crate) fn select_native_search(&self, previous: bool) -> bool {
-        self.ghostty.select_native_search(previous)
+    pub(crate) fn select_native_search(&self, previous: bool, generation: u64) -> bool {
+        self.ghostty.select_native_search(previous, generation)
     }
 
     pub(crate) fn native_search_state(&self) -> Arc<crate::search::NativeSearchState> {

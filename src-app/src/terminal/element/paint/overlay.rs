@@ -9,7 +9,7 @@ use super::super::geometry::CellGeometry;
 pub fn paint_search_highlights(layout: &LayoutState, geom: &CellGeometry, window: &mut Window) {
     for rect in &layout.search_rects {
         let rect_bounds = geom.cell_span_bounds(rect.line, rect.col, rect.num_cols);
-        window.paint_quad(fill(rect_bounds, rect.color));
+        window.paint_quad(fill(rect_bounds, rect.color).corner_radii(px(3.)));
     }
 }
 

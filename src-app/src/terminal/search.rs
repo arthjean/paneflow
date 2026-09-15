@@ -91,6 +91,9 @@ impl TerminalView {
         self.queue_native_search(String::new(), cx);
         self.search_matches.clear();
         self.search_current = 0;
+        self.search_native_navigation_in_flight = None;
+        self.search_native_navigation_queue.clear();
+        self.search_native_snapshot = None;
         self.search_regex_error = None;
         self.search_truncated = false;
         self.search_input.update(cx, |input, cx| {
@@ -136,6 +139,9 @@ impl TerminalView {
         self.queue_native_search(String::new(), cx);
         self.search_matches.clear();
         self.search_current = 0;
+        self.search_native_navigation_in_flight = None;
+        self.search_native_navigation_queue.clear();
+        self.search_native_snapshot = None;
         self.search_regex_error = None;
         self.search_truncated = false;
         self.terminal.session_backend().scroll_to_bottom();
@@ -188,6 +194,8 @@ impl TerminalView {
         self.search_truncated = false;
         self.search_current = 0;
         self.search_native_snapshot = None;
+        self.search_native_navigation_in_flight = None;
+        self.search_native_navigation_queue.clear();
         if !self.search_regex_mode {
             self.search_scan_in_flight = !self.search_query.is_empty();
             self.queue_native_search(self.search_query.clone(), cx);
@@ -219,11 +227,13 @@ impl TerminalView {
             {
                 return;
             }
-            self.search_matches.clone_from(&state.matches);
             self.search_current = state.selected.unwrap_or(0);
             self.search_regex_error.clone_from(&state.error);
             self.search_scan_in_flight = !state.complete && state.error.is_none();
             self.search_truncated = !state.complete;
+            if self.search_native_navigation_in_flight == Some(state.navigation_generation) {
+                self.search_native_navigation_in_flight = None;
+            }
             self.search_native_snapshot = Some(state);
             return;
         }
@@ -359,6 +369,10 @@ impl TerminalView {
                 Some("The terminal could not accept the search; retrying".into());
         }
         self.search_native_pending = Some(query);
+        self.schedule_native_search_retry(cx);
+    }
+
+    fn schedule_native_search_retry(&mut self, cx: &mut Context<Self>) {
         if self.search_native_retry_scheduled {
             return;
         }
@@ -377,18 +391,45 @@ impl TerminalView {
     }
 
     fn navigate_native_search(&mut self, previous: bool, cx: &mut Context<Self>) {
-        if self.search_matches.is_empty() {
+        if self.search_match_count() == 0 {
             return;
         }
-        if !self
+        self.search_native_navigation_queue.push_back(previous);
+        self.dispatch_native_search_navigation(cx);
+        cx.notify();
+    }
+
+    pub(super) fn search_match_count(&self) -> usize {
+        if self.search_regex_mode {
+            self.search_matches.len()
+        } else {
+            self.search_native_snapshot
+                .as_ref()
+                .map_or(0, |state| state.total_matches)
+        }
+    }
+
+    pub(super) fn dispatch_native_search_navigation(&mut self, cx: &mut Context<Self>) {
+        if self.search_native_navigation_in_flight.is_some() {
+            return;
+        }
+        let Some(&previous) = self.search_native_navigation_queue.front() else {
+            return;
+        };
+        let generation = self.search_native_navigation_generation.wrapping_add(1);
+        if self
             .terminal
             .session_backend()
-            .select_native_search(previous)
+            .select_native_search(previous, generation)
         {
+            self.search_native_navigation_queue.pop_front();
+            self.search_native_navigation_generation = generation;
+            self.search_native_navigation_in_flight = Some(generation);
+        } else {
             self.search_regex_error =
                 Some("The terminal could not accept search navigation".into());
+            self.schedule_native_search_retry(cx);
         }
-        cx.notify();
     }
 
     fn scroll_to_current_match(&mut self) {

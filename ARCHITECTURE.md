@@ -196,6 +196,19 @@ output flows, a drag is held, or a child is winding down.
 Because a wakeup is queued only when a frame is actually published, this also
 stops the UI thread being woken for frames it would discard.
 
+Native terminal search uses Ghostty's total, selected match, and viewport-match
+APIs. The runtime publishes only visible highlights to GPUI; navigation does
+not invalidate the cell snapshot. Global scrollbar offsets are cached until
+terminal contents, dimensions, or the result count change, and their pixel
+projection is cached separately from the terminal layout. During output,
+global offsets refresh at most every 100 ms; visible matches and selection
+continue updating immediately. A pending rail refresh keeps a trailing wakeup
+even after output stops. Changing the query refreshes the rail immediately.
+Held navigation
+keys queue in order, with one command in flight. A publication acknowledges
+that command by generation before the next frame dispatches the next one;
+an unrelated output publication cannot acknowledge a navigation command.
+
 **The layout memo (`terminal/element/`), on the render thread.** Terminal
 views use GPUI's view cache. Within an active view, `build_layout` first checks
 its complete frame key, then uses a per-row cache when the content generation

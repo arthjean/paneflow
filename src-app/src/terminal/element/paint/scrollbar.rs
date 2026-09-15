@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use gpui::{BorderStyle, Bounds, Corners, Edges, Hsla, Pixels, Point, Window, fill, px, quad};
 
 use super::super::LayoutState;
@@ -50,8 +52,38 @@ pub(crate) fn match_tick_offsets(
         .collect()
 }
 
+#[derive(Default)]
+pub(crate) struct MatchTickCache {
+    lines: Arc<[usize]>,
+    total_lines: usize,
+    track_height: f32,
+    offsets: Arc<[f32]>,
+}
+
+impl MatchTickCache {
+    fn offsets(
+        &mut self,
+        lines: &Arc<[usize]>,
+        total_lines: usize,
+        track_height: f32,
+    ) -> Arc<[f32]> {
+        if !Arc::ptr_eq(&self.lines, lines)
+            || self.total_lines != total_lines
+            || self.track_height != track_height
+        {
+            self.offsets =
+                match_tick_offsets(lines.iter().copied(), total_lines, track_height).into();
+            self.lines = lines.clone();
+            self.total_lines = total_lines;
+            self.track_height = track_height;
+        }
+        self.offsets.clone()
+    }
+}
+
 pub fn paint_match_ticks(
-    lines_from_bottom: &[usize],
+    lines_from_bottom: &Arc<[usize]>,
+    cache: &super::super::SharedLayoutCache,
     color: Hsla,
     layout: &LayoutState,
     geom: &CellGeometry,
@@ -67,7 +99,12 @@ pub fn paint_match_ticks(
     let track_height = grid_height.as_f32();
     let strip_width = px(SCROLLBAR_THUMB_REST);
     let strip_left = bounds.origin.x + bounds.size.width - px(SCROLLBAR_INSET) - strip_width;
-    for y in match_tick_offsets(lines_from_bottom.iter().copied(), total_lines, track_height) {
+    let offsets = cache
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .match_ticks
+        .offsets(lines_from_bottom, total_lines, track_height);
+    for &y in offsets.iter() {
         window.paint_quad(fill(
             Bounds::new(
                 Point {
@@ -225,6 +262,20 @@ pub fn paint_scrollbar(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn search_tick_projection_is_reused_until_results_or_geometry_change() {
+        let mut cache = MatchTickCache::default();
+        let lines: Arc<[usize]> = vec![10, 50, 90].into();
+        let first = cache.offsets(&lines, 100, 400.0);
+        assert!(Arc::ptr_eq(&first, &cache.offsets(&lines, 100, 400.0)));
+        let resized = cache.offsets(&lines, 100, 200.0);
+        assert!(!Arc::ptr_eq(&first, &resized));
+        let history = cache.offsets(&lines, 200, 200.0);
+        assert!(!Arc::ptr_eq(&resized, &history));
+        let changed = cache.offsets(&vec![20, 60].into(), 200, 200.0);
+        assert!(!Arc::ptr_eq(&history, &changed));
+    }
 
     fn metrics(track_top: f32, track_height: f32, history: usize) -> ScrollbarMetrics {
         ScrollbarMetrics {

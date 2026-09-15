@@ -9,7 +9,11 @@ pub const SEARCH_CHUNK_CELLS: usize = 64 * 1024;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct NativeSearchSnapshot {
-    pub matches: Vec<SearchMatch>,
+    pub total_matches: usize,
+    pub viewport_matches: Vec<SearchMatch>,
+    pub selected_match: Option<SearchMatch>,
+    pub rail_offsets: std::sync::Arc<[usize]>,
+    pub rail_pending: bool,
     pub selected: Option<usize>,
     pub complete: bool,
 }

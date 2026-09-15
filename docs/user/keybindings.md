@@ -95,8 +95,8 @@ diff hunk in the diff view.
 | Terminal pane | `font_size_increase` | `Cmd/Ctrl+=` |
 | Terminal pane | `font_size_decrease` | `Cmd/Ctrl+-` |
 | Terminal pane | `font_size_reset` | `Cmd/Ctrl+0` |
-| Search overlay | `search_next` | `Enter` |
-| Search overlay | `search_prev` | `Shift+Enter` |
+| Search overlay | `search_next` | `Enter`, `Down`, `Tab` |
+| Search overlay | `search_prev` | `Shift+Enter`, `Up`, `Shift+Tab` |
 | Search overlay | `dismiss_search` | `Escape` |
 | Search overlay | `toggle_search_regex` | `Alt+R` |
 | Search overlay | `toggle_fleet_search` | `Alt+F` |

@@ -283,7 +283,7 @@ impl DisplayTerminal {
         terminal_scrollbar(self.terminal.raw())
     }
 
-    fn scrollbar_position(&self) -> Result<(usize, usize)> {
+    pub(crate) fn scrollbar_position(&self) -> Result<(usize, usize)> {
         let scrollbar = self.scrollbar()?;
         let history_size = scrollbar
             .total

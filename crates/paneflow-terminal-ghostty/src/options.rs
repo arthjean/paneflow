@@ -87,6 +87,7 @@ impl DisplayTerminal {
     }
 
     pub fn set_scrollback_max_bytes(&mut self, bytes: Option<usize>) -> Result<()> {
+        self.invalidate_search_rail();
         let limit = bytes.unwrap_or_default();
         let value = if bytes.is_some() {
             (&raw const limit).cast::<c_void>()

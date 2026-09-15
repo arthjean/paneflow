@@ -33,6 +33,7 @@ const MAX_QUEUED_INPUT_BYTES: usize = NFR_005_MAX_QUEUED_INPUT_BYTES;
 const NFR_005_MAX_PENDING_OUTPUT_BYTES: usize = 8 * 1024 * 1024;
 const NFR_005_MAX_QUEUED_INPUT_BYTES: usize = 1024 * 1024;
 const RECENT_OUTPUT_REFRESH_INTERVAL: Duration = Duration::from_millis(300);
+const SEARCH_RAIL_REFRESH_INTERVAL: Duration = Duration::from_millis(100);
 const MIN_PUBLISH_INTERVAL: Duration = Duration::from_millis(8);
 const INTERACTIVE_OUTPUT_WINDOW: Duration = Duration::from_millis(100);
 const SELECT_ALL_TIMEOUT: Duration = Duration::from_secs(10);
@@ -383,7 +384,10 @@ enum RuntimeMessage {
         reply: SyncSender<Result<ghostty::SearchChunk, String>>,
     },
     SetNativeSearch(String),
-    SelectNativeSearch(bool),
+    SelectNativeSearch {
+        previous: bool,
+        generation: u64,
+    },
     LineTexts {
         lines: Vec<i32>,
         reply: SyncSender<Result<Vec<(i32, String)>, String>>,
@@ -1665,10 +1669,13 @@ impl GhosttySession {
             .is_ok()
     }
 
-    pub(super) fn select_native_search(&self, previous: bool) -> bool {
+    pub(super) fn select_native_search(&self, previous: bool, generation: u64) -> bool {
         self.inner
             .mailbox
-            .try_send_control(RuntimeMessage::SelectNativeSearch(previous))
+            .try_send_control(RuntimeMessage::SelectNativeSearch {
+                previous,
+                generation,
+            })
             .is_ok()
     }
 
@@ -2765,6 +2772,7 @@ fn handle_terminal_command(
         }
         RuntimeMessage::SetNativeSearch(query) => {
             gate.search_query = query;
+            gate.last_search_rail_refresh = None;
             gate.search_error = terminal
                 .set_search_query(&gate.search_query)
                 .err()
@@ -2773,7 +2781,11 @@ fn handle_terminal_command(
                 log::warn!(target: "paneflow::terminal::ghostty", "Ghostty search publication failed: {error}");
             }
         }
-        RuntimeMessage::SelectNativeSearch(previous) => {
+        RuntimeMessage::SelectNativeSearch {
+            previous,
+            generation,
+        } => {
+            gate.navigation_generation = generation;
             gate.search_error = terminal
                 .search_select(previous)
                 .err()
@@ -3329,6 +3341,9 @@ struct PublishGate {
     mirror: CellMirror,
     search_query: String,
     search_error: Option<String>,
+    navigation_generation: u64,
+    last_search_rail_refresh: Option<Instant>,
+    search_rail_pending: bool,
 }
 
 impl PublishGate {
@@ -3344,6 +3359,9 @@ impl PublishGate {
             mirror: CellMirror::default(),
             search_query: String::new(),
             search_error: None,
+            navigation_generation: 0,
+            last_search_rail_refresh: None,
+            search_rail_pending: false,
         }
     }
 
@@ -3431,7 +3449,7 @@ impl PublishGate {
         let search_pending = !search.query.is_empty() && !search.complete && search.error.is_none();
         update_shared_state(inner, terminal, &mut self.mirror, Arc::new(search))?;
         self.last_publish = Instant::now();
-        self.pending = search_pending;
+        self.pending = search_pending || self.search_rail_pending;
         self.urgent = false;
         queue_wakeup(inner);
         Ok(())
@@ -3443,17 +3461,35 @@ impl PublishGate {
     ) -> crate::search::NativeSearchState {
         let mut state = crate::search::NativeSearchState {
             query: self.search_query.clone(),
+            navigation_generation: self.navigation_generation,
             complete: true,
             error: self.search_error.clone(),
             ..Default::default()
         };
         if state.query.is_empty() || state.error.is_some() {
+            self.search_rail_pending = false;
             return state;
         }
-        match terminal.search_step() {
+        let refresh_rail = self
+            .last_search_rail_refresh
+            .is_none_or(|last| last.elapsed() >= SEARCH_RAIL_REFRESH_INTERVAL);
+        match terminal.search_step_with_rail_refresh(refresh_rail) {
             Ok(Some(snapshot)) => {
-                state.matches = snapshot
-                    .matches
+                self.search_rail_pending = snapshot.rail_pending;
+                if refresh_rail {
+                    self.last_search_rail_refresh = Some(Instant::now());
+                }
+                state.total_matches = snapshot.total_matches;
+                state.rail_offsets = snapshot.rail_offsets;
+                state.selected_match =
+                    snapshot
+                        .selected_match
+                        .map(|found| crate::search::SearchMatch {
+                            start: point_from_ghostty(found.start),
+                            end: point_from_ghostty(found.end),
+                        });
+                state.viewport_matches = snapshot
+                    .viewport_matches
                     .into_iter()
                     .map(|found| crate::search::SearchMatch {
                         start: point_from_ghostty(found.start),
@@ -3461,12 +3497,13 @@ impl PublishGate {
                     })
                     .collect();
                 state.selected = snapshot.selected;
-                state.complete = snapshot.complete;
+                state.complete = snapshot.complete && !snapshot.rail_pending;
             }
-            Ok(None) => {}
+            Ok(None) => self.search_rail_pending = false,
             Err(error) => {
                 let error = error.to_string();
                 self.search_error = Some(error.clone());
+                self.search_rail_pending = false;
                 state.error = Some(error);
                 terminal.clear_search();
             }
@@ -3487,6 +3524,9 @@ pub(super) fn simulate_gate_trickle(interval: Duration, chunks: usize) -> usize 
         mirror: CellMirror::default(),
         search_query: String::new(),
         search_error: None,
+        navigation_generation: 0,
+        last_search_rail_refresh: None,
+        search_rail_pending: false,
     };
     let mut published = 0usize;
     for index in 0..chunks {
@@ -4396,8 +4436,9 @@ mod tests {
             let state = session.native_search_state();
             if state.query == query && state.complete {
                 assert!(state.error.is_none(), "{:?}", state.error);
-                assert_eq!(state.matches.len(), expected_matches);
-                return state;
+                if state.total_matches == expected_matches {
+                    return state;
+                }
             }
             assert!(
                 Instant::now() < deadline,
@@ -4417,24 +4458,96 @@ mod tests {
         session.write_output(format!("old-marker\r\n{}", "filler\r\n".repeat(12_000)).as_bytes());
         assert!(session.set_native_search("old-marker".into()));
         let before = wait_for_native_search(&session, "old-marker", 1);
-        assert!(before.matches[0].start.line.0 < -11_000);
+        assert!(
+            before
+                .selected_match
+                .as_ref()
+                .expect("selected match")
+                .start
+                .line
+                .0
+                < -11_000
+        );
         assert_eq!(before.selected, Some(0));
         {
             let state = session.inner.state.read();
-            let displayed_line =
-                state.search.matches[0].start.line.0 + state.metrics.display_offset as i32;
+            let displayed_line = state
+                .search
+                .selected_match
+                .as_ref()
+                .expect("selected match")
+                .start
+                .line
+                .0
+                + state.metrics.display_offset as i32;
             assert!((0..6).contains(&displayed_line));
             assert_eq!(state.content.cells[displayed_line as usize * 80].c, 'o');
         }
         session.write_output(b"old-marker\r\n");
         let after = wait_for_native_search(&session, "old-marker", 2);
-        assert_eq!(after.selected, Some(1));
+        assert_eq!(after.selected, Some(0));
         assert_eq!(
-            after.matches[1].start.line.0,
-            before.matches[0].start.line.0 - 1
+            after
+                .selected_match
+                .as_ref()
+                .expect("selected match")
+                .start
+                .line
+                .0,
+            before
+                .selected_match
+                .as_ref()
+                .expect("selected match")
+                .start
+                .line
+                .0
+                - 1
         );
+        assert_eq!(after.rail_offsets.len(), 2);
         assert!(session.set_native_search(String::new()));
         wait_for_native_search(&session, "", 0);
+        session.shutdown();
+    }
+
+    #[test]
+    fn native_search_acknowledges_each_navigation_without_rebuilding_the_rail() {
+        let size = TerminalWindowSize::new(80, 8, 8, 16);
+        let (session, pending, _events) = GhosttySession::pending(size);
+        session
+            .start_display(pending, 1_000)
+            .expect("display runtime");
+        session.write_output("marker\r\n".repeat(100).as_bytes());
+        assert!(session.set_native_search("marker".into()));
+        let initial = wait_for_native_search(&session, "marker", 100);
+        let mut expected = 99;
+        for (index, previous) in [true, true, false, true, false, false]
+            .into_iter()
+            .enumerate()
+        {
+            assert!(
+                session.select_native_search(
+                    previous,
+                    initial.navigation_generation + index as u64 + 1
+                )
+            );
+            expected = if previous {
+                (expected + 99) % 100
+            } else {
+                (expected + 1) % 100
+            };
+            let deadline = Instant::now() + Duration::from_secs(5);
+            loop {
+                let state = session.native_search_state();
+                if state.navigation_generation == initial.navigation_generation + index as u64 + 1 {
+                    assert_eq!(state.selected, Some(expected));
+                    assert!(state.error.is_none(), "{:?}", state.error);
+                    assert!(Arc::ptr_eq(&initial.rail_offsets, &state.rail_offsets));
+                    break;
+                }
+                assert!(Instant::now() < deadline, "navigation was not acknowledged");
+                std::thread::sleep(Duration::from_millis(1));
+            }
+        }
         session.shutdown();
     }
 
@@ -4508,6 +4621,9 @@ mod tests {
             mirror: CellMirror::default(),
             search_query: String::new(),
             search_error: None,
+            navigation_generation: 0,
+            last_search_rail_refresh: None,
+            search_rail_pending: false,
         }
     }
 

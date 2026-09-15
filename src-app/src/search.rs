@@ -11,7 +11,11 @@ pub struct SearchMatch {
 #[derive(Clone, Debug, Default)]
 pub struct NativeSearchState {
     pub query: String,
-    pub matches: Vec<SearchMatch>,
+    pub total_matches: usize,
+    pub viewport_matches: Vec<SearchMatch>,
+    pub selected_match: Option<SearchMatch>,
+    pub rail_offsets: std::sync::Arc<[usize]>,
+    pub navigation_generation: u64,
     pub selected: Option<usize>,
     pub complete: bool,
     pub error: Option<String>,

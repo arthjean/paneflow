@@ -80,6 +80,13 @@ impl DisplayTerminal {
         Err(GhosttyError::UnsupportedPlatform)
     }
 
+    pub fn search_step_with_rail_refresh(
+        &mut self,
+        _: bool,
+    ) -> Result<Option<crate::NativeSearchSnapshot>> {
+        Err(GhosttyError::UnsupportedPlatform)
+    }
+
     pub fn search_select(&mut self, _: bool) -> Result<()> {
         Err(GhosttyError::UnsupportedPlatform)
     }

@@ -17,7 +17,6 @@ use super::types::{
     CopyModeCursorState, CursorShape, HyperlinkZone, Line, Modes, Point, SearchHighlight,
     TerminalWindowSize,
 };
-use crate::ui_primitives::{AnimatedHoverExt, lerp_color};
 
 use super::ghostty_session::GhosttyStartError;
 
@@ -204,6 +203,9 @@ pub struct TerminalView {
     pub(super) search_native_pending: Option<String>,
     pub(super) search_native_retry_scheduled: bool,
     pub(super) search_native_snapshot: Option<Arc<crate::search::NativeSearchState>>,
+    pub(super) search_native_navigation_in_flight: Option<u64>,
+    pub(super) search_native_navigation_generation: u64,
+    pub(super) search_native_navigation_queue: std::collections::VecDeque<bool>,
     appearance_theme_generation: u64,
     pub(super) option_as_meta: bool,
     pub(super) cursor_blink_mode: paneflow_config::schema::CursorBlinkConfig,
@@ -679,6 +681,9 @@ impl TerminalView {
             search_native_pending: None,
             search_native_retry_scheduled: false,
             search_native_snapshot: None,
+            search_native_navigation_in_flight: None,
+            search_native_navigation_generation: 0,
+            search_native_navigation_queue: std::collections::VecDeque::new(),
             appearance_theme_generation: crate::theme::theme_generation(),
             option_as_meta: config
                 .option_as_meta
@@ -1021,13 +1026,16 @@ impl TerminalView {
     }
 
     fn render_search_overlay(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
-        use gpui::{FontWeight, Hsla, MouseButton, hsla, px, svg};
+        use gpui::{FontWeight, Hsla, MouseButton, px, svg};
+
+        use crate::settings::components::with_alpha;
+        use crate::ui_primitives::{ROW_RADIUS, squircle_skin};
 
         let ui = crate::theme::ui_colors();
 
         let regex_active = self.search_regex_mode;
         let has_regex_error = self.search_regex_error.is_some();
-        let match_count = self.search_matches.len();
+        let match_count = self.search_match_count();
         let has_matches = match_count > 0;
         let current_match = if has_matches {
             self.search_current + 1
@@ -1059,86 +1067,33 @@ impl TerminalView {
             (format!("{current_match}/{match_count}"), ui.muted)
         };
 
+        let button_hover = crate::app::constants::sidebar_tab_hover_background();
+
         let field = div()
             .id("search-field")
             .flex()
             .items_center()
-            .min_w(px(160.))
-            .max_w(px(320.))
-            .text_size(px(13.))
+            .flex_1()
+            .min_w(px(0.))
+            .text_size(px(14.))
             .text_color(ui.text)
             .child(self.search_input.clone());
 
-        let regex_background = if regex_active {
-            ui.subtle
-        } else {
-            ui.subtle.opacity(0.0)
-        };
-        let regex_toggle = div()
-            .id("search-regex-toggle")
-            .flex()
-            .items_center()
-            .justify_center()
-            .size(px(22.))
-            .rounded(px(5.))
-            .border_1()
-            .text_size(px(12.))
-            .font_weight(FontWeight::MEDIUM)
-            .bg(regex_background)
-            .border_color(if regex_active {
-                ui.accent
-            } else {
-                hsla(0., 0., 0., 0.)
-            })
-            .text_color(if regex_active { ui.text } else { ui.muted })
-            .animated_hover(move |style, delta| {
-                style.bg(lerp_color(regex_background, ui.subtle, delta));
-            })
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(|this, _, _window, cx| this.toggle_search_regex(cx)),
-            )
-            .child(".*");
-
-        let fleet_toggle = div()
-            .id("search-fleet-toggle")
-            .flex()
-            .flex_row()
-            .items_center()
-            .gap(px(4.))
-            .h(px(22.))
-            .px(px(7.))
-            .rounded(px(5.))
-            .text_size(px(12.))
-            .text_color(ui.muted)
-            .animated_hover(move |style, delta| {
-                style.bg(lerp_color(ui.subtle.opacity(0.0), ui.subtle, delta));
-            })
-            .child(
-                svg()
-                    .size(px(13.))
+        let icon_btn = move |id: &'static str, icon: &'static str, color: Hsla| {
+            squircle_skin(
+                div()
+                    .id(id)
                     .flex_none()
-                    .path("icons/world.svg")
-                    .text_color(ui.muted),
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .size(px(28.)),
+                id,
+                ROW_RADIUS,
+                None,
+                Some(button_hover),
             )
-            .child("Fleet")
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(|this, _, _window, cx| this.request_fleet_search(cx)),
-            );
-
-        let icon_btn = |id: &'static str, icon: &'static str, color: Hsla| {
-            div()
-                .id(id)
-                .flex()
-                .items_center()
-                .justify_center()
-                .size(px(22.))
-                .rounded(px(5.))
-                .animated_hover(move |style, delta| {
-                    style.bg(lerp_color(ui.subtle.opacity(0.0), ui.subtle, delta));
-                })
-                .child(svg().size(px(14.)).flex_none().path(icon).text_color(color))
+            .child(svg().size(px(14.)).flex_none().path(icon).text_color(color))
         };
         let nav_color = if has_matches {
             ui.muted
@@ -1162,55 +1117,75 @@ impl TerminalView {
             }),
         );
 
-        div()
-            .id("search-overlay")
-            .occlude()
-            .absolute()
-            .top_2()
-            .right_2()
-            .flex()
-            .flex_row()
-            .items_center()
-            .gap(px(8.))
-            .px(px(8.))
-            .py(px(6.))
-            .rounded(px(8.))
-            .bg(ui.overlay)
-            .border_1()
-            .border_color(ui.border)
-            .shadow_lg()
-            .child(
-                svg()
-                    .size(px(15.))
-                    .flex_none()
-                    .path("icons/tool_search.svg")
-                    .text_color(ui.muted),
-            )
-            .child(field)
-            .child(regex_toggle)
-            .child(fleet_toggle)
-            .when(!status_text.is_empty(), |el| {
-                el.child(
-                    div()
-                        .id("search-status")
-                        .flex_none()
-                        .text_size(px(12.))
-                        .text_color(status_color)
-                        .child(status_text.clone()),
-                )
-            })
-            .child(div().flex_none().w(px(1.)).h(px(16.)).bg(ui.border))
-            .child(
+        squircle_skin(
+            div()
+                .id("search-overlay")
+                .occlude()
+                .flex()
+                .flex_row()
+                .items_center()
+                .w(px(325.))
+                .h(px(36.))
+                .pl(px(14.))
+                .pr(px(4.))
+                .gap(px(8.)),
+            "search-overlay",
+            ROW_RADIUS,
+            Some(ui.subtle),
+            None,
+        )
+        .absolute()
+        .top_2()
+        .right_2()
+        .child(crate::ui_primitives::squircle::squircle_border(
+            ROW_RADIUS,
+            px(1.),
+            ui.border,
+        ))
+        .child(field)
+        .when(regex_active, |el| {
+            el.child(
                 div()
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .gap(px(2.))
-                    .child(prev_btn)
-                    .child(next_btn)
-                    .child(close_btn),
+                    .id("search-regex-mark")
+                    .flex_none()
+                    .text_size(px(13.))
+                    .font_weight(FontWeight::MEDIUM)
+                    .text_color(ui.text)
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|this, _, _window, cx| this.toggle_search_regex(cx)),
+                    )
+                    .child(".*"),
             )
-            .into_any_element()
+        })
+        .when(!status_text.is_empty(), |el| {
+            el.child(
+                div()
+                    .id("search-status")
+                    .flex_none()
+                    .text_size(px(13.))
+                    .text_color(status_color)
+                    .child(status_text.clone()),
+            )
+        })
+        .child(
+            div()
+                .flex_none()
+                .w(px(1.))
+                .h(px(16.))
+                .bg(with_alpha(ui.text, 0.12)),
+        )
+        .child(
+            div()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap(px(2.))
+                .child(prev_btn)
+                .child(next_btn)
+                .child(close_btn),
+        )
+        .into_any_element()
     }
 }
 
@@ -1276,8 +1251,32 @@ impl Render for TerminalView {
         let keystroke_at = self.terminal.last_keystroke_at.take();
 
         self.sync_search_with_terminal(cx);
+        if self.search_native_navigation_in_flight.is_none()
+            && !self.search_native_navigation_queue.is_empty()
+        {
+            cx.on_next_frame(window, |view, _window, cx| {
+                view.dispatch_native_search_navigation(cx);
+            });
+        }
 
-        let search_match_rects = if self.search_active && !self.search_matches.is_empty() {
+        let search_match_rects = if self.search_active && !self.search_regex_mode {
+            self.search_native_snapshot
+                .as_ref()
+                .map(|state| {
+                    state
+                        .viewport_matches
+                        .iter()
+                        .map(|found| SearchHighlight {
+                            start: found.start,
+                            end: found.end,
+                            is_active: state.selected_match.as_ref().is_some_and(|selected| {
+                                selected.start == found.start && selected.end == found.end
+                            }),
+                        })
+                        .collect()
+                })
+                .unwrap_or_default()
+        } else if self.search_active && !self.search_matches.is_empty() {
             self.search_matches
                 .iter()
                 .enumerate()
@@ -1309,15 +1308,19 @@ impl Render for TerminalView {
         let alt_screen = terminal_mode.contains(Modes::ALT_SCREEN);
         let cursor_visible = self.cursor_visible || alt_screen;
 
-        let search_rail_lines: Vec<usize> = if self.search_active && !self.search_matches.is_empty()
-        {
+        let search_rail_lines: Arc<[usize]> = if self.search_active && !self.search_regex_mode {
+            self.search_native_snapshot
+                .as_ref()
+                .map(|state| state.rail_offsets.clone())
+                .unwrap_or_default()
+        } else if self.search_active && !self.search_matches.is_empty() {
             let bottom = backend.bottommost_line();
             self.search_matches
                 .iter()
                 .map(|m| bottom.0.saturating_sub(m.start.line.0).max(0) as usize)
                 .collect()
         } else {
-            Vec::new()
+            Arc::default()
         };
 
         let scrollbar_presence = self.scrollbar_presence(window, cx);
@@ -1941,6 +1944,142 @@ mod tests {
             probe.hits() > 0,
             "hovered link: the terminal view must notify itself"
         );
+    }
+
+    #[gpui::test]
+    fn native_search_counts_and_reaches_matches_above_and_below_the_viewport(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let (terminal, _host, cx) = hosted_terminal(cx);
+        terminal.update(cx, |view, cx| {
+            let text = format!(
+                "offscreen-marker top\r\n{}offscreen-marker middle\r\n{}offscreen-marker bottom\r\n",
+                "filler\r\n".repeat(1_000),
+                "filler\r\n".repeat(1_000),
+            );
+            view.terminal.write_output(text.as_bytes());
+            view.arm_search("offscreen-marker", false, cx);
+        });
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            cx.run_until_parked();
+            cx.update(|window, cx| {
+                window.draw(cx).clear(cx);
+                window.simulate_next_frame(cx);
+            });
+            if terminal.read_with(cx, |view, _| {
+                view.search_match_count() == 3 && !view.search_scan_in_flight
+            }) {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "full-history search did not finish"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        for expected in [1, 0, 2] {
+            terminal.update(cx, |view, cx| view.search_prev(cx));
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+            loop {
+                cx.run_until_parked();
+                cx.update(|window, cx| {
+                    window.draw(cx).clear(cx);
+                    window.simulate_next_frame(cx);
+                });
+                if terminal.read_with(cx, |view, _| {
+                    view.search_native_navigation_in_flight.is_none()
+                }) {
+                    break;
+                }
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "offscreen navigation did not finish"
+                );
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
+            terminal.read_with(cx, |view, _| {
+                assert_eq!(view.search_match_count(), 3);
+                assert_eq!(view.search_current, expected);
+                let search = view.search_native_snapshot.as_ref().unwrap();
+                let selected = search.selected_match.as_ref().unwrap();
+                assert!(
+                    search.viewport_matches.iter().any(|found| {
+                        found.start == selected.start && found.end == selected.end
+                    })
+                );
+                let metrics = view.terminal.session_backend().grid_metrics();
+                let row = selected.start.line.0 + metrics.display_offset as i32;
+                assert!(row >= 0);
+            });
+        }
+    }
+
+    #[gpui::test]
+    fn native_search_queues_repeated_navigation_until_each_frame_acknowledges_it(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let (terminal, _host, cx) = hosted_terminal(cx);
+        terminal.update(cx, |view, cx| {
+            view.terminal
+                .write_output("marker\r\n".repeat(30).as_bytes());
+            view.search_active = true;
+            view.search_query = "marker".into();
+            assert!(
+                view.terminal
+                    .session_backend()
+                    .set_native_search("marker".into())
+            );
+            cx.notify();
+        });
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            terminal.update(cx, |view, cx| view.sync_search_with_terminal(cx));
+            if terminal.read_with(cx, |view, _| view.search_match_count() == 30) {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "search did not finish"
+            );
+            cx.run_until_parked();
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        terminal.update(cx, |view, cx| {
+            for previous in [true, true, true, false, true, false] {
+                if previous {
+                    view.search_prev(cx);
+                } else {
+                    view.search_next(cx);
+                }
+            }
+            assert!(view.search_native_navigation_in_flight.is_some());
+            assert_eq!(view.search_native_navigation_queue.len(), 5);
+        });
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            cx.run_until_parked();
+            cx.update(|window, cx| {
+                window.draw(cx).clear(cx);
+                window.simulate_next_frame(cx);
+            });
+            let done = terminal.read_with(cx, |view, _| {
+                view.search_native_navigation_in_flight.is_none()
+                    && view.search_native_navigation_queue.is_empty()
+            });
+            if done {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "navigation did not drain"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        terminal.read_with(cx, |view, _| {
+            assert_eq!(view.search_current, 27);
+            assert_eq!(view.search_match_count(), 30);
+        });
     }
 
     #[gpui::test]

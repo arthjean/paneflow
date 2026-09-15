@@ -266,6 +266,26 @@ pub(super) const DEFAULTS: &[DefaultBinding] = &[
         context: Some("Search"),
     },
     DefaultBinding {
+        key: "down",
+        action_name: "search_next",
+        context: Some("Search"),
+    },
+    DefaultBinding {
+        key: "up",
+        action_name: "search_prev",
+        context: Some("Search"),
+    },
+    DefaultBinding {
+        key: "tab",
+        action_name: "search_next",
+        context: Some("Search"),
+    },
+    DefaultBinding {
+        key: "shift-tab",
+        action_name: "search_prev",
+        context: Some("Search"),
+    },
+    DefaultBinding {
         key: "escape",
         action_name: "dismiss_search",
         context: Some("Search"),

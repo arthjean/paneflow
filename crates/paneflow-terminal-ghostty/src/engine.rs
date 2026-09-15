@@ -66,6 +66,7 @@ pub struct DisplayTerminal {
 impl DisplayTerminal {
     pub fn feed(&mut self, bytes: &[u8]) -> Result<()> {
         unsafe { sys::ghostty_terminal_vt_write(self.terminal.raw(), bytes.as_ptr(), bytes.len()) };
+        self.invalidate_search_rail();
         Ok(())
     }
 
@@ -83,6 +84,7 @@ impl DisplayTerminal {
             self.callbacks.set_size(rows_first);
         }
         resize_terminal(self.terminal.raw(), size)?;
+        self.invalidate_search_rail();
         self.snapshot_cache.invalidate();
         self.callbacks.set_size(size);
         Ok(())
@@ -90,6 +92,7 @@ impl DisplayTerminal {
 
     pub fn reset(&mut self) {
         unsafe { sys::ghostty_terminal_reset(self.terminal.raw()) };
+        self.invalidate_search_rail();
         self.callbacks.reset_working_directory();
         self.snapshot_cache.invalidate();
     }
