@@ -604,7 +604,7 @@ impl TerminalView {
             self.scrollbar_hide_scheduled = true;
             cx.spawn(
                 async move |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
-                    smol::Timer::after(delay).await;
+                    cx.background_executor().timer(delay).await;
                     let _ = this.update(cx, |view, cx| {
                         view.scrollbar_hide_scheduled = false;
                         cx.notify();
