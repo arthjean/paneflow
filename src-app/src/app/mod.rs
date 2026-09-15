@@ -12,6 +12,7 @@ pub mod command_palette;
 pub mod composer;
 pub mod constants;
 pub mod custom_buttons_modal;
+pub(crate) mod detached_panes;
 pub mod diff_dock;
 pub mod diff_sidebar;
 pub mod drag;

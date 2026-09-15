@@ -216,6 +216,11 @@ pub(super) const DEFAULTS: &[DefaultBinding] = &[
         context: None,
     },
     DefaultBinding {
+        key: "secondary-alt-shift-d",
+        action_name: "toggle_detached_pane",
+        context: None,
+    },
+    DefaultBinding {
         key: "secondary-alt-1",
         action_name: "layout_even_horizontal",
         context: None,

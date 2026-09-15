@@ -12,6 +12,7 @@ impl PaneFlowApp {
         cx: &mut Context<Self>,
     ) {
         match event {
+            PaneEvent::ToggleDetached { .. } => {}
             PaneEvent::Remove => self.review_close_pane(pane, cx),
             PaneEvent::Split(direction) => {
                 if let Err(message) = self.review_split_pane(pane, *direction, cx) {

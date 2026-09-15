@@ -41,6 +41,25 @@ deliberate: anything that runs *outside* the GUI process (shim, hook, MCP
 bridge, MCP installer logic) must stay GPU-free and tiny, so it lives in its
 own crate and never links GPUI.
 
+## Detached panes
+
+`app/detached_panes` opens a lightweight native GPUI window around the existing
+`Entity<Pane>`. The workspace remains the logical owner: IPC lookup, terminal
+processes, surfaces, and session serialization retain their original identity.
+The main layout projects only docked leaves and normalizes their visible ratios.
+Returning a pane restores its original logical position without spawning a PTY.
+
+Terminal and code-view focus subscriptions follow the current native window.
+The child observes ownership changes instead of reading the app during render,
+because native window creation can synchronously render while the app is borrowed.
+Window bounds are debounced before session snapshot construction. Review panes
+restore by subject identity; CLI panes validate the saved layout leaf count.
+Closing a child returns its pane; closing the main window still quits the app.
+
+Detachment is exposed through pane controls, the pane context menu, and
+`toggle_detached_pane` (`Cmd/Ctrl+Alt+Shift+D`). Native cross-window drag is not
+implemented. It requires portable native drag support beyond the pinned GPUI API.
+
 ## Thread model
 
 ```

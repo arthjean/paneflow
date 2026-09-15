@@ -521,6 +521,7 @@ struct DiffDockState {
 }
 
 struct PaneFlowApp {
+    pending_detached_panes: Vec<paneflow_config::schema::DetachedPaneSession>,
     workspaces: Vec<Workspace>,
     active_idx: usize,
     renaming_tab: Option<(usize, usize)>,
@@ -917,7 +918,9 @@ impl Render for PaneFlowApp {
             crate::window_chrome::linux_backdrop::refresh_blur_region(window);
         }
 
-        if let Some(pane) = self.pending_pane_focus.take() {
+        if let Some(pane) = self.pending_pane_focus.take()
+            && !Self::focus_pane_window(pane.clone(), cx)
+        {
             pane.read(cx).focus_handle(cx).focus(window, cx);
         }
         if std::mem::take(&mut self.pending_palette_focus) {
@@ -1060,6 +1063,7 @@ impl Render for PaneFlowApp {
             .on_action(cx.listener(Self::handle_open_workspace_in_windsurf))
             .on_action(cx.listener(Self::handle_next_workspace))
             .on_action(cx.listener(Self::handle_toggle_zoom))
+            .on_action(cx.listener(Self::handle_toggle_detached_pane))
             .on_action(cx.listener(Self::handle_layout_even_h))
             .on_action(cx.listener(Self::handle_layout_even_v))
             .on_action(cx.listener(Self::handle_layout_main_v))
@@ -1620,14 +1624,26 @@ fn mount_paneflow_app(window: &mut Window, cx: &mut App) -> Entity<PaneFlowApp> 
     });
     view.update(cx, |_, cx| {
         let subscription = cx.observe_window_activation(window, |_, window, cx| {
-            crate::agents::notifications::set_window_active(window.is_window_active());
+            crate::agents::notifications::set_window_active(
+                window.window_handle().window_id(),
+                window.is_window_active(),
+            );
             #[cfg(target_os = "linux")]
             crate::window_chrome::linux_backdrop::refresh_blur_region(window);
             cx.notify();
         });
         subscription.detach();
     });
-    crate::agents::notifications::set_window_active(window.is_window_active());
+    crate::agents::notifications::set_window_active(
+        window.window_handle().window_id(),
+        window.is_window_active(),
+    );
+    let owner = view.downgrade();
+    cx.on_window_closed(move |cx, id| {
+        crate::agents::notifications::remove_window(id);
+        let _ = owner.update(cx, |owner, cx| owner.detached_window_closed(id, cx));
+    })
+    .detach();
 
     view.update(cx, |app, cx| {
         app.sync_system_theme_from_window(window, cx);
@@ -1642,6 +1658,9 @@ fn mount_paneflow_app(window: &mut Window, cx: &mut App) -> Entity<PaneFlowApp> 
         if let Some(ws) = app.workspaces.get(app.active_idx) {
             ws.focus_first(window, cx);
         }
+        cx.on_next_frame(window, |app, window, cx| {
+            app.restore_detached_panes(window, cx)
+        });
     });
     startup_trace::mark("app_mounted");
     view

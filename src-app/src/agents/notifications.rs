@@ -1,6 +1,7 @@
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::collections::HashSet;
+use std::sync::{LazyLock, Mutex};
 
-use gpui::BackgroundExecutor;
+use gpui::{BackgroundExecutor, WindowId};
 use paneflow_config::schema::{AgentPanelConfig, NotifyWhenAgentWaiting, PaneFlowConfig};
 
 use crate::agent_launcher::TerminalAgent;
@@ -14,14 +15,38 @@ const PANEFLOW_WINDOWS_NOTIFICATION_ICON_ASSET: &str = "icons/paneflow.png";
 #[cfg(target_os = "windows")]
 const PANEFLOW_WINDOWS_NOTIFICATION_ICON_FILE: &str = "paneflow-notification.png";
 
-static WINDOW_ACTIVE: AtomicBool = AtomicBool::new(true);
+static ACTIVE_WINDOWS: LazyLock<Mutex<HashSet<WindowId>>> =
+    LazyLock::new(|| Mutex::new(HashSet::new()));
 
-pub fn set_window_active(active: bool) {
-    WINDOW_ACTIVE.store(active, Ordering::Relaxed);
+pub fn set_window_active(window_id: WindowId, active: bool) {
+    let mut windows = ACTIVE_WINDOWS.lock().unwrap_or_else(|err| err.into_inner());
+    update_active_windows(&mut windows, window_id, active);
+}
+
+fn update_active_windows(windows: &mut HashSet<WindowId>, window_id: WindowId, active: bool) {
+    if active {
+        windows.insert(window_id);
+    } else {
+        windows.remove(&window_id);
+    }
+}
+
+pub fn remove_window(window_id: WindowId) {
+    set_window_active(window_id, false);
 }
 
 pub fn window_active() -> bool {
-    WINDOW_ACTIVE.load(Ordering::Relaxed)
+    !ACTIVE_WINDOWS
+        .lock()
+        .unwrap_or_else(|err| err.into_inner())
+        .is_empty()
+}
+
+pub(crate) fn is_window_active(window_id: WindowId) -> bool {
+    ACTIVE_WINDOWS
+        .lock()
+        .unwrap_or_else(|err| err.into_inner())
+        .contains(&window_id)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -265,6 +290,21 @@ fn ensure_windows_notification_icon() -> Result<std::path::PathBuf, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn another_active_window_survives_deactivation_and_removal() {
+        let first = WindowId::from(1);
+        let second = WindowId::from(2);
+        let mut active = HashSet::new();
+        update_active_windows(&mut active, first, true);
+        update_active_windows(&mut active, second, true);
+        update_active_windows(&mut active, first, false);
+        assert_eq!(active, HashSet::from([second]));
+        update_active_windows(&mut active, first, false);
+        assert_eq!(active, HashSet::from([second]));
+        update_active_windows(&mut active, second, false);
+        assert!(active.is_empty());
+    }
 
     #[test]
     fn notification_gate_honors_never_and_the_pane_under_the_users_eye() {

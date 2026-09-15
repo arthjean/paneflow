@@ -15,7 +15,8 @@ use crate::{
     SearchNext, SearchPrev, SelectWorkspace1, SelectWorkspace2, SelectWorkspace3, SelectWorkspace4,
     SelectWorkspace5, SelectWorkspace6, SelectWorkspace7, SelectWorkspace8, SelectWorkspace9,
     SplitEqualize, SplitHorizontally, SplitVertically, SwapPane, TerminalCopy, TerminalPaste,
-    TerminalSelectAll, ToggleCopyMode, ToggleSearch, ToggleSearchRegex, ToggleZoom, UndoClosePane,
+    TerminalSelectAll, ToggleCopyMode, ToggleDetachedPane, ToggleSearch, ToggleSearchRegex,
+    ToggleZoom, UndoClosePane,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -332,6 +333,13 @@ pub(super) const ACTIONS: &[ActionMeta] = &[
         factory: || Box::new(ToggleZoom),
         context: "",
         description: "Toggle zoom",
+        group: ShortcutGroup::Panes,
+    },
+    ActionMeta {
+        name: "toggle_detached_pane",
+        factory: || Box::new(ToggleDetachedPane),
+        context: "",
+        description: "Detach pane or return to workspace",
         group: ShortcutGroup::Panes,
     },
     ActionMeta {

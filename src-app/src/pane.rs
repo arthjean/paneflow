@@ -113,6 +113,9 @@ fn truncate_surface_title(raw: &str) -> String {
 }
 
 pub enum PaneEvent {
+    ToggleDetached {
+        window: gpui::AnyWindowHandle,
+    },
     Remove,
     NewTab,
     SurfacesChanged,
@@ -157,6 +160,7 @@ impl HeaderHoverMotion {
 }
 
 pub struct Pane {
+    pub(crate) detached: Option<crate::app::detached_panes::DetachedPanePlacement>,
     surfaces: Vec<PaneSurface>,
     active_surface: usize,
     attention: Option<String>,
@@ -216,6 +220,7 @@ impl Pane {
         let active_surface = active_surface.min(surfaces.len().saturating_sub(1));
         Self {
             surfaces,
+            detached: None,
             active_surface,
             attention: None,
             errored: false,
@@ -245,6 +250,20 @@ impl Pane {
 
     pub fn surface(&self) -> &PaneSurface {
         &self.surfaces[self.active_surface]
+    }
+
+    pub(crate) fn is_detached(&self) -> bool {
+        self.detached.is_some()
+    }
+
+    pub(crate) fn window_title(&self, cx: &App) -> String {
+        Self::surface_full_title(self.surface(), cx)
+    }
+
+    pub(crate) fn toggle_detached(&self, window: &Window, cx: &mut Context<Self>) {
+        cx.emit(PaneEvent::ToggleDetached {
+            window: window.window_handle(),
+        });
     }
 
     pub fn surfaces(&self) -> &[PaneSurface] {
@@ -1501,6 +1520,30 @@ impl Pane {
             .h_full()
             .gap(px(0.));
 
+        let detach = div()
+            .id("pane-detach-control")
+            .delayed_tooltip(crate::ui_primitives::text_tooltip(if self.is_detached() {
+                "Return to workspace"
+            } else {
+                "Detach pane into a window"
+            }))
+            .child(self.action_button(
+                "pane-btn-detach",
+                if self.is_detached() {
+                    "icons/dock-pane.svg"
+                } else {
+                    "icons/detach-pane.svg"
+                },
+                cx.listener(|this, _, window, cx| {
+                    this.toggle_detached(window, cx);
+                    cx.stop_propagation();
+                }),
+                cx,
+            ));
+        if self.is_detached() {
+            return end_section.child(detach);
+        }
+
         let is_diff = matches!(self.surface(), PaneSurface::Diff(_));
         let show_sessions_button = !is_diff
             && !crate::agent_sessions::enabled_session_agents_from_config(&self.cached_config)
@@ -1576,7 +1619,7 @@ impl Pane {
                 ))
             });
 
-        end_section.child(action_cluster)
+        end_section.child(action_cluster.child(detach))
     }
 
     fn render_diff_options_button(
@@ -1854,7 +1897,9 @@ impl Render for Pane {
                     this.apply_drag_edge(e.bounds, e.event.position, cx);
                 },
             ))
-            .child(self.render_header(cx))
+            .when(!self.is_detached(), |root| {
+                root.child(self.render_header(cx))
+            })
             .children(self.render_tab_bar(cx))
             .child(div().flex_1().min_h_0().w_full().child(body))
             .children(dim_layer)

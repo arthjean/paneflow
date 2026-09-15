@@ -55,6 +55,53 @@ pub struct SessionState {
     pub review_layout: Option<LayoutNode>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub review_collapsed: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub detached_panes: Vec<DetachedPaneSession>,
+}
+
+pub const MAX_DETACHED_PANE_WINDOWS: usize = 16;
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[serde(tag = "mode", rename_all = "snake_case")]
+pub enum DetachedPaneLocation {
+    Cli {
+        workspace: usize,
+        tab: usize,
+        leaf: usize,
+    },
+    Review {
+        leaf: usize,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct DetachedReviewSubject {
+    pub repo_root: String,
+    pub worktree: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct DetachedPaneSession {
+    pub location: DetachedPaneLocation,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub review_subject: Option<DetachedReviewSubject>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub layout_leaf_count: Option<usize>,
+    pub x: f32,
+    pub y: f32,
+    pub width: f32,
+    pub height: f32,
+}
+
+impl DetachedPaneSession {
+    pub fn has_valid_bounds(&self) -> bool {
+        self.x.is_finite()
+            && self.y.is_finite()
+            && self.width.is_finite()
+            && self.height.is_finite()
+            && self.width > 0.0
+            && self.height > 0.0
+    }
 }
 
 #[expect(

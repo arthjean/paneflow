@@ -2330,6 +2330,9 @@ impl PaneFlowApp {
                 }
                 pane.update(cx, |_p, cx| cx.notify());
                 cx.defer(move |cx| {
+                    if PaneFlowApp::focus_pane_window(pane.clone(), cx) {
+                        return;
+                    }
                     for handle in cx.windows() {
                         if let Some(main) = handle.downcast::<PaneFlowApp>() {
                             let _ = main.update(cx, |_, window, cx| {

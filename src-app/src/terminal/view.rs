@@ -219,7 +219,7 @@ pub struct TerminalView {
     pub(super) copy_cursor: Point,
     pub(super) copy_mode_frozen_offset: usize,
     was_focused: bool,
-    focus_subscriptions: Option<(gpui::Subscription, gpui::Subscription)>,
+    focus_subscriptions: Option<(gpui::WindowId, gpui::Subscription, gpui::Subscription)>,
     pub(super) ghostty_pressed_keys:
         std::collections::HashMap<String, paneflow_terminal_ghostty::KeyInput>,
     pub(super) ghostty_pending_text_key:
@@ -1217,7 +1217,34 @@ impl TerminalView {
 
 impl Render for TerminalView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        if self.focus_subscriptions.is_none() {
+        let window_id = window.window_handle().window_id();
+        if self.focus_subscriptions.as_ref().map(|binding| binding.0) != Some(window_id) {
+            if self.focus_subscriptions.take().is_some() {
+                self.apply_terminal_focus(false);
+                self.release_ghostty_pressed_keys();
+                self.selecting = false;
+                self.scrollbar_drag = None;
+                self.scroll_remainder = 0.0;
+                self.hovered_cell = None;
+                self.ctrl_hovered_link = None;
+                self.link_modifier_held = false;
+                self.hover_link_cache = None;
+                self.mouse_down_link = None;
+                self.ime_marked_text.clear();
+                *self
+                    .element_origin
+                    .lock()
+                    .unwrap_or_else(|err| err.into_inner()) = gpui::Point::default();
+                *self
+                    .scrollbar_metrics
+                    .lock()
+                    .unwrap_or_else(|err| err.into_inner()) = None;
+                *self
+                    .layout_cache
+                    .lock()
+                    .unwrap_or_else(|err| err.into_inner()) =
+                    crate::terminal::element::TerminalRenderCache::default();
+            }
             let focus_handle = self.focus_handle.clone();
             let focus_in = cx.on_focus_in(&focus_handle, window, |view, _window, cx| {
                 view.apply_terminal_focus(true);
@@ -1227,7 +1254,7 @@ impl Render for TerminalView {
                 view.apply_terminal_focus(false);
                 cx.notify();
             });
-            self.focus_subscriptions = Some((focus_in, focus_out));
+            self.focus_subscriptions = Some((window_id, focus_in, focus_out));
         }
 
         let focused = self.focus_handle.is_focused(window);
@@ -1755,6 +1782,51 @@ mod tests {
                 ..Default::default()
             }
         }
+    }
+
+    #[gpui::test]
+    fn moving_terminal_between_windows_rebinds_focus_and_clears_pointer_state(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let (terminal, first_window) = {
+            let (terminal, host, first) = hosted_terminal(cx);
+            focus_terminal(&terminal, first);
+            let first_window = terminal.read_with(first, |view, _| {
+                assert!(view.was_focused);
+                view.focus_subscriptions.as_ref().unwrap().0
+            });
+            terminal.update(first, |view, _| {
+                view.selecting = true;
+                view.ime_marked_text = "pending composition".into();
+                view.scroll_remainder = 0.5;
+                view.terminal
+                    .restore_scrollback("preserved session content");
+            });
+            host.update(first, |host, cx| {
+                host.terminal = None;
+                cx.notify();
+            });
+            first.run_until_parked();
+            (terminal, first_window)
+        };
+        let moved = terminal.clone();
+        let (_host, second) = cx.add_window_view(move |_window, _cx| TerminalHost {
+            terminal: Some(moved),
+            cached: false,
+        });
+        second.simulate_resize(gpui::size(gpui::px(HOST_WINDOW_W), gpui::px(HOST_WINDOW_H)));
+        second.run_until_parked();
+        terminal.read_with(second, |view, _| {
+            assert_ne!(view.focus_subscriptions.as_ref().unwrap().0, first_window);
+            assert!(!view.selecting);
+            assert!(view.ime_marked_text.is_empty());
+            assert_eq!(view.scroll_remainder, 0.0);
+        });
+        focus_terminal(&terminal, second);
+        terminal.read_with(second, |view, _| assert!(view.was_focused));
+        second.update(|window, _cx| window.blur());
+        second.run_until_parked();
+        terminal.read_with(second, |view, _| assert!(!view.was_focused));
     }
 
     #[gpui::test]

@@ -50,6 +50,9 @@ impl LayoutTree {
         on_resize_end: Option<ResizeEndCallback>,
         preview: Option<&SplitPreview>,
     ) -> AnyElement {
+        if !self.has_docked_panes(cx) {
+            return crate::app::detached_panes::render_detached_placeholder(self, cx);
+        }
         match self {
             LayoutTree::Leaf(pane) => {
                 if let Some(preview) = preview.filter(|preview| preview.target == *pane)
@@ -95,6 +98,11 @@ impl LayoutTree {
                 drag,
                 container_size,
             } => {
+                let children: Vec<_> = children
+                    .iter()
+                    .filter(|child| child.node.has_docked_panes(cx))
+                    .collect();
+                let visible_ratio: f32 = children.iter().map(|child| child.ratio.get()).sum();
                 let dir = *direction;
 
                 let drag_move = drag.clone();
@@ -104,7 +112,7 @@ impl LayoutTree {
                 let child_count = children.len();
                 let child_minimums: Vec<f32> = children
                     .iter()
-                    .map(|child| child.node.min_main_axis_px(dir))
+                    .map(|child| child.node.docked_min_main_axis_px(dir, cx))
                     .collect();
                 let resize_end_for_move = on_resize_end.clone();
 
@@ -135,8 +143,8 @@ impl LayoutTree {
                                 .copied()
                                 .unwrap_or(MIN_PANE_SIZE);
                             let Some((new_before, new_after)) = resize_adjacent_ratios(
-                                ds.start_ratio_before,
-                                ds.start_ratio_after,
+                                ds.start_ratio_before / visible_ratio,
+                                ds.start_ratio_after / visible_ratio,
                                 delta,
                                 csize,
                                 min_before,
@@ -146,10 +154,10 @@ impl LayoutTree {
                             };
 
                             if let Some(r) = child_ratios.get(ds.divider_idx) {
-                                r.set(new_before);
+                                r.set(new_before * visible_ratio);
                             }
                             if let Some(r) = child_ratios.get(ds.divider_idx + 1) {
-                                r.set(new_after);
+                                r.set(new_after * visible_ratio);
                             }
 
                             window.refresh();
@@ -249,7 +257,7 @@ impl LayoutTree {
                             .node
                             .render_with_preview(window, cx, on_resize_end.clone(), preview);
                     let child_wrapper = div()
-                        .flex_basis(gpui::relative(child.ratio.get()))
+                        .flex_basis(gpui::relative(child.ratio.get() / visible_ratio))
                         .flex_grow(1.0)
                         .flex_shrink(1.0)
                         .size_full()
@@ -367,6 +375,67 @@ mod tests {
         ) -> impl gpui::IntoElement {
             self.tree.render_with_preview(window, cx, None, None)
         }
+    }
+
+    #[gpui::test]
+    fn detached_middle_pane_reflows_and_resize_preserves_its_ratio(cx: &mut TestAppContext) {
+        let ratios = [0.2, 0.3, 0.5].map(|ratio| Rc::new(Cell::new(ratio)));
+        let ratios_for_tree = ratios.clone();
+        let drag = Rc::new(Cell::new(None));
+        let drag_for_tree = drag.clone();
+        let (_view, cx) = cx.add_window_view(move |window, cx| {
+            let panes = [test_pane(cx, 1), test_pane(cx, 1), test_pane(cx, 1)];
+            panes[1].update(cx, |pane, _| {
+                pane.detached = Some(crate::app::detached_panes::DetachedPanePlacement {
+                    window: window.window_handle(),
+                    bounds: gpui::Bounds::default(),
+                });
+            });
+            RenderHarness {
+                tree: LayoutTree::Container {
+                    direction: SplitDirection::Vertical,
+                    children: panes
+                        .into_iter()
+                        .zip(ratios_for_tree)
+                        .map(|(pane, ratio)| LayoutChild {
+                            node: LayoutTree::Leaf(pane),
+                            ratio,
+                        })
+                        .collect(),
+                    drag: drag_for_tree,
+                    container_size: Rc::new(Cell::new(0.0)),
+                },
+            }
+        });
+        cx.simulate_resize(size(px(1000.0), px(600.0)));
+        cx.run_until_parked();
+        let first = cx
+            .debug_bounds("layout-child-0")
+            .expect("first docked pane");
+        let second = cx
+            .debug_bounds("layout-child-1")
+            .expect("second docked pane");
+        assert_px_eq(
+            first.size.width + second.size.width,
+            1000.0 - DIVIDER_PX,
+            "docked width",
+        );
+        assert!(second.size.width > first.size.width);
+        assert!(cx.debug_bounds("layout-child-2").is_none());
+        assert!(cx.debug_bounds("layout-divider-1").is_none());
+        let position = point(px(400.0), px(300.0));
+        drag.set(Some(DragState {
+            divider_idx: 0,
+            start_pos: position.x.as_f32() - 50.0,
+            start_ratio_before: 0.2,
+            start_ratio_after: 0.5,
+        }));
+        cx.simulate_mouse_move(position, Some(MouseButton::Left), Modifiers::default());
+        cx.run_until_parked();
+        let expected = 0.2 + 50.0 / (1000.0 - DIVIDER_PX) * 0.7;
+        assert!((ratios[0].get() - expected).abs() < 0.0001);
+        assert_eq!(ratios[1].get(), 0.3);
+        assert!((ratios.iter().map(|ratio| ratio.get()).sum::<f32>() - 1.0).abs() < 0.0001);
     }
 
     #[gpui::test]

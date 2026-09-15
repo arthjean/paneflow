@@ -41,6 +41,7 @@ pub(crate) struct SessionCorruptionInfo {
 impl PaneFlowApp {
     fn build_session_state(&self, cx: &App) -> paneflow_config::schema::SessionState {
         paneflow_config::schema::SessionState {
+            detached_panes: self.serialize_detached_panes(cx),
             version: paneflow_config::schema::SESSION_SCHEMA_VERSION,
             active_workspace: self.active_idx,
             workspaces: self

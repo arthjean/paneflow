@@ -104,6 +104,10 @@ impl PaneFlowApp {
         crate::startup_trace::mark("session_loaded");
 
         let restored_mode = saved_session.as_ref().map(|s| s.mode).unwrap_or_default();
+        let pending_detached_panes = saved_session
+            .as_ref()
+            .map(|session| session.detached_panes.clone())
+            .unwrap_or_default();
         let restored_review_layout = saved_session.as_ref().and_then(|s| s.review_layout.clone());
         let restored_review_collapsed = saved_session
             .as_ref()
@@ -556,6 +560,7 @@ impl PaneFlowApp {
 
         crate::startup_trace::mark("app_fields_prepared");
         let mut app = Self {
+            pending_detached_panes,
             workspaces,
             active_idx,
             renaming_tab: None,

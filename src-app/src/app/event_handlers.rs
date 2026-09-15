@@ -422,11 +422,23 @@ impl PaneFlowApp {
         event: &pane::PaneEvent,
         cx: &mut Context<Self>,
     ) {
+        if let pane::PaneEvent::ToggleDetached { window } = event {
+            let owner = cx.weak_entity();
+            let handle = *window;
+            cx.defer(move |cx| {
+                let _ = handle.update(cx, |_, window, cx| {
+                    let _ =
+                        owner.update(cx, |owner, cx| owner.toggle_detached_pane(pane, window, cx));
+                });
+            });
+            return;
+        }
         if self.review_contains_pane(&pane) {
             self.handle_review_pane_event(pane, event, cx);
             return;
         }
         match event {
+            pane::PaneEvent::ToggleDetached { .. } => {}
             pane::PaneEvent::DropSubjectSplit { .. } => {}
             pane::PaneEvent::SurfacesChanged => {
                 self.save_session(cx);

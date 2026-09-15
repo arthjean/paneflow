@@ -81,6 +81,7 @@ fn test_session_roundtrip_single_workspace() {
         mode: AppMode::default(),
         review_layout: None,
         review_collapsed: Vec::new(),
+        detached_panes: Vec::new(),
     };
     let json = serde_json::to_string_pretty(&state).unwrap();
     let restored: SessionState = serde_json::from_str(&json).unwrap();
@@ -112,6 +113,7 @@ fn test_session_roundtrip_multiple_workspaces() {
         mode: AppMode::default(),
         review_layout: None,
         review_collapsed: Vec::new(),
+        detached_panes: Vec::new(),
     };
     let json = serde_json::to_string_pretty(&state).unwrap();
     let restored: SessionState = serde_json::from_str(&json).unwrap();
@@ -155,6 +157,7 @@ fn test_session_roundtrip_nested_splits() {
         mode: AppMode::default(),
         review_layout: None,
         review_collapsed: Vec::new(),
+        detached_panes: Vec::new(),
     };
     let json = serde_json::to_string_pretty(&state).unwrap();
     let restored: SessionState = serde_json::from_str(&json).unwrap();
@@ -183,6 +186,7 @@ fn test_session_roundtrip_with_scrollback() {
         mode: AppMode::default(),
         review_layout: None,
         review_collapsed: Vec::new(),
+        detached_panes: Vec::new(),
     };
     let json = serde_json::to_string_pretty(&state).unwrap();
     let restored: SessionState = serde_json::from_str(&json).unwrap();
@@ -569,6 +573,7 @@ fn test_tab_title_source_survives_a_roundtrip() {
         mode: AppMode::default(),
         review_layout: None,
         review_collapsed: Vec::new(),
+        detached_panes: Vec::new(),
     };
     let json = serde_json::to_string(&state).unwrap();
     let back: SessionState = serde_json::from_str(&json).unwrap();
@@ -622,4 +627,60 @@ fn test_only_the_top_two_ranks_settle_a_title() {
     assert!(!TabTitleSource::Prompt.is_settled());
     assert!(TabTitleSource::Generated.is_settled());
     assert!(TabTitleSource::User.is_settled());
+}
+
+#[test]
+fn detached_windows_survive_restart_and_older_sessions_remain_docked() {
+    let mut state: SessionState =
+        serde_json::from_str(r#"{"version":2,"active_workspace":0,"workspaces":[]}"#).unwrap();
+    assert!(state.detached_panes.is_empty());
+    assert!(!serde_json::to_string(&state)
+        .unwrap()
+        .contains("detached_panes"));
+    state.detached_panes = vec![
+        DetachedPaneSession {
+            review_subject: None,
+            layout_leaf_count: Some(4),
+            location: DetachedPaneLocation::Cli {
+                workspace: 1,
+                tab: 2,
+                leaf: 3,
+            },
+            x: -900.0,
+            y: 50.0,
+            width: 800.0,
+            height: 600.0,
+        },
+        DetachedPaneSession {
+            review_subject: None,
+            layout_leaf_count: Some(4),
+            location: DetachedPaneLocation::Review { leaf: 0 },
+            x: 100.0,
+            y: 50.0,
+            width: 600.0,
+            height: 400.0,
+        },
+    ];
+    let restored: SessionState =
+        serde_json::from_str(&serde_json::to_string(&state).unwrap()).unwrap();
+    assert_eq!(state, restored);
+    assert!(restored
+        .detached_panes
+        .iter()
+        .all(DetachedPaneSession::has_valid_bounds));
+    let mut invalid = restored.detached_panes[0].clone();
+    invalid.width = 0.0;
+    assert!(!invalid.has_valid_bounds());
+    invalid.width = f32::INFINITY;
+    assert!(!invalid.has_valid_bounds());
+}
+
+#[test]
+fn legacy_detached_locations_parse_without_unverified_subject_identity() {
+    let saved: DetachedPaneSession = serde_json::from_str(
+        r#"{"location":{"mode":"review","leaf":1},"x":0,"y":0,"width":800,"height":600}"#,
+    )
+    .unwrap();
+    assert!(saved.review_subject.is_none());
+    assert!(saved.layout_leaf_count.is_none());
 }

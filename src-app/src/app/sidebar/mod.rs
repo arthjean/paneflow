@@ -865,6 +865,11 @@ impl PaneFlowApp {
         let is_renaming = self.renaming_tab == Some((ws_idx, tab_idx));
 
         let panes = tab.collect_panes();
+        let detached_panes: Vec<_> = panes
+            .iter()
+            .filter(|pane| pane.read(cx).is_detached())
+            .cloned()
+            .collect();
         let mut surfaces: std::collections::HashSet<u64> =
             std::collections::HashSet::with_capacity(panes.len());
         let mut tab_agents: std::collections::HashSet<String> = std::collections::HashSet::new();
@@ -924,6 +929,29 @@ impl PaneFlowApp {
                 row.child(div().flex_none().w(px(SIDEBAR_FOLDER_ICON_WIDTH)))
             })
             .child(title_el)
+            .when(!detached_panes.is_empty(), |row| {
+                row.child(
+                    sidebar_action_button(
+                        SharedString::from(format!("tab-detached-{tab_id}")),
+                        "icons/detach-pane.svg",
+                        12.,
+                        ui,
+                    )
+                    .delayed_tooltip(crate::ui_primitives::text_tooltip("Show detached pane"))
+                    .on_click(move |_, _, cx| {
+                        let current = detached_panes.iter().position(|pane| {
+                            pane.read(cx).detached.is_some_and(|placement| {
+                                crate::agents::notifications::is_window_active(
+                                    placement.window.window_id(),
+                                )
+                            })
+                        });
+                        let index = current.map_or(0, |index| (index + 1) % detached_panes.len());
+                        PaneFlowApp::focus_pane_window(detached_panes[index].clone(), cx);
+                        cx.stop_propagation();
+                    }),
+                )
+            })
             .child(render_lane_slot(
                 lane,
                 &format!("tab-{tab_id}"),

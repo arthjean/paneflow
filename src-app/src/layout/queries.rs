@@ -5,10 +5,24 @@ use crate::pane::Pane;
 use super::tree::LayoutTree;
 
 impl LayoutTree {
+    pub(crate) fn cancel_resize(&self) {
+        if let Self::Container { children, drag, .. } = self {
+            drag.set(None);
+            for child in children {
+                child.node.cancel_resize();
+            }
+        }
+    }
+
+    pub(crate) fn has_docked_panes(&self, cx: &App) -> bool {
+        self.any_leaf(&mut |pane| !pane.read(cx).is_detached())
+    }
+
     pub fn focused_pane(&self, window: &Window, cx: &App) -> Option<Entity<Pane>> {
         match self {
             LayoutTree::Leaf(pane) => {
-                if pane.read(cx).focus_handle(cx).is_focused(window) {
+                if !pane.read(cx).is_detached() && pane.read(cx).focus_handle(cx).is_focused(window)
+                {
                     Some(pane.clone())
                 } else {
                     None
@@ -29,6 +43,9 @@ impl LayoutTree {
         let mut count = 0usize;
         let mut focused = None;
         self.for_each_leaf(&mut |pane| {
+            if pane.read(cx).is_detached() {
+                return;
+            }
             if focused.is_none() && pane.read(cx).focus_handle(cx).is_focused(window) {
                 focused = Some(count);
             }
@@ -38,12 +55,18 @@ impl LayoutTree {
             DimPolicy::Keep => {}
             DimPolicy::ClearAll => {
                 self.for_each_leaf(&mut |pane| {
+                    if pane.read(cx).is_detached() {
+                        return;
+                    }
                     pane.update(cx, |pane, cx| pane.set_dimmed(false, cx));
                 });
             }
             DimPolicy::DimAllExcept(idx) => {
                 let mut index = 0usize;
                 self.for_each_leaf(&mut |pane| {
+                    if pane.read(cx).is_detached() {
+                        return;
+                    }
                     pane.update(cx, |pane, cx| pane.set_dimmed(index != idx, cx));
                     index += 1;
                 });

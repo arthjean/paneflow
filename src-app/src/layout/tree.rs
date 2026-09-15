@@ -1,7 +1,7 @@
 use std::cell::Cell;
 use std::rc::Rc;
 
-use gpui::Entity;
+use gpui::{App, Entity};
 
 use crate::pane::Pane;
 
@@ -141,6 +141,43 @@ impl LayoutTree {
         }
     }
 
+    pub(super) fn docked_min_main_axis_px(&self, axis: SplitDirection, cx: &App) -> f32 {
+        match self {
+            Self::Leaf(pane) => {
+                if pane.read(cx).is_detached() {
+                    0.0
+                } else {
+                    MIN_PANE_SIZE
+                }
+            }
+            Self::Container {
+                direction,
+                children,
+                ..
+            } => {
+                let mut count = 0usize;
+                let mut minimum = 0.0_f32;
+                for child in children {
+                    let child_minimum = child.node.docked_min_main_axis_px(axis, cx);
+                    if child_minimum == 0.0 {
+                        continue;
+                    }
+                    count += 1;
+                    if *direction == axis {
+                        minimum += child_minimum;
+                    } else {
+                        minimum = minimum.max(child_minimum);
+                    }
+                }
+                if *direction == axis {
+                    minimum += DIVIDER_PX * count.saturating_sub(1) as f32;
+                }
+                minimum
+            }
+        }
+    }
+
+    #[cfg(test)]
     pub(super) fn min_main_axis_px(&self, axis: SplitDirection) -> f32 {
         match self {
             LayoutTree::Leaf(_) => MIN_PANE_SIZE,

@@ -40,7 +40,7 @@ impl LeafRect {
     }
 }
 
-fn ratio_sum(children: &[LayoutChild]) -> f32 {
+fn ratio_sum(children: &[&LayoutChild]) -> f32 {
     children
         .iter()
         .map(|child| child.ratio.get())
@@ -93,7 +93,11 @@ fn compare_focus_score(a: (f32, f32, usize), b: (f32, f32, usize)) -> Ordering {
 }
 
 impl LayoutTree {
-    fn collect_leaf_rects(&self, x: f32, y: f32, w: f32, h: f32, out: &mut Vec<LeafRect>) {
+    fn collect_leaf_rects(&self, bounds: [f32; 4], out: &mut Vec<LeafRect>, cx: &App) {
+        let [x, y, w, h] = bounds;
+        if !self.has_docked_panes(cx) {
+            return;
+        }
         match self {
             LayoutTree::Leaf(pane) => out.push(LeafRect {
                 pane: pane.clone(),
@@ -107,10 +111,14 @@ impl LayoutTree {
                 children,
                 ..
             } => {
+                let children: Vec<_> = children
+                    .iter()
+                    .filter(|child| child.node.has_docked_panes(cx))
+                    .collect();
                 if children.is_empty() {
                     return;
                 }
-                let sum = ratio_sum(children);
+                let sum = ratio_sum(&children);
                 let fallback = 1.0 / children.len() as f32;
                 let mut offset = 0.0;
                 for child in children {
@@ -120,14 +128,14 @@ impl LayoutTree {
                             let child_h = h * fraction;
                             child
                                 .node
-                                .collect_leaf_rects(x, y + offset, w, child_h, out);
+                                .collect_leaf_rects([x, y + offset, w, child_h], out, cx);
                             offset += child_h;
                         }
                         SplitDirection::Vertical => {
                             let child_w = w * fraction;
                             child
                                 .node
-                                .collect_leaf_rects(x + offset, y, child_w, h, out);
+                                .collect_leaf_rects([x + offset, y, child_w, h], out, cx);
                             offset += child_w;
                         }
                     }
@@ -139,10 +147,15 @@ impl LayoutTree {
     pub fn focus_first(&self, window: &mut Window, cx: &mut App) {
         match self {
             LayoutTree::Leaf(pane) => {
-                pane.read(cx).focus_handle(cx).focus(window, cx);
+                if !pane.read(cx).is_detached() {
+                    pane.read(cx).focus_handle(cx).focus(window, cx);
+                }
             }
             LayoutTree::Container { children, .. } => {
-                if let Some(first) = children.first() {
+                if let Some(first) = children
+                    .iter()
+                    .find(|child| child.node.has_docked_panes(cx))
+                {
                     first.node.focus_first(window, cx);
                 }
             }
@@ -156,7 +169,7 @@ impl LayoutTree {
         cx: &mut App,
     ) -> FocusNav {
         let mut leaves = Vec::new();
-        self.collect_leaf_rects(0.0, 0.0, 1.0, 1.0, &mut leaves);
+        self.collect_leaf_rects([0.0, 0.0, 1.0, 1.0], &mut leaves, cx);
         let Some(current_idx) = leaves
             .iter()
             .position(|leaf| leaf.pane.read(cx).focus_handle(cx).is_focused(window))
@@ -206,6 +219,48 @@ mod tests {
     fn test_pane(cx: &mut impl AppContext, workspace_id: u64) -> Entity<Pane> {
         let terminal = cx.new(|cx| TerminalView::display_only_for_test(workspace_id, cx));
         cx.new(|cx| Pane::new(terminal, workspace_id, cx))
+    }
+
+    #[gpui::test]
+    fn detached_panes_are_excluded_from_focus_and_projected_geometry(cx: &mut TestAppContext) {
+        let cx = cx.add_empty_window();
+        let detached = test_pane(cx, 1);
+        let first = test_pane(cx, 1);
+        let last = test_pane(cx, 1);
+        let tree = LayoutTree::new_split(
+            SplitDirection::Vertical,
+            LayoutTree::new_split(
+                SplitDirection::Horizontal,
+                LayoutTree::Leaf(detached.clone()),
+                LayoutTree::Leaf(first.clone()),
+            ),
+            LayoutTree::Leaf(last.clone()),
+        );
+        cx.update(|window, cx| {
+            detached.update(cx, |pane, _| {
+                pane.detached = Some(crate::app::detached_panes::DetachedPanePlacement {
+                    window: window.window_handle(),
+                    bounds: gpui::Bounds::default(),
+                });
+            });
+            assert_eq!(tree.leaf_count(), 3);
+            let mut rects = Vec::new();
+            tree.collect_leaf_rects([0.0, 0.0, 1.0, 1.0], &mut rects, cx);
+            assert_eq!(rects.len(), 2);
+            assert_eq!(rects[0].h, 1.0);
+            tree.focus_first(window, cx);
+            assert!(first.read(cx).focus_handle(cx).is_focused(window));
+            assert_eq!(
+                tree.focus_in_direction(FocusDirection::Right, window, cx),
+                FocusNav::Moved
+            );
+            assert!(last.read(cx).focus_handle(cx).is_focused(window));
+            assert_eq!(
+                tree.focus_in_direction(FocusDirection::Left, window, cx),
+                FocusNav::Moved
+            );
+            assert!(first.read(cx).focus_handle(cx).is_focused(window));
+        });
     }
 
     #[gpui::test]

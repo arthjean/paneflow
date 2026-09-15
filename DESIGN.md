@@ -493,6 +493,21 @@ blue border, radius 8, margin 8, and a swap variant with its own tint.
 
 ### 5.4 Diff dock and Review view
 
+#### Detached pane window
+
+A detached pane has a compact 40px caption containing its title and a persistent
+`Return to workspace` control. The regular pane header is hidden; surface tabs
+remain available. The native shell uses the existing colors, tooltips, window
+controls, and platform decoration policy. macOS reserves space for traffic lights;
+Linux respects server decorations and the system button layout.
+
+The initial window is 800 by 600 logical pixels, with a 420 by 280 minimum.
+These compact dimensions are a contextual exception to the main workspace shell.
+Restored bounds are clamped to an available display. Detaching or returning preserves
+terminal state and reflows docked siblings. A fully detached layout shows controls
+to reveal its windows or return its panes. Closing a detached window returns the
+pane, while explicit Close Pane retains its normal destructive meaning.
+
 The dock attaches to a tab and opens on a surface picker (three cards, 122 by
 98). It starts with no content tabs: Changes is created only when selected in
 the picker or the `+` menu, which also offers File and Terminal. Every content

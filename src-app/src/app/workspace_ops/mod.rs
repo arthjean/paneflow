@@ -247,7 +247,9 @@ impl PaneFlowApp {
             }
             WorkspaceFocusTarget::Pane { pane } => {
                 pane.update(cx, |_p, cx| cx.notify());
-                pane.read(cx).focus_handle(cx).focus(window, cx);
+                if !Self::focus_pane_window(pane.clone(), cx) {
+                    pane.read(cx).focus_handle(cx).focus(window, cx);
+                }
             }
         }
 

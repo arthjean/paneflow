@@ -297,7 +297,7 @@ pub(crate) struct CodeView {
     last_motion: Instant,
     blink_visible: bool,
     focused: bool,
-    focus_observers_installed: bool,
+    focus_subscriptions: Option<(gpui::WindowId, gpui::Subscription, gpui::Subscription)>,
     theme_generation: u64,
     geometry: Rc<Cell<CodeGeometry>>,
     gutter_memo: Rc<Cell<GutterMemo>>,
@@ -355,7 +355,7 @@ impl CodeView {
             last_motion: Instant::now(),
             blink_visible: true,
             focused: false,
-            focus_observers_installed: false,
+            focus_subscriptions: None,
             theme_generation: crate::theme::theme_generation(),
             geometry: Rc::new(Cell::new(CodeGeometry::default())),
             gutter_memo: Rc::new(Cell::new(GutterMemo::default())),
@@ -412,7 +412,7 @@ impl CodeView {
             last_motion: Instant::now(),
             blink_visible: true,
             focused: false,
-            focus_observers_installed: false,
+            focus_subscriptions: None,
             theme_generation: crate::theme::theme_generation(),
             geometry: Rc::new(Cell::new(CodeGeometry::default())),
             gutter_memo: Rc::new(Cell::new(GutterMemo::default())),
@@ -508,21 +508,25 @@ impl CodeView {
 
     fn ensure_focus_observers(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.sync_focus_state(self.focus.is_focused(window));
-        if self.focus_observers_installed {
+        let window_id = window.window_handle().window_id();
+        if self.focus_subscriptions.as_ref().map(|binding| binding.0) == Some(window_id) {
             return;
         }
-        self.focus_observers_installed = true;
+        if self.focus_subscriptions.take().is_some() {
+            self.text_drag = None;
+            self.click_chain = None;
+            self.marked = None;
+        }
         let focus = self.focus.clone();
-        cx.on_focus(&focus, window, |view, _window, cx| {
+        let focus_in = cx.on_focus(&focus, window, |view, _window, cx| {
             view.sync_focus_state(true);
             cx.notify();
-        })
-        .detach();
-        cx.on_blur(&focus, window, |view, _window, cx| {
+        });
+        let focus_out = cx.on_blur(&focus, window, |view, _window, cx| {
             view.sync_focus_state(false);
             cx.notify();
-        })
-        .detach();
+        });
+        self.focus_subscriptions = Some((window_id, focus_in, focus_out));
     }
 
     fn sync_focus_state(&mut self, focused: bool) {
@@ -3438,6 +3442,62 @@ mod tests {
         assert_eq!(cx.update(|window, cx| window.simulate_next_frame(cx)), 0);
     }
 
+    #[gpui::test]
+    fn moving_code_between_windows_rebinds_focus_without_losing_content(cx: &mut TestAppContext) {
+        struct CodeHost(Option<Entity<CodeView>>);
+
+        impl Render for CodeHost {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                div().size_full().children(self.0.clone())
+            }
+        }
+
+        let view = cx.new(seeded_view(
+            PathBuf::from("/nonexistent/moved.rs"),
+            "preserved\n",
+        ));
+        let first_view = view.clone();
+        let first_window = {
+            let (host, first) = cx.add_window_view(move |_, _| CodeHost(Some(first_view)));
+            first.simulate_resize(gpui::size(px(800.), px(600.)));
+            first.run_until_parked();
+            let handle = first.update(|window, cx| {
+                view.read(cx).focus.clone().focus(window, cx);
+                window.window_handle()
+            });
+            first.run_until_parked();
+            assert!(view.read_with(first, |view, _| view.focused));
+            host.update(first, |host, cx| {
+                host.0 = None;
+                cx.notify();
+            });
+            first.run_until_parked();
+            handle
+        };
+        let second_view = view.clone();
+        let (_, second) = cx.add_window_view(move |_, _| CodeHost(Some(second_view)));
+        second.simulate_resize(gpui::size(px(800.), px(600.)));
+        second.run_until_parked();
+        second.update(|window, cx| view.read(cx).focus.clone().focus(window, cx));
+        second.run_until_parked();
+        second.update(|_, cx| {
+            first_window
+                .update(cx, |_, window, _| window.blur())
+                .unwrap();
+        });
+        second.run_until_parked();
+        view.read_with(second, |view, _| {
+            assert!(view.focused);
+            assert_ne!(
+                view.focus_subscriptions.as_ref().unwrap().0,
+                first_window.window_id()
+            );
+            assert_eq!(text_of(view), "preserved\n");
+        });
+        second.update(|window, _| window.blur());
+        second.run_until_parked();
+        assert!(!view.read_with(second, |view, _| view.focused));
+    }
     #[gpui::test]
     fn blink_phase_is_ignored_while_the_view_is_unfocused(cx: &mut TestAppContext) {
         let (view, cx) = view(cx, "one\ntwo\n");

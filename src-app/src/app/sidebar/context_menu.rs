@@ -675,7 +675,7 @@ impl PaneFlowApp {
             .map(|t| t.entity_id().as_u64())
             .filter(|sid| self.broadcast.pending.contains_key(sid));
 
-        let rows = 2 + usize::from(pending_sid.is_some()) + 1;
+        let rows = 2 + usize::from(pending_sid.is_some()) + 2;
         let menu_height = px(8. + rows as f32 * 29. + 18.);
         let menu_pos = clamped_context_menu_position(menu.position, px(248.), menu_height, window);
 
@@ -757,6 +757,22 @@ impl PaneFlowApp {
         );
 
         let source_for_close = source.clone();
+        let source_for_detach = source.clone();
+        context_menu = context_menu.child(self.render_select_menu_item(
+            "pane-context-detach".into(),
+            if source.read(cx).is_detached() {
+                "Return to Workspace"
+            } else {
+                "Detach into Window"
+            },
+            None,
+            ui,
+            cx.listener(move |this, _: &ClickEvent, window, cx| {
+                this.pane_menu_open = None;
+                this.toggle_detached_pane(source_for_detach.clone(), window, cx);
+                cx.stop_propagation();
+            }),
+        ));
         context_menu = context_menu.child(self.render_select_menu_item(
             "pane-context-close".into(),
             "Close Pane",

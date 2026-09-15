@@ -39,6 +39,7 @@ actions!(
         ScrollPageUp,
         ScrollPageDown,
         ToggleZoom,
+        ToggleDetachedPane,
         LayoutEvenHorizontal,
         LayoutEvenVertical,
         LayoutMainVertical,

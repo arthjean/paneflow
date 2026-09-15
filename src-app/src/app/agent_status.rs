@@ -44,16 +44,41 @@ impl PaneFlowApp {
         workspace_id: u64,
         cx: &gpui::App,
     ) -> Option<std::collections::HashSet<u64>> {
-        if self.settings_section.is_some()
-            || !matches!(self.mode, paneflow_config::schema::AppMode::Cli)
-            || !crate::agents::notifications::window_active()
-        {
+        if !crate::agents::notifications::window_active() {
             return None;
         }
-        self.workspaces
-            .get(self.active_idx)
-            .filter(|ws| ws.id == workspace_id)
-            .map(|ws| ws.active_tab().surface_ids(cx))
+        let ws = self.workspaces.iter().find(|ws| ws.id == workspace_id)?;
+        let main_visible = self.settings_section.is_none()
+            && matches!(self.mode, paneflow_config::schema::AppMode::Cli)
+            && self
+                .workspaces
+                .get(self.active_idx)
+                .is_some_and(|active| active.id == workspace_id)
+            && cx.windows().into_iter().any(|window| {
+                window.downcast::<PaneFlowApp>().is_some()
+                    && crate::agents::notifications::is_window_active(window.window_id())
+            });
+        let mut visible = std::collections::HashSet::new();
+        for pane in ws.collect_panes() {
+            let state = pane.read(cx);
+            let shown = match state.detached {
+                Some(placement) => {
+                    crate::agents::notifications::is_window_active(placement.window.window_id())
+                }
+                None => {
+                    main_visible
+                        && ws
+                            .active_tab()
+                            .root
+                            .as_ref()
+                            .is_some_and(|root| root.contains_leaf(&pane))
+                }
+            };
+            if shown && let Some(terminal) = state.active_terminal_opt() {
+                visible.insert(terminal.entity_id().as_u64());
+            }
+        }
+        (!visible.is_empty()).then_some(visible)
     }
 
     pub(super) fn session_is_seen(&self, workspace_id: u64, key: u32, cx: &gpui::App) -> bool {
