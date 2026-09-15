@@ -388,9 +388,8 @@ to `icons/languages/`.
 | Primary sidebar slide | 280 ms | cubic ease-out | Panel inset and gutter follow the width |
 | Menu reveal | 140 ms | cubic ease-out | `menu_reveal`: every menu, select popup, context menu, and submenu fades in from 0 while dropping 4 px into place; the pane palette's `New branch` form and the branch row it folds back to use the same reveal. No exit animation |
 | Toast | 180 ms in, 1440 ms hold, 180 ms out | ease-in-out | 8 px lift on entry, 8 px drop on exit |
-| Status spinner | 1 s loop | linear rotate | Sidebar update banner while downloading or installing, title bar pill while a manual check runs, empty states |
+| Status spinner | 1 s loop | linear rotate | Title bar pill while a manual check runs, empty states |
 | Sidebar thinking matrix | 720 ms cycle | stepped | 3 by 3 dots of 3 px, gap 1, trailing opacities 0.81, 0.49, 0.26 over a 0.06 base |
-| Sidebar update banner shimmer | 2600 ms loop | linear | Five-stop iris ramp sweeping the version label letter by letter, only while an update is available and idle |
 | Startup splash | 2600 ms shimmer, 900 ms minimum on screen | linear | Letters at 0.54 alpha, shimmer to 0.82 |
 | Tooltip | 800 ms delay | none | `delayed_tooltip` |
 
@@ -420,9 +419,9 @@ height 24, padding 8, gap 5, squircle 14 through `squircle_skin`, no border, 11 
 `Checking for updates…` shows the 11 px spinning loader on `subtle` at 0.7
 opacity; `Paneflow is up to date` sits in `vc_added` on its 0.12 wash and
 leaves after 3 s; `v<x.y.z> available` is solid `#3a83f7` with a white
-download glyph, label, and `×` (click installs, `×` dismisses); `Update check
-failed` sits in `vc_deleted` on its 0.12 wash (click retries, `×`
-dismisses). The two colored states carry no glyph. Only the manual check
+download glyph and label (click installs); `Update check failed` sits in
+`vc_deleted` on its 0.12 wash and leaves after 3 s. The two colored states
+carry no glyph. Only the manual check
 raises this pill; the automatic check keeps to the footer banner. On Windows the caption glyphs are native Windows 11
 shapes; on macOS the traffic lights get 80 px of brand padding. The title bar
 draws no bottom hairline inside the cockpit shell; the panel inset separates
@@ -452,12 +451,11 @@ border and a 2 px line.
 
 The footer stacks, top to bottom: the IPC offline banner when the socket is
 disabled (margin 6, padding 8 by 6, radius 6, 1 px `border` on `subtle`, a
-14 px alert glyph and `IPC offline` at 12 px Medium), the update banner when
-a release is available (margin 6, height 30, padding 8, radius 8, the active
-row tint, a 14 px download, refresh, tool, or spinning loader glyph, the
-label at 12 px with the version shimmering through the iris ramp, a 13 px
-bold `×` to dismiss; 0.7 opacity while busy, 0.8 rising to 1.0 on hover for
-a package-manager hint; after a manual check that could not reach the feed the same banner reads `Update check failed` with a 14 px `vc_deleted` alert glyph, click retries and `×` dismisses), then the mode row: `Agents` and `Review` as two
+14 px alert glyph and `IPC offline` at 12 px Medium), the manual-check failed
+banner when the last manual check could not reach the feed (margin 6, height
+30, padding 8, radius 8, the active row tint, a 14 px `vc_deleted` alert
+glyph, `Update check failed` at 12 px Medium, a 13 px bold `×` to dismiss;
+0.8 rising to 1.0 on hover, click retries), then the mode row: `Agents` and `Review` as two
 flexible 30 px squircle buttons at small text Medium with a 3 px gap, and a
 30 by 30 gear that opens Settings in one click. The active mode and an open
 Settings share the active row tint; the others take the hover tint.
