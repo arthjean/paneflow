@@ -1,6 +1,6 @@
 # Features
 
-> A practical map of Paneflow's workspace model, agent supervision, local context, scripting, MCP bridge, worktrees, and review flow.
+> A practical map of Paneflow's workspace model, agent supervision, local context, scripting, MCP bridge, and worktrees.
 
 Canonical: https://paneflow.dev/docs/features
 
@@ -28,8 +28,8 @@ feature map.
   event streams. Read [Scripting](/docs/scripting).
 - **MCP:** read-only pane access for configured agents. Read
   [Scripting](/docs/scripting).
-- **Review:** a Workspaces rail, a Changes rail, and a grid of worktree diffs
-  read side by side. Read [Review](/docs/review).
+- **Changes and Files:** a dock beside each session with the checkout's diff
+  against its base branch and a code editor for any project file.
 - **Settings:** themes, terminal defaults, workspace templates, and AI access
   controls. Read [Settings](/docs/settings).
 
@@ -101,19 +101,15 @@ or control them, and terminal output is returned as untrusted data.
 
 The full command reference lives in [Scripting and automation](/docs/scripting).
 
-## Worktrees and review
+## Worktrees
 
 Create Git worktrees for independent tasks without touching your main checkout.
 Paneflow opens each worktree as its own context with its own branch, files,
 panes, and agent sessions. This makes parallel agent work visible without
 collapsing every task into the same working tree.
 
-Review mode puts the Workspaces rail, the Changes rail, and a grid of diff
-panes in one view. Drag a branch or a worktree onto a pane edge to read diffs
-side by side, up to six at once, each against the base branch you pick, without
-checking anything out. Agents are launched from Agents mode, never from Review.
-
-Read the [Review](/docs/review) page for the full workflow.
+Read the [Worktrees](/docs/worktrees) page for how worktrees are created,
+stored, cleaned up, and restored.
 
 ## Keep exploring
 

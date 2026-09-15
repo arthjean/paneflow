@@ -83,7 +83,7 @@ Themes affect more than terminal ANSI colours:
 - terminal background, foreground, cursor, selection, scrollbar, links, and ANSI palette;
 - the app chrome palette derived from the active theme;
 - markdown panes and tables;
-- Diff and Review syntax colours;
+- Changes and Files syntax colours;
 - title-bar and native material alignment on supported platforms.
 
 Two related settings are separate from the theme name:

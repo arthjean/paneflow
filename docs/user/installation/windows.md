@@ -12,7 +12,7 @@ Paneflow ships a native Windows MSI for **Windows 10 1809+** and
 **Windows 11** on x86_64. Use the MSI for normal Windows work. Use WSL2
 only when your files, agents, and toolchains already live inside Linux.
 
-Download `paneflow-0.12.0-x86_64-pc-windows-msvc.msi`, run it, open
+Download `paneflow-0.15.1-x86_64-pc-windows-msvc.msi`, run it, open
 Paneflow from the Start menu, then verify the `paneflow` command in a
 new PowerShell window.
 
@@ -20,7 +20,7 @@ The MSI is signed under the **StriveX** publisher identity. To verify a
 downloaded MSI before running it:
 
 ```powershell
-$version = "0.12.0"
+$version = "0.15.1"
 Get-AuthenticodeSignature ".\paneflow-$version-x86_64-pc-windows-msvc.msi" | Select-Object Status, SignerCertificate
 ```
 
@@ -35,7 +35,7 @@ certificate reputation builds.
 2. Download the Windows MSI:
 
 ```msi
-paneflow-0.12.0-x86_64-pc-windows-msvc.msi
+paneflow-0.15.1-x86_64-pc-windows-msvc.msi
 ```
 
 3. Run the installer. The MSI installs Paneflow as a standard Windows
@@ -90,7 +90,7 @@ customization live inside a Linux distribution. In that case, install the
 Linux build inside WSL2 and let WSLg display the window.
 
 ```bash
-VER=0.12.0
+VER=0.15.1
 curl -LO "https://github.com/arthjean/paneflow/releases/download/v${VER}/paneflow-${VER}-x86_64.deb"
 sudo apt install "./paneflow-${VER}-x86_64.deb"
 paneflow --version

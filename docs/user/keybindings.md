@@ -17,14 +17,12 @@ below under `shortcuts` in
 
 **TL;DR.** `Cmd/Ctrl+Shift+D` and `Cmd/Ctrl+Shift+E` split panes,
 `Cmd/Ctrl+Shift+Up/Down` jumps between shell prompts, `Alt+Arrow` moves focus,
-`Cmd/Ctrl+1-9` jumps workspaces,
-`Cmd/Ctrl+Shift+A` opens Agents, `Cmd/Ctrl+Shift+G` opens Diff, and
+`Cmd/Ctrl+1-9` jumps workspaces, and
 `Cmd/Ctrl+Shift+J` jumps to the next waiting agent.
 
 The scope column matters because several actions reuse the same key
 chord in different surfaces. For example, `Ctrl+Shift+C` copies terminal
-text in a terminal pane, copies Markdown in a Markdown pane, and copies a
-diff hunk in the diff view.
+text in a terminal pane and copies Markdown in a Markdown pane.
 
 ## Action reference
 
@@ -70,8 +68,6 @@ diff hunk in the diff view.
 | Workspaces | `open_workspace_in_cursor` | `Ctrl+Alt+C` |
 | Workspaces | `open_workspace_in_vscode` | `Ctrl+Alt+V` |
 | Workspaces | `open_workspace_in_windsurf` | `Ctrl+Alt+W` |
-| App views | `open_agents_view` | `Cmd/Ctrl+Shift+A` |
-| App views | `open_diff_view` | `Cmd/Ctrl+Shift+G` |
 | App views | `toggle_files_sidebar` | `Cmd/Ctrl+Alt+F` |
 | App views | `toggle_diff_dock_maximize` | `Cmd/Ctrl+Alt+M` |
 | App views | `open_composer` | `Cmd/Ctrl+Shift+Space` |
@@ -95,8 +91,12 @@ diff hunk in the diff view.
 | Terminal pane | `font_size_increase` | `Cmd/Ctrl+=` |
 | Terminal pane | `font_size_decrease` | `Cmd/Ctrl+-` |
 | Terminal pane | `font_size_reset` | `Cmd/Ctrl+0` |
-| Search overlay | `search_next` | `Enter`, `Down`, `Tab` |
-| Search overlay | `search_prev` | `Shift+Enter`, `Up`, `Shift+Tab` |
+| Search overlay | `search_next` | `Enter` |
+| Search overlay | `search_prev` | `Shift+Enter` |
+| Search overlay | `search_next` | `Down` |
+| Search overlay | `search_prev` | `Up` |
+| Search overlay | `search_next` | `Tab` |
+| Search overlay | `search_prev` | `Shift+Tab` |
 | Search overlay | `dismiss_search` | `Escape` |
 | Search overlay | `toggle_search_regex` | `Alt+R` |
 | Search overlay | `toggle_fleet_search` | `Alt+F` |
@@ -107,12 +107,6 @@ diff hunk in the diff view.
 | Markdown pane | `markdown_find_next` | `Enter` |
 | Markdown pane | `markdown_find_prev` | `Shift+Enter` |
 | Markdown pane | `markdown_find_dismiss` | `Escape` |
-| Diff view | `copy_diff_hunk` | `Ctrl+Shift+C` |
-| Diff view | `diff_next_hunk` | `]` |
-| Diff view | `diff_prev_hunk` | `[` |
-| Diff view | `diff_toggle_view` | `U` |
-| Diff view | `diff_toggle_sync` | `S` |
-| Diff view | `diff_dismiss` | `Escape` |
 | macOS menu bar | `quit` | `Cmd+Q (macOS only)` |
 
 ### Actions without a default shortcut

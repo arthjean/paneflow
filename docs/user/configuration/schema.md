@@ -61,8 +61,6 @@ JetBrains IDEs, Helix, and other JSON Schema-aware editors:
 | `unfocused_pane_opacity` | number/null | `0.7` | Hot reload | Opacity of panes that do not hold focus, when a workspace has more than one pane. Range `0.15` to `1.0`; `1.0` disables the dim. |
 | `reduce_motion` | boolean/null | `false` | Hot reload | Minimizes non-essential interface motion: hover transitions settle instantly and decorative animations render a static frame. |
 | `sidebar_show` | object/null | all off | Hot reload | What a session tab row shows beyond its name: `branch` adds its git branch, `diffstat` adds its insertion and deletion counts, `pr` turns the branch icon into a pull-request glyph colored by the request's state when one exists, `indent_guide` draws a hairline under a workspace's folder icon down its tab rows. The first two read the tab's bound worktree, or its workspace's checkout when the tab is unbound; `pr` needs the `gh` CLI and answers for GitHub remotes only. Toggled from the rail's Customize Sidebar menu. |
-| `editor` | object/null | minimap off, scrollbar on | Hot reload | What the code editor draws beside the text: `minimap` adds a minimap along the right edge, `scrollbar` keeps the vertical scrollbar. Toggled from the editor's controls menu; the choice applies to every open file. |
-| `automation` | object/null | all off | Hot reload | Background work run after an agent turn: `tab_auto_naming` summarizes the session's recent exchange into a 2-5 word tab name through the agent's own CLI (`claude -p`, `codex exec`, `opencode run`, `pi --print`) with tools disabled, at most once per three minutes per session and only when the conversation grew. A name you typed is never replaced; "Reset name" reopens the tab to it. |
 | `worktrees` | object/null | see below | Hot reload | Where Paneflow keeps the git worktrees it creates for branches and how it cleans them up: `dir`, `auto_remove`, `keep_limit`, `for_new_branches`. Settings > Worktrees edits the same keys. |
 | `window_decorations` | string/null | `client` | Startup | `client` draws Paneflow chrome; `server` delegates to the OS compositor. |
 | `window_backdrop` | string/null | `auto` | Startup | `auto`, `mica`, `blurred`, `acrylic`, `transparent`, `opaque`, or `off`. `PANEFLOW_WINDOW_BACKDROP` overrides for one launch. |
@@ -71,11 +69,14 @@ JetBrains IDEs, Helix, and other JSON Schema-aware editors:
 | `macos_chrome_material` | boolean/null | `true` | Window/chrome render | macOS-only native Sidebar material in the primary navigation card. Ignored on other platforms. |
 | `option_as_meta` | boolean/null | `true` | New terminal | Sends Alt/Option as ESC-prefix Meta. Set `false` on macOS when Option should type Unicode characters. |
 | `shell_integration` | boolean/null | `true` | New terminal | Enables Paneflow shell snippets for OSC 7 CWD and OSC 133 command marks. |
+| `editor` | object/null | minimap off, scrollbar on | Hot reload | What the code editor draws beside the text: `minimap` adds a minimap along the right edge, `scrollbar` keeps the vertical scrollbar. Toggled from the editor's controls menu; the choice applies to every open file. |
+| `automation` | object/null | all off | Hot reload | Background work run after an agent turn: `tab_auto_naming` summarizes the session's recent exchange into a 2-5 word tab name through the agent's own CLI (`claude -p`, `codex exec`, `opencode run`, `pi --print`) with tools disabled, at most once per three minutes per session and only when the conversation grew. A name you typed is never replaced; "Reset name" reopens the tab to it. |
 | `submit_paste_delay_ms` | integer/null | `70` | IPC send | Floor delay between bracketed paste and Enter for `paneflow send --submit`. Range `10` to `5000`. |
 | `external_editor` | string/null | `auto` | Next open action | `auto`, `system`, `zed`, `cursor`, `windsurf`, or `code`. |
 | `shortcuts` | object | `{}` | Hot reload | Maps keystrokes to action names. See [shortcuts and actions](/docs/keybindings). |
 | `terminal` | object/null | defaults below | Mixed | Namespaced terminal renderer and PTY settings. |
 | `commands` | array | `[]` | Settings/Run | Command palette entries and workspace templates. |
+| `agent_profiles` | array | `[]` | Hot reload | Custom launcher entries that run a built-in agent with extra environment variables and arguments, for example a second Claude Code account through `CLAUDE_CONFIG_DIR`. Settings > Agents > Profiles edits the same list. |
 | `claude_code_bypass_permissions` | boolean/null | `false` | Next Claude launch | Adds `--permission-mode bypassPermissions` to the Claude Code launcher. High-risk opt-in. |
 | `ai_unrestricted` | boolean/null | `false` | Per IPC call | Allows trusted conductors to submit to peer panes without `PANEFLOW_IPC_SCRIPTING`. Every write is traced. |
 | `ai_injection_fence` | boolean/null | `true` | Per read call | Wraps `surface.read` output in an untrusted-output fence by default. |
@@ -116,9 +117,9 @@ CLI binary. `false` hides the button. `true` forces it visible.
 | `terminal.ligatures` | boolean/null | `false` | Hot reload cache | Enables programming ligatures when the active font supports them. |
 | `terminal.integrated_glyphs` | boolean/null | `true` | Hot reload | Draws built-in block glyphs as filled quads. |
 | `terminal.color_emoji` | boolean/null | `true` | Hot reload | Uses the platform color-emoji path. |
-| `terminal.scrollbar` | boolean/null | `true` | New terminal view | Overlay scrollbar shown while scrolling or hovering the right edge of a pane. |
 | `terminal.cursor_color` | string/null | theme cursor | Hot reload/new terminal | `#RRGGBB`, `RRGGBB`, `#RGB`, or `RGB`. |
-| `terminal.scrollback_lines` | integer/null | `10000` | New terminal | Range `100` to `100000`. Review terminals cap at `2000`; cached terminals cap at `1000`. |
+| `terminal.scrollbar` | boolean/null | `true` | New terminal view | Overlay scrollbar shown while scrolling or hovering the right edge of a pane. |
+| `terminal.scrollback_lines` | integer/null | `10000` | New terminal | Range `100` to `100000`. Cached terminals cap at `1000`. |
 | `terminal.cursor_shape` | string/null | `block` | New terminal | `vintage`, `block`, `beam`, `underline`, `double_underline`, or `hollow`. |
 | `terminal.cursor_blink` | string/null | `terminal_controlled` | New terminal | `on`, `off`, or `terminal_controlled`. |
 | `terminal.env` | object/null | none | New terminal | Environment variables injected into every new terminal. Per-surface `env` wins. Values are passed through verbatim: no `~` and no `$NAME` expansion, unlike `agent_profiles.*.env`. |
@@ -144,37 +145,6 @@ Profile entries under `agent_panel.profiles` use this shape:
 | `agent_panel.profiles.*.mode` | string/null | none | Preferred mode label. |
 | `agent_panel.profiles.*.effort` | string/null | none | Preferred reasoning-effort label. |
 | `agent_panel.profiles.*.tools` | string array | `[]` | Preferred tool-kind keys shown by the profile. |
-
-## `agent_profiles`
-
-`agent_profiles` is a list. Each entry adds a launcher item that runs one of
-the built-in agents with extra environment variables and arguments. Profiles
-show up in the pane palette and the worktree launch pad next to the built-in
-agents, and keep the base agent's status tracking, hooks, and sessions.
-Settings > Agents > Profiles edits the same list.
-
-| Key | Type | Default | Notes |
-| --- | --- | --- | --- |
-| `agent_profiles.*.name` | string | required | Label shown in the launcher. |
-| `agent_profiles.*.agent` | string | required | Tag of the base agent: `claude_code`, `codex`, `opencode`, `pi`, `hermes`, `grok`, `amp`, `cursor`, `gemini`, `kiro`, `antigravity`, `copilot`, `codebuddy`, `factory`, `qoder`, or `openclaw`. |
-| `agent_profiles.*.env` | object | `{}` | Environment variables set on the agent process. A leading `~` expands to the home directory, and `$NAME`, `${NAME}` or `%NAME%` anywhere in a value takes that variable from Paneflow's own environment. A `$` or `%` that names nothing stays literal; a name the environment does not define is refused by the Settings editor and, in a hand-written config, leaves the whole value untouched with a warning in the log. |
-| `agent_profiles.*.args` | string array | `[]` | Extra arguments appended after the base agent's own flags. Each token must be a plain word: letters, digits, `-`, `_`, `.`, `=`. |
-
-An entry with an unknown agent tag, a blank name, or an unsafe token is skipped
-with a warning; the other profiles still load.
-
-```json
-{
-  "agent_profiles": [
-    {
-      "name": "Claude perso",
-      "agent": "claude_code",
-      "env": { "CLAUDE_CONFIG_DIR": "~/.claude-perso" },
-      "args": ["--model", "opus"]
-    }
-  ]
-}
-```
 
 ## `worktrees`
 
@@ -217,6 +187,37 @@ Delete drops the ref. A clean worktree leaves no snapshot.
     "auto_remove": true,
     "keep_limit": 15
   }
+}
+```
+
+## `agent_profiles`
+
+`agent_profiles` is a list. Each entry adds a launcher item that runs one of
+the built-in agents with extra environment variables and arguments. Profiles
+show up in the pane palette and the worktree launch pad next to the built-in
+agents, and keep the base agent's status tracking, hooks, and sessions.
+Settings > Agents > Profiles edits the same list.
+
+| Key | Type | Default | Notes |
+| --- | --- | --- | --- |
+| `agent_profiles.*.name` | string | required | Label shown in the launcher. |
+| `agent_profiles.*.agent` | string | required | Tag of the base agent: `claude_code`, `codex`, `opencode`, `pi`, `hermes`, `grok`, `amp`, `cursor`, `gemini`, `kiro`, `antigravity`, `copilot`, `codebuddy`, `factory`, `qoder`, or `openclaw`. |
+| `agent_profiles.*.env` | object | `{}` | Environment variables set on the agent process. A leading `~` expands to the home directory, and `$NAME`, `${NAME}` or `%NAME%` anywhere in a value takes that variable from Paneflow's own environment. A `$` or `%` that names nothing stays literal; a name the environment does not define is refused by the Settings editor and, in a hand-written config, leaves the whole value untouched with a warning in the log. |
+| `agent_profiles.*.args` | string array | `[]` | Extra arguments appended after the base agent's own flags. Each token must be a plain word: letters, digits, `-`, `_`, `.`, `=`. |
+
+An entry with an unknown agent tag, a blank name, or an unsafe token is skipped
+with a warning; the other profiles still load.
+
+```json
+{
+  "agent_profiles": [
+    {
+      "name": "Claude perso",
+      "agent": "claude_code",
+      "env": { "CLAUDE_CONFIG_DIR": "~/.claude-perso" },
+      "args": ["--model", "opus"]
+    }
+  ]
 }
 ```
 
