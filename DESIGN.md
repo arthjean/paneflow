@@ -416,7 +416,7 @@ shell never renders it (`tb.cockpit = true` in `main.rs`); that code is
 **Migration**, and the sidebar footer owns both banners. The same slot,
 between the center and the caption controls, does render the manual check
 pill raised by `Help > Check for Updates…` and the `PaneFlow` menu on macOS:
-height 24, padding 8, gap 5, radius 6, 1 px border, 11 px Medium.
+height 24, padding 8, gap 5, radius 6, no border, 11 px Medium.
 `Checking for updates…` shows the 11 px spinning loader on `subtle` at 0.7
 opacity; `Paneflow is up to date` sits in `vc_added` on its 0.12 wash and
 leaves after 3 s; `v<x.y.z> available` is solid `#3a83f7` with a white

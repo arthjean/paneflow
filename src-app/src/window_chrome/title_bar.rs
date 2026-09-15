@@ -79,26 +79,17 @@ impl TitleBar {
         let pill = self.update_check.clone()?;
         let white = gpui::white();
         let blue = gpui::Hsla::from(gpui::rgb(UPDATE_AVAILABLE_BLUE));
-        let (label, fill, edge, ink): (String, gpui::Hsla, gpui::Hsla, gpui::Hsla) = match &pill {
-            UpdateCheckPill::Checking => (
-                "Checking for updates…".to_string(),
-                ui.subtle,
-                ui.border,
-                ui.text,
-            ),
+        let (label, fill, ink): (String, gpui::Hsla, gpui::Hsla) = match &pill {
+            UpdateCheckPill::Checking => ("Checking for updates…".to_string(), ui.subtle, ui.text),
             UpdateCheckPill::UpToDate => (
                 "Paneflow is up to date".to_string(),
                 ui.vc_added.opacity(0.12),
-                ui.vc_added.opacity(0.25),
                 ui.vc_added,
             ),
-            UpdateCheckPill::Available(version) => {
-                (format!("v{version} available"), blue, blue, white)
-            }
+            UpdateCheckPill::Available(version) => (format!("v{version} available"), blue, white),
             UpdateCheckPill::Failed => (
                 "Update check failed".to_string(),
                 ui.vc_deleted.opacity(0.12),
-                ui.vc_deleted.opacity(0.25),
                 ui.vc_deleted,
             ),
         };
@@ -115,8 +106,6 @@ impl TitleBar {
             .px(px(8.))
             .h(px(24.))
             .rounded(px(6.))
-            .border_1()
-            .border_color(edge)
             .bg(fill)
             .text_color(ink)
             .text_size(px(11.))
@@ -192,7 +181,7 @@ impl TitleBar {
             }
             UpdateCheckPill::Failed => element
                 .animated_hover(move |style, delta| {
-                    style.bg(lerp_color(fill, edge, delta));
+                    style.bg(lerp_color(fill, ink.opacity(0.25), delta));
                 })
                 .on_mouse_down(MouseButton::Left, move |_, window, cx| {
                     cx.stop_propagation();
