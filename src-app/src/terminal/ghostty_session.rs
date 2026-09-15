@@ -24,6 +24,7 @@ use super::types::{
 compile_error!("terminal::ghostty_session requires a Unix or Windows target");
 
 const CONTROL_CAPACITY: usize = 256;
+const PASTE_TEXT_MIME: &str = "text/plain;charset=utf-8";
 const OUTPUT_BUFFER_COUNT: usize = 4;
 const OUTPUT_CHUNK_BYTES: usize = 32 * 1024;
 const OUTPUT_POOL_BYTES: usize = OUTPUT_BUFFER_COUNT * OUTPUT_CHUNK_BYTES;
@@ -1877,6 +1878,42 @@ fn search_result_from_ghostty(result: ghostty::SearchResult) -> crate::search::S
     }
 }
 
+#[derive(Default)]
+struct BracketedPasteTrace {
+    enabled: bool,
+    changed_at: Option<Instant>,
+}
+
+impl BracketedPasteTrace {
+    fn observe(&mut self, terminal: &ghostty::DisplayTerminal) {
+        let Ok(modes) = terminal.modes() else {
+            return;
+        };
+        if modes.bracketed_paste == self.enabled {
+            return;
+        }
+        self.enabled = modes.bracketed_paste;
+        self.changed_at = Some(Instant::now());
+        log::debug!(
+            target: "paneflow::terminal::ghostty",
+            "bracketed paste mode {}",
+            if self.enabled { "enabled" } else { "disabled" },
+        );
+    }
+
+    fn note_paste(&self, text_bytes: usize) {
+        let since_change = self
+            .changed_at
+            .map(|at| at.elapsed().as_millis())
+            .unwrap_or(0);
+        log::debug!(
+            target: "paneflow::terminal::ghostty",
+            "paste of {text_bytes} bytes with bracketed paste {}, mode last changed {since_change} ms ago",
+            if self.enabled { "enabled" } else { "disabled" },
+        );
+    }
+}
+
 fn reject_input(inner: &SessionInner, input_kind: &'static str, error: impl std::fmt::Display) {
     let _ = inner
         .events_tx
@@ -2125,6 +2162,7 @@ fn run_runtime(
     let mut runtime_failed = false;
     let mut last_autoscroll = Instant::now();
     let mut last_output_at = Instant::now();
+    let mut paste_trace = BracketedPasteTrace::default();
 
     loop {
         count_runtime_loop_iteration();
@@ -2227,6 +2265,7 @@ fn run_runtime(
                     }
                     runtime_failed = true;
                 }
+                paste_trace.observe(&terminal);
             }
             Ok(Some(RuntimeMessage::Eof)) => {
                 #[cfg(unix)]
@@ -2286,9 +2325,26 @@ fn run_runtime(
             }
             Ok(Some(RuntimeMessage::PasteInput { text, allow_unsafe })) => {
                 release_queued_input_bytes(&inner, text.len());
-                match terminal.encode_paste(&text, allow_unsafe) {
-                    Ok(bytes) => {
-                        write_input_bytes(&inner, &mut writer, &bytes, &mut runtime_failed)
+                paste_trace.note_paste(text.len());
+                let representation = [ghostty::PasteRepresentation {
+                    mime: PASTE_TEXT_MIME,
+                    data: text.as_bytes(),
+                }];
+                match terminal.paste(
+                    &representation,
+                    ghostty::ClipboardLocation::Standard,
+                    allow_unsafe,
+                ) {
+                    Ok(_) => {
+                        if let Err(error) = handle_engine_events(&inner, &mut terminal, &mut writer)
+                        {
+                            if !runtime_failed {
+                                let _ = inner
+                                    .events_tx
+                                    .unbounded_send(GhosttyUiEvent::RuntimeFailed(error));
+                            }
+                            runtime_failed = true;
+                        }
                     }
                     Err(error) => reject_input(&inner, "paste", error),
                 }

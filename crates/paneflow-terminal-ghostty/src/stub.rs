@@ -58,14 +58,6 @@ impl DisplayTerminal {
         Err(GhosttyError::UnsupportedPlatform)
     }
 
-    pub fn paste_is_safe(&self, _: &str) -> bool {
-        false
-    }
-
-    pub fn encode_paste(&self, _: &str, _: bool) -> Result<Vec<u8>> {
-        Err(GhosttyError::UnsupportedPlatform)
-    }
-
     pub fn search(&self, _: &str, _: bool) -> Result<SearchResult> {
         Err(GhosttyError::UnsupportedPlatform)
     }
@@ -128,6 +120,15 @@ impl DisplayTerminal {
     }
 
     pub fn restore_scrollback(&mut self, _: &str) -> Result<()> {
+        Err(GhosttyError::UnsupportedPlatform)
+    }
+
+    pub fn paste(
+        &mut self,
+        _: &[crate::PasteRepresentation<'_>],
+        _: crate::ClipboardLocation,
+        _: bool,
+    ) -> Result<bool> {
         Err(GhosttyError::UnsupportedPlatform)
     }
 }

@@ -7,10 +7,43 @@
 ))]
 
 use paneflow_terminal_ghostty::{
-    BackendEvent, Color, DisplayTerminal, FocusEvent, Key, KeyAction, KeyInput, Modifiers,
-    MouseAction, MouseButton, MouseInput, Point, Rgb, Scroll, SelectionRange, TerminalAppearance,
-    WideCell, WindowSize,
+    BackendEvent, ClipboardLocation, Color, DisplayTerminal, FocusEvent, Key, KeyAction, KeyInput,
+    Modifiers, MouseAction, MouseButton, MouseInput, PasteRepresentation, Point, Rgb, Scroll,
+    SelectionRange, TerminalAppearance, WideCell, WindowSize,
 };
+
+#[allow(
+    clippy::unwrap_used,
+    reason = "test fixture setup must fail immediately"
+)]
+fn paste_plain_text(terminal: &mut DisplayTerminal, data: &[u8]) -> Vec<u8> {
+    let _ = terminal.drain_events();
+    terminal
+        .paste(
+            &[PasteRepresentation {
+                mime: "text/plain;charset=utf-8",
+                data,
+            }],
+            ClipboardLocation::Standard,
+            true,
+        )
+        .unwrap();
+    let events = terminal.drain_events();
+    assert!(
+        events
+            .iter()
+            .all(|event| matches!(event, BackendEvent::WritePty(_))),
+        "a paste must only write to the pty, got {events:?}"
+    );
+    events
+        .into_iter()
+        .filter_map(|event| match event {
+            BackendEvent::WritePty(bytes) => Some(bytes),
+            _ => None,
+        })
+        .flatten()
+        .collect()
+}
 
 #[allow(
     clippy::unwrap_used,
@@ -131,9 +164,11 @@ fn encoders_follow_live_terminal_modes() {
         b"\x1b[I"
     );
     assert_eq!(
-        terminal.encode_paste("safe", false).unwrap(),
+        paste_plain_text(&mut terminal, b"safe"),
         b"\x1b[200~safe\x1b[201~"
     );
+    terminal.feed(b"\x1b[?2004l").unwrap();
+    assert_eq!(paste_plain_text(&mut terminal, b"one\ntwo"), b"one\rtwo");
 
     let mouse = terminal
         .encode_mouse(MouseInput {
@@ -173,16 +208,17 @@ fn encoders_follow_live_terminal_modes() {
 }
 
 #[test]
-fn bracketed_paste_preserves_payload_at_the_old_64_kib_boundary() {
+fn a_bracketed_paste_as_large_as_the_app_input_queue_streams_intact() {
     let mut terminal = terminal(80, 24);
     terminal.feed(b"\x1b[?2004h").unwrap();
-    let paste = "x".repeat(64 * 1024);
+    let _ = terminal.drain_events();
+    let paste = vec![b'x'; 960 * 1024];
 
-    let encoded = terminal.encode_paste(&paste, true).unwrap();
+    let encoded = paste_plain_text(&mut terminal, &paste);
 
     assert!(encoded.starts_with(b"\x1b[200~"));
     assert!(encoded.ends_with(b"\x1b[201~"));
-    assert_eq!(&encoded[6..encoded.len() - 6], paste.as_bytes());
+    assert_eq!(&encoded[6..encoded.len() - 6], paste.as_slice());
 }
 
 #[test]
