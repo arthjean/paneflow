@@ -46,13 +46,13 @@ pub(super) fn render_diff_tab_strip(
     cx: &mut Context<PaneFlowApp>,
 ) -> AnyElement {
     let mut strip = div()
-        .h(px(40.))
+        .h(px(44.))
         .flex_none()
         .flex()
         .flex_row()
         .items_center()
-        .gap(px(4.))
-        .px(px(8.))
+        .gap(px(3.))
+        .px(px(6.))
         .border_b_1()
         .border_color(ui.border);
 
@@ -170,48 +170,54 @@ fn render_diff_tab(
     };
     let dirty = file.map(|(_, _, dirty)| dirty).unwrap_or(false);
     let rail_hover = crate::app::constants::sidebar_tab_hover_background();
-    let (resting, hovered) = if active {
-        (Some(rail_hover), None)
+    let active_border = if ui.base.l > 0.5 {
+        ui.accent.opacity(0.14)
     } else {
-        (None, Some(rail_hover))
+        ui.text.opacity(0.12)
     };
     let text = if active { ui.text } else { ui.muted };
     let group = SharedString::from(format!("diff-dock-tab-{index}-group"));
 
-    let mut chip = squircle_skin(
-        div()
-            .id(SharedString::from(format!("diff-dock-tab-{index}")))
-            .flex_none()
-            .h(px(26.))
-            .flex()
-            .flex_row()
-            .items_center()
-            .gap(px(6.))
-            .px(px(8.))
-            .cursor(CursorStyle::PointingHand),
-        group.clone(),
-        ROW_RADIUS,
-        resting,
-        hovered,
-    )
-    .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
-        this.select_diff_tab(index, cx);
-        this.focus_diff_tab(index, window, cx);
-    }))
-    .child(file_icon_element(
-        icon,
-        px(13.),
-        if active { ui.muted } else { text },
-    ))
-    .child(
-        div()
-            .flex_none()
-            .whitespace_nowrap()
-            .text_size(crate::ui_primitives::BODY)
-            .font_weight(FontWeight::MEDIUM)
-            .text_color(text)
-            .child(label),
-    );
+    let mut chip = div()
+        .id(SharedString::from(format!("diff-dock-tab-{index}")))
+        .group(group.clone())
+        .min_w(px(64.))
+        .max_w(px(208.))
+        .h(px(32.))
+        .flex()
+        .flex_row()
+        .items_center()
+        .gap(px(10.))
+        .pl(px(12.))
+        .pr(px(8.))
+        .rounded_full()
+        .border_1()
+        .border_color(gpui::transparent_black())
+        .when(active, |chip| {
+            chip.bg(if ui.base.l > 0.5 { ui.base } else { ui.overlay })
+                .border_color(active_border)
+        })
+        .when(!active, |chip| chip.hover(|style| style.bg(rail_hover)))
+        .cursor(CursorStyle::PointingHand)
+        .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+            this.select_diff_tab(index, cx);
+            this.focus_diff_tab(index, window, cx);
+        }))
+        .child(file_icon_element(
+            icon,
+            px(16.),
+            if active { ui.muted } else { text },
+        ))
+        .child(
+            div()
+                .min_w_0()
+                .text_ellipsis()
+                .whitespace_nowrap()
+                .text_size(crate::ui_primitives::BODY)
+                .font_weight(FontWeight::MEDIUM)
+                .text_color(text)
+                .child(label),
+        );
 
     let mark: AnyElement = if dirty && !close_armed {
         div()
@@ -256,7 +262,12 @@ fn render_diff_tab(
             .flex()
             .items_center()
             .justify_center()
-            .rounded(px(6.))
+            .rounded_full()
+            .when(!dirty && !close_armed, |button| {
+                button
+                    .invisible()
+                    .group_hover(group.clone(), |style| style.visible())
+            })
             .animated_hover_bg(
                 gpui::transparent_black(),
                 crate::app::constants::sidebar_tab_active_background(),
