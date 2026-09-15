@@ -224,22 +224,40 @@ pub enum UpdateStatus {
 
 pub type SharedUpdateSlot = std::sync::Arc<std::sync::Mutex<Option<UpdateStatus>>>;
 
+#[derive(Clone)]
+pub struct UpdateCheckTrigger(std::sync::mpsc::Sender<()>);
+
+impl UpdateCheckTrigger {
+    pub fn request(&self) {
+        let _ = self.0.send(());
+    }
+}
+
 pub fn spawn_check(
     telemetry: std::sync::Arc<crate::telemetry::client::TelemetryClient>,
-) -> SharedUpdateSlot {
+) -> (SharedUpdateSlot, UpdateCheckTrigger) {
     let slot: SharedUpdateSlot =
         std::sync::Arc::new(std::sync::Mutex::new(Some(UpdateStatus::Checking)));
     let writer = std::sync::Arc::clone(&slot);
+    let (trigger, requests) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
         loop {
             crate::app::telemetry_events::emit_update_check_started(&telemetry, CURRENT_VERSION);
             let status = check_github_release(&telemetry);
             let next_check = recheck_delay(&status);
             *writer.lock().unwrap_or_else(|e| e.into_inner()) = Some(status);
-            std::thread::sleep(next_check);
+            wait_for_next_check(&requests, next_check);
         }
     });
-    slot
+    (slot, UpdateCheckTrigger(trigger))
+}
+
+fn wait_for_next_check(requests: &std::sync::mpsc::Receiver<()>, delay: Duration) {
+    if requests.recv_timeout(delay) == Err(std::sync::mpsc::RecvTimeoutError::Disconnected) {
+        std::thread::sleep(delay);
+        return;
+    }
+    while requests.try_recv().is_ok() {}
 }
 
 fn recheck_delay(status: &UpdateStatus) -> Duration {
@@ -420,6 +438,22 @@ pub(crate) fn check_github_release(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_request_wakes_the_checker_before_its_timer() {
+        let (trigger, requests) = std::sync::mpsc::channel();
+        let trigger = UpdateCheckTrigger(trigger);
+        trigger.request();
+        trigger.request();
+        let started = std::time::Instant::now();
+        wait_for_next_check(&requests, Duration::from_secs(60));
+        assert!(started.elapsed() < Duration::from_secs(5));
+        assert_eq!(
+            requests.try_recv(),
+            Err(std::sync::mpsc::TryRecvError::Empty),
+            "queued requests collapse into one check"
+        );
+    }
 
     fn available(version: &str) -> UpdateStatus {
         UpdateStatus::Available {

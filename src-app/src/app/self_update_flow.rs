@@ -1,9 +1,11 @@
 use gpui::{ClipboardItem, Context, Window};
 
+use crate::window_chrome::title_bar::UpdateCheckPill;
 use crate::{
     DismissUpdate, PaneFlowApp, StartSelfUpdate, TOAST_HOLD_MS, ToastAction,
     system_package_update_command, update,
 };
+use update::checker::UpdateStatus;
 
 const DOWNLOAD_WATCHDOG: std::time::Duration = std::time::Duration::from_secs(15 * 60);
 
@@ -21,6 +23,23 @@ pub(crate) fn install_method_label(method: &update::install_method::InstallMetho
 
 fn unknown_install_uses_targz() -> bool {
     cfg!(target_os = "linux")
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ManualUpdateCheck {
+    Checking,
+    UpToDate,
+    Available,
+    Failed,
+}
+
+pub(crate) fn settle_manual_check(status: &UpdateStatus) -> Option<ManualUpdateCheck> {
+    match status {
+        UpdateStatus::Checking => None,
+        UpdateStatus::Available { .. } => Some(ManualUpdateCheck::Available),
+        UpdateStatus::UpToDate => Some(ManualUpdateCheck::UpToDate),
+        UpdateStatus::Failed => Some(ManualUpdateCheck::Failed),
+    }
 }
 
 pub(crate) fn is_strict_semver(raw: &str) -> bool {
@@ -96,12 +115,72 @@ impl PaneFlowApp {
         }
     }
 
+    pub(crate) fn update_check_pill(&self) -> Option<UpdateCheckPill> {
+        match self.self_update.manual_check? {
+            ManualUpdateCheck::Checking => Some(UpdateCheckPill::Checking),
+            ManualUpdateCheck::UpToDate => Some(UpdateCheckPill::UpToDate),
+            ManualUpdateCheck::Failed => Some(UpdateCheckPill::Failed),
+            ManualUpdateCheck::Available => match &self.self_update.update_status {
+                Some(UpdateStatus::Available { version, .. }) => {
+                    Some(UpdateCheckPill::Available(version.clone()))
+                }
+                _ => None,
+            },
+        }
+    }
+
+    pub(crate) fn request_update_check(&mut self, cx: &mut Context<Self>) {
+        self.self_update.dismissed_version = None;
+        self.self_update.manual_check = Some(ManualUpdateCheck::Checking);
+        self.self_update.check_trigger.request();
+        cx.notify();
+    }
+
+    pub(crate) fn report_manual_update_check(
+        &mut self,
+        status: &UpdateStatus,
+        cx: &mut Context<Self>,
+    ) {
+        if self.self_update.manual_check != Some(ManualUpdateCheck::Checking) {
+            return;
+        }
+        let Some(settled) = settle_manual_check(status) else {
+            return;
+        };
+        self.self_update.manual_check = Some(settled);
+        cx.notify();
+        if !matches!(
+            settled,
+            ManualUpdateCheck::UpToDate | ManualUpdateCheck::Failed
+        ) {
+            return;
+        }
+        cx.spawn(async move |this, cx| {
+            cx.background_executor()
+                .timer(std::time::Duration::from_millis(
+                    crate::app::constants::UPDATE_CHECK_PILL_HOLD_MS,
+                ))
+                .await;
+            let _ = this.update(cx, |app, cx| {
+                if matches!(
+                    app.self_update.manual_check,
+                    Some(ManualUpdateCheck::UpToDate | ManualUpdateCheck::Failed)
+                ) {
+                    app.self_update.manual_check = None;
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
+    }
+
     pub(crate) fn handle_start_self_update(
         &mut self,
         _: &StartSelfUpdate,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.self_update.manual_check = None;
         self.kickoff_self_update_install(cx);
     }
 
@@ -111,6 +190,10 @@ impl PaneFlowApp {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.self_update.manual_check.take() == Some(ManualUpdateCheck::Failed) {
+            cx.notify();
+            return;
+        }
         self.emit_update_dismissed();
         if let Some(update::checker::UpdateStatus::Available { version, .. }) =
             self.self_update.update_status.take()
@@ -548,5 +631,28 @@ mod tests {
     #[test]
     fn unknown_targz_fallback_excludes_macos() {
         assert_eq!(unknown_install_uses_targz(), cfg!(target_os = "linux"));
+    }
+
+    #[test]
+    fn a_manual_check_settles_on_every_final_status() {
+        let available = UpdateStatus::Available {
+            version: "9.0.0".to_string(),
+            url: String::new(),
+            asset_url: None,
+            asset_format: None,
+        };
+        assert_eq!(
+            settle_manual_check(&available),
+            Some(ManualUpdateCheck::Available)
+        );
+        assert_eq!(
+            settle_manual_check(&UpdateStatus::UpToDate),
+            Some(ManualUpdateCheck::UpToDate)
+        );
+        assert_eq!(
+            settle_manual_check(&UpdateStatus::Failed),
+            Some(ManualUpdateCheck::Failed)
+        );
+        assert_eq!(settle_manual_check(&UpdateStatus::Checking), None);
     }
 }

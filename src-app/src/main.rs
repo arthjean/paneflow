@@ -227,6 +227,8 @@ pub(crate) struct ClosedPaneRecord {
 
 struct SelfUpdateState {
     pending_update: update::checker::SharedUpdateSlot,
+    check_trigger: update::checker::UpdateCheckTrigger,
+    manual_check: Option<crate::app::self_update_flow::ManualUpdateCheck>,
     update_status: Option<update::checker::UpdateStatus>,
     self_update_status: update::SelfUpdateStatus,
     install_method: update::install_method::InstallMethod,
@@ -1023,6 +1025,7 @@ impl Render for PaneFlowApp {
             tb.files_menu_open = self.title_bar_files_menu_open.is_some();
             tb.help_menu_open = self.title_bar_help_menu_open.is_some();
             tb.update_available = update_info;
+            tb.update_check = self.update_check_pill();
             tb.ipc_state = self.ipc_status.state();
             tb.cockpit = true;
             tb.cockpit_material_active = chrome_material_active;
@@ -1097,13 +1100,19 @@ impl Render for PaneFlowApp {
                     this.open_system_info_dialog(window, cx);
                 }),
             )
-            .on_action(cx.listener(|_this: &mut Self, _: &OpenHelp, _window, _cx| {
-                if let Err(e) =
-                    crate::external_open::open_url("https://github.com/arthjean/paneflow#readme")
-                {
-                    log::warn!("Help > PaneFlow Help: could not open browser: {e}");
-                }
+            .on_action(cx.listener(|this: &mut Self, _: &OpenHelp, _window, cx| {
+                this.open_documentation(cx);
             }))
+            .on_action(
+                cx.listener(|this: &mut Self, _: &OpenSettings, window, cx| {
+                    this.open_settings_window(window, cx);
+                }),
+            )
+            .on_action(
+                cx.listener(|this: &mut Self, _: &CheckForUpdates, _window, cx| {
+                    this.request_update_check(cx);
+                }),
+            )
             .on_action(cx.listener(Self::handle_start_self_update))
             .on_action(cx.listener(Self::handle_dismiss_update))
             .on_action(cx.listener(Self::handle_toggle_files_sidebar))

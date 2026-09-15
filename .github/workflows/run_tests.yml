@@ -582,7 +582,7 @@ jobs:
   # PR's macOS rendering even when the OCR gate is happy.
   #
   # Gates:
-  #   * HARD - `font: resolved family=...` line MUST appear in the app
+  #   * HARD - `font: family=...` line MUST appear in the app
   #     log (proves the renderer reached `cached_font_config()`, i.e.
   #     the app didn't crash before first frame).
   #   * SOFT - OCR finds ≥10 alphanumeric chars (the macOS menubar
@@ -639,7 +639,7 @@ jobs:
 
       - name: Seed a session with one terminal pane
         # Since the welcome screen (#74) a fresh home opens without a
-        # terminal, and the `font: resolved family=` gate below only fires
+        # terminal, and the `font: family=` gate below only fires
         # when a terminal pane renders. Seed the same one-terminal session
         # the startup bench uses so the gate keeps checking the terminal
         # rendering path rather than the welcome screen.
@@ -657,7 +657,7 @@ jobs:
 
           # Launch the binary INSIDE the bundle directly (rather than
           # `open -a`) so stdout/stderr can be redirected - `open` does
-          # not tee child output and the `font: resolved family=` log
+          # not tee child output and the `font: family=` log
           # line is our hard gate. The bundle path is preserved, so
           # Info.plist + Resources/ load correctly and Core Text sees
           # the same bundle context as a real install.
@@ -674,7 +674,7 @@ jobs:
           # the missing-log gate rather than waiting out the whole deadline.
           launched_at=$SECONDS
           while [ $((SECONDS - launched_at)) -lt 90 ]; do
-            if grep -q "font: resolved family=" paneflow.log 2>/dev/null; then
+            if grep -q "font: family=" paneflow.log 2>/dev/null; then
               echo "first paint reached after $((SECONDS - launched_at))s"
               break
             fi
@@ -705,12 +705,12 @@ jobs:
           # for a font, which is upstream of every rendering-correctness
           # property this job exists to verify.
           echo "── Resolved font ──"
-          if grep "font: resolved family=" paneflow.log; then
-            if grep -q "font: resolved family='JetBrains Mono'" paneflow.log; then
+          if grep "font: family=" paneflow.log; then
+            if grep -q "font: family='JetBrains Mono'" paneflow.log; then
               echo "::warning::Embedded JetBrains Mono fallback was selected - Core Text did not surface a system mono family (Menlo / Monaco / Courier). The fallback is the safety net working as designed, but persistent selection on macos-14 indicates a Core Text drift worth investigating."
             fi
           else
-            echo "::error::No 'font: resolved family=' line in app log. The app likely crashed before first render - paneflow.log + screenshot.png artifacts will pin down the exact failure."
+            echo "::error::No 'font: family=' line in app log. The app likely crashed before first render - paneflow.log + screenshot.png artifacts will pin down the exact failure."
             exit 1
           fi
 
@@ -968,7 +968,7 @@ jobs:
   # holds end-to-end on a hosted runner.
   #
   # Gates:
-  #   * HARD - `font: resolved family=...` must appear in the app log.
+  #   * HARD - `font: family=...` must appear in the app log.
   #   * SOFT - visual artifact uploaded for human review (no OCR gate
   #     because tesseract on Windows requires a heavier install path
   #     and the screenshot+log signal is already enough to spot the
@@ -1045,7 +1045,7 @@ jobs:
 
           # Launch detached so we can sleep + capture, with stdout +
           # stderr teed to a log file. RUST_LOG=info is required to
-          # surface the `font: resolved family=` line emitted by
+          # surface the `font: family=` line emitted by
           # terminal/element/font.rs:215 - the hard gate below greps
           # for it.
           $env:RUST_LOG = 'info'
@@ -1064,7 +1064,7 @@ jobs:
           while ((Get-Date) -lt $deadline) {
             $seen = @('paneflow.log', 'paneflow.err.log') |
               Where-Object { Test-Path -LiteralPath $_ } |
-              ForEach-Object { Select-String -Path $_ -Pattern 'font: resolved family=' -SimpleMatch -Quiet } |
+              ForEach-Object { Select-String -Path $_ -Pattern 'font: family=' -SimpleMatch -Quiet } |
               Where-Object { $_ }
             if ($seen) { break }
             if ($proc.HasExited) { break }
@@ -1107,9 +1107,9 @@ jobs:
           }
 
           Write-Output "── Resolved font ──"
-          $fontLine = Select-String -Path 'paneflow.log' -Pattern 'font: resolved family=' -SimpleMatch
+          $fontLine = Select-String -Path 'paneflow.log' -Pattern 'font: family=' -SimpleMatch
           if (-not $fontLine) {
-            Write-Output "::error::No 'font: resolved family=' line in app log. The app likely crashed before first render - paneflow.log + screenshot.png artifacts will pin down the exact failure."
+            Write-Output "::error::No 'font: family=' line in app log. The app likely crashed before first render - paneflow.log + screenshot.png artifacts will pin down the exact failure."
             exit 1
           }
           $fontLine | ForEach-Object { Write-Output $_.Line }

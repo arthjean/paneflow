@@ -12,7 +12,7 @@ use crate::{
     app::constants::{
         SIDEBAR_WIDTH, TITLE_BAR_CONTROL_SIZE, TITLE_BAR_EDGE_INSET, TITLE_BAR_MIN_HEIGHT,
     },
-    ui_primitives::{AnimatedHoverExt, lerp_color},
+    ui_primitives::{AnimatedHoverExt, ROW_RADIUS, lerp_color, squircle_skin},
 };
 
 pub struct TitleBar {
@@ -24,6 +24,7 @@ pub struct TitleBar {
     pub help_menu_open: bool,
     pub ipc_state: crate::ipc::IpcState,
     pub update_available: Option<UpdateInfo>,
+    pub update_check: Option<UpdateCheckPill>,
     pub cockpit: bool,
     pub cockpit_material_active: bool,
     button_layout_observer: Option<gpui::Subscription>,
@@ -56,6 +57,16 @@ pub enum SystemPackageKind {
     Other,
 }
 
+#[derive(Clone, PartialEq, Eq)]
+pub enum UpdateCheckPill {
+    Checking,
+    UpToDate,
+    Available(String),
+    Failed,
+}
+
+const UPDATE_AVAILABLE_BLUE: u32 = 0x3a83f7;
+
 #[derive(Clone, Copy)]
 enum PillStyle {
     Clickable,
@@ -64,6 +75,101 @@ enum PillStyle {
 }
 
 impl TitleBar {
+    fn render_update_check_pill(&self, ui: crate::theme::UiColors) -> Option<AnyElement> {
+        let pill = self.update_check.clone()?;
+        let white = gpui::white();
+        let blue = gpui::Hsla::from(gpui::rgb(UPDATE_AVAILABLE_BLUE));
+        let (label, fill, ink): (String, gpui::Hsla, gpui::Hsla) = match &pill {
+            UpdateCheckPill::Checking => ("Checking for updates…".to_string(), ui.subtle, ui.text),
+            UpdateCheckPill::UpToDate => (
+                "Paneflow is up to date".to_string(),
+                ui.vc_added.opacity(0.12),
+                ui.vc_added,
+            ),
+            UpdateCheckPill::Available(version) => (format!("v{version} available"), blue, white),
+            UpdateCheckPill::Failed => (
+                "Update check failed".to_string(),
+                ui.vc_deleted.opacity(0.12),
+                ui.vc_deleted,
+            ),
+        };
+
+        let hovered = match &pill {
+            UpdateCheckPill::Available(_) => Some(lerp_color(fill, white, 0.12)),
+            UpdateCheckPill::Failed => Some(ui.vc_deleted.opacity(0.2)),
+            UpdateCheckPill::Checking | UpdateCheckPill::UpToDate => None,
+        };
+        let shell = div()
+            .id("update-check-pill")
+            .ml_auto()
+            .mr_2()
+            .flex()
+            .flex_row()
+            .items_center()
+            .justify_center()
+            .gap(px(5.))
+            .px(px(8.))
+            .h(px(24.))
+            .text_color(ink)
+            .text_size(px(11.))
+            .font_weight(gpui::FontWeight::MEDIUM)
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation());
+        let mut element = squircle_skin(
+            shell,
+            "update-check-pill-group",
+            ROW_RADIUS,
+            Some(fill),
+            hovered,
+        );
+        match &pill {
+            UpdateCheckPill::Checking => {
+                element = element.child(
+                    svg()
+                        .size(px(11.))
+                        .flex_none()
+                        .path("icons/loader-circle.svg")
+                        .text_color(ui.muted)
+                        .with_animation(
+                            "update-check-pill-spinner",
+                            Animation::new(Duration::from_secs(1)).repeat(),
+                            |svg, delta| {
+                                svg.with_transformation(Transformation::rotate(percentage(delta)))
+                            },
+                        ),
+                );
+            }
+            UpdateCheckPill::Available(_) => {
+                element = element.child(
+                    svg()
+                        .size(px(11.))
+                        .flex_none()
+                        .path("icons/download.svg")
+                        .text_color(white),
+                );
+            }
+            UpdateCheckPill::UpToDate | UpdateCheckPill::Failed => {}
+        }
+        element = element.child(label);
+
+        let element = match pill {
+            UpdateCheckPill::Available(_) => element
+                .on_mouse_down(MouseButton::Left, move |_, window, cx| {
+                    cx.stop_propagation();
+                    window.dispatch_action(Box::new(crate::StartSelfUpdate), cx);
+                })
+                .into_any_element(),
+            UpdateCheckPill::Failed => element
+                .on_mouse_down(MouseButton::Left, move |_, window, cx| {
+                    cx.stop_propagation();
+                    window.dispatch_action(Box::new(crate::CheckForUpdates), cx);
+                })
+                .into_any_element(),
+            UpdateCheckPill::Checking => element.opacity(0.7).into_any_element(),
+            UpdateCheckPill::UpToDate => element.into_any_element(),
+        };
+        Some(element)
+    }
+
     pub fn new(_cx: &mut Context<Self>) -> Self {
         Self {
             should_move: false,
@@ -74,6 +180,7 @@ impl TitleBar {
             help_menu_open: false,
             ipc_state: crate::ipc::IpcState::Online,
             update_available: None,
+            update_check: None,
             cockpit: false,
             cockpit_material_active: !cfg!(target_os = "windows"),
             button_layout_observer: None,
@@ -523,6 +630,8 @@ impl Render for TitleBar {
                     .child("IPC offline")
             });
 
+        let check_pill = self.render_update_check_pill(ui);
+
         let bar = div()
             .id("title-bar")
             .window_control_area(WindowControlArea::Drag)
@@ -571,6 +680,7 @@ impl Render for TitleBar {
         })
         .child(left_rail)
         .child(content)
+        .children(check_pill)
         .children(ipc_pill)
         .children(update_pill)
         .children(right_controls)

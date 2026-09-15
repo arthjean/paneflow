@@ -428,7 +428,8 @@ impl PaneFlowApp {
                 "ai.unrestricted is ON; same-UID callers may auto-submit prompts to agent panes without PANEFLOW_IPC_SCRIPTING (toggle in Settings -> Agents)"
             );
         }
-        let pending_update = update::checker::spawn_check(std::sync::Arc::clone(&telemetry));
+        let (pending_update, check_trigger) =
+            update::checker::spawn_check(std::sync::Arc::clone(&telemetry));
         Self::spawn_telemetry_flusher(std::sync::Arc::clone(&telemetry), cx);
 
         #[cfg(target_os = "linux")]
@@ -697,6 +698,8 @@ impl PaneFlowApp {
             pending_palette_focus: false,
             self_update: crate::SelfUpdateState {
                 pending_update,
+                check_trigger,
+                manual_check: None,
                 update_status: None,
                 self_update_status: update::SelfUpdateStatus::default(),
                 install_method,
@@ -820,13 +823,16 @@ pub(crate) fn install_macos_menu_bar(cx: &mut gpui::App) {
     use gpui::{Menu, MenuItem, OsAction};
 
     use crate::{
-        About, CloseWorkspace, Copy, NewWorkspace, NextWorkspace, OpenHelp, Paste, Quit, SelectAll,
-        ShowSystemInfo,
+        About, CheckForUpdates, CloseWorkspace, Copy, NewWorkspace, NextWorkspace, OpenHelp,
+        OpenSettings, Paste, Quit, SelectAll, ShowSystemInfo,
     };
 
     cx.set_menus(vec![
         Menu::new("PaneFlow").items(vec![
             MenuItem::action("About PaneFlow", About),
+            MenuItem::action("Check for Updates…", CheckForUpdates),
+            MenuItem::separator(),
+            MenuItem::action("Settings…", OpenSettings),
             MenuItem::separator(),
             MenuItem::action("Quit PaneFlow", Quit),
         ]),
@@ -853,8 +859,9 @@ pub(crate) fn install_macos_menu_bar(cx: &mut gpui::App) {
 #[cfg(target_os = "macos")]
 pub(crate) fn install_macos_menu_action_fallbacks(cx: &mut gpui::App) {
     use crate::{
-        About, CloseWorkspace, Copy, NewWorkspace, NextWorkspace, OpenHelp, PaneFlowApp, Paste,
-        Quit, SelectAll, ShowSystemInfo, TerminalCopy, TerminalPaste, TerminalSelectAll,
+        About, CheckForUpdates, CloseWorkspace, Copy, NewWorkspace, NextWorkspace, OpenHelp,
+        OpenSettings, PaneFlowApp, Paste, Quit, SelectAll, ShowSystemInfo, TerminalCopy,
+        TerminalPaste, TerminalSelectAll,
     };
 
     fn with_active_paneflow_window(
@@ -918,12 +925,17 @@ pub(crate) fn install_macos_menu_action_fallbacks(cx: &mut gpui::App) {
 
     cx.on_action(|_: &OpenHelp, cx| {
         with_active_paneflow_window(cx, |app, _window, cx| {
-            if let Err(e) =
-                crate::external_open::open_url("https://github.com/arthjean/paneflow#readme")
-            {
-                log::warn!("Help > PaneFlow Help: could not open browser: {e}");
-                app.show_toast(format!("Could not open help: {e}"), cx);
-            }
+            app.open_documentation(cx);
+        });
+    });
+    cx.on_action(|_: &OpenSettings, cx| {
+        with_active_paneflow_window(cx, |app, window, cx| {
+            app.open_settings_window(window, cx);
+        });
+    });
+    cx.on_action(|_: &CheckForUpdates, cx| {
+        with_active_paneflow_window(cx, |app, _window, cx| {
+            app.request_update_check(cx);
         });
     });
 }

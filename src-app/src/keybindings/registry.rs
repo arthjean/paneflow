@@ -1,6 +1,10 @@
 use gpui::Action;
 
 use crate::{
+    CheckForUpdates, FontSizeDecrease, FontSizeIncrease, FontSizeReset, OpenSettings,
+    ToggleFleetSearch,
+};
+use crate::{
     ClearScrollHistory, ClosePane, CloseTab, CloseWorkspace, CopyWorkspacePath, DismissSearch,
     FocusDown, FocusLeft, FocusRight, FocusUp, JumpNextPrompt, JumpNextWaiting, JumpPrevPrompt,
     LayoutEvenHorizontal, LayoutEvenVertical, LayoutMainVertical, LayoutTiled, MarkdownCopy,
@@ -13,7 +17,6 @@ use crate::{
     SplitEqualize, SplitHorizontally, SplitVertically, SwapPane, TerminalCopy, TerminalPaste,
     TerminalSelectAll, ToggleCopyMode, ToggleSearch, ToggleSearchRegex, ToggleZoom, UndoClosePane,
 };
-use crate::{FontSizeDecrease, FontSizeIncrease, FontSizeReset, ToggleFleetSearch};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum ShortcutGroup {
@@ -630,6 +633,20 @@ pub(super) const ACTIONS: &[ActionMeta] = &[
         factory: || Box::new(crate::OpenCommandPalette),
         context: "",
         description: "Command palette",
+        group: ShortcutGroup::Application,
+    },
+    ActionMeta {
+        name: "open_settings",
+        factory: || Box::new(OpenSettings),
+        context: "",
+        description: "Settings",
+        group: ShortcutGroup::Application,
+    },
+    ActionMeta {
+        name: "check_for_updates",
+        factory: || Box::new(CheckForUpdates),
+        context: "",
+        description: "Check for updates",
         group: ShortcutGroup::Application,
     },
     ActionMeta {

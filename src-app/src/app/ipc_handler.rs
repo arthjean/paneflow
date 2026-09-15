@@ -1238,6 +1238,7 @@ impl PaneFlowApp {
         else {
             return;
         };
+        self.report_manual_update_check(&incoming, cx);
         let installer_holds_artifact = matches!(
             self.self_update.self_update_status,
             update::SelfUpdateStatus::Downloading
