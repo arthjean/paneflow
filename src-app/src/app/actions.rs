@@ -69,6 +69,8 @@ actions!(
         SelectAll,
         OpenHelp,
         ShowSystemInfo,
+        OpenSettings,
+        CheckForUpdates,
         MarkdownScrollPageUp,
         MarkdownScrollPageDown,
         MarkdownFindOpen,

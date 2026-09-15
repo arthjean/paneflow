@@ -430,6 +430,11 @@ pub(super) const DEFAULTS: &[DefaultBinding] = &[
         action_name: "open_command_palette",
         context: None,
     },
+    DefaultBinding {
+        key: "secondary-,",
+        action_name: "open_settings",
+        context: None,
+    },
 ];
 
 #[cfg(target_os = "macos")]
@@ -660,5 +665,20 @@ mod tests {
     #[test]
     fn us012_quit_is_not_also_a_platform_default() {
         assert!(PLATFORM_DEFAULTS.iter().all(|d| d.action_name != "quit"));
+    }
+
+    #[test]
+    fn secondary_comma_opens_settings_on_every_platform() {
+        let settings = DEFAULTS
+            .iter()
+            .find(|d| d.key == "secondary-,")
+            .expect("secondary-, must be a default on every platform");
+        assert_eq!(settings.action_name, "open_settings");
+        assert_eq!(settings.context, None);
+        assert!(
+            PLATFORM_DEFAULTS
+                .iter()
+                .all(|d| d.action_name != "open_settings")
+        );
     }
 }

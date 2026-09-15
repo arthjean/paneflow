@@ -18,6 +18,10 @@ const TROUBLESHOOTING_URL: &str = "https://paneflow.dev/docs/troubleshooting";
 type TitleBarMenuClick = Box<dyn Fn(&ClickEvent, &mut Window, &mut gpui::App) + 'static>;
 
 impl PaneFlowApp {
+    pub(crate) fn open_documentation(&mut self, cx: &mut Context<Self>) {
+        self.open_help_url(DOCUMENTATION_URL, cx);
+    }
+
     fn open_help_url(&mut self, url: &'static str, cx: &mut Context<Self>) {
         if let Err(err) = crate::external_open::open_url(url) {
             log::warn!("help menu: open URL failed: {err}");
@@ -136,6 +140,15 @@ impl PaneFlowApp {
                 cx.stop_propagation();
             })),
         );
+        let check_for_updates = menu_item(
+            "title-bar-help-check-for-updates",
+            "Check for Updates…",
+            Box::new(cx.listener(|this, _: &ClickEvent, _, cx| {
+                this.title_bar_help_menu_open = None;
+                this.request_update_check(cx);
+                cx.stop_propagation();
+            })),
+        );
         let automations = menu_item(
             "title-bar-help-automations",
             "Automations",
@@ -198,6 +211,7 @@ impl PaneFlowApp {
                 .on_mouse_down(MouseButton::Right, |_, _, cx| cx.stop_propagation())
                 .child(documentation)
                 .child(whats_new)
+                .child(check_for_updates)
                 .child(automations)
                 .child(review)
                 .child(troubleshooting)

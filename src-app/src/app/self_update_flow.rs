@@ -4,6 +4,7 @@ use crate::{
     DismissUpdate, PaneFlowApp, StartSelfUpdate, TOAST_HOLD_MS, ToastAction,
     system_package_update_command, update,
 };
+use update::checker::UpdateStatus;
 
 const DOWNLOAD_WATCHDOG: std::time::Duration = std::time::Duration::from_secs(15 * 60);
 
@@ -21,6 +22,19 @@ pub(crate) fn install_method_label(method: &update::install_method::InstallMetho
 
 fn unknown_install_uses_targz() -> bool {
     cfg!(target_os = "linux")
+}
+
+pub(crate) fn manual_check_message(status: &UpdateStatus, current_version: &str) -> Option<String> {
+    match status {
+        UpdateStatus::Checking => None,
+        UpdateStatus::Available { version, .. } => {
+            Some(format!("Paneflow v{version} is available"))
+        }
+        UpdateStatus::UpToDate => Some(format!("Paneflow v{current_version} is up to date")),
+        UpdateStatus::Failed => {
+            Some("Could not check for updates: the release feed is unreachable".to_string())
+        }
+    }
 }
 
 pub(crate) fn is_strict_semver(raw: &str) -> bool {
@@ -94,6 +108,28 @@ impl PaneFlowApp {
             }
             _ => None,
         }
+    }
+
+    pub(crate) fn request_update_check(&mut self, cx: &mut Context<Self>) {
+        self.self_update.dismissed_version = None;
+        self.self_update.manual_check_pending = true;
+        self.self_update.check_trigger.request();
+        self.show_toast("Checking for updates…", cx);
+    }
+
+    pub(crate) fn report_manual_update_check(
+        &mut self,
+        status: &UpdateStatus,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.self_update.manual_check_pending {
+            return;
+        }
+        let Some(message) = manual_check_message(status, env!("CARGO_PKG_VERSION")) else {
+            return;
+        };
+        self.self_update.manual_check_pending = false;
+        self.show_toast(message, cx);
     }
 
     pub(crate) fn handle_start_self_update(
@@ -548,5 +584,25 @@ mod tests {
     #[test]
     fn unknown_targz_fallback_excludes_macos() {
         assert_eq!(unknown_install_uses_targz(), cfg!(target_os = "linux"));
+    }
+
+    #[test]
+    fn a_manual_check_reports_every_final_status() {
+        let available = UpdateStatus::Available {
+            version: "9.0.0".to_string(),
+            url: String::new(),
+            asset_url: None,
+            asset_format: None,
+        };
+        assert_eq!(
+            manual_check_message(&available, "1.0.0").as_deref(),
+            Some("Paneflow v9.0.0 is available")
+        );
+        assert_eq!(
+            manual_check_message(&UpdateStatus::UpToDate, "1.0.0").as_deref(),
+            Some("Paneflow v1.0.0 is up to date")
+        );
+        assert!(manual_check_message(&UpdateStatus::Failed, "1.0.0").is_some());
+        assert!(manual_check_message(&UpdateStatus::Checking, "1.0.0").is_none());
     }
 }
