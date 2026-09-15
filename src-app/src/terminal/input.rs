@@ -45,17 +45,12 @@ fn key_escape_sequence(
     Some(sequence)
 }
 
-pub(super) fn sanitize_bracketed_paste(text: &str) -> String {
+pub(super) fn normalize_paste_text(text: &str) -> String {
     let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
     normalized
         .chars()
         .filter(|&c| c != '\x1b' && !(('\u{0080}'..='\u{009f}').contains(&c)))
         .collect()
-}
-
-#[cfg(test)]
-pub(super) fn wrap_bracketed_paste(text: &str) -> String {
-    format!("\x1b[200~{}\x1b[201~", sanitize_bracketed_paste(text))
 }
 
 fn ghostty_modifiers(modifiers: gpui::Modifiers) -> ghostty::Modifiers {
@@ -942,7 +937,7 @@ impl TerminalView {
                 if let Some(item) = cx.read_from_primary()
                     && let Some(text) = item.text()
                 {
-                    self.write_paste_text(&text, mode);
+                    self.write_paste_text(&text);
                 }
             }
             return;
@@ -1014,15 +1009,13 @@ impl TerminalView {
                 && let Some(text) =
                     paths_to_pty_text(ext_paths.paths(), self.terminal.shell_quoting)
             {
-                let mode = self.terminal.session_backend().modes();
-                self.write_paste_text(&text, mode);
+                self.write_paste_text(&text);
                 return;
             }
         }
 
         if let Some(text) = clipboard.text() {
-            let mode = self.terminal.session_backend().modes();
-            self.write_paste_text(&text, mode);
+            self.write_paste_text(&text);
             return;
         }
 
@@ -1042,24 +1035,19 @@ impl TerminalView {
         _cx: &mut Context<Self>,
     ) {
         if let Some(text) = paths_to_pty_text(paths.paths(), self.terminal.shell_quoting) {
-            let mode = self.terminal.session_backend().modes();
-            self.write_paste_text(&text, mode);
+            self.write_paste_text(&text);
         }
     }
 
-    pub(super) fn write_paste_text(&self, text: &str, mode: Modes) {
-        let payload = if mode.contains(Modes::BRACKETED_PASTE) {
-            sanitize_bracketed_paste(text)
-        } else {
-            text.replace("\r\n", "\r").replace('\n', "\r")
-        };
-        self.terminal.write_ghostty_paste(payload);
+    pub(super) fn write_paste_text(&self, text: &str) {
+        self.terminal
+            .write_ghostty_paste(normalize_paste_text(text));
     }
 
     pub fn inject_text(&self, text: &str) {
         let mode = self.terminal.session_backend().modes();
         if mode.contains(Modes::BRACKETED_PASTE) {
-            self.write_paste_text(text, mode);
+            self.write_paste_text(text);
         } else {
             self.send_text(text);
         }
@@ -1218,7 +1206,7 @@ impl TerminalView {
 
 #[cfg(test)]
 mod tests {
-    use super::{paths_to_pty_text, wrap_bracketed_paste};
+    use super::{normalize_paste_text, paths_to_pty_text};
     use crate::terminal::types::{Modes, ShellQuoting};
     use std::path::PathBuf;
 
@@ -1275,34 +1263,17 @@ mod tests {
     }
 
     #[test]
-    fn bracketed_wrap_has_both_sentinels_and_no_cr() {
-        let wrapped = wrap_bracketed_paste("hello world");
-        assert!(wrapped.starts_with("\x1b[200~"), "opens with paste-start");
-        assert!(wrapped.ends_with("\x1b[201~"), "closes with paste-end");
-        assert_eq!(wrapped, "\x1b[200~hello world\x1b[201~");
-        assert!(!wrapped.contains('\r'), "no carriage return in the burst");
+    fn paste_text_is_normalized_to_lf_before_the_engine_frames_it() {
+        assert_eq!(normalize_paste_text("hello world"), "hello world");
+        assert_eq!(
+            normalize_paste_text("line one\r\nline two\rline three\nline four"),
+            "line one\nline two\nline three\nline four"
+        );
     }
 
     #[test]
-    fn bracketed_wrap_keeps_newlines_literal() {
-        let wrapped = wrap_bracketed_paste("line one\nline two");
-        assert_eq!(wrapped, "\x1b[200~line one\nline two\x1b[201~");
-        assert!(!wrapped.contains('\r'));
-    }
-
-    #[test]
-    fn bracketed_wrap_normalizes_crlf_to_lf() {
-        let wrapped = wrap_bracketed_paste("line one\r\nline two\rline three");
-        assert_eq!(wrapped, "\x1b[200~line one\nline two\nline three\x1b[201~");
-        assert!(!wrapped.contains('\r'));
-    }
-
-    #[test]
-    fn bracketed_wrap_strips_esc_and_c1_to_block_paste_escape() {
-        let wrapped = wrap_bracketed_paste("a\x1b[201~b\u{0085}c");
-        assert_eq!(wrapped, "\x1b[200~a[201~bc\x1b[201~");
-        assert_eq!(wrapped.matches("\x1b[200~").count(), 1);
-        assert_eq!(wrapped.matches("\x1b[201~").count(), 1);
+    fn paste_text_drops_esc_and_c1_so_a_payload_cannot_close_the_bracket() {
+        assert_eq!(normalize_paste_text("a\x1b[201~b\u{0085}c"), "a[201~bc");
     }
 
     #[test]

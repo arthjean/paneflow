@@ -24,6 +24,7 @@ use super::types::{
 compile_error!("terminal::ghostty_session requires a Unix or Windows target");
 
 const CONTROL_CAPACITY: usize = 256;
+const PASTE_TEXT_MIME: &str = "text/plain;charset=utf-8";
 const OUTPUT_BUFFER_COUNT: usize = 4;
 const OUTPUT_CHUNK_BYTES: usize = 32 * 1024;
 const OUTPUT_POOL_BYTES: usize = OUTPUT_BUFFER_COUNT * OUTPUT_CHUNK_BYTES;
@@ -2286,9 +2287,25 @@ fn run_runtime(
             }
             Ok(Some(RuntimeMessage::PasteInput { text, allow_unsafe })) => {
                 release_queued_input_bytes(&inner, text.len());
-                match terminal.encode_paste(&text, allow_unsafe) {
-                    Ok(bytes) => {
-                        write_input_bytes(&inner, &mut writer, &bytes, &mut runtime_failed)
+                let representation = [ghostty::PasteRepresentation {
+                    mime: PASTE_TEXT_MIME,
+                    data: text.as_bytes(),
+                }];
+                match terminal.paste(
+                    &representation,
+                    ghostty::ClipboardLocation::Standard,
+                    allow_unsafe,
+                ) {
+                    Ok(_) => {
+                        if let Err(error) = handle_engine_events(&inner, &mut terminal, &mut writer)
+                        {
+                            if !runtime_failed {
+                                let _ = inner
+                                    .events_tx
+                                    .unbounded_send(GhosttyUiEvent::RuntimeFailed(error));
+                            }
+                            runtime_failed = true;
+                        }
                     }
                     Err(error) => reject_input(&inner, "paste", error),
                 }

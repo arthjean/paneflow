@@ -8,9 +8,7 @@ use crate::input_map::{key_action, key_code, mouse_action, mouse_button};
 use crate::{FocusEvent, GhosttyError, KeyInput, Modifiers, MouseInput, Result};
 
 const MAX_KEY_TEXT_BYTES: usize = 64 * 1024;
-const MAX_PASTE_BYTES: usize = 1024 * 1024;
 const MAX_KEY_OR_POINTER_OUTPUT_BYTES: usize = 64 * 1024;
-const MAX_PASTE_OUTPUT_BYTES: usize = MAX_PASTE_BYTES + 12;
 
 struct KeyTextGuard<'a> {
     event: sys::GhosttyKeyEvent,
@@ -190,38 +188,6 @@ impl DisplayTerminal {
             MAX_KEY_OR_POINTER_OUTPUT_BYTES,
             |buffer, len, written| unsafe {
                 sys::ghostty_focus_encode(event, buffer, len, written)
-            },
-        )
-    }
-
-    pub fn paste_is_safe(&self, data: &str) -> bool {
-        unsafe { sys::ghostty_paste_is_safe(data.as_ptr().cast(), data.len()) }
-    }
-
-    pub fn encode_paste(&self, data: &str, allow_unsafe: bool) -> Result<Vec<u8>> {
-        if data.len() > MAX_PASTE_BYTES {
-            return Err(GhosttyError::LimitExceeded {
-                resource: "paste",
-                limit: MAX_PASTE_BYTES,
-            });
-        }
-        if !allow_unsafe && !self.paste_is_safe(data) {
-            return Err(GhosttyError::UnsafePaste);
-        }
-        let bracketed = self.modes()?.bracketed_paste;
-        let mut input = data.as_bytes().to_vec();
-        encode_with_buffer(
-            "paste_encode",
-            MAX_PASTE_OUTPUT_BYTES,
-            |buffer, len, written| unsafe {
-                sys::ghostty_paste_encode(
-                    input.as_mut_ptr().cast(),
-                    input.len(),
-                    bracketed,
-                    buffer,
-                    len,
-                    written,
-                )
             },
         )
     }
