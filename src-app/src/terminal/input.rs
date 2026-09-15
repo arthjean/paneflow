@@ -18,6 +18,8 @@ use super::probe_enabled;
 use super::pty_session::BackendInputResult;
 use super::{TerminalEvent, TerminalView};
 
+const SCROLLBAR_HIT_SLOP: gpui::Pixels = gpui::px(2.0);
+
 #[inline]
 fn open_link_modifier_held(modifiers: &gpui::Modifiers) -> bool {
     #[cfg(target_os = "macos")]
@@ -534,7 +536,14 @@ impl TerminalView {
         }
     }
 
-    fn scrollbar_hit(&self, x: gpui::Pixels) -> Option<super::element::ScrollbarMetrics> {
+    fn scrollbar_hit(
+        &self,
+        position: gpui::Point<gpui::Pixels>,
+    ) -> Option<super::element::ScrollbarMetrics> {
+        if !self.scrollbar_enabled || !(self.scrollbar_visible || self.scrollbar_reveal.is_pinned())
+        {
+            return None;
+        }
         let metrics = {
             *self
                 .scrollbar_metrics
@@ -542,8 +551,69 @@ impl TerminalView {
                 .unwrap_or_else(|p| p.into_inner())
         }?;
         metrics
-            .strip_contains_x(x, gpui::px(6.0))
+            .track_contains(position, SCROLLBAR_HIT_SLOP)
             .then_some(metrics)
+    }
+
+    pub(super) fn scrollbar_gutter_contains(&self, position: gpui::Point<gpui::Pixels>) -> bool {
+        if !self.scrollbar_enabled {
+            return false;
+        }
+        let metrics = {
+            *self
+                .scrollbar_metrics
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+        };
+        metrics.is_some_and(|metrics| metrics.track_contains(position, SCROLLBAR_HIT_SLOP))
+    }
+
+    pub(super) fn scrollbar_set_hovered(&mut self, hovered: bool) -> bool {
+        self.scrollbar_reveal
+            .set_hovered(hovered, std::time::Instant::now())
+    }
+
+    pub(super) fn scrollbar_presence(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> super::scrollbar_reveal::ScrollbarPresence {
+        if !self.scrollbar_enabled {
+            return super::scrollbar_reveal::ScrollbarPresence::HIDDEN;
+        }
+        let now = std::time::Instant::now();
+        let offset = self
+            .terminal
+            .session_backend()
+            .grid_metrics()
+            .display_offset;
+        if offset != self.scrollbar_seen_offset {
+            self.scrollbar_seen_offset = offset;
+            self.scrollbar_reveal.touch(now);
+        }
+        let presence = self
+            .scrollbar_reveal
+            .presence(now, crate::ui_primitives::reduce_motion());
+        self.scrollbar_visible = presence.is_visible();
+        if presence.animating {
+            window.request_animation_frame();
+        }
+        if let Some(delay) = presence.hide_after
+            && !self.scrollbar_hide_scheduled
+        {
+            self.scrollbar_hide_scheduled = true;
+            cx.spawn(
+                async move |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
+                    cx.background_executor().timer(delay).await;
+                    let _ = this.update(cx, |view, cx| {
+                        view.scrollbar_hide_scheduled = false;
+                        cx.notify();
+                    });
+                },
+            )
+            .detach();
+        }
+        presence
     }
 
     fn apply_scrollbar_jump(&mut self, target_offset: usize, history_size: usize) -> bool {
@@ -586,7 +656,7 @@ impl TerminalView {
         self.focus_handle(cx).focus(window, cx);
 
         if event.button == MouseButton::Left
-            && let Some(metrics) = self.scrollbar_hit(event.position.x)
+            && let Some(metrics) = self.scrollbar_hit(event.position)
         {
             let mut last_target = metrics.display_offset;
             let anchor_offset = if metrics.y_on_thumb(event.position.y) {
@@ -604,6 +674,8 @@ impl TerminalView {
                 metrics,
                 last_target,
             });
+            self.scrollbar_reveal
+                .set_dragging(true, std::time::Instant::now());
             cx.notify();
             return;
         }
@@ -667,6 +739,10 @@ impl TerminalView {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let over_scrollbar = self.scrollbar_gutter_contains(event.position);
+        if self.scrollbar_set_hovered(over_scrollbar) {
+            cx.notify();
+        }
         if let Some(mut drag) = self.scrollbar_drag {
             if event.pressed_button == Some(MouseButton::Left) {
                 let target = Self::scrollbar_drag_target(drag, event.position.y);
@@ -678,6 +754,17 @@ impl TerminalView {
                 }
             } else {
                 self.scrollbar_drag = None;
+                self.scrollbar_reveal
+                    .set_dragging(false, std::time::Instant::now());
+                cx.notify();
+            }
+            return;
+        }
+
+        if over_scrollbar && !self.selecting {
+            self.hovered_cell = None;
+            if self.ctrl_hovered_link.take().is_some() {
+                cx.notify();
             }
             return;
         }
@@ -825,6 +912,10 @@ impl TerminalView {
                 cx.notify();
             }
             self.scrollbar_drag = None;
+            self.scrollbar_set_hovered(self.scrollbar_gutter_contains(event.position));
+            self.scrollbar_reveal
+                .set_dragging(false, std::time::Instant::now());
+            cx.notify();
             return;
         }
 
@@ -1058,6 +1149,7 @@ impl TerminalView {
             return;
         }
         self.terminal.dirty = true;
+        self.scrollbar_reveal.touch(std::time::Instant::now());
 
         cx.notify();
     }

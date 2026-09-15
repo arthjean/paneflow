@@ -255,6 +255,11 @@
           "description": "Render emoji with the platform color-emoji path. Hot-reloaded.",
           "default": true
         },
+        "scrollbar": {
+          "type": ["boolean", "null"],
+          "description": "Show the overlay scrollbar that appears while scrolling or hovering the right edge of a terminal pane. Applied when a terminal view is constructed.",
+          "default": true
+        },
         "cursor_color": {
           "type": ["string", "null"],
           "description": "Cursor color override as #RRGGBB. Null uses the active color scheme cursor color.",

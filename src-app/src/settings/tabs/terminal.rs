@@ -68,6 +68,7 @@ impl PaneFlowApp {
         let shape = terminal.cursor_shape.unwrap_or_default();
         let integrated_glyphs = terminal.resolved_integrated_glyphs();
         let color_emoji = terminal.resolved_color_emoji();
+        let scrollbar = terminal.resolved_scrollbar_visible();
         let configured_cursor_color = terminal
             .cursor_color
             .as_deref()
@@ -238,6 +239,17 @@ impl PaneFlowApp {
                 "Render emoji in color when the platform font stack supports it.",
                 color_emoji,
                 "color_emoji",
+                true,
+                ui,
+                cx,
+            ))
+            .child(hairline(ui))
+            .child(self.terminal_toggle_row(
+                "term-scrollbar",
+                "Scrollbar",
+                "Overlay scrollbar that appears while scrolling or hovering the right edge. Takes effect on the next new terminal.",
+                scrollbar,
+                "scrollbar",
                 true,
                 ui,
                 cx,
