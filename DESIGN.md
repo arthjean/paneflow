@@ -284,7 +284,7 @@ to the surfaces named:
 | Pane card | 20 | squircle | 1 px `border`, or `vc_conflict` at 0.7 with attention |
 | Settings card, System Info dialog, pane palette ground | 20 | squircle | none |
 | Menu, select popup | 18 | squircle | 1 px `border` at 0.6 |
-| Sidebar rows and tab icon cards, footer mode buttons, row skin, secondary button, menu item, tooltip, terminal search | 14 | squircle | tab icon card, tooltip and terminal search, 1 px `border` |
+| Sidebar rows and tab icon cards, footer mode buttons, row skin, secondary button, menu item, tooltip, terminal search, title bar manual check pill | 14 | squircle | tab icon card, tooltip and terminal search, 1 px `border` |
 | Theme tile | 10 | round | 2 px `text` at 0.12, 0.32 on hover, 0.85 when selected |
 | About dialog | 10 | round | 1 px, plus a shadow; **Migration** |
 | Sidebar update banner, filter field, settings control, select trigger, title bar menu trigger | 8 | round | none |
@@ -416,7 +416,7 @@ shell never renders it (`tb.cockpit = true` in `main.rs`); that code is
 **Migration**, and the sidebar footer owns both banners. The same slot,
 between the center and the caption controls, does render the manual check
 pill raised by `Help > Check for Updates…` and the `PaneFlow` menu on macOS:
-height 24, padding 8, gap 5, radius 6, no border, 11 px Medium.
+height 24, padding 8, gap 5, squircle 14 through `squircle_skin`, no border, 11 px Medium.
 `Checking for updates…` shows the 11 px spinning loader on `subtle` at 0.7
 opacity; `Paneflow is up to date` sits in `vc_added` on its 0.12 wash and
 leaves after 3 s; `v<x.y.z> available` is solid `#3a83f7` with a white

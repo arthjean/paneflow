@@ -12,7 +12,7 @@ use crate::{
     app::constants::{
         SIDEBAR_WIDTH, TITLE_BAR_CONTROL_SIZE, TITLE_BAR_EDGE_INSET, TITLE_BAR_MIN_HEIGHT,
     },
-    ui_primitives::{AnimatedHoverExt, lerp_color},
+    ui_primitives::{AnimatedHoverExt, ROW_RADIUS, lerp_color, squircle_skin},
 };
 
 pub struct TitleBar {
@@ -94,7 +94,12 @@ impl TitleBar {
             ),
         };
 
-        let mut element = div()
+        let hovered = match &pill {
+            UpdateCheckPill::Available(_) => Some(lerp_color(fill, white, 0.12)),
+            UpdateCheckPill::Failed => Some(ui.vc_deleted.opacity(0.2)),
+            UpdateCheckPill::Checking | UpdateCheckPill::UpToDate => None,
+        };
+        let shell = div()
             .id("update-check-pill")
             .ml_auto()
             .mr_2()
@@ -105,12 +110,17 @@ impl TitleBar {
             .gap(px(5.))
             .px(px(8.))
             .h(px(24.))
-            .rounded(px(6.))
-            .bg(fill)
             .text_color(ink)
             .text_size(px(11.))
             .font_weight(gpui::FontWeight::MEDIUM)
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation());
+        let mut element = squircle_skin(
+            shell,
+            "update-check-pill-group",
+            ROW_RADIUS,
+            Some(fill),
+            hovered,
+        );
         match &pill {
             UpdateCheckPill::Checking => {
                 element = element.child(
@@ -141,48 +151,14 @@ impl TitleBar {
         }
         element = element.child(label);
 
-        if matches!(
-            pill,
-            UpdateCheckPill::Available(_) | UpdateCheckPill::Failed
-        ) {
-            let resting = ink.opacity(0.7);
-            element = element.child(
-                div()
-                    .id("update-check-pill-dismiss")
-                    .ml(px(2.))
-                    .px(px(4.))
-                    .text_color(resting)
-                    .text_size(px(13.))
-                    .font_weight(gpui::FontWeight::BOLD)
-                    .animated_hover(move |style, delta| {
-                        style.text_color(lerp_color(resting, ink, delta));
-                    })
-                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                    .on_click(|_, window, cx| {
-                        cx.stop_propagation();
-                        window.dispatch_action(Box::new(crate::DismissUpdate), cx);
-                    })
-                    .child("×"),
-            );
-        }
-
         let element = match pill {
-            UpdateCheckPill::Available(_) => {
-                let hover = lerp_color(fill, white, 0.12);
-                element
-                    .animated_hover(move |style, delta| {
-                        style.bg(lerp_color(fill, hover, delta));
-                    })
-                    .on_mouse_down(MouseButton::Left, move |_, window, cx| {
-                        cx.stop_propagation();
-                        window.dispatch_action(Box::new(crate::StartSelfUpdate), cx);
-                    })
-                    .into_any_element()
-            }
-            UpdateCheckPill::Failed => element
-                .animated_hover(move |style, delta| {
-                    style.bg(lerp_color(fill, ink.opacity(0.25), delta));
+            UpdateCheckPill::Available(_) => element
+                .on_mouse_down(MouseButton::Left, move |_, window, cx| {
+                    cx.stop_propagation();
+                    window.dispatch_action(Box::new(crate::StartSelfUpdate), cx);
                 })
+                .into_any_element(),
+            UpdateCheckPill::Failed => element
                 .on_mouse_down(MouseButton::Left, move |_, window, cx| {
                     cx.stop_propagation();
                     window.dispatch_action(Box::new(crate::CheckForUpdates), cx);

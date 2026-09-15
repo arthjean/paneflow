@@ -149,7 +149,10 @@ impl PaneFlowApp {
         };
         self.self_update.manual_check = Some(settled);
         cx.notify();
-        if settled != ManualUpdateCheck::UpToDate {
+        if !matches!(
+            settled,
+            ManualUpdateCheck::UpToDate | ManualUpdateCheck::Failed
+        ) {
             return;
         }
         cx.spawn(async move |this, cx| {
@@ -159,7 +162,10 @@ impl PaneFlowApp {
                 ))
                 .await;
             let _ = this.update(cx, |app, cx| {
-                if app.self_update.manual_check == Some(ManualUpdateCheck::UpToDate) {
+                if matches!(
+                    app.self_update.manual_check,
+                    Some(ManualUpdateCheck::UpToDate | ManualUpdateCheck::Failed)
+                ) {
                     app.self_update.manual_check = None;
                     cx.notify();
                 }
