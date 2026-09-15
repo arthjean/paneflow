@@ -28,10 +28,6 @@ name: libghostty bump
 # release of the same Ghostty commit.
 
 on:
-  schedule:
-    # Weekly rather than nightly: at Ghostty's merge rate this picks up the same
-    # commits with a fraction of the review load.
-    - cron: "23 4 * * 1"
   workflow_dispatch:
     inputs:
       source_sha:
