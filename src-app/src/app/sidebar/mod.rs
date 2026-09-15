@@ -769,9 +769,9 @@ impl PaneFlowApp {
             .child(title);
 
         let folder_path = if is_expanded {
-            "icons/folder-open.svg"
+            "icons/workspace-folder-open.svg"
         } else {
-            "icons/folder.svg"
+            "icons/workspace-folder.svg"
         };
         let disclosure = div()
             .flex_none()

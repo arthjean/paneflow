@@ -360,6 +360,10 @@ live in `src-app/assets/agents/` and in the icons folder for Claude, Codex,
 OpenCode, and Pi; a mark ships monochrome when the brand allows it and as a
 multicolor image otherwise (`render_logo` decides per logo).
 
+Workspace folder rows use Unpeel's filled open and closed folder SVGs,
+with an opacity gradient and translucent outline, tinted with `muted` at
+the existing 14 px size. These assets are dedicated to the workspace sidebar.
+
 | Size | Use |
 | --- | --- |
 | 10 | Filter clear glyph |
