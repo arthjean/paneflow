@@ -699,7 +699,7 @@ impl PaneFlowApp {
             self_update: crate::SelfUpdateState {
                 pending_update,
                 check_trigger,
-                manual_check_pending: false,
+                manual_check: None,
                 update_status: None,
                 self_update_status: update::SelfUpdateStatus::default(),
                 install_method,

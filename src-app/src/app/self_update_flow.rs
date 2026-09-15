@@ -1,5 +1,6 @@
 use gpui::{ClipboardItem, Context, Window};
 
+use crate::window_chrome::title_bar::UpdateCheckPill;
 use crate::{
     DismissUpdate, PaneFlowApp, StartSelfUpdate, TOAST_HOLD_MS, ToastAction,
     system_package_update_command, update,
@@ -24,16 +25,20 @@ fn unknown_install_uses_targz() -> bool {
     cfg!(target_os = "linux")
 }
 
-pub(crate) fn manual_check_message(status: &UpdateStatus, current_version: &str) -> Option<String> {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ManualUpdateCheck {
+    Checking,
+    UpToDate,
+    Available,
+    Failed,
+}
+
+pub(crate) fn settle_manual_check(status: &UpdateStatus) -> Option<ManualUpdateCheck> {
     match status {
         UpdateStatus::Checking => None,
-        UpdateStatus::Available { version, .. } => {
-            Some(format!("Paneflow v{version} is available"))
-        }
-        UpdateStatus::UpToDate => Some(format!("Paneflow v{current_version} is up to date")),
-        UpdateStatus::Failed => {
-            Some("Could not check for updates: the release feed is unreachable".to_string())
-        }
+        UpdateStatus::Available { .. } => Some(ManualUpdateCheck::Available),
+        UpdateStatus::UpToDate => Some(ManualUpdateCheck::UpToDate),
+        UpdateStatus::Failed => Some(ManualUpdateCheck::Failed),
     }
 }
 
@@ -110,11 +115,25 @@ impl PaneFlowApp {
         }
     }
 
+    pub(crate) fn update_check_pill(&self) -> Option<UpdateCheckPill> {
+        match self.self_update.manual_check? {
+            ManualUpdateCheck::Checking => Some(UpdateCheckPill::Checking),
+            ManualUpdateCheck::UpToDate => Some(UpdateCheckPill::UpToDate),
+            ManualUpdateCheck::Failed => Some(UpdateCheckPill::Failed),
+            ManualUpdateCheck::Available => match &self.self_update.update_status {
+                Some(UpdateStatus::Available { version, .. }) => {
+                    Some(UpdateCheckPill::Available(version.clone()))
+                }
+                _ => None,
+            },
+        }
+    }
+
     pub(crate) fn request_update_check(&mut self, cx: &mut Context<Self>) {
         self.self_update.dismissed_version = None;
-        self.self_update.manual_check_pending = true;
+        self.self_update.manual_check = Some(ManualUpdateCheck::Checking);
         self.self_update.check_trigger.request();
-        self.show_toast("Checking for updates…", cx);
+        cx.notify();
     }
 
     pub(crate) fn report_manual_update_check(
@@ -122,14 +141,31 @@ impl PaneFlowApp {
         status: &UpdateStatus,
         cx: &mut Context<Self>,
     ) {
-        if !self.self_update.manual_check_pending {
+        if self.self_update.manual_check != Some(ManualUpdateCheck::Checking) {
             return;
         }
-        let Some(message) = manual_check_message(status, env!("CARGO_PKG_VERSION")) else {
+        let Some(settled) = settle_manual_check(status) else {
             return;
         };
-        self.self_update.manual_check_pending = false;
-        self.show_toast(message, cx);
+        self.self_update.manual_check = Some(settled);
+        cx.notify();
+        if settled != ManualUpdateCheck::UpToDate {
+            return;
+        }
+        cx.spawn(async move |this, cx| {
+            cx.background_executor()
+                .timer(std::time::Duration::from_millis(
+                    crate::app::constants::UPDATE_CHECK_PILL_HOLD_MS,
+                ))
+                .await;
+            let _ = this.update(cx, |app, cx| {
+                if app.self_update.manual_check == Some(ManualUpdateCheck::UpToDate) {
+                    app.self_update.manual_check = None;
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
     }
 
     pub(crate) fn handle_start_self_update(
@@ -138,6 +174,7 @@ impl PaneFlowApp {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.self_update.manual_check = None;
         self.kickoff_self_update_install(cx);
     }
 
@@ -147,6 +184,10 @@ impl PaneFlowApp {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.self_update.manual_check.take() == Some(ManualUpdateCheck::Failed) {
+            cx.notify();
+            return;
+        }
         self.emit_update_dismissed();
         if let Some(update::checker::UpdateStatus::Available { version, .. }) =
             self.self_update.update_status.take()
@@ -587,7 +628,7 @@ mod tests {
     }
 
     #[test]
-    fn a_manual_check_reports_every_final_status() {
+    fn a_manual_check_settles_on_every_final_status() {
         let available = UpdateStatus::Available {
             version: "9.0.0".to_string(),
             url: String::new(),
@@ -595,14 +636,17 @@ mod tests {
             asset_format: None,
         };
         assert_eq!(
-            manual_check_message(&available, "1.0.0").as_deref(),
-            Some("Paneflow v9.0.0 is available")
+            settle_manual_check(&available),
+            Some(ManualUpdateCheck::Available)
         );
         assert_eq!(
-            manual_check_message(&UpdateStatus::UpToDate, "1.0.0").as_deref(),
-            Some("Paneflow v1.0.0 is up to date")
+            settle_manual_check(&UpdateStatus::UpToDate),
+            Some(ManualUpdateCheck::UpToDate)
         );
-        assert!(manual_check_message(&UpdateStatus::Failed, "1.0.0").is_some());
-        assert!(manual_check_message(&UpdateStatus::Checking, "1.0.0").is_none());
+        assert_eq!(
+            settle_manual_check(&UpdateStatus::Failed),
+            Some(ManualUpdateCheck::Failed)
+        );
+        assert_eq!(settle_manual_check(&UpdateStatus::Checking), None);
     }
 }

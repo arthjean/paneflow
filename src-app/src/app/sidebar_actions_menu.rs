@@ -9,6 +9,7 @@ use gpui::{
 };
 
 use crate::PaneFlowApp;
+use crate::app::self_update_flow::ManualUpdateCheck;
 use crate::ui_primitives::{AnimatedHoverExt, lerp_color};
 use crate::window_chrome::title_bar::{SelfUpdatePillState, SystemPackageKind, UpdatePillKind};
 
@@ -20,6 +21,9 @@ impl PaneFlowApp {
         &self,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
+        if self.self_update.manual_check == Some(ManualUpdateCheck::Failed) {
+            return Some(self.render_sidebar_check_failed_banner(cx));
+        }
         let info = self.update_pill_info()?;
         let ui = crate::theme::ui_colors();
 
@@ -139,6 +143,61 @@ impl PaneFlowApp {
         };
 
         Some(banner)
+    }
+
+    fn render_sidebar_check_failed_banner(&self, cx: &mut Context<Self>) -> AnyElement {
+        let ui = crate::theme::ui_colors();
+        let muted = ui.muted;
+        let text = ui.text;
+        div()
+            .id("sidebar-update-check-failed")
+            .mx(px(6.))
+            .mb(px(2.))
+            .h(px(30.))
+            .px(px(8.))
+            .rounded(crate::app::constants::SIDEBAR_TAB_CORNER_RADIUS)
+            .bg(crate::app::constants::sidebar_tab_active_background())
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap(px(6.))
+            .child(
+                svg()
+                    .size(px(14.))
+                    .flex_none()
+                    .path("icons/triangle-alert.svg")
+                    .text_color(ui.vc_deleted),
+            )
+            .child(render_update_plain_label("Update check failed", ui))
+            .child(
+                div()
+                    .id("sidebar-update-check-dismiss")
+                    .px(px(4.))
+                    .text_color(muted)
+                    .text_size(px(13.))
+                    .font_weight(FontWeight::BOLD)
+                    .animated_hover(move |style, delta| {
+                        style.text_color(lerp_color(muted, text, delta));
+                    })
+                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                    .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+                        cx.stop_propagation();
+                        this.handle_dismiss_update(&crate::DismissUpdate, window, cx);
+                    }))
+                    .child("×"),
+            )
+            .opacity(0.8)
+            .animated_hover(move |style, delta| {
+                style.opacity(lerp(0.8, 1.0, delta));
+            })
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |this, _, _, cx| {
+                    cx.stop_propagation();
+                    this.request_update_check(cx);
+                }),
+            )
+            .into_any_element()
     }
 
     pub(crate) fn render_sidebar_ipc_banner(&self, _cx: &mut Context<Self>) -> Option<AnyElement> {

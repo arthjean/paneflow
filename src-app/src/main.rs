@@ -228,7 +228,7 @@ pub(crate) struct ClosedPaneRecord {
 struct SelfUpdateState {
     pending_update: update::checker::SharedUpdateSlot,
     check_trigger: update::checker::UpdateCheckTrigger,
-    manual_check_pending: bool,
+    manual_check: Option<crate::app::self_update_flow::ManualUpdateCheck>,
     update_status: Option<update::checker::UpdateStatus>,
     self_update_status: update::SelfUpdateStatus,
     install_method: update::install_method::InstallMethod,
@@ -1025,6 +1025,7 @@ impl Render for PaneFlowApp {
             tb.files_menu_open = self.title_bar_files_menu_open.is_some();
             tb.help_menu_open = self.title_bar_help_menu_open.is_some();
             tb.update_available = update_info;
+            tb.update_check = self.update_check_pill();
             tb.ipc_state = self.ipc_status.state();
             tb.cockpit = true;
             tb.cockpit_material_active = chrome_material_active;
