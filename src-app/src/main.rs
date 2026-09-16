@@ -88,7 +88,7 @@ pub(crate) use app::constants::{
 pub(crate) use app::drag::{TabDrag, WorkspaceDrag, WorkspaceDragPreview};
 pub(crate) use app::notifications::{Toast, ToastAction};
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) enum SettingsSection {
     General,
     Appearance,
@@ -524,6 +524,7 @@ struct PaneFlowApp {
     settings_scroll: gpui::ScrollHandle,
     settings_drag: Option<crate::widgets::scrollbar::ScrollDragState>,
     settings_search_input: gpui::Entity<crate::widgets::text_input::TextInput>,
+    settings_search_motion: std::rc::Rc<std::cell::RefCell<crate::settings::search::SearchMotion>>,
     terminal_dropdown: Option<TerminalDropdown>,
     general_dropdown: Option<GeneralDropdown>,
     workspace_template_dropdown: Option<WorkspaceTemplateDropdown>,
@@ -921,7 +922,8 @@ impl Render for PaneFlowApp {
         }
         let main_content = if self.settings_section.is_some() {
             self.tick_agents_list_animation(window);
-            self.render_settings_content_panel(cx).into_any_element()
+            self.render_settings_content_panel(window, cx)
+                .into_any_element()
         } else if let Some(ws) = self.active_workspace() {
             if let Some(root) = &ws.active_tab().root {
                 let app_weak = cx.weak_entity();

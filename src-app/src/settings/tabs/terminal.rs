@@ -8,9 +8,9 @@ use paneflow_config::schema::{CursorShapeConfig, normalize_hex_color};
 
 use crate::settings::components::{
     SETTINGS_CONTROL_CORNER_RADIUS, deferred_select_menu, hairline, menu_row, section_header,
-    select_chevron, select_menu, select_trigger_with_hover, setting_card, setting_text,
-    toggle_pill,
+    select_chevron, select_menu, select_trigger_with_hover, setting_text, toggle_pill,
 };
+use crate::settings::search::{self, Block, SearchCard};
 use crate::ui_primitives::AnimatedHoverExt;
 
 use crate::{PaneFlowApp, TerminalDropdown};
@@ -145,142 +145,182 @@ impl PaneFlowApp {
             .map(|(label, key)| ((*label).to_string(), json!(*key), *key == font_weight_key))
             .collect();
 
-        let cursor_card = setting_card(ui)
-            .child(self.terminal_enum_row(
-                TerminalDropdown::CursorShape,
-                "Cursor shape",
-                "Default shape before an application overrides it. Takes effect on the next new terminal.",
-                shape_label.to_string(),
-                shape_opts,
-                "cursor_shape",
-                true,
-                ui,
-                cx,
-            ))
-            .child(hairline(ui))
-            .child(self.terminal_cursor_color_row(
-                cursor_color_hex,
-                cursor_uses_theme,
-                theme_cursor_hex,
-                ui,
-                cx,
-            ));
+        let cursor_card = SearchCard::new(ui)
+            .row(
+                &search::CURSOR_SHAPE,
+                self.terminal_enum_row(
+                    TerminalDropdown::CursorShape,
+                    search::CURSOR_SHAPE.title,
+                    search::CURSOR_SHAPE.description,
+                    shape_label.to_string(),
+                    shape_opts,
+                    "cursor_shape",
+                    true,
+                    ui,
+                    cx,
+                ),
+            )
+            .row(
+                &search::CURSOR_COLOR,
+                self.terminal_cursor_color_row(
+                    cursor_color_hex,
+                    cursor_uses_theme,
+                    theme_cursor_hex,
+                    ui,
+                    cx,
+                ),
+            );
 
-        let display_card = setting_card(ui)
-            .child(self.terminal_font_family_row(current_font, ui, cx))
-            .child(hairline(ui))
-            .child(self.settings_stepper_row(
-                "term-font-size",
-                "Font size",
-                "Terminal font size in points (8-32). Hot-reloads.",
-                font_size,
-                8.0,
-                32.0,
-                1.0,
-                0,
-                "font_size",
-                ui,
-                cx,
-            ))
-            .child(hairline(ui))
-            .child(self.settings_stepper_row(
-                "term-line-height",
-                "Line height",
-                "Terminal line-height multiplier (1.0-2.5). Hot-reloads.",
-                line_height,
-                1.0,
-                2.5,
-                0.1,
-                1,
-                "line_height",
-                ui,
-                cx,
-            ))
-            .child(hairline(ui))
-            .child(self.settings_stepper_row(
-                "term-cell-width",
-                "Cell width",
-                "Terminal cell-width multiplier (0.3-2.0). Hot-reloads.",
-                cell_width,
-                0.3,
-                2.0,
-                0.1,
-                1,
-                "cell_width",
-                ui,
-                cx,
-            ))
-            .child(hairline(ui))
-            .child(self.terminal_enum_row(
-                TerminalDropdown::FontWeight,
-                "Font weight",
-                "Controls terminal stroke thickness. Hot-reloads.",
-                font_weight_label.to_string(),
-                font_weight_opts,
-                "font_weight",
-                false,
-                ui,
-                cx,
-            ))
-            .child(hairline(ui))
-            .child(self.terminal_toggle_row(
-                "term-integrated-glyphs",
-                "Integrated glyphs",
-                "Draw block elements with Paneflow's built-in renderer instead of the font glyph.",
-                integrated_glyphs,
-                "integrated_glyphs",
-                true,
-                ui,
-                cx,
-            ))
-            .child(hairline(ui))
-            .child(self.terminal_toggle_row(
-                "term-color-emoji",
-                "Color emoji",
-                "Render emoji in color when the platform font stack supports it.",
-                color_emoji,
-                "color_emoji",
-                true,
-                ui,
-                cx,
-            ))
-            .child(hairline(ui))
-            .child(self.terminal_toggle_row(
-                "term-scrollbar",
-                "Scrollbar",
-                "Overlay scrollbar that appears while scrolling or hovering the right edge. Takes effect on the next new terminal.",
-                scrollbar,
-                "scrollbar",
-                true,
-                ui,
-                cx,
-            ));
+        let display_card = SearchCard::new(ui)
+            .row(
+                &search::FONT_FAMILY,
+                self.terminal_font_family_row(current_font, ui, cx),
+            )
+            .row(
+                &search::FONT_SIZE,
+                self.settings_stepper_row(
+                    "term-font-size",
+                    search::FONT_SIZE.title,
+                    search::FONT_SIZE.description,
+                    font_size,
+                    8.0,
+                    32.0,
+                    1.0,
+                    0,
+                    "font_size",
+                    ui,
+                    cx,
+                ),
+            )
+            .row(
+                &search::LINE_HEIGHT,
+                self.settings_stepper_row(
+                    "term-line-height",
+                    search::LINE_HEIGHT.title,
+                    search::LINE_HEIGHT.description,
+                    line_height,
+                    1.0,
+                    2.5,
+                    0.1,
+                    1,
+                    "line_height",
+                    ui,
+                    cx,
+                ),
+            )
+            .row(
+                &search::CELL_WIDTH,
+                self.settings_stepper_row(
+                    "term-cell-width",
+                    search::CELL_WIDTH.title,
+                    search::CELL_WIDTH.description,
+                    cell_width,
+                    0.3,
+                    2.0,
+                    0.1,
+                    1,
+                    "cell_width",
+                    ui,
+                    cx,
+                ),
+            )
+            .row(
+                &search::FONT_WEIGHT,
+                self.terminal_enum_row(
+                    TerminalDropdown::FontWeight,
+                    search::FONT_WEIGHT.title,
+                    search::FONT_WEIGHT.description,
+                    font_weight_label.to_string(),
+                    font_weight_opts,
+                    "font_weight",
+                    false,
+                    ui,
+                    cx,
+                ),
+            )
+            .row(
+                &search::INTEGRATED_GLYPHS,
+                self.terminal_toggle_row(
+                    "term-integrated-glyphs",
+                    search::INTEGRATED_GLYPHS.title,
+                    search::INTEGRATED_GLYPHS.description,
+                    integrated_glyphs,
+                    "integrated_glyphs",
+                    true,
+                    ui,
+                    cx,
+                ),
+            )
+            .row(
+                &search::COLOR_EMOJI,
+                self.terminal_toggle_row(
+                    "term-color-emoji",
+                    search::COLOR_EMOJI.title,
+                    search::COLOR_EMOJI.description,
+                    color_emoji,
+                    "color_emoji",
+                    true,
+                    ui,
+                    cx,
+                ),
+            )
+            .row(
+                &search::SCROLLBAR,
+                self.terminal_toggle_row(
+                    "term-scrollbar",
+                    search::SCROLLBAR.title,
+                    search::SCROLLBAR.description,
+                    scrollbar,
+                    "scrollbar",
+                    true,
+                    ui,
+                    cx,
+                ),
+            );
 
         let content = div()
             .flex()
             .flex_col()
-            .gap(px(20.))
-            .child(section_header(ui, "Cursor"))
-            .child(cursor_card)
-            .child(section_header(ui, "Display"))
-            .child(display_card);
+            .child(
+                Block::new("Cursor")
+                    .gap(20.)
+                    .child(section_header(ui, "Cursor"))
+                    .card(cursor_card)
+                    .finish(),
+            )
+            .child(
+                Block::new("Display")
+                    .top_gap(20.)
+                    .gap(20.)
+                    .child(section_header(ui, "Display"))
+                    .card(display_card)
+                    .finish(),
+            );
 
         #[cfg(target_os = "windows")]
         let content = {
-            let material_card = setting_card(ui).child(self.terminal_toggle_row(
-                "term-windows-terminal-material",
-                "Enable acrylic material",
-                "Applies a translucent texture behind the terminal window.",
-                config.windows_terminal_material_enabled(),
-                "windows_terminal_material",
-                false,
-                ui,
-                cx,
-            ));
+            let material_card = SearchCard::new(ui).row(
+                &search::ACRYLIC_MATERIAL,
+                self.terminal_toggle_row(
+                    "term-windows-terminal-material",
+                    search::ACRYLIC_MATERIAL.title,
+                    search::ACRYLIC_MATERIAL.description,
+                    config.windows_terminal_material_enabled(),
+                    "windows_terminal_material",
+                    false,
+                    ui,
+                    cx,
+                ),
+            );
 
-            content
-                .child(section_header(ui, "Window"))
-                .child(material_card)
+            content.child(
+                Block::new("Window")
+                    .top_gap(20.)
+                    .gap(20.)
+                    .child(section_header(ui, "Window"))
+                    .card(material_card)
+                    .finish(),
+            )
         };
 
         content
@@ -442,8 +482,8 @@ impl PaneFlowApp {
             .py(px(10.))
             .child(setting_text(
                 ui,
-                "Font family",
-                "Choose the monospace font used by every terminal. Hot-reloads.",
+                search::FONT_FAMILY.title,
+                search::FONT_FAMILY.description,
             ))
             .child(div().flex_shrink_0().child(trigger))
             .into_any_element()
@@ -488,8 +528,8 @@ impl PaneFlowApp {
             )
             .child(setting_text(
                 ui,
-                "Cursor color",
-                "Overrides the cursor color from the active color scheme.",
+                search::CURSOR_COLOR.title,
+                search::CURSOR_COLOR.description,
             ))
             .child(
                 div()

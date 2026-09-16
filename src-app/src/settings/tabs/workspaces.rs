@@ -20,6 +20,7 @@ use crate::settings::components::{
     menu_row, section_header_with_action, select_chevron, select_menu, select_trigger,
     setting_card, text_field, with_alpha,
 };
+use crate::settings::search::Block;
 use crate::terminal::TerminalView;
 use crate::ui_primitives::{AnimatedHover, AnimatedHoverExt};
 use crate::{PaneFlowApp, WorkspaceTemplateDropdown};
@@ -72,13 +73,17 @@ impl PaneFlowApp {
         div()
             .flex()
             .flex_col()
-            .gap(px(20.))
-            .child(section_header_with_action(
-                ui,
-                "Workspace templates",
-                create,
-            ))
-            .child(list)
+            .child(
+                Block::new("Workspace templates")
+                    .gap(20.)
+                    .child(section_header_with_action(
+                        ui,
+                        "Workspace templates",
+                        create,
+                    ))
+                    .child(list)
+                    .finish(),
+            )
             .child(div().h(px(160.)).flex_none())
             .into_any_element()
     }

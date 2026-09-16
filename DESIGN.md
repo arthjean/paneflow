@@ -695,6 +695,25 @@ while focused or nonempty, the hover tint otherwise, and the same 18 px
 trailing clear button. Its input stays visible at rest. The back button
 follows the navigation row sizing.
 
+Search covers page content, not only the navigation. Every setting row
+carries a `SettingCopy` (title and description) declared in
+`src-app/src/settings/search.rs`, which is the single source for the row copy
+and for the search index. A query matches a section when it is a
+case-insensitive substring of its label, its keywords, a block header, or a
+setting title or description. Typing a query that no longer matches the open
+section moves the panel to the first matching section in navigation order
+without taking focus from the field. On the open page, section headers,
+titles and descriptions highlight the match in blue (`#007AFF`) semibold, the
+same treatment as the workspace filter. Rows whose copy does not match
+collapse, along with the hairline between them, and a block (header plus
+card) collapses when none of its rows or its header match. Dynamic content
+such as agent lists, profiles, worktrees and templates follows its block. The
+collapse animates opacity and measured height over 180 ms with a cubic
+ease-out, retargets from the current state when the query changes, and
+settles instantly under reduced motion. A page reached through a section
+change shows its final state directly. When only a navigation keyword matches
+the section, the page stays whole.
+
 Navigation reuses the sidebar width: `Back to the app`, a search field, and
 three groups labeled Personal, Terminal, Integrations. Pages are a centered
 column with a 26 px heading, eyebrow labels at 11 px muted, and cards
@@ -958,8 +977,9 @@ Before a UI change is ready for review, confirm on a real build:
 
 Shared primitives to reach for first, in `src-app/src/ui_primitives.rs`:
 `AnimatedHoverExt`, `squircle_skin`, `icon_button_sm`, `icon_button_md`,
-`toolbar_pill`, `filter_pill`, `filter_field`, `section_eyebrow`, `panel_empty_state`,
-`text_tooltip`, `delayed_tooltip`. In `src-app/src/settings/components.rs`:
+`toolbar_pill`, `filter_pill`, `filter_field`, `highlight_matches`,
+`section_eyebrow`, `panel_empty_state`, `text_tooltip`, `delayed_tooltip`.
+In `src-app/src/settings/search.rs`: `SettingCopy`, `SearchCard`, `Block`. In `src-app/src/settings/components.rs`:
 `setting_card`, `toggle_row`, `setting_text`, `select_trigger`,
 `select_menu`, `select_item`, `menu_surface`, `secondary_button`,
 `destructive_button`, `hairline`. Add a primitive only when two surfaces

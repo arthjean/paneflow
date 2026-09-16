@@ -5,7 +5,8 @@ use gpui::{
 };
 
 use crate::ui_primitives::{
-    AnimatedHover, AnimatedHoverExt, ROW_RADIUS, lerp_color, squircle, squircle_skin,
+    AnimatedHover, AnimatedHoverExt, ROW_RADIUS, highlight_matches, lerp_color, squircle,
+    squircle_skin,
 };
 
 pub(crate) const SETTINGS_CONTROL_CORNER_RADIUS: Pixels = px(8.);
@@ -15,12 +16,13 @@ pub fn with_alpha(color: Hsla, alpha: f32) -> Hsla {
 }
 
 pub fn section_header(ui: crate::theme::UiColors, label: &'static str) -> impl IntoElement {
+    let query = crate::settings::search::active_query();
     div().pb(px(8.)).child(
         div()
             .text_size(crate::ui_primitives::LABEL_SM)
             .font_weight(gpui::FontWeight::NORMAL)
             .text_color(ui.muted)
-            .child(label),
+            .child(highlight_matches(label.to_string(), &query)),
     )
 }
 
@@ -29,6 +31,7 @@ pub fn section_header_with_action(
     label: &'static str,
     action: impl IntoElement,
 ) -> impl IntoElement {
+    let query = crate::settings::search::active_query();
     div()
         .flex()
         .flex_row()
@@ -41,7 +44,7 @@ pub fn section_header_with_action(
                 .text_size(crate::ui_primitives::LABEL_SM)
                 .font_weight(gpui::FontWeight::NORMAL)
                 .text_color(ui.muted)
-                .child(label),
+                .child(highlight_matches(label.to_string(), &query)),
         )
         .child(action)
 }
@@ -148,6 +151,7 @@ pub fn setting_text(
     title: &'static str,
     description: &'static str,
 ) -> impl IntoElement {
+    let query = crate::settings::search::active_query();
     div()
         .flex_1()
         .min_w_0()
@@ -159,13 +163,13 @@ pub fn setting_text(
                 .text_size(crate::ui_primitives::BODY)
                 .font_weight(gpui::FontWeight::MEDIUM)
                 .text_color(ui.text)
-                .child(title),
+                .child(highlight_matches(title.to_string(), &query)),
         )
         .child(
             div()
                 .text_size(crate::ui_primitives::LABEL_SM)
                 .text_color(ui.muted)
-                .child(description),
+                .child(highlight_matches(description.to_string(), &query)),
         )
 }
 

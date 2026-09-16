@@ -7,9 +7,9 @@ use paneflow_mcp_install::{InstallKind, OverallState, StatusKind};
 
 use crate::PaneFlowApp;
 use crate::settings::components::{
-    SETTINGS_CONTROL_CORNER_RADIUS, hairline, section_header, setting_card, setting_text,
-    with_alpha,
+    SETTINGS_CONTROL_CORNER_RADIUS, section_header, setting_text, with_alpha,
 };
+use crate::settings::search::{self, Block, SearchCard};
 use crate::ui_primitives::AnimatedHoverExt;
 
 impl PaneFlowApp {
@@ -66,19 +66,16 @@ impl PaneFlowApp {
             .py(px(10.))
             .child(setting_text(
                 ui,
-                "Read your panes from your agents",
-                "Registers the bundled paneflow-mcp bridge with every detected CLI \
-                 agent (Claude Code, Codex, Gemini, opencode) so they can read other \
-                 panes' output. Idempotent, backed up, and only touches the paneflow \
-                 entry. Re-run after an update if a path goes stale.",
+                search::MCP_BRIDGE.title,
+                search::MCP_BRIDGE.description,
             ))
             .child(button);
 
-        let mut card = setting_card(ui).child(header_row);
+        let mut card = SearchCard::new(ui).row(&search::MCP_BRIDGE, header_row);
 
         let recap_lines = self.mcp_recap_lines();
         if let Some(error) = self.mcp_install_error() {
-            card = card.child(hairline(ui)).child(
+            card = card.fixed(
                 div()
                     .px(px(12.))
                     .py(px(8.))
@@ -88,7 +85,7 @@ impl PaneFlowApp {
             );
         }
         for (line, is_error) in recap_lines {
-            card = card.child(hairline(ui)).child(
+            card = card.fixed(
                 div()
                     .px(px(12.))
                     .py(px(6.))
@@ -98,11 +95,10 @@ impl PaneFlowApp {
             );
         }
 
-        div()
-            .flex()
-            .flex_col()
+        Block::new("MCP bridge")
             .child(section_header(ui, "MCP bridge"))
-            .child(card)
+            .card(card)
+            .finish()
     }
 
     fn mcp_install_error(&self) -> Option<SharedString> {

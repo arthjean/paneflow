@@ -402,38 +402,7 @@ impl PaneFlowApp {
             .value()
             .trim()
             .to_lowercase();
-        let mut ranges = Vec::new();
-        if !query.is_empty() {
-            let mut normalized = String::new();
-            let mut offsets = Vec::new();
-            for (start, ch) in label.char_indices() {
-                let lowered = ch.to_lowercase().to_string();
-                offsets.extend(std::iter::repeat_n(
-                    start..start + ch.len_utf8(),
-                    lowered.len(),
-                ));
-                normalized.push_str(&lowered);
-            }
-            for (start, matched) in normalized.match_indices(&query) {
-                let range = offsets[start].start..offsets[start + matched.len() - 1].end;
-                if ranges
-                    .last()
-                    .is_none_or(|previous: &std::ops::Range<usize>| previous.end <= range.start)
-                {
-                    ranges.push(range);
-                }
-            }
-        }
-        gpui::StyledText::new(label).with_highlights(ranges.into_iter().map(|range| {
-            (
-                range,
-                gpui::HighlightStyle {
-                    color: Some(gpui::rgb(0x007aff).into()),
-                    font_weight: Some(FontWeight::SEMIBOLD),
-                    ..Default::default()
-                },
-            )
-        }))
+        crate::ui_primitives::highlight_matches(label, &query)
     }
 
     fn inline_rename_field(&self, ui: crate::theme::UiColors) -> gpui::Div {

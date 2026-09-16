@@ -497,8 +497,11 @@ impl PaneFlowApp {
             .detach();
         let settings_search_input =
             cx.new(|cx| crate::widgets::text_input::TextInput::new("", "Search settings…", cx));
-        cx.observe(&settings_search_input, |_, _, cx| cx.notify())
-            .detach();
+        cx.observe(&settings_search_input, |this: &mut Self, _, cx| {
+            this.follow_settings_search(cx);
+            cx.notify();
+        })
+        .detach();
         let shortcut_search_input = cx.new(|cx| {
             crate::widgets::text_input::TextInput::new("", "Search actions or keys…", cx)
         });
@@ -586,6 +589,7 @@ impl PaneFlowApp {
             settings_scroll: gpui::ScrollHandle::new(),
             settings_drag: None,
             settings_search_input,
+            settings_search_motion: Default::default(),
             terminal_dropdown: None,
             general_dropdown: None,
             workspace_template_dropdown: None,
