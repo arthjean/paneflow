@@ -5,6 +5,7 @@ use std::sync::{Arc, Mutex};
 use paneflow_config::schema::{HostInstanceToken, SessionGeneration, SessionId, WorkspaceId};
 use serde::{Deserialize, Serialize};
 
+use crate::bootstrap::{OwnerLock, OwnerLockError};
 use crate::manifest::{
     AgentSummary, MANIFEST_SCHEMA_VERSION, ManifestError, SessionLaunch, SessionLifecycle,
     SessionManifest, now_ms, read_manifest, write_atomically, write_manifest,
@@ -52,6 +53,57 @@ pub struct SessionSummary {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum SessionReconnection {
+    Live,
+    Starting,
+    Exited {
+        code: i64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        signal: Option<String>,
+    },
+    Failed {
+        reason: String,
+    },
+    HostReplaced {
+        previous_owner: HostInstanceToken,
+        current_owner: HostInstanceToken,
+    },
+    Lost,
+}
+
+impl SessionSummary {
+    pub fn reconnection(&self, current_owner: &HostInstanceToken) -> SessionReconnection {
+        if self.live && self.owned {
+            return match self.manifest.lifecycle {
+                SessionLifecycle::Starting => SessionReconnection::Starting,
+                _ => SessionReconnection::Live,
+            };
+        }
+        match &self.manifest.lifecycle {
+            SessionLifecycle::Exited { code, signal } => SessionReconnection::Exited {
+                code: *code,
+                signal: signal.clone(),
+            },
+            SessionLifecycle::Failed { reason } => SessionReconnection::Failed {
+                reason: reason.clone(),
+            },
+            SessionLifecycle::Lost | SessionLifecycle::Starting | SessionLifecycle::Running
+                if &self.manifest.host_instance != current_owner =>
+            {
+                SessionReconnection::HostReplaced {
+                    previous_owner: self.manifest.host_instance.clone(),
+                    current_owner: current_owner.clone(),
+                }
+            }
+            SessionLifecycle::Lost | SessionLifecycle::Starting | SessionLifecycle::Running => {
+                SessionReconnection::Lost
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AgentSnapshotEntry {
     pub session: SessionId,
     pub generation: SessionGeneration,
@@ -75,6 +127,12 @@ pub enum HostError {
     },
     #[error("session {0} is not running")]
     SessionNotLive(SessionId),
+    #[error("session {0} is still running; stop it before restarting it")]
+    SessionLive(SessionId),
+    #[error("{count} live session(s) remain; stop them before stopping the host")]
+    SessionsLive { count: usize },
+    #[error("{0}")]
+    OwnerBusy(String),
     #[error("session {0} has no owned process handle in this host instance; nothing was signaled")]
     ProcessUnverified(SessionId),
     #[error("session {session} could not start: {reason}")]
@@ -103,12 +161,17 @@ pub struct SessionHost {
     identity: HostIdentity,
     manifest_writer: Arc<Mutex<()>>,
     sessions: Mutex<BTreeMap<SessionId, SessionRecord>>,
+    _owner: OwnerLock,
 }
 
 impl SessionHost {
     pub fn open(home: &Path, endpoint: &Path) -> Result<Arc<Self>, HostError> {
         std::fs::create_dir_all(paneflow_home::host_sessions_dir_in(home))
             .map_err(|e| HostError::Storage(format!("cannot create the host directory: {e}")))?;
+        let owner = OwnerLock::acquire(home).map_err(|error| match error {
+            OwnerLockError::Held(_) => HostError::OwnerBusy(error.to_string()),
+            OwnerLockError::Io(io) => HostError::Storage(io.to_string()),
+        })?;
         let identity = HostIdentity {
             name: "paneflow-host".to_string(),
             version: env!("CARGO_PKG_VERSION").to_string(),
@@ -125,10 +188,24 @@ impl SessionHost {
             identity,
             manifest_writer: Arc::new(Mutex::new(())),
             sessions: Mutex::new(BTreeMap::new()),
+            _owner: owner,
         });
         host.adopt_previous_records();
         host.write_instance_record()?;
         Ok(host)
+    }
+
+    pub fn retire(&self) {
+        let path = paneflow_home::host_instance_record_path_in(&self.home);
+        let _guard = self.lock_writer();
+        if let Err(error) = std::fs::remove_file(&path)
+            && error.kind() != std::io::ErrorKind::NotFound
+        {
+            log::warn!(
+                "paneflow-host: cannot remove the instance record {}: {error}",
+                path.display()
+            );
+        }
     }
 
     pub fn identity(&self) -> &HostIdentity {
@@ -346,8 +423,89 @@ impl SessionHost {
             rows,
             scrollback_lines: DEFAULT_SCROLLBACK_LINES,
         };
+        self.launch(session, manifest, spec, SessionGeneration::FIRST)
+    }
+
+    pub fn restart(
+        &self,
+        session: &SessionId,
+        generation: Option<SessionGeneration>,
+    ) -> Result<SessionSummary, HostError> {
+        let manifest = {
+            let sessions = self.lock_sessions();
+            let record = sessions
+                .get(session)
+                .ok_or_else(|| HostError::SessionNotFound(session.clone()))?;
+            let current = record
+                .manifest
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .clone();
+            if let Some(requested) = generation
+                && requested != current.generation
+            {
+                return Err(HostError::GenerationMismatch {
+                    session: session.clone(),
+                    current: current.generation,
+                    requested,
+                });
+            }
+            if record.is_live() {
+                return Err(HostError::SessionLive(session.clone()));
+            }
+            Arc::clone(&record.manifest)
+        };
+        let (next, spec) = {
+            let mut guard = manifest
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let next = guard.generation.next();
+            let resumed_cwd = guard
+                .current_cwd
+                .as_deref()
+                .filter(|cwd| Path::new(cwd).is_dir())
+                .unwrap_or(guard.cwd.as_str())
+                .to_string();
+            let cwd = resolve_cwd(Some(&resumed_cwd));
+            guard.generation = next;
+            guard.host_instance = self.identity.host_instance.clone();
+            guard.lifecycle = SessionLifecycle::Starting;
+            guard.process = None;
+            guard.current_cwd = None;
+            guard.agent = None;
+            guard.launch.args.clear();
+            guard.cwd = cwd.display().to_string();
+            guard.updated_at_ms = now_ms();
+            let env = launch_env(
+                &guard.session,
+                guard.workspace.as_ref(),
+                &self.home,
+                &guard.launch.env,
+            );
+            let spec = SpawnSpec {
+                shell: guard.launch.shell.clone(),
+                args: Vec::new(),
+                cwd,
+                env,
+                cols: guard.launch.cols,
+                rows: guard.launch.rows,
+                scrollback_lines: DEFAULT_SCROLLBACK_LINES,
+            };
+            (next, spec)
+        };
+        self.persist(&manifest)?;
+        self.launch(session.clone(), manifest, spec, next)
+    }
+
+    fn launch(
+        &self,
+        session: SessionId,
+        manifest: Arc<Mutex<SessionManifest>>,
+        spec: SpawnSpec,
+        generation: SessionGeneration,
+    ) -> Result<SessionSummary, HostError> {
         let observer = self.observer_for(Arc::clone(&manifest));
-        let spawned = SessionRuntime::spawn(spec, SessionGeneration::FIRST, observer);
+        let spawned = SessionRuntime::spawn(spec, generation, observer);
         let runtime = match spawned {
             Ok(runtime) => runtime,
             Err(error) => {
@@ -522,8 +680,21 @@ impl SessionHost {
         self.with_live_runtime(session, generation, |runtime| runtime.resize(cols, rows))
     }
 
+    pub fn live_sessions(&self) -> Vec<SessionSummary> {
+        self.list(None).into_iter().filter(|s| s.live).collect()
+    }
+
     pub fn live_session_count(&self) -> usize {
-        self.list(None).iter().filter(|s| s.live).count()
+        self.live_sessions().len()
+    }
+
+    pub fn request_shutdown(&self) -> Result<(), HostError> {
+        let live = self.live_sessions();
+        if live.is_empty() {
+            Ok(())
+        } else {
+            Err(HostError::SessionsLive { count: live.len() })
+        }
     }
 
     fn persist(&self, manifest: &Arc<Mutex<SessionManifest>>) -> Result<(), HostError> {
@@ -906,6 +1077,105 @@ mod tests {
             Err(HostError::SessionNotLive(_))
         ));
         assert!(manifest_path.exists(), "the record stays for inspection");
+    }
+
+    #[test]
+    fn an_explicit_restart_starts_a_new_generation_as_an_ordinary_shell() {
+        let home = tempfile::tempdir().unwrap();
+        let host = SessionHost::open(home.path(), Path::new("restart")).unwrap();
+        #[cfg_attr(windows, allow(unused_mut))]
+        let mut request = shell_request(80, 24);
+        #[cfg(unix)]
+        {
+            request.args = vec!["-s".to_string()];
+        }
+        assert!(!request.args.is_empty());
+        let created = host.create(request).unwrap();
+        let session = created.manifest.session.clone();
+        assert!(matches!(
+            host.restart(&session, None),
+            Err(HostError::SessionLive(_))
+        ));
+        let stopped = host.stop(&session, None).unwrap();
+        assert!(!stopped.live);
+        assert_eq!(
+            stopped.reconnection(host.instance()),
+            match stopped.manifest.lifecycle.clone() {
+                SessionLifecycle::Exited { code, signal } =>
+                    SessionReconnection::Exited { code, signal },
+                other => panic!("unexpected lifecycle {other:?}"),
+            }
+        );
+
+        assert!(matches!(
+            host.restart(&session, Some(SessionGeneration::FIRST.next())),
+            Err(HostError::GenerationMismatch { .. })
+        ));
+        let restarted = host
+            .restart(&session, Some(SessionGeneration::FIRST))
+            .unwrap();
+        assert_eq!(restarted.manifest.session, session);
+        assert_eq!(
+            restarted.manifest.generation,
+            SessionGeneration::FIRST.next()
+        );
+        assert!(restarted.live);
+        assert!(
+            restarted.manifest.launch.args.is_empty(),
+            "a restart never replays the recorded command"
+        );
+        assert_ne!(restarted.manifest.process, stopped.manifest.process);
+        assert_eq!(
+            restarted.reconnection(host.instance()),
+            SessionReconnection::Live
+        );
+        let on_disk =
+            read_manifest(&crate::manifest::manifest_path(home.path(), &session)).unwrap();
+        assert_eq!(on_disk.generation, SessionGeneration::FIRST.next());
+        assert!(matches!(
+            host.request_shutdown(),
+            Err(HostError::SessionsLive { count: 1 })
+        ));
+        host.stop(&session, None).unwrap();
+        assert_eq!(host.request_shutdown(), Ok(()));
+    }
+
+    #[test]
+    fn a_record_owned_by_a_previous_host_reconnects_as_host_replaced() {
+        let home = tempfile::tempdir().unwrap();
+        let session = {
+            let host = SessionHost::open(home.path(), Path::new("first")).unwrap();
+            host.create(shell_request(80, 24)).unwrap().manifest.session
+        };
+        let host = SessionHost::open(home.path(), Path::new("second")).unwrap();
+        let adopted = host.inspect(&session).unwrap();
+        assert!(matches!(
+            adopted.reconnection(host.instance()),
+            SessionReconnection::HostReplaced { ref current_owner, ref previous_owner }
+                if current_owner == host.instance() && previous_owner == &adopted.manifest.host_instance
+        ));
+        let restarted = host.restart(&session, None).unwrap();
+        assert_eq!(
+            restarted.manifest.generation,
+            SessionGeneration::FIRST.next()
+        );
+        assert_eq!(&restarted.manifest.host_instance, host.instance());
+        assert!(restarted.owned && restarted.live);
+        host.stop(&session, None).unwrap();
+        host.retire();
+        assert!(!paneflow_home::host_instance_record_path_in(home.path()).exists());
+    }
+
+    #[test]
+    fn two_hosts_cannot_own_one_home_at_the_same_time() {
+        let home = tempfile::tempdir().unwrap();
+        let first = SessionHost::open(home.path(), Path::new("first")).unwrap();
+        assert!(matches!(
+            SessionHost::open(home.path(), Path::new("second")),
+            Err(HostError::OwnerBusy(_))
+        ));
+        drop(first);
+        SessionHost::open(home.path(), Path::new("third")).unwrap();
     }
 
     #[test]

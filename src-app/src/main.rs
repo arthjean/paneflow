@@ -30,6 +30,7 @@ mod env_expand;
 mod external_open;
 mod file_icons;
 mod fonts;
+mod host_bootstrap;
 mod ipc;
 mod ipc_events;
 mod keybindings;
@@ -1685,6 +1686,7 @@ fn main() {
              \n\
              Usage: paneflow [OPTIONS]\n\
              \x20      paneflow mcp <install|status|uninstall>\n\
+             \x20      paneflow host <start|status|stop>\n\
              \n\
              Options:\n\
              \x20 -h, --help       Print this help message\n\
@@ -1800,6 +1802,8 @@ fn main() {
         ),
     }
     startup_trace::mark("bridge_extracted");
+
+    host_bootstrap::start_in_background();
 
     #[cfg(target_os = "windows")]
     if let Err(err) = windows_app_identity::ensure_process_app_user_model_id() {

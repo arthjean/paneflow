@@ -14,7 +14,7 @@ use crate::protocol::{
     self, ClientHello, DATA_CHUNK_RAW_BYTES, ERR_BUSY, ERR_CHECKPOINT_TOO_LARGE, ERR_DEADLINE,
     ERR_FRAME_TOO_LARGE, ERR_GENERATION_MISMATCH, ERR_HANDSHAKE_REQUIRED, ERR_INCOMPATIBLE,
     ERR_INTERNAL, ERR_INVALID_PARAMS, ERR_INVALID_REQUEST, ERR_METHOD_NOT_FOUND,
-    ERR_OUTPUT_EVICTED, ERR_PARSE, ERR_PROCESS_UNVERIFIED, ERR_SESSION_NOT_FOUND,
+    ERR_OUTPUT_EVICTED, ERR_PARSE, ERR_PROCESS_UNVERIFIED, ERR_SESSION_LIVE, ERR_SESSION_NOT_FOUND,
     ERR_SESSION_NOT_LIVE, ERR_SPAWN_FAILED, HOST_PROTOCOL_VERSION, encode_data, error_envelope,
     result_envelope,
 };
@@ -82,7 +82,12 @@ impl Drop for ServerHandle {
 
 pub fn serve(host: Arc<SessionHost>, endpoint: &Path, shutdown: Arc<AtomicBool>) -> io::Result<()> {
     let listener = bind(endpoint)?;
-    accept_loop(listener, host, shutdown)
+    let served = accept_loop(listener, host, shutdown);
+    #[cfg(unix)]
+    {
+        let _ = std::fs::remove_file(endpoint);
+    }
+    served
 }
 
 fn bind(endpoint: &Path) -> io::Result<Listener> {
@@ -300,6 +305,34 @@ fn handle_connection(mut wire: Wire, host: Arc<SessionHost>, shutdown: Arc<Atomi
         let flow = match method {
             "session.attach" => stream_attach(&mut wire, &host, &id, &params),
             "session.output" => stream_output(&mut wire, &host, &shutdown, &id, &params),
+            "host.shutdown" => {
+                let envelope = match host.request_shutdown() {
+                    Ok(()) => result_envelope(
+                        &id,
+                        json!({"stopping": true, "host_instance": host.instance()}),
+                    ),
+                    Err(error) => {
+                        let live = host.live_sessions();
+                        error_envelope(
+                            &id,
+                            ERR_SESSION_LIVE,
+                            error.to_string(),
+                            Some(json!({"live_sessions": live})),
+                        )
+                    }
+                };
+                let stopping = envelope.get("result").is_some();
+                let written = wire.write_json(&envelope);
+                if stopping {
+                    shutdown.store(true, Ordering::Release);
+                    wake_accept_loop(Path::new(&host.identity().endpoint));
+                    return;
+                }
+                match written {
+                    Ok(()) => Flow::Continue,
+                    Err(_) => Flow::Close,
+                }
+            }
             _ => {
                 let envelope = match dispatch(&host, method, &params) {
                     Ok(result) => result_envelope(&id, result),
@@ -314,6 +347,12 @@ fn handle_connection(mut wire: Wire, host: Arc<SessionHost>, shutdown: Arc<Atomi
         if matches!(flow, Flow::Close) {
             return;
         }
+    }
+}
+
+fn wake_accept_loop(endpoint: &Path) {
+    if let Ok(name) = endpoint.to_fs_name::<GenericFilePath>() {
+        let _ = Stream::connect(name);
     }
 }
 
@@ -376,6 +415,10 @@ fn error_to_envelope(id: &Value, error: DispatchError) -> Value {
                     Some(json!({"current_generation": current})),
                 ),
                 HostError::SessionNotLive(_) => (ERR_SESSION_NOT_LIVE, None),
+                HostError::SessionLive(_) | HostError::SessionsLive { .. } => {
+                    (ERR_SESSION_LIVE, None)
+                }
+                HostError::OwnerBusy(_) => (ERR_INTERNAL, None),
                 HostError::ProcessUnverified(_) => (ERR_PROCESS_UNVERIFIED, None),
                 HostError::SpawnFailed { .. } => (ERR_SPAWN_FAILED, None),
                 HostError::Runtime(RuntimeError::NotLive) => (ERR_SESSION_NOT_LIVE, None),
@@ -479,6 +522,11 @@ fn dispatch(host: &SessionHost, method: &str, params: &Value) -> Result<Value, D
             let session = param_session(params)?;
             let generation = param_generation(params)?;
             Ok(to_value(&host.stop(&session, generation)?))
+        }
+        "session.restart" => {
+            let session = param_session(params)?;
+            let generation = param_generation(params)?;
+            Ok(to_value(&host.restart(&session, generation)?))
         }
         "session.input" => {
             let session = param_session(params)?;
@@ -666,7 +714,7 @@ fn stream_output(
 mod tests {
     use super::*;
     use crate::client::{HostClient, HostClientError};
-    use crate::protocol::{ERR_HANDSHAKE_REQUIRED, MAX_CONTROL_FRAME_BYTES};
+    use crate::protocol::{ERR_HANDSHAKE_REQUIRED, ERR_SESSION_LIVE, MAX_CONTROL_FRAME_BYTES};
     use std::sync::atomic::AtomicU64;
     use std::time::Instant;
 
@@ -830,6 +878,56 @@ mod tests {
             Some(ERR_METHOD_NOT_FOUND)
         );
         server.stop().unwrap();
+    }
+
+    #[test]
+    fn host_shutdown_refuses_while_a_session_lives_and_ends_the_server_afterwards() {
+        let (_home, host, server) = start();
+        let hello = ClientHello::local("paneflow-host-test");
+        let mut client = HostClient::connect(server.endpoint(), &hello).unwrap();
+        let created = client
+            .call("session.create", shell_create_params())
+            .unwrap();
+        let session = SessionId::parse(created["session"].as_str().unwrap()).unwrap();
+
+        let refused = client.call("host.shutdown", json!({})).unwrap_err();
+        assert_eq!(refused.code(), Some(ERR_SESSION_LIVE));
+        let HostClientError::Rpc {
+            data: Some(data), ..
+        } = refused
+        else {
+            panic!("the refusal lists the live sessions");
+        };
+        assert_eq!(data["live_sessions"].as_array().unwrap().len(), 1);
+        assert_eq!(data["live_sessions"][0]["session"], json!(session));
+        assert!(host.live_session_count() == 1, "nothing was stopped");
+
+        let restarted = client.call("session.restart", json!({"session": session}));
+        assert_eq!(
+            restarted.err().and_then(|e| e.code()),
+            Some(ERR_SESSION_LIVE)
+        );
+        client
+            .call("session.stop", json!({"session": session}))
+            .unwrap();
+        let restarted = client
+            .call("session.restart", json!({"session": session}))
+            .unwrap();
+        assert_eq!(restarted["generation"], 2);
+        assert_eq!(restarted["live"], true);
+        client
+            .call("session.stop", json!({"session": session, "generation": 2}))
+            .unwrap();
+
+        let stopping = client.call("host.shutdown", json!({})).unwrap();
+        assert_eq!(stopping["stopping"], true);
+        assert_eq!(stopping["host_instance"], json!(host.instance()));
+        let endpoint = server.endpoint().to_path_buf();
+        server.stop().unwrap();
+        assert!(
+            HostClient::connect(&endpoint, &hello).is_err(),
+            "the endpoint is gone once the server stopped"
+        );
     }
 
     #[test]

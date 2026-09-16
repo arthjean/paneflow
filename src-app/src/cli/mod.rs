@@ -5,6 +5,7 @@ use serde_json::Value;
 mod control_cmds;
 mod flow_cmd;
 mod flow_spec;
+mod host_cmd;
 mod read_cmds;
 mod selector;
 mod send_cmd;
@@ -34,6 +35,7 @@ const VERBS: &[&str] = &[
     "focus",
     "key",
     "flow",
+    "host",
     "list_panes",
     "read_pane",
     "search_pane",
@@ -247,6 +249,11 @@ enum Commands {
         )]
         all: bool,
     },
+    #[command(
+        subcommand,
+        about = "Start, inspect or stop the detached local host that owns terminal sessions for this PANEFLOW_HOME (no running GUI needed)"
+    )]
+    Host(host_cmd::HostCommand),
     #[command(about = "Stream lifecycle events from the running instance as JSONL (EP-002)")]
     Watch {
         #[arg(
@@ -340,6 +347,16 @@ pub fn run() -> i32 {
     let Some(command) = cli.command else {
         return EXIT_OK;
     };
+
+    if let Commands::Host(command) = command {
+        return match host_cmd::run(command) {
+            Ok(code) => code,
+            Err(e) => {
+                eprintln!("paneflow: {}", e.message);
+                e.code
+            }
+        };
+    }
 
     let client = match connect() {
         Ok(client) => client,
@@ -448,6 +465,7 @@ fn dispatch(command: Commands, client: &IpcClient) -> Result<i32, CliError> {
             types,
             events_only,
         } => watch_cmd::watch(client, surface.as_deref(), &types, events_only),
+        Commands::Host(command) => host_cmd::run(command),
     }
 }
 
@@ -674,6 +692,17 @@ mod tests {
                 ..
             })
         ));
+    }
+
+    #[test]
+    fn host_verbs_parse_and_route_before_the_gui_socket() {
+        assert!(is_cli_verb(Some("host")));
+        for verb in ["start", "status", "stop"] {
+            let cli = Cli::try_parse_from(["paneflow", "host", verb]).expect("parse");
+            assert!(matches!(cli.command, Some(Commands::Host(_))), "{verb}");
+        }
+        let err = Cli::try_parse_from(["paneflow", "host"]).expect_err("usage");
+        assert_eq!(err.exit_code(), 2);
     }
 
     #[test]

@@ -358,6 +358,63 @@ links GPUI. The desktop still runs its in-process terminal path today; the
 host becomes the runtime owner when the desktop attaches to it in a later
 increment.
 
+### Host lifetime
+
+One host owns one state home. The desktop (`host_bootstrap.rs`, on a
+background thread) and `paneflow host start` share
+`paneflow_host::bootstrap::ensure_host_running`: take
+`<home>/host/bootstrap.lock`, `host.hello` the endpoint, adopt a compatible
+host that serves the same home, otherwise spawn `paneflow-host --home <home>
+serve` and wait up to ten seconds for it to answer. The host holds
+`<home>/host/owner.lock` for its lifetime, so a second `serve` on the same
+home exits instead of becoming a second owner. The executable is resolved
+next to the controller binary (`paneflow-host[.exe]` beside `paneflow[.exe]`),
+never from the per-user cache and never from the embedded helper bundle: it
+links libghostty and stays outside the three capped helpers.
+
+The spawn is detached on every platform. Windows uses
+`CREATE_BREAKAWAY_FROM_JOB | CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS`, so
+the host leaves the desktop's kill-on-close Job Object and gets no console, and
+the spawn goes through `CreateProcessW` with an explicit
+`PROC_THREAD_ATTRIBUTE_HANDLE_LIST` because `std::process::Command` always
+passes `bInheritHandles=TRUE` on Windows: without the list the host inherits
+every inheritable handle of the controller, keeps a shell pipeline such as
+`paneflow host start | jq` open forever and pins the desktop's log files;
+Unix calls `setsid()` in the child before exec, so the host has no controlling
+terminal. Stdin and stdout are null and stderr appends to
+`<home>/host/host.log`. A denied breakaway (`ERROR_ACCESS_DENIED`), a missing
+executable, an early exit or a startup timeout is reported as a bounded error;
+nothing falls back to a desktop-owned PTY. Breakaway only leaves the
+controller's immediate job: a controller started under `cargo run` or
+`cargo test` sits in Cargo's kill-on-close job and so does its host, which is
+why `scripts/dev.ps1` and `scripts/dev.sh` build both binaries and run
+`target/<profile>/paneflow` directly.
+
+| Event | Host | Sessions | Records |
+|---|---|---|---|
+| Desktop quit, crash or `taskkill /F` | keeps running | keep running | unchanged |
+| Controller pipe or CLI connection closes | keeps running | keep running | unchanged |
+| Explicit `session.stop` | keeps running | that session's owned process tree is terminated within a 5 s budget, exit recorded | `lifecycle: exited` |
+| `paneflow host stop` with live sessions | refused, lists them | untouched | unchanged |
+| `paneflow host stop` when idle | exits, removes `instance.json` | none live | manifests kept |
+| Host process death or reboot | gone | processes gone | next host marks running records `lost`, never signals them |
+| `session.restart` on an exited or lost record | same host | new generation, recorded shell with no arguments, no input or command replay | `generation + 1`, current owner |
+| Incompatible host on the endpoint | left running | untouched | unchanged; the controller reports the mismatch |
+
+Reconnection classification lives in `SessionSummary::reconnection`: `live`,
+`starting`, `exited`, `failed`, `host_replaced` (the record's owner is not the
+current instance) or `lost`. `paneflow host status` and `paneflow-host session
+inspect` print it. Development recovery commands, all scoped by
+`PANEFLOW_HOME`:
+
+```bash
+paneflow host start                       # start or adopt the host for this home
+paneflow host status                      # identity, live count, per-session reconnection state
+paneflow host stop                        # refused while sessions live
+paneflow-host session list|create|inspect|stop|restart
+paneflow-host --home <dir> serve          # foreground host for an isolated home
+```
+
 Identity is durable and lives in `paneflow-config`: `WorkspaceId` and
 `SessionId` are hyphenated UUIDs persisted in `session.json` (schema version
 3, migrated from v2 by assigning ids without touching the layout), never a
@@ -376,10 +433,12 @@ on Windows, `<runtime dir>/paneflow-host-<fp>.sock` on Unix), so an isolated
 one. The protocol is JSON-RPC 2.0 lines on that endpoint: `host.hello` must
 open every connection and verifies the protocol version and the terminal
 engine identity (libghostty source sha and API version) before any effect;
-`session.list/create/ensure/inspect/stop`, `session.attach` (native snapshot
-checkpoint plus its output offset, captured in one runtime operation),
-`session.output` (contiguous bytes from an offset, optionally followed),
-`session.input`, `session.resize` and `agent.snapshot` follow. Control frames
+`session.list/create/ensure/inspect/stop/restart`, `session.attach` (native
+snapshot checkpoint plus its output offset, captured in one runtime
+operation), `session.output` (contiguous bytes from an offset, optionally
+followed), `session.input`, `session.resize`, `agent.snapshot` and
+`host.shutdown` (refused with the live session list while any session runs)
+follow. Control frames
 are capped at 64 KiB, data chunks at 1 MiB, a checkpoint at 64 MiB; an
 oversized frame or checkpoint is refused without unbounded allocation and
 without stopping the session. The host is the only responder to terminal

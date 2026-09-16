@@ -41,15 +41,18 @@ pub const ERR_CHECKPOINT_TOO_LARGE: i64 = -32025;
 pub const ERR_FRAME_TOO_LARGE: i64 = -32026;
 pub const ERR_SPAWN_FAILED: i64 = -32027;
 pub const ERR_DEADLINE: i64 = -32028;
+pub const ERR_SESSION_LIVE: i64 = -32029;
 
 pub const METHODS: &[&str] = &[
     "host.hello",
     "host.status",
+    "host.shutdown",
     "session.list",
     "session.create",
     "session.ensure",
     "session.inspect",
     "session.stop",
+    "session.restart",
     "session.attach",
     "session.output",
     "session.input",
