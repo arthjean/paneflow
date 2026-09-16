@@ -94,7 +94,21 @@ fn safe_log_text(text: &str) -> String {
 }
 
 pub(crate) fn paneflow_ipc_reachable() -> bool {
-    reachable_from_socket_env(env::var_os("PANEFLOW_SOCKET_PATH").as_deref())
+    reachable_from_endpoints(
+        env::var_os("PANEFLOW_HOST_ENDPOINT").as_deref(),
+        env::var_os("PANEFLOW_SESSION_ID").as_deref(),
+        env::var_os("PANEFLOW_SOCKET_PATH").as_deref(),
+    )
+}
+
+fn reachable_from_endpoints(
+    host_endpoint: Option<&OsStr>,
+    session: Option<&OsStr>,
+    socket: Option<&OsStr>,
+) -> bool {
+    let hosted =
+        session.is_some_and(|value| !value.is_empty()) && reachable_from_socket_env(host_endpoint);
+    hosted || reachable_from_socket_env(socket)
 }
 
 fn reachable_from_socket_env(raw: Option<&OsStr>) -> bool {
@@ -367,6 +381,32 @@ mod tests {
     fn socket_reachability_rejects_absent_values() {
         assert!(!reachable_from_socket_env(None));
         assert!(!reachable_from_socket_env(Some(OsStr::new(""))));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_hosted_session_is_reachable_without_an_open_window() {
+        let endpoint = OsStr::new(r"\\.\pipe\paneflow-host-abc");
+        let session = OsStr::new("11112222-3333-4444-5555-666677778888");
+
+        assert!(reachable_from_endpoints(
+            Some(endpoint),
+            Some(session),
+            None
+        ));
+        assert!(
+            !reachable_from_endpoints(Some(endpoint), None, None),
+            "a host endpoint without a durable session addresses nothing"
+        );
+        assert!(
+            !reachable_from_endpoints(Some(endpoint), Some(OsStr::new("")), None),
+            "a blank session id is not a session"
+        );
+        assert!(
+            reachable_from_endpoints(None, None, Some(OsStr::new(r"\\.\pipe\paneflow"))),
+            "the controller socket stays a reachable target"
+        );
+        assert!(!reachable_from_endpoints(None, None, None));
     }
 
     #[cfg(unix)]

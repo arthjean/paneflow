@@ -1,43 +1,9 @@
-use std::path::{Path, PathBuf};
-
-const ENDPOINT_PREFIX: &str = "paneflow-host-";
-
-#[cfg(windows)]
-pub fn host_endpoint_path(home: &Path) -> PathBuf {
-    PathBuf::from(format!(
-        r"\\.\pipe\{ENDPOINT_PREFIX}{}",
-        paneflow_home::home_fingerprint(home)
-    ))
-}
-
-#[cfg(unix)]
-pub fn host_endpoint_path(home: &Path) -> PathBuf {
-    runtime_dir().join(format!(
-        "{ENDPOINT_PREFIX}{}.sock",
-        paneflow_home::home_fingerprint(home)
-    ))
-}
-
-#[cfg(unix)]
-fn runtime_dir() -> PathBuf {
-    std::env::var_os("XDG_RUNTIME_DIR")
-        .map(PathBuf::from)
-        .filter(|p| !p.as_os_str().is_empty() && p.is_absolute())
-        .or_else(|| {
-            std::env::var_os("TMPDIR")
-                .map(PathBuf::from)
-                .filter(|p| !p.as_os_str().is_empty() && p.is_absolute())
-        })
-        .unwrap_or_else(|| PathBuf::from("/tmp"))
-}
-
-pub fn host_endpoint_path_for_current_home() -> Option<PathBuf> {
-    paneflow_home::paneflow_home().map(|home| host_endpoint_path(&home))
-}
+pub use paneflow_home::{host_endpoint_path, host_endpoint_path_for_current_home};
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::Path;
 
     #[test]
     fn isolated_and_normal_homes_get_distinct_endpoints() {
@@ -47,7 +13,7 @@ mod tests {
         assert_ne!(normal, dev);
         assert_ne!(normal, exercise);
         assert_ne!(dev, exercise);
-        assert!(normal.to_string_lossy().contains(ENDPOINT_PREFIX));
+        assert!(normal.to_string_lossy().contains("paneflow-host-"));
         assert_eq!(
             normal,
             host_endpoint_path(Path::new("/home/arthur/.paneflow"))

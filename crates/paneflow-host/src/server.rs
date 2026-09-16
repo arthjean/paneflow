@@ -9,17 +9,21 @@ use interprocess::local_socket::{GenericFilePath, Listener, ListenerOptions, Str
 use paneflow_config::schema::{SessionGeneration, SessionId, WorkspaceId};
 use serde_json::{Value, json};
 
+use crate::agent::AgentEvent;
+use crate::control::{ConnectionAliases, ControlError};
 use crate::host::{CreateSession, HostError, SessionHost};
+use crate::manifest::now_ms;
 use crate::protocol::{
     self, ClientHello, DATA_CHUNK_RAW_BYTES, ERR_BUSY, ERR_CHECKPOINT_TOO_LARGE, ERR_DEADLINE,
-    ERR_FRAME_TOO_LARGE, ERR_GENERATION_MISMATCH, ERR_HANDSHAKE_REQUIRED, ERR_INCOMPATIBLE,
-    ERR_INTERNAL, ERR_INVALID_PARAMS, ERR_INVALID_REQUEST, ERR_METHOD_NOT_FOUND,
-    ERR_OUTPUT_EVICTED, ERR_PARSE, ERR_PROCESS_UNVERIFIED, ERR_SESSION_LIVE, ERR_SESSION_NOT_FOUND,
-    ERR_SESSION_NOT_LIVE, ERR_SPAWN_FAILED, HOST_PROTOCOL_VERSION, encode_data, error_envelope,
+    ERR_ENGINE_REQUIRED, ERR_FRAME_TOO_LARGE, ERR_GENERATION_MISMATCH, ERR_HANDSHAKE_REQUIRED,
+    ERR_INCOMPATIBLE, ERR_INTERNAL, ERR_INVALID_PARAMS, ERR_INVALID_REQUEST, ERR_METHOD_NOT_FOUND,
+    ERR_NO_CONTROLLER, ERR_OUTPUT_EVICTED, ERR_PARSE, ERR_PROCESS_UNVERIFIED, ERR_SESSION_LIVE,
+    ERR_SESSION_NOT_FOUND, ERR_SESSION_NOT_LIVE, ERR_SPAWN_FAILED, HOST_PROTOCOL_VERSION,
+    METHOD_AGENT_EVENT, METHOD_AGENT_FOLLOW, METHOD_AGENT_SNAPSHOT, encode_data, error_envelope,
     result_envelope,
 };
 use crate::runtime::RuntimeError;
-use crate::wire::{LineRead, Wire};
+use paneflow_ipc_client::line_wire::{LineRead, Wire};
 
 const MAX_CONNECTIONS: usize = 32;
 const IDLE_TIMEOUT: Duration = Duration::from_secs(60);
@@ -164,7 +168,7 @@ fn accept_loop(
             .name("paneflow-host-conn".into())
             .spawn(move || {
                 let _guard = guard;
-                match Wire::new(stream) {
+                match Wire::new(stream, protocol::MAX_CONTROL_FRAME_BYTES) {
                     Ok(wire) => handle_connection(wire, host, shutdown),
                     Err(error) => log::debug!("paneflow-host: connection setup failed: {error}"),
                 }
@@ -202,7 +206,7 @@ impl Drop for ConnectionGuard {
 }
 
 fn reject_busy(stream: Stream) {
-    if let Ok(mut wire) = Wire::new(stream) {
+    if let Ok(mut wire) = Wire::new(stream, protocol::MAX_CONTROL_FRAME_BYTES) {
         let _ = wire.write_json(&error_envelope(
             &Value::Null,
             ERR_BUSY,
@@ -219,6 +223,8 @@ enum Flow {
 
 fn handle_connection(mut wire: Wire, host: Arc<SessionHost>, shutdown: Arc<AtomicBool>) {
     let mut greeted = false;
+    let mut attaches = false;
+    let mut aliases = ConnectionAliases::default();
     loop {
         if shutdown.load(Ordering::Acquire) {
             return;
@@ -285,8 +291,9 @@ fn handle_connection(mut wire: Wire, host: Arc<SessionHost>, shutdown: Arc<Atomi
                 return;
             }
             match handshake(&host, &params) {
-                Ok(identity) => {
+                Ok((identity, offers_engine)) => {
                     greeted = true;
+                    attaches = offers_engine;
                     if wire.write_json(&result_envelope(&id, identity)).is_err() {
                         return;
                     }
@@ -304,8 +311,23 @@ fn handle_connection(mut wire: Wire, host: Arc<SessionHost>, shutdown: Arc<Atomi
             continue;
         }
         let flow = match method {
+            "session.attach" | "session.output" if !attaches => {
+                let written = wire.write_json(&error_envelope(
+                    &id,
+                    ERR_ENGINE_REQUIRED,
+                    format!(
+                        "{method} needs a client that declared a compatible terminal engine in host.hello"
+                    ),
+                    None,
+                ));
+                match written {
+                    Ok(()) => Flow::Continue,
+                    Err(_) => Flow::Close,
+                }
+            }
             "session.attach" => stream_attach(&mut wire, &host, &id, &params),
             "session.output" => stream_output(&mut wire, &host, &shutdown, &id, &params),
+            METHOD_AGENT_FOLLOW => stream_agent_follow(&mut wire, &host, &shutdown, &id),
             "host.shutdown" => {
                 let envelope = match host.request_shutdown() {
                     Ok(()) => result_envelope(
@@ -335,9 +357,21 @@ fn handle_connection(mut wire: Wire, host: Arc<SessionHost>, shutdown: Arc<Atomi
                 }
             }
             _ => {
-                let envelope = match dispatch(&host, method, &params) {
-                    Ok(result) => result_envelope(&id, result),
-                    Err(error) => error_to_envelope(&id, error),
+                let answered = crate::control::dispatch(
+                    &host,
+                    &mut aliases,
+                    host.permissions(),
+                    method,
+                    &params,
+                    now_ms(),
+                );
+                let envelope = match answered {
+                    Some(Ok(result)) => result_envelope(&id, result),
+                    Some(Err(error)) => control_error_to_envelope(&id, error),
+                    None => match dispatch(&host, method, &params) {
+                        Ok(result) => result_envelope(&id, result),
+                        Err(error) => error_to_envelope(&id, error),
+                    },
                 };
                 match wire.write_json(&envelope) {
                     Ok(()) => Flow::Continue,
@@ -357,7 +391,7 @@ fn wake_accept_loop(endpoint: &Path) {
     }
 }
 
-fn handshake(host: &SessionHost, params: &Value) -> Result<Value, (String, Value)> {
+fn handshake(host: &SessionHost, params: &Value) -> Result<(Value, bool), (String, Value)> {
     let hello: ClientHello = serde_json::from_value(params.clone()).map_err(|error| {
         (
             format!("host.hello params are invalid: {error}"),
@@ -369,7 +403,7 @@ fn handshake(host: &SessionHost, params: &Value) -> Result<Value, (String, Value
         HOST_PROTOCOL_VERSION,
         &identity.engine,
         hello.protocol,
-        &hello.engine,
+        hello.engine.as_ref(),
     )
     .map_err(|incompatibility| {
         (
@@ -380,7 +414,23 @@ fn handshake(host: &SessionHost, params: &Value) -> Result<Value, (String, Value
             serde_json::to_value(&incompatibility).unwrap_or(Value::Null),
         )
     })?;
-    serde_json::to_value(identity).map_err(|error| (error.to_string(), Value::Null))
+    let offers_engine = hello.attaches();
+    serde_json::to_value(identity)
+        .map(|identity| (identity, offers_engine))
+        .map_err(|error| (error.to_string(), Value::Null))
+}
+
+fn control_error_to_envelope(id: &Value, error: ControlError) -> Value {
+    match error {
+        ControlError::Params(message) => error_envelope(id, ERR_INVALID_PARAMS, message, None),
+        ControlError::NoController(message) => error_envelope(
+            id,
+            ERR_NO_CONTROLLER,
+            message,
+            Some(json!({"controller": false})),
+        ),
+        ControlError::Host(error) => error_to_envelope(id, DispatchError::Host(error)),
+    }
 }
 
 #[derive(Debug)]
@@ -485,6 +535,9 @@ fn dispatch(host: &SessionHost, method: &str, params: &Value) -> Result<Value, D
                 "sessions": sessions.len(),
                 "live_sessions": live,
                 "methods": protocol::METHODS,
+                "helpers": {
+                    "ai_hook_dir": host.helper_dir().map(|dir| dir.display().to_string()),
+                },
             }))
         }
         "session.list" => {
@@ -554,8 +607,75 @@ fn dispatch(host: &SessionHost, method: &str, params: &Value) -> Result<Value, D
             host.resize(&session, generation, cols, rows)?;
             Ok(json!({"cols": cols, "rows": rows}))
         }
-        "agent.snapshot" => Ok(json!({"sessions": host.agent_snapshot()})),
+        "session.text" => {
+            let session = param_session(params)?;
+            Ok(json!({"session": session, "text": host.text(&session)?}))
+        }
+        METHOD_AGENT_SNAPSHOT => Ok(json!({
+            "host_instance": host.instance(),
+            "sessions": host.agent_snapshot(),
+        })),
+        METHOD_AGENT_EVENT => {
+            let event = AgentEvent::from_params(params).map_err(DispatchError::Params)?;
+            Ok(host.ingest_agent_event(&event)?)
+        }
         _ => Err(DispatchError::MethodNotFound(method.to_string())),
+    }
+}
+
+fn stream_agent_follow(
+    wire: &mut Wire,
+    host: &SessionHost,
+    shutdown: &AtomicBool,
+    id: &Value,
+) -> Flow {
+    let subscription = host.subscribe_agents();
+    let header = result_envelope(
+        id,
+        json!({
+            "host_instance": host.instance(),
+            "sessions": host.agent_snapshot(),
+            "following": true,
+        }),
+    );
+    if wire.write_json(&header).is_err() {
+        host.unsubscribe_agents(subscription.id);
+        return Flow::Close;
+    }
+    let mut last_frame_at = std::time::Instant::now();
+    loop {
+        if shutdown.load(Ordering::Acquire) {
+            host.unsubscribe_agents(subscription.id);
+            let end = json!({"type": "end", "reason": "the local host is stopping"});
+            return match wire.write_json(&end) {
+                Ok(()) => Flow::Close,
+                Err(_) => Flow::Close,
+            };
+        }
+        match subscription.frames.recv_timeout(FOLLOW_POLL) {
+            Ok(frame) => {
+                if wire.write_json(&frame).is_err() {
+                    host.unsubscribe_agents(subscription.id);
+                    return Flow::Close;
+                }
+                last_frame_at = std::time::Instant::now();
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                if last_frame_at.elapsed() >= FOLLOW_KEEPALIVE {
+                    if wire.write_json(&json!({"type": "keepalive"})).is_err() {
+                        host.unsubscribe_agents(subscription.id);
+                        return Flow::Close;
+                    }
+                    last_frame_at = std::time::Instant::now();
+                }
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                host.unsubscribe_agents(subscription.id);
+                let end = json!({"type": "end", "reason": "the agent stream was dropped"});
+                let _ = wire.write_json(&end);
+                return Flow::Close;
+            }
+        }
     }
 }
 
@@ -1064,7 +1184,9 @@ mod tests {
     fn an_incompatible_or_missing_handshake_is_refused_before_any_effect() {
         let (_home, host, server) = start();
         let mut hello = ClientHello::local("paneflow-host-test");
-        hello.engine.source_sha = "f".repeat(40);
+        if let Some(engine) = hello.engine.as_mut() {
+            engine.source_sha = "f".repeat(40);
+        }
         let Err(error) = HostClient::connect(server.endpoint(), &hello) else {
             panic!("a mismatched engine must be refused");
         };
@@ -1077,7 +1199,7 @@ mod tests {
         };
         assert!(matches!(error, HostClientError::Incompatible(_)));
 
-        let mut wire = Wire::connect(server.endpoint()).unwrap();
+        let mut wire = Wire::connect(server.endpoint(), protocol::MAX_CONTROL_FRAME_BYTES).unwrap();
         wire.write_json(&protocol::request(
             1,
             "session.create",
@@ -1100,14 +1222,14 @@ mod tests {
             "{{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"host.hello\",\"params\":{{\"pad\":\"{}\"}}}}",
             "x".repeat(MAX_CONTROL_FRAME_BYTES + 1)
         );
-        let mut wire = Wire::connect(server.endpoint()).unwrap();
+        let mut wire = Wire::connect(server.endpoint(), protocol::MAX_CONTROL_FRAME_BYTES).unwrap();
         assert!(
             wire.write_line(huge.as_bytes()).is_err(),
             "the client side refuses to emit a frame above the limit"
         );
         drop(wire);
 
-        let mut raw = Wire::connect(server.endpoint()).unwrap();
+        let mut raw = Wire::connect(server.endpoint(), protocol::MAX_CONTROL_FRAME_BYTES).unwrap();
         let mut payload = huge.into_bytes();
         payload.push(b'\n');
         raw.write_raw(&payload).unwrap();

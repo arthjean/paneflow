@@ -3,7 +3,7 @@ use std::io;
 use std::thread::sleep;
 use std::time::{Duration, Instant};
 
-use paneflow_ipc_client::{IpcClient, IpcTransport, StreamEvent};
+use paneflow_ipc_client::{IpcTransport, StreamEvent};
 use regex::Regex;
 use serde_json::{Value, json};
 
@@ -298,7 +298,8 @@ fn pane_matches_since(
 }
 
 pub fn wait_idle(
-    client: &IpcClient,
+    client: &impl IpcTransport,
+    socket: &std::path::Path,
     target: &str,
     for_ms: Option<u64>,
     timeout_secs: Option<u64>,
@@ -317,13 +318,6 @@ pub fn wait_idle(
     let timeout = Duration::from_secs(timeout_secs.unwrap_or(DEFAULT_TIMEOUT_SECS));
     let deadline = Instant::now() + timeout;
 
-    let socket = paneflow_ipc_client::resolve_socket_path().ok_or_else(|| {
-        CliError::target(
-            "cannot locate the IPC socket; is Paneflow running? \
-             (set PANEFLOW_SOCKET_PATH if you launched the CLI outside a Paneflow pane)",
-        )
-    })?;
-
     let baseline = read_snapshot(client, id).ok().flatten();
 
     let _ = ctrlc::set_handler(|| std::process::exit(130));
@@ -333,7 +327,7 @@ pub fn wait_idle(
     let mut outcome = IdleOutcome::Dead;
     let mut matched = false;
 
-    let stream_result = paneflow_ipc_client::subscribe_stream_timed(&socket, params, slice, |ev| {
+    let stream_result = paneflow_ipc_client::subscribe_stream_timed(socket, params, slice, |ev| {
         let past_deadline = Instant::now() >= deadline;
         let sig = match ev {
             StreamEvent::Line(l) => classify_event_line(l),

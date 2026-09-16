@@ -232,7 +232,9 @@ impl PaneFlowApp {
         if let Some(title) = hidden.title.clone() {
             terminal.update(cx, |view, _| view.terminal.title = title);
         }
+        let surface_id = terminal.entity_id().as_u64();
         let new_pane = self.create_pane(terminal, ws_id, cx);
+        self.seed_surface_from_host(&hidden.session, ws_id, surface_id, cx);
         let Some(ws) = self.workspaces.get_mut(ws_idx) else {
             return;
         };

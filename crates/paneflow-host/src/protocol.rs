@@ -5,9 +5,10 @@ use paneflow_config::schema::{HostInstanceToken, SessionGeneration, SessionId};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-pub const HOST_PROTOCOL_VERSION: u32 = 1;
-
-pub const MAX_CONTROL_FRAME_BYTES: usize = 64 * 1024;
+pub use paneflow_ipc_client::host_control::{
+    ERR_NO_CONTROLLER, HOST_PROTOCOL_VERSION, MAX_CONTROL_FRAME_BYTES, METHOD_AGENT_EVENT,
+    METHOD_AGENT_FOLLOW, METHOD_AGENT_SNAPSHOT,
+};
 
 pub const MAX_DATA_CHUNK_BYTES: usize = 1024 * 1024;
 
@@ -42,6 +43,7 @@ pub const ERR_FRAME_TOO_LARGE: i64 = -32026;
 pub const ERR_SPAWN_FAILED: i64 = -32027;
 pub const ERR_DEADLINE: i64 = -32028;
 pub const ERR_SESSION_LIVE: i64 = -32029;
+pub const ERR_ENGINE_REQUIRED: i64 = -32031;
 
 pub const METHODS: &[&str] = &[
     "host.hello",
@@ -57,7 +59,17 @@ pub const METHODS: &[&str] = &[
     "session.output",
     "session.input",
     "session.resize",
-    "agent.snapshot",
+    "session.text",
+    METHOD_AGENT_SNAPSHOT,
+    METHOD_AGENT_EVENT,
+    METHOD_AGENT_FOLLOW,
+    "surface.list",
+    "surface.read",
+    "surface.search",
+    "surface.status",
+    "surface.send_text",
+    "fleet.list",
+    "system.capabilities",
 ];
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -95,7 +107,8 @@ pub struct HostIdentity {
 pub struct ClientHello {
     pub client: String,
     pub protocol: u32,
-    pub engine: EngineIdentity,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub engine: Option<EngineIdentity>,
 }
 
 impl ClientHello {
@@ -103,8 +116,20 @@ impl ClientHello {
         Self {
             client: client.into(),
             protocol: HOST_PROTOCOL_VERSION,
-            engine: local_engine_identity(),
+            engine: Some(local_engine_identity()),
         }
+    }
+
+    pub fn control(client: impl Into<String>) -> Self {
+        Self {
+            client: client.into(),
+            protocol: HOST_PROTOCOL_VERSION,
+            engine: None,
+        }
+    }
+
+    pub fn attaches(&self) -> bool {
+        self.engine.is_some()
     }
 }
 
@@ -125,7 +150,7 @@ pub fn check_compatibility(
     expected_protocol: u32,
     expected_engine: &EngineIdentity,
     offered_protocol: u32,
-    offered_engine: &EngineIdentity,
+    offered_engine: Option<&EngineIdentity>,
 ) -> Result<(), Incompatibility> {
     if expected_protocol != offered_protocol {
         return Err(Incompatibility::Protocol {
@@ -133,6 +158,9 @@ pub fn check_compatibility(
             offered: offered_protocol,
         });
     }
+    let Some(offered_engine) = offered_engine else {
+        return Ok(());
+    };
     let fields = [
         ("engine", &expected_engine.engine, &offered_engine.engine),
         (
@@ -213,16 +241,23 @@ mod tests {
                 HOST_PROTOCOL_VERSION,
                 &engine,
                 HOST_PROTOCOL_VERSION,
-                &engine
+                Some(&engine)
             ),
             Ok(())
         );
+        assert_eq!(
+            check_compatibility(HOST_PROTOCOL_VERSION, &engine, HOST_PROTOCOL_VERSION, None),
+            Ok(()),
+            "a control-only client never claims snapshot compatibility"
+        );
+        assert!(ClientHello::local("desktop").attaches());
+        assert!(!ClientHello::control("paneflow-cli").attaches());
         assert_eq!(
             check_compatibility(
                 HOST_PROTOCOL_VERSION,
                 &engine,
                 HOST_PROTOCOL_VERSION + 1,
-                &engine
+                Some(&engine)
             ),
             Err(Incompatibility::Protocol {
                 expected: HOST_PROTOCOL_VERSION,
@@ -235,7 +270,7 @@ mod tests {
             HOST_PROTOCOL_VERSION,
             &engine,
             HOST_PROTOCOL_VERSION,
-            &other,
+            Some(&other),
         )
         .unwrap_err();
         assert!(

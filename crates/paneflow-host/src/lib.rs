@@ -8,10 +8,13 @@
     )
 )]
 
+pub mod agent;
 pub mod bootstrap;
 pub mod client;
+pub mod control;
 pub mod endpoint;
 pub mod env;
+pub mod helpers;
 pub mod host;
 pub mod manifest;
 pub mod process;
@@ -19,10 +22,10 @@ pub mod protocol;
 pub mod runtime;
 pub mod server;
 pub mod tail;
-mod wire;
 
 pub use paneflow_config::schema::{HostInstanceToken, SessionGeneration, SessionId, WorkspaceId};
 
+pub use agent::{AgentEvent, AgentEventKind, AgentSnapshotEntry};
 pub use bootstrap::{BootstrapError, HostAdoption, Probe, ensure_host_running, probe};
 pub use client::{Attachment, HostClient, HostClientError, OutputEnd};
 pub use host::{CreateSession, HostError, SessionHost, SessionReconnection, SessionSummary};

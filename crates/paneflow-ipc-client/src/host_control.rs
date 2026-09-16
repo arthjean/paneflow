@@ -1,0 +1,260 @@
+use std::io;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Duration;
+
+use serde_json::{json, Value};
+
+use crate::line_wire::{LineRead, Wire};
+use crate::{jsonrpc_error_message_from_value, IpcTransport};
+
+pub const HOST_PROTOCOL_VERSION: u32 = 1;
+
+pub const MAX_CONTROL_FRAME_BYTES: usize = 64 * 1024;
+
+pub const REQUEST_DEADLINE: Duration = Duration::from_secs(10);
+
+pub const ENV_HOST_ENDPOINT: &str = "PANEFLOW_HOST_ENDPOINT";
+
+pub const ENV_SESSION_ID: &str = "PANEFLOW_SESSION_ID";
+
+pub const ENV_WORKSPACE_UUID: &str = "PANEFLOW_WORKSPACE_UUID";
+
+pub const METHOD_HOST_HELLO: &str = "host.hello";
+
+pub const METHOD_AGENT_EVENT: &str = "agent.event";
+
+pub const METHOD_AGENT_SNAPSHOT: &str = "agent.snapshot";
+
+pub const METHOD_AGENT_FOLLOW: &str = "agent.follow";
+
+pub const ERR_NO_CONTROLLER: i64 = -32030;
+
+pub fn host_endpoint_from(raw: Option<&std::ffi::OsStr>) -> Option<PathBuf> {
+    raw.filter(|value| !value.is_empty()).map(PathBuf::from)
+}
+
+pub fn host_endpoint_from_env() -> Option<PathBuf> {
+    host_endpoint_from(std::env::var_os(ENV_HOST_ENDPOINT).as_deref())
+}
+
+pub fn session_id_from(raw: Option<&str>) -> Option<String> {
+    raw.map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
+}
+
+pub fn session_id_from_env() -> Option<String> {
+    session_id_from(std::env::var(ENV_SESSION_ID).ok().as_deref())
+}
+
+pub fn control_hello(client: &str) -> Value {
+    json!({"client": client, "protocol": HOST_PROTOCOL_VERSION})
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ControlTarget {
+    Controller(PathBuf),
+    Host(PathBuf),
+}
+
+pub fn choose_control_target(
+    controller_socket: Option<PathBuf>,
+    controller_is_listening: bool,
+    host_endpoint: Option<PathBuf>,
+) -> Option<ControlTarget> {
+    match (controller_socket, host_endpoint) {
+        (Some(socket), _) if controller_is_listening => Some(ControlTarget::Controller(socket)),
+        (_, Some(endpoint)) => Some(ControlTarget::Host(endpoint)),
+        (Some(socket), None) => Some(ControlTarget::Controller(socket)),
+        (None, None) => None,
+    }
+}
+
+pub fn resolve_control_target(host_endpoint_fallback: Option<PathBuf>) -> Option<ControlTarget> {
+    let controller = crate::resolve_socket_path();
+    let listening = controller
+        .as_deref()
+        .is_some_and(crate::socket_is_listening);
+    choose_control_target(
+        controller,
+        listening,
+        host_endpoint_from_env().or(host_endpoint_fallback),
+    )
+}
+
+pub struct HostControl {
+    wire: Wire,
+    next_id: u64,
+    identity: Value,
+}
+
+impl HostControl {
+    pub fn connect(endpoint: &Path, client: &str) -> Result<Self, String> {
+        let wire = Wire::connect(endpoint, MAX_CONTROL_FRAME_BYTES).map_err(|error| {
+            format!(
+                "the local Paneflow host is not reachable at {} ({error})",
+                endpoint.display()
+            )
+        })?;
+        let mut control = Self {
+            wire,
+            next_id: 1,
+            identity: Value::Null,
+        };
+        control.identity = control.request(METHOD_HOST_HELLO, control_hello(client))?;
+        Ok(control)
+    }
+
+    pub fn identity(&self) -> &Value {
+        &self.identity
+    }
+
+    pub fn request(&mut self, method: &str, params: Value) -> Result<Value, String> {
+        let id = self.next_id;
+        self.next_id += 1;
+        let request = json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params});
+        self.wire
+            .write_json(&request)
+            .map_err(|error| format!("paneflow host request {method} failed: {error}"))?;
+        loop {
+            let line = match self.wire.read_line(REQUEST_DEADLINE) {
+                Ok(LineRead::Line(line)) => line,
+                Ok(LineRead::Eof) => {
+                    return Err(format!(
+                        "the local Paneflow host closed the connection during {method}"
+                    ));
+                }
+                Ok(LineRead::TooLong) => {
+                    return Err(format!(
+                        "the local Paneflow host oversized its {method} reply"
+                    ));
+                }
+                Err(error) => {
+                    return Err(format!("paneflow host request {method} failed: {error}"));
+                }
+            };
+            let value: Value = serde_json::from_str(line.trim()).map_err(|error| {
+                format!("invalid JSON-RPC response from the local Paneflow host: {error}")
+            })?;
+            if value.get("id").and_then(Value::as_u64) != Some(id) {
+                continue;
+            }
+            if let Some(message) = jsonrpc_error_message_from_value(&value) {
+                return Err(message);
+            }
+            return value.get("result").cloned().ok_or_else(|| {
+                "the local Paneflow host answered without a result or an error".to_string()
+            });
+        }
+    }
+
+    pub fn read_stream_line(&mut self, timeout: Duration) -> io::Result<Option<String>> {
+        match self.wire.read_line(timeout) {
+            Ok(LineRead::Line(line)) => Ok(Some(line)),
+            Ok(LineRead::Eof) => Ok(None),
+            Ok(LineRead::TooLong) => Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "the local Paneflow host oversized a stream frame",
+            )),
+            Err(error) => Err(error),
+        }
+    }
+
+    pub fn write_request(&mut self, method: &str, params: Value) -> io::Result<u64> {
+        let id = self.next_id;
+        self.next_id += 1;
+        let request = json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params});
+        self.wire.write_json(&request)?;
+        Ok(id)
+    }
+}
+
+pub struct HostTransport {
+    endpoint: PathBuf,
+    client: String,
+    calls: AtomicU64,
+}
+
+impl HostTransport {
+    pub fn connect(endpoint: &Path, client: &str) -> Result<Self, String> {
+        HostControl::connect(endpoint, client)?;
+        Ok(Self {
+            endpoint: endpoint.to_path_buf(),
+            client: client.to_owned(),
+            calls: AtomicU64::new(0),
+        })
+    }
+
+    pub fn endpoint(&self) -> &Path {
+        &self.endpoint
+    }
+
+    pub fn calls(&self) -> u64 {
+        self.calls.load(Ordering::Relaxed)
+    }
+}
+
+impl IpcTransport for HostTransport {
+    fn call(&self, method: &str, params: Value) -> Result<Value, String> {
+        self.calls.fetch_add(1, Ordering::Relaxed);
+        HostControl::connect(&self.endpoint, &self.client)?.request(method, params)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_control_hello_declares_no_terminal_engine() {
+        let hello = control_hello("paneflow-cli");
+        assert_eq!(hello["client"], "paneflow-cli");
+        assert_eq!(hello["protocol"], HOST_PROTOCOL_VERSION);
+        assert!(
+            hello.get("engine").is_none(),
+            "a control client never claims snapshot compatibility"
+        );
+    }
+
+    #[test]
+    fn an_open_window_keeps_the_controller_socket_and_a_closed_one_falls_back_to_the_host() {
+        let socket = PathBuf::from("/tmp/paneflow.sock");
+        let endpoint = PathBuf::from("/tmp/paneflow-host.sock");
+
+        assert_eq!(
+            choose_control_target(Some(socket.clone()), true, Some(endpoint.clone())),
+            Some(ControlTarget::Controller(socket.clone()))
+        );
+        assert_eq!(
+            choose_control_target(Some(socket.clone()), false, Some(endpoint.clone())),
+            Some(ControlTarget::Host(endpoint.clone()))
+        );
+        assert_eq!(
+            choose_control_target(Some(socket.clone()), false, None),
+            Some(ControlTarget::Controller(socket)),
+            "with no host to fall back to, the existing socket error still surfaces"
+        );
+        assert_eq!(
+            choose_control_target(None, false, Some(endpoint.clone())),
+            Some(ControlTarget::Host(endpoint))
+        );
+        assert_eq!(choose_control_target(None, false, None), None);
+    }
+
+    #[test]
+    fn endpoint_and_session_ignore_blank_environment_values() {
+        use std::ffi::OsStr;
+
+        assert_eq!(host_endpoint_from(None), None);
+        assert_eq!(host_endpoint_from(Some(OsStr::new(""))), None);
+        assert_eq!(
+            host_endpoint_from(Some(OsStr::new("/tmp/paneflow-host.sock"))),
+            Some(PathBuf::from("/tmp/paneflow-host.sock"))
+        );
+
+        assert_eq!(session_id_from(None), None);
+        assert_eq!(session_id_from(Some("   ")), None);
+        assert_eq!(session_id_from(Some(" abc ")), Some("abc".to_string()));
+    }
+}

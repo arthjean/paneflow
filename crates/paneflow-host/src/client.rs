@@ -7,10 +7,10 @@ use serde_json::{Value, json};
 use crate::host::{CreateSession, SessionSummary};
 use crate::protocol::{
     self, ClientHello, DATA_CHUNK_RAW_BYTES, HostIdentity, Incompatibility, MAX_CHECKPOINT_BYTES,
-    REQUEST_DEADLINE, decode_data, encode_data, request,
+    MAX_CONTROL_FRAME_BYTES, REQUEST_DEADLINE, decode_data, encode_data, request,
 };
 use crate::runtime::Checkpoint;
-use crate::wire::{LineRead, Wire};
+use paneflow_ipc_client::line_wire::{LineRead, Wire};
 
 #[derive(Debug, thiserror::Error)]
 pub enum HostClientError {
@@ -77,9 +77,11 @@ pub struct HostClient {
 
 impl HostClient {
     pub fn connect(endpoint: &Path, hello: &ClientHello) -> Result<Self, HostClientError> {
-        let wire = Wire::connect(endpoint).map_err(|source| HostClientError::Unreachable {
-            endpoint: endpoint.display().to_string(),
-            source,
+        let wire = Wire::connect(endpoint, MAX_CONTROL_FRAME_BYTES).map_err(|source| {
+            HostClientError::Unreachable {
+                endpoint: endpoint.display().to_string(),
+                source,
+            }
         })?;
         let mut client = Self {
             wire,
@@ -89,7 +91,10 @@ impl HostClient {
                 version: String::new(),
                 protocol: 0,
                 host_instance: HostInstanceToken::new(),
-                engine: hello.engine.clone(),
+                engine: hello
+                    .engine
+                    .clone()
+                    .unwrap_or_else(protocol::local_engine_identity),
                 pid: 0,
                 home: String::new(),
                 endpoint: String::new(),
@@ -109,9 +114,9 @@ impl HostClient {
             .map_err(|e| HostClientError::Protocol(format!("invalid host identity: {e}")))?;
         protocol::check_compatibility(
             hello.protocol,
-            &hello.engine,
-            identity.protocol,
             &identity.engine,
+            identity.protocol,
+            hello.engine.as_ref(),
         )
         .map_err(|incompatibility: Incompatibility| {
             HostClientError::Incompatible(incompatibility.to_string())

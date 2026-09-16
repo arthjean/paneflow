@@ -8,7 +8,12 @@
     )
 )]
 
+pub mod agent;
 pub mod ai_hook;
+pub mod host_control;
+pub mod line_wire;
+pub mod scrollback;
+pub mod send_text;
 
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
@@ -84,7 +89,7 @@ pub fn jsonrpc_error_message(line: &str) -> Option<String> {
     jsonrpc_error_message_from_value(&value)
 }
 
-fn jsonrpc_error_message_from_value(value: &Value) -> Option<String> {
+pub(crate) fn jsonrpc_error_message_from_value(value: &Value) -> Option<String> {
     let err = value.get("error")?;
     let code = err.get("code").and_then(Value::as_i64).unwrap_or(0);
     let message = err
@@ -152,6 +157,10 @@ fn send_and_receive(socket: &Path, request: &Value) -> io::Result<String> {
 fn connect_request_stream(socket: &Path) -> io::Result<Stream> {
     let name = socket.to_fs_name::<GenericFilePath>()?;
     Stream::connect(name)
+}
+
+pub fn socket_is_listening(socket: &Path) -> bool {
+    connect_request_stream(socket).is_ok()
 }
 
 #[cfg(windows)]

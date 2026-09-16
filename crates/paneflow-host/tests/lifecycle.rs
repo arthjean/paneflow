@@ -4,8 +4,13 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use paneflow_host::bootstrap::{self, Probe};
-use paneflow_host::protocol::{ClientHello, ERR_SESSION_LIVE};
+use paneflow_host::protocol::{
+    ClientHello, ERR_SESSION_LIVE, METHOD_AGENT_EVENT, METHOD_AGENT_FOLLOW, METHOD_AGENT_SNAPSHOT,
+};
 use paneflow_host::{HostClient, SessionReconnection, SessionSummary};
+use paneflow_ipc_client::IpcTransport;
+use paneflow_ipc_client::agent::AgentState;
+use paneflow_ipc_client::host_control::{HostControl, HostTransport};
 use serde_json::json;
 
 fn host_executable() -> PathBuf {
@@ -218,6 +223,237 @@ fn a_detached_host_is_started_once_adopted_afterwards_and_stopped_only_when_idle
 }
 
 #[cfg(windows)]
+#[test]
+fn a_gpu_free_client_drives_agents_and_surfaces_while_no_window_is_open() {
+    let home = tempfile::tempdir().unwrap();
+    std::fs::write(
+        home.path().join("paneflow.json"),
+        br#"{"ai_unrestricted": true}"#,
+    )
+    .unwrap();
+    let endpoint = paneflow_host::endpoint::host_endpoint_path(home.path());
+    let hello = ClientHello::local("agent-test");
+    let controller = host_executable();
+    allow_breakaway_like_the_desktop_does();
+
+    bootstrap::ensure_host_running(home.path(), &controller, "agent-test")
+        .expect("a host starts from the sibling executable");
+
+    let mut owner = HostClient::connect(&endpoint, &hello).unwrap();
+    let summary: SessionSummary =
+        serde_json::from_value(owner.call("session.create", shell_params()).unwrap()).unwrap();
+    let session = summary.manifest.session.to_string();
+
+    let mut follower = HostControl::connect(&endpoint, "agent-follower")
+        .expect("a client with no engine connects");
+    let refused = follower
+        .request(
+            "session.attach",
+            json!({"session": session, "generation": 1}),
+        )
+        .expect_err("a client with no engine cannot attach a grid");
+    assert!(refused.contains("terminal engine"), "{refused}");
+    let windowless = follower
+        .request("workspace.list", json!({}))
+        .expect_err("window actions need a controller");
+    assert!(windowless.contains("Paneflow window"), "{windowless}");
+
+    let surfaces = follower.request("surface.list", json!({})).unwrap();
+    let listed = surfaces["surfaces"]
+        .as_array()
+        .expect("surfaces")
+        .iter()
+        .any(|surface| surface["session"] == session);
+    assert!(listed, "the host lists its own sessions: {surfaces}");
+    assert!(
+        follower
+            .request("session.text", json!({"session": session}))
+            .is_ok(),
+        "scrollback is readable with no window open"
+    );
+
+    let follow_id = follower
+        .write_request(METHOD_AGENT_FOLLOW, json!({}))
+        .unwrap();
+    let header: serde_json::Value = serde_json::from_str(
+        &follower
+            .read_stream_line(Duration::from_secs(10))
+            .unwrap()
+            .expect("a follow header"),
+    )
+    .unwrap();
+    assert_eq!(header["id"].as_u64(), Some(follow_id));
+    assert!(header["result"]["following"].as_bool().unwrap_or_default());
+    let known = header["result"]["sessions"]
+        .as_array()
+        .expect("sessions")
+        .iter()
+        .find(|entry| entry["session"] == session)
+        .expect("the snapshot carries the live session");
+    assert!(known["agent"].is_null(), "no event means no agent record");
+
+    let mut hook = HostControl::connect(&endpoint, "agent-hook").expect("the hook connects");
+    let accepted = hook
+        .request(
+            METHOD_AGENT_EVENT,
+            json!({
+                "session": session,
+                "kind": "ai.prompt_submit",
+                "tool": "claude",
+                "event_source": "hook",
+                "emitted_at_ms": 1_000,
+            }),
+        )
+        .unwrap();
+    assert_eq!(accepted["accepted"], true);
+    assert_eq!(accepted["agent"]["state"], "thinking");
+
+    let frame = next_agent_event(&mut follower);
+    assert_eq!(frame["session"], session.as_str());
+    assert_eq!(frame["kind"], "ai.prompt_submit");
+    assert_eq!(frame["agent"]["state"], "thinking");
+    assert_eq!(frame["agent"]["source"], "hook");
+
+    let waiting = hook
+        .request(
+            METHOD_AGENT_EVENT,
+            json!({
+                "session": session,
+                "kind": "ai.notification",
+                "tool": "claude",
+                "event_source": "hook",
+                "emitted_at_ms": 2_000,
+                "hook_payload": {"message": "Needs your approval"},
+            }),
+        )
+        .unwrap();
+    assert_eq!(waiting["agent"]["state"], "waiting_for_input");
+    let frame = next_agent_event(&mut follower);
+    assert_eq!(frame["agent"]["state"], "waiting_for_input");
+    assert_eq!(frame["agent"]["message"], "Needs your approval");
+
+    let stale = hook
+        .request(
+            METHOD_AGENT_EVENT,
+            json!({
+                "session": session,
+                "kind": "ai.stop",
+                "tool": "claude",
+                "event_source": "hook",
+                "emitted_at_ms": 1_500,
+            }),
+        )
+        .unwrap();
+    assert_eq!(stale["accepted"], false, "an out of order event is refused");
+
+    let multiline = hook
+        .request(
+            "surface.send_text",
+            json!({"session": session, "text": "line one\nline two"}),
+        )
+        .expect_err("a bare multiline write is refused without bracketed paste");
+    assert!(multiline.contains("bracketed paste"), "{multiline}");
+    let sent = hook
+        .request(
+            "surface.send_text",
+            json!({"session": session, "text": "rem hosted", "submit": true}),
+        )
+        .expect("a single line reaches the hosted shell");
+    assert_eq!(sent["sent"], true);
+    assert_eq!(sent["agent_target"], true);
+    assert_eq!(sent["terminal_bracketed_paste"], false);
+    assert_eq!(
+        sent["paste"], true,
+        "an agent target submits through the paste policy"
+    );
+    assert_eq!(
+        sent["submit_mode"], "deferred_paste_cr",
+        "the carriage return follows the configured paste delay, as in the desktop"
+    );
+
+    let interrupted = hook
+        .request(
+            METHOD_AGENT_EVENT,
+            json!({
+                "session": session,
+                "kind": "ai.stop",
+                "tool": "claude",
+                "event_source": "interrupt",
+                "emitted_at_ms": 3_000,
+                "hook_payload": {"last_result": "partial"},
+            }),
+        )
+        .unwrap();
+    assert_eq!(interrupted["accepted"], true);
+    assert_eq!(interrupted["agent"]["state"], "finished");
+    assert!(
+        interrupted["agent"]["last_result"].is_null(),
+        "an interrupted turn records no completion summary"
+    );
+    let frame = next_agent_event(&mut follower);
+    assert_eq!(frame["event_source"], "interrupt");
+
+    let transport = HostTransport::connect(&endpoint, "agent-transport")
+        .expect("a control transport connects without an engine");
+    for _ in 0..2 {
+        let status = transport
+            .call("host.status", json!({}))
+            .expect("each call opens its own short-lived connection");
+        assert_eq!(status["live_sessions"], 1);
+    }
+    assert_eq!(transport.calls(), 2);
+
+    let persisted: SessionSummary = serde_json::from_value(
+        owner
+            .call("session.inspect", json!({"session": session}))
+            .unwrap(),
+    )
+    .unwrap();
+    let agent = persisted
+        .manifest
+        .agent
+        .expect("the manifest owns the state");
+    assert_eq!(agent.state, AgentState::Finished.wire_str());
+    assert!(!agent.stale);
+
+    let status = hook.request("host.status", json!({})).unwrap();
+    assert!(
+        status["helpers"].get("ai_hook_dir").is_some(),
+        "the host reports where it looked for the hook helper: {status}"
+    );
+
+    let snapshot = hook.request(METHOD_AGENT_SNAPSHOT, json!({})).unwrap();
+    let entry = snapshot["sessions"]
+        .as_array()
+        .expect("sessions")
+        .iter()
+        .find(|entry| entry["session"] == session)
+        .expect("the session is in the snapshot");
+    assert_eq!(entry["agent"]["state"], "finished");
+
+    let _ = owner.call(
+        "session.stop",
+        json!({"session": session, "generation": summary.manifest.generation.get()}),
+    );
+    let _ = owner.call("host.shutdown", json!({}));
+    assert!(wait_unreachable(home.path(), &endpoint, &hello));
+}
+
+fn next_agent_event(follower: &mut HostControl) -> serde_json::Value {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while Instant::now() < deadline {
+        let line = follower
+            .read_stream_line(Duration::from_secs(5))
+            .expect("the follow stream stays readable")
+            .expect("the follow stream stays open");
+        let frame: serde_json::Value = serde_json::from_str(&line).expect("a JSON frame");
+        if frame["type"] == "event" {
+            return frame;
+        }
+    }
+    panic!("no agent event arrived on the follow stream");
+}
+
 #[test]
 fn a_detached_host_inherits_none_of_the_controllers_stray_handles() {
     use std::os::windows::fs::OpenOptionsExt;

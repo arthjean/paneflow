@@ -2,19 +2,18 @@ use std::io;
 use std::path::Path;
 use std::time::Duration;
 
-use interprocess::local_socket::{GenericFilePath, Stream, prelude::*};
+use interprocess::local_socket::{prelude::*, GenericFilePath, Stream};
 
-use crate::protocol::MAX_CONTROL_FRAME_BYTES;
+pub const WRITE_DEADLINE: Duration = Duration::from_secs(5);
 
-pub(crate) const WRITE_DEADLINE: Duration = Duration::from_secs(5);
-
-pub(crate) enum LineRead {
+pub enum LineRead {
     Line(String),
     Eof,
     TooLong,
 }
 
-pub(crate) struct Wire {
+pub struct Wire {
+    max_frame: usize,
     #[cfg(windows)]
     stream: Stream,
     #[cfg(windows)]
@@ -26,15 +25,16 @@ pub(crate) struct Wire {
 }
 
 impl Wire {
-    pub(crate) fn connect(endpoint: &Path) -> io::Result<Self> {
+    pub fn connect(endpoint: &Path, max_frame: usize) -> io::Result<Self> {
         let name = endpoint.to_fs_name::<GenericFilePath>()?;
-        Self::new(Stream::connect(name)?)
+        Self::new(Stream::connect(name)?, max_frame)
     }
 
-    pub(crate) fn new(stream: Stream) -> io::Result<Self> {
+    pub fn new(stream: Stream, max_frame: usize) -> io::Result<Self> {
         #[cfg(windows)]
         {
             Ok(Self {
+                max_frame,
                 stream,
                 pending: Vec::new(),
             })
@@ -44,6 +44,7 @@ impl Wire {
             use interprocess::TryClone;
             let writer = stream.try_clone()?;
             Ok(Self {
+                max_frame,
                 reader: io::BufReader::new(stream),
                 writer,
             })
@@ -51,12 +52,12 @@ impl Wire {
     }
 
     #[cfg(not(windows))]
-    pub(crate) fn read_line(&mut self, timeout: Duration) -> io::Result<LineRead> {
-        use std::io::BufRead;
+    pub fn read_line(&mut self, timeout: Duration) -> io::Result<LineRead> {
+        use std::io::{BufRead, Read};
         let _ = self.reader.get_ref().set_recv_timeout(Some(timeout));
         let mut buf = Vec::new();
         loop {
-            let remaining = (MAX_CONTROL_FRAME_BYTES + 1).saturating_sub(buf.len());
+            let remaining = (self.max_frame + 1).saturating_sub(buf.len());
             if remaining == 0 {
                 return Ok(LineRead::TooLong);
             }
@@ -71,7 +72,7 @@ impl Wire {
                 });
             }
             if buf.last() == Some(&b'\n') {
-                if buf.len() > MAX_CONTROL_FRAME_BYTES + 1 {
+                if buf.len() > self.max_frame + 1 {
                     return Ok(LineRead::TooLong);
                 }
                 return Ok(LineRead::Line(
@@ -82,21 +83,21 @@ impl Wire {
     }
 
     #[cfg(windows)]
-    pub(crate) fn read_line(&mut self, timeout: Duration) -> io::Result<LineRead> {
-        use paneflow_ipc_client::windows_pipe::read_some;
+    pub fn read_line(&mut self, timeout: Duration) -> io::Result<LineRead> {
+        use crate::windows_pipe::read_some;
         let deadline = std::time::Instant::now() + timeout;
         let mut scratch = [0u8; 4096];
         loop {
             if let Some(newline) = self.pending.iter().position(|b| *b == b'\n') {
                 let line: Vec<u8> = self.pending.drain(..=newline).collect();
-                if line.len() > MAX_CONTROL_FRAME_BYTES + 1 {
+                if line.len() > self.max_frame + 1 {
                     return Ok(LineRead::TooLong);
                 }
                 return Ok(LineRead::Line(
                     String::from_utf8_lossy(&line).trim_end().to_string(),
                 ));
             }
-            if self.pending.len() > MAX_CONTROL_FRAME_BYTES {
+            if self.pending.len() > self.max_frame {
                 return Ok(LineRead::TooLong);
             }
             let remaining = deadline.saturating_duration_since(std::time::Instant::now());
@@ -117,11 +118,11 @@ impl Wire {
         }
     }
 
-    pub(crate) fn write_line(&mut self, line: &[u8]) -> io::Result<()> {
-        if line.len() > MAX_CONTROL_FRAME_BYTES {
+    pub fn write_line(&mut self, line: &[u8]) -> io::Result<()> {
+        if line.len() > self.max_frame {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
-                "control frame exceeds the 64 KiB limit",
+                format!("control frame exceeds the {} byte limit", self.max_frame),
             ));
         }
         let mut payload = Vec::with_capacity(line.len() + 1);
@@ -130,11 +131,10 @@ impl Wire {
         self.write_raw(&payload)
     }
 
-    #[cfg_attr(not(test), allow(dead_code))]
-    pub(crate) fn write_raw(&mut self, payload: &[u8]) -> io::Result<()> {
+    pub fn write_raw(&mut self, payload: &[u8]) -> io::Result<()> {
         #[cfg(windows)]
         {
-            paneflow_ipc_client::windows_pipe::write_all(&self.stream, payload, WRITE_DEADLINE)
+            crate::windows_pipe::write_all(&self.stream, payload, WRITE_DEADLINE)
         }
         #[cfg(not(windows))]
         {
@@ -145,7 +145,7 @@ impl Wire {
         }
     }
 
-    pub(crate) fn write_json(&mut self, value: &serde_json::Value) -> io::Result<()> {
+    pub fn write_json(&mut self, value: &serde_json::Value) -> io::Result<()> {
         let line = serde_json::to_vec(value).map_err(io::Error::other)?;
         self.write_line(&line)
     }

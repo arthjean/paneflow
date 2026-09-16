@@ -56,6 +56,10 @@ fn status(home: &Path) -> Result<i32, CliError> {
         Probe::Running(identity) => {
             let mut client = HostClient::connect(&endpoint, &hello)
                 .map_err(|e| CliError::runtime(e.to_string()))?;
+            let helpers = client
+                .call("host.status", json!({}))
+                .map(|status| status["helpers"].clone())
+                .unwrap_or(Value::Null);
             let listed = client
                 .call("session.list", json!({}))
                 .map_err(|e| CliError::runtime(e.to_string()))?;
@@ -75,6 +79,7 @@ fn status(home: &Path) -> Result<i32, CliError> {
                 "home": home.display().to_string(),
                 "endpoint": endpoint.display().to_string(),
                 "identity": *identity,
+                "helpers": helpers,
                 "live_sessions": live,
                 "sessions": sessions,
             })

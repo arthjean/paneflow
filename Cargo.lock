@@ -4577,6 +4577,7 @@ dependencies = [
 name = "paneflow-mcp"
 version = "0.15.1"
 dependencies = [
+ "paneflow-home",
  "paneflow-ipc-client",
  "serde",
  "serde_json",

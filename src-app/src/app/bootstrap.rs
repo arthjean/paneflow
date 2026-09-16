@@ -663,6 +663,7 @@ impl PaneFlowApp {
             swap_source: None,
             closed_panes: Vec::new(),
             hidden_sessions: Default::default(),
+            host_agents: Default::default(),
             show_about_dialog: false,
             system_info_dialog: None,
             show_theme_picker: false,
@@ -765,6 +766,7 @@ impl PaneFlowApp {
         }
         app.refresh_pull_requests(cx);
         app.refresh_hidden_sessions(cx);
+        app.start_host_agent_stream();
 
         app.emit_app_started(is_first_run_for_telemetry);
         if let Some(info) = session_corruption {

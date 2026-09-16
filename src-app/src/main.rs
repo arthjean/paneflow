@@ -588,6 +588,7 @@ struct PaneFlowApp {
     swap_source: Option<Entity<crate::pane::Pane>>,
     closed_panes: Vec<ClosedPaneRecord>,
     hidden_sessions: crate::app::hosted_sessions::HiddenSessions,
+    host_agents: crate::app::host_agents::HostAgentView,
     show_about_dialog: bool,
     system_info_dialog: Option<crate::app::system_info_dialog::SystemInfoDialog>,
     show_theme_picker: bool,

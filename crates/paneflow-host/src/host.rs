@@ -4,11 +4,13 @@ use std::sync::{Arc, Mutex};
 
 use paneflow_config::schema::{HostInstanceToken, SessionGeneration, SessionId, WorkspaceId};
 use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
 
+use crate::agent::{AgentBus, AgentDecision, AgentEvent, AgentSnapshotEntry, AgentSubscription};
 use crate::bootstrap::{OwnerLock, OwnerLockError};
 use crate::manifest::{
-    AgentSummary, MANIFEST_SCHEMA_VERSION, ManifestError, SessionLaunch, SessionLifecycle,
-    SessionManifest, now_ms, read_manifest, write_atomically, write_manifest,
+    MANIFEST_SCHEMA_VERSION, ManifestError, SessionLaunch, SessionLifecycle, SessionManifest,
+    now_ms, read_manifest, write_atomically, write_manifest,
 };
 use crate::protocol::{HOST_PROTOCOL_VERSION, HostIdentity, local_engine_identity};
 use crate::runtime::{
@@ -103,16 +105,6 @@ impl SessionSummary {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct AgentSnapshotEntry {
-    pub session: SessionId,
-    pub generation: SessionGeneration,
-    pub live: bool,
-    pub lifecycle: SessionLifecycle,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub agent: Option<AgentSummary>,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum HostError {
     #[error("session {0} is not known to this host")]
@@ -161,6 +153,10 @@ pub struct SessionHost {
     identity: HostIdentity,
     manifest_writer: Arc<Mutex<()>>,
     sessions: Mutex<BTreeMap<SessionId, SessionRecord>>,
+    agent_bus: AgentBus,
+    helper_dir: Option<PathBuf>,
+    permissions: crate::control::ControlPermissions,
+    submit_paste_delay: std::time::Duration,
     _owner: OwnerLock,
 }
 
@@ -183,11 +179,25 @@ impl SessionHost {
             endpoint: endpoint.display().to_string(),
             started_at_ms: now_ms(),
         };
+        let helper_dir = match crate::helpers::current_hook_dir(home) {
+            Ok(dir) => Some(dir),
+            Err(error) => {
+                log::warn!(
+                    "paneflow-host: {error}; agent hooks will not be reachable from hosted sessions"
+                );
+                None
+            }
+        };
+        let (permissions, submit_paste_delay) = load_control_settings(home);
         let host = Arc::new(Self {
             home: home.to_path_buf(),
             identity,
             manifest_writer: Arc::new(Mutex::new(())),
             sessions: Mutex::new(BTreeMap::new()),
+            agent_bus: AgentBus::new(),
+            helper_dir,
+            permissions,
+            submit_paste_delay,
             _owner: owner,
         });
         host.adopt_previous_records();
@@ -218,6 +228,26 @@ impl SessionHost {
 
     pub fn home(&self) -> &Path {
         &self.home
+    }
+
+    pub fn helper_dir(&self) -> Option<&Path> {
+        self.helper_dir.as_deref()
+    }
+
+    pub fn permissions(&self) -> crate::control::ControlPermissions {
+        self.permissions
+    }
+
+    pub fn submit_paste_delay(&self) -> std::time::Duration {
+        self.submit_paste_delay
+    }
+
+    pub fn subscribe_agents(&self) -> AgentSubscription {
+        self.agent_bus.subscribe()
+    }
+
+    pub fn unsubscribe_agents(&self, id: u64) {
+        self.agent_bus.unsubscribe(id);
     }
 
     fn write_instance_record(&self) -> Result<(), HostError> {
@@ -262,13 +292,23 @@ impl SessionHost {
                     continue;
                 }
             };
+            let adopted_at = now_ms();
+            let mut rewrite = false;
             if manifest.lifecycle.is_running() {
                 manifest.lifecycle = SessionLifecycle::Lost;
-                manifest.updated_at_ms = now_ms();
+                manifest.updated_at_ms = adopted_at;
+                rewrite = true;
+            }
+            if let Some(agent) = manifest.agent.as_mut() {
+                let before = agent.stale;
+                crate::agent::reconcile_adopted(agent, &manifest.lifecycle, adopted_at);
+                rewrite |= agent.stale != before;
+            }
+            if rewrite {
                 let _guard = self.lock_writer();
                 if let Err(error) = write_manifest(&self.home, &manifest) {
                     log::warn!(
-                        "paneflow-host: cannot record the lost session {}: {error}",
+                        "paneflow-host: cannot record the adopted session {}: {error}",
                         manifest.session
                     );
                 }
@@ -331,9 +371,83 @@ impl SessionHost {
                 generation: summary.manifest.generation,
                 live: summary.live,
                 lifecycle: summary.manifest.lifecycle,
+                workspace: summary.manifest.workspace,
+                title: summary.manifest.title,
+                cwd: Some(summary.manifest.current_cwd.unwrap_or(summary.manifest.cwd)),
                 agent: summary.manifest.agent,
             })
             .collect()
+    }
+
+    fn launch_env(
+        &self,
+        session: &SessionId,
+        workspace: Option<&WorkspaceId>,
+        user: &BTreeMap<String, String>,
+    ) -> BTreeMap<String, String> {
+        launch_env(
+            session,
+            workspace,
+            &self.home,
+            Path::new(&self.identity.endpoint),
+            self.helper_dir.as_deref(),
+            user,
+        )
+    }
+
+    pub fn ingest_agent_event(&self, event: &AgentEvent) -> Result<Value, HostError> {
+        let manifest = {
+            let sessions = self.lock_sessions();
+            let record = sessions
+                .get(&event.session)
+                .ok_or_else(|| HostError::SessionNotFound(event.session.clone()))?;
+            Arc::clone(&record.manifest)
+        };
+        let (generation, current) = {
+            let guard = manifest
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            (guard.generation, guard.agent.clone())
+        };
+        if let Some(requested) = event.generation
+            && requested != generation
+        {
+            return Ok(json!({
+                "accepted": false,
+                "reason": "the event names a generation this session has left",
+                "session": event.session,
+                "generation": generation,
+            }));
+        }
+        let decision = crate::agent::apply_event(current.as_ref(), event, now_ms());
+        let applied = match decision {
+            AgentDecision::Stale(reason) => {
+                return Ok(json!({
+                    "accepted": false,
+                    "reason": reason,
+                    "session": event.session,
+                    "generation": generation,
+                }));
+            }
+            AgentDecision::Clear => {
+                self.update(&manifest, |m| m.agent = None);
+                None
+            }
+            AgentDecision::Update(summary) => {
+                let summary = *summary;
+                let stored = summary.clone();
+                self.update(&manifest, move |m| m.agent = Some(stored));
+                Some(summary)
+            }
+        };
+        self.agent_bus
+            .broadcast(&event.to_frame(generation, applied.as_ref()));
+        Ok(json!({
+            "accepted": true,
+            "session": event.session,
+            "generation": generation,
+            "agent": applied,
+        }))
     }
 
     pub fn create(&self, request: CreateSession) -> Result<SessionSummary, HostError> {
@@ -360,12 +474,7 @@ impl SessionHost {
         };
         let cols = request.cols.filter(|c| *c > 0).unwrap_or(DEFAULT_COLS);
         let rows = request.rows.filter(|r| *r > 0).unwrap_or(DEFAULT_ROWS);
-        let env = launch_env(
-            &session,
-            request.workspace.as_ref(),
-            &self.home,
-            &request.env,
-        );
+        let env = self.launch_env(&session, request.workspace.as_ref(), &request.env);
         let launch = SessionLaunch {
             shell: shell.clone(),
             args: request.args.clone(),
@@ -476,12 +585,7 @@ impl SessionHost {
             guard.launch.args.clear();
             guard.cwd = cwd.display().to_string();
             guard.updated_at_ms = now_ms();
-            let env = launch_env(
-                &guard.session,
-                guard.workspace.as_ref(),
-                &self.home,
-                &guard.launch.env,
-            );
+            let env = self.launch_env(&guard.session, guard.workspace.as_ref(), &guard.launch.env);
             let spec = SpawnSpec {
                 shell: guard.launch.shell.clone(),
                 args: Vec::new(),
@@ -649,6 +753,14 @@ impl SessionHost {
         generation: Option<SessionGeneration>,
     ) -> Result<Checkpoint, HostError> {
         self.with_live_runtime(session, generation, SessionRuntime::checkpoint)
+    }
+
+    pub fn text(&self, session: &SessionId) -> Result<String, HostError> {
+        self.with_live_runtime(session, None, SessionRuntime::text)
+    }
+
+    pub fn bracketed_paste_enabled(&self, session: &SessionId) -> Result<bool, HostError> {
+        self.with_live_runtime(session, None, SessionRuntime::bracketed_paste_enabled)
     }
 
     pub fn output(
@@ -832,10 +944,22 @@ fn platform_default_shell() -> String {
         .unwrap_or_else(|| "cmd.exe".to_string())
 }
 
-fn launch_env(
+fn load_control_settings(home: &Path) -> (crate::control::ControlPermissions, std::time::Duration) {
+    let config = paneflow_config::loader::load_config_from_path(&home.join("paneflow.json"));
+    let permissions = crate::control::ControlPermissions::from_environment(
+        config.ai_unrestricted_enabled(),
+        config.ai_injection_fence_enabled(),
+    );
+    let delay = std::time::Duration::from_millis(config.resolved_submit_paste_delay_ms());
+    (permissions, delay)
+}
+
+pub fn launch_env(
     session: &SessionId,
     workspace: Option<&WorkspaceId>,
     home: &Path,
+    endpoint: &Path,
+    helper_dir: Option<&Path>,
     user: &BTreeMap<String, String>,
 ) -> BTreeMap<String, String> {
     const PROTECTED: &[&str] = &[
@@ -845,6 +969,8 @@ fn launch_env(
         "TERM_PROGRAM_VERSION",
         "SHLVL",
         "PANEFLOW_SESSION_ID",
+        "PANEFLOW_WORKSPACE_UUID",
+        "PANEFLOW_HOST_ENDPOINT",
         "PANEFLOW_HOME",
     ];
     let mut env = BTreeMap::new();
@@ -874,12 +1000,27 @@ fn launch_env(
         env.insert("LANG".to_string(), "en_US.UTF-8".to_string());
     }
     env.insert("PANEFLOW_SESSION_ID".to_string(), session.to_string());
-    if let Some(workspace) = workspace
-        && !env.contains_key("PANEFLOW_WORKSPACE_ID")
-    {
-        env.insert("PANEFLOW_WORKSPACE_ID".to_string(), workspace.to_string());
+    if let Some(workspace) = workspace {
+        env.insert("PANEFLOW_WORKSPACE_UUID".to_string(), workspace.to_string());
     }
+    env.insert(
+        "PANEFLOW_HOST_ENDPOINT".to_string(),
+        endpoint.display().to_string(),
+    );
     env.insert("PANEFLOW_HOME".to_string(), home.display().to_string());
+    if let Some(helper_dir) = helper_dir
+        && !env.contains_key("PANEFLOW_BIN_DIR")
+    {
+        env.insert(
+            "PANEFLOW_BIN_DIR".to_string(),
+            helper_dir.display().to_string(),
+        );
+        let inherited = std::env::var("PATH").ok();
+        let existing = env.get("PATH").map(String::as_str).or(inherited.as_deref());
+        if let Some(path) = crate::helpers::prepend_to_path(existing, helper_dir) {
+            env.insert("PATH".to_string(), path);
+        }
+    }
     env
 }
 
@@ -1203,34 +1344,79 @@ mod tests {
             ("PANEFLOW_SESSION_ID".to_string(), "forged".to_string()),
             ("BAD=NAME".to_string(), "x".to_string()),
         ]);
+        let helper_dir = std::env::temp_dir().join("paneflow-helpers");
         let env = launch_env(
             &session,
             Some(&workspace),
             Path::new("/home/x/.paneflow"),
+            Path::new("/run/paneflow-host.sock"),
+            Some(&helper_dir),
             &user,
         );
         assert_eq!(env.get("KEEP_ME").map(String::as_str), Some("yes"));
         assert_eq!(env.get("PANEFLOW_SESSION_ID"), Some(&session.to_string()));
+        assert!(
+            !env.contains_key("PANEFLOW_WORKSPACE_ID"),
+            "the legacy integer marker is never forged from a UUID; the MCP bridge parses it as u64"
+        );
         assert_eq!(
-            env.get("PANEFLOW_WORKSPACE_ID"),
-            Some(&workspace.to_string())
+            env.get("PANEFLOW_WORKSPACE_UUID"),
+            Some(&workspace.to_string()),
+            "hooks address the durable workspace, not a GPUI surface"
+        );
+        assert_eq!(
+            env.get("PANEFLOW_HOST_ENDPOINT").map(String::as_str),
+            Some("/run/paneflow-host.sock")
+        );
+        assert_eq!(
+            env.get("PANEFLOW_BIN_DIR").map(PathBuf::from),
+            Some(helper_dir.clone())
+        );
+        assert_eq!(
+            std::env::split_paths(env.get("PATH").expect("PATH"))
+                .next()
+                .as_deref(),
+            Some(helper_dir.as_path()),
+            "the host-local helper directory leads the child PATH"
         );
         assert_eq!(env.get("TERM").map(String::as_str), Some("xterm-256color"));
         for key in ["CLAUDECODE", "LD_PRELOAD", "TMUX", "BAD=NAME"] {
             assert!(!env.contains_key(key), "{key} must not reach the child");
         }
 
-        let legacy = BTreeMap::from([("PANEFLOW_WORKSPACE_ID".to_string(), "7".to_string())]);
+        let legacy = BTreeMap::from([
+            ("PANEFLOW_WORKSPACE_ID".to_string(), "7".to_string()),
+            ("PANEFLOW_WORKSPACE_UUID".to_string(), "forged".to_string()),
+            (
+                "PANEFLOW_HOST_ENDPOINT".to_string(),
+                "/tmp/forged.sock".to_string(),
+            ),
+        ]);
         let env = launch_env(
             &session,
             Some(&workspace),
             Path::new("/home/x/.paneflow"),
+            Path::new("/run/paneflow-host.sock"),
+            None,
             &legacy,
         );
         assert_eq!(
             env.get("PANEFLOW_WORKSPACE_ID").map(String::as_str),
             Some("7"),
             "a caller-provided workspace marker keeps the existing hook routing"
+        );
+        assert_eq!(
+            env.get("PANEFLOW_WORKSPACE_UUID"),
+            Some(&workspace.to_string()),
+            "a forged durable workspace never reaches the child"
+        );
+        assert_eq!(
+            env.get("PANEFLOW_HOST_ENDPOINT").map(String::as_str),
+            Some("/run/paneflow-host.sock")
+        );
+        assert!(
+            !env.contains_key("PANEFLOW_BIN_DIR"),
+            "a missing helper directory is reported, never invented"
         );
     }
 }

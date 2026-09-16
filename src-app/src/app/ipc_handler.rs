@@ -464,41 +464,7 @@ fn send_text_gate_open(scripting_enabled: bool, unrestricted: bool) -> bool {
     scripting_enabled || unrestricted
 }
 
-fn resolve_paste_mode(
-    paste_param: Option<bool>,
-    submit: bool,
-    is_agent: bool,
-    bracketed_paste_enabled: bool,
-) -> bool {
-    paste_param.unwrap_or(submit && (is_agent || bracketed_paste_enabled))
-}
-
-fn text_contains_submit_byte(text: &str) -> bool {
-    text.contains('\r') || text.contains('\n')
-}
-
-fn resolve_send_text_body_mode(
-    text: &str,
-    paste_param: Option<bool>,
-    resolved_paste: bool,
-    bracketed_paste_enabled: bool,
-) -> Result<bool, &'static str> {
-    if !text_contains_submit_byte(text) {
-        return Ok(resolved_paste);
-    }
-
-    let paste = if paste_param.is_none() && bracketed_paste_enabled {
-        true
-    } else {
-        resolved_paste
-    };
-
-    if paste && bracketed_paste_enabled {
-        Ok(paste)
-    } else {
-        Err("text contains CR or LF; multiline surface.send_text requires active bracketed paste")
-    }
-}
+pub(crate) use paneflow_ipc_client::send_text::{resolve_paste_mode, resolve_send_text_body_mode};
 
 fn first_command_token(command: &str) -> Option<&str> {
     let command = command.trim_start();
@@ -795,24 +761,9 @@ fn surface_matches_workspace(surface: &SurfaceMeta, workspace_id: Option<u64>) -
     workspace_id.is_none_or(|expected| surface.workspace_id == Some(expected))
 }
 
-pub(crate) fn paginate_scrollback(
-    full: &str,
-    lines: usize,
-    offset: usize,
-) -> (String, usize, usize, bool) {
-    if full.is_empty() {
-        return (String::new(), 0, 0, true);
-    }
-    let all: Vec<&str> = full.split('\n').collect();
-    let total = all.len();
-    let end = total.saturating_sub(offset);
-    if end == 0 {
-        return (String::new(), 0, total, true);
-    }
-    let start = end.saturating_sub(lines);
-    let window = &all[start..end];
-    (window.join("\n"), window.len(), total, start == 0)
-}
+pub(crate) use paneflow_ipc_client::scrollback::{
+    paginate_scrollback, truncate_ipc_text, wrap_untrusted,
+};
 
 fn surface_read_value(
     text: String,
@@ -830,47 +781,6 @@ fn surface_read_value(
         "output_generation": output_generation,
         "truncated": truncated,
     })
-}
-
-fn truncate_ipc_text(text: String) -> (String, bool) {
-    if text.len() <= crate::limits::MAX_IPC_TEXT_BYTES {
-        return (text, false);
-    }
-
-    const MARKER: &str = "\n[paneflow: output truncated to fit IPC frame]\n";
-    let keep = crate::limits::MAX_IPC_TEXT_BYTES.saturating_sub(MARKER.len());
-    let mut boundary = keep.min(text.len());
-    while boundary > 0 && !text.is_char_boundary(boundary) {
-        boundary -= 1;
-    }
-
-    let mut out = text;
-    out.truncate(boundary);
-    out.push_str(MARKER);
-    (out, true)
-}
-
-fn fence_id() -> String {
-    use std::hash::{BuildHasher, Hasher};
-    let n = std::collections::hash_map::RandomState::new()
-        .build_hasher()
-        .finish();
-    format!("{n:016x}")
-}
-
-fn neutralize_sentinel(body: &str) -> String {
-    body.replace(
-        "</untrusted_terminal_output",
-        "<\u{200b}/untrusted_terminal_output",
-    )
-}
-
-fn wrap_untrusted(header_attrs: &str, body: &str) -> String {
-    let id = fence_id();
-    let body = neutralize_sentinel(body);
-    format!(
-        "<untrusted_terminal_output {header_attrs} id=\"{id}\">\n{body}\n</untrusted_terminal_output id=\"{id}\">"
-    )
 }
 
 pub(crate) fn parse_rename_name(params: &serde_json::Value) -> Option<String> {
@@ -1047,6 +957,7 @@ fn drain_ipc_requests_for_tick(
 
 impl PaneFlowApp {
     pub(crate) fn process_automation_tick(&mut self, cx: &mut Context<Self>) {
+        self.process_host_agent_frames(cx);
         self.process_ipc_requests(cx);
         self.broadcast_surface_changes(cx);
         self.process_config_changes(cx);
@@ -1071,7 +982,7 @@ impl PaneFlowApp {
         }
     }
 
-    fn broadcast_ai_frame(&self, method: &str, params: &serde_json::Value) {
+    pub(crate) fn broadcast_ai_frame(&self, method: &str, params: &serde_json::Value) {
         if !self.event_bus.has_subscribers() {
             return;
         }
@@ -2020,7 +1931,7 @@ impl PaneFlowApp {
         }
     }
 
-    fn handle_ipc(
+    pub(crate) fn handle_ipc(
         &mut self,
         method: &str,
         params: &serde_json::Value,
@@ -4101,7 +4012,9 @@ mod tests {
     #[test]
     fn fence_neutralize_is_a_noop_on_clean_text() {
         let clean = "build finished in 1.2s\nrunning 3 tests";
-        assert_eq!(super::neutralize_sentinel(clean), clean);
+        let wrapped = super::wrap_untrusted("source=\"x\"", clean);
+        assert!(wrapped.contains(clean));
+        assert!(!wrapped.contains('\u{200b}'));
     }
 
     #[test]
@@ -4174,10 +4087,10 @@ mod tests {
 
     #[test]
     fn truncate_ipc_text_marks_oversized_surface_read() {
-        let oversized = "x".repeat(crate::limits::MAX_IPC_TEXT_BYTES + 1024);
+        let oversized = "x".repeat(paneflow_ipc_client::scrollback::MAX_IPC_TEXT_BYTES + 1024);
         let (text, truncated) = super::truncate_ipc_text(oversized);
         assert!(truncated);
-        assert!(text.len() <= crate::limits::MAX_IPC_TEXT_BYTES);
+        assert!(text.len() <= paneflow_ipc_client::scrollback::MAX_IPC_TEXT_BYTES);
         assert!(text.contains("output truncated"));
     }
 

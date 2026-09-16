@@ -9,11 +9,13 @@ use gpui::{
     SharedString, Styled, Window, div, prelude::*, px, svg,
 };
 
-use lane::{infer_lane, render_lane_slot};
+use lane::{Lane, infer_lane, render_lane_slot};
 
 use crate::{
     PaneFlowApp, SIDEBAR_WIDTH, TabContextMenu, TabDrag, WorkspaceContextMenu, WorkspaceDrag,
     WorkspaceDragPreview, ai_types,
+    ai_types::AgentState,
+    app::host_agents::HostAgentRow,
     app::pull_request::PullRequest,
     pane_drag::PaneDrag,
     ui_primitives::{ROW_RADIUS, squircle_skin},
@@ -251,6 +253,52 @@ impl SidebarAgentSummary {
             }
         }
     }
+}
+
+fn hidden_session_lane(row: &HostAgentRow) -> Option<SidebarAgentState> {
+    match row.state? {
+        AgentState::WaitingForInput => Some(SidebarAgentState::NeedsInput),
+        AgentState::Errored => Some(SidebarAgentState::Errored),
+        AgentState::Thinking => Some(SidebarAgentState::Thinking),
+        AgentState::Finished => Some(SidebarAgentState::Finished),
+    }
+}
+
+fn hidden_session_agent_word(state: Option<AgentState>) -> &'static str {
+    match state {
+        Some(AgentState::WaitingForInput) => "waiting for input",
+        Some(AgentState::Thinking) => "working",
+        Some(AgentState::Finished) => "finished",
+        Some(AgentState::Errored) => "errored",
+        None => "idle",
+    }
+}
+
+fn hidden_session_tooltip(
+    cwd: &str,
+    row: Option<&HostAgentRow>,
+    disconnected: Option<&str>,
+) -> String {
+    let Some(row) = row else {
+        if let Some(reason) = disconnected {
+            return format!(
+                "Hidden session in {cwd}. Agent state unavailable, the local host is disconnected ({reason}). Click to reopen."
+            );
+        }
+        return format!("Hidden session, still running in {cwd}. Click to reopen.");
+    };
+    let word = hidden_session_agent_word(row.state);
+    if let Some(reason) = disconnected {
+        return format!(
+            "Hidden session in {cwd}. Last seen {word}, now stale because the local host is disconnected ({reason}). Click to reopen."
+        );
+    }
+    if row.stale {
+        return format!(
+            "Hidden session in {cwd}. Last seen {word}, now stale because the session is no longer running. Click to reopen."
+        );
+    }
+    format!("Hidden session in {cwd}. Agent {word}. Click to reopen.")
 }
 
 fn agent_status_sentence(count: usize, singular_state: &str, plural_state: &str) -> String {
@@ -1338,6 +1386,9 @@ impl PaneFlowApp {
         let ws = &self.workspaces[ws_idx];
         let hidden = self.hidden_sessions_for_workspace(ws, cx);
         let hover_bg = crate::app::constants::sidebar_tab_hover_background();
+        let disconnected = self
+            .host_agents_are_stale()
+            .then(|| self.host_agents_disconnect_reason().unwrap_or("no stream"));
         hidden
             .into_iter()
             .map(|session| {
@@ -1353,10 +1404,13 @@ impl PaneFlowApp {
                     });
                 let key = session.session.to_string();
                 let group = SharedString::from(format!("hidden-session-group-{key}"));
-                let tooltip = format!(
-                    "Hidden session, still running in {}. Click to reopen.",
-                    session.cwd
-                );
+                let agent = self.host_agent_row(&session.session);
+                let lane = agent
+                    .and_then(hidden_session_lane)
+                    .map(|state| Lane::Agent(SidebarAgentSummary { state, count: 1 }));
+                let tooltip = hidden_session_tooltip(&session.cwd, agent, disconnected);
+                let dim_label = disconnected.is_some() || agent.is_some_and(|row| row.stale);
+                let lane_tooltip = SharedString::from(tooltip.clone());
                 let body = div()
                     .flex()
                     .flex_row()
@@ -1380,11 +1434,21 @@ impl PaneFlowApp {
                             .overflow_x_hidden()
                             .whitespace_nowrap()
                             .text_ellipsis()
-                            .text_color(ui.muted)
+                            .map(|el| match dim_label {
+                                true => el.text_color(ui.subtle),
+                                false => el.text_color(ui.muted),
+                            })
                             .text_sm()
                             .line_height(px(SIDEBAR_ROW_LINE_HEIGHT))
                             .child(label),
-                    );
+                    )
+                    .child(render_lane_slot(
+                        lane,
+                        &format!("hidden-session-{key}"),
+                        move |_| lane_tooltip,
+                        group.clone(),
+                        ui,
+                    ));
                 let shell = sidebar_row_shell()
                     .id(SharedString::from(format!("hidden-session-{key}")))
                     .cursor_pointer()
@@ -1754,11 +1818,13 @@ mod tests {
         ROW_RADIUS, SIDEBAR_DROP_BAND_REACH, SIDEBAR_DROP_LINE_PX, SIDEBAR_FOLDER_ICON_WIDTH,
         SIDEBAR_ROW_LINE_HEIGHT, SIDEBAR_ROW_MARGIN_X, SIDEBAR_ROW_PADDING_Y, SIDEBAR_ROW_SPACING,
         SIDEBAR_WIDTH, SidebarAgentState, SidebarAgentSummary, SidebarDropSlot, SidebarRow,
-        folder_row_sessions, reorder_target, sidebar_agent_summary, sidebar_drop_slots,
-        sidebar_row_shell, tab_diffstat_visible, tab_display_title, tab_row_sessions,
+        folder_row_sessions, hidden_session_lane, hidden_session_tooltip, reorder_target,
+        sidebar_agent_summary, sidebar_drop_slots, sidebar_row_shell, tab_diffstat_visible,
+        tab_display_title, tab_row_sessions,
     };
     use crate::agent_launcher::TerminalAgent;
     use crate::ai_types::{AgentSession, AgentState};
+    use crate::app::host_agents::HostAgentRow;
     use crate::app::pull_request::{PrState, PullRequest};
     use crate::workspace::Tab;
     use gpui::{
@@ -1766,6 +1832,62 @@ mod tests {
         size,
     };
     use std::collections::HashSet;
+
+    fn host_row(state: Option<AgentState>, stale: bool) -> HostAgentRow {
+        HostAgentRow {
+            session: paneflow_config::schema::SessionId::new(),
+            tool: None,
+            state,
+            message: None,
+            last_result: None,
+            waiting_since_ms: None,
+            stale,
+            live: !stale,
+        }
+    }
+
+    #[test]
+    fn a_hidden_session_row_shows_the_host_agent_state() {
+        let cases = [
+            (AgentState::WaitingForInput, SidebarAgentState::NeedsInput),
+            (AgentState::Errored, SidebarAgentState::Errored),
+            (AgentState::Thinking, SidebarAgentState::Thinking),
+            (AgentState::Finished, SidebarAgentState::Finished),
+        ];
+        for (host, sidebar) in cases {
+            assert_eq!(
+                hidden_session_lane(&host_row(Some(host), false)),
+                Some(sidebar)
+            );
+        }
+        assert_eq!(hidden_session_lane(&host_row(None, false)), None);
+    }
+
+    #[test]
+    fn a_disconnected_host_reads_as_stale_never_as_idle_or_finished() {
+        let working = host_row(Some(AgentState::Thinking), false);
+
+        let live = hidden_session_tooltip("/src/api", Some(&working), None);
+        assert!(live.contains("Agent working"), "{live}");
+        assert!(!live.contains("stale"), "{live}");
+
+        let dropped = hidden_session_tooltip("/src/api", Some(&working), Some("stream closed"));
+        assert!(dropped.contains("Last seen working"), "{dropped}");
+        assert!(dropped.contains("stale"), "{dropped}");
+        assert!(dropped.contains("stream closed"), "{dropped}");
+        assert!(!dropped.contains("finished"), "{dropped}");
+
+        let lost = host_row(Some(AgentState::Thinking), true);
+        let lost = hidden_session_tooltip("/src/api", Some(&lost), None);
+        assert!(lost.contains("no longer running"), "{lost}");
+
+        let unknown = hidden_session_tooltip("/src/api", None, Some("host not running"));
+        assert!(unknown.contains("unavailable"), "{unknown}");
+        assert_eq!(
+            hidden_session_tooltip("/src/api", None, None),
+            "Hidden session, still running in /src/api. Click to reopen."
+        );
+    }
 
     fn session(state: AgentState) -> AgentSession {
         AgentSession::new(TerminalAgent::ClaudeCode, state)

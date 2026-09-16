@@ -27,6 +27,8 @@ const TERMINFO_NAME: &str = "xterm-256color";
 const SCROLLBACK_BYTES_PER_LINE: usize = 1024;
 const MAX_SCROLLBACK_BYTES: usize = 128 * 1024 * 1024;
 pub const CONTINUATION_MAX_BYTES: usize = 64 * 1024;
+const NEWLINE: &str = "\n";
+const NEWLINE_CHAR: char = '\n';
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SpawnSpec {
@@ -99,6 +101,8 @@ pub struct SpawnError(pub String);
 
 enum Command {
     Checkpoint(SyncSender<Result<Checkpoint, RuntimeError>>),
+    Text(SyncSender<Result<String, RuntimeError>>),
+    BracketedPaste(SyncSender<Result<bool, RuntimeError>>),
     Output {
         from: u64,
         max: usize,
@@ -231,6 +235,14 @@ impl SessionRuntime {
 
     pub fn checkpoint(&self) -> Result<Checkpoint, RuntimeError> {
         self.ask(Command::Checkpoint)
+    }
+
+    pub fn text(&self) -> Result<String, RuntimeError> {
+        self.ask(Command::Text)
+    }
+
+    pub fn bracketed_paste_enabled(&self) -> Result<bool, RuntimeError> {
+        self.ask(Command::BracketedPaste)
     }
 
     pub fn output(&self, from: u64, max: usize) -> Result<OutputSlice, RuntimeError> {
@@ -488,6 +500,16 @@ impl Session {
             Command::Checkpoint(reply) => {
                 let _ = reply.send(self.checkpoint());
             }
+            Command::Text(reply) => {
+                let _ = reply.send(self.text());
+            }
+            Command::BracketedPaste(reply) => {
+                let modes = self
+                    .terminal
+                    .modes()
+                    .map_err(|e| RuntimeError::Engine(e.to_string()));
+                let _ = reply.send(modes.map(|modes| modes.bracketed_paste));
+            }
             Command::Output { from, max, reply } => {
                 let _ = reply.send(self.output(from, max));
             }
@@ -538,6 +560,24 @@ impl Session {
             cols: self.cols,
             rows: self.rows,
             snapshot,
+        })
+    }
+
+    fn text(&mut self) -> Result<String, RuntimeError> {
+        let history = self
+            .terminal
+            .extract_scrollback()
+            .map_err(|e| RuntimeError::Engine(e.to_string()))?;
+        let screen = self
+            .terminal
+            .format(ghostty::FormatterOptions::plain_text())
+            .map_err(|e| RuntimeError::Engine(e.to_string()))?;
+        let screen = screen.trim_end_matches([NEWLINE_CHAR, ' ']).to_string();
+        Ok(match (history, screen.is_empty()) {
+            (Some(history), false) => [history, screen].join(NEWLINE),
+            (Some(history), true) => history,
+            (None, false) => screen,
+            (None, true) => String::new(),
         })
     }
 

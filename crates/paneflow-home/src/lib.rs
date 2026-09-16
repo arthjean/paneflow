@@ -100,6 +100,41 @@ pub fn home_fingerprint(home: &Path) -> String {
     format!("{hash:016x}")
 }
 
+const HOST_ENDPOINT_PREFIX: &str = "paneflow-host-";
+
+#[cfg(windows)]
+pub fn host_endpoint_path(home: &Path) -> PathBuf {
+    PathBuf::from(format!(
+        r"\\.\pipe\{HOST_ENDPOINT_PREFIX}{}",
+        home_fingerprint(home)
+    ))
+}
+
+#[cfg(unix)]
+pub fn host_endpoint_path(home: &Path) -> PathBuf {
+    host_runtime_dir().join(format!(
+        "{HOST_ENDPOINT_PREFIX}{}.sock",
+        home_fingerprint(home)
+    ))
+}
+
+#[cfg(unix)]
+fn host_runtime_dir() -> PathBuf {
+    std::env::var_os("XDG_RUNTIME_DIR")
+        .map(PathBuf::from)
+        .filter(|p| !p.as_os_str().is_empty() && p.is_absolute())
+        .or_else(|| {
+            std::env::var_os("TMPDIR")
+                .map(PathBuf::from)
+                .filter(|p| !p.as_os_str().is_empty() && p.is_absolute())
+        })
+        .unwrap_or_else(|| PathBuf::from("/tmp"))
+}
+
+pub fn host_endpoint_path_for_current_home() -> Option<PathBuf> {
+    paneflow_home().map(|home| host_endpoint_path(&home))
+}
+
 pub fn legacy_config_path() -> Option<PathBuf> {
     dirs::config_dir().map(|dir| dir.join(LEGACY_SUBDIR).join("paneflow.json"))
 }
