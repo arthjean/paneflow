@@ -6,6 +6,7 @@ actions!(
         SplitHorizontally,
         SplitVertically,
         ClosePane,
+        HidePane,
         NewTab,
         CloseTab,
         NextTab,

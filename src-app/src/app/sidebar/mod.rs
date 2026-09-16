@@ -1308,6 +1308,11 @@ impl PaneFlowApp {
         };
 
         let row = squircle_row(row_shell, tab_group, resting_bg, hovered_bg, body);
+        let hidden_rows = if tab_idx + 1 == ws.tab_count() {
+            self.render_hidden_session_rows(ws_idx, title_indent, content_width, ui, cx)
+        } else {
+            Vec::new()
+        };
 
         div()
             .id(SharedString::from(format!("tab-drop-{tab_id}")))
@@ -1319,6 +1324,78 @@ impl PaneFlowApp {
             .rounded(ROW_RADIUS)
             .when(indent_guide, |el| el.child(render_sidebar_indent_guide(ui)))
             .child(row)
+            .children(hidden_rows)
+    }
+
+    fn render_hidden_session_rows(
+        &self,
+        ws_idx: usize,
+        title_indent: f32,
+        content_width: f32,
+        ui: crate::theme::UiColors,
+        cx: &mut Context<Self>,
+    ) -> Vec<AnyElement> {
+        let ws = &self.workspaces[ws_idx];
+        let hidden = self.hidden_sessions_for_workspace(ws, cx);
+        let hover_bg = crate::app::constants::sidebar_tab_hover_background();
+        hidden
+            .into_iter()
+            .map(|session| {
+                let label = session
+                    .title
+                    .clone()
+                    .filter(|title| !title.trim().is_empty())
+                    .unwrap_or_else(|| {
+                        std::path::Path::new(&session.cwd)
+                            .file_name()
+                            .map(|name| name.to_string_lossy().into_owned())
+                            .unwrap_or_else(|| session.cwd.clone())
+                    });
+                let key = session.session.to_string();
+                let group = SharedString::from(format!("hidden-session-group-{key}"));
+                let tooltip = format!(
+                    "Hidden session, still running in {}. Click to reopen.",
+                    session.cwd
+                );
+                let body = div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap(px(SIDEBAR_TITLE_ROW_GAP))
+                    .w(px(content_width))
+                    .max_w(px(content_width))
+                    .min_w_0()
+                    .child(div().flex_none().w(px(title_indent)))
+                    .child(
+                        svg()
+                            .size(px(12.))
+                            .flex_none()
+                            .path("icons/terminal.svg")
+                            .text_color(ui.muted),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .overflow_x_hidden()
+                            .whitespace_nowrap()
+                            .text_ellipsis()
+                            .text_color(ui.muted)
+                            .text_sm()
+                            .line_height(px(SIDEBAR_ROW_LINE_HEIGHT))
+                            .child(label),
+                    );
+                let shell = sidebar_row_shell()
+                    .id(SharedString::from(format!("hidden-session-{key}")))
+                    .cursor_pointer()
+                    .delayed_tooltip(crate::ui_primitives::text_tooltip(tooltip))
+                    .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                        this.reopen_hidden_session(ws_idx, session.clone(), window, cx);
+                        cx.stop_propagation();
+                    }));
+                squircle_row(shell, group, None, Some(hover_bg), body).into_any_element()
+            })
+            .collect()
     }
 
     pub(crate) fn tab_row_branch(&self, ws: &Workspace, tab: &Tab) -> String {

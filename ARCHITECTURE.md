@@ -354,9 +354,10 @@ app state.
 that owns terminal execution independently of a GPUI entity: the PTY pair, the
 child process handle, the canonical `libghostty` terminal, an 8 MiB output
 tail with monotonic byte offsets and the session manifests. Nothing in it
-links GPUI. The desktop still runs its in-process terminal path today; the
-host becomes the runtime owner when the desktop attaches to it in a later
-increment.
+links GPUI. The desktop no longer spawns a PTY of its own: every terminal view
+resolves a hosted session and attaches to it (see "Attachment and the client
+mirror" below). The in-process runtime in `ghostty_session.rs` remains only
+for the perf bench and unit tests.
 
 ### Host lifetime
 
@@ -426,6 +427,81 @@ each manifest (identity, cwd, launch metadata, lifecycle, process identity
 with kernel start time, agent summary). A manifest or PID alone never proves
 ownership: a new host instance marks inherited running records `lost` and
 refuses to signal them.
+
+### Attachment and the client mirror
+
+`src-app/src/terminal/host_link.rs` is the desktop's only entry to the host.
+`TerminalView::open` (new terminal), `attach_restored` (saved layout) and
+`attach_existing` (hidden session or explicit restart) each build an
+`AttachRequest` with a `SessionIntent`: `Create` may create, `Reattach` never
+creates and reports a missing or ended record as an explicit ended state,
+`Resume` attaches when live, restarts when ended and creates when missing.
+`host_link::resolve` runs on the background executor: `session.inspect`, then
+create or restart as the intent allows, then `session.attach`, which returns
+the native libghostty snapshot and its output offset captured in one runtime
+operation together with the host instance token and the session generation.
+`ERR_CHECKPOINT_TOO_LARGE` and an engine identity mismatch surface as an attach
+failure that leaves the running session untouched.
+
+The view keeps one `GhosttySession` runtime per attachment
+(`start_attached`, thread `paneflow-ghostty-attached`). It decodes the
+checkpoint through the pinned `SnapshotDecoder` with continuation retention
+enabled before any byte is fed, so a checkpoint cut inside a UTF-8 or control
+sequence resumes parsing correctly. The decoded terminal is the client
+mirror: it renders, selects, searches and scrolls locally, and it encodes key,
+mouse, focus and paste input into bytes that go to the host through
+`session.input`. The mirror has no PTY writer: any reply the mirror's parser
+would emit to a terminal query is dropped, because the host's canonical
+terminal is the only responder. Clipboard, title, cwd and notification events
+still reach the desktop live; they are never replayed from a restored
+snapshot.
+
+A follower thread (`paneflow-ghostty-follower`) streams `session.output` from
+the checkpoint offset with `follow=true`. The host emits a keepalive frame
+every two seconds while idle; the follower skips overlapping bytes, treats a
+gap or `ERR_OUTPUT_EVICTED` as a request for a fresh checkpoint
+(`RuntimeMessage::RestoreCheckpoint` replaces the mirror), reconnects every
+500 ms after a connection loss, and verifies the host instance token on every
+reconnect so a replaced host is reported as `host_replaced` instead of being
+followed. Frames from a previous generation or attach attempt are discarded
+by the runtime's stop flag. When the stream ends with `live: false`, the
+follower classifies the end through `session.inspect` (exited with code or
+signal, failed, lost, restarted, missing).
+
+`TerminalState.host_link` carries `HostLinkState`: `Attaching`, `Attached`,
+`Reconnecting`, `Ended(HostLinkEnd)` or `Unavailable`. Input is accepted only
+while attaching or attached; in every other state the input dispatcher
+rejects it and pending input is cleared, never queued for a later resend. A
+`session.input` call that fails after a disconnect is reported as rejected
+and not retried. `render_host_link_overlay` draws the reconnecting, ended and
+unavailable states over the last rendered frame; Enter on an ended or
+unavailable terminal runs `resume_hosted_session`, which re-resolves the same
+`SessionId` with the `Resume` intent.
+
+### Close versus hide
+
+Dropping a `TerminalState` only shuts the local runtime down; nothing in a
+`Drop` implementation calls `session.stop`, so quitting the desktop, closing
+the main window, a crash or `taskkill /F` leave every session running on the
+host. Session stop is issued only from the explicit close paths, through
+`app/hosted_sessions.rs`:
+
+| Action | Sessions |
+|---|---|
+| Close pane (shortcut, pane menu, detached window shortcut), close surface tab, close diff dock terminal | stopped |
+| Close tab, close workspace | every contained session stopped |
+| Hide pane from layout (`hide_pane` action, pane menu) | kept running, `leave_running_on_close` skips the stop |
+| Return a detached pane to its window, quit, window close | untouched |
+
+A stop whose outcome is unknown (connection lost mid-request) shows a toast
+and is reconciled from the next `session.list`; the desktop never marks
+sessions stopped optimistically. Hidden live sessions are the owned live
+sessions of `session.list` whose id no attached view carries; the sidebar
+lists them under the workspace's last tab and a click reopens one through
+`attach_existing`. Worktree teardown asks the host for the live session cwds
+first: a worktree that still contains a live session, hidden or not, is kept;
+an unreachable host proceeds with the current rules; any other host error
+skips the teardown.
 
 The host endpoint is derived from the state home (`\\.\pipe\paneflow-host-<fp>`
 on Windows, `<runtime dir>/paneflow-host-<fp>.sock` on Unix), so an isolated

@@ -270,6 +270,7 @@ impl PaneFlowApp {
         }
         self.save_session(cx);
         self.acknowledge_visible_completions(cx);
+        self.refresh_hidden_sessions(cx);
         cx.notify();
         changed
     }
@@ -304,7 +305,20 @@ impl PaneFlowApp {
             return;
         }
         cx.spawn(async move |_this, _cx: &mut gpui::AsyncApp| {
-            smol::unblock(move || crate::workspace::worktree::teardown_all(worktrees)).await;
+            smol::unblock(move || {
+                let worktrees = match crate::terminal::host_link::live_session_cwds() {
+                    crate::terminal::host_link::LiveSessionProbe::Sessions(cwds) => {
+                        crate::workspace::worktree::without_live_sessions(worktrees, &cwds)
+                    }
+                    crate::terminal::host_link::LiveSessionProbe::NoHost => worktrees,
+                    crate::terminal::host_link::LiveSessionProbe::Unknown(error) => {
+                        log::warn!("worktree teardown skipped: live session probe failed: {error}");
+                        return;
+                    }
+                };
+                crate::workspace::worktree::teardown_all(worktrees)
+            })
+            .await;
         })
         .detach();
     }
@@ -535,6 +549,7 @@ impl PaneFlowApp {
             if let Some(pane) = closing_pane {
                 let record = capture_closed_pane_record(&pane, workspace_idx, cx);
                 push_closed_pane_record(&mut self.closed_panes, record);
+                self.stop_sessions_in_panes(std::slice::from_ref(&pane), cx);
             }
         }
 
@@ -714,6 +729,8 @@ impl PaneFlowApp {
         }
         let worktrees = std::mem::take(&mut self.workspaces[idx].managed_worktrees);
         self.prune_worktree_states();
+        let closing_panes = self.workspaces[idx].collect_panes();
+        self.stop_sessions_in_panes(&closing_panes, cx);
         self.spawn_worktree_teardown(worktrees, cx);
         self.workspaces.remove(idx);
         if self.workspaces.is_empty() {

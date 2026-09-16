@@ -587,6 +587,7 @@ struct PaneFlowApp {
     jump_cursor: Option<u64>,
     swap_source: Option<Entity<crate::pane::Pane>>,
     closed_panes: Vec<ClosedPaneRecord>,
+    hidden_sessions: crate::app::hosted_sessions::HiddenSessions,
     show_about_dialog: bool,
     system_info_dialog: Option<crate::app::system_info_dialog::SystemInfoDialog>,
     show_theme_picker: bool,
@@ -1022,6 +1023,7 @@ impl Render for PaneFlowApp {
             .on_action(cx.listener(Self::handle_split_h))
             .on_action(cx.listener(Self::handle_split_v))
             .on_action(cx.listener(Self::handle_close_pane))
+            .on_action(cx.listener(Self::handle_hide_pane))
             .on_action(cx.listener(Self::handle_new_tab))
             .on_action(cx.listener(Self::handle_close_tab))
             .on_action(cx.listener(Self::handle_next_tab))

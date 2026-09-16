@@ -449,6 +449,9 @@ impl PaneFlowApp {
                 self.save_session(cx);
                 cx.notify();
             }
+            pane::PaneEvent::SurfaceClosed(terminal) => {
+                self.stop_terminals(vec![terminal.clone()], cx);
+            }
             pane::PaneEvent::NewTab => {
                 let ws_id = pane.read(cx).workspace_id;
                 if !pane.read(cx).can_add_surface() {
@@ -488,6 +491,7 @@ impl PaneFlowApp {
                 cx.notify();
             }
             pane::PaneEvent::Remove => {
+                self.stop_sessions_in_panes(std::slice::from_ref(&pane), cx);
                 let Some((ws_idx, tab_idx)) =
                     self.workspaces.iter().enumerate().find_map(|(idx, ws)| {
                         ws.tab_index_containing_pane(&pane).map(|t| (idx, t))

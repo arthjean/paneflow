@@ -273,7 +273,10 @@ mod tests {
             descriptions.contains(&"Split vertical"),
             "Missing split vertical"
         );
-        assert!(descriptions.contains(&"Close pane"), "Missing close pane");
+        assert!(
+            descriptions.contains(&"Close pane (stop session)"),
+            "Missing close pane"
+        );
         assert!(
             descriptions.contains(&"Next workspace"),
             "Missing next workspace"
@@ -527,7 +530,7 @@ mod tests {
         let entries = effective_shortcuts(&overrides);
         let close = entries
             .iter()
-            .find(|e| e.description == "Close pane")
+            .find(|e| e.description == "Close pane (stop session)")
             .expect("Close pane should be in effective list");
         assert_eq!(
             close.key, "Ctrl+Shift+W",

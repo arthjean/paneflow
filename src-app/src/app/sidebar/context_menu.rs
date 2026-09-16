@@ -405,7 +405,7 @@ impl PaneFlowApp {
                         .overflow_x_hidden()
                         .whitespace_nowrap()
                         .text_ellipsis()
-                        .child("Close Workspace"),
+                        .child("Close Workspace (stop sessions)"),
                 )
                 .when_some(close_shortcut, |d, shortcut| {
                     d.child(
@@ -555,7 +555,7 @@ impl PaneFlowApp {
             })
             .child(self.render_select_menu_item(
                 "tab-context-close".into(),
-                "Close",
+                "Close (stop sessions)",
                 close_shortcut,
                 ui,
                 cx.listener(move |this, _: &ClickEvent, window, cx| {
@@ -757,6 +757,7 @@ impl PaneFlowApp {
         );
 
         let source_for_close = source.clone();
+        let source_for_hide = source.clone();
         let source_for_detach = source.clone();
         context_menu = context_menu.child(self.render_select_menu_item(
             "pane-context-detach".into(),
@@ -774,8 +775,19 @@ impl PaneFlowApp {
             }),
         ));
         context_menu = context_menu.child(self.render_select_menu_item(
+            "pane-context-hide".into(),
+            "Hide from Layout (keep running)",
+            None,
+            ui,
+            cx.listener(move |this, _: &ClickEvent, _window, cx| {
+                this.pane_menu_open = None;
+                this.hide_pane_from_layout(source_for_hide.clone(), cx);
+                cx.stop_propagation();
+            }),
+        ));
+        context_menu = context_menu.child(self.render_select_menu_item(
             "pane-context-close".into(),
-            "Close Pane",
+            "Close Pane (stop session)",
             None,
             ui,
             cx.listener(move |this, _: &ClickEvent, _window, cx| {

@@ -24,7 +24,7 @@ mod wire;
 pub use paneflow_config::schema::{HostInstanceToken, SessionGeneration, SessionId, WorkspaceId};
 
 pub use bootstrap::{BootstrapError, HostAdoption, Probe, ensure_host_running, probe};
-pub use client::{HostClient, HostClientError};
+pub use client::{Attachment, HostClient, HostClientError, OutputEnd};
 pub use host::{CreateSession, HostError, SessionHost, SessionReconnection, SessionSummary};
 pub use manifest::{AgentSummary, SessionLaunch, SessionLifecycle, SessionManifest};
 pub use protocol::{ClientHello, EngineIdentity, HOST_PROTOCOL_VERSION, HostIdentity};

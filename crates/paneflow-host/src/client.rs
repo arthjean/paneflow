@@ -1,12 +1,13 @@
 use std::io;
 use std::path::Path;
 
-use paneflow_config::schema::{SessionGeneration, SessionId};
+use paneflow_config::schema::{HostInstanceToken, SessionGeneration, SessionId, WorkspaceId};
 use serde_json::{Value, json};
 
+use crate::host::{CreateSession, SessionSummary};
 use crate::protocol::{
-    self, ClientHello, HostIdentity, Incompatibility, MAX_CHECKPOINT_BYTES, REQUEST_DEADLINE,
-    decode_data, request,
+    self, ClientHello, DATA_CHUNK_RAW_BYTES, HostIdentity, Incompatibility, MAX_CHECKPOINT_BYTES,
+    REQUEST_DEADLINE, decode_data, encode_data, request,
 };
 use crate::runtime::Checkpoint;
 use crate::wire::{LineRead, Wire};
@@ -36,6 +37,36 @@ impl HostClientError {
             _ => None,
         }
     }
+
+    pub fn is_session_gone(&self) -> bool {
+        matches!(
+            self.code(),
+            Some(protocol::ERR_SESSION_NOT_FOUND)
+                | Some(protocol::ERR_SESSION_NOT_LIVE)
+                | Some(protocol::ERR_GENERATION_MISMATCH)
+        )
+    }
+
+    pub fn is_connection_loss(&self) -> bool {
+        matches!(
+            self,
+            Self::Unreachable { .. } | Self::Io(_) | Self::Protocol(_)
+        )
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Attachment {
+    pub session: SessionId,
+    pub host_instance: HostInstanceToken,
+    pub checkpoint: Checkpoint,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct OutputEnd {
+    pub next_offset: u64,
+    pub live: bool,
+    pub stopped_by_client: bool,
 }
 
 pub struct HostClient {
@@ -57,7 +88,7 @@ impl HostClient {
                 name: String::new(),
                 version: String::new(),
                 protocol: 0,
-                host_instance: paneflow_config::schema::HostInstanceToken::new(),
+                host_instance: HostInstanceToken::new(),
                 engine: hello.engine.clone(),
                 pid: 0,
                 home: String::new(),
@@ -115,17 +146,101 @@ impl HostClient {
         }
     }
 
+    fn call_summary(
+        &mut self,
+        method: &str,
+        params: Value,
+    ) -> Result<SessionSummary, HostClientError> {
+        let value = self.call(method, params)?;
+        serde_json::from_value(value)
+            .map_err(|e| HostClientError::Protocol(format!("invalid session summary: {e}")))
+    }
+
+    pub fn list(
+        &mut self,
+        workspace: Option<&WorkspaceId>,
+    ) -> Result<Vec<SessionSummary>, HostClientError> {
+        let value = self.call("session.list", json!({"workspace": workspace}))?;
+        serde_json::from_value(value["sessions"].clone())
+            .map_err(|e| HostClientError::Protocol(format!("invalid session list: {e}")))
+    }
+
+    pub fn inspect(&mut self, session: &SessionId) -> Result<SessionSummary, HostClientError> {
+        self.call_summary("session.inspect", json!({"session": session}))
+    }
+
+    pub fn create(&mut self, request: &CreateSession) -> Result<SessionSummary, HostClientError> {
+        self.call_summary("session.create", to_value(request)?)
+    }
+
+    pub fn stop(
+        &mut self,
+        session: &SessionId,
+        generation: Option<SessionGeneration>,
+    ) -> Result<SessionSummary, HostClientError> {
+        self.call_summary(
+            "session.stop",
+            json!({"session": session, "generation": generation}),
+        )
+    }
+
+    pub fn restart(
+        &mut self,
+        session: &SessionId,
+        generation: Option<SessionGeneration>,
+    ) -> Result<SessionSummary, HostClientError> {
+        self.call_summary(
+            "session.restart",
+            json!({"session": session, "generation": generation}),
+        )
+    }
+
+    pub fn input(
+        &mut self,
+        session: &SessionId,
+        generation: SessionGeneration,
+        bytes: &[u8],
+    ) -> Result<usize, HostClientError> {
+        let mut accepted = 0usize;
+        for chunk in bytes.chunks(DATA_CHUNK_RAW_BYTES) {
+            let reply = self.call(
+                "session.input",
+                json!({"session": session, "generation": generation, "data": encode_data(chunk)}),
+            )?;
+            accepted =
+                accepted.saturating_add(reply["accepted_bytes"].as_u64().unwrap_or(0) as usize);
+        }
+        Ok(accepted)
+    }
+
+    pub fn resize(
+        &mut self,
+        session: &SessionId,
+        generation: SessionGeneration,
+        cols: u16,
+        rows: u16,
+    ) -> Result<(), HostClientError> {
+        self.call(
+            "session.resize",
+            json!({"session": session, "generation": generation, "cols": cols, "rows": rows}),
+        )
+        .map(|_| ())
+    }
+
     pub fn attach(
         &mut self,
         session: &SessionId,
         generation: Option<SessionGeneration>,
-    ) -> Result<Checkpoint, HostClientError> {
+    ) -> Result<Attachment, HostClientError> {
         let header = self.call(
             "session.attach",
             json!({"session": session, "generation": generation}),
         )?;
         let generation: SessionGeneration = serde_json::from_value(header["generation"].clone())
             .map_err(|e| HostClientError::Protocol(format!("invalid generation: {e}")))?;
+        let host_instance: HostInstanceToken =
+            serde_json::from_value(header["host_instance"].clone())
+                .map_err(|e| HostClientError::Protocol(format!("invalid host instance: {e}")))?;
         let expected = header["bytes"]
             .as_u64()
             .ok_or_else(|| HostClientError::Protocol("missing checkpoint size".to_string()))?;
@@ -176,12 +291,16 @@ impl HostClient {
                 snapshot.len()
             )));
         }
-        Ok(Checkpoint {
-            generation,
-            offset,
-            cols,
-            rows,
-            snapshot,
+        Ok(Attachment {
+            session: session.clone(),
+            host_instance,
+            checkpoint: Checkpoint {
+                generation,
+                offset,
+                cols,
+                rows,
+                snapshot,
+            },
         })
     }
 
@@ -192,12 +311,13 @@ impl HostClient {
         from: u64,
         follow: bool,
         mut on_output: impl FnMut(u64, &[u8]) -> bool,
-    ) -> Result<u64, HostClientError> {
+        mut keep_following: impl FnMut() -> bool,
+    ) -> Result<OutputEnd, HostClientError> {
         self.call(
             "session.output",
             json!({"session": session, "generation": generation, "from": from, "follow": follow}),
         )?;
-        let mut deliver = true;
+        let mut next_offset = from;
         loop {
             let frame = self.read_value()?;
             match frame["type"].as_str() {
@@ -207,13 +327,32 @@ impl HostClient {
                     })?;
                     let data = frame["data"].as_str().unwrap_or_default();
                     let bytes = decode_data(data).map_err(HostClientError::Protocol)?;
-                    if deliver && !on_output(offset, &bytes) {
-                        deliver = false;
+                    next_offset = offset.saturating_add(bytes.len() as u64);
+                    if !on_output(offset, &bytes) || !keep_following() {
+                        return Ok(OutputEnd {
+                            next_offset,
+                            live: true,
+                            stopped_by_client: true,
+                        });
+                    }
+                }
+                Some("keepalive") => {
+                    if !keep_following() {
+                        return Ok(OutputEnd {
+                            next_offset,
+                            live: true,
+                            stopped_by_client: true,
+                        });
                     }
                 }
                 Some("end") => {
-                    return frame["next_offset"].as_u64().ok_or_else(|| {
+                    let next_offset = frame["next_offset"].as_u64().ok_or_else(|| {
                         HostClientError::Protocol("end frame without next_offset".to_string())
+                    })?;
+                    return Ok(OutputEnd {
+                        next_offset,
+                        live: frame["live"].as_bool().unwrap_or(false),
+                        stopped_by_client: false,
                     });
                 }
                 _ => {

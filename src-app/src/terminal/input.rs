@@ -276,6 +276,13 @@ impl TerminalView {
             return;
         }
 
+        if !self.terminal.host_link.accepts_input() {
+            if event.keystroke.key == "enter" && !self.copy_mode_active {
+                self.resume_hosted_session(cx);
+            }
+            return;
+        }
+
         if self.copy_mode_active {
             let keystroke = &event.keystroke;
             let key = keystroke.key.as_str();

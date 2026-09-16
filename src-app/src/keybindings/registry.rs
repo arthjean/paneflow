@@ -6,9 +6,9 @@ use crate::{
 };
 use crate::{
     ClearScrollHistory, ClosePane, CloseTab, CloseWorkspace, CopyWorkspacePath, DismissSearch,
-    FocusDown, FocusLeft, FocusRight, FocusUp, JumpNextPrompt, JumpNextWaiting, JumpPrevPrompt,
-    LayoutEvenHorizontal, LayoutEvenVertical, LayoutMainVertical, LayoutTiled, MarkdownCopy,
-    MarkdownFindDismiss, MarkdownFindNext, MarkdownFindOpen, MarkdownFindPrev,
+    FocusDown, FocusLeft, FocusRight, FocusUp, HidePane, JumpNextPrompt, JumpNextWaiting,
+    JumpPrevPrompt, LayoutEvenHorizontal, LayoutEvenVertical, LayoutMainVertical, LayoutTiled,
+    MarkdownCopy, MarkdownFindDismiss, MarkdownFindNext, MarkdownFindOpen, MarkdownFindPrev,
     MarkdownScrollPageDown, MarkdownScrollPageUp, NewTab, NewWorkspace, NextTab, NextWorkspace,
     OpenWorkspaceInCursor, OpenWorkspaceInVsCode, OpenWorkspaceInWindsurf, OpenWorkspaceInZed,
     PreviousTab, Quit, ResetTerminal, RevealWorkspaceInFileManager, ScrollPageDown, ScrollPageUp,
@@ -87,7 +87,14 @@ pub(super) const ACTIONS: &[ActionMeta] = &[
         name: "close_pane",
         factory: || Box::new(ClosePane),
         context: "",
-        description: "Close pane",
+        description: "Close pane (stop session)",
+        group: ShortcutGroup::Panes,
+    },
+    ActionMeta {
+        name: "hide_pane",
+        factory: || Box::new(HidePane),
+        context: "",
+        description: "Hide pane from layout (keep session running)",
         group: ShortcutGroup::Panes,
     },
     ActionMeta {
@@ -101,7 +108,7 @@ pub(super) const ACTIONS: &[ActionMeta] = &[
         name: "close_workspace",
         factory: || Box::new(CloseWorkspace),
         context: "",
-        description: "Close workspace",
+        description: "Close workspace (stop sessions)",
         group: ShortcutGroup::Workspaces,
     },
     ActionMeta {
@@ -262,7 +269,7 @@ pub(super) const ACTIONS: &[ActionMeta] = &[
         name: "close_tab",
         factory: || Box::new(CloseTab),
         context: "",
-        description: "Close tab",
+        description: "Close tab (stop sessions)",
         group: ShortcutGroup::Tabs,
     },
     ActionMeta {

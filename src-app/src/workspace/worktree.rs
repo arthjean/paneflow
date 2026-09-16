@@ -1075,6 +1075,25 @@ pub fn copy_include_files(src_root: &Path, dst_root: &Path) -> Vec<String> {
     copied
 }
 
+pub fn without_live_sessions(
+    worktrees: Vec<ManagedWorktree>,
+    live_cwds: &[PathBuf],
+) -> Vec<ManagedWorktree> {
+    worktrees
+        .into_iter()
+        .filter(|wt| {
+            let busy = live_cwds.iter().any(|cwd| cwd.starts_with(&wt.path));
+            if busy {
+                log::info!(
+                    "worktree kept ({}): a live terminal session still runs inside it",
+                    wt.path.display()
+                );
+            }
+            !busy
+        })
+        .collect()
+}
+
 pub fn teardown_all(worktrees: Vec<ManagedWorktree>) {
     for wt in worktrees {
         if wt.teardown == TeardownPolicy::Keep {
@@ -1124,6 +1143,33 @@ pub(crate) mod test_support {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn managed(path: &str) -> ManagedWorktree {
+        ManagedWorktree {
+            path: PathBuf::from(path),
+            repo_root: PathBuf::from("/repo"),
+            branch: "feat/x".to_string(),
+            teardown: TeardownPolicy::Auto,
+        }
+    }
+
+    #[test]
+    fn teardown_skips_worktrees_that_still_host_a_live_session() {
+        let root = std::env::temp_dir().join("paneflow-live-wt");
+        let busy = root.join("busy");
+        let idle = root.join("idle");
+        let live = vec![busy.join("src").join("deep"), root.join("elsewhere")];
+        let kept = without_live_sessions(
+            vec![
+                managed(busy.to_str().unwrap()),
+                managed(idle.to_str().unwrap()),
+            ],
+            &live,
+        );
+        assert_eq!(kept.len(), 1);
+        assert_eq!(kept[0].path, idle);
+        assert!(without_live_sessions(vec![managed(busy.to_str().unwrap())], &[]).len() == 1);
+    }
 
     #[test]
     fn branch_slug_is_filesystem_safe() {

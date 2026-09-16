@@ -113,9 +113,33 @@ pub struct Workspace {
     pub muted: bool,
 }
 
+static DURABLE_WORKSPACE_IDS: std::sync::Mutex<
+    std::collections::BTreeMap<u64, paneflow_config::schema::WorkspaceId>,
+> = std::sync::Mutex::new(std::collections::BTreeMap::new());
+
+fn register_durable_workspace_id(id: u64, durable: &paneflow_config::schema::WorkspaceId) {
+    DURABLE_WORKSPACE_IDS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .insert(id, durable.clone());
+}
+
+pub(crate) fn durable_workspace_id(id: u64) -> Option<paneflow_config::schema::WorkspaceId> {
+    DURABLE_WORKSPACE_IDS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .get(&id)
+        .cloned()
+}
+
 impl Workspace {
     fn build(id: u64, title: String, cwd: String, root: LayoutTree) -> Self {
         Self::build_with_tab(id, title, cwd, Tab::new(String::new(), Some(root)))
+    }
+
+    pub(crate) fn set_durable_id(&mut self, durable: paneflow_config::schema::WorkspaceId) {
+        register_durable_workspace_id(self.id, &durable);
+        self.durable_id = durable;
     }
 
     fn build_with_tab(id: u64, title: String, cwd: String, tab: Tab) -> Self {
@@ -130,9 +154,11 @@ impl Workspace {
         };
         let worktree_root =
             git::resolve_worktree_root(&cwd, git_dir.as_deref(), repo_root.as_deref(), is_worktree);
+        let durable_id = paneflow_config::schema::WorkspaceId::new();
+        register_durable_workspace_id(id, &durable_id);
         Self {
             id,
-            durable_id: paneflow_config::schema::WorkspaceId::new(),
+            durable_id,
             title,
             cwd,
             tabs: vec![tab],

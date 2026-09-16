@@ -9,8 +9,13 @@ use paneflow_config::schema::{TerminalConfig, TerminalSurfaceProfile};
 
 use super::TerminalState;
 use super::element::TerminalElement;
+use super::host_link::{
+    self, AttachRequest, HostLinkEnd, HostLinkState, HostedAttachment, ResolveOutcome,
+    SessionIntent,
+};
 use super::pty_session::{
-    TerminalBackendFailureDiagnostics, TerminalBackendFailurePhase, raw_os_error_from_anyhow,
+    TerminalBackendEvents, TerminalBackendFailureDiagnostics, TerminalBackendFailurePhase,
+    raw_os_error_from_anyhow,
 };
 use super::service_detector::ServiceInfo;
 use super::types::{
@@ -232,6 +237,10 @@ pub struct TerminalView {
     ime_marked_text: String,
     needs_initial_clear: Arc<std::sync::atomic::AtomicBool>,
     terminal_window_size: Arc<Mutex<Option<TerminalWindowSize>>>,
+    launch: HostedLaunch,
+    session_intent: SessionIntent,
+    saved_scrollback: Option<String>,
+    pump_epoch: u64,
 }
 
 impl TerminalView {
@@ -280,6 +289,16 @@ impl TerminalView {
         self.needs_initial_clear
             .store(false, std::sync::atomic::Ordering::Relaxed);
         self.terminal.restore_scrollback(text);
+    }
+
+    pub(crate) fn defer_restore_scrollback(&mut self, text: String) {
+        self.saved_scrollback = Some(text);
+    }
+
+    fn restore_saved_scrollback(&mut self) {
+        if let Some(text) = self.saved_scrollback.take() {
+            self.restore_scrollback(&text);
+        }
     }
 
     pub(crate) fn restore_replay(&self, replay: &[u8]) {
@@ -368,28 +387,99 @@ impl TerminalView {
         profile: TerminalSurfaceProfile,
         cx: &mut Context<Self>,
     ) -> Self {
-        let surface_id = cx.entity_id().as_u64();
+        Self::open(
+            HostedLaunch {
+                workspace_id,
+                cwd,
+                initial_size,
+                user_env,
+                profile,
+            },
+            SessionIntent::Create,
+            None,
+            cx,
+        )
+    }
 
-        let params = TerminalState::resolve_spawn_params_with_profile(
-            cwd,
-            workspace_id,
-            surface_id,
-            initial_size,
-            user_env,
-            profile,
-        );
-        let (terminal, pending) = TerminalState::new_pending_with_profile_and_shell_quoting(
+    pub(crate) fn attach_restored(
+        workspace_id: u64,
+        cwd: Option<std::path::PathBuf>,
+        user_env: Option<std::collections::HashMap<String, String>>,
+        session: paneflow_config::schema::SessionId,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        Self::open(
+            HostedLaunch {
+                workspace_id,
+                cwd,
+                initial_size: None,
+                user_env,
+                profile: TerminalSurfaceProfile::Normal,
+            },
+            SessionIntent::Reattach,
+            Some(session),
+            cx,
+        )
+    }
+
+    pub(crate) fn attach_existing(
+        workspace_id: u64,
+        cwd: Option<std::path::PathBuf>,
+        session: paneflow_config::schema::SessionId,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        Self::open(
+            HostedLaunch {
+                workspace_id,
+                cwd,
+                initial_size: None,
+                user_env: None,
+                profile: TerminalSurfaceProfile::Normal,
+            },
+            SessionIntent::Resume,
+            Some(session),
+            cx,
+        )
+    }
+
+    fn open(
+        launch: HostedLaunch,
+        intent: SessionIntent,
+        session: Option<paneflow_config::schema::SessionId>,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let surface_id = cx.entity_id().as_u64();
+        let params = launch.spawn_params(surface_id);
+        let (mut terminal, pending) = TerminalState::new_pending_with_profile_and_shell_quoting(
             params.cols,
             params.rows,
             params.profile,
             params.shell_quoting,
         );
-        let ghostty = terminal.ghostty_session();
+        if let Some(session) = session {
+            terminal.session_id = session;
+        }
+        let view = Self::from_terminal_state(launch, terminal, cx);
+        view.begin_hosted_attach(intent, params, pending, cx);
+        view
+    }
+
+    fn begin_hosted_attach(
+        &self,
+        intent: SessionIntent,
+        params: crate::terminal::pty_session::SpawnParams,
+        pending: crate::terminal::pty_session::PendingTerminalBackend,
+        cx: &mut Context<Self>,
+    ) {
+        let ghostty = self.terminal.ghostty_session();
         let ghostty_pending = pending.ghostty;
-        let signal_mask = crate::terminal::pty_session::capture_foreground_signal_mask();
-
-        let view = Self::from_terminal_state(workspace_id, terminal, cx);
-
+        let profile = params.profile;
+        let request = AttachRequest {
+            intent,
+            session: self.terminal.session_id.clone(),
+            workspace: crate::workspace::durable_workspace_id(self.launch.workspace_id),
+            params,
+        };
         let executor = cx.background_executor().clone();
         cx.spawn(
             async move |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
@@ -398,38 +488,88 @@ impl TerminalView {
                         let max_scrollback = paneflow_config::loader::load_config()
                             .terminal
                             .unwrap_or_default()
-                            .resolved_scrollback_lines_for_profile(params.profile);
-                        ghostty
-                            .start(ghostty_pending, params, signal_mask, max_scrollback)
-                            .map_err(classify_ghostty_start_error)
+                            .resolved_scrollback_lines_for_profile(profile);
+                        match host_link::resolve(request) {
+                            Ok(ResolveOutcome::Attached(hosted)) => {
+                                match ghostty.start_attached(
+                                    ghostty_pending,
+                                    hosted.attachment.clone(),
+                                    max_scrollback,
+                                ) {
+                                    Ok(()) => AttachOutcome::Attached(hosted),
+                                    Err(error) => AttachOutcome::MirrorFailed(error),
+                                }
+                            }
+                            Ok(ResolveOutcome::Ended(end)) => {
+                                let _ = ghostty.start_display(ghostty_pending, max_scrollback);
+                                AttachOutcome::Ended(end)
+                            }
+                            Err(error) => {
+                                let _ = ghostty.start_display(ghostty_pending, max_scrollback);
+                                log::log!(
+                                    target: "paneflow::terminal::backend",
+                                    backend_failure_level(&BACKEND_START_FAILED_LOGGED),
+                                    "hosted session resolution failed: {error}"
+                                );
+                                AttachOutcome::Unavailable(error.user_message())
+                            }
+                        }
                     })
                     .await;
                 let _ = this.update(cx, |view, cx| {
                     match outcome {
-                        Ok(spawned) => {
-                            view.terminal.promote_ghostty(spawned);
+                        AttachOutcome::Attached(hosted) => {
+                            view.saved_scrollback = None;
+                            view.needs_initial_clear
+                                .store(false, std::sync::atomic::Ordering::Relaxed);
+                            view.terminal.promote_hosted(*hosted);
                             if let Some(size) = view.recorded_window_size() {
                                 view.terminal.notify_window_size(size);
                             }
                         }
-                        Err(failure) => {
-                            let after_child = match failure.child_pid {
-                                Some(pid) => format!(" after child creation (pid={pid})"),
-                                None => String::new(),
-                            };
+                        AttachOutcome::Ended(end) => {
+                            view.restore_saved_scrollback();
+                            view.needs_initial_clear
+                                .store(false, std::sync::atomic::Ordering::Relaxed);
+                            view.terminal.mark_host_link(HostLinkState::Ended(end));
+                        }
+                        AttachOutcome::Unavailable(message) => {
+                            view.restore_saved_scrollback();
+                            view.needs_initial_clear
+                                .store(false, std::sync::atomic::Ordering::Relaxed);
+                            view.terminal
+                                .mark_host_link(HostLinkState::Unavailable(message));
+                        }
+                        AttachOutcome::MirrorFailed(error) => {
+                            let failure = classify_ghostty_start_error(error);
                             log::log!(
                                 target: "paneflow::terminal::backend",
                                 backend_failure_level(&BACKEND_START_FAILED_LOGGED),
-                                "Ghostty startup failed{after_child}: failure_phase={} reason_code={} os_error={:?}",
+                                "hosted terminal mirror failed: failure_phase={} reason_code={} os_error={:?} child_pid={:?}",
                                 failure.diagnostics.phase.as_str(),
                                 failure.diagnostics.reason_code,
                                 failure.diagnostics.os_error,
+                                failure.child_pid,
                             );
                             view.needs_initial_clear
                                 .store(false, std::sync::atomic::Ordering::Relaxed);
                             let message = spawn_error_message(&failure.diagnostics);
                             view.terminal
                                 .report_spawn_failure(failure.diagnostics, &message);
+                            view.saved_scrollback = None;
+                            if view.terminal.has_backend_events() {
+                                view.pump_epoch = view.pump_epoch.wrapping_add(1);
+                                let epoch = view.pump_epoch;
+                                spawn_event_pump_task(
+                                    view.terminal.take_backend_events(),
+                                    epoch,
+                                    cx,
+                                );
+                            }
+                            view.terminal.mark_host_link(HostLinkState::Unavailable(
+                                "The terminal state could not be restored from the local host."
+                                    .to_string(),
+                            ));
                         }
                     }
                     log_backend_diagnostics(&view.terminal);
@@ -438,12 +578,112 @@ impl TerminalView {
             },
         )
         .detach();
+    }
 
-        view
+    pub(crate) fn resume_hosted_session(&mut self, cx: &mut Context<Self>) {
+        let intent = match &self.terminal.host_link {
+            HostLinkState::Ended(end) if end.restartable() => SessionIntent::Resume,
+            HostLinkState::Unavailable(_) => match self.session_intent {
+                SessionIntent::Create => SessionIntent::Resume,
+                other => other,
+            },
+            _ => return,
+        };
+        self.session_intent = intent;
+        let surface_id = cx.entity_id().as_u64();
+        let params = self.launch.spawn_params(surface_id);
+        let (mut fresh, pending) = TerminalState::new_pending_with_profile_and_shell_quoting(
+            params.cols,
+            params.rows,
+            params.profile,
+            params.shell_quoting,
+        );
+        fresh.session_id = self.terminal.session_id.clone();
+        fresh.custom_name = self.terminal.custom_name.take();
+        fresh.font_size_override = self.terminal.font_size_override;
+        fresh.detected_agent = self.terminal.detected_agent;
+        fresh.leave_running_on_close = self.terminal.leave_running_on_close;
+        let previous = std::mem::replace(&mut self.terminal, fresh);
+        drop(previous);
+        self.needs_initial_clear
+            .store(false, std::sync::atomic::Ordering::Relaxed);
+        self.pump_epoch = self.pump_epoch.wrapping_add(1);
+        let epoch = self.pump_epoch;
+        spawn_event_pump_task(self.terminal.take_backend_events(), epoch, cx);
+        self.begin_hosted_attach(intent, params, pending, cx);
+        cx.notify();
+    }
+
+    pub(crate) fn hosted_stop_target(
+        &self,
+    ) -> Option<(
+        std::path::PathBuf,
+        paneflow_config::schema::SessionId,
+        paneflow_config::schema::SessionGeneration,
+    )> {
+        self.terminal.hosted_stop_target()
+    }
+
+    fn render_host_link_overlay(&self, ui: crate::theme::UiColors) -> Option<gpui::AnyElement> {
+        let (title, detail, hint) = match &self.terminal.host_link {
+            HostLinkState::Attaching | HostLinkState::Attached => return None,
+            HostLinkState::Reconnecting => (
+                "Reconnecting to the local host",
+                "The last rendered output is shown; input is disabled until the session is attached again."
+                    .to_string(),
+                None,
+            ),
+            HostLinkState::Ended(end) => (
+                "Session ended",
+                end.detail.clone(),
+                Some(end.action_hint()),
+            ),
+            HostLinkState::Unavailable(message) => (
+                "Local host unavailable",
+                message.clone(),
+                Some("Press Enter to try again."),
+            ),
+        };
+        let mut card = div()
+            .flex()
+            .flex_col()
+            .gap(gpui::px(4.0))
+            .px(gpui::px(14.0))
+            .py(gpui::px(10.0))
+            .child(
+                div()
+                    .text_sm()
+                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                    .text_color(ui.text)
+                    .child(title),
+            )
+            .child(div().text_xs().text_color(ui.muted).child(detail));
+        if let Some(hint) = hint {
+            card = card.child(div().text_xs().text_color(ui.accent).child(hint));
+        }
+        Some(
+            div()
+                .absolute()
+                .inset_0()
+                .flex()
+                .items_center()
+                .justify_center()
+                .child(
+                    crate::ui_primitives::squircle_skin(
+                        div().id("host-link-overlay").max_w(gpui::px(420.0)),
+                        "host-link-overlay",
+                        crate::ui_primitives::ROW_RADIUS,
+                        Some(ui.overlay),
+                        None,
+                    )
+                    .child(card),
+                )
+                .into_any_element(),
+        )
     }
 
     fn from_terminal_state(
-        _workspace_id: u64,
+        launch: HostedLaunch,
         mut terminal: TerminalState,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -456,135 +696,7 @@ impl TerminalView {
         })
         .detach();
 
-        let events_rx = terminal.take_backend_events();
-        cx.spawn(
-            async move |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
-                let mut events_rx = events_rx;
-                let mut immediate_ghostty_wakeup_burst_active = false;
-                while let Some(first_event) = events_rx.next().await {
-                    let mut batch = Vec::with_capacity(32);
-                    let mut dequeued = 1usize;
-                    let render_wakeup_immediately = RENDER_WAKEUP_IMMEDIATELY;
-                    let mut had_wakeup = first_event.is_wakeup();
-                    let leading_immediate_wakeup = render_wakeup_immediately
-                        && had_wakeup
-                        && !immediate_ghostty_wakeup_burst_active;
-                    if leading_immediate_wakeup {
-                        immediate_ghostty_wakeup_burst_active = true;
-                        let result = cx.update(|cx| {
-                            this.update(cx, |view: &mut Self, cx: &mut Context<Self>| {
-                                view.apply_backend_wakeup(cx);
-                            })
-                        });
-                        if result.is_err() {
-                            break;
-                        }
-                        had_wakeup = false;
-                    }
-                    if !had_wakeup && !leading_immediate_wakeup {
-                        batch.push(first_event);
-                    }
-
-                    let mut batch_window_elapsed = false;
-                    {
-                        let timer = futures::FutureExt::fuse(smol::Timer::after(
-                            std::time::Duration::from_millis(4),
-                        ));
-                        futures::pin_mut!(timer);
-                        loop {
-                            futures::select_biased! {
-                                event = events_rx.next() => {
-                                    match event {
-                                        Some(event) if event.is_wakeup() => {
-                                            had_wakeup = true;
-                                            dequeued += 1;
-                                        }
-                                        Some(event) => {
-                                            batch.push(event);
-                                            dequeued += 1;
-                                        }
-                                        None => break,
-                                    }
-                                    if dequeued >= 100 { break; }
-                                }
-                                _ = timer => {
-                                    batch_window_elapsed = true;
-                                    break;
-                                },
-                            }
-                        }
-                    }
-                    if batch_window_elapsed {
-                        immediate_ghostty_wakeup_burst_active = false;
-                    }
-
-                    let result = cx.update(|cx| {
-                        this.update(cx, |view: &mut Self, cx: &mut Context<Self>| {
-                            let old_title = view.terminal.title.clone();
-                            let old_cwd = view.terminal.current_cwd.clone();
-                            let was_busy = view.terminal.progress.is_some();
-                            view.terminal.sync_channels();
-                            if had_wakeup {
-                                view.terminal.process_backend_wakeup();
-                            }
-                            for event in batch {
-                                view.terminal.process_backend_event(event);
-                            }
-                            if let Some((point, link)) = view.terminal.take_resolved_hover_link() {
-                                view.apply_resolved_hover_link(point, link, cx);
-                            }
-
-                            let clipboard_ops =
-                                std::mem::take(&mut view.terminal.pending_clipboard_ops);
-                            for text in clipboard_ops {
-                                cx.write_to_clipboard(ClipboardItem::new_string(sanitize_osc52(
-                                    &text,
-                                )));
-                            }
-
-                            for notification in
-                                std::mem::take(&mut view.terminal.pending_notifications)
-                            {
-                                cx.emit(TerminalEvent::ProgramNotification {
-                                    title: notification.title,
-                                    body: notification.body,
-                                });
-                            }
-
-                            let is_busy = view.terminal.progress.is_some();
-                            if is_busy != was_busy && view.terminal.exited.is_none() {
-                                cx.emit(TerminalEvent::AgentProgressChanged { busy: is_busy });
-                            }
-
-                            if view.terminal.exited.is_some()
-                                && view.terminal.should_close_on_exit()
-                            {
-                                cx.emit(TerminalEvent::ChildExited);
-                            }
-                            if view.terminal.title != old_title {
-                                cx.emit(TerminalEvent::TitleChanged);
-                            }
-                            if view.terminal.current_cwd != old_cwd
-                                && let Some(ref cwd) = view.terminal.current_cwd
-                            {
-                                cx.emit(TerminalEvent::CwdChanged(cwd.clone()));
-                            }
-                            if view.terminal.take_shell_prompt_ready() {
-                                cx.emit(TerminalEvent::ShellPromptReady);
-                            }
-
-                            view.process_dirty_terminal(cx);
-                        })
-                    });
-                    if result.is_err() {
-                        break;
-                    }
-
-                    smol::future::yield_now().await;
-                }
-            },
-        )
-        .detach();
+        spawn_event_pump_task(terminal.take_backend_events(), 0, cx);
 
         if let Some(global) = cx.try_global::<crate::terminal::blink::BlinkPhaseGlobal>() {
             let blink_phase = global.0.clone();
@@ -710,6 +822,10 @@ impl TerminalView {
             ime_marked_text: String::new(),
             needs_initial_clear: Arc::new(std::sync::atomic::AtomicBool::new(true)),
             terminal_window_size: Arc::new(Mutex::new(None)),
+            launch,
+            session_intent: SessionIntent::Create,
+            saved_scrollback: None,
+            pump_epoch: 0,
         }
     }
 
@@ -717,8 +833,47 @@ impl TerminalView {
     pub(crate) fn display_only_for_test(workspace_id: u64, cx: &mut Context<Self>) -> Self {
         let mut terminal = TerminalState::new_display_only(24, 80);
         drop(terminal.take_backend_events());
-        Self::from_terminal_state(workspace_id, terminal, cx)
+        Self::from_terminal_state(
+            HostedLaunch {
+                workspace_id,
+                cwd: None,
+                initial_size: None,
+                user_env: None,
+                profile: TerminalSurfaceProfile::Normal,
+            },
+            terminal,
+            cx,
+        )
     }
+}
+
+#[derive(Clone)]
+struct HostedLaunch {
+    workspace_id: u64,
+    cwd: Option<std::path::PathBuf>,
+    initial_size: Option<(usize, usize)>,
+    user_env: Option<std::collections::HashMap<String, String>>,
+    profile: TerminalSurfaceProfile,
+}
+
+impl HostedLaunch {
+    fn spawn_params(&self, surface_id: u64) -> crate::terminal::pty_session::SpawnParams {
+        TerminalState::resolve_spawn_params_with_profile(
+            self.cwd.clone(),
+            self.workspace_id,
+            surface_id,
+            self.initial_size,
+            self.user_env.clone(),
+            self.profile,
+        )
+    }
+}
+
+enum AttachOutcome {
+    Attached(Box<HostedAttachment>),
+    Ended(HostLinkEnd),
+    Unavailable(String),
+    MirrorFailed(GhosttyStartError),
 }
 
 impl TerminalView {
@@ -1215,6 +1370,155 @@ impl TerminalView {
     }
 }
 
+fn spawn_event_pump_task(
+    events_rx: TerminalBackendEvents,
+    epoch: u64,
+    cx: &mut Context<TerminalView>,
+) {
+    cx.spawn(
+        async move |this: gpui::WeakEntity<TerminalView>, cx: &mut gpui::AsyncApp| {
+            let mut events_rx = events_rx;
+            let mut immediate_ghostty_wakeup_burst_active = false;
+            while let Some(first_event) = events_rx.next().await {
+                let mut batch = Vec::with_capacity(32);
+                let mut dequeued = 1usize;
+                let render_wakeup_immediately = RENDER_WAKEUP_IMMEDIATELY;
+                let mut had_wakeup = first_event.is_wakeup();
+                let leading_immediate_wakeup = render_wakeup_immediately
+                    && had_wakeup
+                    && !immediate_ghostty_wakeup_burst_active;
+                if leading_immediate_wakeup {
+                    immediate_ghostty_wakeup_burst_active = true;
+                    let result = cx.update(|cx| {
+                        this.update(
+                            cx,
+                            |view: &mut TerminalView, cx: &mut Context<TerminalView>| {
+                                if view.pump_epoch != epoch {
+                                    return false;
+                                }
+                                view.apply_backend_wakeup(cx);
+                                true
+                            },
+                        )
+                    });
+                    if !matches!(result, Ok(true)) {
+                        break;
+                    }
+                    had_wakeup = false;
+                }
+                if !had_wakeup && !leading_immediate_wakeup {
+                    batch.push(first_event);
+                }
+
+                let mut batch_window_elapsed = false;
+                {
+                    let timer = futures::FutureExt::fuse(smol::Timer::after(
+                        std::time::Duration::from_millis(4),
+                    ));
+                    futures::pin_mut!(timer);
+                    loop {
+                        futures::select_biased! {
+                            event = events_rx.next() => {
+                                match event {
+                                    Some(event) if event.is_wakeup() => {
+                                        had_wakeup = true;
+                                        dequeued += 1;
+                                    }
+                                    Some(event) => {
+                                        batch.push(event);
+                                        dequeued += 1;
+                                    }
+                                    None => break,
+                                }
+                                if dequeued >= 100 { break; }
+                            }
+                            _ = timer => {
+                                batch_window_elapsed = true;
+                                break;
+                            },
+                        }
+                    }
+                }
+                if batch_window_elapsed {
+                    immediate_ghostty_wakeup_burst_active = false;
+                }
+
+                let result = cx.update(|cx| {
+                    this.update(
+                        cx,
+                        |view: &mut TerminalView, cx: &mut Context<TerminalView>| {
+                            if view.pump_epoch != epoch {
+                                return false;
+                            }
+                            let old_title = view.terminal.title.clone();
+                            let old_cwd = view.terminal.current_cwd.clone();
+                            let was_busy = view.terminal.progress.is_some();
+                            view.terminal.sync_channels();
+                            if had_wakeup {
+                                view.terminal.process_backend_wakeup();
+                            }
+                            for event in batch {
+                                view.terminal.process_backend_event(event);
+                            }
+                            if let Some((point, link)) = view.terminal.take_resolved_hover_link() {
+                                view.apply_resolved_hover_link(point, link, cx);
+                            }
+
+                            let clipboard_ops =
+                                std::mem::take(&mut view.terminal.pending_clipboard_ops);
+                            for text in clipboard_ops {
+                                cx.write_to_clipboard(ClipboardItem::new_string(sanitize_osc52(
+                                    &text,
+                                )));
+                            }
+
+                            for notification in
+                                std::mem::take(&mut view.terminal.pending_notifications)
+                            {
+                                cx.emit(TerminalEvent::ProgramNotification {
+                                    title: notification.title,
+                                    body: notification.body,
+                                });
+                            }
+
+                            let is_busy = view.terminal.progress.is_some();
+                            if is_busy != was_busy && view.terminal.exited.is_none() {
+                                cx.emit(TerminalEvent::AgentProgressChanged { busy: is_busy });
+                            }
+
+                            if view.terminal.exited.is_some()
+                                && view.terminal.should_close_on_exit()
+                            {
+                                cx.emit(TerminalEvent::ChildExited);
+                            }
+                            if view.terminal.title != old_title {
+                                cx.emit(TerminalEvent::TitleChanged);
+                            }
+                            if view.terminal.current_cwd != old_cwd
+                                && let Some(ref cwd) = view.terminal.current_cwd
+                            {
+                                cx.emit(TerminalEvent::CwdChanged(cwd.clone()));
+                            }
+                            if view.terminal.take_shell_prompt_ready() {
+                                cx.emit(TerminalEvent::ShellPromptReady);
+                            }
+
+                            view.process_dirty_terminal(cx);
+                            true
+                        },
+                    )
+                });
+                if !matches!(result, Ok(true)) {
+                    break;
+                }
+
+                smol::future::yield_now().await;
+            }
+        },
+    )
+    .detach();
+}
+
 impl Render for TerminalView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let window_id = window.window_handle().window_id();
@@ -1497,6 +1801,10 @@ impl Render for TerminalView {
         if search_active {
             el = el.key_context("Search");
             el = el.child(self.render_search_overlay(cx));
+        }
+
+        if let Some(overlay) = self.render_host_link_overlay(crate::theme::ui_colors()) {
+            el = el.child(overlay);
         }
 
         if self.copy_mode_active {

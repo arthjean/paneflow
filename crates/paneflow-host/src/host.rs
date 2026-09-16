@@ -845,7 +845,6 @@ fn launch_env(
         "TERM_PROGRAM_VERSION",
         "SHLVL",
         "PANEFLOW_SESSION_ID",
-        "PANEFLOW_WORKSPACE_ID",
         "PANEFLOW_HOME",
     ];
     let mut env = BTreeMap::new();
@@ -875,7 +874,9 @@ fn launch_env(
         env.insert("LANG".to_string(), "en_US.UTF-8".to_string());
     }
     env.insert("PANEFLOW_SESSION_ID".to_string(), session.to_string());
-    if let Some(workspace) = workspace {
+    if let Some(workspace) = workspace
+        && !env.contains_key("PANEFLOW_WORKSPACE_ID")
+    {
         env.insert("PANEFLOW_WORKSPACE_ID".to_string(), workspace.to_string());
     }
     env.insert("PANEFLOW_HOME".to_string(), home.display().to_string());
@@ -1218,5 +1219,18 @@ mod tests {
         for key in ["CLAUDECODE", "LD_PRELOAD", "TMUX", "BAD=NAME"] {
             assert!(!env.contains_key(key), "{key} must not reach the child");
         }
+
+        let legacy = BTreeMap::from([("PANEFLOW_WORKSPACE_ID".to_string(), "7".to_string())]);
+        let env = launch_env(
+            &session,
+            Some(&workspace),
+            Path::new("/home/x/.paneflow"),
+            &legacy,
+        );
+        assert_eq!(
+            env.get("PANEFLOW_WORKSPACE_ID").map(String::as_str),
+            Some("7"),
+            "a caller-provided workspace marker keeps the existing hook routing"
+        );
     }
 }

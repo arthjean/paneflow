@@ -24,6 +24,7 @@ use crate::wire::{LineRead, Wire};
 const MAX_CONNECTIONS: usize = 32;
 const IDLE_TIMEOUT: Duration = Duration::from_secs(60);
 const FOLLOW_POLL: Duration = Duration::from_millis(15);
+pub const FOLLOW_KEEPALIVE: Duration = Duration::from_secs(2);
 
 pub struct ServerHandle {
     endpoint: PathBuf,
@@ -668,6 +669,7 @@ fn stream_output(
     if wire.write_json(&header).is_err() {
         return Flow::Close;
     }
+    let mut last_frame_at = std::time::Instant::now();
     loop {
         let slice = match host.output(&session, Some(generation), offset, DATA_CHUNK_RAW_BYTES) {
             Ok(slice) => slice,
@@ -687,10 +689,22 @@ fn stream_output(
             if wire.write_json(&line).is_err() {
                 return Flow::Close;
             }
+            last_frame_at = std::time::Instant::now();
             offset = slice.offset + slice.data.len() as u64;
             if slice.end_offset > offset {
                 continue;
             }
+        } else if follow && last_frame_at.elapsed() >= FOLLOW_KEEPALIVE {
+            let line = json!({
+                "type": "keepalive",
+                "session": session,
+                "generation": generation,
+                "offset": offset,
+            });
+            if wire.write_json(&line).is_err() {
+                return Flow::Close;
+            }
+            last_frame_at = std::time::Instant::now();
         }
         let finished = !follow || !slice.live || shutdown.load(Ordering::Acquire);
         if finished && slice.end_offset <= offset {
@@ -806,11 +820,19 @@ mod tests {
         let mut offset = 0;
         while Instant::now() < deadline {
             offset = client
-                .output(&session, Some(generation), offset, false, |_, bytes| {
-                    collected.extend_from_slice(bytes);
-                    true
-                })
-                .unwrap();
+                .output(
+                    &session,
+                    Some(generation),
+                    offset,
+                    false,
+                    |_, bytes| {
+                        collected.extend_from_slice(bytes);
+                        true
+                    },
+                    || true,
+                )
+                .unwrap()
+                .next_offset;
             if String::from_utf8_lossy(&collected).contains("HOST_WIRE_MARKER") {
                 break;
             }
@@ -821,7 +843,9 @@ mod tests {
             "streamed output carries the echoed marker"
         );
 
-        let checkpoint = client.attach(&session, Some(generation)).unwrap();
+        let attachment = client.attach(&session, Some(generation)).unwrap();
+        let checkpoint = &attachment.checkpoint;
+        assert_eq!(attachment.host_instance, *host.instance());
         assert_eq!(checkpoint.generation, generation);
         assert!(checkpoint.offset >= offset.saturating_sub(64));
         assert!(!checkpoint.snapshot.is_empty());
@@ -836,12 +860,14 @@ mod tests {
                 checkpoint.offset,
                 false,
                 |_, _| true,
+                || true,
             )
             .unwrap();
         assert!(
-            resumed >= checkpoint.offset,
+            resumed.next_offset >= checkpoint.offset,
             "offsets continue from the checkpoint"
         );
+        assert!(resumed.live && !resumed.stopped_by_client);
 
         let stale = client.call(
             "session.input",
@@ -851,7 +877,14 @@ mod tests {
             stale.err().and_then(|e| e.code()),
             Some(ERR_GENERATION_MISMATCH)
         );
-        let evicted = client.output(&session, Some(generation), u64::MAX / 2, false, |_, _| true);
+        let evicted = client.output(
+            &session,
+            Some(generation),
+            u64::MAX / 2,
+            false,
+            |_, _| true,
+            || true,
+        );
         assert_eq!(
             evicted.err().and_then(|e| e.code()),
             Some(ERR_OUTPUT_EVICTED)
@@ -877,6 +910,103 @@ mod tests {
             unknown.err().and_then(|e| e.code()),
             Some(ERR_METHOD_NOT_FOUND)
         );
+        server.stop().unwrap();
+    }
+
+    #[test]
+    fn a_follower_resumes_after_the_checkpoint_survives_idle_keepalives_and_sees_the_exit() {
+        let (_home, _host, server) = start();
+        let hello = ClientHello::local("paneflow-host-test");
+        let mut control = HostClient::connect(server.endpoint(), &hello).unwrap();
+        let created = control
+            .create(&serde_json::from_value(shell_create_params()).unwrap())
+            .unwrap();
+        let session = created.manifest.session.clone();
+        let generation = created.manifest.generation;
+
+        control
+            .input(&session, generation, b"echo FOLLOW_BEFORE\r\n")
+            .unwrap();
+        let mut before = Vec::new();
+        let deadline = Instant::now() + Duration::from_secs(15);
+        while Instant::now() < deadline {
+            let attachment = control.attach(&session, Some(generation)).unwrap();
+            before = attachment.checkpoint.snapshot.clone();
+            let mut decoder =
+                paneflow_terminal_ghostty::SnapshotDecoder::from_bytes(&before).unwrap();
+            let terminal = decoder
+                .decode(paneflow_terminal_ghostty::SnapshotRestore {
+                    cell_width: 8,
+                    cell_height: 16,
+                    max_scrollback: 500,
+                    appearance: paneflow_terminal_ghostty::TerminalAppearance::default(),
+                })
+                .unwrap();
+            let text: String = terminal
+                .snapshot()
+                .unwrap()
+                .cells
+                .iter()
+                .map(|cell| cell.character)
+                .collect();
+            if text.contains("FOLLOW_BEFORE") {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        assert!(!before.is_empty(), "the checkpoint captured the first echo");
+        let attachment = control.attach(&session, Some(generation)).unwrap();
+        let resume_from = attachment.checkpoint.offset;
+
+        let endpoint = server.endpoint().to_path_buf();
+        let follower_session = session.clone();
+        let follower_hello = hello.clone();
+        let follower = std::thread::spawn(move || {
+            let mut client = HostClient::connect(&endpoint, &follower_hello).unwrap();
+            let mut streamed = Vec::new();
+            let mut offsets = Vec::new();
+            let end = client
+                .output(
+                    &follower_session,
+                    Some(generation),
+                    resume_from,
+                    true,
+                    |offset, bytes| {
+                        offsets.push(offset);
+                        streamed.extend_from_slice(bytes);
+                        true
+                    },
+                    || true,
+                )
+                .unwrap();
+            (end, streamed, offsets)
+        });
+
+        std::thread::sleep(FOLLOW_KEEPALIVE + Duration::from_millis(500));
+        control
+            .input(&session, generation, b"echo FOLLOW_AFTER\r\n")
+            .unwrap();
+        std::thread::sleep(Duration::from_millis(500));
+        let stopped = control.stop(&session, Some(generation)).unwrap();
+        assert!(!stopped.live);
+
+        let (end, streamed, offsets) = follower.join().unwrap();
+        assert!(!end.live, "the stream ends once the session exits");
+        assert!(!end.stopped_by_client);
+        assert_eq!(offsets.first().copied(), Some(resume_from));
+        for pair in offsets.windows(2) {
+            assert!(pair[0] < pair[1], "offsets are strictly increasing");
+        }
+        let text = String::from_utf8_lossy(&streamed);
+        assert!(
+            text.contains("FOLLOW_AFTER"),
+            "bytes after the checkpoint reach the follower: {text:?}"
+        );
+        assert!(
+            !text.contains("echo FOLLOW_BEFORE"),
+            "bytes before the checkpoint are never replayed: {text:?}"
+        );
+        assert!(end.next_offset >= resume_from + streamed.len() as u64);
         server.stop().unwrap();
     }
 

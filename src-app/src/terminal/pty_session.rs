@@ -10,6 +10,7 @@ use super::ghostty_session::{
     GhosttyInputSendResult, GhosttyRuntimePending, GhosttySession, GhosttyUiEvent,
     ProgramNotification, SpawnedGhostty,
 };
+use super::host_link::{HostLinkState, HostedAttachment, HostedSession};
 use super::marks::SharedMarkRing;
 use super::service_detector::{ServiceInfo, detect_framework, parse_service_line};
 use super::shell::{resolve_default_shell, setup_shell_integration};
@@ -18,7 +19,9 @@ use super::types::{
     SelectionKind, SelectionRange, ShellQuoting, TerminalWindowSize,
 };
 use crate::limits::MAX_OSC52_BYTES;
-use paneflow_config::schema::{SessionId, TerminalConfig, TerminalSurfaceProfile};
+use paneflow_config::schema::{
+    SessionGeneration, SessionId, TerminalConfig, TerminalSurfaceProfile,
+};
 pub(crate) use paneflow_host::env::INHERITED_AGENT_SESSION_ENV;
 pub(super) use paneflow_host::env::inherited_env_keys_to_strip;
 use paneflow_host::env::{
@@ -520,6 +523,9 @@ pub(super) enum BackendInputResult {
 
 pub struct TerminalState {
     pub session_id: SessionId,
+    pub(crate) hosted: Option<HostedSession>,
+    pub(crate) host_link: HostLinkState,
+    pub(crate) leave_running_on_close: bool,
     ghostty: GhosttySession,
     ghostty_events_rx: Option<UnboundedReceiver<GhosttyUiEvent>>,
     backend_failure: Option<TerminalBackendFailureDiagnostics>,
@@ -583,21 +589,15 @@ pub type ForegroundSignalMask = libc::sigset_t;
 #[cfg(not(unix))]
 pub type ForegroundSignalMask = ();
 
+#[cfg(all(test, unix))]
 pub(super) fn capture_foreground_signal_mask() -> Option<ForegroundSignalMask> {
-    #[cfg(unix)]
-    {
-        unsafe {
-            let mut oldset: libc::sigset_t = std::mem::zeroed();
-            if libc::pthread_sigmask(libc::SIG_SETMASK, std::ptr::null(), &mut oldset) == 0 {
-                Some(oldset)
-            } else {
-                None
-            }
+    unsafe {
+        let mut oldset: libc::sigset_t = std::mem::zeroed();
+        if libc::pthread_sigmask(libc::SIG_SETMASK, std::ptr::null(), &mut oldset) == 0 {
+            Some(oldset)
+        } else {
+            None
         }
-    }
-    #[cfg(not(unix))]
-    {
-        None
     }
 }
 
@@ -638,6 +638,10 @@ impl TerminalState {
         TerminalBackendEvents(self.ghostty_events_rx.take())
     }
 
+    pub(crate) fn has_backend_events(&self) -> bool {
+        self.ghostty_events_rx.is_some()
+    }
+
     pub(crate) fn process_backend_event(&mut self, event: TerminalBackendEvent) {
         self.process_ghostty_event(event.0);
     }
@@ -661,10 +665,57 @@ impl TerminalState {
         {
             self.pty_guard = crate::agents::parent_guard::spawn_pty_guard(spawned.child_pid);
         }
+        self.host_link = HostLinkState::Attached;
         self.set_osc52_mode(Osc52Mode::CopyOnly);
         self.cursor_blinking = true;
         self.dirty = true;
         self.flush_ghostty_pending_input();
+    }
+
+    pub(super) fn promote_hosted(&mut self, hosted: HostedAttachment) {
+        self.ghostty.promote();
+        self.child_pid = hosted.pid;
+        self.current_cwd = Some(hosted.cwd);
+        self.hosted = Some(HostedSession {
+            endpoint: hosted.attachment.endpoint,
+            generation: hosted.attachment.generation,
+        });
+        self.host_link = HostLinkState::Attached;
+        self.set_osc52_mode(Osc52Mode::CopyOnly);
+        self.cursor_blinking = true;
+        self.dirty = true;
+        self.flush_ghostty_pending_input();
+    }
+
+    pub(super) fn mark_host_link(&mut self, state: HostLinkState) {
+        if !state.accepts_input()
+            && let Ok(mut pending) = self.pending_input.lock()
+        {
+            pending.clear();
+        }
+        if matches!(
+            state,
+            HostLinkState::Ended(_) | HostLinkState::Unavailable(_)
+        ) {
+            self.cursor_blinking = false;
+            self.progress = None;
+        }
+        self.host_link = state;
+        self.dirty = true;
+    }
+
+    pub(crate) fn hosted_stop_target(
+        &self,
+    ) -> Option<(std::path::PathBuf, SessionId, SessionGeneration)> {
+        if self.leave_running_on_close {
+            return None;
+        }
+        let hosted = self.hosted.as_ref()?;
+        Some((
+            hosted.endpoint.clone(),
+            self.session_id.clone(),
+            hosted.generation,
+        ))
     }
 
     fn flush_ghostty_pending_input(&self) {
@@ -928,6 +979,9 @@ impl TerminalState {
         let marks = ghostty.marks();
         let state = Self {
             session_id: SessionId::new(),
+            hosted: None,
+            host_link: HostLinkState::Attaching,
+            leave_running_on_close: false,
             ghostty,
             ghostty_events_rx: Some(events_rx),
             backend_failure: None,
@@ -1102,6 +1156,9 @@ impl TerminalState {
                 }
                 self.dirty = true;
             }
+            GhosttyUiEvent::HostLink(state) => {
+                self.mark_host_link(state);
+            }
         }
     }
 
@@ -1239,6 +1296,9 @@ impl TerminalState {
         input: PendingTerminalInput,
         user_initiated: bool,
     ) -> BackendInputResult {
+        if !self.host_link.accepts_input() {
+            return BackendInputResult::Rejected;
+        }
         let Ok(mut pending) = self.pending_input.lock() else {
             return BackendInputResult::Rejected;
         };

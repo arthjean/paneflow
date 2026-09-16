@@ -116,6 +116,7 @@ pub enum PaneEvent {
     Remove,
     NewTab,
     SurfacesChanged,
+    SurfaceClosed(Entity<crate::terminal::TerminalView>),
     Split(crate::layout::SplitDirection),
     ToggleAgentSessions,
     ToggleDiffDock,
@@ -302,6 +303,9 @@ impl Pane {
         if self.surfaces.len() == 1 {
             cx.emit(PaneEvent::Remove);
             return;
+        }
+        if let Some(terminal) = crate::app::hosted_sessions::surface_terminal(&self.surfaces[idx]) {
+            cx.emit(PaneEvent::SurfaceClosed(terminal));
         }
         self.surfaces.remove(idx);
         if self.active_surface > idx || self.active_surface >= self.surfaces.len() {

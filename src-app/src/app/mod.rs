@@ -20,6 +20,7 @@ pub mod files_git;
 pub mod files_sidebar;
 pub mod files_tree;
 pub mod fleet_search;
+pub(crate) mod hosted_sessions;
 pub mod ipc_handler;
 pub mod launch_pad;
 pub mod notifications;

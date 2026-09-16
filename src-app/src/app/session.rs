@@ -359,7 +359,7 @@ impl PaneFlowApp {
             let mut workspace =
                 Workspace::restored_with_id(ws_id, title.clone(), cwd, tabs, ws_session.active_tab);
             if let Some(id) = &ws_session.id {
-                workspace.durable_id = id.clone();
+                workspace.set_durable_id(id.clone());
             }
 
             workspace.custom_buttons = ws_session.custom_buttons.clone();
@@ -436,16 +436,22 @@ impl PaneFlowApp {
         let cwd = resolved_surface_cwd(surface.cwd.as_deref(), fallback_cwd);
 
         let surface_env = surface.env.clone();
-        let t = cx.new(|cx| {
-            TerminalView::with_cwd_and_env(workspace_id, Some(cwd), None, surface_env, cx)
-        });
-        if let Some(session) = &surface.session {
-            t.update(cx, |view, _cx| {
-                view.terminal.session_id = session.clone();
-            });
-        }
+        let t = match surface.session.clone() {
+            Some(session) => cx.new(|cx| {
+                TerminalView::attach_restored(workspace_id, Some(cwd), surface_env, session, cx)
+            }),
+            None => cx.new(|cx| {
+                TerminalView::with_cwd_and_env(workspace_id, Some(cwd), None, surface_env, cx)
+            }),
+        };
         if let Some(ref scrollback) = surface.scrollback {
-            t.read(cx).restore_scrollback(scrollback);
+            if surface.session.is_some() {
+                t.update(cx, |view, _cx| {
+                    view.defer_restore_scrollback(scrollback.clone());
+                });
+            } else {
+                t.read(cx).restore_scrollback(scrollback);
+            }
         }
         if let Some(ref custom) = surface.custom_name {
             t.update(cx, |view, _cx| {

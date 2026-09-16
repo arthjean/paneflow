@@ -209,9 +209,10 @@ impl PaneFlowApp {
         let Some(ws) = self.workspaces.get_mut(ws_idx) else {
             return;
         };
-        if ws.close_tab(tab_idx).is_none() {
+        let Some(removed) = ws.close_tab(tab_idx) else {
             return;
-        }
+        };
+        self.stop_sessions_in_tab(&removed, cx);
         if self.renaming_tab.is_some_and(|(w, _)| w == ws_idx) {
             self.renaming_tab = None;
         }

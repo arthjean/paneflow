@@ -225,6 +225,9 @@ impl PaneFlowApp {
             return;
         }
         let closed = self.diff_dock.diff_tabs.remove(index);
+        if let DiffDockTab::Terminal(terminal) = &closed {
+            self.stop_terminals(vec![terminal.clone()], cx);
+        }
         if matches!(closed, DiffDockTab::File(_) | DiffDockTab::PendingFile)
             && !self
                 .diff_dock

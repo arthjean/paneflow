@@ -609,7 +609,16 @@ impl Session {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(outcome.clone());
         self.writer = None;
+        self.release_master();
         (self.observer)(RuntimeNotice::Exited(outcome));
+    }
+
+    fn release_master(&mut self) {
+        if let Some(master) = self.master.take() {
+            let _ = std::thread::Builder::new()
+                .name("paneflow-host-pty-closer".into())
+                .spawn(move || drop(master));
+        }
     }
 
     fn terminate(&mut self) {
@@ -651,11 +660,7 @@ impl Session {
             self.terminate();
         }
         self.writer = None;
-        if let Some(master) = self.master.take() {
-            let _ = std::thread::Builder::new()
-                .name("paneflow-host-pty-closer".into())
-                .spawn(move || drop(master));
-        }
+        self.release_master();
     }
 }
 
