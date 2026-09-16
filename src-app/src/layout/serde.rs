@@ -61,6 +61,7 @@ impl LayoutTree {
                                 scrollback,
                                 agent: tv_ref.terminal.detected_agent.map(|a| a.tag().to_string()),
                                 font_size: tv_ref.terminal.font_size_override,
+                                session: Some(tv_ref.terminal.session_id.clone()),
                             }
                         }
                         crate::pane::PaneSurface::Markdown(markdown) => {
@@ -78,6 +79,7 @@ impl LayoutTree {
                                 scrollback: None,
                                 agent: None,
                                 font_size: None,
+                                session: None,
                             }
                         }
                     })

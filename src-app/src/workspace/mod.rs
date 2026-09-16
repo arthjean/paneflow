@@ -86,6 +86,7 @@ impl AgentCompletionNotification {
 
 pub struct Workspace {
     pub id: u64,
+    pub durable_id: paneflow_config::schema::WorkspaceId,
     pub title: String,
     pub cwd: String,
     tabs: Vec<Tab>,
@@ -131,6 +132,7 @@ impl Workspace {
             git::resolve_worktree_root(&cwd, git_dir.as_deref(), repo_root.as_deref(), is_worktree);
         Self {
             id,
+            durable_id: paneflow_config::schema::WorkspaceId::new(),
             title,
             cwd,
             tabs: vec![tab],

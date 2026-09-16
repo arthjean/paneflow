@@ -1,11 +1,13 @@
 mod agent_panel;
 mod config;
+mod identity;
 mod layout;
 mod session;
 mod terminal;
 
 pub use agent_panel::*;
 pub use config::*;
+pub use identity::*;
 pub use layout::*;
 pub use session::*;
 pub use terminal::*;
@@ -252,6 +254,7 @@ mod tests {
                             scrollback: Some("previous output".to_string()),
                             agent: Some("claude_code".to_string()),
                             font_size: Some(13.0),
+                            session: None,
                         }],
                     }),
                 },

@@ -48,6 +48,7 @@ impl PaneFlowApp {
                 .workspaces
                 .iter()
                 .map(|ws| paneflow_config::schema::WorkspaceSession {
+                    id: Some(ws.durable_id.clone()),
                     title: ws.title.clone(),
                     cwd: ws.cwd.clone(),
                     tabs: ws
@@ -177,7 +178,28 @@ impl PaneFlowApp {
         };
 
         match serde_json::from_str::<paneflow_config::schema::SessionState>(&data) {
-            Ok(state) if state.version == paneflow_config::schema::SESSION_SCHEMA_VERSION => {
+            Ok(mut state) if state.version == paneflow_config::schema::SESSION_SCHEMA_VERSION => {
+                let assigned = paneflow_config::schema::assign_durable_identities(&mut state);
+                if !assigned.is_empty() {
+                    log::info!(
+                        "session load: assigned {} workspace and {} session identities missing from {}",
+                        assigned.workspaces,
+                        assigned.sessions,
+                        path.display()
+                    );
+                }
+                (Some(state), None)
+            }
+            Ok(mut state)
+                if state.version == paneflow_config::schema::SESSION_SCHEMA_VERSION_V2 =>
+            {
+                log::info!(
+                    "session load: migrating schema v{} to v{} at {}",
+                    paneflow_config::schema::SESSION_SCHEMA_VERSION_V2,
+                    paneflow_config::schema::SESSION_SCHEMA_VERSION,
+                    path.display()
+                );
+                paneflow_config::schema::migrate_session_v2(&mut state);
                 (Some(state), None)
             }
             Ok(mut state)
@@ -336,6 +358,9 @@ impl PaneFlowApp {
             }
             let mut workspace =
                 Workspace::restored_with_id(ws_id, title.clone(), cwd, tabs, ws_session.active_tab);
+            if let Some(id) = &ws_session.id {
+                workspace.durable_id = id.clone();
+            }
 
             workspace.custom_buttons = ws_session.custom_buttons.clone();
             workspace.sidebar_expanded = !ws_session.sidebar_collapsed;
@@ -414,6 +439,11 @@ impl PaneFlowApp {
         let t = cx.new(|cx| {
             TerminalView::with_cwd_and_env(workspace_id, Some(cwd), None, surface_env, cx)
         });
+        if let Some(session) = &surface.session {
+            t.update(cx, |view, _cx| {
+                view.terminal.session_id = session.clone();
+            });
+        }
         if let Some(ref scrollback) = surface.scrollback {
             t.read(cx).restore_scrollback(scrollback);
         }
@@ -1106,6 +1136,144 @@ mod tests {
             std::fs::read_to_string(backup).expect("backup readable"),
             contents
         );
+    }
+
+    #[test]
+    fn v2_session_is_migrated_to_durable_identities_without_touching_the_layout() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let session_path = tmp.path().join("session.json");
+        let contents = r#"{
+            "version": 2,
+            "active_workspace": 0,
+            "workspaces": [
+                {
+                    "title": "paneflow",
+                    "cwd": "/tmp",
+                    "tabs": [
+                        {
+                            "title": "agents",
+                            "title_source": "user",
+                            "worktree": "/tmp/worktrees/feat-x",
+                            "layout": {
+                                "type": "split",
+                                "direction": "horizontal",
+                                "ratios": [0.7, 0.3],
+                                "children": [
+                                    { "type": "pane", "surfaces": [ { "surface_type": "terminal", "name": "claude", "command": "claude --resume abc", "agent": "claude_code", "focus": true } ] },
+                                    { "type": "pane", "surfaces": [ { "surface_type": "terminal", "name": "zsh", "cwd": "/tmp/web" } ] }
+                                ]
+                            }
+                        }
+                    ]
+                }
+            ],
+            "detached_panes": [
+                { "location": { "mode": "cli", "workspace": 0, "tab": 0, "leaf": 1 }, "layout_leaf_count": 2, "x": 10, "y": 20, "width": 800, "height": 600 }
+            ]
+        }"#;
+        std::fs::write(&session_path, contents).expect("seed v2 session");
+
+        let (state, info) = PaneFlowApp::load_session_at(&session_path);
+
+        assert!(info.is_none(), "a v2 file is not corruption");
+        let state = state.expect("v2 session restores");
+        assert_eq!(
+            state.version,
+            paneflow_config::schema::SESSION_SCHEMA_VERSION
+        );
+        assert_eq!(state.detached_panes.len(), 1, "detached windows survive");
+        let ws = &state.workspaces[0];
+        assert!(ws.id.is_some(), "the workspace gained a durable id");
+        assert_eq!(ws.tabs[0].title, "agents");
+        assert_eq!(ws.tabs[0].title_source, Some(TabTitleSource::User));
+        assert_eq!(
+            ws.tabs[0].worktree.as_deref(),
+            Some("/tmp/worktrees/feat-x")
+        );
+        let LayoutNode::Split {
+            children, ratios, ..
+        } = ws.tabs[0].layout.as_ref().unwrap()
+        else {
+            panic!("expected the split to survive");
+        };
+        assert_eq!(ratios.as_deref(), Some(&[0.7, 0.3][..]));
+        let mut ids = Vec::new();
+        for child in children {
+            let LayoutNode::Pane { surfaces } = child else {
+                panic!("expected a pane");
+            };
+            ids.push(
+                surfaces[0]
+                    .session
+                    .clone()
+                    .expect("terminal gets a session id"),
+            );
+        }
+        assert_ne!(ids[0], ids[1]);
+        let LayoutNode::Pane { surfaces } = &children[0] else {
+            panic!("expected a pane");
+        };
+        assert_eq!(
+            surfaces[0].command.as_deref(),
+            Some("claude --resume abc"),
+            "the old agent command stays metadata and is never re-run by restore"
+        );
+        assert!(
+            !session_path.with_extension("json.corrupted").exists(),
+            "no corruption backup for a supported version"
+        );
+    }
+
+    #[test]
+    fn corrupt_session_recovery_leaves_host_session_records_alone() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let home = tmp.path();
+        let session_path = home.join("session.json");
+        let manifest_dir = paneflow_home::host_sessions_dir_in(home);
+        std::fs::create_dir_all(&manifest_dir).expect("host sessions dir");
+        let manifest = manifest_dir.join("550e8400-e29b-41d4-a716-446655440000.json");
+        std::fs::write(&manifest, b"{\"schema\":1}").expect("seed manifest");
+        std::fs::write(
+            &session_path,
+            b"{\"version\":3,\"active_workspace\":0,\"workspaces\":[{\"title\":",
+        )
+        .expect("seed corrupt session");
+
+        let (state, info) = PaneFlowApp::load_session_at(&session_path);
+
+        assert!(state.is_none());
+        let info = info.expect("corruption is reported");
+        assert!(
+            info.backup_path.is_some(),
+            "the existing backup path is kept"
+        );
+        assert_eq!(
+            std::fs::read(&manifest).expect("manifest still readable"),
+            b"{\"schema\":1}",
+            "recovering the layout never deletes or rewrites host session records"
+        );
+    }
+
+    #[gpui::test]
+    fn the_layout_serializer_writes_each_terminal_session_reference(cx: &mut gpui::TestAppContext) {
+        use gpui::AppContext;
+
+        let cx = cx.add_empty_window();
+        let terminal = cx.new(|cx| crate::terminal::TerminalView::display_only_for_test(1, cx));
+        let expected = cx.update(|_, cx| terminal.read(cx).terminal.session_id.clone());
+        let pane = cx.new(|cx| Pane::new(terminal, 1, cx));
+        let tree = LayoutTree::Leaf(pane);
+
+        let node = cx.update(|_, cx| tree.serialize_without_scrollback(cx));
+
+        let LayoutNode::Pane { surfaces } = node else {
+            panic!("expected a pane");
+        };
+        assert_eq!(surfaces.len(), 1);
+        assert_eq!(surfaces[0].session.as_ref(), Some(&expected));
+        assert!(surfaces[0].is_terminal());
+        let written = serde_json::to_string(&surfaces[0]).unwrap();
+        assert!(written.contains(&format!("\"session\":\"{expected}\"")));
     }
 
     #[test]

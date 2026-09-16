@@ -342,6 +342,14 @@ pub struct SurfaceDefinition {
     pub agent: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub font_size: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session: Option<super::SessionId>,
+}
+
+impl SurfaceDefinition {
+    pub fn is_terminal(&self) -> bool {
+        matches!(self.surface_type.as_deref(), None | Some("terminal"))
+    }
 }
 
 impl Default for SurfaceDefinition {
@@ -359,6 +367,7 @@ impl Default for SurfaceDefinition {
             scrollback: None,
             agent: None,
             font_size: None,
+            session: None,
         }
     }
 }
