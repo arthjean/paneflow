@@ -293,27 +293,31 @@ impl PaneFlowApp {
     fn render_settings_search(
         &self,
         ui: crate::theme::UiColors,
-        _window: &Window,
+        window: &Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let show_clear = !self.settings_search_input.read(cx).value().is_empty();
-        crate::ui_primitives::filter_pill(
+        let focus = self.settings_search_input.read(cx).focus_handle.clone();
+        let has_query = !self.settings_search_input.read(cx).value().is_empty();
+        crate::ui_primitives::filter_field(
             "settings-search",
             "settings-search-clear",
             ui,
-            div()
-                .text_size(px(15.))
-                .line_height(px(20.))
-                .child(self.settings_search_input.clone()),
-            show_clear,
-            cx.listener(|this, _: &ClickEvent, _window, cx| {
-                this.settings_search_input.update(cx, |input, cx| {
-                    input.clear(cx);
-                });
+            focus.is_focused(window),
+            has_query,
+            true,
+            self.settings_search_input.clone(),
+            cx.listener(|this, _: &ClickEvent, window, cx| {
+                cx.stop_propagation();
+                this.settings_search_input
+                    .update(cx, |input, cx| input.clear(cx));
+                let focus = this.settings_search_input.read(cx).focus_handle.clone();
+                window.focus(&focus, cx);
             }),
         )
-        .h(px(36.))
-        .rounded_full()
+        .on_mouse_down(MouseButton::Left, move |_, window, cx| {
+            window.focus(&focus, cx);
+            cx.stop_propagation();
+        })
         .on_key_down(cx.listener(|this, ev: &KeyDownEvent, _window, cx| {
             if ev.keystroke.key == "escape" {
                 if this.settings_search_input.read(cx).value().is_empty() {

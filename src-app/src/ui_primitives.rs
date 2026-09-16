@@ -3,7 +3,7 @@ pub(crate) mod squircle;
 use gpui::{
     AnimationExt, AnyElement, AnyView, App, Bounds, ClickEvent, CursorStyle, Div, Element,
     ElementId, FontWeight, GlobalElementId, Hsla, InspectorElementId, InteractiveElement,
-    IntoElement, ParentElement, Pixels, Render, Rgba, SharedString, Stateful,
+    IntoElement, MouseButton, ParentElement, Pixels, Render, Rgba, SharedString, Stateful,
     StatefulInteractiveElement, StyleRefinement, Styled, Window, div, prelude::*, px, svg,
 };
 use std::time::{Duration, Instant};
@@ -521,6 +521,88 @@ pub(crate) fn filter_pill(
         );
     }
     field
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn filter_field(
+    id: impl Into<ElementId>,
+    clear_id: impl Into<ElementId>,
+    ui: UiColors,
+    focused: bool,
+    has_query: bool,
+    input_visible: bool,
+    input: impl IntoElement,
+    on_clear: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+) -> Stateful<Div> {
+    let active_bg = crate::app::constants::sidebar_tab_active_background();
+    let hover_bg = crate::app::constants::sidebar_tab_hover_background();
+    let clear_id = clear_id.into();
+    div()
+        .id(id.into())
+        .min_w_0()
+        .h(px(36.))
+        .px(px(10.))
+        .flex()
+        .items_center()
+        .gap(px(8.))
+        .rounded_full()
+        .when(focused || has_query, |field| field.bg(active_bg))
+        .hover(move |style| {
+            style.bg(if focused || has_query {
+                active_bg
+            } else {
+                hover_bg
+            })
+        })
+        .cursor_text()
+        .child(
+            svg()
+                .size(px(20.))
+                .flex_none()
+                .path(if focused {
+                    "icons/filter-circle.svg"
+                } else {
+                    "icons/filter-circle-outline.svg"
+                })
+                .text_color(if focused {
+                    crate::app::constants::sidebar_filter_icon_color()
+                } else {
+                    ui.muted
+                }),
+        )
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .text_size(px(15.))
+                .line_height(px(20.))
+                .text_color(ui.text)
+                .when(!input_visible, |field| field.invisible())
+                .child(input),
+        )
+        .when(has_query, |field| {
+            field.child(
+                div()
+                    .id(clear_id)
+                    .size(px(18.))
+                    .flex_none()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded_full()
+                    .bg(ui.muted.opacity(0.2))
+                    .cursor_pointer()
+                    .delayed_tooltip(text_tooltip("Clear filter"))
+                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                    .on_click(on_clear)
+                    .child(
+                        svg()
+                            .size(px(12.))
+                            .path("icons/close.svg")
+                            .text_color(ui.text),
+                    ),
+            )
+        })
 }
 
 pub(crate) fn section_eyebrow(label: impl Into<SharedString>, ui: UiColors) -> Div {

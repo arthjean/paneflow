@@ -689,8 +689,11 @@ inside the editor's existing frame budget.
 Navigation uses the same system font and row scale as the workspace sidebar:
 14 px text with 20 px line height, 17 px icons, 32 px minimum row height,
 2 px row spacing, 8 px outer margins, and continuous corners at radius 9.
-The search field is a 36 px capsule with 15 px text. The back button follows
-the navigation row sizing.
+The search field is the sidebar filter field (`filter_field`): a 36 px
+capsule with the 20 px filter-circle glyph, 15 px text, the active row tint
+while focused or nonempty, the hover tint otherwise, and the same 18 px
+trailing clear button. Its input stays visible at rest. The back button
+follows the navigation row sizing.
 
 Navigation reuses the sidebar width: `Back to the app`, a search field, and
 three groups labeled Personal, Terminal, Integrations. Pages are a centered
@@ -955,7 +958,7 @@ Before a UI change is ready for review, confirm on a real build:
 
 Shared primitives to reach for first, in `src-app/src/ui_primitives.rs`:
 `AnimatedHoverExt`, `squircle_skin`, `icon_button_sm`, `icon_button_md`,
-`toolbar_pill`, `filter_pill`, `section_eyebrow`, `panel_empty_state`,
+`toolbar_pill`, `filter_pill`, `filter_field`, `section_eyebrow`, `panel_empty_state`,
 `text_tooltip`, `delayed_tooltip`. In `src-app/src/settings/components.rs`:
 `setting_card`, `toggle_row`, `setting_text`, `select_trigger`,
 `select_menu`, `select_item`, `menu_surface`, `secondary_button`,
