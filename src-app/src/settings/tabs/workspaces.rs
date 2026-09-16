@@ -17,7 +17,7 @@ use crate::app::ipc_handler::{
 use crate::layout::MAX_PANES;
 use crate::settings::components::{
     SETTINGS_CONTROL_CORNER_RADIUS, card_color, card_tint, deferred_select_menu, hairline,
-    section_header_with_action, select_chevron, select_item, select_menu, select_trigger,
+    menu_row, section_header_with_action, select_chevron, select_menu, select_trigger,
     setting_card, text_field, with_alpha,
 };
 use crate::terminal::TerminalView;
@@ -455,7 +455,7 @@ impl PaneFlowApp {
                 let selected = preset == *value;
                 let next = (*value).to_string();
                 menu = menu.child(
-                    select_item(("workspace-layout", i), selected, ui)
+                    menu_row(("workspace-layout", i), selected, ui)
                         .cursor(CursorStyle::Arrow)
                         .h(px(44.))
                         .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {

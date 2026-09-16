@@ -1,5 +1,5 @@
 use crate::ui_primitives::TooltipDelayExt;
-use crate::ui_primitives::{ROW_RADIUS, squircle_skin};
+use crate::ui_primitives::squircle_skin;
 
 use gpui::{
     AnyElement, ClickEvent, Context, FontWeight, InteractiveElement, IntoElement, MouseButton,
@@ -134,16 +134,13 @@ impl PaneFlowApp {
             .id("sidebar-filter")
             .flex_1()
             .min_w_0()
-            .h(px(30.))
-            .px(px(8.))
+            .h(px(36.))
+            .px(px(10.))
             .flex()
             .items_center()
             .gap(px(8.))
             .rounded_full()
             .when(focused || has_query, |field| field.bg(active_bg))
-            .when(expanded && !focused && !has_query, |field| {
-                field.bg(hover_bg)
-            })
             .hover(move |style| {
                 style.bg(if focused || has_query {
                     active_bg
@@ -173,7 +170,7 @@ impl PaneFlowApp {
             }))
             .child(
                 svg()
-                    .size(px(18.))
+                    .size(px(20.))
                     .flex_none()
                     .path(if focused {
                         "icons/filter-circle.svg"
@@ -190,7 +187,8 @@ impl PaneFlowApp {
                 div()
                     .flex_1()
                     .min_w_0()
-                    .text_sm()
+                    .text_size(px(15.))
+                    .line_height(px(20.))
                     .text_color(ui.text)
                     .when(!expanded, |field| field.invisible())
                     .child(self.sidebar_filter_input.clone()),
@@ -218,7 +216,7 @@ impl PaneFlowApp {
                         }))
                         .child(
                             svg()
-                                .size(px(10.))
+                                .size(px(12.))
                                 .path("icons/close.svg")
                                 .text_color(ui.text),
                         ),
@@ -228,16 +226,14 @@ impl PaneFlowApp {
             div()
                 .id("sidebar-settings-trigger")
                 .flex_none()
-                .w(px(30.))
-                .h(px(30.))
+                .size(px(36.))
                 .min_w_0()
-                .px(px(8.))
                 .flex()
                 .flex_row()
                 .items_center()
-                .gap(px(8.)),
+                .justify_center(),
             "sidebar-settings-trigger-group",
-            ROW_RADIUS,
+            px(12.),
             settings_open.then_some(active_bg),
             (!settings_open).then_some(hover_bg),
         )
@@ -248,7 +244,7 @@ impl PaneFlowApp {
         }))
         .child(
             svg()
-                .size(px(14.))
+                .size(px(18.))
                 .flex_none()
                 .path("icons/sidebar-settings.svg")
                 .text_color(ui.muted),
@@ -256,16 +252,16 @@ impl PaneFlowApp {
 
         let footer_row: AnyElement = div()
             .id("sidebar-footer-row")
-            .mx(px(8.))
+            .mx(px(crate::app::sidebar::SIDEBAR_ROW_MARGIN_X))
             .flex()
             .flex_row()
             .items_center()
-            .gap(px(4.))
+            .gap(px(6.))
             .child(filter)
             .child(settings_row)
             .into_any_element();
 
-        let mut footer = div().relative().flex_none().pt(px(6.)).pb(px(8.));
+        let mut footer = div().relative().flex_none().pt(px(0.)).pb(px(9.5));
         if let Some(banner) = self.render_sidebar_ipc_banner(cx) {
             footer = footer.child(banner);
         }

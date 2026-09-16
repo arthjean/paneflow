@@ -6,8 +6,8 @@ use std::time::Duration;
 use gpui::{
     Animation, AnimationExt, AnyElement, App, ClickEvent, Context, DragMoveEvent, Entity,
     EventEmitter, FocusHandle, Focusable, Hsla, InteractiveElement, IntoElement, MouseButton,
-    MouseDownEvent, Pixels, Point, Render, SharedString, Size, StyleRefinement, Styled, Window,
-    deferred, div, ease_out_quint, img, prelude::*, px, rgb, svg,
+    MouseDownEvent, MouseUpEvent, Pixels, Point, Render, SharedString, Size, StyleRefinement,
+    Styled, Window, deferred, div, ease_out_quint, img, prelude::*, px, rgb, svg,
 };
 
 use crate::ui_primitives::squircle::{squircle_border, squircle_fill};
@@ -97,6 +97,7 @@ const TAB_BAR_HEIGHT: f32 = 26.0;
 const TAB_BAR_GAP: f32 = 3.0;
 const TAB_BAR_BOTTOM_INSET: f32 = 6.0;
 const TAB_ICON_SIZE: f32 = 13.0;
+const NEW_TAB_MENU_WIDTH: f32 = 216.0;
 const TAB_CLOSE_SIZE: f32 = 16.0;
 const TAB_CLOSE_GLYPH_SIZE: f32 = 11.0;
 const TAB_FADE_WIDTH: f32 = 28.0;
@@ -115,6 +116,8 @@ pub enum PaneEvent {
     },
     Remove,
     NewTab,
+    OpenNewTabMenu,
+    NewTabPreset(crate::app::pane_palette::Preset),
     SurfacesChanged,
     Split(crate::layout::SplitDirection),
     ToggleAgentSessions,
@@ -168,6 +171,7 @@ pub struct Pane {
     pub workspace_id: u64,
     header_hover_motion: std::collections::HashMap<SharedString, HeaderHoverMotion>,
     tab_scroll: gpui::ScrollHandle,
+    new_tab_menu: Option<Vec<crate::app::pane_palette::Preset>>,
     pub cached_config: paneflow_config::schema::PaneFlowConfig,
     drag_split_direction: Option<DropEdge>,
     overlay_prev_dir: Option<DropEdge>,
@@ -225,6 +229,7 @@ impl Pane {
             workspace_id,
             header_hover_motion: std::collections::HashMap::new(),
             tab_scroll: gpui::ScrollHandle::new(),
+            new_tab_menu: None,
             cached_config,
             drag_split_direction: None,
             overlay_prev_dir: None,
@@ -1098,6 +1103,122 @@ impl Pane {
             )
     }
 
+    pub(crate) fn open_new_tab_menu(
+        &mut self,
+        presets: Vec<crate::app::pane_palette::Preset>,
+        cx: &mut Context<Self>,
+    ) {
+        self.new_tab_menu = Some(presets);
+        cx.notify();
+    }
+
+    pub(crate) fn close_new_tab_menu(&mut self, cx: &mut Context<Self>) {
+        if self.new_tab_menu.take().is_some() {
+            cx.notify();
+        }
+    }
+
+    fn render_new_tab_menu(
+        &self,
+        pane_id: u64,
+        ui: crate::theme::UiColors,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        let presets = self.new_tab_menu.as_ref()?;
+        let (button_size, button_inset) = if self.is_detached() {
+            (32., 7.)
+        } else {
+            (ACTION_BUTTON_SIZE, 0.)
+        };
+        let mut menu = crate::settings::components::menu_panel(
+            div().id(SharedString::from(format!("pane-{pane_id}-new-tab-menu"))),
+            ui,
+        )
+        .w(px(NEW_TAB_MENU_WIDTH))
+        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+        .on_mouse_up_out(
+            MouseButton::Left,
+            cx.listener(|this, _: &MouseUpEvent, _window, cx| {
+                this.close_new_tab_menu(cx);
+            }),
+        );
+        for (index, preset) in presets.iter().enumerate() {
+            menu = menu.child(self.render_new_tab_menu_row(pane_id, index, preset, ui, cx));
+        }
+        Some(
+            deferred(crate::ui_primitives::menu_reveal(
+                SharedString::from(format!("pane-{pane_id}-new-tab-menu-reveal")),
+                div()
+                    .absolute()
+                    .top(px(button_size + 8.))
+                    .left(px(button_inset + button_size - NEW_TAB_MENU_WIDTH))
+                    .occlude()
+                    .child(menu),
+            ))
+            .with_priority(4)
+            .into_any_element(),
+        )
+    }
+
+    fn render_new_tab_menu_row(
+        &self,
+        pane_id: u64,
+        index: usize,
+        preset: &crate::app::pane_palette::Preset,
+        ui: crate::theme::UiColors,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let launchable = preset.ensure_launchable().is_ok();
+        let icon_path = preset.icon_path();
+        let icon = if preset.icon_multicolor() {
+            img(icon_path).size(px(15.)).flex_none().into_any_element()
+        } else {
+            svg()
+                .size(px(15.))
+                .flex_none()
+                .path(icon_path)
+                .text_color(
+                    preset
+                        .accent()
+                        .map_or(ui.muted, |accent| rgb(accent).into()),
+                )
+                .into_any_element()
+        };
+        let chosen = preset.clone();
+        crate::settings::components::menu_row(
+            SharedString::from(format!("pane-{pane_id}-new-tab-{index}")),
+            false,
+            ui,
+        )
+        .gap(px(9.))
+        .on_click(cx.listener(move |this, _: &ClickEvent, _window, cx| {
+            this.close_new_tab_menu(cx);
+            cx.emit(PaneEvent::NewTabPreset(chosen.clone()));
+            cx.stop_propagation();
+        }))
+        .child(icon)
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .whitespace_nowrap()
+                .text_ellipsis()
+                .text_size(px(13.))
+                .text_color(if launchable { ui.text } else { ui.muted })
+                .child(preset.label.clone()),
+        )
+        .when(!launchable, |row| {
+            row.child(
+                div()
+                    .flex_none()
+                    .text_size(px(10.))
+                    .text_color(ui.muted)
+                    .child("not installed"),
+            )
+        })
+        .into_any_element()
+    }
+
     pub(crate) fn render_tab_bar(
         &self,
         unified_background: Option<gpui::Hsla>,
@@ -1328,60 +1449,106 @@ impl Pane {
             .pb(px(if unified { 0. } else { TAB_BAR_BOTTOM_INSET }))
             .px(px(if unified { 2. } else { SECTION_PX }))
             .when(unified && !self.is_detached(), |bar| bar.pl(px(6.)))
+            .when(unified && self.is_detached(), |bar| bar.pl(px(0.)))
             .gap(px(TAB_BAR_GAP))
-            .overflow_hidden()
-            .child(
-                div()
-                    .relative()
-                    .flex_1()
-                    .min_w_0()
-                    .h_full()
-                    .child(strip)
-                    .child(fades),
-            );
+            .overflow_hidden();
 
-        if self.can_add_surface() {
+        if unified && self.is_detached() {
             bar = bar.child(
                 squircle_skin(
                     div()
-                        .id(SharedString::from(format!("pane-{pane_id}-tab-new")))
+                        .id(SharedString::from(format!("pane-{pane_id}-tab-reattach")))
                         .flex_none()
-                        .size(px(TAB_BAR_HEIGHT))
-                        .when(unified && self.is_detached(), |button| {
-                            button.size(px(32.)).mx(px(7.))
-                        })
-                        .when(!self.is_detached(), |button| {
-                            button
-                                .size(px(ACTION_BUTTON_SIZE))
-                                .when(self.dimmed, |button| button.invisible())
-                        })
+                        .size(px(32.))
+                        .mr(px(3.))
                         .flex()
                         .items_center()
                         .justify_center()
                         .cursor(gpui::CursorStyle::PointingHand),
-                    SharedString::from(format!("pane-{pane_id}-tab-new-group")),
+                    SharedString::from(format!("pane-{pane_id}-tab-reattach-group")),
                     crate::ui_primitives::ROW_RADIUS,
                     None,
                     Some(rail_hover),
                 )
-                .delayed_tooltip(crate::ui_primitives::text_tooltip("New tab"))
-                .when(unified, |button| {
-                    button.on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                })
-                .on_click(cx.listener(|_this, _: &ClickEvent, _window, cx| {
-                    cx.emit(PaneEvent::NewTab);
+                .delayed_tooltip(crate::ui_primitives::text_tooltip("Return to workspace"))
+                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+                    this.toggle_detached(window, cx);
                     cx.stop_propagation();
                 }))
                 .child(
                     svg()
-                        .size(px(TAB_ICON_SIZE))
-                        .when(unified, |icon| {
-                            icon.size(px(if self.is_detached() { 20. } else { 14. }))
-                        })
+                        .size(px(20.))
                         .flex_none()
-                        .path("icons/plus.svg")
+                        .path("icons/reattach-pane.svg")
                         .text_color(ui.muted),
                 ),
+            );
+        }
+
+        bar = bar.child(
+            div()
+                .relative()
+                .flex_1()
+                .min_w_0()
+                .h_full()
+                .child(strip)
+                .child(fades),
+        );
+
+        if self.can_add_surface() {
+            let new_tab_button = squircle_skin(
+                div()
+                    .id(SharedString::from(format!("pane-{pane_id}-tab-new")))
+                    .flex_none()
+                    .size(px(TAB_BAR_HEIGHT))
+                    .when(unified && self.is_detached(), |button| {
+                        button.size(px(32.)).mx(px(7.))
+                    })
+                    .when(!self.is_detached(), |button| {
+                        button
+                            .size(px(ACTION_BUTTON_SIZE))
+                            .when(self.dimmed, |button| button.invisible())
+                    })
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .cursor(gpui::CursorStyle::PointingHand),
+                SharedString::from(format!("pane-{pane_id}-tab-new-group")),
+                crate::ui_primitives::ROW_RADIUS,
+                None,
+                Some(rail_hover),
+            )
+            .when(self.new_tab_menu.is_none(), |button| {
+                button.delayed_tooltip(crate::ui_primitives::text_tooltip("New tab"))
+            })
+            .when(unified, |button| {
+                button.on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            })
+            .on_click(cx.listener(|this, _: &ClickEvent, _window, cx| {
+                if this.new_tab_menu.take().is_some() {
+                    cx.notify();
+                } else {
+                    cx.emit(PaneEvent::OpenNewTabMenu);
+                }
+                cx.stop_propagation();
+            }))
+            .child(
+                svg()
+                    .size(px(TAB_ICON_SIZE))
+                    .when(unified, |icon| {
+                        icon.size(px(if self.is_detached() { 20. } else { 14. }))
+                    })
+                    .flex_none()
+                    .path("icons/plus.svg")
+                    .text_color(ui.muted),
+            );
+            bar = bar.child(
+                div()
+                    .relative()
+                    .flex_none()
+                    .child(new_tab_button)
+                    .children(self.render_new_tab_menu(pane_id, ui, cx)),
             );
         }
 

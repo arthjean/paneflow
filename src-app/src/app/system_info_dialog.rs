@@ -12,7 +12,7 @@ use crate::ui_primitives::{BODY, LABEL_SM, TITLE, squircle_skin};
 
 const DIALOG_WIDTH: Pixels = px(560.);
 const LABEL_WIDTH: Pixels = px(116.);
-const CARD_RADIUS: Pixels = crate::app::constants::PANE_CARD_RADIUS;
+const CARD_RADIUS: Pixels = crate::app::constants::SETTINGS_CARD_RADIUS;
 const CARD_PADDING: Pixels = px(20.);
 const ROW_LINE_HEIGHT: Pixels = px(18.);
 const COLLECTING_MIN_HEIGHT: Pixels = px(148.);

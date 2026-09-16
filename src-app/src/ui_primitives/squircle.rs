@@ -3,47 +3,43 @@ use gpui::{
     size,
 };
 
-const EXPONENT: f32 = 4.0;
+const CORNER_EXTENT: f32 = 1.528_665;
+const CORNER_CURVES: [[(f32, f32); 3]; 3] = [
+    [(1.088_493, 0.), (0.868_407, 0.), (0.631_494, 0.074_911)],
+    [
+        (0.372_824, 0.169_060),
+        (0.169_060, 0.372_824),
+        (0.074_911, 0.631_494),
+    ],
+    [(0., 0.868_407), (0., 1.088_493), (0., CORNER_EXTENT)],
+];
 
-const CORNER_SAMPLES: usize = 16;
+pub(crate) fn corner_for_height(height: Pixels, radius: Pixels) -> Pixels {
+    radius.min(height / (2. * CORNER_EXTENT)).max(px(0.))
+}
 
-fn corner_offset(i: usize) -> (f32, f32) {
-    let theta = std::f32::consts::FRAC_PI_2 * (i as f32) / (CORNER_SAMPLES as f32);
-    let e = 2.0 / EXPONENT;
-    let sup = |v: f32| v.max(0.0).powf(e);
-    (1.0 - sup(theta.cos()), 1.0 - sup(theta.sin()))
+fn limited_radius(bounds: Bounds<Pixels>, radius: Pixels) -> Pixels {
+    corner_for_height(bounds.size.height, radius)
+        .min(bounds.size.width / (2. * CORNER_EXTENT))
+        .max(px(0.))
 }
 
 fn trace(builder: &mut PathBuilder, bounds: Bounds<Pixels>, radius: Pixels) {
-    let (l, r) = (bounds.left(), bounds.right());
-    let (t, b) = (bounds.top(), bounds.bottom());
-    let rad = radius
-        .min(bounds.size.width / 2.)
-        .min(bounds.size.height / 2.);
-    if rad <= px(0.) {
-        return;
-    }
-
-    builder.move_to(point(l + rad, t));
-    builder.line_to(point(r - rad, t));
-    for i in (0..=CORNER_SAMPLES).rev() {
-        let (dx, dy) = corner_offset(i);
-        builder.line_to(point(r - rad * dx, t + rad * dy));
-    }
-    builder.line_to(point(r, b - rad));
-    for i in 0..=CORNER_SAMPLES {
-        let (dx, dy) = corner_offset(i);
-        builder.line_to(point(r - rad * dx, b - rad * dy));
-    }
-    builder.line_to(point(l + rad, b));
-    for i in (0..=CORNER_SAMPLES).rev() {
-        let (dx, dy) = corner_offset(i);
-        builder.line_to(point(l + rad * dx, b - rad * dy));
-    }
-    builder.line_to(point(l, t + rad));
-    for i in 0..=CORNER_SAMPLES {
-        let (dx, dy) = corner_offset(i);
-        builder.line_to(point(l + rad * dx, t + rad * dy));
+    let radius = limited_radius(bounds, radius);
+    let (left, right) = (bounds.left(), bounds.right());
+    let (top, bottom) = (bounds.top(), bounds.bottom());
+    builder.move_to(point(left + radius * CORNER_EXTENT, top));
+    for corner in 0..4 {
+        let transform = |(x, y): (f32, f32)| match corner {
+            0 => point(right - radius * x, top + radius * y),
+            1 => point(right - radius * y, bottom - radius * x),
+            2 => point(left + radius * x, bottom - radius * y),
+            _ => point(left + radius * y, top + radius * x),
+        };
+        builder.line_to(transform((CORNER_EXTENT, 0.)));
+        for [control_a, control_b, end] in CORNER_CURVES {
+            builder.cubic_bezier_to(transform(end), transform(control_a), transform(control_b));
+        }
     }
     builder.close();
 }
@@ -76,6 +72,7 @@ pub(crate) fn squircle_border(radius: Pixels, width: Pixels, color: Hsla) -> imp
                     return;
                 }
                 let half = width / 2.;
+                let radius = limited_radius(bounds, radius);
                 let inner = Bounds {
                     origin: bounds.origin + point(half, half),
                     size: size(
@@ -97,42 +94,33 @@ pub(crate) fn squircle_border(radius: Pixels, width: Pixels, color: Hsla) -> imp
 #[cfg(test)]
 mod tests {
     use super::*;
+    use gpui::size;
 
     #[test]
-    fn corner_endpoints_sit_on_the_edges() {
-        let (dx, dy) = corner_offset(0);
-        assert!(dx.abs() < 1e-5, "first sample leaves the edge: {dx}");
-        assert!((dy - 1.0).abs() < 1e-5, "first sample is not a radius deep");
-
-        let (dx, dy) = corner_offset(CORNER_SAMPLES);
-        assert!((dx - 1.0).abs() < 1e-5, "last sample is not a radius along");
-        assert!(dy.abs() < 1e-5, "last sample leaves the edge: {dy}");
+    fn component_radii_fit_without_scaling() {
+        for (width, height, radius) in [
+            (284., 28., 9.),
+            (22., 22., 7.),
+            (22., 22., 6.),
+            (300., 100., 20.),
+            (200., 80., 18.),
+            (200., 48., 14.),
+        ] {
+            let bounds = Bounds::new(point(px(0.), px(0.)), size(px(width), px(height)));
+            assert_eq!(limited_radius(bounds, px(radius)), px(radius));
+            let mut builder = PathBuilder::fill();
+            trace(&mut builder, bounds, px(radius));
+            assert!(builder.build().is_ok());
+        }
     }
 
     #[test]
-    fn corner_is_squarer_than_a_circular_arc() {
-        let circular = 1.0 - std::f32::consts::FRAC_PI_4.cos();
-        let (dx, dy) = corner_offset(CORNER_SAMPLES / 2);
-        assert!(
-            (dx - dy).abs() < 1e-5,
-            "the corner must stay symmetric across its diagonal"
-        );
-        assert!(
-            dx < circular,
-            "superellipse midpoint {dx} is not tighter than the arc {circular}"
-        );
-    }
-
-    #[test]
-    fn samples_advance_monotonically() {
-        let mut previous = corner_offset(0);
-        for i in 1..=CORNER_SAMPLES {
-            let current = corner_offset(i);
-            assert!(
-                current.0 > previous.0 && current.1 < previous.1,
-                "sample {i} back-tracks: {previous:?} -> {current:?}"
-            );
-            previous = current;
+    fn corners_cannot_overlap_in_small_bounds() {
+        for (width, height) in [(1., 28.), (284., 1.), (0., 0.)] {
+            let bounds = Bounds::new(point(px(0.), px(0.)), size(px(width), px(height)));
+            let extent = limited_radius(bounds, px(9.)) * CORNER_EXTENT;
+            assert!(extent <= px(width / 2.));
+            assert!(extent <= px(height / 2.));
         }
     }
 }

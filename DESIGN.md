@@ -87,10 +87,12 @@ shell neutrals hue-free`). The accent appears on links, selected metadata,
 focus, one primary action, and nothing larger. Hover and selection are
 translucent washes of the text color, not colored fills.
 
-**Continuous.** Rows, cards, menus, and tooltips use a superellipse corner
-(exponent 4, `src-app/src/ui_primitives/squircle.rs`), so a hovered row and
+**Continuous.** Rows, cards, menus, and tooltips use the same continuous corner
+approximation (`src-app/src/ui_primitives/squircle.rs`), so a hovered row and
 the card around it read as one material. Separators are gone between chips
-and tabs. Hover, dim, and sidebar slide are interpolated, never stepped.
+and tabs. The curve follows the Unpeel reference described in 5.2.
+Hover, dim, and sidebar slide are interpolated,
+never stepped.
 
 **Native.** The window is client-decorated on every platform with the
 platform's own caption glyphs. The sidebar reveals the OS material where one
@@ -132,7 +134,7 @@ Nerd Font as the default.
 ├──────────────┬───────────────────────────────────────────────────┬───────────────────┤
 │ primary      │ main panel: inset card, 4px inset, 10px radius,   │ right rail        │
 │ sidebar      │ corner masks painted in the shell color           │ sessions or files │
-│ 300px        │ ┌ pane card, 20px squircle ─┐ ┌ pane card ─────┐  │ 300px             │
+│ 300px        │ ┌ pane card, 24px squircle ─┐ ┌ pane card ─────┐  │ 300px             │
 │              │ │ header 40px: title, tools │ │                │  │ or diff dock      │
 │ Workspaces   │ │ terminal, inset 10 / 6    │ │                │  │ 880px default     │
 │ folder rows  │ └───────────────────────────┘ └────────────────┘  │ 360px min         │
@@ -147,7 +149,7 @@ Nerd Font as the default.
 | Window | Client-side decorations on every platform | Default 1200 by 800, minimum 800 by 500, corner radius 10, border 1, resize border 10, shadow black 0.4 blurred 5 when floating | `src-app/src/window_state.rs`, `src-app/src/app/constants.rs`, `src-app/src/window_chrome/csd.rs` |
 | Title bar | Drag region, sidebar toggle, Files and Help menus, workspace name, caption controls | Height max(1.75 rem, 32 px); control size 20; edge inset 8; control spacing 12; macOS brand padding 80 for the traffic lights | `src-app/src/window_chrome/title_bar.rs` |
 | Primary sidebar | Workspaces rail in Agents, navigation in Settings | Width 300; slides in 280 ms | `src-app/src/app/sidebar/mod.rs`, `src-app/src/main.rs` |
-| Main panel | The inset card that holds the pane grid or a Settings page | Inset 4 on right and bottom, and on the left only when the sidebar is hidden; radius 10; four corner masks painted in the shell color | `src-app/src/main.rs` |
+| Main panel | The inset card that holds the pane grid or a Settings page | Inset 4 on right and bottom, and on the left only when the sidebar is hidden; radius 10; four corner masks painted in the shell color, transparent while a chrome material is active, so no surface inside the panel paints its own square background | `src-app/src/main.rs` |
 | Pane grid | Binary split tree of pane cards, one per workspace tab | Gutter 8, divider hit area 7, minimum pane 80 | `src-app/src/layout/tree.rs`, `src-app/src/layout/render.rs` |
 | Right rail | Sessions rail | Width 300 | `src-app/src/app/sessions_sidebar.rs` |
 | File tree | Inside the file dock, below its shared toolbar, to the right of the editor | Width 250, shrinking to preserve 200 px for the editor | `src-app/src/app/files_sidebar/mod.rs` |
@@ -172,7 +174,7 @@ hides the workspace name while Settings is open.
 | Overlay | Placement | Shell | Source |
 | --- | --- | --- | --- |
 | Launch Pad | Centered in the panel | Card 520 wide, radius 10; agent list, branch input, prompt input, footer hint and one accent button | `src-app/src/app/launch_pad.rs` |
-| Pane palette | Fills an empty tab, titled `New pane` | A centered 260 px column on a 20 px squircle of the terminal background: 13 px Semibold title, an optional branch row 28 tall, preset rows 34 tall with a 14 px agent mark, gap 2, list capped at 420 tall, inline error at 11 px | `src-app/src/app/pane_palette.rs` |
+| Pane palette | Fills an empty tab, titled `New pane` | A centered 260 px column on a 24 px squircle of the terminal background: 13 px Semibold title, an optional branch row 28 tall, preset rows 34 tall with a 14 px agent mark, gap 2, list capped at 420 tall, inline error at 11 px | `src-app/src/app/pane_palette.rs` |
 | Diff dock surface picker | Fills a fresh dock | Three cards 122 by 98, gap 12, radius 10, grid padding 16 | `src-app/src/app/diff_dock/surface_picker.rs` |
 | Composer | Scrim over the whole pane, panel docked at its bottom | Black scrim at 0.25 on the 20 px squircle; panel with margin 8, padding 8, gap 6, 1 px border, radius 8; header chips 10 px; input max height 180 | `src-app/src/pane.rs` |
 | Menus and selects | Deferred, anchored under the trigger | Squircle 18, list padding 4, item height 28 | `src-app/src/settings/components.rs` |
@@ -279,16 +281,22 @@ to the surfaces named:
 | --- | --- | --- | --- |
 | Window | 10 | round | 1 px `border` on free edges |
 | Main panel | 10 | round, masked | none |
-| Pane card | 20 | squircle | 1 px `border`, or `vc_conflict` at 0.7 with attention |
-| Settings card, System Info dialog, pane palette ground | 20 | squircle | none |
+| Pane card and right diff dock | 24 | squircle | 1 px `border`, or `vc_conflict` at 0.7 with attention; content stays inside the corner curve through its inset, 10 by 6 for a pane and 8 for the dock body, because GPUI clips to rectangles only |
+| Settings card, System Info dialog | 20 | squircle | none |
+| Pane palette ground | 24 | squircle | none |
 | Menu, select popup | 18 | squircle | 1 px `border` at 0.6 |
-| Sidebar rows and tab icon cards, footer mode buttons, row skin, secondary button, menu item, tooltip, terminal search, title bar manual check pill | 14 | squircle | tab icon card, tooltip and terminal search, 1 px `border` |
+| Primary sidebar workspace and tab rows | 9 | continuous corner approximation | no border |
+| Primary sidebar header controls | 7 | continuous corner approximation | no border |
+| Primary sidebar Settings button | 12 | continuous corner approximation | 36 px high, glyph 18 px for optical balance with the 20 px filter glyph |
+| Primary sidebar filter | full | capsule | 36 px high, glyph 20 px |
+| Primary sidebar inline hover actions | 6 | continuous corner approximation | no border |
+| Tab icon cards, shared row skin, secondary button, menu item, tooltip, terminal search, title bar manual check pill | 14 | squircle | tab icon card, tooltip and terminal search, 1 px `border` |
 | Theme tile | 10 | round | 2 px `text` at 0.12, 0.32 on hover, 0.85 when selected |
 | About dialog | 10 | round | 1 px, plus a shadow; **Migration** |
 | Sidebar update banner, filter field, settings control, select trigger, title bar menu trigger | 8 | round | none |
 | Toast, composer, drop overlay, drop placeholder | 8 | round | drop overlay 2 px blue |
 | Toast action button, About close button, theme mockup inner frame | 7 | round | none |
-| Toolbar pill, sidebar IPC banner, sidebar hover action button, sidebar branch chip, launch pad field | 6 | round | IPC banner 1 px `border` |
+| Toolbar pill, sidebar IPC banner, sidebar branch chip, launch pad field | 6 | round | IPC banner 1 px `border` |
 | Title bar sidebar toggle, launch pad primary button | 5 | round | none |
 | Icon button, composer chip | 4 | round | none |
 | Scrollbar thumb, header chip, filter clear | 3 | round | none |
@@ -296,7 +304,7 @@ to the surfaces named:
 Squircle means `squircle_fill` and `squircle_border` from
 `src-app/src/ui_primitives/squircle.rs`, applied through `squircle_skin`,
 `setting_card`, `menu_surface`, or `tooltip_shell`. Plain `rounded()` is for
-controls at 10 px or below, where the superellipse is invisible.
+small circular controls and the explicitly round surfaces in the table.
 
 ### 4.5 Spacing and sizes
 
@@ -307,10 +315,10 @@ controls at 10 px or below, where the superellipse is invisible.
 | Pane content inset | 10 horizontal, 6 vertical |
 | Pane header | One 44 px surface tab and action row; action gap 7 |
 | Pane tab bar | 26 chips plus 6 below, 32 total; gap 3; 8 tabs maximum |
-| Sidebar row | margin 8, padding 8 by 6, gap 4, line height 18, spacing 4 |
+| Sidebar row | margin 8, padding 7 by 6, minimum height 32, content gap 3, icon-to-title gap 8, line height 20, spacing 2, radius 9 |
 | Sidebar tab icon stack | 16 px icons, cap 4, overlap 11, 24 by 24 icon card |
-| Sidebar action button | 20, gap 4; status slot 48; icon slot 20 |
-| Sidebar footer | padding 6 top and 8 bottom; mode buttons 30 tall on squircle 14, gap 3, margin 8; gear 30 by 30; banners margin 6 with 2 below, update banner 30 tall with padding 8 |
+| Sidebar action button | 22, gap 1; folder glyph 17 in a 20 px slot |
+| Sidebar footer | padding 0 top and 9.5 bottom; filter and gear 36 tall, gap 6, margin 8 shared with workspace rows; filter glyph 20, Settings glyph 18; filter text 15 with line height 20 and horizontal padding 10; banners margin 6 with 2 below, update banner 30 tall with padding 8 |
 | Sessions row | height 30; 5 rows per agent group before Show all |
 | Settings row | padding 12 by 10, gap 16; section header bottom padding 8 |
 | Select trigger | padding 10 by 6, width 190 to 260 |
@@ -321,7 +329,7 @@ controls at 10 px or below, where the superellipse is invisible.
 | Filter field | padding 10 by 6, gap 6, 13 px search icon, 16 px clear button with a 10 px glyph |
 | Toast | inset 18, padding 12 / 14 by 11, minimum width 220, action buttons 26 tall; the release toast is inset 12, padding 12, width 448, close button 20, action button 26 tall |
 | Scrollbar | width 6, gutter 10, minimum thumb 24, inset 2. Terminal panes overlay it: shown on any viewport move, held 1 s, faded out over 200 ms; hovering the gutter or dragging pins it, grows the thumb to the full gutter and reveals the track over 120 ms; `reduce_motion` snaps both |
-| Diff | row 18, file header 32, fold row 32, sticky header 24, gutter 36, change bar 4, split divider 3, column header 30, minimum split column 360, revert chip 56 by 16 inset 10 |
+| Diff | body inset 8 on the sides and bottom, row 18, file header 32, fold row 32, sticky header 24, gutter 36, change bar 4, split divider 3, column header 30, minimum split column 360, revert chip 56 by 16 inset 10 |
 | Code editor | 12 px mono, caret 2, scrollbar 15, minimum thumb 25; git marker column 6 left of the numbers, bar 4 radius 2 inset 1, deleted dot 8, hover grows 3 to the left |
 
 ### 4.6 Typography
@@ -433,7 +441,24 @@ it from the content.
 
 ### 5.2 Primary sidebar, Agents mode
 
-Header row `Workspaces` at label size with two 20 px icon buttons (the
+The primary sidebar uses the platform system UI font at 14 px, Medium for workspace titles and Regular for tab titles, with more generous row sizing than the Unpeel reference. Branch labels use 14 px system text in the same family as workspace titles; diff statistics use 12 px system text. Simple rows have a 32 px minimum height and 9 px corners; Paneflow-specific Git metadata retains its second line. Folder glyphs are 17 px inside 20 px slots. Other application surfaces retain Geist.
+
+All squircle fills and borders use three cubic Bezier segments per
+corner in `src-app/src/ui_primitives/squircle.rs`. This is an approximation of
+Apple's continuous corner profile using normalized UIKit control points
+documented by [Liam Rosenfeld](https://liamrosenfeld.com/posts/apple_icon_quest/).
+Unpeel delegates its shape to SwiftUI's `RoundedRectangle` with `.continuous`:
+radius 9 for rows, 7 for footer buttons, and 6 for session action buttons.
+UIKit control points are not proof of exact SwiftUI rendering. Native macOS
+path extraction and a rendered comparison remain required before claiming
+visual parity. The footer deliberately uses larger controls than Unpeel: 36 px
+high with a 20 px filter glyph, an 18 px Settings glyph, a full-radius capsule
+filter, and radius 12 for Settings,
+following the supplied larger reference.
+The sidebar uses the same shared renderer as cards, menus, tooltips, Settings,
+pane surfaces, and the diff dock. Each component retains its own radius.
+
+Header row `Workspaces` at label size with two 22 px icon buttons (the
 Customize Sidebar menu behind a filter glyph, and new workspace behind a
 folder-plus glyph). A workspace is a folder row; its tabs are child rows with
 inline rename, hover actions, and reorder by drag. A tab row shows the tab
@@ -459,8 +484,8 @@ disabled (margin 6, padding 8 by 6, radius 6, 1 px `border` on `subtle`, a
 banner when the last manual check could not reach the feed (margin 6, height
 30, padding 8, radius 8, the active row tint, a 14 px `vc_deleted` alert
 glyph, `Update check failed` at 12 px Medium, a 13 px bold `×` to dismiss;
-0.8 rising to 1.0 on hover, click retries), then a 30 px footer with a flexible
-fully rounded filter on the left and a 30 px icon-only Settings button on the right. The
+0.8 rising to 1.0 on hover, click retries), then a 36 px footer with a flexible
+fully rounded capsule filter on the left and a 36 px icon-only Settings button on the right. The
 filter shows an outlined circle with three descending horizontal lines at rest
 and on hover. Only while the input is focused, it shows a solid circle with
 three horizontal cutouts, white in dark themes and black in light themes.
@@ -484,7 +509,7 @@ tab structure changes reset the transition to avoid stale rows.
 
 ### 5.3 Pane card
 
-A 32 px squircle filled with the terminal background, 1 px `border`. The
+A 24 px squircle filled with the terminal background, 1 px `border`. The
 header shares the 44 px surface tab row, with no repeated pane name: a 6 px status dot, 9 px
 chips for progress and worktree, and on the right 22 px action buttons that
 appear only on the focused pane (split vertical, split horizontal,
@@ -512,8 +537,13 @@ The chips sit in a strip that scrolls horizontally with the wheel,
 without a scrollbar; the active chip scrolls into view when it changes.
 Where chips are hidden past an edge, a 28 px fade to the card background
 signals them. A 26 by 26 `+` chip is pinned at the visible end of the bar,
-outside the strip; it opens a new terminal in the active tab's directory and
-disappears at the 8 tab cap. Closing the last tab closes the pane. Diff
+outside the strip; it opens the new-tab menu and
+disappears at the 8 tab cap. That menu carries the same presets as the New
+pane palette, Terminal then the visible agents then the workspace custom
+buttons, and launches the chosen one in the active tab's directory. It is
+216 wide on the shared menu geometry from 5.6, and its right edge aligns with
+the chip in both the docked and the detached bar. The `New tab` action keeps
+opening a terminal directly. Closing the last tab closes the pane. Diff
 panes have no tab bar.
 
 State layers, painted in this order: card fill, content, dim layer, drag
@@ -656,6 +686,12 @@ inside the editor's existing frame budget.
 
 ### 5.5 Settings
 
+Navigation uses the same system font and row scale as the workspace sidebar:
+14 px text with 20 px line height, 17 px icons, 32 px minimum row height,
+2 px row spacing, 8 px outer margins, and continuous corners at radius 9.
+The search field is a 36 px capsule with 15 px text. The back button follows
+the navigation row sizing.
+
 Navigation reuses the sidebar width: `Back to the app`, a search field, and
 three groups labeled Personal, Terminal, Integrations. Pages are a centered
 column with a 26 px heading, eyebrow labels at 11 px muted, and cards
@@ -671,10 +707,17 @@ preset, a live diff sample, then the preset select and the preferences.
 
 Popups share `menu_surface`, except the Zed Editor Controls menu in 5.4:
 squircle 18, lifted surface, 0.6 border.
-Items are 28 px squircle rows at radius 14 with `text` washes for hover and
+Every menu is built from `menu_panel` and `menu_row` in
+`settings/components.rs`, which own the geometry: 34 px squircle rows at radius
+14, a 1 px gap, and 7 px of surface padding. The squircle clamps a corner to a
+third of the row height, so a 34 px row paints 11 and the 7 px inset lands it
+concentrically inside the 18 surface; a unit test in that module fails if the
+three constants stop agreeing. Rows carry `text` washes for hover and
 selection, 12 px text, a 12 px chevron on triggers, and a 13 px check on the
-selected item. Widths run from 200 to
-280 and the list scrolls past 320 px. Tooltips are squircle 14 on the title
+selected item. Widths run from 200 to 280 and the list scrolls past 400 px.
+Panels that are not menus, the command palette, the pane palette list, the
+theme picker, the clone dialog and the Welcome rows, keep the 28 px
+`select_item` row. Tooltips are squircle 14 on the title
 bar color, padding 8 by 6, small text, shown after 800 ms through
 `delayed_tooltip`.
 
@@ -847,7 +890,7 @@ while the window is unfocused.
 
 | Platform | Backdrop | Sidebar | Terminal | Chrome |
 | --- | --- | --- | --- | --- |
-| Windows 11 build 22621 and later | Mica by default (`window_backdrop: auto`), blur or transparent by choice | Reveals the backdrop when `windows_chrome_material` is on | Transparent default background when `windows_terminal_material` is on, masked to the panel | Native caption glyphs in light and dark |
+| Windows 11 build 22621 and later | Mica by default (`window_backdrop: auto`), blur or transparent by choice | Reveals the backdrop when `windows_chrome_material` is on | Transparent default background when `windows_terminal_material` is on, masked to the panel; the panel inset gutters are repainted opaque only while `windows_chrome_material` is off | Native caption glyphs in light and dark |
 | Windows 10 and older 11 | Opaque | Opaque card | Opaque | Same glyphs |
 | macOS | Transparent window surface, material dropped in fullscreen | AppKit Sidebar material when `macos_chrome_material` is on | Opaque | Traffic lights with 80 px brand padding |
 | Linux | Opaque shell; a blur region is requested from the compositor on Wayland through the ext background-effect or KDE protocols, and on X11 under KDE | Opaque, tinted from the title bar color | Opaque | Client-side decorations with GPUI's generic glyphs, or server-side when `window_decorations: server` |

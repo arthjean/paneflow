@@ -4,7 +4,7 @@ use gpui::{
 };
 
 use crate::PaneFlowApp;
-use crate::settings::components::{menu_surface, select_item};
+use crate::settings::components::{menu_panel, menu_row};
 
 const MENU_WIDTH: f32 = 236.0;
 
@@ -26,11 +26,7 @@ pub(super) fn render_diff_new_tab_menu(
     ui: crate::theme::UiColors,
     cx: &mut Context<PaneFlowApp>,
 ) -> AnyElement {
-    let menu = menu_surface(div().id("diff-dock-new-tab-menu"), ui)
-        .flex()
-        .flex_col()
-        .gap(px(1.))
-        .p(px(4.))
+    let menu = menu_panel(div().id("diff-dock-new-tab-menu"), ui)
         .w(px(MENU_WIDTH))
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
         .on_mouse_up_out(
@@ -40,7 +36,7 @@ pub(super) fn render_diff_new_tab_menu(
             }),
         )
         .child(
-            menu_row(
+            option_row(
                 "diff-dock-new-tab-changes",
                 "icons/plus-minus.svg",
                 "Changes",
@@ -53,7 +49,7 @@ pub(super) fn render_diff_new_tab_menu(
             })),
         )
         .child(
-            menu_row(
+            option_row(
                 "diff-dock-new-tab-file",
                 "icons/file-text.svg",
                 "File",
@@ -66,7 +62,7 @@ pub(super) fn render_diff_new_tab_menu(
             })),
         )
         .child(
-            menu_row(
+            option_row(
                 "diff-dock-new-tab-terminal",
                 "icons/terminal.svg",
                 "Terminal",
@@ -92,15 +88,14 @@ pub(super) fn render_diff_new_tab_menu(
     .into_any_element()
 }
 
-fn menu_row(
+fn option_row(
     id: &'static str,
     icon: &'static str,
     label: &'static str,
     shortcut: Option<&'static str>,
     ui: crate::theme::UiColors,
 ) -> gpui::Stateful<gpui::Div> {
-    select_item(id, false, ui)
-        .h(px(30.))
+    menu_row(id, false, ui)
         .gap(px(9.))
         .child(
             svg()

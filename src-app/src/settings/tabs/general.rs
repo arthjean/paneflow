@@ -8,7 +8,7 @@ use serde_json::Value;
 use crate::GeneralDropdown;
 use crate::PaneFlowApp;
 use crate::settings::components::{
-    Logo, deferred_select_menu, hairline, render_logo, section_header, select_chevron, select_item,
+    Logo, deferred_select_menu, hairline, menu_row, render_logo, section_header, select_chevron,
     select_menu, select_trigger, setting_card, setting_text, toggle_row_with,
 };
 
@@ -225,7 +225,7 @@ impl PaneFlowApp {
             }));
             for (i, (label, icon, value, selected)) in options.into_iter().enumerate() {
                 let value_for_click = value;
-                let mut item = select_item((config_key, i), selected, ui)
+                let mut item = menu_row((config_key, i), selected, ui)
                     .cursor(CursorStyle::Arrow)
                     .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
                         this.general_dropdown = None;

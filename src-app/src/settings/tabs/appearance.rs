@@ -5,9 +5,9 @@ use gpui::{
 
 use crate::PaneFlowApp;
 use crate::settings::components::{
-    deferred_select_menu, secondary_button, section_header, section_header_with_action,
-    select_chevron, select_item, select_menu, select_trigger, setting_card, setting_text,
-    toggle_pill, with_alpha,
+    deferred_select_menu, menu_row, secondary_button, section_header, section_header_with_action,
+    select_chevron, select_menu, select_trigger, setting_card, setting_text, toggle_pill,
+    with_alpha,
 };
 use crate::ui_primitives::{AnimatedHoverExt, lerp_color};
 
@@ -330,7 +330,7 @@ impl PaneFlowApp {
             for (idx, preset) in crate::theme::PRESETS.iter().enumerate() {
                 let is_current = preset.name == current_name;
                 menu = menu.child(
-                    select_item(("theme-preset", idx), is_current, ui)
+                    menu_row(("theme-preset", idx), is_current, ui)
                         .cursor(CursorStyle::Arrow)
                         .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
                             this.theme_dropdown_open = false;

@@ -7,8 +7,9 @@ use serde_json::{Value, json};
 use paneflow_config::schema::{CursorShapeConfig, normalize_hex_color};
 
 use crate::settings::components::{
-    SETTINGS_CONTROL_CORNER_RADIUS, deferred_select_menu, hairline, section_header, select_chevron,
-    select_item, select_menu, select_trigger_with_hover, setting_card, setting_text, toggle_pill,
+    SETTINGS_CONTROL_CORNER_RADIUS, deferred_select_menu, hairline, menu_row, section_header,
+    select_chevron, select_menu, select_trigger_with_hover, setting_card, setting_text,
+    toggle_pill,
 };
 use crate::ui_primitives::AnimatedHoverExt;
 
@@ -369,7 +370,7 @@ impl PaneFlowApp {
 
             if default_matches {
                 menu = menu.child(
-                    select_item(
+                    menu_row(
                         ("terminal-font-default", 0usize),
                         current_font == default_font,
                         ui,
@@ -395,7 +396,7 @@ impl PaneFlowApp {
                 let name_owned = (*name).clone();
                 let is_current = **name == current_font;
                 menu = menu.child(
-                    select_item(("terminal-font", i), is_current, ui)
+                    menu_row(("terminal-font", i), is_current, ui)
                         .cursor(CursorStyle::Arrow)
                         .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
                             this.font_dropdown_open = false;
@@ -655,7 +656,7 @@ impl PaneFlowApp {
                     }));
             for (i, (label, value, selected)) in options.into_iter().enumerate() {
                 let value_for_click = value;
-                let item = select_item((config_key, i), selected, ui)
+                let item = menu_row((config_key, i), selected, ui)
                     .cursor(CursorStyle::Arrow)
                     .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
                         this.terminal_dropdown = None;

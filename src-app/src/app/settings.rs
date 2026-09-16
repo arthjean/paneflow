@@ -14,7 +14,6 @@ impl PaneFlowApp {
         cx: &mut Context<Self>,
     ) {
         self.workspace_menu_open = None;
-        self.profile_menu_open = None;
         self.settings_section = Some(section);
         self.reset_settings_scroll();
         self.terminal_dropdown = None;
@@ -60,7 +59,6 @@ impl PaneFlowApp {
 
     pub(crate) fn close_settings(&mut self, cx: &mut Context<Self>) {
         self.settings_section = None;
-        self.profile_menu_open = None;
         self.clear_shortcut_filters(cx);
         self.collapsed_shortcut_groups.clear();
         self.shortcut_reset_pending = false;

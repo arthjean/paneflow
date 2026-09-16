@@ -11,9 +11,9 @@ use crate::PaneFlowApp;
 use crate::SidebarWidthAnimation;
 use crate::agent_launcher::{AgentProfile, TerminalAgent};
 use crate::settings::components::{
-    SETTINGS_CONTROL_CORNER_RADIUS, deferred_select_menu, destructive_color, hairline,
-    secondary_button, section_header, section_header_with_action, select_chevron, select_item,
-    select_menu, select_trigger, setting_card, setting_text, toggle_pill, toggle_row, with_alpha,
+    SETTINGS_CONTROL_CORNER_RADIUS, deferred_select_menu, destructive_color, hairline, menu_row,
+    secondary_button, section_header, section_header_with_action, select_chevron, select_menu,
+    select_trigger, setting_card, setting_text, toggle_pill, toggle_row, with_alpha,
 };
 use crate::ui_primitives::{AnimatedHoverExt, BODY, LABEL_SM, LABEL_XS, ROW_RADIUS, squircle_skin};
 use crate::widgets::text_input::TextInput;
@@ -737,7 +737,7 @@ impl PaneFlowApp {
                     }
                 }));
             for agent in TerminalAgent::ALL {
-                let item = select_item(
+                let item = menu_row(
                     SharedString::from(format!("agent-profile-agent-item-{}", agent.tag())),
                     agent == current,
                     ui,

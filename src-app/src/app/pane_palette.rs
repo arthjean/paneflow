@@ -10,7 +10,9 @@ use crate::agent_launcher::AgentLaunch;
 use crate::app::workspace_ops::SurfaceLaunch;
 use crate::layout::SplitDirection;
 use crate::pane::Pane;
-use crate::settings::components::{menu_divider_color, select_item, select_menu, with_alpha};
+use crate::settings::components::{
+    menu_divider_color, menu_row, select_item, select_menu, with_alpha,
+};
 use crate::ui_primitives::squircle::squircle_fill;
 use crate::ui_primitives::{ROW_RADIUS, squircle_skin};
 use crate::widgets::text_input::TextInput;
@@ -56,7 +58,7 @@ pub(crate) struct Preset {
 }
 
 impl Preset {
-    fn icon_path(&self) -> SharedString {
+    pub(crate) fn icon_path(&self) -> SharedString {
         match &self.source {
             PresetSource::Shell => "icons/terminal.svg".into(),
             PresetSource::Agent(launch) => launch.agent().icon_path().into(),
@@ -70,25 +72,25 @@ impl Preset {
         }
     }
 
-    fn icon_multicolor(&self) -> bool {
+    pub(crate) fn icon_multicolor(&self) -> bool {
         matches!(&self.source, PresetSource::Agent(launch) if launch.agent().icon_multicolor())
     }
 
-    fn accent(&self) -> Option<u32> {
+    pub(crate) fn accent(&self) -> Option<u32> {
         match &self.source {
             PresetSource::Agent(launch) => launch.agent().accent(),
             _ => None,
         }
     }
 
-    fn profile(&self) -> TerminalSurfaceProfile {
+    pub(crate) fn profile(&self) -> TerminalSurfaceProfile {
         match &self.source {
             PresetSource::Agent(_) => TerminalSurfaceProfile::Agent,
             _ => TerminalSurfaceProfile::Normal,
         }
     }
 
-    fn command(&self, config: &PaneFlowConfig) -> Option<String> {
+    pub(crate) fn command(&self, config: &PaneFlowConfig) -> Option<String> {
         match &self.source {
             PresetSource::Shell => None,
             PresetSource::Agent(launch) => Some(launch.launch_command(config)),
@@ -96,14 +98,14 @@ impl Preset {
         }
     }
 
-    fn env(&self) -> Option<std::collections::HashMap<String, String>> {
+    pub(crate) fn env(&self) -> Option<std::collections::HashMap<String, String>> {
         match &self.source {
             PresetSource::Agent(launch) => launch.process_env(),
             _ => None,
         }
     }
 
-    fn ensure_launchable(&self) -> Result<(), String> {
+    pub(crate) fn ensure_launchable(&self) -> Result<(), String> {
         match &self.source {
             PresetSource::Agent(launch) if !launch.is_installed() => Err(format!(
                 "{} is not installed - install its CLI, or hide it in Settings > Agents",
@@ -842,7 +844,7 @@ impl PaneFlowApp {
                 );
             menu = menu
                 .child(
-                    select_item("palette-branch-new", false, ui)
+                    menu_row("palette-branch-new", false, ui)
                         .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
                             this.pane_palette_open_new_branch(window, cx);
                             cx.stop_propagation();
@@ -1000,7 +1002,7 @@ impl PaneFlowApp {
                 let selected = draft.base.as_deref() == Some(branch.as_str());
                 let pick = branch.clone();
                 menu = menu.child(
-                    select_item(
+                    menu_row(
                         SharedString::from(format!("palette-new-branch-base-{branch}")),
                         selected,
                         ui,
@@ -1137,7 +1139,7 @@ impl PaneFlowApp {
             needs_checkout,
         } = option;
         let id = SharedString::from(format!("palette-branch-{label}"));
-        select_item(id, selected, ui)
+        menu_row(id, selected, ui)
             .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
                 match target.clone() {
                     BranchTarget::Branch(branch) => {

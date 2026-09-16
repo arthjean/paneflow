@@ -570,7 +570,6 @@ struct PaneFlowApp {
     tab_menu_open: Option<TabContextMenu>,
     pane_menu_open: Option<PaneContextMenu>,
     pending_pane_focus: Option<Entity<Pane>>,
-    profile_menu_open: Option<Point<Pixels>>,
     agent_sessions: AgentSessionsState,
     files_sidebar_open: bool,
     files_sidebar_animation: Option<SidebarWidthAnimation>,
@@ -588,12 +587,6 @@ struct PaneFlowApp {
     closed_panes: Vec<ClosedPaneRecord>,
     show_about_dialog: bool,
     system_info_dialog: Option<crate::app::system_info_dialog::SystemInfoDialog>,
-    show_theme_picker: bool,
-    theme_picker_query: String,
-    theme_picker_selected_idx: usize,
-    theme_picker_focus: FocusHandle,
-    theme_picker_scroll: gpui::ScrollHandle,
-    theme_picker_drag: Option<crate::widgets::scrollbar::ScrollDragState>,
     composer: Option<app::composer::ComposerState>,
     broadcast: app::broadcast::BroadcastState,
     broadcast_picker_open: bool,
@@ -823,6 +816,7 @@ impl Render for PaneFlowApp {
             .is_some_and(|ws| ws.active_tab().root.is_some());
         let terminal_material_visible =
             !settings_open && terminal_surface_mounted && terminal_material_active;
+        let panel_inset_shell_visible = terminal_material_visible && !chrome_material_active;
         let native_material_active = native_backdrop_material_active(
             settings_open,
             terminal_material_active,
@@ -1206,7 +1200,7 @@ impl Render for PaneFlowApp {
                                     ))
                                     .child(main_content),
                             )
-                            .when(terminal_material_visible, |panel_shell| {
+                            .when(panel_inset_shell_visible, |panel_shell| {
                                 panel_shell
                                     .child(
                                         div()
@@ -1322,14 +1316,6 @@ impl Render for PaneFlowApp {
 
         if let Some(anchor) = self.title_bar_help_menu_open {
             app_content = app_content.child(self.render_title_bar_help_menu(anchor, window, cx));
-        }
-
-        if let Some(anchor) = self.profile_menu_open {
-            app_content = app_content.child(self.render_profile_menu(anchor, window, cx));
-        }
-
-        if self.show_theme_picker {
-            app_content = app_content.child(self.render_theme_picker(cx));
         }
 
         if self.broadcast_picker_open {

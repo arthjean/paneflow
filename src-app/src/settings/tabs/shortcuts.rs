@@ -178,7 +178,6 @@ impl PaneFlowApp {
             .left_0()
             .min_h_0()
             .pr(scrollbar::SCROLLBAR_GUTTER)
-            .bg(crate::settings::chrome::settings_chrome_bg())
             .flex()
             .flex_col()
             .items_start()

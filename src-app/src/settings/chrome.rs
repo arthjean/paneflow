@@ -4,15 +4,11 @@ use gpui::{
     Window, div, prelude::*, px, svg,
 };
 
-use crate::ui_primitives::{ROW_RADIUS, squircle_skin};
+use crate::ui_primitives::squircle_skin;
 use crate::widgets::scrollbar;
 use crate::{PaneFlowApp, SettingsSection};
 
 pub(crate) const SETTINGS_NAV_WIDTH: f32 = crate::SIDEBAR_WIDTH;
-
-pub(crate) fn settings_chrome_bg() -> gpui::Hsla {
-    crate::theme::ui_colors().base
-}
 
 struct NavItem {
     section: SettingsSection,
@@ -179,7 +175,7 @@ impl PaneFlowApp {
             .overflow_y_scroll()
             .flex()
             .flex_col()
-            .gap(px(4.))
+            .gap(px(2.))
             .pt(px(4.))
             .pb(px(8.));
 
@@ -213,20 +209,22 @@ impl PaneFlowApp {
                     div()
                         .id(SharedString::from(format!("settings-nav-{}", it.label)))
                         .mx(px(8.))
-                        .px(px(8.))
+                        .px(px(7.))
                         .py(px(6.))
+                        .min_h(px(32.))
+                        .flex_none()
                         .flex()
                         .flex_row()
                         .items_center()
                         .gap(px(8.)),
                     SharedString::from(format!("settings-nav-{}-group", it.label)),
-                    ROW_RADIUS,
+                    px(9.),
                     is_active.then_some(row_background),
                     (!is_active).then_some(row_background),
                 )
                 .child(
                     svg()
-                        .size(px(15.))
+                        .size(px(17.))
                         .flex_none()
                         .path(it.icon)
                         .text_color(ui.muted),
@@ -235,7 +233,8 @@ impl PaneFlowApp {
                     div()
                         .flex_1()
                         .min_w_0()
-                        .text_size(px(13.))
+                        .text_size(px(14.))
+                        .line_height(px(20.))
                         .text_color(ui.text)
                         .truncate()
                         .child(it.label),
@@ -262,7 +261,7 @@ impl PaneFlowApp {
                         .px(px(8.))
                         .py(px(10.)),
                     "settings-nav-empty-group",
-                    ROW_RADIUS,
+                    px(9.),
                     Some(ui.subtle),
                     None,
                 )
@@ -274,6 +273,8 @@ impl PaneFlowApp {
 
         div()
             .id("settings-nav")
+            .font_family(".SystemUIFont")
+            .text_size(px(14.))
             .w(px(SETTINGS_NAV_WIDTH))
             .h_full()
             .flex_shrink_0()
@@ -300,7 +301,10 @@ impl PaneFlowApp {
             "settings-search",
             "settings-search-clear",
             ui,
-            self.settings_search_input.clone(),
+            div()
+                .text_size(px(15.))
+                .line_height(px(20.))
+                .child(self.settings_search_input.clone()),
             show_clear,
             cx.listener(|this, _: &ClickEvent, _window, cx| {
                 this.settings_search_input.update(cx, |input, cx| {
@@ -308,6 +312,8 @@ impl PaneFlowApp {
                 });
             }),
         )
+        .h(px(36.))
+        .rounded_full()
         .on_key_down(cx.listener(|this, ev: &KeyDownEvent, _window, cx| {
             if ev.keystroke.key == "escape" {
                 if this.settings_search_input.read(cx).value().is_empty() {
@@ -372,8 +378,7 @@ impl PaneFlowApp {
             .flex_1()
             .flex()
             .flex_col()
-            .min_h_0()
-            .bg(settings_chrome_bg());
+            .min_h_0();
 
         if section.owns_its_scroll() {
             return shell.child(self.render_shortcuts_page(heading, cx));
@@ -425,7 +430,6 @@ impl PaneFlowApp {
             .left_0()
             .min_h_0()
             .pr(scrollbar::SCROLLBAR_GUTTER)
-            .bg(settings_chrome_bg())
             .overflow_y_scroll()
             .track_scroll(&self.settings_scroll)
             .flex()
