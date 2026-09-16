@@ -360,6 +360,8 @@ impl IntoElement for AnimatedHover {
     }
 }
 
+pub(crate) const FOCUS_BLUE: u32 = 0x007aff;
+
 pub(crate) const LABEL_XS: Pixels = px(10.);
 pub(crate) const LABEL_SM: Pixels = px(11.);
 pub(crate) const BODY: Pixels = px(12.);
@@ -632,7 +634,7 @@ pub(crate) fn highlight_matches(text: String, query: &str) -> gpui::StyledText {
         (
             range,
             gpui::HighlightStyle {
-                color: Some(gpui::rgb(0x007aff).into()),
+                color: Some(gpui::rgb(FOCUS_BLUE).into()),
                 font_weight: Some(FontWeight::SEMIBOLD),
                 ..Default::default()
             },
