@@ -16,7 +16,7 @@ use crate::settings::components::{
     select_trigger, setting_card, setting_text, toggle_pill, toggle_row, with_alpha,
 };
 use crate::settings::search::{self, Block, SearchCard};
-use crate::ui_primitives::{AnimatedHoverExt, BODY, LABEL_SM, LABEL_XS, ROW_RADIUS, squircle_skin};
+use crate::ui_primitives::{AnimatedHoverExt, BODY, LABEL_SM, LABEL_XS, ROW_RADIUS};
 use crate::widgets::text_input::TextInput;
 
 const ROW_ICON: f32 = 18.;
@@ -146,39 +146,42 @@ impl PaneFlowApp {
         } else {
             format!("Show {hidden} more").into()
         };
-        let more_row = squircle_skin(
-            div().id("agents-show-more"),
-            "agents-show-more",
-            ROW_RADIUS,
-            None,
-            Some(with_alpha(ui.text, 0.05)),
-        )
-        .mx(px(6.))
-        .my(px(6.))
-        .h(px(30.))
-        .flex()
-        .flex_row()
-        .items_center()
-        .justify_center()
-        .gap(px(6.))
-        .cursor(CursorStyle::PointingHand)
-        .text_size(LABEL_SM)
-        .text_color(ui.muted)
-        .on_click(cx.listener(|this, _: &ClickEvent, _w, cx| {
-            this.toggle_agents_list(cx);
-        }))
-        .child(more_label)
-        .child(
-            svg()
-                .size(px(10.))
-                .flex_none()
-                .path(if expanded {
-                    "icons/chevron_up.svg"
-                } else {
-                    "icons/chevron-down.svg"
-                })
-                .text_color(ui.muted),
-        );
+        let hover_bg = with_alpha(ui.text, 0.05);
+        let more_button = div()
+            .id("agents-show-more")
+            .h(px(28.))
+            .px(px(10.))
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap(px(6.))
+            .rounded_full()
+            .hover(move |style| style.bg(hover_bg))
+            .cursor(CursorStyle::PointingHand)
+            .text_size(LABEL_SM)
+            .font_weight(gpui::FontWeight::MEDIUM)
+            .text_color(ui.muted)
+            .on_click(cx.listener(|this, _: &ClickEvent, _w, cx| {
+                this.toggle_agents_list(cx);
+            }))
+            .child(more_label)
+            .child(
+                svg()
+                    .size(px(10.))
+                    .flex_none()
+                    .path(if expanded {
+                        "icons/chevron_up.svg"
+                    } else {
+                        "icons/chevron-down.svg"
+                    })
+                    .text_color(ui.muted),
+            );
+        let more_row = div()
+            .py(px(6.))
+            .flex()
+            .flex_row()
+            .justify_center()
+            .child(more_button);
         card = card.child(hairline(ui)).child(more_row);
 
         Block::new("Agents")
