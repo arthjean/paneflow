@@ -502,9 +502,8 @@ impl PaneFlowApp {
             cx.notify();
         })
         .detach();
-        let shortcut_search_input = cx.new(|cx| {
-            crate::widgets::text_input::TextInput::new("", "Search actions or keys…", cx)
-        });
+        let shortcut_search_input = cx
+            .new(|cx| crate::widgets::text_input::TextInput::new("", "Filter by action name", cx));
         cx.observe(&shortcut_search_input, |this: &mut Self, _, cx| {
             this.rebuild_shortcut_rows(cx);
             cx.notify();
@@ -617,7 +616,7 @@ impl PaneFlowApp {
             shortcut_search_input,
             shortcut_capture_active: false,
             shortcut_reset_pending: false,
-            collapsed_shortcut_groups: std::collections::HashSet::new(),
+            shortcut_conflict: None,
             shortcut_rows: Vec::new(),
             shortcut_list: crate::settings::tabs::shortcuts::new_shortcut_list_state(),
             shortcut_drag: None,

@@ -725,6 +725,32 @@ button. The Appearance page leads with three theme tiles (System, Light,
 Dark, 134 tall, radius 10, 2 px border) holding a mockup painted from the
 preset, a live diff sample, then the preset select and the preferences.
 
+The Keyboard Shortcuts page is a register, not a tree. Under the heading, one
+12 px muted line carries the contract: click a row, press the new chord,
+Backspace clears it, Escape cancels, and a dot marks a change. One 36 px
+capsule field on `subtle` filters the list, with a `Name` | `Key` segmented
+pair of full-radius pills at its trailing edge: `Name` filters on the action
+label or an ASCII spelling of the chord, `Key` captures the next chord and
+shows what owns it. Groups are the 11 px muted eyebrow of 5.5 with the count
+on the trailing edge and, for context-bound groups, the context after a
+middle dot (`Terminal · while a pane has focus`); they never fold. Each group
+is one `menu_panel` of 5.6 (squircle 18, lifted surface, 0.6 border, 7 px
+padding, 1 px gap) whose rows are `menu_row` (34 px, squircle 14, `text` at
+0.05 on hover): a 5 px accent dot when the binding differs from the default,
+the action at 12 px, and the chord as keycaps (20 px, radius 5, `subtle` with
+a 1 px edge lifted 8 percent toward `text`, 11 Medium, gap 3), or a dashed
+`Unassigned` cap. Hovering a changed row reveals a 24 px reset glyph before
+the caps. While recording, the caps give way to one solid `Press keys…` cap
+in the caret blue of 6.3 with a white label, and nothing else on the row
+changes. A chord another action owns is held rather than saved, drawn in
+`vc_conflict` with `Also <action> · press again to take it`, and a second
+press of the same chord takes it. The list ends with one more menu panel that
+counts the changed bindings and holds `Reset all to defaults` as a menu row;
+the confirmation swaps the row for the question, a `Cancel` menu row, and the
+red `Reset`. The scrollbar of the list sits at the panel edge, as in the
+panes and the docks, and the fixed heading, intro line, and filter keep a
+20 px gap above the scrolling rows.
+
 ### 5.6 Menus, selects, tooltips
 
 Popups share `menu_surface`, except the Zed Editor Controls menu in 5.4:

@@ -552,7 +552,7 @@ struct PaneFlowApp {
     shortcut_search_input: gpui::Entity<crate::widgets::text_input::TextInput>,
     shortcut_capture_active: bool,
     shortcut_reset_pending: bool,
-    collapsed_shortcut_groups: std::collections::HashSet<keybindings::ShortcutGroup>,
+    shortcut_conflict: Option<crate::settings::tabs::shortcuts::ShortcutConflict>,
     shortcut_rows: Vec<crate::settings::tabs::shortcuts::ShortcutListRow>,
     shortcut_list: gpui::ListState,
     shortcut_drag: Option<crate::widgets::scrollbar::ScrollDragState>,

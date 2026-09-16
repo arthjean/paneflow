@@ -153,6 +153,81 @@ pub fn save_shortcut_checked(new_key: &str, action_name: &str) -> bool {
     write_config_checked(&path, &json)
 }
 
+pub fn reset_shortcut(action_name: &str) -> bool {
+    let Some(path) = paneflow_config::loader::config_path() else {
+        return false;
+    };
+    let _guard = config_write_guard();
+    let Ok(mut json) = load_raw_config(&path) else {
+        return false;
+    };
+    if let Some(obj) = json
+        .as_object_mut()
+        .and_then(|root| root.get_mut("shortcuts"))
+        .and_then(|shortcuts| shortcuts.as_object_mut())
+    {
+        restore_default_binding(obj, action_name);
+    }
+    write_config_checked(&path, &json)
+}
+
+fn restore_default_binding(
+    shortcuts_obj: &mut serde_json::Map<String, serde_json::Value>,
+    action_name: &str,
+) {
+    let defaults = crate::keybindings::default_keys(action_name);
+    shortcuts_obj.retain(|key, value| {
+        let owned = value.as_str() == Some(action_name);
+        let masked_default = value.as_str() == Some("none")
+            && defaults
+                .iter()
+                .any(|default| crate::keybindings::keystrokes_conflict(default, key));
+        !owned && !masked_default
+    });
+}
+
+pub fn unassign_shortcut(action_name: &str) -> bool {
+    let Some(path) = paneflow_config::loader::config_path() else {
+        return false;
+    };
+    let _guard = config_write_guard();
+    let Ok(mut json) = load_raw_config(&path) else {
+        return false;
+    };
+    let Some(root) = json.as_object_mut() else {
+        return false;
+    };
+    let shortcuts = root
+        .entry("shortcuts")
+        .or_insert_with(|| serde_json::json!({}));
+    if !shortcuts.is_object() {
+        *shortcuts = serde_json::json!({});
+    }
+    let Some(shortcuts_obj) = shortcuts.as_object_mut() else {
+        return false;
+    };
+    unbind_action(shortcuts_obj, action_name);
+    write_config_checked(&path, &json)
+}
+
+fn unbind_action(
+    shortcuts_obj: &mut serde_json::Map<String, serde_json::Value>,
+    action_name: &str,
+) {
+    shortcuts_obj.retain(|_, value| value.as_str() != Some(action_name));
+    for default in crate::keybindings::default_keys(action_name) {
+        let taken = shortcuts_obj
+            .keys()
+            .any(|key| crate::keybindings::keystrokes_conflict(key, default));
+        if !taken {
+            shortcuts_obj.insert(
+                default.to_string(),
+                serde_json::Value::String("none".to_string()),
+            );
+        }
+    }
+}
+
 pub fn reset_shortcuts() {
     let Some(path) = paneflow_config::loader::config_path() else {
         return;
@@ -295,7 +370,7 @@ pub fn save_commands_checked(commands: Vec<paneflow_config::schema::CommandDefin
 mod tests {
     use super::{
         apply_agent_panel_field, apply_terminal_field, load_raw_config, merge_shortcut,
-        write_config_checked,
+        restore_default_binding, unbind_action, write_config_checked,
     };
     use serde_json::{Value, json};
 
@@ -373,6 +448,42 @@ mod tests {
         merge_shortcut(&mut m, "ctrl-shift-f", "close_pane");
         assert_eq!(m["ctrl-shift-f"], json!("close_pane"));
         assert_eq!(m.len(), 1, "no leftover binding for the evicted action");
+    }
+
+    #[test]
+    fn unbind_action_drops_its_key_and_masks_its_default() {
+        let mut m = shortcuts(&[("ctrl-alt-h", "split_horizontally")]);
+        unbind_action(&mut m, "split_horizontally");
+        assert_eq!(m.get("ctrl-alt-h"), None);
+        assert_eq!(
+            m.get("secondary-shift-d").and_then(Value::as_str),
+            Some("none")
+        );
+    }
+
+    #[test]
+    fn unbind_action_keeps_a_default_another_action_took() {
+        let mut m = shortcuts(&[("secondary-shift-d", "close_pane")]);
+        unbind_action(&mut m, "split_horizontally");
+        assert_eq!(
+            m.get("secondary-shift-d").and_then(Value::as_str),
+            Some("close_pane")
+        );
+    }
+
+    #[test]
+    fn restore_default_binding_removes_override_and_mask() {
+        let mut m = shortcuts(&[
+            ("ctrl-alt-h", "split_horizontally"),
+            ("secondary-shift-d", "none"),
+            ("ctrl-alt-j", "split_vertically"),
+        ]);
+        restore_default_binding(&mut m, "split_horizontally");
+        assert_eq!(m.len(), 1);
+        assert_eq!(
+            m.get("ctrl-alt-j").and_then(Value::as_str),
+            Some("split_vertically")
+        );
     }
 
     #[test]

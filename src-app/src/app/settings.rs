@@ -43,7 +43,7 @@ impl PaneFlowApp {
             self.shortcut_search_input.update(cx, |input, cx| {
                 input.clear(cx);
             });
-            self.recording_shortcut_idx = None;
+            self.cancel_shortcut_recording();
         } else if changed {
             self.rebuild_shortcut_rows(cx);
         }
@@ -60,7 +60,6 @@ impl PaneFlowApp {
     pub(crate) fn close_settings(&mut self, cx: &mut Context<Self>) {
         self.settings_section = None;
         self.clear_shortcut_filters(cx);
-        self.collapsed_shortcut_groups.clear();
         self.shortcut_reset_pending = false;
         self.font_dropdown_open = false;
         self.font_search.clear();
@@ -72,10 +71,30 @@ impl PaneFlowApp {
         self.agent_profile_editor = None;
         self.clear_settings_search(cx);
         if self.recording_shortcut_idx.is_some() {
-            self.recording_shortcut_idx = None;
+            self.cancel_shortcut_recording();
             let config = paneflow_config::loader::load_config();
             keybindings::apply_keybindings(cx, &config.shortcuts);
         }
+    }
+
+    pub(crate) fn cancel_shortcut_recording(&mut self) {
+        self.recording_shortcut_idx = None;
+        self.shortcut_conflict = None;
+    }
+
+    pub(crate) fn start_shortcut_recording(&mut self, idx: usize, cx: &mut Context<Self>) {
+        self.set_shortcut_capture(false, cx);
+        self.shortcut_reset_pending = false;
+        self.recording_shortcut_idx = Some(idx);
+        self.shortcut_conflict = None;
+    }
+
+    pub(crate) fn reload_shortcuts(&mut self, cx: &mut Context<Self>) {
+        let config = paneflow_config::loader::load_config();
+        keybindings::apply_keybindings(cx, &config.shortcuts);
+        self.effective_shortcuts = keybindings::effective_shortcuts(&config.shortcuts);
+        self.cancel_shortcut_recording();
+        self.rebuild_shortcut_rows(cx);
     }
 
     pub(crate) fn reset_settings_scroll(&mut self) {
@@ -285,30 +304,67 @@ impl PaneFlowApp {
         }
 
         if keystroke.key == "escape" {
-            self.recording_shortcut_idx = None;
+            self.cancel_shortcut_recording();
             cx.notify();
             return;
         }
 
         let Some(action_name) = self.effective_shortcuts.get(idx).map(|e| e.action_name) else {
-            self.recording_shortcut_idx = None;
+            self.cancel_shortcut_recording();
             cx.notify();
             return;
         };
 
+        let unassigns = matches!(keystroke.key.as_str(), "backspace" | "delete")
+            && !keystroke.modifiers.modified();
+        if unassigns {
+            if !config_writer::unassign_shortcut(action_name) {
+                self.cancel_shortcut_recording();
+                self.show_toast("Could not save shortcut", cx);
+                cx.notify();
+                return;
+            }
+            self.reload_shortcuts(cx);
+            cx.notify();
+            return;
+        }
+
         let new_key = keystroke.unparse();
+        let confirmed = self
+            .shortcut_conflict
+            .as_ref()
+            .is_some_and(|conflict| keybindings::keystrokes_conflict(&conflict.key, &new_key));
+        if !confirmed {
+            let owner = self
+                .effective_shortcuts
+                .iter()
+                .enumerate()
+                .filter(|(other_idx, _)| *other_idx != idx)
+                .find(|(_, entry)| {
+                    entry
+                        .raw_key
+                        .as_deref()
+                        .is_some_and(|raw| keybindings::keystrokes_conflict(raw, &new_key))
+                });
+            if let Some((_, owner)) = owner {
+                self.shortcut_conflict = Some(crate::settings::tabs::shortcuts::ShortcutConflict {
+                    label: keybindings::format_keystroke(&new_key),
+                    key: new_key,
+                    owner: owner.description.clone(),
+                });
+                cx.notify();
+                return;
+            }
+        }
+
         if !config_writer::save_shortcut_checked(&new_key, action_name) {
-            self.recording_shortcut_idx = None;
+            self.cancel_shortcut_recording();
             self.show_toast("Could not save shortcut", cx);
             cx.notify();
             return;
         }
 
-        let config = paneflow_config::loader::load_config();
-        keybindings::apply_keybindings(cx, &config.shortcuts);
-        self.effective_shortcuts = keybindings::effective_shortcuts(&config.shortcuts);
-        self.recording_shortcut_idx = None;
-        self.rebuild_shortcut_rows(cx);
+        self.reload_shortcuts(cx);
         cx.notify();
     }
 }

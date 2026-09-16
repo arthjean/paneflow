@@ -450,16 +450,25 @@ impl PaneFlowApp {
     }
 
     pub(crate) fn settings_reading_column(&self) -> gpui::Div {
-        div()
-            .w_full()
-            .flex()
-            .flex_col()
-            .max_w(px(700.))
-            .mx_auto()
-            .px(px(28.))
-            .pt(px(28.))
+        settings_column().pt(px(28.))
     }
+}
 
+pub(crate) const SETTINGS_COLUMN_MAX_WIDTH: gpui::Pixels = px(700.);
+
+pub(crate) const SETTINGS_COLUMN_PADDING: gpui::Pixels = px(28.);
+
+pub(crate) fn settings_column() -> gpui::Div {
+    div()
+        .w_full()
+        .flex()
+        .flex_col()
+        .max_w(SETTINGS_COLUMN_MAX_WIDTH)
+        .mx_auto()
+        .px(SETTINGS_COLUMN_PADDING)
+}
+
+impl PaneFlowApp {
     fn render_settings_scroll(
         &self,
         content: AnyElement,
