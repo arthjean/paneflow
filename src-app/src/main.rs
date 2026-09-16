@@ -499,6 +499,9 @@ struct PaneFlowApp {
     active_idx: usize,
     renaming_tab: Option<(usize, usize)>,
     rename_input: gpui::Entity<crate::widgets::text_input::TextInput>,
+    sidebar_filter_input: gpui::Entity<crate::widgets::text_input::TextInput>,
+    sidebar_filter_hovered: bool,
+    sidebar_filter_motion: std::cell::RefCell<app::sidebar::SidebarFilterMotion>,
     rename_focus_live: bool,
     pending_config:
         std::sync::Arc<std::sync::Mutex<Option<paneflow_config::schema::PaneFlowConfig>>>,

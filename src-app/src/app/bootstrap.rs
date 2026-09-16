@@ -542,6 +542,10 @@ impl PaneFlowApp {
             .detach();
 
         let rename_input = cx.new(|cx| crate::widgets::text_input::TextInput::new("", "Name", cx));
+        let sidebar_filter_input =
+            cx.new(|cx| crate::widgets::text_input::TextInput::new("", "Filter", cx));
+        cx.observe(&sidebar_filter_input, |_, _, cx| cx.notify())
+            .detach();
         cx.observe(&rename_input, |_, _, cx| cx.notify()).detach();
 
         crate::workspace::worktree::set_worktrees_root(cached_config.worktrees.dir_path());
@@ -558,6 +562,9 @@ impl PaneFlowApp {
             active_idx,
             renaming_tab: None,
             rename_input,
+            sidebar_filter_input,
+            sidebar_filter_hovered: false,
+            sidebar_filter_motion: std::cell::RefCell::new(Default::default()),
             rename_focus_live: false,
             pending_config,
             save_seq: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),

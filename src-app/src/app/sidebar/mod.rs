@@ -50,10 +50,83 @@ enum SidebarAgentState {
     Thinking,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 enum SidebarRow {
     Folder(usize),
     Tab(usize, usize),
+}
+
+#[derive(Default)]
+pub(crate) struct SidebarFilterMotion {
+    topology: Vec<(u64, Vec<u64>)>,
+    query: String,
+    initialized: bool,
+    rows: Vec<(SidebarRow, f32)>,
+    from: Vec<(SidebarRow, f32)>,
+    target: Vec<SidebarRow>,
+    started: Option<std::time::Instant>,
+    heights: std::collections::HashMap<SidebarRow, f32>,
+}
+
+impl SidebarFilterMotion {
+    fn sample(&mut self, now: std::time::Instant) {
+        let Some(started) = self.started else { return };
+        let progress = (now.duration_since(started).as_secs_f32() / 0.18).min(1.);
+        let eased = 1. - (1. - progress).powi(3);
+        for (row, amount) in &mut self.rows {
+            let from = self
+                .from
+                .iter()
+                .find(|(key, _)| key == row)
+                .map_or(0., |(_, value)| *value);
+            let to = if self.target.contains(row) { 1. } else { 0. };
+            *amount = from + (to - from) * eased;
+        }
+        if progress >= 1. {
+            self.rows.retain(|(_, amount)| *amount > 0.);
+            self.started = None;
+        }
+    }
+
+    fn update(
+        &mut self,
+        topology: Vec<(u64, Vec<u64>)>,
+        query: &str,
+        target: &[SidebarRow],
+        order: &[SidebarRow],
+        now: std::time::Instant,
+    ) {
+        self.sample(now);
+        if !self.initialized
+            || self.topology != topology
+            || crate::ui_primitives::reduce_motion()
+            || (self.query == query && self.target != target)
+        {
+            if self.topology != topology {
+                self.heights.clear();
+            }
+            self.rows = target.iter().map(|row| (*row, 1.)).collect();
+            self.started = None;
+        } else if self.query != query {
+            self.from = self.rows.clone();
+            self.rows = order
+                .iter()
+                .filter_map(|row| {
+                    let amount = self
+                        .from
+                        .iter()
+                        .find(|(key, _)| key == row)
+                        .map_or(0., |(_, value)| *value);
+                    (amount > 0. || target.contains(row)).then_some((*row, amount))
+                })
+                .collect();
+            self.started = Some(now);
+        }
+        self.initialized = true;
+        self.topology = topology;
+        self.query = query.to_string();
+        self.target = target.to_vec();
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -312,6 +385,47 @@ fn sidebar_drop_slots(rows: &[SidebarRow], workspace_count: usize) -> Vec<Sideba
 }
 
 impl PaneFlowApp {
+    fn sidebar_filter_label(&self, label: String, cx: &gpui::App) -> gpui::StyledText {
+        let query = self
+            .sidebar_filter_input
+            .read(cx)
+            .value()
+            .trim()
+            .to_lowercase();
+        let mut ranges = Vec::new();
+        if !query.is_empty() {
+            let mut normalized = String::new();
+            let mut offsets = Vec::new();
+            for (start, ch) in label.char_indices() {
+                let lowered = ch.to_lowercase().to_string();
+                offsets.extend(std::iter::repeat_n(
+                    start..start + ch.len_utf8(),
+                    lowered.len(),
+                ));
+                normalized.push_str(&lowered);
+            }
+            for (start, matched) in normalized.match_indices(&query) {
+                let range = offsets[start].start..offsets[start + matched.len() - 1].end;
+                if ranges
+                    .last()
+                    .is_none_or(|previous: &std::ops::Range<usize>| previous.end <= range.start)
+                {
+                    ranges.push(range);
+                }
+            }
+        }
+        gpui::StyledText::new(label).with_highlights(ranges.into_iter().map(|range| {
+            (
+                range,
+                gpui::HighlightStyle {
+                    color: Some(gpui::rgb(0x007aff).into()),
+                    font_weight: Some(FontWeight::SEMIBOLD),
+                    ..Default::default()
+                },
+            )
+        }))
+    }
+
     fn inline_rename_field(&self, ui: crate::theme::UiColors) -> gpui::Div {
         div()
             .flex_1()
@@ -481,9 +595,9 @@ impl PaneFlowApp {
             list = list.child(self.render_sidebar_empty_state(ui, cx));
         }
 
-        list = self.render_workspace_rows(list, ui, cx);
+        list = self.render_workspace_rows(list, ui, window, cx);
         sidebar = sidebar.child(self.sidebar_list_wrapper(list, cx));
-        sidebar = sidebar.child(self.render_sidebar_settings_footer(cx));
+        sidebar = sidebar.child(self.render_sidebar_settings_footer(window, cx));
         sidebar
     }
 
@@ -562,7 +676,7 @@ impl PaneFlowApp {
             )
     }
 
-    fn sidebar_rows(&self) -> Vec<SidebarRow> {
+    fn sidebar_rows(&self, query: &str) -> Vec<SidebarRow> {
         let signature = Self::sidebar_order_signature(&self.workspaces);
         if self.sidebar_order_cache.borrow().signature != Some(signature) {
             let order = Self::compute_display_order(&self.workspaces);
@@ -573,9 +687,29 @@ impl PaneFlowApp {
         let order_cache = self.sidebar_order_cache.borrow();
         let mut rows = Vec::with_capacity(order_cache.order.len());
         for &i in &order_cache.order {
+            let ws = &self.workspaces[i];
+            let workspace_matches = query.is_empty()
+                || [&ws.title, &ws.cwd, &ws.git_branch]
+                    .iter()
+                    .any(|value| value.to_lowercase().contains(query));
+            let tabs: Vec<_> = ws
+                .tabs()
+                .iter()
+                .enumerate()
+                .filter(|(index, tab)| {
+                    workspace_matches
+                        || tab_display_title(tab, *index)
+                            .to_lowercase()
+                            .contains(query)
+                })
+                .map(|(index, _)| index)
+                .collect();
+            if !workspace_matches && tabs.is_empty() {
+                continue;
+            }
             rows.push(SidebarRow::Folder(i));
-            if self.workspaces[i].sidebar_expanded && !self.workspaces[i].is_empty_shell() {
-                for tab_idx in 0..self.workspaces[i].tab_count() {
+            if (ws.sidebar_expanded || !query.is_empty()) && !ws.is_empty_shell() {
+                for tab_idx in tabs {
                     rows.push(SidebarRow::Tab(i, tab_idx));
                 }
             }
@@ -600,20 +734,118 @@ impl PaneFlowApp {
         &self,
         mut list: gpui::Stateful<gpui::Div>,
         ui: crate::theme::UiColors,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> gpui::Stateful<gpui::Div> {
-        let rows = self.sidebar_rows();
+        let query = self
+            .sidebar_filter_input
+            .read(cx)
+            .value()
+            .trim()
+            .to_lowercase();
+        let rows = self.sidebar_rows(&query);
+        let topology = self
+            .workspaces
+            .iter()
+            .map(|ws| (ws.id, ws.tabs().iter().map(|tab| tab.id).collect()))
+            .collect();
+        let order: Vec<_> = Self::compute_display_order(&self.workspaces)
+            .into_iter()
+            .flat_map(|i| {
+                std::iter::once(SidebarRow::Folder(i)).chain(
+                    (0..self.workspaces[i].tab_count()).map(move |tab| SidebarRow::Tab(i, tab)),
+                )
+            })
+            .collect();
+        let (animated_rows, animating) = {
+            let mut motion = self.sidebar_filter_motion.borrow_mut();
+            motion.update(topology, &query, &rows, &order, std::time::Instant::now());
+            (motion.rows.clone(), motion.started.is_some())
+        };
+        if animating {
+            window.request_animation_frame();
+        }
+        if rows.is_empty() && !query.is_empty() && !animating {
+            list = list.child(
+                div()
+                    .px(px(16.))
+                    .py(px(8.))
+                    .text_color(ui.muted)
+                    .text_sm()
+                    .child("No matching workspaces"),
+            );
+        }
         let slots = sidebar_drop_slots(&rows, self.workspaces.len());
-        for (k, row) in rows.iter().enumerate() {
-            list = list.child(self.render_drop_divider(k, slots[k], ui, cx));
-            list = list.child(match *row {
+        for (k, (row, amount)) in animated_rows.iter().enumerate() {
+            if query.is_empty() && !animating {
+                list = list.child(self.render_drop_divider(k, slots[k], ui, cx));
+            } else {
+                list = list.child(div().flex_none().h(px(SIDEBAR_ROW_SPACING * amount)));
+            }
+            let content = match *row {
                 SidebarRow::Folder(i) => self.render_workspace_row(i, ui, cx).into_any_element(),
                 SidebarRow::Tab(i, tab_idx) => {
                     self.render_tab_row(i, tab_idx, ui, cx).into_any_element()
                 }
-            });
+            };
+            let key = *row;
+            let app = cx.weak_entity();
+            let natural = div().relative().flex_none().w_full().child(content).child(
+                gpui::canvas(
+                    move |bounds, _, cx| {
+                        let _ = app.update(cx, |this, _| {
+                            this.sidebar_filter_motion
+                                .borrow_mut()
+                                .heights
+                                .insert(key, f32::from(bounds.size.height));
+                        });
+                    },
+                    |_, _, _, _| {},
+                )
+                .absolute()
+                .size_full(),
+            );
+            let height = self
+                .sidebar_filter_motion
+                .borrow()
+                .heights
+                .get(row)
+                .copied()
+                .unwrap_or_else(|| {
+                    let meta = match *row {
+                        SidebarRow::Folder(_) => false,
+                        SidebarRow::Tab(ws, tab) => self
+                            .render_tab_checkout_meta(
+                                &self.workspaces[ws],
+                                &self.workspaces[ws].tabs()[tab],
+                                0.,
+                                SIDEBAR_WIDTH,
+                                cx,
+                            )
+                            .is_some(),
+                    };
+                    SIDEBAR_ROW_PADDING_Y * 2.
+                        + SIDEBAR_ROW_LINE_HEIGHT
+                        + if meta {
+                            SIDEBAR_ROW_GAP + SIDEBAR_ROW_LINE_HEIGHT
+                        } else {
+                            0.
+                        }
+                });
+            list = list.child(
+                div()
+                    .flex_none()
+                    .w_full()
+                    .overflow_hidden()
+                    .opacity(*amount)
+                    .when(*amount < 1., |row| row.h(px(height * amount)))
+                    .child(natural),
+            );
         }
-        if let Some(&trailing) = slots.last() {
+        if query.is_empty()
+            && !animating
+            && let Some(&trailing) = slots.last()
+        {
             list = list.child(self.render_drop_divider(rows.len(), trailing, ui, cx));
         }
         list
@@ -766,7 +998,7 @@ impl PaneFlowApp {
             .text_sm()
             .line_height(px(SIDEBAR_ROW_LINE_HEIGHT))
             .font_weight(FontWeight::MEDIUM)
-            .child(title);
+            .child(self.sidebar_filter_label(title, cx));
 
         let folder_path = if is_expanded {
             "icons/workspace-folder-open.svg"
@@ -909,7 +1141,7 @@ impl PaneFlowApp {
                 .text_color(text_color)
                 .text_sm()
                 .line_height(px(SIDEBAR_ROW_LINE_HEIGHT))
-                .child(title.clone())
+                .child(self.sidebar_filter_label(title.clone(), cx))
         };
 
         let tab_group = SharedString::from(format!("tab-row-group-{tab_id}"));
@@ -1063,7 +1295,7 @@ impl PaneFlowApp {
             tab,
             title_indent - row_inset,
             content_width,
-            ui,
+            cx,
         ) {
             Some(meta) => div()
                 .flex()
@@ -1146,8 +1378,9 @@ impl PaneFlowApp {
         tab: &Tab,
         indent: f32,
         width: f32,
-        ui: crate::theme::UiColors,
+        cx: &gpui::App,
     ) -> Option<AnyElement> {
+        let ui = crate::theme::ui_colors();
         let show = self.cached_config.sidebar_show;
         if !show.any_enabled() {
             return None;
@@ -1191,7 +1424,7 @@ impl PaneFlowApp {
                         .text_ellipsis()
                         .text_sm()
                         .text_color(ui.muted)
-                        .child(label),
+                        .child(self.sidebar_filter_label(label, cx)),
                 )
         });
 
@@ -1397,6 +1630,48 @@ impl Render for SidebarTooltip {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn sidebar_filter_motion_fades_out_and_removes_rows_at_completion() {
+        let now = std::time::Instant::now();
+        let row = super::SidebarRow::Folder(0);
+        let mut motion = super::SidebarFilterMotion {
+            rows: vec![(row, 1.)],
+            from: vec![(row, 1.)],
+            started: Some(now),
+            ..Default::default()
+        };
+        motion.sample(now + std::time::Duration::from_millis(90));
+        assert!((motion.rows[0].1 - 0.125).abs() < 0.001);
+        motion.sample(now + std::time::Duration::from_millis(180));
+        assert!(motion.rows.is_empty());
+        assert!(motion.started.is_none());
+    }
+
+    #[test]
+    fn sidebar_filter_motion_reverses_from_current_visibility() {
+        let now = std::time::Instant::now();
+        let row = super::SidebarRow::Folder(0);
+        let mut motion = super::SidebarFilterMotion {
+            rows: vec![(row, 1.)],
+            from: vec![(row, 1.)],
+            started: Some(now),
+            ..Default::default()
+        };
+        let retarget = now + std::time::Duration::from_millis(60);
+        motion.sample(retarget);
+        let current = motion.rows[0].1;
+        motion.from = motion.rows.clone();
+        motion.target = vec![row];
+        motion.started = Some(retarget);
+        motion.sample(retarget);
+        assert_eq!(motion.rows[0].1, current);
+        motion.sample(retarget + std::time::Duration::from_millis(90));
+        assert!(motion.rows[0].1 > current);
+        motion.sample(retarget + std::time::Duration::from_millis(180));
+        assert_eq!(motion.rows, vec![(row, 1.)]);
+        assert!(motion.started.is_none());
+    }
+
     use super::lane::{Lane, infer_lane};
     use super::{
         ROW_RADIUS, SIDEBAR_DROP_BAND_REACH, SIDEBAR_DROP_LINE_PX, SIDEBAR_FOLDER_ICON_WIDTH,

@@ -362,7 +362,9 @@ multicolor image otherwise (`render_logo` decides per logo).
 
 Workspace folder rows use Unpeel's filled open and closed folder SVGs,
 with an opacity gradient and translucent outline, tinted with `muted` at
-the existing 14 px size. These assets are dedicated to the workspace sidebar.
+the existing 14 px size. The sidebar footer settings button uses Unpeel's
+matching filled gear from the same family. These assets are dedicated to the
+workspace sidebar.
 
 | Size | Use |
 | --- | --- |
@@ -457,10 +459,28 @@ disabled (margin 6, padding 8 by 6, radius 6, 1 px `border` on `subtle`, a
 banner when the last manual check could not reach the feed (margin 6, height
 30, padding 8, radius 8, the active row tint, a 14 px `vc_deleted` alert
 glyph, `Update check failed` at 12 px Medium, a 13 px bold `×` to dismiss;
-0.8 rising to 1.0 on hover, click retries), then the Settings row: one
-flexible 30 px squircle button with the 14 px gear glyph and `Settings` at
-small text Medium, which opens Settings in one click. An open Settings takes
-the active row tint; otherwise the row takes the hover tint.
+0.8 rising to 1.0 on hover, click retries), then a 30 px footer with a flexible
+fully rounded filter on the left and a 30 px icon-only Settings button on the right. The
+filter shows an outlined circle with three descending horizontal lines at rest
+and on hover. Only while the input is focused, it shows a solid circle with
+three horizontal cutouts, white in dark themes and black in light themes.
+It reveals `Filter` and
+the hover tint on hover, and keeps the input visible while focused or nonempty.
+Focus and a nonempty query take the active row tint; a trailing clear button
+resets the query. Filtering matches workspace names, paths, branches, and tab
+titles without changing their order or saved expansion state. Matching tabs
+highlight matching text in blue (`#007AFF`) with semibold weight, as do
+workspace names and visible checkout labels. Matching ignores letter case.
+Matching tabs
+are revealed while filtering. Settings retains its 14 px gear and tooltip,
+with the active row tint when open and the hover tint otherwise.
+
+Filter changes animate row opacity and occupied height over 180 ms with a
+cubic ease-out. Exiting rows remain until the transition completes, and
+surviving rows move as the released space collapses. A new query retargets
+from the current visibility. Measured row heights preserve checkout metadata
+geometry. Reduced motion applies the filtered list immediately; workspace or
+tab structure changes reset the transition to avoid stale rows.
 
 ### 5.3 Pane card
 
@@ -811,6 +831,10 @@ ghost is a 6 px chip with 13 px Medium text, a 12 px icon, and the one
 allowed large shadow.
 
 ### 6.3 Focus and attention
+
+Shared text inputs use a blue (`#007AFF`) insertion caret, 2 px wide and
+vertically centered. Its height is the font size plus 2 px, capped at the
+line height, so it does not span the full input row.
 
 Focus is shown by absence of dim: the focused pane stays at full contrast
 while its siblings fade. An agent that needs the user gets the

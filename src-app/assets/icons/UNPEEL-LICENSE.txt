@@ -1,6 +1,7 @@
-Unpeel folder icons
+Unpeel sidebar icons
 
-workspace-folder.svg and workspace-folder-open.svg are copied from
+workspace-folder.svg, workspace-folder-open.svg and sidebar-settings.svg are
+copied from
 clients/shared/UnpeelShared/Sources/UnpeelShared/ChromeIcons.swift in Unpeel.
 
 MIT License

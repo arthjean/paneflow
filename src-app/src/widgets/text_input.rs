@@ -581,13 +581,15 @@ impl Element for TextElement {
             .shape_line(display_text, font_size, &runs, None);
 
         let cursor_pos = line.x_for_index(cursor);
+        let caret_height = (font_size + px(2.)).min(bounds.size.height);
+        let caret_top = bounds.top() + (bounds.size.height - caret_height) / 2.;
         let (selection, cursor) = if selected_range.is_empty() {
             (
                 None,
                 Some(fill(
                     Bounds::new(
-                        point(bounds.left() + cursor_pos, bounds.top()),
-                        size(px(1.), bounds.bottom() - bounds.top()),
+                        point(bounds.left() + cursor_pos, caret_top),
+                        size(px(2.), caret_height),
                     ),
                     self.caret_color,
                 )),
@@ -689,7 +691,7 @@ impl Render for TextInput {
             .on_mouse_move(cx.listener(Self::on_mouse_move))
             .child(TextElement {
                 input: cx.entity(),
-                caret_color: ui.text,
+                caret_color: gpui::rgb(0x007aff).into(),
                 selection_color: selection,
                 placeholder_color: ui.muted,
             })

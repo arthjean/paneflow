@@ -216,6 +216,15 @@ pub(crate) fn sidebar_tab_active_background() -> Hsla {
     )
 }
 
+pub(crate) fn sidebar_filter_icon_color() -> Hsla {
+    gpui::rgb(if crate::theme::active_theme().background.l > 0.5 {
+        0x000000
+    } else {
+        0xffffff
+    })
+    .into()
+}
+
 pub(crate) fn sidebar_tab_hover_background() -> Hsla {
     sidebar_tab_background(
         LIGHT_SIDEBAR_TAB_HOVER_OPACITY,
