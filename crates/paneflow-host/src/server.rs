@@ -1,0 +1,894 @@
+use std::io;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::thread::JoinHandle;
+use std::time::Duration;
+
+use interprocess::local_socket::{GenericFilePath, Listener, ListenerOptions, Stream, prelude::*};
+use paneflow_config::schema::{SessionGeneration, SessionId, WorkspaceId};
+use serde_json::{Value, json};
+
+use crate::host::{CreateSession, HostError, SessionHost};
+use crate::protocol::{
+    self, ClientHello, DATA_CHUNK_RAW_BYTES, ERR_BUSY, ERR_CHECKPOINT_TOO_LARGE, ERR_DEADLINE,
+    ERR_FRAME_TOO_LARGE, ERR_GENERATION_MISMATCH, ERR_HANDSHAKE_REQUIRED, ERR_INCOMPATIBLE,
+    ERR_INTERNAL, ERR_INVALID_PARAMS, ERR_INVALID_REQUEST, ERR_METHOD_NOT_FOUND,
+    ERR_OUTPUT_EVICTED, ERR_PARSE, ERR_PROCESS_UNVERIFIED, ERR_SESSION_NOT_FOUND,
+    ERR_SESSION_NOT_LIVE, ERR_SPAWN_FAILED, HOST_PROTOCOL_VERSION, encode_data, error_envelope,
+    result_envelope,
+};
+use crate::runtime::RuntimeError;
+use crate::wire::{LineRead, Wire};
+
+const MAX_CONNECTIONS: usize = 32;
+const IDLE_TIMEOUT: Duration = Duration::from_secs(60);
+const FOLLOW_POLL: Duration = Duration::from_millis(15);
+
+pub struct ServerHandle {
+    endpoint: PathBuf,
+    shutdown: Arc<AtomicBool>,
+    thread: Option<JoinHandle<io::Result<()>>>,
+}
+
+impl ServerHandle {
+    pub fn spawn(host: Arc<SessionHost>, endpoint: PathBuf) -> io::Result<Self> {
+        let listener = bind(&endpoint)?;
+        let shutdown = Arc::new(AtomicBool::new(false));
+        let flag = Arc::clone(&shutdown);
+        let thread = std::thread::Builder::new()
+            .name("paneflow-host-accept".into())
+            .spawn(move || accept_loop(listener, host, flag))?;
+        Ok(Self {
+            endpoint,
+            shutdown,
+            thread: Some(thread),
+        })
+    }
+
+    pub fn endpoint(&self) -> &Path {
+        &self.endpoint
+    }
+
+    pub fn stop(mut self) -> io::Result<()> {
+        self.shutdown.store(true, Ordering::Release);
+        if let Ok(name) = self.endpoint.as_path().to_fs_name::<GenericFilePath>() {
+            let _ = Stream::connect(name);
+        }
+        match self.thread.take() {
+            Some(thread) => thread
+                .join()
+                .map_err(|_| io::Error::other("the host accept thread panicked"))?,
+            None => Ok(()),
+        }
+    }
+}
+
+impl Drop for ServerHandle {
+    fn drop(&mut self) {
+        if let Some(thread) = self.thread.take() {
+            self.shutdown.store(true, Ordering::Release);
+            if let Ok(name) = self.endpoint.as_path().to_fs_name::<GenericFilePath>() {
+                let _ = Stream::connect(name);
+            }
+            let _ = thread.join();
+        }
+        #[cfg(unix)]
+        {
+            let _ = std::fs::remove_file(&self.endpoint);
+        }
+    }
+}
+
+pub fn serve(host: Arc<SessionHost>, endpoint: &Path, shutdown: Arc<AtomicBool>) -> io::Result<()> {
+    let listener = bind(endpoint)?;
+    accept_loop(listener, host, shutdown)
+}
+
+fn bind(endpoint: &Path) -> io::Result<Listener> {
+    #[cfg(unix)]
+    {
+        if let Some(parent) = endpoint.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        match std::fs::symlink_metadata(endpoint) {
+            Ok(metadata) => {
+                use std::os::unix::fs::FileTypeExt;
+                if !metadata.file_type().is_socket() {
+                    return Err(io::Error::new(
+                        io::ErrorKind::AlreadyExists,
+                        format!("{} exists and is not a socket", endpoint.display()),
+                    ));
+                }
+                std::fs::remove_file(endpoint)?;
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error),
+        }
+    }
+    let name = endpoint.to_fs_name::<GenericFilePath>()?;
+    #[cfg(windows)]
+    let listener = {
+        use interprocess::os::windows::{
+            local_socket::ListenerOptionsExt, security_descriptor::SecurityDescriptor,
+        };
+        let sddl = widestring::U16CString::from_str("D:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;GA;;;OW)")
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
+        let descriptor = SecurityDescriptor::deserialize(sddl.as_ucstr())?;
+        ListenerOptions::new()
+            .name(name)
+            .security_descriptor(descriptor)
+            .create_sync()?
+    };
+    #[cfg(not(windows))]
+    let listener = ListenerOptions::new().name(name).create_sync()?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(endpoint, std::fs::Permissions::from_mode(0o600))?;
+    }
+    log::info!("paneflow-host: listening on {}", endpoint.display());
+    Ok(listener)
+}
+
+fn accept_loop(
+    listener: Listener,
+    host: Arc<SessionHost>,
+    shutdown: Arc<AtomicBool>,
+) -> io::Result<()> {
+    let active = Arc::new(AtomicUsize::new(0));
+    for connection in listener.incoming() {
+        if shutdown.load(Ordering::Acquire) {
+            break;
+        }
+        let stream = match connection {
+            Ok(stream) => stream,
+            Err(error) => {
+                log::warn!("paneflow-host: accept failed: {error}");
+                continue;
+            }
+        };
+        let Some(guard) = ConnectionGuard::acquire(Arc::clone(&active)) else {
+            reject_busy(stream);
+            continue;
+        };
+        let host = Arc::clone(&host);
+        let shutdown = Arc::clone(&shutdown);
+        let spawned = std::thread::Builder::new()
+            .name("paneflow-host-conn".into())
+            .spawn(move || {
+                let _guard = guard;
+                match Wire::new(stream) {
+                    Ok(wire) => handle_connection(wire, host, shutdown),
+                    Err(error) => log::debug!("paneflow-host: connection setup failed: {error}"),
+                }
+            });
+        if let Err(error) = spawned {
+            log::warn!("paneflow-host: cannot start a connection thread: {error}");
+        }
+    }
+    Ok(())
+}
+
+struct ConnectionGuard(Arc<AtomicUsize>);
+
+impl ConnectionGuard {
+    fn acquire(counter: Arc<AtomicUsize>) -> Option<Self> {
+        loop {
+            let current = counter.load(Ordering::Acquire);
+            if current >= MAX_CONNECTIONS {
+                return None;
+            }
+            if counter
+                .compare_exchange(current, current + 1, Ordering::AcqRel, Ordering::Acquire)
+                .is_ok()
+            {
+                return Some(Self(counter));
+            }
+        }
+    }
+}
+
+impl Drop for ConnectionGuard {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::AcqRel);
+    }
+}
+
+fn reject_busy(stream: Stream) {
+    if let Ok(mut wire) = Wire::new(stream) {
+        let _ = wire.write_json(&error_envelope(
+            &Value::Null,
+            ERR_BUSY,
+            "host busy: too many concurrent connections",
+            None,
+        ));
+    }
+}
+
+enum Flow {
+    Continue,
+    Close,
+}
+
+fn handle_connection(mut wire: Wire, host: Arc<SessionHost>, shutdown: Arc<AtomicBool>) {
+    let mut greeted = false;
+    loop {
+        if shutdown.load(Ordering::Acquire) {
+            return;
+        }
+        let line = match wire.read_line(IDLE_TIMEOUT) {
+            Ok(LineRead::Line(line)) => line,
+            Ok(LineRead::Eof) => return,
+            Ok(LineRead::TooLong) => {
+                let _ = wire.write_json(&error_envelope(
+                    &Value::Null,
+                    ERR_FRAME_TOO_LARGE,
+                    "request exceeds the 64 KiB control frame limit",
+                    None,
+                ));
+                return;
+            }
+            Err(_) => return,
+        };
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let request: Value = match serde_json::from_str(line) {
+            Ok(value) => value,
+            Err(error) => {
+                if wire
+                    .write_json(&error_envelope(
+                        &Value::Null,
+                        ERR_PARSE,
+                        format!("parse error: {error}"),
+                        None,
+                    ))
+                    .is_err()
+                {
+                    return;
+                }
+                continue;
+            }
+        };
+        let id = request.get("id").cloned().unwrap_or(Value::Null);
+        let Some(method) = request.get("method").and_then(Value::as_str) else {
+            if wire
+                .write_json(&error_envelope(
+                    &id,
+                    ERR_INVALID_REQUEST,
+                    "missing method",
+                    None,
+                ))
+                .is_err()
+            {
+                return;
+            }
+            continue;
+        };
+        let params = request.get("params").cloned().unwrap_or_else(|| json!({}));
+        if !greeted {
+            if method != "host.hello" {
+                let _ = wire.write_json(&error_envelope(
+                    &id,
+                    ERR_HANDSHAKE_REQUIRED,
+                    "host.hello must be the first request on a connection",
+                    None,
+                ));
+                return;
+            }
+            match handshake(&host, &params) {
+                Ok(identity) => {
+                    greeted = true;
+                    if wire.write_json(&result_envelope(&id, identity)).is_err() {
+                        return;
+                    }
+                }
+                Err(envelope) => {
+                    let _ = wire.write_json(&error_envelope(
+                        &id,
+                        ERR_INCOMPATIBLE,
+                        envelope.0,
+                        Some(envelope.1),
+                    ));
+                    return;
+                }
+            }
+            continue;
+        }
+        let flow = match method {
+            "session.attach" => stream_attach(&mut wire, &host, &id, &params),
+            "session.output" => stream_output(&mut wire, &host, &shutdown, &id, &params),
+            _ => {
+                let envelope = match dispatch(&host, method, &params) {
+                    Ok(result) => result_envelope(&id, result),
+                    Err(error) => error_to_envelope(&id, error),
+                };
+                match wire.write_json(&envelope) {
+                    Ok(()) => Flow::Continue,
+                    Err(_) => Flow::Close,
+                }
+            }
+        };
+        if matches!(flow, Flow::Close) {
+            return;
+        }
+    }
+}
+
+fn handshake(host: &SessionHost, params: &Value) -> Result<Value, (String, Value)> {
+    let hello: ClientHello = serde_json::from_value(params.clone()).map_err(|error| {
+        (
+            format!("host.hello params are invalid: {error}"),
+            json!({"kind": "invalid_hello"}),
+        )
+    })?;
+    let identity = host.identity();
+    protocol::check_compatibility(
+        HOST_PROTOCOL_VERSION,
+        &identity.engine,
+        hello.protocol,
+        &hello.engine,
+    )
+    .map_err(|incompatibility| {
+        (
+            format!(
+                "client {} is incompatible with this host: {incompatibility}",
+                hello.client
+            ),
+            serde_json::to_value(&incompatibility).unwrap_or(Value::Null),
+        )
+    })?;
+    serde_json::to_value(identity).map_err(|error| (error.to_string(), Value::Null))
+}
+
+#[derive(Debug)]
+enum DispatchError {
+    Params(String),
+    MethodNotFound(String),
+    Host(HostError),
+}
+
+impl From<HostError> for DispatchError {
+    fn from(error: HostError) -> Self {
+        Self::Host(error)
+    }
+}
+
+fn error_to_envelope(id: &Value, error: DispatchError) -> Value {
+    match error {
+        DispatchError::Params(message) => error_envelope(id, ERR_INVALID_PARAMS, message, None),
+        DispatchError::MethodNotFound(method) => error_envelope(
+            id,
+            ERR_METHOD_NOT_FOUND,
+            format!("method not found: {method}"),
+            None,
+        ),
+        DispatchError::Host(error) => {
+            let (code, data) = match &error {
+                HostError::SessionNotFound(_) => (ERR_SESSION_NOT_FOUND, None),
+                HostError::SessionExists { .. } | HostError::InvalidRequest(_) => {
+                    (ERR_INVALID_PARAMS, None)
+                }
+                HostError::GenerationMismatch { current, .. } => (
+                    ERR_GENERATION_MISMATCH,
+                    Some(json!({"current_generation": current})),
+                ),
+                HostError::SessionNotLive(_) => (ERR_SESSION_NOT_LIVE, None),
+                HostError::ProcessUnverified(_) => (ERR_PROCESS_UNVERIFIED, None),
+                HostError::SpawnFailed { .. } => (ERR_SPAWN_FAILED, None),
+                HostError::Runtime(RuntimeError::NotLive) => (ERR_SESSION_NOT_LIVE, None),
+                HostError::Runtime(RuntimeError::CheckpointTooLarge { bytes, limit }) => (
+                    ERR_CHECKPOINT_TOO_LARGE,
+                    Some(json!({"bytes": bytes, "limit": limit})),
+                ),
+                HostError::Runtime(RuntimeError::OutputEvicted {
+                    tail_start,
+                    tail_end,
+                    ..
+                }) => (
+                    ERR_OUTPUT_EVICTED,
+                    Some(json!({"tail_start": tail_start, "tail_end": tail_end})),
+                ),
+                HostError::Runtime(RuntimeError::Deadline(_)) => (ERR_DEADLINE, None),
+                HostError::Runtime(_) | HostError::Storage(_) => (ERR_INTERNAL, None),
+            };
+            error_envelope(id, code, error.to_string(), data)
+        }
+    }
+}
+
+fn param_session(params: &Value) -> Result<SessionId, DispatchError> {
+    let raw = params
+        .get("session")
+        .and_then(Value::as_str)
+        .ok_or_else(|| DispatchError::Params("missing session".to_string()))?;
+    SessionId::parse(raw).map_err(|e| DispatchError::Params(e.to_string()))
+}
+
+fn param_generation(params: &Value) -> Result<Option<SessionGeneration>, DispatchError> {
+    match params.get("generation") {
+        None | Some(Value::Null) => Ok(None),
+        Some(value) => serde_json::from_value(value.clone())
+            .map(Some)
+            .map_err(|e| DispatchError::Params(format!("invalid generation: {e}"))),
+    }
+}
+
+fn param_u64(params: &Value, key: &str) -> Result<Option<u64>, DispatchError> {
+    match params.get(key) {
+        None | Some(Value::Null) => Ok(None),
+        Some(value) => value
+            .as_u64()
+            .map(Some)
+            .ok_or_else(|| DispatchError::Params(format!("{key} must be an unsigned integer"))),
+    }
+}
+
+fn to_value<T: serde::Serialize>(value: &T) -> Value {
+    serde_json::to_value(value).unwrap_or(Value::Null)
+}
+
+fn dispatch(host: &SessionHost, method: &str, params: &Value) -> Result<Value, DispatchError> {
+    match method {
+        "host.hello" => Ok(to_value(host.identity())),
+        "host.status" => {
+            let sessions = host.list(None);
+            let live = sessions.iter().filter(|s| s.live).count();
+            Ok(json!({
+                "identity": host.identity(),
+                "sessions": sessions.len(),
+                "live_sessions": live,
+                "methods": protocol::METHODS,
+            }))
+        }
+        "session.list" => {
+            let workspace = match params.get("workspace").and_then(Value::as_str) {
+                Some(raw) => Some(
+                    WorkspaceId::parse(raw).map_err(|e| DispatchError::Params(e.to_string()))?,
+                ),
+                None => None,
+            };
+            Ok(json!({"sessions": host.list(workspace.as_ref())}))
+        }
+        "session.create" => {
+            let request: CreateSession = serde_json::from_value(params.clone())
+                .map_err(|e| DispatchError::Params(format!("invalid create request: {e}")))?;
+            Ok(to_value(&host.create(request)?))
+        }
+        "session.ensure" => {
+            let session = param_session(params)?;
+            let workspace = match params.get("workspace").and_then(Value::as_str) {
+                Some(raw) => Some(
+                    WorkspaceId::parse(raw).map_err(|e| DispatchError::Params(e.to_string()))?,
+                ),
+                None => None,
+            };
+            let cwd = params
+                .get("cwd")
+                .and_then(Value::as_str)
+                .map(str::to_string);
+            Ok(to_value(&host.ensure(session, workspace, cwd)?))
+        }
+        "session.inspect" => {
+            let session = param_session(params)?;
+            Ok(to_value(&host.inspect(&session)?))
+        }
+        "session.stop" => {
+            let session = param_session(params)?;
+            let generation = param_generation(params)?;
+            Ok(to_value(&host.stop(&session, generation)?))
+        }
+        "session.input" => {
+            let session = param_session(params)?;
+            let generation = param_generation(params)?;
+            let data = params
+                .get("data")
+                .and_then(Value::as_str)
+                .ok_or_else(|| DispatchError::Params("missing data".to_string()))?;
+            let bytes = protocol::decode_data(data).map_err(DispatchError::Params)?;
+            let accepted = host.input(&session, generation, bytes)?;
+            Ok(json!({"accepted_bytes": accepted}))
+        }
+        "session.resize" => {
+            let session = param_session(params)?;
+            let generation = param_generation(params)?;
+            let cols = param_u64(params, "cols")?
+                .and_then(|c| u16::try_from(c).ok())
+                .filter(|c| *c > 0)
+                .ok_or_else(|| DispatchError::Params("cols must be 1..=65535".to_string()))?;
+            let rows = param_u64(params, "rows")?
+                .and_then(|r| u16::try_from(r).ok())
+                .filter(|r| *r > 0)
+                .ok_or_else(|| DispatchError::Params("rows must be 1..=65535".to_string()))?;
+            host.resize(&session, generation, cols, rows)?;
+            Ok(json!({"cols": cols, "rows": rows}))
+        }
+        "agent.snapshot" => Ok(json!({"sessions": host.agent_snapshot()})),
+        _ => Err(DispatchError::MethodNotFound(method.to_string())),
+    }
+}
+
+fn stream_attach(wire: &mut Wire, host: &SessionHost, id: &Value, params: &Value) -> Flow {
+    let checkpoint = match param_session(params)
+        .and_then(|session| Ok((session, param_generation(params)?)))
+        .and_then(|(session, generation)| {
+            host.checkpoint(&session, generation)
+                .map(|checkpoint| (session, checkpoint))
+                .map_err(DispatchError::from)
+        }) {
+        Ok(checkpoint) => checkpoint,
+        Err(error) => {
+            return match wire.write_json(&error_to_envelope(id, error)) {
+                Ok(()) => Flow::Continue,
+                Err(_) => Flow::Close,
+            };
+        }
+    };
+    let (session, checkpoint) = checkpoint;
+    let chunks = checkpoint.snapshot.len().div_ceil(DATA_CHUNK_RAW_BYTES);
+    let header = result_envelope(
+        id,
+        json!({
+            "session": session,
+            "generation": checkpoint.generation,
+            "host_instance": host.instance(),
+            "offset": checkpoint.offset,
+            "cols": checkpoint.cols,
+            "rows": checkpoint.rows,
+            "bytes": checkpoint.snapshot.len(),
+            "chunks": chunks,
+        }),
+    );
+    if wire.write_json(&header).is_err() {
+        return Flow::Close;
+    }
+    for (index, chunk) in checkpoint.snapshot.chunks(DATA_CHUNK_RAW_BYTES).enumerate() {
+        let line = json!({
+            "type": "chunk",
+            "session": session,
+            "generation": checkpoint.generation,
+            "index": index,
+            "data": encode_data(chunk),
+        });
+        if wire.write_json(&line).is_err() {
+            return Flow::Close;
+        }
+    }
+    let end = json!({
+        "type": "end",
+        "session": session,
+        "generation": checkpoint.generation,
+        "offset": checkpoint.offset,
+    });
+    match wire.write_json(&end) {
+        Ok(()) => Flow::Continue,
+        Err(_) => Flow::Close,
+    }
+}
+
+fn stream_output(
+    wire: &mut Wire,
+    host: &SessionHost,
+    shutdown: &AtomicBool,
+    id: &Value,
+    params: &Value,
+) -> Flow {
+    let parsed = param_session(params).and_then(|session| {
+        Ok((
+            session,
+            param_generation(params)?,
+            param_u64(params, "from")?.unwrap_or(0),
+            params
+                .get("follow")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
+        ))
+    });
+    let (session, generation, mut offset, follow) = match parsed {
+        Ok(parsed) => parsed,
+        Err(error) => {
+            return match wire.write_json(&error_to_envelope(id, error)) {
+                Ok(()) => Flow::Continue,
+                Err(_) => Flow::Close,
+            };
+        }
+    };
+    let generation = match generation {
+        Some(generation) => generation,
+        None => match host.inspect(&session) {
+            Ok(summary) => summary.manifest.generation,
+            Err(error) => {
+                return match wire.write_json(&error_to_envelope(id, error.into())) {
+                    Ok(()) => Flow::Continue,
+                    Err(_) => Flow::Close,
+                };
+            }
+        },
+    };
+    let header = result_envelope(
+        id,
+        json!({
+            "session": session,
+            "generation": generation,
+            "host_instance": host.instance(),
+            "from": offset,
+            "follow": follow,
+        }),
+    );
+    if wire.write_json(&header).is_err() {
+        return Flow::Close;
+    }
+    loop {
+        let slice = match host.output(&session, Some(generation), offset, DATA_CHUNK_RAW_BYTES) {
+            Ok(slice) => slice,
+            Err(error) => {
+                let _ = wire.write_json(&error_to_envelope(&Value::Null, error.into()));
+                return Flow::Close;
+            }
+        };
+        if !slice.data.is_empty() {
+            let line = json!({
+                "type": "output",
+                "session": session,
+                "generation": generation,
+                "offset": slice.offset,
+                "data": encode_data(&slice.data),
+            });
+            if wire.write_json(&line).is_err() {
+                return Flow::Close;
+            }
+            offset = slice.offset + slice.data.len() as u64;
+            if slice.end_offset > offset {
+                continue;
+            }
+        }
+        let finished = !follow || !slice.live || shutdown.load(Ordering::Acquire);
+        if finished && slice.end_offset <= offset {
+            let end = json!({
+                "type": "end",
+                "session": session,
+                "generation": generation,
+                "next_offset": offset,
+                "live": slice.live,
+            });
+            return match wire.write_json(&end) {
+                Ok(()) => Flow::Continue,
+                Err(_) => Flow::Close,
+            };
+        }
+        std::thread::sleep(FOLLOW_POLL);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::client::{HostClient, HostClientError};
+    use crate::protocol::{ERR_HANDSHAKE_REQUIRED, MAX_CONTROL_FRAME_BYTES};
+    use std::sync::atomic::AtomicU64;
+    use std::time::Instant;
+
+    static NEXT_ENDPOINT: AtomicU64 = AtomicU64::new(0);
+
+    fn test_endpoint(home: &Path) -> PathBuf {
+        let unique = format!(
+            "{}-{}",
+            std::process::id(),
+            NEXT_ENDPOINT.fetch_add(1, Ordering::Relaxed)
+        );
+        #[cfg(windows)]
+        {
+            let _ = home;
+            PathBuf::from(format!(r"\\.\pipe\paneflow-host-test-{unique}"))
+        }
+        #[cfg(unix)]
+        {
+            home.join(format!("h{unique}.sock"))
+        }
+    }
+
+    fn shell_create_params() -> Value {
+        #[cfg(windows)]
+        let (shell, args) = ("cmd.exe", vec!["/Q", "/D"]);
+        #[cfg(unix)]
+        let (shell, args) = ("/bin/sh", Vec::<&str>::new());
+        json!({
+            "shell": shell,
+            "args": args,
+            "cwd": std::env::temp_dir().display().to_string(),
+            "cols": 80,
+            "rows": 24,
+        })
+    }
+
+    fn start() -> (tempfile::TempDir, Arc<SessionHost>, ServerHandle) {
+        let home = tempfile::tempdir().unwrap();
+        let endpoint = test_endpoint(home.path());
+        let host = SessionHost::open(home.path(), &endpoint).unwrap();
+        let server = ServerHandle::spawn(Arc::clone(&host), endpoint).unwrap();
+        (home, host, server)
+    }
+
+    #[test]
+    fn a_client_handshakes_creates_attaches_streams_and_stops_over_the_endpoint() {
+        let (_home, host, server) = start();
+        let hello = ClientHello::local("paneflow-host-test");
+        let mut client = HostClient::connect(server.endpoint(), &hello).unwrap();
+        assert_eq!(client.identity().host_instance, *host.instance());
+        assert_eq!(client.identity().protocol, HOST_PROTOCOL_VERSION);
+
+        let status = client.call("host.status", json!({})).unwrap();
+        assert_eq!(status["live_sessions"], 0);
+        assert!(
+            status["methods"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|m| m == "session.attach")
+        );
+
+        let created = client
+            .call("session.create", shell_create_params())
+            .unwrap();
+        let session = SessionId::parse(created["session"].as_str().unwrap()).unwrap();
+        let generation: SessionGeneration =
+            serde_json::from_value(created["generation"].clone()).unwrap();
+        assert_eq!(generation, SessionGeneration::FIRST);
+        assert_eq!(created["live"], true);
+        assert_eq!(created["host_instance"], json!(host.instance()));
+
+        let listed = client.call("session.list", json!({})).unwrap();
+        assert_eq!(listed["sessions"].as_array().unwrap().len(), 1);
+
+        client
+            .call(
+                "session.input",
+                json!({
+                    "session": session,
+                    "generation": generation,
+                    "data": encode_data(b"echo HOST_WIRE_MARKER\r\n"),
+                }),
+            )
+            .unwrap();
+
+        let deadline = Instant::now() + Duration::from_secs(15);
+        let mut collected = Vec::new();
+        let mut offset = 0;
+        while Instant::now() < deadline {
+            offset = client
+                .output(&session, Some(generation), offset, false, |_, bytes| {
+                    collected.extend_from_slice(bytes);
+                    true
+                })
+                .unwrap();
+            if String::from_utf8_lossy(&collected).contains("HOST_WIRE_MARKER") {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(30));
+        }
+        assert!(
+            String::from_utf8_lossy(&collected).contains("HOST_WIRE_MARKER"),
+            "streamed output carries the echoed marker"
+        );
+
+        let checkpoint = client.attach(&session, Some(generation)).unwrap();
+        assert_eq!(checkpoint.generation, generation);
+        assert!(checkpoint.offset >= offset.saturating_sub(64));
+        assert!(!checkpoint.snapshot.is_empty());
+        assert!(
+            paneflow_terminal_ghostty::SnapshotDecoder::from_bytes(&checkpoint.snapshot).is_ok(),
+            "the streamed checkpoint is a decodable native snapshot"
+        );
+        let resumed = client
+            .output(
+                &session,
+                Some(generation),
+                checkpoint.offset,
+                false,
+                |_, _| true,
+            )
+            .unwrap();
+        assert!(
+            resumed >= checkpoint.offset,
+            "offsets continue from the checkpoint"
+        );
+
+        let stale = client.call(
+            "session.input",
+            json!({"session": session, "generation": 2, "data": encode_data(b"x")}),
+        );
+        assert_eq!(
+            stale.err().and_then(|e| e.code()),
+            Some(ERR_GENERATION_MISMATCH)
+        );
+        let evicted = client.output(&session, Some(generation), u64::MAX / 2, false, |_, _| true);
+        assert_eq!(
+            evicted.err().and_then(|e| e.code()),
+            Some(ERR_OUTPUT_EVICTED)
+        );
+        drop(client);
+
+        let mut client = HostClient::connect(server.endpoint(), &hello).unwrap();
+        let stopped = client
+            .call(
+                "session.stop",
+                json!({"session": session, "generation": generation}),
+            )
+            .unwrap();
+        assert_eq!(stopped["live"], false);
+        assert_eq!(stopped["lifecycle"]["state"], "exited");
+        let missing = client.call("session.inspect", json!({"session": SessionId::new()}));
+        assert_eq!(
+            missing.err().and_then(|e| e.code()),
+            Some(ERR_SESSION_NOT_FOUND)
+        );
+        let unknown = client.call("session.explode", json!({}));
+        assert_eq!(
+            unknown.err().and_then(|e| e.code()),
+            Some(ERR_METHOD_NOT_FOUND)
+        );
+        server.stop().unwrap();
+    }
+
+    #[test]
+    fn an_incompatible_or_missing_handshake_is_refused_before_any_effect() {
+        let (_home, host, server) = start();
+        let mut hello = ClientHello::local("paneflow-host-test");
+        hello.engine.source_sha = "f".repeat(40);
+        let Err(error) = HostClient::connect(server.endpoint(), &hello) else {
+            panic!("a mismatched engine must be refused");
+        };
+        assert!(matches!(error, HostClientError::Incompatible(ref m) if m.contains("source_sha")));
+
+        let mut old = ClientHello::local("paneflow-host-test");
+        old.protocol = HOST_PROTOCOL_VERSION + 7;
+        let Err(error) = HostClient::connect(server.endpoint(), &old) else {
+            panic!("an older protocol must be refused");
+        };
+        assert!(matches!(error, HostClientError::Incompatible(_)));
+
+        let mut wire = Wire::connect(server.endpoint()).unwrap();
+        wire.write_json(&protocol::request(
+            1,
+            "session.create",
+            shell_create_params(),
+        ))
+        .unwrap();
+        let LineRead::Line(line) = wire.read_line(Duration::from_secs(5)).unwrap() else {
+            panic!("expected a refusal line");
+        };
+        let refusal: Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(refusal["error"]["code"], ERR_HANDSHAKE_REQUIRED);
+        assert!(host.list(None).is_empty(), "no session was created");
+        server.stop().unwrap();
+    }
+
+    #[test]
+    fn an_oversized_control_frame_is_rejected_without_buffering_it() {
+        let (_home, host, server) = start();
+        let huge = format!(
+            "{{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"host.hello\",\"params\":{{\"pad\":\"{}\"}}}}",
+            "x".repeat(MAX_CONTROL_FRAME_BYTES + 1)
+        );
+        let mut wire = Wire::connect(server.endpoint()).unwrap();
+        assert!(
+            wire.write_line(huge.as_bytes()).is_err(),
+            "the client side refuses to emit a frame above the limit"
+        );
+        drop(wire);
+
+        let mut raw = Wire::connect(server.endpoint()).unwrap();
+        let mut payload = huge.into_bytes();
+        payload.push(b'\n');
+        raw.write_raw(&payload).unwrap();
+        let LineRead::Line(line) = raw.read_line(Duration::from_secs(5)).unwrap() else {
+            panic!("expected a refusal line");
+        };
+        let refusal: Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(refusal["error"]["code"], ERR_FRAME_TOO_LARGE);
+        assert!(host.list(None).is_empty());
+        server.stop().unwrap();
+    }
+}

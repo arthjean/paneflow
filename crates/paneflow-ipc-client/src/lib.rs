@@ -155,7 +155,7 @@ fn connect_request_stream(socket: &Path) -> io::Result<Stream> {
 }
 
 #[cfg(windows)]
-mod windows_pipe {
+pub mod windows_pipe {
     use super::{io, Duration, Stream};
     use std::os::windows::io::{AsHandle, AsRawHandle};
     use windows_sys::Win32::Foundation::{
@@ -233,11 +233,7 @@ mod windows_pipe {
         }
     }
 
-    pub(super) fn write_all(
-        stream: &Stream,
-        mut payload: &[u8],
-        timeout: Duration,
-    ) -> io::Result<()> {
+    pub fn write_all(stream: &Stream, mut payload: &[u8], timeout: Duration) -> io::Result<()> {
         let deadline = std::time::Instant::now() + timeout;
         let handle = pipe_handle(stream);
 
@@ -279,11 +275,7 @@ mod windows_pipe {
         Ok(())
     }
 
-    pub(super) fn read_some(
-        stream: &Stream,
-        buffer: &mut [u8],
-        timeout: Duration,
-    ) -> io::Result<usize> {
+    pub fn read_some(stream: &Stream, buffer: &mut [u8], timeout: Duration) -> io::Result<usize> {
         if timeout.is_zero() {
             return Err(io::Error::new(
                 io::ErrorKind::TimedOut,

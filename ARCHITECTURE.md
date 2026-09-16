@@ -26,6 +26,7 @@ focused library crates:
 | `paneflow-terminal-ghostty` | `crates/paneflow-terminal-ghostty/` | Safe Rust interface over Ghostty terminal state, input, search, selection, and owned render snapshots |
 | `paneflow-ghostty-smoke` | `crates/paneflow-ghostty-smoke/` | Package-level native smoke binary for Ghostty, PTY I/O, resize, and shutdown verification |
 | `paneflow-config` | `crates/paneflow-config/` | Config schema, tolerant JSON loader, file watcher |
+| `paneflow-host` | `crates/paneflow-host/` | GPU-free local host library and executable: owns PTYs, child processes, canonical libghostty state and the durable session manifests under `~/.paneflow/host/` |
 | `paneflow-shim` | `crates/paneflow-shim/` | PATH shim wrapping 16 known agent CLIs so Paneflow can observe their lifecycle |
 | `paneflow-ai-hook` | `crates/paneflow-ai-hook/` | The hook binary agent CLIs invoke to report session events back over IPC |
 | `paneflow-ipc-client` | `crates/paneflow-ipc-client/` | Blocking JSON-RPC client for the local IPC socket (shared by the MCP bridge and the CLI) |
@@ -346,6 +347,44 @@ launch, so there is nothing extra to install.
 Ingress is treated as untrusted: session and config files are validated
 structurally (layout budgets, ratio clamps, id alphabets) before they touch
 app state.
+
+## Local host and durable session identity
+
+`paneflow-host` is a GPU-free crate (library plus `paneflow-host` executable)
+that owns terminal execution independently of a GPUI entity: the PTY pair, the
+child process handle, the canonical `libghostty` terminal, an 8 MiB output
+tail with monotonic byte offsets and the session manifests. Nothing in it
+links GPUI. The desktop still runs its in-process terminal path today; the
+host becomes the runtime owner when the desktop attaches to it in a later
+increment.
+
+Identity is durable and lives in `paneflow-config`: `WorkspaceId` and
+`SessionId` are hyphenated UUIDs persisted in `session.json` (schema version
+3, migrated from v2 by assigning ids without touching the layout), never a
+GPUI entity id, a PID, a cwd string or a connection id. A `HostInstanceToken`
+identifies one running owner per state home and a `SessionGeneration` counts
+explicit restarts. Host records sit under `~/.paneflow/host/`:
+`instance.json` for the running owner and `sessions/<SessionId>.json` for
+each manifest (identity, cwd, launch metadata, lifecycle, process identity
+with kernel start time, agent summary). A manifest or PID alone never proves
+ownership: a new host instance marks inherited running records `lost` and
+refuses to signal them.
+
+The host endpoint is derived from the state home (`\\.\pipe\paneflow-host-<fp>`
+on Windows, `<runtime dir>/paneflow-host-<fp>.sock` on Unix), so an isolated
+`PANEFLOW_HOME` never shares an endpoint or a record directory with the normal
+one. The protocol is JSON-RPC 2.0 lines on that endpoint: `host.hello` must
+open every connection and verifies the protocol version and the terminal
+engine identity (libghostty source sha and API version) before any effect;
+`session.list/create/ensure/inspect/stop`, `session.attach` (native snapshot
+checkpoint plus its output offset, captured in one runtime operation),
+`session.output` (contiguous bytes from an offset, optionally followed),
+`session.input`, `session.resize` and `agent.snapshot` follow. Control frames
+are capped at 64 KiB, data chunks at 1 MiB, a checkpoint at 64 MiB; an
+oversized frame or checkpoint is refused without unbounded allocation and
+without stopping the session. The host is the only responder to terminal
+queries; clipboard, bell and notification effects are not replayed from
+history.
 
 ## Self-update
 

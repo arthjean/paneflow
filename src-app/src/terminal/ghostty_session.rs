@@ -3759,10 +3759,7 @@ fn child_termination_target(child_pid: u32) -> ChildTerminationTarget {
 }
 
 #[cfg(unix)]
-fn verified_process_group(child_pid: u32) -> Option<i32> {
-    let pid = i32::try_from(child_pid).ok().filter(|pid| *pid > 0)?;
-    (unsafe { libc::getpgid(pid) } == pid).then_some(pid)
-}
+use paneflow_host::process::verified_process_group;
 
 #[cfg(unix)]
 fn observe_child_exit(
