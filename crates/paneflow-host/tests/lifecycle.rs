@@ -4,14 +4,18 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use paneflow_host::bootstrap::{self, Probe};
-use paneflow_host::protocol::{
-    ClientHello, ERR_SESSION_LIVE, METHOD_AGENT_EVENT, METHOD_AGENT_FOLLOW, METHOD_AGENT_SNAPSHOT,
-};
+use paneflow_host::protocol::{ClientHello, ERR_SESSION_LIVE};
 use paneflow_host::{HostClient, SessionReconnection, SessionSummary};
-use paneflow_ipc_client::IpcTransport;
-use paneflow_ipc_client::agent::AgentState;
-use paneflow_ipc_client::host_control::{HostControl, HostTransport};
 use serde_json::json;
+
+#[cfg(windows)]
+use paneflow_host::protocol::{METHOD_AGENT_EVENT, METHOD_AGENT_FOLLOW, METHOD_AGENT_SNAPSHOT};
+#[cfg(windows)]
+use paneflow_ipc_client::IpcTransport;
+#[cfg(windows)]
+use paneflow_ipc_client::agent::AgentState;
+#[cfg(windows)]
+use paneflow_ipc_client::host_control::{HostControl, HostTransport};
 
 fn host_executable() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_paneflow-host"))
@@ -439,6 +443,7 @@ fn a_gpu_free_client_drives_agents_and_surfaces_while_no_window_is_open() {
     assert!(wait_unreachable(home.path(), &endpoint, &hello));
 }
 
+#[cfg(windows)]
 fn next_agent_event(follower: &mut HostControl) -> serde_json::Value {
     let deadline = Instant::now() + Duration::from_secs(10);
     while Instant::now() < deadline {
@@ -454,6 +459,7 @@ fn next_agent_event(follower: &mut HostControl) -> serde_json::Value {
     panic!("no agent event arrived on the follow stream");
 }
 
+#[cfg(windows)]
 #[test]
 fn a_detached_host_inherits_none_of_the_controllers_stray_handles() {
     use std::os::windows::fs::OpenOptionsExt;

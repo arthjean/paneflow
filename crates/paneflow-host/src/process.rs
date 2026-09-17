@@ -72,7 +72,7 @@ fn process_is_running(pid: u32) -> bool {
             size,
         )
     };
-    written == size && info.pbi_status != libc::SZOMB as u32
+    written == size && info.pbi_status != libc::SZOMB
 }
 
 #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
