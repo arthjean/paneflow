@@ -8,9 +8,32 @@ use std::time::Instant;
 use interprocess::local_socket::ConnectOptions;
 use interprocess::local_socket::{prelude::*, GenericFilePath, Stream};
 use paneflow_ipc_client::ai_hook::{AiHookFrame, MAX_FRAME_BYTES};
+use paneflow_ipc_client::host_control::{HostControl, METHOD_AGENT_EVENT};
 
 const WRITE_TIMEOUT: Duration = Duration::from_millis(500);
 const CONNECT_BACKOFF: [Duration; 2] = [Duration::from_millis(100), Duration::from_millis(300)];
+
+const HOST_CLIENT_NAME: &str = "paneflow-ai-hook";
+
+pub(crate) fn send_agent_event(
+    endpoint: &Path,
+    session: &str,
+    frame: &AiHookFrame,
+) -> io::Result<()> {
+    let mut control = HostControl::connect(endpoint, HOST_CLIENT_NAME)
+        .map_err(|error| io::Error::new(io::ErrorKind::ConnectionRefused, error))?;
+    let accepted = control
+        .request(METHOD_AGENT_EVENT, frame.to_agent_event_params(session))
+        .map_err(io::Error::other)?;
+    if accepted.get("accepted").and_then(|value| value.as_bool()) == Some(false) {
+        let reason = accepted
+            .get("reason")
+            .and_then(|value| value.as_str())
+            .unwrap_or("the local host refused the event");
+        return Err(io::Error::new(io::ErrorKind::InvalidData, reason));
+    }
+    Ok(())
+}
 
 pub(crate) fn send_frame(socket_path: &Path, frame: &AiHookFrame) -> io::Result<()> {
     let payload = serialize_frame(frame)?;

@@ -26,6 +26,7 @@ focused library crates:
 | `paneflow-terminal-ghostty` | `crates/paneflow-terminal-ghostty/` | Safe Rust interface over Ghostty terminal state, input, search, selection, and owned render snapshots |
 | `paneflow-ghostty-smoke` | `crates/paneflow-ghostty-smoke/` | Package-level native smoke binary for Ghostty, PTY I/O, resize, and shutdown verification |
 | `paneflow-config` | `crates/paneflow-config/` | Config schema, tolerant JSON loader, file watcher |
+| `paneflow-host` | `crates/paneflow-host/` | GPU-free local host library and executable: owns PTYs, child processes, canonical libghostty state and the durable session manifests under `~/.paneflow/host/` |
 | `paneflow-shim` | `crates/paneflow-shim/` | PATH shim wrapping 16 known agent CLIs so Paneflow can observe their lifecycle |
 | `paneflow-ai-hook` | `crates/paneflow-ai-hook/` | The hook binary agent CLIs invoke to report session events back over IPC |
 | `paneflow-ipc-client` | `crates/paneflow-ipc-client/` | Blocking JSON-RPC client for the local IPC socket (shared by the MCP bridge and the CLI) |
@@ -346,6 +347,204 @@ launch, so there is nothing extra to install.
 Ingress is treated as untrusted: session and config files are validated
 structurally (layout budgets, ratio clamps, id alphabets) before they touch
 app state.
+
+## Local host and durable session identity
+
+`paneflow-host` is a GPU-free crate (library plus `paneflow-host` executable)
+that owns terminal execution independently of a GPUI entity: the PTY pair, the
+child process handle, the canonical `libghostty` terminal, an 8 MiB output
+tail with monotonic byte offsets and the session manifests. Nothing in it
+links GPUI. The desktop no longer spawns a PTY of its own: every terminal view
+resolves a hosted session and attaches to it (see "Attachment and the client
+mirror" below). The in-process runtime in `ghostty_session.rs` remains only
+for the perf bench and unit tests.
+
+### Host lifetime
+
+One host owns one state home. The desktop (`host_bootstrap.rs`, on a
+background thread) and `paneflow host start` share
+`paneflow_host::bootstrap::ensure_host_running`: take
+`<home>/host/bootstrap.lock`, `host.hello` the endpoint, adopt a compatible
+host that serves the same home, otherwise spawn `paneflow-host --home <home>
+serve` and wait up to ten seconds for it to answer. The host holds
+`<home>/host/owner.lock` for its lifetime, so a second `serve` on the same
+home exits instead of becoming a second owner. The executable is resolved
+next to the controller binary (`paneflow-host[.exe]` beside `paneflow[.exe]`),
+never from the per-user cache and never from the embedded helper bundle: it
+links libghostty and stays outside the three capped helpers.
+
+The spawn is detached on every platform. Windows uses
+`CREATE_BREAKAWAY_FROM_JOB | CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS`, so
+the host leaves the desktop's kill-on-close Job Object and gets no console, and
+the spawn goes through `CreateProcessW` with an explicit
+`PROC_THREAD_ATTRIBUTE_HANDLE_LIST` because `std::process::Command` always
+passes `bInheritHandles=TRUE` on Windows: without the list the host inherits
+every inheritable handle of the controller, keeps a shell pipeline such as
+`paneflow host start | jq` open forever and pins the desktop's log files;
+Unix calls `setsid()` in the child before exec, so the host has no controlling
+terminal. Stdin and stdout are null and stderr appends to
+`<home>/host/host.log`. A denied breakaway (`ERROR_ACCESS_DENIED`), a missing
+executable, an early exit or a startup timeout is reported as a bounded error;
+nothing falls back to a desktop-owned PTY. Breakaway only leaves the
+controller's immediate job: a controller started under `cargo run` or
+`cargo test` sits in Cargo's kill-on-close job and so does its host, which is
+why `scripts/dev.ps1` and `scripts/dev.sh` build both binaries and run
+`target/<profile>/paneflow` directly.
+
+| Event | Host | Sessions | Records |
+|---|---|---|---|
+| Quit keeping sessions (the default of the quit dialog), crash or `taskkill /F` | keeps running | keep running | unchanged |
+| Quit with no live session, or "Stop everything and quit" | `host.shutdown` once the stops are done | stopped one by one | `lifecycle: exited` |
+| Controller pipe or CLI connection closes | keeps running | keep running | unchanged |
+| Explicit `session.stop` | keeps running | that session's owned process tree is terminated within a 5 s budget, exit recorded | `lifecycle: exited` |
+| `paneflow host stop` with live sessions | refused, lists them | untouched | unchanged |
+| `paneflow host stop` when idle | exits, removes `instance.json` | none live | manifests kept |
+| Host process death or reboot | gone | processes gone | next host marks running records `lost`, never signals them |
+| `session.restart` on an exited or lost record | same host | new generation, recorded shell with no arguments, no input or command replay | `generation + 1`, current owner |
+| Incompatible host on the endpoint | left running | untouched | unchanged; the controller reports the mismatch |
+
+Reconnection classification lives in `SessionSummary::reconnection`: `live`,
+`starting`, `exited`, `failed`, `host_replaced` (the record's owner is not the
+current instance) or `lost`. `paneflow host status` and `paneflow-host session
+inspect` print it. Development recovery commands, all scoped by
+`PANEFLOW_HOME`:
+
+```bash
+paneflow host start                       # start or adopt the host for this home
+paneflow host status                      # identity, live count, per-session reconnection state
+paneflow host stop                        # refused while sessions live
+paneflow-host session list|create|inspect|stop|restart
+paneflow-host --home <dir> serve          # foreground host for an isolated home
+```
+
+Identity is durable and lives in `paneflow-config`: `WorkspaceId` and
+`SessionId` are hyphenated UUIDs persisted in `session.json` (schema version
+3, migrated from v2 by assigning ids without touching the layout), never a
+GPUI entity id, a PID, a cwd string or a connection id. A `HostInstanceToken`
+identifies one running owner per state home and a `SessionGeneration` counts
+explicit restarts. Host records sit under `~/.paneflow/host/`:
+`instance.json` for the running owner and `sessions/<SessionId>.json` for
+each manifest (identity, cwd, launch metadata, lifecycle, process identity
+with kernel start time, agent summary). A manifest or PID alone never proves
+ownership: a new host instance marks inherited running records `lost` and
+refuses to signal them.
+
+### Attachment and the client mirror
+
+`src-app/src/terminal/host_link.rs` is the desktop's only entry to the host.
+`TerminalView::open` (new terminal), `attach_restored` (saved layout) and
+`attach_existing` (hidden session or explicit restart) each build an
+`AttachRequest` with a `SessionIntent`: `Create` may create, `Reattach` never
+creates and reports a missing or ended record as an explicit ended state,
+`Resume` attaches when live, restarts when ended and creates when missing.
+`host_link::resolve` runs on the background executor: `session.inspect`, then
+create or restart as the intent allows, then `session.attach`, which returns
+the native libghostty snapshot and its output offset captured in one runtime
+operation together with the host instance token and the session generation.
+`ERR_CHECKPOINT_TOO_LARGE` and an engine identity mismatch surface as an attach
+failure that leaves the running session untouched.
+
+The view keeps one `GhosttySession` runtime per attachment
+(`start_attached`, thread `paneflow-ghostty-attached`). It decodes the
+checkpoint through the pinned `SnapshotDecoder` with continuation retention
+enabled before any byte is fed, so a checkpoint cut inside a UTF-8 or control
+sequence resumes parsing correctly. The decoded terminal is the client
+mirror: it renders, selects, searches and scrolls locally, and it encodes key,
+mouse, focus and paste input into bytes that go to the host through
+`session.input`. The mirror has no PTY writer: any reply the mirror's parser
+would emit to a terminal query is dropped, because the host's canonical
+terminal is the only responder. Clipboard, title, cwd and notification events
+still reach the desktop live; they are never replayed from a restored
+snapshot.
+
+A follower thread (`paneflow-ghostty-follower`) streams `session.output` from
+the checkpoint offset with `follow=true`. The host emits a keepalive frame
+every two seconds while idle; the follower skips overlapping bytes, treats a
+gap or `ERR_OUTPUT_EVICTED` as a request for a fresh checkpoint
+(`RuntimeMessage::RestoreCheckpoint` replaces the mirror), reconnects every
+500 ms after a connection loss, and verifies the host instance token on every
+reconnect so a replaced host is reported as `host_replaced` instead of being
+followed. Frames from a previous generation or attach attempt are discarded
+by the runtime's stop flag. When the stream ends with `live: false`, the
+follower classifies the end through `session.inspect` (exited with code or
+signal, failed, lost, restarted, missing).
+
+`TerminalState.host_link` carries `HostLinkState`: `Attaching`, `Attached`,
+`Reconnecting`, `Ended(HostLinkEnd)` or `Unavailable`. Input is accepted only
+while attaching or attached; in every other state the input dispatcher
+rejects it and pending input is cleared, never queued for a later resend. A
+`session.input` call that fails after a disconnect is reported as rejected
+and not retried. `render_host_link_overlay` draws the reconnecting, ended and
+unavailable states over the last rendered frame; Enter on an ended or
+unavailable terminal runs `resume_hosted_session`, which re-resolves the same
+`SessionId` with the `Resume` intent.
+
+### Close versus hide
+
+Dropping a `TerminalState` only shuts the local runtime down; nothing in a
+`Drop` implementation calls `session.stop`, so a crash or `taskkill /F` leaves
+every session running on the host. Every close path resolves one shared policy
+in `app/close_policy.rs` before anything is removed: a `CloseTarget` names what
+the action closes, `session_close_decision` answers `Stop` for a session with
+no agent or a finished or errored one, `Ask` for a thinking or waiting agent,
+and `Unknown` when that session's host link is unavailable. `Ask` opens one
+dialog for the whole action; `Keep running` (Enter, the default) removes the
+views with the `Detach` intent and leaves the sessions listed, `Stop` removes
+them with the `Stop` intent, Escape cancels and nothing is removed. Every stop,
+from a close path or from the quit dialog, goes through the single call site
+`host_link::stop_session`, which a guard test in `terminal/host_link.rs`
+enforces.
+
+| Action | Sessions |
+|---|---|
+| Close pane (shortcut, pane menu, detached window shortcut), close surface tab, close diff dock terminal | stopped, or asked for when an agent is thinking or waiting |
+| Close tab, close workspace | every contained session stopped, one dialog for the whole action |
+| Hide pane from layout (`hide_pane` action, pane menu) | kept running, the `Detach` intent skips the stop, never asks |
+| Any close while the local host is unreachable | the views are removed, no stop is attempted and a toast says the session state is unknown |
+| Return a detached pane to its window | untouched |
+| Quit (`Quit` action, main window close, title bar close) with live sessions | asks: "Keep sessions running" (Enter, default) leaves them and the host untouched; "Stop everything and quit" stops each live session, then `host.shutdown`; the `on_quit` setting skips the dialog |
+| Quit with no live session | the idle host receives `host.shutdown` and the app exits |
+
+A stop whose outcome is unknown (connection lost mid-request) shows a toast
+and is reconciled from the next `session.list`; the desktop never marks
+sessions stopped optimistically. The workspace session list is every owned
+record of `session.list`, live or ended, whose id no attached view carries;
+the sidebar lists them under the workspace's last tab, live rows first and
+then ended rows by the most recent lifecycle change. A record the desktop
+cannot parse is skipped with a log line and the rest of the list renders; a
+failed listing keeps the previous rows and marks them stale. Ended rows are
+dimmed, carry no agent lane, and the ones beyond `sidebar_ended_sessions`
+(default 5) collapse under one row. Left-click reopens a live row through
+`attach_existing` and resumes an ended one; right-click offers Open in layout
+and Stop session for a live row, Resume and Remove from list for an ended one.
+`Remove from list` calls `session.remove`, which the host refuses with
+`ERR_SESSION_LIVE` while the session runs and which otherwise deletes its
+manifest; nothing is pruned automatically. `resume_ended_sessions` brings back
+every ended restartable pane of a workspace in layout order, resumability being
+decided by the host link alone because a reattach that lands on an ended
+session never promotes an attachment, and a window that opens with at least two
+of them offers it once through a toast. Worktree teardown asks the host for the
+live session cwds first: a worktree that still contains a live session, hidden
+or not, is kept; an unreachable host proceeds with the current rules; any other
+host error skips the teardown.
+
+The host endpoint is derived from the state home (`\\.\pipe\paneflow-host-<fp>`
+on Windows, `<runtime dir>/paneflow-host-<fp>.sock` on Unix), so an isolated
+`PANEFLOW_HOME` never shares an endpoint or a record directory with the normal
+one. The protocol is JSON-RPC 2.0 lines on that endpoint: `host.hello` must
+open every connection and verifies the protocol version and the terminal
+engine identity (libghostty source sha and API version) before any effect;
+`session.list/create/ensure/inspect/stop/restart`, `session.attach` (native
+snapshot checkpoint plus its output offset, captured in one runtime
+operation), `session.output` (contiguous bytes from an offset, optionally
+followed), `session.input`, `session.resize`, `agent.snapshot` and
+`host.shutdown` (refused with the live session list while any session runs)
+follow. Control frames
+are capped at 64 KiB, data chunks at 1 MiB, a checkpoint at 64 MiB; an
+oversized frame or checkpoint is refused without unbounded allocation and
+without stopping the session. The host is the only responder to terminal
+queries; clipboard, bell and notification effects are not replayed from
+history.
 
 ## Self-update
 

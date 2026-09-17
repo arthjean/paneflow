@@ -2,6 +2,7 @@ use gpui::{App, AppContext, Context, Entity, Window};
 use paneflow_config::schema::{TabTitleSource, TerminalSurfaceProfile};
 
 use crate::PaneFlowApp;
+use crate::app::close_policy::CloseTarget;
 use crate::app::workspace_ops::SurfaceLaunch;
 use crate::layout::LayoutTree;
 use crate::terminal::TerminalView;
@@ -200,6 +201,24 @@ impl PaneFlowApp {
     }
 
     pub(crate) fn close_workspace_tab(
+        &mut self,
+        ws_idx: usize,
+        tab_idx: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self
+            .workspaces
+            .get(ws_idx)
+            .and_then(|ws| ws.tabs().get(tab_idx))
+            .is_none()
+        {
+            return;
+        }
+        self.request_close(CloseTarget::Tab { ws_idx, tab_idx }, Some(window), cx);
+    }
+
+    pub(crate) fn remove_workspace_tab(
         &mut self,
         ws_idx: usize,
         tab_idx: usize,

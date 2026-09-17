@@ -5,10 +5,11 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
 use paneflow_ipc_client::ai_hook::{AiToolName, LifecycleEventSource, SessionPid, SurfaceId};
+use paneflow_ipc_client::host_control::{host_endpoint_from, session_id_from};
 use serde_json::Value;
 
 use crate::event::{build_frame, BuildOutcome, FrameContext, HookEvent, InputSource};
-use crate::transport::send_frame;
+use crate::transport::{send_agent_event, send_frame};
 use crate::MAX_STDIN_BYTES;
 
 const SOCKET_PATH_ENV: &str = "PANEFLOW_SOCKET_PATH";
@@ -19,6 +20,36 @@ const SURFACE_ID_ENV: &str = "PANEFLOW_SURFACE_ID";
 const EXIT_CODE_ENV: &str = "PANEFLOW_AI_EXIT_CODE";
 const EVENT_SOURCE_ENV: &str = "PANEFLOW_AI_EVENT_SOURCE";
 const HOOK_LOG_ENV: &str = "PANEFLOW_HOOK_LOG";
+const HOST_ENDPOINT_ENV: &str = "PANEFLOW_HOST_ENDPOINT";
+const SESSION_ID_ENV: &str = "PANEFLOW_SESSION_ID";
+
+pub(crate) enum Target {
+    Host { endpoint: PathBuf, session: String },
+    Controller { socket: PathBuf, workspace_id: u64 },
+}
+
+pub(crate) fn resolve_target(
+    host_endpoint: Option<&OsStr>,
+    session: Option<&str>,
+    socket: Option<&OsStr>,
+    workspace_id: Option<&str>,
+) -> Option<Target> {
+    if let (Some(endpoint), Some(session)) = (
+        host_endpoint_from(host_endpoint).filter(|path| path.is_absolute()),
+        session_id_from(session),
+    ) {
+        return Some(Target::Host { endpoint, session });
+    }
+    let socket = read_socket_path_from(socket)?;
+    if !socket.is_absolute() {
+        return None;
+    }
+    let workspace_id = workspace_id?.parse::<u64>().ok()?;
+    Some(Target::Controller {
+        socket,
+        workspace_id,
+    })
+}
 
 pub(crate) fn dispatch() {
     let Some(event_name) = env::args().nth(1) else {
@@ -29,11 +60,21 @@ pub(crate) fn dispatch() {
         diagnose(&format!("{event_name}: unhandled hook event"));
         return;
     };
-    let Some(socket_path) = read_socket_path() else {
+    let Some(target) = resolve_target(
+        env::var_os(HOST_ENDPOINT_ENV).as_deref(),
+        env::var(SESSION_ID_ENV).ok().as_deref(),
+        env::var_os(SOCKET_PATH_ENV).as_deref(),
+        env::var(WORKSPACE_ID_ENV).ok().as_deref(),
+    ) else {
+        diagnose(&format!(
+            "{}: no local host endpoint and no reachable {SOCKET_PATH_ENV}/{WORKSPACE_ID_ENV} pair",
+            event.name()
+        ));
         return;
     };
-    let Some(workspace_id) = read_workspace_id() else {
-        return;
+    let workspace_id = match &target {
+        Target::Host { .. } => 0,
+        Target::Controller { workspace_id, .. } => *workspace_id,
     };
     let Some(hook_payload) = read_payload(event) else {
         return;
@@ -55,8 +96,12 @@ pub(crate) fn dispatch() {
 
     match build_frame(event, context, hook_payload) {
         Ok(BuildOutcome::Send(frame)) => {
-            if let Err(error) = send_frame(&socket_path, &frame) {
-                diagnose(&format!("{}: send_frame failed: {error}", event.name()));
+            let delivered = match &target {
+                Target::Host { endpoint, session } => send_agent_event(endpoint, session, &frame),
+                Target::Controller { socket, .. } => send_frame(socket, &frame),
+            };
+            if let Err(error) = delivered {
+                diagnose(&format!("{}: delivery failed: {error}", event.name()));
             }
         }
         Ok(BuildOutcome::Drop(reason)) => diagnose(&format!("{}: {reason}", event.name())),
@@ -82,28 +127,8 @@ fn read_payload(event: HookEvent) -> Option<Value> {
     }
 }
 
-fn read_socket_path() -> Option<PathBuf> {
-    let path = read_socket_path_from(env::var_os(SOCKET_PATH_ENV).as_deref())?;
-    if !path.is_absolute() {
-        diagnose(&format!("{SOCKET_PATH_ENV} is not absolute"));
-        return None;
-    }
-    Some(path)
-}
-
 fn read_socket_path_from(raw: Option<&OsStr>) -> Option<PathBuf> {
-    raw.map(PathBuf::from)
-}
-
-fn read_workspace_id() -> Option<u64> {
-    let raw = env::var(WORKSPACE_ID_ENV).ok()?;
-    match raw.parse::<u64>() {
-        Ok(workspace_id) => Some(workspace_id),
-        Err(_) => {
-            diagnose(&format!("{WORKSPACE_ID_ENV} is not u64"));
-            None
-        }
-    }
+    raw.filter(|value| !value.is_empty()).map(PathBuf::from)
 }
 
 fn detect_tool_from(
@@ -178,6 +203,61 @@ fn diagnose_to(message: &str, log_path: Option<&Path>) {
 mod tests {
     use super::*;
     use paneflow_ipc_client::ai_hook::MAX_SESSION_PID;
+    use std::ffi::OsString;
+
+    #[test]
+    fn the_local_host_wins_over_the_controller_socket_when_both_are_present() {
+        let absolute_socket = if cfg!(windows) {
+            OsString::from(r"\\.\pipe\paneflow-test")
+        } else {
+            OsString::from("/tmp/paneflow.sock")
+        };
+        let absolute_endpoint = if cfg!(windows) {
+            OsString::from(r"\\.\pipe\paneflow-host-test")
+        } else {
+            OsString::from("/tmp/paneflow-host.sock")
+        };
+
+        let target = resolve_target(
+            Some(&absolute_endpoint),
+            Some("11112222-3333-4444-5555-666677778888"),
+            Some(&absolute_socket),
+            Some("7"),
+        );
+        match target {
+            Some(Target::Host { endpoint, session }) => {
+                assert_eq!(endpoint, PathBuf::from(&absolute_endpoint));
+                assert_eq!(session, "11112222-3333-4444-5555-666677778888");
+            }
+            _ => panic!("the durable host session must win"),
+        }
+
+        let target = resolve_target(None, None, Some(&absolute_socket), Some("7"));
+        match target {
+            Some(Target::Controller {
+                socket,
+                workspace_id,
+            }) => {
+                assert_eq!(socket, PathBuf::from(&absolute_socket));
+                assert_eq!(workspace_id, 7);
+            }
+            _ => panic!("the controller socket stays the fallback"),
+        }
+
+        assert!(
+            resolve_target(Some(&absolute_endpoint), None, None, None).is_none(),
+            "a host endpoint without a durable session addresses nothing"
+        );
+        assert!(
+            resolve_target(None, None, Some(&absolute_socket), None).is_none(),
+            "the controller path still needs its workspace id"
+        );
+        assert!(
+            resolve_target(None, None, Some(OsStr::new("relative.sock")), Some("7")).is_none(),
+            "a relative socket path is refused"
+        );
+        assert!(resolve_target(None, None, None, Some("7")).is_none());
+    }
 
     #[test]
     fn missing_tool_uses_the_legacy_default_but_malformed_tool_is_rejected() {

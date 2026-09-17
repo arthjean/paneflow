@@ -1,7 +1,10 @@
+use super::identity::{SessionId, WorkspaceId};
 use super::layout::{default_layout_pane, LayoutNode, SurfaceDefinition};
 use serde::{Deserialize, Serialize};
 
-pub const SESSION_SCHEMA_VERSION: u32 = 2;
+pub const SESSION_SCHEMA_VERSION: u32 = 3;
+
+pub const SESSION_SCHEMA_VERSION_V2: u32 = 2;
 
 pub const SESSION_SCHEMA_VERSION_V1: u32 = 1;
 
@@ -193,6 +196,8 @@ impl TabSession {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct WorkspaceSession {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<WorkspaceId>,
     pub title: String,
     pub cwd: String,
     #[serde(default)]
@@ -219,7 +224,80 @@ pub fn migrate_session_v1(state: &mut SessionState) {
     for ws in &mut state.workspaces {
         migrate_workspace_v1(ws);
     }
+    state.version = SESSION_SCHEMA_VERSION_V2;
+    migrate_session_v2(state);
+}
+
+pub fn migrate_session_v2(state: &mut SessionState) {
+    let assigned = assign_durable_identities(state);
+    tracing::info!(
+        workspaces = assigned.workspaces,
+        sessions = assigned.sessions,
+        "session v2 migration: durable identities assigned"
+    );
     state.version = SESSION_SCHEMA_VERSION;
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct DurableIdentityAssignment {
+    pub workspaces: usize,
+    pub sessions: usize,
+}
+
+impl DurableIdentityAssignment {
+    pub fn is_empty(self) -> bool {
+        self.workspaces == 0 && self.sessions == 0
+    }
+}
+
+pub fn assign_durable_identities(state: &mut SessionState) -> DurableIdentityAssignment {
+    let mut assigned = DurableIdentityAssignment::default();
+    let mut seen_sessions = std::collections::HashSet::new();
+    for ws in &mut state.workspaces {
+        if ws.id.is_none() {
+            ws.id = Some(WorkspaceId::new());
+            assigned.workspaces += 1;
+        }
+        for layout in ws
+            .tabs
+            .iter_mut()
+            .filter_map(|tab| tab.layout.as_mut())
+            .chain(ws.legacy_layout.as_mut())
+        {
+            assign_surface_sessions(layout, &mut seen_sessions, &mut assigned);
+        }
+    }
+    assigned
+}
+
+fn assign_surface_sessions(
+    node: &mut LayoutNode,
+    seen: &mut std::collections::HashSet<SessionId>,
+    assigned: &mut DurableIdentityAssignment,
+) {
+    match node {
+        LayoutNode::Pane { surfaces } => {
+            for surface in surfaces.iter_mut() {
+                if !surface.is_terminal() {
+                    surface.session = None;
+                    continue;
+                }
+                let fresh =
+                    !matches!(&surface.session, Some(existing) if seen.insert(existing.clone()));
+                if fresh {
+                    let id = SessionId::new();
+                    seen.insert(id.clone());
+                    surface.session = Some(id);
+                    assigned.sessions += 1;
+                }
+            }
+        }
+        LayoutNode::Split { children, .. } => {
+            for child in children.iter_mut() {
+                assign_surface_sessions(child, seen, assigned);
+            }
+        }
+    }
 }
 
 fn migrate_workspace_v1(ws: &mut WorkspaceSession) {

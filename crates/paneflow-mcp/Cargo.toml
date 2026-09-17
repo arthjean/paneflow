@@ -10,6 +10,7 @@ name = "paneflow-mcp"
 path = "src/main.rs"
 
 [dependencies]
+paneflow-home.workspace = true
 paneflow-ipc-client.workspace = true
 serde.workspace = true
 serde_json.workspace = true

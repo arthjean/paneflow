@@ -6,7 +6,9 @@ mod tab;
 use gpui::{App, AppContext, ClipboardItem, Context, Entity, Focusable, PathPromptOptions, Window};
 use paneflow_config::schema::{TabTitleSource, TerminalSurfaceProfile};
 
+use crate::app::close_policy::CloseTarget;
 use crate::layout::{LayoutTree, MAX_PANES, SplitDirection};
+use crate::pane::Pane;
 use crate::terminal::TerminalView;
 use crate::workspace::{MAX_WORKSPACES, Workspace, next_workspace_id};
 use crate::{
@@ -195,6 +197,7 @@ impl PaneFlowApp {
         self.title_bar_files_menu_open = None;
         self.title_bar_help_menu_open = None;
         self.workspace_menu_open = None;
+        self.session_menu_open = None;
         self.sidebar_customize_menu_open = false;
         self.sidebar_show_submenu_open = false;
         self.tab_menu_open = None;
@@ -269,6 +272,7 @@ impl PaneFlowApp {
         }
         self.save_session(cx);
         self.acknowledge_visible_completions(cx);
+        self.refresh_owned_sessions(cx);
         cx.notify();
         changed
     }
@@ -303,7 +307,20 @@ impl PaneFlowApp {
             return;
         }
         cx.spawn(async move |_this, _cx: &mut gpui::AsyncApp| {
-            smol::unblock(move || crate::workspace::worktree::teardown_all(worktrees)).await;
+            smol::unblock(move || {
+                let worktrees = match crate::terminal::host_link::live_session_cwds() {
+                    crate::terminal::host_link::LiveSessionProbe::Sessions(cwds) => {
+                        crate::workspace::worktree::without_live_sessions(worktrees, &cwds)
+                    }
+                    crate::terminal::host_link::LiveSessionProbe::NoHost => worktrees,
+                    crate::terminal::host_link::LiveSessionProbe::Unknown(error) => {
+                        log::warn!("worktree teardown skipped: live session probe failed: {error}");
+                        return;
+                    }
+                };
+                crate::workspace::worktree::teardown_all(worktrees)
+            })
+            .await;
         })
         .detach();
     }
@@ -522,20 +539,31 @@ impl PaneFlowApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let closing_pane = self.active_workspace().and_then(|ws| {
+            ws.active_tab().root.as_ref().and_then(|root| {
+                if ws.is_zoomed() {
+                    root.first_leaf()
+                } else {
+                    root.focused_pane(window, cx)
+                }
+            })
+        });
+        let Some(pane) = closing_pane else {
+            return;
+        };
+        self.request_close(CloseTarget::FocusedPane(pane), Some(window), cx);
+    }
+
+    pub(crate) fn remove_focused_pane(
+        &mut self,
+        pane: Entity<Pane>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let workspace_idx = self.active_idx;
-        if let Some(ws) = self.active_workspace()
-            && let Some(root) = &ws.active_tab().root
-        {
-            let closing_pane = if ws.is_zoomed() {
-                root.first_leaf()
-            } else {
-                root.focused_pane(window, cx)
-            };
-            if let Some(pane) = closing_pane {
-                let record = capture_closed_pane_record(&pane, workspace_idx, cx);
-                push_closed_pane_record(&mut self.closed_panes, record);
-            }
-        }
+        let record = capture_closed_pane_record(&pane, workspace_idx, cx);
+        push_closed_pane_record(&mut self.closed_panes, record);
+        pane.read(cx).focus_handle(cx).focus(window, cx);
 
         if let Some(ws) = self.active_workspace_mut()
             && ws.is_zoomed()
@@ -708,6 +736,18 @@ impl PaneFlowApp {
             return;
         }
         self.workspace_menu_open = None;
+        self.request_close(CloseTarget::Workspace(idx), Some(window), cx);
+    }
+
+    pub(crate) fn remove_workspace(
+        &mut self,
+        idx: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if idx >= self.workspaces.len() {
+            return;
+        }
         if let Some(dir) = self.workspaces[idx].git_dir.clone() {
             self.unwatch_git_dir(&dir);
         }

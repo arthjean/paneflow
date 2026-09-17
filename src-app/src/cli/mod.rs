@@ -1,10 +1,12 @@
 use clap::{Parser, Subcommand, ValueEnum};
-use paneflow_ipc_client::IpcClient;
+use paneflow_ipc_client::host_control::{ControlTarget, HostTransport, resolve_control_target};
+use paneflow_ipc_client::{IpcClient, IpcTransport};
 use serde_json::Value;
 
 mod control_cmds;
 mod flow_cmd;
 mod flow_spec;
+mod host_cmd;
 mod read_cmds;
 mod selector;
 mod send_cmd;
@@ -34,6 +36,7 @@ const VERBS: &[&str] = &[
     "focus",
     "key",
     "flow",
+    "host",
     "list_panes",
     "read_pane",
     "search_pane",
@@ -247,6 +250,11 @@ enum Commands {
         )]
         all: bool,
     },
+    #[command(
+        subcommand,
+        about = "Start, inspect or stop the detached local host that owns terminal sessions for this PANEFLOW_HOME (no running GUI needed)"
+    )]
+    Host(host_cmd::HostCommand),
     #[command(about = "Stream lifecycle events from the running instance as JSONL (EP-002)")]
     Watch {
         #[arg(
@@ -341,6 +349,16 @@ pub fn run() -> i32 {
         return EXIT_OK;
     };
 
+    if let Commands::Host(command) = command {
+        return match host_cmd::run(command) {
+            Ok(code) => code,
+            Err(e) => {
+                eprintln!("paneflow: {}", e.message);
+                e.code
+            }
+        };
+    }
+
     let client = match connect() {
         Ok(client) => client,
         Err(message) => {
@@ -358,16 +376,56 @@ pub fn run() -> i32 {
     }
 }
 
-fn connect() -> Result<IpcClient, String> {
-    let socket = paneflow_ipc_client::resolve_socket_path().ok_or_else(|| {
-        "paneflow: cannot locate the IPC socket; is Paneflow running? \
-         (set PANEFLOW_SOCKET_PATH if you launched the CLI outside a Paneflow pane)"
-            .to_string()
-    })?;
-    Ok(IpcClient::new(socket))
+pub(super) enum CliTransport {
+    Controller(IpcClient),
+    Host(Box<HostTransport>),
 }
 
-fn dispatch(command: Commands, client: &IpcClient) -> Result<i32, CliError> {
+impl CliTransport {
+    pub(super) fn controller_socket(&self) -> Option<std::path::PathBuf> {
+        match self {
+            Self::Controller(_) => paneflow_ipc_client::resolve_socket_path(),
+            Self::Host(_) => None,
+        }
+    }
+
+    pub(super) fn no_controller(action: &str) -> CliError {
+        CliError::runtime(format!(
+            "{action} needs an open Paneflow window; the local host answers session and terminal \
+             operations, not machine-local window actions"
+        ))
+    }
+}
+
+impl IpcTransport for CliTransport {
+    fn call(&self, method: &str, params: Value) -> Result<Value, String> {
+        match self {
+            Self::Controller(client) => client.call(method, params),
+            Self::Host(transport) => transport.call(method, params),
+        }
+    }
+}
+
+const CLIENT_NAME: &str = "paneflow-cli";
+
+fn connect() -> Result<CliTransport, String> {
+    let fallback = paneflow_host::endpoint::host_endpoint_path_for_current_home();
+    match resolve_control_target(fallback) {
+        Some(ControlTarget::Controller(socket)) => {
+            Ok(CliTransport::Controller(IpcClient::new(socket)))
+        }
+        Some(ControlTarget::Host(endpoint)) => HostTransport::connect(&endpoint, CLIENT_NAME)
+            .map(|transport| CliTransport::Host(Box::new(transport)))
+            .map_err(|error| format!("paneflow: {error}; start it with `paneflow host start`")),
+        None => Err(
+            "paneflow: cannot locate the IPC socket; is Paneflow running? \
+         (set PANEFLOW_SOCKET_PATH if you launched the CLI outside a Paneflow pane)"
+                .to_string(),
+        ),
+    }
+}
+
+fn dispatch(command: Commands, client: &CliTransport) -> Result<i32, CliError> {
     match command {
         Commands::Ls { human } => read_cmds::ls(client, human),
         Commands::Read {
@@ -426,7 +484,17 @@ fn dispatch(command: Commands, client: &IpcClient) -> Result<i32, CliError> {
             all,
         } => {
             if idle {
-                wait_cmd::wait_idle(client, &selector, for_ms, timeout, pattern.as_deref())
+                match client.controller_socket() {
+                    Some(socket) => wait_cmd::wait_idle(
+                        client,
+                        &socket,
+                        &selector,
+                        for_ms,
+                        timeout,
+                        pattern.as_deref(),
+                    ),
+                    None => Err(CliTransport::no_controller("paneflow wait --idle")),
+                }
             } else {
                 let Some(pattern) = pattern else {
                     return Err(CliError::runtime(
@@ -447,7 +515,13 @@ fn dispatch(command: Commands, client: &IpcClient) -> Result<i32, CliError> {
             surface,
             types,
             events_only,
-        } => watch_cmd::watch(client, surface.as_deref(), &types, events_only),
+        } => match client.controller_socket() {
+            Some(socket) => {
+                watch_cmd::watch(client, &socket, surface.as_deref(), &types, events_only)
+            }
+            None => Err(CliTransport::no_controller("paneflow watch")),
+        },
+        Commands::Host(command) => host_cmd::run(command),
     }
 }
 
@@ -468,6 +542,34 @@ pub(super) fn reject_legacy_error(result: Value) -> Result<Value, CliError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_window_only_action_names_what_the_host_cannot_do() {
+        let error = CliTransport::no_controller("paneflow watch");
+        assert_eq!(error.code, EXIT_RUNTIME);
+        assert!(
+            error.message.contains("paneflow watch"),
+            "{}",
+            error.message
+        );
+        assert!(
+            error.message.contains("Paneflow window"),
+            "{}",
+            error.message
+        );
+    }
+
+    #[test]
+    fn a_host_transport_offers_no_controller_socket() {
+        let socket = std::path::PathBuf::from("/tmp/paneflow-host.sock");
+        assert_eq!(
+            paneflow_ipc_client::host_control::choose_control_target(None, false, Some(socket)),
+            Some(ControlTarget::Host(std::path::PathBuf::from(
+                "/tmp/paneflow-host.sock"
+            ))),
+            "with no window listening the CLI targets the local host"
+        );
+    }
 
     #[test]
     fn is_cli_verb_matches_known_verbs() {
@@ -674,6 +776,17 @@ mod tests {
                 ..
             })
         ));
+    }
+
+    #[test]
+    fn host_verbs_parse_and_route_before_the_gui_socket() {
+        assert!(is_cli_verb(Some("host")));
+        for verb in ["start", "status", "stop"] {
+            let cli = Cli::try_parse_from(["paneflow", "host", verb]).expect("parse");
+            assert!(matches!(cli.command, Some(Commands::Host(_))), "{verb}");
+        }
+        let err = Cli::try_parse_from(["paneflow", "host"]).expect_err("usage");
+        assert_eq!(err.exit_code(), 2);
     }
 
     #[test]

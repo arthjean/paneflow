@@ -30,6 +30,7 @@ mod env_expand;
 mod external_open;
 mod file_icons;
 mod fonts;
+mod host_bootstrap;
 mod ipc;
 mod ipc_events;
 mod keybindings;
@@ -174,6 +175,8 @@ pub(crate) enum TerminalDropdown {
 pub(crate) enum GeneralDropdown {
     Editor,
     Shell,
+    OnQuit,
+    EndedSessions,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -184,6 +187,13 @@ pub(crate) enum WorkspaceTemplateDropdown {
 #[derive(Clone, Copy)]
 pub(crate) struct WorkspaceContextMenu {
     pub(crate) idx: usize,
+    pub(crate) position: Point<Pixels>,
+}
+
+#[derive(Clone)]
+pub(crate) struct SessionContextMenu {
+    pub(crate) ws_idx: usize,
+    pub(crate) session: Box<crate::app::hosted_sessions::OwnedSession>,
     pub(crate) position: Point<Pixels>,
 }
 
@@ -563,6 +573,7 @@ struct PaneFlowApp {
     theme_dropdown_open: bool,
     theme_mode: ThemeMode,
     workspace_menu_open: Option<WorkspaceContextMenu>,
+    session_menu_open: Option<SessionContextMenu>,
     pub(crate) worktree_states: crate::app::tab_worktree::WorktreeStates,
     pub(crate) branch_checkout_pending: Option<String>,
     pub(crate) pr_states: crate::app::pull_request::PrStates,
@@ -586,8 +597,15 @@ struct PaneFlowApp {
     jump_cursor: Option<u64>,
     swap_source: Option<Entity<crate::pane::Pane>>,
     closed_panes: Vec<ClosedPaneRecord>,
+    owned_sessions: crate::app::hosted_sessions::OwnedSessions,
+    resume_batch: Option<crate::app::hosted_sessions::ResumeBatch>,
+    close_dialog: Option<crate::app::close_policy::CloseDialog>,
+    close_dialog_focus: FocusHandle,
+    host_agents: crate::app::host_agents::HostAgentView,
     show_about_dialog: bool,
     system_info_dialog: Option<crate::app::system_info_dialog::SystemInfoDialog>,
+    quit_dialog: Option<crate::app::quit_dialog::QuitDialog>,
+    quit_dialog_focus: FocusHandle,
     composer: Option<app::composer::ComposerState>,
     broadcast: app::broadcast::BroadcastState,
     broadcast_picker_open: bool,
@@ -1017,6 +1035,10 @@ impl Render for PaneFlowApp {
             .on_action(cx.listener(Self::handle_split_h))
             .on_action(cx.listener(Self::handle_split_v))
             .on_action(cx.listener(Self::handle_close_pane))
+            .on_action(cx.listener(Self::handle_hide_pane))
+            .on_action(cx.listener(Self::handle_stop_session))
+            .on_action(cx.listener(Self::handle_resume_ended_sessions))
+            .on_action(cx.listener(Self::handle_remove_ended_sessions))
             .on_action(cx.listener(Self::handle_new_tab))
             .on_action(cx.listener(Self::handle_close_tab))
             .on_action(cx.listener(Self::handle_next_tab))
@@ -1054,9 +1076,7 @@ impl Render for PaneFlowApp {
             .on_action(cx.listener(Self::handle_ws8))
             .on_action(cx.listener(Self::handle_ws9))
             .on_action(cx.listener(|this: &mut Self, _: &Quit, _window, cx| {
-                this.save_session_blocking(cx);
-                this.emit_app_exited_and_flush();
-                cx.quit();
+                this.request_quit(cx);
             }))
             .on_action(cx.listener(|this: &mut Self, _: &About, _window, cx| {
                 this.show_about_dialog = true;
@@ -1358,11 +1378,23 @@ impl Render for PaneFlowApp {
             app_content = app_content.child(self.render_system_info_dialog(cx));
         }
 
+        if self.quit_dialog.is_some() {
+            app_content = app_content.child(self.render_quit_dialog(window, cx));
+        }
+
+        if self.close_dialog.is_some() {
+            app_content = app_content.child(self.render_close_dialog(window, cx));
+        }
+
         if let Some(menu) = self.workspace_menu_open
             && menu.idx < self.workspaces.len()
         {
             app_content =
                 app_content.child(self.render_workspace_context_menu(menu, ui, window, cx));
+        }
+
+        if let Some(menu) = self.session_menu_open.clone() {
+            app_content = app_content.child(self.render_session_context_menu(menu, ui, window, cx));
         }
 
         if let Some(menu) = self.tab_menu_open
@@ -1556,12 +1588,7 @@ fn mount_paneflow_app(window: &mut Window, cx: &mut App) -> Entity<PaneFlowApp> 
     window.on_window_should_close(cx, {
         let view = view.clone();
         move |_window, cx| {
-            let app = view.read(cx);
-            app.save_session_blocking(cx);
-            app.emit_app_exited_and_flush();
-            #[cfg(target_os = "linux")]
-            crate::window_chrome::linux_backdrop::clear_subtle_chrome_material();
-            cx.quit();
+            view.update(cx, |app, cx| app.request_quit(cx));
             false
         }
     });
@@ -1673,6 +1700,7 @@ fn main() {
              \n\
              Usage: paneflow [OPTIONS]\n\
              \x20      paneflow mcp <install|status|uninstall>\n\
+             \x20      paneflow host <start|status|stop>\n\
              \n\
              Options:\n\
              \x20 -h, --help       Print this help message\n\
@@ -1788,6 +1816,8 @@ fn main() {
         ),
     }
     startup_trace::mark("bridge_extracted");
+
+    host_bootstrap::start_in_background();
 
     #[cfg(target_os = "windows")]
     if let Err(err) = windows_app_identity::ensure_process_app_user_model_id() {

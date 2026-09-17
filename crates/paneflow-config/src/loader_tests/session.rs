@@ -2,6 +2,7 @@ use crate::schema::*;
 
 fn make_workspace(title: &str, cwd: &str, tabs: Vec<TabSession>) -> WorkspaceSession {
     WorkspaceSession {
+        id: None,
         title: title.to_string(),
         cwd: cwd.to_string(),
         tabs,
@@ -297,6 +298,189 @@ fn count_workspace_surfaces(ws: &WorkspaceSession) -> usize {
         .filter_map(|tab| tab.layout.as_ref())
         .map(count_surfaces)
         .sum()
+}
+
+const V2_FIXTURE: &str = r#"{
+    "version": 2,
+    "active_workspace": 1,
+    "workspaces": [
+        {
+            "title": "paneflow",
+            "cwd": "/home/user/dev/paneflow",
+            "tabs": [
+                {
+                    "title": "agents",
+                    "title_source": "user",
+                    "worktree": "/home/user/.paneflow/worktrees/paneflow/feat-x",
+                    "layout": {
+                        "type": "split",
+                        "direction": "horizontal",
+                        "ratios": [0.6, 0.4],
+                        "children": [
+                            { "type": "pane", "surfaces": [
+                                { "surface_type": "terminal", "name": "claude", "cwd": "/home/user/dev/paneflow", "command": "claude --resume abc", "agent": "claude_code", "focus": true }
+                            ] },
+                            { "type": "pane", "surfaces": [
+                                { "surface_type": "markdown", "path": "/home/user/dev/paneflow/README.md" },
+                                { "surface_type": "terminal", "name": "zsh", "cwd": "/home/user/dev/paneflow/web" }
+                            ] }
+                        ]
+                    }
+                },
+                { "title": "notes", "layout": { "type": "pane", "surfaces": [ { "surface_type": "terminal" } ] } }
+            ],
+            "active_tab": 1
+        },
+        { "title": "scratch", "cwd": "/tmp", "tabs": [ {} ] }
+    ],
+    "detached_panes": [
+        { "location": { "mode": "cli", "workspace": 0, "tab": 0, "leaf": 1 }, "layout_leaf_count": 2, "x": 10, "y": 20, "width": 800, "height": 600 }
+    ]
+}"#;
+
+fn terminal_sessions(node: &LayoutNode) -> Vec<Option<SessionId>> {
+    match node {
+        LayoutNode::Pane { surfaces } => surfaces
+            .iter()
+            .filter(|surface| surface.is_terminal())
+            .map(|surface| surface.session.clone())
+            .collect(),
+        LayoutNode::Split { children, .. } => children.iter().flat_map(terminal_sessions).collect(),
+    }
+}
+
+#[test]
+fn test_migrate_v2_assigns_durable_identities_and_keeps_the_layout() {
+    let mut state: SessionState = serde_json::from_str(V2_FIXTURE).unwrap();
+    assert_eq!(state.version, SESSION_SCHEMA_VERSION_V2);
+    let before = state.clone();
+
+    migrate_session_v2(&mut state);
+
+    assert_eq!(state.version, SESSION_SCHEMA_VERSION);
+    assert_eq!(state.active_workspace, before.active_workspace);
+    assert_eq!(state.detached_panes, before.detached_panes);
+    assert_eq!(state.workspaces.len(), before.workspaces.len());
+    let mut workspace_ids = std::collections::HashSet::new();
+    for (migrated, original) in state.workspaces.iter().zip(&before.workspaces) {
+        let id = migrated
+            .id
+            .clone()
+            .expect("every workspace gets a durable id");
+        assert!(workspace_ids.insert(id), "workspace ids are unique");
+        assert_eq!(migrated.title, original.title);
+        assert_eq!(migrated.cwd, original.cwd);
+        assert_eq!(migrated.active_tab, original.active_tab);
+        assert_eq!(migrated.tabs.len(), original.tabs.len());
+        for (tab, original_tab) in migrated.tabs.iter().zip(&original.tabs) {
+            assert_eq!(tab.title, original_tab.title);
+            assert_eq!(tab.title_source, original_tab.title_source);
+            assert_eq!(tab.worktree, original_tab.worktree);
+            let (Some(layout), Some(original_layout)) = (&tab.layout, &original_tab.layout) else {
+                assert_eq!(tab.layout, original_tab.layout);
+                continue;
+            };
+            assert_eq!(layout.leaf_count(), original_layout.leaf_count());
+            assert_eq!(layout.resolved_ratios(), original_layout.resolved_ratios());
+        }
+    }
+
+    let first_tab = state.workspaces[0].tabs[0].layout.as_ref().unwrap();
+    let sessions = terminal_sessions(first_tab);
+    assert_eq!(sessions.len(), 2, "two terminal surfaces in the first tab");
+    assert!(sessions.iter().all(Option::is_some));
+    assert_ne!(sessions[0], sessions[1], "session ids are unique");
+    let LayoutNode::Split { children, .. } = first_tab else {
+        panic!("expected a split");
+    };
+    let LayoutNode::Pane { surfaces } = &children[0] else {
+        panic!("expected a pane");
+    };
+    assert_eq!(
+        surfaces[0].command.as_deref(),
+        Some("claude --resume abc"),
+        "the recorded command is kept as metadata, never turned into a launch"
+    );
+    assert_eq!(surfaces[0].agent.as_deref(), Some("claude_code"));
+    let LayoutNode::Pane { surfaces } = &children[1] else {
+        panic!("expected a pane");
+    };
+    assert!(
+        surfaces[0].session.is_none(),
+        "a markdown surface is not a hosted terminal"
+    );
+    assert!(surfaces[1].session.is_some());
+}
+
+#[test]
+fn test_durable_identities_are_stable_across_repeated_assignment() {
+    let mut state: SessionState = serde_json::from_str(V2_FIXTURE).unwrap();
+    let first = assign_durable_identities(&mut state);
+    assert_eq!(first.workspaces, 2);
+    assert_eq!(first.sessions, 3);
+    let snapshot = state.clone();
+
+    let second = assign_durable_identities(&mut state);
+    assert!(second.is_empty(), "a second pass changes nothing");
+    assert_eq!(state, snapshot);
+
+    let written = serde_json::to_string(&state).unwrap();
+    let back: SessionState = serde_json::from_str(&written).unwrap();
+    assert_eq!(back, snapshot, "identities round-trip through session.json");
+}
+
+#[test]
+fn test_a_duplicated_session_reference_is_reassigned_not_shared() {
+    let shared = SessionId::new();
+    let mut state: SessionState = serde_json::from_str(V2_FIXTURE).unwrap();
+    for tab in &mut state.workspaces[0].tabs {
+        if let Some(LayoutNode::Pane { surfaces }) = &mut tab.layout {
+            surfaces[0].session = Some(shared.clone());
+        }
+    }
+    let LayoutNode::Split { children, .. } = state.workspaces[0].tabs[0].layout.as_mut().unwrap()
+    else {
+        panic!("expected a split");
+    };
+    let LayoutNode::Pane { surfaces } = &mut children[0] else {
+        panic!("expected a pane");
+    };
+    surfaces[0].session = Some(shared.clone());
+
+    assign_durable_identities(&mut state);
+
+    let mut all: Vec<SessionId> = state
+        .workspaces
+        .iter()
+        .flat_map(|ws| ws.tabs.iter())
+        .filter_map(|tab| tab.layout.as_ref())
+        .flat_map(terminal_sessions)
+        .flatten()
+        .collect();
+    assert_eq!(all.iter().filter(|id| **id == shared).count(), 1);
+    let total = all.len();
+    all.sort();
+    all.dedup();
+    assert_eq!(all.len(), total, "no two surfaces share a session id");
+}
+
+#[test]
+fn test_migrate_v1_chains_into_durable_identities() {
+    let mut state: SessionState = serde_json::from_str(V1_FIXTURE).unwrap();
+    migrate_session_v1(&mut state);
+    assert_eq!(state.version, SESSION_SCHEMA_VERSION);
+    assert!(state.workspaces[0].id.is_some());
+    let missing = state.workspaces[0]
+        .tabs
+        .iter()
+        .filter_map(|tab| tab.layout.as_ref())
+        .flat_map(terminal_sessions)
+        .filter(Option::is_none)
+        .count();
+    assert_eq!(
+        missing, 0,
+        "every restored terminal has a session reference"
+    );
 }
 
 #[test]

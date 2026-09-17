@@ -126,6 +126,7 @@ the two you did.
 ```bash
 scripts/fetch-libghostty.sh              # once per pin: places the libghostty-vt archives (not tracked by git)
 cargo run                                # debug build, needs Vulkan
+scripts/dev.sh                           # (or .ps1) builds paneflow + paneflow-host and runs the desktop directly, so the detached host outlives Cargo's job
 RUST_LOG=info cargo run                  # structured logging
 PANEFLOW_LATENCY_PROBE=1 cargo run       # keystroke to pixel latency, debug only
 cargo build --release                    # thin LTO, strip, codegen-units=1

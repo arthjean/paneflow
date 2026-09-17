@@ -119,6 +119,8 @@ pub enum PaneEvent {
     OpenNewTabMenu,
     NewTabPreset(crate::app::pane_palette::Preset),
     SurfacesChanged,
+    CloseRequested,
+    CloseSurfaceRequested(Entity<crate::terminal::TerminalView>),
     Split(crate::layout::SplitDirection),
     ToggleAgentSessions,
     ToggleDiffDock,
@@ -301,6 +303,45 @@ impl Pane {
     }
 
     pub(crate) fn close_surface(&mut self, idx: usize, cx: &mut Context<Self>) {
+        if idx >= self.surfaces.len() {
+            return;
+        }
+        if self.surfaces.len() == 1 {
+            cx.emit(PaneEvent::CloseRequested);
+            return;
+        }
+        match crate::app::hosted_sessions::surface_terminal(&self.surfaces[idx]) {
+            Some(terminal) => cx.emit(PaneEvent::CloseSurfaceRequested(terminal)),
+            None => self.remove_surface_at(idx, cx),
+        }
+    }
+
+    pub(crate) fn surface_exited(&mut self, idx: usize, cx: &mut Context<Self>) {
+        if idx >= self.surfaces.len() {
+            return;
+        }
+        if self.surfaces.len() == 1 {
+            cx.emit(PaneEvent::Remove);
+            return;
+        }
+        self.remove_surface_at(idx, cx);
+    }
+
+    pub(crate) fn remove_surface(
+        &mut self,
+        terminal: &Entity<crate::terminal::TerminalView>,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(idx) = self
+            .surfaces
+            .iter()
+            .position(|surface| surface.as_terminal() == Some(terminal))
+        {
+            self.remove_surface_at(idx, cx);
+        }
+    }
+
+    pub(crate) fn remove_surface_at(&mut self, idx: usize, cx: &mut Context<Self>) {
         if idx >= self.surfaces.len() {
             return;
         }
@@ -577,10 +618,10 @@ impl Pane {
                         .iter()
                         .position(|surface| surface.as_terminal() == Some(&terminal))
                     {
-                        this.close_surface(idx, cx);
+                        this.surface_exited(idx, cx);
                     }
                 }
-                TerminalEvent::TitleChanged => {
+                TerminalEvent::TitleChanged | TerminalEvent::HostLinkResolved => {
                     cx.notify();
                 }
                 TerminalEvent::CwdChanged(_)
@@ -915,7 +956,7 @@ impl Pane {
     }
 
     pub fn close(&mut self, cx: &mut Context<Self>) {
-        cx.emit(PaneEvent::Remove);
+        cx.emit(PaneEvent::CloseRequested);
     }
 
     fn apply_drag_edge(
@@ -1952,8 +1993,28 @@ mod tests {
         pane.update(cx, |pane, cx| pane.activate_surface(0, cx));
         assert_eq!(tab_state(&pane, cx), (2, 0));
 
-        pane.update(cx, |pane, cx| pane.close_surface(0, cx));
+        pane.update(cx, |pane, cx| pane.remove_surface_at(0, cx));
         assert_eq!(tab_state(&pane, cx), (1, 0));
+    }
+
+    #[gpui::test]
+    fn closing_a_tab_asks_the_owner_before_anything_is_removed(cx: &mut TestAppContext) {
+        let cx = cx.add_empty_window();
+        let pane = tabbed_pane(2, cx);
+        let asked = std::rc::Rc::new(std::cell::Cell::new(false));
+        let asked_for_sub = asked.clone();
+        cx.update(|_, cx| {
+            cx.subscribe(&pane, move |_, event: &PaneEvent, _| {
+                if matches!(event, PaneEvent::CloseSurfaceRequested(_)) {
+                    asked_for_sub.set(true);
+                }
+            })
+            .detach();
+        });
+
+        pane.update(cx, |pane, cx| pane.close_surface(0, cx));
+        assert!(asked.get(), "closing a tab is a request, not a removal");
+        assert_eq!(tab_state(&pane, cx), (2, 0), "nothing was removed yet");
     }
 
     #[gpui::test]
@@ -1964,7 +2025,7 @@ mod tests {
         let active_before =
             cx.update(|_, cx| pane.read(cx).surface().as_terminal().map(Entity::entity_id));
 
-        pane.update(cx, |pane, cx| pane.close_surface(0, cx));
+        pane.update(cx, |pane, cx| pane.remove_surface_at(0, cx));
         assert_eq!(tab_state(&pane, cx), (2, 1));
         let active_after =
             cx.update(|_, cx| pane.read(cx).surface().as_terminal().map(Entity::entity_id));
@@ -1975,19 +2036,31 @@ mod tests {
     fn closing_the_last_tab_asks_to_remove_the_pane(cx: &mut TestAppContext) {
         let cx = cx.add_empty_window();
         let pane = tabbed_pane(1, cx);
-        let removed = std::rc::Rc::new(std::cell::Cell::new(false));
-        let removed_for_sub = removed.clone();
+        let requested = std::rc::Rc::new(std::cell::Cell::new(false));
+        let requested_for_sub = requested.clone();
+        let exited = std::rc::Rc::new(std::cell::Cell::new(false));
+        let exited_for_sub = exited.clone();
         cx.update(|_, cx| {
-            cx.subscribe(&pane, move |_, event: &PaneEvent, _| {
-                if matches!(event, PaneEvent::Remove) {
-                    removed_for_sub.set(true);
-                }
+            cx.subscribe(&pane, move |_, event: &PaneEvent, _| match event {
+                PaneEvent::CloseRequested => requested_for_sub.set(true),
+                PaneEvent::Remove => exited_for_sub.set(true),
+                _ => {}
             })
             .detach();
         });
 
         pane.update(cx, |pane, cx| pane.close_surface(0, cx));
-        assert!(removed.get(), "the pane must emit Remove for its last tab");
+        assert!(
+            requested.get(),
+            "closing the last tab asks the owner to close the pane"
+        );
+        assert!(!exited.get(), "no removal happens before the owner decides");
+
+        pane.update(cx, |pane, cx| pane.surface_exited(0, cx));
+        assert!(
+            exited.get(),
+            "a child that exited removes the pane without asking"
+        );
         assert_eq!(tab_state(&pane, cx), (1, 0));
     }
 
@@ -2001,7 +2074,7 @@ mod tests {
         let surface = cx.update(|_, cx| source.read(cx).surfaces()[0].clone());
         let terminal = surface.as_terminal().unwrap().clone();
         target.update(cx, |pane, cx| pane.push_surface(surface, cx));
-        source.update(cx, |pane, cx| pane.close_surface(0, cx));
+        source.update(cx, |pane, cx| pane.remove_surface_at(0, cx));
         cx.update(|_, cx| {
             assert!(!source.read(cx).contains_terminal(&terminal));
             assert_eq!(target.read(cx).active_terminal_opt(), Some(&terminal));

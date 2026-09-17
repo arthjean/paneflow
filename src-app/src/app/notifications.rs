@@ -1,7 +1,7 @@
 use gpui::{
-    Animation, AnimationExt, AnyElement, AsyncApp, Context, CursorStyle, IntoElement, MouseButton,
-    ParentElement, SharedString, Styled, WeakEntity, deferred, div, ease_in_out, prelude::*, px,
-    svg,
+    Animation, AnimationExt, AnyElement, AsyncApp, ClickEvent, Context, CursorStyle, IntoElement,
+    MouseButton, ParentElement, SharedString, Styled, WeakEntity, deferred, div, ease_in_out,
+    prelude::*, px, svg,
 };
 
 use crate::app::constants::{TOAST_ENTER_MS, TOAST_EXIT_MS, TOAST_HOLD_MS};
@@ -192,21 +192,23 @@ impl PaneFlowApp {
                     })
                     .child(label)
                     .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                    .on_click(move |_, window, cx| match &action_clone {
-                        ToastAction::RetryUpdate => {
-                            window.dispatch_action(Box::new(StartSelfUpdate), cx);
-                        }
-                        ToastAction::OpenReleasesPage(url) => {
-                            if let Err(err) = crate::external_open::open_url(url) {
-                                log::warn!("toast: open releases URL failed: {err}");
+                    .on_click(cx.listener(move |_this, _: &ClickEvent, window, cx| {
+                        match &action_clone {
+                            ToastAction::RetryUpdate => {
+                                window.dispatch_action(Box::new(StartSelfUpdate), cx);
+                            }
+                            ToastAction::OpenReleasesPage(url) => {
+                                if let Err(err) = crate::external_open::open_url(url) {
+                                    log::warn!("toast: open releases URL failed: {err}");
+                                }
+                            }
+                            ToastAction::OpenReleaseNotes(url) => {
+                                if let Err(err) = crate::external_open::open_url(url) {
+                                    log::warn!("toast: open changelog URL failed: {err}");
+                                }
                             }
                         }
-                        ToastAction::OpenReleaseNotes(url) => {
-                            if let Err(err) = crate::external_open::open_url(url) {
-                                log::warn!("toast: open changelog URL failed: {err}");
-                            }
-                        }
-                    });
+                    }));
                 row = row.child(btn);
             }
             Some(row)

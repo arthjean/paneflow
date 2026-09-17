@@ -48,6 +48,93 @@ pub fn worktrees_dir() -> Option<PathBuf> {
     paneflow_home().map(|home| home.join("worktrees"))
 }
 
+pub const HOST_DIR_NAME: &str = "host";
+
+pub const HOST_SESSIONS_DIR_NAME: &str = "sessions";
+
+pub const HOST_INSTANCE_FILE_NAME: &str = "instance.json";
+
+pub fn host_dir_in(home: &Path) -> PathBuf {
+    home.join(HOST_DIR_NAME)
+}
+
+pub fn host_sessions_dir_in(home: &Path) -> PathBuf {
+    host_dir_in(home).join(HOST_SESSIONS_DIR_NAME)
+}
+
+pub fn host_session_manifest_path_in(home: &Path, session_id: &str) -> PathBuf {
+    host_sessions_dir_in(home).join(format!("{session_id}.json"))
+}
+
+pub fn host_instance_record_path_in(home: &Path) -> PathBuf {
+    host_dir_in(home).join(HOST_INSTANCE_FILE_NAME)
+}
+
+pub fn host_dir() -> Option<PathBuf> {
+    paneflow_home().map(|home| host_dir_in(&home))
+}
+
+pub fn host_sessions_dir() -> Option<PathBuf> {
+    paneflow_home().map(|home| host_sessions_dir_in(&home))
+}
+
+pub fn home_fingerprint(home: &Path) -> String {
+    const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
+    const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
+    let normalized: String = home
+        .to_string_lossy()
+        .chars()
+        .map(|c| if c == '\\' { '/' } else { c })
+        .collect();
+    let normalized = if cfg!(windows) {
+        normalized.to_lowercase()
+    } else {
+        normalized
+    };
+    let normalized = normalized.trim_end_matches('/');
+    let mut hash = FNV_OFFSET;
+    for byte in normalized.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(FNV_PRIME);
+    }
+    format!("{hash:016x}")
+}
+
+const HOST_ENDPOINT_PREFIX: &str = "paneflow-host-";
+
+#[cfg(windows)]
+pub fn host_endpoint_path(home: &Path) -> PathBuf {
+    PathBuf::from(format!(
+        r"\\.\pipe\{HOST_ENDPOINT_PREFIX}{}",
+        home_fingerprint(home)
+    ))
+}
+
+#[cfg(unix)]
+pub fn host_endpoint_path(home: &Path) -> PathBuf {
+    host_runtime_dir().join(format!(
+        "{HOST_ENDPOINT_PREFIX}{}.sock",
+        home_fingerprint(home)
+    ))
+}
+
+#[cfg(unix)]
+fn host_runtime_dir() -> PathBuf {
+    std::env::var_os("XDG_RUNTIME_DIR")
+        .map(PathBuf::from)
+        .filter(|p| !p.as_os_str().is_empty() && p.is_absolute())
+        .or_else(|| {
+            std::env::var_os("TMPDIR")
+                .map(PathBuf::from)
+                .filter(|p| !p.as_os_str().is_empty() && p.is_absolute())
+        })
+        .unwrap_or_else(|| PathBuf::from("/tmp"))
+}
+
+pub fn host_endpoint_path_for_current_home() -> Option<PathBuf> {
+    paneflow_home().map(|home| host_endpoint_path(&home))
+}
+
 pub fn legacy_config_path() -> Option<PathBuf> {
     dirs::config_dir().map(|dir| dir.join(LEGACY_SUBDIR).join("paneflow.json"))
 }
@@ -167,5 +254,51 @@ mod tests {
         assert_eq!(session_path().expect("session"), home.join("session.json"));
         assert_eq!(cache_dir().expect("cache"), home.join("cache"));
         assert_eq!(worktrees_dir().expect("worktrees"), home.join("worktrees"));
+        assert_eq!(host_dir().expect("host"), home.join("host"));
+        assert_eq!(
+            host_sessions_dir().expect("host sessions"),
+            home.join("host").join("sessions")
+        );
+    }
+
+    #[test]
+    fn host_records_hang_off_the_home_that_owns_them() {
+        let home = Path::new("/srv/home/.paneflow-dev");
+        assert_eq!(
+            host_session_manifest_path_in(home, "550e8400-e29b-41d4-a716-446655440000"),
+            home.join("host")
+                .join("sessions")
+                .join("550e8400-e29b-41d4-a716-446655440000.json")
+        );
+        assert_eq!(
+            host_instance_record_path_in(home),
+            home.join("host").join("instance.json")
+        );
+    }
+
+    #[test]
+    fn distinct_homes_have_distinct_fingerprints_and_a_home_has_one() {
+        let normal = home_fingerprint(Path::new("/home/arthur/.paneflow"));
+        let dev = home_fingerprint(Path::new("/home/arthur/.paneflow-dev"));
+        let isolated = home_fingerprint(Path::new("/tmp/paneflow-exercise"));
+        assert_eq!(normal.len(), 16);
+        assert_ne!(normal, dev);
+        assert_ne!(normal, isolated);
+        assert_ne!(dev, isolated);
+        assert_eq!(
+            home_fingerprint(Path::new("/home/arthur/.paneflow/")),
+            normal,
+            "a trailing separator does not change the home"
+        );
+        assert_eq!(
+            home_fingerprint(Path::new("/home/arthur/.paneflow")),
+            home_fingerprint(Path::new("/home/arthur/.paneflow")),
+        );
+        if cfg!(windows) {
+            assert_eq!(
+                home_fingerprint(Path::new(r"C:\Users\Arthur\.paneflow")),
+                home_fingerprint(Path::new("c:/users/arthur/.paneflow")),
+            );
+        }
     }
 }

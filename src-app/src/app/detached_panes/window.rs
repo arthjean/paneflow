@@ -389,11 +389,7 @@ impl Render for DetachedPaneWindow {
                 this.pane.update(cx, |_, cx| cx.emit(PaneEvent::NewTab));
             }))
             .on_action(cx.listener(|this, _: &crate::Quit, _, cx| {
-                let _ = this.owner.update(cx, |owner, cx| {
-                    owner.save_session_blocking(cx);
-                    owner.emit_app_exited_and_flush();
-                    cx.quit();
-                });
+                let _ = this.owner.update(cx, |owner, cx| owner.request_quit(cx));
             }))
             .on_action(|_: &crate::OpenSettings, _, cx| {
                 forward_to_workspace(crate::OpenSettings, cx)

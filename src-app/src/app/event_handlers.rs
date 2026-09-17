@@ -2,6 +2,7 @@ use gpui::{App, AppContext, Context, Entity};
 use notify::Watcher;
 use paneflow_config::schema::TerminalSurfaceProfile;
 
+use crate::app::close_policy::{CloseIntent, CloseTarget};
 use crate::layout::{LayoutTree, MAX_PANES};
 use crate::pane::{self, Pane};
 use crate::pane_drag::DropEdge;
@@ -388,9 +389,7 @@ impl PaneFlowApp {
     ) {
         match event {
             title_bar::TitleBarEvent::CloseRequested => {
-                self.save_session_blocking(cx);
-                self.emit_app_exited_and_flush();
-                cx.quit();
+                self.request_quit(cx);
             }
             title_bar::TitleBarEvent::ToggleSidebar => {
                 self.toggle_primary_sidebar(cx);
@@ -475,6 +474,19 @@ impl PaneFlowApp {
                 self.save_session(cx);
                 cx.notify();
             }
+            pane::PaneEvent::CloseRequested => {
+                self.request_close(CloseTarget::Pane(pane), None, cx);
+            }
+            pane::PaneEvent::CloseSurfaceRequested(terminal) => {
+                self.request_close(
+                    CloseTarget::Surface {
+                        pane: pane.clone(),
+                        terminal: terminal.clone(),
+                    },
+                    None,
+                    cx,
+                );
+            }
             pane::PaneEvent::NewTab => {
                 let ws_id = pane.read(cx).workspace_id;
                 if !pane.read(cx).can_add_surface() {
@@ -537,57 +549,7 @@ impl PaneFlowApp {
                 cx.notify();
             }
             pane::PaneEvent::Remove => {
-                let Some((ws_idx, tab_idx)) =
-                    self.workspaces.iter().enumerate().find_map(|(idx, ws)| {
-                        ws.tab_index_containing_pane(&pane).map(|t| (idx, t))
-                    })
-                else {
-                    return;
-                };
-
-                let Some(tab) = self.workspaces[ws_idx].tabs().get(tab_idx) else {
-                    return;
-                };
-                let root_contains = tab
-                    .root
-                    .as_ref()
-                    .is_some_and(|root| root.contains_leaf(&pane));
-                let saved_contains = tab
-                    .saved_layout
-                    .as_ref()
-                    .is_some_and(|saved| saved.contains_leaf(&pane));
-
-                if let Some(tab) = self.workspaces[ws_idx].tab_mut(tab_idx) {
-                    if saved_contains {
-                        if let Some(saved) = tab.saved_layout.take() {
-                            let (new_saved, _) = saved.remove_pane(&pane);
-                            if root_contains {
-                                tab.root = new_saved;
-                            } else {
-                                tab.saved_layout = new_saved;
-                            }
-                        }
-                    } else if let Some(root) = tab.root.take() {
-                        let (new_root, _) = root.remove_pane(&pane);
-                        tab.root = new_root;
-                    }
-                }
-
-                let tab_is_empty = self.workspaces[ws_idx]
-                    .tabs()
-                    .get(tab_idx)
-                    .is_none_or(|tab| tab.root.is_none());
-                if tab_is_empty {
-                    let ws_id = self.workspaces[ws_idx].id;
-                    let cwd = std::path::PathBuf::from(&self.workspaces[ws_idx].cwd);
-                    let terminal = cx.new(|cx| TerminalView::with_cwd(ws_id, Some(cwd), None, cx));
-                    let new_pane = self.create_pane(terminal, ws_id, cx);
-                    if let Some(tab) = self.workspaces[ws_idx].tab_mut(tab_idx) {
-                        tab.root = Some(LayoutTree::Leaf(new_pane));
-                    }
-                }
-                self.save_session(cx);
-                cx.notify();
+                self.perform_close(CloseTarget::Pane(pane), CloseIntent::Stop, None, cx);
             }
             pane::PaneEvent::ToggleAgentSessions => {
                 if self.agent_sessions.sessions_sidebar_open {
@@ -874,9 +836,64 @@ impl PaneFlowApp {
                 *root = tree.remove_pane(&source).0;
             }
         } else {
-            source.update(cx, |pane, cx| pane.close_surface(index, cx));
+            source.update(cx, |pane, cx| pane.remove_surface_at(index, cx));
         }
         self.pending_pane_focus = Some(destination);
+        self.save_session(cx);
+        cx.notify();
+    }
+
+    pub(crate) fn remove_pane_from_layout(&mut self, pane: Entity<Pane>, cx: &mut Context<Self>) {
+        let Some((ws_idx, tab_idx)) = self
+            .workspaces
+            .iter()
+            .enumerate()
+            .find_map(|(idx, ws)| ws.tab_index_containing_pane(&pane).map(|t| (idx, t)))
+        else {
+            return;
+        };
+
+        let Some(tab) = self.workspaces[ws_idx].tabs().get(tab_idx) else {
+            return;
+        };
+        let root_contains = tab
+            .root
+            .as_ref()
+            .is_some_and(|root| root.contains_leaf(&pane));
+        let saved_contains = tab
+            .saved_layout
+            .as_ref()
+            .is_some_and(|saved| saved.contains_leaf(&pane));
+
+        if let Some(tab) = self.workspaces[ws_idx].tab_mut(tab_idx) {
+            if saved_contains {
+                if let Some(saved) = tab.saved_layout.take() {
+                    let (new_saved, _) = saved.remove_pane(&pane);
+                    if root_contains {
+                        tab.root = new_saved;
+                    } else {
+                        tab.saved_layout = new_saved;
+                    }
+                }
+            } else if let Some(root) = tab.root.take() {
+                let (new_root, _) = root.remove_pane(&pane);
+                tab.root = new_root;
+            }
+        }
+
+        let tab_is_empty = self.workspaces[ws_idx]
+            .tabs()
+            .get(tab_idx)
+            .is_none_or(|tab| tab.root.is_none());
+        if tab_is_empty {
+            let ws_id = self.workspaces[ws_idx].id;
+            let cwd = std::path::PathBuf::from(&self.workspaces[ws_idx].cwd);
+            let terminal = cx.new(|cx| TerminalView::with_cwd(ws_id, Some(cwd), None, cx));
+            let new_pane = self.create_pane(terminal, ws_id, cx);
+            if let Some(tab) = self.workspaces[ws_idx].tab_mut(tab_idx) {
+                tab.root = Some(LayoutTree::Leaf(new_pane));
+            }
+        }
         self.save_session(cx);
         cx.notify();
     }
@@ -973,6 +990,10 @@ impl PaneFlowApp {
             }
             terminal::TerminalEvent::ChildExited => {
                 self.purge_sessions_for_surface(terminal.entity_id().as_u64(), cx);
+            }
+            terminal::TerminalEvent::HostLinkResolved => {
+                self.note_host_link_resolved(&terminal, cx);
+                self.refresh_owned_sessions(cx);
             }
         }
     }

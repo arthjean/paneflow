@@ -1,11 +1,13 @@
 mod agent_panel;
 mod config;
+mod identity;
 mod layout;
 mod session;
 mod terminal;
 
 pub use agent_panel::*;
 pub use config::*;
+pub use identity::*;
 pub use layout::*;
 pub use session::*;
 pub use terminal::*;
@@ -110,6 +112,8 @@ mod tests {
             claude_code_bypass_permissions: Some(false),
             ai_unrestricted: Some(true),
             ai_injection_fence: Some(false),
+            on_quit: Some(OnQuit::Stop),
+            sidebar_ended_sessions: Some(3),
             claude_code_button_visible: Some(true),
             codex_button_visible: Some(true),
             opencode_button_visible: Some(true),
@@ -252,6 +256,7 @@ mod tests {
                             scrollback: Some("previous output".to_string()),
                             agent: Some("claude_code".to_string()),
                             font_size: Some(13.0),
+                            session: None,
                         }],
                     }),
                 },

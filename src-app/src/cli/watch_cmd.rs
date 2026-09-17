@@ -1,11 +1,14 @@
-use paneflow_ipc_client::IpcClient;
+use std::path::Path;
+
+use paneflow_ipc_client::IpcTransport;
 use serde_json::{Value, json};
 
 use super::selector::resolve_target;
 use super::{CliError, EXIT_OK};
 
 pub fn watch(
-    client: &IpcClient,
+    client: &impl IpcTransport,
+    socket: &Path,
     surface: Option<&str>,
     types: &[String],
     events_only: bool,
@@ -19,17 +22,10 @@ pub fn watch(
         params.insert("types".into(), json!(types));
     }
 
-    let socket = paneflow_ipc_client::resolve_socket_path().ok_or_else(|| {
-        CliError::target(
-            "cannot locate the IPC socket; is Paneflow running? \
-             (set PANEFLOW_SOCKET_PATH if you launched the CLI outside a Paneflow pane)",
-        )
-    })?;
-
     let _ = ctrlc::set_handler(|| std::process::exit(EXIT_OK));
 
     let mut stream_error = None;
-    match paneflow_ipc_client::subscribe_stream(&socket, Value::Object(params), |line| {
+    match paneflow_ipc_client::subscribe_stream(socket, Value::Object(params), |line| {
         if let Some(err) = paneflow_ipc_client::jsonrpc_error_message(line) {
             stream_error = Some(err);
             return false;

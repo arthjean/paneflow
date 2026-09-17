@@ -260,6 +260,39 @@ impl AiHookFrame {
             "params": self.params.to_value(),
         })
     }
+
+    pub fn to_agent_event_params(&self, session: &str) -> Value {
+        let mut value = Map::new();
+        value.insert("session".into(), Value::String(session.to_owned()));
+        value.insert(
+            "kind".into(),
+            Value::String(self.method.as_str().to_owned()),
+        );
+        value.insert(
+            "tool".into(),
+            Value::String(self.params.tool.as_str().to_owned()),
+        );
+        if let Some(pid) = self.params.pid {
+            value.insert("pid".into(), Value::from(pid.get()));
+        }
+        if let Some(tool_name) = &self.params.tool_name {
+            value.insert("tool_name".into(), Value::String(tool_name.clone()));
+        }
+        if let Some(exit_code) = self.params.exit_code {
+            value.insert("exit_code".into(), Value::from(exit_code));
+        }
+        if let Some(event_source) = self.params.event_source {
+            value.insert(
+                "event_source".into(),
+                Value::String(event_source.as_str().to_owned()),
+            );
+        }
+        if let Some(emitted_at_ms) = self.params.emitted_at_ms {
+            value.insert("emitted_at_ms".into(), Value::from(emitted_at_ms));
+        }
+        value.insert("hook_payload".into(), self.params.hook_payload.clone());
+        Value::Object(value)
+    }
 }
 
 #[cfg(test)]
@@ -292,6 +325,32 @@ mod tests {
                 .as_str(),
             DEFAULT_TOOL
         );
+    }
+
+    #[test]
+    fn a_host_event_addresses_the_durable_session_not_a_surface() {
+        let mut params = AiHookParams::new(
+            7,
+            AiToolName::parse("claude").expect("valid test tool"),
+            json!({"summary": "done"}),
+        );
+        params.pid = SessionPid::new(42);
+        params.surface_id = SurfaceId::new(9);
+        params.emitted_at_ms = Some(1_234);
+        let frame = AiHookFrame::new(AiHookMethod::Stop, params);
+        let event = frame.to_agent_event_params("11112222-3333-4444-5555-666677778888");
+
+        assert_eq!(event["session"], "11112222-3333-4444-5555-666677778888");
+        assert_eq!(event["kind"], METHOD_STOP);
+        assert_eq!(event["tool"], "claude");
+        assert_eq!(event["pid"], 42);
+        assert_eq!(event["emitted_at_ms"], 1_234);
+        assert_eq!(event["hook_payload"]["summary"], "done");
+        assert!(
+            event.get("surface_id").is_none(),
+            "a transient surface id never reaches host-owned state"
+        );
+        assert!(event.get("workspace_id").is_none());
     }
 
     #[test]

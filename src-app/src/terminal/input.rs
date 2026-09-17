@@ -45,13 +45,7 @@ fn key_escape_sequence(
     Some(sequence)
 }
 
-pub(super) fn normalize_paste_text(text: &str) -> String {
-    let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
-    normalized
-        .chars()
-        .filter(|&c| c != '\x1b' && !(('\u{0080}'..='\u{009f}').contains(&c)))
-        .collect()
-}
+pub(super) use paneflow_ipc_client::send_text::normalize_paste_text;
 
 fn ghostty_modifiers(modifiers: gpui::Modifiers) -> ghostty::Modifiers {
     let mut result = ghostty::Modifiers::empty();
@@ -273,6 +267,13 @@ impl TerminalView {
         }
 
         if self.search_active {
+            return;
+        }
+
+        if !self.terminal.host_link.accepts_input() {
+            if event.keystroke.key == "enter" && !self.copy_mode_active {
+                self.resume_hosted_session(cx);
+            }
             return;
         }
 

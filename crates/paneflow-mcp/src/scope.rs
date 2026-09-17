@@ -48,6 +48,22 @@ impl BridgeScope {
         Self::from_values(scope.as_deref(), workspace.as_deref())
     }
 
+    pub fn from_env_for_host() -> Result<Self, ScopeConfigError> {
+        let scope = read_env(MCP_SCOPE_ENV)?;
+        let workspace = read_env(WORKSPACE_ENV)?;
+        Self::from_values_for_host(scope.as_deref(), workspace.as_deref())
+    }
+
+    fn from_values_for_host(
+        scope: Option<&str>,
+        workspace: Option<&str>,
+    ) -> Result<Self, ScopeConfigError> {
+        match Self::from_values(scope, workspace) {
+            Err(ScopeConfigError::MissingWorkspaceId) if scope.is_none() => Ok(Self::All),
+            resolved => resolved,
+        }
+    }
+
     fn from_values(scope: Option<&str>, workspace: Option<&str>) -> Result<Self, ScopeConfigError> {
         match scope {
             Some(value) if value.eq_ignore_ascii_case("all") => Ok(Self::All),
@@ -116,6 +132,26 @@ fn read_env(name: &'static str) -> Result<Option<String>, ScopeConfigError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_hosted_bridge_without_a_window_marker_reads_everything_the_host_lists() {
+        assert_eq!(
+            BridgeScope::from_values_for_host(None, None),
+            Ok(BridgeScope::All),
+            "a session created while no window was open carries no integer workspace id"
+        );
+        assert_eq!(
+            BridgeScope::from_values_for_host(None, Some("7")),
+            Ok(BridgeScope::Workspace(7)),
+            "a window-created session keeps its workspace filter"
+        );
+        assert_eq!(
+            BridgeScope::from_values_for_host(Some("workspace"), None),
+            Err(ScopeConfigError::MissingWorkspaceId),
+            "an explicit workspace request still needs the id"
+        );
+        assert!(BridgeScope::from_values_for_host(None, Some("not-a-number")).is_err());
+    }
 
     #[test]
     fn explicit_all_is_the_only_global_path() {

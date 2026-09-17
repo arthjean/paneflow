@@ -6,13 +6,16 @@ use gpui::{
     point, prelude::*, px, svg,
 };
 
+use crate::app::close_policy::CloseTarget;
 use crate::app::files_tree;
 use crate::pane::PaneSurface;
 use crate::settings::components::{
     menu_divider_color, menu_height, menu_row, select_menu, with_alpha,
 };
 use crate::ui_primitives::AnimatedHoverExt;
-use crate::{PaneContextMenu, PaneFlowApp, TabContextMenu, WorkspaceContextMenu};
+use crate::{
+    PaneContextMenu, PaneFlowApp, SessionContextMenu, TabContextMenu, WorkspaceContextMenu,
+};
 
 pub(crate) const EDITOR_CONTEXT_MENU_ITEMS: &[(&str, &str, &str, &str)] = &[
     ("zed", "Open in Zed", "zed", "open_workspace_in_zed"),
@@ -323,6 +326,23 @@ impl PaneFlowApp {
             }),
         ));
 
+        if self.resumable_ended_panes(idx, cx) > 0 {
+            let resume_shortcut = self
+                .shortcut_for_action("resume_ended_sessions")
+                .map(|s| SharedString::from(s.to_string()));
+            context_menu = context_menu.child(self.render_select_menu_item(
+                "workspace-context-resume-ended".into(),
+                "Resume Ended Sessions",
+                resume_shortcut,
+                ui,
+                cx.listener(move |this, _: &ClickEvent, _window, cx| {
+                    this.workspace_menu_open = None;
+                    this.resume_ended_sessions_in_workspace(idx, cx);
+                    cx.stop_propagation();
+                }),
+            ));
+        }
+
         context_menu = context_menu.child(self.render_select_menu_item(
             "workspace-context-custom-buttons".into(),
             "Manage Custom Buttons…",
@@ -407,7 +427,7 @@ impl PaneFlowApp {
                         .overflow_x_hidden()
                         .whitespace_nowrap()
                         .text_ellipsis()
-                        .child("Close Workspace"),
+                        .child("Close Workspace (stop sessions)"),
                 )
                 .when_some(close_shortcut, |d, shortcut| {
                     d.child(
@@ -422,6 +442,93 @@ impl PaneFlowApp {
 
         deferred(crate::ui_primitives::menu_reveal(
             "workspace-context-menu-reveal",
+            context_menu,
+        ))
+        .priority(3)
+        .into_any_element()
+    }
+
+    pub(crate) fn render_session_context_menu(
+        &self,
+        menu: SessionContextMenu,
+        ui: crate::theme::UiColors,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let ws_idx = menu.ws_idx;
+        let session = *menu.session;
+        let menu_pos =
+            clamped_context_menu_position(menu.position, px(220.), px(8. + 2. * 28.), window);
+
+        let mut context_menu = select_menu("session-context-menu", ui)
+            .occlude()
+            .absolute()
+            .left(menu_pos.x)
+            .top(menu_pos.y)
+            .w(px(220.))
+            .on_mouse_down_out(cx.listener(|this, _, _, cx| {
+                this.session_menu_open = None;
+                cx.notify();
+            }))
+            .on_mouse_down(MouseButton::Right, |_, _, cx| cx.stop_propagation());
+
+        if session.live {
+            let open = session.clone();
+            context_menu = context_menu.child(self.render_select_menu_item(
+                "session-context-open".into(),
+                "Open in layout",
+                None,
+                ui,
+                cx.listener(move |this, _: &ClickEvent, window, cx| {
+                    this.session_menu_open = None;
+                    this.open_session_in_layout(ws_idx, open.clone(), window, cx);
+                    cx.stop_propagation();
+                }),
+            ));
+            let stop = session.session.clone();
+            context_menu = context_menu.child(
+                self.render_select_menu_item(
+                    "session-context-stop".into(),
+                    "Stop session",
+                    self.shortcut_for_action("stop_session")
+                        .map(|s| SharedString::from(s.to_string())),
+                    ui,
+                    cx.listener(move |this, _: &ClickEvent, window, cx| {
+                        this.session_menu_open = None;
+                        this.request_close(CloseTarget::Session(stop.clone()), Some(window), cx);
+                        cx.stop_propagation();
+                    }),
+                ),
+            );
+        } else {
+            let resume = session.clone();
+            context_menu = context_menu.child(self.render_select_menu_item(
+                "session-context-resume".into(),
+                "Resume",
+                None,
+                ui,
+                cx.listener(move |this, _: &ClickEvent, window, cx| {
+                    this.session_menu_open = None;
+                    this.resume_listed_session(ws_idx, resume.clone(), window, cx);
+                    cx.stop_propagation();
+                }),
+            ));
+            let remove = session.session.clone();
+            context_menu = context_menu.child(self.render_select_menu_item(
+                "session-context-remove".into(),
+                "Remove from list",
+                None,
+                ui,
+                cx.listener(move |this, _: &ClickEvent, _window, cx| {
+                    this.session_menu_open = None;
+                    this.remove_listed_session(remove.clone(), cx);
+                    cx.stop_propagation();
+                }),
+            ));
+        }
+
+        deferred(crate::ui_primitives::menu_reveal(
+            "session-context-menu-reveal",
             context_menu,
         ))
         .priority(3)
@@ -557,7 +664,7 @@ impl PaneFlowApp {
             })
             .child(self.render_select_menu_item(
                 "tab-context-close".into(),
-                "Close",
+                "Close (stop sessions)",
                 close_shortcut,
                 ui,
                 cx.listener(move |this, _: &ClickEvent, window, cx| {
@@ -759,6 +866,7 @@ impl PaneFlowApp {
         );
 
         let source_for_close = source.clone();
+        let source_for_hide = source.clone();
         let source_for_detach = source.clone();
         context_menu = context_menu.child(self.render_select_menu_item(
             "pane-context-detach".into(),
@@ -776,8 +884,19 @@ impl PaneFlowApp {
             }),
         ));
         context_menu = context_menu.child(self.render_select_menu_item(
+            "pane-context-hide".into(),
+            "Hide from Layout (keep running)",
+            None,
+            ui,
+            cx.listener(move |this, _: &ClickEvent, _window, cx| {
+                this.pane_menu_open = None;
+                this.hide_pane_from_layout(source_for_hide.clone(), cx);
+                cx.stop_propagation();
+            }),
+        ));
+        context_menu = context_menu.child(self.render_select_menu_item(
             "pane-context-close".into(),
-            "Close Pane",
+            "Close Pane (stop its sessions)",
             None,
             ui,
             cx.listener(move |this, _: &ClickEvent, _window, cx| {

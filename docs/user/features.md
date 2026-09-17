@@ -47,10 +47,14 @@ directory. Move focus with `Alt+Arrow`, open another workspace with
 vertical, and tiled.
 
 Session restore saves the workspace layout, pane tree, working directories,
-custom buttons, projects, and chats. Terminal scrollback stays process-local,
-so a relaunched workspace starts with fresh terminal output. Paneflow does not
-keep child processes alive after the app has closed, so restart long-running
-dev servers or agents when the underlying process exited.
+custom buttons, projects, and chats. Terminals run in a local host process
+that outlives the window: quitting Paneflow detaches the views and leaves
+shells and agents running, and reopening the app reattaches each pane to the
+same session with its screen restored. Closing a pane, tab, or workspace stops
+the sessions it contains, and the menu labels say so. To drop a pane from the
+layout while keeping its process alive, use **Hide from Layout** in the pane
+menu; hidden sessions stay listed under the workspace in the sidebar and
+reopen with one click.
 
 ## Agent supervision
 

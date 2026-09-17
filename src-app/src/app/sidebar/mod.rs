@@ -10,13 +10,17 @@ use gpui::{
 };
 
 use crate::ui_primitives::squircle_skin;
-use lane::{infer_lane, render_lane_slot};
+use lane::{Lane, infer_lane, render_lane_slot};
 
 use crate::{
     PaneFlowApp, SIDEBAR_WIDTH, TabContextMenu, TabDrag, WorkspaceContextMenu, WorkspaceDrag,
     WorkspaceDragPreview, ai_types,
+    ai_types::AgentState,
+    app::host_agents::HostAgentRow,
+    app::hosted_sessions::{OwnedSession, lifecycle_sentence, relative_age},
     app::pull_request::PullRequest,
     pane_drag::PaneDrag,
+    settings::components::with_alpha,
     workspace::{Tab, Workspace},
 };
 
@@ -261,6 +265,85 @@ impl SidebarAgentSummary {
             }
         }
     }
+}
+
+fn session_row_lane(row: &HostAgentRow) -> Option<SidebarAgentState> {
+    match row.state? {
+        AgentState::WaitingForInput => Some(SidebarAgentState::NeedsInput),
+        AgentState::Errored => Some(SidebarAgentState::Errored),
+        AgentState::Thinking => Some(SidebarAgentState::Thinking),
+        AgentState::Finished => Some(SidebarAgentState::Finished),
+    }
+}
+
+fn session_row_agent_word(state: Option<AgentState>) -> &'static str {
+    match state {
+        Some(AgentState::WaitingForInput) => "waiting for input",
+        Some(AgentState::Thinking) => "working",
+        Some(AgentState::Finished) => "finished",
+        Some(AgentState::Errored) => "errored",
+        None => "idle",
+    }
+}
+
+fn ended_preview(ended_total: usize, cap: usize, expanded: bool) -> (usize, usize) {
+    let shown = if expanded {
+        ended_total
+    } else {
+        cap.min(ended_total)
+    };
+    (shown, ended_total - shown)
+}
+
+fn collapsed_sessions_label(collapsed: usize) -> String {
+    if collapsed == 1 {
+        "1 more ended session".to_string()
+    } else {
+        format!("{collapsed} more ended sessions")
+    }
+}
+
+fn session_row_tooltip(
+    session: &OwnedSession,
+    row: Option<&HostAgentRow>,
+    now_ms: u64,
+    disconnected: Option<&str>,
+    list_stale: bool,
+    unknown: bool,
+) -> String {
+    let cwd = &session.cwd;
+    let mut text = if session.live {
+        let word = session_row_agent_word(row.and_then(|row| row.state));
+        match row {
+            Some(row) if row.stale => {
+                format!("Session running in {cwd}. Agent last seen {word}, now stale.")
+            }
+            _ => format!("Session running in {cwd}. Agent {word}."),
+        }
+    } else {
+        format!(
+            "{} {} in {cwd}.",
+            lifecycle_sentence(&session.lifecycle),
+            relative_age(now_ms, session.updated_at_ms)
+        )
+    };
+    if let Some(reason) = disconnected {
+        text.push_str(&format!(
+            " The agent stream is disconnected ({reason}), so this state may be stale."
+        ));
+    }
+    if list_stale {
+        text.push_str(" The local host did not answer the last listing, so this list is stale.");
+    }
+    if unknown {
+        text.push_str(" The outcome of the last action on it is unknown.");
+    }
+    text.push_str(if session.live {
+        " Click to reopen it, right-click for more."
+    } else {
+        " Click to resume it, right-click for more."
+    });
+    text
 }
 
 fn agent_status_sentence(count: usize, singular_state: &str, plural_state: &str) -> String {
@@ -1290,6 +1373,11 @@ impl PaneFlowApp {
         };
 
         let row = sidebar_row(row_shell, tab_group, resting_bg, hovered_bg, body);
+        let hidden_rows = if tab_idx + 1 == ws.tab_count() {
+            self.render_session_rows(ws_idx, title_indent, content_width, ui, cx)
+        } else {
+            Vec::new()
+        };
 
         div()
             .id(SharedString::from(format!("tab-drop-{tab_id}")))
@@ -1301,6 +1389,176 @@ impl PaneFlowApp {
             .rounded(ROW_RADIUS)
             .when(indent_guide, |el| el.child(render_sidebar_indent_guide(ui)))
             .child(row)
+            .children(hidden_rows)
+    }
+
+    fn render_session_rows(
+        &self,
+        ws_idx: usize,
+        title_indent: f32,
+        content_width: f32,
+        ui: crate::theme::UiColors,
+        cx: &mut Context<Self>,
+    ) -> Vec<AnyElement> {
+        let ws = &self.workspaces[ws_idx];
+        let workspace_id = ws.durable_id.clone();
+        let listed = self.owned_sessions_for_workspace(ws, cx);
+        if listed.is_empty() {
+            return Vec::new();
+        }
+        let cap = usize::from(self.cached_config.resolved_sidebar_ended_sessions());
+        let expanded = self.ended_sessions_expanded(ws);
+        let ended_total = listed.iter().filter(|session| !session.live).count();
+        let (shown_ended, collapsed) = ended_preview(ended_total, cap, expanded);
+        let hover_bg = crate::app::constants::sidebar_tab_hover_background();
+        let disconnected = self
+            .host_agents_are_stale()
+            .then(|| self.host_agents_disconnect_reason().unwrap_or("no stream"));
+        let list_stale = self.owned_sessions_are_stale();
+        let now_ms = crate::ipc_events::now_ms();
+
+        let mut rendered = 0usize;
+        let mut rows: Vec<AnyElement> = Vec::new();
+        for session in listed {
+            if !session.live {
+                rendered += 1;
+                if rendered > shown_ended {
+                    continue;
+                }
+            }
+            let label = session.label();
+            let key = session.session.to_string();
+            let group = SharedString::from(format!("session-row-group-{key}"));
+            let agent = self.host_agent_row(&session.session);
+            let lane = session
+                .live
+                .then(|| agent.and_then(session_row_lane))
+                .flatten()
+                .map(|state| Lane::Agent(SidebarAgentSummary { state, count: 1 }));
+            let unknown = self.session_outcome_unknown(&session.session);
+            let tooltip =
+                session_row_tooltip(&session, agent, now_ms, disconnected, list_stale, unknown);
+            let dimmed = !session.live
+                || list_stale
+                || unknown
+                || disconnected.is_some()
+                || agent.is_some_and(|row| row.stale);
+            let resting_color = if dimmed {
+                with_alpha(ui.muted, 0.45)
+            } else {
+                ui.muted
+            };
+            let lane_tooltip = SharedString::from(tooltip.clone());
+            let body = div()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap(px(SIDEBAR_TITLE_ROW_GAP))
+                .w(px(content_width))
+                .max_w(px(content_width))
+                .min_w_0()
+                .child(div().flex_none().w(px(title_indent)))
+                .child(
+                    svg()
+                        .size(px(12.))
+                        .flex_none()
+                        .path("icons/terminal.svg")
+                        .text_color(resting_color)
+                        .group_hover(group.clone(), |style| style.text_color(ui.muted)),
+                )
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .overflow_x_hidden()
+                        .whitespace_nowrap()
+                        .text_ellipsis()
+                        .text_color(resting_color)
+                        .group_hover(group.clone(), |style| style.text_color(ui.muted))
+                        .text_sm()
+                        .line_height(px(SIDEBAR_ROW_LINE_HEIGHT))
+                        .child(label),
+                )
+                .child(render_lane_slot(
+                    lane,
+                    &format!("session-row-{key}"),
+                    move |_| lane_tooltip,
+                    group.clone(),
+                    ui,
+                ));
+            let click_session = session.clone();
+            let menu_session = session.clone();
+            let shell = sidebar_row_shell()
+                .id(SharedString::from(format!("session-row-{key}")))
+                .cursor_pointer()
+                .delayed_tooltip(crate::ui_primitives::text_tooltip(tooltip))
+                .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                    if click_session.live {
+                        this.open_session_in_layout(ws_idx, click_session.clone(), window, cx);
+                    } else {
+                        this.resume_listed_session(ws_idx, click_session.clone(), window, cx);
+                    }
+                    cx.stop_propagation();
+                }))
+                .on_aux_click(cx.listener(move |this, event: &ClickEvent, _window, cx| {
+                    if event.is_right_click()
+                        && let Some(position) = event.mouse_position()
+                    {
+                        this.dismiss_transient_surfaces();
+                        this.session_menu_open = Some(crate::SessionContextMenu {
+                            ws_idx,
+                            session: Box::new(menu_session.clone()),
+                            position,
+                        });
+                        cx.stop_propagation();
+                        cx.notify();
+                    }
+                }));
+            rows.push(sidebar_row(shell, group, None, Some(hover_bg), body).into_any_element());
+        }
+
+        if collapsed > 0 {
+            let group = SharedString::from(format!("session-more-group-{ws_idx}"));
+            let body = div()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap(px(SIDEBAR_TITLE_ROW_GAP))
+                .w(px(content_width))
+                .max_w(px(content_width))
+                .min_w_0()
+                .child(
+                    div()
+                        .flex_none()
+                        .w(px(title_indent + 12. + SIDEBAR_TITLE_ROW_GAP)),
+                )
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .overflow_x_hidden()
+                        .whitespace_nowrap()
+                        .text_ellipsis()
+                        .text_color(with_alpha(ui.muted, 0.45))
+                        .group_hover(group.clone(), |style| style.text_color(ui.muted))
+                        .text_sm()
+                        .line_height(px(SIDEBAR_ROW_LINE_HEIGHT))
+                        .child(collapsed_sessions_label(collapsed)),
+                );
+            let shell = sidebar_row_shell()
+                .id(SharedString::from(format!("session-more-{ws_idx}")))
+                .cursor_pointer()
+                .delayed_tooltip(crate::ui_primitives::text_tooltip(
+                    "Nothing is pruned: show every ended session of this workspace.".to_string(),
+                ))
+                .on_click(cx.listener(move |this, _: &ClickEvent, _window, cx| {
+                    this.expand_ended_sessions(workspace_id.clone(), cx);
+                    cx.stop_propagation();
+                }));
+            rows.push(sidebar_row(shell, group, None, Some(hover_bg), body).into_any_element());
+        }
+
+        rows
     }
 
     pub(crate) fn tab_row_branch(&self, ws: &Workspace, tab: &Tab) -> String {
@@ -1654,16 +1912,19 @@ mod tests {
         assert!(motion.started.is_none());
     }
 
+    use super::OwnedSession;
     use super::lane::{Lane, infer_lane};
     use super::{
         ROW_RADIUS, SIDEBAR_DROP_BAND_REACH, SIDEBAR_DROP_LINE_PX, SIDEBAR_FOLDER_ICON_WIDTH,
         SIDEBAR_ROW_LINE_HEIGHT, SIDEBAR_ROW_MARGIN_X, SIDEBAR_ROW_PADDING_Y, SIDEBAR_ROW_SPACING,
         SIDEBAR_WIDTH, SidebarAgentState, SidebarAgentSummary, SidebarDropSlot, SidebarRow,
-        folder_row_sessions, reorder_target, sidebar_agent_summary, sidebar_drop_slots,
+        collapsed_sessions_label, ended_preview, folder_row_sessions, reorder_target,
+        session_row_lane, session_row_tooltip, sidebar_agent_summary, sidebar_drop_slots,
         sidebar_row_shell, tab_diffstat_visible, tab_display_title, tab_row_sessions,
     };
     use crate::agent_launcher::TerminalAgent;
     use crate::ai_types::{AgentSession, AgentState};
+    use crate::app::host_agents::HostAgentRow;
     use crate::app::pull_request::{PrState, PullRequest};
     use crate::workspace::Tab;
     use gpui::{
@@ -1671,6 +1932,114 @@ mod tests {
         size,
     };
     use std::collections::HashSet;
+
+    fn host_row(state: Option<AgentState>, stale: bool) -> HostAgentRow {
+        HostAgentRow {
+            session: paneflow_config::schema::SessionId::new(),
+            tool: None,
+            state,
+            message: None,
+            last_result: None,
+            waiting_since_ms: None,
+            stale,
+            live: !stale,
+        }
+    }
+
+    #[test]
+    fn a_session_row_shows_the_host_agent_state() {
+        let cases = [
+            (AgentState::WaitingForInput, SidebarAgentState::NeedsInput),
+            (AgentState::Errored, SidebarAgentState::Errored),
+            (AgentState::Thinking, SidebarAgentState::Thinking),
+            (AgentState::Finished, SidebarAgentState::Finished),
+        ];
+        for (host, sidebar) in cases {
+            assert_eq!(
+                session_row_lane(&host_row(Some(host), false)),
+                Some(sidebar)
+            );
+        }
+        assert_eq!(session_row_lane(&host_row(None, false)), None);
+    }
+
+    fn listed(live: bool) -> OwnedSession {
+        OwnedSession {
+            session: paneflow_config::schema::SessionId::new(),
+            generation: paneflow_config::schema::SessionGeneration::FIRST,
+            workspace: None,
+            title: Some("api".to_string()),
+            cwd: "/src/api".to_string(),
+            live,
+            lifecycle: if live {
+                paneflow_host::SessionLifecycle::Running
+            } else {
+                paneflow_host::SessionLifecycle::Exited {
+                    code: 130,
+                    signal: None,
+                }
+            },
+            updated_at_ms: 0,
+        }
+    }
+
+    #[test]
+    fn a_disconnected_host_reads_as_stale_never_as_idle_or_finished() {
+        let working = host_row(Some(AgentState::Thinking), false);
+
+        let live = session_row_tooltip(&listed(true), Some(&working), 0, None, false, false);
+        assert!(live.contains("Agent working"), "{live}");
+        assert!(!live.contains("stale"), "{live}");
+        assert!(live.contains("Click to reopen"), "{live}");
+
+        let dropped = session_row_tooltip(
+            &listed(true),
+            Some(&working),
+            0,
+            Some("stream closed"),
+            false,
+            false,
+        );
+        assert!(dropped.contains("stale"), "{dropped}");
+        assert!(dropped.contains("stream closed"), "{dropped}");
+        assert!(!dropped.contains("finished"), "{dropped}");
+
+        let lost = host_row(Some(AgentState::Thinking), true);
+        let lost = session_row_tooltip(&listed(true), Some(&lost), 0, None, false, false);
+        assert!(lost.contains("last seen working"), "{lost}");
+        assert!(lost.contains("stale"), "{lost}");
+    }
+
+    #[test]
+    fn an_ended_row_states_its_lifecycle_its_age_and_its_verb() {
+        let tooltip = session_row_tooltip(&listed(false), None, 120_000, None, false, false);
+        assert!(tooltip.contains("Exited with code 130"), "{tooltip}");
+        assert!(tooltip.contains("2 min ago"), "{tooltip}");
+        assert!(tooltip.contains("Click to resume"), "{tooltip}");
+
+        let stale = session_row_tooltip(&listed(false), None, 120_000, None, true, true);
+        assert!(stale.contains("this list is stale"), "{stale}");
+        assert!(stale.contains("outcome of the last action"), "{stale}");
+    }
+
+    #[test]
+    fn the_overflow_row_counts_what_it_hides() {
+        assert_eq!(collapsed_sessions_label(1), "1 more ended session");
+        assert_eq!(collapsed_sessions_label(4), "4 more ended sessions");
+    }
+
+    #[test]
+    fn the_preview_cap_collapses_the_rest_and_never_drops_a_record() {
+        assert_eq!(ended_preview(9, 5, false), (5, 4));
+        assert_eq!(ended_preview(9, 5, true), (9, 0));
+        assert_eq!(ended_preview(3, 5, false), (3, 0));
+        assert_eq!(ended_preview(3, 0, false), (0, 3));
+        assert_eq!(ended_preview(0, 5, false), (0, 0));
+        for cap in paneflow_config::schema::ENDED_SESSION_CAPS {
+            let (shown, collapsed) = ended_preview(12, usize::from(*cap), false);
+            assert_eq!(shown + collapsed, 12, "every ended record keeps a place");
+        }
+    }
 
     fn session(state: AgentState) -> AgentSession {
         AgentSession::new(TerminalAgent::ClaudeCode, state)

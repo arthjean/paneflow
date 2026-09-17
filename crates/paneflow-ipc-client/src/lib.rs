@@ -8,7 +8,12 @@
     )
 )]
 
+pub mod agent;
 pub mod ai_hook;
+pub mod host_control;
+pub mod line_wire;
+pub mod scrollback;
+pub mod send_text;
 
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
@@ -84,7 +89,7 @@ pub fn jsonrpc_error_message(line: &str) -> Option<String> {
     jsonrpc_error_message_from_value(&value)
 }
 
-fn jsonrpc_error_message_from_value(value: &Value) -> Option<String> {
+pub(crate) fn jsonrpc_error_message_from_value(value: &Value) -> Option<String> {
     let err = value.get("error")?;
     let code = err.get("code").and_then(Value::as_i64).unwrap_or(0);
     let message = err
@@ -154,8 +159,12 @@ fn connect_request_stream(socket: &Path) -> io::Result<Stream> {
     Stream::connect(name)
 }
 
+pub fn socket_is_listening(socket: &Path) -> bool {
+    connect_request_stream(socket).is_ok()
+}
+
 #[cfg(windows)]
-mod windows_pipe {
+pub mod windows_pipe {
     use super::{io, Duration, Stream};
     use std::os::windows::io::{AsHandle, AsRawHandle};
     use windows_sys::Win32::Foundation::{
@@ -233,11 +242,7 @@ mod windows_pipe {
         }
     }
 
-    pub(super) fn write_all(
-        stream: &Stream,
-        mut payload: &[u8],
-        timeout: Duration,
-    ) -> io::Result<()> {
+    pub fn write_all(stream: &Stream, mut payload: &[u8], timeout: Duration) -> io::Result<()> {
         let deadline = std::time::Instant::now() + timeout;
         let handle = pipe_handle(stream);
 
@@ -279,11 +284,7 @@ mod windows_pipe {
         Ok(())
     }
 
-    pub(super) fn read_some(
-        stream: &Stream,
-        buffer: &mut [u8],
-        timeout: Duration,
-    ) -> io::Result<usize> {
+    pub fn read_some(stream: &Stream, buffer: &mut [u8], timeout: Duration) -> io::Result<usize> {
         if timeout.is_zero() {
             return Err(io::Error::new(
                 io::ErrorKind::TimedOut,

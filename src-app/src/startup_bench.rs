@@ -38,6 +38,7 @@ impl Scenario {
             Scenario::Restore => (0..RESTORE_WORKSPACES)
                 .map(|index| {
                     serde_json::json!({
+                        "id": fixture_workspace_id(index),
                         "title": format!("bench-{index}"),
                         "cwd": cwd.to_string_lossy(),
                         "tabs": [{
@@ -51,7 +52,8 @@ impl Scenario {
                                     "command": null,
                                     "cwd": cwd.to_string_lossy(),
                                     "env": null,
-                                    "focus": true
+                                    "focus": true,
+                                    "session": fixture_session_id(index)
                                 }]
                             }
                         }]
@@ -66,6 +68,14 @@ impl Scenario {
         });
         serde_json::from_value(document).expect("fixture session matches the session schema")
     }
+}
+
+fn fixture_workspace_id(index: usize) -> String {
+    format!("00000000-0000-4000-8000-00000000{index:04x}")
+}
+
+fn fixture_session_id(index: usize) -> String {
+    format!("00000000-0000-4000-8000-00010000{index:04x}")
 }
 
 struct Trace {
@@ -314,5 +324,32 @@ mod tests {
         let text = serde_json::to_string(&restore).unwrap();
         let back: paneflow_config::schema::SessionState = serde_json::from_str(&text).unwrap();
         assert_eq!(back, restore);
+    }
+
+    #[test]
+    fn restore_fixture_pins_its_identities_so_repeated_launches_resume_instead_of_accumulating() {
+        let cwd = std::path::Path::new("bench-project");
+        let first = Scenario::Restore.session(cwd);
+        let second = Scenario::Restore.session(cwd);
+        assert_eq!(first, second);
+        let sessions = |state: &paneflow_config::schema::SessionState| {
+            state
+                .workspaces
+                .iter()
+                .filter_map(|ws| ws.tabs.first()?.layout.as_ref())
+                .filter_map(|layout| match layout {
+                    paneflow_config::schema::LayoutNode::Pane { surfaces } => {
+                        surfaces.first()?.session.clone()
+                    }
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+        };
+        let ids = sessions(&first);
+        assert_eq!(ids.len(), super::RESTORE_WORKSPACES);
+        assert_eq!(ids, sessions(&second));
+        let unique: std::collections::HashSet<_> = ids.iter().collect();
+        assert_eq!(unique.len(), ids.len());
+        assert!(first.workspaces.iter().all(|ws| ws.id.is_some()));
     }
 }

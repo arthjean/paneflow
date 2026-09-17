@@ -4436,6 +4436,7 @@ dependencies = [
  "open",
  "paneflow-config",
  "paneflow-home",
+ "paneflow-host",
  "paneflow-ipc-client",
  "paneflow-mcp-install",
  "paneflow-process",
@@ -4507,6 +4508,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.20",
  "tracing",
+ "uuid",
 ]
 
 [[package]]
@@ -4525,6 +4527,30 @@ version = "0.1.0"
 dependencies = [
  "dirs",
  "tempfile",
+]
+
+[[package]]
+name = "paneflow-host"
+version = "0.15.1"
+dependencies = [
+ "base64 0.22.1",
+ "clap",
+ "env_logger",
+ "interprocess",
+ "libc",
+ "log",
+ "paneflow-config",
+ "paneflow-home",
+ "paneflow-ipc-client",
+ "paneflow-terminal-ghostty",
+ "portable-pty",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.20",
+ "which 8.0.5",
+ "widestring",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -4551,6 +4577,7 @@ dependencies = [
 name = "paneflow-mcp"
 version = "0.15.1"
 dependencies = [
+ "paneflow-home",
  "paneflow-ipc-client",
  "serde",
  "serde_json",

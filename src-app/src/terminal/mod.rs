@@ -6,6 +6,7 @@ pub mod element;
 mod ghostty_session;
 #[cfg(test)]
 mod ghostty_stress;
+pub(crate) mod host_link;
 mod input;
 pub mod kitty;
 mod marks;

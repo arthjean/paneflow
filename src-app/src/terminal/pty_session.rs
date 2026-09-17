@@ -10,6 +10,7 @@ use super::ghostty_session::{
     GhosttyInputSendResult, GhosttyRuntimePending, GhosttySession, GhosttyUiEvent,
     ProgramNotification, SpawnedGhostty,
 };
+use super::host_link::{HostLinkState, HostedAttachment, HostedSession};
 use super::marks::SharedMarkRing;
 use super::service_detector::{ServiceInfo, detect_framework, parse_service_line};
 use super::shell::{resolve_default_shell, setup_shell_integration};
@@ -18,39 +19,21 @@ use super::types::{
     SelectionKind, SelectionRange, ShellQuoting, TerminalWindowSize,
 };
 use crate::limits::MAX_OSC52_BYTES;
-use paneflow_config::schema::{TerminalConfig, TerminalSurfaceProfile};
+use paneflow_config::schema::{
+    SessionGeneration, SessionId, TerminalConfig, TerminalSurfaceProfile,
+};
+pub(crate) use paneflow_host::env::INHERITED_AGENT_SESSION_ENV;
+pub(super) use paneflow_host::env::inherited_env_keys_to_strip;
+use paneflow_host::env::{
+    is_forbidden_child_env_key, is_inherited_agent_session_env_key, is_valid_env_name,
+};
+#[cfg(windows)]
+pub(super) use paneflow_host::process::{
+    WINDOWS_PROCESS_TREE_TERMINATION_BUDGET, terminate_windows_process_tree,
+};
 use paneflow_terminal_ghostty::Scroll as GhosttyScroll;
 
 const DEFAULT_SCROLLBACK_LINES: usize = TerminalConfig::DEFAULT_SCROLLBACK_LINES;
-pub(crate) const INHERITED_AGENT_SESSION_ENV: &[&str] = &[
-    "CLAUDECODE",
-    "CLAUDE_CODE_CHILD_SESSION",
-    "CLAUDE_CODE_SESSION_ID",
-    "CLAUDE_CODE_ENTRYPOINT",
-    "CLAUDE_CODE_EXECPATH",
-    "CLAUDE_CODE_MESSAGING_SOCKET",
-    "CLAUDE_CODE_MESSAGING_TOKEN",
-];
-const INHERITED_HOST_TERMINAL_ENV: &[&str] = &[
-    "WT_SESSION",
-    "WT_PROFILE_ID",
-    "TMUX",
-    "TMUX_PANE",
-    "STY",
-    "ZELLIJ",
-    "ZELLIJ_SESSION_NAME",
-    "ZELLIJ_PANE_ID",
-    "KITTY_WINDOW_ID",
-    "KITTY_LISTEN_ON",
-    "TERMINAL_EMULATOR",
-    "VTE_VERSION",
-    "ITERM_SESSION_ID",
-    "LC_TERMINAL",
-    "LC_TERMINAL_VERSION",
-    "ALACRITTY_WINDOW_ID",
-    "ALACRITTY_SOCKET",
-];
-const CONEMU_ENV_PREFIX: &str = "conemu";
 const MAX_PENDING_CLIPBOARD_OPS: usize = 8;
 const MAX_PENDING_NOTIFICATIONS: usize = 8;
 
@@ -539,6 +522,9 @@ pub(super) enum BackendInputResult {
 }
 
 pub struct TerminalState {
+    pub session_id: SessionId,
+    pub(crate) hosted: Option<HostedSession>,
+    pub(crate) host_link: HostLinkState,
     ghostty: GhosttySession,
     ghostty_events_rx: Option<UnboundedReceiver<GhosttyUiEvent>>,
     backend_failure: Option<TerminalBackendFailureDiagnostics>,
@@ -602,21 +588,15 @@ pub type ForegroundSignalMask = libc::sigset_t;
 #[cfg(not(unix))]
 pub type ForegroundSignalMask = ();
 
+#[cfg(all(test, unix))]
 pub(super) fn capture_foreground_signal_mask() -> Option<ForegroundSignalMask> {
-    #[cfg(unix)]
-    {
-        unsafe {
-            let mut oldset: libc::sigset_t = std::mem::zeroed();
-            if libc::pthread_sigmask(libc::SIG_SETMASK, std::ptr::null(), &mut oldset) == 0 {
-                Some(oldset)
-            } else {
-                None
-            }
+    unsafe {
+        let mut oldset: libc::sigset_t = std::mem::zeroed();
+        if libc::pthread_sigmask(libc::SIG_SETMASK, std::ptr::null(), &mut oldset) == 0 {
+            Some(oldset)
+        } else {
+            None
         }
-    }
-    #[cfg(not(unix))]
-    {
-        None
     }
 }
 
@@ -657,6 +637,10 @@ impl TerminalState {
         TerminalBackendEvents(self.ghostty_events_rx.take())
     }
 
+    pub(crate) fn has_backend_events(&self) -> bool {
+        self.ghostty_events_rx.is_some()
+    }
+
     pub(crate) fn process_backend_event(&mut self, event: TerminalBackendEvent) {
         self.process_ghostty_event(event.0);
     }
@@ -680,10 +664,54 @@ impl TerminalState {
         {
             self.pty_guard = crate::agents::parent_guard::spawn_pty_guard(spawned.child_pid);
         }
+        self.host_link = HostLinkState::Attached;
         self.set_osc52_mode(Osc52Mode::CopyOnly);
         self.cursor_blinking = true;
         self.dirty = true;
         self.flush_ghostty_pending_input();
+    }
+
+    pub(super) fn promote_hosted(&mut self, hosted: HostedAttachment) {
+        self.ghostty.promote();
+        self.child_pid = hosted.pid;
+        self.current_cwd = Some(hosted.cwd);
+        self.hosted = Some(HostedSession {
+            endpoint: hosted.attachment.endpoint,
+            generation: hosted.attachment.generation,
+        });
+        self.host_link = HostLinkState::Attached;
+        self.set_osc52_mode(Osc52Mode::CopyOnly);
+        self.cursor_blinking = true;
+        self.dirty = true;
+        self.flush_ghostty_pending_input();
+    }
+
+    pub(super) fn mark_host_link(&mut self, state: HostLinkState) {
+        if !state.accepts_input()
+            && let Ok(mut pending) = self.pending_input.lock()
+        {
+            pending.clear();
+        }
+        if matches!(
+            state,
+            HostLinkState::Ended(_) | HostLinkState::Unavailable(_)
+        ) {
+            self.cursor_blinking = false;
+            self.progress = None;
+        }
+        self.host_link = state;
+        self.dirty = true;
+    }
+
+    pub(crate) fn hosted_stop_target(
+        &self,
+    ) -> Option<(std::path::PathBuf, SessionId, SessionGeneration)> {
+        let hosted = self.hosted.as_ref()?;
+        Some((
+            hosted.endpoint.clone(),
+            self.session_id.clone(),
+            hosted.generation,
+        ))
     }
 
     fn flush_ghostty_pending_input(&self) {
@@ -946,6 +974,9 @@ impl TerminalState {
         );
         let marks = ghostty.marks();
         let state = Self {
+            session_id: SessionId::new(),
+            hosted: None,
+            host_link: HostLinkState::Attaching,
             ghostty,
             ghostty_events_rx: Some(events_rx),
             backend_failure: None,
@@ -1120,6 +1151,9 @@ impl TerminalState {
                 }
                 self.dirty = true;
             }
+            GhosttyUiEvent::HostLink(state) => {
+                self.mark_host_link(state);
+            }
         }
     }
 
@@ -1257,6 +1291,9 @@ impl TerminalState {
         input: PendingTerminalInput,
         user_initiated: bool,
     ) -> BackendInputResult {
+        if !self.host_link.accepts_input() {
+            return BackendInputResult::Rejected;
+        }
         let Ok(mut pending) = self.pending_input.lock() else {
             return BackendInputResult::Rejected;
         };
@@ -1454,41 +1491,6 @@ fn prepend_bin_dir_to_path(
     }
 }
 
-fn is_loader_influencing_env_key(key: &str) -> bool {
-    key.starts_with("LD_") || key.starts_with("DYLD_")
-}
-
-fn is_inherited_agent_session_env_key(key: &str) -> bool {
-    INHERITED_AGENT_SESSION_ENV.contains(&key)
-}
-
-fn is_forbidden_child_env_key(key: &str) -> bool {
-    is_inherited_agent_session_env_key(key) || is_loader_influencing_env_key(key)
-}
-
-pub(super) fn is_inherited_host_terminal_env_key(key: &str) -> bool {
-    INHERITED_HOST_TERMINAL_ENV
-        .iter()
-        .any(|known| key.eq_ignore_ascii_case(known))
-        || key.len() > CONEMU_ENV_PREFIX.len()
-            && key[..CONEMU_ENV_PREFIX.len()].eq_ignore_ascii_case(CONEMU_ENV_PREFIX)
-}
-
-pub(super) fn inherited_env_keys_to_strip() -> Vec<std::ffi::OsString> {
-    std::env::vars_os()
-        .map(|(key, _)| key)
-        .filter(|key| {
-            key.to_str().is_some_and(|key| {
-                is_inherited_host_terminal_env_key(key) || is_inherited_agent_session_env_key(key)
-            })
-        })
-        .collect()
-}
-
-fn is_valid_env_name(key: &str) -> bool {
-    !key.is_empty() && !key.contains('=') && !key.contains('\0')
-}
-
 fn is_wsl_shell(shell: &str) -> bool {
     let executable = shell.rsplit(['/', '\\']).next().unwrap_or(shell);
     executable.eq_ignore_ascii_case("wsl.exe") || executable.eq_ignore_ascii_case("wsl")
@@ -1659,323 +1661,6 @@ impl Drop for TerminalState {
         self.ghostty.shutdown();
         self.child_pid = 0;
     }
-}
-
-#[cfg(windows)]
-pub(super) const WINDOWS_PROCESS_TREE_TERMINATION_BUDGET: std::time::Duration =
-    std::time::Duration::from_secs(5);
-
-#[cfg(windows)]
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(super) struct WindowsProcessTreeTerminationResult {
-    pub(super) targeted: usize,
-    pub(super) terminate_requested: usize,
-    pub(super) already_exited: usize,
-    pub(super) failures: usize,
-    pub(super) timed_out: usize,
-    pub(super) deadline_exhausted: bool,
-}
-
-#[cfg(windows)]
-fn windows_process_entries() -> io::Result<Vec<(u32, u32)>> {
-    use std::mem;
-    use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
-    use windows_sys::Win32::System::Diagnostics::ToolHelp::{
-        CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW,
-        TH32CS_SNAPPROCESS,
-    };
-
-    let snap = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) };
-    if snap == INVALID_HANDLE_VALUE {
-        return Err(io::Error::last_os_error());
-    }
-
-    let mut entries: Vec<(u32, u32)> = Vec::with_capacity(256);
-    let mut entry: PROCESSENTRY32W = unsafe { mem::zeroed() };
-    entry.dwSize = mem::size_of::<PROCESSENTRY32W>() as u32;
-    if unsafe { Process32FirstW(snap, &mut entry) } == 0 {
-        let error = io::Error::last_os_error();
-        unsafe { CloseHandle(snap) };
-        return Err(error);
-    }
-    loop {
-        entries.push((entry.th32ProcessID, entry.th32ParentProcessID));
-        if unsafe { Process32NextW(snap, &mut entry) } == 0 {
-            break;
-        }
-    }
-    unsafe { CloseHandle(snap) };
-    Ok(entries)
-}
-
-#[cfg(windows)]
-fn windows_descendants_postorder(root_pid: u32, entries: &[(u32, u32)]) -> Vec<u32> {
-    fn visit(
-        pid: u32,
-        entries: &[(u32, u32)],
-        seen: &mut std::collections::HashSet<u32>,
-        out: &mut Vec<u32>,
-    ) -> bool {
-        if !seen.insert(pid) {
-            return false;
-        }
-        let mut children: Vec<u32> = entries
-            .iter()
-            .filter_map(|(child, parent)| (*parent == pid).then_some(*child))
-            .collect();
-        children.sort_unstable();
-        for child in children {
-            if visit(child, entries, seen, out) {
-                out.push(child);
-            }
-        }
-        true
-    }
-
-    let mut seen = std::collections::HashSet::new();
-    let mut out = Vec::new();
-    let _ = visit(root_pid, entries, &mut seen, &mut out);
-    out
-}
-
-#[cfg(windows)]
-fn windows_process_tree_targets(
-    root_pid: u32,
-    entries: &[(u32, u32)],
-    include_root: bool,
-) -> Vec<u32> {
-    let mut targets = windows_descendants_postorder(root_pid, entries);
-    if include_root && root_pid != 0 {
-        targets.push(root_pid);
-    }
-    targets
-}
-
-#[cfg(windows)]
-fn windows_wait_timeout_ms(remaining: std::time::Duration) -> Option<u32> {
-    const MAX_FINITE_WAIT_MS: u32 = u32::MAX - 1;
-    let milliseconds = remaining.as_millis().min(u128::from(MAX_FINITE_WAIT_MS)) as u32;
-    (milliseconds != 0).then_some(milliseconds)
-}
-
-#[cfg(windows)]
-struct WindowsTerminationHandle {
-    pid: u32,
-    handle: windows_sys::Win32::Foundation::HANDLE,
-}
-
-#[cfg(windows)]
-impl Drop for WindowsTerminationHandle {
-    fn drop(&mut self) {
-        unsafe {
-            windows_sys::Win32::Foundation::CloseHandle(self.handle);
-        }
-    }
-}
-
-#[cfg(windows)]
-fn request_windows_pid_termination(
-    pid: u32,
-    result: &mut WindowsProcessTreeTerminationResult,
-) -> Option<WindowsTerminationHandle> {
-    use windows_sys::Win32::Foundation::{WAIT_FAILED, WAIT_OBJECT_0, WAIT_TIMEOUT};
-    use windows_sys::Win32::System::Threading::{
-        OpenProcess, PROCESS_TERMINATE, TerminateProcess, WaitForSingleObject,
-    };
-    const SYNCHRONIZE: u32 = 0x0010_0000;
-
-    let handle = unsafe { OpenProcess(PROCESS_TERMINATE | SYNCHRONIZE, 0, pid) };
-    if handle.is_null() {
-        let os_error = io::Error::last_os_error().raw_os_error();
-        result.failures = result.failures.saturating_add(1);
-        log::debug!(
-            "paneflow: Windows pane cleanup could not open pid={pid} (os_error={os_error:?})"
-        );
-        return None;
-    }
-    let process = WindowsTerminationHandle { pid, handle };
-
-    match unsafe { WaitForSingleObject(process.handle, 0) } {
-        WAIT_OBJECT_0 => {
-            result.already_exited = result.already_exited.saturating_add(1);
-            return None;
-        }
-        WAIT_TIMEOUT => {}
-        WAIT_FAILED => {
-            let os_error = io::Error::last_os_error().raw_os_error();
-            result.failures = result.failures.saturating_add(1);
-            log::warn!(
-                "paneflow: Windows pane cleanup precheck failed for pid={pid} (os_error={os_error:?})"
-            );
-        }
-        status => {
-            result.failures = result.failures.saturating_add(1);
-            log::warn!(
-                "paneflow: Windows pane cleanup precheck returned status={status:#x} for pid={pid}"
-            );
-        }
-    }
-
-    if unsafe { TerminateProcess(process.handle, 1) } == 0 {
-        let terminate_error = io::Error::last_os_error().raw_os_error();
-        let exited = unsafe { WaitForSingleObject(process.handle, 0) } == WAIT_OBJECT_0;
-        if exited {
-            result.already_exited = result.already_exited.saturating_add(1);
-        } else {
-            result.failures = result.failures.saturating_add(1);
-            log::debug!(
-                "paneflow: Windows pane cleanup could not terminate pid={pid} (os_error={terminate_error:?})"
-            );
-        }
-        return None;
-    }
-
-    result.terminate_requested = result.terminate_requested.saturating_add(1);
-    Some(process)
-}
-
-#[cfg(windows)]
-fn wait_for_windows_terminations(
-    handles: Vec<WindowsTerminationHandle>,
-    deadline: std::time::Instant,
-    result: &mut WindowsProcessTreeTerminationResult,
-) {
-    use windows_sys::Win32::Foundation::{WAIT_FAILED, WAIT_OBJECT_0, WAIT_TIMEOUT};
-    use windows_sys::Win32::System::Threading::WaitForSingleObject;
-
-    if handles.is_empty() {
-        return;
-    }
-
-    let remaining = deadline.saturating_duration_since(std::time::Instant::now());
-    if windows_wait_timeout_ms(remaining).is_none() {
-        result.deadline_exhausted = true;
-        result.timed_out = result.timed_out.saturating_add(handles.len());
-        return;
-    }
-
-    let mut pending = Vec::with_capacity(handles.len());
-    for process in handles {
-        match unsafe { WaitForSingleObject(process.handle, 0) } {
-            WAIT_OBJECT_0 => {}
-            WAIT_TIMEOUT => pending.push(process),
-            WAIT_FAILED => {
-                let os_error = io::Error::last_os_error().raw_os_error();
-                result.failures = result.failures.saturating_add(1);
-                log::warn!(
-                    "paneflow: Windows pane cleanup wait failed for pid={} (os_error={os_error:?})",
-                    process.pid
-                );
-            }
-            status => {
-                result.failures = result.failures.saturating_add(1);
-                log::warn!(
-                    "paneflow: Windows pane cleanup wait returned status={status:#x} for pid={}",
-                    process.pid
-                );
-            }
-        }
-    }
-
-    let pending_count = pending.len();
-    for (index, process) in pending.into_iter().enumerate() {
-        let remaining = deadline.saturating_duration_since(std::time::Instant::now());
-        let Some(timeout_ms) = windows_wait_timeout_ms(remaining) else {
-            result.deadline_exhausted = true;
-            result.timed_out = result
-                .timed_out
-                .saturating_add(pending_count.saturating_sub(index));
-            break;
-        };
-
-        match unsafe { WaitForSingleObject(process.handle, timeout_ms) } {
-            WAIT_OBJECT_0 => {}
-            WAIT_TIMEOUT => {
-                result.deadline_exhausted = true;
-                result.timed_out = result
-                    .timed_out
-                    .saturating_add(pending_count.saturating_sub(index));
-                break;
-            }
-            WAIT_FAILED => {
-                let os_error = io::Error::last_os_error().raw_os_error();
-                result.failures = result.failures.saturating_add(1);
-                log::warn!(
-                    "paneflow: Windows pane cleanup wait failed for pid={} (os_error={os_error:?})",
-                    process.pid
-                );
-            }
-            status => {
-                result.failures = result.failures.saturating_add(1);
-                log::warn!(
-                    "paneflow: Windows pane cleanup wait returned status={status:#x} for pid={}",
-                    process.pid
-                );
-            }
-        }
-    }
-}
-
-#[cfg(windows)]
-pub(super) fn terminate_windows_process_tree(
-    root_pid: u32,
-    deadline: std::time::Instant,
-) -> WindowsProcessTreeTerminationResult {
-    let mut result = WindowsProcessTreeTerminationResult::default();
-    if root_pid == 0 {
-        return result;
-    }
-
-    const KILL_PASSES: usize = 3;
-    let mut targeted = std::collections::HashSet::new();
-    let mut handles = Vec::new();
-    for pass in 0..KILL_PASSES {
-        if pass > 0 && std::time::Instant::now() >= deadline {
-            result.deadline_exhausted = true;
-            break;
-        }
-
-        let (entries, snapshot_failed) = match windows_process_entries() {
-            Ok(entries) => (entries, false),
-            Err(error) => {
-                result.failures = result.failures.saturating_add(1);
-                log::warn!(
-                    "paneflow: Windows pane cleanup snapshot failed for root_pid={root_pid} (os_error={:?})",
-                    error.raw_os_error()
-                );
-                (Vec::new(), true)
-            }
-        };
-        let targets = windows_process_tree_targets(root_pid, &entries, pass == 0);
-        let had_descendants = targets.iter().any(|pid| *pid != root_pid);
-        for pid in targets {
-            if !targeted.insert(pid) {
-                continue;
-            }
-            result.targeted = result.targeted.saturating_add(1);
-            if let Some(handle) = request_windows_pid_termination(pid, &mut result) {
-                handles.push(handle);
-            }
-        }
-
-        if pass > 0 && !snapshot_failed && !had_descendants {
-            break;
-        }
-    }
-
-    wait_for_windows_terminations(handles, deadline, &mut result);
-    if result.failures != 0 || result.timed_out != 0 {
-        log::warn!(
-            "paneflow: Windows pane cleanup incomplete (root_pid={root_pid}, targeted={}, terminate_requested={}, already_exited={}, failures={}, timed_out={}, deadline_exhausted={})",
-            result.targeted,
-            result.terminate_requested,
-            result.already_exited,
-            result.failures,
-            result.timed_out,
-            result.deadline_exhausted
-        );
-    }
-    result
 }
 
 #[cfg(test)]
@@ -2637,66 +2322,11 @@ mod tests {
     }
 
     #[test]
-    fn host_terminal_markers_are_recognized_whatever_their_casing() {
-        for key in INHERITED_HOST_TERMINAL_ENV {
-            assert!(
-                is_inherited_host_terminal_env_key(key),
-                "{key} is listed and must be recognized"
-            );
-            assert!(
-                is_inherited_host_terminal_env_key(&key.to_lowercase()),
-                "{key} must be recognized case-insensitively"
-            );
-        }
-        for key in ["ConEmuANSI", "ConEmuPID", "ConEmuTask", "CONEMUBUILD"] {
-            assert!(
-                is_inherited_host_terminal_env_key(key),
-                "{key} must be matched by the ConEmu prefix rule"
-            );
-        }
-    }
-
-    #[test]
-    fn host_terminal_matcher_does_not_swallow_unrelated_names() {
-        for key in [
-            "conemu",
-            "CONEMU",
-            "TERM",
-            "TERM_PROGRAM",
-            "TMUXINATOR_CONFIG",
-            "STYLE",
-            "PATH",
-            "KITTY_WINDOW_IDS",
-            "PANEFLOW_SURFACE_ID",
-        ] {
-            assert!(
-                !is_inherited_host_terminal_env_key(key),
-                "{key} must survive - it is not a host-terminal identity marker"
-            );
-        }
-    }
-
-    #[test]
-    fn the_strip_list_covers_both_families_it_claims_to() {
-        for key in INHERITED_AGENT_SESSION_ENV {
-            assert!(
-                is_inherited_agent_session_env_key(key) || is_inherited_host_terminal_env_key(key),
-                "{key} must be stripped from the inherited env, not just the map"
-            );
-        }
-        assert!(
-            !is_inherited_agent_session_env_key("PANEFLOW_SURFACE_ID")
-                && !is_inherited_host_terminal_env_key("PANEFLOW_SURFACE_ID"),
-            "the strip must not reach a variable Paneflow sets for the pane"
-        );
-    }
-
-    #[test]
     fn host_terminal_markers_are_not_smuggled_through_the_assembled_env() {
         let env = assemble_pty_env(HashMap::new(), 1, 1, None);
         for key in env.keys() {
             assert!(
-                !is_inherited_host_terminal_env_key(key),
+                !paneflow_host::env::is_inherited_host_terminal_env_key(key),
                 "assemble_pty_env must never introduce the host marker {key}"
             );
         }
@@ -2870,57 +2500,6 @@ mod tests {
                 "active viewport must exclude {marker:?}; got:\n{drained}"
             );
         }
-    }
-
-    #[cfg(windows)]
-    #[test]
-    fn windows_descendants_postorder_places_children_before_parent() {
-        let entries = vec![(10, 1), (11, 10), (12, 10), (13, 12), (20, 1)];
-
-        assert_eq!(
-            windows_descendants_postorder(10, &entries),
-            vec![11, 13, 12]
-        );
-    }
-
-    #[cfg(windows)]
-    #[test]
-    fn windows_process_tree_targets_stay_scoped_and_put_root_last() {
-        let entries = vec![(10, 1), (11, 10), (12, 10), (13, 12), (20, 1)];
-
-        assert_eq!(
-            windows_process_tree_targets(10, &entries, true),
-            vec![11, 13, 12, 10]
-        );
-        assert_eq!(
-            windows_process_tree_targets(10, &entries, false),
-            vec![11, 13, 12]
-        );
-
-        let cyclic_entries = vec![(10, 11), (11, 10), (20, 1)];
-        assert_eq!(
-            windows_process_tree_targets(10, &cyclic_entries, true),
-            vec![11, 10],
-            "a malformed cycle must still target the pane root exactly once"
-        );
-    }
-
-    #[cfg(windows)]
-    #[test]
-    fn windows_wait_timeout_never_rounds_past_global_budget() {
-        use std::time::Duration;
-
-        assert_eq!(windows_wait_timeout_ms(Duration::ZERO), None);
-        assert_eq!(windows_wait_timeout_ms(Duration::from_micros(999)), None);
-        assert_eq!(windows_wait_timeout_ms(Duration::from_millis(1)), Some(1));
-        assert_eq!(
-            windows_wait_timeout_ms(Duration::from_micros(1_999)),
-            Some(1)
-        );
-        assert_eq!(
-            windows_wait_timeout_ms(Duration::from_millis(u64::from(u32::MAX) + 1)),
-            Some(u32::MAX - 1)
-        );
     }
 
     #[test]
