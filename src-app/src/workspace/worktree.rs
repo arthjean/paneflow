@@ -9,6 +9,8 @@ const GIT_DEADLINE: Duration = Duration::from_secs(10);
 const ADD_DEADLINE: Duration = Duration::from_secs(120);
 const STDOUT_CAP: u64 = 256 * 1024;
 const OWNER_MARKER_FILE: &str = "paneflow-owner";
+const REMOVE_ATTEMPTS: usize = 6;
+const REMOVE_RETRY_DELAY: Duration = Duration::from_millis(250);
 const LEGACY_OWNER_MARKER_FILE: &str = ".paneflow-worktree";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -649,6 +651,23 @@ pub fn restore_snapshot(repo_root: &Path, snapshot: &Snapshot) -> Result<PathBuf
     Ok(path)
 }
 
+pub fn retry_while_held(
+    attempts: usize,
+    delay: Duration,
+    mut remove: impl FnMut() -> Result<(), String>,
+) -> Result<(), String> {
+    let attempts = attempts.max(1);
+    let mut outcome = remove();
+    for _ in 1..attempts {
+        if outcome.is_ok() {
+            return outcome;
+        }
+        std::thread::sleep(delay);
+        outcome = remove();
+    }
+    outcome
+}
+
 pub fn snapshot_and_remove(
     repo_root: &Path,
     worktree_path: &Path,
@@ -665,11 +684,14 @@ pub fn snapshot_and_remove(
         false => Some(snapshot_worktree(repo_root, worktree_path)?),
     };
     let path_s = worktree_path.to_string_lossy();
-    run_git(
-        repo_root,
-        &["worktree", "remove", "--force", &path_s],
-        GIT_DEADLINE,
-    )?;
+    retry_while_held(REMOVE_ATTEMPTS, REMOVE_RETRY_DELAY, || {
+        run_git(
+            repo_root,
+            &["worktree", "remove", "--force", &path_s],
+            GIT_DEADLINE,
+        )
+        .map(|_| ())
+    })?;
     let _ = prune(repo_root);
     remove_empty_repo_dir(repo_root, worktree_path);
     Ok(snapshot)
@@ -1887,6 +1909,34 @@ mod tests {
         assert_eq!(snaps[1].branch.as_deref(), Some("feat/x"));
         assert_eq!(snaps[1].path, PathBuf::from("/w/feat-x"));
         assert_eq!(snaps[1].head, "1111");
+    }
+
+    #[test]
+    fn a_removal_is_retried_while_the_checkout_is_still_held() {
+        let mut calls = 0;
+        let outcome = retry_while_held(4, Duration::ZERO, || {
+            calls += 1;
+            if calls < 3 {
+                Err("held by another process".to_string())
+            } else {
+                Ok(())
+            }
+        });
+
+        assert_eq!(outcome, Ok(()), "a released checkout is removed");
+        assert_eq!(calls, 3, "no attempt is made once it succeeds");
+    }
+
+    #[test]
+    fn a_removal_that_never_frees_reports_the_last_error() {
+        let mut calls = 0;
+        let outcome = retry_while_held(3, Duration::ZERO, || {
+            calls += 1;
+            Err(format!("attempt {calls} refused"))
+        });
+
+        assert_eq!(calls, 3, "every attempt is spent");
+        assert_eq!(outcome, Err("attempt 3 refused".to_string()));
     }
 
     #[test]

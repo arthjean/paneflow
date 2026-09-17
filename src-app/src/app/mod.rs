@@ -44,3 +44,4 @@ pub mod title_bar_menus;
 pub mod welcome;
 pub mod win_timer;
 pub mod workspace_ops;
+pub mod worktree_remove;

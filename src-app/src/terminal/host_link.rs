@@ -370,21 +370,41 @@ pub(crate) fn stop_sessions_and_shutdown(
     failures
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct LiveSession {
+    pub(crate) session: SessionId,
+    pub(crate) title: String,
+    pub(crate) cwd: PathBuf,
+}
+
 pub(crate) enum LiveSessionProbe {
-    Sessions(Vec<PathBuf>),
+    Sessions(Vec<LiveSession>),
     NoHost,
     Unknown(String),
 }
 
-pub(crate) fn live_session_cwds() -> LiveSessionProbe {
+fn live_session_row(summary: SessionSummary) -> LiveSession {
+    let manifest = summary.manifest;
+    let title = manifest
+        .title
+        .clone()
+        .filter(|title| !title.trim().is_empty())
+        .or_else(|| manifest.agent.as_ref().map(|agent| agent.tool.clone()))
+        .unwrap_or_else(|| manifest.session.to_string());
+    LiveSession {
+        session: manifest.session,
+        title,
+        cwd: PathBuf::from(manifest.current_cwd.unwrap_or(manifest.cwd)),
+    }
+}
+
+pub(crate) fn live_sessions() -> LiveSessionProbe {
     match list_sessions(None) {
         Ok(sessions) => LiveSessionProbe::Sessions(
             sessions
                 .into_iter()
                 .filter(|summary| summary.live)
-                .map(|summary| {
-                    PathBuf::from(summary.manifest.current_cwd.unwrap_or(summary.manifest.cwd))
-                })
+                .map(live_session_row)
                 .collect(),
         ),
         Err(HostLinkError::NoHome) => LiveSessionProbe::NoHost,
