@@ -158,14 +158,16 @@ impl PaneFlowApp {
                     match result {
                         Ok(saved) if !saved || app.save_seq.load(Ordering::SeqCst) != seq => false,
                         Ok(_) => {
+                            app.session_exit_pending = false;
                             if let Some(on_saved) = on_saved.take() {
                                 on_saved(app, cx);
                             }
-                            app.session_exit_pending = false;
                             true
                         }
                         Err(error) => {
                             app.session_exit_pending = false;
+                            app.quit_dialog = None;
+                            cx.notify();
                             log::warn!("session save prevented exit: {error:#}");
                             show_session_message("Paneflow stayed open because your session could not be saved", &format!("Your panes are still available. Try closing Paneflow again after resolving the error.\n\n{error:#}"), cx);
                             true

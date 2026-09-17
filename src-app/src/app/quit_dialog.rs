@@ -84,7 +84,7 @@ pub(crate) struct QuitDialog {
 
 impl PaneFlowApp {
     pub(crate) fn request_quit(&mut self, cx: &mut Context<Self>) {
-        if self.quit_dialog.is_some() {
+        if self.quit_dialog.is_some() || self.session_exit_pending {
             return;
         }
         let sessions = self.live_session_targets(cx).len();
@@ -107,7 +107,9 @@ impl PaneFlowApp {
     }
 
     pub(crate) fn close_quit_dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if matches!(self.quit_dialog.as_ref(), Some(dialog) if !dialog.stopping) {
+        if !self.session_exit_pending
+            && matches!(self.quit_dialog.as_ref(), Some(dialog) if !dialog.stopping)
+        {
             self.quit_dialog = None;
             if let Some(ws) = self.workspaces.get_mut(self.active_idx) {
                 ws.focus_first(window, cx);
@@ -184,30 +186,35 @@ impl PaneFlowApp {
 
     fn quit_stopping_everything(&mut self, cx: &mut Context<Self>) {
         self.remember_quit_choice(OnQuit::Stop);
-        let targets = self.live_session_targets(cx);
-        let endpoint = host_link::host_endpoint().map(|target| target.endpoint);
-        if let Some(dialog) = self.quit_dialog.as_mut() {
-            dialog.stopping = true;
-            dialog.sessions = targets.len();
-        }
-        cx.notify();
-        let executor = cx.background_executor().clone();
-        cx.spawn(async move |this, cx: &mut AsyncApp| {
-            executor
-                .spawn(async move { host_link::stop_sessions_and_shutdown(targets, endpoint) })
-                .await;
-            let _ = this.update(cx, |app, cx| app.quit_now(cx));
-        })
-        .detach();
+        self.save_session_before_exit(cx, |app, cx| {
+            let targets = app.live_session_targets(cx);
+            let endpoint = host_link::host_endpoint().map(|target| target.endpoint);
+            app.session_exit_pending = true;
+            if let Some(dialog) = app.quit_dialog.as_mut() {
+                dialog.stopping = true;
+                dialog.sessions = targets.len();
+            }
+            cx.notify();
+            let executor = cx.background_executor().clone();
+            cx.spawn(async move |this, cx: &mut AsyncApp| {
+                executor
+                    .spawn(async move { host_link::stop_sessions_and_shutdown(targets, endpoint) })
+                    .await;
+                let _ = this.update(cx, |app, cx| app.finish_quit(cx));
+            })
+            .detach();
+        });
     }
 
     fn quit_now(&mut self, cx: &mut Context<Self>) {
-        self.save_session_before_exit(cx, |app, cx| {
-            app.emit_app_exited_and_flush();
-            #[cfg(target_os = "linux")]
-            crate::window_chrome::linux_backdrop::clear_subtle_chrome_material();
-            cx.quit();
-        });
+        self.save_session_before_exit(cx, |app, cx| app.finish_quit(cx));
+    }
+
+    fn finish_quit(&mut self, cx: &mut Context<Self>) {
+        self.emit_app_exited_and_flush();
+        #[cfg(target_os = "linux")]
+        crate::window_chrome::linux_backdrop::clear_subtle_chrome_material();
+        cx.quit();
     }
 
     fn handle_quit_dialog_key_down(
