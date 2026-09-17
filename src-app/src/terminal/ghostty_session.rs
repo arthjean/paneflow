@@ -5364,7 +5364,6 @@ mod tests {
             restored.contains("MIRROR_BEFORE"),
             "the checkpoint restores the host screen: {restored:?}"
         );
-        let restored_markers = restored.matches("MIRROR_BEFORE").count();
 
         assert!(
             mirror.write(b"echo MIRROR_AFTER\r\n".to_vec()).is_sent(),
@@ -5383,10 +5382,37 @@ mod tests {
             mirrored.contains("MIRROR_AFTER"),
             "input reaches the host and its output streams back: {mirrored:?}"
         );
-        assert_eq!(
-            mirrored.matches("MIRROR_BEFORE").count(),
-            restored_markers,
-            "bytes already in the checkpoint are never streamed again: {mirrored:?}"
+        let mut streamed = Vec::new();
+        let mut streamed_offset = attachment.checkpoint.offset;
+        let deadline = Instant::now() + Duration::from_secs(30);
+        while Instant::now() < deadline {
+            streamed_offset = client
+                .output(
+                    &session,
+                    Some(generation),
+                    streamed_offset,
+                    false,
+                    |_, bytes| {
+                        streamed.extend_from_slice(bytes);
+                        true
+                    },
+                    || true,
+                )
+                .expect("drain what the host streams past the checkpoint")
+                .next_offset;
+            if String::from_utf8_lossy(&streamed).contains("MIRROR_AFTER") {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(25));
+        }
+        let streamed = String::from_utf8_lossy(&streamed).into_owned();
+        assert!(
+            streamed.contains("MIRROR_AFTER"),
+            "the tail past the checkpoint carries the later bytes: {streamed:?}"
+        );
+        assert!(
+            !streamed.contains("MIRROR_BEFORE"),
+            "bytes already in the checkpoint are never streamed again: {streamed:?}"
         );
 
         client
