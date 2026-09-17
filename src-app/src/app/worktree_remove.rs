@@ -243,8 +243,14 @@ impl PaneFlowApp {
                 self.stop_listed_session(session, cx);
             }
         }
-        self.forget_removed_worktree(&dialog.path, cx);
         self.forget_managed_paths(std::slice::from_ref(&dialog.path), cx);
+        for blocker in &dialog.blockers {
+            if let WorktreeBlocker::Tab { ws_id, tab_id, .. } = blocker
+                && let Some((ws_idx, tab_idx)) = self.tab_position(*ws_id, *tab_id)
+            {
+                self.remove_workspace_tab(ws_idx, tab_idx, window, cx);
+            }
+        }
         for blocker in &dialog.blockers {
             if let WorktreeBlocker::Workspace { id, .. } = blocker
                 && let Some(idx) = self.workspaces.iter().position(|ws| ws.id == *id)
@@ -252,6 +258,7 @@ impl PaneFlowApp {
                 self.remove_workspace(idx, window, cx);
             }
         }
+        self.forget_removed_worktree(&dialog.path, cx);
         self.spawn_worktree_checkout_removal(dialog.repo_root, dialog.path, cx);
         cx.notify();
     }
@@ -399,9 +406,9 @@ impl PaneFlowApp {
             .line_height(px(18.))
             .text_color(ui.muted)
             .child(
-                "Removing closes the workspaces listed above, stops their sessions and returns \
-                 their tabs to the project checkout. Uncommitted changes are saved as a snapshot \
-                 and the branch is kept.",
+                "Removing closes everything listed above and stops those sessions. Uncommitted \
+                 changes in the worktree are saved as a snapshot you can restore, and the branch \
+                 itself is kept.",
             );
 
         let footer = div()
