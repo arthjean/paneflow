@@ -103,7 +103,6 @@ pub(crate) fn connect_or_start(target: &HostEndpoint) -> Result<HostClient, Host
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum SessionIntent {
     Create,
-    Reattach,
     Resume,
 }
 
@@ -293,20 +292,9 @@ fn inspect_optional(
 pub(super) fn resolve(request: AttachRequest) -> Result<ResolveOutcome, HostLinkError> {
     let target = host_endpoint().ok_or(HostLinkError::NoHome)?;
     let mut client = connect_or_start(&target)?;
-    let owner = client.identity().host_instance.clone();
     let existing = inspect_optional(&mut client, &request.session)?;
     let live = match (request.intent, existing) {
         (_, Some(summary)) if summary.live && summary.owned => summary,
-        (SessionIntent::Reattach, None) => {
-            return Ok(ResolveOutcome::Ended(HostLinkEnd::missing()));
-        }
-        (SessionIntent::Reattach, Some(summary)) => {
-            let generation = summary.manifest.generation;
-            return Ok(ResolveOutcome::Ended(HostLinkEnd::from_reconnection(
-                summary.reconnection(&owner),
-                generation,
-            )));
-        }
         (SessionIntent::Create, None) | (SessionIntent::Resume, None) => {
             client.create(&create_request(&request))?
         }

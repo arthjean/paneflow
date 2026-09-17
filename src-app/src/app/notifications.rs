@@ -22,7 +22,6 @@ pub(crate) struct Toast {
 #[derive(Clone)]
 pub(crate) enum ToastAction {
     RetryUpdate,
-    ResumeEndedSessions(usize),
     OpenReleasesPage(String),
     OpenReleaseNotes(String),
 }
@@ -132,12 +131,7 @@ impl PaneFlowApp {
         {
             return self.render_release_toast(toast, ui, cx);
         }
-        let offers_resume = toast
-            .actions
-            .iter()
-            .any(|action| matches!(action, ToastAction::ResumeEndedSessions(_)));
-        let is_error =
-            (has_actions && !offers_resume) || toast_message_reads_like_error(&toast.message);
+        let is_error = has_actions || toast_message_reads_like_error(&toast.message);
         let (icon, icon_color, max_w) = if is_error {
             ("icons/triangle-alert.svg", ui.agent_error, px(440.))
         } else {
@@ -173,9 +167,6 @@ impl PaneFlowApp {
             for (idx, action) in toast.actions.iter().enumerate() {
                 let (label, button_id): (&str, String) = match action {
                     ToastAction::RetryUpdate => ("Retry", format!("toast-retry-{idx}")),
-                    ToastAction::ResumeEndedSessions(_) => {
-                        ("Resume all", format!("toast-resume-all-{idx}"))
-                    }
                     ToastAction::OpenReleasesPage(_) => {
                         ("Open releases", format!("toast-releases-{idx}"))
                     }
@@ -201,13 +192,10 @@ impl PaneFlowApp {
                     })
                     .child(label)
                     .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                    .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                    .on_click(cx.listener(move |_this, _: &ClickEvent, window, cx| {
                         match &action_clone {
                             ToastAction::RetryUpdate => {
                                 window.dispatch_action(Box::new(StartSelfUpdate), cx);
-                            }
-                            ToastAction::ResumeEndedSessions(ws_idx) => {
-                                this.resume_ended_sessions_in_workspace(*ws_idx, cx);
                             }
                             ToastAction::OpenReleasesPage(url) => {
                                 if let Err(err) = crate::external_open::open_url(url) {

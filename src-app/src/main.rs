@@ -599,8 +599,6 @@ struct PaneFlowApp {
     closed_panes: Vec<ClosedPaneRecord>,
     owned_sessions: crate::app::hosted_sessions::OwnedSessions,
     resume_batch: Option<crate::app::hosted_sessions::ResumeBatch>,
-    resume_offer_shown: bool,
-    resume_offer_deadline: std::time::Instant,
     close_dialog: Option<crate::app::close_policy::CloseDialog>,
     close_dialog_focus: FocusHandle,
     host_agents: crate::app::host_agents::HostAgentView,

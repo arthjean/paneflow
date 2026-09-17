@@ -6,8 +6,6 @@ use crate::terminal::blink::{BlinkPhase, BlinkPhaseGlobal, CURSOR_BLINK_INTERVAL
 use crate::window_chrome::title_bar;
 use crate::{PaneFlowApp, ipc, keybindings, update};
 
-const RESUME_OFFER_WINDOW: std::time::Duration = std::time::Duration::from_secs(30);
-
 impl PaneFlowApp {
     pub(crate) fn spawn_telemetry_flusher(
         telemetry: std::sync::Arc<telemetry::client::TelemetryClient>,
@@ -667,8 +665,6 @@ impl PaneFlowApp {
             closed_panes: Vec::new(),
             owned_sessions: Default::default(),
             resume_batch: None,
-            resume_offer_shown: false,
-            resume_offer_deadline: std::time::Instant::now() + RESUME_OFFER_WINDOW,
             close_dialog: None,
             close_dialog_focus: cx.focus_handle(),
             host_agents: Default::default(),
@@ -768,6 +764,8 @@ impl PaneFlowApp {
             let restored_paths =
                 crate::app::recents::restored_session_paths(&app.workspaces, app.active_idx);
             app.record_recent_workspaces(&restored_paths, cx);
+            let restored_terminals = app.attached_terminals(cx);
+            app.track_resume_batch(restored_terminals, cx);
         }
 
         for (repo_root, branch, pr) in pull_request_seeds {

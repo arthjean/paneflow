@@ -554,30 +554,6 @@ impl PaneFlowApp {
         resumable
     }
 
-    pub(crate) fn offer_resume_all_once(&mut self, cx: &mut Context<Self>) {
-        if self.resume_offer_shown {
-            return;
-        }
-        if std::time::Instant::now() >= self.resume_offer_deadline {
-            self.resume_offer_shown = true;
-            return;
-        }
-        let ws_idx = self.active_idx;
-        let ended = self.resumable_ended_panes(ws_idx, cx);
-        if ended < 2 {
-            return;
-        }
-        self.resume_offer_shown = true;
-        self.push_toast(
-            format!("{ended} panes of this workspace have an ended session."),
-            vec![crate::app::notifications::ToastAction::ResumeEndedSessions(
-                ws_idx,
-            )],
-            crate::app::constants::TOAST_HOLD_MS * 4,
-            cx,
-        );
-    }
-
     pub(crate) fn resumable_ended_panes(&self, ws_idx: usize, cx: &App) -> usize {
         self.workspaces
             .get(ws_idx)
@@ -629,12 +605,16 @@ impl PaneFlowApp {
         if batch.pending.is_empty() {
             let (resumed, requested) = (batch.resumed, batch.requested);
             self.resume_batch = None;
-            self.show_toast(
-                format!("{resumed} of {requested} ended session(s) resumed"),
-                cx,
-            );
+            if let Some(notice) = resume_batch_failure_notice(resumed, requested) {
+                self.show_toast(notice, cx);
+            }
         }
     }
+}
+
+pub(crate) fn resume_batch_failure_notice(resumed: usize, requested: usize) -> Option<String> {
+    let failed = requested.saturating_sub(resumed);
+    (failed > 0).then(|| format!("{failed} of {requested} panes could not be resumed"))
 }
 
 pub(crate) fn host_link_is_resumable(link: &HostLinkState) -> bool {
@@ -697,6 +677,20 @@ mod tests {
         assert_eq!(listed.label(), "web");
         listed.title = Some("claude".to_string());
         assert_eq!(listed.label(), "claude");
+    }
+
+    #[test]
+    fn a_fully_resumed_batch_stays_silent_and_a_partial_one_counts_the_failures() {
+        assert_eq!(resume_batch_failure_notice(4, 4), None);
+        assert_eq!(resume_batch_failure_notice(0, 0), None);
+        assert_eq!(
+            resume_batch_failure_notice(3, 5).as_deref(),
+            Some("2 of 5 panes could not be resumed")
+        );
+        assert_eq!(
+            resume_batch_failure_notice(0, 1).as_deref(),
+            Some("1 of 1 panes could not be resumed")
+        );
     }
 
     #[test]

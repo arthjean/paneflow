@@ -944,7 +944,6 @@ impl PaneFlowApp {
             }
             terminal::TerminalEvent::HostLinkResolved => {
                 self.note_host_link_resolved(&terminal, cx);
-                self.offer_resume_all_once(cx);
                 self.refresh_owned_sessions(cx);
             }
         }

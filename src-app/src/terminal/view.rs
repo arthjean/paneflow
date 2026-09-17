@@ -416,7 +416,7 @@ impl TerminalView {
                 user_env,
                 profile: TerminalSurfaceProfile::Normal,
             },
-            SessionIntent::Reattach,
+            SessionIntent::Resume,
             Some(session),
             cx,
         )
@@ -428,18 +428,7 @@ impl TerminalView {
         session: paneflow_config::schema::SessionId,
         cx: &mut Context<Self>,
     ) -> Self {
-        Self::open(
-            HostedLaunch {
-                workspace_id,
-                cwd,
-                initial_size: None,
-                user_env: None,
-                profile: TerminalSurfaceProfile::Normal,
-            },
-            SessionIntent::Resume,
-            Some(session),
-            cx,
-        )
+        Self::attach_restored(workspace_id, cwd, None, session, cx)
     }
 
     fn open(
