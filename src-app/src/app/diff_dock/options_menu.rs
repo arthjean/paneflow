@@ -10,7 +10,7 @@ use gpui::{
 use super::model::{DiffChrome, DiffOptionsSubmenu};
 use crate::PaneFlowApp;
 use crate::diff::{ComparisonPolicy, DiffOptions, HighlightPolicy};
-use crate::settings::components::{menu_divider_color, menu_surface, select_item};
+use crate::settings::components::{menu_divider_color, menu_panel, menu_row};
 use crate::ui_primitives::{ROW_RADIUS, squircle_skin};
 
 const MENU_WIDTH: f32 = 232.0;
@@ -277,11 +277,7 @@ fn render_diff_options_menu(
     let dismiss = actions.dismiss.clone();
     let submenu_bounds: SubmenuBounds = Rc::default();
     let dismiss_bounds = submenu_bounds.clone();
-    let mut menu = menu_surface(div().id("diff-options-menu"), ui)
-        .flex()
-        .flex_col()
-        .gap(px(1.))
-        .p(px(4.))
+    let mut menu = menu_panel(div().id("diff-options-menu"), ui)
         .w(px(MENU_WIDTH))
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
         .on_mouse_up_out(MouseButton::Left, move |event: &MouseUpEvent, _w, cx| {
@@ -348,7 +344,7 @@ fn render_diff_options_menu(
         let next_collapse = !all_collapsed;
         let set_all_collapsed = actions.set_all_collapsed.clone();
         menu = menu.child(
-            select_item("diff-options-collapse", false, ui)
+            menu_row("diff-options-collapse", false, ui)
                 .on_click(move |_: &ClickEvent, _w, cx| set_all_collapsed(next_collapse, cx))
                 .child(menu_label(label, ui)),
         );
@@ -356,7 +352,7 @@ fn render_diff_options_menu(
 
     let refresh = actions.refresh.clone();
     menu = menu.child(
-        select_item("diff-options-refresh", false, ui)
+        menu_row("diff-options-refresh", false, ui)
             .on_click(move |_: &ClickEvent, _w, cx| refresh(cx))
             .child(menu_label("Refresh Changes", ui)),
     );
@@ -410,7 +406,7 @@ fn render_submenu_row(
     let (row_id, submenu_id) = submenu_ids(submenu);
     let toggle_submenu = actions.toggle_submenu.clone();
 
-    select_item(row_id, open, ui)
+    menu_row(row_id, open, ui)
         .relative()
         .on_click(move |_: &ClickEvent, _w, cx| toggle_submenu(submenu, cx))
         .child(menu_label(label, ui))
@@ -447,11 +443,7 @@ fn render_submenu(
     submenu_bounds: SubmenuBounds,
     ui: crate::theme::UiColors,
 ) -> AnyElement {
-    let mut menu = menu_surface(div().id(id), ui)
-        .flex()
-        .flex_col()
-        .gap(px(1.))
-        .p(px(4.))
+    let mut menu = menu_panel(div().id(id), ui)
         .w(px(SUBMENU_WIDTH))
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
         .child(
@@ -485,7 +477,7 @@ fn render_option_entry(
     ui: crate::theme::UiColors,
 ) -> AnyElement {
     let choice = entry.choice;
-    select_item(entry.id, entry.selected, ui)
+    menu_row(entry.id, entry.selected, ui)
         .on_click(move |_: &ClickEvent, _w, cx| choose(choice, cx))
         .child(menu_label(entry.label, ui))
         .child(div().w(px(14.)).flex_none().child(if entry.selected {

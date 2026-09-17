@@ -415,6 +415,32 @@ impl PaneFlowApp {
         }
     }
 
+    fn new_surface_cwd(
+        &self,
+        pane: &Entity<Pane>,
+        ws_id: u64,
+        cx: &Context<Self>,
+    ) -> Option<std::path::PathBuf> {
+        pane.read(cx)
+            .active_terminal_opt()
+            .and_then(|terminal| {
+                let terminal = terminal.read(cx);
+                terminal
+                    .terminal
+                    .current_cwd
+                    .as_deref()
+                    .filter(|cwd| !cwd.is_empty())
+                    .map(std::path::PathBuf::from)
+                    .or_else(|| terminal.terminal.cwd_now())
+            })
+            .or_else(|| {
+                self.workspaces
+                    .iter()
+                    .find(|ws| ws.id == ws_id)
+                    .map(|ws| std::path::PathBuf::from(&ws.cwd))
+            })
+    }
+
     pub(crate) fn handle_pane_event(
         &mut self,
         pane: Entity<Pane>,
@@ -470,31 +496,54 @@ impl PaneFlowApp {
                     );
                     return;
                 }
-                let cwd = pane
-                    .read(cx)
-                    .active_terminal_opt()
-                    .and_then(|terminal| {
-                        let terminal = terminal.read(cx);
-                        terminal
-                            .terminal
-                            .current_cwd
-                            .as_deref()
-                            .filter(|cwd| !cwd.is_empty())
-                            .map(std::path::PathBuf::from)
-                            .or_else(|| terminal.terminal.cwd_now())
-                    })
-                    .or_else(|| {
-                        self.workspaces
-                            .iter()
-                            .find(|ws| ws.id == ws_id)
-                            .map(|ws| std::path::PathBuf::from(&ws.cwd))
-                    });
+                let cwd = self.new_surface_cwd(&pane, ws_id, cx);
                 let terminal = cx.new(|cx| TerminalView::with_cwd(ws_id, cwd, None, cx));
                 cx.subscribe(&terminal, Self::handle_terminal_event)
                     .detach();
                 pane.update(cx, |pane, cx| {
                     pane.push_surface(pane::PaneSurface::Terminal(terminal), cx);
                 });
+                self.pending_pane_focus = Some(pane);
+                self.save_session(cx);
+                cx.notify();
+            }
+            pane::PaneEvent::OpenNewTabMenu => {
+                let ws_id = pane.read(cx).workspace_id;
+                let Some(ws_idx) = self.workspaces.iter().position(|ws| ws.id == ws_id) else {
+                    return;
+                };
+                let presets = self.pane_palette_presets(ws_idx);
+                pane.update(cx, |pane, cx| pane.open_new_tab_menu(presets, cx));
+            }
+            pane::PaneEvent::NewTabPreset(preset) => {
+                let ws_id = pane.read(cx).workspace_id;
+                if !pane.read(cx).can_add_surface() {
+                    self.show_toast(
+                        format!("Maximum tab count reached ({})", pane::MAX_PANE_TABS),
+                        cx,
+                    );
+                    return;
+                }
+                if let Err(message) = preset.ensure_launchable() {
+                    self.show_toast(message, cx);
+                    return;
+                }
+                let cwd = self.new_surface_cwd(&pane, ws_id, cx);
+                let command = preset.command(&self.cached_config);
+                let env = preset.env();
+                let profile = preset.profile();
+                let terminal = cx.new(|cx| {
+                    TerminalView::with_cwd_env_and_profile(ws_id, cwd, None, env, profile, cx)
+                });
+                cx.subscribe(&terminal, Self::handle_terminal_event)
+                    .detach();
+                pane.update(cx, |pane, cx| {
+                    pane.push_surface(pane::PaneSurface::Terminal(terminal.clone()), cx);
+                });
+                if let Some(command) = command.as_deref() {
+                    terminal.read(cx).send_command(command);
+                    terminal.update(cx, |view, _cx| view.declare_agent_from_command(command));
+                }
                 self.pending_pane_focus = Some(pane);
                 self.save_session(cx);
                 cx.notify();

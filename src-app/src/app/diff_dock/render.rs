@@ -128,7 +128,7 @@ pub(super) fn render_diff_tab_strip(
         ))
         .child(render_diff_header_icon_button(
             "diff-dock-close",
-            "icons/close.svg",
+            "icons/layout-sidebar-right-collapse.svg",
             cx.listener(|this, _: &ClickEvent, _w, cx| {
                 this.close_diff_dock_panel(cx);
             }),

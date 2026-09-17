@@ -9,7 +9,7 @@ use gpui::{
 };
 
 use super::view::CodeView;
-use crate::settings::components::{menu_surface, select_item};
+use crate::settings::components::{menu_panel, menu_row};
 use crate::ui_primitives::{AnimatedHoverExt, TooltipDelayExt, text_tooltip};
 
 const MENU_WIDTH: f32 = 180.0;
@@ -94,14 +94,10 @@ impl EditorControls {
     fn menu(&self, cx: &mut Context<Self>) -> AnyElement {
         let ui = crate::theme::ui_colors();
         let display = editor_display();
-        let mut menu = menu_surface(div().id("code-editor-controls-menu"), ui)
+        let mut menu = menu_panel(div().id("code-editor-controls-menu"), ui)
             .role(gpui::Role::Menu)
             .aria_label("Editor Controls")
             .track_focus(&self.focus)
-            .flex()
-            .flex_col()
-            .gap(px(1.))
-            .p(px(4.))
             .w(px(MENU_WIDTH))
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .on_mouse_down_out(
@@ -133,7 +129,7 @@ impl EditorControls {
         .enumerate()
         {
             menu = menu.child(
-                select_item(
+                menu_row(
                     ("code-editor-control", index),
                     self.selected == Some(index),
                     ui,

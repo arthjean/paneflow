@@ -1,5 +1,5 @@
 use crate::ui_primitives::TooltipDelayExt;
-use crate::ui_primitives::{ROW_RADIUS, squircle_skin};
+use crate::ui_primitives::squircle_skin;
 
 use gpui::{
     AnyElement, ClickEvent, Context, FontWeight, InteractiveElement, IntoElement, MouseButton,
@@ -130,114 +130,54 @@ impl PaneFlowApp {
         let has_query = !self.sidebar_filter_input.read(cx).value().is_empty();
         let focused = focus.is_focused(window);
         let expanded = self.sidebar_filter_hovered || focused || has_query;
-        let filter = div()
-            .id("sidebar-filter")
-            .flex_1()
-            .min_w_0()
-            .h(px(30.))
-            .px(px(8.))
-            .flex()
-            .items_center()
-            .gap(px(8.))
-            .rounded_full()
-            .when(focused || has_query, |field| field.bg(active_bg))
-            .when(expanded && !focused && !has_query, |field| {
-                field.bg(hover_bg)
-            })
-            .hover(move |style| {
-                style.bg(if focused || has_query {
-                    active_bg
-                } else {
-                    hover_bg
-                })
-            })
-            .cursor_text()
-            .on_hover(cx.listener(|this, hovered: &bool, _, cx| {
-                this.sidebar_filter_hovered = *hovered;
-                cx.notify();
-            }))
-            .on_mouse_down(MouseButton::Left, move |_, window, cx| {
-                window.focus(&focus, cx);
+        let filter = crate::ui_primitives::filter_field(
+            "sidebar-filter",
+            "sidebar-filter-clear",
+            ui,
+            focused,
+            has_query,
+            expanded,
+            self.sidebar_filter_input.clone(),
+            cx.listener(|this, _: &ClickEvent, window, cx| {
                 cx.stop_propagation();
-            })
-            .on_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, window, cx| {
-                if event.keystroke.key == "escape" {
-                    this.sidebar_filter_input
-                        .update(cx, |input, cx| input.clear(cx));
-                    window.blur();
-                    if let Some(ws) = this.workspaces.get(this.active_idx) {
-                        ws.focus_first(window, cx);
-                    }
-                    cx.stop_propagation();
+                this.sidebar_filter_input
+                    .update(cx, |input, cx| input.clear(cx));
+                let focus = this.sidebar_filter_input.read(cx).focus_handle.clone();
+                window.focus(&focus, cx);
+            }),
+        )
+        .flex_1()
+        .on_hover(cx.listener(|this, hovered: &bool, _, cx| {
+            this.sidebar_filter_hovered = *hovered;
+            cx.notify();
+        }))
+        .on_mouse_down(MouseButton::Left, move |_, window, cx| {
+            window.focus(&focus, cx);
+            cx.stop_propagation();
+        })
+        .on_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, window, cx| {
+            if event.keystroke.key == "escape" {
+                this.sidebar_filter_input
+                    .update(cx, |input, cx| input.clear(cx));
+                window.blur();
+                if let Some(ws) = this.workspaces.get(this.active_idx) {
+                    ws.focus_first(window, cx);
                 }
-            }))
-            .child(
-                svg()
-                    .size(px(18.))
-                    .flex_none()
-                    .path(if focused {
-                        "icons/filter-circle.svg"
-                    } else {
-                        "icons/filter-circle-outline.svg"
-                    })
-                    .text_color(if focused {
-                        crate::app::constants::sidebar_filter_icon_color()
-                    } else {
-                        ui.muted
-                    }),
-            )
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .text_sm()
-                    .text_color(ui.text)
-                    .when(!expanded, |field| field.invisible())
-                    .child(self.sidebar_filter_input.clone()),
-            )
-            .when(has_query, |field| {
-                field.child(
-                    div()
-                        .id("sidebar-filter-clear")
-                        .size(px(18.))
-                        .flex_none()
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .rounded_full()
-                        .bg(ui.muted.opacity(0.2))
-                        .cursor_pointer()
-                        .delayed_tooltip(crate::ui_primitives::text_tooltip("Clear filter"))
-                        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                        .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
-                            cx.stop_propagation();
-                            this.sidebar_filter_input
-                                .update(cx, |input, cx| input.clear(cx));
-                            let focus = this.sidebar_filter_input.read(cx).focus_handle.clone();
-                            window.focus(&focus, cx);
-                        }))
-                        .child(
-                            svg()
-                                .size(px(10.))
-                                .path("icons/close.svg")
-                                .text_color(ui.text),
-                        ),
-                )
-            });
+                cx.stop_propagation();
+            }
+        }));
         let settings_row = squircle_skin(
             div()
                 .id("sidebar-settings-trigger")
                 .flex_none()
-                .w(px(30.))
-                .h(px(30.))
+                .size(px(36.))
                 .min_w_0()
-                .px(px(8.))
                 .flex()
                 .flex_row()
                 .items_center()
-                .gap(px(8.)),
+                .justify_center(),
             "sidebar-settings-trigger-group",
-            ROW_RADIUS,
+            px(12.),
             settings_open.then_some(active_bg),
             (!settings_open).then_some(hover_bg),
         )
@@ -248,7 +188,7 @@ impl PaneFlowApp {
         }))
         .child(
             svg()
-                .size(px(14.))
+                .size(px(18.))
                 .flex_none()
                 .path("icons/sidebar-settings.svg")
                 .text_color(ui.muted),
@@ -256,16 +196,16 @@ impl PaneFlowApp {
 
         let footer_row: AnyElement = div()
             .id("sidebar-footer-row")
-            .mx(px(8.))
+            .mx(px(crate::app::sidebar::SIDEBAR_ROW_MARGIN_X))
             .flex()
             .flex_row()
             .items_center()
-            .gap(px(4.))
+            .gap(px(6.))
             .child(filter)
             .child(settings_row)
             .into_any_element();
 
-        let mut footer = div().relative().flex_none().pt(px(6.)).pb(px(8.));
+        let mut footer = div().relative().flex_none().pt(px(0.)).pb(px(9.5));
         if let Some(banner) = self.render_sidebar_ipc_banner(cx) {
             footer = footer.child(banner);
         }

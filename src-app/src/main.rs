@@ -89,7 +89,7 @@ pub(crate) use app::constants::{
 pub(crate) use app::drag::{TabDrag, WorkspaceDrag, WorkspaceDragPreview};
 pub(crate) use app::notifications::{Toast, ToastAction};
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) enum SettingsSection {
     General,
     Appearance,
@@ -534,6 +534,7 @@ struct PaneFlowApp {
     settings_scroll: gpui::ScrollHandle,
     settings_drag: Option<crate::widgets::scrollbar::ScrollDragState>,
     settings_search_input: gpui::Entity<crate::widgets::text_input::TextInput>,
+    settings_search_motion: std::rc::Rc<std::cell::RefCell<crate::settings::search::SearchMotion>>,
     terminal_dropdown: Option<TerminalDropdown>,
     general_dropdown: Option<GeneralDropdown>,
     workspace_template_dropdown: Option<WorkspaceTemplateDropdown>,
@@ -561,7 +562,7 @@ struct PaneFlowApp {
     shortcut_search_input: gpui::Entity<crate::widgets::text_input::TextInput>,
     shortcut_capture_active: bool,
     shortcut_reset_pending: bool,
-    collapsed_shortcut_groups: std::collections::HashSet<keybindings::ShortcutGroup>,
+    shortcut_conflict: Option<crate::settings::tabs::shortcuts::ShortcutConflict>,
     shortcut_rows: Vec<crate::settings::tabs::shortcuts::ShortcutListRow>,
     shortcut_list: gpui::ListState,
     shortcut_drag: Option<crate::widgets::scrollbar::ScrollDragState>,
@@ -581,7 +582,6 @@ struct PaneFlowApp {
     tab_menu_open: Option<TabContextMenu>,
     pane_menu_open: Option<PaneContextMenu>,
     pending_pane_focus: Option<Entity<Pane>>,
-    profile_menu_open: Option<Point<Pixels>>,
     agent_sessions: AgentSessionsState,
     files_sidebar_open: bool,
     files_sidebar_animation: Option<SidebarWidthAnimation>,
@@ -606,12 +606,6 @@ struct PaneFlowApp {
     system_info_dialog: Option<crate::app::system_info_dialog::SystemInfoDialog>,
     quit_dialog: Option<crate::app::quit_dialog::QuitDialog>,
     quit_dialog_focus: FocusHandle,
-    show_theme_picker: bool,
-    theme_picker_query: String,
-    theme_picker_selected_idx: usize,
-    theme_picker_focus: FocusHandle,
-    theme_picker_scroll: gpui::ScrollHandle,
-    theme_picker_drag: Option<crate::widgets::scrollbar::ScrollDragState>,
     composer: Option<app::composer::ComposerState>,
     broadcast: app::broadcast::BroadcastState,
     broadcast_picker_open: bool,
@@ -841,6 +835,7 @@ impl Render for PaneFlowApp {
             .is_some_and(|ws| ws.active_tab().root.is_some());
         let terminal_material_visible =
             !settings_open && terminal_surface_mounted && terminal_material_active;
+        let panel_inset_shell_visible = terminal_material_visible && !chrome_material_active;
         let native_material_active = native_backdrop_material_active(
             settings_open,
             terminal_material_active,
@@ -945,7 +940,8 @@ impl Render for PaneFlowApp {
         }
         let main_content = if self.settings_section.is_some() {
             self.tick_agents_list_animation(window);
-            self.render_settings_content_panel(cx).into_any_element()
+            self.render_settings_content_panel(window, cx)
+                .into_any_element()
         } else if let Some(ws) = self.active_workspace() {
             if let Some(root) = &ws.active_tab().root {
                 let app_weak = cx.weak_entity();
@@ -1226,7 +1222,7 @@ impl Render for PaneFlowApp {
                                     ))
                                     .child(main_content),
                             )
-                            .when(terminal_material_visible, |panel_shell| {
+                            .when(panel_inset_shell_visible, |panel_shell| {
                                 panel_shell
                                     .child(
                                         div()
@@ -1342,14 +1338,6 @@ impl Render for PaneFlowApp {
 
         if let Some(anchor) = self.title_bar_help_menu_open {
             app_content = app_content.child(self.render_title_bar_help_menu(anchor, window, cx));
-        }
-
-        if let Some(anchor) = self.profile_menu_open {
-            app_content = app_content.child(self.render_profile_menu(anchor, window, cx));
-        }
-
-        if self.show_theme_picker {
-            app_content = app_content.child(self.render_theme_picker(cx));
         }
 
         if self.broadcast_picker_open {

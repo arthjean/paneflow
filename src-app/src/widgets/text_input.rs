@@ -691,7 +691,7 @@ impl Render for TextInput {
             .on_mouse_move(cx.listener(Self::on_mouse_move))
             .child(TextElement {
                 input: cx.entity(),
-                caret_color: gpui::rgb(0x007aff).into(),
+                caret_color: gpui::rgb(crate::ui_primitives::FOCUS_BLUE).into(),
                 selection_color: selection,
                 placeholder_color: ui.muted,
             })

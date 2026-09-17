@@ -5,10 +5,10 @@ use gpui::{
 
 use crate::PaneFlowApp;
 use crate::settings::components::{
-    deferred_select_menu, secondary_button, section_header, section_header_with_action,
-    select_chevron, select_item, select_menu, select_trigger, setting_card, setting_text,
-    toggle_pill, with_alpha,
+    deferred_select_menu, menu_row, secondary_button, section_header, section_header_with_action,
+    select_chevron, select_menu, select_trigger, setting_text, toggle_pill, with_alpha,
 };
+use crate::settings::search::{self, Block, SearchCard};
 use crate::ui_primitives::{AnimatedHoverExt, lerp_color};
 
 const THEME_MODE_TILE_HEIGHT: f32 = 134.;
@@ -67,8 +67,8 @@ impl PaneFlowApp {
             .py(px(10.))
             .child(setting_text(
                 ui,
-                "Reduce motion",
-                "Settle hover transitions and the sidebar slide instantly instead of animating them.",
+                search::REDUCE_MOTION.title,
+                search::REDUCE_MOTION.description,
             ))
             .child(
                 div()
@@ -85,18 +85,24 @@ impl PaneFlowApp {
                     .child(toggle_pill(reduce_motion, ui)),
             );
 
-        let content = div()
-            .flex()
-            .flex_col()
+        let theme_block = Block::new("Theme")
             .child(header)
-            .child(mode_row)
+            .region("theme-mode", search::THEME_MODES, mode_row)
             .child(div().h(px(14.)).flex_none())
             .child(render_theme_diff_preview(ui))
             .child(div().h(px(12.)).flex_none())
-            .child(setting_card(ui).child(preset_row))
-            .child(div().h(px(18.)).flex_none())
+            .card(SearchCard::new(ui).row(&search::THEME_PRESET, preset_row))
+            .finish();
+        let preferences_block = Block::new("Preferences")
+            .top_gap(18.)
             .child(section_header(ui, "Preferences"))
-            .child(setting_card(ui).child(motion_row));
+            .card(SearchCard::new(ui).row(&search::REDUCE_MOTION, motion_row))
+            .finish();
+        let content = div()
+            .flex()
+            .flex_col()
+            .child(theme_block)
+            .child(preferences_block);
 
         #[cfg(target_os = "windows")]
         let content = {
@@ -112,8 +118,8 @@ impl PaneFlowApp {
                 .py(px(10.))
                 .child(setting_text(
                     ui,
-                    "Chrome material",
-                    "Let Mica show through the navigation card.",
+                    search::CHROME_MATERIAL.title,
+                    search::CHROME_MATERIAL.description,
                 ))
                 .child(
                     div()
@@ -133,12 +139,13 @@ impl PaneFlowApp {
                         )),
                 );
 
-            let windows_card = setting_card(ui).child(chrome_material_row);
-
-            content
-                .child(div().h(px(18.)).flex_none())
-                .child(crate::settings::components::section_header(ui, "Windows"))
-                .child(windows_card)
+            content.child(
+                Block::new("Windows")
+                    .top_gap(18.)
+                    .child(section_header(ui, "Windows"))
+                    .card(SearchCard::new(ui).row(&search::CHROME_MATERIAL, chrome_material_row))
+                    .finish(),
+            )
         };
 
         #[cfg(target_os = "macos")]
@@ -155,8 +162,8 @@ impl PaneFlowApp {
                 .py(px(10.))
                 .child(setting_text(
                     ui,
-                    "Sidebar transparency",
-                    "Show the native macOS Sidebar material in the navigation card.",
+                    search::SIDEBAR_TRANSPARENCY.title,
+                    search::SIDEBAR_TRANSPARENCY.description,
                 ))
                 .child(
                     div()
@@ -176,12 +183,16 @@ impl PaneFlowApp {
                         )),
                 );
 
-            let macos_card = setting_card(ui).child(sidebar_material_row);
-
-            content
-                .child(div().h(px(18.)).flex_none())
-                .child(crate::settings::components::section_header(ui, "macOS"))
-                .child(macos_card)
+            content.child(
+                Block::new("macOS")
+                    .top_gap(18.)
+                    .child(section_header(ui, "macOS"))
+                    .card(
+                        SearchCard::new(ui)
+                            .row(&search::SIDEBAR_TRANSPARENCY, sidebar_material_row),
+                    )
+                    .finish(),
+            )
         };
 
         content
@@ -330,7 +341,7 @@ impl PaneFlowApp {
             for (idx, preset) in crate::theme::PRESETS.iter().enumerate() {
                 let is_current = preset.name == current_name;
                 menu = menu.child(
-                    select_item(("theme-preset", idx), is_current, ui)
+                    menu_row(("theme-preset", idx), is_current, ui)
                         .cursor(CursorStyle::Arrow)
                         .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
                             this.theme_dropdown_open = false;
@@ -371,8 +382,8 @@ impl PaneFlowApp {
             .py(px(10.))
             .child(setting_text(
                 ui,
-                "Preset",
-                "Palette applied to the terminal grid and the app chrome.",
+                search::THEME_PRESET.title,
+                search::THEME_PRESET.description,
             ))
             .child(div().flex_shrink_0().child(trigger))
             .into_any_element()

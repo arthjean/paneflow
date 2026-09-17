@@ -5,8 +5,9 @@ use gpui::{
 };
 
 use crate::PaneFlowApp;
-use crate::settings::components::{menu_surface, select_item};
-use crate::ui_primitives::{ROW_RADIUS, TooltipDelayExt, squircle_skin};
+use crate::settings::components::{menu_panel, menu_row};
+use crate::ui_primitives::TooltipDelayExt;
+use crate::ui_primitives::squircle_skin;
 
 use super::SidebarTooltip;
 use paneflow_config::schema::SidebarShow;
@@ -81,14 +82,14 @@ pub(super) fn render_customize_sidebar_button(
         div()
             .id("sidebar-customize")
             .flex_none()
-            .size(px(28.))
+            .size(px(22.))
             .flex()
             .items_center()
             .justify_center(),
         "sidebar-customize-group",
-        ROW_RADIUS,
+        px(7.),
         open.then_some(hover),
-        Some(hover),
+        (!open).then_some(hover),
     )
     .delayed_tooltip(|_w, cx| {
         cx.new(|_| SidebarTooltip {
@@ -120,11 +121,7 @@ fn render_menu(
     ui: crate::theme::UiColors,
     cx: &mut Context<PaneFlowApp>,
 ) -> AnyElement {
-    let menu = menu_surface(div().id("sidebar-customize-menu"), ui)
-        .flex()
-        .flex_col()
-        .gap(px(1.))
-        .p(px(4.))
+    let menu = menu_panel(div().id("sidebar-customize-menu"), ui)
         .w(px(MENU_WIDTH))
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
         .on_mouse_up_out(
@@ -174,7 +171,7 @@ fn render_expand_all_row(
     ui: crate::theme::UiColors,
     cx: &mut Context<PaneFlowApp>,
 ) -> AnyElement {
-    select_item("sidebar-customize-expand-all", false, ui)
+    menu_row("sidebar-customize-expand-all", false, ui)
         .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
             this.set_all_workspaces_expanded(!all_expanded, cx);
         }))
@@ -195,7 +192,7 @@ fn render_show_row(
     cx: &mut Context<PaneFlowApp>,
 ) -> AnyElement {
     let submenu_open = state.submenu_open;
-    select_item("sidebar-customize-show", submenu_open, ui)
+    menu_row("sidebar-customize-show", submenu_open, ui)
         .relative()
         .on_click(cx.listener(|this, _: &ClickEvent, _w, cx| {
             this.sidebar_show_submenu_open = !this.sidebar_show_submenu_open;
@@ -220,11 +217,7 @@ fn render_show_submenu(
     ui: crate::theme::UiColors,
     cx: &mut Context<PaneFlowApp>,
 ) -> AnyElement {
-    let menu = menu_surface(div().id("sidebar-show-submenu"), ui)
-        .flex()
-        .flex_col()
-        .gap(px(1.))
-        .p(px(4.))
+    let menu = menu_panel(div().id("sidebar-show-submenu"), ui)
         .w(px(SUBMENU_WIDTH))
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
         .child(render_show_option(
@@ -288,7 +281,7 @@ fn render_show_option(
         SidebarShowLine::IndentGuide => "sidebar-show-indent-guide",
     };
 
-    select_item(id, false, ui)
+    menu_row(id, false, ui)
         .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
             this.toggle_sidebar_show(line, cx);
         }))

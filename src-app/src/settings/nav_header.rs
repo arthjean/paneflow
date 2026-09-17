@@ -1,6 +1,6 @@
 use crate::PaneFlowApp;
 use crate::theme::UiColors;
-use crate::ui_primitives::{ROW_RADIUS, squircle_skin};
+use crate::ui_primitives::squircle_skin;
 use gpui::{
     AnyElement, ClickEvent, Context, InteractiveElement, IntoElement, ParentElement, Role,
     StatefulInteractiveElement, Styled, div, px, svg,
@@ -27,14 +27,16 @@ impl PaneFlowApp {
                         .role(Role::Button)
                         .aria_label("Back to the app")
                         .mx(px(8.))
-                        .px(px(8.))
+                        .px(px(7.))
                         .py(px(6.))
+                        .min_h(px(32.))
+                        .flex_none()
                         .flex()
                         .flex_row()
                         .items_center()
                         .gap(px(8.)),
                     "settings-back-group",
-                    ROW_RADIUS,
+                    px(9.),
                     None,
                     Some(hover_background),
                 )
@@ -44,7 +46,7 @@ impl PaneFlowApp {
                 }))
                 .child(
                     svg()
-                        .size(px(15.))
+                        .size(px(17.))
                         .flex_none()
                         .path("icons/arrow_left.svg")
                         .text_color(ui.muted),
@@ -53,7 +55,8 @@ impl PaneFlowApp {
                     div()
                         .flex_1()
                         .min_w_0()
-                        .text_size(px(13.))
+                        .text_size(px(14.))
+                        .line_height(px(20.))
                         .text_color(ui.text)
                         .truncate()
                         .child("Back to the app"),

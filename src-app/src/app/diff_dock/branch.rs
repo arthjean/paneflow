@@ -5,8 +5,7 @@ use gpui::{
 };
 
 use crate::PaneFlowApp;
-use crate::settings::components::with_alpha;
-use crate::ui_primitives::{AnimatedHoverExt, ROW_RADIUS, squircle_skin};
+use crate::ui_primitives::{ROW_RADIUS, squircle_skin};
 use crate::widgets::text_input::TextInput;
 
 const BRANCH_GIT_DEADLINE: std::time::Duration = std::time::Duration::from_secs(30);
@@ -242,11 +241,7 @@ fn render_diff_branch_menu(
     let query_input = menu_state.query_input.clone();
     let query_lc = query_input.read(cx).value().trim().to_lowercase();
 
-    let mut menu = crate::settings::components::menu_surface(div().id("diff-branch-menu"), ui)
-        .flex()
-        .flex_col()
-        .gap(px(2.))
-        .p(px(6.))
+    let mut menu = crate::settings::components::menu_panel(div().id("diff-branch-menu"), ui)
         .w(px(280.))
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
         .on_mouse_down_out(cx.listener(|this, _: &gpui::MouseDownEvent, window, cx| {
@@ -358,74 +353,60 @@ fn render_diff_branch_item(
     cx: &mut Context<PaneFlowApp>,
 ) -> AnyElement {
     let item_branch = branch.clone();
-    let selected_background = with_alpha(ui.text, 0.10);
-    let resting_background = if selected {
-        selected_background
-    } else {
-        with_alpha(ui.text, 0.0)
-    };
-    let hover_background = if selected {
-        selected_background
-    } else {
-        with_alpha(ui.text, 0.05)
-    };
 
-    div()
-        .id(SharedString::from(format!("diff-branch-{idx}")))
-        .flex()
-        .flex_row()
-        .items_center()
-        .gap(px(8.))
-        .px(px(8.))
-        .py(px(6.))
-        .rounded(px(8.))
-        .bg(resting_background)
-        .animated_hover_bg(resting_background, hover_background)
-        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-        .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
-            this.close_diff_branch_menu(window, cx);
-            this.spawn_switch_diff_branch(cwd.clone(), item_branch.clone(), cx);
-        }))
-        .child(
-            svg()
-                .size(px(16.))
-                .flex_none()
-                .path("icons/git-branch.svg")
-                .text_color(ui.muted),
-        )
-        .child(
-            div()
-                .flex_1()
-                .min_w_0()
-                .flex()
-                .flex_col()
-                .gap(px(1.))
-                .child(
-                    div()
-                        .overflow_x_hidden()
-                        .whitespace_nowrap()
-                        .text_ellipsis()
-                        .text_size(px(13.))
-                        .text_color(ui.text)
-                        .child(branch),
-                )
-                .when(files_changed > 0, |d| {
-                    d.child(div().text_size(px(11.)).text_color(ui.muted).child(format!(
-                        "Uncommitted: {files_changed} file{}",
-                        if files_changed > 1 { "s" } else { "" }
-                    )))
-                }),
-        )
-        .child(div().w(px(14.)).flex_none().child(if selected {
-            svg()
-                .size(px(14.))
-                .path("icons/check.svg")
-                .text_color(ui.text)
-                .into_any_element()
-        } else {
-            div().size(px(14.)).into_any_element()
-        }))
-        .into_any_element()
+    crate::settings::components::menu_row(
+        SharedString::from(format!("diff-branch-{idx}")),
+        selected,
+        ui,
+    )
+    .h_auto()
+    .min_h(crate::settings::components::MENU_ROW_HEIGHT)
+    .py(px(6.))
+    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+    .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+        this.close_diff_branch_menu(window, cx);
+        this.spawn_switch_diff_branch(cwd.clone(), item_branch.clone(), cx);
+    }))
+    .child(
+        svg()
+            .size(px(16.))
+            .flex_none()
+            .path("icons/git-branch.svg")
+            .text_color(ui.muted),
+    )
+    .child(
+        div()
+            .flex_1()
+            .min_w_0()
+            .flex()
+            .flex_col()
+            .gap(px(1.))
+            .child(
+                div()
+                    .overflow_x_hidden()
+                    .whitespace_nowrap()
+                    .text_ellipsis()
+                    .text_size(px(13.))
+                    .text_color(ui.text)
+                    .child(branch),
+            )
+            .when(files_changed > 0, |d| {
+                d.child(div().text_size(px(11.)).text_color(ui.muted).child(format!(
+                    "Uncommitted: {files_changed} file{}",
+                    if files_changed > 1 { "s" } else { "" }
+                )))
+            }),
+    )
+    .child(div().w(px(14.)).flex_none().child(if selected {
+        svg()
+            .size(px(14.))
+            .path("icons/check.svg")
+            .text_color(ui.text)
+            .into_any_element()
+    } else {
+        div().size(px(14.)).into_any_element()
+    }))
+    .into_any_element()
 }
 
 fn render_diff_branch_menu_status(

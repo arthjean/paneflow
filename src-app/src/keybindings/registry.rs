@@ -59,6 +59,15 @@ impl ShortcutGroup {
             ShortcutGroup::Application => "Application",
         }
     }
+
+    pub fn context_hint(self) -> Option<&'static str> {
+        match self {
+            ShortcutGroup::Terminal => Some("while a pane has focus"),
+            ShortcutGroup::Search => Some("while the search bar is open"),
+            ShortcutGroup::Markdown => Some("while a Markdown view has focus"),
+            _ => None,
+        }
+    }
 }
 
 pub(super) struct ActionMeta {

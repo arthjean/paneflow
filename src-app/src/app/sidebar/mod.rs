@@ -9,6 +9,7 @@ use gpui::{
     SharedString, Styled, Window, div, prelude::*, px, svg,
 };
 
+use crate::ui_primitives::squircle_skin;
 use lane::{Lane, infer_lane, render_lane_slot};
 
 use crate::{
@@ -20,7 +21,6 @@ use crate::{
     app::pull_request::PullRequest,
     pane_drag::PaneDrag,
     settings::components::with_alpha,
-    ui_primitives::{ROW_RADIUS, squircle_skin},
     workspace::{Tab, Workspace},
 };
 
@@ -146,29 +146,34 @@ struct SidebarAgentSummary {
 }
 
 pub(crate) const SIDEBAR_ROW_MARGIN_X: f32 = 8.0;
-pub(crate) const SIDEBAR_ROW_PADDING_X: f32 = 8.0;
+pub(crate) const SIDEBAR_ROW_PADDING_X: f32 = 7.0;
 pub(crate) const SIDEBAR_ROW_PADDING_Y: f32 = 6.0;
-const SIDEBAR_ROW_GAP: f32 = 4.0;
-pub(crate) const SIDEBAR_ROW_LINE_HEIGHT: f32 = 18.0;
+const SIDEBAR_ROW_GAP: f32 = 3.0;
+pub(crate) const SIDEBAR_ROW_LINE_HEIGHT: f32 = 20.0;
 const SIDEBAR_TITLE_ROW_GAP: f32 = 8.0;
+const SIDEBAR_ROW_MIN_HEIGHT: f32 = 32.0;
+const SIDEBAR_FOLDER_SLOT_WIDTH: f32 = 20.0;
+const ROW_RADIUS: gpui::Pixels = px(9.0);
 const SIDEBAR_DROP_GROUP: &str = "sidebar-drop-zone";
 const SIDEBAR_DROP_PLACEHOLDER_MARGIN: f32 = 6.0;
 const SIDEBAR_DROP_PLACEHOLDER_RADIUS: f32 = 8.0;
 const SIDEBAR_DROP_PLACEHOLDER_FILL_ALPHA: f32 = 0.10;
 const SIDEBAR_DROP_PLACEHOLDER_BORDER_ALPHA: f32 = 0.22;
-const SIDEBAR_ACTION_BUTTON_SIZE: f32 = 20.0;
-const SIDEBAR_ACTION_BUTTON_GAP: f32 = 4.0;
-const SIDEBAR_ROW_SPACING: f32 = 4.0;
+const SIDEBAR_ACTION_BUTTON_SIZE: f32 = 22.0;
+const SIDEBAR_ACTION_BUTTON_GAP: f32 = 1.0;
+const SIDEBAR_ROW_SPACING: f32 = 2.0;
 const SIDEBAR_DROP_LINE_PX: f32 = 2.0;
 const SIDEBAR_DROP_BAND_REACH: f32 = SIDEBAR_ROW_LINE_HEIGHT / 2.0 + SIDEBAR_ROW_PADDING_Y;
 const SIDEBAR_WORKSPACE_ROW_CONTENT_WIDTH: f32 =
     SIDEBAR_WIDTH - SIDEBAR_ROW_MARGIN_X * 2.0 - SIDEBAR_ROW_PADDING_X * 2.0;
-const SIDEBAR_FOLDER_ICON_WIDTH: f32 = 14.0;
+const SIDEBAR_FOLDER_ICON_WIDTH: f32 = 17.0;
 
 fn sidebar_row_shell() -> gpui::Div {
     div()
         .px(px(SIDEBAR_ROW_PADDING_X))
         .py(px(SIDEBAR_ROW_PADDING_Y))
+        .min_h(px(SIDEBAR_ROW_MIN_HEIGHT))
+        .justify_center()
         .flex_none()
         .relative()
         .overflow_x_hidden()
@@ -179,7 +184,7 @@ fn sidebar_row_shell() -> gpui::Div {
 
 fn render_sidebar_indent_guide(ui: crate::theme::UiColors) -> gpui::Div {
     let color = ui.text.opacity(0.08);
-    let left = px(SIDEBAR_ROW_PADDING_X + (SIDEBAR_FOLDER_ICON_WIDTH / 2.).floor());
+    let left = px(SIDEBAR_ROW_PADDING_X + (SIDEBAR_FOLDER_SLOT_WIDTH / 2.).floor());
     div()
         .absolute()
         .left(left)
@@ -189,7 +194,7 @@ fn render_sidebar_indent_guide(ui: crate::theme::UiColors) -> gpui::Div {
         .bg(color)
 }
 
-fn squircle_row(
+fn sidebar_row(
     shell: gpui::Stateful<gpui::Div>,
     group: SharedString,
     resting: Option<gpui::Hsla>,
@@ -221,23 +226,28 @@ fn sidebar_action_button(
     ui: crate::theme::UiColors,
 ) -> gpui::Stateful<gpui::Div> {
     let active_bg = crate::app::constants::sidebar_tab_active_background();
-    div()
-        .id(id)
-        .flex_none()
-        .size(px(SIDEBAR_ACTION_BUTTON_SIZE))
-        .flex()
-        .items_center()
-        .justify_center()
-        .rounded(px(6.))
-        .text_color(ui.muted)
-        .hover(move |style| style.bg(active_bg))
-        .child(
-            svg()
-                .size(px(icon_size))
-                .flex_none()
-                .path(icon)
-                .text_color(ui.muted),
-        )
+    let group = SharedString::from(format!("{id}-hover"));
+    squircle_skin(
+        div()
+            .id(id)
+            .flex_none()
+            .size(px(SIDEBAR_ACTION_BUTTON_SIZE))
+            .flex()
+            .items_center()
+            .justify_center()
+            .text_color(ui.muted),
+        group,
+        px(6.),
+        None,
+        Some(active_bg),
+    )
+    .child(
+        svg()
+            .size(px(icon_size))
+            .flex_none()
+            .path(icon)
+            .text_color(ui.muted),
+    )
 }
 
 impl SidebarAgentSummary {
@@ -475,38 +485,7 @@ impl PaneFlowApp {
             .value()
             .trim()
             .to_lowercase();
-        let mut ranges = Vec::new();
-        if !query.is_empty() {
-            let mut normalized = String::new();
-            let mut offsets = Vec::new();
-            for (start, ch) in label.char_indices() {
-                let lowered = ch.to_lowercase().to_string();
-                offsets.extend(std::iter::repeat_n(
-                    start..start + ch.len_utf8(),
-                    lowered.len(),
-                ));
-                normalized.push_str(&lowered);
-            }
-            for (start, matched) in normalized.match_indices(&query) {
-                let range = offsets[start].start..offsets[start + matched.len() - 1].end;
-                if ranges
-                    .last()
-                    .is_none_or(|previous: &std::ops::Range<usize>| previous.end <= range.start)
-                {
-                    ranges.push(range);
-                }
-            }
-        }
-        gpui::StyledText::new(label).with_highlights(ranges.into_iter().map(|range| {
-            (
-                range,
-                gpui::HighlightStyle {
-                    color: Some(gpui::rgb(0x007aff).into()),
-                    font_weight: Some(FontWeight::SEMIBOLD),
-                    ..Default::default()
-                },
-            )
-        }))
+        crate::ui_primitives::highlight_matches(label, &query)
     }
 
     fn inline_rename_field(&self, ui: crate::theme::UiColors) -> gpui::Div {
@@ -515,7 +494,7 @@ impl PaneFlowApp {
             .min_w_0()
             .overflow_x_hidden()
             .text_color(ui.text)
-            .text_sm()
+            .text_size(px(14.))
             .line_height(px(SIDEBAR_ROW_LINE_HEIGHT))
             .bg(ui.overlay)
             .px_1()
@@ -579,6 +558,9 @@ impl PaneFlowApp {
         let ui = crate::theme::ui_colors();
         let theme = crate::theme::active_theme();
         let mut sidebar = div()
+            .font_family(".SystemUIFont")
+            .text_size(px(13.))
+            .font_weight(FontWeight::NORMAL)
             .relative()
             .w(px(SIDEBAR_WIDTH))
             .flex_shrink_0()
@@ -634,12 +616,12 @@ impl PaneFlowApp {
                             squircle_skin(
                                 div()
                                     .id("sidebar-new-workspace")
-                                    .size(px(28.))
+                                    .size(px(22.))
                                     .flex()
                                     .items_center()
                                     .justify_center(),
                                 "sidebar-new-workspace-group",
-                                ROW_RADIUS,
+                                px(7.),
                                 None,
                                 Some(hover_bg),
                             )
@@ -854,7 +836,7 @@ impl PaneFlowApp {
                     .px(px(16.))
                     .py(px(8.))
                     .text_color(ui.muted)
-                    .text_sm()
+                    .text_size(px(13.))
                     .child("No matching workspaces"),
             );
         }
@@ -1078,7 +1060,7 @@ impl PaneFlowApp {
             .whitespace_nowrap()
             .text_ellipsis()
             .text_color(ui.text)
-            .text_sm()
+            .text_size(px(14.))
             .line_height(px(SIDEBAR_ROW_LINE_HEIGHT))
             .font_weight(FontWeight::MEDIUM)
             .child(self.sidebar_filter_label(title, cx));
@@ -1090,7 +1072,7 @@ impl PaneFlowApp {
         };
         let disclosure = div()
             .flex_none()
-            .size(px(SIDEBAR_FOLDER_ICON_WIDTH))
+            .size(px(SIDEBAR_FOLDER_SLOT_WIDTH))
             .flex()
             .items_center()
             .justify_center()
@@ -1151,7 +1133,7 @@ impl PaneFlowApp {
             ),
         );
 
-        let row = squircle_row(row_shell, group_name.clone(), None, Some(hover_bg), body);
+        let row = sidebar_row(row_shell, group_name.clone(), None, Some(hover_bg), body);
 
         div()
             .id(SharedString::from(format!("ws-drop-{ws_id}")))
@@ -1222,14 +1204,14 @@ impl PaneFlowApp {
                 .whitespace_nowrap()
                 .text_ellipsis()
                 .text_color(text_color)
-                .text_sm()
+                .text_size(px(14.))
                 .line_height(px(SIDEBAR_ROW_LINE_HEIGHT))
                 .child(self.sidebar_filter_label(title.clone(), cx))
         };
 
         let tab_group = SharedString::from(format!("tab-row-group-{tab_id}"));
         let indent_guide = self.cached_config.sidebar_show.indent_guide_enabled();
-        let title_indent = SIDEBAR_FOLDER_ICON_WIDTH + SIDEBAR_TITLE_ROW_GAP;
+        let title_indent = SIDEBAR_FOLDER_SLOT_WIDTH + SIDEBAR_TITLE_ROW_GAP;
         let row_inset = if indent_guide { title_indent } else { 0. };
         let content_width = SIDEBAR_WORKSPACE_ROW_CONTENT_WIDTH - row_inset;
         let mut title_row = div()
@@ -1241,7 +1223,7 @@ impl PaneFlowApp {
             .max_w(px(content_width))
             .min_w_0()
             .when(!indent_guide, |row| {
-                row.child(div().flex_none().w(px(SIDEBAR_FOLDER_ICON_WIDTH)))
+                row.child(div().flex_none().w(px(SIDEBAR_FOLDER_SLOT_WIDTH)))
             })
             .child(title_el)
             .when(!detached_panes.is_empty(), |row| {
@@ -1390,7 +1372,7 @@ impl PaneFlowApp {
             None => title_row.into_any_element(),
         };
 
-        let row = squircle_row(row_shell, tab_group, resting_bg, hovered_bg, body);
+        let row = sidebar_row(row_shell, tab_group, resting_bg, hovered_bg, body);
         let hidden_rows = if tab_idx + 1 == ws.tab_count() {
             self.render_session_rows(ws_idx, title_indent, content_width, ui, cx)
         } else {
@@ -1532,7 +1514,7 @@ impl PaneFlowApp {
                         cx.notify();
                     }
                 }));
-            rows.push(squircle_row(shell, group, None, Some(hover_bg), body).into_any_element());
+            rows.push(sidebar_row(shell, group, None, Some(hover_bg), body).into_any_element());
         }
 
         if collapsed > 0 {
@@ -1573,7 +1555,7 @@ impl PaneFlowApp {
                     this.expand_ended_sessions(workspace_id.clone(), cx);
                     cx.stop_propagation();
                 }));
-            rows.push(squircle_row(shell, group, None, Some(hover_bg), body).into_any_element());
+            rows.push(sidebar_row(shell, group, None, Some(hover_bg), body).into_any_element());
         }
 
         rows
@@ -1680,7 +1662,7 @@ impl PaneFlowApp {
                         .overflow_x_hidden()
                         .whitespace_nowrap()
                         .text_ellipsis()
-                        .text_sm()
+                        .text_size(px(14.))
                         .text_color(ui.muted)
                         .child(self.sidebar_filter_label(label, cx)),
                 )
@@ -2209,7 +2191,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn a_single_line_row_is_thirty_pixels_tall(cx: &mut TestAppContext) {
+    fn a_single_line_row_is_thirty_two_pixels_tall(cx: &mut TestAppContext) {
         let cx = cx.add_empty_window();
         cx.draw(
             point(px(0.), px(0.)),
@@ -2227,7 +2209,7 @@ mod tests {
                             .child(div().flex_none().size(px(SIDEBAR_FOLDER_ICON_WIDTH)))
                             .child(
                                 div()
-                                    .text_sm()
+                                    .text_size(px(14.))
                                     .line_height(px(SIDEBAR_ROW_LINE_HEIGHT))
                                     .child("paneflow"),
                             ),
@@ -2239,10 +2221,10 @@ mod tests {
         let bounds = cx.debug_bounds("row").expect("row not painted");
         assert_eq!(
             bounds.size.height,
-            px(SIDEBAR_ROW_LINE_HEIGHT + 2. * SIDEBAR_ROW_PADDING_Y),
+            px((SIDEBAR_ROW_LINE_HEIGHT + 2. * SIDEBAR_ROW_PADDING_Y).max(32.)),
             "a title line must not let the font's own line height set the row height"
         );
-        assert_eq!(bounds.size.height, px(30.));
+        assert_eq!(bounds.size.height, px(32.));
         assert!(
             ROW_RADIUS <= bounds.size.height / 2.,
             "row corner {ROW_RADIUS:?} exceeds half of a {:?} row",
@@ -2295,7 +2277,7 @@ mod tests {
             let bounds = cx
                 .debug_bounds(selector)
                 .unwrap_or_else(|| panic!("{selector} not painted"));
-            assert_eq!(bounds.size.height, px(50.), "{selector}");
+            assert_eq!(bounds.size.height, px(49.), "{selector}");
         }
     }
 

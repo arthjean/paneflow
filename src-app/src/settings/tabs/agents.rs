@@ -11,11 +11,12 @@ use crate::PaneFlowApp;
 use crate::SidebarWidthAnimation;
 use crate::agent_launcher::{AgentProfile, TerminalAgent};
 use crate::settings::components::{
-    SETTINGS_CONTROL_CORNER_RADIUS, deferred_select_menu, destructive_color, hairline,
-    secondary_button, section_header, section_header_with_action, select_chevron, select_item,
-    select_menu, select_trigger, setting_card, setting_text, toggle_pill, toggle_row, with_alpha,
+    SETTINGS_CONTROL_CORNER_RADIUS, deferred_select_menu, destructive_color, hairline, menu_row,
+    secondary_button, section_header, section_header_with_action, select_chevron, select_menu,
+    select_trigger, setting_card, setting_text, toggle_pill, toggle_row, with_alpha,
 };
-use crate::ui_primitives::{AnimatedHoverExt, BODY, LABEL_SM, LABEL_XS, ROW_RADIUS, squircle_skin};
+use crate::settings::search::{self, Block, SearchCard};
+use crate::ui_primitives::{AnimatedHoverExt, BODY, LABEL_SM, LABEL_XS, ROW_RADIUS};
 use crate::widgets::text_input::TextInput;
 
 const ROW_ICON: f32 = 18.;
@@ -145,44 +146,45 @@ impl PaneFlowApp {
         } else {
             format!("Show {hidden} more").into()
         };
-        let more_row = squircle_skin(
-            div().id("agents-show-more"),
-            "agents-show-more",
-            ROW_RADIUS,
-            None,
-            Some(with_alpha(ui.text, 0.05)),
-        )
-        .mx(px(6.))
-        .my(px(6.))
-        .h(px(30.))
-        .flex()
-        .flex_row()
-        .items_center()
-        .justify_center()
-        .gap(px(6.))
-        .cursor(CursorStyle::PointingHand)
-        .text_size(LABEL_SM)
-        .text_color(ui.muted)
-        .on_click(cx.listener(|this, _: &ClickEvent, _w, cx| {
-            this.toggle_agents_list(cx);
-        }))
-        .child(more_label)
-        .child(
-            svg()
-                .size(px(10.))
-                .flex_none()
-                .path(if expanded {
-                    "icons/chevron_up.svg"
-                } else {
-                    "icons/chevron-down.svg"
-                })
-                .text_color(ui.muted),
-        );
+        let hover_bg = with_alpha(ui.text, 0.05);
+        let more_button = div()
+            .id("agents-show-more")
+            .h(px(28.))
+            .px(px(10.))
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap(px(6.))
+            .rounded_full()
+            .hover(move |style| style.bg(hover_bg))
+            .cursor(CursorStyle::PointingHand)
+            .text_size(LABEL_SM)
+            .font_weight(gpui::FontWeight::MEDIUM)
+            .text_color(ui.muted)
+            .on_click(cx.listener(|this, _: &ClickEvent, _w, cx| {
+                this.toggle_agents_list(cx);
+            }))
+            .child(more_label)
+            .child(
+                svg()
+                    .size(px(10.))
+                    .flex_none()
+                    .path(if expanded {
+                        "icons/chevron_up.svg"
+                    } else {
+                        "icons/chevron-down.svg"
+                    })
+                    .text_color(ui.muted),
+            );
+        let more_row = div()
+            .py(px(6.))
+            .flex()
+            .flex_row()
+            .justify_center()
+            .child(more_button);
         card = card.child(hairline(ui)).child(more_row);
 
-        div()
-            .flex()
-            .flex_col()
+        Block::new("Agents")
             .child(section_header_with_action(
                 ui,
                 "Agents",
@@ -192,7 +194,7 @@ impl PaneFlowApp {
                     .child(counter),
             ))
             .child(card)
-            .into_any_element()
+            .finish()
     }
 
     fn render_agent_row(
@@ -366,13 +368,11 @@ impl PaneFlowApp {
             }))
             .child("+ New profile");
 
-        div()
-            .mt(px(24.))
-            .flex()
-            .flex_col()
+        Block::new("Profiles")
+            .top_gap(24.)
             .child(section_header_with_action(ui, "Profiles", new_button))
             .child(card)
-            .into_any_element()
+            .finish()
     }
 
     fn render_agent_profile_row(
@@ -737,7 +737,7 @@ impl PaneFlowApp {
                     }
                 }));
             for agent in TerminalAgent::ALL {
-                let item = select_item(
+                let item = menu_row(
                     SharedString::from(format!("agent-profile-agent-item-{}", agent.tag())),
                     agent == current,
                     ui,
@@ -778,44 +778,49 @@ impl PaneFlowApp {
         let unrestricted = self.cached_config.ai_unrestricted_enabled();
         let fence = self.cached_config.ai_injection_fence_enabled();
 
-        let mut card = setting_card(ui)
-            .child(toggle_row(
-                "row-claude-bypass",
-                "Full access for Claude Code",
-                "Edits any file and runs networked commands without asking. No protection \
-                 against prompt injection.",
-                None,
-                bypass,
-                "claude_code_bypass_permissions",
-                ui,
-                cx,
-            ))
-            .child(hairline(ui))
-            .child(toggle_row(
-                "row-ai-unrestricted",
-                "AI free access",
-                "Lets an agent auto-submit prompts to your other panes, without the \
-                 PANEFLOW_IPC_SCRIPTING gate. Every write is logged.",
-                None,
-                unrestricted,
-                "ai_unrestricted",
-                ui,
-                cx,
-            ));
+        let mut card = SearchCard::new(ui)
+            .row(
+                &search::CLAUDE_FULL_ACCESS,
+                toggle_row(
+                    "row-claude-bypass",
+                    search::CLAUDE_FULL_ACCESS.title,
+                    search::CLAUDE_FULL_ACCESS.description,
+                    None,
+                    bypass,
+                    "claude_code_bypass_permissions",
+                    ui,
+                    cx,
+                ),
+            )
+            .row(
+                &search::AI_FREE_ACCESS,
+                toggle_row(
+                    "row-ai-unrestricted",
+                    search::AI_FREE_ACCESS.title,
+                    search::AI_FREE_ACCESS.description,
+                    None,
+                    unrestricted,
+                    "ai_unrestricted",
+                    ui,
+                    cx,
+                ),
+            );
         if unrestricted {
-            card = card.child(hairline(ui)).child(toggle_row(
-                "row-ai-injection-fence",
-                "Injection fence",
-                "Marks peer-pane output as untrusted when an agent reads it, so a malicious \
-                 repo cannot hijack it.",
-                None,
-                fence,
-                "ai_injection_fence",
-                ui,
-                cx,
-            ));
+            card = card.row(
+                &search::INJECTION_FENCE,
+                toggle_row(
+                    "row-ai-injection-fence",
+                    search::INJECTION_FENCE.title,
+                    search::INJECTION_FENCE.description,
+                    None,
+                    fence,
+                    "ai_injection_fence",
+                    ui,
+                    cx,
+                ),
+            );
             if !fence {
-                card = card.child(hairline(ui)).child(
+                card = card.fixed(
                     div()
                         .px(px(12.))
                         .py(px(8.))
@@ -826,13 +831,11 @@ impl PaneFlowApp {
             }
         }
 
-        div()
-            .mt(px(24.))
-            .flex()
-            .flex_col()
+        Block::new("Permissions")
+            .top_gap(24.)
             .child(section_header(ui, "Permissions"))
-            .child(card)
-            .into_any_element()
+            .card(card)
+            .finish()
     }
 
     fn agent_profile_command_preview(

@@ -9,7 +9,9 @@ use gpui::{
 use crate::app::close_policy::CloseTarget;
 use crate::app::files_tree;
 use crate::pane::PaneSurface;
-use crate::settings::components::{menu_divider_color, select_item, select_menu, with_alpha};
+use crate::settings::components::{
+    menu_divider_color, menu_height, menu_row, select_menu, with_alpha,
+};
 use crate::ui_primitives::AnimatedHoverExt;
 use crate::{
     PaneContextMenu, PaneFlowApp, SessionContextMenu, TabContextMenu, WorkspaceContextMenu,
@@ -122,7 +124,7 @@ impl PaneFlowApp {
         ui: crate::theme::UiColors,
         on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
     ) -> impl IntoElement {
-        select_item(id, false, ui)
+        menu_row(id, false, ui)
             .cursor(CursorStyle::Arrow)
             .on_click(on_click)
             .child(
@@ -204,7 +206,7 @@ impl PaneFlowApp {
         let separator_rows = 3 + workflow_rows + usize::from(service_rows > 0);
         let menu_rows =
             EDITOR_CONTEXT_MENU_ITEMS.len() + 4 + workflow_rows + service_rows + notification_rows;
-        let menu_height = px(8. + menu_rows as f32 * 28. + separator_rows as f32 * 9.);
+        let menu_height = menu_height(menu_rows as f32, separator_rows as f32 * 9.);
         let menu_pos = clamped_context_menu_position(menu.position, px(248.), menu_height, window);
 
         let mut context_menu = select_menu("workspace-context-menu", ui)
@@ -593,7 +595,7 @@ impl PaneFlowApp {
         let detached = self.tab_detached_checkout(ws_idx, tab_idx);
         let remove_rows = if is_bound { 1. } else { 0. } + if detached.is_some() { 1. } else { 0. };
         let rows = if can_reset_name { 3. } else { 2. } + worktree_rows + remove_rows;
-        let menu_height = px(8. + rows * 28.);
+        let menu_height = menu_height(rows, 0.);
         let menu_pos = clamped_context_menu_position(position, px(248.), menu_height, window);
         let close_shortcut = self
             .shortcut_for_action("close_tab")
@@ -681,7 +683,7 @@ impl PaneFlowApp {
                         .child("Branch"),
                 );
                 menu = menu.child(
-                    select_item("tab-branch-new", false, ui)
+                    menu_row("tab-branch-new", false, ui)
                         .cursor(CursorStyle::Arrow)
                         .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
                             this.tab_menu_open = None;
@@ -707,7 +709,7 @@ impl PaneFlowApp {
                 for (detached, label, selected) in branches {
                     let branch = label.clone();
                     menu = menu.child(
-                        select_item(
+                        menu_row(
                             SharedString::from(format!("tab-branch-{label}")),
                             selected,
                             ui,
@@ -783,7 +785,7 @@ impl PaneFlowApp {
             .filter(|sid| self.broadcast.pending.contains_key(sid));
 
         let rows = 2 + usize::from(pending_sid.is_some()) + 2;
-        let menu_height = px(8. + rows as f32 * 29. + 18.);
+        let menu_height = menu_height(rows as f32, 18.);
         let menu_pos = clamped_context_menu_position(menu.position, px(248.), menu_height, window);
 
         let mut context_menu = select_menu("pane-context-menu", ui)

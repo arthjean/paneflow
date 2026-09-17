@@ -8,8 +8,10 @@ use super::projection::FileRow;
 use super::{DIMMED_OPACITY, INDENT_STEP, ROW_GAP, ROW_HEIGHT, ROW_SLOT};
 use crate::app::files_git;
 use crate::app::files_tree;
-use crate::app::sidebar::{SIDEBAR_ROW_LINE_HEIGHT, SIDEBAR_ROW_PADDING_X};
 use crate::ui_primitives::{LABEL_SM, squircle_skin};
+
+const SIDEBAR_ROW_PADDING_X: f32 = 8.0;
+const SIDEBAR_ROW_LINE_HEIGHT: f32 = 18.0;
 
 impl FilesSidebar {
     pub(super) fn files_row(

@@ -4,15 +4,12 @@ use gpui::{
     Window, div, prelude::*, px, svg,
 };
 
-use crate::ui_primitives::{ROW_RADIUS, squircle_skin};
+use crate::settings::search;
+use crate::ui_primitives::squircle_skin;
 use crate::widgets::scrollbar;
 use crate::{PaneFlowApp, SettingsSection};
 
 pub(crate) const SETTINGS_NAV_WIDTH: f32 = crate::SIDEBAR_WIDTH;
-
-pub(crate) fn settings_chrome_bg() -> gpui::Hsla {
-    crate::theme::ui_colors().base
-}
 
 struct NavItem {
     section: SettingsSection,
@@ -143,6 +140,28 @@ const NAV_GROUPS: &[NavGroup] = &[
     },
 ];
 
+fn nav_item_matches(item: &NavItem, query: &str) -> bool {
+    query.is_empty()
+        || item.label.to_lowercase().contains(query)
+        || item.keywords.iter().any(|keyword| keyword.contains(query))
+        || search::section_matches(item.section, query)
+}
+
+fn nav_section_matches(section: SettingsSection, query: &str) -> bool {
+    NAV_GROUPS
+        .iter()
+        .flat_map(|group| group.items)
+        .any(|item| item.section == section && nav_item_matches(item, query))
+}
+
+fn first_matching_section(query: &str) -> Option<SettingsSection> {
+    NAV_GROUPS
+        .iter()
+        .flat_map(|group| group.items)
+        .find(|item| nav_item_matches(item, query))
+        .map(|item| item.section)
+}
+
 pub(crate) fn section_title(section: SettingsSection) -> &'static str {
     match section {
         SettingsSection::General => "General",
@@ -165,7 +184,7 @@ impl PaneFlowApp {
         let ui = crate::theme::ui_colors();
         let theme = crate::theme::active_theme();
         let active = self.settings_section.unwrap_or(SettingsSection::General);
-        let query = self.settings_search_input.read(cx).value().to_lowercase();
+        let query = search::normalize(&self.settings_search_input.read(cx).value());
         let row_background = crate::app::constants::sidebar_tab_hover_background();
 
         let search = self.render_settings_search(ui, window, cx);
@@ -179,7 +198,7 @@ impl PaneFlowApp {
             .overflow_y_scroll()
             .flex()
             .flex_col()
-            .gap(px(4.))
+            .gap(px(2.))
             .pt(px(4.))
             .pb(px(8.));
 
@@ -188,11 +207,7 @@ impl PaneFlowApp {
             let items: Vec<&NavItem> = group
                 .items
                 .iter()
-                .filter(|it| {
-                    query.is_empty()
-                        || it.label.to_lowercase().contains(&query)
-                        || it.keywords.iter().any(|k| k.contains(query.as_str()))
-                })
+                .filter(|it| nav_item_matches(it, &query))
                 .collect();
             if items.is_empty() {
                 continue;
@@ -213,20 +228,22 @@ impl PaneFlowApp {
                     div()
                         .id(SharedString::from(format!("settings-nav-{}", it.label)))
                         .mx(px(8.))
-                        .px(px(8.))
+                        .px(px(7.))
                         .py(px(6.))
+                        .min_h(px(32.))
+                        .flex_none()
                         .flex()
                         .flex_row()
                         .items_center()
                         .gap(px(8.)),
                     SharedString::from(format!("settings-nav-{}-group", it.label)),
-                    ROW_RADIUS,
+                    px(9.),
                     is_active.then_some(row_background),
                     (!is_active).then_some(row_background),
                 )
                 .child(
                     svg()
-                        .size(px(15.))
+                        .size(px(17.))
                         .flex_none()
                         .path(it.icon)
                         .text_color(ui.muted),
@@ -235,10 +252,14 @@ impl PaneFlowApp {
                     div()
                         .flex_1()
                         .min_w_0()
-                        .text_size(px(13.))
+                        .text_size(px(14.))
+                        .line_height(px(20.))
                         .text_color(ui.text)
                         .truncate()
-                        .child(it.label),
+                        .child(crate::ui_primitives::highlight_matches(
+                            it.label.to_string(),
+                            &query,
+                        )),
                 );
                 let row = if is_active {
                     row.into_any_element()
@@ -262,7 +283,7 @@ impl PaneFlowApp {
                         .px(px(8.))
                         .py(px(10.)),
                     "settings-nav-empty-group",
-                    ROW_RADIUS,
+                    px(9.),
                     Some(ui.subtle),
                     None,
                 )
@@ -274,6 +295,8 @@ impl PaneFlowApp {
 
         div()
             .id("settings-nav")
+            .font_family(".SystemUIFont")
+            .text_size(px(14.))
             .w(px(SETTINGS_NAV_WIDTH))
             .h_full()
             .flex_shrink_0()
@@ -292,22 +315,31 @@ impl PaneFlowApp {
     fn render_settings_search(
         &self,
         ui: crate::theme::UiColors,
-        _window: &Window,
+        window: &Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let show_clear = !self.settings_search_input.read(cx).value().is_empty();
-        crate::ui_primitives::filter_pill(
+        let focus = self.settings_search_input.read(cx).focus_handle.clone();
+        let has_query = !self.settings_search_input.read(cx).value().is_empty();
+        crate::ui_primitives::filter_field(
             "settings-search",
             "settings-search-clear",
             ui,
+            focus.is_focused(window),
+            has_query,
+            true,
             self.settings_search_input.clone(),
-            show_clear,
-            cx.listener(|this, _: &ClickEvent, _window, cx| {
-                this.settings_search_input.update(cx, |input, cx| {
-                    input.clear(cx);
-                });
+            cx.listener(|this, _: &ClickEvent, window, cx| {
+                cx.stop_propagation();
+                this.settings_search_input
+                    .update(cx, |input, cx| input.clear(cx));
+                let focus = this.settings_search_input.read(cx).focus_handle.clone();
+                window.focus(&focus, cx);
             }),
         )
+        .on_mouse_down(MouseButton::Left, move |_, window, cx| {
+            window.focus(&focus, cx);
+            cx.stop_propagation();
+        })
         .on_key_down(cx.listener(|this, ev: &KeyDownEvent, _window, cx| {
             if ev.keystroke.key == "escape" {
                 if this.settings_search_input.read(cx).value().is_empty() {
@@ -335,7 +367,11 @@ impl PaneFlowApp {
         .into_any_element()
     }
 
-    pub(crate) fn render_settings_content_panel(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    pub(crate) fn render_settings_content_panel(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         let ui = crate::theme::ui_colors();
         let section = self.settings_section.unwrap_or(SettingsSection::General);
 
@@ -372,13 +408,25 @@ impl PaneFlowApp {
             .flex_1()
             .flex()
             .flex_col()
-            .min_h_0()
-            .bg(settings_chrome_bg());
+            .min_h_0();
 
         if section.owns_its_scroll() {
             return shell.child(self.render_shortcuts_page(heading, cx));
         }
 
+        let raw_query = search::normalize(&self.settings_search_input.read(cx).value());
+        let page_query = if search::section_matches(section, &raw_query) {
+            raw_query
+        } else {
+            String::new()
+        };
+        if search::begin_frame(
+            page_query,
+            self.settings_search_motion.clone(),
+            std::time::Instant::now(),
+        ) {
+            window.request_animation_frame();
+        }
         let body = match section {
             SettingsSection::General => self.render_general_content(cx).into_any_element(),
             SettingsSection::Appearance => self.render_appearance_content(cx).into_any_element(),
@@ -389,6 +437,7 @@ impl PaneFlowApp {
             SettingsSection::Worktrees => self.render_worktrees_content(cx).into_any_element(),
             SettingsSection::Shortcuts => gpui::Empty.into_any_element(),
         };
+        search::end_frame();
 
         let column = div()
             .flex()
@@ -401,16 +450,25 @@ impl PaneFlowApp {
     }
 
     pub(crate) fn settings_reading_column(&self) -> gpui::Div {
-        div()
-            .w_full()
-            .flex()
-            .flex_col()
-            .max_w(px(700.))
-            .mx_auto()
-            .px(px(28.))
-            .pt(px(28.))
+        settings_column().pt(px(28.))
     }
+}
 
+pub(crate) const SETTINGS_COLUMN_MAX_WIDTH: gpui::Pixels = px(700.);
+
+pub(crate) const SETTINGS_COLUMN_PADDING: gpui::Pixels = px(28.);
+
+pub(crate) fn settings_column() -> gpui::Div {
+    div()
+        .w_full()
+        .flex()
+        .flex_col()
+        .max_w(SETTINGS_COLUMN_MAX_WIDTH)
+        .mx_auto()
+        .px(SETTINGS_COLUMN_PADDING)
+}
+
+impl PaneFlowApp {
     fn render_settings_scroll(
         &self,
         content: AnyElement,
@@ -425,7 +483,6 @@ impl PaneFlowApp {
             .left_0()
             .min_h_0()
             .pr(scrollbar::SCROLLBAR_GUTTER)
-            .bg(settings_chrome_bg())
             .overflow_y_scroll()
             .track_scroll(&self.settings_scroll)
             .flex()
@@ -488,13 +545,32 @@ impl PaneFlowApp {
             .when_some(bar, |d, sb| d.child(sb))
     }
 
+    pub(crate) fn follow_settings_search(&mut self, cx: &mut Context<Self>) {
+        let Some(current) = self.settings_section else {
+            return;
+        };
+        let query = search::normalize(&self.settings_search_input.read(cx).value());
+        if query.is_empty() || nav_section_matches(current, &query) {
+            return;
+        }
+        if let Some(section) = first_matching_section(&query) {
+            self.enter_settings_section(section, cx);
+        }
+    }
+
     pub(crate) fn select_settings_section(
         &mut self,
         section: SettingsSection,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.enter_settings_section(section, cx);
+        self.settings_focus.focus(window, cx);
+    }
+
+    fn enter_settings_section(&mut self, section: SettingsSection, cx: &mut Context<Self>) {
         self.settings_section = Some(section);
+        self.settings_search_motion.borrow_mut().reset();
         self.reset_settings_scroll();
         self.font_dropdown_open = false;
         self.font_search.clear();
@@ -519,7 +595,6 @@ impl PaneFlowApp {
         if section == SettingsSection::Workspaces {
             self.sync_workspace_template_inputs(cx);
         }
-        self.settings_focus.focus(window, cx);
         cx.notify();
     }
 }

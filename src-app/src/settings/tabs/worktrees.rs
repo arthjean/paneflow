@@ -9,6 +9,7 @@ use crate::settings::components::{
     hairline, secondary_button, section_header, setting_card, toggle_pill, toggle_row_with,
     with_alpha,
 };
+use crate::settings::search::{self, Block, SearchCard};
 use crate::workspace::worktree;
 
 impl PaneFlowApp {
@@ -62,19 +63,16 @@ impl PaneFlowApp {
             ));
         }
         let dir_row = toggle_row_with(
-            "Worktree root",
-            "Directory where Paneflow creates managed worktrees, one subdirectory per \
-             repository. Worktrees already created elsewhere stay where they are.",
+            search::WORKTREE_ROOT.title,
+            search::WORKTREE_ROOT.description,
             None,
             ui,
             dir_control,
         );
 
         let auto_remove_row = toggle_row_with(
-            "Remove old worktrees automatically",
-            "A managed worktree is removed when its workspace closes, and the oldest ones \
-             are trimmed past the keep limit. Uncommitted changes are saved as a snapshot \
-             first, and the branch is never deleted.",
+            search::AUTO_REMOVE_WORKTREES.title,
+            search::AUTO_REMOVE_WORKTREES.description,
             None,
             ui,
             div()
@@ -124,20 +122,18 @@ impl PaneFlowApp {
                 }),
             ));
         let limit_row = toggle_row_with(
-            "Keep limit",
-            "Number of managed worktrees to keep before the oldest unopened ones are \
-             removed.",
+            search::WORKTREE_KEEP_LIMIT.title,
+            search::WORKTREE_KEEP_LIMIT.description,
             None,
             ui,
             limit_control,
         );
 
-        let mut settings_card = setting_card(ui)
-            .child(dir_row)
-            .child(hairline(ui))
-            .child(auto_remove_row);
+        let mut settings_card = SearchCard::new(ui)
+            .row(&search::WORKTREE_ROOT, dir_row)
+            .row(&search::AUTO_REMOVE_WORKTREES, auto_remove_row);
         if auto_remove {
-            settings_card = settings_card.child(hairline(ui)).child(limit_row);
+            settings_card = settings_card.row(&search::WORKTREE_KEEP_LIMIT, limit_row);
         }
 
         let managed = self.managed_worktrees_snapshot();
@@ -324,27 +320,24 @@ impl PaneFlowApp {
             .flex()
             .flex_col()
             .child(
-                div()
-                    .flex()
-                    .flex_col()
+                Block::new("Storage and cleanup")
                     .child(section_header(ui, "Storage and cleanup"))
-                    .child(settings_card),
+                    .card(settings_card)
+                    .finish(),
             )
             .child(
-                div()
-                    .mt(px(24.))
-                    .flex()
-                    .flex_col()
+                Block::new("Managed worktrees")
+                    .top_gap(24.)
                     .child(section_header(ui, count_label))
-                    .child(list),
+                    .child(list)
+                    .finish(),
             )
             .child(
-                div()
-                    .mt(px(24.))
-                    .flex()
-                    .flex_col()
+                Block::new("Snapshots")
+                    .top_gap(24.)
                     .child(section_header(ui, "Snapshots"))
-                    .child(snapshot_list),
+                    .child(snapshot_list)
+                    .finish(),
             )
             .into_any_element()
     }

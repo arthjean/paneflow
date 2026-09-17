@@ -8,9 +8,10 @@ use serde_json::Value;
 use crate::GeneralDropdown;
 use crate::PaneFlowApp;
 use crate::settings::components::{
-    Logo, deferred_select_menu, hairline, render_logo, section_header, select_chevron, select_item,
-    select_menu, select_trigger, setting_card, setting_text, toggle_row_with,
+    Logo, deferred_select_menu, menu_row, render_logo, section_header, select_chevron, select_menu,
+    select_trigger, setting_text, toggle_row_with,
 };
+use crate::settings::search::{self, Block, SearchCard};
 
 type SelectOption = (String, Option<Logo>, Value, bool);
 
@@ -42,8 +43,8 @@ impl PaneFlowApp {
 
         let editor_row = self.general_select_row(
             GeneralDropdown::Editor,
-            "Default editor",
-            "Default application for opening files and folders.",
+            search::DEFAULT_EDITOR.title,
+            search::DEFAULT_EDITOR.description,
             editor_label,
             editor_icon(&editor_value),
             editor_opts,
@@ -97,8 +98,8 @@ impl PaneFlowApp {
 
         let shell_row = self.general_select_row(
             GeneralDropdown::Shell,
-            "Shell in the integrated terminal",
-            "Choose which shell opens in new integrated terminals. Existing terminals keep their shell until restarted.",
+            search::DEFAULT_SHELL.title,
+            search::DEFAULT_SHELL.description,
             shell_label,
             None,
             shell_opts,
@@ -130,8 +131,8 @@ impl PaneFlowApp {
             .unwrap_or_default();
         let quit_row = self.general_select_row(
             GeneralDropdown::OnQuit,
-            "When quitting with sessions running",
-            "Keep sessions running so they are back next time, or stop everything and end their processes.",
+            search::ON_QUIT.title,
+            search::ON_QUIT.description,
             quit_label,
             None,
             quit_opts,
@@ -155,8 +156,8 @@ impl PaneFlowApp {
         let ended_label = ended_cap_label(ended_cap);
         let ended_row = self.general_select_row(
             GeneralDropdown::EndedSessions,
-            "Ended sessions listed per workspace",
-            "How many ended sessions the sidebar previews before the rest collapse under one row. Nothing is ever pruned.",
+            search::ENDED_SESSIONS.title,
+            search::ENDED_SESSIONS.description,
             ended_label,
             None,
             ended_opts,
@@ -165,20 +166,16 @@ impl PaneFlowApp {
             cx,
         );
 
-        let defaults_section = div()
-            .flex()
-            .flex_col()
+        let defaults_section = Block::new("Defaults")
             .child(section_header(ui, "Defaults"))
-            .child(
-                setting_card(ui)
-                    .child(editor_row)
-                    .child(hairline(ui))
-                    .child(shell_row)
-                    .child(hairline(ui))
-                    .child(quit_row)
-                    .child(hairline(ui))
-                    .child(ended_row),
-            );
+            .card(
+                SearchCard::new(ui)
+                    .row(&search::DEFAULT_EDITOR, editor_row)
+                    .row(&search::DEFAULT_SHELL, shell_row)
+                    .row(&search::ON_QUIT, quit_row)
+                    .row(&search::ENDED_SESSIONS, ended_row),
+            )
+            .finish();
 
         div()
             .flex()
@@ -201,29 +198,32 @@ impl PaneFlowApp {
             Value::String("PrimaryScreen".to_string())
         };
 
-        div()
-            .mt(px(24.))
-            .flex()
-            .flex_col()
+        Block::new("Notifications")
+            .top_gap(24.)
             .child(section_header(ui, "Notifications"))
-            .child(setting_card(ui).child(toggle_row_with(
-                "Native OS notifications",
-                "Alert you when an agent needs attention or finishes while Paneflow is unfocused.",
-                None,
-                ui,
-                div()
-                    .id("row-native-notifications")
-                    .flex_shrink_0()
-                    .on_click(cx.listener(move |this, _: &ClickEvent, _window, cx| {
-                        this.persist_agent_panel_setting(
-                            "notify_when_agent_waiting",
-                            target.clone(),
-                            cx,
-                        );
-                    }))
-                    .child(crate::settings::components::toggle_pill(enabled, ui)),
-            )))
-            .into_any_element()
+            .card(
+                SearchCard::new(ui).row(
+                    &search::NATIVE_NOTIFICATIONS,
+                    toggle_row_with(
+                        search::NATIVE_NOTIFICATIONS.title,
+                        search::NATIVE_NOTIFICATIONS.description,
+                        None,
+                        ui,
+                        div()
+                            .id("row-native-notifications")
+                            .flex_shrink_0()
+                            .on_click(cx.listener(move |this, _: &ClickEvent, _window, cx| {
+                                this.persist_agent_panel_setting(
+                                    "notify_when_agent_waiting",
+                                    target.clone(),
+                                    cx,
+                                );
+                            }))
+                            .child(crate::settings::components::toggle_pill(enabled, ui)),
+                    ),
+                ),
+            )
+            .finish()
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -287,7 +287,7 @@ impl PaneFlowApp {
             }));
             for (i, (label, icon, value, selected)) in options.into_iter().enumerate() {
                 let value_for_click = value;
-                let mut item = select_item((config_key, i), selected, ui)
+                let mut item = menu_row((config_key, i), selected, ui)
                     .cursor(CursorStyle::Arrow)
                     .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
                         this.general_dropdown = None;

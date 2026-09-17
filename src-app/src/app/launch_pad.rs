@@ -471,7 +471,7 @@ impl PaneFlowApp {
                 let selected = lp.base.as_deref() == Some(branch.as_str());
                 let pick = branch.clone();
                 menu = menu.child(
-                    crate::settings::components::select_item(
+                    crate::settings::components::menu_row(
                         SharedString::from(format!("launch-pad-base-{branch}")),
                         selected,
                         ui,

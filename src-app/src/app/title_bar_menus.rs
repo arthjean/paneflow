@@ -1,13 +1,11 @@
 use gpui::{
     AnyElement, ClickEvent, Context, CursorStyle, InteractiveElement, IntoElement, MouseButton,
-    ParentElement, Pixels, Point, SharedString, StatefulInteractiveElement, Styled, Window,
-    deferred, div, px,
+    ParentElement, Pixels, Point, StatefulInteractiveElement, Styled, Window, deferred, div, px,
 };
 
 use crate::PaneFlowApp;
-use crate::settings::components::{menu_divider_color, select_item, select_menu};
+use crate::settings::components::{menu_divider_color, menu_row, select_menu};
 
-const PROFILE_MENU_WIDTH: Pixels = px(220.);
 const TITLE_BAR_FILES_MENU_WIDTH: Pixels = px(200.);
 const TITLE_BAR_HELP_MENU_WIDTH: Pixels = px(220.);
 const DOCUMENTATION_URL: &str = "https://paneflow.dev/docs";
@@ -42,7 +40,7 @@ impl PaneFlowApp {
         let top = anchor.y + px(4.);
 
         let menu_item = |id: &'static str, label: &'static str, on_click: TitleBarMenuClick| {
-            select_item(id, false, ui)
+            menu_row(id, false, ui)
                 .cursor(CursorStyle::Arrow)
                 .on_click(on_click)
                 .child(
@@ -108,7 +106,7 @@ impl PaneFlowApp {
         let top = anchor.y + px(4.);
 
         let menu_item = |id: &'static str, label: &'static str, on_click: TitleBarMenuClick| {
-            select_item(id, false, ui)
+            menu_row(id, false, ui)
                 .cursor(CursorStyle::Arrow)
                 .on_click(on_click)
                 .child(
@@ -213,127 +211,6 @@ impl PaneFlowApp {
                         .bg(menu_divider_color(ui)),
                 )
                 .child(about),
-        ))
-        .with_priority(4)
-        .into_any_element()
-    }
-
-    pub(crate) fn render_profile_menu(
-        &self,
-        anchor: Point<Pixels>,
-        window: &Window,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        let ui = crate::theme::ui_colors();
-        let win_size = window.window_bounds().get_bounds().size;
-
-        let desired_left = anchor.x - PROFILE_MENU_WIDTH;
-        let max_left = (win_size.width - PROFILE_MENU_WIDTH - px(4.)).max(px(4.));
-        let left = desired_left.clamp(px(4.), max_left);
-
-        let menu_height = px(140.);
-        let desired_top = anchor.y + px(4.);
-        let top = if desired_top + menu_height > win_size.height {
-            (desired_top - menu_height).max(px(4.))
-        } else {
-            desired_top
-        };
-
-        let header = div()
-            .flex()
-            .flex_row()
-            .items_center()
-            .justify_between()
-            .px(px(10.))
-            .py(px(6.))
-            .child(
-                div()
-                    .text_size(px(12.))
-                    .font_weight(gpui::FontWeight::MEDIUM)
-                    .text_color(ui.text)
-                    .child("Guest"),
-            )
-            .child(
-                div()
-                    .px(px(6.))
-                    .py(px(1.))
-                    .rounded(px(4.))
-                    .bg(ui.subtle)
-                    .text_size(px(10.))
-                    .text_color(ui.muted)
-                    .child("Free"),
-            );
-
-        let settings_item = self.render_context_menu_item(
-            SharedString::from("profile-menu-settings"),
-            "Settings",
-            None,
-            ui,
-            cx.listener(|this, _: &ClickEvent, window, cx| {
-                this.profile_menu_open = None;
-                this.open_settings_window(window, cx);
-                cx.stop_propagation();
-            }),
-        );
-
-        let themes_item = self.render_context_menu_item(
-            SharedString::from("profile-menu-themes"),
-            "Themes…",
-            None,
-            ui,
-            cx.listener(|this, _: &ClickEvent, window, cx| {
-                this.profile_menu_open = None;
-                this.open_theme_picker(window, cx);
-                cx.stop_propagation();
-            }),
-        );
-
-        let about_item = self.render_context_menu_item(
-            SharedString::from("profile-menu-about"),
-            "About PaneFlow",
-            None,
-            ui,
-            cx.listener(|this, _: &ClickEvent, _w, cx| {
-                this.profile_menu_open = None;
-                this.show_about_dialog = true;
-                cx.notify();
-                cx.stop_propagation();
-            }),
-        );
-
-        deferred(crate::ui_primitives::menu_reveal(
-            "profile-menu-reveal",
-            div()
-                .id("profile-menu")
-                .occlude()
-                .absolute()
-                .left(left)
-                .top(top)
-                .w(PROFILE_MENU_WIDTH)
-                .bg(ui.overlay)
-                .border_1()
-                .border_color(ui.border)
-                .rounded(px(8.))
-                .flex()
-                .flex_col()
-                .p(px(4.))
-                .on_mouse_down_out(cx.listener(|this, _, _, cx| {
-                    this.profile_menu_open = None;
-                    cx.notify();
-                }))
-                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                .on_mouse_down(MouseButton::Right, |_, _, cx| cx.stop_propagation())
-                .child(header)
-                .child(
-                    div()
-                        .mx(px(-4.))
-                        .my(px(3.))
-                        .h(px(1.))
-                        .bg(menu_divider_color(ui)),
-                )
-                .child(settings_item)
-                .child(themes_item)
-                .child(about_item),
         ))
         .with_priority(4)
         .into_any_element()

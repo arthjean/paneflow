@@ -5,7 +5,8 @@ use gpui::{
 };
 
 use crate::ui_primitives::{
-    AnimatedHover, AnimatedHoverExt, ROW_RADIUS, lerp_color, squircle, squircle_skin,
+    AnimatedHover, AnimatedHoverExt, ROW_RADIUS, highlight_matches, lerp_color, squircle,
+    squircle_skin,
 };
 
 pub(crate) const SETTINGS_CONTROL_CORNER_RADIUS: Pixels = px(8.);
@@ -15,12 +16,13 @@ pub fn with_alpha(color: Hsla, alpha: f32) -> Hsla {
 }
 
 pub fn section_header(ui: crate::theme::UiColors, label: &'static str) -> impl IntoElement {
+    let query = crate::settings::search::active_query();
     div().pb(px(8.)).child(
         div()
             .text_size(crate::ui_primitives::LABEL_SM)
             .font_weight(gpui::FontWeight::NORMAL)
             .text_color(ui.muted)
-            .child(label),
+            .child(highlight_matches(label.to_string(), &query)),
     )
 }
 
@@ -29,6 +31,7 @@ pub fn section_header_with_action(
     label: &'static str,
     action: impl IntoElement,
 ) -> impl IntoElement {
+    let query = crate::settings::search::active_query();
     div()
         .flex()
         .flex_row()
@@ -41,7 +44,7 @@ pub fn section_header_with_action(
                 .text_size(crate::ui_primitives::LABEL_SM)
                 .font_weight(gpui::FontWeight::NORMAL)
                 .text_color(ui.muted)
-                .child(label),
+                .child(highlight_matches(label.to_string(), &query)),
         )
         .child(action)
 }
@@ -61,13 +64,13 @@ pub fn setting_card(_ui: crate::theme::UiColors) -> Div {
         .flex()
         .flex_col()
         .child(squircle::squircle_fill(
-            crate::app::constants::PANE_CARD_RADIUS,
+            crate::app::constants::SETTINGS_CARD_RADIUS,
             bg,
         ))
 }
 
 pub fn card_tint(color: Hsla) -> impl IntoElement {
-    squircle::squircle_fill(crate::app::constants::PANE_CARD_RADIUS, color)
+    squircle::squircle_fill(crate::app::constants::SETTINGS_CARD_RADIUS, color)
 }
 
 pub fn hairline(ui: crate::theme::UiColors) -> impl IntoElement {
@@ -148,6 +151,7 @@ pub fn setting_text(
     title: &'static str,
     description: &'static str,
 ) -> impl IntoElement {
+    let query = crate::settings::search::active_query();
     div()
         .flex_1()
         .min_w_0()
@@ -159,13 +163,13 @@ pub fn setting_text(
                 .text_size(crate::ui_primitives::BODY)
                 .font_weight(gpui::FontWeight::MEDIUM)
                 .text_color(ui.text)
-                .child(title),
+                .child(highlight_matches(title.to_string(), &query)),
         )
         .child(
             div()
                 .text_size(crate::ui_primitives::LABEL_SM)
                 .text_color(ui.muted)
-                .child(description),
+                .child(highlight_matches(description.to_string(), &query)),
         )
 }
 
@@ -321,6 +325,33 @@ pub fn menu_surface<E: Styled + ParentElement>(el: E, ui: crate::theme::UiColors
         ))
 }
 
+pub(crate) const MENU_ROW_HEIGHT: Pixels = px(34.);
+pub(crate) const MENU_ROW_GAP: Pixels = px(1.);
+pub(crate) const MENU_PADDING: Pixels = px(7.);
+pub(crate) const MENU_MAX_HEIGHT: Pixels = px(400.);
+
+pub fn menu_panel<E: Styled + ParentElement>(el: E, ui: crate::theme::UiColors) -> E {
+    menu_surface(el, ui)
+        .flex()
+        .flex_col()
+        .gap(MENU_ROW_GAP)
+        .p(MENU_PADDING)
+}
+
+pub fn menu_row(
+    id: impl Into<ElementId>,
+    selected: bool,
+    ui: crate::theme::UiColors,
+) -> Stateful<Div> {
+    select_item(id, selected, ui).h(MENU_ROW_HEIGHT)
+}
+
+pub fn menu_height(rows: f32, extra: f32) -> Pixels {
+    px(f32::from(MENU_PADDING) * 2.
+        + rows * (f32::from(MENU_ROW_HEIGHT) + f32::from(MENU_ROW_GAP))
+        + extra)
+}
+
 pub fn select_menu(id: impl Into<ElementId>, ui: crate::theme::UiColors) -> SelectMenu {
     let id: ElementId = id.into();
     let list_id: ElementId = (id.clone(), "list").into();
@@ -332,14 +363,14 @@ pub fn select_menu(id: impl Into<ElementId>, ui: crate::theme::UiColors) -> Sele
             .flex_col()
             .min_w(px(200.))
             .max_w(px(280.))
-            .max_h(px(320.))
+            .max_h(MENU_MAX_HEIGHT)
             .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation()),
         list: div()
             .id(list_id)
             .flex()
             .flex_col()
-            .gap(px(1.))
-            .p(px(4.))
+            .gap(MENU_ROW_GAP)
+            .p(MENU_PADDING)
             .min_h_0()
             .overflow_y_scroll(),
     }
@@ -430,4 +461,21 @@ pub fn deferred_select_menu(menu: SelectMenu) -> AnyElement {
     ))
     .with_priority(1)
     .into_any_element()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn menu_rows_nest_concentrically_inside_the_menu_surface() {
+        let painted = f32::from(squircle::corner_for_height(MENU_ROW_HEIGHT, ROW_RADIUS));
+        let nested = f32::from(MENU_PADDING) + painted;
+        let surface = f32::from(MENU_RADIUS);
+        assert!(
+            (nested - surface).abs() <= 0.5,
+            "a menu row corner must sit concentrically inside the {surface} surface corner: {} padding plus a {painted} painted corner is {nested}",
+            f32::from(MENU_PADDING)
+        );
+    }
 }

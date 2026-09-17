@@ -421,7 +421,9 @@ impl PaneFlowApp {
             .w_full()
             .flex()
             .overflow_hidden()
-            .rounded_b(crate::app::constants::PANE_CARD_RADIUS)
+            .pl(crate::app::constants::DIFF_DOCK_CONTENT_INSET)
+            .pr(crate::app::constants::DIFF_DOCK_CONTENT_INSET)
+            .pb(crate::app::constants::DIFF_DOCK_CONTENT_INSET)
             .child(
                 div()
                     .flex_1()
