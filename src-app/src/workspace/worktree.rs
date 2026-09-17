@@ -140,16 +140,11 @@ pub fn managed_worktree_from_record(
         log::warn!("managed worktree: dropping record with invalid branch");
         return None;
     }
-    if !is_paneflow_worktree_dir(&repo_root, branch, &path) {
+    migrate_owner_marker(&path);
+    if !is_owned_worktree(&repo_root, &path) {
         log::warn!(
-            "managed worktree: dropping record outside Paneflow worktree dir: {}",
-            path.display()
-        );
-        return None;
-    }
-    if !has_owner_marker(&path) {
-        log::warn!(
-            "managed worktree: dropping record without owner marker: {}",
+            "managed worktree: dropping record that is not a Paneflow worktree of {}: {}",
+            repo_root.display(),
             path.display()
         );
         return None;
@@ -250,9 +245,20 @@ fn repo_name(repo_root: &Path) -> String {
         .unwrap_or_else(|| "repo".to_string())
 }
 
+fn repo_identity_key(repo_root: &Path) -> String {
+    std::fs::canonicalize(repo_root)
+        .map(without_verbatim_prefix)
+        .unwrap_or_else(|_| repo_root.to_path_buf())
+        .to_string_lossy()
+        .into_owned()
+}
+
 fn repo_dir_name(repo_root: &Path) -> String {
-    let key = repo_root.to_string_lossy();
-    format!("{}-{}", repo_name(repo_root), branch_hash_suffix(&key))
+    format!(
+        "{}-{}",
+        repo_name(repo_root),
+        branch_hash_suffix(&repo_identity_key(repo_root))
+    )
 }
 
 fn legacy_worktrees_parent(repo_root: &Path) -> PathBuf {
@@ -260,7 +266,7 @@ fn legacy_worktrees_parent(repo_root: &Path) -> PathBuf {
     parent.join(format!("{}.worktrees", repo_name(repo_root)))
 }
 
-fn worktrees_parent(repo_root: &Path) -> PathBuf {
+pub fn worktrees_parent(repo_root: &Path) -> PathBuf {
     match worktrees_root() {
         Some(root) => root.join(repo_dir_name(repo_root)),
         None => legacy_worktrees_parent(repo_root),
@@ -302,7 +308,11 @@ fn without_verbatim_prefix(path: PathBuf) -> PathBuf {
 }
 
 pub fn worktree_dir(repo_root: &Path, branch: &str) -> PathBuf {
-    worktrees_parent(repo_root).join(branch_slug_or_default(branch))
+    worktree_dir_under(&worktrees_parent(repo_root), branch)
+}
+
+pub fn worktree_dir_under(parent: &Path, branch: &str) -> PathBuf {
+    parent.join(branch_slug_or_default(branch))
 }
 
 pub fn worktree_dir_hashed(repo_root: &Path, branch: &str) -> PathBuf {
@@ -317,6 +327,36 @@ pub fn legacy_worktree_dir(repo_root: &Path, branch: &str) -> PathBuf {
 pub fn legacy_worktree_dir_hashed(repo_root: &Path, branch: &str) -> PathBuf {
     let slug = branch_slug_or_default(branch);
     legacy_worktrees_parent(repo_root).join(format!("{slug}-{}", branch_hash_suffix(branch)))
+}
+
+fn repo_git_dir(repo_root: &Path) -> Option<PathBuf> {
+    let dot_git = repo_root.join(".git");
+    if dot_git.is_dir() {
+        return Some(dot_git);
+    }
+    worktree_git_dir(repo_root)
+}
+
+fn path_starts_with(path: &Path, prefix: &Path) -> bool {
+    if path.starts_with(prefix) {
+        return true;
+    }
+    let (Ok(path), Ok(prefix)) = (std::fs::canonicalize(path), std::fs::canonicalize(prefix))
+    else {
+        return false;
+    };
+    path.starts_with(prefix)
+}
+
+pub fn is_owned_worktree(repo_root: &Path, worktree_path: &Path) -> bool {
+    let Some(admin_dir) = repo_git_dir(repo_root).map(|dir| dir.join("worktrees")) else {
+        return false;
+    };
+    let Some(git_dir) = worktree_git_dir(worktree_path) else {
+        return false;
+    };
+    path_starts_with(&git_dir, &admin_dir)
+        && owner_marker_path(worktree_path).is_some_and(|marker| marker.is_file())
 }
 
 pub fn is_paneflow_worktree_dir(repo_root: &Path, branch: &str, path: &Path) -> bool {
@@ -1457,6 +1497,75 @@ mod tests {
     }
 
     #[test]
+    fn managed_worktree_record_survives_a_worktrees_root_change() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let repo_root = tmp.path().join("repo");
+        let branch = "feat/moved-root";
+        let path = {
+            let _root = test_support::scoped_root(tmp.path().join("old-root"));
+            worktree_dir(&repo_root, branch)
+        };
+        link_fake_git_dir(&path, &repo_root.join(".git/worktrees/feat-moved-root"));
+        std::fs::write(
+            owner_marker_path(&path).expect("marker path"),
+            "owner=paneflow\n",
+        )
+        .expect("marker");
+
+        let _root = test_support::scoped_root(tmp.path().join("new-root"));
+        let restored = managed_worktree_from_record(
+            &path.to_string_lossy(),
+            &repo_root.to_string_lossy(),
+            branch,
+            "auto",
+        )
+        .expect("a worktree created under the previous root still restores");
+        assert_eq!(restored.path, path);
+    }
+
+    #[test]
+    fn managed_worktree_record_rejects_a_worktree_of_another_repo() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let _root = test_support::scoped_root(tmp.path().join("worktrees"));
+        let repo_root = tmp.path().join("repo");
+        let other_root = tmp.path().join("other");
+        let branch = "feat/foreign";
+        let path = worktree_dir(&repo_root, branch);
+        link_fake_git_dir(&path, &other_root.join(".git/worktrees/feat-foreign"));
+        std::fs::write(
+            owner_marker_path(&path).expect("marker path"),
+            "owner=paneflow\n",
+        )
+        .expect("marker");
+
+        assert!(
+            managed_worktree_from_record(
+                &path.to_string_lossy(),
+                &repo_root.to_string_lossy(),
+                branch,
+                "auto",
+            )
+            .is_none(),
+            "a marker under another repo cannot bless this record"
+        );
+    }
+
+    #[test]
+    fn worktrees_parent_ignores_path_spelling() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let _root = test_support::scoped_root(tmp.path().join("worktrees"));
+        let repo_root = tmp.path().join("repo");
+        std::fs::create_dir_all(&repo_root).expect("repo dir");
+        let detoured = tmp.path().join("repo/../repo");
+
+        assert_eq!(
+            worktree_dir(&repo_root, "feat/x"),
+            worktree_dir(&detoured, "feat/x"),
+            "two spellings of one repo share a worktrees parent"
+        );
+    }
+
+    #[test]
     fn managed_worktree_record_requires_marker_and_generated_path() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let _root = test_support::scoped_root(tmp.path().join("worktrees"));
@@ -1491,22 +1600,18 @@ mod tests {
         assert_eq!(restored.path, path);
         assert_eq!(restored.teardown, TeardownPolicy::Keep);
 
-        let outside = tmp.path().join("external");
-        link_fake_git_dir(&outside, &repo_root.join(".git/worktrees/external"));
-        std::fs::write(
-            owner_marker_path(&outside).expect("marker path"),
-            "owner=paneflow\n",
-        )
-        .expect("outside marker");
+        let plain = tmp.path().join("plain");
+        std::fs::create_dir_all(&plain).expect("plain dir");
+        std::fs::write(legacy_owner_marker_path(&plain), "owner=paneflow\n").expect("marker");
         assert!(
             managed_worktree_from_record(
-                &outside.to_string_lossy(),
+                &plain.to_string_lossy(),
                 &repo_root.to_string_lossy(),
                 branch,
                 "auto",
             )
             .is_none(),
-            "marker cannot bless a path outside the deterministic Paneflow dir"
+            "a marker cannot bless a directory that is not a worktree of the repo"
         );
     }
 

@@ -185,7 +185,7 @@ pub(super) fn plan_worktree(idx: usize, pane: &PaneSpec) -> Result<Option<Worktr
     let mut create: Option<bool> = Some(!worktree::branch_exists(&repo_root, branch));
     for entry in &entries {
         if entry.branch.as_deref() == Some(branch) {
-            if worktree::is_paneflow_worktree_dir(&repo_root, branch, &entry.path) {
+            if worktree::is_owned_worktree(&repo_root, &entry.path) {
                 path = entry.path.clone();
                 create = None;
             } else {
