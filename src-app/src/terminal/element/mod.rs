@@ -3008,6 +3008,23 @@ mod golden_frame_tests {
     }
 
     #[test]
+    fn the_placeholder_grid_paints_no_opaque_background() {
+        let placeholder = crate::terminal::ghostty_session::blank_content(COLS, ROWS);
+        let state = run(placeholder.cells.to_vec(), None, None);
+
+        let covered: usize = state
+            .rects
+            .iter()
+            .filter(|rect| rect.color.a > 0.0)
+            .map(|rect| rect.num_lines * rect.num_cols)
+            .sum();
+        assert_eq!(
+            covered, 0,
+            "the grid shown before the first engine frame must let the pane background through"
+        );
+    }
+
+    #[test]
     fn unfocused_terminal_hides_copy_mode_cursor() {
         let copy_cursor = CopyModeCursorState {
             grid_line: 0,

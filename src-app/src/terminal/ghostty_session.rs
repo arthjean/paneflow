@@ -4472,18 +4472,14 @@ fn color_from_ghostty(color: ghostty::Color, default: NamedColor) -> Color {
     }
 }
 
-fn blank_content(cols: usize, rows: usize) -> Content {
+pub(super) fn blank_content(cols: usize, rows: usize) -> Content {
     let cells: Arc<[Cell]> = (0..rows)
         .flat_map(|row| {
             (0..cols).map(move |column| Cell {
                 point: Point::new(row as i32, column),
                 c: ' ',
-                fg: Color::Spec(Rgb {
-                    r: 0xd0,
-                    g: 0xd0,
-                    b: 0xd0,
-                }),
-                bg: Color::Spec(Rgb::default()),
+                fg: Color::Named(NamedColor::Foreground),
+                bg: Color::Named(NamedColor::Background),
                 flags: CellFlags::empty(),
                 zerowidth: None,
                 hyperlink: false,
