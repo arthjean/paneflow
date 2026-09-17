@@ -202,11 +202,12 @@ impl PaneFlowApp {
     }
 
     fn quit_now(&mut self, cx: &mut Context<Self>) {
-        self.save_session_blocking(cx);
-        self.emit_app_exited_and_flush();
-        #[cfg(target_os = "linux")]
-        crate::window_chrome::linux_backdrop::clear_subtle_chrome_material();
-        cx.quit();
+        self.save_session_before_exit(cx, |app, cx| {
+            app.emit_app_exited_and_flush();
+            #[cfg(target_os = "linux")]
+            crate::window_chrome::linux_backdrop::clear_subtle_chrome_material();
+            cx.quit();
+        });
     }
 
     fn handle_quit_dialog_key_down(

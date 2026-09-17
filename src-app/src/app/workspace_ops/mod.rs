@@ -877,7 +877,7 @@ impl PaneFlowApp {
         cx.notify();
     }
 
-    pub(crate) fn commit_rename(&mut self, cx: &App) {
+    pub(crate) fn commit_rename(&mut self, cx: &mut Context<Self>) {
         let Some((ws_idx, tab_idx)) = self.renaming_tab.take() else {
             return;
         };

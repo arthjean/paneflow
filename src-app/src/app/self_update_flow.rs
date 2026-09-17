@@ -205,7 +205,7 @@ impl PaneFlowApp {
 
     fn on_preinstall_success(&mut self, cx: &mut Context<Self>) {
         self.self_update.self_update_status = update::SelfUpdateStatus::ReadyToRestart;
-        self.save_session_blocking(cx);
+        self.save_session(cx);
         self.emit_update_success();
         cx.notify();
     }
@@ -239,12 +239,15 @@ impl PaneFlowApp {
     }
 
     pub(crate) fn kickoff_self_update_install(&mut self, cx: &mut Context<Self>) {
+        if self.session_exit_pending {
+            return;
+        }
         if matches!(
             self.self_update.self_update_status,
             update::SelfUpdateStatus::ReadyToRestart
         ) {
             log::info!("self-update: ReadyToRestart click - invoking cx.restart()");
-            cx.restart();
+            self.save_session_before_exit(cx, |_, cx| cx.restart());
             return;
         }
 
@@ -516,21 +519,23 @@ impl PaneFlowApp {
                 match result {
                     Ok(staged) => {
                         let _ = this.update(cx, |app, cx| {
-                            app.save_session_blocking(cx);
-                            match update::windows::msi::spawn_relay(staged) {
-                                Ok(()) => {
-                                    log::info!(
-                                        "self-update/msi: relay spawned - quitting so msiexec can replace paneflow.exe"
-                                    );
-                                    app.self_update.self_update_status =
-                                        update::SelfUpdateStatus::Installing;
-                                    cx.notify();
-                                    cx.quit();
+                            app.self_update.self_update_status = update::SelfUpdateStatus::Idle;
+                            app.save_session_before_exit(cx, move |app, cx| {
+                                match update::windows::msi::spawn_relay(staged) {
+                                    Ok(()) => {
+                                        log::info!(
+                                            "self-update/msi: relay spawned - quitting so msiexec can replace paneflow.exe"
+                                        );
+                                        app.self_update.self_update_status =
+                                            update::SelfUpdateStatus::Installing;
+                                        cx.notify();
+                                        cx.quit();
+                                    }
+                                    Err(err) => {
+                                        app.record_update_failure("msi-relay", &err, cx);
+                                    }
                                 }
-                                Err(err) => {
-                                    app.record_update_failure("msi-relay", &err, cx);
-                                }
-                            }
+                            });
                         });
                     }
                     Err(err) => {

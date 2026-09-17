@@ -101,6 +101,7 @@ impl PaneFlowApp {
         let cached_config = paneflow_config::loader::load_config();
         crate::terminal::element::apply_font_config(&cached_config);
         let (saved_session, session_corruption) = Self::load_session();
+        let session_restore_failed = session_corruption.is_some();
         crate::startup_trace::mark("session_loaded");
 
         let pending_detached_panes = saved_session
@@ -570,6 +571,9 @@ impl PaneFlowApp {
             rename_focus_live: false,
             pending_config,
             save_seq: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            session_restore_failed,
+            session_exit_pending: false,
+            session_save_error_shown: false,
             cached_config,
             ipc_rx,
             ipc_status,

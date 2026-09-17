@@ -4,7 +4,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, MutexGuard, PoisonError};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use gpui::{App, AppContext, Context, Entity};
+use anyhow::Context as _;
+use gpui::{App, AppContext, Context, Entity, Window};
 use paneflow_config::schema::{LayoutNode, TabTitleSource};
 
 use crate::PaneFlowApp;
@@ -88,40 +89,155 @@ impl PaneFlowApp {
         }
     }
 
-    pub(crate) fn save_session(&self, cx: &App) {
-        let state = self.build_session_state(cx);
-        let Some(path) = paneflow_config::loader::session_path() else {
+    pub(crate) fn save_session(&self, cx: &mut Context<Self>) {
+        let seq = self.save_seq.fetch_add(1, Ordering::SeqCst) + 1;
+        if self.session_restore_failed || self.session_exit_pending {
             return;
-        };
-
-        let seq = self
-            .save_seq
-            .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
-            + 1;
-        let save_seq = std::sync::Arc::clone(&self.save_seq);
-
-        cx.background_spawn(async move {
+        }
+        let state = self.build_session_state(cx);
+        let restore_failed = self.session_restore_failed;
+        let save_seq = self.save_seq.clone();
+        cx.spawn(async move |this, cx| {
             smol::Timer::after(std::time::Duration::from_millis(SAVE_DEBOUNCE_MS)).await;
-            if save_seq.load(std::sync::atomic::Ordering::SeqCst) != seq {
+            if save_seq.load(Ordering::SeqCst) != seq {
                 return;
             }
-            smol::unblock(move || {
-                write_session_json_if_current(&path, &state, &save_seq, seq);
-            })
-            .await;
-        })
-        .detach();
+            let result = smol::unblock(move || {
+                let path = paneflow_config::loader::session_path()
+                    .ok_or_else(|| anyhow::anyhow!("Could not locate the session directory"))?;
+                write_session_json_if_current(&path, &state, restore_failed, &save_seq, seq)
+            }).await;
+            let _ = this.update(cx, |app, cx| {
+                if app.save_seq.load(Ordering::SeqCst) != seq {
+                    return;
+                }
+                match result {
+                    Ok(_) => app.session_save_error_shown = false,
+                    Err(error) => {
+                        log::warn!("session save failed: {error:#}");
+                        if !app.session_save_error_shown {
+                            app.session_save_error_shown = true;
+                            show_session_message("Your session could not be saved", &format!("Your open panes are still available. Paneflow will try again when your session changes.\n\n{error:#}"), cx);
+                        }
+                    }
+                }
+            });
+        }).detach();
     }
 
-    pub(crate) fn save_session_blocking(&self, cx: &App) {
-        crate::window_state::save();
-        self.save_seq
-            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        let state = self.build_session_state(cx);
-        let Some(path) = paneflow_config::loader::session_path() else {
+    pub(crate) fn save_session_before_exit(
+        &mut self,
+        cx: &mut Context<Self>,
+        on_saved: impl FnOnce(&mut Self, &mut Context<Self>) + 'static,
+    ) {
+        if self.session_exit_pending {
             return;
+        }
+        if self.session_restore_failed {
+            self.defer_session_recovery(cx);
+            return;
+        }
+        self.session_exit_pending = true;
+        cx.spawn(async move |this, cx| {
+            let mut on_saved = Some(on_saved);
+            loop {
+                let Ok((state, restore_failed, save_seq, seq)) = this.update(cx, |app, cx| {
+                    let seq = app.save_seq.fetch_add(1, Ordering::SeqCst) + 1;
+                    (app.build_session_state(cx), app.session_restore_failed, app.save_seq.clone(), seq)
+                }) else { return };
+                let result = smol::unblock(move || {
+                    let path = paneflow_config::loader::session_path()
+                        .ok_or_else(|| anyhow::anyhow!("Could not locate the session directory"))?;
+                    let saved = write_session_json_if_current(&path, &state, restore_failed, &save_seq, seq)?;
+                    if saved {
+                        crate::window_state::save();
+                    }
+                    Ok::<_, anyhow::Error>(saved)
+                }).await;
+                let done = this.update(cx, |app, cx| {
+                    match result {
+                        Ok(saved) if !saved || app.save_seq.load(Ordering::SeqCst) != seq => false,
+                        Ok(_) => {
+                            if let Some(on_saved) = on_saved.take() {
+                                on_saved(app, cx);
+                            }
+                            app.session_exit_pending = false;
+                            true
+                        }
+                        Err(error) => {
+                            app.session_exit_pending = false;
+                            log::warn!("session save prevented exit: {error:#}");
+                            show_session_message("Paneflow stayed open because your session could not be saved", &format!("Your panes are still available. Try closing Paneflow again after resolving the error.\n\n{error:#}"), cx);
+                            true
+                        }
+                    }
+                }).unwrap_or(true);
+                if done { break; }
+            }
+        }).detach();
+    }
+
+    fn defer_session_recovery(&self, cx: &mut Context<Self>) {
+        cx.defer(|cx| {
+            for handle in cx.windows() {
+                if let Some(main) = handle.downcast::<Self>() {
+                    let _ = main.update(cx, |app, window, cx| {
+                        app.prompt_session_recovery(window, cx)
+                    });
+                    break;
+                }
+            }
+        });
+    }
+
+    pub(crate) fn prompt_session_recovery(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.session_restore_failed || self.session_exit_pending {
+            return;
+        }
+        self.session_exit_pending = true;
+        let detail = if self.workspaces.is_empty() {
+            "The saved session has been preserved. Retry restarts Paneflow without replacing it. Starting a new session first saves a separate copy of the previous session."
+        } else {
+            "The saved session has been preserved. Retry or quitting will discard panes opened since this error. To keep the current panes, choose Start a new session; Paneflow will first back up the previous session."
         };
-        write_session_json(&path, &state);
+        let answer = window.prompt(
+            gpui::PromptLevel::Warning,
+            "Your previous session could not be fully restored",
+            Some(detail),
+            &[
+                gpui::PromptButton::Ok("Retry".into()),
+                gpui::PromptButton::Other("Start a new session".into()),
+                gpui::PromptButton::Cancel("Quit without replacing it".into()),
+            ],
+            cx,
+        );
+        cx.spawn(async move |this, cx| {
+            match answer.await {
+                Ok(0) => { cx.update(|cx| cx.restart()); }
+                Ok(1) => {
+                    let result = smol::unblock(|| {
+                        let path = paneflow_config::loader::session_path()
+                            .ok_or_else(|| anyhow::anyhow!("Could not locate the session directory"))?;
+                        archive_unrestored_session(&path)
+                    }).await;
+                    let _ = this.update(cx, |app, cx| {
+                        app.session_exit_pending = false;
+                        match result {
+                            Ok(backups) => {
+                                app.session_restore_failed = false;
+                                app.save_session(cx);
+                                if let Some(directory) = backups.first().and_then(|path| path.parent()) {
+                                    app.show_toast(format!("Previous session backups saved in {}", directory.display()), cx);
+                                }
+                            }
+                            Err(error) => show_session_message("The previous session could not be backed up", &format!("The original has not been replaced. Resolve the error, then close Paneflow to retry recovery.\n\n{error:#}"), cx),
+                        }
+                    });
+                }
+                Ok(2) => { cx.update(|cx| cx.quit()); }
+                _ => { let _ = this.update(cx, |app, _| app.session_exit_pending = false); }
+            }
+        }).detach();
     }
 
     pub(crate) fn load_session() -> (
@@ -131,7 +247,31 @@ impl PaneFlowApp {
         let Some(path) = paneflow_config::loader::session_path() else {
             return (None, None);
         };
-        Self::load_session_at(&path)
+        Self::load_session_with_recovery_at(&path)
+    }
+
+    fn load_session_with_recovery_at(
+        path: &Path,
+    ) -> (
+        Option<paneflow_config::schema::SessionState>,
+        Option<SessionCorruptionInfo>,
+    ) {
+        let pending = path.with_extension("json.pending");
+        let (recovered, recovery_error) = Self::load_session_at(&pending);
+        if recovered.is_some() {
+            log::info!(
+                "session restore: recovered the pending save at {}",
+                pending.display()
+            );
+            return (recovered, None);
+        }
+        if recovery_error.is_some() {
+            log::warn!(
+                "session restore: pending save could not be loaded; trying the committed session"
+            );
+        }
+        let (state, error) = Self::load_session_at(path);
+        (state, error.or(recovery_error))
     }
 
     pub(crate) fn load_session_at(
@@ -140,7 +280,7 @@ impl PaneFlowApp {
         Option<paneflow_config::schema::SessionState>,
         Option<SessionCorruptionInfo>,
     ) {
-        let bytes = match read_session_capped(path) {
+        let bytes = match retry_session_io(|| read_session_capped(path)) {
             Ok(SessionRead::Data(d)) => d,
             Ok(SessionRead::Missing) => return (None, None),
             Ok(SessionRead::Rejected(category)) => {
@@ -729,46 +869,150 @@ fn persisted_expanded_paths(cwd: &str, expanded: &[PathBuf]) -> Vec<String> {
     paths
 }
 
-fn write_session_json(path: &Path, state: &paneflow_config::schema::SessionState) {
+fn show_session_message(title: &str, detail: &str, cx: &mut Context<PaneFlowApp>) {
+    let title = title.to_string();
+    let detail = detail.to_string();
+    cx.defer(move |cx| {
+        for handle in cx.windows() {
+            if let Some(main) = handle.downcast::<PaneFlowApp>() {
+                let _ = main.update(cx, |_, window, cx| {
+                    window.activate_window();
+                    let answer = window.prompt(
+                        gpui::PromptLevel::Critical,
+                        &title,
+                        Some(&detail),
+                        &["OK"],
+                        cx,
+                    );
+                    cx.spawn(async move |_, _| {
+                        let _ = answer.await;
+                    })
+                    .detach();
+                });
+                break;
+            }
+        }
+    });
+}
+
+fn retry_session_io<T>(mut operation: impl FnMut() -> std::io::Result<T>) -> std::io::Result<T> {
+    for attempt in 0..4 {
+        match operation() {
+            Err(error)
+                if attempt < 3
+                    && matches!(
+                        error.kind(),
+                        std::io::ErrorKind::PermissionDenied
+                            | std::io::ErrorKind::WouldBlock
+                            | std::io::ErrorKind::Interrupted
+                    ) =>
+            {
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+            result => return result,
+        }
+    }
+    unreachable!()
+}
+
+fn archive_unrestored_session(path: &Path) -> anyhow::Result<Vec<PathBuf>> {
     let _guard = session_write_guard();
-    write_session_json_inner(path, state);
+    let mut backups = Vec::new();
+    for source in [path.to_path_buf(), path.with_extension("json.pending")] {
+        if let Some(backup) = archive_session_file(&source)? {
+            backups.push(backup);
+        }
+    }
+    Ok(backups)
+}
+
+fn archive_session_file(path: &Path) -> anyhow::Result<Option<PathBuf>> {
+    use std::io::Write as _;
+    let mut source = match retry_session_io(|| std::fs::File::open(path)) {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error).context("Could not read the previous session"),
+    };
+    let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
+    let sequence = SESSION_TMP_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let mut backup_name = path
+        .file_name()
+        .context("Session path has no file name")?
+        .to_os_string();
+    backup_name.push(format!(
+        ".unrestored-{timestamp}-{}-{sequence}",
+        std::process::id()
+    ));
+    let backup = path.with_file_name(backup_name);
+    let mut target = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&backup)?;
+    std::io::copy(&mut source, &mut target).context("Could not back up the previous session")?;
+    target.flush()?;
+    target.sync_all()?;
+    Ok(Some(backup))
 }
 
 fn write_session_json_if_current(
     path: &Path,
     state: &paneflow_config::schema::SessionState,
+    restore_failed: bool,
     save_seq: &AtomicU64,
     seq: u64,
-) {
+) -> anyhow::Result<bool> {
     let _guard = session_write_guard();
+    anyhow::ensure!(
+        !restore_failed,
+        "The previous session has not been restored; its file is protected"
+    );
     if save_seq.load(Ordering::SeqCst) != seq {
-        return;
+        return Ok(false);
     }
-    write_session_json_inner(path, state);
+    write_session_json_inner(path, state)?;
+    Ok(true)
 }
 
-fn write_session_json_inner(path: &Path, state: &paneflow_config::schema::SessionState) {
+fn write_session_json_inner(
+    path: &Path,
+    state: &paneflow_config::schema::SessionState,
+) -> anyhow::Result<()> {
+    use std::io::Write as _;
     if let Some(parent) = path.parent() {
-        let _ = std::fs::create_dir_all(parent);
+        std::fs::create_dir_all(parent).context("Could not create the session directory")?;
     }
-    match serde_json::to_string_pretty(state) {
-        Ok(json) => {
-            let tmp_path = session_tmp_path(path);
-            match std::fs::write(&tmp_path, &json) {
-                Ok(()) => {
-                    if let Err(e) = std::fs::rename(&tmp_path, path) {
-                        log::warn!("session save rename failed: {e}");
-                        let _ = std::fs::remove_file(&tmp_path);
-                    }
-                }
-                Err(e) => {
-                    log::warn!("session save failed: {e}");
-                    let _ = std::fs::remove_file(&tmp_path);
-                }
-            }
-        }
-        Err(e) => log::warn!("session serialize failed: {e}"),
+    let json = serde_json::to_vec_pretty(state)?;
+    anyhow::ensure!(
+        json.len() as u64 <= MAX_SESSION_SIZE_BYTES,
+        "The session exceeds the size that Paneflow can restore"
+    );
+    let tmp_path = session_tmp_path(path);
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&tmp_path)
+        .context("Could not create the new session file")?;
+    let result = file.write_all(&json).and_then(|()| file.sync_all());
+    drop(file);
+    if let Err(error) = result {
+        let _ = std::fs::remove_file(&tmp_path);
+        return Err(error).context("Could not write the new session");
     }
+    let recovery = path.with_extension("json.pending");
+    retry_session_io(|| std::fs::rename(&tmp_path, &recovery)).with_context(|| {
+        format!(
+            "Could not stage the session for recovery. The new session is preserved at {}",
+            tmp_path.display()
+        )
+    })?;
+    retry_session_io(|| std::fs::rename(&recovery, path)).with_context(|| {
+        format!(
+            "Could not replace {}. The new session is preserved at {}",
+            path.display(),
+            recovery.display()
+        )
+    })?;
+    Ok(())
 }
 
 fn session_tmp_path(path: &Path) -> PathBuf {
@@ -1460,6 +1704,266 @@ mod tests {
 
         std::fs::write(&session_path, "{").expect("seed");
         assert!(session_path.exists());
+    }
+
+    fn session_with_tabs(count: usize) -> paneflow_config::schema::SessionState {
+        let tabs: Vec<_> = (0..count)
+            .map(|index| {
+                serde_json::json!({
+                    "title": format!("Tab {index}"),
+                    "layout": { "type": "pane", "surfaces": [] }
+                })
+            })
+            .collect();
+        serde_json::from_value(serde_json::json!({
+            "version": paneflow_config::schema::SESSION_SCHEMA_VERSION,
+            "active_workspace": 0,
+            "workspaces": [{
+                "id": "3f1b7a52-0c4d-4e88-9a16-5d2c7e9b4a10",
+                "title": "Project",
+                "cwd": "project",
+                "tabs": tabs
+            }]
+        }))
+        .expect("session")
+    }
+
+    fn persist_fixture(path: &Path, state: &paneflow_config::schema::SessionState) {
+        assert!(
+            write_session_json_if_current(path, state, false, &AtomicU64::new(1), 1).expect("save")
+        );
+    }
+
+    #[test]
+    fn normal_save_restores_tabs_and_detached_window_placements() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let path = tmp.path().join("session.json");
+        let mut state = session_with_tabs(15);
+        state.detached_panes = (0..15)
+            .map(|tab| paneflow_config::schema::DetachedPaneSession {
+                location: paneflow_config::schema::DetachedPaneLocation {
+                    workspace: 0,
+                    tab,
+                    leaf: 0,
+                },
+                layout_leaf_count: Some(1),
+                x: 10.,
+                y: 20.,
+                width: 800.,
+                height: 600.,
+            })
+            .collect();
+        persist_fixture(&path, &state);
+        let (loaded, error) = PaneFlowApp::load_session_at(&path);
+        assert!(error.is_none());
+        assert_eq!(loaded, Some(state));
+    }
+
+    #[test]
+    fn an_intentionally_empty_session_replaces_the_previous_session() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let path = tmp.path().join("session.json");
+        let mut state = session_with_tabs(15);
+        persist_fixture(&path, &state);
+        state.workspaces.clear();
+        persist_fixture(&path, &state);
+        assert_eq!(PaneFlowApp::load_session_at(&path).0, Some(state));
+    }
+
+    #[test]
+    fn an_unrestored_session_cannot_be_overwritten_by_a_new_snapshot() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let path = tmp.path().join("session.json");
+        let original = b"{an unreadable session";
+        std::fs::write(&path, original).expect("seed");
+        let (loaded, error) = PaneFlowApp::load_session_at(&path);
+        assert!(loaded.is_none());
+        let blocked = error.is_some();
+        for count in [0, 15] {
+            assert!(
+                write_session_json_if_current(
+                    &path,
+                    &session_with_tabs(count),
+                    blocked,
+                    &AtomicU64::new(1),
+                    1
+                )
+                .is_err()
+            );
+            assert_eq!(std::fs::read(&path).expect("original"), original);
+        }
+    }
+
+    #[test]
+    fn explicit_new_session_preserves_the_original_before_replacement() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let path = tmp.path().join("session.json");
+        let original = b"{original data";
+        std::fs::write(&path, original).expect("seed");
+        archive_unrestored_session(&path).expect("backup");
+        archive_unrestored_session(&path).expect("second backup has a unique name");
+        let mut state = session_with_tabs(0);
+        state.workspaces.clear();
+        persist_fixture(&path, &state);
+        let backups: Vec<_> = std::fs::read_dir(tmp.path())
+            .expect("list")
+            .map(|entry| entry.expect("entry").path())
+            .filter(|entry| entry != &path)
+            .collect();
+        assert_eq!(backups.len(), 2);
+        for backup in backups {
+            assert_eq!(std::fs::read(backup).expect("backup bytes"), original);
+        }
+        assert_eq!(PaneFlowApp::load_session_at(&path).0, Some(state));
+    }
+
+    #[test]
+    fn explicit_replacement_archives_both_committed_and_pending_sessions() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let path = tmp.path().join("session.json");
+        let pending = path.with_extension("json.pending");
+        persist_fixture(&path, &session_with_tabs(15));
+        std::fs::write(&pending, b"{pending data").expect("pending");
+        let originals = [
+            std::fs::read(&path).expect("committed"),
+            std::fs::read(&pending).expect("pending"),
+        ];
+        let backups = archive_unrestored_session(&path).expect("archive both");
+        assert_eq!(backups.len(), 2);
+        for (backup, original) in backups.iter().zip(originals) {
+            assert_eq!(std::fs::read(backup).expect("backup"), original);
+        }
+        persist_fixture(&path, &session_with_tabs(1));
+        assert!(!pending.exists());
+        assert!(backups.iter().all(|path| path.exists()));
+    }
+
+    #[test]
+    fn restart_recovers_a_pending_save_instead_of_the_older_committed_session() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let path = tmp.path().join("session.json");
+        let old = session_with_tabs(15);
+        let new = session_with_tabs(16);
+        persist_fixture(&path, &old);
+        std::fs::write(
+            path.with_extension("json.pending"),
+            serde_json::to_vec(&new).expect("json"),
+        )
+        .expect("pending save");
+        let (restored, error) = PaneFlowApp::load_session_with_recovery_at(&path);
+        assert!(error.is_none());
+        assert_eq!(restored, Some(new.clone()));
+        persist_fixture(&path, &new);
+        assert_eq!(
+            PaneFlowApp::load_session_with_recovery_at(&path).0,
+            Some(new)
+        );
+    }
+
+    #[test]
+    fn a_broken_pending_save_does_not_hide_the_committed_session() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let path = tmp.path().join("session.json");
+        let original = session_with_tabs(15);
+        persist_fixture(&path, &original);
+        std::fs::write(path.with_extension("json.pending"), b"{").expect("pending save");
+        let (restored, error) = PaneFlowApp::load_session_with_recovery_at(&path);
+        assert_eq!(restored, Some(original));
+        assert!(error.expect("recovery error").backup_path.is_some());
+    }
+
+    #[test]
+    fn a_superseded_snapshot_never_replaces_the_final_snapshot() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let path = tmp.path().join("session.json");
+        let newest = session_with_tabs(15);
+        persist_fixture(&path, &newest);
+        assert!(
+            !write_session_json_if_current(
+                &path,
+                &session_with_tabs(1),
+                false,
+                &AtomicU64::new(2),
+                1
+            )
+            .expect("stale save")
+        );
+        assert_eq!(PaneFlowApp::load_session_at(&path).0, Some(newest));
+    }
+
+    #[test]
+    fn transient_session_io_errors_are_retried_with_a_bound() {
+        let mut attempts = 0;
+        let value = retry_session_io(|| {
+            attempts += 1;
+            if attempts < 3 {
+                Err(std::io::Error::from(std::io::ErrorKind::PermissionDenied))
+            } else {
+                Ok(42)
+            }
+        })
+        .expect("transient error clears");
+        assert_eq!(value, 42);
+        assert_eq!(attempts, 3);
+        attempts = 0;
+        let result = retry_session_io::<()>(|| {
+            attempts += 1;
+            Err(std::io::Error::from(std::io::ErrorKind::PermissionDenied))
+        });
+        assert!(result.is_err());
+        assert_eq!(attempts, 4);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn transient_read_denial_followed_by_close_preserves_fifteen_tabs() {
+        use std::os::windows::fs::OpenOptionsExt as _;
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let path = tmp.path().join("session.json");
+        let original = session_with_tabs(15);
+        persist_fixture(&path, &original);
+        let held = std::fs::OpenOptions::new()
+            .read(true)
+            .share_mode(0)
+            .open(&path)
+            .expect("lock");
+        let (loaded, error) = PaneFlowApp::load_session_at(&path);
+        assert!(loaded.is_none());
+        assert_eq!(error.as_ref().expect("error").error_category, "io");
+        drop(held);
+        let mut empty = session_with_tabs(0);
+        empty.workspaces.clear();
+        assert!(
+            write_session_json_if_current(&path, &empty, error.is_some(), &AtomicU64::new(1), 1)
+                .is_err()
+        );
+        assert_eq!(PaneFlowApp::load_session_at(&path).0, Some(original));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn failed_replacement_preserves_new_snapshot_and_allows_retry() {
+        use std::os::windows::fs::OpenOptionsExt as _;
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let path = tmp.path().join("session.json");
+        let old = session_with_tabs(15);
+        let new = session_with_tabs(16);
+        persist_fixture(&path, &old);
+        let held = std::fs::OpenOptions::new()
+            .read(true)
+            .share_mode(1)
+            .open(&path)
+            .expect("prevent replacement");
+        let error = write_session_json_if_current(&path, &new, false, &AtomicU64::new(1), 1)
+            .expect_err("must prevent exit");
+        let recovery = path.with_extension("json.pending");
+        assert!(error.to_string().contains("preserved"));
+        assert_eq!(PaneFlowApp::load_session_at(&recovery).0, Some(new.clone()));
+        drop(held);
+        assert_eq!(PaneFlowApp::load_session_at(&path).0, Some(old));
+        persist_fixture(&path, &new);
+        assert_eq!(PaneFlowApp::load_session_at(&path).0, Some(new));
+        assert!(!recovery.exists());
     }
 
     #[test]

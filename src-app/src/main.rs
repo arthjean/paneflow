@@ -516,6 +516,9 @@ struct PaneFlowApp {
     pending_config:
         std::sync::Arc<std::sync::Mutex<Option<paneflow_config::schema::PaneFlowConfig>>>,
     save_seq: std::sync::Arc<std::sync::atomic::AtomicU64>,
+    session_restore_failed: bool,
+    session_exit_pending: bool,
+    session_save_error_shown: bool,
     cached_config: paneflow_config::schema::PaneFlowConfig,
     ipc_rx: std::sync::mpsc::Receiver<ipc::IpcRequest>,
     ipc_status: ipc::IpcStatus,
@@ -1629,7 +1632,8 @@ fn mount_paneflow_app(window: &mut Window, cx: &mut App) -> Entity<PaneFlowApp> 
             ws.focus_first(window, cx);
         }
         cx.on_next_frame(window, |app, window, cx| {
-            app.restore_detached_panes(window, cx)
+            app.restore_detached_panes(window, cx);
+            app.prompt_session_recovery(window, cx);
         });
     });
     startup_trace::mark("app_mounted");
