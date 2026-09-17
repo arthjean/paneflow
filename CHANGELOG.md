@@ -37,6 +37,12 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
 
 ### Changed
 
+- Closing a pane, a surface tab, a workspace tab or a workspace now forgets the
+  hosted sessions it stops instead of leaving a dimmed ended row in the sidebar.
+  A terminal whose process exits on its own is forgotten the same way when its
+  surface goes, and the row stays hidden while the stop is in flight instead of
+  flashing for an instant. The resume list keeps its purpose: it holds the sessions nobody
+  stopped, the ones a hidden pane left running or that outlived the app.
 - The pinned `libghostty-vt` archive moves to Ghostty `0c2a290d`, which adds
   the `ghostty_search_*` API the terminal search now uses.
 - The attention queue moves from `Cmd/Ctrl+Shift+A` to `Cmd/Ctrl+Shift+U`,

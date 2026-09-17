@@ -121,6 +121,7 @@ pub enum PaneEvent {
     SurfacesChanged,
     CloseRequested,
     CloseSurfaceRequested(Entity<crate::terminal::TerminalView>),
+    SurfaceExited(Entity<crate::terminal::TerminalView>),
     Split(crate::layout::SplitDirection),
     ToggleAgentSessions,
     ToggleDiffDock,
@@ -323,6 +324,9 @@ impl Pane {
         if self.surfaces.len() == 1 {
             cx.emit(PaneEvent::Remove);
             return;
+        }
+        if let Some(terminal) = crate::app::hosted_sessions::surface_terminal(&self.surfaces[idx]) {
+            cx.emit(PaneEvent::SurfaceExited(terminal));
         }
         self.remove_surface_at(idx, cx);
     }
@@ -2060,6 +2064,37 @@ mod tests {
         assert!(
             exited.get(),
             "a child that exited removes the pane without asking"
+        );
+        assert_eq!(tab_state(&pane, cx), (1, 0));
+    }
+
+    #[gpui::test]
+    fn a_child_that_exits_beside_other_tabs_hands_its_session_back(cx: &mut TestAppContext) {
+        let cx = cx.add_empty_window();
+        let pane = tabbed_pane(2, cx);
+        let terminal = cx.update(|_, cx| {
+            pane.read(cx).surfaces()[0]
+                .as_terminal()
+                .expect("a terminal surface")
+                .clone()
+        });
+        let forgotten = std::rc::Rc::new(std::cell::RefCell::new(None));
+        let forgotten_for_sub = forgotten.clone();
+        cx.update(|_, cx| {
+            cx.subscribe(&pane, move |_, event: &PaneEvent, _| {
+                if let PaneEvent::SurfaceExited(exited) = event {
+                    *forgotten_for_sub.borrow_mut() = Some(exited.clone());
+                }
+            })
+            .detach();
+        });
+
+        pane.update(cx, |pane, cx| pane.surface_exited(0, cx));
+
+        assert_eq!(
+            forgotten.borrow().as_ref(),
+            Some(&terminal),
+            "the pane hands the exited terminal back so its session is forgotten"
         );
         assert_eq!(tab_state(&pane, cx), (1, 0));
     }

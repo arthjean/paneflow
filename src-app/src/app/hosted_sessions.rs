@@ -46,6 +46,7 @@ pub(crate) struct OwnedSessions {
     rows: Vec<OwnedSession>,
     stale: bool,
     unknown: HashSet<SessionId>,
+    forgetting: HashSet<SessionId>,
     expanded: HashSet<WorkspaceId>,
     refresh_generation: u64,
 }
@@ -100,6 +101,48 @@ pub(crate) fn lifecycle_sentence(lifecycle: &SessionLifecycle) -> String {
     }
 }
 
+fn visible_session_rows(
+    rows: &[OwnedSession],
+    workspace: &WorkspaceId,
+    attached: &HashSet<SessionId>,
+    forgetting: &HashSet<SessionId>,
+) -> Vec<OwnedSession> {
+    let mut visible: Vec<OwnedSession> = rows
+        .iter()
+        .filter(|session| session.workspace.as_ref() == Some(workspace))
+        .filter(|session| !attached.contains(&session.session))
+        .filter(|session| !forgetting.contains(&session.session))
+        .cloned()
+        .collect();
+    order_session_rows(&mut visible);
+    visible
+}
+
+fn stop_and_forget(targets: Vec<StopTarget>) -> Vec<SessionId> {
+    let mut failures = Vec::new();
+    for (endpoint, session, generation) in targets {
+        match host_link::stop_session(&endpoint, &session, generation) {
+            Ok(summary) => {
+                log::info!(
+                    "paneflow: hosted session {session} stopped ({})",
+                    summary.manifest.lifecycle.label()
+                );
+                match host_link::remove_session(&endpoint, &session) {
+                    Ok(()) => log::info!("paneflow: hosted session {session} record removed"),
+                    Err(error) => log::warn!(
+                        "paneflow: hosted session {session} stopped but its record remains: {error}"
+                    ),
+                }
+            }
+            Err(error) => {
+                log::warn!("paneflow: hosted session {session} stop outcome unknown: {error}");
+                failures.push(session);
+            }
+        }
+    }
+    failures
+}
+
 impl PaneFlowApp {
     pub(crate) fn stop_terminals(
         &mut self,
@@ -132,7 +175,7 @@ impl PaneFlowApp {
         self.stop_hosted_sessions(targets, cx);
     }
 
-    pub(crate) fn stop_listed_session(&self, session: &SessionId, cx: &mut Context<Self>) {
+    pub(crate) fn stop_listed_session(&mut self, session: &SessionId, cx: &mut Context<Self>) {
         let Some(target) = self.stop_target_for_listed_session(session, cx) else {
             return;
         };
@@ -159,33 +202,27 @@ impl PaneFlowApp {
         Some((endpoint, row.session.clone(), row.generation))
     }
 
-    fn stop_hosted_sessions(&self, targets: Vec<StopTarget>, cx: &mut Context<Self>) {
+    fn stop_hosted_sessions(&mut self, targets: Vec<StopTarget>, cx: &mut Context<Self>) {
         if targets.is_empty() {
             return;
         }
+        let attempted: Vec<SessionId> = targets
+            .iter()
+            .map(|(_, session, _)| session.clone())
+            .collect();
+        self.owned_sessions
+            .forgetting
+            .extend(attempted.iter().cloned());
         let executor = cx.background_executor().clone();
         cx.spawn(async move |this, cx: &mut gpui::AsyncApp| {
-            let failures = executor
-                .spawn(async move {
-                    let mut failures = Vec::new();
-                    for (endpoint, session, generation) in targets {
-                        match host_link::stop_session(&endpoint, &session, generation) {
-                            Ok(summary) => log::info!(
-                                "paneflow: hosted session {session} stopped ({})",
-                                summary.manifest.lifecycle.label()
-                            ),
-                            Err(error) => {
-                                log::warn!(
-                                    "paneflow: hosted session {session} stop outcome unknown: {error}"
-                                );
-                                failures.push(session);
-                            }
-                        }
-                    }
-                    failures
-                })
-                .await;
+            let failures = executor.spawn(async move { stop_and_forget(targets) }).await;
             let _ = this.update(cx, |app, cx| {
+                for session in &attempted {
+                    app.owned_sessions.forgetting.remove(session);
+                }
+                app.owned_sessions.rows.retain(|row| {
+                    failures.contains(&row.session) || !attempted.contains(&row.session)
+                });
                 if !failures.is_empty() {
                     app.show_toast(
                         format!(
@@ -444,16 +481,12 @@ impl PaneFlowApp {
             return Vec::new();
         }
         let attached = self.attached_session_ids(cx);
-        let mut rows: Vec<OwnedSession> = self
-            .owned_sessions
-            .rows
-            .iter()
-            .filter(|session| session.workspace.as_ref() == Some(&ws.durable_id))
-            .filter(|session| !attached.contains(&session.session))
-            .cloned()
-            .collect();
-        order_session_rows(&mut rows);
-        rows
+        visible_session_rows(
+            &self.owned_sessions.rows,
+            &ws.durable_id,
+            &attached,
+            &self.owned_sessions.forgetting,
+        )
     }
 
     pub(crate) fn open_session_in_layout(
@@ -653,6 +686,108 @@ mod tests {
             },
             updated_at_ms,
         }
+    }
+
+    #[test]
+    fn a_session_whose_stop_is_in_flight_is_held_back_from_the_sidebar() {
+        let workspace = WorkspaceId::new();
+        let mut closing = row(true, 30);
+        closing.workspace = Some(workspace.clone());
+        let mut attached = row(true, 20);
+        attached.workspace = Some(workspace.clone());
+        let mut kept = row(false, 10);
+        kept.workspace = Some(workspace.clone());
+        let mut elsewhere = row(true, 40);
+        elsewhere.workspace = Some(WorkspaceId::new());
+        let rows = vec![
+            closing.clone(),
+            attached.clone(),
+            kept.clone(),
+            elsewhere.clone(),
+        ];
+
+        let visible = visible_session_rows(
+            &rows,
+            &workspace,
+            &HashSet::from([attached.session.clone()]),
+            &HashSet::from([closing.session.clone()]),
+        );
+
+        let listed: Vec<_> = visible.into_iter().map(|session| session.session).collect();
+        assert_eq!(
+            listed,
+            vec![kept.session.clone()],
+            "a session whose stop is in flight never flashes a row before it goes"
+        );
+    }
+
+    #[test]
+    fn a_stopped_session_leaves_no_record_behind() {
+        use paneflow_host::server::ServerHandle;
+        use paneflow_host::{ClientHello, CreateSession, HostClient, SessionHost};
+
+        let home = tempfile::tempdir().expect("host home");
+        let unique = format!(
+            "{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|elapsed| elapsed.as_nanos())
+                .unwrap_or_default()
+        );
+        #[cfg(windows)]
+        let endpoint = std::path::PathBuf::from(format!(r"\\.\pipe\paneflow-forget-test-{unique}"));
+        #[cfg(unix)]
+        let endpoint = home.path().join(format!("forget-test-{unique}.sock"));
+        let host = SessionHost::open(home.path(), &endpoint).expect("session host");
+        let server = ServerHandle::spawn(std::sync::Arc::clone(&host), endpoint.clone())
+            .expect("host server");
+        let hello = ClientHello::local("paneflow-desktop-test");
+        let mut client = HostClient::connect(&endpoint, &hello).expect("control connection");
+
+        #[cfg(windows)]
+        let (shell, args) = ("cmd.exe", vec!["/Q".to_string(), "/D".to_string()]);
+        #[cfg(unix)]
+        let (shell, args) = ("/bin/sh", Vec::<String>::new());
+        let created = client
+            .create(&CreateSession {
+                session: None,
+                workspace: None,
+                cwd: Some(std::env::temp_dir().display().to_string()),
+                shell: Some(shell.to_string()),
+                args,
+                env: Default::default(),
+                cols: Some(80),
+                rows: Some(24),
+                title: None,
+            })
+            .expect("hosted session");
+        let session = created.manifest.session.clone();
+        let manifest = paneflow_host::manifest::manifest_path(home.path(), &session);
+        assert!(manifest.is_file(), "a live session owns a manifest");
+
+        let failures = stop_and_forget(vec![(
+            endpoint.clone(),
+            session.clone(),
+            created.manifest.generation,
+        )]);
+
+        assert!(failures.is_empty(), "the stop reported no failure");
+        assert!(
+            !manifest.exists(),
+            "an explicit stop deletes the record instead of leaving an ended row"
+        );
+        let listed = client
+            .call("session.list", serde_json::json!({}))
+            .expect("session list");
+        assert!(
+            listed["sessions"]
+                .as_array()
+                .expect("a sessions array")
+                .is_empty(),
+            "the sidebar source has nothing left to list"
+        );
+        server.stop().expect("the host server stops");
     }
 
     #[test]

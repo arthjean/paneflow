@@ -497,8 +497,9 @@ enforces.
 
 | Action | Sessions |
 |---|---|
-| Close pane (shortcut, pane menu, detached window shortcut), close surface tab, close diff dock terminal | stopped, or asked for when an agent is thinking or waiting |
-| Close tab, close workspace | every contained session stopped, one dialog for the whole action |
+| Close pane (shortcut, pane menu, detached window shortcut), close surface tab, close diff dock terminal | stopped and its record removed, or asked for when an agent is thinking or waiting |
+| Close tab, close workspace | every contained session stopped and its record removed, one dialog for the whole action |
+| Child exit | the surface goes and its record with it; the last surface closes its pane through the same stop path |
 | Hide pane from layout (`hide_pane` action, pane menu) | kept running, the `Detach` intent skips the stop, never asks |
 | Any close while the local host is unreachable | the views are removed, no stop is attempted and a toast says the session state is unknown |
 | Return a detached pane to its window | untouched |
@@ -519,14 +520,20 @@ dimmed, carry no agent lane, and the ones beyond `sidebar_ended_sessions`
 and Stop session for a live row, Resume and Remove from list for an ended one.
 `Remove from list` calls `session.remove`, which the host refuses with
 `ERR_SESSION_LIVE` while the session runs and which otherwise deletes its
-manifest; nothing is pruned automatically. `resume_ended_sessions` brings back
-every ended restartable pane of a workspace in layout order, resumability being
-decided by the host link alone because a reattach that lands on an ended
-session never promotes an attachment, and a window that opens with at least two
-of them offers it once through a toast. Worktree teardown asks the host for the
-live session cwds first: a worktree that still contains a live session, hidden
-or not, is kept; an unreachable host proceeds with the current rules; any other
-host error skips the teardown.
+manifest. Every stop the desktop issues chains that call, so a close forgets
+the session it stopped and leaves no row behind. The row is held back from the
+moment the stop is issued until its outcome lands, so a close never flashes
+one; a record whose stop failed comes back and is reconciled from the next
+listing. An ended row therefore comes from a session nobody stopped: one a
+hidden pane left running, or one that outlived the app.
+`resume_ended_sessions` brings back every ended restartable pane of a
+workspace in layout order, resumability being decided by the host link alone
+because a reattach that lands on an ended session never promotes an
+attachment, and a window that opens with at least two of them offers it once
+through a toast. Worktree teardown asks the host for the live session cwds
+first: a worktree that still contains a live session, hidden or not, is kept;
+an unreachable host proceeds with the current rules; any other host error
+skips the teardown.
 
 The host endpoint is derived from the state home (`\\.\pipe\paneflow-host-<fp>`
 on Windows, `<runtime dir>/paneflow-host-<fp>.sock` on Unix), so an isolated
