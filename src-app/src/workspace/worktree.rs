@@ -1,4 +1,5 @@
 use std::collections::HashSet;
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::RwLock;
@@ -359,6 +360,24 @@ pub fn is_owned_worktree(repo_root: &Path, worktree_path: &Path) -> bool {
         && owner_marker_path(worktree_path).is_some_and(|marker| marker.is_file())
 }
 
+pub fn has_paneflow_worktree_shape(repo_root: &Path, branch: &str, path: &Path) -> bool {
+    if !path.is_absolute() {
+        return false;
+    }
+    let Some(leaf) = path.file_name() else {
+        return false;
+    };
+    let Some(parent) = path.parent().and_then(Path::file_name) else {
+        return false;
+    };
+    let slug = branch_slug_or_default(branch);
+    let leaf_matches = leaf == OsStr::new(&slug)
+        || leaf == OsStr::new(&format!("{slug}-{}", branch_hash_suffix(branch)));
+    let parent_matches = parent == OsStr::new(&repo_dir_name(repo_root))
+        || parent == OsStr::new(&format!("{}.worktrees", repo_name(repo_root)));
+    leaf_matches && parent_matches
+}
+
 pub fn is_paneflow_worktree_dir(repo_root: &Path, branch: &str, path: &Path) -> bool {
     path == worktree_dir(repo_root, branch)
         || path == worktree_dir_hashed(repo_root, branch)
@@ -567,14 +586,15 @@ pub fn delete_snapshot(repo_root: &Path, snapshot: &Snapshot) -> Result<(), Stri
 pub fn restore_snapshot(repo_root: &Path, snapshot: &Snapshot) -> Result<PathBuf, String> {
     let entries = list_worktrees(repo_root)?;
     let label = snapshot.label();
-    let path =
-        if !snapshot.path.exists() && is_paneflow_worktree_dir(repo_root, &label, &snapshot.path) {
-            snapshot.path.clone()
-        } else {
-            match plan_branch_checkout(&entries, repo_root, &label)? {
-                BranchCheckout::Existing(path) | BranchCheckout::Create(path) => path,
-            }
-        };
+    let path = if !snapshot.path.exists()
+        && has_paneflow_worktree_shape(repo_root, &label, &snapshot.path)
+    {
+        snapshot.path.clone()
+    } else {
+        match plan_branch_checkout(&entries, repo_root, &label)? {
+            BranchCheckout::Existing(path) | BranchCheckout::Create(path) => path,
+        }
+    };
     if path.exists() {
         return Err(format!(
             "{} exists; remove it first, then restore again",
@@ -1867,6 +1887,77 @@ mod tests {
         assert_eq!(snaps[1].branch.as_deref(), Some("feat/x"));
         assert_eq!(snaps[1].path, PathBuf::from("/w/feat-x"));
         assert_eq!(snaps[1].head, "1111");
+    }
+
+    #[test]
+    fn a_snapshot_returns_to_its_original_path_after_the_root_moves() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let _root = test_support::scoped_root(tmp.path().join("worktrees"));
+        let repo_root = tmp.path().join("repo");
+        if !init_test_repo(&repo_root) {
+            return;
+        }
+        let path = create_branch_checkout(&repo_root, "feat/moved", None)
+            .expect("create")
+            .path;
+        std::fs::write(path.join("README.md"), "edited\n").expect("tracked edit");
+        let snapshot = snapshot_and_remove(&repo_root, &path)
+            .expect("remove")
+            .expect("a dirty worktree leaves a snapshot");
+
+        let moved_root = tmp.path().join("relocated-worktrees");
+        set_worktrees_root(Some(moved_root.clone()));
+
+        let restored = restore_snapshot(&repo_root, &snapshot).expect("restore");
+        assert_eq!(
+            restored, path,
+            "a snapshot taken under the previous root comes back where it was"
+        );
+        assert!(
+            !restored.starts_with(&moved_root),
+            "restoring must not relocate the work under the new root"
+        );
+        assert_eq!(
+            std::fs::read_to_string(restored.join("README.md")).expect("tracked"),
+            "edited\n"
+        );
+    }
+
+    #[test]
+    fn a_snapshot_path_outside_the_paneflow_shape_is_not_trusted() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let _root = test_support::scoped_root(tmp.path().join("worktrees"));
+        let repo_root = tmp.path().join("repo");
+        let branch = "feat/forged";
+
+        assert!(
+            !has_paneflow_worktree_shape(repo_root.as_path(), branch, &tmp.path().join("anywhere")),
+            "a path the trailer invented is refused"
+        );
+        assert!(
+            !has_paneflow_worktree_shape(
+                repo_root.as_path(),
+                branch,
+                Path::new("repo-1234abcd/feat-forged")
+            ),
+            "a relative path is refused"
+        );
+        assert!(
+            has_paneflow_worktree_shape(
+                repo_root.as_path(),
+                branch,
+                &tmp.path()
+                    .join("elsewhere")
+                    .join(
+                        worktree_dir(&repo_root, branch)
+                            .parent()
+                            .and_then(Path::file_name)
+                            .expect("repo dir name")
+                    )
+                    .join("feat-forged")
+            ),
+            "the same repository and branch under another root is accepted"
+        );
     }
 
     #[test]
