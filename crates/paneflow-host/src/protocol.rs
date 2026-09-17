@@ -55,6 +55,7 @@ pub const METHODS: &[&str] = &[
     "session.inspect",
     "session.stop",
     "session.restart",
+    "session.remove",
     "session.attach",
     "session.output",
     "session.input",

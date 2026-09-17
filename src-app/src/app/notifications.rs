@@ -1,7 +1,7 @@
 use gpui::{
-    Animation, AnimationExt, AnyElement, AsyncApp, Context, CursorStyle, IntoElement, MouseButton,
-    ParentElement, SharedString, Styled, WeakEntity, deferred, div, ease_in_out, prelude::*, px,
-    svg,
+    Animation, AnimationExt, AnyElement, AsyncApp, ClickEvent, Context, CursorStyle, IntoElement,
+    MouseButton, ParentElement, SharedString, Styled, WeakEntity, deferred, div, ease_in_out,
+    prelude::*, px, svg,
 };
 
 use crate::app::constants::{TOAST_ENTER_MS, TOAST_EXIT_MS, TOAST_HOLD_MS};
@@ -22,6 +22,7 @@ pub(crate) struct Toast {
 #[derive(Clone)]
 pub(crate) enum ToastAction {
     RetryUpdate,
+    ResumeEndedSessions(usize),
     OpenReleasesPage(String),
     OpenReleaseNotes(String),
 }
@@ -131,7 +132,12 @@ impl PaneFlowApp {
         {
             return self.render_release_toast(toast, ui, cx);
         }
-        let is_error = has_actions || toast_message_reads_like_error(&toast.message);
+        let offers_resume = toast
+            .actions
+            .iter()
+            .any(|action| matches!(action, ToastAction::ResumeEndedSessions(_)));
+        let is_error =
+            (has_actions && !offers_resume) || toast_message_reads_like_error(&toast.message);
         let (icon, icon_color, max_w) = if is_error {
             ("icons/triangle-alert.svg", ui.agent_error, px(440.))
         } else {
@@ -167,6 +173,9 @@ impl PaneFlowApp {
             for (idx, action) in toast.actions.iter().enumerate() {
                 let (label, button_id): (&str, String) = match action {
                     ToastAction::RetryUpdate => ("Retry", format!("toast-retry-{idx}")),
+                    ToastAction::ResumeEndedSessions(_) => {
+                        ("Resume all", format!("toast-resume-all-{idx}"))
+                    }
                     ToastAction::OpenReleasesPage(_) => {
                         ("Open releases", format!("toast-releases-{idx}"))
                     }
@@ -192,21 +201,26 @@ impl PaneFlowApp {
                     })
                     .child(label)
                     .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                    .on_click(move |_, window, cx| match &action_clone {
-                        ToastAction::RetryUpdate => {
-                            window.dispatch_action(Box::new(StartSelfUpdate), cx);
-                        }
-                        ToastAction::OpenReleasesPage(url) => {
-                            if let Err(err) = crate::external_open::open_url(url) {
-                                log::warn!("toast: open releases URL failed: {err}");
+                    .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                        match &action_clone {
+                            ToastAction::RetryUpdate => {
+                                window.dispatch_action(Box::new(StartSelfUpdate), cx);
+                            }
+                            ToastAction::ResumeEndedSessions(ws_idx) => {
+                                this.resume_ended_sessions_in_workspace(*ws_idx, cx);
+                            }
+                            ToastAction::OpenReleasesPage(url) => {
+                                if let Err(err) = crate::external_open::open_url(url) {
+                                    log::warn!("toast: open releases URL failed: {err}");
+                                }
+                            }
+                            ToastAction::OpenReleaseNotes(url) => {
+                                if let Err(err) = crate::external_open::open_url(url) {
+                                    log::warn!("toast: open changelog URL failed: {err}");
+                                }
                             }
                         }
-                        ToastAction::OpenReleaseNotes(url) => {
-                            if let Err(err) = crate::external_open::open_url(url) {
-                                log::warn!("toast: open changelog URL failed: {err}");
-                            }
-                        }
-                    });
+                    }));
                 row = row.child(btn);
             }
             Some(row)

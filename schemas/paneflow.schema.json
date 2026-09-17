@@ -327,6 +327,18 @@
       "description": "Anti-injection fence on the surface.read CLI/IPC path, independent of ai_unrestricted. Null/true (default) wraps returned terminal text in an <untrusted_terminal_output> marker so a malicious peer pane cannot hijack a conductor reading it. False returns raw text (an assumed risk). Stays ON by default even in free-access mode because the fence protects the AI, it does not bridle it.",
       "default": true
     },
+    "on_quit": {
+      "type": ["string", "null"],
+      "enum": ["ask", "keep", "stop", null],
+      "description": "What quitting the desktop does when hosted sessions are still running. ask (default) opens the quit dialog. keep exits and leaves every session running on the host. stop stops every session, then shuts the host down. With no live session the app always exits and shuts the idle host down.",
+      "default": "ask"
+    },
+    "sidebar_ended_sessions": {
+      "type": ["integer", "null"],
+      "enum": [0, 3, 5, 10, null],
+      "description": "How many ended sessions each workspace previews in the sidebar before the rest collapse under one 'N more ended sessions' row. Ended records are never pruned automatically; the cap only controls the preview. Any other value falls back to 5.",
+      "default": 5
+    },
     "claude_code_button_visible": {
       "type": ["boolean", "null"],
       "description": "Show the built-in 'Claude Code' command button. Null/omitted auto-detects the CLI binary.",

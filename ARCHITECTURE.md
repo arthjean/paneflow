@@ -393,7 +393,8 @@ why `scripts/dev.ps1` and `scripts/dev.sh` build both binaries and run
 
 | Event | Host | Sessions | Records |
 |---|---|---|---|
-| Desktop quit, crash or `taskkill /F` | keeps running | keep running | unchanged |
+| Quit keeping sessions (the default of the quit dialog), crash or `taskkill /F` | keeps running | keep running | unchanged |
+| Quit with no live session, or "Stop everything and quit" | `host.shutdown` once the stops are done | stopped one by one | `lifecycle: exited` |
 | Controller pipe or CLI connection closes | keeps running | keep running | unchanged |
 | Explicit `session.stop` | keeps running | that session's owned process tree is terminated within a 5 s budget, exit recorded | `lifecycle: exited` |
 | `paneflow host stop` with live sessions | refused, lists them | untouched | unchanged |
@@ -481,27 +482,51 @@ unavailable terminal runs `resume_hosted_session`, which re-resolves the same
 ### Close versus hide
 
 Dropping a `TerminalState` only shuts the local runtime down; nothing in a
-`Drop` implementation calls `session.stop`, so quitting the desktop, closing
-the main window, a crash or `taskkill /F` leave every session running on the
-host. Session stop is issued only from the explicit close paths, through
-`app/hosted_sessions.rs`:
+`Drop` implementation calls `session.stop`, so a crash or `taskkill /F` leaves
+every session running on the host. Every close path resolves one shared policy
+in `app/close_policy.rs` before anything is removed: a `CloseTarget` names what
+the action closes, `session_close_decision` answers `Stop` for a session with
+no agent or a finished or errored one, `Ask` for a thinking or waiting agent,
+and `Unknown` when that session's host link is unavailable. `Ask` opens one
+dialog for the whole action; `Keep running` (Enter, the default) removes the
+views with the `Detach` intent and leaves the sessions listed, `Stop` removes
+them with the `Stop` intent, Escape cancels and nothing is removed. Every stop,
+from a close path or from the quit dialog, goes through the single call site
+`host_link::stop_session`, which a guard test in `terminal/host_link.rs`
+enforces.
 
 | Action | Sessions |
 |---|---|
-| Close pane (shortcut, pane menu, detached window shortcut), close surface tab, close diff dock terminal | stopped |
-| Close tab, close workspace | every contained session stopped |
-| Hide pane from layout (`hide_pane` action, pane menu) | kept running, `leave_running_on_close` skips the stop |
-| Return a detached pane to its window, quit, window close | untouched |
+| Close pane (shortcut, pane menu, detached window shortcut), close surface tab, close diff dock terminal | stopped, or asked for when an agent is thinking or waiting |
+| Close tab, close workspace | every contained session stopped, one dialog for the whole action |
+| Hide pane from layout (`hide_pane` action, pane menu) | kept running, the `Detach` intent skips the stop, never asks |
+| Any close while the local host is unreachable | the views are removed, no stop is attempted and a toast says the session state is unknown |
+| Return a detached pane to its window | untouched |
+| Quit (`Quit` action, main window close, title bar close) with live sessions | asks: "Keep sessions running" (Enter, default) leaves them and the host untouched; "Stop everything and quit" stops each live session, then `host.shutdown`; the `on_quit` setting skips the dialog |
+| Quit with no live session | the idle host receives `host.shutdown` and the app exits |
 
 A stop whose outcome is unknown (connection lost mid-request) shows a toast
 and is reconciled from the next `session.list`; the desktop never marks
-sessions stopped optimistically. Hidden live sessions are the owned live
-sessions of `session.list` whose id no attached view carries; the sidebar
-lists them under the workspace's last tab and a click reopens one through
-`attach_existing`. Worktree teardown asks the host for the live session cwds
-first: a worktree that still contains a live session, hidden or not, is kept;
-an unreachable host proceeds with the current rules; any other host error
-skips the teardown.
+sessions stopped optimistically. The workspace session list is every owned
+record of `session.list`, live or ended, whose id no attached view carries;
+the sidebar lists them under the workspace's last tab, live rows first and
+then ended rows by the most recent lifecycle change. A record the desktop
+cannot parse is skipped with a log line and the rest of the list renders; a
+failed listing keeps the previous rows and marks them stale. Ended rows are
+dimmed, carry no agent lane, and the ones beyond `sidebar_ended_sessions`
+(default 5) collapse under one row. Left-click reopens a live row through
+`attach_existing` and resumes an ended one; right-click offers Open in layout
+and Stop session for a live row, Resume and Remove from list for an ended one.
+`Remove from list` calls `session.remove`, which the host refuses with
+`ERR_SESSION_LIVE` while the session runs and which otherwise deletes its
+manifest; nothing is pruned automatically. `resume_ended_sessions` brings back
+every ended restartable pane of a workspace in layout order, resumability being
+decided by the host link alone because a reattach that lands on an ended
+session never promotes an attachment, and a window that opens with at least two
+of them offers it once through a toast. Worktree teardown asks the host for the
+live session cwds first: a worktree that still contains a live session, hidden
+or not, is kept; an unreachable host proceeds with the current rules; any other
+host error skips the teardown.
 
 The host endpoint is derived from the state home (`\\.\pipe\paneflow-host-<fp>`
 on Windows, `<runtime dir>/paneflow-host-<fp>.sock` on Unix), so an isolated

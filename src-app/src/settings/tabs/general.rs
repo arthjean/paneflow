@@ -2,7 +2,7 @@ use gpui::{
     AnyElement, ClickEvent, Context, CursorStyle, IntoElement, MouseButton, ParentElement,
     SharedString, Styled, div, prelude::*, px,
 };
-use paneflow_config::schema::NotifyWhenAgentWaiting;
+use paneflow_config::schema::{NotifyWhenAgentWaiting, OnQuit};
 use serde_json::Value;
 
 use crate::GeneralDropdown;
@@ -107,6 +107,64 @@ impl PaneFlowApp {
             cx,
         );
 
+        let on_quit = config.resolved_on_quit();
+        let quit_opts: Vec<SelectOption> = [
+            (OnQuit::Ask, "Ask every time"),
+            (OnQuit::Keep, "Keep sessions running"),
+            (OnQuit::Stop, "Stop everything"),
+        ]
+        .into_iter()
+        .map(|(choice, label)| {
+            (
+                label.to_string(),
+                None,
+                Value::String(choice.wire_str().to_string()),
+                choice == on_quit,
+            )
+        })
+        .collect();
+        let quit_label = quit_opts
+            .iter()
+            .find(|(_, _, _, selected)| *selected)
+            .map(|(label, _, _, _)| label.clone())
+            .unwrap_or_default();
+        let quit_row = self.general_select_row(
+            GeneralDropdown::OnQuit,
+            "When quitting with sessions running",
+            "Keep sessions running so they are back next time, or stop everything and end their processes.",
+            quit_label,
+            None,
+            quit_opts,
+            "on_quit",
+            ui,
+            cx,
+        );
+
+        let ended_cap = config.resolved_sidebar_ended_sessions();
+        let ended_opts: Vec<SelectOption> = paneflow_config::schema::ENDED_SESSION_CAPS
+            .iter()
+            .map(|cap| {
+                (
+                    ended_cap_label(*cap),
+                    None,
+                    Value::Number((*cap).into()),
+                    *cap == ended_cap,
+                )
+            })
+            .collect();
+        let ended_label = ended_cap_label(ended_cap);
+        let ended_row = self.general_select_row(
+            GeneralDropdown::EndedSessions,
+            "Ended sessions listed per workspace",
+            "How many ended sessions the sidebar previews before the rest collapse under one row. Nothing is ever pruned.",
+            ended_label,
+            None,
+            ended_opts,
+            "sidebar_ended_sessions",
+            ui,
+            cx,
+        );
+
         let defaults_section = div()
             .flex()
             .flex_col()
@@ -115,7 +173,11 @@ impl PaneFlowApp {
                 setting_card(ui)
                     .child(editor_row)
                     .child(hairline(ui))
-                    .child(shell_row),
+                    .child(shell_row)
+                    .child(hairline(ui))
+                    .child(quit_row)
+                    .child(hairline(ui))
+                    .child(ended_row),
             );
 
         div()
@@ -257,6 +319,14 @@ impl PaneFlowApp {
             .child(setting_text(ui, title, description))
             .child(div().flex_shrink_0().child(trigger))
             .into_any_element()
+    }
+}
+
+fn ended_cap_label(cap: u8) -> String {
+    match cap {
+        0 => "None".to_string(),
+        1 => "1 session".to_string(),
+        other => format!("{other} sessions"),
     }
 }
 

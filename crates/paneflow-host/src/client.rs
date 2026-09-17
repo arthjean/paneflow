@@ -200,6 +200,11 @@ impl HostClient {
         )
     }
 
+    pub fn remove(&mut self, session: &SessionId) -> Result<(), HostClientError> {
+        self.call("session.remove", json!({"session": session}))?;
+        Ok(())
+    }
+
     pub fn input(
         &mut self,
         session: &SessionId,

@@ -128,8 +128,8 @@ pub(crate) struct HostLinkEnd {
 impl HostLinkEnd {
     pub(crate) fn exited(code: i32, signal: Option<String>) -> Self {
         let detail = match &signal {
-            Some(signal) => format!("The session exited with code {code} ({signal})."),
-            None => format!("The session exited with code {code}."),
+            Some(signal) => format!("Session ended ({signal})"),
+            None => "Session ended".to_string(),
         };
         Self {
             kind: HostLinkEndKind::Exited { code, signal },
@@ -140,16 +140,14 @@ impl HostLinkEnd {
     pub(crate) fn missing() -> Self {
         Self {
             kind: HostLinkEndKind::Missing,
-            detail: "The local host has no record of this session.".to_string(),
+            detail: "Session ended: the local host has no record of it".to_string(),
         }
     }
 
     pub(crate) fn incompatible(message: String) -> Self {
         Self {
             kind: HostLinkEndKind::Incompatible,
-            detail: format!(
-                "The running local host is incompatible with this Paneflow build: {message}"
-            ),
+            detail: format!("The local host is incompatible with this build: {message}"),
         }
     }
 
@@ -175,10 +173,7 @@ impl HostLinkEnd {
         match reconnection {
             SessionReconnection::Live | SessionReconnection::Starting => Self {
                 kind: HostLinkEndKind::Restarted { generation },
-                detail: format!(
-                    "This session was restarted elsewhere (generation {}).",
-                    generation.get()
-                ),
+                detail: "This session was restarted elsewhere".to_string(),
             },
             SessionReconnection::Exited { code, signal } => {
                 Self::exited(i32::try_from(code).unwrap_or(-1), signal)
@@ -190,8 +185,7 @@ impl HostLinkEnd {
             SessionReconnection::HostReplaced { .. } => Self::host_replaced(),
             SessionReconnection::Lost => Self {
                 kind: HostLinkEndKind::Lost,
-                detail: "The local host lost this session; its process did not survive."
-                    .to_string(),
+                detail: "Session lost: its process did not survive".to_string(),
             },
         }
     }
@@ -207,11 +201,11 @@ impl HostLinkEnd {
         !matches!(self.kind, HostLinkEndKind::Incompatible)
     }
 
-    pub(crate) fn action_hint(&self) -> &'static str {
+    pub(crate) fn action_label(&self) -> Option<&'static str> {
         match self.kind {
-            HostLinkEndKind::Incompatible => "Stop the running host or update it before reopening.",
-            HostLinkEndKind::Restarted { .. } => "Press Enter to attach to the running session.",
-            _ => "Press Enter to start a new shell in this pane.",
+            HostLinkEndKind::Incompatible => None,
+            HostLinkEndKind::Restarted { .. } => Some("Attach"),
+            _ => Some("Resume"),
         }
     }
 }
@@ -356,6 +350,38 @@ pub(crate) fn stop_session(
     connect(endpoint)?.stop(session, Some(generation))
 }
 
+pub(crate) fn shutdown_host(endpoint: &Path) -> Result<(), HostClientError> {
+    connect(endpoint)?.call("host.shutdown", serde_json::json!({}))?;
+    Ok(())
+}
+
+pub(crate) fn stop_sessions_and_shutdown(
+    targets: Vec<(PathBuf, SessionId, SessionGeneration)>,
+    host: Option<PathBuf>,
+) -> usize {
+    let mut failures = 0;
+    for (endpoint, session, generation) in targets {
+        match stop_session(&endpoint, &session, generation) {
+            Ok(summary) => log::info!(
+                "paneflow: hosted session {session} stopped at quit ({})",
+                summary.manifest.lifecycle.label()
+            ),
+            Err(error) => {
+                log::warn!("paneflow: hosted session {session} stop at quit failed: {error}");
+                failures += 1;
+            }
+        }
+    }
+    if let Some(endpoint) = host {
+        match shutdown_host(&endpoint) {
+            Ok(()) => log::info!("paneflow: host shutdown requested at quit"),
+            Err(HostClientError::Unreachable { .. }) => {}
+            Err(error) => log::warn!("paneflow: host shutdown at quit refused: {error}"),
+        }
+    }
+    failures
+}
+
 pub(crate) enum LiveSessionProbe {
     Sessions(Vec<PathBuf>),
     NoHost,
@@ -383,7 +409,31 @@ pub(crate) fn list_sessions(
     workspace: Option<&WorkspaceId>,
 ) -> Result<Vec<SessionSummary>, HostLinkError> {
     let target = host_endpoint().ok_or(HostLinkError::NoHome)?;
-    Ok(connect(&target.endpoint)?.list(workspace)?)
+    let listed = connect(&target.endpoint)?
+        .call("session.list", serde_json::json!({"workspace": workspace}))?;
+    Ok(parse_session_rows(&listed))
+}
+
+pub(crate) fn parse_session_rows(listed: &serde_json::Value) -> Vec<SessionSummary> {
+    listed["sessions"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|row| match serde_json::from_value(row.clone()) {
+            Ok(summary) => Some(summary),
+            Err(error) => {
+                log::warn!(
+                    "paneflow: skipping a session record this build cannot read ({}): {error}",
+                    row["session"].as_str().unwrap_or("unknown id")
+                );
+                None
+            }
+        })
+        .collect()
+}
+
+pub(crate) fn remove_session(endpoint: &Path, session: &SessionId) -> Result<(), HostClientError> {
+    connect(endpoint)?.remove(session)
 }
 
 #[cfg(test)]
@@ -395,7 +445,8 @@ mod tests {
         let exited = HostLinkEnd::exited(3, None);
         assert_eq!(exited.exit(), Some((3, None)));
         assert!(exited.restartable());
-        assert!(exited.detail.contains("code 3"));
+        assert_eq!(exited.detail, "Session ended");
+        assert_eq!(exited.action_label(), Some("Resume"));
 
         let incompatible = HostLinkEnd::incompatible("source_sha".into());
         assert!(!incompatible.restartable());
@@ -409,7 +460,11 @@ mod tests {
             restarted.kind,
             HostLinkEndKind::Restarted { generation } if generation == SessionGeneration::FIRST.next()
         ));
-        assert!(restarted.action_hint().contains("attach"));
+        assert_eq!(restarted.action_label(), Some("Attach"));
+        assert_eq!(
+            HostLinkEnd::incompatible("source_sha".into()).action_label(),
+            None
+        );
 
         let lost =
             HostLinkEnd::from_reconnection(SessionReconnection::Lost, SessionGeneration::FIRST);
@@ -417,6 +472,76 @@ mod tests {
         assert!(!HostLinkState::Ended(lost).accepts_input());
         assert!(!HostLinkState::Reconnecting.accepts_input());
         assert!(HostLinkState::Attaching.accepts_input());
+    }
+
+    #[test]
+    fn every_session_stop_goes_through_the_single_host_call_site() {
+        use std::path::{Path, PathBuf};
+
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let mut violations = Vec::new();
+        let mut stack: Vec<PathBuf> = vec![root.clone()];
+        while let Some(dir) = stack.pop() {
+            for entry in std::fs::read_dir(&dir).unwrap() {
+                let path = entry.unwrap().path();
+                if path.is_dir() {
+                    stack.push(path);
+                    continue;
+                }
+                if path.extension().and_then(|e| e.to_str()) != Some("rs") {
+                    continue;
+                }
+                let rel = path
+                    .strip_prefix(&root)
+                    .unwrap()
+                    .to_string_lossy()
+                    .replace('\\', "/");
+                if rel == "terminal/host_link.rs" {
+                    continue;
+                }
+                let text = std::fs::read_to_string(&path).unwrap();
+                for (i, line) in text.lines().enumerate() {
+                    if line.contains("\"session.stop\"") || line.contains("client.stop(") {
+                        violations.push(format!("{rel}:{}", i + 1));
+                    }
+                }
+            }
+        }
+        assert!(
+            violations.is_empty(),
+            "the quit dialog and every close path stop sessions through host_link::stop_session; found {violations:?}"
+        );
+    }
+
+    #[test]
+    fn an_unreadable_record_is_skipped_and_the_rest_of_the_listing_survives() {
+        let good = serde_json::json!({
+            "manifest": {
+                "schema": 1,
+                "session": SessionId::new(),
+                "generation": 1,
+                "host_instance": HostInstanceToken::new(),
+                "cwd": "/repo",
+                "launch": {"shell": "/bin/zsh", "cols": 80, "rows": 24},
+                "lifecycle": {"state": "running"},
+                "created_at_ms": 1,
+                "updated_at_ms": 2,
+            },
+            "live": true,
+            "owned": true,
+        });
+        let mut flattened = good["manifest"].clone();
+        if let Some(object) = flattened.as_object_mut() {
+            object.insert("live".to_string(), serde_json::json!(true));
+            object.insert("owned".to_string(), serde_json::json!(true));
+        }
+        let mut broken = flattened.clone();
+        broken["lifecycle"] = serde_json::json!({"state": "teleported"});
+        let listed = serde_json::json!({"sessions": [broken, flattened]});
+        let rows = parse_session_rows(&listed);
+        assert_eq!(rows.len(), 1, "one unreadable record never hides the rest");
+        assert_eq!(rows[0].manifest.cwd, "/repo");
+        assert!(parse_session_rows(&serde_json::json!({})).is_empty());
     }
 
     #[test]

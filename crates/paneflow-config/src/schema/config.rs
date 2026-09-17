@@ -67,6 +67,10 @@ pub struct PaneFlowConfig {
     #[serde(default, deserialize_with = "lenient_opt_bool")]
     pub ai_injection_fence: Option<bool>,
     #[serde(default, deserialize_with = "lenient_value_or_default")]
+    pub on_quit: Option<OnQuit>,
+    #[serde(default, deserialize_with = "lenient_value_or_default")]
+    pub sidebar_ended_sessions: Option<u8>,
+    #[serde(default, deserialize_with = "lenient_value_or_default")]
     pub claude_code_button_visible: Option<bool>,
     #[serde(default, deserialize_with = "lenient_value_or_default")]
     pub codex_button_visible: Option<bool>,
@@ -334,6 +338,16 @@ impl PaneFlowConfig {
     pub fn ai_injection_fence_enabled(&self) -> bool {
         self.ai_injection_fence.unwrap_or(true)
     }
+
+    pub fn resolved_on_quit(&self) -> OnQuit {
+        self.on_quit.unwrap_or_default()
+    }
+
+    pub fn resolved_sidebar_ended_sessions(&self) -> u8 {
+        self.sidebar_ended_sessions
+            .filter(|cap| ENDED_SESSION_CAPS.contains(cap))
+            .unwrap_or(DEFAULT_ENDED_SESSION_CAP)
+    }
 }
 
 pub(super) fn lenient_opt_bool<'de, D>(d: D) -> Result<Option<bool>, D::Error>
@@ -410,6 +424,29 @@ where
     })
 }
 
+pub const ENDED_SESSION_CAPS: &[u8] = &[0, 3, 5, 10];
+
+pub const DEFAULT_ENDED_SESSION_CAP: u8 = 5;
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum OnQuit {
+    #[default]
+    Ask,
+    Keep,
+    Stop,
+}
+
+impl OnQuit {
+    pub fn wire_str(self) -> &'static str {
+        match self {
+            Self::Ask => "ask",
+            Self::Keep => "keep",
+            Self::Stop => "stop",
+        }
+    }
+}
+
 fn lenient_value_or_default<'de, D, T>(d: D) -> Result<T, D::Error>
 where
     D: serde::Deserializer<'de>,
@@ -473,4 +510,38 @@ pub struct ToolPermissionsEntry {
     pub always_allow: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub always_deny: Vec<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ended_session_cap_keeps_the_allowed_values_and_falls_back_to_five() {
+        let config: PaneFlowConfig = serde_json::from_str("{}").unwrap();
+        assert_eq!(config.resolved_sidebar_ended_sessions(), 5);
+        for cap in ENDED_SESSION_CAPS {
+            let config: PaneFlowConfig =
+                serde_json::from_str(&format!(r#"{{"sidebar_ended_sessions": {cap}}}"#)).unwrap();
+            assert_eq!(config.resolved_sidebar_ended_sessions(), *cap);
+        }
+        for rejected in ["7", "\"many\"", "-3", "999"] {
+            let config: PaneFlowConfig =
+                serde_json::from_str(&format!(r#"{{"sidebar_ended_sessions": {rejected}}}"#))
+                    .unwrap();
+            assert_eq!(config.resolved_sidebar_ended_sessions(), 5);
+        }
+    }
+
+    #[test]
+    fn on_quit_defaults_to_ask_and_tolerates_garbage() {
+        let config: PaneFlowConfig = serde_json::from_str("{}").unwrap();
+        assert_eq!(config.resolved_on_quit(), OnQuit::Ask);
+        let config: PaneFlowConfig = serde_json::from_str(r#"{"on_quit": "stop"}"#).unwrap();
+        assert_eq!(config.resolved_on_quit(), OnQuit::Stop);
+        let config: PaneFlowConfig = serde_json::from_str(r#"{"on_quit": "later"}"#).unwrap();
+        assert_eq!(config.resolved_on_quit(), OnQuit::Ask);
+        let config: PaneFlowConfig = serde_json::from_str(r#"{"on_quit": 3}"#).unwrap();
+        assert_eq!(config.resolved_on_quit(), OnQuit::Ask);
+    }
 }

@@ -582,6 +582,10 @@ fn dispatch(host: &SessionHost, method: &str, params: &Value) -> Result<Value, D
             let generation = param_generation(params)?;
             Ok(to_value(&host.restart(&session, generation)?))
         }
+        "session.remove" => {
+            let session = param_session(params)?;
+            Ok(json!({"removed": to_value(&host.remove(&session)?)}))
+        }
         "session.input" => {
             let session = param_session(params)?;
             let generation = param_generation(params)?;
@@ -1178,6 +1182,45 @@ mod tests {
             HostClient::connect(&endpoint, &hello).is_err(),
             "the endpoint is gone once the server stopped"
         );
+    }
+
+    #[test]
+    fn session_remove_refuses_a_live_session_and_deletes_an_ended_manifest() {
+        let (home, host, server) = start();
+        let hello = ClientHello::local("paneflow-host-test");
+        let mut client = HostClient::connect(server.endpoint(), &hello).unwrap();
+        let created = client
+            .call("session.create", shell_create_params())
+            .unwrap();
+        let session = SessionId::parse(created["session"].as_str().unwrap()).unwrap();
+        let manifest = crate::manifest::manifest_path(home.path(), &session);
+        assert!(manifest.is_file());
+
+        let refused = client
+            .call("session.remove", json!({"session": session}))
+            .unwrap_err();
+        assert_eq!(refused.code(), Some(ERR_SESSION_LIVE));
+        assert!(manifest.is_file(), "a refusal never deletes the record");
+        assert_eq!(host.live_session_count(), 1);
+
+        client
+            .call("session.stop", json!({"session": session}))
+            .unwrap();
+        let removed = client
+            .call("session.remove", json!({"session": session}))
+            .unwrap();
+        assert_eq!(removed["removed"]["session"], json!(session));
+        assert!(!manifest.exists());
+        let listed = client.call("session.list", json!({})).unwrap();
+        assert!(listed["sessions"].as_array().unwrap().is_empty());
+        assert_eq!(
+            client
+                .call("session.remove", json!({"session": session}))
+                .err()
+                .and_then(|e| e.code()),
+            Some(crate::protocol::ERR_SESSION_NOT_FOUND)
+        );
+        server.stop().unwrap();
     }
 
     #[test]

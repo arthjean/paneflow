@@ -103,6 +103,13 @@ enum SessionCommand {
         #[arg(long, help = "Only restart from this generation")]
         generation: Option<u64>,
     },
+    #[command(
+        about = "Delete a non-live session's manifest; refused while the session is still running"
+    )]
+    Remove {
+        #[arg(help = "Durable session id")]
+        session: String,
+    },
 }
 
 fn main() {
@@ -237,6 +244,9 @@ fn session(home: &Path, command: SessionCommand) -> i32 {
             "session.restart",
             json!({"session": session, "generation": generation}),
         ),
+        SessionCommand::Remove { session } => {
+            client.call("session.remove", json!({"session": session}))
+        }
     };
     match outcome {
         Ok(value) => print_json(&value),

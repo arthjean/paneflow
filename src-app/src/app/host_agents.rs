@@ -250,7 +250,7 @@ impl PaneFlowApp {
         self.host_agents.disconnect_reason = None;
         self.host_agents.bootstrapped = true;
         self.seed_attached_sessions_from_host(cx);
-        self.refresh_hidden_sessions(cx);
+        self.refresh_owned_sessions(cx);
         cx.notify();
     }
 

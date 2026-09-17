@@ -6,6 +6,8 @@ use crate::terminal::blink::{BlinkPhase, BlinkPhaseGlobal, CURSOR_BLINK_INTERVAL
 use crate::window_chrome::title_bar;
 use crate::{PaneFlowApp, ipc, keybindings, update};
 
+const RESUME_OFFER_WINDOW: std::time::Duration = std::time::Duration::from_secs(30);
+
 impl PaneFlowApp {
     pub(crate) fn spawn_telemetry_flusher(
         telemetry: std::sync::Arc<telemetry::client::TelemetryClient>,
@@ -624,6 +626,7 @@ impl PaneFlowApp {
             font_search: String::new(),
             theme_mode,
             workspace_menu_open: None,
+            session_menu_open: None,
             worktree_states: crate::app::tab_worktree::WorktreeStates::default(),
             branch_checkout_pending: None,
             pr_states: crate::app::pull_request::PrStates::default(),
@@ -662,10 +665,17 @@ impl PaneFlowApp {
             jump_cursor: None,
             swap_source: None,
             closed_panes: Vec::new(),
-            hidden_sessions: Default::default(),
+            owned_sessions: Default::default(),
+            resume_batch: None,
+            resume_offer_shown: false,
+            resume_offer_deadline: std::time::Instant::now() + RESUME_OFFER_WINDOW,
+            close_dialog: None,
+            close_dialog_focus: cx.focus_handle(),
             host_agents: Default::default(),
             show_about_dialog: false,
             system_info_dialog: None,
+            quit_dialog: None,
+            quit_dialog_focus: cx.focus_handle(),
             show_theme_picker: false,
             theme_picker_query: String::new(),
             theme_picker_selected_idx: 0,
@@ -765,7 +775,7 @@ impl PaneFlowApp {
                 .seed(&repo_root.to_string_lossy(), &branch, pr);
         }
         app.refresh_pull_requests(cx);
-        app.refresh_hidden_sessions(cx);
+        app.refresh_owned_sessions(cx);
         app.start_host_agent_stream();
 
         app.emit_app_started(is_first_run_for_telemetry);
@@ -870,9 +880,7 @@ pub(crate) fn install_macos_menu_action_fallbacks(cx: &mut gpui::App) {
 
     cx.on_action(|_: &Quit, cx| {
         with_active_paneflow_window(cx, |app, _window, cx| {
-            app.save_session_blocking(cx);
-            app.emit_app_exited_and_flush();
-            cx.quit();
+            app.request_quit(cx);
         });
     });
 

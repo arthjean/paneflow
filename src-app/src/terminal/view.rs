@@ -517,6 +517,7 @@ impl TerminalView {
                     })
                     .await;
                 let _ = this.update(cx, |view, cx| {
+                    cx.emit(TerminalEvent::HostLinkResolved);
                     match outcome {
                         AttachOutcome::Attached(hosted) => {
                             view.saved_scrollback = None;
@@ -602,7 +603,6 @@ impl TerminalView {
         fresh.custom_name = self.terminal.custom_name.take();
         fresh.font_size_override = self.terminal.font_size_override;
         fresh.detected_agent = self.terminal.detected_agent;
-        fresh.leave_running_on_close = self.terminal.leave_running_on_close;
         let previous = std::mem::replace(&mut self.terminal, fresh);
         drop(previous);
         self.needs_initial_clear
@@ -614,69 +614,63 @@ impl TerminalView {
         cx.notify();
     }
 
-    pub(crate) fn hosted_stop_target(
+    fn render_host_link_bar(
         &self,
-    ) -> Option<(
-        std::path::PathBuf,
-        paneflow_config::schema::SessionId,
-        paneflow_config::schema::SessionGeneration,
-    )> {
-        self.terminal.hosted_stop_target()
-    }
-
-    fn render_host_link_overlay(&self, ui: crate::theme::UiColors) -> Option<gpui::AnyElement> {
-        let (title, detail, hint) = match &self.terminal.host_link {
+        ui: crate::theme::UiColors,
+        cx: &mut Context<Self>,
+    ) -> Option<gpui::AnyElement> {
+        let (text, action) = match &self.terminal.host_link {
             HostLinkState::Attaching | HostLinkState::Attached => return None,
-            HostLinkState::Reconnecting => (
-                "Reconnecting to the local host",
-                "The last rendered output is shown; input is disabled until the session is attached again."
-                    .to_string(),
-                None,
-            ),
-            HostLinkState::Ended(end) => (
-                "Session ended",
-                end.detail.clone(),
-                Some(end.action_hint()),
-            ),
-            HostLinkState::Unavailable(message) => (
-                "Local host unavailable",
-                message.clone(),
-                Some("Press Enter to try again."),
-            ),
+            HostLinkState::Reconnecting => ("Reconnecting to the local host".to_string(), None),
+            HostLinkState::Ended(end) => (end.detail.clone(), end.action_label()),
+            HostLinkState::Unavailable(message) => (message.clone(), Some("Retry")),
         };
-        let mut card = div()
+
+        let mut bar = div()
             .flex()
-            .flex_col()
-            .gap(gpui::px(4.0))
-            .px(gpui::px(14.0))
-            .py(gpui::px(10.0))
+            .flex_row()
+            .items_center()
+            .gap(gpui::px(10.0))
+            .px(gpui::px(12.0))
+            .py(gpui::px(7.0))
             .child(
                 div()
-                    .text_sm()
-                    .font_weight(gpui::FontWeight::SEMIBOLD)
-                    .text_color(ui.text)
-                    .child(title),
-            )
-            .child(div().text_xs().text_color(ui.muted).child(detail));
-        if let Some(hint) = hint {
-            card = card.child(div().text_xs().text_color(ui.accent).child(hint));
+                    .min_w_0()
+                    .text_xs()
+                    .text_color(ui.muted)
+                    .truncate()
+                    .child(text),
+            );
+        if let Some(label) = action {
+            bar = bar.child(crate::settings::components::secondary_button(
+                "host-link-action",
+                label,
+                ui,
+                cx.listener(|this, _: &gpui::ClickEvent, _, cx| {
+                    this.resume_hosted_session(cx);
+                }),
+            ));
         }
+
         Some(
             div()
                 .absolute()
-                .inset_0()
+                .bottom_0()
+                .left_0()
+                .w_full()
                 .flex()
                 .items_center()
                 .justify_center()
+                .pb(gpui::px(10.0))
                 .child(
                     crate::ui_primitives::squircle_skin(
-                        div().id("host-link-overlay").max_w(gpui::px(420.0)),
-                        "host-link-overlay",
+                        div().id("host-link-bar").max_w(gpui::px(420.0)),
+                        "host-link-bar",
                         crate::ui_primitives::ROW_RADIUS,
                         Some(ui.overlay),
                         None,
                     )
-                    .child(card),
+                    .child(bar),
                 )
                 .into_any_element(),
         )
@@ -1093,6 +1087,7 @@ impl TerminalView {
 
 pub enum TerminalEvent {
     ChildExited,
+    HostLinkResolved,
     TitleChanged,
     CwdChanged(String),
     ShellPromptReady,
@@ -1803,8 +1798,8 @@ impl Render for TerminalView {
             el = el.child(self.render_search_overlay(cx));
         }
 
-        if let Some(overlay) = self.render_host_link_overlay(crate::theme::ui_colors()) {
-            el = el.child(overlay);
+        if let Some(bar) = self.render_host_link_bar(crate::theme::ui_colors(), cx) {
+            el = el.child(bar);
         }
 
         if self.copy_mode_active {

@@ -525,7 +525,6 @@ pub struct TerminalState {
     pub session_id: SessionId,
     pub(crate) hosted: Option<HostedSession>,
     pub(crate) host_link: HostLinkState,
-    pub(crate) leave_running_on_close: bool,
     ghostty: GhosttySession,
     ghostty_events_rx: Option<UnboundedReceiver<GhosttyUiEvent>>,
     backend_failure: Option<TerminalBackendFailureDiagnostics>,
@@ -707,9 +706,6 @@ impl TerminalState {
     pub(crate) fn hosted_stop_target(
         &self,
     ) -> Option<(std::path::PathBuf, SessionId, SessionGeneration)> {
-        if self.leave_running_on_close {
-            return None;
-        }
         let hosted = self.hosted.as_ref()?;
         Some((
             hosted.endpoint.clone(),
@@ -981,7 +977,6 @@ impl TerminalState {
             session_id: SessionId::new(),
             hosted: None,
             host_link: HostLinkState::Attaching,
-            leave_running_on_close: false,
             ghostty,
             ghostty_events_rx: Some(events_rx),
             backend_failure: None,

@@ -5,6 +5,7 @@ use gpui::{AppContext, Context, Entity, Focusable, Window};
 use super::code::view::CodeView;
 use super::model::{DiffDockTab, MAX_DIFF_FILE_TABS};
 use crate::PaneFlowApp;
+use crate::app::close_policy::CloseTarget;
 use crate::terminal::{TerminalEvent, TerminalView};
 
 impl PaneFlowApp {
@@ -216,18 +217,28 @@ impl PaneFlowApp {
             cx.notify();
             return;
         }
-        self.close_diff_tab(index, cx);
-        self.focus_diff_tab(self.diff_dock.diff_active_tab, window, cx);
+        self.request_close(CloseTarget::DiffTerminal(index), Some(window), cx);
     }
 
     pub(crate) fn close_diff_tab(&mut self, index: usize, cx: &mut Context<Self>) {
         if index >= self.diff_dock.diff_tabs.len() {
             return;
         }
-        let closed = self.diff_dock.diff_tabs.remove(index);
-        if let DiffDockTab::Terminal(terminal) = &closed {
-            self.stop_terminals(vec![terminal.clone()], cx);
+        if matches!(
+            self.diff_dock.diff_tabs.get(index),
+            Some(DiffDockTab::Terminal(_))
+        ) {
+            self.request_close(CloseTarget::DiffTerminal(index), None, cx);
+            return;
         }
+        self.remove_diff_tab(index, cx);
+    }
+
+    pub(crate) fn remove_diff_tab(&mut self, index: usize, cx: &mut Context<Self>) {
+        if index >= self.diff_dock.diff_tabs.len() {
+            return;
+        }
+        let closed = self.diff_dock.diff_tabs.remove(index);
         if matches!(closed, DiffDockTab::File(_) | DiffDockTab::PendingFile)
             && !self
                 .diff_dock
@@ -257,7 +268,7 @@ impl PaneFlowApp {
             .iter()
             .position(|tab| matches!(tab, DiffDockTab::Terminal(t) if t == terminal));
         if let Some(index) = found {
-            self.close_diff_tab(index, cx);
+            self.remove_diff_tab(index, cx);
         }
     }
 }

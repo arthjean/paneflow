@@ -112,6 +112,8 @@ mod tests {
             claude_code_bypass_permissions: Some(false),
             ai_unrestricted: Some(true),
             ai_injection_fence: Some(false),
+            on_quit: Some(OnQuit::Stop),
+            sidebar_ended_sessions: Some(3),
             claude_code_button_visible: Some(true),
             codex_button_visible: Some(true),
             opencode_button_visible: Some(true),

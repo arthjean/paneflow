@@ -119,7 +119,7 @@ pub enum HostError {
     },
     #[error("session {0} is not running")]
     SessionNotLive(SessionId),
-    #[error("session {0} is still running; stop it before restarting it")]
+    #[error("session {0} is still running; stop it first")]
     SessionLive(SessionId),
     #[error("{count} live session(s) remain; stop them before stopping the host")]
     SessionsLive { count: usize },
@@ -712,6 +712,34 @@ impl SessionHost {
             });
         }
         self.inspect(session)
+    }
+
+    pub fn remove(&self, session: &SessionId) -> Result<SessionManifest, HostError> {
+        let removed = {
+            let mut sessions = self.lock_sessions();
+            let record = sessions
+                .get(session)
+                .ok_or_else(|| HostError::SessionNotFound(session.clone()))?;
+            let manifest = record
+                .manifest
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .clone();
+            if record.is_live() || manifest.lifecycle.is_running() {
+                return Err(HostError::SessionLive(session.clone()));
+            }
+            sessions.remove(session);
+            manifest
+        };
+        let _guard = self.lock_writer();
+        let path = crate::manifest::manifest_path(&self.home, session);
+        match std::fs::remove_file(&path) {
+            Ok(()) => Ok(removed),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(removed),
+            Err(error) => Err(HostError::Storage(format!(
+                "cannot delete the manifest of {session}: {error}"
+            ))),
+        }
     }
 
     fn with_live_runtime<T>(
