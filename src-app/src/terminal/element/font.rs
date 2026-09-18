@@ -12,6 +12,9 @@ use super::face_tables;
 use super::{CellDimensions, TerminalFrameMetrics};
 
 pub(crate) const DEFAULT_FONT_SIZE: f32 = 13.0;
+#[cfg(target_os = "macos")]
+const POINTS_TO_PIXELS: f32 = 1.0;
+#[cfg(not(target_os = "macos"))]
 const POINTS_TO_PIXELS: f32 = 96.0 / 72.0;
 pub(crate) const DEFAULT_LINE_HEIGHT: f32 = 1.0;
 pub(crate) const DEFAULT_CELL_WIDTH: f32 = 1.0;
@@ -244,7 +247,7 @@ fn font_settings_from_config(config: &paneflow_config::schema::PaneFlowConfig) -
         .terminal
         .as_ref()
         .and_then(|t| t.ligatures)
-        .unwrap_or(false);
+        .unwrap_or(true);
 
     let fallbacks = sanitize_font_fallbacks(config.font_fallbacks.as_ref());
 
@@ -695,9 +698,14 @@ mod tests {
     #[test]
     fn terminal_font_points_convert_to_logical_pixels() {
         let px_size = font_points_to_pixels(13.0).as_f32();
+        let expected = if cfg!(target_os = "macos") {
+            13.0
+        } else {
+            17.333334
+        };
         assert!(
-            (px_size - 17.333334).abs() < 0.00001,
-            "13pt should render as 17.333px, got {px_size}"
+            (px_size - expected).abs() < 0.00001,
+            "13pt should render as {expected}px, got {px_size}"
         );
     }
 

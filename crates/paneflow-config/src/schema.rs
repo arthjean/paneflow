@@ -481,8 +481,8 @@ mod tests {
     #[test]
     fn unfocused_pane_dim_alpha_inverts_clamps_and_disables() {
         assert!(
-            (PaneFlowConfig::default().resolved_unfocused_pane_dim_alpha() - 0.3).abs() < 1e-6,
-            "default 0.7 opacity must paint a 0.3 overlay"
+            PaneFlowConfig::default().resolved_unfocused_pane_dim_alpha() == 0.0,
+            "default 1.0 opacity must paint no overlay"
         );
         let cfg = PaneFlowConfig {
             unfocused_pane_opacity: Some(1.0),
@@ -503,7 +503,7 @@ mod tests {
             unfocused_pane_opacity: Some(f32::NAN),
             ..Default::default()
         };
-        assert!((cfg.resolved_unfocused_pane_dim_alpha() - 0.3).abs() < 1e-6);
+        assert_eq!(cfg.resolved_unfocused_pane_dim_alpha(), 0.0);
     }
 
     #[test]

@@ -242,7 +242,7 @@ impl SidebarShow {
 }
 
 impl PaneFlowConfig {
-    pub const DEFAULT_UNFOCUSED_PANE_OPACITY: f32 = 0.7;
+    pub const DEFAULT_UNFOCUSED_PANE_OPACITY: f32 = 1.0;
     pub const MIN_UNFOCUSED_PANE_OPACITY: f32 = 0.15;
     pub const MAX_UNFOCUSED_PANE_OPACITY: f32 = 1.0;
 

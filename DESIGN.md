@@ -257,7 +257,7 @@ theme load until it clears APCA Lc 45 against the selection background.
 | Menu border | `border` at 0.6 | same | `menu_surface` |
 | Control hover | `subtle` moved 6 percent toward `text` | same | `select_trigger`, `secondary_button` |
 | Hairline | `border` at 0.5 | same | `hairline` |
-| Unfocused pane dim | terminal background at 0.3 | same | `unfocused_pane_opacity`, default 0.7 |
+| Unfocused pane dim | terminal background at `1 - unfocused_pane_opacity` | same | `unfocused_pane_opacity`, default 1.0, so off unless set |
 | Attention border | `vc_conflict` at 0.7 | same | `pane.rs` |
 | Icon button hover | the caller's hover color from 0 to 1 | same | `icon_button_sm`, `icon_button_md` |
 
@@ -930,8 +930,9 @@ Shared text inputs use a blue (`#007AFF`) insertion caret, 2 px wide and
 vertically centered. Its height is the font size plus 2 px, capped at the
 line height, so it does not span the full input row.
 
-Focus is shown by absence of dim: the focused pane stays at full contrast
-while its siblings fade. An agent that needs the user gets the
+Focus is shown by the pane border and the title bar, not by dimming: every
+pane keeps full contrast by default, and `unfocused_pane_opacity` below 1.0
+opts back into fading the siblings. An agent that needs the user gets the
 `vc_conflict` border at 0.7 and a sidebar dot; clicking anywhere in the panel
 acknowledges visible completions. The attention queue lists those panes and
 `secondary-shift-j` jumps through them. Native OS notifications fire only

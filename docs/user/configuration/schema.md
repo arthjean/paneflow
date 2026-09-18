@@ -58,7 +58,7 @@ JetBrains IDEs, Helix, and other JSON Schema-aware editors:
 | `font_weight` | string/null | `normal` | Hot reload cache | One of `thin`, `extra_light`, `light`, `semi_light`, `normal`, `medium`, `semi_bold`, `bold`, `extra_bold`, `black`, `extra_black`. |
 | `line_height` | number/null | `1.0` | Hot reload cache | Multiplier of the font's own line height (ascent, descent, and line gap), valid range `0.8` to `2.5`. The cell is rounded to whole device pixels. |
 | `cell_width` | number/null | `1.0` | Hot reload cache | Multiplier of the font's advance, valid range `0.8` to `2.0`. The cell is rounded to whole device pixels. |
-| `unfocused_pane_opacity` | number/null | `0.7` | Hot reload | Opacity of panes that do not hold focus, when a workspace has more than one pane. Range `0.15` to `1.0`; `1.0` disables the dim. |
+| `unfocused_pane_opacity` | number/null | `1.0` | Hot reload | Opacity of panes that do not hold focus, when a workspace has more than one pane. Range `0.15` to `1.0`; `1.0` disables the dim. |
 | `reduce_motion` | boolean/null | `false` | Hot reload | Minimizes non-essential interface motion: hover transitions settle instantly and decorative animations render a static frame. |
 | `sidebar_show` | object/null | all off | Hot reload | What a session tab row shows beyond its name: `branch` adds its git branch, `diffstat` adds its insertion and deletion counts, `pr` turns the branch icon into a pull-request glyph colored by the request's state when one exists, `indent_guide` draws a hairline under a workspace's folder icon down its tab rows. The first two read the tab's bound worktree, or its workspace's checkout when the tab is unbound; `pr` needs the `gh` CLI and answers for GitHub remotes only. Toggled from the rail's Customize Sidebar menu. |
 | `worktrees` | object/null | see below | Hot reload | Where Paneflow keeps the git worktrees it creates for branches and how it cleans them up: `dir`, `auto_remove`, `keep_limit`, `for_new_branches`. Settings > Worktrees edits the same keys. |
@@ -116,7 +116,7 @@ CLI binary. `false` hides the button. `true` forces it visible.
 
 | Key | Type | Default | Applied | Notes |
 | --- | --- | --- | --- | --- |
-| `terminal.ligatures` | boolean/null | `false` | Hot reload cache | Enables programming ligatures when the active font supports them. |
+| `terminal.ligatures` | boolean/null | `true` | Hot reload cache | Enables programming ligatures when the active font supports them. |
 | `terminal.integrated_glyphs` | boolean/null | `true` | Hot reload | Draws built-in block glyphs as filled quads. |
 | `terminal.color_emoji` | boolean/null | `true` | Hot reload | Uses the platform color-emoji path. |
 | `terminal.cursor_color` | string/null | theme cursor | Hot reload/new terminal | `#RRGGBB`, `RRGGBB`, `#RGB`, or `RGB`. |
@@ -304,7 +304,7 @@ Surface keys inside a pane:
   "windows_chrome_material": false,
   "macos_chrome_material": true,
   "terminal": {
-    "ligatures": false,
+    "ligatures": true,
     "scrollback_lines": 10000,
     "cursor_shape": "block"
   },

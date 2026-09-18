@@ -85,10 +85,10 @@
     },
     "unfocused_pane_opacity": {
       "type": ["number", "null"],
-      "description": "Opacity of panes that do not hold focus, when a workspace has more than one pane. 1.0 disables the dim. Default 0.7.",
+      "description": "Opacity of panes that do not hold focus, when a workspace has more than one pane. 1.0 disables the dim. Default 1.0.",
       "minimum": 0.15,
       "maximum": 1.0,
-      "default": 0.7
+      "default": 1.0
     },
     "reduce_motion": {
       "type": ["boolean", "null"],
@@ -243,7 +243,7 @@
         "ligatures": {
           "type": ["boolean", "null"],
           "description": "Render programming-font ligatures (FiraCode '=>', '!=', JetBrains Mono, Cascadia Code). Hot-reloaded.",
-          "default": false
+          "default": true
         },
         "integrated_glyphs": {
           "type": ["boolean", "null"],

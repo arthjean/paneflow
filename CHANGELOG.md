@@ -5,6 +5,15 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
 
 ## [Unreleased]
 
+### Changed
+
+- Unfocused panes no longer dim by default: `unfocused_pane_opacity` now
+  defaults to 1.0. Focus reads from the pane border and title bar; set a
+  value below 1.0 to fade the siblings again.
+- Programming ligatures are on by default (`terminal.ligatures: true`),
+  matching Ghostty. The bundled JetBrains Mono Nerd Font ligates `->`,
+  `=>`, `!=` and `//`; set `false` to keep the plain glyphs.
+
 ### Added
 
 - Select all in a terminal pane. `Ctrl+Shift+A` (`Cmd+A` on macOS) and
@@ -23,6 +32,10 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
 
 ### Fixed
 
+- Terminal font size on macOS follows the platform point: `font_size: 13`
+  renders 13 logical pixels there, as Ghostty and every macOS terminal do,
+  instead of the 96 DPI conversion that made the same number a third
+  larger than on Linux and Windows.
 - `Ctrl+Shift+F` opens the terminal search again on Windows and Linux. The
   diff dock maximize shortcut resolved to the same chord there and shadowed
   it; it now lives on `Cmd/Ctrl+Alt+M`, and macOS also gets `Cmd+F` for the
