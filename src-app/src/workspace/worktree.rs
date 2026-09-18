@@ -1,4 +1,5 @@
 use std::collections::HashSet;
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::RwLock;
@@ -8,6 +9,8 @@ const GIT_DEADLINE: Duration = Duration::from_secs(10);
 const ADD_DEADLINE: Duration = Duration::from_secs(120);
 const STDOUT_CAP: u64 = 256 * 1024;
 const OWNER_MARKER_FILE: &str = "paneflow-owner";
+const REMOVE_ATTEMPTS: usize = 6;
+const REMOVE_RETRY_DELAY: Duration = Duration::from_millis(250);
 const LEGACY_OWNER_MARKER_FILE: &str = ".paneflow-worktree";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -140,16 +143,11 @@ pub fn managed_worktree_from_record(
         log::warn!("managed worktree: dropping record with invalid branch");
         return None;
     }
-    if !is_paneflow_worktree_dir(&repo_root, branch, &path) {
+    migrate_owner_marker(&path);
+    if !is_owned_worktree(&repo_root, &path) {
         log::warn!(
-            "managed worktree: dropping record outside Paneflow worktree dir: {}",
-            path.display()
-        );
-        return None;
-    }
-    if !has_owner_marker(&path) {
-        log::warn!(
-            "managed worktree: dropping record without owner marker: {}",
+            "managed worktree: dropping record that is not a Paneflow worktree of {}: {}",
+            repo_root.display(),
             path.display()
         );
         return None;
@@ -250,9 +248,20 @@ fn repo_name(repo_root: &Path) -> String {
         .unwrap_or_else(|| "repo".to_string())
 }
 
+fn repo_identity_key(repo_root: &Path) -> String {
+    std::fs::canonicalize(repo_root)
+        .map(without_verbatim_prefix)
+        .unwrap_or_else(|_| repo_root.to_path_buf())
+        .to_string_lossy()
+        .into_owned()
+}
+
 fn repo_dir_name(repo_root: &Path) -> String {
-    let key = repo_root.to_string_lossy();
-    format!("{}-{}", repo_name(repo_root), branch_hash_suffix(&key))
+    format!(
+        "{}-{}",
+        repo_name(repo_root),
+        branch_hash_suffix(&repo_identity_key(repo_root))
+    )
 }
 
 fn legacy_worktrees_parent(repo_root: &Path) -> PathBuf {
@@ -260,7 +269,7 @@ fn legacy_worktrees_parent(repo_root: &Path) -> PathBuf {
     parent.join(format!("{}.worktrees", repo_name(repo_root)))
 }
 
-fn worktrees_parent(repo_root: &Path) -> PathBuf {
+pub fn worktrees_parent(repo_root: &Path) -> PathBuf {
     match worktrees_root() {
         Some(root) => root.join(repo_dir_name(repo_root)),
         None => legacy_worktrees_parent(repo_root),
@@ -302,7 +311,11 @@ fn without_verbatim_prefix(path: PathBuf) -> PathBuf {
 }
 
 pub fn worktree_dir(repo_root: &Path, branch: &str) -> PathBuf {
-    worktrees_parent(repo_root).join(branch_slug_or_default(branch))
+    worktree_dir_under(&worktrees_parent(repo_root), branch)
+}
+
+pub fn worktree_dir_under(parent: &Path, branch: &str) -> PathBuf {
+    parent.join(branch_slug_or_default(branch))
 }
 
 pub fn worktree_dir_hashed(repo_root: &Path, branch: &str) -> PathBuf {
@@ -317,6 +330,54 @@ pub fn legacy_worktree_dir(repo_root: &Path, branch: &str) -> PathBuf {
 pub fn legacy_worktree_dir_hashed(repo_root: &Path, branch: &str) -> PathBuf {
     let slug = branch_slug_or_default(branch);
     legacy_worktrees_parent(repo_root).join(format!("{slug}-{}", branch_hash_suffix(branch)))
+}
+
+fn repo_git_dir(repo_root: &Path) -> Option<PathBuf> {
+    let dot_git = repo_root.join(".git");
+    if dot_git.is_dir() {
+        return Some(dot_git);
+    }
+    worktree_git_dir(repo_root)
+}
+
+fn path_starts_with(path: &Path, prefix: &Path) -> bool {
+    if path.starts_with(prefix) {
+        return true;
+    }
+    let (Ok(path), Ok(prefix)) = (std::fs::canonicalize(path), std::fs::canonicalize(prefix))
+    else {
+        return false;
+    };
+    path.starts_with(prefix)
+}
+
+pub fn is_owned_worktree(repo_root: &Path, worktree_path: &Path) -> bool {
+    let Some(admin_dir) = repo_git_dir(repo_root).map(|dir| dir.join("worktrees")) else {
+        return false;
+    };
+    let Some(git_dir) = worktree_git_dir(worktree_path) else {
+        return false;
+    };
+    path_starts_with(&git_dir, &admin_dir)
+        && owner_marker_path(worktree_path).is_some_and(|marker| marker.is_file())
+}
+
+pub fn has_paneflow_worktree_shape(repo_root: &Path, branch: &str, path: &Path) -> bool {
+    if !path.is_absolute() {
+        return false;
+    }
+    let Some(leaf) = path.file_name() else {
+        return false;
+    };
+    let Some(parent) = path.parent().and_then(Path::file_name) else {
+        return false;
+    };
+    let slug = branch_slug_or_default(branch);
+    let leaf_matches = leaf == OsStr::new(&slug)
+        || leaf == OsStr::new(&format!("{slug}-{}", branch_hash_suffix(branch)));
+    let parent_matches = parent == OsStr::new(&repo_dir_name(repo_root))
+        || parent == OsStr::new(&format!("{}.worktrees", repo_name(repo_root)));
+    leaf_matches && parent_matches
 }
 
 pub fn is_paneflow_worktree_dir(repo_root: &Path, branch: &str, path: &Path) -> bool {
@@ -527,14 +588,15 @@ pub fn delete_snapshot(repo_root: &Path, snapshot: &Snapshot) -> Result<(), Stri
 pub fn restore_snapshot(repo_root: &Path, snapshot: &Snapshot) -> Result<PathBuf, String> {
     let entries = list_worktrees(repo_root)?;
     let label = snapshot.label();
-    let path =
-        if !snapshot.path.exists() && is_paneflow_worktree_dir(repo_root, &label, &snapshot.path) {
-            snapshot.path.clone()
-        } else {
-            match plan_branch_checkout(&entries, repo_root, &label)? {
-                BranchCheckout::Existing(path) | BranchCheckout::Create(path) => path,
-            }
-        };
+    let path = if !snapshot.path.exists()
+        && has_paneflow_worktree_shape(repo_root, &label, &snapshot.path)
+    {
+        snapshot.path.clone()
+    } else {
+        match plan_branch_checkout(&entries, repo_root, &label)? {
+            BranchCheckout::Existing(path) | BranchCheckout::Create(path) => path,
+        }
+    };
     if path.exists() {
         return Err(format!(
             "{} exists; remove it first, then restore again",
@@ -589,6 +651,23 @@ pub fn restore_snapshot(repo_root: &Path, snapshot: &Snapshot) -> Result<PathBuf
     Ok(path)
 }
 
+pub fn retry_while_held(
+    attempts: usize,
+    delay: Duration,
+    mut remove: impl FnMut() -> Result<(), String>,
+) -> Result<(), String> {
+    let attempts = attempts.max(1);
+    let mut outcome = remove();
+    for _ in 1..attempts {
+        if outcome.is_ok() {
+            return outcome;
+        }
+        std::thread::sleep(delay);
+        outcome = remove();
+    }
+    outcome
+}
+
 pub fn snapshot_and_remove(
     repo_root: &Path,
     worktree_path: &Path,
@@ -605,11 +684,14 @@ pub fn snapshot_and_remove(
         false => Some(snapshot_worktree(repo_root, worktree_path)?),
     };
     let path_s = worktree_path.to_string_lossy();
-    run_git(
-        repo_root,
-        &["worktree", "remove", "--force", &path_s],
-        GIT_DEADLINE,
-    )?;
+    retry_while_held(REMOVE_ATTEMPTS, REMOVE_RETRY_DELAY, || {
+        run_git(
+            repo_root,
+            &["worktree", "remove", "--force", &path_s],
+            GIT_DEADLINE,
+        )
+        .map(|_| ())
+    })?;
     let _ = prune(repo_root);
     remove_empty_repo_dir(repo_root, worktree_path);
     Ok(snapshot)
@@ -1457,6 +1539,75 @@ mod tests {
     }
 
     #[test]
+    fn managed_worktree_record_survives_a_worktrees_root_change() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let repo_root = tmp.path().join("repo");
+        let branch = "feat/moved-root";
+        let path = {
+            let _root = test_support::scoped_root(tmp.path().join("old-root"));
+            worktree_dir(&repo_root, branch)
+        };
+        link_fake_git_dir(&path, &repo_root.join(".git/worktrees/feat-moved-root"));
+        std::fs::write(
+            owner_marker_path(&path).expect("marker path"),
+            "owner=paneflow\n",
+        )
+        .expect("marker");
+
+        let _root = test_support::scoped_root(tmp.path().join("new-root"));
+        let restored = managed_worktree_from_record(
+            &path.to_string_lossy(),
+            &repo_root.to_string_lossy(),
+            branch,
+            "auto",
+        )
+        .expect("a worktree created under the previous root still restores");
+        assert_eq!(restored.path, path);
+    }
+
+    #[test]
+    fn managed_worktree_record_rejects_a_worktree_of_another_repo() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let _root = test_support::scoped_root(tmp.path().join("worktrees"));
+        let repo_root = tmp.path().join("repo");
+        let other_root = tmp.path().join("other");
+        let branch = "feat/foreign";
+        let path = worktree_dir(&repo_root, branch);
+        link_fake_git_dir(&path, &other_root.join(".git/worktrees/feat-foreign"));
+        std::fs::write(
+            owner_marker_path(&path).expect("marker path"),
+            "owner=paneflow\n",
+        )
+        .expect("marker");
+
+        assert!(
+            managed_worktree_from_record(
+                &path.to_string_lossy(),
+                &repo_root.to_string_lossy(),
+                branch,
+                "auto",
+            )
+            .is_none(),
+            "a marker under another repo cannot bless this record"
+        );
+    }
+
+    #[test]
+    fn worktrees_parent_ignores_path_spelling() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let _root = test_support::scoped_root(tmp.path().join("worktrees"));
+        let repo_root = tmp.path().join("repo");
+        std::fs::create_dir_all(&repo_root).expect("repo dir");
+        let detoured = tmp.path().join("repo/../repo");
+
+        assert_eq!(
+            worktree_dir(&repo_root, "feat/x"),
+            worktree_dir(&detoured, "feat/x"),
+            "two spellings of one repo share a worktrees parent"
+        );
+    }
+
+    #[test]
     fn managed_worktree_record_requires_marker_and_generated_path() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let _root = test_support::scoped_root(tmp.path().join("worktrees"));
@@ -1491,22 +1642,18 @@ mod tests {
         assert_eq!(restored.path, path);
         assert_eq!(restored.teardown, TeardownPolicy::Keep);
 
-        let outside = tmp.path().join("external");
-        link_fake_git_dir(&outside, &repo_root.join(".git/worktrees/external"));
-        std::fs::write(
-            owner_marker_path(&outside).expect("marker path"),
-            "owner=paneflow\n",
-        )
-        .expect("outside marker");
+        let plain = tmp.path().join("plain");
+        std::fs::create_dir_all(&plain).expect("plain dir");
+        std::fs::write(legacy_owner_marker_path(&plain), "owner=paneflow\n").expect("marker");
         assert!(
             managed_worktree_from_record(
-                &outside.to_string_lossy(),
+                &plain.to_string_lossy(),
                 &repo_root.to_string_lossy(),
                 branch,
                 "auto",
             )
             .is_none(),
-            "marker cannot bless a path outside the deterministic Paneflow dir"
+            "a marker cannot bless a directory that is not a worktree of the repo"
         );
     }
 
@@ -1762,6 +1909,105 @@ mod tests {
         assert_eq!(snaps[1].branch.as_deref(), Some("feat/x"));
         assert_eq!(snaps[1].path, PathBuf::from("/w/feat-x"));
         assert_eq!(snaps[1].head, "1111");
+    }
+
+    #[test]
+    fn a_removal_is_retried_while_the_checkout_is_still_held() {
+        let mut calls = 0;
+        let outcome = retry_while_held(4, Duration::ZERO, || {
+            calls += 1;
+            if calls < 3 {
+                Err("held by another process".to_string())
+            } else {
+                Ok(())
+            }
+        });
+
+        assert_eq!(outcome, Ok(()), "a released checkout is removed");
+        assert_eq!(calls, 3, "no attempt is made once it succeeds");
+    }
+
+    #[test]
+    fn a_removal_that_never_frees_reports_the_last_error() {
+        let mut calls = 0;
+        let outcome = retry_while_held(3, Duration::ZERO, || {
+            calls += 1;
+            Err(format!("attempt {calls} refused"))
+        });
+
+        assert_eq!(calls, 3, "every attempt is spent");
+        assert_eq!(outcome, Err("attempt 3 refused".to_string()));
+    }
+
+    #[test]
+    fn a_snapshot_returns_to_its_original_path_after_the_root_moves() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let _root = test_support::scoped_root(tmp.path().join("worktrees"));
+        let repo_root = tmp.path().join("repo");
+        if !init_test_repo(&repo_root) {
+            return;
+        }
+        let path = create_branch_checkout(&repo_root, "feat/moved", None)
+            .expect("create")
+            .path;
+        std::fs::write(path.join("README.md"), "edited\n").expect("tracked edit");
+        let snapshot = snapshot_and_remove(&repo_root, &path)
+            .expect("remove")
+            .expect("a dirty worktree leaves a snapshot");
+
+        let moved_root = tmp.path().join("relocated-worktrees");
+        set_worktrees_root(Some(moved_root.clone()));
+
+        let restored = restore_snapshot(&repo_root, &snapshot).expect("restore");
+        assert_eq!(
+            restored, path,
+            "a snapshot taken under the previous root comes back where it was"
+        );
+        assert!(
+            !restored.starts_with(&moved_root),
+            "restoring must not relocate the work under the new root"
+        );
+        assert_eq!(
+            std::fs::read_to_string(restored.join("README.md")).expect("tracked"),
+            "edited\n"
+        );
+    }
+
+    #[test]
+    fn a_snapshot_path_outside_the_paneflow_shape_is_not_trusted() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let _root = test_support::scoped_root(tmp.path().join("worktrees"));
+        let repo_root = tmp.path().join("repo");
+        let branch = "feat/forged";
+
+        assert!(
+            !has_paneflow_worktree_shape(repo_root.as_path(), branch, &tmp.path().join("anywhere")),
+            "a path the trailer invented is refused"
+        );
+        assert!(
+            !has_paneflow_worktree_shape(
+                repo_root.as_path(),
+                branch,
+                Path::new("repo-1234abcd/feat-forged")
+            ),
+            "a relative path is refused"
+        );
+        assert!(
+            has_paneflow_worktree_shape(
+                repo_root.as_path(),
+                branch,
+                &tmp.path()
+                    .join("elsewhere")
+                    .join(
+                        worktree_dir(&repo_root, branch)
+                            .parent()
+                            .and_then(Path::file_name)
+                            .expect("repo dir name")
+                    )
+                    .join("feat-forged")
+            ),
+            "the same repository and branch under another root is accepted"
+        );
     }
 
     #[test]

@@ -308,8 +308,10 @@ impl PaneFlowApp {
         }
         cx.spawn(async move |_this, _cx: &mut gpui::AsyncApp| {
             smol::unblock(move || {
-                let worktrees = match crate::terminal::host_link::live_session_cwds() {
-                    crate::terminal::host_link::LiveSessionProbe::Sessions(cwds) => {
+                let worktrees = match crate::terminal::host_link::live_sessions() {
+                    crate::terminal::host_link::LiveSessionProbe::Sessions(sessions) => {
+                        let cwds: Vec<std::path::PathBuf> =
+                            sessions.into_iter().map(|session| session.cwd).collect();
                         crate::workspace::worktree::without_live_sessions(worktrees, &cwds)
                     }
                     crate::terminal::host_link::LiveSessionProbe::NoHost => worktrees,

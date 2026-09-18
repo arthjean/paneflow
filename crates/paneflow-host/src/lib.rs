@@ -28,7 +28,10 @@ pub use paneflow_config::schema::{HostInstanceToken, SessionGeneration, SessionI
 pub use agent::{AgentEvent, AgentEventKind, AgentSnapshotEntry};
 pub use bootstrap::{BootstrapError, HostAdoption, Probe, ensure_host_running, probe};
 pub use client::{Attachment, HostClient, HostClientError, OutputEnd};
-pub use host::{CreateSession, HostError, SessionHost, SessionReconnection, SessionSummary};
+pub use host::{
+    CreateSession, HostError, INACTIVE_ROWS_PER_WORKSPACE, SessionHost, SessionReconnection,
+    SessionRow, SessionSummary,
+};
 pub use manifest::{AgentSummary, SessionLaunch, SessionLifecycle, SessionManifest};
 pub use protocol::{ClientHello, EngineIdentity, HOST_PROTOCOL_VERSION, HostIdentity};
 pub use runtime::Checkpoint;

@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
@@ -160,6 +160,92 @@ pub struct SessionHost {
     _owner: OwnerLock,
 }
 
+pub const INACTIVE_ROWS_PER_WORKSPACE: usize = 5;
+
+const FINISHED_RECORD_MAX_AGE_MS: u64 = 24 * 60 * 60 * 1000;
+
+const INTERRUPTED_RECORD_MAX_AGE_MS: u64 = 30 * 24 * 60 * 60 * 1000;
+
+fn record_max_age_ms(lifecycle: &SessionLifecycle) -> Option<u64> {
+    match lifecycle {
+        SessionLifecycle::Starting | SessionLifecycle::Running => None,
+        SessionLifecycle::Lost => Some(INTERRUPTED_RECORD_MAX_AGE_MS),
+        SessionLifecycle::Exited { .. } | SessionLifecycle::Failed { .. } => {
+            Some(FINISHED_RECORD_MAX_AGE_MS)
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SessionRow {
+    pub session: SessionId,
+    pub generation: SessionGeneration,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace: Option<WorkspaceId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    pub cwd: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent: Option<String>,
+    pub shell: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pid: Option<u32>,
+    pub lifecycle: SessionLifecycle,
+    pub reconnection: SessionReconnection,
+    pub live: bool,
+    pub owned: bool,
+    pub updated_at_ms: u64,
+}
+
+impl SessionRow {
+    fn of(summary: SessionSummary, owner: &HostInstanceToken) -> Self {
+        let reconnection = summary.reconnection(owner);
+        let SessionSummary {
+            manifest,
+            live,
+            owned,
+        } = summary;
+        Self {
+            session: manifest.session,
+            generation: manifest.generation,
+            workspace: manifest.workspace,
+            title: manifest.title,
+            cwd: manifest.current_cwd.unwrap_or(manifest.cwd),
+            agent: manifest.agent.map(|agent| agent.tool),
+            shell: manifest.launch.shell,
+            pid: manifest.process.map(|process| process.pid),
+            lifecycle: manifest.lifecycle,
+            reconnection,
+            live,
+            owned,
+            updated_at_ms: manifest.updated_at_ms,
+        }
+    }
+}
+
+pub fn inactive_window(
+    mut summaries: Vec<SessionSummary>,
+    inactive_per_workspace: usize,
+) -> Vec<SessionSummary> {
+    summaries.sort_unstable_by_key(|summary| std::cmp::Reverse(summary.manifest.updated_at_ms));
+    let mut seen: HashMap<Option<WorkspaceId>, usize> = HashMap::new();
+    summaries.retain(|summary| {
+        if summary.live {
+            return true;
+        }
+        let counted = seen.entry(summary.manifest.workspace.clone()).or_default();
+        let keep = *counted < inactive_per_workspace;
+        *counted += 1;
+        keep
+    });
+    summaries
+}
+
+fn without_launch_environment(mut summary: SessionSummary) -> SessionSummary {
+    summary.manifest.launch.env = BTreeMap::new();
+    summary
+}
+
 impl SessionHost {
     pub fn open(home: &Path, endpoint: &Path) -> Result<Arc<Self>, HostError> {
         std::fs::create_dir_all(paneflow_home::host_sessions_dir_in(home))
@@ -201,6 +287,7 @@ impl SessionHost {
             _owner: owner,
         });
         host.adopt_previous_records();
+        host.trim_terminated_records();
         host.write_instance_record()?;
         Ok(host)
     }
@@ -344,6 +431,45 @@ impl SessionHost {
         }
     }
 
+    fn trim_terminated_records(&self) {
+        let now = now_ms();
+        let dropped = {
+            let mut sessions = self.lock_sessions();
+            let dropped: Vec<SessionId> = sessions
+                .iter()
+                .filter(|(_, record)| !record.is_live())
+                .filter_map(|(id, record)| {
+                    let manifest = record.manifest.lock().ok()?;
+                    let max_age = record_max_age_ms(&manifest.lifecycle)?;
+                    let stale = now.saturating_sub(manifest.updated_at_ms) > max_age;
+                    stale.then(|| id.clone())
+                })
+                .collect();
+            if dropped.is_empty() {
+                return;
+            }
+            for id in &dropped {
+                sessions.remove(id);
+            }
+            dropped
+        };
+        let _guard = self.lock_writer();
+        for id in &dropped {
+            let path = crate::manifest::manifest_path(&self.home, id);
+            match std::fs::remove_file(&path) {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => {
+                    log::warn!("paneflow-host: cannot delete the manifest of {id}: {error}")
+                }
+            }
+        }
+        log::info!(
+            "paneflow-host: dropped {} session records past their retention",
+            dropped.len()
+        );
+    }
+
     pub fn list(&self, workspace: Option<&WorkspaceId>) -> Vec<SessionSummary> {
         let sessions = self.lock_sessions();
         sessions
@@ -352,6 +478,19 @@ impl SessionHost {
             .filter(|summary| {
                 workspace.is_none_or(|wanted| summary.manifest.workspace.as_ref() == Some(wanted))
             })
+            .map(without_launch_environment)
+            .collect()
+    }
+
+    pub fn rows(
+        &self,
+        workspace: Option<&WorkspaceId>,
+        inactive_per_workspace: usize,
+    ) -> Vec<SessionRow> {
+        let owner = self.instance().clone();
+        inactive_window(self.list(workspace), inactive_per_workspace)
+            .into_iter()
+            .map(|summary| SessionRow::of(summary, &owner))
             .collect()
     }
 
@@ -532,7 +671,11 @@ impl SessionHost {
             rows,
             scrollback_lines: DEFAULT_SCROLLBACK_LINES,
         };
-        self.launch(session, manifest, spec, SessionGeneration::FIRST)
+        let created = self.launch(session, manifest, spec, SessionGeneration::FIRST);
+        if created.is_ok() {
+            self.trim_terminated_records();
+        }
+        created
     }
 
     pub fn restart(
@@ -1084,6 +1227,345 @@ mod tests {
             std::thread::sleep(Duration::from_millis(30));
         }
         false
+    }
+
+    fn exited_manifest(home: &Path, workspace: &WorkspaceId, updated_at_ms: u64) -> SessionId {
+        finished_manifest(
+            home,
+            workspace,
+            SessionLifecycle::Exited {
+                code: 0,
+                signal: None,
+            },
+            updated_at_ms,
+        )
+    }
+
+    fn finished_manifest(
+        home: &Path,
+        workspace: &WorkspaceId,
+        lifecycle: SessionLifecycle,
+        updated_at_ms: u64,
+    ) -> SessionId {
+        let session = SessionId::new();
+        let cwd = home
+            .join("worktrees")
+            .join("paneflow-a1b2c3d4")
+            .join("feat-a-reasonably-long-branch-name")
+            .join("crates")
+            .join("paneflow-host");
+        let manifest = SessionManifest {
+            schema: 1,
+            session: session.clone(),
+            workspace: Some(workspace.clone()),
+            generation: SessionGeneration::FIRST,
+            host_instance: HostInstanceToken::new(),
+            cwd: cwd.display().to_string(),
+            launch: SessionLaunch {
+                shell: "sh".to_string(),
+                args: Vec::new(),
+                env: BTreeMap::new(),
+                cols: 80,
+                rows: 24,
+            },
+            lifecycle,
+            process: None,
+            title: Some("claude \u{00b7} feat/a-reasonably-long-branch-name".to_string()),
+            current_cwd: Some(cwd.display().to_string()),
+            agent: None,
+            created_at_ms: updated_at_ms,
+            updated_at_ms,
+        };
+        crate::manifest::write_manifest(home, &manifest).unwrap();
+        session
+    }
+
+    fn summary_at(
+        workspace: Option<&WorkspaceId>,
+        live: bool,
+        updated_at_ms: u64,
+    ) -> SessionSummary {
+        SessionSummary {
+            manifest: SessionManifest {
+                schema: 1,
+                session: SessionId::new(),
+                workspace: workspace.cloned(),
+                generation: SessionGeneration::FIRST,
+                host_instance: HostInstanceToken::new(),
+                cwd: "/tmp".to_string(),
+                launch: SessionLaunch {
+                    shell: "sh".to_string(),
+                    args: Vec::new(),
+                    env: BTreeMap::new(),
+                    cols: 80,
+                    rows: 24,
+                },
+                lifecycle: if live {
+                    SessionLifecycle::Running
+                } else {
+                    SessionLifecycle::Exited {
+                        code: 0,
+                        signal: None,
+                    }
+                },
+                process: None,
+                title: None,
+                current_cwd: None,
+                agent: None,
+                created_at_ms: updated_at_ms,
+                updated_at_ms,
+            },
+            live,
+            owned: true,
+        }
+    }
+
+    #[test]
+    fn a_listing_never_drops_a_running_session_however_many_are_open() {
+        let workspace = WorkspaceId::new();
+        let summaries: Vec<SessionSummary> = (0..40)
+            .map(|index| summary_at(Some(&workspace), true, index))
+            .collect();
+
+        let windowed = inactive_window(summaries, INACTIVE_ROWS_PER_WORKSPACE);
+
+        assert_eq!(
+            windowed.len(),
+            40,
+            "every running session is listed whatever the window allows"
+        );
+    }
+
+    #[test]
+    fn the_inactive_window_counts_each_workspace_on_its_own() {
+        let first = WorkspaceId::new();
+        let second = WorkspaceId::new();
+        let mut summaries = Vec::new();
+        for index in 0..20u64 {
+            summaries.push(summary_at(Some(&first), false, index));
+            summaries.push(summary_at(Some(&second), false, index));
+            summaries.push(summary_at(None, false, index));
+        }
+
+        let windowed = inactive_window(summaries, INACTIVE_ROWS_PER_WORKSPACE);
+
+        for wanted in [Some(&first), Some(&second), None] {
+            let kept = windowed
+                .iter()
+                .filter(|summary| summary.manifest.workspace.as_ref() == wanted)
+                .count();
+            assert_eq!(
+                kept, INACTIVE_ROWS_PER_WORKSPACE,
+                "each workspace keeps its own preview of finished sessions"
+            );
+        }
+    }
+
+    #[test]
+    fn the_inactive_window_keeps_the_most_recent_of_a_workspace() {
+        let workspace = WorkspaceId::new();
+        let mut summaries: Vec<SessionSummary> = (0..20u64)
+            .map(|index| summary_at(Some(&workspace), false, index))
+            .collect();
+        let newest = summaries[19].manifest.session.clone();
+        let oldest = summaries[0].manifest.session.clone();
+        summaries.rotate_left(7);
+
+        let windowed = inactive_window(summaries, INACTIVE_ROWS_PER_WORKSPACE);
+
+        assert!(
+            windowed.iter().any(|s| s.manifest.session == newest),
+            "the freshest finished session is previewed"
+        );
+        assert!(
+            !windowed.iter().any(|s| s.manifest.session == oldest),
+            "the stalest finished session falls outside the window"
+        );
+    }
+
+    #[test]
+    fn a_heavy_day_of_agents_still_fits_one_frame() {
+        const OPEN_TERMINALS: usize = 50;
+        const WORKSPACES: usize = 8;
+
+        let home = tempfile::tempdir().unwrap();
+        let endpoint = PathBuf::from("test-endpoint");
+        let host = SessionHost::open(home.path(), &endpoint).unwrap();
+        let owner = host.instance().clone();
+
+        let mut summaries = Vec::new();
+        for _ in 0..OPEN_TERMINALS {
+            summaries.push(summary_at(Some(&WorkspaceId::new()), true, now_ms()));
+        }
+        for _ in 0..WORKSPACES {
+            let workspace = WorkspaceId::new();
+            for index in 0..40u64 {
+                summaries.push(summary_at(Some(&workspace), false, index));
+            }
+        }
+
+        let rows: Vec<SessionRow> = inactive_window(summaries, INACTIVE_ROWS_PER_WORKSPACE)
+            .into_iter()
+            .map(|summary| SessionRow::of(summary, &owner))
+            .collect();
+        assert_eq!(
+            rows.len(),
+            OPEN_TERMINALS + WORKSPACES * INACTIVE_ROWS_PER_WORKSPACE
+        );
+
+        let frame = serde_json::to_vec(&json!({"sessions": rows})).unwrap();
+        assert!(
+            frame.len() * 2 < crate::protocol::MAX_CONTROL_FRAME_BYTES,
+            "{OPEN_TERMINALS} agents plus a preview per workspace must fit a frame twice over, got {} bytes",
+            frame.len()
+        );
+    }
+
+    #[test]
+    fn a_session_finished_yesterday_is_forgotten_and_a_fresh_one_is_kept() {
+        let home = tempfile::tempdir().unwrap();
+        let endpoint = PathBuf::from("test-endpoint");
+        let workspace = WorkspaceId::new();
+        let now = now_ms();
+        let yesterday = exited_manifest(
+            home.path(),
+            &workspace,
+            now - FINISHED_RECORD_MAX_AGE_MS - 60_000,
+        );
+        let recent = exited_manifest(home.path(), &workspace, now - 60_000);
+
+        let host = SessionHost::open(home.path(), &endpoint).unwrap();
+        let listed = host.list(None);
+
+        assert!(
+            listed.iter().any(|s| s.manifest.session == recent),
+            "a session that ended an hour ago is still there after a restart"
+        );
+        assert!(
+            !listed.iter().any(|s| s.manifest.session == yesterday),
+            "a session that ended more than a day ago is forgotten"
+        );
+        assert!(
+            !crate::manifest::manifest_path(home.path(), &yesterday).exists(),
+            "a forgotten record leaves no file behind"
+        );
+    }
+
+    #[test]
+    fn a_session_interrupted_before_a_week_away_is_still_there_on_return() {
+        let home = tempfile::tempdir().unwrap();
+        let endpoint = PathBuf::from("test-endpoint");
+        let workspace = WorkspaceId::new();
+        let week = 7 * 24 * 60 * 60 * 1000;
+        let now = now_ms();
+        let interrupted =
+            finished_manifest(home.path(), &workspace, SessionLifecycle::Lost, now - week);
+        let finished = exited_manifest(home.path(), &workspace, now - week);
+
+        let host = SessionHost::open(home.path(), &endpoint).unwrap();
+        let listed = host.list(None);
+
+        assert!(
+            listed.iter().any(|s| s.manifest.session == interrupted),
+            "a session left running before a week away is waiting on return"
+        );
+        assert!(
+            !listed.iter().any(|s| s.manifest.session == finished),
+            "a session that ended on its own that week is gone"
+        );
+    }
+
+    #[test]
+    fn a_session_the_machine_rebooted_under_is_kept_for_a_month() {
+        let home = tempfile::tempdir().unwrap();
+        let endpoint = PathBuf::from("test-endpoint");
+        let workspace = WorkspaceId::new();
+        let now = now_ms();
+        let kept = finished_manifest(
+            home.path(),
+            &workspace,
+            SessionLifecycle::Lost,
+            now - INTERRUPTED_RECORD_MAX_AGE_MS + 60_000,
+        );
+        let dropped = finished_manifest(
+            home.path(),
+            &workspace,
+            SessionLifecycle::Lost,
+            now - INTERRUPTED_RECORD_MAX_AGE_MS - 60_000,
+        );
+
+        let host = SessionHost::open(home.path(), &endpoint).unwrap();
+        let listed = host.list(None);
+
+        assert!(
+            listed.iter().any(|s| s.manifest.session == kept),
+            "an interrupted session is kept for a month"
+        );
+        assert!(
+            !listed.iter().any(|s| s.manifest.session == dropped),
+            "an interrupted session older than a month is finally forgotten"
+        );
+    }
+
+    #[test]
+    fn a_live_session_is_never_forgotten_however_old_it_is() {
+        let home = tempfile::tempdir().unwrap();
+        let endpoint = PathBuf::from("test-endpoint");
+        let host = SessionHost::open(home.path(), &endpoint).unwrap();
+        let live = host.create(shell_request(80, 24)).unwrap();
+        host.update(
+            &host.lock_sessions()[&live.manifest.session]
+                .manifest
+                .clone(),
+            |m| m.updated_at_ms = 1,
+        );
+
+        host.trim_terminated_records();
+
+        assert!(
+            host.list(None)
+                .iter()
+                .any(|s| s.manifest.session == live.manifest.session),
+            "an agent that has been running for days is never forgotten"
+        );
+
+        let _ = host.stop(&live.manifest.session, None);
+    }
+
+    #[test]
+    fn a_listing_leaves_the_launch_environment_out_so_many_sessions_still_fit_a_frame() {
+        let home = tempfile::tempdir().unwrap();
+        let endpoint = PathBuf::from("test-endpoint");
+        let host = SessionHost::open(home.path(), &endpoint).unwrap();
+
+        let mut request = shell_request(80, 24);
+        request.env = (0..40)
+            .map(|i| (format!("LAB_VAR_{i:02}"), "x".repeat(256)))
+            .collect();
+        let created = host.create(request).unwrap();
+
+        let listed = host.list(None);
+        assert_eq!(listed.len(), 1);
+        assert!(
+            listed[0].manifest.launch.env.is_empty(),
+            "a listing must not carry every session's environment"
+        );
+
+        let inspected = host.inspect(&created.manifest.session).unwrap();
+        assert_eq!(
+            inspected.manifest.launch.env.len(),
+            40,
+            "inspecting one session still answers with its environment"
+        );
+
+        let frame = serde_json::to_vec(&json!({"sessions": host.list(None)})).unwrap();
+        assert!(
+            frame.len() * 32 < crate::protocol::MAX_CONTROL_FRAME_BYTES,
+            "one listed session must leave room for many more, got {} bytes",
+            frame.len()
+        );
+
+        let _ = host.stop(&created.manifest.session, None);
     }
 
     #[test]

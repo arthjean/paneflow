@@ -386,16 +386,16 @@ impl PaneFlowApp {
                 Ok(sessions) => Some(
                     sessions
                         .into_iter()
-                        .filter(|summary| summary.owned)
-                        .map(|summary| OwnedSession {
-                            session: summary.manifest.session,
-                            generation: summary.manifest.generation,
-                            workspace: summary.manifest.workspace,
-                            title: summary.manifest.title,
-                            cwd: summary.manifest.current_cwd.unwrap_or(summary.manifest.cwd),
-                            live: summary.live,
-                            lifecycle: summary.manifest.lifecycle,
-                            updated_at_ms: summary.manifest.updated_at_ms,
+                        .filter(|row| row.owned)
+                        .map(|row| OwnedSession {
+                            session: row.session,
+                            generation: row.generation,
+                            workspace: row.workspace,
+                            title: row.title,
+                            cwd: row.cwd,
+                            live: row.live,
+                            lifecycle: row.lifecycle,
+                            updated_at_ms: row.updated_at_ms,
                         })
                         .collect::<Vec<_>>(),
                 ),

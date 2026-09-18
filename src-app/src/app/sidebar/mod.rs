@@ -167,6 +167,8 @@ const SIDEBAR_DROP_BAND_REACH: f32 = SIDEBAR_ROW_LINE_HEIGHT / 2.0 + SIDEBAR_ROW
 const SIDEBAR_WORKSPACE_ROW_CONTENT_WIDTH: f32 =
     SIDEBAR_WIDTH - SIDEBAR_ROW_MARGIN_X * 2.0 - SIDEBAR_ROW_PADDING_X * 2.0;
 const SIDEBAR_FOLDER_ICON_WIDTH: f32 = 17.0;
+const SIDEBAR_WORKSPACE_FOLDER_ICON_WIDTH: f32 = 15.0;
+const SIDEBAR_WORKSPACE_FOLDER_ICON_BASELINE_NUDGE: f32 = 2.0;
 
 fn sidebar_row_shell() -> gpui::Div {
     div()
@@ -448,7 +450,7 @@ where
         .filter(move |session| session.surface_id.is_some_and(|id| surfaces.contains(&id)))
 }
 
-fn tab_display_title(tab: &Tab, tab_idx: usize) -> String {
+pub(crate) fn tab_display_title(tab: &Tab, tab_idx: usize) -> String {
     if tab.title().trim().is_empty() {
         format!("Tab {}", tab_idx + 1)
     } else {
@@ -1078,8 +1080,10 @@ impl PaneFlowApp {
             .justify_center()
             .child(
                 svg()
-                    .size(px(SIDEBAR_FOLDER_ICON_WIDTH))
+                    .size(px(SIDEBAR_WORKSPACE_FOLDER_ICON_WIDTH))
                     .flex_none()
+                    .relative()
+                    .top(px(SIDEBAR_WORKSPACE_FOLDER_ICON_BASELINE_NUDGE))
                     .path(folder_path)
                     .text_color(ui.muted),
             );

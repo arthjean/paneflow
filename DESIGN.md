@@ -181,6 +181,7 @@ hides the workspace name while Settings is open.
 | Tooltip | After 800 ms | Squircle 14 on the title bar color with a 1 px border | `src-app/src/ui_primitives.rs` |
 | Terminal search | Top right of the pane, 8 px inset | Squircle 14 on `subtle` with a 1 px `border`, 325 by 36, padding 14 left and 4 right, gap 8: the field, a `.*` mark only while regex mode is on, the match count, a 1 px divider, then previous, next and close as 28 px squircle icon buttons with the sidebar hover tint | `src-app/src/terminal/view.rs` |
 | Toast | Bottom right, 18 px inset | Radius 8 on `subtle`, minimum width 220, one header row and an optional action row | `src-app/src/app/notifications.rs` |
+| Worktree removal dialog | Centered | The card of the close dialog: squircle at `PANE_CARD_RADIUS`, 460 wide, padding 20 over a 0.55 black scrim, the blocking workspaces, tabs and sessions on `subtle` at 0.5 on radius 8, one kind word per row at 10 px muted, then `Cancel` and a destructive `Remove` | `src-app/src/app/worktree_remove.rs` |
 | System Info dialog | Centered | Squircle 20, 560 wide, padding 20, label column 116 | `src-app/src/app/system_info_dialog.rs` |
 | About dialog | Centered | 382 wide, radius 10, 1 px border, large shadow, 32 px header band, 225 px body, hardcoded grays; **Migration**, see section 10 | `src-app/src/app/about_dialog.rs` |
 
@@ -793,8 +794,10 @@ mark and the `Branch name (optional)` input, under it a 28 px quiet row
 `from <branch>` with a chevron (filled at `text` 0.05 on hover or while its
 select of the repository's branches is open, defaulting to the project's
 checkout), a `Worktree` row of the same shape with a 26 by 16 toggle and a
-10 px muted caption (`own folder`, or `switch this checkout` when off,
-persisted as `worktrees.for_new_branches`), a hairline, and the eyebrow
+10 px muted caption (`separate folder`, or `switch this checkout` when off,
+persisted as `worktrees.for_new_branches`), under it the 10 px muted
+destination path of the worktree to be created while the toggle is on
+(elided from the left of the row when it overflows), a hairline, and the eyebrow
 `Open with` over the presets. Escape or the chevron folds the form back; a preset
 creates the branch and its worktree, then opens there. An empty name starts
 a detached checkout at the base. The `Create branch

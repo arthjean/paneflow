@@ -121,6 +121,7 @@ pub(crate) struct NewBranchDraft {
     pub(crate) base: Option<String>,
     pub(crate) base_open: bool,
     pub(crate) worktree: bool,
+    pub(crate) worktrees_parent: Option<std::path::PathBuf>,
 }
 
 pub(crate) struct PanePaletteState {
@@ -509,10 +510,44 @@ impl PaneFlowApp {
                 base,
                 base_open: false,
                 worktree: self.cached_config.worktrees.new_branches_use_worktrees(),
+                worktrees_parent: None,
             });
         }
+        self.spawn_new_branch_destination(cx);
         window.focus(&focus, cx);
         cx.notify();
+    }
+
+    fn spawn_new_branch_destination(&mut self, cx: &mut Context<Self>) {
+        let Some(repo_root) = self
+            .pane_palette
+            .as_ref()
+            .and_then(|palette| self.pane_palette_tab(palette))
+            .and_then(|(ws_idx, _)| self.workspaces.get(ws_idx))
+            .and_then(|ws| ws.repo_root.clone())
+        else {
+            return;
+        };
+        cx.spawn(
+            async move |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
+                let parent =
+                    smol::unblock(move || crate::workspace::worktree::worktrees_parent(&repo_root))
+                        .await;
+                let _ = cx.update(|cx| {
+                    this.update(cx, |app: &mut Self, cx: &mut Context<Self>| {
+                        if let Some(draft) = app
+                            .pane_palette
+                            .as_mut()
+                            .and_then(|palette| palette.new_branch.as_mut())
+                        {
+                            draft.worktrees_parent = Some(parent);
+                            cx.notify();
+                        }
+                    })
+                });
+            },
+        )
+        .detach();
     }
 
     fn pane_palette_close_new_branch(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1088,12 +1123,27 @@ impl PaneFlowApp {
                     .text_size(px(10.))
                     .text_color(ui.muted)
                     .child(if worktree {
-                        "own folder"
+                        "separate folder"
                     } else {
                         "switch this checkout"
                     }),
             )
             .child(compact_toggle(worktree, ui));
+
+        let destination = worktree
+            .then(|| draft.worktrees_parent.clone())
+            .flatten()
+            .map(|parent| {
+                let name = draft.name.read(cx).value();
+                let name = name.trim();
+                if name.is_empty() {
+                    parent
+                } else {
+                    crate::workspace::worktree::worktree_dir_under(&parent, name)
+                }
+                .to_string_lossy()
+                .into_owned()
+            });
 
         let form = div()
             .flex_none()
@@ -1104,6 +1154,20 @@ impl PaneFlowApp {
             .child(branch_field)
             .child(base_trigger)
             .child(worktree_row)
+            .when_some(destination, |form, path| {
+                form.child(
+                    div()
+                        .w(px(PICKER_WIDTH))
+                        .px(px(8.))
+                        .pt(px(2.))
+                        .overflow_x_hidden()
+                        .whitespace_nowrap()
+                        .text_ellipsis()
+                        .text_size(px(10.))
+                        .text_color(ui.muted)
+                        .child(path),
+                )
+            })
             .child(
                 div()
                     .h(px(1.))

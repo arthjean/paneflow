@@ -206,7 +206,7 @@ impl PaneFlowApp {
                             .font_weight(gpui::FontWeight::MEDIUM)
                             .text_color(ui.text)
                             .on_click(cx.listener(move |this, _: &ClickEvent, _window, cx| {
-                                this.remove_managed_worktree(ws_id, path.clone(), cx);
+                                this.request_worktree_removal(ws_id, path.clone(), cx);
                             }))
                             .child("Remove"),
                     ),

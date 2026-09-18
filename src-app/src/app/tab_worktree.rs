@@ -469,7 +469,11 @@ impl PaneFlowApp {
         .detach();
     }
 
-    fn notify_snapshot_kept(&mut self, snapshot: Option<Snapshot>, cx: &mut Context<Self>) {
+    pub(crate) fn notify_snapshot_kept(
+        &mut self,
+        snapshot: Option<Snapshot>,
+        cx: &mut Context<Self>,
+    ) {
         if let Some(snapshot) = snapshot {
             self.show_toast(
                 format!(
@@ -638,7 +642,11 @@ impl PaneFlowApp {
         .detach();
     }
 
-    fn forget_managed_paths(&mut self, removed: &[std::path::PathBuf], cx: &mut Context<Self>) {
+    pub(crate) fn forget_managed_paths(
+        &mut self,
+        removed: &[std::path::PathBuf],
+        cx: &mut Context<Self>,
+    ) {
         let mut touched = Vec::new();
         for (ws_idx, ws) in self.workspaces.iter_mut().enumerate() {
             let before = ws.managed_worktrees.len();
@@ -689,7 +697,7 @@ impl PaneFlowApp {
                     this.update(cx, |app: &mut Self, cx: &mut Context<Self>| {
                         match removed {
                             Ok(snapshot) => {
-                                app.forget_removed_worktree(ws_id, &path, cx);
+                                app.forget_removed_worktree(&path, cx);
                                 app.forget_managed_paths(std::slice::from_ref(&path), cx);
                                 app.notify_snapshot_kept(snapshot, cx);
                             }
@@ -824,7 +832,6 @@ impl PaneFlowApp {
         let Some(path) = ws.tabs().get(tab_idx).and_then(|tab| tab.worktree.clone()) else {
             return;
         };
-        let ws_id = ws.id;
         if self.workspaces.iter().any(|ws| ws.worktree_root == path) {
             self.show_toast(
                 format!("{} is open as a workspace - close it first", path.display()),
@@ -841,7 +848,7 @@ impl PaneFlowApp {
                     this.update(cx, |app: &mut Self, cx: &mut Context<Self>| {
                         match removed {
                             Ok(snapshot) => {
-                                app.forget_removed_worktree(ws_id, &path, cx);
+                                app.forget_removed_worktree(&path, cx);
                                 app.notify_snapshot_kept(snapshot, cx);
                             }
                             Err(message) => app.show_toast(message, cx),
@@ -854,27 +861,34 @@ impl PaneFlowApp {
         .detach();
     }
 
-    fn forget_removed_worktree(
+    pub(crate) fn forget_removed_worktree(
         &mut self,
-        ws_id: u64,
         path: &std::path::Path,
         cx: &mut Context<Self>,
     ) {
-        let Some(ws_idx) = self.workspaces.iter().position(|ws| ws.id == ws_id) else {
-            return;
-        };
-        let orphaned: Vec<usize> = self.workspaces[ws_idx]
-            .tabs()
+        let orphaned: Vec<(usize, usize)> = self
+            .workspaces
             .iter()
             .enumerate()
-            .filter(|(_, tab)| tab.worktree.as_deref() == Some(path))
-            .map(|(idx, _)| idx)
+            .flat_map(|(ws_idx, ws)| {
+                ws.tabs()
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, tab)| tab.worktree.as_deref() == Some(path))
+                    .map(move |(tab_idx, _)| (ws_idx, tab_idx))
+                    .collect::<Vec<_>>()
+            })
             .collect();
-        for tab_idx in orphaned {
-            self.set_tab_worktree(ws_idx, tab_idx, None, cx);
+        for (ws_idx, tab_idx) in &orphaned {
+            self.set_tab_worktree(*ws_idx, *tab_idx, None, cx);
         }
         self.prune_worktree_states();
-        self.spawn_worktree_listing(ws_idx, cx);
+        let mut listed: Vec<usize> = orphaned.iter().map(|(ws_idx, _)| *ws_idx).collect();
+        listed.sort_unstable();
+        listed.dedup();
+        for ws_idx in listed {
+            self.spawn_worktree_listing(ws_idx, cx);
+        }
     }
 }
 

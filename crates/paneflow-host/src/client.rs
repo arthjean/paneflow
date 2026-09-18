@@ -164,7 +164,7 @@ impl HostClient {
     pub fn list(
         &mut self,
         workspace: Option<&WorkspaceId>,
-    ) -> Result<Vec<SessionSummary>, HostClientError> {
+    ) -> Result<Vec<crate::host::SessionRow>, HostClientError> {
         let value = self.call("session.list", json!({"workspace": workspace}))?;
         serde_json::from_value(value["sessions"].clone())
             .map_err(|e| HostClientError::Protocol(format!("invalid session list: {e}")))

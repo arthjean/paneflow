@@ -25,7 +25,17 @@ use crate::protocol::{
 use crate::runtime::RuntimeError;
 use paneflow_ipc_client::line_wire::{LineRead, Wire};
 
-const MAX_CONNECTIONS: usize = 32;
+const CONTROL_CONNECTIONS_PER_PANE: usize = 2;
+const PANES_A_HEAVY_WORKSPACE_ATTACHES: usize = 48;
+const CONTROL_CALLS_IN_FLIGHT: usize = 8;
+
+const MAX_CONNECTIONS: usize = 128;
+
+const _: () = assert!(
+    MAX_CONNECTIONS
+        >= PANES_A_HEAVY_WORKSPACE_ATTACHES * CONTROL_CONNECTIONS_PER_PANE
+            + CONTROL_CALLS_IN_FLIGHT
+);
 const IDLE_TIMEOUT: Duration = Duration::from_secs(60);
 const FOLLOW_POLL: Duration = Duration::from_millis(15);
 pub const FOLLOW_KEEPALIVE: Duration = Duration::from_secs(2);
@@ -547,7 +557,12 @@ fn dispatch(host: &SessionHost, method: &str, params: &Value) -> Result<Value, D
                 ),
                 None => None,
             };
-            Ok(json!({"sessions": host.list(workspace.as_ref())}))
+            Ok(json!({
+                "sessions": host.rows(
+                    workspace.as_ref(),
+                    crate::host::INACTIVE_ROWS_PER_WORKSPACE,
+                )
+            }))
         }
         "session.create" => {
             let request: CreateSession = serde_json::from_value(params.clone())
@@ -853,6 +868,7 @@ mod tests {
     use super::*;
     use crate::client::{HostClient, HostClientError};
     use crate::protocol::{ERR_HANDSHAKE_REQUIRED, ERR_SESSION_LIVE, MAX_CONTROL_FRAME_BYTES};
+
     use std::sync::atomic::AtomicU64;
     use std::time::Instant;
 

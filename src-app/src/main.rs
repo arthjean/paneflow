@@ -604,6 +604,8 @@ struct PaneFlowApp {
     resume_batch: Option<crate::app::hosted_sessions::ResumeBatch>,
     close_dialog: Option<crate::app::close_policy::CloseDialog>,
     close_dialog_focus: FocusHandle,
+    worktree_remove_dialog: Option<crate::app::worktree_remove::WorktreeRemoveDialog>,
+    worktree_remove_focus: FocusHandle,
     host_agents: crate::app::host_agents::HostAgentView,
     show_about_dialog: bool,
     system_info_dialog: Option<crate::app::system_info_dialog::SystemInfoDialog>,
@@ -1387,6 +1389,10 @@ impl Render for PaneFlowApp {
 
         if self.close_dialog.is_some() {
             app_content = app_content.child(self.render_close_dialog(window, cx));
+        }
+
+        if self.worktree_remove_dialog.is_some() {
+            app_content = app_content.child(self.render_worktree_remove_dialog(window, cx));
         }
 
         if let Some(menu) = self.workspace_menu_open

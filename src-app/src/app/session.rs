@@ -2007,7 +2007,7 @@ mod tests {
     }
 
     #[test]
-    fn restored_managed_worktree_must_match_paneflow_worktree_dir() {
+    fn restored_managed_worktree_must_be_a_paneflow_worktree_of_the_repo() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let _root =
             crate::workspace::worktree::test_support::scoped_root(tmp.path().join("worktrees"));
@@ -2041,13 +2041,46 @@ mod tests {
             crate::workspace::worktree::TeardownPolicy::Auto
         );
 
-        let outside = paneflow_config::schema::ManagedWorktreeDef {
-            path: tmp.path().join("external").to_string_lossy().into_owned(),
+        let plain_path = tmp.path().join("external");
+        std::fs::create_dir_all(&plain_path).expect("plain dir");
+        let plain = paneflow_config::schema::ManagedWorktreeDef {
+            path: plain_path.to_string_lossy().into_owned(),
             ..valid.clone()
         };
         assert!(
-            rehydrate_managed_worktree(&outside).is_none(),
-            "a restored worktree path outside Paneflow's generated dir is dropped"
+            rehydrate_managed_worktree(&plain).is_none(),
+            "a restored path that is not a worktree at all is dropped"
+        );
+
+        let foreign_path = tmp.path().join("foreign");
+        let foreign_git_dir = tmp.path().join("other/.git/worktrees/foreign");
+        std::fs::create_dir_all(&foreign_path).expect("foreign worktree dir");
+        std::fs::create_dir_all(&foreign_git_dir).expect("foreign git dir");
+        std::fs::write(
+            foreign_path.join(".git"),
+            format!("gitdir: {}\n", foreign_git_dir.display()),
+        )
+        .expect("gitdir pointer");
+        std::fs::write(
+            crate::workspace::worktree::owner_marker_path(&foreign_path).expect("marker path"),
+            "owner=paneflow\n",
+        )
+        .expect("owner marker");
+        let foreign = paneflow_config::schema::ManagedWorktreeDef {
+            path: foreign_path.to_string_lossy().into_owned(),
+            ..valid.clone()
+        };
+        assert!(
+            rehydrate_managed_worktree(&foreign).is_none(),
+            "a restored worktree of another repository is dropped"
+        );
+
+        crate::workspace::worktree::set_worktrees_root(Some(
+            tmp.path().join("relocated-worktrees"),
+        ));
+        assert!(
+            rehydrate_managed_worktree(&valid).is_some(),
+            "a worktree created under the previous root still restores"
         );
 
         let unknown_policy = paneflow_config::schema::ManagedWorktreeDef {
