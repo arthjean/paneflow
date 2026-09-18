@@ -25,7 +25,17 @@ use crate::protocol::{
 use crate::runtime::RuntimeError;
 use paneflow_ipc_client::line_wire::{LineRead, Wire};
 
-const MAX_CONNECTIONS: usize = 32;
+const CONTROL_CONNECTIONS_PER_PANE: usize = 2;
+const PANES_A_HEAVY_WORKSPACE_ATTACHES: usize = 48;
+const CONTROL_CALLS_IN_FLIGHT: usize = 8;
+
+const MAX_CONNECTIONS: usize = 128;
+
+const _: () = assert!(
+    MAX_CONNECTIONS
+        >= PANES_A_HEAVY_WORKSPACE_ATTACHES * CONTROL_CONNECTIONS_PER_PANE
+            + CONTROL_CALLS_IN_FLIGHT
+);
 const IDLE_TIMEOUT: Duration = Duration::from_secs(60);
 const FOLLOW_POLL: Duration = Duration::from_millis(15);
 pub const FOLLOW_KEEPALIVE: Duration = Duration::from_secs(2);
@@ -858,6 +868,7 @@ mod tests {
     use super::*;
     use crate::client::{HostClient, HostClientError};
     use crate::protocol::{ERR_HANDSHAKE_REQUIRED, ERR_SESSION_LIVE, MAX_CONTROL_FRAME_BYTES};
+
     use std::sync::atomic::AtomicU64;
     use std::time::Instant;
 
