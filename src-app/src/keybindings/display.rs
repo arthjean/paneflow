@@ -404,8 +404,13 @@ mod tests {
             .iter()
             .find(|e| e.description == "Split horizontal")
             .expect("Split horizontal should be in effective list");
+        let expected = if cfg!(target_os = "macos") {
+            "\u{2303}\u{2325}H"
+        } else {
+            "Ctrl+Alt+H"
+        };
         assert_eq!(
-            split_h.key, "Ctrl+Alt+H",
+            split_h.key, expected,
             "User override should replace the default key"
         );
     }
