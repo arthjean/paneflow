@@ -160,6 +160,8 @@ pub struct SessionHost {
     _owner: OwnerLock,
 }
 
+const TERMINATED_RECORD_LIMIT: usize = 25;
+
 fn without_launch_environment(mut summary: SessionSummary) -> SessionSummary {
     summary.manifest.launch.env = BTreeMap::new();
     summary
@@ -206,6 +208,7 @@ impl SessionHost {
             _owner: owner,
         });
         host.adopt_previous_records();
+        host.trim_terminated_records();
         host.write_instance_record()?;
         Ok(host)
     }
@@ -347,6 +350,48 @@ impl SessionHost {
             live,
             owned,
         }
+    }
+
+    fn trim_terminated_records(&self) {
+        let dropped = {
+            let mut sessions = self.lock_sessions();
+            let mut terminated: Vec<(u64, SessionId)> = sessions
+                .iter()
+                .filter(|(_, record)| !record.is_live())
+                .filter_map(|(id, record)| {
+                    let manifest = record.manifest.lock().ok()?;
+                    (!manifest.lifecycle.is_running()).then(|| (manifest.updated_at_ms, id.clone()))
+                })
+                .collect();
+            if terminated.len() <= TERMINATED_RECORD_LIMIT {
+                return;
+            }
+            terminated.sort_unstable_by_key(|(updated_at, _)| std::cmp::Reverse(*updated_at));
+            let dropped: Vec<SessionId> = terminated
+                .split_off(TERMINATED_RECORD_LIMIT)
+                .into_iter()
+                .map(|(_, id)| id)
+                .collect();
+            for id in &dropped {
+                sessions.remove(id);
+            }
+            dropped
+        };
+        let _guard = self.lock_writer();
+        for id in &dropped {
+            let path = crate::manifest::manifest_path(&self.home, id);
+            match std::fs::remove_file(&path) {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => {
+                    log::warn!("paneflow-host: cannot delete the manifest of {id}: {error}")
+                }
+            }
+        }
+        log::info!(
+            "paneflow-host: dropped {} finished session records past the {TERMINATED_RECORD_LIMIT} kept",
+            dropped.len()
+        );
     }
 
     pub fn list(&self, workspace: Option<&WorkspaceId>) -> Vec<SessionSummary> {
@@ -538,7 +583,11 @@ impl SessionHost {
             rows,
             scrollback_lines: DEFAULT_SCROLLBACK_LINES,
         };
-        self.launch(session, manifest, spec, SessionGeneration::FIRST)
+        let created = self.launch(session, manifest, spec, SessionGeneration::FIRST);
+        if created.is_ok() {
+            self.trim_terminated_records();
+        }
+        created
     }
 
     pub fn restart(
@@ -1090,6 +1139,91 @@ mod tests {
             std::thread::sleep(Duration::from_millis(30));
         }
         false
+    }
+
+    fn exited_manifest(home: &Path, index: u64) -> SessionId {
+        let session = SessionId::new();
+        let manifest = SessionManifest {
+            schema: 1,
+            session: session.clone(),
+            workspace: None,
+            generation: SessionGeneration::FIRST,
+            host_instance: HostInstanceToken::new(),
+            cwd: home.display().to_string(),
+            launch: SessionLaunch {
+                shell: "sh".to_string(),
+                args: Vec::new(),
+                env: BTreeMap::new(),
+                cols: 80,
+                rows: 24,
+            },
+            lifecycle: SessionLifecycle::Exited {
+                code: 0,
+                signal: None,
+            },
+            process: None,
+            title: None,
+            current_cwd: None,
+            agent: None,
+            created_at_ms: index,
+            updated_at_ms: index,
+        };
+        crate::manifest::write_manifest(home, &manifest).unwrap();
+        session
+    }
+
+    #[test]
+    fn finished_session_records_stop_piling_up_across_restarts() {
+        let home = tempfile::tempdir().unwrap();
+        let endpoint = PathBuf::from("test-endpoint");
+        let kept_newest = TERMINATED_RECORD_LIMIT as u64 + 20;
+        let oldest = exited_manifest(home.path(), 1);
+        let newest = exited_manifest(home.path(), kept_newest);
+        for index in 2..kept_newest {
+            exited_manifest(home.path(), index);
+        }
+
+        let host = SessionHost::open(home.path(), &endpoint).unwrap();
+        let listed = host.list(None);
+
+        assert_eq!(
+            listed.len(),
+            TERMINATED_RECORD_LIMIT,
+            "only the most recent finished records survive a restart"
+        );
+        assert!(
+            listed.iter().any(|s| s.manifest.session == newest),
+            "the newest finished record is kept"
+        );
+        assert!(
+            !listed.iter().any(|s| s.manifest.session == oldest),
+            "the oldest finished record is dropped"
+        );
+        assert!(
+            !crate::manifest::manifest_path(home.path(), &oldest).exists(),
+            "a dropped record leaves no file behind"
+        );
+    }
+
+    #[test]
+    fn a_live_session_is_never_dropped_to_make_room() {
+        let home = tempfile::tempdir().unwrap();
+        let endpoint = PathBuf::from("test-endpoint");
+        for index in 1..(TERMINATED_RECORD_LIMIT as u64 + 10) {
+            exited_manifest(home.path(), index);
+        }
+        let host = SessionHost::open(home.path(), &endpoint).unwrap();
+        let live = host.create(shell_request(80, 24)).unwrap();
+        host.trim_terminated_records();
+
+        assert!(
+            host.list(None)
+                .iter()
+                .any(|s| s.manifest.session == live.manifest.session),
+            "the running session stays whatever the finished ones do"
+        );
+
+        let _ = host.stop(&live.manifest.session, None);
     }
 
     #[test]
