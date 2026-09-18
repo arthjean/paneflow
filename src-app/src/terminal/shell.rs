@@ -624,7 +624,12 @@ fn wsl_startup_args(bashrc: String, zdotdir: String, fish_init: String) -> Vec<S
 }
 
 fn powershell_startup_args(init_command: String) -> Vec<String> {
-    vec!["-NoExit".into(), "-Command".into(), init_command]
+    vec![
+        "-NoLogo".into(),
+        "-NoExit".into(),
+        "-Command".into(),
+        init_command,
+    ]
 }
 
 fn quote_fish_arg(arg: &str) -> String {
@@ -825,7 +830,7 @@ mod tests {
     fn powershell_startup_always_loads_the_user_profile() {
         assert_eq!(
             powershell_startup_args("init".into()),
-            vec!["-NoExit", "-Command", "init"]
+            vec!["-NoLogo", "-NoExit", "-Command", "init"]
         );
     }
 }
