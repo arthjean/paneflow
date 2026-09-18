@@ -610,7 +610,7 @@ mod tests {
     use crate::terminal::element::apca_contrast;
     use crate::theme::builtin::{
         claude_dark, claude_light, cursor_dark, cursor_light, paneflow_dark, paneflow_light,
-        theme_by_name, vercel_dark, vercel_light,
+        tailwind_dark, tailwind_light, theme_by_name, vercel_dark, vercel_light,
     };
 
     #[test]
@@ -733,6 +733,8 @@ mod tests {
             ("Claude Light", apply_surface_overrides(claude_light())),
             ("Cursor Dark", apply_surface_overrides(cursor_dark())),
             ("Cursor Light", apply_surface_overrides(cursor_light())),
+            ("Tailwind Dark", apply_surface_overrides(tailwind_dark())),
+            ("Tailwind Light", apply_surface_overrides(tailwind_light())),
         ] {
             assert_selection_invariant(&theme, label);
         }
@@ -856,6 +858,8 @@ mod tests {
             ("Claude Light", claude_light()),
             ("Cursor Dark", cursor_dark()),
             ("Cursor Light", cursor_light()),
+            ("Tailwind Dark", tailwind_dark()),
+            ("Tailwind Light", tailwind_light()),
         ] {
             let p = theme.syntax;
             let core = [
@@ -881,6 +885,8 @@ mod tests {
             ("Claude Light", claude_light()),
             ("Cursor Dark", cursor_dark()),
             ("Cursor Light", cursor_light()),
+            ("Tailwind Dark", tailwind_dark()),
+            ("Tailwind Light", tailwind_light()),
         ] {
             for (i, slot) in theme.syntax.all_slots().iter().enumerate() {
                 assert_ne!(*slot, default, "{label}: syntax slot #{i} left at default");

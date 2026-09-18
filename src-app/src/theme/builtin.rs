@@ -11,6 +11,8 @@ pub static THEMES: &[ThemeEntry] = &[
     ("Claude Light", claude_light),
     ("Cursor Dark", cursor_dark),
     ("Cursor Light", cursor_light),
+    ("Tailwind Dark", tailwind_dark),
+    ("Tailwind Light", tailwind_light),
 ];
 
 pub const DEFAULT_THEME: &str = "Paneflow Dark";
@@ -47,6 +49,11 @@ pub static PRESETS: &[ThemePreset] = &[
         name: "Cursor",
         light: "Cursor Light",
         dark: "Cursor Dark",
+    },
+    ThemePreset {
+        name: "Tailwind",
+        light: "Tailwind Light",
+        dark: "Tailwind Dark",
     },
 ];
 
@@ -598,6 +605,161 @@ fn cursor_light_ui() -> UiColors {
         agent_error: h(0xd20f39),
         agent_claude: h(0xfe640b),
         agent_codex: h(0x0f6fc5),
+    }
+}
+
+fn tailwind_syntax(base: SyntaxPalette, text: gpui::Hsla) -> SyntaxPalette {
+    SyntaxPalette {
+        variable: text,
+        punctuation: text,
+        namespace: text,
+        ..base
+    }
+}
+
+pub fn tailwind_dark() -> TerminalTheme {
+    let mut theme = TerminalTheme {
+        ui: Some(tailwind_dark_ui()),
+        background: h(0x1a1b1d),
+        foreground: h(0xfafafa),
+        bright_foreground: h(0xffffff),
+        dim_foreground: h(0x6e6e76),
+        ansi_background: h(0x1a1b1d),
+        cursor: h(0xfafafa),
+        selection: h(0x3a3a40),
+        selection_foreground: gpui::Hsla::default(),
+        scrollbar_thumb: ha(0xfafafa, 0.28),
+        scrollbar_track: ha(0xfafafa, 0.10),
+        link_text: h(0x60a5fa),
+        title_bar_background: h(0x121314),
+        title_bar_inactive_background: h(0x121314),
+        black: h(0x1c1c22),
+        red: h(0xef4444),
+        green: h(0x22c55e),
+        yellow: h(0xeab308),
+        blue: h(0x3b82f6),
+        magenta: h(0xa855f7),
+        cyan: h(0x06b6d4),
+        white: h(0xa1a1aa),
+        bright_black: h(0x6e6e76),
+        bright_red: h(0xf87171),
+        bright_green: h(0x4ade80),
+        bright_yellow: h(0xfacc15),
+        bright_blue: h(0x60a5fa),
+        bright_magenta: h(0xc084fc),
+        bright_cyan: h(0x22d3ee),
+        bright_white: h(0xfafafa),
+        syntax: tailwind_syntax(SyntaxPalette::catppuccin_mocha(), h(0xfafafa)),
+    };
+    theme.recompute_selection_foreground();
+    theme
+}
+
+fn tailwind_dark_ui() -> UiColors {
+    UiColors {
+        use_theme_diff_washes: true,
+        base: h(0x121314),
+        surface: h(0x1a1b1d),
+        overlay: h(0x1f2023),
+        border: h(0x2a2b2e),
+        subtle: h(0x232426),
+        muted: h(0xa1a1aa),
+        text: h(0xfafafa),
+        accent: h(0x3b82f6),
+        tool_card_header_bg: h(0x232426),
+        vc_added: h(0x22c55e),
+        vc_modified: h(0xeab308),
+        vc_deleted: h(0xef4444),
+        vc_conflict: h(0xf97316),
+        vc_added_background: ha(0x22c55e, 0.16),
+        vc_deleted_background: ha(0xef4444, 0.16),
+        vc_modified_background: ha(0xeab308, 0.16),
+        vc_word_added: ha(0x22c55e, 0.40),
+        vc_word_deleted: ha(0xef4444, 0.40),
+        group_1: h(0x60a5fa),
+        group_2: h(0x4ade80),
+        group_3: h(0xfacc15),
+        group_4: h(0xf87171),
+        group_5: h(0xc084fc),
+        group_6: h(0x22d3ee),
+        group_7: h(0xfb923c),
+        group_8: h(0xa1a1aa),
+        agent_error: h(0xf87171),
+        agent_claude: h(0xfb923c),
+        agent_codex: h(0x60a5fa),
+    }
+}
+
+pub fn tailwind_light() -> TerminalTheme {
+    let mut theme = TerminalTheme {
+        ui: Some(tailwind_light_ui()),
+        background: h(0xffffff),
+        foreground: h(0x09090b),
+        bright_foreground: h(0x000000),
+        dim_foreground: h(0x71717a),
+        ansi_background: h(0xffffff),
+        cursor: h(0x09090b),
+        selection: h(0xd4d4d8),
+        selection_foreground: gpui::Hsla::default(),
+        scrollbar_thumb: ha(0x09090b, 0.28),
+        scrollbar_track: ha(0x09090b, 0.10),
+        link_text: h(0x2563eb),
+        title_bar_background: h(0xf4f4f5),
+        title_bar_inactive_background: h(0xfafafa),
+        black: h(0x09090b),
+        red: h(0xdc2626),
+        green: h(0x16a34a),
+        yellow: h(0xca8a04),
+        blue: h(0x2563eb),
+        magenta: h(0x9333ea),
+        cyan: h(0x0891b2),
+        white: h(0xe4e4e7),
+        bright_black: h(0x71717a),
+        bright_red: h(0xef4444),
+        bright_green: h(0x22c55e),
+        bright_yellow: h(0xeab308),
+        bright_blue: h(0x3b82f6),
+        bright_magenta: h(0xa855f7),
+        bright_cyan: h(0x06b6d4),
+        bright_white: h(0xfafafa),
+        syntax: tailwind_syntax(SyntaxPalette::catppuccin_latte(), h(0x09090b)),
+    };
+    theme.recompute_selection_foreground();
+    theme
+}
+
+fn tailwind_light_ui() -> UiColors {
+    UiColors {
+        use_theme_diff_washes: true,
+        base: h(0xffffff),
+        surface: h(0xfafafa),
+        overlay: h(0xffffff),
+        border: h(0xe4e4e7),
+        subtle: h(0xf4f4f5),
+        muted: h(0x71717a),
+        text: h(0x09090b),
+        accent: h(0x2563eb),
+        tool_card_header_bg: h(0xf4f4f5),
+        vc_added: h(0x16a34a),
+        vc_modified: h(0xca8a04),
+        vc_deleted: h(0xdc2626),
+        vc_conflict: h(0xea580c),
+        vc_added_background: ha(0x16a34a, 0.16),
+        vc_deleted_background: ha(0xdc2626, 0.16),
+        vc_modified_background: ha(0xca8a04, 0.16),
+        vc_word_added: ha(0x16a34a, 0.40),
+        vc_word_deleted: ha(0xdc2626, 0.40),
+        group_1: h(0x2563eb),
+        group_2: h(0x16a34a),
+        group_3: h(0xca8a04),
+        group_4: h(0xdc2626),
+        group_5: h(0x9333ea),
+        group_6: h(0x0891b2),
+        group_7: h(0xea580c),
+        group_8: h(0x71717a),
+        agent_error: h(0xdc2626),
+        agent_claude: h(0xc2410c),
+        agent_codex: h(0x2563eb),
     }
 }
 

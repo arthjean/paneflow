@@ -16,6 +16,12 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
 
 ### Added
 
+- Tailwind theme preset, light and dark. The ANSI palette, foreground,
+  background, cursor and selection come from Unpeel (MIT, UX Themes AS,
+  see THIRD_PARTY_NOTICES.md): Tailwind 500 for the normal colors, 400 for
+  the brights, `#fafafa` on `#1a1b1d` in dark and `#09090b` on white in
+  light. It ships its own `UiColors`, so the chrome follows the palette
+  instead of the shared dark surfaces.
 - Select all in a terminal pane. `Ctrl+Shift+A` (`Cmd+A` on macOS) and
   Edit > Select All on macOS select the whole buffer, scrollback included,
   the way Ghostty does: leading and trailing blank cells are skipped, the

@@ -196,9 +196,9 @@ Color resolves in three layers.
    link text, two title bar colors) plus a syntax palette for the diff and the editor.
    `src-app/src/theme/model.rs`, values in `src-app/src/theme/builtin.rs`.
 2. **UI colors**: the semantic roles the chrome consumes, `UiColors`. A
-   preset either ships its own `UiColors` (Vercel, Claude, Cursor) or lets
-   Paneflow derive one from the terminal theme's lightness (Paneflow Dark and
-   Light).
+   preset either ships its own `UiColors` (Vercel, Claude, Cursor,
+   Tailwind) or lets Paneflow derive one from the terminal theme's lightness
+   (Paneflow Dark and Light).
 3. **Local tints**: alpha washes computed at render time from `text`,
    `muted`, or a fixed tint, listed in 4.3.
 
@@ -237,9 +237,9 @@ and border `#252525`, so the shell stays identical while the ANSI palette
 changes. Light presets keep their own surfaces.
 
 Diff colors on a dark theme fall back to Paneflow's canonical green and red
-with opaque row washes unless the preset sets `use_theme_diff_washes`; only
-Vercel does. Status hues are functional and MUST NOT be recolored to match a
-brand when doing so weakens the meaning.
+with opaque row washes unless the preset sets `use_theme_diff_washes`;
+Vercel and Tailwind do. Status hues are functional and MUST NOT be recolored
+to match a brand when doing so weakens the meaning.
 
 The terminal selection foreground is never hand-tuned: it is recomputed at
 theme load until it clears APCA Lc 45 against the selection background.

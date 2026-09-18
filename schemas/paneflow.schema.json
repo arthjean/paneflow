@@ -21,7 +21,7 @@
     },
     "theme": {
       "type": ["string", "null"],
-      "description": "Bundled theme name: the light or dark variant of one preset (Paneflow, Vercel, Claude, Cursor). Pre-preset names (One Dark, Vercel, Claude, Cursor) still resolve to their variant.",
+      "description": "Bundled theme name: the light or dark variant of one preset (Paneflow, Vercel, Claude, Cursor, Tailwind). Pre-preset names (One Dark, Vercel, Claude, Cursor) still resolve to their variant.",
       "enum": [
         "Paneflow Dark",
         "Paneflow Light",
@@ -31,6 +31,8 @@
         "Claude Light",
         "Cursor Dark",
         "Cursor Light",
+        "Tailwind Dark",
+        "Tailwind Light",
         "One Dark",
         "PaneFlow Light",
         "Vercel",
