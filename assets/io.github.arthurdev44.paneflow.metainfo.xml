@@ -63,6 +63,18 @@
   <content_rating type="oars-1.1" />
 
   <releases>
+    <release version="0.16.0" date="2026-09-18">
+      <description>
+        <p>Terminal sessions move into paneflow-host, a detached process that owns the PTYs and the terminal state, so quitting, closing a window or updating no longer ends the shells and agents running inside Paneflow. The desktop reattaches with screen and scrollback, every restored pane resumes at startup, the sidebar lists sessions as first-class objects, and Review mode is gone.</p>
+        <ul>
+          <li>paneflow-host ships beside the desktop in every package; paneflow host start, status and stop, and paneflow-host session commands expose the lifecycle, and the CLI and MCP bridge reach host-owned sessions when no window is listening</li>
+          <li>Sessions in the sidebar with reopen, resume, stop, hide from layout and remove, one close policy that asks once when an agent is thinking or waiting, and an on_quit setting</li>
+          <li>Worktree removal asks before pulling a checkout out from under an open workspace, a bound tab or a live shell, and managed worktrees stay owned when worktrees.dir changes</li>
+          <li>Settings search with highlighted results, a rebuilt Keyboard Shortcuts page, a manual update check with a title bar pill, panes that detach into native windows, a Tailwind theme, select all and an overlay scrollbar in terminals</li>
+          <li>Windows PTYs run on a pinned ConPTY runtime, unfocused panes no longer dim, ligatures are on by default, and pasting, terminal search, the macOS font size and bright_black legibility are fixed</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.15.1" date="2026-09-14">
       <description>
         <p>Paneflow opens in under a third of a second onto a welcome screen with a command palette and a clone modal, the file tree carries git status, a toast announces each update, and Muse Code and DeepSeek Harness join the built-in agents with live state.</p>

@@ -5,17 +5,88 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
 
 ## [Unreleased]
 
-### Changed
+## [0.16.0] - 2026-09-18
 
-- Unfocused panes no longer dim by default: `unfocused_pane_opacity` now
-  defaults to 1.0. Focus reads from the pane border and title bar; set a
-  value below 1.0 to fade the siblings again.
-- Programming ligatures are on by default (`terminal.ligatures: true`),
-  matching Ghostty. The bundled JetBrains Mono Nerd Font ligates `->`,
-  `=>`, `!=` and `//`; set `false` to keep the plain glyphs.
+Terminal sessions move out of the window and into `paneflow-host`, a detached
+process with no GPU dependency that owns the PTYs, the child processes and the
+canonical libghostty terminal. Quitting Paneflow, closing a window or updating
+no longer ends the shells and agents running inside it: the desktop reattaches
+to the same sessions with their screen and scrollback, and every restored pane
+resumes at startup without a click. The sidebar lists those sessions as
+first-class objects, the worktree removal asks before pulling a checkout out
+from under a live shell, and Review mode is gone.
 
 ### Added
 
+- `paneflow-host`, shipped beside the desktop in the `.deb`, `.rpm`,
+  AppImage, `.tar.gz`, `.dmg` and MSI. The desktop and `paneflow host start`
+  share one bootstrap that adopts a compatible host serving the same
+  `PANEFLOW_HOME` or spawns one detached from the window. A host of another
+  build is retired and replaced on the next launch, and its sessions come back
+  as a new generation with a fresh shell in their recorded directory.
+- Every terminal view attaches to a hosted session: it decodes the native
+  libghostty checkpoint, follows the output stream from that offset, and
+  travels input, resize, paste and focus over the control connection.
+  Reconnecting, ended and unavailable states draw over the last frame with an
+  explicit action. Three integration tests drive a real host and an attached
+  mirror through restore, client drop and the first render resize.
+- Sessions in the sidebar, under the last tab of their workspace: live rows
+  keep their agent lane, ended rows dim with a lifecycle tooltip and collapse
+  under one "N more ended sessions" row past `sidebar_ended_sessions`
+  (default 5, Settings > General). Left-click reopens or resumes, right-click
+  offers Open in layout, Stop session, Resume and Remove from list. Hide from
+  Layout keeps a session running out of sight, Resume ended sessions brings a
+  workspace's ended panes back in layout order, and a kept session is listed
+  under the open workspace that contains its directory.
+- One close policy for panes, surface tabs, workspace tabs, workspaces and
+  quit: stop at once when the session hosts no agent or its agent is finished
+  or errored, ask once for the whole action when an agent is thinking,
+  waiting or in an unknown state. The quit dialog offers Keep running, Stop
+  and Cancel; `on_quit` (`ask`, `keep`, `stop`) can skip it. The restart into
+  an update warns how many running sessions it ends.
+- `paneflow host start|status|stop [--force]` and `paneflow-host session
+  list|create|inspect|stop|restart|remove`. `host stop` refuses while a
+  session is live and lists them; `--force` stops them first and reports the
+  count. The CLI and `paneflow-mcp` target the host when no window is
+  listening, so listing, read, search, status, fleet and authorized send_text
+  keep working against host-owned state.
+- Agent state lives in the host: it ingests ai-hook events, persists the
+  summary on the session manifest, reconciles busy records as stale after a
+  restart and broadcasts every event on an `agent.follow` stream the desktop
+  follows. Hidden sessions show their host state, or stale while the stream is
+  disconnected.
+- Remove in Settings > Worktrees asks before removing a worktree something
+  still uses. The card names the workspaces rooted there, the tabs bound to it
+  in any window and the sessions whose working directory sits inside it;
+  confirming stops those sessions, closes those tabs and workspaces, then
+  removes the checkout. Nothing changes when nothing is using it.
+- Windows PTYs open through a pinned ConPTY runtime: the embedded
+  `conpty.dll` and `OpenConsole.exe` pair is installed under
+  `cache/conpty/<version>/<target>` and loaded by absolute path, so the
+  system renderer that could emit a DEC 2026 end marker before restoring the
+  cursor is out of the path. The binaries are pinned in
+  `native/conpty/manifest.json` and fetched by `scripts/fetch-conpty.ps1`.
+- Panes detach into native windows, and tabs and surfaces transfer between
+  windows with one shared tab chrome.
+- The pane tab bar `+` opens a menu of New pane presets: Terminal, the
+  visible agents, then the workspace custom buttons, in the docked bar and in
+  a detached window.
+- Settings search matches every setting's title and description, moves the
+  panel to the first matching section, highlights the matches in blue and
+  collapses the rows and blocks that do not match, animated over 180 ms. The
+  field is the same 36 px capsule as the sidebar workspace filter, which is
+  now animated as well.
+- The Keyboard Shortcuts page is a register of menu panels: chords drawn as
+  keycaps, an accent dot and a hover reset on every customized binding,
+  Backspace during recording unassigns an action, a chord another action owns
+  is held and flagged until pressed again, group eyebrows name the context a
+  binding needs, and a footer counts the customized bindings and holds the
+  global reset.
+- A manual update check from the macOS Paneflow menu, the Windows and Linux
+  Help menu and the command palette, plus a Settings entry on `Cmd/Ctrl+,`.
+  The result lands in a title bar pill: a spinner while checking, green when
+  up to date, red when the feed is unreachable, and a solid blue pill that
+  installs on click and stays until used. The sidebar update banner is gone.
 - Tailwind theme preset, light and dark. The ANSI palette, foreground,
   background, cursor and selection come from Unpeel (MIT, UX Themes AS,
   see THIRD_PARTY_NOTICES.md): Tailwind 500 for the normal colors, 400 for
@@ -36,8 +107,81 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
   place. `reduce_motion` snaps instead of fading. `terminal.scrollbar: false`
   (Settings > Terminal > Scrollbar) hides it. Refs #63.
 
+### Changed
+
+- `session.json` moves to schema version 3: every workspace carries an id and
+  every terminal surface a session reference. Version 2 files migrate in
+  place without touching tab order, titles, directories, worktree bindings or
+  detached-window layout, and recorded agent commands stay metadata that
+  restore never re-runs. Host records live under `<home>/host/`.
+- Quitting, closing the window or dropping a view never stops a hosted
+  session. Closing a pane, a surface tab, a workspace tab or a workspace
+  stops and forgets the sessions it contains instead of leaving a dimmed
+  ended row; a terminal whose process exits on its own is forgotten the same
+  way when its surface goes. The resume list holds the sessions nobody
+  stopped: the ones a hidden pane left running or that outlived the app.
+- Unfocused panes no longer dim by default: `unfocused_pane_opacity` now
+  defaults to 1.0. Focus reads from the pane border and title bar; set a
+  value below 1.0 to fade the siblings again.
+- Programming ligatures are on by default (`terminal.ligatures: true`),
+  matching Ghostty. The bundled JetBrains Mono Nerd Font ligates `->`,
+  `=>`, `!=` and `//`; set `false` to keep the plain glyphs.
+- Every bundled icon moves to a single 24 by 24 outline family at stroke
+  1.5, so the sidebar, the settings nav, the pane header and the tab bar
+  share one weight, and workspace folders use the Unpeel folder icons. Rows
+  line up on one baseline, a tab that shows its diffstat without a branch
+  renders the counts as a chip, and the right panel closes with a
+  layout-sidebar-right icon rather than a cross.
+- Every popup menu shares one geometry, 34 px rows with a 1 px gap and 7 px
+  of padding inside the 18 px menu surface, and a unit test fails if those
+  constants stop agreeing.
+- The pinned `libghostty-vt` archive moves to Ghostty `0c2a290d`, which adds
+  the `ghostty_search_*` API the terminal search now uses.
+- The attention queue moves from `Cmd/Ctrl+Shift+A` to `Cmd/Ctrl+Shift+U`,
+  freeing the chord every terminal uses for select all. The keybindings page
+  used to list it as `Shift+K`, which is the scrollback clear.
+- The diff dock maximize shortcut moves to `Cmd/Ctrl+Alt+M`.
+- Managed worktrees prove their ownership from the `paneflow-owner` marker
+  in their own git dir instead of their path under the current
+  `worktrees.dir`, so changing that setting no longer drops every worktree
+  created under the previous root from the inventory, the keep limit and the
+  removal path. A snapshot restores where it was taken. Repository identity is
+  canonicalized before it is hashed.
+
+### Removed
+
+- Review mode. The Changes and Files tabs of the Agents dock replaced the
+  Review grid, so the mode switch, the diff pane grid, the Workspaces and
+  Changes rails, the diff sidebar and the review keybindings are gone, with
+  the pricing, session usage scans, attribution ranking and worktree diff
+  stats nothing used anymore. Old session files still load: retired keys are
+  ignored and a detached pane saved by Review is dropped instead of the whole
+  session. The sidebar footer is a single Settings row.
+- The profile menu, unreachable since its title bar trigger went, and the
+  theme picker overlay it opened. Theme selection stays in
+  Settings > Appearance; the Files and Help menus move to the title bar.
+
 ### Fixed
 
+- Quitting, restarting and the MSI self-update save the session
+  asynchronously and only exit once the write lands, so closing Paneflow no
+  longer blocks the render thread or drops the final snapshot. When the
+  previous session could not be restored, its file is protected: no new
+  snapshot overwrites it, and a startup prompt offers to retry, quit, or start
+  a new session after backing the original up. Transient IO errors are
+  retried and an interrupted replacement leaves a pending save the next
+  launch restores.
+- A pane no longer flashes pure black for about half a second at startup:
+  the placeholder grid shown before the engine's first frame carried an
+  opaque black background instead of the theme background. Measured on a
+  release build, 21.7 to 23.4 percent of the screen was black from 789 ms to
+  1301 ms before, 0.0 percent after.
+- Pasting frames the text with `ghostty_terminal_paste` on the runtime
+  thread, so the bracketed paste markers and the newline conversion come from
+  the parser's state at that instant instead of a stale mirror of mode 2004.
+  Mode transitions and each paste frame are traced at debug level under
+  `paneflow::terminal::ghostty`. Refs #65.
+- A new PowerShell pane opens on a prompt instead of the version banner.
 - Terminal `bright_black` is legible again in Paneflow Dark and Cursor
   Dark. It sat at APCA Lc 13 against the normalized `#181818` surface,
   and `terminal.minimum_contrast` is off by default, so the secondary text
@@ -49,29 +193,30 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
   larger than on Linux and Windows.
 - `Ctrl+Shift+F` opens the terminal search again on Windows and Linux. The
   diff dock maximize shortcut resolved to the same chord there and shadowed
-  it; it now lives on `Cmd/Ctrl+Alt+M`, and macOS also gets `Cmd+F` for the
-  search. A test fails the build whenever a global default shares its
-  resolved chord with any other default. Refs #63.
+  it, and macOS also gets `Cmd+F` for the search. A test fails the build
+  whenever a global default shares its resolved chord with any other
+  default. Refs #63.
 - Terminal search highlights stay on their text while the program keeps
   writing, and the match count follows the buffer. Plain-text queries now run
   on Ghostty's own incremental search, which tracks matches and the selected
   one across output, resize, reflow, and history pruning; wrapped matches
   highlight every row they span. Regex queries keep Paneflow's scanner and are
   re-anchored and rescanned as the scrollback grows. Refs #63.
-
-### Changed
-
-- Closing a pane, a surface tab, a workspace tab or a workspace now forgets the
-  hosted sessions it stops instead of leaving a dimmed ended row in the sidebar.
-  A terminal whose process exits on its own is forgotten the same way when its
-  surface goes, and the row stays hidden while the stop is in flight instead of
-  flashing for an instant. The resume list keeps its purpose: it holds the sessions nobody
-  stopped, the ones a hidden pane left running or that outlived the app.
-- The pinned `libghostty-vt` archive moves to Ghostty `0c2a290d`, which adds
-  the `ghostty_search_*` API the terminal search now uses.
-- The attention queue moves from `Cmd/Ctrl+Shift+A` to `Cmd/Ctrl+Shift+U`,
-  freeing the chord every terminal uses for select all. The keybindings page
-  used to list it as `Shift+K`, which is the scrollback clear.
+- A session listing no longer carries every session's launch environment,
+  which pushed the response past the 64 KiB control frame around fifteen
+  sessions and blinded the sessions sidebar and the worktree removal card.
+  The host keeps the twenty-five most recent finished records instead of
+  every record forever, never drops a live one, and no longer refuses a
+  seventeenth attached pane. A session left running is never forgotten.
+- A host left over from another Paneflow build is retired on launch instead
+  of being adopted silently or leaving every pane dead, a restart is reserved
+  under the registry lock, and an exit the host could not confirm is reported
+  as lost rather than as a clean stop.
+- Terminal row layouts are reused across frames and interactive output is
+  prioritized over bulk output, and the Ghostty search path and its keyboard
+  navigation shed redundant work.
+- Both render smoke gates follow the renamed font log line, and the dead
+  embedded-font fallback warning that could never fire is gone.
 
 ## [0.15.1] - 2026-09-14
 
