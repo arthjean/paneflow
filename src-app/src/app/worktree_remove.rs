@@ -57,6 +57,7 @@ pub(crate) struct WorktreeRemoveDialog {
     repo_root: PathBuf,
     branch: String,
     blockers: Vec<WorktreeBlocker>,
+    unlisted_sessions: Option<String>,
     focused: bool,
 }
 
@@ -213,22 +214,16 @@ impl PaneFlowApp {
                 let probe = smol::unblock(crate::terminal::host_link::live_sessions).await;
                 let _ = cx.update(|cx| {
                     this.update(cx, |app: &mut Self, cx: &mut Context<Self>| {
-                        let sessions = match probe {
-                            LiveSessionProbe::Sessions(sessions) => sessions,
-                            LiveSessionProbe::NoHost => Vec::new(),
+                        let (sessions, unlisted_sessions) = match probe {
+                            LiveSessionProbe::Sessions(sessions) => (sessions, None),
+                            LiveSessionProbe::NoHost => (Vec::new(), None),
                             LiveSessionProbe::Unknown(error) => {
-                                app.show_toast(
-                                    format!(
-                                        "Cannot check what is using {} right now: {error}",
-                                        path.display()
-                                    ),
-                                    cx,
-                                );
-                                return;
+                                log::warn!("worktree removal: the session probe failed: {error}");
+                                (Vec::new(), Some(error))
                             }
                         };
                         let blockers = app.worktree_blockers(&path, &sessions);
-                        if blockers.is_empty() {
+                        if blockers.is_empty() && unlisted_sessions.is_none() {
                             app.remove_managed_worktree(ws_id, path.clone(), cx);
                             return;
                         }
@@ -238,6 +233,7 @@ impl PaneFlowApp {
                             repo_root: repo_root.clone(),
                             branch: branch.clone(),
                             blockers,
+                            unlisted_sessions,
                             focused: false,
                         });
                         cx.notify();
@@ -381,7 +377,18 @@ impl PaneFlowApp {
                     .text_size(LABEL_SM)
                     .text_color(ui.muted)
                     .child(blocker_summary(&dialog.blockers)),
-            );
+            )
+            .when_some(dialog.unlisted_sessions.clone(), |header, error| {
+                header.child(
+                    div()
+                        .text_size(LABEL_SM)
+                        .text_color(ui.vc_deleted)
+                        .child(format!(
+                            "Running sessions could not be listed, so this may remove more than \
+                             it shows: {error}"
+                        )),
+                )
+            });
 
         let mut list = div()
             .flex()

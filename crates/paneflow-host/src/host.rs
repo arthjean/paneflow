@@ -160,6 +160,11 @@ pub struct SessionHost {
     _owner: OwnerLock,
 }
 
+fn without_launch_environment(mut summary: SessionSummary) -> SessionSummary {
+    summary.manifest.launch.env = BTreeMap::new();
+    summary
+}
+
 impl SessionHost {
     pub fn open(home: &Path, endpoint: &Path) -> Result<Arc<Self>, HostError> {
         std::fs::create_dir_all(paneflow_home::host_sessions_dir_in(home))
@@ -352,6 +357,7 @@ impl SessionHost {
             .filter(|summary| {
                 workspace.is_none_or(|wanted| summary.manifest.workspace.as_ref() == Some(wanted))
             })
+            .map(without_launch_environment)
             .collect()
     }
 
@@ -1084,6 +1090,42 @@ mod tests {
             std::thread::sleep(Duration::from_millis(30));
         }
         false
+    }
+
+    #[test]
+    fn a_listing_leaves_the_launch_environment_out_so_many_sessions_still_fit_a_frame() {
+        let home = tempfile::tempdir().unwrap();
+        let endpoint = PathBuf::from("test-endpoint");
+        let host = SessionHost::open(home.path(), &endpoint).unwrap();
+
+        let mut request = shell_request(80, 24);
+        request.env = (0..40)
+            .map(|i| (format!("LAB_VAR_{i:02}"), "x".repeat(256)))
+            .collect();
+        let created = host.create(request).unwrap();
+
+        let listed = host.list(None);
+        assert_eq!(listed.len(), 1);
+        assert!(
+            listed[0].manifest.launch.env.is_empty(),
+            "a listing must not carry every session's environment"
+        );
+
+        let inspected = host.inspect(&created.manifest.session).unwrap();
+        assert_eq!(
+            inspected.manifest.launch.env.len(),
+            40,
+            "inspecting one session still answers with its environment"
+        );
+
+        let frame = serde_json::to_vec(&json!({"sessions": host.list(None)})).unwrap();
+        assert!(
+            frame.len() * 32 < crate::protocol::MAX_CONTROL_FRAME_BYTES,
+            "one listed session must leave room for many more, got {} bytes",
+            frame.len()
+        );
+
+        let _ = host.stop(&created.manifest.session, None);
     }
 
     #[test]
