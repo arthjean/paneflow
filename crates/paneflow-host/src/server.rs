@@ -339,10 +339,18 @@ fn handle_connection(mut wire: Wire, host: Arc<SessionHost>, shutdown: Arc<Atomi
             "session.output" => stream_output(&mut wire, &host, &shutdown, &id, &params),
             METHOD_AGENT_FOLLOW => stream_agent_follow(&mut wire, &host, &shutdown, &id),
             "host.shutdown" => {
-                let envelope = match host.request_shutdown() {
-                    Ok(()) => result_envelope(
+                let force = params
+                    .get("force")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false);
+                let envelope = match host.request_shutdown(force) {
+                    Ok(ended) => result_envelope(
                         &id,
-                        json!({"stopping": true, "host_instance": host.instance()}),
+                        json!({
+                            "stopping": true,
+                            "host_instance": host.instance(),
+                            "ended_sessions": ended.len(),
+                        }),
                     ),
                     Err(error) => {
                         let live = host.live_sessions();
@@ -1192,6 +1200,31 @@ mod tests {
         let stopping = client.call("host.shutdown", json!({})).unwrap();
         assert_eq!(stopping["stopping"], true);
         assert_eq!(stopping["host_instance"], json!(host.instance()));
+        let endpoint = server.endpoint().to_path_buf();
+        server.stop().unwrap();
+        assert!(
+            HostClient::connect(&endpoint, &hello).is_err(),
+            "the endpoint is gone once the server stopped"
+        );
+    }
+
+    #[test]
+    fn forced_host_shutdown_ends_live_sessions_and_stops_the_server() {
+        let (_home, host, server) = start();
+        let hello = ClientHello::local("paneflow-host-test");
+        let mut client = HostClient::connect(server.endpoint(), &hello).unwrap();
+        client
+            .call("session.create", shell_create_params())
+            .unwrap();
+        assert_eq!(host.live_session_count(), 1);
+
+        let stopping = client
+            .call("host.shutdown", json!({"force": true}))
+            .unwrap();
+        assert_eq!(stopping["stopping"], true);
+        assert_eq!(stopping["ended_sessions"], json!(1));
+        assert_eq!(host.live_session_count(), 0);
+
         let endpoint = server.endpoint().to_path_buf();
         server.stop().unwrap();
         assert!(

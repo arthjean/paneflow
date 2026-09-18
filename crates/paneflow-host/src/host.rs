@@ -971,12 +971,27 @@ impl SessionHost {
         self.live_sessions().len()
     }
 
-    pub fn request_shutdown(&self) -> Result<(), HostError> {
+    pub fn request_shutdown(&self, force: bool) -> Result<Vec<SessionSummary>, HostError> {
         let live = self.live_sessions();
         if live.is_empty() {
-            Ok(())
+            return Ok(Vec::new());
+        }
+        if !force {
+            return Err(HostError::SessionsLive { count: live.len() });
+        }
+        let mut ended = Vec::new();
+        for summary in live {
+            if let Ok(stopped) = self.stop(&summary.manifest.session, None) {
+                ended.push(stopped);
+            }
+        }
+        let remaining = self.live_sessions();
+        if remaining.is_empty() {
+            Ok(ended)
         } else {
-            Err(HostError::SessionsLive { count: live.len() })
+            Err(HostError::SessionsLive {
+                count: remaining.len(),
+            })
         }
     }
 
@@ -1785,11 +1800,11 @@ mod tests {
             read_manifest(&crate::manifest::manifest_path(home.path(), &session)).unwrap();
         assert_eq!(on_disk.generation, SessionGeneration::FIRST.next());
         assert!(matches!(
-            host.request_shutdown(),
+            host.request_shutdown(false),
             Err(HostError::SessionsLive { count: 1 })
         ));
         host.stop(&session, None).unwrap();
-        assert_eq!(host.request_shutdown(), Ok(()));
+        assert_eq!(host.request_shutdown(false), Ok(Vec::new()));
     }
 
     #[test]

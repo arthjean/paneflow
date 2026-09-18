@@ -21,7 +21,13 @@ pub enum HostCommand {
     #[command(about = "Report the host serving this PANEFLOW_HOME and every session it knows")]
     Status,
     #[command(about = "Stop the local host; refused while live sessions remain (they are listed)")]
-    Stop,
+    Stop {
+        #[arg(
+            long,
+            help = "End every live session first instead of refusing; their processes are terminated"
+        )]
+        force: bool,
+    },
 }
 
 pub fn run(command: HostCommand) -> Result<i32, CliError> {
@@ -31,7 +37,7 @@ pub fn run(command: HostCommand) -> Result<i32, CliError> {
     match command {
         HostCommand::Start => start(&home),
         HostCommand::Status => status(&home),
-        HostCommand::Stop => stop(&home),
+        HostCommand::Stop { force } => stop(&home, force),
     }
 }
 
@@ -125,7 +131,7 @@ fn session_line(row: Value) -> Value {
     })
 }
 
-fn stop(home: &Path) -> Result<i32, CliError> {
+fn stop(home: &Path, force: bool) -> Result<i32, CliError> {
     let endpoint: PathBuf = paneflow_host::endpoint::host_endpoint_path(home);
     let hello = ClientHello::local(CLIENT_NAME);
     let mut client = match HostClient::connect(&endpoint, &hello) {
@@ -140,7 +146,7 @@ fn stop(home: &Path) -> Result<i32, CliError> {
         Err(error) => return Err(CliError::runtime(error.to_string())),
     };
     let instance = client.identity().host_instance.clone();
-    match client.call("host.shutdown", json!({})) {
+    match client.call("host.shutdown", json!({"force": force})) {
         Ok(_) => {}
         Err(HostClientError::Rpc {
             code,
@@ -166,8 +172,10 @@ fn stop(home: &Path) -> Result<i32, CliError> {
                         .unwrap_or("?")
                 ));
             }
-            lines
-                .push("stop each session with `paneflow-host session stop <id>` first".to_string());
+            lines.push(
+                "stop each session with `paneflow-host session stop <id>` first, or rerun with `--force` to end them all"
+                    .to_string(),
+            );
             return Err(CliError::runtime(lines.join("\n")));
         }
         Err(error) => return Err(CliError::runtime(error.to_string())),
