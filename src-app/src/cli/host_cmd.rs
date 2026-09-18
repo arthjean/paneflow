@@ -68,7 +68,7 @@ fn status(home: &Path) -> Result<i32, CliError> {
                 .cloned()
                 .unwrap_or_default()
                 .into_iter()
-                .map(|summary| session_line(summary, &identity.host_instance))
+                .map(session_line)
                 .collect();
             let live = sessions
                 .iter()
@@ -109,23 +109,19 @@ fn status(home: &Path) -> Result<i32, CliError> {
     Ok(EXIT_OK)
 }
 
-fn session_line(summary: Value, owner: &paneflow_host::HostInstanceToken) -> Value {
-    let reconnection = serde_json::from_value::<paneflow_host::SessionSummary>(summary.clone())
-        .ok()
-        .map(|parsed| serde_json::to_value(parsed.reconnection(owner)).unwrap_or(Value::Null))
-        .unwrap_or(Value::Null);
+fn session_line(row: Value) -> Value {
     json!({
-        "session": summary["session"],
-        "generation": summary["generation"],
-        "workspace": summary["workspace"],
-        "title": summary["title"],
-        "cwd": summary["current_cwd"].as_str().or(summary["cwd"].as_str()),
-        "shell": summary["launch"]["shell"],
-        "pid": summary["process"]["pid"],
-        "lifecycle": summary["lifecycle"],
-        "live": summary["live"],
-        "owned": summary["owned"],
-        "reconnection": reconnection,
+        "session": row["session"],
+        "generation": row["generation"],
+        "workspace": row["workspace"],
+        "title": row["title"],
+        "cwd": row["cwd"],
+        "shell": row["shell"],
+        "pid": row["pid"],
+        "lifecycle": row["lifecycle"],
+        "live": row["live"],
+        "owned": row["owned"],
+        "reconnection": row["reconnection"],
     })
 }
 

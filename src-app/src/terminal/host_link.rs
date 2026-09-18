@@ -5,7 +5,7 @@ use paneflow_config::schema::{HostInstanceToken, SessionGeneration, SessionId, W
 use paneflow_host::protocol::{ClientHello, ERR_CHECKPOINT_TOO_LARGE, ERR_SESSION_NOT_FOUND};
 use paneflow_host::{
     BootstrapError, Checkpoint, CreateSession, HostClient, HostClientError, SessionReconnection,
-    SessionSummary,
+    SessionRow, SessionSummary,
 };
 
 use super::pty_session::SpawnParams;
@@ -383,18 +383,17 @@ pub(crate) enum LiveSessionProbe {
     Unknown(String),
 }
 
-fn live_session_row(summary: SessionSummary) -> LiveSession {
-    let manifest = summary.manifest;
-    let title = manifest
+fn live_session_row(row: SessionRow) -> LiveSession {
+    let title = row
         .title
         .clone()
         .filter(|title| !title.trim().is_empty())
-        .or_else(|| manifest.agent.as_ref().map(|agent| agent.tool.clone()))
-        .unwrap_or_else(|| manifest.session.to_string());
+        .or_else(|| row.agent.clone())
+        .unwrap_or_else(|| row.session.to_string());
     LiveSession {
-        session: manifest.session,
+        session: row.session,
         title,
-        cwd: PathBuf::from(manifest.current_cwd.unwrap_or(manifest.cwd)),
+        cwd: PathBuf::from(row.cwd),
     }
 }
 
@@ -403,7 +402,7 @@ pub(crate) fn live_sessions() -> LiveSessionProbe {
         Ok(sessions) => LiveSessionProbe::Sessions(
             sessions
                 .into_iter()
-                .filter(|summary| summary.live)
+                .filter(|row| row.live)
                 .map(live_session_row)
                 .collect(),
         ),
@@ -415,14 +414,14 @@ pub(crate) fn live_sessions() -> LiveSessionProbe {
 
 pub(crate) fn list_sessions(
     workspace: Option<&WorkspaceId>,
-) -> Result<Vec<SessionSummary>, HostLinkError> {
+) -> Result<Vec<SessionRow>, HostLinkError> {
     let target = host_endpoint().ok_or(HostLinkError::NoHome)?;
     let listed = connect(&target.endpoint)?
         .call("session.list", serde_json::json!({"workspace": workspace}))?;
     Ok(parse_session_rows(&listed))
 }
 
-pub(crate) fn parse_session_rows(listed: &serde_json::Value) -> Vec<SessionSummary> {
+pub(crate) fn parse_session_rows(listed: &serde_json::Value) -> Vec<SessionRow> {
     listed["sessions"]
         .as_array()
         .into_iter()
@@ -524,31 +523,22 @@ mod tests {
     #[test]
     fn an_unreadable_record_is_skipped_and_the_rest_of_the_listing_survives() {
         let good = serde_json::json!({
-            "manifest": {
-                "schema": 1,
-                "session": SessionId::new(),
-                "generation": 1,
-                "host_instance": HostInstanceToken::new(),
-                "cwd": "/repo",
-                "launch": {"shell": "/bin/zsh", "cols": 80, "rows": 24},
-                "lifecycle": {"state": "running"},
-                "created_at_ms": 1,
-                "updated_at_ms": 2,
-            },
+            "session": SessionId::new(),
+            "generation": 1,
+            "cwd": "/repo",
+            "shell": "/bin/zsh",
+            "lifecycle": {"state": "running"},
+            "reconnection": {"state": "live"},
             "live": true,
             "owned": true,
+            "updated_at_ms": 2,
         });
-        let mut flattened = good["manifest"].clone();
-        if let Some(object) = flattened.as_object_mut() {
-            object.insert("live".to_string(), serde_json::json!(true));
-            object.insert("owned".to_string(), serde_json::json!(true));
-        }
-        let mut broken = flattened.clone();
+        let mut broken = good.clone();
         broken["lifecycle"] = serde_json::json!({"state": "teleported"});
-        let listed = serde_json::json!({"sessions": [broken, flattened]});
+        let listed = serde_json::json!({"sessions": [broken, good]});
         let rows = parse_session_rows(&listed);
         assert_eq!(rows.len(), 1, "one unreadable record never hides the rest");
-        assert_eq!(rows[0].manifest.cwd, "/repo");
+        assert_eq!(rows[0].cwd, "/repo");
         assert!(parse_session_rows(&serde_json::json!({})).is_empty());
     }
 

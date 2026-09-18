@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
@@ -160,7 +160,74 @@ pub struct SessionHost {
     _owner: OwnerLock,
 }
 
-const TERMINATED_RECORD_LIMIT: usize = 50;
+pub const INACTIVE_ROWS_PER_WORKSPACE: usize = 5;
+
+const TERMINATED_RECORD_MAX_AGE_MS: u64 = 24 * 60 * 60 * 1000;
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SessionRow {
+    pub session: SessionId,
+    pub generation: SessionGeneration,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace: Option<WorkspaceId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    pub cwd: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent: Option<String>,
+    pub shell: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pid: Option<u32>,
+    pub lifecycle: SessionLifecycle,
+    pub reconnection: SessionReconnection,
+    pub live: bool,
+    pub owned: bool,
+    pub updated_at_ms: u64,
+}
+
+impl SessionRow {
+    fn of(summary: SessionSummary, owner: &HostInstanceToken) -> Self {
+        let reconnection = summary.reconnection(owner);
+        let SessionSummary {
+            manifest,
+            live,
+            owned,
+        } = summary;
+        Self {
+            session: manifest.session,
+            generation: manifest.generation,
+            workspace: manifest.workspace,
+            title: manifest.title,
+            cwd: manifest.current_cwd.unwrap_or(manifest.cwd),
+            agent: manifest.agent.map(|agent| agent.tool),
+            shell: manifest.launch.shell,
+            pid: manifest.process.map(|process| process.pid),
+            lifecycle: manifest.lifecycle,
+            reconnection,
+            live,
+            owned,
+            updated_at_ms: manifest.updated_at_ms,
+        }
+    }
+}
+
+pub fn inactive_window(
+    mut summaries: Vec<SessionSummary>,
+    inactive_per_workspace: usize,
+) -> Vec<SessionSummary> {
+    summaries.sort_unstable_by_key(|summary| std::cmp::Reverse(summary.manifest.updated_at_ms));
+    let mut seen: HashMap<Option<WorkspaceId>, usize> = HashMap::new();
+    summaries.retain(|summary| {
+        if summary.live {
+            return true;
+        }
+        let counted = seen.entry(summary.manifest.workspace.clone()).or_default();
+        let keep = *counted < inactive_per_workspace;
+        *counted += 1;
+        keep
+    });
+    summaries
+}
 
 fn without_launch_environment(mut summary: SessionSummary) -> SessionSummary {
     summary.manifest.launch.env = BTreeMap::new();
@@ -353,25 +420,23 @@ impl SessionHost {
     }
 
     fn trim_terminated_records(&self) {
+        let now = now_ms();
         let dropped = {
             let mut sessions = self.lock_sessions();
-            let mut terminated: Vec<(u64, SessionId)> = sessions
+            let dropped: Vec<SessionId> = sessions
                 .iter()
                 .filter(|(_, record)| !record.is_live())
                 .filter_map(|(id, record)| {
                     let manifest = record.manifest.lock().ok()?;
-                    (!manifest.lifecycle.is_running()).then(|| (manifest.updated_at_ms, id.clone()))
+                    let stale = !manifest.lifecycle.is_running()
+                        && now.saturating_sub(manifest.updated_at_ms)
+                            > TERMINATED_RECORD_MAX_AGE_MS;
+                    stale.then(|| id.clone())
                 })
                 .collect();
-            if terminated.len() <= TERMINATED_RECORD_LIMIT {
+            if dropped.is_empty() {
                 return;
             }
-            terminated.sort_unstable_by_key(|(updated_at, _)| std::cmp::Reverse(*updated_at));
-            let dropped: Vec<SessionId> = terminated
-                .split_off(TERMINATED_RECORD_LIMIT)
-                .into_iter()
-                .map(|(_, id)| id)
-                .collect();
             for id in &dropped {
                 sessions.remove(id);
             }
@@ -389,8 +454,9 @@ impl SessionHost {
             }
         }
         log::info!(
-            "paneflow-host: dropped {} finished session records past the {TERMINATED_RECORD_LIMIT} kept",
-            dropped.len()
+            "paneflow-host: dropped {} session records finished more than {} hours ago",
+            dropped.len(),
+            TERMINATED_RECORD_MAX_AGE_MS / (60 * 60 * 1000)
         );
     }
 
@@ -403,6 +469,18 @@ impl SessionHost {
                 workspace.is_none_or(|wanted| summary.manifest.workspace.as_ref() == Some(wanted))
             })
             .map(without_launch_environment)
+            .collect()
+    }
+
+    pub fn rows(
+        &self,
+        workspace: Option<&WorkspaceId>,
+        inactive_per_workspace: usize,
+    ) -> Vec<SessionRow> {
+        let owner = self.instance().clone();
+        inactive_window(self.list(workspace), inactive_per_workspace)
+            .into_iter()
+            .map(|summary| SessionRow::of(summary, &owner))
             .collect()
     }
 
@@ -1141,7 +1219,7 @@ mod tests {
         false
     }
 
-    fn exited_manifest(home: &Path, index: u64) -> SessionId {
+    fn exited_manifest(home: &Path, workspace: &WorkspaceId, updated_at_ms: u64) -> SessionId {
         let session = SessionId::new();
         let cwd = home
             .join("worktrees")
@@ -1152,7 +1230,7 @@ mod tests {
         let manifest = SessionManifest {
             schema: 1,
             session: session.clone(),
-            workspace: Some(WorkspaceId::new()),
+            workspace: Some(workspace.clone()),
             generation: SessionGeneration::FIRST,
             host_instance: HostInstanceToken::new(),
             cwd: cwd.display().to_string(),
@@ -1171,85 +1249,204 @@ mod tests {
             title: Some("claude \u{00b7} feat/a-reasonably-long-branch-name".to_string()),
             current_cwd: Some(cwd.display().to_string()),
             agent: None,
-            created_at_ms: index,
-            updated_at_ms: index,
+            created_at_ms: updated_at_ms,
+            updated_at_ms,
         };
         crate::manifest::write_manifest(home, &manifest).unwrap();
         session
     }
 
-    #[test]
-    fn a_full_retention_still_leaves_a_frame_for_the_terminals_a_heavy_day_keeps_open() {
-        const OPEN_TERMINALS: usize = 32;
-
-        let home = tempfile::tempdir().unwrap();
-        let endpoint = PathBuf::from("test-endpoint");
-        for index in 1..=(TERMINATED_RECORD_LIMIT as u64) {
-            exited_manifest(home.path(), index);
+    fn summary_at(
+        workspace: Option<&WorkspaceId>,
+        live: bool,
+        updated_at_ms: u64,
+    ) -> SessionSummary {
+        SessionSummary {
+            manifest: SessionManifest {
+                schema: 1,
+                session: SessionId::new(),
+                workspace: workspace.cloned(),
+                generation: SessionGeneration::FIRST,
+                host_instance: HostInstanceToken::new(),
+                cwd: "/tmp".to_string(),
+                launch: SessionLaunch {
+                    shell: "sh".to_string(),
+                    args: Vec::new(),
+                    env: BTreeMap::new(),
+                    cols: 80,
+                    rows: 24,
+                },
+                lifecycle: if live {
+                    SessionLifecycle::Running
+                } else {
+                    SessionLifecycle::Exited {
+                        code: 0,
+                        signal: None,
+                    }
+                },
+                process: None,
+                title: None,
+                current_cwd: None,
+                agent: None,
+                created_at_ms: updated_at_ms,
+                updated_at_ms,
+            },
+            live,
+            owned: true,
         }
-        let host = SessionHost::open(home.path(), &endpoint).unwrap();
-
-        let listed = host.list(None);
-        assert_eq!(listed.len(), TERMINATED_RECORD_LIMIT);
-        let frame = serde_json::to_vec(&json!({"sessions": listed})).unwrap();
-        let per_record = frame.len() / TERMINATED_RECORD_LIMIT;
-        let projected = frame.len() + per_record * OPEN_TERMINALS;
-
-        assert!(
-            projected < crate::protocol::MAX_CONTROL_FRAME_BYTES,
-            "a full retention plus {OPEN_TERMINALS} open terminals must fit one frame, got {projected} bytes for {per_record} bytes a record"
-        );
     }
 
     #[test]
-    fn finished_session_records_stop_piling_up_across_restarts() {
-        let home = tempfile::tempdir().unwrap();
-        let endpoint = PathBuf::from("test-endpoint");
-        let kept_newest = TERMINATED_RECORD_LIMIT as u64 + 20;
-        let oldest = exited_manifest(home.path(), 1);
-        let newest = exited_manifest(home.path(), kept_newest);
-        for index in 2..kept_newest {
-            exited_manifest(home.path(), index);
-        }
+    fn a_listing_never_drops_a_running_session_however_many_are_open() {
+        let workspace = WorkspaceId::new();
+        let summaries: Vec<SessionSummary> = (0..40)
+            .map(|index| summary_at(Some(&workspace), true, index))
+            .collect();
 
-        let host = SessionHost::open(home.path(), &endpoint).unwrap();
-        let listed = host.list(None);
+        let windowed = inactive_window(summaries, INACTIVE_ROWS_PER_WORKSPACE);
 
         assert_eq!(
-            listed.len(),
-            TERMINATED_RECORD_LIMIT,
-            "only the most recent finished records survive a restart"
-        );
-        assert!(
-            listed.iter().any(|s| s.manifest.session == newest),
-            "the newest finished record is kept"
-        );
-        assert!(
-            !listed.iter().any(|s| s.manifest.session == oldest),
-            "the oldest finished record is dropped"
-        );
-        assert!(
-            !crate::manifest::manifest_path(home.path(), &oldest).exists(),
-            "a dropped record leaves no file behind"
+            windowed.len(),
+            40,
+            "every running session is listed whatever the window allows"
         );
     }
 
     #[test]
-    fn a_live_session_is_never_dropped_to_make_room() {
+    fn the_inactive_window_counts_each_workspace_on_its_own() {
+        let first = WorkspaceId::new();
+        let second = WorkspaceId::new();
+        let mut summaries = Vec::new();
+        for index in 0..20u64 {
+            summaries.push(summary_at(Some(&first), false, index));
+            summaries.push(summary_at(Some(&second), false, index));
+            summaries.push(summary_at(None, false, index));
+        }
+
+        let windowed = inactive_window(summaries, INACTIVE_ROWS_PER_WORKSPACE);
+
+        for wanted in [Some(&first), Some(&second), None] {
+            let kept = windowed
+                .iter()
+                .filter(|summary| summary.manifest.workspace.as_ref() == wanted)
+                .count();
+            assert_eq!(
+                kept, INACTIVE_ROWS_PER_WORKSPACE,
+                "each workspace keeps its own preview of finished sessions"
+            );
+        }
+    }
+
+    #[test]
+    fn the_inactive_window_keeps_the_most_recent_of_a_workspace() {
+        let workspace = WorkspaceId::new();
+        let mut summaries: Vec<SessionSummary> = (0..20u64)
+            .map(|index| summary_at(Some(&workspace), false, index))
+            .collect();
+        let newest = summaries[19].manifest.session.clone();
+        let oldest = summaries[0].manifest.session.clone();
+        summaries.rotate_left(7);
+
+        let windowed = inactive_window(summaries, INACTIVE_ROWS_PER_WORKSPACE);
+
+        assert!(
+            windowed.iter().any(|s| s.manifest.session == newest),
+            "the freshest finished session is previewed"
+        );
+        assert!(
+            !windowed.iter().any(|s| s.manifest.session == oldest),
+            "the stalest finished session falls outside the window"
+        );
+    }
+
+    #[test]
+    fn a_heavy_day_of_agents_still_fits_one_frame() {
+        const OPEN_TERMINALS: usize = 50;
+        const WORKSPACES: usize = 8;
+
         let home = tempfile::tempdir().unwrap();
         let endpoint = PathBuf::from("test-endpoint");
-        for index in 1..(TERMINATED_RECORD_LIMIT as u64 + 10) {
-            exited_manifest(home.path(), index);
+        let host = SessionHost::open(home.path(), &endpoint).unwrap();
+        let owner = host.instance().clone();
+
+        let mut summaries = Vec::new();
+        for _ in 0..OPEN_TERMINALS {
+            summaries.push(summary_at(Some(&WorkspaceId::new()), true, now_ms()));
         }
+        for _ in 0..WORKSPACES {
+            let workspace = WorkspaceId::new();
+            for index in 0..40u64 {
+                summaries.push(summary_at(Some(&workspace), false, index));
+            }
+        }
+
+        let rows: Vec<SessionRow> = inactive_window(summaries, INACTIVE_ROWS_PER_WORKSPACE)
+            .into_iter()
+            .map(|summary| SessionRow::of(summary, &owner))
+            .collect();
+        assert_eq!(
+            rows.len(),
+            OPEN_TERMINALS + WORKSPACES * INACTIVE_ROWS_PER_WORKSPACE
+        );
+
+        let frame = serde_json::to_vec(&json!({"sessions": rows})).unwrap();
+        assert!(
+            frame.len() * 2 < crate::protocol::MAX_CONTROL_FRAME_BYTES,
+            "{OPEN_TERMINALS} agents plus a preview per workspace must fit a frame twice over, got {} bytes",
+            frame.len()
+        );
+    }
+
+    #[test]
+    fn a_session_finished_yesterday_is_forgotten_and_a_fresh_one_is_kept() {
+        let home = tempfile::tempdir().unwrap();
+        let endpoint = PathBuf::from("test-endpoint");
+        let workspace = WorkspaceId::new();
+        let now = now_ms();
+        let yesterday = exited_manifest(
+            home.path(),
+            &workspace,
+            now - TERMINATED_RECORD_MAX_AGE_MS - 60_000,
+        );
+        let recent = exited_manifest(home.path(), &workspace, now - 60_000);
+
+        let host = SessionHost::open(home.path(), &endpoint).unwrap();
+        let listed = host.list(None);
+
+        assert!(
+            listed.iter().any(|s| s.manifest.session == recent),
+            "a session that ended an hour ago is still there after a restart"
+        );
+        assert!(
+            !listed.iter().any(|s| s.manifest.session == yesterday),
+            "a session that ended more than a day ago is forgotten"
+        );
+        assert!(
+            !crate::manifest::manifest_path(home.path(), &yesterday).exists(),
+            "a forgotten record leaves no file behind"
+        );
+    }
+
+    #[test]
+    fn a_live_session_is_never_forgotten_however_old_it_is() {
+        let home = tempfile::tempdir().unwrap();
+        let endpoint = PathBuf::from("test-endpoint");
         let host = SessionHost::open(home.path(), &endpoint).unwrap();
         let live = host.create(shell_request(80, 24)).unwrap();
+        host.update(
+            &host.lock_sessions()[&live.manifest.session]
+                .manifest
+                .clone(),
+            |m| m.updated_at_ms = 1,
+        );
+
         host.trim_terminated_records();
 
         assert!(
             host.list(None)
                 .iter()
                 .any(|s| s.manifest.session == live.manifest.session),
-            "the running session stays whatever the finished ones do"
+            "an agent that has been running for days is never forgotten"
         );
 
         let _ = host.stop(&live.manifest.session, None);

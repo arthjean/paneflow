@@ -193,14 +193,7 @@ fn session(home: &Path, command: SessionCommand) -> i32 {
             if let Some(workspace) = workspace {
                 params["workspace"] = json!(workspace);
             }
-            client.call("session.list", params).map(|mut listed| {
-                if let Some(sessions) = listed["sessions"].as_array_mut() {
-                    for summary in sessions {
-                        annotate_reconnection(summary, &owner);
-                    }
-                }
-                listed
-            })
+            client.call("session.list", params)
         }
         SessionCommand::Create {
             cwd,

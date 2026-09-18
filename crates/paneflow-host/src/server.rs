@@ -547,7 +547,12 @@ fn dispatch(host: &SessionHost, method: &str, params: &Value) -> Result<Value, D
                 ),
                 None => None,
             };
-            Ok(json!({"sessions": host.list(workspace.as_ref())}))
+            Ok(json!({
+                "sessions": host.rows(
+                    workspace.as_ref(),
+                    crate::host::INACTIVE_ROWS_PER_WORKSPACE,
+                )
+            }))
         }
         "session.create" => {
             let request: CreateSession = serde_json::from_value(params.clone())
