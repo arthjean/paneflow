@@ -52,6 +52,7 @@ pub enum RuntimeNotice {
     Title(String),
     WorkingDirectory(String),
     Exited(ExitOutcome),
+    Lost,
 }
 
 pub type RuntimeObserver = Arc<dyn Fn(RuntimeNotice) + Send + Sync>;
@@ -688,10 +689,9 @@ impl Session {
             "paneflow-host: child pid={} did not exit within {STOP_BUDGET:?} after termination",
             self.child_pid
         );
-        self.record_exit(ExitOutcome {
-            code: -1,
-            signal: None,
-        });
+        self.writer = None;
+        self.release_master();
+        (self.observer)(RuntimeNotice::Lost);
     }
 
     fn shutdown(mut self) {

@@ -683,7 +683,7 @@ impl SessionHost {
         session: &SessionId,
         generation: Option<SessionGeneration>,
     ) -> Result<SessionSummary, HostError> {
-        let manifest = {
+        let (manifest, next, spec) = {
             let sessions = self.lock_sessions();
             let record = sessions
                 .get(session)
@@ -702,12 +702,10 @@ impl SessionHost {
                     requested,
                 });
             }
-            if record.is_live() {
+            if record.is_live() || current.lifecycle == SessionLifecycle::Starting {
                 return Err(HostError::SessionLive(session.clone()));
             }
-            Arc::clone(&record.manifest)
-        };
-        let (next, spec) = {
+            let manifest = Arc::clone(&record.manifest);
             let mut guard = manifest
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -738,7 +736,8 @@ impl SessionHost {
                 rows: guard.launch.rows,
                 scrollback_lines: DEFAULT_SCROLLBACK_LINES,
             };
-            (next, spec)
+            drop(guard);
+            (Arc::clone(&manifest), next, spec)
         };
         self.persist(&manifest)?;
         self.launch(session.clone(), manifest, spec, next)
@@ -1045,6 +1044,7 @@ impl SessionHost {
                             signal: exit.signal,
                         };
                     }
+                    RuntimeNotice::Lost => guard.lifecycle = SessionLifecycle::Lost,
                 }
                 guard.updated_at_ms = now_ms();
                 guard.clone()

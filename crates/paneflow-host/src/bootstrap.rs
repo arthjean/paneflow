@@ -22,6 +22,7 @@ pub const STARTUP_WAIT: Duration = Duration::from_secs(10);
 pub const RETIRE_WAIT: Duration = Duration::from_secs(10);
 const BOOTSTRAP_LOCK_WAIT: Duration = Duration::from_secs(15);
 const LOCK_RETRY: Duration = Duration::from_millis(25);
+const OWNER_LOCK_WAIT: Duration = Duration::from_millis(500);
 const STARTUP_POLL: Duration = Duration::from_millis(50);
 const MAX_INSTANCE_RECORD_BYTES: u64 = 64 * 1024;
 
@@ -45,10 +46,16 @@ impl OwnerLock {
     pub fn acquire(home: &Path) -> Result<Self, OwnerLockError> {
         let path = paneflow_home::host_dir_in(home).join(OWNER_LOCK_FILE_NAME);
         let file = open_lock_file(&path)?;
-        match file.try_lock() {
-            Ok(()) => Ok(Self { _file: file, path }),
-            Err(TryLockError::WouldBlock) => Err(OwnerLockError::Held(path)),
-            Err(TryLockError::Error(error)) => Err(OwnerLockError::Io(error)),
+        let deadline = Instant::now() + OWNER_LOCK_WAIT;
+        loop {
+            match file.try_lock() {
+                Ok(()) => return Ok(Self { _file: file, path }),
+                Err(TryLockError::WouldBlock) if Instant::now() < deadline => {
+                    std::thread::sleep(LOCK_RETRY);
+                }
+                Err(TryLockError::WouldBlock) => return Err(OwnerLockError::Held(path)),
+                Err(TryLockError::Error(error)) => return Err(OwnerLockError::Io(error)),
+            }
         }
     }
 
