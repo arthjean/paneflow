@@ -1,5 +1,5 @@
 use std::collections::{HashSet, VecDeque};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use gpui::{App, AppContext, Context, Entity, Focusable, Window};
 use paneflow_config::schema::{SessionGeneration, SessionId, WorkspaceId};
@@ -101,15 +101,61 @@ pub(crate) fn lifecycle_sentence(lifecycle: &SessionLifecycle) -> String {
     }
 }
 
+pub(crate) struct OpenWorkspace {
+    pub(crate) id: WorkspaceId,
+    pub(crate) root: PathBuf,
+}
+
+fn path_contains(root: &Path, cwd: &Path) -> bool {
+    let mut roots = root.components();
+    let mut cwds = cwd.components();
+    loop {
+        match (roots.next(), cwds.next()) {
+            (None, _) => return true,
+            (Some(_), None) => return false,
+            (Some(a), Some(b)) => {
+                let same = if cfg!(windows) {
+                    a.as_os_str().eq_ignore_ascii_case(b.as_os_str())
+                } else {
+                    a == b
+                };
+                if !same {
+                    return false;
+                }
+            }
+        }
+    }
+}
+
+fn adopting_workspace<'a>(cwd: &str, open: &'a [OpenWorkspace]) -> Option<&'a WorkspaceId> {
+    let cwd = Path::new(cwd);
+    open.iter()
+        .filter(|ws| path_contains(&ws.root, cwd))
+        .max_by_key(|ws| ws.root.components().count())
+        .map(|ws| &ws.id)
+}
+
+fn session_belongs_to(
+    session: &OwnedSession,
+    workspace: &WorkspaceId,
+    open: &[OpenWorkspace],
+) -> bool {
+    match session.workspace.as_ref() {
+        Some(id) if open.iter().any(|ws| &ws.id == id) => id == workspace,
+        _ => adopting_workspace(&session.cwd, open) == Some(workspace),
+    }
+}
+
 fn visible_session_rows(
     rows: &[OwnedSession],
     workspace: &WorkspaceId,
+    open: &[OpenWorkspace],
     attached: &HashSet<SessionId>,
     forgetting: &HashSet<SessionId>,
 ) -> Vec<OwnedSession> {
     let mut visible: Vec<OwnedSession> = rows
         .iter()
-        .filter(|session| session.workspace.as_ref() == Some(workspace))
+        .filter(|session| session_belongs_to(session, workspace, open))
         .filter(|session| !attached.contains(&session.session))
         .filter(|session| !forgetting.contains(&session.session))
         .cloned()
@@ -481,9 +527,18 @@ impl PaneFlowApp {
             return Vec::new();
         }
         let attached = self.attached_session_ids(cx);
+        let open: Vec<OpenWorkspace> = self
+            .workspaces
+            .iter()
+            .map(|ws| OpenWorkspace {
+                id: ws.durable_id.clone(),
+                root: PathBuf::from(&ws.cwd),
+            })
+            .collect();
         visible_session_rows(
             &self.owned_sessions.rows,
             &ws.durable_id,
+            &open,
             &attached,
             &self.owned_sessions.forgetting,
         )
@@ -689,6 +744,59 @@ mod tests {
     }
 
     #[test]
+    fn a_session_whose_workspace_is_gone_is_adopted_by_the_deepest_open_root_over_its_cwd() {
+        let repo = WorkspaceId::new();
+        let web = WorkspaceId::new();
+        let open = [
+            OpenWorkspace {
+                id: repo.clone(),
+                root: PathBuf::from("/repo"),
+            },
+            OpenWorkspace {
+                id: web.clone(),
+                root: PathBuf::from("/repo/web"),
+            },
+        ];
+        let mut orphan = row(true, 10);
+        orphan.workspace = Some(WorkspaceId::new());
+        let mut api = row(true, 20);
+        api.workspace = Some(WorkspaceId::new());
+        api.cwd = "/repo/api".to_string();
+        let mut elsewhere = row(true, 30);
+        elsewhere.workspace = Some(WorkspaceId::new());
+        elsewhere.cwd = "/tmp/scratch".to_string();
+        let mut owned_by_repo = row(true, 40);
+        owned_by_repo.workspace = Some(repo.clone());
+        let rows = vec![
+            orphan.clone(),
+            api.clone(),
+            elsewhere.clone(),
+            owned_by_repo.clone(),
+        ];
+
+        let ids = |workspace: &WorkspaceId| -> Vec<SessionId> {
+            visible_session_rows(&rows, workspace, &open, &HashSet::new(), &HashSet::new())
+                .into_iter()
+                .map(|session| session.session)
+                .collect()
+        };
+        assert_eq!(
+            ids(&web),
+            vec![orphan.session.clone()],
+            "the deepest open root over the cwd adopts the session"
+        );
+        assert_eq!(
+            ids(&repo),
+            vec![owned_by_repo.session.clone(), api.session.clone()],
+            "a session still bound to an open workspace stays there, whatever its cwd"
+        );
+        assert!(
+            path_contains(Path::new("/repo"), Path::new("/repo/web"))
+                && !path_contains(Path::new("/repo/we"), Path::new("/repo/web"))
+        );
+    }
+
+    #[test]
     fn a_session_whose_stop_is_in_flight_is_held_back_from_the_sidebar() {
         let workspace = WorkspaceId::new();
         let mut closing = row(true, 30);
@@ -709,6 +817,16 @@ mod tests {
         let visible = visible_session_rows(
             &rows,
             &workspace,
+            &[
+                OpenWorkspace {
+                    id: workspace.clone(),
+                    root: PathBuf::from("/repo"),
+                },
+                OpenWorkspace {
+                    id: elsewhere.workspace.clone().unwrap(),
+                    root: PathBuf::from("/other"),
+                },
+            ],
             &HashSet::from([attached.session.clone()]),
             &HashSet::from([closing.session.clone()]),
         );
