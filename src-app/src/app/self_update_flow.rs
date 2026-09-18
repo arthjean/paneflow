@@ -246,8 +246,8 @@ impl PaneFlowApp {
             self.self_update.self_update_status,
             update::SelfUpdateStatus::ReadyToRestart
         ) {
-            log::info!("self-update: ReadyToRestart click - invoking cx.restart()");
-            self.save_session_before_exit(cx, |_, cx| cx.restart());
+            log::info!("self-update: ReadyToRestart click - checking live sessions first");
+            self.request_update_restart(cx);
             return;
         }
 

@@ -30,6 +30,12 @@ pub(crate) enum QuitPlan {
     Ask,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ExitKind {
+    Quit,
+    UpdateRestart,
+}
+
 pub(crate) fn quit_plan(policy: OnQuit, live_sessions: usize) -> QuitPlan {
     if live_sessions == 0 {
         return QuitPlan::StopEverything;
@@ -38,6 +44,14 @@ pub(crate) fn quit_plan(policy: OnQuit, live_sessions: usize) -> QuitPlan {
         OnQuit::Ask => QuitPlan::Ask,
         OnQuit::Keep => QuitPlan::QuitNow,
         OnQuit::Stop => QuitPlan::StopEverything,
+    }
+}
+
+pub(crate) fn update_restart_plan(policy: OnQuit, live_sessions: usize) -> QuitPlan {
+    if live_sessions == 0 || policy == OnQuit::Stop {
+        QuitPlan::StopEverything
+    } else {
+        QuitPlan::Ask
     }
 }
 
@@ -74,6 +88,7 @@ pub(crate) fn quit_summary(sessions: usize, working: usize, waiting: usize) -> S
 }
 
 pub(crate) struct QuitDialog {
+    kind: ExitKind,
     sessions: usize,
     working: usize,
     waiting: usize,
@@ -90,20 +105,36 @@ impl PaneFlowApp {
         let sessions = self.live_session_targets(cx).len();
         match quit_plan(self.cached_config.resolved_on_quit(), sessions) {
             QuitPlan::QuitNow => self.quit_keeping_sessions(cx),
-            QuitPlan::StopEverything => self.quit_stopping_everything(cx),
-            QuitPlan::Ask => {
-                let (working, waiting) = self.busy_agent_counts();
-                self.quit_dialog = Some(QuitDialog {
-                    sessions,
-                    working,
-                    waiting,
-                    remember: false,
-                    stopping: false,
-                    focused: false,
-                });
-                cx.notify();
-            }
+            QuitPlan::StopEverything => self.exit_stopping_everything(ExitKind::Quit, cx),
+            QuitPlan::Ask => self.open_exit_dialog(ExitKind::Quit, sessions, cx),
         }
+    }
+
+    pub(crate) fn request_update_restart(&mut self, cx: &mut Context<Self>) {
+        if self.quit_dialog.is_some() || self.session_exit_pending {
+            return;
+        }
+        let sessions = self.live_session_targets(cx).len();
+        match update_restart_plan(self.cached_config.resolved_on_quit(), sessions) {
+            QuitPlan::StopEverything | QuitPlan::QuitNow => {
+                self.exit_stopping_everything(ExitKind::UpdateRestart, cx)
+            }
+            QuitPlan::Ask => self.open_exit_dialog(ExitKind::UpdateRestart, sessions, cx),
+        }
+    }
+
+    fn open_exit_dialog(&mut self, kind: ExitKind, sessions: usize, cx: &mut Context<Self>) {
+        let (working, waiting) = self.busy_agent_counts();
+        self.quit_dialog = Some(QuitDialog {
+            kind,
+            sessions,
+            working,
+            waiting,
+            remember: false,
+            stopping: false,
+            focused: false,
+        });
+        cx.notify();
     }
 
     pub(crate) fn close_quit_dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -184,9 +215,11 @@ impl PaneFlowApp {
         self.quit_now(cx);
     }
 
-    fn quit_stopping_everything(&mut self, cx: &mut Context<Self>) {
-        self.remember_quit_choice(OnQuit::Stop);
-        self.save_session_before_exit(cx, |app, cx| {
+    fn exit_stopping_everything(&mut self, kind: ExitKind, cx: &mut Context<Self>) {
+        if kind == ExitKind::Quit {
+            self.remember_quit_choice(OnQuit::Stop);
+        }
+        self.save_session_before_exit(cx, move |app, cx| {
             let targets = app.live_session_targets(cx);
             let endpoint = host_link::host_endpoint().map(|target| target.endpoint);
             app.session_exit_pending = true;
@@ -200,7 +233,13 @@ impl PaneFlowApp {
                 executor
                     .spawn(async move { host_link::stop_sessions_and_shutdown(targets, endpoint) })
                     .await;
-                let _ = this.update(cx, |app, cx| app.finish_quit(cx));
+                let _ = this.update(cx, |app, cx| match kind {
+                    ExitKind::Quit => app.finish_quit(cx),
+                    ExitKind::UpdateRestart => {
+                        log::info!("self-update: sessions stopped - invoking cx.restart()");
+                        cx.restart();
+                    }
+                });
             })
             .detach();
         });
@@ -234,7 +273,8 @@ impl PaneFlowApp {
                 self.close_quit_dialog(window, cx);
                 cx.stop_propagation();
             }
-            "enter" => {
+            "enter" if matches!(self.quit_dialog.as_ref(), Some(dialog) if dialog.kind == ExitKind::Quit) =>
+            {
                 self.quit_keeping_sessions(cx);
                 cx.stop_propagation();
             }
@@ -259,6 +299,21 @@ impl PaneFlowApp {
         };
         let ui = crate::theme::ui_colors();
         let stopping = dialog.stopping;
+        let kind = dialog.kind;
+        let (question, explanation_text, stop_label): (&str, &str, &str) = match kind {
+            ExitKind::Quit => (
+                "Quit Paneflow?",
+                "Keep them running and they are right there the next time Paneflow opens. \
+                 Stop everything to end every session and the processes it started.",
+                "Stop everything and quit",
+            ),
+            ExitKind::UpdateRestart => (
+                "Restart into the new version?",
+                "The update replaces the session host, which ends every running session and \
+                 the processes it started. Cancel to keep them going and restart later.",
+                "Stop everything and restart",
+            ),
+        };
         let summary = if stopping {
             format!(
                 "Stopping {}...",
@@ -280,7 +335,7 @@ impl PaneFlowApp {
                     .text_size(TITLE)
                     .font_weight(FontWeight::SEMIBOLD)
                     .text_color(ui.text)
-                    .child("Quit Paneflow?"),
+                    .child(question),
             )
             .child(
                 div()
@@ -295,10 +350,7 @@ impl PaneFlowApp {
             .text_size(BODY)
             .line_height(px(18.))
             .text_color(ui.muted)
-            .child(
-                "Keep them running and they are right there the next time Paneflow opens. \
-                 Stop everything to end every session and the processes it started.",
-            );
+            .child(explanation_text);
 
         let remember = dialog.remember;
         let remember_row = div()
@@ -347,22 +399,23 @@ impl PaneFlowApp {
                             cx.stop_propagation();
                         }),
                     ))
-                    .child(
-                        destructive_button("quit-dialog-stop", "Stop everything and quit")
-                            .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                                this.quit_stopping_everything(cx);
-                                cx.stop_propagation();
-                            })),
-                    )
-                    .child(secondary_button(
-                        "quit-dialog-keep",
-                        "Keep sessions running",
-                        ui,
-                        cx.listener(|this, _: &ClickEvent, _, cx| {
-                            this.quit_keeping_sessions(cx);
+                    .child(destructive_button("quit-dialog-stop", stop_label).on_click(
+                        cx.listener(move |this, _: &ClickEvent, _, cx| {
+                            this.exit_stopping_everything(kind, cx);
                             cx.stop_propagation();
                         }),
                     ))
+                    .when(kind == ExitKind::Quit, |footer| {
+                        footer.child(secondary_button(
+                            "quit-dialog-keep",
+                            "Keep sessions running",
+                            ui,
+                            cx.listener(|this, _: &ClickEvent, _, cx| {
+                                this.quit_keeping_sessions(cx);
+                                cx.stop_propagation();
+                            }),
+                        ))
+                    })
             });
 
         let card = div()
@@ -384,7 +437,9 @@ impl PaneFlowApp {
                     .flex_col()
                     .child(header)
                     .child(explanation)
-                    .when(!stopping, |body| body.child(remember_row))
+                    .when(!stopping && kind == ExitKind::Quit, |body| {
+                        body.child(remember_row)
+                    })
                     .child(footer),
             )
             .child(squircle_border(
@@ -433,6 +488,19 @@ mod tests {
         assert_eq!(quit_plan(OnQuit::Ask, 2), QuitPlan::Ask);
         assert_eq!(quit_plan(OnQuit::Keep, 2), QuitPlan::QuitNow);
         assert_eq!(quit_plan(OnQuit::Stop, 1), QuitPlan::StopEverything);
+    }
+
+    #[test]
+    fn an_update_restart_never_pretends_sessions_can_be_kept() {
+        for policy in [OnQuit::Ask, OnQuit::Keep, OnQuit::Stop] {
+            assert_eq!(update_restart_plan(policy, 0), QuitPlan::StopEverything);
+        }
+        assert_eq!(update_restart_plan(OnQuit::Ask, 2), QuitPlan::Ask);
+        assert_eq!(update_restart_plan(OnQuit::Keep, 2), QuitPlan::Ask);
+        assert_eq!(
+            update_restart_plan(OnQuit::Stop, 2),
+            QuitPlan::StopEverything
+        );
     }
 
     #[test]
