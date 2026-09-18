@@ -160,7 +160,7 @@ pub struct SessionHost {
     _owner: OwnerLock,
 }
 
-const TERMINATED_RECORD_LIMIT: usize = 25;
+const TERMINATED_RECORD_LIMIT: usize = 50;
 
 fn without_launch_environment(mut summary: SessionSummary) -> SessionSummary {
     summary.manifest.launch.env = BTreeMap::new();
@@ -1143,13 +1143,19 @@ mod tests {
 
     fn exited_manifest(home: &Path, index: u64) -> SessionId {
         let session = SessionId::new();
+        let cwd = home
+            .join("worktrees")
+            .join("paneflow-a1b2c3d4")
+            .join("feat-a-reasonably-long-branch-name")
+            .join("crates")
+            .join("paneflow-host");
         let manifest = SessionManifest {
             schema: 1,
             session: session.clone(),
-            workspace: None,
+            workspace: Some(WorkspaceId::new()),
             generation: SessionGeneration::FIRST,
             host_instance: HostInstanceToken::new(),
-            cwd: home.display().to_string(),
+            cwd: cwd.display().to_string(),
             launch: SessionLaunch {
                 shell: "sh".to_string(),
                 args: Vec::new(),
@@ -1162,14 +1168,37 @@ mod tests {
                 signal: None,
             },
             process: None,
-            title: None,
-            current_cwd: None,
+            title: Some("claude \u{00b7} feat/a-reasonably-long-branch-name".to_string()),
+            current_cwd: Some(cwd.display().to_string()),
             agent: None,
             created_at_ms: index,
             updated_at_ms: index,
         };
         crate::manifest::write_manifest(home, &manifest).unwrap();
         session
+    }
+
+    #[test]
+    fn a_full_retention_still_leaves_a_frame_for_the_terminals_a_heavy_day_keeps_open() {
+        const OPEN_TERMINALS: usize = 32;
+
+        let home = tempfile::tempdir().unwrap();
+        let endpoint = PathBuf::from("test-endpoint");
+        for index in 1..=(TERMINATED_RECORD_LIMIT as u64) {
+            exited_manifest(home.path(), index);
+        }
+        let host = SessionHost::open(home.path(), &endpoint).unwrap();
+
+        let listed = host.list(None);
+        assert_eq!(listed.len(), TERMINATED_RECORD_LIMIT);
+        let frame = serde_json::to_vec(&json!({"sessions": listed})).unwrap();
+        let per_record = frame.len() / TERMINATED_RECORD_LIMIT;
+        let projected = frame.len() + per_record * OPEN_TERMINALS;
+
+        assert!(
+            projected < crate::protocol::MAX_CONTROL_FRAME_BYTES,
+            "a full retention plus {OPEN_TERMINALS} open terminals must fit one frame, got {projected} bytes for {per_record} bytes a record"
+        );
     }
 
     #[test]
