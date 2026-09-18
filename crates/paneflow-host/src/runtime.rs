@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 
 use paneflow_config::schema::SessionGeneration;
 use paneflow_terminal_ghostty as ghostty;
-use portable_pty::{CommandBuilder, PtySize, native_pty_system};
+use portable_pty::{CommandBuilder, PtySize};
 
 use crate::process::ProcessIdentity;
 use crate::protocol::{MAX_CHECKPOINT_BYTES, MAX_OUTPUT_TAIL_BYTES, REQUEST_DEADLINE};
@@ -358,8 +358,7 @@ fn start(
 ) -> Result<Session, String> {
     let terminal = new_terminal(&spec)?;
 
-    let pair = native_pty_system()
-        .openpty(pty_size(spec.cols, spec.rows))
+    let pair = crate::pty::open(pty_size(spec.cols, spec.rows))
         .map_err(|e| format!("failed to open a native PTY: {e}"))?;
     let mut command = CommandBuilder::new(&spec.shell);
     command.args(&spec.args);

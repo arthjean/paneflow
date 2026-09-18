@@ -82,6 +82,8 @@ jobs:
               - 'Cargo.lock'
               - 'rust-toolchain.toml'
               - 'clippy.toml'
+              - 'native/conpty/**'
+              - 'scripts/fetch-conpty.ps1'
             # US-013: the native engine inputs. The `rust` filter above only
             # matches `*.rs` and Cargo manifests, so a change to the pinned
             # archive, its manifest, or a libghostty build script would

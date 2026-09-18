@@ -87,6 +87,10 @@ scripts/fetch-libghostty.sh   # terminal engine archives, verified against nativ
 cargo run --release -p paneflow-app
 ```
 
+On Windows, also run `scripts/fetch-conpty.ps1` in PowerShell 7 before building,
+or use `scripts/dev.ps1 -Release`, which fetches the pinned ConPTY runtime and
+builds both the app and its session host.
+
 [ARCHITECTURE.md](ARCHITECTURE.md) covers the runtime and thread model, [AGENTS.md](AGENTS.md) the repository instructions for coding agents.
 
 ## Contributing

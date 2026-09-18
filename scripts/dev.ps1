@@ -6,6 +6,8 @@ param(
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 Set-Location $root
+& (Join-Path $PSScriptRoot 'fetch-conpty.ps1')
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 $profileArgs = @()
 $profileDir = 'debug'
 if ($Release) {

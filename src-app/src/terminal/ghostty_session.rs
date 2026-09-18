@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 use futures::channel::mpsc::{UnboundedReceiver, UnboundedSender, unbounded};
 use paneflow_terminal_ghostty as ghostty;
 use parking_lot::RwLock;
-use portable_pty::{CommandBuilder, PtySize, native_pty_system};
+use portable_pty::{CommandBuilder, PtySize};
 
 use paneflow_host::protocol::ERR_OUTPUT_EVICTED;
 use paneflow_host::{HostClient, HostClientError};
@@ -2058,11 +2058,11 @@ fn run_runtime(
         return;
     }
 
-    let pair = match native_pty_system().openpty(pty_size(initial_size)) {
+    let pair = match paneflow_host::pty::open(pty_size(initial_size)) {
         Ok(pair) => pair,
         Err(error) => {
             let _ = startup_tx.send(StartupReport::OpenPtyFailed(
-                error.context("failed to open native PTY"),
+                anyhow::anyhow!(error).context("failed to open native PTY"),
             ));
             return;
         }
@@ -7301,8 +7301,7 @@ mod tests {
         Box<dyn portable_pty::Child + Send + Sync>,
         u32,
     ) {
-        let pair = native_pty_system()
-            .openpty(pty_size(TerminalWindowSize::new(80, 24, 8, 16)))
+        let pair = paneflow_host::pty::open(pty_size(TerminalWindowSize::new(80, 24, 8, 16)))
             .expect("POSIX lifecycle probe must open a PTY");
         let mut command = CommandBuilder::new("/bin/sh");
         command.arg("-c");

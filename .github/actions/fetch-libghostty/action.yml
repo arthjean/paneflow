@@ -1,4 +1,4 @@
-name: Fetch libghostty archives
+name: Fetch native terminal dependencies
 description: >-
   Place the reviewed libghostty-vt archives under native/libghostty/prebuilt
   by downloading them from the GitHub Release that
@@ -6,7 +6,8 @@ description: >-
   archive_sha256. Git does not track the archives, so every job that runs
   cargo against the workspace needs this step after checkout; all four targets
   are fetched because the sys crate's tests validate the Linux x86_64 and
-  macOS trees on every host. Cargo itself performs no downloads.
+  macOS trees on every host. Windows also fetches the pinned ConPTY runtime
+  from native/conpty/manifest.json. Cargo itself performs no downloads.
 
 runs:
   using: composite
@@ -14,3 +15,7 @@ runs:
     - name: Fetch the manifest-pinned libghostty archives
       shell: bash
       run: scripts/fetch-libghostty.sh
+    - name: Fetch the manifest-pinned ConPTY runtime
+      if: runner.os == 'Windows'
+      shell: pwsh
+      run: scripts/fetch-conpty.ps1
