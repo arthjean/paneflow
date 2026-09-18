@@ -508,6 +508,7 @@ and JSON-RPC 2.0 IPC for local automation. The Linux package supports both
 Wayland and X11."""
 assets = [
     ["target/release/paneflow", "usr/bin/", "755"],
+    ["target/release/paneflow-host", "usr/bin/", "755"],
     ["../native/libghostty/THIRD_PARTY_NOTICES.md", "usr/share/doc/paneflow/THIRD_PARTY_NOTICES.md", "644"],
     ["../assets/paneflow.desktop", "usr/share/applications/paneflow.desktop", "644"],
     ["../assets/icons/paneflow-16.png",  "usr/share/icons/hicolor/16x16/apps/paneflow.png",     "644"],
@@ -568,6 +569,7 @@ pre_uninstall_script = "packaging/rpm/preun.sh"
 post_uninstall_script = "packaging/rpm/postun.sh"
 assets = [
     { source = "target/release/paneflow",                                       dest = "/usr/bin/paneflow",                                                         mode = "755" },
+    { source = "target/release/paneflow-host",                                  dest = "/usr/bin/paneflow-host",                                                    mode = "755" },
     { source = "native/libghostty/THIRD_PARTY_NOTICES.md",                      dest = "/usr/share/doc/paneflow/THIRD_PARTY_NOTICES.md",                              mode = "644" },
     { source = "assets/paneflow.desktop",                                       dest = "/usr/share/applications/paneflow.desktop",                                  mode = "644" },
     { source = "assets/icons/paneflow-16.png",                                  dest = "/usr/share/icons/hicolor/16x16/apps/paneflow.png",                          mode = "644" },

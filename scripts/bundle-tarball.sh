@@ -22,12 +22,15 @@ if [ -n "$TARGET_TRIPLE" ]; then
 else
     BIN="$REPO_ROOT/target/release/paneflow"
 fi
+HOST_BIN="$(dirname "$BIN")/paneflow-host"
 
-if [ ! -x "$BIN" ]; then
-    echo "error: release binary not found at $BIN" >&2
-    echo "hint:  run 'cargo build --release${TARGET_TRIPLE:+ --target $TARGET_TRIPLE} -p paneflow-app' first" >&2
-    exit 1
-fi
+for required in "$BIN" "$HOST_BIN"; do
+    if [ ! -x "$required" ]; then
+        echo "error: release binary not found at $required" >&2
+        echo "hint:  run 'cargo build --release${TARGET_TRIPLE:+ --target $TARGET_TRIPLE} -p paneflow-app -p paneflow-host' first" >&2
+        exit 1
+    fi
+done
 
 BUNDLE_DIR="$REPO_ROOT/target/bundle"
 APP="$BUNDLE_DIR/paneflow.app"
@@ -39,6 +42,7 @@ mkdir -p "$APP/bin" \
          "$APP/share/metainfo"
 
 install -m 755 "$BIN" "$APP/bin/paneflow"
+install -m 755 "$HOST_BIN" "$APP/bin/paneflow-host"
 install -m 644 "$REPO_ROOT/assets/paneflow.desktop" "$APP/share/applications/paneflow.desktop"
 install -m 644 "$REPO_ROOT/assets/io.github.arthurdev44.paneflow.metainfo.xml" \
                "$APP/share/metainfo/io.github.arthurdev44.paneflow.metainfo.xml"

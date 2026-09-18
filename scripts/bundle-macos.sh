@@ -61,10 +61,12 @@ if [ -z "$TARGET_DIR" ]; then
 fi
 
 BIN="$TARGET_DIR/paneflow"
+HOST_BIN="$TARGET_DIR/paneflow-host"
 INFO_PLIST_SRC="$REPO_ROOT/assets/Info.plist"
 ICNS_SRC="$REPO_ROOT/assets/PaneFlow.icns"
 
-[ -f "$BIN" ]              || die "release binary not found at $BIN (did you run 'cargo build --release --target $TRIPLE -p paneflow-app'?)"
+[ -f "$BIN" ]              || die "release binary not found at $BIN (did you run 'cargo build --release --target $TRIPLE -p paneflow-app -p paneflow-host'?)"
+[ -f "$HOST_BIN" ]         || die "host binary not found at $HOST_BIN (did you run 'cargo build --release --target $TRIPLE -p paneflow-app -p paneflow-host'?)"
 [ -f "$INFO_PLIST_SRC" ]   || die "Info.plist template not found at $INFO_PLIST_SRC"
 [ -f "$ICNS_SRC" ]         || die "PaneFlow.icns not found at $ICNS_SRC (scripts/build-icons.sh generates it from the macOS icon master)"
 
@@ -77,6 +79,7 @@ rm -rf "$APP"
 mkdir -p "$MACOS_DIR" "$RESOURCES_DIR"
 
 install -m 0755 "$BIN" "$MACOS_DIR/paneflow"
+install -m 0755 "$HOST_BIN" "$MACOS_DIR/paneflow-host"
 install -m 0644 "$ICNS_SRC" "$RESOURCES_DIR/PaneFlow.icns"
 
 sed -e "s/@VERSION@/$VERSION/g" "$INFO_PLIST_SRC" > "$CONTENTS/Info.plist"

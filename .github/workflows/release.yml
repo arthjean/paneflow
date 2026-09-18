@@ -567,7 +567,7 @@ jobs:
               exit 1
               ;;
           esac
-          cargo build --release -p paneflow-app --locked --target "$TARGET"
+          cargo build --release -p paneflow-app -p paneflow-host --locked --target "$TARGET"
 
       - name: Verify packaged libghostty identity and static linkage
         if: runner.os == 'Linux'
@@ -604,7 +604,7 @@ jobs:
           if ($env:WINDOWS_HELPERS_PREPARED -eq 'true') {
               $env:PANEFLOW_SKIP_EMBED_BUILD = '1'
           }
-          cargo build --release -p paneflow-app --locked --target $env:TARGET
+          cargo build --release -p paneflow-app -p paneflow-host --locked --target $env:TARGET
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       # --- Phase 1 artifacts ---
@@ -1302,11 +1302,16 @@ jobs:
           AZURE_TRUSTED_SIGNING_ACCOUNT: ${{ secrets.AZURE_TRUSTED_SIGNING_ACCOUNT }}
           AZURE_TRUSTED_SIGNING_CERT_PROFILE: ${{ secrets.AZURE_TRUSTED_SIGNING_CERT_PROFILE }}
         run: |
-          $exe = 'target\x86_64-pc-windows-msvc\release\paneflow.exe'
-          if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) {
-              throw "No Windows release executable found at $exe. The Build release binary step may have failed or emitted an unexpected path."
+          $executables = @(
+              'target\x86_64-pc-windows-msvc\release\paneflow.exe',
+              'target\x86_64-pc-windows-msvc\release\paneflow-host.exe'
+          )
+          foreach ($exe in $executables) {
+              if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) {
+                  throw "No Windows release executable found at $exe. The Build release binary step may have failed or emitted an unexpected path."
+              }
+              pwsh -NoProfile -File ./scripts/sign-windows.ps1 -InputFile $exe
           }
-          pwsh -NoProfile -File ./scripts/sign-windows.ps1 -InputFile $exe
 
       - name: Verify Windows libghostty release payload
         if: runner.os == 'Windows' && steps.windows_signing.outputs.signing_available == 'true'
@@ -2349,6 +2354,21 @@ jobs:
           expected="paneflow ${version}"
           if [ "${actual}" != "${expected}" ]; then
             echo "::error::paneflow --version returned '${actual}', expected '${expected}'"
+            exit 1
+          fi
+          # `paneflow_host::resolve_host_executable` only looks next to the
+          # running controller, so a tarball that ships the desktop without
+          # its host installs an app whose every terminal pane opens dead.
+          host_bin="$(dirname "${paneflow_bin}")/paneflow-host"
+          if [ ! -x "${host_bin}" ]; then
+            echo "::error::paneflow-host is missing next to ${paneflow_bin}; hosted terminal sessions cannot start"
+            ls -laR /opt/paneflow-smoke
+            exit 1
+          fi
+          host_actual="$("${host_bin}" --version)"
+          host_expected="paneflow-host ${version}"
+          if [ "${host_actual}" != "${host_expected}" ]; then
+            echo "::error::paneflow-host --version returned '${host_actual}', expected '${host_expected}'"
             exit 1
           fi
 

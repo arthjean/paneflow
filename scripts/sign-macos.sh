@@ -89,6 +89,7 @@ if [[ "$IDENTITY" != *"($APPLE_TEAM_ID)"* ]]; then
 fi
 
 NESTED_PATTERNS=(
+    "Contents/MacOS"
     "Contents/Frameworks"
     "Contents/Helpers"
     "Contents/PlugIns"

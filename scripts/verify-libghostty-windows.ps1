@@ -336,6 +336,7 @@ if (-not [string]::IsNullOrWhiteSpace($PackageRoot)) {
     $PackageRoot = (Resolve-Path -LiteralPath $PackageRoot).Path
     $RequiredPackageFiles = @(
         "paneflow.exe",
+        "paneflow-host.exe",
         "LICENSE.txt",
         "THIRD_PARTY_NOTICES.md",
         "libghostty-sbom.cdx.json",

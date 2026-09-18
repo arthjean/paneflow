@@ -382,6 +382,15 @@ next to the controller binary (`paneflow-host[.exe]` beside `paneflow[.exe]`),
 never from the per-user cache and never from the embedded helper bundle: it
 links libghostty and stays outside the three capped helpers.
 
+Every shipping artifact therefore has to carry the host beside the desktop, or
+the installed app opens dead panes with no way to recover: `Contents/MacOS/` in
+the `.app`, `paneflow.app/bin/` in the tar.gz, `/usr/bin/` in the `.deb` and
+`.rpm`, `usr/bin/` in the AppImage, and the install root beside `paneflow.exe`
+in the MSI. On macOS the host is a second Mach-O inside a signed bundle, so
+`scripts/sign-macos.sh` signs `Contents/MacOS` inside-out before sealing the
+bundle; an unsigned helper there fails `codesign --verify --deep --strict` and
+will not execute on Apple Silicon at all.
+
 The spawn is detached on every platform. Windows uses
 `CREATE_BREAKAWAY_FROM_JOB | CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS`, so
 the host leaves the desktop's kill-on-close Job Object and gets no console, and

@@ -77,6 +77,12 @@ if [ ! -x "$BIN" ]; then
     exit 1
 fi
 
+HOST_BIN="${PANEFLOW_HOST_BIN:-$(dirname "$BIN")/paneflow-host}"
+if [ ! -x "$HOST_BIN" ]; then
+    echo "error: host binary not found at $HOST_BIN (set PANEFLOW_HOST_BIN or run 'cargo build --release -p paneflow-host')" >&2
+    exit 1
+fi
+
 LD_BIN="${LINUXDEPLOY:-}"
 if [ -z "$LD_BIN" ]; then
     TOOLS_DIR="$REPO_ROOT/target/tools"
@@ -112,6 +118,7 @@ cd "$OUT_DIR"
 "$LD_BIN" \
     --appdir "$APPDIR" \
     --executable "$BIN" \
+    --executable "$HOST_BIN" \
     --desktop-file "$REPO_ROOT/assets/paneflow.desktop" \
     --icon-file "$REPO_ROOT/assets/icons/paneflow-256.png" \
     --icon-filename paneflow \
@@ -145,6 +152,7 @@ if [ -n "$HOST_PATCHELF" ]; then
         done
 
         "$HOST_PATCHELF" --set-rpath '$ORIGIN/../lib' "$APPDIR/usr/bin/paneflow" 2>/dev/null || true
+        "$HOST_PATCHELF" --set-rpath '$ORIGIN/../lib' "$APPDIR/usr/bin/paneflow-host" 2>/dev/null || true
     fi
 fi
 
