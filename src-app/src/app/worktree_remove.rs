@@ -89,10 +89,30 @@ pub(crate) fn blockers_for(
             .filter(|session| session.cwd.starts_with(path))
             .map(|session| WorktreeBlocker::Session {
                 session: session.session.clone(),
-                title: session.title.clone(),
+                title: session_label(session, path),
             }),
     );
     blockers
+}
+
+fn session_label(session: &LiveSession, worktree: &Path) -> String {
+    let name = runnable_name(&session.title);
+    match session.cwd.strip_prefix(worktree) {
+        Ok(rest) if !rest.as_os_str().is_empty() => format!("{name} · {}", rest.display()),
+        _ => name,
+    }
+}
+
+fn runnable_name(title: &str) -> String {
+    let trimmed = title.trim();
+    if trimmed.is_empty() {
+        return "session".to_string();
+    }
+    Path::new(trimmed)
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .filter(|name| !name.is_empty())
+        .unwrap_or_else(|| trimmed.to_string())
 }
 
 fn blocker_summary(blockers: &[WorktreeBlocker]) -> String {
@@ -153,9 +173,18 @@ impl PaneFlowApp {
             .workspaces
             .iter()
             .flat_map(|ws| {
-                ws.tabs()
-                    .iter()
-                    .map(|tab| (ws.id, tab.id, tab.title().to_string(), tab.worktree.clone()))
+                ws.tabs().iter().enumerate().map(|(tab_idx, tab)| {
+                    (
+                        ws.id,
+                        tab.id,
+                        format!(
+                            "{} › {}",
+                            ws.title,
+                            crate::app::sidebar::tab_display_title(tab, tab_idx)
+                        ),
+                        tab.worktree.clone(),
+                    )
+                })
             })
             .collect();
         blockers_for(path, &workspaces, &tabs, sessions)
@@ -547,15 +576,41 @@ mod tests {
         let blockers = blockers_for(&path, &[], &[], &sessions);
 
         assert_eq!(blockers.len(), 1, "only the session inside the worktree");
-        assert_eq!(blockers[0].title(), "claude");
         assert_eq!(blockers[0].kind_word(), "running session");
+        assert_eq!(
+            blockers[0].title(),
+            "claude · src-app/src",
+            "a session below the root says where it sits"
+        );
+    }
+
+    #[test]
+    fn a_session_is_named_by_its_program_not_by_its_full_path() {
+        let path = PathBuf::from("/wt/feat-x");
+        let sessions = vec![
+            session(r"C:\Program Files\PowerShell\7\pwsh.exe", "/wt/feat-x"),
+            session("   ", "/wt/feat-x"),
+        ];
+
+        let blockers = blockers_for(&path, &[], &[], &sessions);
+
+        assert_eq!(
+            blockers[0].title(),
+            "pwsh.exe",
+            "the window title of a shell is an executable path"
+        );
+        assert_eq!(
+            blockers[1].title(),
+            "session",
+            "a session that set no title still reads as something"
+        );
     }
 
     #[test]
     fn a_workspace_rooted_at_the_worktree_is_listed_first() {
         let path = PathBuf::from("/wt/feat-x");
         let workspaces = vec![(7, "feat-x".to_string(), path.clone())];
-        let tabs = vec![(7, 70, "Terminal".to_string(), Some(path.clone()))];
+        let tabs = vec![(7, 70, "Lab › Terminal".to_string(), Some(path.clone()))];
         let sessions = vec![session("claude", "/wt/feat-x")];
 
         let blockers = blockers_for(&path, &workspaces, &tabs, &sessions);
@@ -563,6 +618,11 @@ mod tests {
         assert_eq!(blockers.len(), 3);
         assert_eq!(blockers[0].kind_word(), "workspace");
         assert_eq!(blockers[0].title(), "feat-x");
+        assert_eq!(
+            blockers[1].title(),
+            "Lab › Terminal",
+            "a tab row names its workspace so two windows stay apart"
+        );
         assert_eq!(
             blocker_summary(&blockers),
             "1 workspace, 1 tab and 1 running session are using it"
