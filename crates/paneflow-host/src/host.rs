@@ -162,7 +162,19 @@ pub struct SessionHost {
 
 pub const INACTIVE_ROWS_PER_WORKSPACE: usize = 5;
 
-const TERMINATED_RECORD_MAX_AGE_MS: u64 = 24 * 60 * 60 * 1000;
+const FINISHED_RECORD_MAX_AGE_MS: u64 = 24 * 60 * 60 * 1000;
+
+const INTERRUPTED_RECORD_MAX_AGE_MS: u64 = 30 * 24 * 60 * 60 * 1000;
+
+fn record_max_age_ms(lifecycle: &SessionLifecycle) -> Option<u64> {
+    match lifecycle {
+        SessionLifecycle::Starting | SessionLifecycle::Running => None,
+        SessionLifecycle::Lost => Some(INTERRUPTED_RECORD_MAX_AGE_MS),
+        SessionLifecycle::Exited { .. } | SessionLifecycle::Failed { .. } => {
+            Some(FINISHED_RECORD_MAX_AGE_MS)
+        }
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SessionRow {
@@ -428,9 +440,8 @@ impl SessionHost {
                 .filter(|(_, record)| !record.is_live())
                 .filter_map(|(id, record)| {
                     let manifest = record.manifest.lock().ok()?;
-                    let stale = !manifest.lifecycle.is_running()
-                        && now.saturating_sub(manifest.updated_at_ms)
-                            > TERMINATED_RECORD_MAX_AGE_MS;
+                    let max_age = record_max_age_ms(&manifest.lifecycle)?;
+                    let stale = now.saturating_sub(manifest.updated_at_ms) > max_age;
                     stale.then(|| id.clone())
                 })
                 .collect();
@@ -454,9 +465,8 @@ impl SessionHost {
             }
         }
         log::info!(
-            "paneflow-host: dropped {} session records finished more than {} hours ago",
-            dropped.len(),
-            TERMINATED_RECORD_MAX_AGE_MS / (60 * 60 * 1000)
+            "paneflow-host: dropped {} session records past their retention",
+            dropped.len()
         );
     }
 
@@ -1220,6 +1230,23 @@ mod tests {
     }
 
     fn exited_manifest(home: &Path, workspace: &WorkspaceId, updated_at_ms: u64) -> SessionId {
+        finished_manifest(
+            home,
+            workspace,
+            SessionLifecycle::Exited {
+                code: 0,
+                signal: None,
+            },
+            updated_at_ms,
+        )
+    }
+
+    fn finished_manifest(
+        home: &Path,
+        workspace: &WorkspaceId,
+        lifecycle: SessionLifecycle,
+        updated_at_ms: u64,
+    ) -> SessionId {
         let session = SessionId::new();
         let cwd = home
             .join("worktrees")
@@ -1241,10 +1268,7 @@ mod tests {
                 cols: 80,
                 rows: 24,
             },
-            lifecycle: SessionLifecycle::Exited {
-                code: 0,
-                signal: None,
-            },
+            lifecycle,
             process: None,
             title: Some("claude \u{00b7} feat/a-reasonably-long-branch-name".to_string()),
             current_cwd: Some(cwd.display().to_string()),
@@ -1406,7 +1430,7 @@ mod tests {
         let yesterday = exited_manifest(
             home.path(),
             &workspace,
-            now - TERMINATED_RECORD_MAX_AGE_MS - 60_000,
+            now - FINISHED_RECORD_MAX_AGE_MS - 60_000,
         );
         let recent = exited_manifest(home.path(), &workspace, now - 60_000);
 
@@ -1424,6 +1448,62 @@ mod tests {
         assert!(
             !crate::manifest::manifest_path(home.path(), &yesterday).exists(),
             "a forgotten record leaves no file behind"
+        );
+    }
+
+    #[test]
+    fn a_session_interrupted_before_a_week_away_is_still_there_on_return() {
+        let home = tempfile::tempdir().unwrap();
+        let endpoint = PathBuf::from("test-endpoint");
+        let workspace = WorkspaceId::new();
+        let week = 7 * 24 * 60 * 60 * 1000;
+        let now = now_ms();
+        let interrupted =
+            finished_manifest(home.path(), &workspace, SessionLifecycle::Lost, now - week);
+        let finished = exited_manifest(home.path(), &workspace, now - week);
+
+        let host = SessionHost::open(home.path(), &endpoint).unwrap();
+        let listed = host.list(None);
+
+        assert!(
+            listed.iter().any(|s| s.manifest.session == interrupted),
+            "a session left running before a week away is waiting on return"
+        );
+        assert!(
+            !listed.iter().any(|s| s.manifest.session == finished),
+            "a session that ended on its own that week is gone"
+        );
+    }
+
+    #[test]
+    fn a_session_the_machine_rebooted_under_is_kept_for_a_month() {
+        let home = tempfile::tempdir().unwrap();
+        let endpoint = PathBuf::from("test-endpoint");
+        let workspace = WorkspaceId::new();
+        let now = now_ms();
+        let kept = finished_manifest(
+            home.path(),
+            &workspace,
+            SessionLifecycle::Lost,
+            now - INTERRUPTED_RECORD_MAX_AGE_MS + 60_000,
+        );
+        let dropped = finished_manifest(
+            home.path(),
+            &workspace,
+            SessionLifecycle::Lost,
+            now - INTERRUPTED_RECORD_MAX_AGE_MS - 60_000,
+        );
+
+        let host = SessionHost::open(home.path(), &endpoint).unwrap();
+        let listed = host.list(None);
+
+        assert!(
+            listed.iter().any(|s| s.manifest.session == kept),
+            "an interrupted session is kept for a month"
+        );
+        assert!(
+            !listed.iter().any(|s| s.manifest.session == dropped),
+            "an interrupted session older than a month is finally forgotten"
         );
     }
 
