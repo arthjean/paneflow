@@ -394,6 +394,10 @@ impl PaneFlowApp {
         self.host_agents.bootstrapped && !self.host_agents.connected()
     }
 
+    pub(crate) fn host_agents_are_settled(&self) -> bool {
+        self.host_agents.bootstrapped && self.host_agents.connected()
+    }
+
     pub(crate) fn host_agents_disconnect_reason(&self) -> Option<&str> {
         self.host_agents.disconnect_reason()
     }

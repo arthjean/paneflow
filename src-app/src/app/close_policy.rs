@@ -33,16 +33,25 @@ pub(crate) enum SessionCloseDecision {
     Unknown,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum AgentReading {
+    Known(Option<AgentState>),
+    Unknown,
+}
+
 pub(crate) fn session_close_decision(
     link: &HostLinkState,
-    agent: Option<AgentState>,
+    agent: AgentReading,
 ) -> SessionCloseDecision {
     if matches!(link, HostLinkState::Unavailable(_)) {
         return SessionCloseDecision::Unknown;
     }
     match agent {
-        Some(AgentState::Thinking) | Some(AgentState::WaitingForInput) => SessionCloseDecision::Ask,
-        Some(AgentState::Finished) | Some(AgentState::Errored) | None => SessionCloseDecision::Stop,
+        AgentReading::Unknown => SessionCloseDecision::Ask,
+        AgentReading::Known(Some(AgentState::Thinking | AgentState::WaitingForInput)) => {
+            SessionCloseDecision::Ask
+        }
+        AgentReading::Known(_) => SessionCloseDecision::Stop,
     }
 }
 
@@ -87,7 +96,15 @@ impl CloseTarget {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct CloseDialogRow {
     pub(crate) title: String,
-    pub(crate) state: AgentState,
+    pub(crate) state: Option<AgentState>,
+}
+
+impl CloseDialogRow {
+    fn state_word(&self) -> &'static str {
+        self.state
+            .map(agent_state_word)
+            .unwrap_or("state unknown, the agent stream is down")
+    }
 }
 
 pub(crate) struct CloseDialog {
@@ -133,18 +150,11 @@ impl PaneFlowApp {
 
     fn close_dialog_rows(&self, target: &CloseTarget, cx: &gpui::App) -> Vec<CloseDialogRow> {
         if let CloseTarget::Session(session) = target {
-            let Some(state) = self.settled_agent_state(session) else {
-                return Vec::new();
-            };
-            if session_close_decision(&HostLinkState::Attached, Some(state))
-                != SessionCloseDecision::Ask
-            {
-                return Vec::new();
-            }
-            return vec![CloseDialogRow {
-                title: self.listed_session_label(session),
-                state,
-            }];
+            return busy_rows(vec![(
+                self.listed_session_label(session),
+                HostLinkState::Attached,
+                self.agent_reading(session),
+            )]);
         }
         let contained: Vec<_> = self
             .close_target_terminals(target, cx)
@@ -155,19 +165,21 @@ impl PaneFlowApp {
                 Some((
                     view.terminal.title.clone(),
                     view.terminal.host_link.clone(),
-                    self.settled_agent_state(&view.terminal.session_id),
+                    self.agent_reading(&view.terminal.session_id),
                 ))
             })
             .collect();
         busy_rows(contained)
     }
 
-    fn settled_agent_state(&self, session: &SessionId) -> Option<AgentState> {
-        if self.host_agents_are_stale() {
-            return None;
+    fn agent_reading(&self, session: &SessionId) -> AgentReading {
+        if !self.host_agents_are_settled() {
+            return AgentReading::Unknown;
         }
-        self.host_agent_row(session)
-            .and_then(|row| row.state.filter(|_| !row.stale))
+        AgentReading::Known(
+            self.host_agent_row(session)
+                .and_then(|row| row.state.filter(|_| !row.stale)),
+        )
     }
 
     pub(crate) fn request_close(
@@ -305,7 +317,8 @@ impl PaneFlowApp {
         };
         let ui = crate::theme::ui_colors();
         let question = dialog.target.question();
-        let summary = close_summary(dialog.rows.len());
+        let unknown = dialog.rows.iter().filter(|row| row.state.is_none()).count();
+        let summary = close_summary(dialog.rows.len() - unknown, unknown);
         let hidden = dialog.rows.len().saturating_sub(MAX_LISTED_SESSIONS);
 
         let header = div()
@@ -360,7 +373,7 @@ impl PaneFlowApp {
                             .flex_none()
                             .text_size(LABEL_SM)
                             .text_color(ui.muted)
-                            .child(agent_state_word(row.state)),
+                            .child(row.state_word()),
                     ),
             );
         }
@@ -474,57 +487,102 @@ impl PaneFlowApp {
 }
 
 pub(crate) fn busy_rows(
-    contained: Vec<(String, HostLinkState, Option<AgentState>)>,
+    contained: Vec<(String, HostLinkState, AgentReading)>,
 ) -> Vec<CloseDialogRow> {
     contained
         .into_iter()
         .filter_map(
             |(title, link, agent)| match (session_close_decision(&link, agent), agent) {
-                (SessionCloseDecision::Ask, Some(state)) => Some(CloseDialogRow { title, state }),
+                (SessionCloseDecision::Ask, AgentReading::Known(state)) => {
+                    Some(CloseDialogRow { title, state })
+                }
+                (SessionCloseDecision::Ask, AgentReading::Unknown) => {
+                    Some(CloseDialogRow { title, state: None })
+                }
                 _ => None,
             },
         )
         .collect()
 }
 
-pub(crate) fn close_summary(sessions: usize) -> String {
-    if sessions == 1 {
-        "1 session is still busy. Closing this view does not have to end it.".to_string()
-    } else {
-        format!("{sessions} sessions are still busy. Closing this view does not have to end them.")
+pub(crate) fn close_summary(busy: usize, unknown: usize) -> String {
+    let mut parts = Vec::new();
+    match busy {
+        0 => {}
+        1 => parts.push("1 session is still busy.".to_string()),
+        n => parts.push(format!("{n} sessions are still busy.")),
     }
+    match unknown {
+        0 => {}
+        1 => parts.push("1 session cannot be checked: the agent stream is down.".to_string()),
+        n => parts.push(format!(
+            "{n} sessions cannot be checked: the agent stream is down."
+        )),
+    }
+    parts.push(if busy + unknown == 1 {
+        "Closing this view does not have to end it.".to_string()
+    } else {
+        "Closing this view does not have to end them.".to_string()
+    });
+    parts.join(" ")
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    fn known(state: Option<AgentState>) -> AgentReading {
+        AgentReading::Known(state)
+    }
+
     #[test]
     fn an_idle_shell_stops_and_a_busy_agent_asks() {
         assert_eq!(
-            session_close_decision(&HostLinkState::Attached, None),
+            session_close_decision(&HostLinkState::Attached, known(None)),
             SessionCloseDecision::Stop
         );
         for finished in [AgentState::Finished, AgentState::Errored] {
             assert_eq!(
-                session_close_decision(&HostLinkState::Attached, Some(finished)),
+                session_close_decision(&HostLinkState::Attached, known(Some(finished))),
                 SessionCloseDecision::Stop
             );
         }
         for busy in [AgentState::Thinking, AgentState::WaitingForInput] {
             assert_eq!(
-                session_close_decision(&HostLinkState::Attached, Some(busy)),
+                session_close_decision(&HostLinkState::Attached, known(Some(busy))),
                 SessionCloseDecision::Ask
             );
         }
     }
 
     #[test]
+    fn an_unknown_agent_state_asks_instead_of_passing_for_an_idle_shell() {
+        assert_eq!(
+            session_close_decision(&HostLinkState::Attached, AgentReading::Unknown),
+            SessionCloseDecision::Ask
+        );
+        let rows = busy_rows(vec![(
+            "claude".to_string(),
+            HostLinkState::Attached,
+            AgentReading::Unknown,
+        )]);
+        assert_eq!(
+            rows,
+            vec![CloseDialogRow {
+                title: "claude".to_string(),
+                state: None
+            }]
+        );
+        assert!(rows[0].state_word().starts_with("state unknown"));
+    }
+
+    #[test]
     fn an_unreachable_host_never_asks_and_never_stops_blindly() {
         for agent in [
-            None,
-            Some(AgentState::Thinking),
-            Some(AgentState::WaitingForInput),
+            known(None),
+            known(Some(AgentState::Thinking)),
+            known(Some(AgentState::WaitingForInput)),
+            AgentReading::Unknown,
         ] {
             assert_eq!(
                 session_close_decision(&HostLinkState::Unavailable("no host".into()), agent),
@@ -536,26 +594,26 @@ mod tests {
     #[test]
     fn one_action_asks_once_for_every_busy_session_it_contains() {
         let contained = vec![
-            ("shell".to_string(), HostLinkState::Attached, None),
+            ("shell".to_string(), HostLinkState::Attached, known(None)),
             (
                 "done".to_string(),
                 HostLinkState::Attached,
-                Some(AgentState::Finished),
+                known(Some(AgentState::Finished)),
             ),
             (
                 "claude".to_string(),
                 HostLinkState::Attached,
-                Some(AgentState::Thinking),
+                known(Some(AgentState::Thinking)),
             ),
             (
                 "codex".to_string(),
                 HostLinkState::Attached,
-                Some(AgentState::WaitingForInput),
+                known(Some(AgentState::WaitingForInput)),
             ),
             (
                 "orphan".to_string(),
                 HostLinkState::Unavailable("no host".to_string()),
-                Some(AgentState::Thinking),
+                known(Some(AgentState::Thinking)),
             ),
         ];
         let rows = busy_rows(contained);
@@ -564,11 +622,11 @@ mod tests {
             vec![
                 CloseDialogRow {
                     title: "claude".to_string(),
-                    state: AgentState::Thinking
+                    state: Some(AgentState::Thinking)
                 },
                 CloseDialogRow {
                     title: "codex".to_string(),
-                    state: AgentState::WaitingForInput
+                    state: Some(AgentState::WaitingForInput)
                 },
             ],
             "an idle shell, a finished agent and a session whose host is unreachable never ask"
@@ -582,15 +640,24 @@ mod tests {
             busy_rows(vec![(
                 "shell".to_string(),
                 HostLinkState::Attached,
-                Some(AgentState::Errored)
+                known(Some(AgentState::Errored))
             )])
             .is_empty()
         );
     }
 
     #[test]
-    fn the_summary_counts_the_busy_sessions() {
-        assert!(close_summary(1).starts_with("1 session is still busy"));
-        assert!(close_summary(3).starts_with("3 sessions are still busy"));
+    fn the_summary_counts_the_busy_and_the_unchecked_sessions() {
+        assert_eq!(
+            close_summary(1, 0),
+            "1 session is still busy. Closing this view does not have to end it."
+        );
+        assert!(close_summary(3, 0).starts_with("3 sessions are still busy. "));
+        assert_eq!(
+            close_summary(0, 1),
+            "1 session cannot be checked: the agent stream is down. \
+             Closing this view does not have to end it."
+        );
+        assert!(close_summary(1, 2).contains("2 sessions cannot be checked"));
     }
 }
