@@ -19,7 +19,6 @@ pub mod host;
 pub mod manifest;
 pub mod process;
 pub mod protocol;
-pub mod pty;
 pub mod runtime;
 pub mod server;
 pub mod tail;
