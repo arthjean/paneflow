@@ -32,6 +32,11 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
 
 ### Fixed
 
+- Terminal `bright_black` is legible again in Paneflow Dark and Cursor
+  Dark. It sat at APCA Lc 13 against the normalized `#181818` surface,
+  and `terminal.minimum_contrast` is off by default, so the secondary text
+  agents print in that slot was simply unreadable; the palette value now
+  carries Lc 26.
 - Terminal font size on macOS follows the platform point: `font_size: 13`
   renders 13 logical pixels there, as Ghostty and every macOS terminal do,
   instead of the 96 DPI conversion that made the same number a third
