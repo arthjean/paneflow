@@ -55,15 +55,9 @@ LOG_*.text
 # Local-only logo explorations (kept out of the public repo)
 /logo-concepts/
 
-# Local Claude Code agent state (memory, scheduled tasks) - never share publicly.
-# Shared skills are opted in one by one below, so a new local skill stays private
-# until it is listed here on purpose.
+# Local Claude Code agent state (memory, skills, scheduled tasks) - never share
+# publicly.
 **/.claude/
-!/.claude/
-/.claude/*
-!/.claude/skills/
-/.claude/skills/*
-!/.claude/skills/release/
 .vercel
 
 # Local-only security pipeline artifacts (vuln-scan/triage/patch). Contain
