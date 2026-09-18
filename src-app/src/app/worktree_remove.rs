@@ -109,11 +109,11 @@ fn runnable_name(title: &str) -> String {
     if trimmed.is_empty() {
         return "session".to_string();
     }
-    Path::new(trimmed)
-        .file_name()
-        .map(|name| name.to_string_lossy().into_owned())
-        .filter(|name| !name.is_empty())
-        .unwrap_or_else(|| trimmed.to_string())
+    trimmed
+        .rsplit(['/', '\\'])
+        .find(|segment| !segment.is_empty())
+        .unwrap_or(trimmed)
+        .to_string()
 }
 
 fn blocker_summary(blockers: &[WorktreeBlocker]) -> String {
@@ -596,6 +596,7 @@ mod tests {
         let path = PathBuf::from("/wt/feat-x");
         let sessions = vec![
             session(r"C:\Program Files\PowerShell\7\pwsh.exe", "/wt/feat-x"),
+            session("/usr/bin/zsh", "/wt/feat-x"),
             session("   ", "/wt/feat-x"),
         ];
 
@@ -604,10 +605,15 @@ mod tests {
         assert_eq!(
             blockers[0].title(),
             "pwsh.exe",
-            "the window title of a shell is an executable path"
+            "a windows shell path reads as its executable wherever the app runs"
         );
         assert_eq!(
             blockers[1].title(),
+            "zsh",
+            "a unix shell path reads as its executable too"
+        );
+        assert_eq!(
+            blockers[2].title(),
             "session",
             "a session that set no title still reads as something"
         );
