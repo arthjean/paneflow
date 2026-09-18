@@ -121,6 +121,11 @@ impl HostClient {
         .map_err(|incompatibility: Incompatibility| {
             HostClientError::Incompatible(incompatibility.to_string())
         })?;
+        protocol::check_build(&identity.version, hello.build.as_deref()).map_err(
+            |incompatibility: Incompatibility| {
+                HostClientError::Incompatible(incompatibility.to_string())
+            },
+        )?;
         client.identity = identity;
         Ok(client)
     }

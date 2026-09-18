@@ -19,6 +19,7 @@ pub const OWNER_LOCK_FILE_NAME: &str = "owner.lock";
 pub const BOOTSTRAP_LOCK_FILE_NAME: &str = "bootstrap.lock";
 pub const HOST_LOG_FILE_NAME: &str = "host.log";
 pub const STARTUP_WAIT: Duration = Duration::from_secs(10);
+pub const RETIRE_WAIT: Duration = Duration::from_secs(10);
 const BOOTSTRAP_LOCK_WAIT: Duration = Duration::from_secs(15);
 const LOCK_RETRY: Duration = Duration::from_millis(25);
 const STARTUP_POLL: Duration = Duration::from_millis(50);
@@ -195,6 +196,29 @@ pub fn resolve_host_executable(controller_exe: &Path) -> Result<PathBuf, Bootstr
     }
 }
 
+fn retire_host(home: &Path, endpoint: &Path) -> Result<(), String> {
+    let hello = ClientHello::control("paneflow-bootstrap");
+    let mut client =
+        HostClient::connect(endpoint, &hello).map_err(|error| format!("host.hello: {error}"))?;
+    client
+        .call("host.shutdown", serde_json::json!({"force": true}))
+        .map_err(|error| format!("host.shutdown: {error}"))?;
+    drop(client);
+    let deadline = Instant::now() + RETIRE_WAIT;
+    loop {
+        if matches!(probe(home, endpoint, &hello), Probe::Unreachable(_)) {
+            return Ok(());
+        }
+        if Instant::now() >= deadline {
+            return Err(format!(
+                "it still answers {} after {RETIRE_WAIT:?}",
+                endpoint.display()
+            ));
+        }
+        std::thread::sleep(STARTUP_POLL);
+    }
+}
+
 pub fn ensure_host_running(
     home: &Path,
     controller_exe: &Path,
@@ -212,7 +236,16 @@ pub fn ensure_host_running(
             });
         }
         Probe::Incompatible(message) => {
-            return Err(BootstrapError::Incompatible(endpoint, message));
+            log::warn!(
+                "paneflow-host: retiring the host on {} built from another release: {message}",
+                endpoint.display()
+            );
+            if let Err(error) = retire_host(home, &endpoint) {
+                return Err(BootstrapError::Incompatible(
+                    endpoint,
+                    format!("{message}; it could not be retired: {error}"),
+                ));
+            }
         }
         Probe::Faulted(message) => return Err(BootstrapError::EndpointFaulted(endpoint, message)),
         Probe::Unreachable(_) => {}
@@ -592,6 +625,35 @@ mod tests {
         let host = dir.path().join(HOST_EXECUTABLE_FILE_NAME);
         std::fs::write(&host, b"").unwrap();
         assert_eq!(resolve_host_executable(&controller).unwrap(), host);
+    }
+
+    #[test]
+    fn a_running_host_is_retired_so_a_replacement_can_take_the_endpoint() {
+        let home = tempfile::tempdir().unwrap();
+        #[cfg(windows)]
+        let endpoint = PathBuf::from(format!(
+            r"\\.\pipe\paneflow-host-retire-{}",
+            std::process::id()
+        ));
+        #[cfg(unix)]
+        let endpoint = home.path().join("retire.sock");
+        let host = crate::host::SessionHost::open(home.path(), &endpoint).unwrap();
+        let server =
+            crate::server::ServerHandle::spawn(std::sync::Arc::clone(&host), endpoint.clone())
+                .unwrap();
+        let hello = ClientHello::control("retire-test");
+        assert!(matches!(
+            probe(home.path(), &endpoint, &hello),
+            Probe::Running(_)
+        ));
+
+        retire_host(home.path(), &endpoint).unwrap();
+
+        assert!(matches!(
+            probe(home.path(), &endpoint, &hello),
+            Probe::Unreachable(_)
+        ));
+        let _ = server.stop();
     }
 
     #[test]

@@ -432,6 +432,17 @@ fn handshake(host: &SessionHost, params: &Value) -> Result<(Value, bool), (Strin
             serde_json::to_value(&incompatibility).unwrap_or(Value::Null),
         )
     })?;
+    protocol::check_build(&identity.version, hello.build.as_deref()).map_err(
+        |incompatibility| {
+            (
+                format!(
+                    "client {} was built from another Paneflow release: {incompatibility}",
+                    hello.client
+                ),
+                serde_json::to_value(&incompatibility).unwrap_or(Value::Null),
+            )
+        },
+    )?;
     let offers_engine = hello.attaches();
     serde_json::to_value(identity)
         .map(|identity| (identity, offers_engine))
@@ -1231,6 +1242,28 @@ mod tests {
             HostClient::connect(&endpoint, &hello).is_err(),
             "the endpoint is gone once the server stopped"
         );
+    }
+
+    #[test]
+    fn a_client_from_another_release_is_refused_while_control_clients_are_not() {
+        let (_home, _host, server) = start();
+        let mut stale = ClientHello::local("paneflow-host-test");
+        stale.build = Some("0.0.0-stale".to_string());
+        let refused = match HostClient::connect(server.endpoint(), &stale) {
+            Ok(_) => panic!("a desktop from another release must be refused"),
+            Err(error) => error,
+        };
+        assert!(
+            matches!(refused, HostClientError::Incompatible(_)),
+            "a desktop from another release is refused: {refused:?}"
+        );
+
+        let control = ClientHello::control("paneflow-host-test");
+        assert!(
+            HostClient::connect(server.endpoint(), &control).is_ok(),
+            "control clients stay able to inspect and retire any host"
+        );
+        server.stop().unwrap();
     }
 
     #[test]

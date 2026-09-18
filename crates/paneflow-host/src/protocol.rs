@@ -10,6 +10,8 @@ pub use paneflow_ipc_client::host_control::{
     METHOD_AGENT_FOLLOW, METHOD_AGENT_SNAPSHOT,
 };
 
+pub const LOCAL_BUILD_VERSION: &str = env!("CARGO_PKG_VERSION");
+
 pub const MAX_DATA_CHUNK_BYTES: usize = 1024 * 1024;
 
 pub const MAX_CHECKPOINT_BYTES: usize = 64 * 1024 * 1024;
@@ -110,6 +112,8 @@ pub struct ClientHello {
     pub protocol: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub engine: Option<EngineIdentity>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub build: Option<String>,
 }
 
 impl ClientHello {
@@ -118,6 +122,7 @@ impl ClientHello {
             client: client.into(),
             protocol: HOST_PROTOCOL_VERSION,
             engine: Some(local_engine_identity()),
+            build: Some(LOCAL_BUILD_VERSION.to_string()),
         }
     }
 
@@ -126,6 +131,7 @@ impl ClientHello {
             client: client.into(),
             protocol: HOST_PROTOCOL_VERSION,
             engine: None,
+            build: None,
         }
     }
 
@@ -145,6 +151,8 @@ pub enum Incompatibility {
         expected: String,
         offered: String,
     },
+    #[error("host build {offered} does not match this build {expected}")]
+    Build { expected: String, offered: String },
 }
 
 pub fn check_compatibility(
@@ -185,6 +193,19 @@ pub fn check_compatibility(
         }
     }
     Ok(())
+}
+
+pub fn check_build(expected: &str, offered: Option<&str>) -> Result<(), Incompatibility> {
+    let Some(offered) = offered else {
+        return Ok(());
+    };
+    if expected == offered {
+        return Ok(());
+    }
+    Err(Incompatibility::Build {
+        expected: expected.to_string(),
+        offered: offered.to_string(),
+    })
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -295,5 +316,30 @@ mod tests {
         let chunk = vec![0xffu8; DATA_CHUNK_RAW_BYTES];
         let line = json!({"type": "chunk", "index": 1_000_000u64, "data": encode_data(&chunk)});
         assert!(serde_json::to_vec(&line).unwrap().len() < MAX_CONTROL_FRAME_BYTES);
+    }
+
+    #[test]
+    fn a_build_mismatch_is_incompatible_and_control_clients_skip_the_check() {
+        assert_eq!(check_build(LOCAL_BUILD_VERSION, None), Ok(()));
+        assert_eq!(
+            check_build(LOCAL_BUILD_VERSION, Some(LOCAL_BUILD_VERSION)),
+            Ok(())
+        );
+        assert_eq!(
+            check_build("0.15.1", Some("0.15.0")),
+            Err(Incompatibility::Build {
+                expected: "0.15.1".to_string(),
+                offered: "0.15.0".to_string()
+            })
+        );
+    }
+
+    #[test]
+    fn only_attaching_hellos_carry_a_build() {
+        assert_eq!(
+            ClientHello::local("test").build.as_deref(),
+            Some(LOCAL_BUILD_VERSION)
+        );
+        assert_eq!(ClientHello::control("test").build, None);
     }
 }
