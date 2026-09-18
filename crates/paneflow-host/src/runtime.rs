@@ -802,7 +802,7 @@ mod tests {
 
         let checkpoint = runtime.checkpoint().expect("checkpoint");
         assert!(
-            checkpoint.offset >= offset - 32,
+            checkpoint.offset + 32 >= offset,
             "offset covers the echoed output"
         );
         assert!(!checkpoint.snapshot.is_empty());

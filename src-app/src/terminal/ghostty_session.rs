@@ -5282,9 +5282,17 @@ mod tests {
         let mut client = HostClient::connect(&endpoint, &hello).expect("control connection");
 
         #[cfg(windows)]
-        let (shell, args) = ("cmd.exe", vec!["/Q".to_string(), "/D".to_string()]);
+        let (shell, args, before_command) = (
+            "cmd.exe",
+            vec!["/Q".to_string(), "/D".to_string()],
+            "echo MIRROR_BEFORE\r\n",
+        );
         #[cfg(unix)]
-        let (shell, args) = ("/bin/sh", Vec::<String>::new());
+        let (shell, args, before_command) = (
+            "/bin/sh",
+            Vec::<String>::new(),
+            "echo MIRROR_BE\"FORE\"\r\n",
+        );
         let created = client
             .create(&CreateSession {
                 session: None,
@@ -5302,7 +5310,7 @@ mod tests {
         let generation = created.manifest.generation;
 
         client
-            .input(&session, generation, b"echo MIRROR_BEFORE\r\n")
+            .input(&session, generation, before_command.as_bytes())
             .expect("input before the checkpoint");
         let mut drained = Vec::new();
         let mut offset = 0u64;
