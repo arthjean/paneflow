@@ -1,4 +1,8 @@
 use crate::PaneFlowApp;
+use crate::settings::chrome::{
+    SETTINGS_NAV_ICON_BASELINE_NUDGE, SETTINGS_NAV_ICON_SIZE, SETTINGS_NAV_ROW_MARGIN_X,
+    SETTINGS_NAV_ROW_PADDING_X,
+};
 use crate::theme::UiColors;
 use crate::ui_primitives::squircle_skin;
 use gpui::{
@@ -26,8 +30,8 @@ impl PaneFlowApp {
                         .id("settings-back")
                         .role(Role::Button)
                         .aria_label("Back to the app")
-                        .mx(px(8.))
-                        .px(px(7.))
+                        .mx(px(SETTINGS_NAV_ROW_MARGIN_X))
+                        .px(px(SETTINGS_NAV_ROW_PADDING_X))
                         .py(px(6.))
                         .min_h(px(32.))
                         .flex_none()
@@ -46,8 +50,10 @@ impl PaneFlowApp {
                 }))
                 .child(
                     svg()
-                        .size(px(17.))
+                        .size(px(SETTINGS_NAV_ICON_SIZE))
                         .flex_none()
+                        .relative()
+                        .top(px(SETTINGS_NAV_ICON_BASELINE_NUDGE))
                         .path("icons/arrow_left.svg")
                         .text_color(ui.muted),
                 )

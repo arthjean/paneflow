@@ -7,8 +7,8 @@ use crate::app::pull_request::{PrState, PullRequest};
 use crate::ui_primitives::TooltipDelayExt;
 
 use super::{
-    SIDEBAR_ACTION_BUTTON_SIZE, SidebarAgentState, SidebarAgentSummary, SidebarTooltip,
-    render_comet_trail_loader,
+    SIDEBAR_ACTION_BUTTON_SIZE, SIDEBAR_ROW_BASELINE_NUDGE, SidebarAgentState, SidebarAgentSummary,
+    SidebarTooltip, render_comet_trail_loader,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -161,6 +161,8 @@ pub(super) fn render_lane_slot(
             };
             div()
                 .flex_none()
+                .relative()
+                .top(px(SIDEBAR_ROW_BASELINE_NUDGE))
                 .group_hover(group, |style| style.invisible())
                 .child(render_lane(lane, row_key, tooltip, ui))
                 .into_any_element()

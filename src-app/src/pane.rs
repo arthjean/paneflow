@@ -1080,26 +1080,32 @@ impl Pane {
                 })
         };
 
-        let identity = div()
-            .id("pane-header-identity")
-            .flex()
-            .flex_row()
-            .items_center()
-            .min_w_0()
-            .max_w_full()
-            .h_full()
-            .gap(px(HEADER_GAP))
-            .overflow_x_hidden()
-            .text_color(ui.muted)
-            .on_click(cx.listener(|this, _e: &ClickEvent, window, cx| {
-                this.focus_handle(cx).focus(window, cx);
-                cx.notify();
-                cx.stop_propagation();
-            }))
-            .children(status_dot)
-            .children(pending_chip)
-            .children(progress_chip)
-            .children(match_badge);
+        let has_identity = status_dot.is_some()
+            || pending_chip.is_some()
+            || progress_chip.is_some()
+            || match_badge.is_some();
+        let identity = has_identity.then(|| {
+            div()
+                .id("pane-header-identity")
+                .flex()
+                .flex_row()
+                .items_center()
+                .min_w_0()
+                .max_w_full()
+                .h_full()
+                .gap(px(HEADER_GAP))
+                .overflow_x_hidden()
+                .text_color(ui.muted)
+                .on_click(cx.listener(|this, _e: &ClickEvent, window, cx| {
+                    this.focus_handle(cx).focus(window, cx);
+                    cx.notify();
+                    cx.stop_propagation();
+                }))
+                .children(status_dot)
+                .children(pending_chip)
+                .children(progress_chip)
+                .children(match_badge)
+        });
 
         div()
             .id("pane-header")
@@ -1134,7 +1140,7 @@ impl Pane {
                     cx.stop_propagation();
                 }),
             )
-            .child(identity)
+            .children(identity)
             .child(
                 div()
                     .flex_none()
@@ -1318,7 +1324,7 @@ impl Pane {
                 .gap(px(6.))
                 .pl(px(8.))
                 .pr(px(4.))
-                .cursor(gpui::CursorStyle::PointingHand);
+                .cursor(gpui::CursorStyle::Arrow);
             let chip = if unified {
                 chip.group(group.clone())
                     .rounded_full()
@@ -1509,7 +1515,7 @@ impl Pane {
                         .flex()
                         .items_center()
                         .justify_center()
-                        .cursor(gpui::CursorStyle::PointingHand),
+                        .cursor(gpui::CursorStyle::Arrow),
                     SharedString::from(format!("pane-{pane_id}-tab-reattach-group")),
                     crate::ui_primitives::ROW_RADIUS,
                     None,
@@ -1525,7 +1531,7 @@ impl Pane {
                     svg()
                         .size(px(20.))
                         .flex_none()
-                        .path("icons/reattach-pane.svg")
+                        .path("icons/dock-pane.svg")
                         .text_color(ui.muted),
                 ),
             );
@@ -1558,7 +1564,7 @@ impl Pane {
                     .flex()
                     .items_center()
                     .justify_center()
-                    .cursor(gpui::CursorStyle::PointingHand),
+                    .cursor(gpui::CursorStyle::Arrow),
                 SharedString::from(format!("pane-{pane_id}-tab-new-group")),
                 crate::ui_primitives::ROW_RADIUS,
                 None,

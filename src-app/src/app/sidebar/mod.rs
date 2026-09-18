@@ -166,9 +166,9 @@ const SIDEBAR_DROP_LINE_PX: f32 = 2.0;
 const SIDEBAR_DROP_BAND_REACH: f32 = SIDEBAR_ROW_LINE_HEIGHT / 2.0 + SIDEBAR_ROW_PADDING_Y;
 const SIDEBAR_WORKSPACE_ROW_CONTENT_WIDTH: f32 =
     SIDEBAR_WIDTH - SIDEBAR_ROW_MARGIN_X * 2.0 - SIDEBAR_ROW_PADDING_X * 2.0;
-const SIDEBAR_FOLDER_ICON_WIDTH: f32 = 17.0;
+const SIDEBAR_HEADER_ICON_WIDTH: f32 = 15.0;
 const SIDEBAR_WORKSPACE_FOLDER_ICON_WIDTH: f32 = 15.0;
-const SIDEBAR_WORKSPACE_FOLDER_ICON_BASELINE_NUDGE: f32 = 2.0;
+pub(super) const SIDEBAR_ROW_BASELINE_NUDGE: f32 = 2.0;
 
 fn sidebar_row_shell() -> gpui::Div {
     div()
@@ -209,9 +209,9 @@ fn sidebar_row(
 fn sidebar_hover_actions(group: SharedString) -> gpui::Div {
     div()
         .absolute()
-        .top(px(
-            (SIDEBAR_ROW_LINE_HEIGHT - SIDEBAR_ACTION_BUTTON_SIZE) / 2.
-        ))
+        .top(px((SIDEBAR_ROW_LINE_HEIGHT - SIDEBAR_ACTION_BUTTON_SIZE)
+            / 2.
+            + SIDEBAR_ROW_BASELINE_NUDGE))
         .right(px(0.))
         .flex()
         .flex_row()
@@ -377,6 +377,29 @@ impl Drop for SidebarRenderTimeCanary {
             );
         }
     }
+}
+
+fn render_diffstat_counts(
+    stats: &crate::workspace::GitDiffStats,
+    ui: crate::theme::UiColors,
+) -> gpui::Div {
+    div()
+        .flex_none()
+        .flex()
+        .flex_row()
+        .items_center()
+        .gap(px(5.))
+        .text_size(px(12.))
+        .child(
+            div()
+                .text_color(ui.vc_added)
+                .child(format!("+{}", stats.insertions)),
+        )
+        .child(
+            div()
+                .text_color(ui.vc_deleted)
+                .child(format!("\u{2212}{}", stats.deletions)),
+        )
 }
 
 fn tab_diffstat_visible(
@@ -609,7 +632,7 @@ impl PaneFlowApp {
                                 show: self.cached_config.sidebar_show,
                                 all_expanded: self.all_workspaces_expanded(),
                             },
-                            SIDEBAR_FOLDER_ICON_WIDTH,
+                            SIDEBAR_HEADER_ICON_WIDTH,
                             ui,
                             cx,
                         ))
@@ -638,7 +661,7 @@ impl PaneFlowApp {
                             }))
                             .child(
                                 svg()
-                                    .size(px(SIDEBAR_FOLDER_ICON_WIDTH))
+                                    .size(px(SIDEBAR_HEADER_ICON_WIDTH))
                                     .flex_none()
                                     .path("icons/folder-plus.svg")
                                     .text_color(ui.muted),
@@ -1083,7 +1106,7 @@ impl PaneFlowApp {
                     .size(px(SIDEBAR_WORKSPACE_FOLDER_ICON_WIDTH))
                     .flex_none()
                     .relative()
-                    .top(px(SIDEBAR_WORKSPACE_FOLDER_ICON_BASELINE_NUDGE))
+                    .top(px(SIDEBAR_ROW_BASELINE_NUDGE))
                     .path(folder_path)
                     .text_color(ui.muted),
             );
@@ -1202,7 +1225,6 @@ impl PaneFlowApp {
             self.inline_rename_field(ui)
         } else {
             div()
-                .flex_1()
                 .min_w_0()
                 .overflow_x_hidden()
                 .whitespace_nowrap()
@@ -1218,6 +1240,8 @@ impl PaneFlowApp {
         let title_indent = SIDEBAR_FOLDER_SLOT_WIDTH + SIDEBAR_TITLE_ROW_GAP;
         let row_inset = if indent_guide { title_indent } else { 0. };
         let content_width = SIDEBAR_WORKSPACE_ROW_CONTENT_WIDTH - row_inset;
+        let diffstat = self.render_tab_diffstat_chip(ws, tab);
+        let diffstat_reserves_slot = diffstat.is_some();
         let mut title_row = div()
             .flex()
             .flex_row()
@@ -1229,37 +1253,59 @@ impl PaneFlowApp {
             .when(!indent_guide, |row| {
                 row.child(div().flex_none().w(px(SIDEBAR_FOLDER_SLOT_WIDTH)))
             })
-            .child(title_el)
-            .when(!detached_panes.is_empty(), |row| {
-                row.child(
-                    sidebar_action_button(
-                        SharedString::from(format!("tab-detached-{tab_id}")),
-                        "icons/detach-pane.svg",
-                        12.,
-                        ui,
-                    )
-                    .delayed_tooltip(crate::ui_primitives::text_tooltip("Show detached pane"))
-                    .on_click(move |_, _, cx| {
-                        let current = detached_panes.iter().position(|pane| {
-                            pane.read(cx).detached.is_some_and(|placement| {
-                                crate::agents::notifications::is_window_active(
-                                    placement.window.window_id(),
-                                )
-                            })
-                        });
-                        let index = current.map_or(0, |index| (index + 1) % detached_panes.len());
-                        PaneFlowApp::focus_pane_window(detached_panes[index].clone(), cx);
-                        cx.stop_propagation();
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap(px(SIDEBAR_TITLE_ROW_GAP))
+                    .flex_1()
+                    .min_w_0()
+                    .child(title_el)
+                    .when(!detached_panes.is_empty(), |titled| {
+                        titled.child(
+                            sidebar_action_button(
+                                SharedString::from(format!("tab-detached-{tab_id}")),
+                                "icons/detach-pane.svg",
+                                12.,
+                                ui,
+                            )
+                            .relative()
+                            .top(px(SIDEBAR_ROW_BASELINE_NUDGE))
+                            .delayed_tooltip(crate::ui_primitives::text_tooltip(
+                                "Show detached pane",
+                            ))
+                            .on_click(move |_, _, cx| {
+                                let current = detached_panes.iter().position(|pane| {
+                                    pane.read(cx).detached.is_some_and(|placement| {
+                                        crate::agents::notifications::is_window_active(
+                                            placement.window.window_id(),
+                                        )
+                                    })
+                                });
+                                let index =
+                                    current.map_or(0, |index| (index + 1) % detached_panes.len());
+                                PaneFlowApp::focus_pane_window(detached_panes[index].clone(), cx);
+                                cx.stop_propagation();
+                            }),
+                        )
                     }),
-                )
-            })
-            .child(render_lane_slot(
-                lane,
-                &format!("tab-{tab_id}"),
-                |summary| sidebar_agent_status_tooltip(summary, &agent_status),
-                tab_group.clone(),
-                ui,
-            ));
+            )
+            .children(diffstat.map(|chip| {
+                div()
+                    .flex_none()
+                    .group_hover(tab_group.clone(), |style| style.invisible())
+                    .child(chip)
+            }))
+            .when(lane.is_some() || !diffstat_reserves_slot, |row| {
+                row.child(render_lane_slot(
+                    lane,
+                    &format!("tab-{tab_id}"),
+                    |summary| sidebar_agent_status_tooltip(summary, &agent_status),
+                    tab_group.clone(),
+                    ui,
+                ))
+            });
         title_row = title_row.child(
             sidebar_hover_actions(tab_group.clone()).child(
                 sidebar_action_button(
@@ -1616,6 +1662,26 @@ impl PaneFlowApp {
         }
     }
 
+    fn render_tab_diffstat_chip(&self, ws: &Workspace, tab: &Tab) -> Option<AnyElement> {
+        let show = self.cached_config.sidebar_show;
+        if !show.any_enabled() {
+            return None;
+        }
+        let (label, stats) = self.tab_row_checkout(ws, tab)?;
+        if show.branch_enabled() && !label.is_empty() {
+            return None;
+        }
+        if !tab_diffstat_visible(show, &stats) {
+            return None;
+        }
+        Some(
+            render_diffstat_counts(&stats, crate::theme::ui_colors())
+                .relative()
+                .top(px(SIDEBAR_ROW_BASELINE_NUDGE))
+                .into_any_element(),
+        )
+    }
+
     fn render_tab_checkout_meta(
         &self,
         ws: &Workspace,
@@ -1631,10 +1697,10 @@ impl PaneFlowApp {
         }
         let (label, stats) = self.tab_row_checkout(ws, tab)?;
         let draw_branch = show.branch_enabled() && !label.is_empty();
-        let draw_counts = tab_diffstat_visible(show, &stats);
-        if !draw_branch && !draw_counts {
+        if !draw_branch {
             return None;
         }
+        let draw_counts = tab_diffstat_visible(show, &stats);
 
         let pr = self.tab_pull_request(ws, tab);
 
@@ -1672,25 +1738,7 @@ impl PaneFlowApp {
                 )
         });
 
-        let counts = draw_counts.then(|| {
-            div()
-                .flex_none()
-                .flex()
-                .flex_row()
-                .items_center()
-                .gap(px(5.))
-                .text_size(px(12.))
-                .child(
-                    div()
-                        .text_color(ui.vc_added)
-                        .child(format!("+{}", stats.insertions)),
-                )
-                .child(
-                    div()
-                        .text_color(ui.vc_deleted)
-                        .child(format!("\u{2212}{}", stats.deletions)),
-                )
-        });
+        let counts = draw_counts.then(|| render_diffstat_counts(&stats, ui));
 
         Some(
             div()
@@ -1919,7 +1967,7 @@ mod tests {
     use super::OwnedSession;
     use super::lane::{Lane, infer_lane};
     use super::{
-        ROW_RADIUS, SIDEBAR_DROP_BAND_REACH, SIDEBAR_DROP_LINE_PX, SIDEBAR_FOLDER_ICON_WIDTH,
+        ROW_RADIUS, SIDEBAR_DROP_BAND_REACH, SIDEBAR_DROP_LINE_PX, SIDEBAR_FOLDER_SLOT_WIDTH,
         SIDEBAR_ROW_LINE_HEIGHT, SIDEBAR_ROW_MARGIN_X, SIDEBAR_ROW_PADDING_Y, SIDEBAR_ROW_SPACING,
         SIDEBAR_WIDTH, SidebarAgentState, SidebarAgentSummary, SidebarDropSlot, SidebarRow,
         collapsed_sessions_label, ended_preview, folder_row_sessions, reorder_target,
@@ -2210,7 +2258,7 @@ mod tests {
                             .flex()
                             .flex_row()
                             .items_center()
-                            .child(div().flex_none().size(px(SIDEBAR_FOLDER_ICON_WIDTH)))
+                            .child(div().flex_none().size(px(SIDEBAR_FOLDER_SLOT_WIDTH)))
                             .child(
                                 div()
                                     .text_size(px(14.))

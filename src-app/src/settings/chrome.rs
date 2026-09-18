@@ -10,6 +10,11 @@ use crate::widgets::scrollbar;
 use crate::{PaneFlowApp, SettingsSection};
 
 pub(crate) const SETTINGS_NAV_WIDTH: f32 = crate::SIDEBAR_WIDTH;
+pub(super) const SETTINGS_NAV_ROW_MARGIN_X: f32 = 8.0;
+pub(super) const SETTINGS_NAV_ROW_PADDING_X: f32 = 7.0;
+const SETTINGS_NAV_GROUP_LABEL_INDENT: f32 = SETTINGS_NAV_ROW_MARGIN_X + SETTINGS_NAV_ROW_PADDING_X;
+pub(super) const SETTINGS_NAV_ICON_SIZE: f32 = 15.0;
+pub(super) const SETTINGS_NAV_ICON_BASELINE_NUDGE: f32 = 2.0;
 
 struct NavItem {
     section: SettingsSection,
@@ -216,7 +221,7 @@ impl PaneFlowApp {
             list = list.child(
                 div()
                     .mt(px(8.))
-                    .pl(px(16.))
+                    .pl(px(SETTINGS_NAV_GROUP_LABEL_INDENT))
                     .pr(px(8.))
                     .py(px(2.))
                     .child(crate::ui_primitives::section_eyebrow(group.label, ui)),
@@ -227,8 +232,8 @@ impl PaneFlowApp {
                 let row = squircle_skin(
                     div()
                         .id(SharedString::from(format!("settings-nav-{}", it.label)))
-                        .mx(px(8.))
-                        .px(px(7.))
+                        .mx(px(SETTINGS_NAV_ROW_MARGIN_X))
+                        .px(px(SETTINGS_NAV_ROW_PADDING_X))
                         .py(px(6.))
                         .min_h(px(32.))
                         .flex_none()
@@ -243,8 +248,10 @@ impl PaneFlowApp {
                 )
                 .child(
                     svg()
-                        .size(px(17.))
+                        .size(px(SETTINGS_NAV_ICON_SIZE))
                         .flex_none()
+                        .relative()
+                        .top(px(SETTINGS_NAV_ICON_BASELINE_NUDGE))
                         .path(it.icon)
                         .text_color(ui.muted),
                 )
@@ -324,6 +331,7 @@ impl PaneFlowApp {
             "settings-search",
             "settings-search-clear",
             ui,
+            crate::ui_primitives::FilterFieldGlyph::Search,
             focus.is_focused(window),
             has_query,
             true,

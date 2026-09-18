@@ -525,11 +525,35 @@ pub(crate) fn filter_pill(
     field
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum FilterFieldGlyph {
+    Filter,
+    Search,
+}
+
+impl FilterFieldGlyph {
+    fn size(self) -> Pixels {
+        match self {
+            Self::Filter => px(20.),
+            Self::Search => px(17.),
+        }
+    }
+
+    fn path(self, focused: bool) -> &'static str {
+        match (self, focused) {
+            (Self::Filter, true) => "icons/filter-circle.svg",
+            (Self::Filter, false) => "icons/filter-circle-outline.svg",
+            (Self::Search, _) => "icons/tool_search.svg",
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn filter_field(
     id: impl Into<ElementId>,
     clear_id: impl Into<ElementId>,
     ui: UiColors,
+    glyph: FilterFieldGlyph,
     focused: bool,
     has_query: bool,
     input_visible: bool,
@@ -559,13 +583,9 @@ pub(crate) fn filter_field(
         .cursor_text()
         .child(
             svg()
-                .size(px(20.))
+                .size(glyph.size())
                 .flex_none()
-                .path(if focused {
-                    "icons/filter-circle.svg"
-                } else {
-                    "icons/filter-circle-outline.svg"
-                })
+                .path(glyph.path(focused))
                 .text_color(if focused {
                     crate::app::constants::sidebar_filter_icon_color()
                 } else {

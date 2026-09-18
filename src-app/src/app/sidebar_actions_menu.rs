@@ -134,6 +134,7 @@ impl PaneFlowApp {
             "sidebar-filter",
             "sidebar-filter-clear",
             ui,
+            crate::ui_primitives::FilterFieldGlyph::Filter,
             focused,
             has_query,
             expanded,
@@ -190,7 +191,7 @@ impl PaneFlowApp {
             svg()
                 .size(px(18.))
                 .flex_none()
-                .path("icons/sidebar-settings.svg")
+                .path("icons/settings.svg")
                 .text_color(ui.muted),
         );
 
