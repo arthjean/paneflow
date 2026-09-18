@@ -153,7 +153,7 @@ impl PaneFlowApp {
             return busy_rows(vec![(
                 self.listed_session_label(session),
                 HostLinkState::Attached,
-                self.agent_reading(session),
+                self.agent_reading(session, None),
             )]);
         }
         let contained: Vec<_> = self
@@ -165,21 +165,39 @@ impl PaneFlowApp {
                 Some((
                     view.terminal.title.clone(),
                     view.terminal.host_link.clone(),
-                    self.agent_reading(&view.terminal.session_id),
+                    self.agent_reading(
+                        &view.terminal.session_id,
+                        Some(terminal.entity_id().as_u64()),
+                    ),
                 ))
             })
             .collect();
         busy_rows(contained)
     }
 
-    fn agent_reading(&self, session: &SessionId) -> AgentReading {
+    fn agent_reading(&self, session: &SessionId, surface: Option<u64>) -> AgentReading {
+        let local = surface.and_then(|surface| self.local_agent_state(surface));
+        if matches!(
+            local,
+            Some(AgentState::Thinking | AgentState::WaitingForInput)
+        ) {
+            return AgentReading::Known(local);
+        }
         if !self.host_agents_are_settled() {
             return AgentReading::Unknown;
         }
-        AgentReading::Known(
-            self.host_agent_row(session)
-                .and_then(|row| row.state.filter(|_| !row.stale)),
-        )
+        let hosted = self
+            .host_agent_row(session)
+            .and_then(|row| row.state.filter(|_| !row.stale));
+        AgentReading::Known(hosted.or(local))
+    }
+
+    fn local_agent_state(&self, surface: u64) -> Option<AgentState> {
+        self.workspaces
+            .iter()
+            .flat_map(|ws| ws.agent_sessions.values())
+            .find(|agent| agent.surface_id == Some(surface))
+            .map(|agent| agent.state)
     }
 
     pub(crate) fn request_close(
