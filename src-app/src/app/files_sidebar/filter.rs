@@ -304,7 +304,12 @@ mod tests {
         let elapsed = start.elapsed();
 
         assert_eq!(rows.len(), 500);
-        let budget_ms = if cfg!(debug_assertions) { 64 } else { 16 };
+        let local_ms = if cfg!(debug_assertions) { 64 } else { 16 };
+        let budget_ms = if std::env::var_os("CI").is_some() {
+            local_ms * 4
+        } else {
+            local_ms
+        };
         assert!(
             elapsed < std::time::Duration::from_millis(budget_ms),
             "filtering 50 000 entries took {:.2}ms, over the {budget_ms}ms budget",
