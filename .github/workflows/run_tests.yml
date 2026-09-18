@@ -541,7 +541,7 @@ jobs:
 
       # AC2 - release build produces the expected binary path.
       - name: cargo build --release (aarch64-apple-darwin)
-        run: cargo build --release -p paneflow-app --locked --target aarch64-apple-darwin
+        run: cargo build --release -p paneflow-app -p paneflow-host --locked --target aarch64-apple-darwin
 
       # AC3 - verify the produced binary is a Mach-O arm64 executable.
       - name: Verify Mach-O arm64 binary
@@ -559,7 +559,9 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: paneflow-aarch64-apple-darwin
-          path: target/aarch64-apple-darwin/release/paneflow
+          path: |
+            target/aarch64-apple-darwin/release/paneflow
+            target/aarch64-apple-darwin/release/paneflow-host
           if-no-files-found: error
           retention-days: 7
 
@@ -626,7 +628,7 @@ jobs:
         # Linux outputs (https://github.com/actions/upload-artifact/issues/38).
         # Without this, `bundle-macos.sh`'s `install -m 0755` would copy
         # a non-executable file and `open` would fail with EACCES.
-        run: chmod +x target/aarch64-apple-darwin/release/paneflow
+        run: chmod +x target/aarch64-apple-darwin/release/paneflow target/aarch64-apple-darwin/release/paneflow-host
 
       - name: Bundle .app
         # Reuse the production bundling script so the smoke test exercises
