@@ -34,6 +34,9 @@ use hooks::{
 };
 #[cfg(not(unix))]
 use hooks::{merge_codex_hooks, remove_codex_hooks};
+use paneflow_agent_config::{
+    command_alias_supports_current_platform, hook_adapter_for_command_alias, RuntimeHookAdapter,
+};
 
 pub(crate) fn diagnose(msg: &str) {
     let Some(path) = env::var_os("PANEFLOW_HOOK_LOG") else {
@@ -66,19 +69,19 @@ fn main() -> ExitCode {
         return ExitCode::from(127);
     };
 
-    let hook_guard = match install_hook_guard(tool) {
+    let hook_guard = match install_catalog_hook(tool) {
         Ok(HookInstall::Installed(guard)) => {
-            diagnose(&format!("install_hook_guard({tool}) = installed"));
+            diagnose(&format!("install_catalog_hook({tool}) = installed"));
             Some(guard)
         }
         Ok(HookInstall::Skipped(reason)) => {
             diagnose(&format!(
-                "install_hook_guard({tool}) = skipped ({reason:?})"
+                "install_catalog_hook({tool}) = skipped ({reason:?})"
             ));
             None
         }
         Err(error) => {
-            diagnose(&format!("install_hook_guard({tool}) = failed ({error})"));
+            diagnose(&format!("install_catalog_hook({tool}) = failed ({error})"));
             None
         }
     };
@@ -117,63 +120,90 @@ enum ToolHookGuard {
     Muse(MuseHookConfigGuard),
 }
 
-fn install_hook_guard(tool: &str) -> std::io::Result<HookInstall<ToolHookGuard>> {
-    match tool {
-        "claude" => HookConfigGuard::install().map(|outcome| outcome.map(ToolHookGuard::Claude)),
+fn install_catalog_hook(tool: &str) -> std::io::Result<HookInstall<ToolHookGuard>> {
+    if !command_alias_supports_current_platform(tool) {
+        return Ok(HookInstall::Skipped(HookInstallSkip::UnsupportedTool));
+    }
+    match hook_adapter_for_command_alias(tool) {
+        Some(RuntimeHookAdapter::Claude) => {
+            HookConfigGuard::install().map(|outcome| outcome.map(ToolHookGuard::Claude))
+        }
         #[cfg(unix)]
-        "codex" => CodexHookConfigGuard::install().map(|outcome| outcome.map(ToolHookGuard::Codex)),
+        Some(RuntimeHookAdapter::Codex) => {
+            CodexHookConfigGuard::install().map(|outcome| outcome.map(ToolHookGuard::Codex))
+        }
         #[cfg(not(unix))]
-        "codex" => ManagedHookConfigGuard::install_in_cwd(ManagedHookSpec::new(
-            ".codex",
-            "hooks.json",
-            "Codex",
-            merge_codex_hooks,
-            remove_codex_hooks,
-        ))
-        .map(|outcome| outcome.map(ToolHookGuard::Managed)),
-        "codebuddy" => ManagedHookConfigGuard::install_in_cwd(ManagedHookSpec::new(
-            ".codebuddy",
-            "settings.local.json",
-            "CodeBuddy",
-            merge_codebuddy_hooks,
-            remove_paneflow_hooks,
-        ))
-        .map(|outcome| outcome.map(ToolHookGuard::Managed)),
-        "qodercli" => ManagedHookConfigGuard::install_in_cwd(ManagedHookSpec::new(
-            ".qoder",
-            "settings.local.json",
-            "Qoder",
-            merge_qoder_hooks,
-            remove_qoder_hooks,
-        ))
-        .map(|outcome| outcome.map(ToolHookGuard::Managed)),
-        "gemini" => ManagedHookConfigGuard::install_in_home(ManagedHookSpec::new(
-            ".gemini",
-            "settings.json",
-            "Gemini CLI",
-            merge_gemini_hooks,
-            remove_gemini_hooks,
-        ))
-        .map(|outcome| outcome.map(ToolHookGuard::Managed)),
-        "cursor-agent" => ManagedHookConfigGuard::install_in_home(ManagedHookSpec::new(
-            ".cursor",
-            "hooks.json",
-            "Cursor",
-            merge_cursor_hooks,
-            remove_cursor_hooks,
-        ))
-        .map(|outcome| outcome.map(ToolHookGuard::Managed)),
-        "pi" => PiExtensionGuard::install().map(|outcome| outcome.map(ToolHookGuard::Pi)),
-        "opencode" => {
+        Some(RuntimeHookAdapter::Codex) => {
+            ManagedHookConfigGuard::install_in_cwd(ManagedHookSpec::new(
+                ".codex",
+                "hooks.json",
+                "Codex",
+                merge_codex_hooks,
+                remove_codex_hooks,
+            ))
+            .map(|outcome| outcome.map(ToolHookGuard::Managed))
+        }
+        Some(RuntimeHookAdapter::Codebuddy) => {
+            ManagedHookConfigGuard::install_in_cwd(ManagedHookSpec::new(
+                ".codebuddy",
+                "settings.local.json",
+                "CodeBuddy",
+                merge_codebuddy_hooks,
+                remove_paneflow_hooks,
+            ))
+            .map(|outcome| outcome.map(ToolHookGuard::Managed))
+        }
+        Some(RuntimeHookAdapter::Qoder) => {
+            ManagedHookConfigGuard::install_in_cwd(ManagedHookSpec::new(
+                ".qoder",
+                "settings.local.json",
+                "Qoder",
+                merge_qoder_hooks,
+                remove_qoder_hooks,
+            ))
+            .map(|outcome| outcome.map(ToolHookGuard::Managed))
+        }
+        Some(RuntimeHookAdapter::Gemini) => {
+            ManagedHookConfigGuard::install_in_home(ManagedHookSpec::new(
+                ".gemini",
+                "settings.json",
+                "Gemini CLI",
+                merge_gemini_hooks,
+                remove_gemini_hooks,
+            ))
+            .map(|outcome| outcome.map(ToolHookGuard::Managed))
+        }
+        Some(RuntimeHookAdapter::Cursor) => {
+            ManagedHookConfigGuard::install_in_home(ManagedHookSpec::new(
+                ".cursor",
+                "hooks.json",
+                "Cursor",
+                merge_cursor_hooks,
+                remove_cursor_hooks,
+            ))
+            .map(|outcome| outcome.map(ToolHookGuard::Managed))
+        }
+        Some(RuntimeHookAdapter::Opencode) => {
             OpenCodePluginGuard::install().map(|outcome| outcome.map(ToolHookGuard::OpenCode))
         }
-        "hermes" => {
+        Some(RuntimeHookAdapter::Hermes) => {
             HermesHookConfigGuard::install().map(|outcome| outcome.map(ToolHookGuard::Hermes))
         }
-        "grok" => GrokHookFileGuard::install().map(|outcome| outcome.map(ToolHookGuard::Grok)),
-        "dsh" => DshOverlayGuard::install().map(|outcome| outcome.map(ToolHookGuard::Dsh)),
-        "muse" => MuseHookConfigGuard::install().map(|outcome| outcome.map(ToolHookGuard::Muse)),
-        _ => Ok(HookInstall::Skipped(HookInstallSkip::UnsupportedTool)),
+        Some(RuntimeHookAdapter::Grok) => {
+            GrokHookFileGuard::install().map(|outcome| outcome.map(ToolHookGuard::Grok))
+        }
+        Some(RuntimeHookAdapter::Muse) => {
+            MuseHookConfigGuard::install().map(|outcome| outcome.map(ToolHookGuard::Muse))
+        }
+        Some(RuntimeHookAdapter::Pi) => {
+            PiExtensionGuard::install().map(|outcome| outcome.map(ToolHookGuard::Pi))
+        }
+        Some(RuntimeHookAdapter::Dsh) => {
+            DshOverlayGuard::install().map(|outcome| outcome.map(ToolHookGuard::Dsh))
+        }
+        Some(RuntimeHookAdapter::None) | None => {
+            Ok(HookInstall::Skipped(HookInstallSkip::UnsupportedTool))
+        }
     }
 }
 

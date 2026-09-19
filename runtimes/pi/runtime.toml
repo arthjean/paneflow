@@ -1,0 +1,42 @@
+schema_version = 1
+id = "dev.mariozechner.pi"
+slug = "pi"
+label = "Pi"
+platforms = ["linux", "macos"]
+capabilities = []
+
+[display]
+order = 3
+icon_asset_path = "icons/pi-coding-agent.svg"
+icon_multicolor = false
+visibility_config_key = "pi_button_visible"
+
+[detection]
+command_aliases = ["pi"]
+process_aliases = ["pi"]
+script_path_signatures = []
+
+[environment]
+strip_inherited = []
+
+[lifecycle]
+source = "hooks"
+authority = "none"
+fallback = "none"
+escape_cancels_turn = false
+attention_clears_on_output = true
+anchor_start_event_to_output = true
+terminal_title_signal = false
+
+[integration]
+summary = "Pi reports turn activity through the Paneflow status extension; its stream is not a lifecycle authority."
+hook_adapter = "pi"
+
+[install]
+command = "npm install -g @mariozechner/pi-coding-agent"
+
+[[suggested_presets]]
+id = "pi"
+label = "Pi"
+command = "pi"
+quick_launch = true

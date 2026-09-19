@@ -1,0 +1,42 @@
+schema_version = 1
+id = "com.factory.droid"
+slug = "factory"
+label = "Factory"
+platforms = ["linux", "macos"]
+capabilities = []
+
+[display]
+order = 13
+icon_asset_path = "agents/factory.svg"
+icon_multicolor = false
+visibility_config_key = "factory_button_visible"
+
+[detection]
+command_aliases = ["droid"]
+process_aliases = ["droid"]
+script_path_signatures = []
+
+[environment]
+strip_inherited = []
+
+[lifecycle]
+source = "output"
+authority = "none"
+fallback = "none"
+escape_cancels_turn = false
+attention_clears_on_output = true
+anchor_start_event_to_output = true
+terminal_title_signal = false
+
+[integration]
+summary = "Factory Droid has no Paneflow lifecycle hook integration."
+hook_adapter = "none"
+
+[install]
+command = ""
+
+[[suggested_presets]]
+id = "factory"
+label = "Factory"
+command = "droid"
+quick_launch = false

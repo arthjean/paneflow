@@ -113,14 +113,15 @@ impl PaneFlowApp {
         let expanded = self.agents_list_expanded;
         let hidden = TerminalAgent::secondary().count();
         let shown = if expanded {
-            TerminalAgent::ALL.len()
+            TerminalAgent::all().count()
         } else {
-            TerminalAgent::PRIMARY.len()
+            TerminalAgent::primary().count()
         };
-        let counter: SharedString = format!("{shown} of {} shown", TerminalAgent::ALL.len()).into();
+        let counter: SharedString =
+            format!("{shown} of {} shown", TerminalAgent::all().count()).into();
 
         let mut card = setting_card(ui);
-        for (idx, agent) in TerminalAgent::PRIMARY.into_iter().enumerate() {
+        for (idx, agent) in TerminalAgent::primary().enumerate() {
             if idx > 0 {
                 card = card.child(hairline(ui));
             }
@@ -736,7 +737,7 @@ impl PaneFlowApp {
                         cx.notify();
                     }
                 }));
-            for agent in TerminalAgent::ALL {
+            for agent in TerminalAgent::all() {
                 let item = menu_row(
                     SharedString::from(format!("agent-profile-agent-item-{}", agent.tag())),
                     agent == current,

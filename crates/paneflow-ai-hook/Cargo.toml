@@ -11,6 +11,7 @@ path = "src/main.rs"
 
 [dependencies]
 interprocess.workspace = true
+paneflow-agent-config.workspace = true
 paneflow-ipc-client.workspace = true
 serde_json.workspace = true
 

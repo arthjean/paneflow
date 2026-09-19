@@ -1,12 +1,14 @@
-use crate::detect::{candidate_names, detect_tool_from_stem, find_real_binary_in, WRAPPED_TOOLS};
+use crate::detect::{candidate_names, detect_tool_from_stem, find_real_binary_in};
 #[cfg(unix)]
 use std::path::Path;
 use std::path::PathBuf;
 
 #[test]
 fn detect_tool_from_stem_maps_known_stems() {
-    for &tool in WRAPPED_TOOLS {
-        assert_eq!(detect_tool_from_stem(tool), Some(tool));
+    for runtime in paneflow_agent_config::RUNTIMES {
+        for &tool in runtime.detection.command_aliases {
+            assert_eq!(detect_tool_from_stem(tool), Some(tool));
+        }
     }
     assert_eq!(detect_tool_from_stem("claude"), Some("claude"));
     assert_eq!(detect_tool_from_stem("cursor-agent"), Some("cursor-agent"));

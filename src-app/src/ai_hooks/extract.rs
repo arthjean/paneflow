@@ -13,8 +13,7 @@ const TARGET_TRIPLE: &str = env!("PANEFLOW_TARGET_TRIPLE");
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 fn extract_plan() -> Vec<(&'static str, &'static str)> {
-    let mut plan: Vec<(&'static str, &'static str)> = crate::agent_launcher::TerminalAgent::ALL
-        .iter()
+    let mut plan: Vec<(&'static str, &'static str)> = crate::agent_launcher::TerminalAgent::all()
         .map(|agent| (agent.binary(), "paneflow-shim"))
         .collect();
     plan.push(("paneflow-ai-hook", "paneflow-ai-hook"));
@@ -515,8 +514,7 @@ mod tests {
         }
         let dir = ensure_binaries_extracted().unwrap();
         let suffix = exe_suffix();
-        let mut expected: Vec<String> = crate::agent_launcher::TerminalAgent::ALL
-            .iter()
+        let mut expected: Vec<String> = crate::agent_launcher::TerminalAgent::all()
             .map(|a| format!("{}{suffix}", a.binary()))
             .collect();
         expected.push(format!("paneflow-ai-hook{suffix}"));
@@ -531,34 +529,14 @@ mod tests {
     }
 
     #[test]
-    fn wrapped_stems_match_shim_detect_list() {
-        let binaries: Vec<&str> = crate::agent_launcher::TerminalAgent::ALL
-            .iter()
-            .map(|a| a.binary())
-            .collect();
-        assert_eq!(
-            binaries,
-            vec![
-                "claude",
-                "codex",
-                "opencode",
-                "pi",
-                "hermes",
-                "grok",
-                "amp",
-                "cursor-agent",
-                "gemini",
-                "kiro-cli",
-                "agy",
-                "copilot",
-                "codebuddy",
-                "droid",
-                "qodercli",
-                "openclaw",
-                "dsh",
-                "muse",
-            ],
+    fn catalog_detection_rejects_generic_interpreters_and_fx() {
+        assert!(
+            crate::agent_launcher::TerminalAgent::all()
+                .all(|agent| { !agent.runtime().detection.command_aliases.is_empty() })
         );
+        for false_positive in ["node", "sh", "python", "fx"] {
+            assert!(crate::agent_launcher::TerminalAgent::from_binary(false_positive).is_none());
+        }
     }
 
     #[test]

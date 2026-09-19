@@ -1,35 +1,16 @@
 use std::env;
 use std::path::{Path, PathBuf};
 
+use paneflow_agent_config::command_alias_literal;
+
 pub(crate) fn detect_tool() -> Option<&'static str> {
     let exe = env::current_exe().ok()?;
     let stem = exe.file_stem()?.to_str()?;
     detect_tool_from_stem(stem)
 }
 
-pub(crate) const WRAPPED_TOOLS: &[&str] = &[
-    "claude",
-    "codex",
-    "opencode",
-    "pi",
-    "hermes",
-    "grok",
-    "amp",
-    "cursor-agent",
-    "gemini",
-    "kiro-cli",
-    "agy",
-    "copilot",
-    "codebuddy",
-    "droid",
-    "qodercli",
-    "openclaw",
-    "dsh",
-    "muse",
-];
-
 pub(crate) fn detect_tool_from_stem(stem: &str) -> Option<&'static str> {
-    WRAPPED_TOOLS.iter().find(|t| **t == stem).copied()
+    command_alias_literal(stem)
 }
 
 #[cfg(unix)]

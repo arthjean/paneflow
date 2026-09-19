@@ -1,0 +1,43 @@
+schema_version = 1
+id = "com.sourcegraph.amp"
+slug = "amp"
+label = "Amp"
+platforms = ["linux", "macos", "windows"]
+capabilities = []
+
+[display]
+order = 6
+tint = "#F34E3F"
+icon_asset_path = "agents/amp-color.svg"
+icon_multicolor = false
+visibility_config_key = "amp_button_visible"
+
+[detection]
+command_aliases = ["amp"]
+process_aliases = ["amp"]
+script_path_signatures = []
+
+[environment]
+strip_inherited = []
+
+[lifecycle]
+source = "output"
+authority = "none"
+fallback = "none"
+escape_cancels_turn = false
+attention_clears_on_output = true
+anchor_start_event_to_output = true
+terminal_title_signal = false
+
+[integration]
+summary = "Amp has no Paneflow lifecycle hook integration."
+hook_adapter = "none"
+
+[install]
+command = ""
+
+[[suggested_presets]]
+id = "amp"
+label = "Amp"
+command = "amp"
+quick_launch = false

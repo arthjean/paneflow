@@ -1,0 +1,42 @@
+schema_version = 1
+id = "ai.openclaw.cli"
+slug = "openclaw"
+label = "Openclaw"
+platforms = ["linux", "macos"]
+capabilities = []
+
+[display]
+order = 15
+icon_asset_path = "agents/openclaw-color.svg"
+icon_multicolor = true
+visibility_config_key = "openclaw_button_visible"
+
+[detection]
+command_aliases = ["openclaw"]
+process_aliases = ["openclaw"]
+script_path_signatures = []
+
+[environment]
+strip_inherited = []
+
+[lifecycle]
+source = "output"
+authority = "none"
+fallback = "none"
+escape_cancels_turn = false
+attention_clears_on_output = true
+anchor_start_event_to_output = true
+terminal_title_signal = false
+
+[integration]
+summary = "Openclaw has no Paneflow lifecycle hook integration."
+hook_adapter = "none"
+
+[install]
+command = ""
+
+[[suggested_presets]]
+id = "openclaw"
+label = "Openclaw"
+command = "openclaw tui"
+quick_launch = false

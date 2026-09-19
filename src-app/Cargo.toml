@@ -67,6 +67,7 @@ ttf-parser = "0.25"
 # Internal crates
 paneflow-config = { path = "../crates/paneflow-config" }
 paneflow-home = { workspace = true }
+paneflow-agent-config = { workspace = true }
 paneflow-host = { workspace = true }
 paneflow-terminal-ghostty = { path = "../crates/paneflow-terminal-ghostty", features = [
     "native",

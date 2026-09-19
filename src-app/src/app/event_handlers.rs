@@ -1271,9 +1271,8 @@ impl PaneFlowApp {
             async move |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
                 let mut scan = smol::unblock(move || {
                     let agent_binaries: Vec<&'static str> =
-                        crate::agent_launcher::TerminalAgent::ALL
-                            .iter()
-                            .map(|a| a.binary())
+                        crate::agent_launcher::TerminalAgent::all()
+                            .map(|agent| agent.binary())
                             .collect();
                     crate::workspace::scan_panes(&roots, &agent_binaries)
                 })

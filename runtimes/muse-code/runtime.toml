@@ -1,0 +1,43 @@
+schema_version = 1
+id = "com.muse.code"
+slug = "muse-code"
+label = "Muse Code"
+platforms = ["linux", "macos"]
+capabilities = ["lifecycle_hooks", "integration_install"]
+
+[display]
+order = 17
+tint = "#0081FB"
+icon_asset_path = "agents/muse-color.svg"
+icon_multicolor = false
+visibility_config_key = "muse_button_visible"
+
+[detection]
+command_aliases = ["muse"]
+process_aliases = ["muse"]
+script_path_signatures = []
+
+[environment]
+strip_inherited = []
+
+[lifecycle]
+source = "hooks"
+authority = "complete"
+fallback = "none"
+escape_cancels_turn = true
+attention_clears_on_output = true
+anchor_start_event_to_output = true
+terminal_title_signal = false
+
+[integration]
+summary = "Installs Paneflow lifecycle hooks in Muse Code's global settings."
+hook_adapter = "muse"
+
+[install]
+command = ""
+
+[[suggested_presets]]
+id = "muse"
+label = "Muse Code"
+command = "muse"
+quick_launch = false

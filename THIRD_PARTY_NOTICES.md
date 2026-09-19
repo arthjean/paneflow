@@ -5,7 +5,7 @@ travels with the code they cover. Native archive components are listed
 separately in
 [native/libghostty/THIRD_PARTY_NOTICES.md](native/libghostty/THIRD_PARTY_NOTICES.md).
 
-## Unpeel terminal palette (Tailwind Dark, Tailwind Light)
+## Unpeel terminal palette and runtime catalog model
 
 The ANSI palette, foreground, background, cursor, and selection values of the
 bundled `Tailwind Dark` and `Tailwind Light` themes in
@@ -14,6 +14,8 @@ bundled `Tailwind Dark` and `Tailwind Light` themes in
 `clients/native/UnpeelNative/Sources/UnpeelNative/Theme.swift`. The chrome
 values of those two themes (`UiColors`, scrollbars, title bar, link text,
 syntax palettes) are Paneflow's own.
+
+The strict runtime descriptor schema, generated registry model, and provider-neutral screen rule fixtures under `runtimes/` are adapted from Unpeel's runtime catalog at commit `443877b`. Paneflow's descriptor shape, socket integration, platform policy, and application model are its own.
 
 ```
 MIT License

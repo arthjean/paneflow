@@ -12,5 +12,13 @@ paneflow-home.workspace = true
 serde_json.workspace = true
 tempfile.workspace = true
 
+[build-dependencies]
+serde = { workspace = true, features = ["derive"] }
+toml = "0.8"
+
+[dev-dependencies]
+serde = { workspace = true, features = ["derive"] }
+toml = "0.8"
+
 [lints]
 workspace = true

@@ -4,6 +4,7 @@ use std::fs::OpenOptions;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
+use paneflow_agent_config::{canonical_command_for_alias, canonical_command_for_script_path};
 use paneflow_ipc_client::ai_hook::{AiToolName, LifecycleEventSource, SessionPid, SurfaceId};
 use paneflow_ipc_client::host_control::{host_endpoint_from, session_id_from};
 use serde_json::Value;
@@ -79,7 +80,7 @@ pub(crate) fn dispatch() {
     let Some(hook_payload) = read_payload(event) else {
         return;
     };
-    let tool = match detect_tool_from(env::var(TOOL_ENV).ok().as_deref()) {
+    let tool = match detect_tool_from(env::var(TOOL_ENV).ok().as_deref(), &hook_payload) {
         Ok(tool) => tool,
         Err(error) => {
             diagnose(&format!("{TOOL_ENV}: {error}"));
@@ -133,8 +134,30 @@ fn read_socket_path_from(raw: Option<&OsStr>) -> Option<PathBuf> {
 
 fn detect_tool_from(
     raw: Option<&str>,
+    payload: &Value,
 ) -> Result<AiToolName, paneflow_ipc_client::ai_hook::InvalidToolName> {
-    raw.map_or_else(|| Ok(AiToolName::legacy_default()), AiToolName::parse)
+    if let Some(raw) = raw {
+        return catalog_tool_name(raw).map_or_else(|| AiToolName::parse(raw), AiToolName::parse);
+    }
+    for key in [
+        "runtime",
+        "runtime_id",
+        "agent",
+        "agent_name",
+        "client",
+        "tool",
+    ] {
+        if let Some(candidate) = payload.get(key).and_then(Value::as_str) {
+            if let Some(tool) = catalog_tool_name(candidate) {
+                return AiToolName::parse(tool);
+            }
+        }
+    }
+    Ok(AiToolName::legacy_default())
+}
+
+fn catalog_tool_name(candidate: &str) -> Option<&'static str> {
+    canonical_command_for_alias(candidate).or_else(|| canonical_command_for_script_path(candidate))
 }
 
 fn read_ai_pid_from(raw: Option<&str>) -> Option<SessionPid> {
@@ -262,16 +285,27 @@ mod tests {
     #[test]
     fn missing_tool_uses_the_legacy_default_but_malformed_tool_is_rejected() {
         assert_eq!(
-            detect_tool_from(None).expect("legacy default").as_str(),
+            detect_tool_from(None, &serde_json::json!({}))
+                .expect("legacy default")
+                .as_str(),
             "claude"
         );
         assert_eq!(
-            detect_tool_from(Some("cursor-agent"))
+            detect_tool_from(Some("cursor-agent"), &serde_json::json!({}))
                 .expect("valid tool")
                 .as_str(),
             "cursor-agent"
         );
-        assert!(detect_tool_from(Some("tool/../etc")).is_err());
+        assert!(detect_tool_from(Some("tool/../etc"), &serde_json::json!({})).is_err());
+        assert_eq!(
+            detect_tool_from(
+                None,
+                &serde_json::json!({"runtime": "C:\\node_modules\\@openai\\codex\\bin\\codex.js"}),
+            )
+            .expect("payload runtime")
+            .as_str(),
+            "codex"
+        );
     }
 
     #[test]

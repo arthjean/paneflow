@@ -1,0 +1,42 @@
+schema_version = 1
+id = "com.github.copilot-cli"
+slug = "github-copilot"
+label = "Copilot"
+platforms = ["linux", "macos", "windows"]
+capabilities = []
+
+[display]
+order = 11
+icon_asset_path = "agents/githubcopilot.svg"
+icon_multicolor = false
+visibility_config_key = "copilot_button_visible"
+
+[detection]
+command_aliases = ["copilot"]
+process_aliases = ["copilot"]
+script_path_signatures = []
+
+[environment]
+strip_inherited = []
+
+[lifecycle]
+source = "output"
+authority = "none"
+fallback = "none"
+escape_cancels_turn = false
+attention_clears_on_output = true
+anchor_start_event_to_output = true
+terminal_title_signal = false
+
+[integration]
+summary = "GitHub Copilot CLI has no Paneflow lifecycle hook integration."
+hook_adapter = "none"
+
+[install]
+command = "npm install -g @github/copilot"
+
+[[suggested_presets]]
+id = "copilot"
+label = "Copilot"
+command = "copilot"
+quick_launch = false

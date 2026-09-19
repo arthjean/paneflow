@@ -805,9 +805,7 @@ fn is_app_written_tab_title(title: &str) -> bool {
     title.is_empty()
         || title == crate::app::pane_palette::PALETTE_TAB_TITLE
         || title == SHELL_PRESET_LABEL
-        || TerminalAgent::ALL
-            .iter()
-            .any(|agent| agent.display_name() == title)
+        || TerminalAgent::all().any(|agent| agent.display_name() == title)
 }
 
 const SHELL_PRESET_LABEL: &str = "Terminal";

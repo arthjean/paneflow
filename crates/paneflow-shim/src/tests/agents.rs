@@ -633,15 +633,6 @@ fn dsh_guard_writes_hooks_and_overlay_and_removes_both_on_drop() {
 }
 
 #[test]
-fn dsh_overlay_escapes_a_single_quote_in_the_config_path() {
-    let overlay = render_overlay(std::path::Path::new("/it's/hooks.json"));
-    assert!(
-        overlay.contains("configPath: '/it''s/hooks.json'"),
-        "a single quote must be doubled inside a single-quoted YAML scalar, got {overlay}"
-    );
-}
-
-#[test]
 fn dsh_patch_overlay_leads_the_launcher_flags() {
     let overlay = std::path::Path::new("/tmp/overlay.yml");
     let args = vec![
@@ -674,6 +665,44 @@ fn dsh_patch_overlay_stays_out_of_plugin_help_version_and_dumps() {
             "{argv:?} must reach dsh untouched"
         );
     }
+}
+
+#[test]
+fn catalog_hook_adapters_cover_every_runtime_with_a_shim_installer() {
+    for runtime in paneflow_agent_config::RUNTIMES {
+        let detection_only = matches!(
+            runtime.slug,
+            "amp" | "antigravity" | "factory" | "github-copilot" | "kiro" | "openclaw"
+        );
+        assert_eq!(
+            matches!(
+                runtime.integration.hook_adapter,
+                paneflow_agent_config::RuntimeHookAdapter::None
+            ),
+            detection_only,
+            "{} hook adapter",
+            runtime.slug
+        );
+    }
+    assert_eq!(
+        paneflow_agent_config::runtime_by_command_alias("pi")
+            .map(|runtime| runtime.integration.hook_adapter),
+        Some(paneflow_agent_config::RuntimeHookAdapter::Pi)
+    );
+    assert_eq!(
+        paneflow_agent_config::runtime_by_command_alias("dsh")
+            .map(|runtime| runtime.integration.hook_adapter),
+        Some(paneflow_agent_config::RuntimeHookAdapter::Dsh)
+    );
+}
+
+#[test]
+fn dsh_overlay_escapes_a_single_quote_in_the_config_path() {
+    let overlay = render_overlay(std::path::Path::new("/it's/hooks.json"));
+    assert!(
+        overlay.contains("configPath: '/it''s/hooks.json'"),
+        "a single quote must be doubled inside a single-quoted YAML scalar, got {overlay}"
+    );
 }
 
 fn read_json(path: &std::path::Path) -> serde_json::Value {

@@ -1,0 +1,42 @@
+schema_version = 1
+id = "ai.x.grok-cli"
+slug = "grok"
+label = "Grok"
+platforms = ["linux", "macos"]
+capabilities = ["lifecycle_hooks", "integration_install"]
+
+[display]
+order = 5
+icon_asset_path = "agents/grok.svg"
+icon_multicolor = false
+visibility_config_key = "grok_button_visible"
+
+[detection]
+command_aliases = ["grok"]
+process_aliases = ["grok", "grok-build"]
+script_path_signatures = []
+
+[environment]
+strip_inherited = []
+
+[lifecycle]
+source = "hooks"
+authority = "complete"
+fallback = "none"
+escape_cancels_turn = false
+attention_clears_on_output = false
+anchor_start_event_to_output = false
+terminal_title_signal = false
+
+[integration]
+summary = "Installs Paneflow lifecycle hooks in Grok's global hook directory."
+hook_adapter = "grok"
+
+[install]
+command = "curl -fsSL https://x.ai/cli/install.sh | bash"
+
+[[suggested_presets]]
+id = "grok"
+label = "Grok"
+command = "grok"
+quick_launch = true
