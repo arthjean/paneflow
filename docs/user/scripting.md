@@ -38,7 +38,7 @@ text unless you deliberately pass `--raw`.
 | `paneflow mcp install` | Let MCP-capable agents read panes | No |
 | `paneflow up <file>` | Create a named workspace from TOML | Prefill only |
 | `paneflow flow run <file>` | Run a local multi-agent DAG | Only when a step submits |
-| `paneflow hooks setup` | Report agent lifecycle state to Paneflow | No |
+| `paneflow integrations install <runtime>` | Report agent lifecycle state to Paneflow | No |
 
 The CLI and MCP bridge use the same local socket. Inside a Paneflow
 pane, `PANEFLOW_SOCKET_PATH` is injected automatically. Outside
@@ -183,14 +183,16 @@ status, notifications, `ps`, `status`, and `watch`; they are not a
 generic workflow trigger system.
 
 ```bash
-paneflow hooks setup
-paneflow hooks status
-paneflow hooks uninstall
+paneflow integrations list
+paneflow integrations install claude
+paneflow integrations install codex
+paneflow integrations remove claude
 ```
 
-Persistent setup is Claude Code scoped. Codex gets per-launch hooks
-through the shim. Agents without a hook surface can still run in panes,
-but fleet state and lifecycle events are limited.
+Claude Code and Codex integrations are installed once in their global
+configuration and remain inert outside a hosted Paneflow pane. Codex asks you
+to trust the new hooks once with `/hooks`. Agents without an integration can
+still run in panes, but fleet state and lifecycle events are limited.
 
 ## Related
 

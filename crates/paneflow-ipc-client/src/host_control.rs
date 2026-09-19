@@ -91,6 +91,14 @@ pub struct HostControl {
 
 impl HostControl {
     pub fn connect(endpoint: &Path, client: &str) -> Result<Self, String> {
+        Self::connect_with_deadline(endpoint, client, REQUEST_DEADLINE)
+    }
+
+    pub fn connect_with_deadline(
+        endpoint: &Path,
+        client: &str,
+        deadline: Duration,
+    ) -> Result<Self, String> {
         let wire = Wire::connect(endpoint, MAX_CONTROL_FRAME_BYTES).map_err(|error| {
             format!(
                 "the local Paneflow host is not reachable at {} ({error})",
@@ -102,7 +110,8 @@ impl HostControl {
             next_id: 1,
             identity: Value::Null,
         };
-        control.identity = control.request(METHOD_HOST_HELLO, control_hello(client))?;
+        control.identity =
+            control.request_with_deadline(METHOD_HOST_HELLO, control_hello(client), deadline)?;
         Ok(control)
     }
 
@@ -111,14 +120,23 @@ impl HostControl {
     }
 
     pub fn request(&mut self, method: &str, params: Value) -> Result<Value, String> {
+        self.request_with_deadline(method, params, REQUEST_DEADLINE)
+    }
+
+    pub fn request_with_deadline(
+        &mut self,
+        method: &str,
+        params: Value,
+        deadline: Duration,
+    ) -> Result<Value, String> {
         let id = self.next_id;
         self.next_id += 1;
         let request = json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params});
         self.wire
-            .write_json(&request)
+            .write_json_with_timeout(&request, deadline)
             .map_err(|error| format!("paneflow host request {method} failed: {error}"))?;
         loop {
-            let line = match self.wire.read_line(REQUEST_DEADLINE) {
+            let line = match self.wire.read_line(deadline) {
                 Ok(LineRead::Line(line)) => line,
                 Ok(LineRead::Eof) => {
                     return Err(format!(

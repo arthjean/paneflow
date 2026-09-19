@@ -10,7 +10,6 @@
 
 use std::env;
 use std::ffi::OsString;
-use std::io::Write;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
@@ -19,39 +18,9 @@ const PANEFLOW_AI_EVENT_SOURCE_INTERRUPT: &str = "interrupt";
 
 mod detect;
 mod exec;
-mod hooks;
 
 use detect::{detect_tool, find_real_binary};
 use exec::run_real;
-#[cfg(unix)]
-use hooks::CodexHookConfigGuard;
-use hooks::{
-    merge_codebuddy_hooks, merge_cursor_hooks, merge_gemini_hooks, merge_qoder_hooks,
-    remove_cursor_hooks, remove_gemini_hooks, remove_paneflow_hooks, remove_qoder_hooks,
-    DshOverlayGuard, GrokHookFileGuard, HermesHookConfigGuard, HookConfigGuard, HookInstall,
-    HookInstallSkip, ManagedHookConfigGuard, ManagedHookSpec, MuseHookConfigGuard,
-    OpenCodePluginGuard, PiExtensionGuard,
-};
-#[cfg(not(unix))]
-use hooks::{merge_codex_hooks, remove_codex_hooks};
-use paneflow_agent_config::{
-    command_alias_supports_current_platform, hook_adapter_for_command_alias, RuntimeHookAdapter,
-};
-
-pub(crate) fn diagnose(msg: &str) {
-    let Some(path) = env::var_os("PANEFLOW_HOOK_LOG") else {
-        return;
-    };
-    if path.is_empty() {
-        return;
-    }
-    let line = format!("paneflow-shim[{}]: {msg}\n", std::process::id());
-    let _ = std::fs::OpenOptions::new()
-        .append(true)
-        .create(true)
-        .open(&path)
-        .and_then(|mut f| f.write_all(line.as_bytes()));
-}
 
 fn main() -> ExitCode {
     let Some(tool) = detect_tool() else {
@@ -69,28 +38,7 @@ fn main() -> ExitCode {
         return ExitCode::from(127);
     };
 
-    let hook_guard = match install_catalog_hook(tool) {
-        Ok(HookInstall::Installed(guard)) => {
-            diagnose(&format!("install_catalog_hook({tool}) = installed"));
-            Some(guard)
-        }
-        Ok(HookInstall::Skipped(reason)) => {
-            diagnose(&format!(
-                "install_catalog_hook({tool}) = skipped ({reason:?})"
-            ));
-            None
-        }
-        Err(error) => {
-            diagnose(&format!("install_catalog_hook({tool}) = failed ({error})"));
-            None
-        }
-    };
-
     let args: Vec<OsString> = env::args_os().skip(1).collect();
-    let args = match hook_guard.as_ref() {
-        Some(ToolHookGuard::Dsh(guard)) => with_dsh_patch_overlay(args, guard.overlay_path()),
-        _ => args,
-    };
 
     notify_session_start(tool);
 
@@ -104,107 +52,6 @@ fn main() -> ExitCode {
     notify_session_end(tool, interrupted_exit);
 
     code
-}
-
-#[allow(dead_code)]
-enum ToolHookGuard {
-    Claude(HookConfigGuard),
-    #[cfg(unix)]
-    Codex(CodexHookConfigGuard),
-    Managed(ManagedHookConfigGuard),
-    Pi(PiExtensionGuard),
-    OpenCode(OpenCodePluginGuard),
-    Hermes(HermesHookConfigGuard),
-    Grok(GrokHookFileGuard),
-    Dsh(DshOverlayGuard),
-    Muse(MuseHookConfigGuard),
-}
-
-fn install_catalog_hook(tool: &str) -> std::io::Result<HookInstall<ToolHookGuard>> {
-    if !command_alias_supports_current_platform(tool) {
-        return Ok(HookInstall::Skipped(HookInstallSkip::UnsupportedTool));
-    }
-    match hook_adapter_for_command_alias(tool) {
-        Some(RuntimeHookAdapter::Claude) => {
-            HookConfigGuard::install().map(|outcome| outcome.map(ToolHookGuard::Claude))
-        }
-        #[cfg(unix)]
-        Some(RuntimeHookAdapter::Codex) => {
-            CodexHookConfigGuard::install().map(|outcome| outcome.map(ToolHookGuard::Codex))
-        }
-        #[cfg(not(unix))]
-        Some(RuntimeHookAdapter::Codex) => {
-            ManagedHookConfigGuard::install_in_cwd(ManagedHookSpec::new(
-                ".codex",
-                "hooks.json",
-                "Codex",
-                merge_codex_hooks,
-                remove_codex_hooks,
-            ))
-            .map(|outcome| outcome.map(ToolHookGuard::Managed))
-        }
-        Some(RuntimeHookAdapter::Codebuddy) => {
-            ManagedHookConfigGuard::install_in_cwd(ManagedHookSpec::new(
-                ".codebuddy",
-                "settings.local.json",
-                "CodeBuddy",
-                merge_codebuddy_hooks,
-                remove_paneflow_hooks,
-            ))
-            .map(|outcome| outcome.map(ToolHookGuard::Managed))
-        }
-        Some(RuntimeHookAdapter::Qoder) => {
-            ManagedHookConfigGuard::install_in_cwd(ManagedHookSpec::new(
-                ".qoder",
-                "settings.local.json",
-                "Qoder",
-                merge_qoder_hooks,
-                remove_qoder_hooks,
-            ))
-            .map(|outcome| outcome.map(ToolHookGuard::Managed))
-        }
-        Some(RuntimeHookAdapter::Gemini) => {
-            ManagedHookConfigGuard::install_in_home(ManagedHookSpec::new(
-                ".gemini",
-                "settings.json",
-                "Gemini CLI",
-                merge_gemini_hooks,
-                remove_gemini_hooks,
-            ))
-            .map(|outcome| outcome.map(ToolHookGuard::Managed))
-        }
-        Some(RuntimeHookAdapter::Cursor) => {
-            ManagedHookConfigGuard::install_in_home(ManagedHookSpec::new(
-                ".cursor",
-                "hooks.json",
-                "Cursor",
-                merge_cursor_hooks,
-                remove_cursor_hooks,
-            ))
-            .map(|outcome| outcome.map(ToolHookGuard::Managed))
-        }
-        Some(RuntimeHookAdapter::Opencode) => {
-            OpenCodePluginGuard::install().map(|outcome| outcome.map(ToolHookGuard::OpenCode))
-        }
-        Some(RuntimeHookAdapter::Hermes) => {
-            HermesHookConfigGuard::install().map(|outcome| outcome.map(ToolHookGuard::Hermes))
-        }
-        Some(RuntimeHookAdapter::Grok) => {
-            GrokHookFileGuard::install().map(|outcome| outcome.map(ToolHookGuard::Grok))
-        }
-        Some(RuntimeHookAdapter::Muse) => {
-            MuseHookConfigGuard::install().map(|outcome| outcome.map(ToolHookGuard::Muse))
-        }
-        Some(RuntimeHookAdapter::Pi) => {
-            PiExtensionGuard::install().map(|outcome| outcome.map(ToolHookGuard::Pi))
-        }
-        Some(RuntimeHookAdapter::Dsh) => {
-            DshOverlayGuard::install().map(|outcome| outcome.map(ToolHookGuard::Dsh))
-        }
-        Some(RuntimeHookAdapter::None) | None => {
-            Ok(HookInstall::Skipped(HookInstallSkip::UnsupportedTool))
-        }
-    }
 }
 
 fn is_interrupt_exit_code(exit_code: i32) -> bool {
@@ -293,44 +140,6 @@ pub(crate) fn locate_sibling_hook_binary() -> Option<PathBuf> {
     candidate.is_file().then_some(candidate)
 }
 
-const DSH_LAUNCHER_OPT_OUT: &[&str] = &[
-    "--help",
-    "-h",
-    "--version",
-    "-V",
-    "--dump-config",
-    "--dump-default-config",
-];
-
-fn with_dsh_patch_overlay(args: Vec<OsString>, overlay: &std::path::Path) -> Vec<OsString> {
-    if !dsh_accepts_patch_overlay(&args) {
-        return args;
-    }
-    let mut patched = Vec::with_capacity(args.len() + 2);
-    patched.push(OsString::from("--patch"));
-    patched.push(overlay.as_os_str().to_owned());
-    patched.extend(args);
-    patched
-}
-
-fn dsh_accepts_patch_overlay(args: &[OsString]) -> bool {
-    let first_positional = args
-        .iter()
-        .find(|arg| !arg.to_string_lossy().starts_with('-'));
-    if first_positional.is_some_and(|arg| arg == "plugin") {
-        return false;
-    }
-    !args
-        .iter()
-        .any(|arg| DSH_LAUNCHER_OPT_OUT.iter().any(|opt| arg == opt))
-}
-
-#[cfg(test)]
-#[path = "tests/agents.rs"]
-mod agent_tests;
 #[cfg(test)]
 #[path = "tests/detect.rs"]
 mod detect_tests;
-#[cfg(test)]
-#[path = "tests/hook_config.rs"]
-mod hook_config_tests;

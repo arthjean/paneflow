@@ -52,6 +52,8 @@ pub const HOST_DIR_NAME: &str = "host";
 
 pub const HOST_SESSIONS_DIR_NAME: &str = "sessions";
 
+pub const HOST_SESSION_DATA_DIR_NAME: &str = "session-data";
+
 pub const HOST_INSTANCE_FILE_NAME: &str = "instance.json";
 
 pub fn host_dir_in(home: &Path) -> PathBuf {
@@ -64,6 +66,14 @@ pub fn host_sessions_dir_in(home: &Path) -> PathBuf {
 
 pub fn host_session_manifest_path_in(home: &Path, session_id: &str) -> PathBuf {
     host_sessions_dir_in(home).join(format!("{session_id}.json"))
+}
+
+pub fn host_session_data_root_in(home: &Path) -> PathBuf {
+    host_dir_in(home).join(HOST_SESSION_DATA_DIR_NAME)
+}
+
+pub fn host_session_data_dir_in(home: &Path, session_id: &str) -> PathBuf {
+    host_session_data_root_in(home).join(session_id)
 }
 
 pub fn host_instance_record_path_in(home: &Path) -> PathBuf {
@@ -273,6 +283,12 @@ mod tests {
         assert_eq!(
             host_instance_record_path_in(home),
             home.join("host").join("instance.json")
+        );
+        assert_eq!(
+            host_session_data_dir_in(home, "550e8400-e29b-41d4-a716-446655440000"),
+            home.join("host")
+                .join("session-data")
+                .join("550e8400-e29b-41d4-a716-446655440000")
         );
     }
 

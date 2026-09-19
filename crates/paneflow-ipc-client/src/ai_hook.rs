@@ -194,6 +194,7 @@ pub struct AiHookParams {
     pub exit_code: Option<i32>,
     pub event_source: Option<LifecycleEventSource>,
     pub emitted_at_ms: Option<u64>,
+    pub runtime_generation: Option<u64>,
     pub hook_payload: Value,
 }
 
@@ -208,6 +209,7 @@ impl AiHookParams {
             exit_code: None,
             event_source: None,
             emitted_at_ms: None,
+            runtime_generation: None,
             hook_payload,
         }
     }
@@ -236,6 +238,9 @@ impl AiHookParams {
         }
         if let Some(emitted_at_ms) = self.emitted_at_ms {
             value.insert("emitted_at_ms".into(), Value::from(emitted_at_ms));
+        }
+        if let Some(runtime_generation) = self.runtime_generation {
+            value.insert("runtime_generation".into(), Value::from(runtime_generation));
         }
         value.insert("hook_payload".into(), self.hook_payload.clone());
         Value::Object(value)
@@ -289,6 +294,9 @@ impl AiHookFrame {
         }
         if let Some(emitted_at_ms) = self.params.emitted_at_ms {
             value.insert("emitted_at_ms".into(), Value::from(emitted_at_ms));
+        }
+        if let Some(runtime_generation) = self.params.runtime_generation {
+            value.insert("runtime_generation".into(), Value::from(runtime_generation));
         }
         value.insert("hook_payload".into(), self.params.hook_payload.clone());
         Value::Object(value)

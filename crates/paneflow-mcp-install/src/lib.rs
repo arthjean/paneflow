@@ -5,6 +5,7 @@ pub mod api;
 pub mod cli;
 pub mod detect;
 pub mod hooks;
+pub mod integrations;
 pub mod io;
 pub mod merge;
 
@@ -14,3 +15,7 @@ pub use api::{
 };
 pub use cli::run_cli;
 pub use hooks::run_hooks_cli;
+pub use integrations::{
+    adopt_and_refresh_installed, install_integration, list_integrations, remove_integration,
+    run_integrations_cli, IntegrationBinaries, IntegrationState, IntegrationStatus,
+};

@@ -551,6 +551,8 @@ mod tests {
             active_tool_name: None,
             message: None,
             last_result: None,
+            provider_session_id: None,
+            transcript_path: None,
             pid: Some(42),
             waiting_since_ms: None,
             last_event_at_ms: Some(1_000),

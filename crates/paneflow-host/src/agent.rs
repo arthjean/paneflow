@@ -75,6 +75,7 @@ pub struct AgentEvent {
     pub summary: Option<String>,
     pub exit_code: Option<i32>,
     pub emitted_at_ms: Option<u64>,
+    pub received_at_ms: Option<u64>,
     pub source: AgentStateSource,
     pub event_source: Option<LifecycleEventSource>,
     pub payload: Value,
@@ -109,7 +110,10 @@ impl AgentEvent {
             .and_then(Value::as_str)
             .ok_or_else(|| "missing session".to_string())?;
         let session = SessionId::parse(raw_session).map_err(|error| error.to_string())?;
-        let generation = match params.get("generation") {
+        let generation = match params
+            .get("runtime_generation")
+            .or_else(|| params.get("generation"))
+        {
             None | Some(Value::Null) => None,
             Some(value) => Some(
                 serde_json::from_value(value.clone())
@@ -158,6 +162,7 @@ impl AgentEvent {
             summary: optional_text(params, &["last_result", "summary", "result"]),
             exit_code,
             emitted_at_ms: params.get("emitted_at_ms").and_then(Value::as_u64),
+            received_at_ms: None,
             source,
             event_source: LifecycleEventSource::from_wire_params(params),
             payload: params
@@ -205,6 +210,7 @@ impl AgentEvent {
             "tool_name": self.tool_name,
             "exit_code": self.exit_code,
             "emitted_at_ms": self.emitted_at_ms,
+            "received_at_ms": self.received_at_ms,
             "source": self.source.wire_str(),
             "event_source": self.event_source.map(LifecycleEventSource::as_str),
             "hook_payload": self.payload,
@@ -278,6 +284,8 @@ pub fn apply_event(
             active_tool_name: None,
             message: None,
             last_result: None,
+            provider_session_id: None,
+            transcript_path: None,
             pid: event.pid,
             waiting_since_ms: None,
             last_event_at_ms: event.emitted_at_ms,
@@ -288,6 +296,10 @@ pub fn apply_event(
         summary.pid = event.pid.or(summary.pid);
         summary.stale = false;
         summary.last_event_at_ms = event.emitted_at_ms.or(summary.last_event_at_ms);
+        summary.provider_session_id =
+            optional_payload_text(event, "session_id").or(summary.provider_session_id);
+        summary.transcript_path =
+            optional_payload_text(event, "transcript_path").or(summary.transcript_path);
         summary.updated_at_ms = now_ms;
         return AgentDecision::Update(Box::new(summary));
     };
@@ -316,6 +328,10 @@ pub fn apply_event(
         active_tool_name: transition.active_tool_name,
         message,
         last_result,
+        provider_session_id: optional_payload_text(event, "session_id")
+            .or_else(|| existing.and_then(|summary| summary.provider_session_id.clone())),
+        transcript_path: optional_payload_text(event, "transcript_path")
+            .or_else(|| existing.and_then(|summary| summary.transcript_path.clone())),
         pid: event
             .pid
             .or_else(|| existing.and_then(|summary| summary.pid)),
@@ -326,6 +342,15 @@ pub fn apply_event(
         stale: false,
         updated_at_ms: now_ms,
     }))
+}
+
+fn optional_payload_text(event: &AgentEvent, key: &str) -> Option<String> {
+    event
+        .payload
+        .get(key)
+        .and_then(Value::as_str)
+        .map(clamp_text)
+        .filter(|value| !value.is_empty())
 }
 
 pub fn reconcile_adopted(summary: &mut AgentSummary, lifecycle: &SessionLifecycle, now_ms: u64) {
@@ -419,6 +444,7 @@ mod tests {
             summary: None,
             exit_code: (kind == AgentEventKind::Exit).then_some(0),
             emitted_at_ms,
+            received_at_ms: None,
             source: AgentStateSource::Hook,
             event_source: None,
             payload: json!({}),

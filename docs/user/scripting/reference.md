@@ -290,9 +290,12 @@ frame, and exits `0` so a stopped Paneflow instance does not break the
 agent. The hook surface powers status, notifications, `ps`, `status`,
 and `watch`.
 
-Persistent `paneflow hooks setup` is Claude Code scoped. Codex uses
-per-launch shim hooks. Agents with no hook surface still run, but their
-state may be limited to process detection.
+Use `paneflow integrations list` to inspect every catalog runtime, then
+`paneflow integrations install claude` or `paneflow integrations install codex`
+for the supported global hook integrations. The installed reporters are inert
+outside a hosted Paneflow pane. Remove only Paneflow-owned entries with
+`paneflow integrations remove <runtime>`. Agents with no hook surface still
+run, but their state may be limited to process detection.
 
 ## Related
 

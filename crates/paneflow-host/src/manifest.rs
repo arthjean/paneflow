@@ -67,6 +67,10 @@ pub struct AgentSummary {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_result: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_session_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transcript_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pid: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub waiting_since_ms: Option<u64>,
@@ -161,6 +165,47 @@ pub fn write_atomically(path: &Path, bytes: &[u8]) -> io::Result<()> {
                 return Err(error);
             }
         }
+    }
+}
+
+pub fn write_last_hook_event(
+    home: &Path,
+    session: &SessionId,
+    hook_event_name: &str,
+    tool_name: Option<&str>,
+    runtime_generation: SessionGeneration,
+) -> io::Result<PathBuf> {
+    let path = paneflow_home::host_session_data_dir_in(home, session.as_str())
+        .join("last-hook-event.json");
+    let mut seed = serde_json::Map::new();
+    seed.insert(
+        "hook_event_name".into(),
+        serde_json::Value::String(hook_event_name.to_string()),
+    );
+    if let Some(tool_name) = tool_name {
+        seed.insert(
+            "tool_name".into(),
+            serde_json::Value::String(tool_name.to_string()),
+        );
+    }
+    seed.insert(
+        "runtime_generation".into(),
+        serde_json::Value::from(runtime_generation.get()),
+    );
+    let bytes = serde_json::to_vec(&serde_json::Value::Object(seed)).map_err(io::Error::other)?;
+    write_atomically(&path, &bytes)?;
+    Ok(path)
+}
+
+pub fn remove_session_data(home: &Path, session: &SessionId) {
+    let path = paneflow_home::host_session_data_dir_in(home, session.as_str());
+    match std::fs::remove_dir_all(&path) {
+        Ok(()) => {}
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => log::warn!(
+            "paneflow-host: cannot delete the session data directory {}: {error}",
+            path.display()
+        ),
     }
 }
 

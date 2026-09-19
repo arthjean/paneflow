@@ -4543,6 +4543,7 @@ dependencies = [
  "interprocess",
  "libc",
  "log",
+ "paneflow-agent-config",
  "paneflow-config",
  "paneflow-home",
  "paneflow-ipc-client",
@@ -4595,6 +4596,7 @@ dependencies = [
  "anyhow",
  "dirs",
  "paneflow-agent-config",
+ "paneflow-home",
  "serde_json",
  "tempfile",
  "toml_edit 0.22.27",
@@ -4617,7 +4619,6 @@ dependencies = [
  "libc",
  "paneflow-agent-config",
  "same-file",
- "serde_json",
  "tempfile",
 ]
 

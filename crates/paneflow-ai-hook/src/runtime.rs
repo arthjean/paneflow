@@ -10,11 +10,9 @@ use paneflow_ipc_client::host_control::{host_endpoint_from, session_id_from};
 use serde_json::Value;
 
 use crate::event::{build_frame, BuildOutcome, FrameContext, HookEvent, InputSource};
-use crate::transport::{send_agent_event, send_frame};
+use crate::transport::send_agent_event;
 use crate::MAX_STDIN_BYTES;
 
-const SOCKET_PATH_ENV: &str = "PANEFLOW_SOCKET_PATH";
-const WORKSPACE_ID_ENV: &str = "PANEFLOW_WORKSPACE_ID";
 const TOOL_ENV: &str = "PANEFLOW_AI_TOOL";
 const PID_ENV: &str = "PANEFLOW_AI_PID";
 const SURFACE_ID_ENV: &str = "PANEFLOW_SURFACE_ID";
@@ -23,36 +21,26 @@ const EVENT_SOURCE_ENV: &str = "PANEFLOW_AI_EVENT_SOURCE";
 const HOOK_LOG_ENV: &str = "PANEFLOW_HOOK_LOG";
 const HOST_ENDPOINT_ENV: &str = "PANEFLOW_HOST_ENDPOINT";
 const SESSION_ID_ENV: &str = "PANEFLOW_SESSION_ID";
-
-pub(crate) enum Target {
-    Host { endpoint: PathBuf, session: String },
-    Controller { socket: PathBuf, workspace_id: u64 },
-}
+const SESSION_DIR_ENV: &str = "PANEFLOW_SESSION_DIR";
+const RUNTIME_GENERATION_ENV: &str = "PANEFLOW_RUNTIME_GENERATION";
 
 pub(crate) fn resolve_target(
     host_endpoint: Option<&OsStr>,
     session: Option<&str>,
-    socket: Option<&OsStr>,
-    workspace_id: Option<&str>,
-) -> Option<Target> {
-    if let (Some(endpoint), Some(session)) = (
+) -> Option<(PathBuf, String)> {
+    let (Some(endpoint), Some(session)) = (
         host_endpoint_from(host_endpoint).filter(|path| path.is_absolute()),
         session_id_from(session),
-    ) {
-        return Some(Target::Host { endpoint, session });
-    }
-    let socket = read_socket_path_from(socket)?;
-    if !socket.is_absolute() {
+    ) else {
         return None;
-    }
-    let workspace_id = workspace_id?.parse::<u64>().ok()?;
-    Some(Target::Controller {
-        socket,
-        workspace_id,
-    })
+    };
+    Some((endpoint, session))
 }
 
 pub(crate) fn dispatch() {
+    let Ok(session) = env::var(SESSION_ID_ENV) else {
+        return;
+    };
     let Some(event_name) = env::args().nth(1) else {
         diagnose("missing argv[1] hook event name");
         return;
@@ -61,21 +49,11 @@ pub(crate) fn dispatch() {
         diagnose(&format!("{event_name}: unhandled hook event"));
         return;
     };
-    let Some(target) = resolve_target(
-        env::var_os(HOST_ENDPOINT_ENV).as_deref(),
-        env::var(SESSION_ID_ENV).ok().as_deref(),
-        env::var_os(SOCKET_PATH_ENV).as_deref(),
-        env::var(WORKSPACE_ID_ENV).ok().as_deref(),
-    ) else {
-        diagnose(&format!(
-            "{}: no local host endpoint and no reachable {SOCKET_PATH_ENV}/{WORKSPACE_ID_ENV} pair",
-            event.name()
-        ));
+    let Some((endpoint, session)) =
+        resolve_target(env::var_os(HOST_ENDPOINT_ENV).as_deref(), Some(&session))
+    else {
+        diagnose(&format!("{}: no local host endpoint", event.name()));
         return;
-    };
-    let workspace_id = match &target {
-        Target::Host { .. } => 0,
-        Target::Controller { workspace_id, .. } => *workspace_id,
     };
     let Some(hook_payload) = read_payload(event) else {
         return;
@@ -88,20 +66,26 @@ pub(crate) fn dispatch() {
         }
     };
     let context = FrameContext {
-        workspace_id,
+        workspace_id: 0,
         tool,
         pid: read_ai_pid_from(env::var(PID_ENV).ok().as_deref()),
         surface_id: read_surface_id_from(env::var(SURFACE_ID_ENV).ok().as_deref()),
         event_source: read_event_source_from(env::var(EVENT_SOURCE_ENV).ok().as_deref()),
+        runtime_generation: read_runtime_generation_from(
+            env::var(RUNTIME_GENERATION_ENV).ok().as_deref(),
+        ),
     };
 
     match build_frame(event, context, hook_payload) {
         Ok(BuildOutcome::Send(frame)) => {
-            let delivered = match &target {
-                Target::Host { endpoint, session } => send_agent_event(endpoint, session, &frame),
-                Target::Controller { socket, .. } => send_frame(socket, &frame),
-            };
+            let delivered = send_agent_event(&endpoint, &session, &frame);
             if let Err(error) = delivered {
+                if error.kind() != std::io::ErrorKind::InvalidData {
+                    write_last_hook_event(
+                        env::var_os(SESSION_DIR_ENV).as_deref().map(Path::new),
+                        &frame,
+                    );
+                }
                 diagnose(&format!("{}: delivery failed: {error}", event.name()));
             }
         }
@@ -112,7 +96,6 @@ pub(crate) fn dispatch() {
 
 fn read_payload(event: HookEvent) -> Option<Value> {
     match event.input_source() {
-        InputSource::Empty => Some(serde_json::json!({})),
         InputSource::ExitCodeEnvironment => {
             let Some(exit_code) = read_exit_code_from(env::var(EXIT_CODE_ENV).ok().as_deref())
             else {
@@ -128,8 +111,8 @@ fn read_payload(event: HookEvent) -> Option<Value> {
     }
 }
 
-fn read_socket_path_from(raw: Option<&OsStr>) -> Option<PathBuf> {
-    raw.filter(|value| !value.is_empty()).map(PathBuf::from)
+fn read_runtime_generation_from(raw: Option<&str>) -> Option<u64> {
+    raw?.parse::<u64>().ok().filter(|value| *value > 0)
 }
 
 fn detect_tool_from(
@@ -193,6 +176,9 @@ fn read_stdin_json(event: HookEvent) -> Option<Value> {
         ));
         return None;
     }
+    if bytes.iter().all(u8::is_ascii_whitespace) && event == HookEvent::SessionEnd {
+        return Some(serde_json::json!({}));
+    }
     if bytes.iter().all(u8::is_ascii_whitespace) {
         diagnose(&format!("{}: empty stdin", event.name()));
         return None;
@@ -203,6 +189,45 @@ fn read_stdin_json(event: HookEvent) -> Option<Value> {
             diagnose(&format!("{}: invalid stdin JSON", event.name()));
             None
         }
+    }
+}
+
+fn write_last_hook_event(
+    session_dir: Option<&Path>,
+    frame: &paneflow_ipc_client::ai_hook::AiHookFrame,
+) {
+    let Some(session_dir) = session_dir.filter(|path| path.is_dir()) else {
+        return;
+    };
+    let Some(event) = frame
+        .params
+        .hook_payload
+        .get("hook_event_name")
+        .and_then(Value::as_str)
+    else {
+        return;
+    };
+    let mut seed = serde_json::Map::new();
+    seed.insert("hook_event_name".into(), Value::String(event.to_string()));
+    if let Some(tool_name) = frame.params.tool_name.as_deref().or_else(|| {
+        frame
+            .params
+            .hook_payload
+            .get("tool_name")
+            .and_then(Value::as_str)
+    }) {
+        seed.insert("tool_name".into(), Value::String(tool_name.to_string()));
+    }
+    if let Some(generation) = frame.params.runtime_generation {
+        seed.insert("runtime_generation".into(), Value::from(generation));
+    }
+    let Ok(bytes) = serde_json::to_vec(&Value::Object(seed)) else {
+        return;
+    };
+    let target = session_dir.join("last-hook-event.json");
+    let temporary = session_dir.join(format!(".last-hook-event.json.{}", std::process::id()));
+    if std::fs::write(&temporary, bytes).is_ok() && std::fs::rename(&temporary, &target).is_err() {
+        let _ = std::fs::remove_file(temporary);
     }
 }
 
@@ -229,12 +254,7 @@ mod tests {
     use std::ffi::OsString;
 
     #[test]
-    fn the_local_host_wins_over_the_controller_socket_when_both_are_present() {
-        let absolute_socket = if cfg!(windows) {
-            OsString::from(r"\\.\pipe\paneflow-test")
-        } else {
-            OsString::from("/tmp/paneflow.sock")
-        };
+    fn a_host_target_requires_both_an_absolute_endpoint_and_a_session() {
         let absolute_endpoint = if cfg!(windows) {
             OsString::from(r"\\.\pipe\paneflow-host-test")
         } else {
@@ -244,42 +264,21 @@ mod tests {
         let target = resolve_target(
             Some(&absolute_endpoint),
             Some("11112222-3333-4444-5555-666677778888"),
-            Some(&absolute_socket),
-            Some("7"),
         );
-        match target {
-            Some(Target::Host { endpoint, session }) => {
-                assert_eq!(endpoint, PathBuf::from(&absolute_endpoint));
-                assert_eq!(session, "11112222-3333-4444-5555-666677778888");
-            }
-            _ => panic!("the durable host session must win"),
-        }
-
-        let target = resolve_target(None, None, Some(&absolute_socket), Some("7"));
-        match target {
-            Some(Target::Controller {
-                socket,
-                workspace_id,
-            }) => {
-                assert_eq!(socket, PathBuf::from(&absolute_socket));
-                assert_eq!(workspace_id, 7);
-            }
-            _ => panic!("the controller socket stays the fallback"),
-        }
+        assert_eq!(
+            target,
+            Some((
+                PathBuf::from(&absolute_endpoint),
+                "11112222-3333-4444-5555-666677778888".to_string()
+            ))
+        );
 
         assert!(
-            resolve_target(Some(&absolute_endpoint), None, None, None).is_none(),
+            resolve_target(Some(&absolute_endpoint), None).is_none(),
             "a host endpoint without a durable session addresses nothing"
         );
-        assert!(
-            resolve_target(None, None, Some(&absolute_socket), None).is_none(),
-            "the controller path still needs its workspace id"
-        );
-        assert!(
-            resolve_target(None, None, Some(OsStr::new("relative.sock")), Some("7")).is_none(),
-            "a relative socket path is refused"
-        );
-        assert!(resolve_target(None, None, None, Some("7")).is_none());
+        assert!(resolve_target(Some(OsStr::new("relative.sock")), Some("id")).is_none());
+        assert!(resolve_target(None, Some("id")).is_none());
     }
 
     #[test]

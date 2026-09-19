@@ -600,6 +600,10 @@ impl PaneFlowApp {
         if section == SettingsSection::McpServers {
             self.refresh_mcp_status(cx);
         }
+        if section == SettingsSection::Agents {
+            self.probe_agent_versions(cx);
+            self.refresh_integration_status(cx);
+        }
         if section == SettingsSection::Workspaces {
             self.sync_workspace_template_inputs(cx);
         }

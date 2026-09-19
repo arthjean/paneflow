@@ -1,25 +1,12 @@
-use std::collections::HashMap;
-
 use gpui::Context;
 
 use crate::agent_launcher::TerminalAgent;
 use crate::ai_types::{self, AgentLifecycleEvent, AgentStateSource};
-use crate::claude_session_registry::{self, ClaudeSessionRecord, ClaudeSessionStatus};
 
 use crate::PaneFlowApp;
 use crate::app::ipc_handler::upsert_session_state;
 
 const FINISHED_LINGER: std::time::Duration = std::time::Duration::from_secs(5);
-
-pub(crate) const REGISTRY_POLL_INTERVAL: std::time::Duration =
-    std::time::Duration::from_millis(400);
-
-pub(crate) type RegistryWatermark = HashMap<u32, (ClaudeSessionStatus, Option<String>)>;
-
-struct PendingRecord {
-    record: ClaudeSessionRecord,
-    surface_id: Option<u64>,
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Observation {
@@ -207,91 +194,6 @@ impl PaneFlowApp {
                     .map(|terminal| terminal.read(cx).terminal.child_pid)
             })
         })
-    }
-
-    fn registry_surface_candidates(&self, cx: &gpui::App) -> Option<HashMap<u32, u64>> {
-        let mut candidates = HashMap::new();
-        let mut backed = false;
-        for ws in &self.workspaces {
-            for pane in ws.collect_panes() {
-                for terminal in pane.read(cx).terminals() {
-                    let view = terminal.read(cx);
-                    backed |= matches!(
-                        view.terminal.detected_agent,
-                        Some(TerminalAgent::ClaudeCode)
-                    );
-                    if view.terminal.child_pid > 0 {
-                        candidates.insert(view.terminal.child_pid, terminal.entity_id().as_u64());
-                    }
-                }
-            }
-        }
-        backed.then_some(candidates)
-    }
-
-    pub(crate) fn sweep_claude_session_registry(&mut self, cx: &mut Context<Self>) {
-        let Some(candidates) = self.registry_surface_candidates(cx) else {
-            self.claude_registry_seen.clear();
-            return;
-        };
-        let Some(dir) = claude_session_registry::sessions_dir() else {
-            return;
-        };
-        cx.spawn(
-            async move |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
-                let records = smol::unblock(move || {
-                    let records = claude_session_registry::read_live_sessions(&dir);
-                    records
-                        .into_iter()
-                        .map(|record| {
-                            let surface_id = candidates.get(&record.pid).copied().or_else(|| {
-                                crate::workspace::pid_resolve::resolve_surface_for_pid(
-                                    record.pid,
-                                    &candidates,
-                                )
-                            });
-                            PendingRecord { record, surface_id }
-                        })
-                        .collect::<Vec<_>>()
-                })
-                .await;
-                cx.update(|cx| {
-                    let _ = this.update(cx, |app, cx| {
-                        app.apply_registry_records(records, cx);
-                    });
-                });
-            },
-        )
-        .detach();
-    }
-
-    fn apply_registry_records(&mut self, records: Vec<PendingRecord>, cx: &mut Context<Self>) {
-        let live: std::collections::HashSet<u32> =
-            records.iter().map(|pending| pending.record.pid).collect();
-        self.claude_registry_seen
-            .retain(|pid, _| live.contains(pid));
-
-        for pending in records {
-            let Some(surface_id) = pending.surface_id else {
-                continue;
-            };
-            let record = pending.record;
-            let observation = (record.status, record.waiting_for.clone());
-            if self.claude_registry_seen.get(&record.pid) == Some(&observation) {
-                continue;
-            }
-            let applied = self.apply_observed_agent_state(
-                surface_id,
-                TerminalAgent::ClaudeCode,
-                Some(record.pid),
-                record.lifecycle_event(),
-                AgentStateSource::SessionRegistry,
-                cx,
-            );
-            if applied != Observation::Refused {
-                self.claude_registry_seen.insert(record.pid, observation);
-            }
-        }
     }
 }
 

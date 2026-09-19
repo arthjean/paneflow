@@ -6,6 +6,7 @@ use gpui::{
     prelude::*, px, rgb, svg,
 };
 use paneflow_config::schema::AgentProfileConfig;
+use paneflow_mcp_install::IntegrationState;
 
 use crate::PaneFlowApp;
 use crate::SidebarWidthAnimation;
@@ -51,6 +52,7 @@ impl PaneFlowApp {
             .flex()
             .flex_col()
             .child(self.render_agent_list_section(ui, cx))
+            .child(self.render_agent_integrations_section(ui, cx))
             .child(self.render_agent_profiles_section(ui, cx))
             .child(self.render_agent_permissions_section(ui, cx))
             .child(div().h(px(180.)).flex_none())
@@ -101,6 +103,159 @@ impl PaneFlowApp {
         cx.spawn(async move |this, cx| {
             smol::unblock(TerminalAgent::probe_missing_versions).await;
             let _ = this.update(cx, |_, cx| cx.notify());
+        })
+        .detach();
+    }
+
+    pub(crate) fn refresh_integration_status(&self, cx: &mut Context<Self>) {
+        cx.spawn(async move |this, cx| {
+            let statuses = smol::unblock(paneflow_mcp_install::list_integrations).await;
+            let _ = this.update(cx, |this, cx| {
+                this.integration_status = Some(statuses);
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn render_agent_integrations_section(
+        &self,
+        ui: crate::theme::UiColors,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let mut card = setting_card(ui);
+        let statuses = self.integration_status.clone().unwrap_or_default();
+        for (index, status) in statuses.into_iter().enumerate() {
+            if index > 0 {
+                card = card.child(hairline(ui));
+            }
+            let slug = status.slug.to_string();
+            let busy = self.integration_busy.as_deref() == Some(status.slug);
+            let state = match status.state {
+                IntegrationState::Installed => "Installed",
+                IntegrationState::NotInstalled => "Not installed",
+                IntegrationState::UnsupportedPlatform => "Not supported on this platform",
+                IntegrationState::DetectionOnly => "Detection only",
+            };
+            let action = if busy {
+                div()
+                    .flex_none()
+                    .text_size(LABEL_SM)
+                    .text_color(ui.muted)
+                    .child("Working...")
+                    .into_any_element()
+            } else {
+                match status.state {
+                    IntegrationState::Installed => secondary_button(
+                        format!("integration-remove-{}", status.slug),
+                        "Remove",
+                        ui,
+                        cx.listener(move |this, _: &ClickEvent, _window, cx| {
+                            this.change_integration(slug.clone(), false, cx);
+                        }),
+                    )
+                    .into_any_element(),
+                    IntegrationState::NotInstalled => secondary_button(
+                        format!("integration-install-{}", status.slug),
+                        "Install",
+                        ui,
+                        cx.listener(move |this, _: &ClickEvent, _window, cx| {
+                            this.change_integration(slug.clone(), true, cx);
+                        }),
+                    )
+                    .into_any_element(),
+                    IntegrationState::UnsupportedPlatform | IntegrationState::DetectionOnly => {
+                        div().into_any_element()
+                    }
+                }
+            };
+            let mut details = div()
+                .flex()
+                .flex_col()
+                .flex_1()
+                .min_w_0()
+                .gap(px(2.))
+                .child(
+                    div()
+                        .text_size(BODY)
+                        .text_color(ui.text)
+                        .child(status.label),
+                )
+                .child(
+                    div()
+                        .text_size(LABEL_SM)
+                        .text_color(ui.muted)
+                        .child(status.summary),
+                )
+                .child(div().text_size(LABEL_XS).text_color(ui.muted).child(state));
+            if status.state == IntegrationState::Installed
+                && let Some(step) = status.post_install_step
+            {
+                details = details.child(div().text_size(LABEL_XS).text_color(ui.muted).child(step));
+            }
+            if let Some(error) = self.integration_errors.get(status.slug) {
+                details = details.child(
+                    div()
+                        .text_size(LABEL_XS)
+                        .text_color(destructive_color())
+                        .child(error.clone()),
+                );
+            }
+            card = card.child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap(px(16.))
+                    .px(px(12.))
+                    .py(px(10.))
+                    .child(details)
+                    .child(action),
+            );
+        }
+        Block::new("Integrations")
+            .top_gap(24.)
+            .child(section_header(ui, "Integrations"))
+            .child(card)
+            .finish()
+    }
+
+    fn change_integration(&mut self, slug: String, install: bool, cx: &mut Context<Self>) {
+        if self.integration_busy.is_some() {
+            return;
+        }
+        self.integration_busy = Some(slug.clone());
+        self.integration_errors.remove(&slug);
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            let action_slug = slug.clone();
+            let result = smol::unblock(move || {
+                if install {
+                    let hook_binary = crate::ai_hooks::extract::ensure_ai_hook_extracted()
+                        .map_err(|error| format!("hook extraction failed: {error:#}"))?;
+                    let bridge_binary = crate::ai_hooks::extract::ensure_bridge_extracted()
+                        .map_err(|error| format!("bridge extraction failed: {error:#}"))?;
+                    paneflow_mcp_install::install_integration(
+                        &action_slug,
+                        &paneflow_mcp_install::IntegrationBinaries {
+                            hook_binary,
+                            bridge_binary,
+                        },
+                    )
+                } else {
+                    paneflow_mcp_install::remove_integration(&action_slug)
+                }
+            })
+            .await;
+            let statuses = smol::unblock(paneflow_mcp_install::list_integrations).await;
+            let _ = this.update(cx, |this, cx| {
+                this.integration_busy = None;
+                this.integration_status = Some(statuses);
+                if let Err(error) = result {
+                    this.integration_errors.insert(slug, error);
+                }
+                cx.notify();
+            });
         })
         .detach();
     }

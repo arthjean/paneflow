@@ -271,23 +271,6 @@ impl PaneFlowApp {
         .detach();
 
         cx.spawn(
-            async |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
-                loop {
-                    smol::Timer::after(crate::app::agent_status::REGISTRY_POLL_INTERVAL).await;
-                    let alive = cx.update(|cx| {
-                        this.update(cx, |app: &mut Self, cx: &mut Context<Self>| {
-                            app.sweep_claude_session_registry(cx);
-                        })
-                    });
-                    if alive.is_err() {
-                        break;
-                    }
-                }
-            },
-        )
-        .detach();
-
-        cx.spawn(
             async move |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
                 let _config_watcher = running_config_watcher;
                 loop {
@@ -587,7 +570,6 @@ impl PaneFlowApp {
             git_watcher,
             git_event_rx,
             git_watch_counts,
-            claude_registry_seen: std::collections::HashMap::new(),
             settings_section: None,
             settings_scroll: gpui::ScrollHandle::new(),
             settings_drag: None,
@@ -609,6 +591,9 @@ impl PaneFlowApp {
             agent_profile_editor: None,
             agents_list_expanded: false,
             agents_list_animation: None,
+            integration_status: None,
+            integration_busy: None,
+            integration_errors: std::collections::HashMap::new(),
             agent_profile_name_input,
             agent_profile_args_input,
             mcp_status: None,

@@ -250,6 +250,11 @@ impl SessionHost {
     pub fn open(home: &Path, endpoint: &Path) -> Result<Arc<Self>, HostError> {
         std::fs::create_dir_all(paneflow_home::host_sessions_dir_in(home))
             .map_err(|e| HostError::Storage(format!("cannot create the host directory: {e}")))?;
+        std::fs::create_dir_all(paneflow_home::host_session_data_root_in(home)).map_err(|e| {
+            HostError::Storage(format!(
+                "cannot create the host session data directory: {e}"
+            ))
+        })?;
         let owner = OwnerLock::acquire(home).map_err(|error| match error {
             OwnerLockError::Held(_) => HostError::OwnerBusy(error.to_string()),
             OwnerLockError::Io(io) => HostError::Storage(io.to_string()),
@@ -463,6 +468,7 @@ impl SessionHost {
                     log::warn!("paneflow-host: cannot delete the manifest of {id}: {error}")
                 }
             }
+            crate::manifest::remove_session_data(&self.home, id);
         }
         log::info!(
             "paneflow-host: dropped {} session records past their retention",
@@ -521,11 +527,13 @@ impl SessionHost {
     fn launch_env(
         &self,
         session: &SessionId,
+        generation: SessionGeneration,
         workspace: Option<&WorkspaceId>,
         user: &BTreeMap<String, String>,
     ) -> BTreeMap<String, String> {
         launch_env(
             session,
+            generation,
             workspace,
             &self.home,
             Path::new(&self.identity.endpoint),
@@ -551,6 +559,12 @@ impl SessionHost {
         if let Some(requested) = event.generation
             && requested != generation
         {
+            log::warn!(
+                "agent event rejected for session {}: runtime generation {} does not match current generation {}",
+                event.session,
+                requested,
+                generation
+            );
             return Ok(json!({
                 "accepted": false,
                 "reason": "the event names a generation this session has left",
@@ -579,12 +593,26 @@ impl SessionHost {
                 Some(summary)
             }
         };
+        let hook_event_name = event
+            .payload
+            .get("hook_event_name")
+            .and_then(Value::as_str)
+            .unwrap_or_else(|| event.kind.wire_str());
+        crate::manifest::write_last_hook_event(
+            &self.home,
+            &event.session,
+            hook_event_name,
+            event.tool_name.as_deref(),
+            generation,
+        )
+        .map_err(|error| HostError::Storage(error.to_string()))?;
         self.agent_bus
             .broadcast(&event.to_frame(generation, applied.as_ref()));
         Ok(json!({
             "accepted": true,
             "session": event.session,
             "generation": generation,
+            "received_at_ms": event.received_at_ms,
             "agent": applied,
         }))
     }
@@ -613,7 +641,19 @@ impl SessionHost {
         };
         let cols = request.cols.filter(|c| *c > 0).unwrap_or(DEFAULT_COLS);
         let rows = request.rows.filter(|r| *r > 0).unwrap_or(DEFAULT_ROWS);
-        let env = self.launch_env(&session, request.workspace.as_ref(), &request.env);
+        let session_dir = paneflow_home::host_session_data_dir_in(&self.home, session.as_str());
+        std::fs::create_dir_all(&session_dir).map_err(|error| {
+            HostError::Storage(format!(
+                "cannot create session data directory {}: {error}",
+                session_dir.display()
+            ))
+        })?;
+        let env = self.launch_env(
+            &session,
+            SessionGeneration::FIRST,
+            request.workspace.as_ref(),
+            &request.env,
+        );
         let launch = SessionLaunch {
             shell: shell.clone(),
             args: request.args.clone(),
@@ -726,7 +766,12 @@ impl SessionHost {
             guard.launch.args.clear();
             guard.cwd = cwd.display().to_string();
             guard.updated_at_ms = now_ms();
-            let env = self.launch_env(&guard.session, guard.workspace.as_ref(), &guard.launch.env);
+            let env = self.launch_env(
+                &guard.session,
+                next,
+                guard.workspace.as_ref(),
+                &guard.launch.env,
+            );
             let spec = SpawnSpec {
                 shell: guard.launch.shell.clone(),
                 args: Vec::new(),
@@ -875,13 +920,15 @@ impl SessionHost {
         };
         let _guard = self.lock_writer();
         let path = crate::manifest::manifest_path(&self.home, session);
-        match std::fs::remove_file(&path) {
+        let outcome = match std::fs::remove_file(&path) {
             Ok(()) => Ok(removed),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(removed),
             Err(error) => Err(HostError::Storage(format!(
                 "cannot delete the manifest of {session}: {error}"
             ))),
-        }
+        };
+        crate::manifest::remove_session_data(&self.home, session);
+        outcome
     }
 
     fn with_live_runtime<T>(
@@ -1142,6 +1189,7 @@ fn load_control_settings(home: &Path) -> (crate::control::ControlPermissions, st
 
 pub fn launch_env(
     session: &SessionId,
+    generation: SessionGeneration,
     workspace: Option<&WorkspaceId>,
     home: &Path,
     endpoint: &Path,
@@ -1155,8 +1203,10 @@ pub fn launch_env(
         "TERM_PROGRAM_VERSION",
         "SHLVL",
         "PANEFLOW_SESSION_ID",
+        "PANEFLOW_SESSION_DIR",
         "PANEFLOW_WORKSPACE_UUID",
         "PANEFLOW_HOST_ENDPOINT",
+        "PANEFLOW_RUNTIME_GENERATION",
         "PANEFLOW_HOME",
     ];
     let mut env = BTreeMap::new();
@@ -1186,12 +1236,22 @@ pub fn launch_env(
         env.insert("LANG".to_string(), "en_US.UTF-8".to_string());
     }
     env.insert("PANEFLOW_SESSION_ID".to_string(), session.to_string());
+    env.insert(
+        "PANEFLOW_SESSION_DIR".to_string(),
+        paneflow_home::host_session_data_dir_in(home, session.as_str())
+            .display()
+            .to_string(),
+    );
     if let Some(workspace) = workspace {
         env.insert("PANEFLOW_WORKSPACE_UUID".to_string(), workspace.to_string());
     }
     env.insert(
         "PANEFLOW_HOST_ENDPOINT".to_string(),
         endpoint.display().to_string(),
+    );
+    env.insert(
+        "PANEFLOW_RUNTIME_GENERATION".to_string(),
+        generation.to_string(),
     );
     env.insert("PANEFLOW_HOME".to_string(), home.display().to_string());
     if let Some(helper_dir) = helper_dir
@@ -1448,6 +1508,9 @@ mod tests {
             now - FINISHED_RECORD_MAX_AGE_MS - 60_000,
         );
         let recent = exited_manifest(home.path(), &workspace, now - 60_000);
+        let stale_data = paneflow_home::host_session_data_dir_in(home.path(), yesterday.as_str());
+        std::fs::create_dir_all(&stale_data).unwrap();
+        std::fs::write(stale_data.join("last-hook-event.json"), b"{}").unwrap();
 
         let host = SessionHost::open(home.path(), &endpoint).unwrap();
         let listed = host.list(None);
@@ -1463,6 +1526,10 @@ mod tests {
         assert!(
             !crate::manifest::manifest_path(home.path(), &yesterday).exists(),
             "a forgotten record leaves no file behind"
+        );
+        assert!(
+            !stale_data.exists(),
+            "the retention sweep takes the forgotten session's hook seed with it"
         );
     }
 
@@ -1674,6 +1741,74 @@ mod tests {
     }
 
     #[test]
+    fn agent_ingress_rejects_old_generations_and_persists_the_accepted_seed() {
+        let home = tempfile::tempdir().unwrap();
+        let host = SessionHost::open(home.path(), Path::new("agent-ingress")).unwrap();
+        let created = host.create(shell_request(80, 24)).unwrap();
+        let session = created.manifest.session.clone();
+        let accepted = crate::agent::AgentEvent::from_params(&json!({
+            "session": session,
+            "runtime_generation": 1,
+            "kind": "ai.notification",
+            "tool": "claude",
+            "tool_name": "AskUserQuestion",
+            "hook_payload": {
+                "hook_event_name": "PermissionRequest",
+                "tool_name": "AskUserQuestion",
+                "message": "Choose one"
+            }
+        }))
+        .unwrap();
+        let response = host.ingest_agent_event(&accepted).unwrap();
+        assert_eq!(response["accepted"], true);
+        let seed_path = paneflow_home::host_session_data_dir_in(home.path(), session.as_str())
+            .join("last-hook-event.json");
+        let seed: Value = serde_json::from_slice(&std::fs::read(seed_path).unwrap()).unwrap();
+        assert_eq!(
+            seed,
+            json!({
+                "hook_event_name": "PermissionRequest",
+                "tool_name": "AskUserQuestion",
+                "runtime_generation": 1
+            })
+        );
+
+        host.stop(&session, None).unwrap();
+        host.restart(&session, None).unwrap();
+        let rejected = host.ingest_agent_event(&accepted).unwrap();
+        assert_eq!(rejected["accepted"], false);
+        assert_eq!(rejected["generation"], 2);
+        host.stop(&session, None).unwrap();
+    }
+
+    #[test]
+    fn forgetting_a_session_takes_its_hook_seed_directory_with_it() {
+        let home = tempfile::tempdir().unwrap();
+        let host = SessionHost::open(home.path(), Path::new("agent-seed-cleanup")).unwrap();
+        let created = host.create(shell_request(80, 24)).unwrap();
+        let session = created.manifest.session.clone();
+        let event = crate::agent::AgentEvent::from_params(&json!({
+            "session": session,
+            "runtime_generation": 1,
+            "kind": "ai.stop",
+            "tool": "claude",
+            "hook_payload": {"hook_event_name": "Stop"}
+        }))
+        .unwrap();
+        host.ingest_agent_event(&event).unwrap();
+        let session_dir = paneflow_home::host_session_data_dir_in(home.path(), session.as_str());
+        assert!(session_dir.join("last-hook-event.json").is_file());
+
+        host.stop(&session, None).unwrap();
+        host.remove(&session).unwrap();
+        assert!(
+            !session_dir.exists(),
+            "a forgotten session leaves no hook seed behind at {}",
+            session_dir.display()
+        );
+    }
+
+    #[test]
     fn a_layout_reference_without_a_live_session_becomes_one_ordinary_shell() {
         let home = tempfile::tempdir().unwrap();
         let host = SessionHost::open(home.path(), Path::new("test-endpoint")).unwrap();
@@ -1872,6 +2007,7 @@ mod tests {
         let helper_dir = std::env::temp_dir().join("paneflow-helpers");
         let env = launch_env(
             &session,
+            SessionGeneration::FIRST,
             Some(&workspace),
             Path::new("/home/x/.paneflow"),
             Path::new("/run/paneflow-host.sock"),
@@ -1880,6 +2016,19 @@ mod tests {
         );
         assert_eq!(env.get("KEEP_ME").map(String::as_str), Some("yes"));
         assert_eq!(env.get("PANEFLOW_SESSION_ID"), Some(&session.to_string()));
+        assert_eq!(
+            env.get("PANEFLOW_SESSION_DIR").map(PathBuf::from),
+            Some(
+                Path::new("/home/x/.paneflow")
+                    .join("host")
+                    .join("session-data")
+                    .join(session.as_str())
+            )
+        );
+        assert_eq!(
+            env.get("PANEFLOW_RUNTIME_GENERATION").map(String::as_str),
+            Some("1")
+        );
         assert!(
             !env.contains_key("PANEFLOW_WORKSPACE_ID"),
             "the legacy integer marker is never forged from a UUID; the MCP bridge parses it as u64"
@@ -1919,6 +2068,7 @@ mod tests {
         ]);
         let env = launch_env(
             &session,
+            SessionGeneration::FIRST,
             Some(&workspace),
             Path::new("/home/x/.paneflow"),
             Path::new("/run/paneflow-host.sock"),

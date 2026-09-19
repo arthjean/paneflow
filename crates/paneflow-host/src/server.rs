@@ -31,6 +31,9 @@ const CONTROL_CALLS_IN_FLIGHT: usize = 8;
 
 const MAX_CONNECTIONS: usize = 128;
 
+#[cfg(windows)]
+const WINDOWS_PIPE_SDDL: &str = "D:P(A;;GA;;;OW)";
+
 const _: () = assert!(
     MAX_CONNECTIONS
         >= PANES_A_HEAVY_WORKSPACE_ATTACHES * CONTROL_CONNECTIONS_PER_PANE
@@ -132,7 +135,7 @@ fn bind(endpoint: &Path) -> io::Result<Listener> {
         use interprocess::os::windows::{
             local_socket::ListenerOptionsExt, security_descriptor::SecurityDescriptor,
         };
-        let sddl = widestring::U16CString::from_str("D:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;GA;;;OW)")
+        let sddl = widestring::U16CString::from_str(WINDOWS_PIPE_SDDL)
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
         let descriptor = SecurityDescriptor::deserialize(sddl.as_ucstr())?;
         ListenerOptions::new()
@@ -654,7 +657,8 @@ fn dispatch(host: &SessionHost, method: &str, params: &Value) -> Result<Value, D
             "sessions": host.agent_snapshot(),
         })),
         METHOD_AGENT_EVENT => {
-            let event = AgentEvent::from_params(params).map_err(DispatchError::Params)?;
+            let mut event = AgentEvent::from_params(params).map_err(DispatchError::Params)?;
+            event.received_at_ms = Some(crate::manifest::now_ms());
             Ok(host.ingest_agent_event(&event)?)
         }
         _ => Err(DispatchError::MethodNotFound(method.to_string())),
@@ -930,6 +934,53 @@ mod tests {
         let host = SessionHost::open(home.path(), &endpoint).unwrap();
         let server = ServerHandle::spawn(Arc::clone(&host), endpoint).unwrap();
         (home, host, server)
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn the_named_pipe_acl_has_no_world_or_authenticated_user_grant() {
+        assert!(WINDOWS_PIPE_SDDL.contains(";;;OW)"));
+        assert!(!WINDOWS_PIPE_SDDL.contains(";;;WD)"));
+        assert!(!WINDOWS_PIPE_SDDL.contains(";;;AU)"));
+        assert!(!WINDOWS_PIPE_SDDL.contains(";;;BU)"));
+        assert!(!WINDOWS_PIPE_SDDL.contains(";;;SY)"));
+        assert!(!WINDOWS_PIPE_SDDL.contains(";;;BA)"));
+    }
+
+    #[test]
+    fn an_agent_frame_for_an_unknown_session_gets_the_session_not_found_code() {
+        let (_home, _host, server) = start();
+        let hello = ClientHello::control("agent-ingress-test");
+        let mut client = HostClient::connect(server.endpoint(), &hello).unwrap();
+        let error = client
+            .call(
+                "agent.event",
+                json!({
+                    "session": SessionId::new(),
+                    "runtime_generation": 1,
+                    "kind": "ai.stop",
+                    "tool": "claude",
+                    "hook_payload": {"hook_event_name": "Stop"}
+                }),
+            )
+            .unwrap_err();
+        assert_eq!(error.code(), Some(crate::protocol::ERR_SESSION_NOT_FOUND));
+        server.stop().unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_unix_socket_is_owner_read_write_only() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let home = tempfile::tempdir().unwrap();
+        let endpoint = test_endpoint(home.path());
+        let listener = bind(&endpoint).unwrap();
+        assert_eq!(
+            std::fs::metadata(&endpoint).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        drop(listener);
     }
 
     #[test]

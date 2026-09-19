@@ -349,40 +349,18 @@ fn version_cache() -> &'static Mutex<HashMap<TerminalAgent, Option<String>>> {
 }
 
 const VERSION_PROBE_TIMEOUT: Duration = Duration::from_secs(3);
+const VERSION_PROBE_STDOUT_CAP: u64 = 4096;
 
 fn probe_version(binary: &std::path::Path) -> Option<String> {
-    use std::io::Read;
-    use std::process::{Command, Stdio};
-    let mut child = Command::new(binary)
-        .arg("--version")
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-        .ok()?;
-    let started = Instant::now();
-    let exited = loop {
-        match child.try_wait() {
-            Ok(Some(_)) => break true,
-            Ok(None) if started.elapsed() < VERSION_PROBE_TIMEOUT => {
-                std::thread::sleep(Duration::from_millis(50));
-            }
-            _ => break false,
-        }
-    };
-    if !exited {
-        let _ = child.kill();
-        let _ = child.wait();
-        return None;
-    }
-    let mut output = String::new();
-    child
-        .stdout
-        .take()?
-        .take(4096)
-        .read_to_string(&mut output)
-        .ok()?;
-    parse_version(&output)
+    let mut command = std::process::Command::new(binary);
+    command.arg("--version");
+    let output = paneflow_process::run_with_timeout(
+        command,
+        VERSION_PROBE_TIMEOUT,
+        VERSION_PROBE_STDOUT_CAP,
+    )
+    .ok()?;
+    parse_version(std::str::from_utf8(&output.stdout).ok()?)
 }
 
 fn parse_version(output: &str) -> Option<String> {

@@ -18,7 +18,6 @@ mod assets;
 mod auto_naming;
 #[cfg(test)]
 mod bench_harness;
-mod claude_session_registry;
 mod claude_sessions;
 mod cli;
 mod codex_sessions;
@@ -532,7 +531,6 @@ struct PaneFlowApp {
     git_watcher: Option<notify::RecommendedWatcher>,
     git_event_rx: std::sync::mpsc::Receiver<notify::Result<notify::Event>>,
     git_watch_counts: std::collections::HashMap<std::path::PathBuf, usize>,
-    claude_registry_seen: crate::app::agent_status::RegistryWatermark,
     settings_section: Option<SettingsSection>,
     settings_scroll: gpui::ScrollHandle,
     settings_drag: Option<crate::widgets::scrollbar::ScrollDragState>,
@@ -554,6 +552,9 @@ struct PaneFlowApp {
     agent_profile_editor: Option<crate::settings::tabs::agents::AgentProfileEditor>,
     agents_list_expanded: bool,
     agents_list_animation: Option<SidebarWidthAnimation>,
+    integration_status: Option<Vec<paneflow_mcp_install::IntegrationStatus>>,
+    integration_busy: Option<String>,
+    integration_errors: std::collections::HashMap<String, String>,
     agent_profile_name_input: gpui::Entity<crate::widgets::text_input::TextInput>,
     agent_profile_args_input: gpui::Entity<crate::widgets::text_input::TextInput>,
     mcp_status: Option<Vec<paneflow_mcp_install::StatusReport>>,
@@ -1668,20 +1669,22 @@ fn main() {
     let is_mcp_subcommand = args.get(1).map(String::as_str) == Some("mcp");
     let is_cli_subcommand = cli::is_cli_verb(args.get(1).map(String::as_str));
     let is_hooks_subcommand = args.get(1).map(String::as_str) == Some("hooks");
+    let is_integrations_subcommand = args.get(1).map(String::as_str) == Some("integrations");
+    let is_hook_utility_subcommand = is_hooks_subcommand || is_integrations_subcommand;
     let is_global_help = !is_msi_relay
         && !is_mcp_subcommand
         && !is_cli_subcommand
-        && !is_hooks_subcommand
+        && !is_hook_utility_subcommand
         && args.iter().any(|a| a == "--help" || a == "-h");
     let is_global_version = !is_msi_relay
         && !is_mcp_subcommand
         && !is_cli_subcommand
-        && !is_hooks_subcommand
+        && !is_hook_utility_subcommand
         && args.iter().any(|a| a == "--version" || a == "-v");
     let is_update_and_exit = !is_msi_relay
         && !is_mcp_subcommand
         && !is_cli_subcommand
-        && !is_hooks_subcommand
+        && !is_hook_utility_subcommand
         && args.iter().any(|a| a == "--update-and-exit");
     let is_unknown_verb = args
         .get(1)
@@ -1692,7 +1695,7 @@ fn main() {
         is_msi_relay
             || is_mcp_subcommand
             || is_cli_subcommand
-            || is_hooks_subcommand
+            || is_hook_utility_subcommand
             || is_global_help
             || is_global_version
             || is_update_and_exit
@@ -1710,6 +1713,7 @@ fn main() {
              \n\
              Usage: paneflow [OPTIONS]\n\
              \x20      paneflow mcp <install|status|uninstall>\n\
+             \x20      paneflow integrations <list|install|remove>\n\
              \x20      paneflow host <start|status|stop>\n\
              \n\
              Options:\n\
@@ -1766,7 +1770,7 @@ fn main() {
         is_msi_relay,
         is_mcp_subcommand,
         is_cli_subcommand,
-        is_hooks_subcommand,
+        is_hook_utility_subcommand,
         is_update_and_exit,
         is_unknown_verb,
     ) {
@@ -1806,6 +1810,37 @@ fn main() {
         std::process::exit(paneflow_mcp_install::run_hooks_cli(&args[2..], hook_path));
     }
 
+    if is_integrations_subcommand {
+        let binaries = if args.get(2).map(String::as_str) == Some("install") {
+            match (
+                ai_hooks::extract::ensure_ai_hook_extracted(),
+                ai_hooks::extract::ensure_bridge_extracted(),
+            ) {
+                (Ok(hook_binary), Ok(bridge_binary)) => {
+                    Some(paneflow_mcp_install::IntegrationBinaries {
+                        hook_binary,
+                        bridge_binary,
+                    })
+                }
+                (hook, bridge) => {
+                    if let Err(error) = hook {
+                        eprintln!("paneflow integrations: hook extraction failed: {error:#}");
+                    }
+                    if let Err(error) = bridge {
+                        eprintln!("paneflow integrations: bridge extraction failed: {error:#}");
+                    }
+                    None
+                }
+            }
+        } else {
+            None
+        };
+        std::process::exit(paneflow_mcp_install::run_integrations_cli(
+            &args[2..],
+            binaries,
+        ));
+    }
+
     if is_cli_subcommand {
         std::process::exit(cli::run());
     }
@@ -1824,6 +1859,36 @@ fn main() {
         Err(e) => log::warn!(
             "paneflow: MCP bridge extraction failed ({e:#}); `paneflow mcp install` will be unavailable until resolved"
         ),
+    }
+    match (
+        ai_hooks::extract::ensure_ai_hook_extracted(),
+        ai_hooks::extract::ensure_bridge_extracted(),
+    ) {
+        (Ok(hook_binary), Ok(bridge_binary)) => {
+            let binaries = paneflow_mcp_install::IntegrationBinaries {
+                hook_binary,
+                bridge_binary,
+            };
+            let _ = std::thread::Builder::new()
+                .name("paneflow-integration-refresh".into())
+                .spawn(move || {
+                    for (runtime, result) in
+                        paneflow_mcp_install::adopt_and_refresh_installed(&binaries)
+                    {
+                        if let Err(error) = result {
+                            log::warn!("paneflow: {runtime} integration refresh failed: {error}");
+                        }
+                    }
+                });
+        }
+        (hook, bridge) => {
+            if let Err(error) = hook {
+                log::warn!("paneflow: AI hook extraction failed ({error:#})");
+            }
+            if let Err(error) = bridge {
+                log::warn!("paneflow: MCP bridge extraction failed ({error:#})");
+            }
+        }
     }
     startup_trace::mark("bridge_extracted");
 
