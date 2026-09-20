@@ -61,7 +61,7 @@ which = "8"
 widestring = "1"
 
 # Internal crates
-paneflow-agent-config = { path = "crates/paneflow-agent-config" }
+paneflow-agent-config = { path = "crates/paneflow-agent-config", default-features = false }
 paneflow-config = { path = "crates/paneflow-config" }
 paneflow-home = { path = "crates/paneflow-home" }
 paneflow-host = { path = "crates/paneflow-host" }
