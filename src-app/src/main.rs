@@ -627,8 +627,6 @@ struct PaneFlowApp {
     fleet_search_generation: u64,
     fleet_search_focus: FocusHandle,
     fleet_search_pending_focus: bool,
-    launch_pad: Option<app::launch_pad::LaunchPadState>,
-    launch_pad_focus: FocusHandle,
     branch_prompt: Option<app::branch_prompt::BranchPromptState>,
     branch_prompt_focus: FocusHandle,
     recent_workspaces: Vec<app::recents::RecentWorkspace>,
@@ -636,10 +634,13 @@ struct PaneFlowApp {
     clone_repo: Option<app::clone_repo::CloneRepoState>,
     clone_repo_focus: FocusHandle,
     command_palette_open: bool,
-    command_palette_query: String,
+    command_palette_input: gpui::Entity<crate::widgets::text_input::TextInput>,
     command_palette_selected: usize,
-    command_palette_focus: FocusHandle,
+    command_palette_query_seen: String,
     command_palette_scroll: gpui::ScrollHandle,
+    command_palette_scope: Option<crate::app::command_palette::Scope>,
+    command_palette_context: crate::app::command_palette::PaletteContext,
+    command_palette_restore_focus: Option<FocusHandle>,
     pane_palette: Option<app::pane_palette::PanePaletteState>,
     pane_palette_focus: FocusHandle,
     pending_palette_focus: bool,
@@ -1123,7 +1124,6 @@ impl Render for PaneFlowApp {
             .on_action(cx.listener(Self::handle_toggle_broadcast_member))
             .on_action(cx.listener(Self::handle_open_broadcast_groups))
             .on_action(cx.listener(Self::handle_open_attention_queue))
-            .on_action(cx.listener(Self::handle_open_launch_pad))
             .on_action(cx.listener(Self::handle_open_command_palette))
             .on_action(cx.listener(Self::handle_clone_repository))
             .on_action(cx.listener(Self::handle_diff_new_file_tab))
@@ -1356,9 +1356,6 @@ impl Render for PaneFlowApp {
         if self.branch_prompt.is_some() {
             app_content = app_content.child(self.render_branch_prompt(cx));
         }
-        if self.launch_pad.is_some() {
-            app_content = app_content.child(self.render_launch_pad(cx));
-        }
         if self.fleet_search.is_some() {
             if std::mem::take(&mut self.fleet_search_pending_focus) {
                 self.fleet_search_focus.focus(window, cx);
@@ -1370,7 +1367,7 @@ impl Render for PaneFlowApp {
             app_content = app_content.child(self.render_clone_repo(cx));
         }
         if self.command_palette_open {
-            app_content = app_content.child(self.render_command_palette(cx));
+            app_content = app_content.child(self.render_command_palette(window, cx));
         }
         if self.custom_buttons_modal.is_some() {
             app_content = app_content.child(self.render_custom_buttons_modal(cx));

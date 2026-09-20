@@ -173,7 +173,6 @@ hides the workspace name while Settings is open.
 
 | Overlay | Placement | Shell | Source |
 | --- | --- | --- | --- |
-| Launch Pad | Centered in the panel | Card 520 wide, radius 10; agent list, branch input, prompt input, footer hint and one accent button | `src-app/src/app/launch_pad.rs` |
 | Pane palette | Fills an empty tab, titled `New pane` | A centered 260 px column on a 24 px squircle of the terminal background: 13 px Semibold title, an optional branch row 28 tall, preset rows 34 tall with a 14 px agent mark, gap 2, list capped at 420 tall, inline error at 11 px | `src-app/src/app/pane_palette.rs` |
 | Diff dock surface picker | Fills a fresh dock | Three cards 122 by 98, gap 12, radius 10, grid padding 16 | `src-app/src/app/diff_dock/surface_picker.rs` |
 | Composer | Scrim over the whole pane, panel docked at its bottom | Black scrim at 0.25 on the 20 px squircle; panel with margin 8, padding 8, gap 6, 1 px border, radius 8; header chips 10 px; input max height 180 | `src-app/src/pane.rs` |
@@ -297,8 +296,8 @@ to the surfaces named:
 | Sidebar update banner, filter field, settings control, select trigger, title bar menu trigger | 8 | round | none |
 | Toast, composer, drop overlay, drop placeholder | 8 | round | drop overlay 2 px blue |
 | Toast action button, About close button, theme mockup inner frame | 7 | round | none |
-| Toolbar pill, sidebar IPC banner, sidebar branch chip, launch pad field | 6 | round | IPC banner 1 px `border` |
-| Title bar sidebar toggle, launch pad primary button | 5 | round | none |
+| Toolbar pill, sidebar IPC banner, sidebar branch chip, branch prompt field | 6 | round | IPC banner 1 px `border` |
+| Title bar sidebar toggle, branch prompt primary button | 5 | round | none |
 | Icon button, composer chip | 4 | round | none |
 | Scrollbar thumb, header chip, filter clear | 3 | round | none |
 
@@ -770,17 +769,13 @@ theme picker, the clone dialog and the Welcome rows, keep the 28 px
 bar color, padding 8 by 6, small text, shown after 800 ms through
 `delayed_tooltip`.
 
-### 5.7 Launch Pad, Composer, palette
+### 5.7 Composer, palette
 
-Launch Pad is the one modal with a filled accent button: 520 wide, radius
-10, an `Agent` list with disabled rows marked `not installed`, a `New
-branch` field, a `From` select listing the repository's branches, an optional
-`Prompt` field, and a footer hint
-`Enter creates · Tab switches fields · Esc cancels`. The Composer dims the
-whole pane under a 0.25 black scrim and docks a bordered panel at the bottom:
-a `Composer` label at 11 px Medium, then 10 px chips on radius 4 for the
-broadcast toggle (`Single pane` on `subtle`, or `Broadcast: group` on
-`accent` at 0.15), `agent generating - Enter queues` on `vc_modified` at
+The Composer dims the whole pane under a 0.25 black scrim and docks a
+bordered panel at the bottom: a `Composer` label at 11 px Medium, then 10 px
+chips on radius 4 for the broadcast toggle (`Single pane` on `subtle`, or
+`Broadcast: group` on `accent` at 0.15), `agent generating - Enter queues`
+on `vc_modified` at
 0.15 while the agent is busy, and a cancel chip when prompts are queued;
 Enter submits, Escape closes. The pane palette fills an empty tab named
 `New pane` with a centered 260 px column: a 13 px Semibold title, an
@@ -801,11 +796,12 @@ destination path of the worktree to be created while the toggle is on
 `Open with` over the presets. Escape or the chevron folds the form back; a preset
 creates the branch and its worktree, then opens there. An empty name starts
 a detached checkout at the base. The `Create branch
-here…` prompt that names it is a 420 wide card on the Launch Pad pattern: a
-title, one line of context, the name field, an accent `Create branch`
-button, and the hint `Enter creates · Esc cancels`. The command palette and
-the `Clone repository` modal share one shell: the menu surface of 5.6, 544
-wide, docked 96 from the top of the window over a 0.4 black scrim. The
+here…` prompt that names it is a 420 wide card on the overlay surface, radius
+10: a title, one line of context, the name field, a `Create branch` button
+filled with `accent` at 0.15, and the hint `Enter creates · Esc cancels`. The
+command palette and the `Clone repository` modal share one shell: the menu
+surface of 5.6, 544 wide, docked 96 from the top of the window over a 0.4
+black scrim. The
 command palette is a 13 px query line over a hairline, then 28 px rows, one
 per action that carries no key context, each showing the Settings
 description and its binding at 11 px muted; typing filters on whole words,
@@ -891,8 +887,7 @@ workspace's only surface.
 
 `secondary` maps to Cmd on macOS and Ctrl elsewhere. Every overlay has a
 binding, every binding is remappable in Settings, Keyboard Shortcuts, and
-every modal answers Enter and Escape; Launch Pad also moves between fields
-with Tab.
+every modal answers Enter and Escape.
 
 | Surface | Default |
 | --- | --- |
@@ -902,7 +897,6 @@ with Tab.
 | Workspaces 1 to 9 | `secondary-1` to `secondary-9` |
 | File tree in the dock | `secondary-alt-f` |
 | Composer | `secondary-shift-space` |
-| Launch Pad | `secondary-shift-l` |
 | Attention queue | `secondary-shift-a` |
 | Broadcast groups, toggle member | `secondary-shift-m`, `secondary-shift-b` |
 | Jump to next waiting agent | `secondary-shift-j` |
@@ -972,8 +966,9 @@ design review would raise anywhere.
   language replaced full-height bordered tabs in 0.5.5.
 - Identity pills, badges, or logos in the pane header. The sidebar owns
   identity.
-- Accent fills on anything larger than a button. The Launch Pad primary
-  button is the ceiling.
+- Accent fills on anything larger than a button, or at more than 0.15. A
+  button tinted with `accent` at 0.15, like the branch prompt's `Create
+  branch`, is the ceiling.
 - Hue in a neutral. If a gray reads warm or cool, it is a bug unless the
   preset is Claude, whose paper and graphite are the identity.
 - A new radius, a new text size, or a new hover color. Pick from sections

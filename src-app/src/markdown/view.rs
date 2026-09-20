@@ -54,6 +54,10 @@ pub struct MarkdownView {
 }
 
 impl MarkdownView {
+    pub(crate) fn search_active(&self) -> bool {
+        self.search_active
+    }
+
     pub fn open(path: PathBuf, cx: &mut Context<Self>) -> Self {
         let element_id = make_element_id(&path);
         let pending_restore_y = state::lookup_offset_for(&path);

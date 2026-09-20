@@ -151,8 +151,8 @@ Profile entries under `agent_panel.profiles` use this shape:
 ## `worktrees`
 
 Paneflow creates a git worktree when you open a branch from the "New pane"
-palette, the Launch Pad, or `paneflow up`. Nothing is written inside the
-checkout: the ownership marker lives in the worktree's own git dir
+palette or `paneflow up`. Nothing is written inside the checkout: the
+ownership marker lives in the worktree's own git dir
 (`.git/worktrees/<name>/` in the main repository), so `git status` stays
 clean and the marker disappears with the worktree. Settings > Worktrees edits
 the same keys and lists the worktrees Paneflow manages.
@@ -196,9 +196,9 @@ Delete drops the ref. A clean worktree leaves no snapshot.
 
 `agent_profiles` is a list. Each entry adds a launcher item that runs one of
 the built-in agents with extra environment variables and arguments. Profiles
-show up in the pane palette and the worktree launch pad next to the built-in
-agents, and keep the base agent's status tracking, hooks, and sessions.
-Settings > Agents > Profiles edits the same list.
+show up in the pane palette next to the built-in agents, and keep the base
+agent's status tracking, hooks, and sessions. Settings > Agents > Profiles
+edits the same list.
 
 | Key | Type | Default | Notes |
 | --- | --- | --- | --- |

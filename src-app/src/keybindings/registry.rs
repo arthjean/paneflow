@@ -626,13 +626,6 @@ pub(super) const ACTIONS: &[ActionMeta] = &[
         group: ShortcutGroup::Agents,
     },
     ActionMeta {
-        name: "open_launch_pad",
-        factory: || Box::new(crate::OpenLaunchPad),
-        context: "",
-        description: "Launch Pad",
-        group: ShortcutGroup::Agents,
-    },
-    ActionMeta {
         name: "open_command_palette",
         factory: || Box::new(crate::OpenCommandPalette),
         context: "",
@@ -674,10 +667,6 @@ pub(super) fn context_for_action(name: &str) -> Option<&'static str> {
     find(name)
         .map(|meta| meta.context)
         .filter(|ctx| !ctx.is_empty())
-}
-
-pub fn action_is_global(name: &str) -> bool {
-    find(name).is_some_and(|meta| meta.context.is_empty())
 }
 
 pub(super) fn action_description(name: &str) -> &'static str {

@@ -470,7 +470,7 @@
     },
     "agent_profiles": {
       "type": "array",
-      "description": "Custom launcher entries. Each profile launches one of the built-in agents with extra environment variables and arguments, for example a second Claude Code account through CLAUDE_CONFIG_DIR. Profiles appear in the pane palette and the worktree launch pad next to the built-in agents and inherit the base agent's status tracking, hooks, and sessions.",
+      "description": "Custom launcher entries. Each profile launches one of the built-in agents with extra environment variables and arguments, for example a second Claude Code account through CLAUDE_CONFIG_DIR. Profiles appear in the pane palette next to the built-in agents and inherit the base agent's status tracking, hooks, and sessions.",
       "items": { "$ref": "#/definitions/agentProfile" },
       "default": []
     },

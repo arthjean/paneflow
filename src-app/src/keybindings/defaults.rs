@@ -396,11 +396,6 @@ pub(super) const DEFAULTS: &[DefaultBinding] = &[
         context: None,
     },
     DefaultBinding {
-        key: "secondary-shift-l",
-        action_name: "open_launch_pad",
-        context: None,
-    },
-    DefaultBinding {
         key: "secondary-shift-p",
         action_name: "open_command_palette",
         context: None,

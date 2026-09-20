@@ -415,7 +415,15 @@ pub fn select_item(
     selected: bool,
     ui: crate::theme::UiColors,
 ) -> Stateful<Div> {
-    let selected_bg = with_alpha(ui.text, 0.10);
+    select_item_tinted(id, selected, ui, with_alpha(ui.text, 0.10))
+}
+
+pub fn select_item_tinted(
+    id: impl Into<ElementId>,
+    selected: bool,
+    ui: crate::theme::UiColors,
+    selected_bg: Hsla,
+) -> Stateful<Div> {
     let resting_bg = if selected {
         selected_bg
     } else {

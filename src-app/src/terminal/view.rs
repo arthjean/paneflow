@@ -244,6 +244,10 @@ pub struct TerminalView {
 }
 
 impl TerminalView {
+    pub(crate) fn search_active(&self) -> bool {
+        self.search_active
+    }
+
     fn recorded_window_size(&self) -> Option<TerminalWindowSize> {
         *self
             .terminal_window_size

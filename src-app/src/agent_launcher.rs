@@ -557,13 +557,6 @@ impl AgentLaunch {
         }
     }
 
-    pub fn key(&self) -> String {
-        match self {
-            AgentLaunch::Builtin(agent) => agent.tag().to_string(),
-            AgentLaunch::Profile(profile) => format!("profile-{}", profile.name),
-        }
-    }
-
     pub fn is_installed(&self) -> bool {
         self.agent().is_installed()
     }

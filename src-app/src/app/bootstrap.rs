@@ -530,6 +530,21 @@ impl PaneFlowApp {
         let rename_input = cx.new(|cx| crate::widgets::text_input::TextInput::new("", "Name", cx));
         let sidebar_filter_input =
             cx.new(|cx| crate::widgets::text_input::TextInput::new("", "Filter", cx));
+        let command_palette_input =
+            cx.new(|cx| crate::widgets::text_input::TextInput::new("", "Search commands…", cx));
+        cx.observe(
+            &command_palette_input,
+            |this: &mut PaneFlowApp, input, cx| {
+                let value = input.read(cx).value();
+                if this.command_palette_open && value != this.command_palette_query_seen {
+                    this.command_palette_query_seen = value;
+                    this.command_palette_selected = 0;
+                    this.command_palette_scroll.scroll_to_item(0);
+                }
+                cx.notify();
+            },
+        )
+        .detach();
         cx.observe(&sidebar_filter_input, |_, _, cx| cx.notify())
             .detach();
         cx.observe(&rename_input, |_, _, cx| cx.notify()).detach();
@@ -680,8 +695,6 @@ impl PaneFlowApp {
             fleet_search_generation: 0,
             fleet_search_focus: cx.focus_handle(),
             fleet_search_pending_focus: false,
-            launch_pad: None,
-            launch_pad_focus: cx.focus_handle(),
             branch_prompt: None,
             branch_prompt_focus: cx.focus_handle(),
             recent_workspaces: crate::app::recents::load_pruned(),
@@ -689,10 +702,13 @@ impl PaneFlowApp {
             clone_repo: None,
             clone_repo_focus: cx.focus_handle(),
             command_palette_open: false,
-            command_palette_query: String::new(),
+            command_palette_input,
             command_palette_selected: 0,
-            command_palette_focus: cx.focus_handle(),
+            command_palette_query_seen: String::new(),
             command_palette_scroll: gpui::ScrollHandle::new(),
+            command_palette_scope: None,
+            command_palette_context: Default::default(),
+            command_palette_restore_focus: None,
             pane_palette: None,
             pane_palette_focus: cx.focus_handle(),
             pending_palette_focus: false,

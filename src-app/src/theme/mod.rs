@@ -16,3 +16,20 @@ pub use signal::{
 pub use watcher::{
     ThemeWatcher, active_theme, config_mtime, invalidate_theme_cache, theme_generation,
 };
+
+const SELECTION_BLUE: u32 = 0x2259b9;
+
+pub fn selection_color() -> gpui::Hsla {
+    gpui::Hsla::from(gpui::rgb(SELECTION_BLUE))
+}
+
+pub fn on_selection_color() -> gpui::Hsla {
+    gpui::white()
+}
+
+pub fn on_selection_muted() -> gpui::Hsla {
+    gpui::Hsla {
+        a: 0.72,
+        ..gpui::white()
+    }
+}
