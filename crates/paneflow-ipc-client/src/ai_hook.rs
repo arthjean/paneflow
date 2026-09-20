@@ -1,4 +1,5 @@
 use std::fmt;
+use std::path::{Path, PathBuf};
 
 use serde_json::{Map, Value};
 
@@ -145,6 +146,34 @@ impl SurfaceId {
     pub const fn get(self) -> u64 {
         self.0
     }
+}
+
+pub const BACKGROUND_DIR: &str = "background-hooks";
+
+pub const MAX_ACTIVITY_ID_BYTES: usize = 160;
+
+pub fn is_safe_activity_id(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= MAX_ACTIVITY_ID_BYTES
+        && id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+}
+
+pub fn background_generation_dir(session_dir: &Path, generation: u64) -> PathBuf {
+    session_dir
+        .join(BACKGROUND_DIR)
+        .join(generation.to_string())
+}
+
+pub fn background_marker_path(
+    session_dir: &Path,
+    generation: u64,
+    activity_id: &str,
+) -> Option<PathBuf> {
+    is_safe_activity_id(activity_id).then(|| {
+        background_generation_dir(session_dir, generation).join(format!("{activity_id}.json"))
+    })
 }
 
 pub fn epoch_millis() -> Option<u64> {

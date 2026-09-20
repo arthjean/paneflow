@@ -349,3 +349,124 @@ fn unix_reporter_script_passes_the_same_event_contract() {
     assert_eq!(frame["params"]["kind"], "ai.session_start");
     assert_eq!(frame["params"]["runtime_generation"], 2);
 }
+
+fn background_markers(session_dir: &Path, generation: u64) -> Vec<String> {
+    let directory = session_dir
+        .join("background-hooks")
+        .join(generation.to_string());
+    let Ok(entries) = std::fs::read_dir(directory) else {
+        return Vec::new();
+    };
+    let mut names: Vec<String> = entries
+        .filter_map(|entry| Some(entry.ok()?.file_name().to_string_lossy().into_owned()))
+        .collect();
+    names.sort();
+    names
+}
+
+#[test]
+fn subagent_events_keep_a_background_marker_per_child_under_their_generation() {
+    let directory = tempfile::tempdir().expect("session directory");
+    let log = directory.path().join("hook.log");
+    let children = [
+        ("explorer-1", "SubagentStart"),
+        ("writer_2", "SubagentStart"),
+    ];
+    for (agent_id, event) in children {
+        let host = MockHost::start();
+        let (status, _, _) = run_reporter(
+            Path::new(HOOK_BIN),
+            event,
+            &HookEnv {
+                endpoint: Some(&host.endpoint),
+                session: Some(SESSION_ID),
+                session_dir: Some(directory.path()),
+                tool: "claude",
+                generation: Some(5),
+                hook_log: Some(&log),
+            },
+            json!({"session_id": "provider-session", "agent_id": agent_id})
+                .to_string()
+                .as_bytes(),
+        );
+        assert!(status.success(), "agent_id={agent_id}");
+        assert_eq!(host.event()["params"]["kind"], "ai.session_start");
+    }
+    assert_eq!(
+        background_markers(directory.path(), 5),
+        vec!["explorer-1.json".to_string(), "writer_2.json".to_string()]
+    );
+    let marker: Value = serde_json::from_slice(
+        &std::fs::read(
+            directory
+                .path()
+                .join("background-hooks")
+                .join("5")
+                .join("explorer-1.json"),
+        )
+        .expect("marker bytes"),
+    )
+    .expect("marker JSON");
+    assert_eq!(
+        marker,
+        json!({"activity_id": "explorer-1", "runtime_generation": 5})
+    );
+
+    let host = MockHost::start();
+    let (status, _, _) = run_reporter(
+        Path::new(HOOK_BIN),
+        "SubagentStop",
+        &HookEnv {
+            endpoint: Some(&host.endpoint),
+            session: Some(SESSION_ID),
+            session_dir: Some(directory.path()),
+            tool: "claude",
+            generation: Some(5),
+            hook_log: Some(&log),
+        },
+        json!({"session_id": "provider-session", "agent_id": "explorer-1"})
+            .to_string()
+            .as_bytes(),
+    );
+    assert!(status.success());
+    assert_eq!(host.event()["params"]["kind"], "ai.session_start");
+    assert_eq!(
+        background_markers(directory.path(), 5),
+        vec!["writer_2.json".to_string()],
+        "a stopping child removes only its own marker"
+    );
+}
+
+#[test]
+fn an_unusable_background_identity_is_still_forwarded_as_a_latch() {
+    let directory = tempfile::tempdir().expect("session directory");
+    let log = directory.path().join("hook.log");
+    let host = MockHost::start();
+    let (status, _, _) = run_reporter(
+        Path::new(HOOK_BIN),
+        "SubagentStart",
+        &HookEnv {
+            endpoint: Some(&host.endpoint),
+            session: Some(SESSION_ID),
+            session_dir: Some(directory.path()),
+            tool: "claude",
+            generation: Some(1),
+            hook_log: Some(&log),
+        },
+        json!({"session_id": "provider-session", "agent_id": "a".repeat(161)})
+            .to_string()
+            .as_bytes(),
+    );
+    assert!(status.success());
+    assert_eq!(
+        host.event()["params"]["hook_payload"]["hook_event_name"],
+        "HookSeen",
+        "the event still latches the session as hook owned"
+    );
+    assert!(background_markers(directory.path(), 1).is_empty());
+    let recorded = std::fs::read_to_string(&log).expect("hook log");
+    assert!(
+        recorded.contains("unusable background agent id"),
+        "{recorded}"
+    );
+}

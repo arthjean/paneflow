@@ -273,6 +273,13 @@ fn apply(worker: &Arc<Worker>, frame: CoreFrame) {
                 broadcast_projection(worker, &projection, &value);
             }
         }
+        CoreFrame::Cancellation(value) => {
+            worker.core_connected.store(true, Ordering::Release);
+            let projected = worker.lock_state().apply_cancellation(&value);
+            if let Some(projection) = projected {
+                broadcast_projection(worker, &projection, &json!({}));
+            }
+        }
         CoreFrame::Disconnected(reason) => {
             worker.core_connected.store(false, Ordering::Release);
             log::warn!("paneflow-serve: the core link dropped: {reason}");

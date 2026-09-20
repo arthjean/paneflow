@@ -379,6 +379,7 @@ enum RuntimeMessage {
     },
     ClearSelection,
     ClearScrollback,
+    BindRuntime(Option<&'static str>),
     UpdateAppearance(ghostty::TerminalAppearance),
     SetDefaultCursor {
         shape: ghostty::CursorShape,
@@ -1632,6 +1633,13 @@ impl GhosttySession {
         self.request_within(SELECT_ALL_TIMEOUT, RuntimeMessage::SelectAll)
             .and_then(Result::ok)
             .flatten()
+    }
+
+    pub(super) fn bind_runtime(&self, runtime_id: Option<&'static str>) {
+        let _ = self
+            .inner
+            .mailbox
+            .try_send_control(RuntimeMessage::BindRuntime(runtime_id));
     }
 
     pub(super) fn clear_history(&self) {
@@ -4679,6 +4687,20 @@ impl HostControl {
         }
     }
 
+    fn bind_runtime(&mut self, link: &HostLinkShared, runtime_id: Option<&'static str>) {
+        let (session, generation) = (self.attachment.session.clone(), self.attachment.generation);
+        let Some(client) = self.client(link) else {
+            return;
+        };
+        if let Err(error) = client.bind_runtime(&session, generation, runtime_id) {
+            log::debug!(
+                target: "paneflow::terminal::ghostty",
+                "the launch binding was refused: {error}"
+            );
+            self.note_failure(&error);
+        }
+    }
+
     fn resize(&mut self, link: &HostLinkShared, cols: u16, rows: u16) -> Result<(), String> {
         let (session, generation) = (self.attachment.session.clone(), self.attachment.generation);
         let Some(client) = self.client(link) else {
@@ -4992,6 +5014,9 @@ fn run_attached_runtime(
             #[cfg(test)]
             Ok(Some(RuntimeMessage::SimulateWorkerCrash)) => {
                 panic!("Ghostty runtime worker failure injected for test");
+            }
+            Ok(Some(RuntimeMessage::BindRuntime(runtime_id))) => {
+                control.bind_runtime(&link, runtime_id);
             }
             Ok(Some(RuntimeMessage::Shutdown)) => break,
             Ok(Some(RuntimeMessage::WriteOutput { reply, .. })) => {

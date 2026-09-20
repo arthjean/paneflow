@@ -84,6 +84,8 @@ struct BackgroundActivity {
 #[derive(Debug, Default)]
 struct Entry {
     background: BTreeMap<String, BackgroundActivity>,
+    background_changed_at: Option<SystemTime>,
+    background_signal: Option<SystemTime>,
     background_expired: bool,
     background_tasks_pending: bool,
     native_cancelled: bool,
@@ -434,7 +436,8 @@ impl ActivityEngine {
         if entry.state == Some(HookState::Attention) {
             return entry.state;
         }
-        if entry.background.values().any(|activity| !activity.expired) {
+        let fenced = entry.cancelled_at.is_some() || entry.native_cancelled;
+        if !fenced && entry.background.values().any(|activity| !activity.expired) {
             return Some(HookState::Busy);
         }
         entry.state
@@ -524,10 +527,15 @@ impl ActivityEngine {
         now: SystemTime,
     ) {
         let entry = self.entries.entry(session.clone()).or_default();
-        let grew = entry
-            .last_signal
-            .is_some_and(|previous| previous != activity_signal);
+        let background_grew = entry
+            .background_signal
+            .is_some_and(|previous| Some(previous) != entry.background_changed_at);
+        let grew = background_grew
+            || entry
+                .last_signal
+                .is_some_and(|previous| previous != activity_signal);
         entry.last_signal = Some(activity_signal);
+        entry.background_signal = entry.background_changed_at;
         for activity in entry
             .background
             .values_mut()
@@ -650,8 +658,9 @@ impl ActivityEngine {
             return;
         };
         let entry = self.entries.entry(session.clone()).or_default();
+        entry.background_changed_at = activities.changed_at;
         let mut current = BTreeSet::new();
-        for activity in activities {
+        for activity in activities.markers {
             if not_before_unix_ms.is_some_and(|epoch| unix_ms(activity.started_at) < epoch) {
                 continue;
             }
@@ -1096,6 +1105,124 @@ mod tests {
         assert_eq!(engine.hook_owned_state(&session), Some(HookState::Idle));
         assert!(!engine.is_completed(&session));
         assert_eq!(engine.outcome(&session), Some(Outcome::Expired));
+    }
+
+    fn write_background_marker(dir: &Path, generation: u64, activity_id: &str) {
+        let path =
+            paneflow_ipc_client::ai_hook::background_marker_path(dir, generation, activity_id)
+                .expect("a usable background identity");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &path,
+            serde_json::to_vec(&serde_json::json!({
+                "activity_id": activity_id,
+                "runtime_generation": generation,
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn a_live_subagent_keeps_the_session_busy_through_the_main_stop_until_its_marker_is_gone() {
+        let dir = tempfile::tempdir().unwrap();
+        let session = SessionId::new();
+        let mut engine = engine_with_turn(&session);
+        write_background_marker(dir.path(), 1, "explorer-1");
+        engine.sync_background_from_disk(&session, dir.path(), 1, None);
+
+        assert!(engine.apply_hook_event(&session, opened("Stop"), at(2_000)));
+        assert_eq!(
+            engine.hook_owned_state(&session),
+            Some(HookState::Busy),
+            "a child still running holds the session busy"
+        );
+        assert!(!engine.is_completed(&session));
+        assert_eq!(engine.take_notice(&session), None);
+
+        std::fs::remove_file(
+            paneflow_ipc_client::ai_hook::background_marker_path(dir.path(), 1, "explorer-1")
+                .unwrap(),
+        )
+        .unwrap();
+        engine.sync_background_from_disk(&session, dir.path(), 1, None);
+        assert_eq!(engine.hook_owned_state(&session), Some(HookState::Idle));
+        assert!(engine.is_completed(&session));
+    }
+
+    #[test]
+    fn markers_of_a_previous_generation_are_ignored_and_attention_outranks_a_busy_child() {
+        let dir = tempfile::tempdir().unwrap();
+        let session = SessionId::new();
+        let mut engine = engine_with_turn(&session);
+        write_background_marker(dir.path(), 1, "stale");
+        engine.sync_background_from_disk(&session, dir.path(), 2, None);
+        assert!(engine.apply_hook_event(&session, opened("Stop"), at(2_000)));
+        assert_eq!(
+            engine.hook_owned_state(&session),
+            Some(HookState::Idle),
+            "a new generation never inherits the previous generation's children"
+        );
+
+        write_background_marker(dir.path(), 1, "child");
+        engine.sync_background_from_disk(&session, dir.path(), 1, None);
+        assert!(engine.apply_hook_event(&session, opened("PermissionRequest"), at(2_500)));
+        assert_eq!(
+            engine.hook_owned_state(&session),
+            Some(HookState::Attention),
+            "the main turn waiting on the user outranks a busy child"
+        );
+    }
+
+    #[test]
+    fn a_stale_child_expires_on_the_lease_and_the_turn_settles_without_completion() {
+        let dir = tempfile::tempdir().unwrap();
+        let session = SessionId::new();
+        let mut engine = engine_with_turn(&session);
+        write_background_marker(dir.path(), 1, "child");
+        engine.sync_background_from_disk(&session, dir.path(), 1, None);
+        assert!(engine.apply_hook_event(&session, opened("Stop"), at(2_000)));
+
+        let lease = HOOK_IDLE_TIMEOUT.as_millis() as u64;
+        let started = unix_ms(SystemTime::now());
+        engine.note_output_and_sweep(&session, 1, true, at(started + lease + 1_000));
+        assert_eq!(engine.hook_owned_state(&session), Some(HookState::Idle));
+        assert!(
+            !engine.is_completed(&session),
+            "an expired child never completes the turn"
+        );
+        assert_eq!(engine.take_notice(&session), None);
+    }
+
+    #[test]
+    fn an_escape_fence_settles_a_turn_whose_child_is_still_marked() {
+        let dir = tempfile::tempdir().unwrap();
+        let session = SessionId::new();
+        let mut engine = engine_with_turn(&session);
+        write_background_marker(dir.path(), 1, "child");
+        engine.sync_background_from_disk(&session, dir.path(), 1, None);
+        assert_eq!(engine.hook_owned_state(&session), Some(HookState::Busy));
+
+        let mut marker = hook_assets::Cancellation {
+            runtime_generation: 1,
+            cancelled_at: 2_000,
+            submitted_at: None,
+        };
+        engine.observe_cancellation(&session, &marker, 1);
+        assert_eq!(
+            engine.hook_owned_state(&session),
+            Some(HookState::Idle),
+            "the interrupt ends the children the turn started, so their markers never hold it busy"
+        );
+        assert_eq!(engine.outcome(&session), Some(Outcome::Cancelled));
+        assert!(!engine.is_completed(&session));
+        assert_eq!(engine.take_notice(&session), None);
+
+        assert!(!engine.apply_hook_event(&session, opened("UserPromptSubmit"), at(2_500)));
+        marker.submitted_at = Some(2_400);
+        engine.observe_cancellation(&session, &marker, 1);
+        assert_eq!(engine.hook_owned_state(&session), Some(HookState::Busy));
+        assert!(!engine.is_cancelled(&session));
     }
 
     #[test]

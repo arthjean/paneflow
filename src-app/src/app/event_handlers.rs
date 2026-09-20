@@ -627,7 +627,9 @@ impl PaneFlowApp {
                     &self.cached_config,
                 ) {
                     term.read(cx).send_command(&resume);
-                    term.update(cx, |view, _cx| view.declare_agent(agent.terminal_agent()));
+                    term.update(cx, |view, _cx| {
+                        view.declare_launched_agent(agent.terminal_agent())
+                    });
                 }
 
                 match edge {

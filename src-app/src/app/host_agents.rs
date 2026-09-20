@@ -523,10 +523,6 @@ impl PaneFlowApp {
             }
         }
         self.host_agents.connected = true;
-        let Some(kind) = frame.get("kind").and_then(Value::as_str).map(str::to_owned) else {
-            cx.notify();
-            return;
-        };
         let Some((workspace_id, surface_id)) = self.surface_for_session(&session, cx) else {
             cx.notify();
             return;
@@ -545,6 +541,12 @@ impl PaneFlowApp {
         if let Some(row) = row.as_ref() {
             self.seed_session_surface(row, workspace_id, surface_id);
         }
+        let Some(kind) = frame.get("kind").and_then(Value::as_str).map(str::to_owned) else {
+            self.sync_attention(cx);
+            self.agent_sessions_changed(cx);
+            cx.notify();
+            return;
+        };
         if let Some(params) = legacy_ai_params(frame, workspace_id, surface_id) {
             self.apply_projected_agent_metadata(&kind, &params, workspace_id, surface_id, cx);
         }

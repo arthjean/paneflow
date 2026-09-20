@@ -65,6 +65,7 @@ pub(crate) fn dispatch() {
             return;
         }
     };
+    let session_dir = env::var_os(SESSION_DIR_ENV);
     let context = FrameContext {
         workspace_id: 0,
         tool,
@@ -75,16 +76,21 @@ pub(crate) fn dispatch() {
             env::var(RUNTIME_GENERATION_ENV).ok().as_deref(),
         ),
     };
+    if let Err(error) = crate::background::record(
+        event,
+        session_dir.as_deref().map(Path::new),
+        context.runtime_generation,
+        &hook_payload,
+    ) {
+        diagnose(&format!("{}: {error}", event.name()));
+    }
 
     match build_frame(event, context, hook_payload) {
         Ok(BuildOutcome::Send(frame)) => {
             let delivered = send_agent_event(&endpoint, &session, &frame);
             if let Err(error) = delivered {
                 if error.kind() != std::io::ErrorKind::InvalidData {
-                    write_last_hook_event(
-                        env::var_os(SESSION_DIR_ENV).as_deref().map(Path::new),
-                        &frame,
-                    );
+                    write_last_hook_event(session_dir.as_deref().map(Path::new), &frame);
                 }
                 diagnose(&format!("{}: delivery failed: {error}", event.name()));
             }

@@ -934,6 +934,11 @@ impl TerminalView {
 
     const DECLARED_AGENT_GRACE: std::time::Duration = std::time::Duration::from_secs(10);
 
+    pub fn declare_launched_agent(&mut self, agent: crate::agent_launcher::TerminalAgent) {
+        self.terminal.bind_runtime(Some(agent.runtime().id));
+        self.declare_agent(agent);
+    }
+
     pub fn declare_agent(&mut self, agent: crate::agent_launcher::TerminalAgent) {
         self.terminal.detected_agent = Some(agent);
         self.terminal.agent_confirmed = false;
@@ -943,7 +948,7 @@ impl TerminalView {
 
     pub fn declare_agent_from_command(&mut self, command: &str) {
         if let Some(agent) = crate::agent_launcher::TerminalAgent::from_launch_command(command) {
-            self.declare_agent(agent);
+            self.declare_launched_agent(agent);
         }
     }
 

@@ -1372,6 +1372,10 @@ impl TerminalState {
         self.dispatch_ghostty_input(PendingTerminalInput::Raw(input), false);
     }
 
+    pub fn bind_runtime(&self, runtime_id: Option<&'static str>) {
+        self.ghostty.bind_runtime(runtime_id);
+    }
+
     pub fn write_to_pty_silent(&self, input: impl Into<Cow<'static, [u8]>>) {
         self.notify_or_buffer(input.into());
     }

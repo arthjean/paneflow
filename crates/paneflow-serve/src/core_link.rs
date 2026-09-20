@@ -14,6 +14,7 @@ const STREAM_READ_TIMEOUT: Duration = Duration::from_secs(30);
 pub enum CoreFrame {
     Snapshot(Vec<Value>),
     Event(Box<Value>),
+    Cancellation(Box<Value>),
     Disconnected(String),
 }
 
@@ -106,6 +107,7 @@ fn follow_once(endpoint: &Path, tx: &SyncSender<CoreFrame>) -> Result<(), String
         };
         match value["type"].as_str() {
             Some("event") => send(tx, CoreFrame::Event(Box::new(value)))?,
+            Some("cancellation") => send(tx, CoreFrame::Cancellation(Box::new(value)))?,
             Some("end") => {
                 return Err(value["reason"]
                     .as_str()

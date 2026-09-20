@@ -61,6 +61,7 @@ pub const METHODS: &[&str] = &[
     "session.attach",
     "session.output",
     "session.input",
+    "session.runtime.bind",
     "session.resize",
     "session.text",
     METHOD_AGENT_SNAPSHOT,

@@ -428,6 +428,40 @@ stale code.
   mtime, so a later repaint cannot reopen a finished turn.
   `hook-cancellation.json` is restored before the seed, so an escape fence
   survives the restart.
+- **The escape cancellation fence.** Claude Code, Gemini and Muse Code fire no
+  hook when the user interrupts a turn with Escape, so the host reads the
+  intent from the input it already delivers. A session carries a launch
+  binding: `runtime.launch_binding` in its manifest, derived from the launch
+  command when the agent is the pane's own shell and set over
+  `session.runtime.bind` when the app declares the agent it just launched from
+  a preset. A hand-typed agent in a blank pane has no binding and is never
+  fenced, and neither is a runtime whose descriptor leaves
+  `escape_cancels_turn` false, Codex first, whose native `Interrupt` hook
+  already settles the turn. For a bound fenced session, `session_input.rs`
+  parses the delivered bytes: a lone `ESC` with no continuation within 150 ms
+  is a cancellation, while a CSI or SS3 sequence, a modified key, bracketed
+  paste and the Kitty escape release are not. The thread named
+  `paneflow-host-cancellation` settles the parser every 100 ms, writes
+  `<session dir>/hook-cancellation.json` under an exclusive lock and announces
+  the marker on the agent bus, so the worker fences the turn without waiting
+  for its own sweep. The first Enter after a fence records `submitted_at` in
+  the same marker; the reducer keeps the session idle without completion until
+  an opening hook arrives after that submission, and an opener that raced ahead
+  of the Enter is retained and applied when the submission lands. No signal is
+  ever sent to the process.
+- **Background agents are tracked per child.** On Claude's `SubagentStart` the
+  hook reporter atomically creates
+  `<session dir>/background-hooks/<generation>/<agent_id>.json` before it
+  broadcasts, and `SubagentStop` removes that one file. An `agent_id` outside
+  `[A-Za-z0-9_-]` or longer than 160 bytes writes nothing and the event still
+  latches hook ownership. The reducer holds the session busy while any marker
+  is unexpired, so a child finishing never completes the main turn, and settles
+  to the main turn's outcome once the last marker is gone. Markers carry their
+  own generation directory, so a relaunch never inherits children, and a marker
+  whose lease runs out with no screen change expires without a completion
+  notification. `Attention` on the main turn outranks a busy child, and a
+  cancelled turn outranks both: an interrupt ends the children it started, so
+  markers a lost `SubagentStop` left behind never hold a fenced pane busy.
 - **The worker decides notifications.** Only a hook-sourced completed `Stop`
   earns a `Finished` decision, and only a `PermissionRequest` or a
   `menu_prompt_active` false-to-true edge earns `Needs input`, deduplicated to

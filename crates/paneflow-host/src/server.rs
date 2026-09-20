@@ -634,6 +634,16 @@ fn dispatch(host: &SessionHost, method: &str, params: &Value) -> Result<Value, D
             let accepted = host.input(&session, generation, bytes)?;
             Ok(json!({"accepted_bytes": accepted}))
         }
+        "session.runtime.bind" => {
+            let session = param_session(params)?;
+            let generation = param_generation(params)?;
+            let runtime_id = params
+                .get("runtime_id")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|id| !id.is_empty());
+            Ok(host.bind_runtime(&session, generation, runtime_id)?)
+        }
         "session.resize" => {
             let session = param_session(params)?;
             let generation = param_generation(params)?;

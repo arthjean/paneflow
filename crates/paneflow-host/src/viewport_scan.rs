@@ -179,12 +179,17 @@ fn scan_once(host: &Arc<SessionHost>, trackers: &mut BTreeMap<SessionId, Viewpor
             }
             record.screen_activity = edges.screen_activity;
             record.menu_prompt_active = edges.menu_prompt_active;
-            record.runtime =
-                edges
-                    .observed_runtime
-                    .map(|current_observation| HostedSessionRuntime {
-                        current_observation: Some(current_observation),
-                    });
+            let launch_binding = record
+                .runtime
+                .as_ref()
+                .and_then(|runtime| runtime.launch_binding.clone());
+            record.runtime = match (edges.observed_runtime, launch_binding) {
+                (None, None) => None,
+                (current_observation, launch_binding) => Some(HostedSessionRuntime {
+                    current_observation,
+                    launch_binding,
+                }),
+            };
         });
     }
 }

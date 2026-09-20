@@ -395,6 +395,23 @@ impl WorkerState {
             .collect()
     }
 
+    pub fn apply_cancellation(&mut self, frame: &Value) -> Option<Projection> {
+        let session = frame["session"]
+            .as_str()
+            .and_then(|raw| SessionId::parse(raw).ok())?;
+        let generation = self.sessions.get(&session)?.generation.get();
+        let marker = crate::hook_assets::Cancellation {
+            runtime_generation: frame["runtime_generation"].as_u64()?,
+            cancelled_at: frame["cancelled_at"].as_u64()?,
+            submitted_at: frame["submitted_at"].as_u64(),
+        };
+        let dir = self.session_dir(&session);
+        self.engine.bind_session_dir(&session, &dir);
+        self.engine
+            .observe_cancellation(&session, &marker, generation);
+        self.derive(&session, SystemTime::now(), &|_| None)
+    }
+
     pub fn apply_core_event(&mut self, frame: &Value) -> Option<Projection> {
         let event = AgentEvent::from_params(frame).ok()?;
         let entry = self.sessions.get_mut(&event.session)?;
@@ -892,6 +909,105 @@ mod tests {
         let mut state = WorkerState::new(home);
         state.rebuild_from_home(home);
         state
+    }
+
+    fn cancellation_frame(
+        session: &SessionId,
+        cancelled_at: u64,
+        submitted_at: Option<u64>,
+    ) -> Value {
+        json!({
+            "type": "cancellation",
+            "session": session.to_string(),
+            "generation": 1,
+            "runtime_generation": 1,
+            "cancelled_at": cancelled_at,
+            "submitted_at": submitted_at,
+        })
+    }
+
+    #[test]
+    fn an_escape_fence_settles_a_busy_turn_without_completing_it_and_the_next_prompt_rearms() {
+        let home = tempfile::tempdir().unwrap();
+        let session = SessionId::new();
+        let mut state = running_state(home.path(), &session);
+
+        let busy = state
+            .apply_core_event(&frame(
+                &session,
+                "ai.prompt_submit",
+                "UserPromptSubmit",
+                json!({}),
+            ))
+            .expect("the opening hook projects");
+        assert_eq!(busy.session["status"], "busy");
+
+        let cancelled_at = crate::hook_state::unix_ms(SystemTime::now()) - 2_000;
+        let settled = state
+            .apply_cancellation(&cancellation_frame(&session, cancelled_at, None))
+            .expect("the fence projects");
+        assert_eq!(settled.session["status"], "idle");
+        assert_eq!(settled.session["outcome"], "cancelled");
+        assert!(
+            settled.notification.is_none(),
+            "a cancelled turn never notifies a completion"
+        );
+
+        assert!(
+            state
+                .apply_core_event(&frame(&session, "ai.stop", "Stop", json!({})))
+                .is_none(),
+            "a Stop arriving after the fence never completes the turn"
+        );
+        assert_eq!(
+            state.sessions.get(&session).unwrap().to_value()["status"],
+            "idle"
+        );
+        assert_eq!(
+            state.sessions.get(&session).unwrap().to_value()["outcome"],
+            "cancelled"
+        );
+
+        state.apply_cancellation(&cancellation_frame(
+            &session,
+            cancelled_at,
+            Some(cancelled_at + 1_000),
+        ));
+        let rearmed = state
+            .apply_core_event(&frame(
+                &session,
+                "ai.prompt_submit",
+                "UserPromptSubmit",
+                json!({}),
+            ))
+            .expect("the next prompt projects");
+        assert_eq!(rearmed.session["status"], "busy");
+    }
+
+    #[test]
+    fn a_cancellation_for_an_unknown_session_or_generation_changes_nothing() {
+        let home = tempfile::tempdir().unwrap();
+        let session = SessionId::new();
+        let mut state = running_state(home.path(), &session);
+        state.apply_core_event(&frame(
+            &session,
+            "ai.prompt_submit",
+            "UserPromptSubmit",
+            json!({}),
+        ));
+
+        assert!(
+            state
+                .apply_cancellation(&cancellation_frame(&SessionId::new(), 10, None))
+                .is_none()
+        );
+        let mut stale = cancellation_frame(&session, 10, None);
+        stale["runtime_generation"] = json!(9);
+        state.apply_cancellation(&stale);
+        assert_eq!(
+            state.sessions.get(&session).unwrap().to_value()["status"],
+            "busy"
+        );
     }
 
     #[test]

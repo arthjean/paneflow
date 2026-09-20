@@ -17,6 +17,8 @@ pub const MAX_MANIFEST_BYTES: u64 = 64 * 1024;
 pub struct HostedSessionRuntime {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub current_observation: Option<RuntimeObservation>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub launch_binding: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -357,10 +359,15 @@ mod tests {
                 process_name: "claude".to_string(),
                 argv: Some(vec!["claude".to_string()]),
             }),
+            launch_binding: Some("com.anthropic.claude-code".to_string()),
         });
         let value = serde_json::to_value(&manifest).unwrap();
         assert_eq!(
             value["runtime"]["current_observation"]["id"],
+            "com.anthropic.claude-code"
+        );
+        assert_eq!(
+            value["runtime"]["launch_binding"],
             "com.anthropic.claude-code"
         );
         assert!(value.get("observed_runtime").is_none());
