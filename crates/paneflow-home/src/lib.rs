@@ -145,6 +145,58 @@ pub fn host_endpoint_path_for_current_home() -> Option<PathBuf> {
     paneflow_home().map(|home| host_endpoint_path(&home))
 }
 
+pub const SERVE_DIR_NAME: &str = "serve";
+
+pub const SERVE_OWNER_LOCK_FILE_NAME: &str = "owner.lock";
+
+pub const SERVE_INSTANCE_FILE_NAME: &str = "instance.json";
+
+pub const SERVE_LOG_FILE_NAME: &str = "serve.log";
+
+pub const SERVE_RUNTIME_DIR_NAME: &str = "runtime";
+
+pub fn serve_dir_in(home: &Path) -> PathBuf {
+    home.join(SERVE_DIR_NAME)
+}
+
+pub fn serve_owner_lock_path_in(home: &Path) -> PathBuf {
+    serve_dir_in(home).join(SERVE_OWNER_LOCK_FILE_NAME)
+}
+
+pub fn serve_instance_record_path_in(home: &Path) -> PathBuf {
+    serve_dir_in(home).join(SERVE_INSTANCE_FILE_NAME)
+}
+
+pub fn serve_log_path_in(home: &Path) -> PathBuf {
+    serve_dir_in(home).join(SERVE_LOG_FILE_NAME)
+}
+
+pub fn serve_runtime_dir_in(home: &Path) -> PathBuf {
+    serve_dir_in(home).join(SERVE_RUNTIME_DIR_NAME)
+}
+
+const SERVE_ENDPOINT_PREFIX: &str = "paneflow-serve-";
+
+#[cfg(windows)]
+pub fn serve_endpoint_path(home: &Path) -> PathBuf {
+    PathBuf::from(format!(
+        r"\\.\pipe\{SERVE_ENDPOINT_PREFIX}{}",
+        home_fingerprint(home)
+    ))
+}
+
+#[cfg(unix)]
+pub fn serve_endpoint_path(home: &Path) -> PathBuf {
+    host_runtime_dir().join(format!(
+        "{SERVE_ENDPOINT_PREFIX}{}.sock",
+        home_fingerprint(home)
+    ))
+}
+
+pub fn serve_endpoint_path_for_current_home() -> Option<PathBuf> {
+    paneflow_home().map(|home| serve_endpoint_path(&home))
+}
+
 pub fn legacy_config_path() -> Option<PathBuf> {
     dirs::config_dir().map(|dir| dir.join(LEGACY_SUBDIR).join("paneflow.json"))
 }

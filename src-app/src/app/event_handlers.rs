@@ -958,11 +958,7 @@ impl PaneFlowApp {
                     .detach();
             }
             terminal::TerminalEvent::AgentProgressChanged { busy } => {
-                self.apply_terminal_agent_observation(
-                    &terminal,
-                    crate::app::agent_status::progress_lifecycle_event(*busy),
-                    cx,
-                );
+                let _ = busy;
             }
             terminal::TerminalEvent::ProgramNotification { title, body } => {
                 let surface_id = terminal.entity_id().as_u64();
@@ -981,11 +977,6 @@ impl PaneFlowApp {
                     seen,
                     cx.background_executor().clone(),
                 );
-                if let Some(event) =
-                    crate::app::agent_status::notification_lifecycle_event(title, body)
-                {
-                    self.apply_terminal_agent_observation(&terminal, event, cx);
-                }
             }
             terminal::TerminalEvent::ShellPromptReady => {
                 let child_pid = terminal.read(cx).terminal.child_pid;
@@ -999,26 +990,6 @@ impl PaneFlowApp {
                 self.refresh_owned_sessions(cx);
             }
         }
-    }
-
-    fn apply_terminal_agent_observation(
-        &mut self,
-        terminal: &Entity<TerminalView>,
-        event: crate::ai_types::AgentLifecycleEvent,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(tool) = terminal.read(cx).terminal.detected_agent else {
-            return;
-        };
-        let surface_id = terminal.entity_id().as_u64();
-        self.apply_observed_agent_state(
-            surface_id,
-            tool,
-            None,
-            event,
-            crate::ai_types::AgentStateSource::Terminal,
-            cx,
-        );
     }
 
     fn open_markdown_in_pane(

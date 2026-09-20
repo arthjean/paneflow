@@ -12,6 +12,7 @@ members = [
     "crates/paneflow-mcp",
     "crates/paneflow-mcp-install",
     "crates/paneflow-process",
+    "crates/paneflow-serve",
     "crates/paneflow-shim",
     "crates/paneflow-telemetry",
     "crates/paneflow-terminal-ghostty",
@@ -65,6 +66,8 @@ paneflow-config = { path = "crates/paneflow-config" }
 paneflow-home = { path = "crates/paneflow-home" }
 paneflow-host = { path = "crates/paneflow-host" }
 paneflow-ipc-client = { path = "crates/paneflow-ipc-client" }
+paneflow-mcp-install = { path = "crates/paneflow-mcp-install" }
+paneflow-serve = { path = "crates/paneflow-serve" }
 paneflow-process = { path = "crates/paneflow-process" }
 paneflow-telemetry = { path = "crates/paneflow-telemetry" }
 paneflow-textdiff = { path = "crates/paneflow-textdiff" }

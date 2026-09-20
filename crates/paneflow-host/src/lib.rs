@@ -33,7 +33,8 @@ pub use host::{
     CreateSession, HostError, INACTIVE_ROWS_PER_WORKSPACE, SessionHost, SessionReconnection,
     SessionRow, SessionSummary,
 };
-pub use manifest::{AgentSummary, SessionLaunch, SessionLifecycle, SessionManifest};
+pub use manifest::{HookRecord, SessionLaunch, SessionLifecycle, SessionManifest};
+pub use process::{ProcessIdentity, ProcessVerdict};
 pub use protocol::{ClientHello, EngineIdentity, HOST_PROTOCOL_VERSION, HostIdentity};
 pub use runtime::Checkpoint;
 pub use server::{ServerHandle, serve};

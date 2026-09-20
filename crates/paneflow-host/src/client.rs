@@ -90,6 +90,7 @@ impl HostClient {
                 name: String::new(),
                 version: String::new(),
                 protocol: 0,
+                build_id: String::new(),
                 host_instance: HostInstanceToken::new(),
                 engine: hello
                     .engine

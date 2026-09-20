@@ -4444,6 +4444,7 @@ dependencies = [
  "paneflow-ipc-client",
  "paneflow-mcp-install",
  "paneflow-process",
+ "paneflow-serve",
  "paneflow-telemetry",
  "paneflow-terminal-ghostty",
  "paneflow-textdiff",
@@ -4608,6 +4609,28 @@ name = "paneflow-process"
 version = "0.16.0"
 dependencies = [
  "win32job",
+ "windows-sys 0.59.0",
+]
+
+[[package]]
+name = "paneflow-serve"
+version = "0.16.0"
+dependencies = [
+ "interprocess",
+ "libc",
+ "log",
+ "paneflow-agent-config",
+ "paneflow-config",
+ "paneflow-home",
+ "paneflow-host",
+ "paneflow-ipc-client",
+ "paneflow-mcp-install",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tempfile",
+ "thiserror 2.0.20",
+ "widestring",
  "windows-sys 0.59.0",
 ]
 

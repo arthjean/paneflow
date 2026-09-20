@@ -27,6 +27,7 @@ focused library crates:
 | `paneflow-ghostty-smoke` | `crates/paneflow-ghostty-smoke/` | Package-level native smoke binary for Ghostty, PTY I/O, resize, and shutdown verification |
 | `paneflow-config` | `crates/paneflow-config/` | Config schema, tolerant JSON loader, file watcher |
 | `paneflow-host` | `crates/paneflow-host/` | GPU-free local host library and executable: owns PTYs, child processes, canonical libghostty state and the durable session manifests under `~/.paneflow/host/` |
+| `paneflow-serve` | `crates/paneflow-serve/` | The per-home worker: owns the activity reducer, the session projection and the advertised-capability protocol Controllers speak |
 | `paneflow-shim` | `crates/paneflow-shim/` | PATH shim wrapping 16 known agent CLIs so Paneflow can observe their lifecycle |
 | `paneflow-ai-hook` | `crates/paneflow-ai-hook/` | The hook binary agent CLIs invoke to report session events back over IPC |
 | `paneflow-ipc-client` | `crates/paneflow-ipc-client/` | Blocking JSON-RPC client for the local IPC socket (shared by the MCP bridge and the CLI) |
@@ -328,6 +329,13 @@ agent CLI (claude, codex, opencode, …)
   (`Terminal < SessionRegistry < Hook`) and `upsert_session_state` enforces the
   rank, so a weaker observer never talks over a live stronger one - and a
   stronger one that falls silent hands over instead of freezing the sidebar.
+- **Where the reduction happens**: in the worker, never in the core and never
+  in a Controller. The core validates a hook frame against the session's
+  runtime generation, writes `last-hook-event.json` and records the raw
+  `last_hook` on the manifest; the worker
+  (`crates/paneflow-serve/src/activity.rs`) turns that stream into a state and
+  publishes it with an `activity_source` of `hooks`, `screen` or `none`. The
+  GPUI app subscribes and renders; it computes no lifecycle of its own.
 - **States**: thinking, waiting for input (with the actual prompt text),
   finished, errored (non-zero exit). Each state routes to the UI - and to your own tooling, since
   the same events are observable over IPC.
@@ -356,6 +364,50 @@ launch, so there is nothing extra to install.
 Ingress is treated as untrusted: session and config files are validated
 structurally (layout budgets, ratio clamps, id alphabets) before they touch
 app state.
+
+## The worker between the core and its Controllers
+
+`paneflow-serve` is the per-home worker. It sits between the PTY core and
+every Controller (the GPUI app, the `paneflow` CLI, the MCP bridge) and owns
+the concerns that must survive a restart of the UI but not of the terminals:
+the activity reducer, the session projection, and the capability set it
+advertises at bootstrap.
+
+The worker is the `paneflow` executable itself, started as
+`paneflow serve run --home <home>` and detached through the same
+`CREATE_BREAKAWAY_FROM_JOB | CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS`
+path the core uses on Windows, `setsid` on Unix. It holds
+`<home>/serve/owner.lock` for its lifetime, so a second start adopts instead
+of racing. `paneflow serve status` prints its pid, protocol version, home,
+session count and advertised capabilities as JSON.
+
+On Windows the bootstrap copies the executable into a content-addressed
+`<home>/serve/runtime/<build-id>/` directory before detaching it. The worker
+therefore never locks the application binary that Cargo, an installer or the
+updater needs to replace. The build digest is part of `worker.hello`, so a
+same-version development rebuild replaces the old worker instead of adopting
+stale code.
+
+- **Restarts are free.** On start the worker rebuilds every session from the
+  manifests under `<home>/host/sessions/` and the durable seeds under
+  `<home>/host/session-data/<id>/last-hook-event.json`. No terminal receives a
+  signal, because the worker owns no PTY. When the app ships a newer worker it
+  stops the old one with a five second drain and starts its own; the sessions
+  list is identical across the swap.
+- **Capabilities, not probes.** `worker.hello` answers a `WorkerIdentity`
+  carrying the set in `protocol/host-capabilities-v1.json`. A Controller reads
+  that set once and never discovers a feature by trying it.
+- **Restart recommendation.** A session whose core reports a
+  `host_protocol_version` below the version this worker requires carries a
+  `restart_recommended` token instead of failing. `host_build_id` travels
+  beside it for diagnosis only; no restart path reads it.
+- **Identity before any signal.** The health refresh marks a session stopped
+  only when its recorded child pid with a matching kernel start time is
+  absent. An unknown or recycled pid stays `non_resumable` and is never
+  signaled.
+- **One front door.** `fleet.list` and `surface.status` are answered from the
+  worker's reduced state; every other `session.*`, `surface.*`, `host.*` and
+  `system.*` method is forwarded verbatim to the core.
 
 ## Local host and durable session identity
 

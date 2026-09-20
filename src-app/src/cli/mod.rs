@@ -10,6 +10,7 @@ mod host_cmd;
 mod read_cmds;
 mod selector;
 mod send_cmd;
+mod serve_cmd;
 mod up_cmd;
 mod wait_cmd;
 mod watch_cmd;
@@ -37,6 +38,7 @@ const VERBS: &[&str] = &[
     "key",
     "flow",
     "host",
+    "serve",
     "list_panes",
     "read_pane",
     "search_pane",
@@ -255,6 +257,11 @@ enum Commands {
         about = "Start, inspect or stop the detached local host that owns terminal sessions for this PANEFLOW_HOME (no running GUI needed)"
     )]
     Host(host_cmd::HostCommand),
+    #[command(
+        subcommand,
+        about = "Start, inspect or stop the per-home worker that owns agent activity and serves Controllers"
+    )]
+    Serve(serve_cmd::ServeCommand),
     #[command(about = "Stream lifecycle events from the running instance as JSONL (EP-002)")]
     Watch {
         #[arg(
@@ -351,6 +358,16 @@ pub fn run() -> i32 {
 
     if let Commands::Host(command) = command {
         return match host_cmd::run(command) {
+            Ok(code) => code,
+            Err(e) => {
+                eprintln!("paneflow: {}", e.message);
+                e.code
+            }
+        };
+    }
+
+    if let Commands::Serve(command) = command {
+        return match serve_cmd::run(command) {
             Ok(code) => code,
             Err(e) => {
                 eprintln!("paneflow: {}", e.message);
@@ -522,6 +539,7 @@ fn dispatch(command: Commands, client: &CliTransport) -> Result<i32, CliError> {
             None => Err(CliTransport::no_controller("paneflow watch")),
         },
         Commands::Host(command) => host_cmd::run(command),
+        Commands::Serve(command) => serve_cmd::run(command),
     }
 }
 
@@ -786,6 +804,19 @@ mod tests {
             assert!(matches!(cli.command, Some(Commands::Host(_))), "{verb}");
         }
         let err = Cli::try_parse_from(["paneflow", "host"]).expect_err("usage");
+        assert_eq!(err.exit_code(), 2);
+    }
+
+    #[test]
+    fn serve_verbs_parse_and_route_before_the_gui_socket() {
+        assert!(is_cli_verb(Some("serve")));
+        for verb in ["start", "status", "stop"] {
+            let cli = Cli::try_parse_from(["paneflow", "serve", verb]).expect("parse");
+            assert!(matches!(cli.command, Some(Commands::Serve(_))), "{verb}");
+        }
+        let cli = Cli::try_parse_from(["paneflow", "serve", "run"]).expect("parse run");
+        assert!(matches!(cli.command, Some(Commands::Serve(_))));
+        let err = Cli::try_parse_from(["paneflow", "serve"]).expect_err("usage");
         assert_eq!(err.exit_code(), 2);
     }
 

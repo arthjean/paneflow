@@ -152,7 +152,7 @@ pub(crate) fn group_up_panes_by_worktree(
     groups
 }
 
-fn fire_turn_end_notification(
+pub(crate) fn fire_turn_end_notification(
     agent: TerminalAgent,
     workspace_title: &str,
     session_summary: Option<&str>,
@@ -168,7 +168,7 @@ fn fire_turn_end_notification(
     );
 }
 
-fn fire_attention_notification(
+pub(crate) fn fire_attention_notification(
     agent: TerminalAgent,
     workspace_title: &str,
     message: Option<&str>,
@@ -395,7 +395,7 @@ pub(crate) fn stage_planned_pane_env(
     stage_context_file(pane.context.as_deref(), pane.env.clone(), cx)
 }
 
-fn fire_agent_exit_notification(
+pub(crate) fn fire_agent_exit_notification(
     agent: TerminalAgent,
     workspace_title: &str,
     exit_code: i32,
@@ -870,6 +870,13 @@ fn build_fleet_rows(
     rows.into_iter().map(|(_, _, _, v)| v).collect()
 }
 
+pub(crate) fn frame_is_hook_sourced(params: &serde_json::Value) -> bool {
+    match params.get("activity_source").and_then(|v| v.as_str()) {
+        None => true,
+        Some(source) => source == "hooks",
+    }
+}
+
 fn surface_status_value(
     sid: u64,
     session: Option<&AgentSession>,
@@ -1072,7 +1079,7 @@ impl PaneFlowApp {
             );
             keybindings::apply_keybindings(cx, &config.shortcuts);
             self.effective_shortcuts = keybindings::effective_shortcuts(&config.shortcuts);
-            crate::theme::invalidate_theme_cache();
+            crate::theme::set_active_theme(config.theme.as_deref());
             self.reconcile_telemetry_consent(&config, cx);
             crate::workspace::worktree::set_worktrees_root(config.worktrees.dir_path());
             self.cached_config = config;
@@ -1816,6 +1823,89 @@ impl PaneFlowApp {
         if named {
             self.save_session(cx);
             cx.notify();
+        }
+    }
+
+    pub(crate) fn apply_projected_agent_metadata(
+        &mut self,
+        method: &str,
+        params: &serde_json::Value,
+        workspace_id: u64,
+        surface_id: u64,
+        cx: &mut Context<Self>,
+    ) {
+        let session_key = self
+            .workspaces
+            .iter()
+            .find(|workspace| workspace.id == workspace_id)
+            .and_then(|workspace| {
+                workspace
+                    .agent_sessions
+                    .iter()
+                    .find(|(_, session)| session.surface_id == Some(surface_id))
+                    .map(|(key, _)| *key)
+            });
+        let Some(tool) = read_tool(params) else {
+            return;
+        };
+        match method {
+            METHOD_SESSION_START => {
+                if let Some(terminal) =
+                    find_terminal_by_surface_id(&self.workspaces, surface_id, cx)
+                {
+                    terminal.update(cx, |view, cx| {
+                        view.declare_agent(tool);
+                        cx.notify();
+                    });
+                }
+            }
+            METHOD_PROMPT_SUBMIT => {
+                let Some(session_key) = session_key else {
+                    return;
+                };
+                if let Some(session) = self
+                    .workspaces
+                    .iter_mut()
+                    .find(|workspace| workspace.id == workspace_id)
+                    .and_then(|workspace| workspace.agent_sessions.get_mut(&session_key))
+                {
+                    if let Some(prompt) = read_hook_prompt(params) {
+                        session
+                            .auto_naming
+                            .record(crate::auto_naming::Role::User, prompt);
+                    }
+                    if let Some(title) = read_hook_prompt_title(params) {
+                        session.pending_tab_title = Some(title);
+                    }
+                }
+                self.apply_pending_tab_title(workspace_id, session_key, cx);
+            }
+            METHOD_STOP if !is_interrupt_lifecycle_event(params) => {
+                let Some(session_key) = session_key else {
+                    return;
+                };
+                let (summary, transcript) = read_stop_summary(params);
+                self.schedule_generated_title_scan(workspace_id, session_key, tool, params, cx);
+                if let Some(summary) = summary.as_deref() {
+                    self.record_auto_naming_message(
+                        workspace_id,
+                        session_key,
+                        crate::auto_naming::Role::Assistant,
+                        summary,
+                    );
+                }
+                if let Some(path) = transcript {
+                    Self::schedule_transcript_turn_end(
+                        Some((workspace_id, session_key)),
+                        path,
+                        None,
+                        cx,
+                    );
+                } else {
+                    self.schedule_auto_naming(workspace_id, session_key, cx);
+                }
+            }
+            _ => {}
         }
     }
 
@@ -2735,6 +2825,7 @@ impl PaneFlowApp {
                 };
                 let explicit_surface_id = self.validated_frame_surface_id(params, cx);
                 let notify_config = self.cached_config.clone();
+                let hook_sourced = frame_is_hook_sourced(params);
                 let visible_surfaces = self.surfaces_under_user_eye(workspace_id, cx);
                 if let Some(ws) = self.workspaces.iter_mut().find(|ws| ws.id == workspace_id) {
                     let interrupt_stop = is_interrupt_lifecycle_event(params);
@@ -2763,7 +2854,7 @@ impl PaneFlowApp {
                         visible_surfaces.as_ref(),
                         finished_surface,
                     ) || ws.muted;
-                    if !interrupt_stop {
+                    if !interrupt_stop && hook_sourced {
                         ws.agent_completion_notification
                             .record_finished(seen, finished_surface);
                     }

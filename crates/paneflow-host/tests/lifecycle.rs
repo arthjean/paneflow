@@ -13,8 +13,6 @@ use paneflow_host::protocol::{METHOD_AGENT_EVENT, METHOD_AGENT_FOLLOW, METHOD_AG
 #[cfg(windows)]
 use paneflow_ipc_client::IpcTransport;
 #[cfg(windows)]
-use paneflow_ipc_client::agent::AgentState;
-#[cfg(windows)]
 use paneflow_ipc_client::host_control::{HostControl, HostTransport};
 
 fn host_executable() -> PathBuf {
@@ -294,7 +292,10 @@ fn a_gpu_free_client_drives_agents_and_surfaces_while_no_window_is_open() {
         .iter()
         .find(|entry| entry["session"] == session)
         .expect("the snapshot carries the live session");
-    assert!(known["agent"].is_null(), "no event means no agent record");
+    assert!(
+        known["last_hook"].is_null(),
+        "no event means no hook record"
+    );
 
     let mut hook = HostControl::connect(&endpoint, "agent-hook").expect("the hook connects");
     let accepted = hook
@@ -310,13 +311,20 @@ fn a_gpu_free_client_drives_agents_and_surfaces_while_no_window_is_open() {
         )
         .unwrap();
     assert_eq!(accepted["accepted"], true);
-    assert_eq!(accepted["agent"]["state"], "thinking");
+    assert_eq!(accepted["last_hook"]["tool"], "claude");
+    assert!(
+        accepted["agent"].is_null(),
+        "the core answers with the raw record, never with a reduced state"
+    );
 
     let frame = next_agent_event(&mut follower);
     assert_eq!(frame["session"], session.as_str());
     assert_eq!(frame["kind"], "ai.prompt_submit");
-    assert_eq!(frame["agent"]["state"], "thinking");
-    assert_eq!(frame["agent"]["source"], "hook");
+    assert_eq!(frame["source"], "hook");
+    assert!(
+        frame["agent"].is_null(),
+        "a core frame carries the event, never a controller state"
+    );
 
     let waiting = hook
         .request(
@@ -331,10 +339,10 @@ fn a_gpu_free_client_drives_agents_and_surfaces_while_no_window_is_open() {
             }),
         )
         .unwrap();
-    assert_eq!(waiting["agent"]["state"], "waiting_for_input");
+    assert_eq!(waiting["accepted"], true);
     let frame = next_agent_event(&mut follower);
-    assert_eq!(frame["agent"]["state"], "waiting_for_input");
-    assert_eq!(frame["agent"]["message"], "Needs your approval");
+    assert_eq!(frame["kind"], "ai.notification");
+    assert_eq!(frame["hook_payload"]["message"], "Needs your approval");
 
     let stale = hook
         .request(
@@ -345,10 +353,20 @@ fn a_gpu_free_client_drives_agents_and_surfaces_while_no_window_is_open() {
                 "tool": "claude",
                 "event_source": "hook",
                 "emitted_at_ms": 1_500,
+                "runtime_generation": 0,
             }),
         )
         .unwrap();
-    assert_eq!(stale["accepted"], false, "an out of order event is refused");
+    assert_eq!(
+        stale["accepted"], false,
+        "a frame below the manifest generation is refused"
+    );
+    assert!(
+        stale["reason"]
+            .as_str()
+            .is_some_and(|reason| reason.contains("has left")),
+        "the refusal names the reason: {stale}"
+    );
 
     let multiline = hook
         .request(
@@ -389,11 +407,6 @@ fn a_gpu_free_client_drives_agents_and_surfaces_while_no_window_is_open() {
         )
         .unwrap();
     assert_eq!(interrupted["accepted"], true);
-    assert_eq!(interrupted["agent"]["state"], "finished");
-    assert!(
-        interrupted["agent"]["last_result"].is_null(),
-        "an interrupted turn records no completion summary"
-    );
     let frame = next_agent_event(&mut follower);
     assert_eq!(frame["event_source"], "interrupt");
 
@@ -413,12 +426,20 @@ fn a_gpu_free_client_drives_agents_and_surfaces_while_no_window_is_open() {
             .unwrap(),
     )
     .unwrap();
-    let agent = persisted
+    let hook_record = persisted
         .manifest
-        .agent
-        .expect("the manifest owns the state");
-    assert_eq!(agent.state, AgentState::Finished.wire_str());
-    assert!(!agent.stale);
+        .last_hook
+        .expect("the manifest owns the seed");
+    assert_eq!(hook_record.tool, "claude");
+    assert_eq!(hook_record.hook_event_name, "ai.stop");
+    assert_eq!(
+        persisted.manifest.host_protocol_version,
+        paneflow_host::HOST_PROTOCOL_VERSION
+    );
+    assert!(
+        !persisted.manifest.host_build_id.is_empty(),
+        "the manifest carries a diagnostic build id"
+    );
 
     let status = hook.request("host.status", json!({})).unwrap();
     assert!(
@@ -433,7 +454,11 @@ fn a_gpu_free_client_drives_agents_and_surfaces_while_no_window_is_open() {
         .iter()
         .find(|entry| entry["session"] == session)
         .expect("the session is in the snapshot");
-    assert_eq!(entry["agent"]["state"], "finished");
+    assert_eq!(entry["last_hook"]["hook_event_name"], "ai.stop");
+    assert!(
+        entry["agent"].is_null(),
+        "the core snapshot never carries a reduced state"
+    );
 
     let _ = owner.call(
         "session.stop",

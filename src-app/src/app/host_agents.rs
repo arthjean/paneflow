@@ -6,6 +6,7 @@ use gpui::Context;
 use paneflow_config::schema::SessionId;
 use paneflow_ipc_client::agent::AgentState;
 use paneflow_ipc_client::host_control::{HostControl, METHOD_AGENT_FOLLOW};
+use paneflow_serve::protocol::METHOD_WORKER_HELLO;
 use serde_json::{Value, json};
 
 use crate::PaneFlowApp;
@@ -18,9 +19,33 @@ const RECONNECT_DELAY: Duration = Duration::from_secs(2);
 const STREAM_READ_TIMEOUT: Duration = Duration::from_secs(30);
 const DRAIN_MAX_PER_TICK: usize = 128;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ActivitySource {
+    Hooks,
+    Screen,
+    None,
+}
+
+impl ActivitySource {
+    pub(crate) fn parse(raw: Option<&str>) -> Self {
+        match raw {
+            Some("hooks") => Self::Hooks,
+            Some("screen") => Self::Screen,
+            _ => Self::None,
+        }
+    }
+
+    pub(crate) fn is_hooks(self) -> bool {
+        matches!(self, Self::Hooks)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum HostAgentFrame {
-    Snapshot(Vec<Value>),
+    Snapshot {
+        sessions: Vec<Value>,
+        capabilities: Vec<String>,
+    },
     Event(Box<Value>),
     Disconnected(String),
 }
@@ -32,15 +57,21 @@ pub(crate) struct HostAgentRow {
     pub(crate) state: Option<AgentState>,
     pub(crate) message: Option<String>,
     pub(crate) last_result: Option<String>,
+    pub(crate) active_tool_name: Option<String>,
+    pub(crate) pid: Option<u32>,
     pub(crate) waiting_since_ms: Option<u64>,
+    pub(crate) last_event_at_ms: Option<u64>,
     pub(crate) stale: bool,
     pub(crate) live: bool,
+    pub(crate) activity_source: ActivitySource,
+    pub(crate) restart_recommended: bool,
 }
 
 #[derive(Default)]
 pub(crate) struct HostAgentView {
     rows: BTreeMap<SessionId, HostAgentRow>,
     frames: Option<Receiver<HostAgentFrame>>,
+    capabilities: Vec<String>,
     connected: bool,
     bootstrapped: bool,
     disconnect_reason: Option<String>,
@@ -58,6 +89,10 @@ impl HostAgentView {
     pub(crate) fn disconnect_reason(&self) -> Option<&str> {
         self.disconnect_reason.as_deref()
     }
+
+    pub(crate) fn advertises(&self, capability: &str) -> bool {
+        self.capabilities.iter().any(|held| held == capability)
+    }
 }
 
 pub(crate) fn row_from_snapshot(entry: &Value) -> Option<HostAgentRow> {
@@ -66,7 +101,7 @@ pub(crate) fn row_from_snapshot(entry: &Value) -> Option<HostAgentRow> {
         .get("live")
         .and_then(Value::as_bool)
         .unwrap_or_default();
-    let agent = entry.get("agent");
+    let agent = entry.get("activity").or_else(|| entry.get("agent"));
     Some(HostAgentRow {
         session,
         tool: agent
@@ -85,14 +120,31 @@ pub(crate) fn row_from_snapshot(entry: &Value) -> Option<HostAgentRow> {
             .and_then(|agent| agent.get("last_result"))
             .and_then(Value::as_str)
             .map(str::to_owned),
+        active_tool_name: agent
+            .and_then(|agent| agent.get("active_tool_name"))
+            .and_then(Value::as_str)
+            .map(str::to_owned),
+        pid: agent
+            .and_then(|agent| agent.get("pid"))
+            .and_then(Value::as_u64)
+            .and_then(|pid| u32::try_from(pid).ok()),
         waiting_since_ms: agent
             .and_then(|agent| agent.get("waiting_since_ms"))
+            .and_then(Value::as_u64),
+        last_event_at_ms: agent
+            .and_then(|agent| agent.get("last_event_at_ms"))
             .and_then(Value::as_u64),
         stale: agent
             .and_then(|agent| agent.get("stale"))
             .and_then(Value::as_bool)
             .unwrap_or_default(),
         live,
+        activity_source: ActivitySource::parse(
+            entry.get("activity_source").and_then(Value::as_str),
+        ),
+        restart_recommended: entry.get("restart_recommended").is_some_and(|value| {
+            value.get("token").and_then(Value::as_str) == Some(paneflow_serve::RESTART_RECOMMENDED)
+        }),
     })
 }
 
@@ -114,6 +166,7 @@ pub(crate) fn legacy_ai_params(frame: &Value, workspace_id: u64, surface_id: u64
         "exit_code",
         "emitted_at_ms",
         "event_source",
+        "activity_source",
     ] {
         match frame.get(key) {
             Some(value) if !value.is_null() => {
@@ -139,32 +192,97 @@ pub(crate) fn waiting_since_instant(waiting_since_ms: Option<u64>) -> std::time:
         .unwrap_or(now)
 }
 
+fn projected_session(
+    row: &HostAgentRow,
+    surface_id: u64,
+    previous: Option<&AgentSession>,
+) -> Option<AgentSession> {
+    let (tool, state) = (row.tool?, row.state?);
+    let mut session = previous
+        .cloned()
+        .unwrap_or_else(|| AgentSession::new(tool, state));
+    session.tool = tool;
+    session.state = state;
+    session.source = if row.activity_source.is_hooks() {
+        AgentStateSource::Hook
+    } else {
+        AgentStateSource::Terminal
+    };
+    session.active_tool_name = row.active_tool_name.clone();
+    session.message = row.message.clone();
+    session.last_result = row.last_result.clone();
+    session.last_event_at_ms = row.last_event_at_ms;
+    session.surface_id = Some(surface_id);
+    session.waiting_since =
+        (state == AgentState::WaitingForInput).then(|| waiting_since_instant(row.waiting_since_ms));
+    session.last_activity = std::time::Instant::now();
+    Some(session)
+}
+
 fn follow_once(endpoint: &std::path::Path, tx: &SyncSender<HostAgentFrame>) -> Result<(), String> {
     let mut control = HostControl::connect(endpoint, CLIENT_NAME)?;
+    let identity = control.request(METHOD_WORKER_HELLO, json!({"client": CLIENT_NAME}))?;
+    let capabilities: Vec<String> = identity["capabilities"]
+        .as_array()
+        .map(|entries| {
+            entries
+                .iter()
+                .filter_map(|entry| entry.as_str().map(str::to_owned))
+                .collect()
+        })
+        .unwrap_or_default();
+    if !capabilities
+        .iter()
+        .any(|capability| capability == "agent.follow")
+    {
+        return Err(
+            "the worker does not advertise the required agent.follow capability".to_string(),
+        );
+    }
     let header = control.request(METHOD_AGENT_FOLLOW, json!({}))?;
     let sessions = header
         .get("sessions")
         .and_then(Value::as_array)
         .cloned()
         .unwrap_or_default();
-    send(tx, HostAgentFrame::Snapshot(sessions))?;
+    send(
+        tx,
+        HostAgentFrame::Snapshot {
+            sessions,
+            capabilities: capabilities.clone(),
+        },
+    )?;
     loop {
         let line = control
             .read_stream_line(STREAM_READ_TIMEOUT)
             .map_err(|error| error.to_string())?;
         let Some(line) = line else {
-            return Err("the local host closed the agent stream".to_string());
+            return Err("the worker closed the agent stream".to_string());
         };
         let Ok(value) = serde_json::from_str::<Value>(line.trim()) else {
             continue;
         };
         match value.get("type").and_then(Value::as_str) {
             Some("event") => send(tx, HostAgentFrame::Event(Box::new(value)))?,
+            Some("snapshot") => {
+                let sessions = value
+                    .get("sessions")
+                    .and_then(Value::as_array)
+                    .cloned()
+                    .unwrap_or_default();
+                send(
+                    tx,
+                    HostAgentFrame::Snapshot {
+                        sessions,
+                        capabilities: capabilities.clone(),
+                    },
+                )?;
+            }
             Some("end") => {
                 let reason = value
                     .get("reason")
                     .and_then(Value::as_str)
-                    .unwrap_or("the local host ended the agent stream");
+                    .unwrap_or("the worker ended the agent stream");
                 return Err(reason.to_string());
             }
             _ => {}
@@ -181,10 +299,10 @@ fn send(tx: &SyncSender<HostAgentFrame>, frame: HostAgentFrame) -> Result<(), St
 }
 
 pub(crate) fn spawn_follow_thread() -> Option<Receiver<HostAgentFrame>> {
-    let endpoint = paneflow_host::endpoint::host_endpoint_path_for_current_home()?;
+    let endpoint = paneflow_home::serve_endpoint_path_for_current_home()?;
     let (tx, rx) = sync_channel(FRAME_QUEUE_SLOTS);
     let spawned = std::thread::Builder::new()
-        .name("paneflow-host-agents".into())
+        .name("paneflow-worker-agents".into())
         .spawn(move || {
             loop {
                 let reason = match follow_once(&endpoint, &tx) {
@@ -200,7 +318,7 @@ pub(crate) fn spawn_follow_thread() -> Option<Receiver<HostAgentFrame>> {
     match spawned {
         Ok(_) => Some(rx),
         Err(error) => {
-            log::warn!("paneflow: cannot start the host agent stream thread: {error}");
+            log::warn!("paneflow: cannot start the worker agent stream thread: {error}");
             None
         }
     }
@@ -226,7 +344,10 @@ impl PaneFlowApp {
         }
         for frame in pending {
             match frame {
-                HostAgentFrame::Snapshot(entries) => self.apply_host_agent_snapshot(entries, cx),
+                HostAgentFrame::Snapshot {
+                    sessions,
+                    capabilities,
+                } => self.apply_host_agent_snapshot(sessions, capabilities, cx),
                 HostAgentFrame::Event(frame) => self.apply_host_agent_event(&frame, cx),
                 HostAgentFrame::Disconnected(reason) => {
                     self.host_agents.connected = false;
@@ -240,12 +361,18 @@ impl PaneFlowApp {
         }
     }
 
-    fn apply_host_agent_snapshot(&mut self, entries: Vec<Value>, cx: &mut Context<Self>) {
+    fn apply_host_agent_snapshot(
+        &mut self,
+        entries: Vec<Value>,
+        capabilities: Vec<String>,
+        cx: &mut Context<Self>,
+    ) {
         self.host_agents.rows = entries
             .iter()
             .filter_map(row_from_snapshot)
             .map(|row| (row.session.clone(), row))
             .collect();
+        self.host_agents.capabilities = capabilities;
         self.host_agents.connected = true;
         self.host_agents.disconnect_reason = None;
         self.host_agents.bootstrapped = true;
@@ -255,13 +382,7 @@ impl PaneFlowApp {
     }
 
     fn seed_attached_sessions_from_host(&mut self, cx: &mut Context<Self>) {
-        let rows: Vec<HostAgentRow> = self
-            .host_agents
-            .rows
-            .values()
-            .filter(|row| row.state.is_some())
-            .cloned()
-            .collect();
+        let rows: Vec<HostAgentRow> = self.host_agents.rows.values().cloned().collect();
         let mut seeded = 0usize;
         for row in rows {
             let Some((workspace_id, surface_id)) = self.surface_for_session(&row.session, cx)
@@ -284,32 +405,29 @@ impl PaneFlowApp {
         workspace_id: u64,
         surface_id: u64,
     ) -> bool {
-        let (Some(tool), Some(state)) = (row.tool, row.state) else {
-            return false;
-        };
         let Some(ws) = self.workspaces.iter_mut().find(|ws| ws.id == workspace_id) else {
             return false;
         };
-        if ws
+        let held_key = ws
             .agent_sessions
-            .values()
-            .any(|session| session.surface_id == Some(surface_id))
-        {
+            .iter()
+            .find(|(_, session)| session.surface_id == Some(surface_id))
+            .map(|(key, _)| *key);
+        let previous = held_key.and_then(|key| ws.agent_sessions.get(&key));
+        let Some(session) = projected_session(row, surface_id, previous) else {
+            if let Some(key) = held_key {
+                ws.agent_sessions.remove(&key);
+                return true;
+            }
             return false;
+        };
+        let key = held_key.or(row.pid).unwrap_or(surface_id as u32);
+        if let Some(old_key) = held_key
+            && old_key != key
+        {
+            ws.agent_sessions.remove(&old_key);
         }
-        let key = surface_id as u32;
-        let mut session = AgentSession::new(tool, state);
-        session.source = AgentStateSource::Hook;
-        session.surface_id = Some(surface_id);
-        session.message = row.message.clone();
-        session.last_result = row.last_result.clone();
-        session.waiting_since = (state == AgentState::WaitingForInput)
-            .then(|| waiting_since_instant(row.waiting_since_ms));
         ws.agent_sessions.insert(key, session);
-        if state == AgentState::Finished {
-            ws.agent_completion_notification
-                .record_finished(ws.muted, Some(surface_id));
-        }
         true
     }
 
@@ -352,17 +470,19 @@ impl PaneFlowApp {
         else {
             return;
         };
-        if let Some(row) = row_from_snapshot(&json!({
+        let row = row_from_snapshot(&json!({
             "session": session.to_string(),
             "live": true,
-            "agent": frame.get("agent").cloned().unwrap_or(Value::Null),
-        })) {
+            "activity": frame.get("agent").cloned().unwrap_or(Value::Null),
+            "activity_source": frame.get("activity_source").cloned().unwrap_or(Value::Null),
+        }));
+        if let Some(row) = row.as_ref() {
             match frame.get("agent") {
                 Some(Value::Null) | None => {
                     self.host_agents.rows.remove(&session);
                 }
                 Some(_) => {
-                    self.host_agents.rows.insert(session.clone(), row);
+                    self.host_agents.rows.insert(session.clone(), row.clone());
                 }
             }
         }
@@ -375,12 +495,104 @@ impl PaneFlowApp {
             cx.notify();
             return;
         };
-        let Some(params) = legacy_ai_params(frame, workspace_id, surface_id) else {
-            cx.notify();
-            return;
-        };
-        let result = self.handle_ipc(&kind, &params, None, cx);
-        if result.get("error").is_none() && result.get("_jsonrpc_error").is_none() {
+        let previous_state = self
+            .workspaces
+            .iter()
+            .find(|workspace| workspace.id == workspace_id)
+            .and_then(|workspace| {
+                workspace
+                    .agent_sessions
+                    .values()
+                    .find(|session| session.surface_id == Some(surface_id))
+            })
+            .map(|session| session.state);
+        if let Some(row) = row.as_ref() {
+            self.seed_session_surface(row, workspace_id, surface_id);
+        }
+        if let Some(params) = legacy_ai_params(frame, workspace_id, surface_id) {
+            self.apply_projected_agent_metadata(&kind, &params, workspace_id, surface_id, cx);
+        }
+        let next_state = row.as_ref().and_then(|row| row.state);
+        let hook_finished = next_state == Some(AgentState::Finished)
+            && previous_state != Some(AgentState::Finished)
+            && row
+                .as_ref()
+                .is_some_and(|row| row.activity_source.is_hooks())
+            && frame.get("event_source").and_then(Value::as_str) != Some("interrupt");
+        if hook_finished {
+            let visible = self.surfaces_under_user_eye(workspace_id, cx);
+            let notify = self.cached_config.clone();
+            if let Some(workspace) = self
+                .workspaces
+                .iter_mut()
+                .find(|workspace| workspace.id == workspace_id)
+            {
+                let seen = crate::app::agent_status::completion_was_seen(
+                    visible.as_ref(),
+                    Some(surface_id),
+                ) || workspace.muted;
+                workspace
+                    .agent_completion_notification
+                    .record_finished(seen, Some(surface_id));
+                if let Some(row) = row.as_ref()
+                    && let Some(tool) = row.tool
+                {
+                    crate::app::ipc_handler::fire_turn_end_notification(
+                        tool,
+                        &workspace.title,
+                        row.last_result.as_deref(),
+                        &notify,
+                        seen,
+                        cx.background_executor().clone(),
+                    );
+                }
+            }
+        }
+        if next_state == Some(AgentState::WaitingForInput)
+            && previous_state != Some(AgentState::WaitingForInput)
+            && let Some(row) = row.as_ref()
+            && let Some(tool) = row.tool
+            && let Some(workspace) = self
+                .workspaces
+                .iter()
+                .find(|workspace| workspace.id == workspace_id)
+        {
+            crate::app::ipc_handler::fire_attention_notification(
+                tool,
+                &workspace.title,
+                row.message.as_deref(),
+                &self.cached_config,
+                self.session_is_seen(workspace_id, row.pid.unwrap_or(surface_id as u32), cx)
+                    || workspace.muted,
+                cx.background_executor().clone(),
+            );
+        }
+        if next_state == Some(AgentState::Errored)
+            && previous_state != Some(AgentState::Errored)
+            && let Some(exit_code) = frame
+                .get("exit_code")
+                .and_then(Value::as_i64)
+                .and_then(|code| i32::try_from(code).ok())
+            && let Some(row) = row.as_ref()
+            && let Some(tool) = row.tool
+            && let Some(workspace) = self
+                .workspaces
+                .iter()
+                .find(|workspace| workspace.id == workspace_id)
+        {
+            crate::app::ipc_handler::fire_agent_exit_notification(
+                tool,
+                &workspace.title,
+                exit_code,
+                &self.cached_config,
+                self.session_is_seen(workspace_id, row.pid.unwrap_or(surface_id as u32), cx)
+                    || workspace.muted,
+                cx.background_executor().clone(),
+            );
+        }
+        self.sync_attention(cx);
+        self.agent_sessions_changed(cx);
+        if let Some(params) = legacy_ai_params(frame, workspace_id, surface_id) {
             self.broadcast_ai_frame(&kind, &params);
         }
         cx.notify();
@@ -401,6 +613,14 @@ impl PaneFlowApp {
     pub(crate) fn host_agents_disconnect_reason(&self) -> Option<&str> {
         self.host_agents.disconnect_reason()
     }
+
+    pub(crate) fn worker_advertises(&self, capability: &str) -> bool {
+        self.host_agents.advertises(capability)
+    }
+
+    pub(crate) fn worker_is_reconnecting(&self) -> bool {
+        !self.host_agents.connected()
+    }
 }
 
 #[cfg(test)]
@@ -408,14 +628,16 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_snapshot_row_reads_the_host_record_without_inferring_idle() {
+    fn a_snapshot_row_reads_the_worker_projection_without_inferring_idle() {
         let session = SessionId::new();
         let entry = json!({
             "session": session.to_string(),
             "generation": 1,
             "live": false,
             "lifecycle": {"state": "lost"},
-            "agent": {
+            "status": "busy",
+            "activity_source": "hooks",
+            "activity": {
                 "tool": "claude",
                 "state": "thinking",
                 "source": "hook",
@@ -429,6 +651,8 @@ mod tests {
         assert_eq!(row.state, Some(AgentState::Thinking));
         assert!(row.stale);
         assert!(!row.live);
+        assert_eq!(row.activity_source, ActivitySource::Hooks);
+        assert!(!row.restart_recommended);
         assert_eq!(row.waiting_since_ms, None);
 
         let bare = json!({"session": session.to_string(), "live": true});
@@ -436,13 +660,85 @@ mod tests {
         assert_eq!(row.state, None, "no record is not an idle record");
         assert!(!row.stale);
         assert!(row.live);
+        assert_eq!(row.activity_source, ActivitySource::None);
 
         assert!(row_from_snapshot(&json!({"live": true})).is_none());
         assert!(row_from_snapshot(&json!({"session": "not-a-uuid"})).is_none());
     }
 
     #[test]
-    fn a_host_event_is_replayed_to_the_controller_under_its_own_surface() {
+    fn a_screen_sourced_row_is_named_as_such_and_never_as_a_hook() {
+        let session = SessionId::new();
+        let row = row_from_snapshot(&json!({
+            "session": session.to_string(),
+            "live": true,
+            "activity_source": "screen",
+            "activity": {"tool": "codex", "state": "thinking", "source": "terminal", "updated_at_ms": 1},
+        }))
+        .expect("row");
+        assert_eq!(row.activity_source, ActivitySource::Screen);
+        assert!(!row.activity_source.is_hooks());
+        assert_eq!(
+            row.state,
+            Some(AgentState::Thinking),
+            "a screen verdict still animates the spinner"
+        );
+        let projected = projected_session(&row, 17, None).expect("projected session");
+        assert_eq!(projected.state, AgentState::Thinking);
+        assert_eq!(projected.source, AgentStateSource::Terminal);
+        assert_eq!(projected.surface_id, Some(17));
+    }
+
+    #[test]
+    fn a_worker_projection_overwrites_the_controller_state_instead_of_reducing_again() {
+        let session = SessionId::new();
+        let row = row_from_snapshot(&json!({
+            "session": session.to_string(),
+            "live": true,
+            "activity_source": "hooks",
+            "activity": {
+                "tool": "claude",
+                "state": "waiting_for_input",
+                "source": "hook",
+                "active_tool_name": "AskUserQuestion",
+                "message": "Pick one",
+                "waiting_since_ms": 1,
+                "last_event_at_ms": 2,
+                "updated_at_ms": 3,
+            },
+        }))
+        .expect("row");
+        let mut local = AgentSession::new(TerminalAgent::ClaudeCode, AgentState::Thinking);
+        local.source = AgentStateSource::Terminal;
+        let projected = projected_session(&row, 19, Some(&local)).expect("projected session");
+        assert_eq!(projected.state, AgentState::WaitingForInput);
+        assert_eq!(projected.source, AgentStateSource::Hook);
+        assert_eq!(
+            projected.active_tool_name.as_deref(),
+            Some("AskUserQuestion")
+        );
+        assert_eq!(projected.message.as_deref(), Some("Pick one"));
+        assert_eq!(projected.last_event_at_ms, Some(2));
+    }
+
+    #[test]
+    fn a_session_on_an_older_core_carries_the_restart_recommendation() {
+        let session = SessionId::new();
+        let row = row_from_snapshot(&json!({
+            "session": session.to_string(),
+            "live": true,
+            "restart_recommended": {
+                "token": paneflow_serve::RESTART_RECOMMENDED,
+                "required_protocol": 1,
+                "core_protocol": 0,
+            },
+        }))
+        .expect("row");
+        assert!(row.restart_recommended);
+    }
+
+    #[test]
+    fn a_worker_event_is_replayed_to_the_controller_under_its_own_surface() {
         let frame = json!({
             "type": "event",
             "session": SessionId::new().to_string(),
@@ -471,6 +767,37 @@ mod tests {
     }
 
     #[test]
+    fn a_screen_verdict_reaches_the_controller_labelled_as_a_screen_verdict() {
+        let frame = json!({
+            "type": "event",
+            "session": SessionId::new().to_string(),
+            "kind": "ai.stop",
+            "tool": "codex",
+            "activity_source": "screen",
+            "hook_payload": {},
+        });
+        let params = legacy_ai_params(&frame, 7, 11).expect("params");
+        assert_eq!(params["activity_source"], "screen");
+        assert!(
+            !crate::app::ipc_handler::frame_is_hook_sourced(&params),
+            "a screen verdict never counts as a completion"
+        );
+        let hooked = legacy_ai_params(
+            &json!({"kind": "ai.stop", "tool": "claude", "activity_source": "hooks"}),
+            7,
+            11,
+        )
+        .expect("params");
+        assert!(crate::app::ipc_handler::frame_is_hook_sourced(&hooked));
+        let silent =
+            legacy_ai_params(&json!({"kind": "ai.stop", "tool": "claude"}), 7, 11).expect("params");
+        assert!(
+            crate::app::ipc_handler::frame_is_hook_sourced(&silent),
+            "a frame with no source is a direct hook client, as before the worker"
+        );
+    }
+
+    #[test]
     fn an_interrupt_marker_survives_the_replay_to_the_controller() {
         let frame = json!({
             "type": "event",
@@ -490,7 +817,8 @@ mod tests {
         let row = row_from_snapshot(&json!({
             "session": session.to_string(),
             "live": true,
-            "agent": {
+            "activity_source": "hooks",
+            "activity": {
                 "tool": "claude",
                 "state": "waiting_for_input",
                 "source": "hook",
@@ -508,5 +836,15 @@ mod tests {
             "a wait that started in the past is not restarted on reopen"
         );
         assert!(waiting_since_instant(None) >= before);
+    }
+
+    #[test]
+    fn a_controller_reads_the_advertised_set_instead_of_probing_for_a_feature() {
+        let mut view = HostAgentView::default();
+        assert!(!view.advertises("agent.follow"));
+        view.capabilities = paneflow_serve::advertised_capabilities();
+        assert!(view.advertises("agent.follow"));
+        assert!(view.advertises("restart.recommendation"));
+        assert!(!view.advertises("screen.scan"));
     }
 }

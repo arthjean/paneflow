@@ -83,6 +83,12 @@ pub struct EngineIdentity {
     pub source_sha: String,
 }
 
+pub fn host_build_id() -> String {
+    let build = paneflow_terminal_ghostty::build_identity();
+    let engine: String = build.source_sha.chars().take(12).collect();
+    format!("{LOCAL_BUILD_VERSION}+{engine}")
+}
+
 pub fn local_engine_identity() -> EngineIdentity {
     let build = paneflow_terminal_ghostty::build_identity();
     EngineIdentity {
@@ -98,6 +104,7 @@ pub struct HostIdentity {
     pub name: String,
     pub version: String,
     pub protocol: u32,
+    pub build_id: String,
     pub host_instance: HostInstanceToken,
     pub engine: EngineIdentity,
     pub pid: u32,

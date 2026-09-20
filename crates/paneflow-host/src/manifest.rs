@@ -56,29 +56,21 @@ impl SessionLifecycle {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct AgentSummary {
+pub struct HookRecord {
+    pub hook_event_name: String,
     pub tool: String,
-    pub state: String,
-    pub source: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub active_tool_name: Option<String>,
+    pub tool_name: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub message: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub last_result: Option<String>,
+    pub pid: Option<u32>,
+    pub runtime_generation: SessionGeneration,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provider_session_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub transcript_path: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub pid: Option<u32>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub waiting_since_ms: Option<u64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub last_event_at_ms: Option<u64>,
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub stale: bool,
-    pub updated_at_ms: u64,
+    pub emitted_at_ms: Option<u64>,
+    pub received_at_ms: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -99,7 +91,11 @@ pub struct SessionManifest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub current_cwd: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub agent: Option<AgentSummary>,
+    pub last_hook: Option<HookRecord>,
+    #[serde(default)]
+    pub host_protocol_version: u32,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub host_build_id: String,
     pub created_at_ms: u64,
     pub updated_at_ms: u64,
 }
@@ -284,7 +280,9 @@ mod tests {
             }),
             title: None,
             current_cwd: None,
-            agent: None,
+            last_hook: None,
+            host_protocol_version: crate::protocol::HOST_PROTOCOL_VERSION,
+            host_build_id: crate::protocol::host_build_id(),
             created_at_ms: 1,
             updated_at_ms: 2,
         }
@@ -323,6 +321,38 @@ mod tests {
                 .contains(".tmp.")),
             "no temporary file survives an atomic replacement"
         );
+    }
+
+    #[test]
+    fn a_schema_one_manifest_from_before_the_worker_split_still_decodes() {
+        let home = tempfile::tempdir().unwrap();
+        let session = SessionId::new();
+        let path = manifest_path(home.path(), &session);
+        let mut value = serde_json::to_value(sample(session)).unwrap();
+        let object = value.as_object_mut().unwrap();
+        object.remove("last_hook");
+        object.remove("host_protocol_version");
+        object.remove("host_build_id");
+        object.insert(
+            "agent".to_string(),
+            serde_json::json!({
+                "tool": "claude",
+                "state": "thinking",
+                "source": "hook",
+                "updated_at_ms": 10
+            }),
+        );
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, serde_json::to_vec(&value).unwrap()).unwrap();
+        let decoded = read_manifest(&path).unwrap();
+        assert_eq!(decoded.schema, MANIFEST_SCHEMA_VERSION);
+        assert_eq!(decoded.host_protocol_version, 0);
+        assert!(decoded.host_build_id.is_empty());
+        assert!(decoded.last_hook.is_none());
+        assert!(path.ends_with(format!(
+            "{decoded_session}.json",
+            decoded_session = decoded.session
+        )));
     }
 
     #[test]

@@ -60,6 +60,7 @@ mod widgets;
 mod window_chrome;
 mod window_state;
 mod windows_app_identity;
+mod worker_bootstrap;
 mod workspace;
 
 use crate::window_chrome::title_bar;
@@ -1712,6 +1713,7 @@ fn main() {
              \x20      paneflow mcp <install|status|uninstall>\n\
              \x20      paneflow integrations <list|install|remove>\n\
              \x20      paneflow host <start|status|stop>\n\
+             \x20      paneflow serve <start|status|stop>\n\
              \n\
              Options:\n\
              \x20 -h, --help       Print this help message\n\
@@ -1861,23 +1863,7 @@ fn main() {
         ai_hooks::extract::ensure_ai_hook_extracted(),
         ai_hooks::extract::ensure_bridge_extracted(),
     ) {
-        (Ok(hook_binary), Ok(bridge_binary)) => {
-            let binaries = paneflow_mcp_install::IntegrationBinaries {
-                hook_binary,
-                bridge_binary,
-            };
-            let _ = std::thread::Builder::new()
-                .name("paneflow-integration-refresh".into())
-                .spawn(move || {
-                    for (runtime, result) in
-                        paneflow_mcp_install::adopt_and_refresh_installed(&binaries)
-                    {
-                        if let Err(error) = result {
-                            log::warn!("paneflow: {runtime} integration refresh failed: {error}");
-                        }
-                    }
-                });
-        }
+        (Ok(_), Ok(_)) => {}
         (hook, bridge) => {
             if let Err(error) = hook {
                 log::warn!("paneflow: AI hook extraction failed ({error:#})");
@@ -1890,6 +1876,7 @@ fn main() {
     startup_trace::mark("bridge_extracted");
 
     host_bootstrap::start_in_background();
+    worker_bootstrap::start_in_background();
 
     #[cfg(target_os = "windows")]
     if let Err(err) = windows_app_identity::ensure_process_app_user_model_id() {

@@ -6,7 +6,7 @@ use paneflow_config::schema::{HostInstanceToken, SessionGeneration, SessionId, W
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use crate::agent::{AgentBus, AgentDecision, AgentEvent, AgentSnapshotEntry, AgentSubscription};
+use crate::agent::{AgentBus, AgentEvent, AgentSnapshotEntry, AgentSubscription};
 use crate::bootstrap::{OwnerLock, OwnerLockError};
 use crate::manifest::{
     MANIFEST_SCHEMA_VERSION, ManifestError, SessionLaunch, SessionLifecycle, SessionManifest,
@@ -194,6 +194,10 @@ pub struct SessionRow {
     pub reconnection: SessionReconnection,
     pub live: bool,
     pub owned: bool,
+    #[serde(default)]
+    pub host_protocol_version: u32,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub host_build_id: String,
     pub updated_at_ms: u64,
 }
 
@@ -211,13 +215,15 @@ impl SessionRow {
             workspace: manifest.workspace,
             title: manifest.title,
             cwd: manifest.current_cwd.unwrap_or(manifest.cwd),
-            agent: manifest.agent.map(|agent| agent.tool),
+            agent: manifest.last_hook.map(|hook| hook.tool),
             shell: manifest.launch.shell,
             pid: manifest.process.map(|process| process.pid),
             lifecycle: manifest.lifecycle,
             reconnection,
             live,
             owned,
+            host_protocol_version: manifest.host_protocol_version,
+            host_build_id: manifest.host_build_id,
             updated_at_ms: manifest.updated_at_ms,
         }
     }
@@ -263,6 +269,7 @@ impl SessionHost {
             name: "paneflow-host".to_string(),
             version: env!("CARGO_PKG_VERSION").to_string(),
             protocol: HOST_PROTOCOL_VERSION,
+            build_id: crate::protocol::host_build_id(),
             host_instance: HostInstanceToken::new(),
             engine: local_engine_identity(),
             pid: std::process::id(),
@@ -391,10 +398,14 @@ impl SessionHost {
                 manifest.updated_at_ms = adopted_at;
                 rewrite = true;
             }
-            if let Some(agent) = manifest.agent.as_mut() {
-                let before = agent.stale;
-                crate::agent::reconcile_adopted(agent, &manifest.lifecycle, adopted_at);
-                rewrite |= agent.stale != before;
+            if manifest.host_protocol_version != HOST_PROTOCOL_VERSION {
+                manifest.host_protocol_version = HOST_PROTOCOL_VERSION;
+                rewrite = true;
+            }
+            let build_id = crate::protocol::host_build_id();
+            if manifest.host_build_id != build_id {
+                manifest.host_build_id = build_id;
+                rewrite = true;
             }
             if rewrite {
                 let _guard = self.lock_writer();
@@ -516,10 +527,13 @@ impl SessionHost {
                 generation: summary.manifest.generation,
                 live: summary.live,
                 lifecycle: summary.manifest.lifecycle,
+                process: summary.manifest.process,
                 workspace: summary.manifest.workspace,
                 title: summary.manifest.title,
                 cwd: Some(summary.manifest.current_cwd.unwrap_or(summary.manifest.cwd)),
-                agent: summary.manifest.agent,
+                last_hook: summary.manifest.last_hook,
+                host_protocol_version: summary.manifest.host_protocol_version,
+                host_build_id: summary.manifest.host_build_id,
             })
             .collect()
     }
@@ -550,70 +564,67 @@ impl SessionHost {
                 .ok_or_else(|| HostError::SessionNotFound(event.session.clone()))?;
             Arc::clone(&record.manifest)
         };
-        let (generation, current) = {
+        let generation = {
             let guard = manifest
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
-            (guard.generation, guard.agent.clone())
+            guard.generation
         };
         if let Some(requested) = event.generation
             && requested != generation
         {
+            let reason = if requested < generation {
+                "the event names a generation this session has left"
+            } else {
+                "the event names a generation this session has not reached"
+            };
             log::warn!(
-                "agent event rejected for session {}: runtime generation {} does not match current generation {}",
+                "agent event rejected for session {}: runtime generation {} does not match current generation {}: {reason}",
                 event.session,
                 requested,
                 generation
             );
             return Ok(json!({
                 "accepted": false,
-                "reason": "the event names a generation this session has left",
+                "reason": reason,
                 "session": event.session,
                 "generation": generation,
             }));
         }
-        let decision = crate::agent::apply_event(current.as_ref(), event, now_ms());
-        let applied = match decision {
-            AgentDecision::Stale(reason) => {
-                return Ok(json!({
-                    "accepted": false,
-                    "reason": reason,
-                    "session": event.session,
-                    "generation": generation,
-                }));
-            }
-            AgentDecision::Clear => {
-                self.update(&manifest, |m| m.agent = None);
-                None
-            }
-            AgentDecision::Update(summary) => {
-                let summary = *summary;
-                let stored = summary.clone();
-                self.update(&manifest, move |m| m.agent = Some(stored));
-                Some(summary)
-            }
-        };
         let hook_event_name = event
             .payload
             .get("hook_event_name")
             .and_then(Value::as_str)
-            .unwrap_or_else(|| event.kind.wire_str());
+            .unwrap_or_else(|| event.kind.wire_str())
+            .to_string();
         crate::manifest::write_last_hook_event(
             &self.home,
             &event.session,
-            hook_event_name,
+            &hook_event_name,
             event.tool_name.as_deref(),
             generation,
         )
         .map_err(|error| HostError::Storage(error.to_string()))?;
-        self.agent_bus
-            .broadcast(&event.to_frame(generation, applied.as_ref()));
+        let record = crate::manifest::HookRecord {
+            hook_event_name,
+            tool: event.tool.clone(),
+            tool_name: event.tool_name.clone(),
+            pid: event.pid,
+            runtime_generation: generation,
+            provider_session_id: payload_text(event, "session_id"),
+            transcript_path: payload_text(event, "transcript_path"),
+            emitted_at_ms: event.emitted_at_ms,
+            received_at_ms: event.received_at_ms.unwrap_or_else(now_ms),
+        };
+        let stored = record.clone();
+        self.update(&manifest, move |m| m.last_hook = Some(stored));
+        self.agent_bus.broadcast(&event.to_frame(generation));
         Ok(json!({
             "accepted": true,
             "session": event.session,
             "generation": generation,
             "received_at_ms": event.received_at_ms,
-            "agent": applied,
+            "last_hook": record,
         }))
     }
 
@@ -680,7 +691,9 @@ impl SessionHost {
             process: None,
             title: request.title.clone(),
             current_cwd: None,
-            agent: None,
+            last_hook: None,
+            host_protocol_version: HOST_PROTOCOL_VERSION,
+            host_build_id: crate::protocol::host_build_id(),
             created_at_ms: created,
             updated_at_ms: created,
         }));
@@ -762,7 +775,9 @@ impl SessionHost {
             guard.lifecycle = SessionLifecycle::Starting;
             guard.process = None;
             guard.current_cwd = None;
-            guard.agent = None;
+            guard.last_hook = None;
+            guard.host_protocol_version = HOST_PROTOCOL_VERSION;
+            guard.host_build_id = crate::protocol::host_build_id();
             guard.launch.args.clear();
             guard.cwd = cwd.display().to_string();
             guard.updated_at_ms = now_ms();
@@ -1006,7 +1021,28 @@ impl SessionHost {
         cols: u16,
         rows: u16,
     ) -> Result<(), HostError> {
-        self.with_live_runtime(session, generation, |runtime| runtime.resize(cols, rows))
+        self.with_live_runtime(session, generation, |runtime| runtime.resize(cols, rows))?;
+        let manifest = {
+            let sessions = self.lock_sessions();
+            sessions
+                .get(session)
+                .map(|record| Arc::clone(&record.manifest))
+        };
+        if let Some(manifest) = manifest {
+            let changed = {
+                let guard = manifest
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                guard.launch.cols != cols || guard.launch.rows != rows
+            };
+            if changed {
+                self.update(&manifest, |m| {
+                    m.launch.cols = cols;
+                    m.launch.rows = rows;
+                });
+            }
+        }
+        Ok(())
     }
 
     pub fn live_sessions(&self) -> Vec<SessionSummary> {
@@ -1107,6 +1143,20 @@ impl SessionHost {
             }
         })
     }
+}
+
+fn payload_text(event: &AgentEvent, key: &str) -> Option<String> {
+    event
+        .payload
+        .get(key)
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|text| !text.is_empty())
+        .map(|text| {
+            text.chars()
+                .take(crate::agent::MAX_AGENT_TEXT_BYTES)
+                .collect()
+        })
 }
 
 fn resolve_cwd(requested: Option<&str>) -> PathBuf {
@@ -1330,7 +1380,7 @@ mod tests {
             .join("crates")
             .join("paneflow-host");
         let manifest = SessionManifest {
-            schema: 1,
+            schema: MANIFEST_SCHEMA_VERSION,
             session: session.clone(),
             workspace: Some(workspace.clone()),
             generation: SessionGeneration::FIRST,
@@ -1347,7 +1397,9 @@ mod tests {
             process: None,
             title: Some("claude \u{00b7} feat/a-reasonably-long-branch-name".to_string()),
             current_cwd: Some(cwd.display().to_string()),
-            agent: None,
+            last_hook: None,
+            host_protocol_version: HOST_PROTOCOL_VERSION,
+            host_build_id: crate::protocol::host_build_id(),
             created_at_ms: updated_at_ms,
             updated_at_ms,
         };
@@ -1362,7 +1414,7 @@ mod tests {
     ) -> SessionSummary {
         SessionSummary {
             manifest: SessionManifest {
-                schema: 1,
+                schema: MANIFEST_SCHEMA_VERSION,
                 session: SessionId::new(),
                 workspace: workspace.cloned(),
                 generation: SessionGeneration::FIRST,
@@ -1386,7 +1438,9 @@ mod tests {
                 process: None,
                 title: None,
                 current_cwd: None,
-                agent: None,
+                last_hook: None,
+                host_protocol_version: HOST_PROTOCOL_VERSION,
+                host_build_id: crate::protocol::host_build_id(),
                 created_at_ms: updated_at_ms,
                 updated_at_ms,
             },

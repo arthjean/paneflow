@@ -1,0 +1,39 @@
+{
+  "schema": 1,
+  "protocol": "paneflow-worker",
+  "version": 1,
+  "core_protocol": 1,
+  "description": "Capabilities the paneflow serve worker advertises to every Controller at bootstrap. A Controller reads this set once and never probes for a feature by trying it.",
+  "capabilities": [
+    {
+      "name": "agent.snapshot",
+      "since": 1,
+      "summary": "agent.snapshot returns the worker's reduced activity for every session it knows."
+    },
+    {
+      "name": "agent.follow",
+      "since": 1,
+      "summary": "agent.follow streams agent.snapshot once, then one agent.event frame per accepted transition."
+    },
+    {
+      "name": "restart.recommendation",
+      "since": 1,
+      "summary": "A session carries restart_recommended when the core's host_protocol_version is below the version this worker requires."
+    },
+    {
+      "name": "control.proxy",
+      "since": 1,
+      "summary": "surface.* and session.* control methods are forwarded verbatim to the PTY core on the caller's behalf."
+    },
+    {
+      "name": "fleet.projection",
+      "since": 1,
+      "summary": "fleet.list and surface.status are answered from the worker's reduced activity, not from core state."
+    },
+    {
+      "name": "integrations.refresh",
+      "since": 1,
+      "summary": "The worker re-runs the installers of installed integrations at start and adopts legacy per-launch installs once."
+    }
+  ]
+}

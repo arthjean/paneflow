@@ -18,11 +18,40 @@ impl ProcessIdentity {
     }
 
     pub fn is_provably_live(&self) -> bool {
-        match self.started_at {
-            Some(recorded) => {
-                process_start_time(self.pid) == Some(recorded) && process_is_running(self.pid)
+        matches!(self.verify(), ProcessVerdict::Live)
+    }
+
+    pub fn verify(&self) -> ProcessVerdict {
+        let Some(recorded) = self.started_at else {
+            return ProcessVerdict::Unverifiable;
+        };
+        match process_start_time(self.pid) {
+            Some(observed) if observed == recorded => {
+                if process_is_running(self.pid) {
+                    ProcessVerdict::Live
+                } else {
+                    ProcessVerdict::Gone
+                }
             }
-            None => false,
+            Some(_) => ProcessVerdict::Unverifiable,
+            None => ProcessVerdict::Gone,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProcessVerdict {
+    Live,
+    Gone,
+    Unverifiable,
+}
+
+impl ProcessVerdict {
+    pub fn wire_str(self) -> &'static str {
+        match self {
+            Self::Live => "live",
+            Self::Gone => "gone",
+            Self::Unverifiable => "unverifiable",
         }
     }
 }

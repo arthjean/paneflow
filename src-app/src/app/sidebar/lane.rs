@@ -87,7 +87,10 @@ fn lane_visual(lane: Lane, row_key: &str, ui: crate::theme::UiColors) -> (gpui::
             SidebarAgentState::Errored => {
                 (ui.agent_error, icon("icons/x_circle.svg", ui.agent_error))
             }
-            SidebarAgentState::Thinking => (ui.muted, render_comet_trail_loader(row_key, ui.muted)),
+            SidebarAgentState::Thinking => {
+                let color = summary.tint.map_or(ui.muted, |tint| rgb(tint).into());
+                (color, render_comet_trail_loader(row_key, color))
+            }
             SidebarAgentState::Finished => {
                 let color: gpui::Hsla = rgb(0x83C3FF).into();
                 (

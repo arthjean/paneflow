@@ -61,7 +61,7 @@ fn cache_key(home: &Path, cwd: &str) -> String {
 
 fn session_from_manifest(path: &Path, cwd: &str) -> Option<SessionMeta> {
     let manifest = paneflow_host::manifest::read_manifest(path).ok()?;
-    let agent = manifest.agent?;
+    let agent = manifest.last_hook?;
     if !agent.tool.eq_ignore_ascii_case("codex") {
         return None;
     }
@@ -81,14 +81,13 @@ fn session_from_manifest(path: &Path, cwd: &str) -> Option<SessionMeta> {
         return None;
     }
     let summary = agent
-        .last_result
+        .tool_name
         .as_deref()
-        .or(agent.message.as_deref())
         .and_then(|value| clean_session_label(value, LABEL_MAX_CHARS));
     Some(SessionMeta {
         agent: SessionAgent::Codex,
         session_id: provider_session_id,
-        timestamp: format!("{:020}", agent.updated_at_ms),
+        timestamp: format!("{:020}", agent.received_at_ms),
         cwd: recorded_cwd.to_string(),
         summary,
     })
@@ -103,14 +102,16 @@ mod tests {
         let path = paneflow_home::host_session_manifest_path_in(home, session);
         std::fs::create_dir_all(path.parent().expect("parent")).expect("session directory");
         let value = serde_json::json!({
-            "schema": 1,
+            "schema": paneflow_host::manifest::MANIFEST_SCHEMA_VERSION,
             "session": session,
             "generation": 1,
             "host_instance": "550e8400-e29b-41d4-a716-446655440001",
             "cwd": "C:\\dev\\paneflow",
             "launch": {"shell": "pwsh", "cols": 120, "rows": 30},
             "lifecycle": {"state": "running"},
-            "agent": agent,
+            "last_hook": agent,
+            "host_protocol_version": paneflow_host::HOST_PROTOCOL_VERSION,
+            "host_build_id": "test-build",
             "created_at_ms": 10,
             "updated_at_ms": 20
         });
@@ -123,14 +124,13 @@ mod tests {
         write_manifest(
             home.path(),
             serde_json::json!({
+                "hook_event_name": "ai.stop",
                 "tool": "codex",
-                "state": "idle",
-                "source": "hook",
-                "last_result": "Implement the runtime system",
+                "tool_name": "Implement the runtime system",
+                "runtime_generation": 1,
                 "provider_session_id": "019dc9ea-38d7-7372-9cc4-253ce944d41b",
                 "transcript_path": "C:\\Users\\Arthur\\.codex\\sessions\\rollout.jsonl",
-                "updated_at_ms": 42,
-                "stale": false
+                "received_at_ms": 42
             }),
         );
         let (sessions, omitted) = read_sessions_from_home(home.path(), "C:\\dev\\paneflow");
