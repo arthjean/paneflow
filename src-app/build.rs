@@ -57,16 +57,6 @@ fn main() {
         "cargo:rerun-if-changed={}",
         workspace_root.join("Cargo.toml").display()
     );
-    for asset in [
-        "crates/paneflow-shim/assets/opencode-paneflow-status.ts",
-        "crates/paneflow-shim/assets/pi-paneflow-status.ts",
-    ] {
-        println!(
-            "cargo:rerun-if-changed={}",
-            workspace_root.join(asset).display()
-        );
-    }
-
     let skip_nested_build = std::env::var_os("PANEFLOW_SKIP_EMBED_BUILD").is_some();
     if !skip_nested_build {
         stage_ai_hook_binaries(&workspace_root, &target, &embed_dir);

@@ -2,87 +2,49 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
+use paneflow_agent_config::{
+    RUNTIMES, Runtime, runtime_by_command_alias, runtime_by_id, runtime_by_preset_id,
+};
 use paneflow_config::schema::{AgentProfileConfig, PaneFlowConfig};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum TerminalAgent {
-    ClaudeCode,
-    Codex,
-    OpenCode,
-    Pi,
-    Hermes,
-    Grok,
-    Amp,
-    Cursor,
-    Gemini,
-    Kiro,
-    Antigravity,
-    Copilot,
-    CodeBuddy,
-    Factory,
-    Qoder,
-    Openclaw,
-    DeepSeekHarness,
-    Muse,
-}
+pub struct TerminalAgent(&'static str);
 
+#[allow(non_upper_case_globals)]
 impl TerminalAgent {
-    pub const ALL: [TerminalAgent; 18] = [
-        TerminalAgent::ClaudeCode,
-        TerminalAgent::Codex,
-        TerminalAgent::OpenCode,
-        TerminalAgent::Pi,
-        TerminalAgent::Hermes,
-        TerminalAgent::Grok,
-        TerminalAgent::Amp,
-        TerminalAgent::Cursor,
-        TerminalAgent::Gemini,
-        TerminalAgent::Kiro,
-        TerminalAgent::Antigravity,
-        TerminalAgent::Copilot,
-        TerminalAgent::CodeBuddy,
-        TerminalAgent::Factory,
-        TerminalAgent::Qoder,
-        TerminalAgent::Openclaw,
-        TerminalAgent::DeepSeekHarness,
-        TerminalAgent::Muse,
-    ];
+    pub const ClaudeCode: TerminalAgent = TerminalAgent("com.anthropic.claude-code");
+    pub const Codex: TerminalAgent = TerminalAgent("com.openai.codex");
+    pub const OpenCode: TerminalAgent = TerminalAgent("ai.opencode.cli");
+    pub const Pi: TerminalAgent = TerminalAgent("dev.mariozechner.pi");
+    pub const Hermes: TerminalAgent = TerminalAgent("ai.hermes.agent");
+    pub const Grok: TerminalAgent = TerminalAgent("ai.x.grok-cli");
+    pub const Amp: TerminalAgent = TerminalAgent("com.sourcegraph.amp");
+    pub const Cursor: TerminalAgent = TerminalAgent("com.cursor.agent");
+    pub const Gemini: TerminalAgent = TerminalAgent("com.google.gemini-cli");
+    pub const Kiro: TerminalAgent = TerminalAgent("com.amazon.kiro-cli");
+    pub const Antigravity: TerminalAgent = TerminalAgent("com.google.antigravity-cli");
+    pub const Copilot: TerminalAgent = TerminalAgent("com.github.copilot-cli");
+    pub const CodeBuddy: TerminalAgent = TerminalAgent("com.tencent.codebuddy");
+    pub const Factory: TerminalAgent = TerminalAgent("com.factory.droid");
+    pub const Qoder: TerminalAgent = TerminalAgent("com.alibaba.qoder-cli");
+    pub const Openclaw: TerminalAgent = TerminalAgent("ai.openclaw.cli");
+    pub const DeepSeekHarness: TerminalAgent = TerminalAgent("ai.deepseek.harness");
+    pub const Muse: TerminalAgent = TerminalAgent("com.muse.code");
 
-    pub const PRIMARY: [TerminalAgent; 5] = [
-        TerminalAgent::ClaudeCode,
-        TerminalAgent::Codex,
-        TerminalAgent::OpenCode,
-        TerminalAgent::Pi,
-        TerminalAgent::Grok,
-    ];
+    pub fn all() -> impl Iterator<Item = TerminalAgent> {
+        RUNTIMES.iter().map(|runtime| TerminalAgent(runtime.id))
+    }
 
-    pub fn secondary() -> impl Iterator<Item = TerminalAgent> {
-        Self::ALL
-            .into_iter()
-            .filter(|agent| !Self::PRIMARY.contains(agent))
+    #[allow(
+        clippy::expect_used,
+        reason = "TerminalAgent values are private catalog identities"
+    )]
+    pub fn runtime(self) -> &'static Runtime {
+        runtime_by_id(self.0).expect("catalog identity must resolve")
     }
 
     pub fn visibility_config_key(self) -> &'static str {
-        match self {
-            TerminalAgent::ClaudeCode => "claude_code_button_visible",
-            TerminalAgent::Codex => "codex_button_visible",
-            TerminalAgent::OpenCode => "opencode_button_visible",
-            TerminalAgent::Pi => "pi_button_visible",
-            TerminalAgent::Hermes => "hermes_agent_button_visible",
-            TerminalAgent::Grok => "grok_button_visible",
-            TerminalAgent::Amp => "amp_button_visible",
-            TerminalAgent::Cursor => "cursor_button_visible",
-            TerminalAgent::Gemini => "gemini_button_visible",
-            TerminalAgent::Kiro => "kiro_button_visible",
-            TerminalAgent::Antigravity => "antigravity_button_visible",
-            TerminalAgent::Copilot => "copilot_button_visible",
-            TerminalAgent::CodeBuddy => "codebuddy_button_visible",
-            TerminalAgent::Factory => "factory_button_visible",
-            TerminalAgent::Qoder => "qoder_button_visible",
-            TerminalAgent::Openclaw => "openclaw_button_visible",
-            TerminalAgent::DeepSeekHarness => "deepseek_harness_button_visible",
-            TerminalAgent::Muse => "muse_button_visible",
-        }
+        self.runtime().display.visibility_config_key
     }
 
     pub fn cached_version(self) -> Option<String> {
@@ -97,8 +59,7 @@ impl TerminalAgent {
             let Ok(cache) = version_cache().lock() else {
                 return;
             };
-            TerminalAgent::ALL
-                .into_iter()
+            TerminalAgent::all()
                 .filter(|agent| agent.is_installed() && !cache.contains_key(agent))
                 .collect()
         };
@@ -113,120 +74,31 @@ impl TerminalAgent {
     }
 
     pub fn display_rank(self) -> usize {
-        Self::ALL
-            .iter()
-            .position(|a| *a == self)
-            .unwrap_or(usize::MAX)
+        usize::from(self.runtime().display.order)
     }
 
     pub fn display_name(self) -> &'static str {
-        match self {
-            TerminalAgent::ClaudeCode => "Claude Code",
-            TerminalAgent::Codex => "Codex",
-            TerminalAgent::OpenCode => "OpenCode",
-            TerminalAgent::Pi => "Pi",
-            TerminalAgent::Hermes => "Hermes Agent",
-            TerminalAgent::Grok => "Grok",
-            TerminalAgent::Amp => "Amp",
-            TerminalAgent::Cursor => "Cursor",
-            TerminalAgent::Gemini => "Gemini",
-            TerminalAgent::Kiro => "Kiro",
-            TerminalAgent::Antigravity => "Antigravity",
-            TerminalAgent::Copilot => "Copilot",
-            TerminalAgent::CodeBuddy => "CodeBuddy",
-            TerminalAgent::Factory => "Factory",
-            TerminalAgent::Qoder => "Qoder",
-            TerminalAgent::Openclaw => "Openclaw",
-            TerminalAgent::DeepSeekHarness => "DeepSeek Harness",
-            TerminalAgent::Muse => "Muse Code",
-        }
+        self.runtime().label
     }
 
     pub fn icon_path(self) -> &'static str {
-        match self {
-            TerminalAgent::ClaudeCode => "icons/claude-color.svg",
-            TerminalAgent::Codex => "icons/codex.svg",
-            TerminalAgent::OpenCode => "icons/opencode-color.svg",
-            TerminalAgent::Pi => "icons/pi-coding-agent.svg",
-            TerminalAgent::Hermes => "icons/hermesagent.svg",
-            TerminalAgent::Grok => "agents/grok.svg",
-            TerminalAgent::Amp => "agents/amp-color.svg",
-            TerminalAgent::Cursor => "agents/cursor.svg",
-            TerminalAgent::Gemini => "agents/gemini-color.svg",
-            TerminalAgent::Kiro => "agents/kiro-color.svg",
-            TerminalAgent::Antigravity => "agents/antigravity-color.svg",
-            TerminalAgent::Copilot => "agents/githubcopilot.svg",
-            TerminalAgent::CodeBuddy => "agents/codebuddy-color.svg",
-            TerminalAgent::Factory => "agents/factory.svg",
-            TerminalAgent::Qoder => "agents/qoder-color.svg",
-            TerminalAgent::Openclaw => "agents/openclaw-color.svg",
-            TerminalAgent::DeepSeekHarness => "agents/deepseek-color.svg",
-            TerminalAgent::Muse => "agents/muse-color.svg",
-        }
+        self.runtime().display.icon_asset_path
     }
 
     pub fn accent(self) -> Option<u32> {
-        match self {
-            TerminalAgent::ClaudeCode => Some(0xd97757),
-            TerminalAgent::Amp => Some(0xF34E3F),
-            TerminalAgent::Qoder => Some(0x2ADB5C),
-            TerminalAgent::DeepSeekHarness => Some(0x4D6BFE),
-            TerminalAgent::Muse => Some(0x0081FB),
-            TerminalAgent::Codex
-            | TerminalAgent::OpenCode
-            | TerminalAgent::Pi
-            | TerminalAgent::Hermes
-            | TerminalAgent::Grok
-            | TerminalAgent::Cursor
-            | TerminalAgent::Gemini
-            | TerminalAgent::Kiro
-            | TerminalAgent::Antigravity
-            | TerminalAgent::Copilot
-            | TerminalAgent::CodeBuddy
-            | TerminalAgent::Factory
-            | TerminalAgent::Openclaw => None,
-        }
+        self.runtime().display.tint
     }
 
     pub fn icon_multicolor(self) -> bool {
-        matches!(
-            self,
-            TerminalAgent::Antigravity
-                | TerminalAgent::CodeBuddy
-                | TerminalAgent::Gemini
-                | TerminalAgent::Kiro
-                | TerminalAgent::Openclaw
-        )
+        self.runtime().display.icon_multicolor
     }
 
     pub fn tag(self) -> &'static str {
-        match self {
-            TerminalAgent::ClaudeCode => "claude_code",
-            TerminalAgent::Codex => "codex",
-            TerminalAgent::OpenCode => "opencode",
-            TerminalAgent::Pi => "pi",
-            TerminalAgent::Hermes => "hermes",
-            TerminalAgent::Grok => "grok",
-            TerminalAgent::Amp => "amp",
-            TerminalAgent::Cursor => "cursor",
-            TerminalAgent::Gemini => "gemini",
-            TerminalAgent::Kiro => "kiro",
-            TerminalAgent::Antigravity => "antigravity",
-            TerminalAgent::Copilot => "copilot",
-            TerminalAgent::CodeBuddy => "codebuddy",
-            TerminalAgent::Factory => "factory",
-            TerminalAgent::Qoder => "qoder",
-            TerminalAgent::Openclaw => "openclaw",
-            TerminalAgent::DeepSeekHarness => "deepseek_harness",
-            TerminalAgent::Muse => "muse",
-        }
+        self.runtime().suggested_presets[0].id
     }
 
     pub fn from_binary(name: &str) -> Option<TerminalAgent> {
-        TerminalAgent::ALL
-            .iter()
-            .copied()
-            .find(|a| a.binary() == name)
+        runtime_by_command_alias(name).map(|runtime| TerminalAgent(runtime.id))
     }
 
     pub fn from_launch_command(command: &str) -> Option<TerminalAgent> {
@@ -240,27 +112,7 @@ impl TerminalAgent {
     }
 
     pub fn from_tag(tag: &str) -> Option<TerminalAgent> {
-        match tag {
-            "claude_code" => Some(TerminalAgent::ClaudeCode),
-            "codex" => Some(TerminalAgent::Codex),
-            "opencode" => Some(TerminalAgent::OpenCode),
-            "pi" => Some(TerminalAgent::Pi),
-            "hermes" => Some(TerminalAgent::Hermes),
-            "grok" => Some(TerminalAgent::Grok),
-            "amp" => Some(TerminalAgent::Amp),
-            "cursor" => Some(TerminalAgent::Cursor),
-            "gemini" => Some(TerminalAgent::Gemini),
-            "kiro" => Some(TerminalAgent::Kiro),
-            "antigravity" => Some(TerminalAgent::Antigravity),
-            "copilot" => Some(TerminalAgent::Copilot),
-            "codebuddy" => Some(TerminalAgent::CodeBuddy),
-            "factory" => Some(TerminalAgent::Factory),
-            "qoder" => Some(TerminalAgent::Qoder),
-            "openclaw" => Some(TerminalAgent::Openclaw),
-            "deepseek_harness" => Some(TerminalAgent::DeepSeekHarness),
-            "muse" => Some(TerminalAgent::Muse),
-            _ => None,
-        }
+        runtime_by_preset_id(tag).map(|runtime| TerminalAgent(runtime.id))
     }
 
     pub fn is_visible(self, config: &PaneFlowConfig) -> bool {
@@ -283,31 +135,13 @@ impl TerminalAgent {
             TerminalAgent::Openclaw => config.openclaw_button_visible,
             TerminalAgent::DeepSeekHarness => config.deepseek_harness_button_visible,
             TerminalAgent::Muse => config.muse_button_visible,
+            _ => None,
         };
         explicit.unwrap_or_else(|| self.is_installed())
     }
 
     pub fn binary(self) -> &'static str {
-        match self {
-            TerminalAgent::ClaudeCode => "claude",
-            TerminalAgent::Codex => "codex",
-            TerminalAgent::OpenCode => "opencode",
-            TerminalAgent::Pi => "pi",
-            TerminalAgent::Hermes => "hermes",
-            TerminalAgent::Grok => "grok",
-            TerminalAgent::Amp => "amp",
-            TerminalAgent::Cursor => "cursor-agent",
-            TerminalAgent::Gemini => "gemini",
-            TerminalAgent::Kiro => "kiro-cli",
-            TerminalAgent::Antigravity => "agy",
-            TerminalAgent::Copilot => "copilot",
-            TerminalAgent::CodeBuddy => "codebuddy",
-            TerminalAgent::Factory => "droid",
-            TerminalAgent::Qoder => "qodercli",
-            TerminalAgent::Openclaw => "openclaw",
-            TerminalAgent::DeepSeekHarness => "dsh",
-            TerminalAgent::Muse => "muse",
-        }
+        self.runtime().detection.command_aliases[0]
     }
 
     pub fn is_installed(self) -> bool {
@@ -321,18 +155,12 @@ impl TerminalAgent {
         installed_binaries_contains(self.binary())
     }
 
-    fn command_args(self) -> &'static [&'static str] {
-        match self {
-            TerminalAgent::Kiro => &["chat"],
-            TerminalAgent::Openclaw => &["tui"],
-            TerminalAgent::DeepSeekHarness => &["--profile", "tui"],
-            _ => &[],
-        }
-    }
-
     fn launch_spec(self, config: &PaneFlowConfig) -> AgentCommandSpec {
-        let mut spec = AgentCommandSpec::new(self.binary());
-        spec.extend_args(self.command_args().iter().copied());
+        let mut tokens = self.runtime().suggested_presets[0]
+            .command
+            .split_whitespace();
+        let mut spec = AgentCommandSpec::new(tokens.next().unwrap_or(self.binary()));
+        spec.extend_args(tokens);
         if self == TerminalAgent::ClaudeCode
             && config.claude_code_bypass_permissions.unwrap_or(false)
         {
@@ -367,10 +195,13 @@ impl TerminalAgent {
     }
 
     pub fn visible(config: &PaneFlowConfig) -> Vec<TerminalAgent> {
-        TerminalAgent::ALL
-            .into_iter()
-            .filter(|a| a.is_visible(config))
+        TerminalAgent::all()
+            .filter(|agent| agent.is_visible(config))
             .collect()
+    }
+
+    pub fn supports_current_platform(self) -> bool {
+        self.runtime().supports_current_platform()
     }
 }
 
@@ -455,8 +286,7 @@ fn lock_installed_binary_cache() -> std::sync::MutexGuard<'static, InstalledBina
 }
 
 fn scan_installed_binaries() -> HashSet<&'static str> {
-    TerminalAgent::ALL
-        .into_iter()
+    TerminalAgent::all()
         .map(TerminalAgent::binary)
         .filter(|bin| which::which(bin).is_ok())
         .collect()
@@ -499,40 +329,18 @@ fn version_cache() -> &'static Mutex<HashMap<TerminalAgent, Option<String>>> {
 }
 
 const VERSION_PROBE_TIMEOUT: Duration = Duration::from_secs(3);
+const VERSION_PROBE_STDOUT_CAP: u64 = 4096;
 
 fn probe_version(binary: &std::path::Path) -> Option<String> {
-    use std::io::Read;
-    use std::process::{Command, Stdio};
-    let mut child = Command::new(binary)
-        .arg("--version")
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-        .ok()?;
-    let started = Instant::now();
-    let exited = loop {
-        match child.try_wait() {
-            Ok(Some(_)) => break true,
-            Ok(None) if started.elapsed() < VERSION_PROBE_TIMEOUT => {
-                std::thread::sleep(Duration::from_millis(50));
-            }
-            _ => break false,
-        }
-    };
-    if !exited {
-        let _ = child.kill();
-        let _ = child.wait();
-        return None;
-    }
-    let mut output = String::new();
-    child
-        .stdout
-        .take()?
-        .take(4096)
-        .read_to_string(&mut output)
-        .ok()?;
-    parse_version(&output)
+    let mut command = std::process::Command::new(binary);
+    command.arg("--version");
+    let output = paneflow_process::run_with_timeout(
+        command,
+        VERSION_PROBE_TIMEOUT,
+        VERSION_PROBE_STDOUT_CAP,
+    )
+    .ok()?;
+    parse_version(std::str::from_utf8(&output.stdout).ok()?)
 }
 
 fn parse_version(output: &str) -> Option<String> {
@@ -689,12 +497,13 @@ pub enum AgentLaunch {
 
 impl AgentLaunch {
     pub fn all(config: &PaneFlowConfig) -> Vec<AgentLaunch> {
-        TerminalAgent::ALL
-            .into_iter()
+        TerminalAgent::all()
+            .filter(|agent| agent.supports_current_platform())
             .map(AgentLaunch::Builtin)
             .chain(
                 AgentProfile::all(config)
                     .into_iter()
+                    .filter(|profile| profile.agent.supports_current_platform())
                     .map(AgentLaunch::Profile),
             )
             .collect()
@@ -703,10 +512,12 @@ impl AgentLaunch {
     pub fn visible(config: &PaneFlowConfig) -> Vec<AgentLaunch> {
         TerminalAgent::visible(config)
             .into_iter()
+            .filter(|agent| agent.supports_current_platform())
             .map(AgentLaunch::Builtin)
             .chain(
                 AgentProfile::all(config)
                     .into_iter()
+                    .filter(|profile| profile.agent.supports_current_platform())
                     .map(AgentLaunch::Profile),
             )
             .collect()
@@ -723,13 +534,6 @@ impl AgentLaunch {
         match self {
             AgentLaunch::Builtin(agent) => agent.display_name().to_string(),
             AgentLaunch::Profile(profile) => profile.name.clone(),
-        }
-    }
-
-    pub fn key(&self) -> String {
-        match self {
-            AgentLaunch::Builtin(agent) => agent.tag().to_string(),
-            AgentLaunch::Profile(profile) => format!("profile-{}", profile.name),
         }
     }
 
@@ -786,7 +590,7 @@ mod tests {
     #[test]
     fn launch_command_declares_its_own_agent() {
         let config = PaneFlowConfig::default();
-        for agent in TerminalAgent::ALL {
+        for agent in TerminalAgent::all() {
             assert_eq!(
                 TerminalAgent::from_launch_command(&agent.launch_command(&config)),
                 Some(agent),
@@ -819,7 +623,7 @@ mod tests {
 
     #[test]
     fn tag_roundtrip() {
-        for agent in TerminalAgent::ALL {
+        for agent in TerminalAgent::all() {
             assert_eq!(TerminalAgent::from_tag(agent.tag()), Some(agent));
         }
         assert_eq!(TerminalAgent::from_tag("unknown"), None);
@@ -841,7 +645,7 @@ mod tests {
 
     #[test]
     fn binary_roundtrip_via_from_binary() {
-        for agent in TerminalAgent::ALL {
+        for agent in TerminalAgent::all() {
             assert_eq!(TerminalAgent::from_binary(agent.binary()), Some(agent));
         }
         assert_eq!(TerminalAgent::from_binary("bash"), None);
@@ -851,7 +655,7 @@ mod tests {
     #[test]
     fn binary_is_launch_command_leading_token() {
         let cfg = PaneFlowConfig::default();
-        for agent in TerminalAgent::ALL {
+        for agent in TerminalAgent::all() {
             let command = agent.command(&cfg);
             let leading = command.split_whitespace().next().unwrap_or_default();
             assert_eq!(
@@ -880,7 +684,7 @@ mod tests {
 
     #[test]
     fn icon_paths_are_embedded_assets() {
-        for agent in TerminalAgent::ALL {
+        for agent in TerminalAgent::all() {
             let p = agent.icon_path();
             assert!(
                 p.starts_with("icons/") || p.starts_with("agents/"),
@@ -937,13 +741,17 @@ mod tests {
 
     #[test]
     fn launch_spec_plain_token_guard_matches_agent_command_surface() {
-        for agent in TerminalAgent::ALL {
+        for agent in TerminalAgent::all() {
             assert!(
                 is_plain_shell_token(agent.binary()),
                 "{} binary must stay a plain shell token",
                 agent.display_name()
             );
-            for arg in agent.command_args() {
+            for arg in agent.runtime().suggested_presets[0]
+                .command
+                .split_whitespace()
+                .skip(1)
+            {
                 assert!(
                     is_plain_shell_token(arg),
                     "{} arg `{arg}` must stay a plain shell token",
@@ -1071,7 +879,10 @@ mod tests {
         assert_eq!(profiles[0].agent, TerminalAgent::Codex);
         assert_eq!(
             AgentLaunch::all(&config).len(),
-            TerminalAgent::ALL.len() + 1
+            TerminalAgent::all()
+                .filter(|agent| agent.supports_current_platform())
+                .count()
+                + 1
         );
     }
 
@@ -1134,18 +945,35 @@ mod tests {
     }
 
     #[test]
-    fn primary_and_secondary_agents_partition_all() {
-        let mut seen: Vec<TerminalAgent> = TerminalAgent::PRIMARY.to_vec();
-        seen.extend(TerminalAgent::secondary());
-        assert_eq!(seen.len(), TerminalAgent::ALL.len());
-        for agent in TerminalAgent::ALL {
-            assert!(seen.contains(&agent));
+    fn launch_presets_follow_catalog_platforms_without_hiding_presentation() {
+        let config = PaneFlowConfig::default();
+        let builtins = AgentLaunch::all(&config)
+            .into_iter()
+            .filter_map(|launch| match launch {
+                AgentLaunch::Builtin(agent) => Some(agent),
+                AgentLaunch::Profile(_) => None,
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            builtins
+                .iter()
+                .all(|agent| agent.supports_current_platform())
+        );
+        if cfg!(windows) {
+            assert_eq!(builtins.len(), 5);
+            assert_eq!(
+                TerminalAgent::from_tag("antigravity").map(TerminalAgent::display_name),
+                Some("Antigravity")
+            );
+            assert!(!builtins.contains(&TerminalAgent::Antigravity));
+        } else {
+            assert_eq!(builtins.len(), TerminalAgent::all().count());
         }
     }
 
     #[test]
     fn visibility_config_key_matches_is_visible_field() {
-        for agent in TerminalAgent::ALL {
+        for agent in TerminalAgent::all() {
             let json = serde_json::json!({ agent.visibility_config_key(): false });
             let config: PaneFlowConfig = serde_json::from_value(json).unwrap();
             assert!(!agent.is_visible(&config), "{}", agent.display_name());

@@ -28,7 +28,8 @@ anyhow.workspace = true
 # Used by `io::write_atomic` for same-dir temp file + atomic rename (not
 # test-only), so it lives in [dependencies], not [dev-dependencies].
 tempfile.workspace = true
-paneflow-agent-config.workspace = true
+paneflow-agent-config = { workspace = true, features = ["config-io"] }
+paneflow-home.workspace = true
 
 [lints]
 workspace = true

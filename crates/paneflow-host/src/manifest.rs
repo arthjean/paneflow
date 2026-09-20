@@ -7,10 +7,19 @@ use paneflow_config::schema::{HostInstanceToken, SessionGeneration, SessionId, W
 use serde::{Deserialize, Serialize};
 
 use crate::process::ProcessIdentity;
+use crate::runtime_observer::RuntimeObservation;
 
 pub const MANIFEST_SCHEMA_VERSION: u32 = 1;
 
 pub const MAX_MANIFEST_BYTES: u64 = 64 * 1024;
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HostedSessionRuntime {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub current_observation: Option<RuntimeObservation>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub launch_binding: Option<String>,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SessionLaunch {
@@ -56,25 +65,21 @@ impl SessionLifecycle {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct AgentSummary {
+pub struct HookRecord {
+    pub hook_event_name: String,
     pub tool: String,
-    pub state: String,
-    pub source: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub active_tool_name: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub message: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub last_result: Option<String>,
+    pub tool_name: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pid: Option<u32>,
+    pub runtime_generation: SessionGeneration,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub waiting_since_ms: Option<u64>,
+    pub provider_session_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub last_event_at_ms: Option<u64>,
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub stale: bool,
-    pub updated_at_ms: u64,
+    pub transcript_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub emitted_at_ms: Option<u64>,
+    pub received_at_ms: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -95,7 +100,21 @@ pub struct SessionManifest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub current_cwd: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub agent: Option<AgentSummary>,
+    pub last_hook: Option<HookRecord>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub generation_started_at_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub screen_changed_at_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub screen_activity: Option<String>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub menu_prompt_active: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runtime: Option<HostedSessionRuntime>,
+    #[serde(default)]
+    pub host_protocol_version: u32,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub host_build_id: String,
     pub created_at_ms: u64,
     pub updated_at_ms: u64,
 }
@@ -161,6 +180,47 @@ pub fn write_atomically(path: &Path, bytes: &[u8]) -> io::Result<()> {
                 return Err(error);
             }
         }
+    }
+}
+
+pub fn write_last_hook_event(
+    home: &Path,
+    session: &SessionId,
+    hook_event_name: &str,
+    tool_name: Option<&str>,
+    runtime_generation: SessionGeneration,
+) -> io::Result<PathBuf> {
+    let path = paneflow_home::host_session_data_dir_in(home, session.as_str())
+        .join("last-hook-event.json");
+    let mut seed = serde_json::Map::new();
+    seed.insert(
+        "hook_event_name".into(),
+        serde_json::Value::String(hook_event_name.to_string()),
+    );
+    if let Some(tool_name) = tool_name {
+        seed.insert(
+            "tool_name".into(),
+            serde_json::Value::String(tool_name.to_string()),
+        );
+    }
+    seed.insert(
+        "runtime_generation".into(),
+        serde_json::Value::from(runtime_generation.get()),
+    );
+    let bytes = serde_json::to_vec(&serde_json::Value::Object(seed)).map_err(io::Error::other)?;
+    write_atomically(&path, &bytes)?;
+    Ok(path)
+}
+
+pub fn remove_session_data(home: &Path, session: &SessionId) {
+    let path = paneflow_home::host_session_data_dir_in(home, session.as_str());
+    match std::fs::remove_dir_all(&path) {
+        Ok(()) => {}
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => log::warn!(
+            "paneflow-host: cannot delete the session data directory {}: {error}",
+            path.display()
+        ),
     }
 }
 
@@ -239,7 +299,14 @@ mod tests {
             }),
             title: None,
             current_cwd: None,
-            agent: None,
+            last_hook: None,
+            generation_started_at_ms: None,
+            screen_changed_at_ms: None,
+            screen_activity: None,
+            menu_prompt_active: false,
+            runtime: None,
+            host_protocol_version: crate::protocol::HOST_PROTOCOL_VERSION,
+            host_build_id: crate::protocol::host_build_id(),
             created_at_ms: 1,
             updated_at_ms: 2,
         }
@@ -278,6 +345,68 @@ mod tests {
                 .contains(".tmp.")),
             "no temporary file survives an atomic replacement"
         );
+    }
+
+    #[test]
+    fn a_runtime_observation_uses_the_nested_manifest_contract() {
+        let mut manifest = sample(SessionId::new());
+        manifest.runtime = Some(HostedSessionRuntime {
+            current_observation: Some(RuntimeObservation {
+                id: "com.anthropic.claude-code".to_string(),
+                pid: 42,
+                pid_started_at: Some(7),
+                process_group: 42,
+                process_name: "claude".to_string(),
+                argv: Some(vec!["claude".to_string()]),
+            }),
+            launch_binding: Some("com.anthropic.claude-code".to_string()),
+        });
+        let value = serde_json::to_value(&manifest).unwrap();
+        assert_eq!(
+            value["runtime"]["current_observation"]["id"],
+            "com.anthropic.claude-code"
+        );
+        assert_eq!(
+            value["runtime"]["launch_binding"],
+            "com.anthropic.claude-code"
+        );
+        assert!(value.get("observed_runtime").is_none());
+        assert_eq!(
+            serde_json::from_value::<SessionManifest>(value).unwrap(),
+            manifest
+        );
+    }
+
+    #[test]
+    fn a_schema_one_manifest_from_before_the_worker_split_still_decodes() {
+        let home = tempfile::tempdir().unwrap();
+        let session = SessionId::new();
+        let path = manifest_path(home.path(), &session);
+        let mut value = serde_json::to_value(sample(session)).unwrap();
+        let object = value.as_object_mut().unwrap();
+        object.remove("last_hook");
+        object.remove("host_protocol_version");
+        object.remove("host_build_id");
+        object.insert(
+            "agent".to_string(),
+            serde_json::json!({
+                "tool": "claude",
+                "state": "thinking",
+                "source": "hook",
+                "updated_at_ms": 10
+            }),
+        );
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, serde_json::to_vec(&value).unwrap()).unwrap();
+        let decoded = read_manifest(&path).unwrap();
+        assert_eq!(decoded.schema, MANIFEST_SCHEMA_VERSION);
+        assert_eq!(decoded.host_protocol_version, 0);
+        assert!(decoded.host_build_id.is_empty());
+        assert!(decoded.last_hook.is_none());
+        assert!(path.ends_with(format!(
+            "{decoded_session}.json",
+            decoded_session = decoded.session
+        )));
     }
 
     #[test]

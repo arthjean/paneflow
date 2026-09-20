@@ -77,6 +77,48 @@ pub fn hairline(ui: crate::theme::UiColors) -> impl IntoElement {
     div().h(px(1.)).w_full().bg(with_alpha(ui.border, 0.5))
 }
 
+pub const CARD_PADDING_X: f32 = 16.;
+pub const CARD_PADDING_Y: f32 = 6.;
+pub const ROW_HAIRLINE_INSET: f32 = CARD_PADDING_X + 18. + 12.;
+
+pub fn hairline_inset(ui: crate::theme::UiColors) -> impl IntoElement {
+    div()
+        .h(px(1.))
+        .w_full()
+        .pl(px(ROW_HAIRLINE_INSET))
+        .child(div().h_full().w_full().bg(with_alpha(ui.border, 0.5)))
+}
+
+pub fn section_title(
+    ui: crate::theme::UiColors,
+    label: &'static str,
+    description: Option<&'static str>,
+) -> impl IntoElement {
+    let query = crate::settings::search::active_query();
+    div()
+        .flex()
+        .flex_col()
+        .gap(px(2.))
+        .px(px(2.))
+        .pb(px(8.))
+        .child(
+            div()
+                .text_size(crate::ui_primitives::BODY_EMPHASIS)
+                .font_weight(gpui::FontWeight::SEMIBOLD)
+                .text_color(ui.text)
+                .child(highlight_matches(label.to_string(), &query)),
+        )
+        .when_some(description, |d, description| {
+            d.child(
+                div()
+                    .max_w(px(520.))
+                    .text_size(crate::ui_primitives::LABEL_SM)
+                    .text_color(ui.muted)
+                    .child(description),
+            )
+        })
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn toggle_row(
     id: &'static str,
@@ -116,8 +158,8 @@ pub fn toggle_row_with(
         .flex_row()
         .items_center()
         .gap(px(16.))
-        .px(px(12.))
-        .py(px(10.))
+        .px(px(CARD_PADDING_X))
+        .py(px(12.))
         .when_some(icon, |d, icon| d.child(icon))
         .child(setting_text(ui, title, description))
         .child(control)
@@ -415,7 +457,15 @@ pub fn select_item(
     selected: bool,
     ui: crate::theme::UiColors,
 ) -> Stateful<Div> {
-    let selected_bg = with_alpha(ui.text, 0.10);
+    select_item_tinted(id, selected, ui, with_alpha(ui.text, 0.10))
+}
+
+pub fn select_item_tinted(
+    id: impl Into<ElementId>,
+    selected: bool,
+    ui: crate::theme::UiColors,
+    selected_bg: Hsla,
+) -> Stateful<Div> {
     let resting_bg = if selected {
         selected_bg
     } else {

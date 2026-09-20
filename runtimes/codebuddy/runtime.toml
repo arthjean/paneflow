@@ -1,0 +1,42 @@
+schema_version = 1
+id = "com.tencent.codebuddy"
+slug = "codebuddy"
+label = "CodeBuddy"
+platforms = ["linux", "macos"]
+capabilities = ["lifecycle_hooks", "integration_install"]
+
+[display]
+order = 12
+icon_asset_path = "agents/codebuddy-color.svg"
+icon_multicolor = true
+visibility_config_key = "codebuddy_button_visible"
+
+[detection]
+command_aliases = ["codebuddy"]
+process_aliases = ["codebuddy"]
+script_path_signatures = []
+
+[environment]
+strip_inherited = []
+
+[lifecycle]
+source = "hooks"
+authority = "complete"
+fallback = "none"
+escape_cancels_turn = false
+attention_clears_on_output = true
+anchor_start_event_to_output = true
+terminal_title_signal = false
+
+[integration]
+summary = "Installs Paneflow lifecycle hooks in CodeBuddy's project settings."
+hook_adapter = "codebuddy"
+
+[install]
+command = ""
+
+[[suggested_presets]]
+id = "codebuddy"
+label = "CodeBuddy"
+command = "codebuddy"
+quick_launch = false

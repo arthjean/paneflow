@@ -331,10 +331,13 @@ impl PaneFlowApp {
             "settings-search",
             "settings-search-clear",
             ui,
-            crate::ui_primitives::FilterFieldGlyph::Search,
+            crate::ui_primitives::FilterFieldStyle::sidebar(
+                crate::ui_primitives::FilterFieldGlyph::Search,
+            ),
             focus.is_focused(window),
             has_query,
             true,
+            None,
             self.settings_search_input.clone(),
             cx.listener(|this, _: &ClickEvent, window, cx| {
                 cx.stop_propagation();
@@ -599,6 +602,10 @@ impl PaneFlowApp {
         }
         if section == SettingsSection::McpServers {
             self.refresh_mcp_status(cx);
+        }
+        if section == SettingsSection::Agents {
+            self.probe_agent_versions(cx);
+            self.refresh_integration_status(cx);
         }
         if section == SettingsSection::Workspaces {
             self.sync_workspace_template_inputs(cx);

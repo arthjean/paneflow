@@ -36,6 +36,9 @@ pub fn is_loader_influencing_env_key(key: &str) -> bool {
 
 pub fn is_inherited_agent_session_env_key(key: &str) -> bool {
     INHERITED_AGENT_SESSION_ENV.contains(&key)
+        || paneflow_agent_config::RUNTIMES
+            .iter()
+            .any(|runtime| runtime.environment.strip_inherited.contains(&key))
 }
 
 pub fn is_forbidden_child_env_key(key: &str) -> bool {
@@ -105,6 +108,15 @@ mod tests {
                 is_inherited_agent_session_env_key(key) || is_inherited_host_terminal_env_key(key)
             );
             assert!(is_forbidden_child_env_key(key));
+        }
+        for runtime in paneflow_agent_config::RUNTIMES {
+            for key in runtime.environment.strip_inherited {
+                assert!(
+                    is_forbidden_child_env_key(key),
+                    "{} declares {key} in strip_inherited",
+                    runtime.slug
+                );
+            }
         }
         assert!(is_forbidden_child_env_key("LD_PRELOAD"));
         assert!(is_forbidden_child_env_key("DYLD_INSERT_LIBRARIES"));

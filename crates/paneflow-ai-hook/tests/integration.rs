@@ -6,21 +6,20 @@
 )]
 
 use std::ffi::{OsStr, OsString};
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc;
-use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use interprocess::local_socket::{prelude::*, GenericFilePath, ListenerOptions, Stream};
-use paneflow_ai_hook::MAX_STDIN_BYTES;
+use interprocess::TryClone;
 use serde_json::{json, Value};
 
 const HOOK_BIN: &str = env!("CARGO_BIN_EXE_paneflow-ai-hook");
-const RECV_TIMEOUT: Duration = Duration::from_secs(5);
-const EXIT_TIMEOUT: Duration = Duration::from_secs(7);
+const SESSION_ID: &str = "550e8400-e29b-41d4-a716-446655440000";
+const EXIT_TIMEOUT: Duration = Duration::from_millis(800);
 
 #[cfg(unix)]
 type PathKeepalive = tempfile::TempDir;
@@ -28,186 +27,167 @@ type PathKeepalive = tempfile::TempDir;
 #[cfg(windows)]
 struct PathKeepalive;
 
-struct MockServer {
-    socket_path: PathBuf,
-    rx: mpsc::Receiver<Result<Stream, String>>,
-    accept_thread: Option<JoinHandle<()>>,
+struct MockHost {
+    endpoint: PathBuf,
+    event_rx: mpsc::Receiver<Value>,
+    thread: Option<std::thread::JoinHandle<()>>,
     _keepalive: PathKeepalive,
 }
 
-impl MockServer {
+impl MockHost {
     fn start() -> Self {
-        let (socket_path, keepalive) = unique_ipc_path();
-        let name = socket_path
+        let (endpoint, keepalive) = unique_ipc_path();
+        let name = endpoint
             .as_path()
             .to_fs_name::<GenericFilePath>()
-            .expect("test IPC name");
+            .expect("IPC name");
         let listener = ListenerOptions::new()
             .name(name)
             .create_sync()
-            .expect("test IPC listener");
-        let (tx, rx) = mpsc::channel();
-        let display_path = socket_path.clone();
-        let accept_thread = std::thread::Builder::new()
-            .name("ai-hook-test-listener".into())
-            .spawn(move || match listener.accept() {
-                Ok(stream) => {
-                    let _ = tx.send(Ok(stream));
-                }
-                Err(error) => {
-                    let _ = tx.send(Err(format!(
-                        "accept on {} failed: {error}",
-                        display_path.display()
-                    )));
-                }
-            })
-            .expect("test listener thread");
-
+            .expect("IPC listener");
+        let (event_tx, event_rx) = mpsc::channel();
+        let thread = std::thread::spawn(move || {
+            let stream = listener.accept().expect("accept reporter");
+            let mut writer = stream.try_clone().expect("clone stream");
+            let mut reader = BufReader::new(stream);
+            let hello = read_json_line(&mut reader);
+            assert_eq!(hello["method"], "host.hello");
+            write_result(&mut writer, &hello, json!({"protocol": 1}));
+            let event = read_json_line(&mut reader);
+            assert_eq!(event["method"], "agent.event");
+            event_tx.send(event.clone()).expect("send event");
+            write_result(&mut writer, &event, json!({"accepted": true}));
+        });
         Self {
-            socket_path,
-            rx,
-            accept_thread: Some(accept_thread),
+            endpoint,
+            event_rx,
+            thread: Some(thread),
             _keepalive: keepalive,
         }
     }
 
-    fn expect_frame(&self, scenario: &str) -> Value {
-        let result = self
-            .rx
-            .recv_timeout(RECV_TIMEOUT)
-            .unwrap_or_else(|_| panic!("[{scenario}]: no frame arrived within {RECV_TIMEOUT:?}"));
-        let stream = result.unwrap_or_else(|error| panic!("[{scenario}]: {error}"));
-        let bytes = read_frame(stream, RECV_TIMEOUT)
-            .unwrap_or_else(|error| panic!("[{scenario}]: {error}"));
-        serde_json::from_slice(trim_trailing_newline(&bytes)).unwrap_or_else(|error| {
-            panic!(
-                "[{scenario}]: invalid frame JSON ({error}): {}",
-                String::from_utf8_lossy(&bytes)
-            )
-        })
-    }
-
-    fn try_recv(&self, timeout: Duration) -> Option<Value> {
-        let stream = self.rx.recv_timeout(timeout).ok()?.ok()?;
-        let bytes = read_frame(stream, timeout).ok()?;
-        serde_json::from_slice(trim_trailing_newline(&bytes)).ok()
+    fn event(&self) -> Value {
+        self.event_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("reporter event")
     }
 }
 
-impl Drop for MockServer {
+impl Drop for MockHost {
     fn drop(&mut self) {
-        let Some(thread) = self.accept_thread.take() else {
-            return;
-        };
-        if !thread.is_finished() {
-            if let Ok(name) = self.socket_path.as_path().to_fs_name::<GenericFilePath>() {
-                let _ = Stream::connect(name);
-            }
-        }
-        let _ = thread.join();
-    }
-}
-
-fn read_frame(stream: Stream, timeout: Duration) -> Result<Vec<u8>, String> {
-    stream
-        .set_nonblocking(true)
-        .map_err(|error| format!("failed to bound frame read: {error}"))?;
-    let deadline = Instant::now() + timeout;
-    let mut reader = BufReader::new(stream);
-    let mut bytes = Vec::new();
-
-    loop {
-        match reader.read_until(b'\n', &mut bytes) {
-            Ok(0) if bytes.is_empty() => return Err("connection closed without a frame".into()),
-            Ok(_) => return Ok(bytes),
-            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-                if Instant::now() >= deadline {
-                    return Err(format!("frame read exceeded {timeout:?}"));
-                }
-                std::thread::sleep(Duration::from_millis(10));
-            }
-            Err(error) => return Err(format!("frame read failed: {error}")),
+        if let Some(thread) = self.thread.take() {
+            thread.join().expect("host thread");
         }
     }
 }
 
-fn trim_trailing_newline(bytes: &[u8]) -> &[u8] {
-    bytes.strip_suffix(b"\n").unwrap_or(bytes)
+fn read_json_line(reader: &mut BufReader<Stream>) -> Value {
+    let mut line = String::new();
+    reader.read_line(&mut line).expect("read frame");
+    serde_json::from_str(line.trim()).expect("frame JSON")
+}
+
+fn write_result(writer: &mut Stream, request: &Value, result: Value) {
+    let mut response = serde_json::to_vec(&json!({
+        "jsonrpc": "2.0",
+        "id": request["id"],
+        "result": result
+    }))
+    .expect("response JSON");
+    response.push(b'\n');
+    writer.write_all(&response).expect("write response");
+    writer.flush().expect("flush response");
 }
 
 static UNIQUE: AtomicU64 = AtomicU64::new(0);
 
 #[cfg(unix)]
 fn unique_ipc_path() -> (PathBuf, PathKeepalive) {
-    let directory = tempfile::TempDir::new().expect("test temp directory");
+    let directory = tempfile::TempDir::new().expect("temp directory");
     let sequence = UNIQUE.fetch_add(1, Ordering::Relaxed);
-    let path = directory
-        .path()
-        .join(format!("paneflow-test-{sequence}.sock"));
+    let path = directory.path().join(format!("hook-{sequence}.sock"));
     (path, directory)
 }
 
 #[cfg(windows)]
 fn unique_ipc_path() -> (PathBuf, PathKeepalive) {
     let sequence = UNIQUE.fetch_add(1, Ordering::Relaxed);
-    let pid = std::process::id();
     (
-        PathBuf::from(format!(r"\\.\pipe\paneflow-test-{pid}-{sequence}")),
+        PathBuf::from(format!(
+            r"\\.\pipe\paneflow-ai-hook-{}-{sequence}",
+            std::process::id()
+        )),
         PathKeepalive,
     )
 }
 
 struct HookEnv<'a> {
-    socket_path: Option<&'a Path>,
-    workspace_id: u64,
+    endpoint: Option<&'a Path>,
+    session: Option<&'a str>,
+    session_dir: Option<&'a Path>,
     tool: &'a str,
-    pid: Option<u32>,
+    generation: Option<u64>,
     hook_log: Option<&'a Path>,
 }
 
-fn run_hook(event: &str, hook_env: &HookEnv<'_>, stdin_bytes: &[u8]) -> std::process::ExitStatus {
-    let mut command = Command::new(HOOK_BIN);
+fn run_reporter(
+    executable: &Path,
+    event: &str,
+    hook_env: &HookEnv<'_>,
+    stdin_bytes: &[u8],
+) -> (std::process::ExitStatus, Duration, Vec<u8>) {
+    let mut command = Command::new(executable);
     command
         .arg(event)
         .env_clear()
         .envs(non_paneflow_environment())
-        .env("PANEFLOW_WORKSPACE_ID", hook_env.workspace_id.to_string())
         .env("PANEFLOW_AI_TOOL", hook_env.tool)
         .stdin(Stdio::piped())
-        .stdout(Stdio::null())
+        .stdout(Stdio::piped())
         .stderr(Stdio::inherit());
-
-    if let Some(path) = hook_env.socket_path {
-        command.env("PANEFLOW_SOCKET_PATH", path);
+    if let Some(endpoint) = hook_env.endpoint {
+        command.env("PANEFLOW_HOST_ENDPOINT", endpoint);
     }
-    if let Some(pid) = hook_env.pid {
-        command.env("PANEFLOW_AI_PID", pid.to_string());
+    if let Some(session) = hook_env.session {
+        command.env("PANEFLOW_SESSION_ID", session);
+    }
+    if let Some(session_dir) = hook_env.session_dir {
+        command.env("PANEFLOW_SESSION_DIR", session_dir);
+    }
+    if let Some(generation) = hook_env.generation {
+        command.env("PANEFLOW_RUNTIME_GENERATION", generation.to_string());
     }
     if let Some(log) = hook_env.hook_log {
         command.env("PANEFLOW_HOOK_LOG", log);
     }
-
-    let mut child = command.spawn().expect("hook subprocess");
-    child
-        .stdin
-        .as_mut()
-        .expect("piped stdin")
-        .write_all(stdin_bytes)
-        .expect("write hook stdin");
+    let started = Instant::now();
+    let mut child = command.spawn().expect("reporter process");
+    match child.stdin.as_mut().expect("stdin").write_all(stdin_bytes) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::BrokenPipe => {}
+        Err(error) => panic!("stdin payload: {error:?}"),
+    }
     drop(child.stdin.take());
-
-    let started = std::time::Instant::now();
     loop {
         match child.try_wait() {
-            Ok(Some(status)) => return status,
-            Ok(None) if started.elapsed() <= EXIT_TIMEOUT => {
-                std::thread::sleep(Duration::from_millis(25));
+            Ok(Some(status)) => {
+                let mut stdout = Vec::new();
+                child
+                    .stdout
+                    .take()
+                    .expect("stdout")
+                    .read_to_end(&mut stdout)
+                    .expect("read stdout");
+                return (status, started.elapsed(), stdout);
+            }
+            Ok(None) if started.elapsed() < EXIT_TIMEOUT => {
+                std::thread::sleep(Duration::from_millis(1));
             }
             Ok(None) => {
                 let _ = child.kill();
-                panic!("hook subprocess exceeded {EXIT_TIMEOUT:?}");
+                panic!("reporter exceeded {EXIT_TIMEOUT:?}");
             }
-            Err(error) => panic!("hook subprocess wait failed: {error}"),
+            Err(error) => panic!("reporter wait failed: {error}"),
         }
     }
 }
@@ -219,343 +199,273 @@ fn non_paneflow_environment() -> Vec<(OsString, OsString)> {
 }
 
 fn is_paneflow_environment_key(key: &OsStr) -> bool {
-    const PREFIX: &[u8] = b"PANEFLOW_";
-
     key.to_string_lossy()
-        .as_bytes()
-        .get(..PREFIX.len())
-        .is_some_and(|prefix| prefix.eq_ignore_ascii_case(PREFIX))
-}
-
-struct SuccessCase {
-    name: &'static str,
-    event: &'static str,
-    workspace_id: u64,
-    tool: &'static str,
-    pid: Option<u32>,
-    payload: Value,
-    method: &'static str,
-    expected_tool_name: Option<&'static str>,
-}
-
-fn assert_envelope<'a>(frame: &'a Value, case: &SuccessCase) -> &'a Value {
-    assert_eq!(frame["jsonrpc"], "2.0", "case={}", case.name);
-    assert_eq!(frame["method"], case.method, "case={}", case.name);
-    assert!(frame.get("id").is_none(), "case={}", case.name);
-    let params = &frame["params"];
-    assert_eq!(
-        params["workspace_id"], case.workspace_id,
-        "case={}",
-        case.name
-    );
-    assert_eq!(params["tool"], case.tool, "case={}", case.name);
-    assert!(params.get("hook_payload").is_some(), "case={}", case.name);
-    assert_eq!(
-        params.get("tool_name").and_then(Value::as_str),
-        case.expected_tool_name,
-        "case={}",
-        case.name
-    );
-    params
+        .to_ascii_uppercase()
+        .starts_with("PANEFLOW_")
 }
 
 #[test]
-fn supported_events_dispatch_through_the_process_boundary() {
-    let cases = vec![
-        SuccessCase {
-            name: "claude_prompt",
-            event: "UserPromptSubmit",
-            workspace_id: 42,
-            tool: "claude",
-            pid: None,
-            payload: json!({"session_id": "abc", "prompt": "hello"}),
-            method: "ai.prompt_submit",
-            expected_tool_name: None,
-        },
-        SuccessCase {
-            name: "claude_notification",
-            event: "Notification",
-            workspace_id: 7,
-            tool: "claude",
-            pid: None,
-            payload: json!({
-                "session_id": "abc",
-                "notification_type": "permission_prompt",
-                "message": "Allow Bash?"
-            }),
-            method: "ai.notification",
-            expected_tool_name: None,
-        },
-        SuccessCase {
-            name: "claude_stop",
-            event: "Stop",
-            workspace_id: 1,
-            tool: "claude",
-            pid: None,
-            payload: json!({"session_id": "abc"}),
-            method: "ai.stop",
-            expected_tool_name: None,
-        },
-        SuccessCase {
-            name: "claude_subagent_stop",
-            event: "SubagentStop",
-            workspace_id: 1,
-            tool: "claude",
-            pid: None,
-            payload: json!({"session_id": "sub"}),
-            method: "ai.stop",
-            expected_tool_name: None,
-        },
-        SuccessCase {
-            name: "claude_pre_tool",
-            event: "PreToolUse",
-            workspace_id: 3,
-            tool: "claude",
-            pid: None,
-            payload: json!({"tool_name": "Bash", "tool_input": {"command": "ls"}}),
-            method: "ai.tool_use",
-            expected_tool_name: Some("Bash"),
-        },
-        SuccessCase {
-            name: "claude_post_tool",
-            event: "PostToolUse",
-            workspace_id: 3,
-            tool: "claude",
-            pid: None,
-            payload: json!({"tool_name": "Edit"}),
-            method: "ai.tool_use",
-            expected_tool_name: Some("Edit"),
-        },
-        SuccessCase {
-            name: "codex_session_start",
-            event: "SessionStart",
-            workspace_id: 5,
-            tool: "codex",
-            pid: Some(4242),
-            payload: json!({"session_id": "s1"}),
-            method: "ai.session_start",
-            expected_tool_name: None,
-        },
-        SuccessCase {
-            name: "codex_prompt",
-            event: "UserPromptSubmit",
-            workspace_id: 9,
-            tool: "codex",
-            pid: None,
-            payload: json!({"session_id": "s1", "prompt": "hi"}),
-            method: "ai.prompt_submit",
-            expected_tool_name: None,
-        },
-        SuccessCase {
-            name: "codex_notification",
-            event: "Notification",
-            workspace_id: 9,
-            tool: "codex",
-            pid: None,
-            payload: json!({
-                "notification_type": "elicitation_dialog",
-                "message": "Choose"
-            }),
-            method: "ai.notification",
-            expected_tool_name: None,
-        },
-        SuccessCase {
-            name: "codex_tool",
-            event: "PreToolUse",
-            workspace_id: 9,
-            tool: "codex",
-            pid: None,
-            payload: json!({"tool_name": "shell"}),
-            method: "ai.tool_use",
-            expected_tool_name: Some("shell"),
-        },
-        SuccessCase {
-            name: "codex_stop",
-            event: "Stop",
-            workspace_id: 9,
-            tool: "codex",
-            pid: None,
-            payload: json!({"session_id": "s1"}),
-            method: "ai.stop",
-            expected_tool_name: None,
-        },
-        SuccessCase {
-            name: "codex_permission",
-            event: "PermissionRequest",
-            workspace_id: 9,
-            tool: "codex",
-            pid: None,
-            payload: json!({"message": "Approve shell?"}),
-            method: "ai.notification",
-            expected_tool_name: None,
-        },
+fn hand_typed_claude_events_use_the_host_protocol() {
+    let cases = [
+        ("SessionStart", "ai.session_start", "HookSeen"),
+        ("SubagentStart", "ai.session_start", "HookSeen"),
+        ("SubagentStop", "ai.session_start", "HookSeen"),
+        ("UserPromptSubmit", "ai.prompt_submit", "UserPromptSubmit"),
+        ("PermissionRequest", "ai.notification", "PermissionRequest"),
+        ("Stop", "ai.stop", "Stop"),
+        ("StopFailure", "ai.stop", "StopFailure"),
+        ("Interrupt", "ai.stop", "Interrupt"),
     ];
-
-    for case in cases {
-        let server = MockServer::start();
-        let status = run_hook(
-            case.event,
+    for (event, kind, payload_event) in cases {
+        let host = MockHost::start();
+        let payload = json!({
+            "session_id": "provider-session",
+            "transcript_path": "C:\\temp\\transcript.jsonl",
+            "tool_name": "AskUserQuestion"
+        });
+        let (status, elapsed, stdout) = run_reporter(
+            Path::new(HOOK_BIN),
+            event,
             &HookEnv {
-                socket_path: Some(&server.socket_path),
-                workspace_id: case.workspace_id,
-                tool: case.tool,
-                pid: case.pid,
+                endpoint: Some(&host.endpoint),
+                session: Some(SESSION_ID),
+                session_dir: None,
+                tool: "claude",
+                generation: Some(7),
                 hook_log: None,
             },
-            case.payload.to_string().as_bytes(),
+            payload.to_string().as_bytes(),
         );
-        assert!(status.success(), "case={}", case.name);
-        let frame = server.expect_frame(case.name);
-        let params = assert_envelope(&frame, &case);
-        if case.name == "claude_prompt" {
-            assert_eq!(params["hook_payload"]["prompt"], "hello");
-        }
-        if case.name == "codex_session_start" {
-            assert_eq!(params["pid"], 4242);
-        }
-        if case.name == "codex_permission" {
-            assert!(params.get("notification_type").is_none());
-        }
+        assert!(status.success(), "event={event}");
+        assert!(elapsed < Duration::from_millis(500), "event={event}");
+        assert!(stdout.is_empty(), "event={event}");
+        let frame = host.event();
+        assert_eq!(frame["params"]["session"], SESSION_ID, "event={event}");
+        assert_eq!(frame["params"]["kind"], kind, "event={event}");
+        assert_eq!(frame["params"]["runtime_generation"], 7, "event={event}");
+        assert_eq!(
+            frame["params"]["hook_payload"]["hook_event_name"], payload_event,
+            "event={event}"
+        );
     }
 }
 
 #[test]
-fn informational_notification_is_dropped_with_one_accurate_diagnostic() {
-    let server = MockServer::start();
-    let log_directory = tempfile::TempDir::new().expect("log directory");
-    let log_path = log_directory.path().join("hook.log");
-    let payload = json!({"notification_type": "idle_prompt", "message": "idle"});
-    let status = run_hook(
-        "Notification",
+fn missing_session_is_an_immediate_no_op_without_files_or_network() {
+    let directory = tempfile::tempdir().expect("temp directory");
+    let log = directory.path().join("hook.log");
+    let mut best = EXIT_TIMEOUT;
+    for _ in 0..3 {
+        let (status, elapsed, stdout) = run_reporter(
+            Path::new(HOOK_BIN),
+            "Stop",
+            &HookEnv {
+                endpoint: None,
+                session: None,
+                session_dir: Some(directory.path()),
+                tool: "claude",
+                generation: Some(1),
+                hook_log: Some(&log),
+            },
+            b"{}",
+        );
+        assert!(status.success());
+        assert!(stdout.is_empty());
+        best = best.min(elapsed);
+    }
+    assert!(best < Duration::from_millis(50), "best={best:?}");
+    assert!(!log.exists());
+    assert!(!directory.path().join("last-hook-event.json").exists());
+}
+
+#[test]
+fn unreachable_host_is_bounded_and_writes_the_generation_seed() {
+    let (endpoint, _keepalive) = unique_ipc_path();
+    let directory = tempfile::tempdir().expect("session directory");
+    let (status, elapsed, stdout) = run_reporter(
+        Path::new(HOOK_BIN),
+        "PermissionRequest",
         &HookEnv {
-            socket_path: Some(&server.socket_path),
-            workspace_id: 7,
+            endpoint: Some(&endpoint),
+            session: Some(SESSION_ID),
+            session_dir: Some(directory.path()),
             tool: "claude",
-            pid: None,
-            hook_log: Some(&log_path),
-        },
-        payload.to_string().as_bytes(),
-    );
-
-    assert!(status.success());
-    assert!(server.try_recv(Duration::from_millis(500)).is_none());
-    let log = std::fs::read_to_string(log_path).expect("hook log");
-    assert_eq!(log.lines().count(), 1);
-    assert!(log.contains("dropping notification_type=Some(\"idle_prompt\")"));
-    assert!(!log.contains("unhandled hook event"));
-}
-
-#[test]
-fn malformed_tool_is_rejected_instead_of_becoming_claude() {
-    let server = MockServer::start();
-    let log_directory = tempfile::TempDir::new().expect("log directory");
-    let log_path = log_directory.path().join("hook.log");
-    let status = run_hook(
-        "Stop",
-        &HookEnv {
-            socket_path: Some(&server.socket_path),
-            workspace_id: 1,
-            tool: "tool/../etc",
-            pid: None,
-            hook_log: Some(&log_path),
-        },
-        json!({}).to_string().as_bytes(),
-    );
-
-    assert!(status.success());
-    assert!(server.try_recv(Duration::from_millis(250)).is_none());
-    let log = std::fs::read_to_string(log_path).expect("hook log");
-    assert!(log.contains("PANEFLOW_AI_TOOL"));
-}
-
-#[test]
-fn inherited_paneflow_environment_is_filtered_case_insensitively() {
-    assert!(is_paneflow_environment_key(OsStr::new("PANEFLOW_AI_TOOL")));
-    assert!(is_paneflow_environment_key(OsStr::new("paneflow_ai_tool")));
-    assert!(!is_paneflow_environment_key(OsStr::new("PATH")));
-}
-
-#[test]
-fn frame_read_is_bounded_when_peer_stays_open_without_newline() {
-    let server = MockServer::start();
-    let name = server
-        .socket_path
-        .as_path()
-        .to_fs_name::<GenericFilePath>()
-        .expect("test IPC name");
-    let mut client = Stream::connect(name).expect("connect partial-frame client");
-    client.write_all(b"{").expect("write partial frame");
-
-    let started = Instant::now();
-    assert!(server.try_recv(Duration::from_millis(50)).is_none());
-    assert!(
-        started.elapsed() < Duration::from_secs(1),
-        "partial frame must not block the test harness"
-    );
-}
-
-#[test]
-fn missing_socket_still_exits_successfully() {
-    let (missing_path, _keepalive) = unique_ipc_path();
-    let status = run_hook(
-        "Stop",
-        &HookEnv {
-            socket_path: Some(&missing_path),
-            workspace_id: 1,
-            tool: "claude",
-            pid: None,
+            generation: Some(9),
             hook_log: None,
         },
-        json!({}).to_string().as_bytes(),
+        br#"{"tool_name":"AskUserQuestion"}"#,
     );
     assert!(status.success());
+    assert!(elapsed < EXIT_TIMEOUT, "elapsed={elapsed:?}");
+    assert!(stdout.is_empty());
+    let seed: Value = serde_json::from_slice(
+        &std::fs::read(directory.path().join("last-hook-event.json")).expect("seed"),
+    )
+    .expect("seed JSON");
+    assert_eq!(
+        seed,
+        json!({
+            "hook_event_name": "PermissionRequest",
+            "runtime_generation": 9,
+            "tool_name": "AskUserQuestion"
+        })
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn unix_reporter_script_passes_the_same_event_contract() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let directory = tempfile::tempdir().expect("reporter directory");
+    let binary = directory.path().join("paneflow-ai-hook");
+    std::fs::copy(HOOK_BIN, &binary).expect("copy reporter");
+    let script = directory.path().join("paneflow-ai-hook.sh");
+    std::fs::write(
+        &script,
+        include_bytes!("../../../runtimes/claude-code/assets/hooks/lifecycle.sh"),
+    )
+    .expect("write script");
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o700))
+        .expect("script permissions");
+    let host = MockHost::start();
+    let (status, _, stdout) = run_reporter(
+        &script,
+        "SessionStart",
+        &HookEnv {
+            endpoint: Some(&host.endpoint),
+            session: Some(SESSION_ID),
+            session_dir: None,
+            tool: "claude",
+            generation: Some(2),
+            hook_log: None,
+        },
+        br#"{"session_id":"provider-session"}"#,
+    );
+    assert!(status.success());
+    assert!(stdout.is_empty());
+    let frame = host.event();
+    assert_eq!(frame["params"]["kind"], "ai.session_start");
+    assert_eq!(frame["params"]["runtime_generation"], 2);
+}
+
+fn background_markers(session_dir: &Path, generation: u64) -> Vec<String> {
+    let directory = session_dir
+        .join("background-hooks")
+        .join(generation.to_string());
+    let Ok(entries) = std::fs::read_dir(directory) else {
+        return Vec::new();
+    };
+    let mut names: Vec<String> = entries
+        .filter_map(|entry| Some(entry.ok()?.file_name().to_string_lossy().into_owned()))
+        .collect();
+    names.sort();
+    names
 }
 
 #[test]
-fn malformed_stdin_logs_and_sends_no_frame() {
-    let server = MockServer::start();
-    let log_directory = tempfile::TempDir::new().expect("log directory");
-    let log_path = log_directory.path().join("hook.log");
-    let status = run_hook(
-        "UserPromptSubmit",
-        &HookEnv {
-            socket_path: Some(&server.socket_path),
-            workspace_id: 1,
-            tool: "claude",
-            pid: None,
-            hook_log: Some(&log_path),
-        },
-        b"not-valid-json",
+fn subagent_events_keep_a_background_marker_per_child_under_their_generation() {
+    let directory = tempfile::tempdir().expect("session directory");
+    let log = directory.path().join("hook.log");
+    let children = [
+        ("explorer-1", "SubagentStart"),
+        ("writer_2", "SubagentStart"),
+    ];
+    for (agent_id, event) in children {
+        let host = MockHost::start();
+        let (status, _, _) = run_reporter(
+            Path::new(HOOK_BIN),
+            event,
+            &HookEnv {
+                endpoint: Some(&host.endpoint),
+                session: Some(SESSION_ID),
+                session_dir: Some(directory.path()),
+                tool: "claude",
+                generation: Some(5),
+                hook_log: Some(&log),
+            },
+            json!({"session_id": "provider-session", "agent_id": agent_id})
+                .to_string()
+                .as_bytes(),
+        );
+        assert!(status.success(), "agent_id={agent_id}");
+        assert_eq!(host.event()["params"]["kind"], "ai.session_start");
+    }
+    assert_eq!(
+        background_markers(directory.path(), 5),
+        vec!["explorer-1.json".to_string(), "writer_2.json".to_string()]
+    );
+    let marker: Value = serde_json::from_slice(
+        &std::fs::read(
+            directory
+                .path()
+                .join("background-hooks")
+                .join("5")
+                .join("explorer-1.json"),
+        )
+        .expect("marker bytes"),
+    )
+    .expect("marker JSON");
+    assert_eq!(
+        marker,
+        json!({"activity_id": "explorer-1", "runtime_generation": 5})
     );
 
+    let host = MockHost::start();
+    let (status, _, _) = run_reporter(
+        Path::new(HOOK_BIN),
+        "SubagentStop",
+        &HookEnv {
+            endpoint: Some(&host.endpoint),
+            session: Some(SESSION_ID),
+            session_dir: Some(directory.path()),
+            tool: "claude",
+            generation: Some(5),
+            hook_log: Some(&log),
+        },
+        json!({"session_id": "provider-session", "agent_id": "explorer-1"})
+            .to_string()
+            .as_bytes(),
+    );
     assert!(status.success());
-    assert!(server.try_recv(Duration::from_millis(250)).is_none());
-    assert!(std::fs::read_to_string(log_path)
-        .expect("hook log")
-        .contains("invalid stdin JSON"));
+    assert_eq!(host.event()["params"]["kind"], "ai.session_start");
+    assert_eq!(
+        background_markers(directory.path(), 5),
+        vec!["writer_2.json".to_string()],
+        "a stopping child removes only its own marker"
+    );
 }
 
 #[test]
-fn oversized_stdin_logs_and_sends_no_frame() {
-    let server = MockServer::start();
-    let log_directory = tempfile::TempDir::new().expect("log directory");
-    let log_path = log_directory.path().join("hook.log");
-    let oversized = vec![b'x'; MAX_STDIN_BYTES + 1];
-    let status = run_hook(
-        "UserPromptSubmit",
+fn an_unusable_background_identity_is_still_forwarded_as_a_latch() {
+    let directory = tempfile::tempdir().expect("session directory");
+    let log = directory.path().join("hook.log");
+    let host = MockHost::start();
+    let (status, _, _) = run_reporter(
+        Path::new(HOOK_BIN),
+        "SubagentStart",
         &HookEnv {
-            socket_path: Some(&server.socket_path),
-            workspace_id: 1,
+            endpoint: Some(&host.endpoint),
+            session: Some(SESSION_ID),
+            session_dir: Some(directory.path()),
             tool: "claude",
-            pid: None,
-            hook_log: Some(&log_path),
+            generation: Some(1),
+            hook_log: Some(&log),
         },
-        &oversized,
+        json!({"session_id": "provider-session", "agent_id": "a".repeat(161)})
+            .to_string()
+            .as_bytes(),
     );
-
     assert!(status.success());
-    assert!(server.try_recv(Duration::from_millis(250)).is_none());
-    assert!(std::fs::read_to_string(log_path)
-        .expect("hook log")
-        .contains("stdin exceeds"));
+    assert_eq!(
+        host.event()["params"]["hook_payload"]["hook_event_name"],
+        "HookSeen",
+        "the event still latches the session as hook owned"
+    );
+    assert!(background_markers(directory.path(), 1).is_empty());
+    let recorded = std::fs::read_to_string(&log).expect("hook log");
+    assert!(
+        recorded.contains("unusable background agent id"),
+        "{recorded}"
+    );
 }

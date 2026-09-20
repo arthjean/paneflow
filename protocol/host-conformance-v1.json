@@ -1,0 +1,43 @@
+{
+  "schema": 1,
+  "protocol": "paneflow-host",
+  "version": 1,
+  "description": "Cases a PTY core must pass to serve protocol version 1. crates/paneflow-host/tests/conformance.rs runs every case against a real core over its real endpoint; a case listed here with no runner is a failure, not a skip.",
+  "cases": [
+    {
+      "id": "bootstrap",
+      "summary": "host.hello answers with the core identity: name, protocol, host_instance, engine, pid, home and endpoint.",
+      "method": "host.hello"
+    },
+    {
+      "id": "session_list",
+      "summary": "session.list returns every manifest the core knows, each carrying host_protocol_version and host_build_id.",
+      "method": "session.list"
+    },
+    {
+      "id": "output_stream",
+      "summary": "session.output streams the session's output tail from the requested offset and ends with an explicit end frame.",
+      "method": "session.output"
+    },
+    {
+      "id": "input",
+      "summary": "session.input writes bytes to the session's PTY and the written bytes come back through the output tail.",
+      "method": "session.input"
+    },
+    {
+      "id": "resize",
+      "summary": "session.resize applies new cols and rows and the manifest records them.",
+      "method": "session.resize"
+    },
+    {
+      "id": "agent_snapshot",
+      "summary": "agent.snapshot lists every session with its raw last hook record and never with a reduced activity state.",
+      "method": "agent.snapshot"
+    },
+    {
+      "id": "hook_ingress_rejection",
+      "summary": "agent.event naming a runtime_generation below the manifest's is refused, logged and not persisted.",
+      "method": "agent.event"
+    }
+  ]
+}

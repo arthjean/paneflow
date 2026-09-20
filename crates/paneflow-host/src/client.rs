@@ -90,6 +90,7 @@ impl HostClient {
                 name: String::new(),
                 version: String::new(),
                 protocol: 0,
+                build_id: String::new(),
                 host_instance: HostInstanceToken::new(),
                 engine: hello
                     .engine
@@ -226,6 +227,19 @@ impl HostClient {
                 accepted.saturating_add(reply["accepted_bytes"].as_u64().unwrap_or(0) as usize);
         }
         Ok(accepted)
+    }
+
+    pub fn bind_runtime(
+        &mut self,
+        session: &SessionId,
+        generation: SessionGeneration,
+        runtime_id: Option<&str>,
+    ) -> Result<(), HostClientError> {
+        self.call(
+            "session.runtime.bind",
+            json!({"session": session, "generation": generation, "runtime_id": runtime_id}),
+        )?;
+        Ok(())
     }
 
     pub fn resize(

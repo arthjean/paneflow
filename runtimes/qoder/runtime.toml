@@ -1,0 +1,43 @@
+schema_version = 1
+id = "com.alibaba.qoder-cli"
+slug = "qoder"
+label = "Qoder"
+platforms = ["linux", "macos"]
+capabilities = ["lifecycle_hooks", "integration_install"]
+
+[display]
+order = 14
+tint = "#2ADB5C"
+icon_asset_path = "agents/qoder-color.svg"
+icon_multicolor = false
+visibility_config_key = "qoder_button_visible"
+
+[detection]
+command_aliases = ["qodercli"]
+process_aliases = ["qodercli"]
+script_path_signatures = []
+
+[environment]
+strip_inherited = []
+
+[lifecycle]
+source = "hooks"
+authority = "complete"
+fallback = "none"
+escape_cancels_turn = false
+attention_clears_on_output = true
+anchor_start_event_to_output = true
+terminal_title_signal = false
+
+[integration]
+summary = "Installs Paneflow lifecycle hooks in Qoder's project settings."
+hook_adapter = "qoder"
+
+[install]
+command = ""
+
+[[suggested_presets]]
+id = "qoder"
+label = "Qoder"
+command = "qodercli"
+quick_launch = false

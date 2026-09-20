@@ -31,6 +31,7 @@ impl PaneFlowApp {
         self.refresh_mcp_status(cx);
         if section == SettingsSection::Agents {
             self.probe_agent_versions(cx);
+            self.refresh_integration_status(cx);
         }
         self.settings_focus.focus(window, cx);
         cx.notify();

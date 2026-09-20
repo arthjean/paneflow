@@ -1,4 +1,5 @@
 use std::fmt;
+use std::path::{Path, PathBuf};
 
 use serde_json::{Map, Value};
 
@@ -147,6 +148,34 @@ impl SurfaceId {
     }
 }
 
+pub const BACKGROUND_DIR: &str = "background-hooks";
+
+pub const MAX_ACTIVITY_ID_BYTES: usize = 160;
+
+pub fn is_safe_activity_id(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= MAX_ACTIVITY_ID_BYTES
+        && id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+}
+
+pub fn background_generation_dir(session_dir: &Path, generation: u64) -> PathBuf {
+    session_dir
+        .join(BACKGROUND_DIR)
+        .join(generation.to_string())
+}
+
+pub fn background_marker_path(
+    session_dir: &Path,
+    generation: u64,
+    activity_id: &str,
+) -> Option<PathBuf> {
+    is_safe_activity_id(activity_id).then(|| {
+        background_generation_dir(session_dir, generation).join(format!("{activity_id}.json"))
+    })
+}
+
 pub fn epoch_millis() -> Option<u64> {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -194,6 +223,7 @@ pub struct AiHookParams {
     pub exit_code: Option<i32>,
     pub event_source: Option<LifecycleEventSource>,
     pub emitted_at_ms: Option<u64>,
+    pub runtime_generation: Option<u64>,
     pub hook_payload: Value,
 }
 
@@ -208,6 +238,7 @@ impl AiHookParams {
             exit_code: None,
             event_source: None,
             emitted_at_ms: None,
+            runtime_generation: None,
             hook_payload,
         }
     }
@@ -236,6 +267,9 @@ impl AiHookParams {
         }
         if let Some(emitted_at_ms) = self.emitted_at_ms {
             value.insert("emitted_at_ms".into(), Value::from(emitted_at_ms));
+        }
+        if let Some(runtime_generation) = self.runtime_generation {
+            value.insert("runtime_generation".into(), Value::from(runtime_generation));
         }
         value.insert("hook_payload".into(), self.hook_payload.clone());
         Value::Object(value)
@@ -289,6 +323,9 @@ impl AiHookFrame {
         }
         if let Some(emitted_at_ms) = self.params.emitted_at_ms {
             value.insert("emitted_at_ms".into(), Value::from(emitted_at_ms));
+        }
+        if let Some(runtime_generation) = self.params.runtime_generation {
+            value.insert("runtime_generation".into(), Value::from(runtime_generation));
         }
         value.insert("hook_payload".into(), self.params.hook_payload.clone());
         Value::Object(value)

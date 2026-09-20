@@ -6,17 +6,22 @@ use gpui::{
     prelude::*, px, rgb, svg,
 };
 use paneflow_config::schema::AgentProfileConfig;
+use paneflow_mcp_install::IntegrationState;
 
 use crate::PaneFlowApp;
 use crate::SidebarWidthAnimation;
 use crate::agent_launcher::{AgentProfile, TerminalAgent};
 use crate::settings::components::{
-    SETTINGS_CONTROL_CORNER_RADIUS, deferred_select_menu, destructive_color, hairline, menu_row,
-    secondary_button, section_header, section_header_with_action, select_chevron, select_menu,
-    select_trigger, setting_card, setting_text, toggle_pill, toggle_row, with_alpha,
+    SETTINGS_CONTROL_CORNER_RADIUS, deferred_select_menu, destructive_color, hairline,
+    hairline_inset, menu_row, secondary_button, section_header_with_action, section_title,
+    select_chevron, select_menu, select_trigger, setting_card, setting_text, toggle_pill,
+    toggle_row, with_alpha,
 };
 use crate::settings::search::{self, Block, SearchCard};
-use crate::ui_primitives::{AnimatedHoverExt, BODY, LABEL_SM, LABEL_XS, ROW_RADIUS};
+use crate::ui_primitives::{
+    AnimatedHoverExt, BODY, BODY_EMPHASIS, LABEL_SM, LABEL_XS, ROW_RADIUS, TooltipDelayExt,
+    text_tooltip,
+};
 use crate::widgets::text_input::TextInput;
 
 const ROW_ICON: f32 = 18.;
@@ -24,11 +29,30 @@ const CONTROL_WIDTH: f32 = 300.;
 const ENV_NAME_WIDTH: f32 = 200.;
 const INPUT_HEIGHT: f32 = 28.;
 const ICON_BUTTON_SIZE: f32 = 26.;
-const AGENT_ROW_HEIGHT: f32 = 44.;
+const AGENT_ROW_HEIGHT: f32 = 50.;
+const CARD_PADDING_X: f32 = crate::settings::components::CARD_PADDING_X;
+const CARD_PADDING_Y: f32 = crate::settings::components::CARD_PADDING_Y;
 const HAIRLINE_HEIGHT: f32 = 1.;
+const MISSING_PREVIEW_ROWS: usize = 3;
+const HOOK_GLYPH: f32 = 14.;
+const HOOK_STEP_DOT: f32 = 6.;
 
-fn secondary_list_height() -> f32 {
-    TerminalAgent::secondary().count() as f32 * (AGENT_ROW_HEIGHT + HAIRLINE_HEIGHT)
+fn installed_agents() -> impl Iterator<Item = TerminalAgent> {
+    TerminalAgent::all().filter(|agent| agent.is_installed())
+}
+
+fn missing_agents() -> impl Iterator<Item = TerminalAgent> {
+    TerminalAgent::all().filter(|agent| !agent.is_installed())
+}
+
+fn folded_missing_count() -> usize {
+    missing_agents()
+        .count()
+        .saturating_sub(MISSING_PREVIEW_ROWS)
+}
+
+fn folded_missing_height() -> f32 {
+    folded_missing_count() as f32 * (AGENT_ROW_HEIGHT + HAIRLINE_HEIGHT)
 }
 
 pub(crate) struct EnvRowInputs {
@@ -50,7 +74,8 @@ impl PaneFlowApp {
         div()
             .flex()
             .flex_col()
-            .child(self.render_agent_list_section(ui, cx))
+            .child(self.render_installed_agents_section(ui, cx))
+            .child(self.render_missing_agents_section(ui, cx))
             .child(self.render_agent_profiles_section(ui, cx))
             .child(self.render_agent_permissions_section(ui, cx))
             .child(div().h(px(180.)).flex_none())
@@ -70,7 +95,7 @@ impl PaneFlowApp {
     fn agents_list_height_now(&self) -> f32 {
         match self.agents_list_animation {
             Some(animation) => animation.width_at(std::time::Instant::now()),
-            None if self.agents_list_expanded => secondary_list_height(),
+            None if self.agents_list_expanded => folded_missing_height(),
             None => 0.,
         }
     }
@@ -80,7 +105,7 @@ impl PaneFlowApp {
         let from_width = self.agents_list_height_now();
         self.agents_list_expanded = !self.agents_list_expanded;
         let to_width = if self.agents_list_expanded {
-            secondary_list_height()
+            folded_missing_height()
         } else {
             0.
         };
@@ -105,89 +130,170 @@ impl PaneFlowApp {
         .detach();
     }
 
-    fn render_agent_list_section(
+    pub(crate) fn refresh_integration_status(&self, cx: &mut Context<Self>) {
+        cx.spawn(async move |this, cx| {
+            let statuses = smol::unblock(paneflow_mcp_install::list_integrations).await;
+            let _ = this.update(cx, |this, cx| {
+                this.integration_status = Some(statuses);
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn change_integration(&mut self, slug: String, install: bool, cx: &mut Context<Self>) {
+        if self.integration_busy.is_some() {
+            return;
+        }
+        self.integration_busy = Some(slug.clone());
+        self.integration_errors.remove(&slug);
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            let action_slug = slug.clone();
+            let result = smol::unblock(move || {
+                if install {
+                    let hook_binary = crate::ai_hooks::extract::ensure_ai_hook_extracted()
+                        .map_err(|error| format!("hook extraction failed: {error:#}"))?;
+                    let bridge_binary = crate::ai_hooks::extract::ensure_bridge_extracted()
+                        .map_err(|error| format!("bridge extraction failed: {error:#}"))?;
+                    paneflow_mcp_install::install_integration(
+                        &action_slug,
+                        &paneflow_mcp_install::IntegrationBinaries {
+                            hook_binary,
+                            bridge_binary,
+                        },
+                    )
+                } else {
+                    paneflow_mcp_install::remove_integration(&action_slug)
+                }
+            })
+            .await;
+            let statuses = smol::unblock(paneflow_mcp_install::list_integrations).await;
+            let _ = this.update(cx, |this, cx| {
+                this.integration_busy = None;
+                this.integration_status = Some(statuses);
+                if let Err(error) = result {
+                    this.integration_errors.insert(slug, error);
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn render_installed_agents_section(
         &self,
         ui: crate::theme::UiColors,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let expanded = self.agents_list_expanded;
-        let hidden = TerminalAgent::secondary().count();
-        let shown = if expanded {
-            TerminalAgent::ALL.len()
-        } else {
-            TerminalAgent::PRIMARY.len()
-        };
-        let counter: SharedString = format!("{shown} of {} shown", TerminalAgent::ALL.len()).into();
-
-        let mut card = setting_card(ui);
-        for (idx, agent) in TerminalAgent::PRIMARY.into_iter().enumerate() {
-            if idx > 0 {
-                card = card.child(hairline(ui));
+        let mut card = setting_card(ui).py(px(CARD_PADDING_Y));
+        let mut any = false;
+        for agent in installed_agents() {
+            if any {
+                card = card.child(hairline_inset(ui));
             }
-            card = card.child(self.render_agent_row(agent, ui, cx));
+            any = true;
+            card = card.child(self.render_installed_agent_row(agent, ui, cx));
         }
-        let secondary_height = self.agents_list_height_now();
-        if secondary_height > 0. {
-            let mut secondary = div()
+        if !any {
+            card = card.child(
+                div()
+                    .px(px(CARD_PADDING_X))
+                    .py(px(14.))
+                    .text_size(LABEL_SM)
+                    .text_color(ui.muted)
+                    .child("No agent found on PATH."),
+            );
+        }
+        Block::new("Agents").child(card).finish()
+    }
+
+    fn render_missing_agents_section(
+        &self,
+        ui: crate::theme::UiColors,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let missing: Vec<TerminalAgent> = missing_agents().collect();
+        if missing.is_empty() {
+            return div().into_any_element();
+        }
+        let expanded = self.agents_list_expanded;
+        let folded = folded_missing_count();
+        let counter: SharedString = missing.len().to_string().into();
+
+        let mut card = setting_card(ui).py(px(CARD_PADDING_Y));
+        for (idx, agent) in missing.iter().take(MISSING_PREVIEW_ROWS).enumerate() {
+            if idx > 0 {
+                card = card.child(hairline_inset(ui));
+            }
+            card = card.child(missing_agent_row(*agent, ui));
+        }
+        let folded_height = self.agents_list_height_now();
+        if folded_height > 0. {
+            let mut rest = div()
                 .flex()
                 .flex_col()
                 .flex_none()
-                .h(px(secondary_height))
+                .h(px(folded_height))
                 .overflow_hidden();
-            for agent in TerminalAgent::secondary() {
-                secondary = secondary
-                    .child(hairline(ui))
-                    .child(self.render_agent_row(agent, ui, cx));
+            for agent in missing.iter().skip(MISSING_PREVIEW_ROWS) {
+                rest = rest
+                    .child(hairline_inset(ui))
+                    .child(missing_agent_row(*agent, ui));
             }
-            card = card.child(secondary);
+            card = card.child(rest);
         }
-        let more_label: SharedString = if expanded {
-            "Show less".into()
-        } else {
-            format!("Show {hidden} more").into()
-        };
-        let hover_bg = with_alpha(ui.text, 0.05);
-        let more_button = div()
-            .id("agents-show-more")
-            .h(px(28.))
-            .px(px(10.))
-            .flex()
-            .flex_row()
-            .items_center()
-            .gap(px(6.))
-            .rounded_full()
-            .hover(move |style| style.bg(hover_bg))
-            .cursor(CursorStyle::PointingHand)
-            .text_size(LABEL_SM)
-            .font_weight(gpui::FontWeight::MEDIUM)
-            .text_color(ui.muted)
-            .on_click(cx.listener(|this, _: &ClickEvent, _w, cx| {
-                this.toggle_agents_list(cx);
-            }))
-            .child(more_label)
-            .child(
-                svg()
-                    .size(px(10.))
-                    .flex_none()
-                    .path(if expanded {
-                        "icons/chevron_up.svg"
-                    } else {
-                        "icons/chevron-down.svg"
-                    })
-                    .text_color(ui.muted),
+        if folded > 0 {
+            let more_label: SharedString = if expanded {
+                "Show less".into()
+            } else {
+                format!("Show {folded} more").into()
+            };
+            let hover_bg = with_alpha(ui.text, 0.05);
+            let more_button = div()
+                .id("agents-show-more")
+                .h(px(28.))
+                .px(px(10.))
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap(px(6.))
+                .rounded_full()
+                .hover(move |style| style.bg(hover_bg))
+                .cursor(CursorStyle::PointingHand)
+                .text_size(LABEL_SM)
+                .font_weight(gpui::FontWeight::MEDIUM)
+                .text_color(ui.muted)
+                .on_click(cx.listener(|this, _: &ClickEvent, _w, cx| {
+                    this.toggle_agents_list(cx);
+                }))
+                .child(more_label)
+                .child(
+                    svg()
+                        .size(px(10.))
+                        .flex_none()
+                        .path(if expanded {
+                            "icons/chevron_up.svg"
+                        } else {
+                            "icons/chevron-down.svg"
+                        })
+                        .text_color(ui.muted),
+                );
+            card = card.child(hairline(ui)).child(
+                div()
+                    .py(px(6.))
+                    .flex()
+                    .flex_row()
+                    .justify_center()
+                    .child(more_button),
             );
-        let more_row = div()
-            .py(px(6.))
-            .flex()
-            .flex_row()
-            .justify_center()
-            .child(more_button);
-        card = card.child(hairline(ui)).child(more_row);
+        }
 
-        Block::new("Agents")
+        Block::new("Not installed")
+            .top_gap(24.)
             .child(section_header_with_action(
                 ui,
-                "Agents",
+                "Not installed",
                 div()
                     .text_size(LABEL_SM)
                     .text_color(ui.muted)
@@ -197,57 +303,40 @@ impl PaneFlowApp {
             .finish()
     }
 
-    fn render_agent_row(
+    fn render_installed_agent_row(
         &self,
         agent: TerminalAgent,
         ui: crate::theme::UiColors,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let installed = agent.is_installed();
         let visible = agent.is_visible(&self.cached_config);
-        let binary: SharedString = agent.binary().into();
-        let mut status = div()
-            .flex()
-            .flex_row()
-            .items_center()
-            .gap(px(4.))
-            .text_size(LABEL_SM)
-            .text_color(ui.muted)
-            .whitespace_nowrap()
-            .overflow_hidden();
-        status = if installed {
-            status
-                .child("Installed ·")
-                .child(mono_text(binary, ui.muted))
-                .when_some(agent.cached_version(), |s, version| {
-                    s.child(mono_text(SharedString::from(version), ui.muted))
-                })
-        } else {
-            status
-                .child("Not installed ·")
-                .child(mono_text(binary, ui.muted))
-                .child("not on PATH")
+        let slug = agent.runtime().slug;
+        let subtitle: AnyElement = match self.integration_errors.get(slug) {
+            Some(error) => div()
+                .text_size(LABEL_SM)
+                .text_color(destructive_color())
+                .truncate()
+                .child(error.clone())
+                .into_any_element(),
+            None => {
+                let mut label = agent.binary().to_string();
+                if let Some(version) = agent.cached_version() {
+                    label.push(' ');
+                    label.push_str(&version);
+                }
+                mono_text(label.into(), ui.muted).into_any_element()
+            }
         };
-
-        let control = if installed {
-            let key = agent.visibility_config_key();
-            let target = !visible;
-            div()
-                .id(SharedString::from(format!("agent-visible-{}", agent.tag())))
-                .flex_shrink_0()
-                .cursor(CursorStyle::PointingHand)
-                .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
-                    this.persist_setting(false, key, serde_json::Value::Bool(target), cx);
-                }))
-                .child(toggle_pill(visible, ui))
-                .into_any_element()
-        } else {
-            div()
-                .flex_shrink_0()
-                .opacity(0.35)
-                .child(toggle_pill(false, ui))
-                .into_any_element()
-        };
+        let key = agent.visibility_config_key();
+        let target = !visible;
+        let toggle = div()
+            .id(SharedString::from(format!("agent-visible-{}", agent.tag())))
+            .flex_shrink_0()
+            .cursor(CursorStyle::PointingHand)
+            .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
+                this.persist_setting(false, key, serde_json::Value::Bool(target), cx);
+            }))
+            .child(toggle_pill(visible, ui));
 
         div()
             .flex()
@@ -256,12 +345,8 @@ impl PaneFlowApp {
             .flex_none()
             .h(px(AGENT_ROW_HEIGHT))
             .gap(px(12.))
-            .px(px(12.))
-            .child(
-                div()
-                    .when(!installed, |d| d.opacity(0.45))
-                    .child(agent_icon_el(agent, ui)),
-            )
+            .px(px(CARD_PADDING_X))
+            .child(agent_icon_el(agent, ui))
             .child(
                 div()
                     .flex_1()
@@ -271,15 +356,99 @@ impl PaneFlowApp {
                     .gap(px(1.))
                     .child(
                         div()
-                            .text_size(BODY)
+                            .text_size(BODY_EMPHASIS)
                             .font_weight(gpui::FontWeight::MEDIUM)
-                            .text_color(if installed { ui.text } else { ui.muted })
+                            .text_color(ui.text)
                             .child(agent.display_name()),
                     )
-                    .child(status),
+                    .child(subtitle),
             )
-            .child(control)
+            .child(self.render_hook_control(agent, ui, cx))
+            .child(toggle)
             .into_any_element()
+    }
+
+    fn render_hook_control(
+        &self,
+        agent: TerminalAgent,
+        ui: crate::theme::UiColors,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let slug = agent.runtime().slug;
+        let Some(status) = self
+            .integration_status
+            .as_ref()
+            .and_then(|statuses| statuses.iter().find(|status| status.slug == slug))
+        else {
+            return div().into_any_element();
+        };
+        if self.integration_busy.as_deref() == Some(slug) {
+            return div()
+                .flex_none()
+                .text_size(LABEL_SM)
+                .text_color(ui.muted)
+                .child("Working...")
+                .into_any_element();
+        }
+        let owned = slug.to_string();
+        match status.state {
+            IntegrationState::NotInstalled => secondary_button(
+                format!("integration-install-{slug}"),
+                "Install hooks",
+                ui,
+                cx.listener(move |this, _: &ClickEvent, _window, cx| {
+                    this.change_integration(owned.clone(), true, cx);
+                }),
+            )
+            .into_any_element(),
+            IntegrationState::Installed => {
+                let (glyph, tip): (AnyElement, String) = match status.post_install_step {
+                    Some(step) => (
+                        div()
+                            .size(px(HOOK_STEP_DOT))
+                            .rounded_full()
+                            .bg(ui.vc_modified)
+                            .into_any_element(),
+                        format!("Hooks installed. {step} Click to remove them."),
+                    ),
+                    None => (
+                        div()
+                            .size(px(HOOK_GLYPH))
+                            .rounded_full()
+                            .border_1()
+                            .border_color(ui.vc_added)
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .child(
+                                svg()
+                                    .size(px(9.))
+                                    .path("icons/check.svg")
+                                    .text_color(ui.vc_added),
+                            )
+                            .into_any_element(),
+                        "Hooks installed. Click to remove them.".to_string(),
+                    ),
+                };
+                div()
+                    .id(SharedString::from(format!("integration-remove-{slug}")))
+                    .flex_none()
+                    .size(px(ICON_BUTTON_SIZE))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .cursor(CursorStyle::PointingHand)
+                    .delayed_tooltip(text_tooltip(tip))
+                    .on_click(cx.listener(move |this, _: &ClickEvent, _window, cx| {
+                        this.change_integration(owned.clone(), false, cx);
+                    }))
+                    .child(glyph)
+                    .into_any_element()
+            }
+            IntegrationState::UnsupportedPlatform | IntegrationState::DetectionOnly => {
+                div().into_any_element()
+            }
+        }
     }
 
     fn render_agent_profiles_section(
@@ -291,24 +460,10 @@ impl PaneFlowApp {
         let editor = self.agent_profile_editor.as_ref();
         let creating = editor.is_some_and(|editor| editor.index.is_none());
 
-        let mut card = setting_card(ui);
-        if entries.is_empty() && !creating {
-            card = card.child(
-                div()
-                    .px(px(12.))
-                    .py(px(14.))
-                    .text_size(LABEL_SM)
-                    .text_color(ui.muted)
-                    .child(
-                        "A profile launches one of the agents above with its own environment \
-                         variables and arguments, for example a second Claude Code account \
-                         through CLAUDE_CONFIG_DIR.",
-                    ),
-            );
-        }
+        let mut card = setting_card(ui).py(px(CARD_PADDING_Y));
         for (idx, entry) in entries.iter().enumerate() {
             if idx > 0 {
-                card = card.child(hairline(ui));
+                card = card.child(hairline_inset(ui));
             }
             let editing = editor.is_some_and(|editor| editor.index == Some(idx));
             card = card.child(self.render_agent_profile_row(idx, entry, editing, ui, cx));
@@ -318,7 +473,7 @@ impl PaneFlowApp {
         }
         if creating && let Some(editor) = editor {
             if !entries.is_empty() {
-                card = card.child(hairline(ui));
+                card = card.child(hairline_inset(ui));
             }
             card = card
                 .child(
@@ -327,7 +482,7 @@ impl PaneFlowApp {
                         .flex_row()
                         .items_center()
                         .gap(px(12.))
-                        .px(px(12.))
+                        .px(px(CARD_PADDING_X))
                         .py(px(10.))
                         .child(agent_icon_el(editor.agent, ui))
                         .child(
@@ -354,23 +509,36 @@ impl PaneFlowApp {
                 .child(self.render_agent_profile_editor(editor, ui, cx));
         }
 
-        let new_button = div()
-            .id("agent-profile-new")
-            .px(px(6.))
-            .py(px(2.))
-            .rounded(SETTINGS_CONTROL_CORNER_RADIUS)
-            .cursor(CursorStyle::PointingHand)
-            .text_size(LABEL_SM)
-            .text_color(ui.muted)
-            .animated_hover_bg(with_alpha(ui.text, 0.0), with_alpha(ui.text, 0.05))
-            .on_click(cx.listener(|this, _: &ClickEvent, _w, cx| {
-                this.open_agent_profile_editor(None, cx);
-            }))
-            .child("+ New profile");
+        if !creating {
+            if !entries.is_empty() {
+                card = card.child(hairline(ui));
+            }
+            card = card.child(
+                div()
+                    .id("agent-profile-new")
+                    .h(px(36.))
+                    .px(px(CARD_PADDING_X))
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .cursor(CursorStyle::PointingHand)
+                    .text_size(BODY)
+                    .text_color(ui.muted)
+                    .hover(move |style| style.text_color(ui.text).bg(with_alpha(ui.text, 0.05)))
+                    .on_click(cx.listener(|this, _: &ClickEvent, _w, cx| {
+                        this.open_agent_profile_editor(None, cx);
+                    }))
+                    .child("+ New profile"),
+            );
+        }
 
         Block::new("Profiles")
             .top_gap(24.)
-            .child(section_header_with_action(ui, "Profiles", new_button))
+            .child(section_title(
+                ui,
+                "Profiles",
+                Some("Launch an agent with its own environment and arguments."),
+            ))
             .child(card)
             .finish()
     }
@@ -455,7 +623,7 @@ impl PaneFlowApp {
             .flex_row()
             .items_center()
             .gap(px(12.))
-            .px(px(12.))
+            .px(px(CARD_PADDING_X))
             .py(px(10.))
             .child(icon)
             .child(
@@ -662,7 +830,7 @@ impl PaneFlowApp {
                     .items_center()
                     .justify_between()
                     .gap(px(12.))
-                    .px(px(12.))
+                    .px(px(CARD_PADDING_X))
                     .py(px(10.))
                     .child(footer_text)
                     .child(
@@ -736,7 +904,7 @@ impl PaneFlowApp {
                         cx.notify();
                     }
                 }));
-            for agent in TerminalAgent::ALL {
+            for agent in TerminalAgent::all() {
                 let item = menu_row(
                     SharedString::from(format!("agent-profile-agent-item-{}", agent.tag())),
                     agent == current,
@@ -822,7 +990,7 @@ impl PaneFlowApp {
             if !fence {
                 card = card.fixed(
                     div()
-                        .px(px(12.))
+                        .px(px(CARD_PADDING_X))
                         .py(px(8.))
                         .text_size(BODY)
                         .text_color(destructive_color())
@@ -833,7 +1001,7 @@ impl PaneFlowApp {
 
         Block::new("Permissions")
             .top_gap(24.)
-            .child(section_header(ui, "Permissions"))
+            .child(section_title(ui, "Permissions", None))
             .card(card)
             .finish()
     }
@@ -1029,7 +1197,7 @@ fn editor_row(
         .flex_row()
         .items_start()
         .gap(px(16.))
-        .px(px(12.))
+        .px(px(CARD_PADDING_X))
         .py(px(10.))
         .child(setting_text(ui, title, description))
         .child(div().flex_shrink_0().child(control))
@@ -1045,7 +1213,7 @@ fn editor_stacked_row(
         .flex()
         .flex_col()
         .gap(px(10.))
-        .px(px(12.))
+        .px(px(CARD_PADDING_X))
         .py(px(10.))
         .child(
             div()
@@ -1083,6 +1251,30 @@ fn env_value_hint(
                 .into_any_element(),
         ),
     }
+}
+
+fn missing_agent_row(agent: TerminalAgent, ui: crate::theme::UiColors) -> AnyElement {
+    div()
+        .flex()
+        .flex_row()
+        .items_center()
+        .flex_none()
+        .h(px(AGENT_ROW_HEIGHT))
+        .gap(px(12.))
+        .px(px(CARD_PADDING_X))
+        .opacity(0.45)
+        .child(agent_icon_el(agent, ui))
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .text_size(BODY_EMPHASIS)
+                .font_weight(gpui::FontWeight::MEDIUM)
+                .text_color(ui.text)
+                .child(agent.display_name()),
+        )
+        .child(mono_text(agent.binary().into(), ui.muted))
+        .into_any_element()
 }
 
 fn mono_family() -> SharedString {

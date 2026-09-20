@@ -80,6 +80,7 @@ JetBrains IDEs, Helix, and other JSON Schema-aware editors:
 | `claude_code_bypass_permissions` | boolean/null | `false` | Next Claude launch | Adds `--permission-mode bypassPermissions` to the Claude Code launcher. High-risk opt-in. |
 | `ai_unrestricted` | boolean/null | `false` | Per IPC call | Allows trusted conductors to submit to peer panes without `PANEFLOW_IPC_SCRIPTING`. Every write is traced. |
 | `ai_injection_fence` | boolean/null | `true` | Per read call | Wraps `surface.read` output in an untrusted-output fence by default. |
+| `menu_attention_detection` | boolean/null | `true` | Next viewport scan | Raises the attention badge when an agent draws a numbered select menu, which fires no lifecycle hook. Set to `false` to leave such a session on its hook- or screen-derived state. |
 | `on_quit` | `ask`, `keep`, `stop`, null | `ask` | At quit | What quitting does while hosted sessions run: `ask` opens the quit dialog, `keep` leaves every session running, `stop` stops them all and shuts the host down. With no live session the app exits and shuts the idle host down. |
 | `sidebar_ended_sessions` | `0`, `3`, `5`, `10`, null | `5` | Next sidebar render | How many ended sessions a workspace previews in the sidebar before the rest collapse under one "N more ended sessions" row. Nothing is pruned; the cap only controls the preview. |
 | `agent_panel` | object/null | defaults below | Agents UI | Agents-view display, profiles, and notification preferences. |
@@ -151,8 +152,8 @@ Profile entries under `agent_panel.profiles` use this shape:
 ## `worktrees`
 
 Paneflow creates a git worktree when you open a branch from the "New pane"
-palette, the Launch Pad, or `paneflow up`. Nothing is written inside the
-checkout: the ownership marker lives in the worktree's own git dir
+palette or `paneflow up`. Nothing is written inside the checkout: the
+ownership marker lives in the worktree's own git dir
 (`.git/worktrees/<name>/` in the main repository), so `git status` stays
 clean and the marker disappears with the worktree. Settings > Worktrees edits
 the same keys and lists the worktrees Paneflow manages.
@@ -196,9 +197,9 @@ Delete drops the ref. A clean worktree leaves no snapshot.
 
 `agent_profiles` is a list. Each entry adds a launcher item that runs one of
 the built-in agents with extra environment variables and arguments. Profiles
-show up in the pane palette and the worktree launch pad next to the built-in
-agents, and keep the base agent's status tracking, hooks, and sessions.
-Settings > Agents > Profiles edits the same list.
+show up in the pane palette next to the built-in agents, and keep the base
+agent's status tracking, hooks, and sessions. Settings > Agents > Profiles
+edits the same list.
 
 | Key | Type | Default | Notes |
 | --- | --- | --- | --- |

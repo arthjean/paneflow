@@ -89,7 +89,6 @@ actions!(
         ToggleFilesSidebar,
         ToggleDiffDockMaximize,
         OpenAttentionQueue,
-        OpenLaunchPad,
         DiffNewFileTab,
         DiffNewTerminalTab,
         OpenCommandPalette,

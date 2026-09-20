@@ -531,6 +531,43 @@ pub(crate) enum FilterFieldGlyph {
     Search,
 }
 
+#[derive(Clone, Copy, PartialEq)]
+pub(crate) enum FilterFieldShape {
+    Capsule,
+    Squircle(Pixels),
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct FilterFieldStyle {
+    pub(crate) glyph: FilterFieldGlyph,
+    pub(crate) shape: FilterFieldShape,
+    pub(crate) height: Pixels,
+    pub(crate) padding: Pixels,
+    pub(crate) text_size: Pixels,
+}
+
+impl FilterFieldStyle {
+    pub(crate) fn sidebar(glyph: FilterFieldGlyph) -> Self {
+        Self {
+            glyph,
+            shape: FilterFieldShape::Capsule,
+            height: px(36.),
+            padding: px(10.),
+            text_size: px(15.),
+        }
+    }
+
+    pub(crate) fn palette() -> Self {
+        Self {
+            glyph: FilterFieldGlyph::Search,
+            shape: FilterFieldShape::Squircle(px(10.)),
+            height: px(38.),
+            padding: px(6.),
+            text_size: px(13.),
+        }
+    }
+}
+
 impl FilterFieldGlyph {
     fn size(self) -> Pixels {
         match self {
@@ -553,36 +590,47 @@ pub(crate) fn filter_field(
     id: impl Into<ElementId>,
     clear_id: impl Into<ElementId>,
     ui: UiColors,
-    glyph: FilterFieldGlyph,
+    style: FilterFieldStyle,
     focused: bool,
     has_query: bool,
     input_visible: bool,
+    prefix: Option<AnyElement>,
     input: impl IntoElement,
     on_clear: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
 ) -> Stateful<Div> {
     let active_bg = crate::app::constants::sidebar_tab_active_background();
     let hover_bg = crate::app::constants::sidebar_tab_hover_background();
     let clear_id = clear_id.into();
-    div()
-        .id(id.into())
+    let id: ElementId = id.into();
+    let base = div()
+        .id(id.clone())
         .min_w_0()
-        .h(px(36.))
-        .px(px(10.))
+        .h(style.height)
+        .px(style.padding)
         .flex()
         .items_center()
-        .gap(px(8.))
-        .rounded_full()
-        .when(focused || has_query, |field| field.bg(active_bg))
-        .hover(move |style| {
-            style.bg(if focused || has_query {
-                active_bg
-            } else {
-                hover_bg
-            })
-        })
+        .gap(px(8.));
+    let filled = focused || has_query;
+    let shaped = match style.shape {
+        FilterFieldShape::Capsule => base
+            .rounded_full()
+            .when(filled, |field| field.bg(active_bg))
+            .hover(move |hovered| hovered.bg(if filled { active_bg } else { hover_bg })),
+        FilterFieldShape::Squircle(radius) => squircle_skin(
+            base,
+            SharedString::from(format!("{id}-filter-squircle")),
+            radius,
+            filled.then_some(active_bg),
+            Some(if filled { active_bg } else { hover_bg }),
+        ),
+    };
+    let glyph = style.glyph;
+    shaped
         .cursor_text()
-        .child(
-            svg()
+        .child(match prefix {
+            Some(prefix) => prefix,
+            None => svg()
+                .relative()
                 .size(glyph.size())
                 .flex_none()
                 .path(glyph.path(focused))
@@ -590,14 +638,16 @@ pub(crate) fn filter_field(
                     crate::app::constants::sidebar_filter_icon_color()
                 } else {
                     ui.muted
-                }),
-        )
+                })
+                .into_any_element(),
+        })
         .child(
             div()
+                .relative()
                 .flex_1()
                 .min_w_0()
-                .text_size(px(15.))
-                .line_height(px(20.))
+                .text_size(style.text_size)
+                .line_height(style.text_size + px(5.))
                 .text_color(ui.text)
                 .when(!input_visible, |field| field.invisible())
                 .child(input),

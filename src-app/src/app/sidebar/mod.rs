@@ -143,6 +143,7 @@ struct SidebarDropSlot {
 struct SidebarAgentSummary {
     state: SidebarAgentState,
     count: usize,
+    tint: Option<u32>,
 }
 
 pub(crate) const SIDEBAR_ROW_MARGIN_X: f32 = 8.0;
@@ -312,6 +313,7 @@ fn session_row_tooltip(
     disconnected: Option<&str>,
     list_stale: bool,
     unknown: bool,
+    restart_recommended: bool,
 ) -> String {
     let cwd = &session.cwd;
     let mut text = if session.live {
@@ -333,6 +335,11 @@ fn session_row_tooltip(
         text.push_str(&format!(
             " The agent stream is disconnected ({reason}), so this state may be stale."
         ));
+    }
+    if restart_recommended {
+        text.push_str(
+            " The terminal core serving it is older than this worker; restart it when convenient.",
+        );
     }
     if list_stale {
         text.push_str(" The local host did not answer the last listing, so this list is stale.");
@@ -430,7 +437,11 @@ where
     let priority = [SidebarAgentState::NeedsInput, SidebarAgentState::Errored];
     for (state, count) in priority.into_iter().zip(counts[..2].iter().copied()) {
         if count > 0 {
-            return Some(SidebarAgentSummary { state, count });
+            return Some(SidebarAgentSummary {
+                state,
+                count,
+                tint: None,
+            });
         }
     }
 
@@ -438,12 +449,14 @@ where
         return Some(SidebarAgentSummary {
             state: SidebarAgentState::Finished,
             count: completion_unread,
+            tint: None,
         });
     }
 
     (counts[2] > 0).then_some(SidebarAgentSummary {
         state: SidebarAgentState::Thinking,
         count: counts[2],
+        tint: None,
     })
 }
 
@@ -670,6 +683,10 @@ impl PaneFlowApp {
                 ),
         );
 
+        if let Some(banner) = self.render_worker_banner(ui, cx) {
+            sidebar = sidebar.child(banner);
+        }
+
         let mut list = div()
             .id("workspace-list")
             .flex_1()
@@ -689,6 +706,66 @@ impl PaneFlowApp {
         sidebar = sidebar.child(self.sidebar_list_wrapper(list, cx));
         sidebar = sidebar.child(self.render_sidebar_settings_footer(window, cx));
         sidebar
+    }
+
+    fn render_worker_banner(
+        &self,
+        ui: crate::theme::UiColors,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        let (message, retryable) = crate::worker_bootstrap::banner(
+            &crate::worker_bootstrap::state(),
+            self.worker_is_reconnecting(),
+            self.host_agents_are_stale(),
+            self.host_agents_disconnect_reason(),
+        )?;
+        let label = SharedString::from(message.clone());
+        let mut banner = div()
+            .flex_none()
+            .mx(px(SIDEBAR_ROW_MARGIN_X))
+            .mb(px(4.))
+            .px(px(SIDEBAR_ROW_PADDING_X))
+            .py(px(SIDEBAR_ROW_PADDING_Y))
+            .rounded(ROW_RADIUS)
+            .bg(with_alpha(ui.agent_error, 0.08))
+            .flex()
+            .flex_col()
+            .gap(px(4.))
+            .child(
+                div()
+                    .text_size(px(11.))
+                    .text_color(if retryable {
+                        ui.agent_error
+                    } else {
+                        with_alpha(ui.muted, 0.7)
+                    })
+                    .child(label),
+            );
+        if retryable {
+            let hover_bg = crate::app::constants::sidebar_tab_hover_background();
+            banner = banner.child(
+                squircle_skin(
+                    div()
+                        .id("worker-retry")
+                        .px(px(6.))
+                        .py(px(2.))
+                        .flex()
+                        .items_center()
+                        .justify_center(),
+                    "worker-retry-group",
+                    px(6.),
+                    None,
+                    Some(hover_bg),
+                )
+                .cursor_pointer()
+                .on_click(cx.listener(|_this, _: &ClickEvent, _window, cx| {
+                    crate::worker_bootstrap::retry();
+                    cx.notify();
+                }))
+                .child(div().text_size(px(11.)).text_color(ui.muted).child("Retry")),
+            );
+        }
+        Some(banner.into_any_element())
     }
 
     fn render_sidebar_empty_state(
@@ -1464,6 +1541,8 @@ impl PaneFlowApp {
         let disconnected = self
             .host_agents_are_stale()
             .then(|| self.host_agents_disconnect_reason().unwrap_or("no stream"));
+        let reconnecting = self.worker_is_reconnecting();
+        let restart_capability = self.worker_advertises("restart.recommendation");
         let list_stale = self.owned_sessions_are_stale();
         let now_ms = crate::ipc_events::now_ms();
 
@@ -1484,13 +1563,31 @@ impl PaneFlowApp {
                 .live
                 .then(|| agent.and_then(session_row_lane))
                 .flatten()
-                .map(|state| Lane::Agent(SidebarAgentSummary { state, count: 1 }));
+                .map(|state| {
+                    Lane::Agent(SidebarAgentSummary {
+                        state,
+                        count: 1,
+                        tint: agent
+                            .and_then(|row| row.tool)
+                            .and_then(crate::agent_launcher::TerminalAgent::accent),
+                    })
+                });
             let unknown = self.session_outcome_unknown(&session.session);
-            let tooltip =
-                session_row_tooltip(&session, agent, now_ms, disconnected, list_stale, unknown);
+            let restart_recommended =
+                restart_capability && agent.is_some_and(|row| row.restart_recommended);
+            let tooltip = session_row_tooltip(
+                &session,
+                agent,
+                now_ms,
+                disconnected,
+                list_stale,
+                unknown,
+                restart_recommended,
+            );
             let dimmed = !session.live
                 || list_stale
                 || unknown
+                || reconnecting
                 || disconnected.is_some()
                 || agent.is_some_and(|row| row.stale);
             let resting_color = if dimmed {
@@ -1992,9 +2089,15 @@ mod tests {
             state,
             message: None,
             last_result: None,
+            active_tool_name: None,
+            pid: None,
             waiting_since_ms: None,
+            last_event_at_ms: None,
             stale,
             live: !stale,
+            activity_source: crate::app::host_agents::ActivitySource::Hooks,
+            restart_recommended: false,
+            unread: false,
         }
     }
 
@@ -2039,7 +2142,7 @@ mod tests {
     fn a_disconnected_host_reads_as_stale_never_as_idle_or_finished() {
         let working = host_row(Some(AgentState::Thinking), false);
 
-        let live = session_row_tooltip(&listed(true), Some(&working), 0, None, false, false);
+        let live = session_row_tooltip(&listed(true), Some(&working), 0, None, false, false, false);
         assert!(live.contains("Agent working"), "{live}");
         assert!(!live.contains("stale"), "{live}");
         assert!(live.contains("Click to reopen"), "{live}");
@@ -2051,27 +2154,35 @@ mod tests {
             Some("stream closed"),
             false,
             false,
+            false,
         );
         assert!(dropped.contains("stale"), "{dropped}");
         assert!(dropped.contains("stream closed"), "{dropped}");
         assert!(!dropped.contains("finished"), "{dropped}");
 
         let lost = host_row(Some(AgentState::Thinking), true);
-        let lost = session_row_tooltip(&listed(true), Some(&lost), 0, None, false, false);
+        let lost = session_row_tooltip(&listed(true), Some(&lost), 0, None, false, false, false);
         assert!(lost.contains("last seen working"), "{lost}");
         assert!(lost.contains("stale"), "{lost}");
     }
 
     #[test]
     fn an_ended_row_states_its_lifecycle_its_age_and_its_verb() {
-        let tooltip = session_row_tooltip(&listed(false), None, 120_000, None, false, false);
+        let tooltip = session_row_tooltip(&listed(false), None, 120_000, None, false, false, false);
         assert!(tooltip.contains("Exited with code 130"), "{tooltip}");
         assert!(tooltip.contains("2 min ago"), "{tooltip}");
         assert!(tooltip.contains("Click to resume"), "{tooltip}");
 
-        let stale = session_row_tooltip(&listed(false), None, 120_000, None, true, true);
+        let stale = session_row_tooltip(&listed(false), None, 120_000, None, true, true, false);
         assert!(stale.contains("this list is stale"), "{stale}");
         assert!(stale.contains("outcome of the last action"), "{stale}");
+
+        let older_core =
+            session_row_tooltip(&listed(true), None, 120_000, None, false, false, true);
+        assert!(
+            older_core.contains("older than this worker"),
+            "a restart recommendation is surfaced, never acted on for the user: {older_core}"
+        );
     }
 
     #[test]
@@ -2349,7 +2460,8 @@ mod tests {
             sidebar_agent_summary(sessions.iter(), 0),
             Some(SidebarAgentSummary {
                 state: SidebarAgentState::NeedsInput,
-                count: 2
+                count: 2,
+                tint: None,
             })
         );
     }
@@ -2385,7 +2497,8 @@ mod tests {
             sidebar_agent_summary(std::iter::empty(), 1),
             Some(SidebarAgentSummary {
                 state: SidebarAgentState::Finished,
-                count: 1
+                count: 1,
+                tint: None,
             })
         );
     }
@@ -2402,7 +2515,8 @@ mod tests {
             sidebar_agent_summary(std::iter::empty(), 3),
             Some(SidebarAgentSummary {
                 state: SidebarAgentState::Finished,
-                count: 3
+                count: 3,
+                tint: None,
             })
         );
     }
@@ -2416,6 +2530,7 @@ mod tests {
         let working = SidebarAgentSummary {
             state: SidebarAgentState::Thinking,
             count: 1,
+            tint: None,
         };
         assert_eq!(
             infer_lane(Some(working), Some(pr(PrState::Open))),
@@ -2435,7 +2550,13 @@ mod tests {
 
     #[test]
     fn every_lane_answers_with_a_word_and_only_agents_count() {
-        let summary = |state, count| Lane::Agent(SidebarAgentSummary { state, count });
+        let summary = |state, count| {
+            Lane::Agent(SidebarAgentSummary {
+                state,
+                count,
+                tint: None,
+            })
+        };
         assert_eq!(summary(SidebarAgentState::NeedsInput, 1).label(), "Input");
         assert_eq!(summary(SidebarAgentState::NeedsInput, 2).label(), "Input 2");
         assert_eq!(summary(SidebarAgentState::Errored, 1).label(), "Error");
@@ -2477,7 +2598,8 @@ mod tests {
             sidebar_agent_summary(tab_row_sessions(sessions.iter(), &surfaces), 0),
             Some(SidebarAgentSummary {
                 state: SidebarAgentState::NeedsInput,
-                count: 1
+                count: 1,
+                tint: None,
             }),
             "a tab must not inherit a sibling tab's session, nor an unattributed one"
         );
@@ -2495,7 +2617,8 @@ mod tests {
             sidebar_agent_summary(folder_row_sessions(sessions.iter(), true), 0),
             Some(SidebarAgentSummary {
                 state: SidebarAgentState::Thinking,
-                count: 1
+                count: 1,
+                tint: None,
             })
         );
 
@@ -2513,7 +2636,8 @@ mod tests {
             sidebar_agent_summary(folder_row_sessions(sessions.iter(), false), 0),
             Some(SidebarAgentSummary {
                 state: SidebarAgentState::NeedsInput,
-                count: 1
+                count: 1,
+                tint: None,
             })
         );
     }

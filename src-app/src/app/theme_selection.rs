@@ -21,25 +21,31 @@ impl PaneFlowApp {
         mode: ThemeMode,
         name: &str,
         cx: &mut Context<Self>,
-    ) -> bool {
-        let ok = config_writer::save_config_values_checked([
-            (
-                "theme_mode",
-                serde_json::Value::String(mode.as_config_str().to_string()),
-            ),
-            ("theme", serde_json::Value::String(name.to_string())),
-        ]);
-        if !ok {
-            self.show_toast("Could not save theme", cx);
-            return false;
-        }
+    ) {
         self.theme_mode = mode;
         self.cached_config.theme_mode = Some(mode.as_config_str().to_string());
         self.cached_config.theme = Some(name.to_string());
-        crate::theme::invalidate_theme_cache();
+        crate::theme::set_active_theme(Some(name));
         crate::theme::publish_theme_generation(cx);
         cx.notify();
-        true
+        let mode_value = serde_json::Value::String(mode.as_config_str().to_string());
+        let name_value = serde_json::Value::String(name.to_string());
+        cx.spawn(async move |this, cx| {
+            let ok = smol::unblock(move || {
+                config_writer::save_config_values_checked([
+                    ("theme_mode", mode_value),
+                    ("theme", name_value),
+                ])
+            })
+            .await;
+            if !ok {
+                log::warn!("theme: failed to persist the selection; it is in-memory only");
+                let _ = this.update(cx, |this, cx| {
+                    this.show_toast("Could not save theme", cx);
+                });
+            }
+        })
+        .detach();
     }
 
     pub(crate) fn apply_theme_preset(
@@ -47,10 +53,10 @@ impl PaneFlowApp {
         preset: &crate::theme::ThemePreset,
         window: &gpui::Window,
         cx: &mut Context<Self>,
-    ) -> bool {
+    ) {
         let mode = self.theme_mode;
         let name = mode.resolved_theme_name(preset, window.appearance());
-        self.persist_theme_selection(mode, name, cx)
+        self.persist_theme_selection(mode, name, cx);
     }
 
     pub(crate) fn reset_theme_selection(&mut self, cx: &mut Context<Self>) {
@@ -65,7 +71,7 @@ impl PaneFlowApp {
         self.theme_mode = ThemeMode::Dark;
         self.cached_config.theme_mode = None;
         self.cached_config.theme = None;
-        crate::theme::invalidate_theme_cache();
+        crate::theme::set_active_theme(None);
         crate::theme::publish_theme_generation(cx);
         cx.notify();
     }

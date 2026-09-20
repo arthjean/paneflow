@@ -119,6 +119,10 @@ impl Wire {
     }
 
     pub fn write_line(&mut self, line: &[u8]) -> io::Result<()> {
+        self.write_line_with_timeout(line, WRITE_DEADLINE)
+    }
+
+    pub fn write_line_with_timeout(&mut self, line: &[u8], timeout: Duration) -> io::Result<()> {
         if line.len() > self.max_frame {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -128,25 +132,37 @@ impl Wire {
         let mut payload = Vec::with_capacity(line.len() + 1);
         payload.extend_from_slice(line);
         payload.push(b'\n');
-        self.write_raw(&payload)
+        self.write_raw_with_timeout(&payload, timeout)
     }
 
     pub fn write_raw(&mut self, payload: &[u8]) -> io::Result<()> {
+        self.write_raw_with_timeout(payload, WRITE_DEADLINE)
+    }
+
+    pub fn write_raw_with_timeout(&mut self, payload: &[u8], timeout: Duration) -> io::Result<()> {
         #[cfg(windows)]
         {
-            crate::windows_pipe::write_all(&self.stream, payload, WRITE_DEADLINE)
+            crate::windows_pipe::write_all(&self.stream, payload, timeout)
         }
         #[cfg(not(windows))]
         {
             use std::io::Write;
-            let _ = self.writer.set_send_timeout(Some(WRITE_DEADLINE));
+            let _ = self.writer.set_send_timeout(Some(timeout));
             self.writer.write_all(payload)?;
             self.writer.flush()
         }
     }
 
     pub fn write_json(&mut self, value: &serde_json::Value) -> io::Result<()> {
+        self.write_json_with_timeout(value, WRITE_DEADLINE)
+    }
+
+    pub fn write_json_with_timeout(
+        &mut self,
+        value: &serde_json::Value,
+        timeout: Duration,
+    ) -> io::Result<()> {
         let line = serde_json::to_vec(value).map_err(io::Error::other)?;
-        self.write_line(&line)
+        self.write_line_with_timeout(&line, timeout)
     }
 }

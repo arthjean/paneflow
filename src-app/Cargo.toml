@@ -67,6 +67,7 @@ ttf-parser = "0.25"
 # Internal crates
 paneflow-config = { path = "../crates/paneflow-config" }
 paneflow-home = { workspace = true }
+paneflow-agent-config = { workspace = true }
 paneflow-host = { workspace = true }
 paneflow-terminal-ghostty = { path = "../crates/paneflow-terminal-ghostty", features = [
     "native",
@@ -79,7 +80,8 @@ paneflow-telemetry = { workspace = true }
 # `paneflow mcp install|uninstall|status`. Kept in its own crate so its
 # `toml_edit` dep stays out of the size-budgeted embedded `paneflow-mcp`
 # bridge binary (PRD decision D3).
-paneflow-mcp-install = { path = "../crates/paneflow-mcp-install" }
+paneflow-mcp-install.workspace = true
+paneflow-serve.workspace = true
 # EP-002 (prd-ultron-remediation): std-only bounded-subprocess primitive
 # (`run_with_timeout`) adopted at every external-process call site (self-update,
 # git, opencode, mcp-install) so a hung tool can't wedge a worker.

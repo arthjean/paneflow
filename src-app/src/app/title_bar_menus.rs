@@ -8,10 +8,10 @@ use crate::settings::components::{menu_divider_color, menu_row, select_menu};
 
 const TITLE_BAR_FILES_MENU_WIDTH: Pixels = px(200.);
 const TITLE_BAR_HELP_MENU_WIDTH: Pixels = px(220.);
-const DOCUMENTATION_URL: &str = "https://paneflow.dev/docs";
-const RELEASES_URL: &str = "https://paneflow.dev/releases";
-const AUTOMATIONS_URL: &str = "https://paneflow.dev/docs/scripting";
-const TROUBLESHOOTING_URL: &str = "https://paneflow.dev/docs/troubleshooting";
+pub(crate) const DOCUMENTATION_URL: &str = "https://paneflow.dev/docs";
+pub(crate) const RELEASES_URL: &str = "https://paneflow.dev/releases";
+pub(crate) const AUTOMATIONS_URL: &str = "https://paneflow.dev/docs/scripting";
+pub(crate) const TROUBLESHOOTING_URL: &str = "https://paneflow.dev/docs/troubleshooting";
 type TitleBarMenuClick = Box<dyn Fn(&ClickEvent, &mut Window, &mut gpui::App) + 'static>;
 
 impl PaneFlowApp {
@@ -19,7 +19,7 @@ impl PaneFlowApp {
         self.open_help_url(DOCUMENTATION_URL, cx);
     }
 
-    fn open_help_url(&mut self, url: &'static str, cx: &mut Context<Self>) {
+    pub(crate) fn open_help_url(&mut self, url: &'static str, cx: &mut Context<Self>) {
         if let Err(err) = crate::external_open::open_url(url) {
             log::warn!("help menu: open URL failed: {err}");
             self.show_toast(format!("Could not open URL: {err}"), cx);

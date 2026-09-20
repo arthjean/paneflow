@@ -13,6 +13,23 @@ pub use model::{DiffColors, SyntaxPalette, TerminalTheme, UiColors, ui_colors, u
 pub use signal::{
     ThemeSignal, ThemeSignalGlobal, install_theme_signal, publish_theme_generation, theme_signal,
 };
-pub use watcher::{
-    ThemeWatcher, active_theme, config_mtime, invalidate_theme_cache, theme_generation,
-};
+#[cfg(test)]
+pub use watcher::invalidate_theme_cache;
+pub use watcher::{ThemeWatcher, active_theme, config_mtime, set_active_theme, theme_generation};
+
+const SELECTION_BLUE: u32 = 0x2259b9;
+
+pub fn selection_color() -> gpui::Hsla {
+    gpui::Hsla::from(gpui::rgb(SELECTION_BLUE))
+}
+
+pub fn on_selection_color() -> gpui::Hsla {
+    gpui::white()
+}
+
+pub fn on_selection_muted() -> gpui::Hsla {
+    gpui::Hsla {
+        a: 0.72,
+        ..gpui::white()
+    }
+}

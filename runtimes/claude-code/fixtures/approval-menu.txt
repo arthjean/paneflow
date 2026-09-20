@@ -1,0 +1,16 @@
+Bash command
+
+  git add -A && git status --short
+  Stage all remaining changes
+
+  Auto mode classifier requires confirmation for this command.
+  3 consecutive actions were blocked. Please review the transcript.
+
+  Latest blocked action: Blocked by classifier
+
+Do you want to proceed?
+❯ 1. Yes
+  2. Yes, and don't ask again for: git *
+  3. No
+
+Esc to cancel · Tab to amend

@@ -66,6 +66,8 @@ pub struct PaneFlowConfig {
     pub ai_unrestricted: Option<bool>,
     #[serde(default, deserialize_with = "lenient_opt_bool")]
     pub ai_injection_fence: Option<bool>,
+    #[serde(default, deserialize_with = "lenient_opt_bool")]
+    pub menu_attention_detection: Option<bool>,
     #[serde(default, deserialize_with = "lenient_value_or_default")]
     pub on_quit: Option<OnQuit>,
     #[serde(default, deserialize_with = "lenient_value_or_default")]
@@ -337,6 +339,10 @@ impl PaneFlowConfig {
 
     pub fn ai_injection_fence_enabled(&self) -> bool {
         self.ai_injection_fence.unwrap_or(true)
+    }
+
+    pub fn menu_attention_detection_enabled(&self) -> bool {
+        self.menu_attention_detection.unwrap_or(true)
     }
 
     pub fn resolved_on_quit(&self) -> OnQuit {

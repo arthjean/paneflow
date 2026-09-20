@@ -10,7 +10,7 @@ use paneflow_ipc_client::send_text::{
 use serde_json::{Value, json};
 
 use crate::host::{HostError, SessionHost, SessionSummary};
-use crate::manifest::AgentSummary;
+use crate::manifest::HookRecord;
 
 pub const DEFAULT_READ_LINES: usize = 200;
 pub const MAX_READ_LINES: usize = 4000;
@@ -150,28 +150,26 @@ fn surface_value(alias: u64, summary: &SessionSummary) -> Value {
     })
 }
 
-fn agent_status_value(alias: u64, agent: Option<&AgentSummary>, now_ms: u64) -> Value {
-    match agent {
-        Some(agent) => json!({
+fn agent_status_value(alias: u64, last_hook: Option<&HookRecord>, now_ms: u64) -> Value {
+    match last_hook {
+        Some(hook) => json!({
             "surface_id": alias,
-            "state": agent.state,
+            "state": "unknown",
             "hooked": true,
-            "stale": agent.stale,
-            "tool": agent.tool,
-            "active_tool_name": agent.active_tool_name,
-            "message": agent.message,
-            "last_result": agent.last_result,
-            "waiting_ms": agent
-                .waiting_since_ms
-                .map(|since| now_ms.saturating_sub(since)),
-            "idle_ms": now_ms.saturating_sub(agent.updated_at_ms),
+            "tool": hook.tool,
+            "hook_event_name": hook.hook_event_name,
+            "active_tool_name": hook.tool_name,
+            "runtime_generation": hook.runtime_generation,
+            "idle_ms": now_ms.saturating_sub(hook.received_at_ms),
             "output_generation": 0,
+            "reduced_by": Value::Null,
         }),
         None => json!({
             "surface_id": alias,
             "state": "idle",
             "hooked": false,
             "output_generation": 0,
+            "reduced_by": Value::Null,
         }),
     }
 }
@@ -334,7 +332,7 @@ fn answer(
             let alias = aliases.alias_of(&session).unwrap_or(0);
             Ok(agent_status_value(
                 alias,
-                summary.manifest.agent.as_ref(),
+                summary.manifest.last_hook.as_ref(),
                 now_ms,
             ))
         }
@@ -346,25 +344,22 @@ fn answer(
                 .iter()
                 .enumerate()
                 .filter_map(|(index, summary)| {
-                    let agent = summary.manifest.agent.as_ref()?;
+                    let hook = summary.manifest.last_hook.as_ref()?;
                     Some(json!({
-                        "pid": agent.pid,
-                        "tool": agent.tool,
-                        "state": agent.state,
+                        "pid": hook.pid,
+                        "tool": hook.tool,
+                        "state": "unknown",
                         "hooked": true,
-                        "stale": agent.stale,
                         "reason": Value::Null,
                         "surface_id": index as u64 + 1,
                         "surface_name": surface_name(summary),
                         "session": summary.manifest.session,
                         "workspace": summary.manifest.workspace,
-                        "active_tool_name": agent.active_tool_name,
-                        "message": agent.message,
-                        "last_result": agent.last_result,
-                        "waiting_ms": agent
-                            .waiting_since_ms
-                            .map(|since| now_ms.saturating_sub(since)),
-                        "idle_ms": now_ms.saturating_sub(agent.updated_at_ms),
+                        "hook_event_name": hook.hook_event_name,
+                        "active_tool_name": hook.tool_name,
+                        "runtime_generation": hook.runtime_generation,
+                        "idle_ms": now_ms.saturating_sub(hook.received_at_ms),
+                        "reduced_by": Value::Null,
                     }))
                 })
                 .collect();
@@ -389,7 +384,7 @@ fn answer(
             let session = resolve_session(aliases, params)?;
             let summary = host.inspect(&session)?;
             let generation = Some(summary.manifest.generation);
-            let agent_target = summary.manifest.agent.is_some();
+            let agent_target = summary.manifest.last_hook.is_some();
             let terminal_bracketed_paste = host.bracketed_paste_enabled(&session)?;
             let paste =
                 resolve_paste_mode(paste_param, submit, agent_target, terminal_bracketed_paste);
@@ -423,7 +418,7 @@ fn answer(
                 "paste": paste,
                 "submit_mode": submit_mode,
                 "agent_target": agent_target,
-                "agent_tool": summary.manifest.agent.as_ref().map(|agent| agent.tool.clone()),
+                "agent_tool": summary.manifest.last_hook.as_ref().map(|hook| hook.tool.clone()),
                 "terminal_bracketed_paste": terminal_bracketed_paste,
             }))
         }
@@ -459,7 +454,14 @@ mod tests {
                 process: None,
                 title: title.map(str::to_string),
                 current_cwd: None,
-                agent: None,
+                last_hook: None,
+                generation_started_at_ms: None,
+                screen_changed_at_ms: None,
+                screen_activity: None,
+                menu_prompt_active: false,
+                runtime: None,
+                host_protocol_version: crate::protocol::HOST_PROTOCOL_VERSION,
+                host_build_id: crate::protocol::host_build_id(),
                 created_at_ms: 1,
                 updated_at_ms: 1,
             },
@@ -543,24 +545,27 @@ mod tests {
     }
 
     #[test]
-    fn the_status_row_reports_a_stale_record_instead_of_inferring_idle() {
-        let agent = AgentSummary {
+    fn the_status_row_reports_the_raw_hook_and_never_a_reduced_state() {
+        let hook = HookRecord {
+            hook_event_name: "UserPromptSubmit".to_string(),
             tool: "claude".to_string(),
-            state: "thinking".to_string(),
-            source: "hook".to_string(),
-            active_tool_name: None,
-            message: None,
-            last_result: None,
+            tool_name: None,
             pid: Some(42),
-            waiting_since_ms: None,
-            last_event_at_ms: Some(1_000),
-            stale: true,
-            updated_at_ms: 1_000,
+            runtime_generation: SessionGeneration::FIRST,
+            provider_session_id: None,
+            transcript_path: None,
+            emitted_at_ms: Some(900),
+            received_at_ms: 1_000,
         };
-        let value = agent_status_value(3, Some(&agent), 5_000);
-        assert_eq!(value["state"], "thinking");
-        assert_eq!(value["stale"], true);
+        let value = agent_status_value(3, Some(&hook), 5_000);
+        assert_eq!(
+            value["state"], "unknown",
+            "the core never reduces; only a worker names a state"
+        );
+        assert_eq!(value["hooked"], true);
+        assert_eq!(value["hook_event_name"], "UserPromptSubmit");
         assert_eq!(value["idle_ms"], 4_000);
+        assert!(value["reduced_by"].is_null());
 
         let idle = agent_status_value(3, None, 5_000);
         assert_eq!(idle["state"], "idle");

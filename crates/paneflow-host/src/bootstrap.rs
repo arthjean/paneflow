@@ -302,7 +302,7 @@ pub fn ensure_host_running(
 }
 
 #[cfg(unix)]
-fn release_child(mut child: HostChild) {
+pub fn release_child(mut child: DetachedChild) {
     let _ = std::thread::Builder::new()
         .name("paneflow-host-reaper".into())
         .spawn(move || {
@@ -311,48 +311,46 @@ fn release_child(mut child: HostChild) {
 }
 
 #[cfg(windows)]
-fn release_child(child: HostChild) {
+pub fn release_child(child: DetachedChild) {
     drop(child);
 }
 
-fn host_log_file(log: &Path) -> io::Result<File> {
+pub fn detached_log_file(log: &Path) -> io::Result<File> {
     OpenOptions::new().create(true).append(true).open(log)
 }
 
 #[cfg(unix)]
-struct HostChild(std::process::Child);
+pub struct DetachedChild(std::process::Child);
 
 #[cfg(unix)]
-impl HostChild {
-    fn try_wait(&mut self) -> io::Result<Option<ExitStatus>> {
+impl DetachedChild {
+    pub fn try_wait(&mut self) -> io::Result<Option<ExitStatus>> {
         self.0.try_wait()
     }
 
-    fn kill(&mut self) -> io::Result<()> {
+    pub fn kill(&mut self) -> io::Result<()> {
         self.0.kill()
     }
 
-    fn wait(&mut self) -> io::Result<ExitStatus> {
+    pub fn wait(&mut self) -> io::Result<ExitStatus> {
         self.0.wait()
     }
 }
 
 #[cfg(unix)]
-fn spawn_detached_host(
+pub fn spawn_detached(
     executable: &Path,
-    home: &Path,
+    arguments: &[&std::ffi::OsStr],
     log: &Path,
-) -> Result<HostChild, BootstrapError> {
+) -> Result<DetachedChild, BootstrapError> {
     use std::os::unix::process::CommandExt;
     use std::process::{Command, Stdio};
-    let stderr = host_log_file(log)
+    let stderr = detached_log_file(log)
         .map(Stdio::from)
         .unwrap_or_else(|_| Stdio::null());
     let mut command = Command::new(executable);
     command
-        .arg("--home")
-        .arg(home)
-        .arg("serve")
+        .args(arguments)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(stderr);
@@ -366,21 +364,37 @@ fn spawn_detached_host(
     }
     command
         .spawn()
-        .map(HostChild)
+        .map(DetachedChild)
         .map_err(|source| classify_spawn_error(executable, source))
 }
 
+fn spawn_detached_host(
+    executable: &Path,
+    home: &Path,
+    log: &Path,
+) -> Result<DetachedChild, BootstrapError> {
+    spawn_detached(
+        executable,
+        &[
+            std::ffi::OsStr::new("--home"),
+            home.as_os_str(),
+            std::ffi::OsStr::new("serve"),
+        ],
+        log,
+    )
+}
+
 #[cfg(windows)]
-struct HostChild {
+pub struct DetachedChild {
     process: windows_sys::Win32::Foundation::HANDLE,
 }
 
 #[cfg(windows)]
-unsafe impl Send for HostChild {}
+unsafe impl Send for DetachedChild {}
 
 #[cfg(windows)]
-impl HostChild {
-    fn try_wait(&mut self) -> io::Result<Option<ExitStatus>> {
+impl DetachedChild {
+    pub fn try_wait(&mut self) -> io::Result<Option<ExitStatus>> {
         use windows_sys::Win32::Foundation::{WAIT_OBJECT_0, WAIT_TIMEOUT};
         use windows_sys::Win32::System::Threading::WaitForSingleObject;
         match unsafe { WaitForSingleObject(self.process, 0) } {
@@ -390,7 +404,7 @@ impl HostChild {
         }
     }
 
-    fn kill(&mut self) -> io::Result<()> {
+    pub fn kill(&mut self) -> io::Result<()> {
         use windows_sys::Win32::System::Threading::TerminateProcess;
         if unsafe { TerminateProcess(self.process, 1) } == 0 {
             return Err(io::Error::last_os_error());
@@ -398,7 +412,7 @@ impl HostChild {
         Ok(())
     }
 
-    fn wait(&mut self) -> io::Result<ExitStatus> {
+    pub fn wait(&mut self) -> io::Result<ExitStatus> {
         use windows_sys::Win32::Foundation::WAIT_OBJECT_0;
         use windows_sys::Win32::System::Threading::{INFINITE, WaitForSingleObject};
         if unsafe { WaitForSingleObject(self.process, INFINITE) } != WAIT_OBJECT_0 {
@@ -419,7 +433,7 @@ impl HostChild {
 }
 
 #[cfg(windows)]
-impl Drop for HostChild {
+impl Drop for DetachedChild {
     fn drop(&mut self) {
         use windows_sys::Win32::Foundation::CloseHandle;
         unsafe {
@@ -522,11 +536,11 @@ fn quote_windows_argument(argument: &std::ffi::OsStr) -> Vec<u16> {
 }
 
 #[cfg(windows)]
-fn spawn_detached_host(
+pub fn spawn_detached(
     executable: &Path,
-    home: &Path,
+    arguments: &[&std::ffi::OsStr],
     log: &Path,
-) -> Result<HostChild, BootstrapError> {
+) -> Result<DetachedChild, BootstrapError> {
     use std::os::windows::ffi::OsStrExt;
     use windows_sys::Win32::Foundation::CloseHandle;
     use windows_sys::Win32::System::Threading::{
@@ -539,7 +553,7 @@ fn spawn_detached_host(
     };
     let stdin = File::open("NUL").map_err(spawn_failed)?;
     let stdout = File::create("NUL").map_err(spawn_failed)?;
-    let stderr = host_log_file(log)
+    let stderr = detached_log_file(log)
         .or_else(|_| File::create("NUL"))
         .map_err(spawn_failed)?;
     let handles = [
@@ -559,11 +573,7 @@ fn spawn_detached_host(
     let mut program: Vec<u16> = executable.as_os_str().encode_wide().collect();
     program.push(0);
     let mut command_line = quote_windows_argument(executable.as_os_str());
-    for argument in [
-        std::ffi::OsStr::new("--home"),
-        home.as_os_str(),
-        std::ffi::OsStr::new("serve"),
-    ] {
+    for argument in arguments {
         command_line.push(u16::from(b' '));
         command_line.extend(quote_windows_argument(argument));
     }
@@ -592,7 +602,7 @@ fn spawn_detached_host(
     unsafe {
         CloseHandle(information.hThread);
     }
-    Ok(HostChild {
+    Ok(DetachedChild {
         process: information.hProcess,
     })
 }

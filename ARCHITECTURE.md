@@ -27,6 +27,7 @@ focused library crates:
 | `paneflow-ghostty-smoke` | `crates/paneflow-ghostty-smoke/` | Package-level native smoke binary for Ghostty, PTY I/O, resize, and shutdown verification |
 | `paneflow-config` | `crates/paneflow-config/` | Config schema, tolerant JSON loader, file watcher |
 | `paneflow-host` | `crates/paneflow-host/` | GPU-free local host library and executable: owns PTYs, child processes, canonical libghostty state and the durable session manifests under `~/.paneflow/host/` |
+| `paneflow-serve` | `crates/paneflow-serve/` | The per-home worker: owns the activity reducer, the session projection and the advertised-capability protocol Controllers speak |
 | `paneflow-shim` | `crates/paneflow-shim/` | PATH shim wrapping 16 known agent CLIs so Paneflow can observe their lifecycle |
 | `paneflow-ai-hook` | `crates/paneflow-ai-hook/` | The hook binary agent CLIs invoke to report session events back over IPC |
 | `paneflow-ipc-client` | `crates/paneflow-ipc-client/` | Blocking JSON-RPC client for the local IPC socket (shared by the MCP bridge and the CLI) |
@@ -320,14 +321,23 @@ agent CLI (claude, codex, opencode, …)
   report `session_start`, `prompt_submit`, `tool_use`, `notification`, `stop`,
   `exit`, and `session_end` through the `ai.*` IPC namespace. Richest source,
   and the only one that names the active sub-tool or carries a turn summary.
-- **Three sources, one order**: hooks can be switched off outside Paneflow's
-  reach (Claude Code's managed settings do exactly that), so they are not the
-  substrate. Two hook-free sources back them: the escape sequences the agent
-  writes into its own pane, and the status file it maintains for its own peer
-  discovery. `ai_types::AgentStateSource` ranks them
-  (`Terminal < SessionRegistry < Hook`) and `upsert_session_state` enforces the
-  rank, so a weaker observer never talks over a live stronger one - and a
-  stronger one that falls silent hands over instead of freezing the sidebar.
+- **Hooks own the state once a session latches.** The first hook event of a
+  session makes it hook-owned, and from then on only hook events and the
+  bounded lease below move it. Raw output growth never starts a busy state.
+  Hooks can be switched off outside Paneflow's reach (Claude Code's managed
+  settings do exactly that), so a lower-confidence screen tier backs them: a
+  runtime that declares `[screen]` rules in its descriptor and has no latch
+  takes the host's screen verdict, published as `activity_source = screen`. A
+  screen verdict never produces a completion notification, and hooks win the
+  moment they latch.
+- **Where the reduction happens**: in the worker, never in the core and never
+  in a Controller. The core validates a hook frame against the session's
+  runtime generation, writes `last-hook-event.json` and records the raw
+  `last_hook` on the manifest; the worker
+  (`crates/paneflow-serve/src/hook_state.rs`) turns that stream into a state
+  and `crates/paneflow-serve/src/state.rs` publishes it with an
+  `activity_source` of `hooks`, `screen` or `none`. The GPUI app subscribes and
+  renders; it computes no lifecycle of its own.
 - **States**: thinking, waiting for input (with the actual prompt text),
   finished, errored (non-zero exit). Each state routes to the UI - and to your own tooling, since
   the same events are observable over IPC.
@@ -356,6 +366,166 @@ launch, so there is nothing extra to install.
 Ingress is treated as untrusted: session and config files are validated
 structurally (layout budgets, ratio clamps, id alphabets) before they touch
 app state.
+
+## The worker between the core and its Controllers
+
+`paneflow-serve` is the per-home worker. It sits between the PTY core and
+every Controller (the GPUI app, the `paneflow` CLI, the MCP bridge) and owns
+the concerns that must survive a restart of the UI but not of the terminals:
+the activity reducer, the session projection, and the capability set it
+advertises at bootstrap.
+
+The worker is the `paneflow` executable itself, started as
+`paneflow serve run --home <home>` and detached through the same
+`CREATE_BREAKAWAY_FROM_JOB | CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS`
+path the core uses on Windows, `setsid` on Unix. It holds
+`<home>/serve/owner.lock` for its lifetime, so a second start adopts instead
+of racing. `paneflow serve status` prints its pid, protocol version, home,
+session count and advertised capabilities as JSON.
+
+On Windows the bootstrap copies the executable into a content-addressed
+`<home>/serve/runtime/<build-id>/` directory before detaching it. The worker
+therefore never locks the application binary that Cargo, an installer or the
+updater needs to replace. The build digest is part of `worker.hello`, so a
+same-version development rebuild replaces the old worker instead of adopting
+stale code.
+
+- **Restarts are free.** On start the worker rebuilds every session from the
+  manifests under `<home>/host/sessions/` and the durable seeds under
+  `<home>/host/session-data/<id>/last-hook-event.json`. No terminal receives a
+  signal, because the worker owns no PTY. When the app ships a newer worker it
+  stops the old one with a five second drain and starts its own; the sessions
+  list is identical across the swap.
+- **The activity reducer.** `hook_state.rs` holds one latch per session.
+  `Start` and `UserPromptSubmit` open a turn and arm a five-minute lease;
+  `Stop` settles it as completed; `StopFailure` and `Idle` settle it without
+  completion; Codex's `Interrupt` settles it as cancelled and only a new
+  opening event re-arms it; `PermissionRequest` (except
+  `tool_name = AskUserQuestion`) asks for input. `SessionStart`,
+  `SubagentStart`, `SubagentStop` and informational notifications latch hook
+  ownership and change nothing. A `Stop` whose payload counts pending
+  `background_tasks` keeps the pane busy until the count reaches zero.
+- **The lease bounds a lost stop.** Every busy turn carries a deadline five
+  minutes past its last changed screen signal. The live reducer consumes only
+  the host's `screen_changed_at_ms`; raw PTY output growth never re-arms the
+  lease. The host's separate `output_changed_at_ms` timestamp may anchor a
+  recovered opening seed, so output written before a worker restart is not
+  mistaken for new live activity. When the deadline passes the session settles
+  to idle without completion and the worker writes a generation-scoped
+  watermark to `<session dir>/hook-expiry.json`, so a restart cannot revive the
+  turn.
+- **Generations reject stale events.** A frame naming a runtime generation
+  below the manifest's is refused. An untagged settling event arriving within
+  30 seconds of an in-place relaunch is quarantined until the replacement
+  runtime opens a turn of its own. For sessions whose launch command is not
+  hook-capable, a change in the observed foreground identity
+  (`runtime_id:pid:pid_started_at`) resets the latch while keeping the
+  generation; the first sighting is recorded, never treated as an edge.
+- **Restart replays the durable seed.** `last-hook-event.json` is read with its
+  own file handle for both metadata and bytes, capped at 64 KiB, and applied
+  with the file's mtime as the event time. An opening event's lease is anchored
+  at `max(seed mtime, activity signal)`; a seed holding a stop uses only its own
+  mtime, so a later repaint cannot reopen a finished turn.
+  `hook-cancellation.json` is restored before the seed, so an escape fence
+  survives the restart.
+- **The escape cancellation fence.** Claude Code, Gemini and Muse Code fire no
+  hook when the user interrupts a turn with Escape, so the host reads the
+  intent from the input it already delivers. A session carries a launch
+  binding: `runtime.launch_binding` in its manifest, derived from the launch
+  command when the agent is the pane's own shell and set over
+  `session.runtime.bind` when the app declares the agent it just launched from
+  a preset. A hand-typed agent in a blank pane has no binding and is never
+  fenced, and neither is a runtime whose descriptor leaves
+  `escape_cancels_turn` false, Codex first, whose native `Interrupt` hook
+  already settles the turn. For a bound fenced session, `session_input.rs`
+  parses the delivered bytes: a lone `ESC` with no continuation within 150 ms
+  is a cancellation, while a CSI or SS3 sequence, a modified key, bracketed
+  paste and the Kitty escape release are not. The thread named
+  `paneflow-host-cancellation` settles the parser every 100 ms, writes
+  `<session dir>/hook-cancellation.json` under an exclusive lock and announces
+  the marker on the agent bus, so the worker fences the turn without waiting
+  for its own sweep. The first Enter after a fence records `submitted_at` in
+  the same marker; the reducer keeps the session idle without completion until
+  an opening hook arrives after that submission, and an opener that raced ahead
+  of the Enter is retained and applied when the submission lands. No signal is
+  ever sent to the process.
+- **Background agents are tracked per child.** On Claude's `SubagentStart` the
+  hook reporter atomically creates
+  `<session dir>/background-hooks/<generation>/<agent_id>.json` before it
+  broadcasts, and `SubagentStop` removes that one file. An `agent_id` outside
+  `[A-Za-z0-9_-]` or longer than 160 bytes writes nothing and the event still
+  latches hook ownership. The reducer holds the session busy while any marker
+  is unexpired, so a child finishing never completes the main turn, and settles
+  to the main turn's outcome once the last marker is gone. Markers carry their
+  own generation directory, so a relaunch never inherits children, and a marker
+  whose lease runs out with no screen change expires without a completion
+  notification. `Attention` on the main turn outranks a busy child, and a
+  cancelled turn outranks both: an interrupt ends the children it started, so
+  markers a lost `SubagentStop` left behind never hold a fenced pane busy.
+- **The worker decides notifications.** Only a hook-sourced completed `Stop`
+  earns a `Finished` decision, and only a `PermissionRequest` or a
+  `menu_prompt_active` false-to-true edge earns `Needs input`, deduplicated to
+  one per ten seconds. The decision rides on the `agent.event` frame as
+  `notify`; the Controller decides whether the user already saw the pane and
+  delivers it. Failures, expiries and cancellations never notify, and every
+  settled turn is recorded in the worker's bounded activity log
+  (`agent.activity_log`) as `completed`, `failed:<reason>`, `expired` or
+  `cancelled`.
+- **The host viewport scan.** Every 500 ms the host thread named
+  `paneflow-host-viewport` asks each live session for its rendered screen and
+  its foreground process group, then edge-writes four manifest fields:
+  `screen_changed_at_ms` when the screen text hash changes (coalesced to one
+  stamp per second, so an idle TUI repainting identical content costs zero
+  writes), `screen_activity` from the observed runtime's declared `[screen]`
+  rules over the bottom 15 non-blank lines, `menu_prompt_active` when the
+  viewport carries an agent-drawn select-menu footer, and `observed_runtime`
+  with the foreground runtime identity. Nothing is written when nothing
+  changed. The worker consumes the three signals below the hooks: a hook latch
+  ignores `screen_activity`, an unlatched session maps it to busy/idle with
+  `activity_source = screen`, and a detected menu overrides busy/idle with
+  attention while `menu_attention_detection` is enabled.
+- **Foreground runtime observation.** The scan matches the foreground job
+  against the catalog: the process-group leader first, then the best of
+  `Direct` over `Wrapper` strength, smallest ancestry depth, lowest pid. A
+  `node`, `bun`, `python`, `sh -c`, `env` or `npx` wrapper is resolved through
+  its script path against the runtime's `script_path_signatures`, so an
+  npm-installed Claude running under `node.exe` on Windows is recognized;
+  ambiguous interpreter flags (`-e`, `-c`, `-m`) never name a runtime.
+  Persisted argv evidence stops at the cell that established the match, is
+  bounded to 8 cells and 1 KiB, and is omitted for wrapper matches. The
+  observation is refused outright when the session leader's recorded kernel
+  start time no longer matches. Unix reads the PTY's foreground process group;
+  Windows walks the child process tree and reads each PEB command line.
+- **Capabilities, not probes.** `worker.hello` answers a `WorkerIdentity`
+  carrying the set in `protocol/host-capabilities-v1.json`. A Controller reads
+  that set once and never discovers a feature by trying it. A capability the
+  file does not list is refused by the client before a frame leaves, with
+  `capability not advertised: <name>`.
+- **One attention queue.** A session carries `unread`, raised by the worker
+  when it publishes a `finished` notification and lowered by
+  `agent.acknowledge`. The desktop reads that flag off the projection and
+  acknowledges the sessions the user has actually looked at, whatever its own
+  local badge holds, so a restart of the window cannot strand an `unread` a
+  remote Controller would keep showing.
+- **A second Controller proves the protocol.** `crates/paneflow-serve/src/controller.rs`
+  is the Controller client: it connects, reads the advertised set, follows the
+  stream, and reconnects to a worker that restarted without replaying a row
+  whose projection has not moved (recency stamps alone do not make a row
+  fresh). `paneflow sessions [--follow] [--json]` is that client as a separate
+  process, and `protocol/controller-conformance-v1.json` lists the cases it
+  must pass; `crates/paneflow-serve/tests/controller_conformance.rs` runs every
+  one of them against a real worker, and a listed case with no runner fails.
+- **Restart recommendation.** A session whose core reports a
+  `host_protocol_version` below the version this worker requires carries a
+  `restart_recommended` token instead of failing. `host_build_id` travels
+  beside it for diagnosis only; no restart path reads it.
+- **Identity before any signal.** The health refresh marks a session stopped
+  only when its recorded child pid with a matching kernel start time is
+  absent. An unknown or recycled pid stays `non_resumable` and is never
+  signaled.
+- **One front door.** `fleet.list` and `surface.status` are answered from the
+  worker's reduced state; every other `session.*`, `surface.*`, `host.*` and
+  `system.*` method is forwarded verbatim to the core.
 
 ## Local host and durable session identity
 

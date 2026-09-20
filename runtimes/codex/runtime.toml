@@ -1,0 +1,47 @@
+schema_version = 1
+id = "com.openai.codex"
+slug = "codex"
+label = "Codex"
+platforms = ["linux", "macos", "windows"]
+capabilities = ["lifecycle_hooks", "screen_activity", "terminal_title_signal", "integration_install"]
+
+[display]
+order = 1
+icon_asset_path = "icons/codex.svg"
+icon_multicolor = false
+visibility_config_key = "codex_button_visible"
+
+[detection]
+command_aliases = ["codex"]
+process_aliases = ["codex"]
+script_path_signatures = ["@openai/codex"]
+
+[environment]
+strip_inherited = ["CODEX_CI", "CODEX_SHELL", "CODEX_THREAD_ID", "CODEX_TUI_RECORD_SESSION", "CODEX_TUI_SESSION_LOG_PATH"]
+
+[lifecycle]
+source = "hooks"
+authority = "complete"
+fallback = "screen"
+escape_cancels_turn = false
+attention_clears_on_output = true
+anchor_start_event_to_output = true
+terminal_title_signal = true
+
+[screen]
+working = ["esc to interrupt", "• Working"]
+idle_prompt = ["›"]
+
+[integration]
+summary = "Installs Paneflow lifecycle hooks in Codex's global hooks file."
+post_install_step = "Trust the Paneflow hooks once in Codex with /hooks."
+hook_adapter = "codex"
+
+[install]
+command = "npm install -g @openai/codex"
+
+[[suggested_presets]]
+id = "codex"
+label = "Codex"
+command = "codex"
+quick_launch = true

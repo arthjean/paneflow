@@ -18,7 +18,6 @@ mod assets;
 mod auto_naming;
 #[cfg(test)]
 mod bench_harness;
-mod claude_session_registry;
 mod claude_sessions;
 mod cli;
 mod codex_sessions;
@@ -61,6 +60,7 @@ mod widgets;
 mod window_chrome;
 mod window_state;
 mod windows_app_identity;
+mod worker_bootstrap;
 mod workspace;
 
 use crate::window_chrome::title_bar;
@@ -532,7 +532,6 @@ struct PaneFlowApp {
     git_watcher: Option<notify::RecommendedWatcher>,
     git_event_rx: std::sync::mpsc::Receiver<notify::Result<notify::Event>>,
     git_watch_counts: std::collections::HashMap<std::path::PathBuf, usize>,
-    claude_registry_seen: crate::app::agent_status::RegistryWatermark,
     settings_section: Option<SettingsSection>,
     settings_scroll: gpui::ScrollHandle,
     settings_drag: Option<crate::widgets::scrollbar::ScrollDragState>,
@@ -554,6 +553,9 @@ struct PaneFlowApp {
     agent_profile_editor: Option<crate::settings::tabs::agents::AgentProfileEditor>,
     agents_list_expanded: bool,
     agents_list_animation: Option<SidebarWidthAnimation>,
+    integration_status: Option<Vec<paneflow_mcp_install::IntegrationStatus>>,
+    integration_busy: Option<String>,
+    integration_errors: std::collections::HashMap<String, String>,
     agent_profile_name_input: gpui::Entity<crate::widgets::text_input::TextInput>,
     agent_profile_args_input: gpui::Entity<crate::widgets::text_input::TextInput>,
     mcp_status: Option<Vec<paneflow_mcp_install::StatusReport>>,
@@ -626,8 +628,6 @@ struct PaneFlowApp {
     fleet_search_generation: u64,
     fleet_search_focus: FocusHandle,
     fleet_search_pending_focus: bool,
-    launch_pad: Option<app::launch_pad::LaunchPadState>,
-    launch_pad_focus: FocusHandle,
     branch_prompt: Option<app::branch_prompt::BranchPromptState>,
     branch_prompt_focus: FocusHandle,
     recent_workspaces: Vec<app::recents::RecentWorkspace>,
@@ -635,10 +635,13 @@ struct PaneFlowApp {
     clone_repo: Option<app::clone_repo::CloneRepoState>,
     clone_repo_focus: FocusHandle,
     command_palette_open: bool,
-    command_palette_query: String,
+    command_palette_input: gpui::Entity<crate::widgets::text_input::TextInput>,
     command_palette_selected: usize,
-    command_palette_focus: FocusHandle,
+    command_palette_query_seen: String,
     command_palette_scroll: gpui::ScrollHandle,
+    command_palette_scope: Option<crate::app::command_palette::Scope>,
+    command_palette_context: crate::app::command_palette::PaletteContext,
+    command_palette_restore_focus: Option<FocusHandle>,
     pane_palette: Option<app::pane_palette::PanePaletteState>,
     pane_palette_focus: FocusHandle,
     pending_palette_focus: bool,
@@ -1122,7 +1125,6 @@ impl Render for PaneFlowApp {
             .on_action(cx.listener(Self::handle_toggle_broadcast_member))
             .on_action(cx.listener(Self::handle_open_broadcast_groups))
             .on_action(cx.listener(Self::handle_open_attention_queue))
-            .on_action(cx.listener(Self::handle_open_launch_pad))
             .on_action(cx.listener(Self::handle_open_command_palette))
             .on_action(cx.listener(Self::handle_clone_repository))
             .on_action(cx.listener(Self::handle_diff_new_file_tab))
@@ -1355,9 +1357,6 @@ impl Render for PaneFlowApp {
         if self.branch_prompt.is_some() {
             app_content = app_content.child(self.render_branch_prompt(cx));
         }
-        if self.launch_pad.is_some() {
-            app_content = app_content.child(self.render_launch_pad(cx));
-        }
         if self.fleet_search.is_some() {
             if std::mem::take(&mut self.fleet_search_pending_focus) {
                 self.fleet_search_focus.focus(window, cx);
@@ -1369,7 +1368,7 @@ impl Render for PaneFlowApp {
             app_content = app_content.child(self.render_clone_repo(cx));
         }
         if self.command_palette_open {
-            app_content = app_content.child(self.render_command_palette(cx));
+            app_content = app_content.child(self.render_command_palette(window, cx));
         }
         if self.custom_buttons_modal.is_some() {
             app_content = app_content.child(self.render_custom_buttons_modal(cx));
@@ -1668,20 +1667,22 @@ fn main() {
     let is_mcp_subcommand = args.get(1).map(String::as_str) == Some("mcp");
     let is_cli_subcommand = cli::is_cli_verb(args.get(1).map(String::as_str));
     let is_hooks_subcommand = args.get(1).map(String::as_str) == Some("hooks");
+    let is_integrations_subcommand = args.get(1).map(String::as_str) == Some("integrations");
+    let is_hook_utility_subcommand = is_hooks_subcommand || is_integrations_subcommand;
     let is_global_help = !is_msi_relay
         && !is_mcp_subcommand
         && !is_cli_subcommand
-        && !is_hooks_subcommand
+        && !is_hook_utility_subcommand
         && args.iter().any(|a| a == "--help" || a == "-h");
     let is_global_version = !is_msi_relay
         && !is_mcp_subcommand
         && !is_cli_subcommand
-        && !is_hooks_subcommand
+        && !is_hook_utility_subcommand
         && args.iter().any(|a| a == "--version" || a == "-v");
     let is_update_and_exit = !is_msi_relay
         && !is_mcp_subcommand
         && !is_cli_subcommand
-        && !is_hooks_subcommand
+        && !is_hook_utility_subcommand
         && args.iter().any(|a| a == "--update-and-exit");
     let is_unknown_verb = args
         .get(1)
@@ -1692,7 +1693,7 @@ fn main() {
         is_msi_relay
             || is_mcp_subcommand
             || is_cli_subcommand
-            || is_hooks_subcommand
+            || is_hook_utility_subcommand
             || is_global_help
             || is_global_version
             || is_update_and_exit
@@ -1710,7 +1711,9 @@ fn main() {
              \n\
              Usage: paneflow [OPTIONS]\n\
              \x20      paneflow mcp <install|status|uninstall>\n\
+             \x20      paneflow integrations <list|install|remove>\n\
              \x20      paneflow host <start|status|stop>\n\
+             \x20      paneflow serve <start|status|stop>\n\
              \n\
              Options:\n\
              \x20 -h, --help       Print this help message\n\
@@ -1766,7 +1769,7 @@ fn main() {
         is_msi_relay,
         is_mcp_subcommand,
         is_cli_subcommand,
-        is_hooks_subcommand,
+        is_hook_utility_subcommand,
         is_update_and_exit,
         is_unknown_verb,
     ) {
@@ -1806,6 +1809,37 @@ fn main() {
         std::process::exit(paneflow_mcp_install::run_hooks_cli(&args[2..], hook_path));
     }
 
+    if is_integrations_subcommand {
+        let binaries = if args.get(2).map(String::as_str) == Some("install") {
+            match (
+                ai_hooks::extract::ensure_ai_hook_extracted(),
+                ai_hooks::extract::ensure_bridge_extracted(),
+            ) {
+                (Ok(hook_binary), Ok(bridge_binary)) => {
+                    Some(paneflow_mcp_install::IntegrationBinaries {
+                        hook_binary,
+                        bridge_binary,
+                    })
+                }
+                (hook, bridge) => {
+                    if let Err(error) = hook {
+                        eprintln!("paneflow integrations: hook extraction failed: {error:#}");
+                    }
+                    if let Err(error) = bridge {
+                        eprintln!("paneflow integrations: bridge extraction failed: {error:#}");
+                    }
+                    None
+                }
+            }
+        } else {
+            None
+        };
+        std::process::exit(paneflow_mcp_install::run_integrations_cli(
+            &args[2..],
+            binaries,
+        ));
+    }
+
     if is_cli_subcommand {
         std::process::exit(cli::run());
     }
@@ -1825,9 +1859,24 @@ fn main() {
             "paneflow: MCP bridge extraction failed ({e:#}); `paneflow mcp install` will be unavailable until resolved"
         ),
     }
+    match (
+        ai_hooks::extract::ensure_ai_hook_extracted(),
+        ai_hooks::extract::ensure_bridge_extracted(),
+    ) {
+        (Ok(_), Ok(_)) => {}
+        (hook, bridge) => {
+            if let Err(error) = hook {
+                log::warn!("paneflow: AI hook extraction failed ({error:#})");
+            }
+            if let Err(error) = bridge {
+                log::warn!("paneflow: MCP bridge extraction failed ({error:#})");
+            }
+        }
+    }
     startup_trace::mark("bridge_extracted");
 
     host_bootstrap::start_in_background();
+    worker_bootstrap::start_in_background();
 
     #[cfg(target_os = "windows")]
     if let Err(err) = windows_app_identity::ensure_process_app_user_model_id() {

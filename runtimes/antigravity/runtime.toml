@@ -1,0 +1,42 @@
+schema_version = 1
+id = "com.google.antigravity-cli"
+slug = "antigravity"
+label = "Antigravity"
+platforms = ["linux", "macos"]
+capabilities = []
+
+[display]
+order = 10
+icon_asset_path = "agents/antigravity-color.svg"
+icon_multicolor = true
+visibility_config_key = "antigravity_button_visible"
+
+[detection]
+command_aliases = ["agy"]
+process_aliases = ["agy"]
+script_path_signatures = []
+
+[environment]
+strip_inherited = []
+
+[lifecycle]
+source = "output"
+authority = "none"
+fallback = "none"
+escape_cancels_turn = false
+attention_clears_on_output = true
+anchor_start_event_to_output = true
+terminal_title_signal = false
+
+[integration]
+summary = "Antigravity has no verified lifecycle hook contract."
+hook_adapter = "none"
+
+[install]
+command = "curl -fsSL https://antigravity.google/cli/install.sh | bash"
+
+[[suggested_presets]]
+id = "antigravity"
+label = "Antigravity"
+command = "agy"
+quick_launch = false

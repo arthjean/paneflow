@@ -6,11 +6,23 @@ rust-version.workspace = true
 license.workspace = true
 description = "Dependency-light shared primitives for safely editing coding-agent configuration."
 
+[features]
+default = ["config-io"]
+config-io = ["dep:dirs", "dep:paneflow-home", "dep:tempfile"]
+
 [dependencies]
-dirs.workspace = true
-paneflow-home.workspace = true
+dirs = { workspace = true, optional = true }
+paneflow-home = { workspace = true, optional = true }
 serde_json.workspace = true
-tempfile.workspace = true
+tempfile = { workspace = true, optional = true }
+
+[build-dependencies]
+serde = { workspace = true, features = ["derive"] }
+toml = "0.8"
+
+[dev-dependencies]
+serde = { workspace = true, features = ["derive"] }
+toml = "0.8"
 
 [lints]
 workspace = true

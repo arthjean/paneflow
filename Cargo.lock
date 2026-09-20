@@ -4389,8 +4389,10 @@ version = "0.16.0"
 dependencies = [
  "dirs",
  "paneflow-home",
+ "serde",
  "serde_json",
  "tempfile",
+ "toml 0.8.23",
 ]
 
 [[package]]
@@ -4398,6 +4400,7 @@ name = "paneflow-ai-hook"
 version = "0.16.0"
 dependencies = [
  "interprocess",
+ "paneflow-agent-config",
  "paneflow-ipc-client",
  "serde_json",
  "tempfile",
@@ -4434,12 +4437,14 @@ dependencies = [
  "objc",
  "objc2-metal 0.3.2",
  "open",
+ "paneflow-agent-config",
  "paneflow-config",
  "paneflow-home",
  "paneflow-host",
  "paneflow-ipc-client",
  "paneflow-mcp-install",
  "paneflow-process",
+ "paneflow-serve",
  "paneflow-telemetry",
  "paneflow-terminal-ghostty",
  "paneflow-textdiff",
@@ -4539,6 +4544,7 @@ dependencies = [
  "interprocess",
  "libc",
  "log",
+ "paneflow-agent-config",
  "paneflow-config",
  "paneflow-home",
  "paneflow-ipc-client",
@@ -4591,6 +4597,7 @@ dependencies = [
  "anyhow",
  "dirs",
  "paneflow-agent-config",
+ "paneflow-home",
  "serde_json",
  "tempfile",
  "toml_edit 0.22.27",
@@ -4606,6 +4613,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "paneflow-serve"
+version = "0.16.0"
+dependencies = [
+ "interprocess",
+ "libc",
+ "log",
+ "paneflow-agent-config",
+ "paneflow-config",
+ "paneflow-home",
+ "paneflow-host",
+ "paneflow-ipc-client",
+ "paneflow-mcp-install",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tempfile",
+ "thiserror 2.0.20",
+ "widestring",
+ "windows-sys 0.59.0",
+]
+
+[[package]]
 name = "paneflow-shim"
 version = "0.16.0"
 dependencies = [
@@ -4613,7 +4642,6 @@ dependencies = [
  "libc",
  "paneflow-agent-config",
  "same-file",
- "serde_json",
  "tempfile",
 ]
 

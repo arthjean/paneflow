@@ -1770,6 +1770,48 @@ mod tests {
     }
 
     #[test]
+    fn a_real_checkout_plans_a_hashed_path_when_the_slug_is_claimed() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let _root = test_support::scoped_root(tmp.path().join("worktrees"));
+        let repo_root = tmp.path().join("repo");
+        if !init_test_repo(&repo_root) {
+            return;
+        }
+
+        let claimed = "feat/a b";
+        let colliding = "feat/a-b";
+        let claimed_path = worktree_dir(&repo_root, claimed);
+        std::fs::create_dir_all(claimed_path.parent().expect("worktree parent"))
+            .expect("parent dir");
+        if !test_git(
+            &repo_root,
+            &[
+                "worktree",
+                "add",
+                claimed_path.to_str().expect("utf8 path"),
+                "-b",
+                claimed,
+            ],
+        ) {
+            return;
+        }
+        let entries = list_worktrees(&repo_root).expect("list");
+
+        assert_eq!(
+            plan_branch_checkout(&entries, &repo_root, colliding),
+            Ok(BranchCheckout::Create(worktree_dir_hashed(
+                &repo_root, colliding
+            ))),
+            "a slug git already parked another branch on falls back to the hashed dir"
+        );
+        assert_eq!(
+            plan_branch_checkout(&entries, &repo_root, claimed),
+            Ok(BranchCheckout::Existing(claimed_path)),
+            "a checked-out branch is reused, never recreated"
+        );
+    }
+
+    #[test]
     fn a_new_branch_starts_from_the_requested_base() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let _root = test_support::scoped_root(tmp.path().join("worktrees"));

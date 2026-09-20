@@ -134,10 +134,13 @@ impl PaneFlowApp {
             "sidebar-filter",
             "sidebar-filter-clear",
             ui,
-            crate::ui_primitives::FilterFieldGlyph::Filter,
+            crate::ui_primitives::FilterFieldStyle::sidebar(
+                crate::ui_primitives::FilterFieldGlyph::Filter,
+            ),
             focused,
             has_query,
             expanded,
+            None,
             self.sidebar_filter_input.clone(),
             cx.listener(|this, _: &ClickEvent, window, cx| {
                 cx.stop_propagation();

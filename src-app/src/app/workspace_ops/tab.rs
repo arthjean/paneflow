@@ -185,18 +185,29 @@ impl PaneFlowApp {
         let Some(ws) = self.workspaces.get(self.active_idx) else {
             return;
         };
-        if !ws.agent_completion_notification.is_unread() {
+        let badge_unread = ws.agent_completion_notification.is_unread();
+        let seen = ws.active_tab().surface_ids(cx);
+        let acknowledged = self.unread_sessions_for_surfaces(&seen, cx);
+        if acknowledged.is_empty() && !badge_unread {
             return;
         }
-        let seen = ws.active_tab().surface_ids(cx);
-        let live: std::collections::HashSet<u64> = ws
-            .tabs()
-            .iter()
-            .flat_map(|tab| tab.surface_ids(cx))
-            .collect();
-        if let Some(ws) = self.workspaces.get_mut(self.active_idx) {
+        let live: std::collections::HashSet<u64> = self
+            .workspaces
+            .get(self.active_idx)
+            .map(|ws| {
+                ws.tabs()
+                    .iter()
+                    .flat_map(|tab| tab.surface_ids(cx))
+                    .collect()
+            })
+            .unwrap_or_default();
+        if badge_unread && let Some(ws) = self.workspaces.get_mut(self.active_idx) {
             ws.agent_completion_notification.acknowledge(&seen, &live);
         }
+        crate::app::host_agents::acknowledge_worker_unread(
+            acknowledged,
+            cx.background_executor().clone(),
+        );
         cx.notify();
     }
 

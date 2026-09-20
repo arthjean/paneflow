@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use std::io::{Read, Write};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, SyncSender, sync_channel};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -67,6 +67,12 @@ pub struct Checkpoint {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ViewportScan {
+    pub screen: String,
+    pub foreground_process_group: Option<i32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OutputSlice {
     pub offset: u64,
     pub data: Vec<u8>,
@@ -103,6 +109,7 @@ pub struct SpawnError(pub String);
 enum Command {
     Checkpoint(SyncSender<Result<Checkpoint, RuntimeError>>),
     Text(SyncSender<Result<String, RuntimeError>>),
+    Viewport(SyncSender<Result<ViewportScan, RuntimeError>>),
     BracketedPaste(SyncSender<Result<bool, RuntimeError>>),
     Output {
         from: u64,
@@ -127,6 +134,7 @@ enum Message {
 struct Shared {
     exit: Mutex<Option<ExitOutcome>>,
     stop_requested: AtomicBool,
+    output_changed_at_ms: AtomicU64,
 }
 
 impl Shared {
@@ -156,6 +164,7 @@ impl SessionRuntime {
         let shared = Arc::new(Shared {
             exit: Mutex::new(None),
             stop_requested: AtomicBool::new(false),
+            output_changed_at_ms: AtomicU64::new(0),
         });
         let thread_shared = Arc::clone(&shared);
         let thread_tx = tx.clone();
@@ -198,6 +207,11 @@ impl SessionRuntime {
         self.shared.exit()
     }
 
+    pub fn output_changed_at_ms(&self) -> Option<u64> {
+        let changed_at = self.shared.output_changed_at_ms.load(Ordering::Acquire);
+        (changed_at != 0).then_some(changed_at)
+    }
+
     pub fn is_live(&self) -> bool {
         self.shared.exit().is_none()
     }
@@ -225,11 +239,19 @@ impl SessionRuntime {
         &self,
         build: impl FnOnce(SyncSender<Result<T, RuntimeError>>) -> Command,
     ) -> Result<T, RuntimeError> {
+        self.ask_within(REQUEST_DEADLINE, build)
+    }
+
+    fn ask_within<T>(
+        &self,
+        budget: Duration,
+        build: impl FnOnce(SyncSender<Result<T, RuntimeError>>) -> Command,
+    ) -> Result<T, RuntimeError> {
         let (reply_tx, reply_rx) = sync_channel(1);
-        self.send_bounded(Message::Command(build(reply_tx)), REQUEST_DEADLINE)?;
-        match reply_rx.recv_timeout(REQUEST_DEADLINE) {
+        self.send_bounded(Message::Command(build(reply_tx)), budget)?;
+        match reply_rx.recv_timeout(budget) {
             Ok(result) => result,
-            Err(RecvTimeoutError::Timeout) => Err(RuntimeError::Deadline(REQUEST_DEADLINE)),
+            Err(RecvTimeoutError::Timeout) => Err(RuntimeError::Deadline(budget)),
             Err(RecvTimeoutError::Disconnected) => Err(RuntimeError::Gone),
         }
     }
@@ -240,6 +262,10 @@ impl SessionRuntime {
 
     pub fn text(&self) -> Result<String, RuntimeError> {
         self.ask(Command::Text)
+    }
+
+    pub fn viewport_scan(&self, budget: Duration) -> Result<ViewportScan, RuntimeError> {
+        self.ask_within(budget, Command::Viewport)
     }
 
     pub fn bracketed_paste_enabled(&self) -> Result<bool, RuntimeError> {
@@ -443,6 +469,9 @@ fn write_pty_queue(mut writer: Box<dyn Write + Send>, rx: Receiver<Vec<u8>>) {
 impl Session {
     fn feed(&mut self, chunk: &[u8]) {
         self.tail.append(chunk);
+        self.shared
+            .output_changed_at_ms
+            .store(crate::manifest::now_ms(), Ordering::Release);
         if let Err(error) = self.terminal.feed(chunk) {
             log::warn!("paneflow-host: terminal feed failed: {error}");
         }
@@ -502,6 +531,9 @@ impl Session {
             }
             Command::Text(reply) => {
                 let _ = reply.send(self.text());
+            }
+            Command::Viewport(reply) => {
+                let _ = reply.send(self.viewport_scan());
             }
             Command::BracketedPaste(reply) => {
                 let modes = self
@@ -579,6 +611,29 @@ impl Session {
             (None, false) => screen,
             (None, true) => String::new(),
         })
+    }
+
+    fn viewport_scan(&mut self) -> Result<ViewportScan, RuntimeError> {
+        let screen = self
+            .terminal
+            .format(ghostty::FormatterOptions::plain_text())
+            .map_err(|e| RuntimeError::Engine(e.to_string()))?;
+        Ok(ViewportScan {
+            screen,
+            foreground_process_group: self.foreground_process_group(),
+        })
+    }
+
+    #[cfg(unix)]
+    fn foreground_process_group(&self) -> Option<i32> {
+        self.master
+            .as_ref()
+            .and_then(|master| master.process_group_leader())
+    }
+
+    #[cfg(not(unix))]
+    fn foreground_process_group(&self) -> Option<i32> {
+        None
     }
 
     fn output(&self, from: u64, max: usize) -> Result<OutputSlice, RuntimeError> {

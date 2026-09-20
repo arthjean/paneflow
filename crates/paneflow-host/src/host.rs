@@ -6,17 +6,18 @@ use paneflow_config::schema::{HostInstanceToken, SessionGeneration, SessionId, W
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use crate::agent::{AgentBus, AgentDecision, AgentEvent, AgentSnapshotEntry, AgentSubscription};
+use crate::agent::{AgentBus, AgentEvent, AgentSnapshotEntry, AgentSubscription};
 use crate::bootstrap::{OwnerLock, OwnerLockError};
 use crate::manifest::{
-    MANIFEST_SCHEMA_VERSION, ManifestError, SessionLaunch, SessionLifecycle, SessionManifest,
-    now_ms, read_manifest, write_atomically, write_manifest,
+    HostedSessionRuntime, MANIFEST_SCHEMA_VERSION, ManifestError, SessionLaunch, SessionLifecycle,
+    SessionManifest, now_ms, read_manifest, write_atomically, write_manifest,
 };
 use crate::protocol::{HOST_PROTOCOL_VERSION, HostIdentity, local_engine_identity};
 use crate::runtime::{
     Checkpoint, OutputSlice, RuntimeError, RuntimeNotice, RuntimeObserver, SessionRuntime,
     SpawnSpec,
 };
+use crate::session_input::SessionInput;
 
 pub const DEFAULT_COLS: u16 = 80;
 pub const DEFAULT_ROWS: u16 = 24;
@@ -140,11 +141,77 @@ pub enum HostError {
 struct SessionRecord {
     manifest: Arc<Mutex<SessionManifest>>,
     runtime: Option<Arc<SessionRuntime>>,
+    input: Arc<Mutex<SessionInput>>,
+    escape_fence: bool,
 }
 
 impl SessionRecord {
+    fn fresh(manifest: Arc<Mutex<SessionManifest>>) -> Self {
+        let escape_fence = escape_fence_of(
+            manifest
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .runtime
+                .as_ref(),
+        );
+        Self {
+            manifest,
+            runtime: None,
+            input: Arc::new(Mutex::new(SessionInput::default())),
+            escape_fence,
+        }
+    }
+
     fn is_live(&self) -> bool {
         self.runtime.as_deref().is_some_and(SessionRuntime::is_live)
+    }
+
+    fn set_escape_fence(&mut self, fenced: bool) {
+        self.escape_fence = fenced;
+        self.input
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clear();
+    }
+}
+
+pub(crate) type FencedInputTarget = (
+    SessionId,
+    Arc<Mutex<SessionManifest>>,
+    Arc<Mutex<SessionInput>>,
+);
+
+pub fn launch_binding_for_command(
+    command: &str,
+) -> Option<&'static paneflow_agent_config::Runtime> {
+    let alias = Path::new(command)
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .unwrap_or(command);
+    paneflow_agent_config::runtime_by_command_alias(alias)
+}
+
+fn escape_fence_of(runtime: Option<&HostedSessionRuntime>) -> bool {
+    runtime
+        .and_then(|runtime| runtime.launch_binding.as_deref())
+        .and_then(paneflow_agent_config::runtime_by_id)
+        .is_some_and(|runtime| runtime.lifecycle.escape_cancels_turn)
+}
+
+fn with_launch_binding(
+    held: Option<HostedSessionRuntime>,
+    binding: Option<String>,
+) -> Option<HostedSessionRuntime> {
+    match (held, binding) {
+        (None, None) => None,
+        (None, launch_binding) => Some(HostedSessionRuntime {
+            current_observation: None,
+            launch_binding,
+        }),
+        (Some(held), launch_binding) => Some(HostedSessionRuntime {
+            launch_binding,
+            ..held
+        }),
     }
 }
 
@@ -194,6 +261,10 @@ pub struct SessionRow {
     pub reconnection: SessionReconnection,
     pub live: bool,
     pub owned: bool,
+    #[serde(default)]
+    pub host_protocol_version: u32,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub host_build_id: String,
     pub updated_at_ms: u64,
 }
 
@@ -211,13 +282,15 @@ impl SessionRow {
             workspace: manifest.workspace,
             title: manifest.title,
             cwd: manifest.current_cwd.unwrap_or(manifest.cwd),
-            agent: manifest.agent.map(|agent| agent.tool),
+            agent: manifest.last_hook.map(|hook| hook.tool),
             shell: manifest.launch.shell,
             pid: manifest.process.map(|process| process.pid),
             lifecycle: manifest.lifecycle,
             reconnection,
             live,
             owned,
+            host_protocol_version: manifest.host_protocol_version,
+            host_build_id: manifest.host_build_id,
             updated_at_ms: manifest.updated_at_ms,
         }
     }
@@ -250,6 +323,11 @@ impl SessionHost {
     pub fn open(home: &Path, endpoint: &Path) -> Result<Arc<Self>, HostError> {
         std::fs::create_dir_all(paneflow_home::host_sessions_dir_in(home))
             .map_err(|e| HostError::Storage(format!("cannot create the host directory: {e}")))?;
+        std::fs::create_dir_all(paneflow_home::host_session_data_root_in(home)).map_err(|e| {
+            HostError::Storage(format!(
+                "cannot create the host session data directory: {e}"
+            ))
+        })?;
         let owner = OwnerLock::acquire(home).map_err(|error| match error {
             OwnerLockError::Held(_) => HostError::OwnerBusy(error.to_string()),
             OwnerLockError::Io(io) => HostError::Storage(io.to_string()),
@@ -258,6 +336,7 @@ impl SessionHost {
             name: "paneflow-host".to_string(),
             version: env!("CARGO_PKG_VERSION").to_string(),
             protocol: HOST_PROTOCOL_VERSION,
+            build_id: crate::protocol::host_build_id(),
             host_instance: HostInstanceToken::new(),
             engine: local_engine_identity(),
             pid: std::process::id(),
@@ -289,7 +368,59 @@ impl SessionHost {
         host.adopt_previous_records();
         host.trim_terminated_records();
         host.write_instance_record()?;
+        crate::viewport_scan::spawn(&host);
+        crate::cancellation_scan::spawn(&host);
         Ok(host)
+    }
+
+    pub(crate) fn fenced_input_targets(&self) -> Vec<FencedInputTarget> {
+        self.lock_sessions()
+            .iter()
+            .filter(|(_, record)| record.escape_fence && record.is_live())
+            .map(|(session, record)| {
+                (
+                    session.clone(),
+                    Arc::clone(&record.manifest),
+                    Arc::clone(&record.input),
+                )
+            })
+            .collect()
+    }
+
+    pub(crate) fn announce_cancellation(
+        &self,
+        session: &SessionId,
+        generation: SessionGeneration,
+        marker: &crate::hook_assets::Cancellation,
+    ) {
+        self.agent_bus.broadcast(&json!({
+            "type": "cancellation",
+            "session": session,
+            "generation": generation,
+            "runtime_generation": marker.runtime_generation,
+            "cancelled_at": marker.cancelled_at,
+            "submitted_at": marker.submitted_at,
+        }));
+    }
+
+    pub fn session_data_dir(&self, session: &SessionId) -> PathBuf {
+        paneflow_home::host_session_data_dir_in(&self.home, session.as_str())
+    }
+
+    pub(crate) fn live_scan_targets(
+        &self,
+    ) -> Vec<(SessionId, Arc<Mutex<SessionManifest>>, Arc<SessionRuntime>)> {
+        self.lock_sessions()
+            .iter()
+            .filter(|(_, record)| record.is_live())
+            .filter_map(|(session, record)| {
+                Some((
+                    session.clone(),
+                    Arc::clone(&record.manifest),
+                    record.runtime.clone()?,
+                ))
+            })
+            .collect()
     }
 
     pub fn retire(&self) {
@@ -386,10 +517,14 @@ impl SessionHost {
                 manifest.updated_at_ms = adopted_at;
                 rewrite = true;
             }
-            if let Some(agent) = manifest.agent.as_mut() {
-                let before = agent.stale;
-                crate::agent::reconcile_adopted(agent, &manifest.lifecycle, adopted_at);
-                rewrite |= agent.stale != before;
+            if manifest.host_protocol_version != HOST_PROTOCOL_VERSION {
+                manifest.host_protocol_version = HOST_PROTOCOL_VERSION;
+                rewrite = true;
+            }
+            let build_id = crate::protocol::host_build_id();
+            if manifest.host_build_id != build_id {
+                manifest.host_build_id = build_id;
+                rewrite = true;
             }
             if rewrite {
                 let _guard = self.lock_writer();
@@ -402,10 +537,7 @@ impl SessionHost {
             }
             sessions.insert(
                 manifest.session.clone(),
-                SessionRecord {
-                    manifest: Arc::new(Mutex::new(manifest)),
-                    runtime: None,
-                },
+                SessionRecord::fresh(Arc::new(Mutex::new(manifest))),
             );
         }
     }
@@ -463,6 +595,7 @@ impl SessionHost {
                     log::warn!("paneflow-host: cannot delete the manifest of {id}: {error}")
                 }
             }
+            crate::manifest::remove_session_data(&self.home, id);
         }
         log::info!(
             "paneflow-host: dropped {} session records past their retention",
@@ -503,17 +636,43 @@ impl SessionHost {
     }
 
     pub fn agent_snapshot(&self) -> Vec<AgentSnapshotEntry> {
+        let output_changes: BTreeMap<SessionId, u64> = {
+            let sessions = self.lock_sessions();
+            sessions
+                .iter()
+                .filter_map(|(session, record)| {
+                    record.runtime.as_deref().and_then(|runtime| {
+                        runtime
+                            .output_changed_at_ms()
+                            .map(|changed_at| (session.clone(), changed_at))
+                    })
+                })
+                .collect()
+        };
         self.list(None)
             .into_iter()
             .map(|summary| AgentSnapshotEntry {
+                output_changed_at_ms: output_changes.get(&summary.manifest.session).copied(),
                 session: summary.manifest.session,
                 generation: summary.manifest.generation,
+                launch_shell: summary.manifest.launch.shell.clone(),
                 live: summary.live,
                 lifecycle: summary.manifest.lifecycle,
+                process: summary.manifest.process,
                 workspace: summary.manifest.workspace,
                 title: summary.manifest.title,
                 cwd: Some(summary.manifest.current_cwd.unwrap_or(summary.manifest.cwd)),
-                agent: summary.manifest.agent,
+                last_hook: summary.manifest.last_hook,
+                generation_started_at_ms: summary.manifest.generation_started_at_ms,
+                screen_changed_at_ms: summary.manifest.screen_changed_at_ms,
+                screen_activity: summary.manifest.screen_activity,
+                menu_prompt_active: summary.manifest.menu_prompt_active,
+                observed_runtime: summary
+                    .manifest
+                    .runtime
+                    .and_then(|runtime| runtime.current_observation),
+                host_protocol_version: summary.manifest.host_protocol_version,
+                host_build_id: summary.manifest.host_build_id,
             })
             .collect()
     }
@@ -521,11 +680,13 @@ impl SessionHost {
     fn launch_env(
         &self,
         session: &SessionId,
+        generation: SessionGeneration,
         workspace: Option<&WorkspaceId>,
         user: &BTreeMap<String, String>,
     ) -> BTreeMap<String, String> {
         launch_env(
             session,
+            generation,
             workspace,
             &self.home,
             Path::new(&self.identity.endpoint),
@@ -542,50 +703,67 @@ impl SessionHost {
                 .ok_or_else(|| HostError::SessionNotFound(event.session.clone()))?;
             Arc::clone(&record.manifest)
         };
-        let (generation, current) = {
+        let generation = {
             let guard = manifest
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
-            (guard.generation, guard.agent.clone())
+            guard.generation
         };
         if let Some(requested) = event.generation
             && requested != generation
         {
+            let reason = if requested < generation {
+                "the event names a generation this session has left"
+            } else {
+                "the event names a generation this session has not reached"
+            };
+            log::warn!(
+                "agent event rejected for session {}: runtime generation {} does not match current generation {}: {reason}",
+                event.session,
+                requested,
+                generation
+            );
             return Ok(json!({
                 "accepted": false,
-                "reason": "the event names a generation this session has left",
+                "reason": reason,
                 "session": event.session,
                 "generation": generation,
             }));
         }
-        let decision = crate::agent::apply_event(current.as_ref(), event, now_ms());
-        let applied = match decision {
-            AgentDecision::Stale(reason) => {
-                return Ok(json!({
-                    "accepted": false,
-                    "reason": reason,
-                    "session": event.session,
-                    "generation": generation,
-                }));
-            }
-            AgentDecision::Clear => {
-                self.update(&manifest, |m| m.agent = None);
-                None
-            }
-            AgentDecision::Update(summary) => {
-                let summary = *summary;
-                let stored = summary.clone();
-                self.update(&manifest, move |m| m.agent = Some(stored));
-                Some(summary)
-            }
+        let hook_event_name = event
+            .payload
+            .get("hook_event_name")
+            .and_then(Value::as_str)
+            .unwrap_or_else(|| event.kind.wire_str())
+            .to_string();
+        crate::manifest::write_last_hook_event(
+            &self.home,
+            &event.session,
+            &hook_event_name,
+            event.tool_name.as_deref(),
+            generation,
+        )
+        .map_err(|error| HostError::Storage(error.to_string()))?;
+        let record = crate::manifest::HookRecord {
+            hook_event_name,
+            tool: event.tool.clone(),
+            tool_name: event.tool_name.clone(),
+            pid: event.pid,
+            runtime_generation: generation,
+            provider_session_id: payload_text(event, "session_id"),
+            transcript_path: payload_text(event, "transcript_path"),
+            emitted_at_ms: event.emitted_at_ms,
+            received_at_ms: event.received_at_ms.unwrap_or_else(now_ms),
         };
-        self.agent_bus
-            .broadcast(&event.to_frame(generation, applied.as_ref()));
+        let stored = record.clone();
+        self.update(&manifest, move |m| m.last_hook = Some(stored));
+        self.agent_bus.broadcast(&event.to_frame(generation));
         Ok(json!({
             "accepted": true,
             "session": event.session,
             "generation": generation,
-            "agent": applied,
+            "received_at_ms": event.received_at_ms,
+            "last_hook": record,
         }))
     }
 
@@ -613,7 +791,19 @@ impl SessionHost {
         };
         let cols = request.cols.filter(|c| *c > 0).unwrap_or(DEFAULT_COLS);
         let rows = request.rows.filter(|r| *r > 0).unwrap_or(DEFAULT_ROWS);
-        let env = self.launch_env(&session, request.workspace.as_ref(), &request.env);
+        let session_dir = paneflow_home::host_session_data_dir_in(&self.home, session.as_str());
+        std::fs::create_dir_all(&session_dir).map_err(|error| {
+            HostError::Storage(format!(
+                "cannot create session data directory {}: {error}",
+                session_dir.display()
+            ))
+        })?;
+        let env = self.launch_env(
+            &session,
+            SessionGeneration::FIRST,
+            request.workspace.as_ref(),
+            &request.env,
+        );
         let launch = SessionLaunch {
             shell: shell.clone(),
             args: request.args.clone(),
@@ -640,7 +830,14 @@ impl SessionHost {
             process: None,
             title: request.title.clone(),
             current_cwd: None,
-            agent: None,
+            last_hook: None,
+            generation_started_at_ms: Some(created),
+            screen_changed_at_ms: None,
+            screen_activity: None,
+            menu_prompt_active: false,
+            runtime: None,
+            host_protocol_version: HOST_PROTOCOL_VERSION,
+            host_build_id: crate::protocol::host_build_id(),
             created_at_ms: created,
             updated_at_ms: created,
         }));
@@ -649,13 +846,7 @@ impl SessionHost {
             if sessions.contains_key(&session) {
                 return Err(HostError::SessionExists { session });
             }
-            sessions.insert(
-                session.clone(),
-                SessionRecord {
-                    manifest: Arc::clone(&manifest),
-                    runtime: None,
-                },
-            );
+            sessions.insert(session.clone(), SessionRecord::fresh(Arc::clone(&manifest)));
         }
         if let Err(error) = self.persist(&manifest) {
             self.lock_sessions().remove(&session);
@@ -722,11 +913,23 @@ impl SessionHost {
             guard.lifecycle = SessionLifecycle::Starting;
             guard.process = None;
             guard.current_cwd = None;
-            guard.agent = None;
+            guard.last_hook = None;
+            guard.generation_started_at_ms = Some(now_ms());
+            guard.screen_changed_at_ms = None;
+            guard.screen_activity = None;
+            guard.menu_prompt_active = false;
+            guard.runtime = None;
+            guard.host_protocol_version = HOST_PROTOCOL_VERSION;
+            guard.host_build_id = crate::protocol::host_build_id();
             guard.launch.args.clear();
             guard.cwd = cwd.display().to_string();
             guard.updated_at_ms = now_ms();
-            let env = self.launch_env(&guard.session, guard.workspace.as_ref(), &guard.launch.env);
+            let env = self.launch_env(
+                &guard.session,
+                next,
+                guard.workspace.as_ref(),
+                &guard.launch.env,
+            );
             let spec = SpawnSpec {
                 shell: guard.launch.shell.clone(),
                 args: Vec::new(),
@@ -767,7 +970,18 @@ impl SessionHost {
             }
         };
         let process = runtime.process();
+        let binding = {
+            let guard = manifest
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            launch_binding_for_command(&guard.launch.shell).map(|bound| bound.id.to_string())
+        };
+        let escape_fence = binding
+            .as_deref()
+            .and_then(paneflow_agent_config::runtime_by_id)
+            .is_some_and(|bound| bound.lifecycle.escape_cancels_turn);
         self.update(&manifest, |m| {
+            m.runtime = with_launch_binding(m.runtime.take(), binding);
             m.lifecycle = if runtime.is_live() {
                 SessionLifecycle::Running
             } else {
@@ -783,11 +997,11 @@ impl SessionHost {
         });
         let runtime = Arc::new(runtime);
         let mut sessions = self.lock_sessions();
-        let record = sessions.entry(session).or_insert_with(|| SessionRecord {
-            manifest: Arc::clone(&manifest),
-            runtime: None,
-        });
+        let record = sessions
+            .entry(session)
+            .or_insert_with(|| SessionRecord::fresh(Arc::clone(&manifest)));
         record.runtime = Some(runtime);
+        record.set_escape_fence(escape_fence);
         Ok(self.summary_of(record))
     }
 
@@ -875,13 +1089,15 @@ impl SessionHost {
         };
         let _guard = self.lock_writer();
         let path = crate::manifest::manifest_path(&self.home, session);
-        match std::fs::remove_file(&path) {
+        let outcome = match std::fs::remove_file(&path) {
             Ok(()) => Ok(removed),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(removed),
             Err(error) => Err(HostError::Storage(format!(
                 "cannot delete the manifest of {session}: {error}"
             ))),
-        }
+        };
+        crate::manifest::remove_session_data(&self.home, session);
+        outcome
     }
 
     fn with_live_runtime<T>(
@@ -949,7 +1165,71 @@ impl SessionHost {
         generation: Option<SessionGeneration>,
         bytes: Vec<u8>,
     ) -> Result<usize, HostError> {
-        self.with_live_runtime(session, generation, |runtime| runtime.input(bytes))
+        let fenced = {
+            let sessions = self.lock_sessions();
+            sessions
+                .get(session)
+                .filter(|record| record.escape_fence)
+                .map(|record| Arc::clone(&record.input))
+        };
+        let observed = fenced.as_ref().map(|_| bytes.clone());
+        let accepted =
+            self.with_live_runtime(session, generation, |runtime| runtime.input(bytes))?;
+        if let (Some(input), Some(observed)) = (fenced, observed) {
+            input
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .observe(&observed, std::time::SystemTime::now());
+        }
+        Ok(accepted)
+    }
+
+    pub fn bind_runtime(
+        &self,
+        session: &SessionId,
+        generation: Option<SessionGeneration>,
+        runtime_id: Option<&str>,
+    ) -> Result<Value, HostError> {
+        let bound = match runtime_id {
+            None => None,
+            Some(id) => Some(paneflow_agent_config::runtime_by_id(id).ok_or_else(|| {
+                HostError::InvalidRequest(format!("{id} is not a catalog runtime"))
+            })?),
+        };
+        let manifest = {
+            let sessions = self.lock_sessions();
+            let record = sessions
+                .get(session)
+                .ok_or_else(|| HostError::SessionNotFound(session.clone()))?;
+            let current = record
+                .manifest
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .generation;
+            if let Some(requested) = generation
+                && requested != current
+            {
+                return Err(HostError::GenerationMismatch {
+                    session: session.clone(),
+                    current,
+                    requested,
+                });
+            }
+            Arc::clone(&record.manifest)
+        };
+        let binding = bound.map(|bound| bound.id.to_string());
+        self.update(&manifest, |m| {
+            m.runtime = with_launch_binding(m.runtime.take(), binding);
+        });
+        let fenced = bound.is_some_and(|bound| bound.lifecycle.escape_cancels_turn);
+        if let Some(record) = self.lock_sessions().get_mut(session) {
+            record.set_escape_fence(fenced);
+        }
+        Ok(json!({
+            "session": session,
+            "launch_binding": bound.map(|bound| bound.id),
+            "escape_cancels_turn": fenced,
+        }))
     }
 
     pub fn resize(
@@ -959,7 +1239,28 @@ impl SessionHost {
         cols: u16,
         rows: u16,
     ) -> Result<(), HostError> {
-        self.with_live_runtime(session, generation, |runtime| runtime.resize(cols, rows))
+        self.with_live_runtime(session, generation, |runtime| runtime.resize(cols, rows))?;
+        let manifest = {
+            let sessions = self.lock_sessions();
+            sessions
+                .get(session)
+                .map(|record| Arc::clone(&record.manifest))
+        };
+        if let Some(manifest) = manifest {
+            let changed = {
+                let guard = manifest
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                guard.launch.cols != cols || guard.launch.rows != rows
+            };
+            if changed {
+                self.update(&manifest, |m| {
+                    m.launch.cols = cols;
+                    m.launch.rows = rows;
+                });
+            }
+        }
+        Ok(())
     }
 
     pub fn live_sessions(&self) -> Vec<SessionSummary> {
@@ -1005,7 +1306,7 @@ impl SessionHost {
             .map_err(|e| HostError::Storage(format!("cannot write the session manifest: {e}")))
     }
 
-    fn update(
+    pub(crate) fn update(
         &self,
         manifest: &Arc<Mutex<SessionManifest>>,
         apply: impl FnOnce(&mut SessionManifest),
@@ -1060,6 +1361,20 @@ impl SessionHost {
             }
         })
     }
+}
+
+fn payload_text(event: &AgentEvent, key: &str) -> Option<String> {
+    event
+        .payload
+        .get(key)
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|text| !text.is_empty())
+        .map(|text| {
+            text.chars()
+                .take(crate::agent::MAX_AGENT_TEXT_BYTES)
+                .collect()
+        })
 }
 
 fn resolve_cwd(requested: Option<&str>) -> PathBuf {
@@ -1142,6 +1457,7 @@ fn load_control_settings(home: &Path) -> (crate::control::ControlPermissions, st
 
 pub fn launch_env(
     session: &SessionId,
+    generation: SessionGeneration,
     workspace: Option<&WorkspaceId>,
     home: &Path,
     endpoint: &Path,
@@ -1155,8 +1471,10 @@ pub fn launch_env(
         "TERM_PROGRAM_VERSION",
         "SHLVL",
         "PANEFLOW_SESSION_ID",
+        "PANEFLOW_SESSION_DIR",
         "PANEFLOW_WORKSPACE_UUID",
         "PANEFLOW_HOST_ENDPOINT",
+        "PANEFLOW_RUNTIME_GENERATION",
         "PANEFLOW_HOME",
     ];
     let mut env = BTreeMap::new();
@@ -1186,12 +1504,22 @@ pub fn launch_env(
         env.insert("LANG".to_string(), "en_US.UTF-8".to_string());
     }
     env.insert("PANEFLOW_SESSION_ID".to_string(), session.to_string());
+    env.insert(
+        "PANEFLOW_SESSION_DIR".to_string(),
+        paneflow_home::host_session_data_dir_in(home, session.as_str())
+            .display()
+            .to_string(),
+    );
     if let Some(workspace) = workspace {
         env.insert("PANEFLOW_WORKSPACE_UUID".to_string(), workspace.to_string());
     }
     env.insert(
         "PANEFLOW_HOST_ENDPOINT".to_string(),
         endpoint.display().to_string(),
+    );
+    env.insert(
+        "PANEFLOW_RUNTIME_GENERATION".to_string(),
+        generation.to_string(),
     );
     env.insert("PANEFLOW_HOME".to_string(), home.display().to_string());
     if let Some(helper_dir) = helper_dir
@@ -1270,7 +1598,7 @@ mod tests {
             .join("crates")
             .join("paneflow-host");
         let manifest = SessionManifest {
-            schema: 1,
+            schema: MANIFEST_SCHEMA_VERSION,
             session: session.clone(),
             workspace: Some(workspace.clone()),
             generation: SessionGeneration::FIRST,
@@ -1287,7 +1615,14 @@ mod tests {
             process: None,
             title: Some("claude \u{00b7} feat/a-reasonably-long-branch-name".to_string()),
             current_cwd: Some(cwd.display().to_string()),
-            agent: None,
+            last_hook: None,
+            generation_started_at_ms: None,
+            screen_changed_at_ms: None,
+            screen_activity: None,
+            menu_prompt_active: false,
+            runtime: None,
+            host_protocol_version: HOST_PROTOCOL_VERSION,
+            host_build_id: crate::protocol::host_build_id(),
             created_at_ms: updated_at_ms,
             updated_at_ms,
         };
@@ -1302,7 +1637,7 @@ mod tests {
     ) -> SessionSummary {
         SessionSummary {
             manifest: SessionManifest {
-                schema: 1,
+                schema: MANIFEST_SCHEMA_VERSION,
                 session: SessionId::new(),
                 workspace: workspace.cloned(),
                 generation: SessionGeneration::FIRST,
@@ -1326,7 +1661,14 @@ mod tests {
                 process: None,
                 title: None,
                 current_cwd: None,
-                agent: None,
+                last_hook: None,
+                generation_started_at_ms: None,
+                screen_changed_at_ms: None,
+                screen_activity: None,
+                menu_prompt_active: false,
+                runtime: None,
+                host_protocol_version: HOST_PROTOCOL_VERSION,
+                host_build_id: crate::protocol::host_build_id(),
                 created_at_ms: updated_at_ms,
                 updated_at_ms,
             },
@@ -1448,6 +1790,9 @@ mod tests {
             now - FINISHED_RECORD_MAX_AGE_MS - 60_000,
         );
         let recent = exited_manifest(home.path(), &workspace, now - 60_000);
+        let stale_data = paneflow_home::host_session_data_dir_in(home.path(), yesterday.as_str());
+        std::fs::create_dir_all(&stale_data).unwrap();
+        std::fs::write(stale_data.join("last-hook-event.json"), b"{}").unwrap();
 
         let host = SessionHost::open(home.path(), &endpoint).unwrap();
         let listed = host.list(None);
@@ -1463,6 +1808,10 @@ mod tests {
         assert!(
             !crate::manifest::manifest_path(home.path(), &yesterday).exists(),
             "a forgotten record leaves no file behind"
+        );
+        assert!(
+            !stale_data.exists(),
+            "the retention sweep takes the forgotten session's hook seed with it"
         );
     }
 
@@ -1584,6 +1933,153 @@ mod tests {
     }
 
     #[test]
+    fn the_viewport_scan_stamps_the_screen_and_flags_an_agent_drawn_menu() {
+        let home = tempfile::tempdir().unwrap();
+        let endpoint = home.path().join("host.sock");
+        let host = SessionHost::open(home.path(), &endpoint).unwrap();
+        let created = host.create(shell_request(100, 24)).unwrap();
+        let session = created.manifest.session.clone();
+        assert!(created.manifest.screen_changed_at_ms.is_none());
+        assert!(!created.manifest.menu_prompt_active);
+
+        assert!(
+            wait_until(Duration::from_secs(15), || {
+                host.inspect(&session)
+                    .is_ok_and(|summary| summary.manifest.screen_changed_at_ms.is_some())
+            }),
+            "the scan stamps the first painted screen"
+        );
+        let stamped = host.inspect(&session).unwrap().manifest;
+        assert!(!stamped.menu_prompt_active);
+        assert!(
+            stamped.runtime.is_none(),
+            "a plain shell is never mistaken for an agent runtime"
+        );
+
+        host.input(
+            &session,
+            Some(SessionGeneration::FIRST),
+            b"echo Enter to select - up/down to navigate - Esc to cancel
+"
+            .to_vec(),
+        )
+        .unwrap();
+        assert!(
+            wait_until(Duration::from_secs(15), || {
+                host.inspect(&session)
+                    .is_ok_and(|summary| summary.manifest.menu_prompt_active)
+            }),
+            "an agent-drawn menu footer reaches the manifest without any hook"
+        );
+        let asking = host.inspect(&session).unwrap().manifest;
+        assert!(asking.screen_changed_at_ms >= stamped.screen_changed_at_ms);
+        assert!(
+            read_manifest(&crate::manifest::manifest_path(home.path(), &session))
+                .unwrap()
+                .menu_prompt_active,
+            "the edge is persisted, not only held in memory"
+        );
+
+        host.stop(&session, None).unwrap();
+    }
+
+    #[test]
+    fn a_bare_escape_in_a_bound_claude_pane_fences_the_turn_and_the_next_enter_resumes_it() {
+        let home = tempfile::tempdir().unwrap();
+        let endpoint = home.path().join("host.sock");
+        let host = SessionHost::open(home.path(), &endpoint).unwrap();
+        let created = host.create(shell_request(100, 24)).unwrap();
+        let session = created.manifest.session.clone();
+        let directory = host.session_data_dir(&session);
+        let subscription = host.subscribe_agents();
+
+        host.input(&session, None, b"\x1b".to_vec()).unwrap();
+        std::thread::sleep(crate::session_input::ESCAPE_SETTLE * 2);
+        assert_eq!(
+            crate::hook_assets::read_cancellation(&directory),
+            None,
+            "an unbound pane never fences a turn"
+        );
+
+        host.bind_runtime(&session, None, Some("com.anthropic.claude-code"))
+            .unwrap();
+        assert_eq!(
+            host.inspect(&session)
+                .unwrap()
+                .manifest
+                .runtime
+                .and_then(|runtime| runtime.launch_binding)
+                .as_deref(),
+            Some("com.anthropic.claude-code")
+        );
+
+        host.input(&session, None, b"\x1b".to_vec()).unwrap();
+        assert!(
+            wait_until(Duration::from_secs(5), || {
+                crate::hook_assets::read_cancellation(&directory).is_some()
+            }),
+            "a bare escape settles into a cancellation marker"
+        );
+        let fenced = crate::hook_assets::read_cancellation(&directory).unwrap();
+        assert_eq!(fenced.runtime_generation, SessionGeneration::FIRST.get());
+        assert_eq!(fenced.submitted_at, None);
+
+        let announced = wait_until(Duration::from_secs(5), || {
+            matches!(
+                subscription.frames.try_recv(),
+                Ok(frame) if frame["type"] == "cancellation"
+                    && frame["session"] == session.to_string()
+            )
+        });
+        assert!(announced, "the fence is announced on the agent bus");
+
+        host.input(&session, None, b"retry\r".to_vec()).unwrap();
+        assert!(
+            wait_until(Duration::from_secs(5), || {
+                crate::hook_assets::read_cancellation(&directory)
+                    .is_some_and(|marker| marker.submitted_at.is_some())
+            }),
+            "the next Enter records the resumption in the same marker"
+        );
+
+        host.bind_runtime(&session, None, None).unwrap();
+        host.input(&session, None, b"\x1b".to_vec()).unwrap();
+        std::thread::sleep(crate::session_input::ESCAPE_SETTLE * 2);
+        let unbound = crate::hook_assets::read_cancellation(&directory).unwrap();
+        assert_eq!(
+            unbound.cancelled_at, fenced.cancelled_at,
+            "unbinding the runtime retires the fence"
+        );
+
+        assert!(
+            host.bind_runtime(&session, None, Some("com.example.nope"))
+                .is_err(),
+            "only a catalog runtime can be bound"
+        );
+
+        host.stop(&session, None).unwrap();
+    }
+
+    #[test]
+    fn a_codex_pane_never_fences_an_escape_because_its_interrupt_hook_settles_the_turn() {
+        let home = tempfile::tempdir().unwrap();
+        let endpoint = home.path().join("host.sock");
+        let host = SessionHost::open(home.path(), &endpoint).unwrap();
+        let created = host.create(shell_request(80, 24)).unwrap();
+        let session = created.manifest.session.clone();
+        host.bind_runtime(&session, None, Some("com.openai.codex"))
+            .unwrap();
+
+        host.input(&session, None, b"\x1b".to_vec()).unwrap();
+        std::thread::sleep(crate::session_input::ESCAPE_SETTLE * 3);
+        assert_eq!(
+            crate::hook_assets::read_cancellation(&host.session_data_dir(&session)),
+            None
+        );
+        host.stop(&session, None).unwrap();
+    }
+
+    #[test]
     fn the_host_assigns_durable_ids_persists_manifests_and_stops_owned_processes() {
         let home = tempfile::tempdir().unwrap();
         let endpoint = PathBuf::from("test-endpoint");
@@ -1625,7 +2121,19 @@ mod tests {
 
         let manifest_path = crate::manifest::manifest_path(home.path(), &session);
         let on_disk = read_manifest(&manifest_path).unwrap();
-        assert_eq!(on_disk, created.manifest);
+        assert_eq!(
+            SessionManifest {
+                title: None,
+                updated_at_ms: 0,
+                ..on_disk
+            },
+            SessionManifest {
+                title: None,
+                updated_at_ms: 0,
+                ..created.manifest.clone()
+            },
+            "the manifest on disk carries the same durable identity as the one in memory"
+        );
         assert_eq!(host.list(Some(&workspace)).len(), 1);
         assert!(host.list(Some(&WorkspaceId::new())).is_empty());
 
@@ -1671,6 +2179,74 @@ mod tests {
             host.input(&session, None, b"x".to_vec()),
             Err(HostError::Runtime(RuntimeError::NotLive))
         ));
+    }
+
+    #[test]
+    fn agent_ingress_rejects_old_generations_and_persists_the_accepted_seed() {
+        let home = tempfile::tempdir().unwrap();
+        let host = SessionHost::open(home.path(), Path::new("agent-ingress")).unwrap();
+        let created = host.create(shell_request(80, 24)).unwrap();
+        let session = created.manifest.session.clone();
+        let accepted = crate::agent::AgentEvent::from_params(&json!({
+            "session": session,
+            "runtime_generation": 1,
+            "kind": "ai.notification",
+            "tool": "claude",
+            "tool_name": "AskUserQuestion",
+            "hook_payload": {
+                "hook_event_name": "PermissionRequest",
+                "tool_name": "AskUserQuestion",
+                "message": "Choose one"
+            }
+        }))
+        .unwrap();
+        let response = host.ingest_agent_event(&accepted).unwrap();
+        assert_eq!(response["accepted"], true);
+        let seed_path = paneflow_home::host_session_data_dir_in(home.path(), session.as_str())
+            .join("last-hook-event.json");
+        let seed: Value = serde_json::from_slice(&std::fs::read(seed_path).unwrap()).unwrap();
+        assert_eq!(
+            seed,
+            json!({
+                "hook_event_name": "PermissionRequest",
+                "tool_name": "AskUserQuestion",
+                "runtime_generation": 1
+            })
+        );
+
+        host.stop(&session, None).unwrap();
+        host.restart(&session, None).unwrap();
+        let rejected = host.ingest_agent_event(&accepted).unwrap();
+        assert_eq!(rejected["accepted"], false);
+        assert_eq!(rejected["generation"], 2);
+        host.stop(&session, None).unwrap();
+    }
+
+    #[test]
+    fn forgetting_a_session_takes_its_hook_seed_directory_with_it() {
+        let home = tempfile::tempdir().unwrap();
+        let host = SessionHost::open(home.path(), Path::new("agent-seed-cleanup")).unwrap();
+        let created = host.create(shell_request(80, 24)).unwrap();
+        let session = created.manifest.session.clone();
+        let event = crate::agent::AgentEvent::from_params(&json!({
+            "session": session,
+            "runtime_generation": 1,
+            "kind": "ai.stop",
+            "tool": "claude",
+            "hook_payload": {"hook_event_name": "Stop"}
+        }))
+        .unwrap();
+        host.ingest_agent_event(&event).unwrap();
+        let session_dir = paneflow_home::host_session_data_dir_in(home.path(), session.as_str());
+        assert!(session_dir.join("last-hook-event.json").is_file());
+
+        host.stop(&session, None).unwrap();
+        host.remove(&session).unwrap();
+        assert!(
+            !session_dir.exists(),
+            "a forgotten session leaves no hook seed behind at {}",
+            session_dir.display()
+        );
     }
 
     #[test]
@@ -1872,6 +2448,7 @@ mod tests {
         let helper_dir = std::env::temp_dir().join("paneflow-helpers");
         let env = launch_env(
             &session,
+            SessionGeneration::FIRST,
             Some(&workspace),
             Path::new("/home/x/.paneflow"),
             Path::new("/run/paneflow-host.sock"),
@@ -1880,6 +2457,19 @@ mod tests {
         );
         assert_eq!(env.get("KEEP_ME").map(String::as_str), Some("yes"));
         assert_eq!(env.get("PANEFLOW_SESSION_ID"), Some(&session.to_string()));
+        assert_eq!(
+            env.get("PANEFLOW_SESSION_DIR").map(PathBuf::from),
+            Some(
+                Path::new("/home/x/.paneflow")
+                    .join("host")
+                    .join("session-data")
+                    .join(session.as_str())
+            )
+        );
+        assert_eq!(
+            env.get("PANEFLOW_RUNTIME_GENERATION").map(String::as_str),
+            Some("1")
+        );
         assert!(
             !env.contains_key("PANEFLOW_WORKSPACE_ID"),
             "the legacy integer marker is never forged from a UUID; the MCP bridge parses it as u64"
@@ -1919,6 +2509,7 @@ mod tests {
         ]);
         let env = launch_env(
             &session,
+            SessionGeneration::FIRST,
             Some(&workspace),
             Path::new("/home/x/.paneflow"),
             Path::new("/run/paneflow-host.sock"),

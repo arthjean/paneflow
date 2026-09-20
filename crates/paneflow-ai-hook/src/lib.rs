@@ -8,6 +8,7 @@
     )
 )]
 
+mod background;
 mod event;
 mod runtime;
 mod transport;

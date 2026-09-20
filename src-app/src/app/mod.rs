@@ -24,7 +24,6 @@ pub mod fleet_search;
 pub(crate) mod host_agents;
 pub(crate) mod hosted_sessions;
 pub mod ipc_handler;
-pub mod launch_pad;
 pub mod notifications;
 pub mod pane_palette;
 pub mod pull_request;

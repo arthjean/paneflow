@@ -5,6 +5,17 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
 
 ## [Unreleased]
 
+### Removed
+
+- The Launch Pad modal, its `open_launch_pad` action and the
+  `Cmd/Ctrl+Shift+L` default binding. Creating a branch, its worktree and an
+  agent pane in one step lives in the "New pane" palette's **New branch…**
+  form and in the tab context menu, which carry the same branch name, base
+  and worktree options; the optional prompt pre-fill the modal carried has no
+  equivalent there. A `shortcuts` entry that still names `open_launch_pad` is
+  skipped with a warning in the log and no longer appears in Settings >
+  Keyboard Shortcuts, so it has to be removed from `paneflow.json` by hand.
+
 ## [0.16.0] - 2026-09-18
 
 Terminal sessions move out of the window and into `paneflow-host`, a detached

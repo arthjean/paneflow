@@ -1,0 +1,42 @@
+schema_version = 1
+id = "com.amazon.kiro-cli"
+slug = "kiro"
+label = "Kiro"
+platforms = ["linux", "macos"]
+capabilities = []
+
+[display]
+order = 9
+icon_asset_path = "agents/kiro-color.svg"
+icon_multicolor = true
+visibility_config_key = "kiro_button_visible"
+
+[detection]
+command_aliases = ["kiro-cli"]
+process_aliases = ["kiro-cli"]
+script_path_signatures = []
+
+[environment]
+strip_inherited = []
+
+[lifecycle]
+source = "output"
+authority = "none"
+fallback = "none"
+escape_cancels_turn = false
+attention_clears_on_output = true
+anchor_start_event_to_output = true
+terminal_title_signal = false
+
+[integration]
+summary = "Kiro has no Paneflow lifecycle hook integration."
+hook_adapter = "none"
+
+[install]
+command = ""
+
+[[suggested_presets]]
+id = "kiro"
+label = "Kiro"
+command = "kiro-cli chat"
+quick_launch = false

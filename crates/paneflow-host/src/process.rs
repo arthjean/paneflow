@@ -18,11 +18,40 @@ impl ProcessIdentity {
     }
 
     pub fn is_provably_live(&self) -> bool {
-        match self.started_at {
-            Some(recorded) => {
-                process_start_time(self.pid) == Some(recorded) && process_is_running(self.pid)
+        matches!(self.verify(), ProcessVerdict::Live)
+    }
+
+    pub fn verify(&self) -> ProcessVerdict {
+        let Some(recorded) = self.started_at else {
+            return ProcessVerdict::Unverifiable;
+        };
+        match process_start_time(self.pid) {
+            Some(observed) if observed == recorded => {
+                if process_is_running(self.pid) {
+                    ProcessVerdict::Live
+                } else {
+                    ProcessVerdict::Gone
+                }
             }
-            None => false,
+            Some(_) => ProcessVerdict::Unverifiable,
+            None => ProcessVerdict::Gone,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProcessVerdict {
+    Live,
+    Gone,
+    Unverifiable,
+}
+
+impl ProcessVerdict {
+    pub fn wire_str(self) -> &'static str {
+        match self {
+            Self::Live => "live",
+            Self::Gone => "gone",
+            Self::Unverifiable => "unverifiable",
         }
     }
 }
@@ -179,7 +208,15 @@ pub struct WindowsProcessTreeTerminationResult {
 }
 
 #[cfg(windows)]
-fn windows_process_entries() -> io::Result<Vec<(u32, u32)>> {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct WindowsProcessEntry {
+    pub pid: u32,
+    pub parent_pid: u32,
+    pub name: String,
+}
+
+#[cfg(windows)]
+pub(crate) fn windows_process_entries_named() -> io::Result<Vec<WindowsProcessEntry>> {
     use std::mem;
     use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
     use windows_sys::Win32::System::Diagnostics::ToolHelp::{
@@ -192,7 +229,7 @@ fn windows_process_entries() -> io::Result<Vec<(u32, u32)>> {
         return Err(io::Error::last_os_error());
     }
 
-    let mut entries: Vec<(u32, u32)> = Vec::with_capacity(256);
+    let mut entries: Vec<WindowsProcessEntry> = Vec::with_capacity(256);
     let mut entry: PROCESSENTRY32W = unsafe { mem::zeroed() };
     entry.dwSize = mem::size_of::<PROCESSENTRY32W>() as u32;
     if unsafe { Process32FirstW(snap, &mut entry) } == 0 {
@@ -201,13 +238,30 @@ fn windows_process_entries() -> io::Result<Vec<(u32, u32)>> {
         return Err(error);
     }
     loop {
-        entries.push((entry.th32ProcessID, entry.th32ParentProcessID));
+        let end = entry
+            .szExeFile
+            .iter()
+            .position(|unit| *unit == 0)
+            .unwrap_or(entry.szExeFile.len());
+        entries.push(WindowsProcessEntry {
+            pid: entry.th32ProcessID,
+            parent_pid: entry.th32ParentProcessID,
+            name: String::from_utf16_lossy(&entry.szExeFile[..end]),
+        });
         if unsafe { Process32NextW(snap, &mut entry) } == 0 {
             break;
         }
     }
     unsafe { CloseHandle(snap) };
     Ok(entries)
+}
+
+#[cfg(windows)]
+fn windows_process_entries() -> io::Result<Vec<(u32, u32)>> {
+    Ok(windows_process_entries_named()?
+        .into_iter()
+        .map(|entry| (entry.pid, entry.parent_pid))
+        .collect())
 }
 
 #[cfg(windows)]
