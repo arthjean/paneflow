@@ -72,6 +72,29 @@ paneflow watch --type ai.notification --type surface_changed
 `watch` streams newline-delimited JSON from `events.subscribe` until
 you stop it.
 
+`sessions` reads the same reduced projection the desktop sidebar shows,
+straight from the per-home worker, with no running window needed:
+
+```bash
+paneflow sessions
+paneflow sessions --follow --json
+paneflow sessions ack 01JABCDEFGHJKMNPQRSTVWXYZ
+```
+
+The first line is a bootstrap carrying the worker identity and the
+capabilities it advertises; after it, one frame per reduced transition with
+`status`, `activity`, `activity_source`, `runtime_id`, `unread` and
+`updated_at_ms`. `--follow` reconnects on its own when the worker restarts: the
+bootstrap it prints then carries `resumed: true`, the whole fleet under
+`sessions`, and under `fresh` only the rows whose state moved while the
+link was down, so a script can pick up where it left off without
+replaying rows. A feature the bootstrap does not advertise is refused
+before anything reaches the wire, with `capability not advertised:
+<name>`; the CLI never probes for one.
+
+`ack` lowers the `unread` flag the worker raised on a finished turn, the
+same flag the desktop lowers when you look at the pane.
+
 ## How do I write safely?
 
 `send` stages text in a pane. It does not press Enter unless you pass

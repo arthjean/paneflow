@@ -83,6 +83,12 @@ pub fn resolve_control_target(host_endpoint_fallback: Option<PathBuf>) -> Option
     )
 }
 
+#[derive(Debug)]
+pub enum ControlConnectError {
+    Transport(io::Error),
+    Handshake(String),
+}
+
 pub struct HostControl {
     wire: Wire,
     next_id: u64,
@@ -99,19 +105,30 @@ impl HostControl {
         client: &str,
         deadline: Duration,
     ) -> Result<Self, String> {
-        let wire = Wire::connect(endpoint, MAX_CONTROL_FRAME_BYTES).map_err(|error| {
-            format!(
+        Self::open(endpoint, client, deadline).map_err(|error| match error {
+            ControlConnectError::Transport(error) => format!(
                 "the local Paneflow host is not reachable at {} ({error})",
                 endpoint.display()
-            )
-        })?;
+            ),
+            ControlConnectError::Handshake(message) => message,
+        })
+    }
+
+    pub fn open(
+        endpoint: &Path,
+        client: &str,
+        deadline: Duration,
+    ) -> Result<Self, ControlConnectError> {
+        let wire = Wire::connect(endpoint, MAX_CONTROL_FRAME_BYTES)
+            .map_err(ControlConnectError::Transport)?;
         let mut control = Self {
             wire,
             next_id: 1,
             identity: Value::Null,
         };
-        control.identity =
-            control.request_with_deadline(METHOD_HOST_HELLO, control_hello(client), deadline)?;
+        control.identity = control
+            .request_with_deadline(METHOD_HOST_HELLO, control_hello(client), deadline)
+            .map_err(ControlConnectError::Handshake)?;
         Ok(control)
     }
 

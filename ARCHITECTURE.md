@@ -498,7 +498,23 @@ stale code.
   Windows walks the child process tree and reads each PEB command line.
 - **Capabilities, not probes.** `worker.hello` answers a `WorkerIdentity`
   carrying the set in `protocol/host-capabilities-v1.json`. A Controller reads
-  that set once and never discovers a feature by trying it.
+  that set once and never discovers a feature by trying it. A capability the
+  file does not list is refused by the client before a frame leaves, with
+  `capability not advertised: <name>`.
+- **One attention queue.** A session carries `unread`, raised by the worker
+  when it publishes a `finished` notification and lowered by
+  `agent.acknowledge`. The desktop reads that flag off the projection and
+  acknowledges the sessions the user has actually looked at, whatever its own
+  local badge holds, so a restart of the window cannot strand an `unread` a
+  remote Controller would keep showing.
+- **A second Controller proves the protocol.** `crates/paneflow-serve/src/controller.rs`
+  is the Controller client: it connects, reads the advertised set, follows the
+  stream, and reconnects to a worker that restarted without replaying a row
+  whose projection has not moved (recency stamps alone do not make a row
+  fresh). `paneflow sessions [--follow] [--json]` is that client as a separate
+  process, and `protocol/controller-conformance-v1.json` lists the cases it
+  must pass; `crates/paneflow-serve/tests/controller_conformance.rs` runs every
+  one of them against a real worker, and a listed case with no runner fails.
 - **Restart recommendation.** A session whose core reports a
   `host_protocol_version` below the version this worker requires carries a
   `restart_recommended` token instead of failing. `host_build_id` travels

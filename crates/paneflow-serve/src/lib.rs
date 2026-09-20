@@ -10,6 +10,7 @@
 
 pub mod activity;
 pub mod bootstrap;
+pub mod controller;
 pub mod core_link;
 pub mod hook_assets;
 pub mod hook_state;
@@ -24,6 +25,7 @@ pub use bootstrap::{
     DRAIN_WAIT, OwnerLock, OwnerLockError, Probe, WorkerAdoption, WorkerBootstrapError,
     ensure_worker_running, needs_replacement, probe, stop_worker,
 };
+pub use controller::{Bootstrap, Controller, ControllerError, FollowFrame, FollowSession};
 pub use hook_state::{ActivityEngine, HookState, Notice, Outcome};
 pub use notifications::{ActivityLog, Notification};
 pub use protocol::{

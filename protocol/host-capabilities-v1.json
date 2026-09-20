@@ -46,6 +46,11 @@
       "summary": "The worker decides when a session finished or needs input and publishes that decision as notify on the agent.event frame; screen-sourced edges never carry one."
     },
     {
+      "name": "agent.unread",
+      "since": 1,
+      "summary": "Every session carries unread, raised by the worker when it publishes a finished notification and lowered by agent.acknowledge, so every Controller sees the same attention queue."
+    },
+    {
       "name": "agent.activity_log",
       "since": 1,
       "summary": "agent.activity_log returns the worker's bounded history of settled turns with their outcome: completed, failed:<reason>, expired or cancelled."

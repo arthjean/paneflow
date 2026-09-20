@@ -295,28 +295,7 @@ fn broadcast_projection(
     projection: &crate::state::Projection,
     source: &Value,
 ) {
-    let session = &projection.session;
-    worker.bus.broadcast(&json!({
-        "type": "event",
-        "session": session["session"],
-        "kind": source["kind"],
-        "tool": source["tool"],
-        "pid": source["pid"],
-        "tool_name": source["tool_name"],
-        "exit_code": source["exit_code"],
-        "emitted_at_ms": source["emitted_at_ms"],
-        "event_source": source["event_source"],
-        "hook_payload": source["hook_payload"],
-        "agent": session["activity"],
-        "activity_source": session["activity_source"],
-        "status": session["status"],
-        "outcome": session["outcome"],
-        "runtime_id": session["runtime_id"],
-        "notify": projection
-            .notification
-            .as_ref()
-            .map(crate::notifications::Notification::to_value),
-    }));
+    worker.publish(projection, source);
 }
 
 fn with_type(mut frame: Value, kind: &str) -> Value {

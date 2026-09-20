@@ -13,9 +13,9 @@ use serde_json::{Value, json};
 use crate::protocol::{
     DEFAULT_ACTIVITY_LOG_LIMIT, ERR_BUSY, ERR_FRAME_TOO_LARGE, ERR_HANDSHAKE_REQUIRED,
     ERR_INTERNAL, ERR_INVALID_REQUEST, ERR_METHOD_NOT_FOUND, ERR_PARSE, MAX_CONTROL_FRAME_BYTES,
-    METHOD_AGENT_ACTIVITY_LOG, METHOD_AGENT_FOLLOW, METHOD_AGENT_SNAPSHOT, METHOD_HOST_HELLO,
-    METHOD_WORKER_HELLO, METHOD_WORKER_SHUTDOWN, METHOD_WORKER_STATUS, WorkerIdentity,
-    error_envelope, result_envelope,
+    METHOD_AGENT_ACKNOWLEDGE, METHOD_AGENT_ACTIVITY_LOG, METHOD_AGENT_FOLLOW,
+    METHOD_AGENT_SNAPSHOT, METHOD_HOST_HELLO, METHOD_WORKER_HELLO, METHOD_WORKER_SHUTDOWN,
+    METHOD_WORKER_STATUS, WorkerIdentity, error_envelope, result_envelope,
 };
 use crate::state::WorkerState;
 
@@ -37,6 +37,7 @@ pub const WORKER_ANSWERED: &[&str] = &[
     METHOD_AGENT_SNAPSHOT,
     METHOD_AGENT_FOLLOW,
     METHOD_AGENT_ACTIVITY_LOG,
+    METHOD_AGENT_ACKNOWLEDGE,
     "fleet.list",
     "surface.status",
 ];
@@ -129,6 +130,53 @@ impl Worker {
             "core_connected": self.core_connected.load(Ordering::Acquire),
             "capabilities": self.identity.capabilities,
         })
+    }
+
+    pub fn publish(&self, projection: &crate::state::Projection, source: &Value) {
+        let session = &projection.session;
+        self.bus.broadcast(&json!({
+            "type": "event",
+            "session": session["session"],
+            "kind": source["kind"],
+            "tool": source["tool"],
+            "pid": source["pid"],
+            "tool_name": source["tool_name"],
+            "exit_code": source["exit_code"],
+            "emitted_at_ms": source["emitted_at_ms"],
+            "event_source": source["event_source"],
+            "hook_payload": source["hook_payload"],
+            "agent": session["activity"],
+            "activity_source": session["activity_source"],
+            "status": session["status"],
+            "outcome": session["outcome"],
+            "runtime_id": session["runtime_id"],
+            "unread": session["unread"],
+            "updated_at_ms": session["updated_at_ms"],
+            "notify": projection
+                .notification
+                .as_ref()
+                .map(crate::notifications::Notification::to_value),
+        }));
+    }
+
+    fn acknowledge(&self, params: &Value) -> Value {
+        let requested: Vec<paneflow_config::schema::SessionId> = params["sessions"]
+            .as_array()
+            .map(|entries| entries.iter().filter_map(Value::as_str).collect::<Vec<_>>())
+            .or_else(|| params["session"].as_str().map(|one| vec![one]))
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|raw| paneflow_config::schema::SessionId::parse(raw).ok())
+            .collect();
+        let projections = self.lock_state().acknowledge(&requested);
+        let acknowledged: Vec<Value> = projections
+            .iter()
+            .map(|projection| projection.session["session"].clone())
+            .collect();
+        for projection in &projections {
+            self.publish(projection, &json!({}));
+        }
+        json!({"acknowledged": acknowledged})
     }
 
     fn fleet_list(&self) -> Value {
@@ -468,6 +516,7 @@ fn dispatch(worker: &Worker, method: &str, params: &Value) -> Result<Value, Disp
                 .unwrap_or(DEFAULT_ACTIVITY_LOG_LIMIT);
             Ok(json!({"entries": worker.lock_state().activity_log().to_values(limit)}))
         }
+        METHOD_AGENT_ACKNOWLEDGE => Ok(worker.acknowledge(params)),
         "fleet.list" => Ok(worker.fleet_list()),
         "surface.status" => {
             let proxied = crate::core_link::call_core(&worker.core_endpoint, method, params)

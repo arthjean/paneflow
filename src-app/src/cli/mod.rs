@@ -11,6 +11,7 @@ mod read_cmds;
 mod selector;
 mod send_cmd;
 mod serve_cmd;
+mod sessions_cmd;
 mod up_cmd;
 mod wait_cmd;
 mod watch_cmd;
@@ -39,6 +40,7 @@ const VERBS: &[&str] = &[
     "flow",
     "host",
     "serve",
+    "sessions",
     "list_panes",
     "read_pane",
     "search_pane",
@@ -262,6 +264,20 @@ enum Commands {
         about = "Start, inspect or stop the per-home worker that owns agent activity and serves Controllers"
     )]
     Serve(serve_cmd::ServeCommand),
+    #[command(
+        about = "Read the worker's session projection as a Controller: a bootstrap carrying its advertised capabilities, then one frame per reduced transition"
+    )]
+    Sessions {
+        #[command(subcommand)]
+        command: Option<sessions_cmd::SessionsCommand>,
+        #[arg(
+            long,
+            help = "Stay connected and print one frame per transition, reconnecting to a worker that restarts"
+        )]
+        follow: bool,
+        #[arg(long, help = "Emit JSON lines instead of a human table")]
+        json: bool,
+    },
     #[command(about = "Stream lifecycle events from the running instance as JSONL (EP-002)")]
     Watch {
         #[arg(
@@ -368,6 +384,21 @@ pub fn run() -> i32 {
 
     if let Commands::Serve(command) = command {
         return match serve_cmd::run(command) {
+            Ok(code) => code,
+            Err(e) => {
+                eprintln!("paneflow: {}", e.message);
+                e.code
+            }
+        };
+    }
+
+    if let Commands::Sessions {
+        command,
+        follow,
+        json,
+    } = command
+    {
+        return match sessions_cmd::run(command, follow, json) {
             Ok(code) => code,
             Err(e) => {
                 eprintln!("paneflow: {}", e.message);
@@ -540,6 +571,11 @@ fn dispatch(command: Commands, client: &CliTransport) -> Result<i32, CliError> {
         },
         Commands::Host(command) => host_cmd::run(command),
         Commands::Serve(command) => serve_cmd::run(command),
+        Commands::Sessions {
+            command,
+            follow,
+            json,
+        } => sessions_cmd::run(command, follow, json),
     }
 }
 
@@ -817,6 +853,50 @@ mod tests {
         let cli = Cli::try_parse_from(["paneflow", "serve", "run"]).expect("parse run");
         assert!(matches!(cli.command, Some(Commands::Serve(_))));
         let err = Cli::try_parse_from(["paneflow", "serve"]).expect_err("usage");
+        assert_eq!(err.exit_code(), 2);
+    }
+
+    #[test]
+    fn the_sessions_verb_routes_to_the_worker_before_the_gui_socket() {
+        assert!(is_cli_verb(Some("sessions")));
+        let cli = Cli::try_parse_from(["paneflow", "sessions", "--follow", "--json"])
+            .expect("parse the Controller stream");
+        assert!(matches!(
+            cli.command,
+            Some(Commands::Sessions {
+                command: None,
+                follow: true,
+                json: true,
+            })
+        ));
+        let bare = Cli::try_parse_from(["paneflow", "sessions"]).expect("parse the snapshot");
+        assert!(matches!(
+            bare.command,
+            Some(Commands::Sessions {
+                command: None,
+                follow: false,
+                json: false,
+            })
+        ));
+        let resume = Cli::try_parse_from(["paneflow", "sessions", "resume", "01JABC"])
+            .expect("parse the resume");
+        assert!(matches!(
+            resume.command,
+            Some(Commands::Sessions {
+                command: Some(sessions_cmd::SessionsCommand::Resume { .. }),
+                ..
+            })
+        ));
+        let ack =
+            Cli::try_parse_from(["paneflow", "sessions", "ack", "01JABC"]).expect("parse ack");
+        assert!(matches!(
+            ack.command,
+            Some(Commands::Sessions {
+                command: Some(sessions_cmd::SessionsCommand::Ack { .. }),
+                ..
+            })
+        ));
+        let err = Cli::try_parse_from(["paneflow", "sessions", "ack"]).expect_err("usage");
         assert_eq!(err.exit_code(), 2);
     }
 

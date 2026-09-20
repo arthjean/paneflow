@@ -2097,6 +2097,7 @@ mod tests {
             live: !stale,
             activity_source: crate::app::host_agents::ActivitySource::Hooks,
             restart_recommended: false,
+            unread: false,
         }
     }
 

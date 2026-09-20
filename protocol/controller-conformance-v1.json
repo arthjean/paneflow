@@ -1,0 +1,38 @@
+{
+  "schema": 1,
+  "protocol": "paneflow-worker",
+  "version": 1,
+  "description": "Cases a Controller must pass against a real paneflow serve worker over its real endpoint. crates/paneflow-serve/tests/controller_conformance.rs runs every case against the CLI Controller client in crates/paneflow-serve/src/controller.rs; a case listed here with no runner is a failure, not a skip.",
+  "cases": [
+    {
+      "id": "bootstrap_capabilities",
+      "summary": "The first frame a Controller receives is a bootstrap carrying the worker identity and the capability set from protocol/host-capabilities-v1.json, so no Controller ever probes a feature by trying it.",
+      "method": "agent.follow"
+    },
+    {
+      "id": "session_projection_fields",
+      "summary": "Every bootstrap row and every agent.event frame carries status, activity, activity_source, runtime_id, unread and updated_at_ms, so a Controller never reconstructs state or recency from local files.",
+      "method": "agent.follow"
+    },
+    {
+      "id": "unread_raised_and_acknowledged",
+      "summary": "A hook-sourced finished notification raises unread on the session it settles; agent.acknowledge lowers it and publishes the lowered row to every follower, so the desktop sidebar and a remote Controller show the same attention queue.",
+      "method": "agent.acknowledge"
+    },
+    {
+      "id": "capability_gate_refuses_resume",
+      "summary": "A worker that does not advertise session.runtime.resume refuses a resume with `capability not advertised` and sends no request over the wire.",
+      "method": "session.runtime.resume"
+    },
+    {
+      "id": "reconnect_without_duplicate_rows",
+      "summary": "When the worker restarts during agent.follow, the Controller reconnects within three seconds, resumes from a fresh bootstrap, and repeats no row that has not changed.",
+      "method": "agent.follow"
+    },
+    {
+      "id": "endpoint_is_owner_only",
+      "summary": "The worker endpoint is restricted to the account that owns it, read off the live object: the Unix socket's mode is 0600, and the Windows pipe's own DACL reads back as D:P(A;;FA;;;OW), protected, one allow ACE, owner alone, nothing inherited (the kernel maps the requested GA to FA when it assigns the descriptor). A transport denial surfaces to the caller as `permission denied`. This case proves the descriptor Paneflow puts on the object, which is the whole of Paneflow's responsibility here; enforcing that DACL against a token from another account is the kernel's own access check and is deliberately not exercised by this suite.",
+      "method": "worker.hello"
+    }
+  ]
+}

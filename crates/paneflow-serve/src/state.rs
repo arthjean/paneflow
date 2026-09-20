@@ -117,6 +117,7 @@ pub struct SessionEntry {
     pub screen_activity: Option<String>,
     pub menu_prompt_active: bool,
     pub observed_runtime: Option<RuntimeObservation>,
+    pub unread: bool,
     pub updated_at_ms: u64,
 }
 
@@ -150,6 +151,7 @@ impl SessionEntry {
             observed_runtime: manifest
                 .runtime
                 .and_then(|runtime| runtime.current_observation),
+            unread: false,
             updated_at_ms: manifest.updated_at_ms,
         };
         entry.refresh_health();
@@ -216,6 +218,7 @@ impl SessionEntry {
             "outcome": self.outcome,
             "runtime_id": self.runtime().map(|runtime| runtime.id),
             "menu_prompt_active": self.menu_prompt_active,
+            "unread": self.unread,
             "core_protocol": self.core_protocol,
             "core_build_id": self.core_build_id,
             "updated_at_ms": self.updated_at_ms,
@@ -676,15 +679,39 @@ impl WorkerState {
             Some(Notice::NeedsInput) => summary.message.clone(),
             None => None,
         });
-        let value = entry.to_value();
         let notification = notice.and_then(|notice| {
             notification_for(notice, source.is_hooks(), &runtime_label, body.as_deref())
         });
+        if notification
+            .as_ref()
+            .is_some_and(|notification| notification.kind == crate::notifications::KIND_FINISHED)
+        {
+            entry.unread = true;
+        }
+        let value = entry.to_value();
         Some(Projection {
             session: value,
             notification,
             changed: !settled,
         })
+    }
+
+    pub fn acknowledge(&mut self, sessions: &[SessionId]) -> Vec<Projection> {
+        sessions
+            .iter()
+            .filter_map(|session| {
+                let entry = self.sessions.get_mut(session)?;
+                if !entry.unread {
+                    return None;
+                }
+                entry.unread = false;
+                Some(Projection {
+                    session: entry.to_value(),
+                    notification: None,
+                    changed: true,
+                })
+            })
+            .collect()
     }
 }
 
@@ -789,6 +816,10 @@ fn merge_core_row(session: SessionId, raw: &Value, held: Option<SessionEntry>) -
                 held.as_ref()
                     .and_then(|entry| entry.observed_runtime.clone())
             }),
+        unread: same_generation
+            .then(|| held.as_ref().map(|entry| entry.unread))
+            .flatten()
+            .unwrap_or(false),
         updated_at_ms: raw["updated_at_ms"].as_u64().unwrap_or_else(now_ms),
     }
 }

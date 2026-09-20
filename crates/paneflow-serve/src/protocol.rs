@@ -22,6 +22,11 @@ pub const METHOD_WORKER_STATUS: &str = "worker.status";
 pub const METHOD_WORKER_SHUTDOWN: &str = "worker.shutdown";
 pub const METHOD_HOST_HELLO: &str = "host.hello";
 pub const METHOD_AGENT_ACTIVITY_LOG: &str = "agent.activity_log";
+pub const METHOD_AGENT_ACKNOWLEDGE: &str = "agent.acknowledge";
+
+pub const CAPABILITY_AGENT_FOLLOW: &str = "agent.follow";
+pub const CAPABILITY_AGENT_UNREAD: &str = "agent.unread";
+pub const CAPABILITY_SESSION_RUNTIME_RESUME: &str = "session.runtime.resume";
 
 pub const DEFAULT_ACTIVITY_LOG_LIMIT: usize = 50;
 
@@ -106,6 +111,11 @@ mod tests {
         assert!(advertised.contains(&"activity.reducer".to_string()));
         assert!(advertised.contains(&"activity.notifications".to_string()));
         assert!(advertised.contains(&"agent.activity_log".to_string()));
+        assert!(advertised.contains(&CAPABILITY_AGENT_UNREAD.to_string()));
+        assert!(
+            !advertised.contains(&CAPABILITY_SESSION_RUNTIME_RESUME.to_string()),
+            "a capability nobody implements is never advertised, so a Controller refuses instead of probing"
+        );
         let document: Value = serde_json::from_str(CAPABILITY_FILE).unwrap();
         assert_eq!(
             document["version"].as_u64(),

@@ -65,6 +65,7 @@ pub(crate) struct HostAgentRow {
     pub(crate) live: bool,
     pub(crate) activity_source: ActivitySource,
     pub(crate) restart_recommended: bool,
+    pub(crate) unread: bool,
 }
 
 #[derive(Default)]
@@ -181,6 +182,10 @@ pub(crate) fn row_from_snapshot(entry: &Value) -> Option<HostAgentRow> {
         restart_recommended: entry.get("restart_recommended").is_some_and(|value| {
             value.get("token").and_then(Value::as_str) == Some(paneflow_serve::RESTART_RECOMMENDED)
         }),
+        unread: entry
+            .get("unread")
+            .and_then(Value::as_bool)
+            .unwrap_or_default(),
     })
 }
 
@@ -332,6 +337,38 @@ fn send(tx: &SyncSender<HostAgentFrame>, frame: HostAgentFrame) -> Result<(), St
         Err(TrySendError::Full(_)) => Ok(()),
         Err(TrySendError::Disconnected(_)) => Err("the desktop stopped reading".to_string()),
     }
+}
+
+pub(crate) fn acknowledge_worker_unread(
+    sessions: Vec<SessionId>,
+    executor: gpui::BackgroundExecutor,
+) {
+    if sessions.is_empty() {
+        return;
+    }
+    let Some(endpoint) = paneflow_home::serve_endpoint_path_for_current_home() else {
+        return;
+    };
+    executor
+        .spawn(async move {
+            smol::unblock(move || {
+                let ids: Vec<String> = sessions.iter().map(SessionId::to_string).collect();
+                match paneflow_serve::Controller::connect(&endpoint) {
+                    Ok(mut controller) => {
+                        if let Err(error) = controller.acknowledge(&ids) {
+                            log::debug!(
+                                "paneflow: the worker refused an unread acknowledgement: {error}"
+                            );
+                        }
+                    }
+                    Err(error) => log::debug!(
+                        "paneflow: cannot reach the worker to acknowledge unread sessions: {error}"
+                    ),
+                }
+            })
+            .await;
+        })
+        .detach();
 }
 
 pub(crate) fn spawn_follow_thread() -> Option<Receiver<HostAgentFrame>> {
@@ -511,6 +548,7 @@ impl PaneFlowApp {
             "live": true,
             "activity": frame.get("agent").cloned().unwrap_or(Value::Null),
             "activity_source": frame.get("activity_source").cloned().unwrap_or(Value::Null),
+            "unread": frame.get("unread").cloned().unwrap_or(Value::Null),
         }));
         if let Some(row) = row.as_ref() {
             match frame.get("agent") {
@@ -552,7 +590,7 @@ impl PaneFlowApp {
         }
         let next_state = row.as_ref().and_then(|row| row.state);
         if let Some(decision) = WorkerNotification::from_frame(frame) {
-            self.deliver_worker_notification(&decision, workspace_id, surface_id, cx);
+            self.deliver_worker_notification(&decision, &session, workspace_id, surface_id, cx);
         }
         if next_state == Some(AgentState::Errored)
             && previous_state != Some(AgentState::Errored)
@@ -585,9 +623,27 @@ impl PaneFlowApp {
         cx.notify();
     }
 
+    pub(crate) fn unread_sessions_for_surfaces(
+        &self,
+        surfaces: &std::collections::HashSet<u64>,
+        cx: &gpui::App,
+    ) -> Vec<SessionId> {
+        self.host_agents
+            .rows
+            .values()
+            .filter(|row| row.unread)
+            .filter(|row| {
+                self.surface_for_session(&row.session, cx)
+                    .is_some_and(|(_, surface)| surfaces.contains(&surface))
+            })
+            .map(|row| row.session.clone())
+            .collect()
+    }
+
     fn deliver_worker_notification(
         &mut self,
         decision: &WorkerNotification,
+        session: &SessionId,
         workspace_id: u64,
         surface_id: u64,
         cx: &mut Context<Self>,
@@ -610,6 +666,9 @@ impl PaneFlowApp {
                 workspace
                     .agent_completion_notification
                     .record_finished(seen, Some(surface_id));
+                if seen {
+                    acknowledge_worker_unread(vec![session.clone()], executor.clone());
+                }
                 crate::agents::notifications::DesktopNotification::turn_finished_for(
                     &decision.runtime_label,
                     &workspace.title,
@@ -672,6 +731,7 @@ mod tests {
             "lifecycle": {"state": "lost"},
             "status": "busy",
             "activity_source": "hooks",
+            "unread": true,
             "activity": {
                 "tool": "claude",
                 "state": "thinking",
@@ -681,6 +741,10 @@ mod tests {
             },
         });
         let row = row_from_snapshot(&entry).expect("row");
+        assert!(
+            row.unread,
+            "the attention queue is read off the worker projection, never kept privately"
+        );
         assert_eq!(row.session, session);
         assert_eq!(row.tool, Some(TerminalAgent::ClaudeCode));
         assert_eq!(row.state, Some(AgentState::Thinking));
@@ -692,6 +756,7 @@ mod tests {
 
         let bare = json!({"session": session.to_string(), "live": true});
         let row = row_from_snapshot(&bare).expect("row");
+        assert!(!row.unread);
         assert_eq!(row.state, None, "no record is not an idle record");
         assert!(!row.stale);
         assert!(row.live);
