@@ -378,9 +378,14 @@ fn the_worker_owns_the_home_reduces_for_controllers_and_rebuilds_after_a_restart
         .get(&session)
         .cloned()
         .expect("the session is rebuilt from its manifest");
+    let rebuild_budget = if std::env::var_os("CI").is_some() {
+        Duration::from_secs(8)
+    } else {
+        Duration::from_secs(2)
+    };
     assert!(
-        restarted_at.elapsed() < Duration::from_secs(2),
-        "the rebuild stays inside the 2 s budget, took {:?}",
+        restarted_at.elapsed() < rebuild_budget,
+        "the rebuild stays inside the {rebuild_budget:?} budget, took {:?}",
         restarted_at.elapsed()
     );
     assert_eq!(

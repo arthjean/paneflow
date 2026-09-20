@@ -162,12 +162,11 @@ fn run_reporter(
     }
     let started = Instant::now();
     let mut child = command.spawn().expect("reporter process");
-    child
-        .stdin
-        .as_mut()
-        .expect("stdin")
-        .write_all(stdin_bytes)
-        .expect("stdin payload");
+    match child.stdin.as_mut().expect("stdin").write_all(stdin_bytes) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::BrokenPipe => {}
+        Err(error) => panic!("stdin payload: {error:?}"),
+    }
     drop(child.stdin.take());
     loop {
         match child.try_wait() {

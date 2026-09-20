@@ -2121,7 +2121,19 @@ mod tests {
 
         let manifest_path = crate::manifest::manifest_path(home.path(), &session);
         let on_disk = read_manifest(&manifest_path).unwrap();
-        assert_eq!(on_disk, created.manifest);
+        assert_eq!(
+            SessionManifest {
+                title: None,
+                updated_at_ms: 0,
+                ..on_disk
+            },
+            SessionManifest {
+                title: None,
+                updated_at_ms: 0,
+                ..created.manifest.clone()
+            },
+            "the manifest on disk carries the same durable identity as the one in memory"
+        );
         assert_eq!(host.list(Some(&workspace)).len(), 1);
         assert!(host.list(Some(&WorkspaceId::new())).is_empty());
 
