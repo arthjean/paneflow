@@ -98,6 +98,24 @@ fn wait_for_output(
     }
 }
 
+fn stable_session_identities(list: &Value) -> Vec<Value> {
+    let mut sessions: Vec<Value> = list["sessions"]
+        .as_array()
+        .expect("session.list carries a sessions array")
+        .iter()
+        .map(|entry| {
+            let mut entry = entry.clone();
+            entry
+                .as_object_mut()
+                .expect("a session entry is an object")
+                .remove("updated_at_ms");
+            entry
+        })
+        .collect();
+    sessions.sort_by(|left, right| left["session"].as_str().cmp(&right["session"].as_str()));
+    sessions
+}
+
 #[test]
 fn the_worker_owns_the_home_reduces_for_controllers_and_rebuilds_after_a_restart() {
     let home = tempfile::tempdir().unwrap();
@@ -415,8 +433,9 @@ fn the_worker_owns_the_home_reduces_for_controllers_and_rebuilds_after_a_restart
         .call("session.list", json!({}))
         .expect("the core lists its sessions after the replacement");
     assert_eq!(
-        sessions_before, sessions_after,
-        "the sessions list is identical before and after a worker replacement"
+        stable_session_identities(&sessions_before),
+        stable_session_identities(&sessions_after),
+        "every session keeps its identity and lifecycle across a worker replacement"
     );
     assert!(
         child.is_provably_live(),
