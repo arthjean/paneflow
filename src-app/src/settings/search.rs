@@ -200,7 +200,7 @@ const APPEARANCE_HEADERS: &[&str] = &["Theme", "Preferences", "System", "Light",
 const TERMINAL_HEADERS: &[&str] = &["Cursor", "Display", "Window"];
 #[cfg(not(target_os = "windows"))]
 const TERMINAL_HEADERS: &[&str] = &["Cursor", "Display"];
-const AGENTS_HEADERS: &[&str] = &["Agents", "Profiles", "Permissions"];
+const AGENTS_HEADERS: &[&str] = &["Agents", "Not installed", "Profiles", "Permissions"];
 const MCP_HEADERS: &[&str] = &["MCP bridge"];
 const WORKSPACES_HEADERS: &[&str] = &["Workspace templates"];
 const WORKTREES_HEADERS: &[&str] = &["Storage and cleanup", "Managed worktrees", "Snapshots"];
@@ -419,7 +419,7 @@ impl SearchCard {
     }
 
     fn finish(self) -> Div {
-        let mut card = setting_card(self.ui);
+        let mut card = setting_card(self.ui).py(px(crate::settings::components::CARD_PADDING_Y));
         let mut previous: Option<f32> = None;
         for (amount, element) in self.rows {
             if let Some(above) = previous {

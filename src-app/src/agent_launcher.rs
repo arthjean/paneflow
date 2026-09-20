@@ -35,26 +35,6 @@ impl TerminalAgent {
         RUNTIMES.iter().map(|runtime| TerminalAgent(runtime.id))
     }
 
-    pub fn primary() -> impl Iterator<Item = TerminalAgent> {
-        Self::all().filter(|agent| {
-            agent
-                .runtime()
-                .suggested_presets
-                .first()
-                .is_some_and(|preset| preset.quick_launch)
-        })
-    }
-
-    pub fn secondary() -> impl Iterator<Item = TerminalAgent> {
-        Self::all().filter(|agent| {
-            agent
-                .runtime()
-                .suggested_presets
-                .first()
-                .is_none_or(|preset| !preset.quick_launch)
-        })
-    }
-
     #[allow(
         clippy::expect_used,
         reason = "TerminalAgent values are private catalog identities"
@@ -962,16 +942,6 @@ mod tests {
         );
         assert_eq!(parse_version("no numbers here"), None);
         assert_eq!(parse_version("build 20260908"), None);
-    }
-
-    #[test]
-    fn primary_and_secondary_agents_partition_all() {
-        let mut seen: Vec<TerminalAgent> = TerminalAgent::primary().collect();
-        seen.extend(TerminalAgent::secondary());
-        assert_eq!(seen.len(), TerminalAgent::all().count());
-        for agent in TerminalAgent::all() {
-            assert!(seen.contains(&agent));
-        }
     }
 
     #[test]
