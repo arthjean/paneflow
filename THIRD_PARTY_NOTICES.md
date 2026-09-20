@@ -17,6 +17,17 @@ syntax palettes) are Paneflow's own.
 
 The strict runtime descriptor schema, generated registry model, and provider-neutral screen rule fixtures under `runtimes/` are adapted from Unpeel's runtime catalog at commit `443877b`. Paneflow's descriptor shape, socket integration, platform policy, and application model are its own.
 
+The activity reducer in `crates/paneflow-serve/src/hook_state.rs`, its durable
+hook assets in `crates/paneflow-serve/src/hook_assets.rs`, and the status
+derivation they feed in `crates/paneflow-serve/src/state.rs` are ported from
+Unpeel's `crates/unpeel-serve/src/activity.rs`,
+`crates/unpeel-core/src/hook_assets/`, `crates/unpeel-core/src/hook_cancellation.rs`
+and `crates/unpeel-serve/src/sessions.rs::derive_status_with_source` at commit
+`443877b`. The event vocabulary, latch model, five-minute lease, runtime
+generation guard and durable seed replay follow that design. Paneflow's socket
+transport, manifest types, notification decision and Controller projection are
+its own.
+
 ```
 MIT License
 

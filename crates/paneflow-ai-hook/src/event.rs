@@ -274,9 +274,17 @@ fn compact_hook_payload(event: HookEvent, payload: &Value) -> Value {
             copy_string_field(payload, &mut compact, "tool_name", 128);
         }
         HookEvent::Stop | HookEvent::StopFailure | HookEvent::Interrupt | HookEvent::SessionEnd => {
+            copy_string_field(
+                payload,
+                &mut compact,
+                "last_assistant_message",
+                MAX_HOOK_TEXT_BYTES,
+            );
             copy_string_field(payload, &mut compact, "summary", MAX_HOOK_TEXT_BYTES);
             copy_string_field(payload, &mut compact, "last_result", MAX_HOOK_TEXT_BYTES);
             copy_string_field(payload, &mut compact, "transcript_path", 2048);
+            copy_string_field(payload, &mut compact, "reason", 128);
+            copy_background_task_count(payload, &mut compact);
         }
         HookEvent::Exit => {
             copy_i64_field(payload, &mut compact, "exit_code");
@@ -286,6 +294,19 @@ fn compact_hook_payload(event: HookEvent, payload: &Value) -> Value {
     }
 
     Value::Object(compact)
+}
+
+fn copy_background_task_count(source: &Value, target: &mut serde_json::Map<String, Value>) {
+    let Some(tasks) = source.get("background_tasks") else {
+        return;
+    };
+    let count = match tasks {
+        Value::Array(entries) => entries.len() as u64,
+        Value::Number(number) => number.as_u64().unwrap_or(0),
+        Value::Bool(pending) => u64::from(*pending),
+        _ => return,
+    };
+    target.insert("background_tasks".to_owned(), Value::from(count));
 }
 
 fn copy_string_field(
@@ -391,6 +412,61 @@ mod tests {
                 sent_frame(build_frame(event, test_context(), payload).expect("valid frame"));
             assert_eq!(frame["method"], expected_method, "event={}", event.name());
         }
+    }
+
+    #[test]
+    fn a_stop_carries_its_background_task_count_and_its_failure_reason_without_the_task_payloads() {
+        let frame = sent_frame(
+            build_frame(
+                HookEvent::Stop,
+                test_context(),
+                json!({
+                    "last_assistant_message": "The change is ready.",
+                    "background_tasks": [
+                        {"id": "build", "prompt": "secret prompt"},
+                        {"id": "tests"}
+                    ],
+                }),
+            )
+            .expect("valid frame"),
+        );
+        assert_eq!(frame["params"]["hook_payload"]["background_tasks"], 2);
+        assert_eq!(
+            frame["params"]["hook_payload"]["last_assistant_message"],
+            "The change is ready."
+        );
+        assert!(
+            !frame["params"]["hook_payload"]
+                .to_string()
+                .contains("secret"),
+            "only the count crosses the wire, never the task payloads"
+        );
+
+        let empty = sent_frame(
+            build_frame(
+                HookEvent::Stop,
+                test_context(),
+                json!({"background_tasks": []}),
+            )
+            .expect("valid frame"),
+        );
+        assert_eq!(empty["params"]["hook_payload"]["background_tasks"], 0);
+
+        let failed = sent_frame(
+            build_frame(
+                HookEvent::StopFailure,
+                test_context(),
+                json!({"reason": "matcher rejected the answer"}),
+            )
+            .expect("valid frame"),
+        );
+        assert_eq!(
+            failed["params"]["hook_payload"]["reason"],
+            "matcher rejected the answer"
+        );
+
+        let bare = sent_frame(build_frame(HookEvent::Stop, test_context(), json!({})).expect("ok"));
+        assert!(bare["params"]["hook_payload"]["background_tasks"].is_null());
     }
 
     #[test]

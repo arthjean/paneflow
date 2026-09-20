@@ -21,6 +21,9 @@ pub const METHOD_WORKER_HELLO: &str = "worker.hello";
 pub const METHOD_WORKER_STATUS: &str = "worker.status";
 pub const METHOD_WORKER_SHUTDOWN: &str = "worker.shutdown";
 pub const METHOD_HOST_HELLO: &str = "host.hello";
+pub const METHOD_AGENT_ACTIVITY_LOG: &str = "agent.activity_log";
+
+pub const DEFAULT_ACTIVITY_LOG_LIMIT: usize = 50;
 
 pub const REQUEST_DEADLINE: Duration = Duration::from_secs(10);
 
@@ -100,6 +103,9 @@ mod tests {
         assert!(advertised.contains(&"agent.follow".to_string()));
         assert!(advertised.contains(&"restart.recommendation".to_string()));
         assert!(advertised.contains(&"integrations.refresh".to_string()));
+        assert!(advertised.contains(&"activity.reducer".to_string()));
+        assert!(advertised.contains(&"activity.notifications".to_string()));
+        assert!(advertised.contains(&"agent.activity_log".to_string()));
         let document: Value = serde_json::from_str(CAPABILITY_FILE).unwrap();
         assert_eq!(
             document["version"].as_u64(),

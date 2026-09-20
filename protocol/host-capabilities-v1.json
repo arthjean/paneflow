@@ -34,6 +34,21 @@
       "name": "integrations.refresh",
       "since": 1,
       "summary": "The worker re-runs the installers of installed integrations at start and adopts legacy per-launch installs once."
+    },
+    {
+      "name": "activity.reducer",
+      "since": 1,
+      "summary": "Busy, idle and attention follow hook events once a session latches; a five-minute lease re-armed only by a changed screen signal bounds a lost stop, and stale runtime generations are refused."
+    },
+    {
+      "name": "activity.notifications",
+      "since": 1,
+      "summary": "The worker decides when a session finished or needs input and publishes that decision as notify on the agent.event frame; screen-sourced edges never carry one."
+    },
+    {
+      "name": "agent.activity_log",
+      "since": 1,
+      "summary": "agent.activity_log returns the worker's bounded history of settled turns with their outcome: completed, failed:<reason>, expired or cancelled."
     }
   ]
 }

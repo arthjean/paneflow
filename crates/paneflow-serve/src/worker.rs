@@ -18,6 +18,7 @@ use crate::state::{WorkerState, now_ms};
 const HEALTH_REFRESH: Duration = Duration::from_secs(2);
 const FRAME_WAIT: Duration = Duration::from_millis(100);
 const DRAIN_PER_TICK: usize = 256;
+const MENU_EVIDENCE_DEADLINE: Duration = Duration::from_millis(100);
 
 #[derive(Debug, thiserror::Error)]
 pub enum WorkerError {
@@ -99,7 +100,7 @@ fn open_with_build_id(home: &Path, build_id: String) -> Result<RunningWorker, Wo
         started_at_ms: now_ms(),
         capabilities: advertised_capabilities(),
     };
-    let mut state = WorkerState::new();
+    let mut state = WorkerState::new(home);
     let rebuilt = state.rebuild_from_home(home);
     log::info!("paneflow-serve: rebuilt {rebuilt} sessions from manifests and seeds");
     let worker = Arc::new(Worker {
@@ -193,11 +194,24 @@ fn pump(worker: &Arc<Worker>, home: &Path) {
         if last_health.elapsed() >= HEALTH_REFRESH {
             last_health = std::time::Instant::now();
             refresh_core_snapshot(worker);
-            let sessions = {
+            let core_endpoint = worker.core_endpoint.clone();
+            let evidence = move |session: &paneflow_config::schema::SessionId| {
+                crate::core_link::menu_prompt_active(
+                    &core_endpoint,
+                    session,
+                    MENU_EVIDENCE_DEADLINE,
+                )
+            };
+            let (settled, sessions) = {
                 let mut state = worker.lock_state();
                 state.refresh_health();
-                state.snapshot()
+                let settled = state.sweep(std::time::SystemTime::now(), &evidence);
+                let sessions = state.snapshot();
+                (settled, sessions)
             };
+            for projection in settled {
+                broadcast_projection(worker, &projection, &json!({}));
+            }
             worker
                 .bus
                 .broadcast(&json!({"type": "snapshot", "sessions": sessions}));
@@ -209,8 +223,11 @@ fn refresh_core_snapshot(worker: &Arc<Worker>) {
     match crate::core_link::call_core(&worker.core_endpoint, METHOD_AGENT_SNAPSHOT, &json!({})) {
         Ok(snapshot) => {
             let entries = snapshot["sessions"].as_array().cloned().unwrap_or_default();
-            worker.lock_state().apply_core_snapshot(&entries);
+            let projections = worker.lock_state().apply_core_snapshot(&entries);
             worker.core_connected.store(true, Ordering::Release);
+            for projection in projections {
+                broadcast_projection(worker, &projection, &json!({}));
+            }
         }
         Err(error) => {
             worker.core_connected.store(false, Ordering::Release);
@@ -222,12 +239,16 @@ fn refresh_core_snapshot(worker: &Arc<Worker>) {
 fn apply(worker: &Arc<Worker>, frame: CoreFrame) {
     match frame {
         CoreFrame::Snapshot(entries) => {
-            {
+            let projections = {
                 let mut state = worker.lock_state();
-                state.apply_core_snapshot(&entries);
+                let projections = state.apply_core_snapshot(&entries);
                 state.refresh_health();
-            }
+                projections
+            };
             worker.core_connected.store(true, Ordering::Release);
+            for projection in projections {
+                broadcast_projection(worker, &projection, &json!({}));
+            }
             write_instance_record(worker);
             let snapshot = worker.snapshot_frame();
             worker.bus.broadcast(&with_type(snapshot, "snapshot"));
@@ -242,22 +263,8 @@ fn apply(worker: &Arc<Worker>, frame: CoreFrame) {
                 refresh_core_snapshot(worker);
             }
             let projected = worker.lock_state().apply_core_event(&value);
-            if let Some(session) = projected {
-                worker.bus.broadcast(&json!({
-                    "type": "event",
-                    "session": session["session"],
-                    "kind": value["kind"],
-                    "tool": value["tool"],
-                    "pid": value["pid"],
-                    "tool_name": value["tool_name"],
-                    "exit_code": value["exit_code"],
-                    "emitted_at_ms": value["emitted_at_ms"],
-                    "event_source": value["event_source"],
-                    "hook_payload": value["hook_payload"],
-                    "agent": session["activity"],
-                    "activity_source": session["activity_source"],
-                    "status": session["status"],
-                }));
+            if let Some(projection) = projected {
+                broadcast_projection(worker, &projection, &value);
             }
         }
         CoreFrame::Disconnected(reason) => {
@@ -268,6 +275,35 @@ fn apply(worker: &Arc<Worker>, frame: CoreFrame) {
                 .broadcast(&json!({"type": "core_disconnected", "reason": reason}));
         }
     }
+}
+
+fn broadcast_projection(
+    worker: &Arc<Worker>,
+    projection: &crate::state::Projection,
+    source: &Value,
+) {
+    let session = &projection.session;
+    worker.bus.broadcast(&json!({
+        "type": "event",
+        "session": session["session"],
+        "kind": source["kind"],
+        "tool": source["tool"],
+        "pid": source["pid"],
+        "tool_name": source["tool_name"],
+        "exit_code": source["exit_code"],
+        "emitted_at_ms": source["emitted_at_ms"],
+        "event_source": source["event_source"],
+        "hook_payload": source["hook_payload"],
+        "agent": session["activity"],
+        "activity_source": session["activity_source"],
+        "status": session["status"],
+        "outcome": session["outcome"],
+        "runtime_id": session["runtime_id"],
+        "notify": projection
+            .notification
+            .as_ref()
+            .map(crate::notifications::Notification::to_value),
+    }));
 }
 
 fn with_type(mut frame: Value, kind: &str) -> Value {

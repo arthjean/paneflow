@@ -68,20 +68,28 @@ impl DesktopNotification {
         workspace_title: &str,
         session_summary: Option<&str>,
     ) -> Self {
+        Self::turn_finished_for(agent.display_name(), workspace_title, session_summary)
+    }
+
+    pub(crate) fn turn_finished_for(
+        runtime_label: &str,
+        workspace_title: &str,
+        session_summary: Option<&str>,
+    ) -> Self {
         Self {
-            summary: format!("{} finished", agent.display_name()),
+            summary: format!("{runtime_label} finished"),
             body: notification_context_body(workspace_title, session_summary),
             urgency: DesktopNotificationUrgency::Normal,
         }
     }
 
-    pub(crate) fn needs_input(
-        agent: TerminalAgent,
+    pub(crate) fn needs_input_for(
+        runtime_label: &str,
         workspace_title: &str,
         message: Option<&str>,
     ) -> Self {
         Self {
-            summary: format!("{} needs input", agent.display_name()),
+            summary: format!("{runtime_label} needs input"),
             body: attention_notification_body(workspace_title, message),
             urgency: DesktopNotificationUrgency::Critical,
         }
@@ -142,6 +150,16 @@ pub(crate) fn fire_desktop_notification(
     seen: bool,
     executor: BackgroundExecutor,
 ) {
+    fire_desktop_notification_for_session(notification, config, seen, None, executor);
+}
+
+pub(crate) fn fire_desktop_notification_for_session(
+    notification: DesktopNotification,
+    config: &PaneFlowConfig,
+    seen: bool,
+    session_key: Option<u64>,
+    executor: BackgroundExecutor,
+) {
     let gate = config.agent_panel.as_ref().map_or(
         NotifyWhenAgentWaiting::Never,
         AgentPanelConfig::resolved_notify_when_agent_waiting,
@@ -152,9 +170,27 @@ pub(crate) fn fire_desktop_notification(
 
     executor
         .spawn(async move {
-            let _ = smol::unblock(move || show_desktop_notification(notification)).await;
+            if let Err(error) = smol::unblock(move || show_desktop_notification(notification)).await
+            {
+                report_delivery_failure(session_key, &error);
+            }
         })
         .detach();
+}
+
+static NOTIFIER_FAILURES_REPORTED: LazyLock<Mutex<HashSet<u64>>> =
+    LazyLock::new(|| Mutex::new(HashSet::new()));
+
+fn report_delivery_failure(session_key: Option<u64>, error: &str) {
+    if let Some(key) = session_key {
+        let mut reported = NOTIFIER_FAILURES_REPORTED
+            .lock()
+            .unwrap_or_else(|err| err.into_inner());
+        if !reported.insert(key) {
+            return;
+        }
+    }
+    log::warn!("paneflow: the desktop notifier refused a notification: {error}");
 }
 
 pub(crate) fn should_fire_desktop_notification(gate: NotifyWhenAgentWaiting, seen: bool) -> bool {
@@ -376,8 +412,8 @@ mod tests {
         assert_eq!(finished_without_summary.summary, "Codex finished");
         assert_eq!(finished_without_summary.body, "backend");
 
-        let attention = DesktopNotification::needs_input(
-            TerminalAgent::ClaudeCode,
+        let attention = DesktopNotification::needs_input_for(
+            TerminalAgent::ClaudeCode.display_name(),
             "backend",
             Some("Approve edit?"),
         );

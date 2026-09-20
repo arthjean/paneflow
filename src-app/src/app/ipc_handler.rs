@@ -176,10 +176,27 @@ pub(crate) fn fire_attention_notification(
     seen: bool,
     executor: gpui::BackgroundExecutor,
 ) {
-    desktop_notifications::fire_desktop_notification(
-        DesktopNotification::needs_input(agent, workspace_title, message),
+    fire_worker_notification(
+        DesktopNotification::needs_input_for(agent.display_name(), workspace_title, message),
         config,
         seen,
+        None,
+        executor,
+    );
+}
+
+pub(crate) fn fire_worker_notification(
+    notification: DesktopNotification,
+    config: &paneflow_config::schema::PaneFlowConfig,
+    seen: bool,
+    session_key: Option<u64>,
+    executor: gpui::BackgroundExecutor,
+) {
+    desktop_notifications::fire_desktop_notification_for_session(
+        notification,
+        config,
+        seen,
+        session_key,
         executor,
     );
 }

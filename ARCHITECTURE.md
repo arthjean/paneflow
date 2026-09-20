@@ -321,21 +321,23 @@ agent CLI (claude, codex, opencode, …)
   report `session_start`, `prompt_submit`, `tool_use`, `notification`, `stop`,
   `exit`, and `session_end` through the `ai.*` IPC namespace. Richest source,
   and the only one that names the active sub-tool or carries a turn summary.
-- **Three sources, one order**: hooks can be switched off outside Paneflow's
-  reach (Claude Code's managed settings do exactly that), so they are not the
-  substrate. Two hook-free sources back them: the escape sequences the agent
-  writes into its own pane, and the status file it maintains for its own peer
-  discovery. `ai_types::AgentStateSource` ranks them
-  (`Terminal < SessionRegistry < Hook`) and `upsert_session_state` enforces the
-  rank, so a weaker observer never talks over a live stronger one - and a
-  stronger one that falls silent hands over instead of freezing the sidebar.
+- **Hooks own the state once a session latches.** The first hook event of a
+  session makes it hook-owned, and from then on only hook events and the
+  bounded lease below move it. Raw output growth never starts a busy state.
+  Hooks can be switched off outside Paneflow's reach (Claude Code's managed
+  settings do exactly that), so a lower-confidence screen tier backs them: a
+  runtime that declares `[screen]` rules in its descriptor and has no latch
+  takes the host's screen verdict, published as `activity_source = screen`. A
+  screen verdict never produces a completion notification, and hooks win the
+  moment they latch.
 - **Where the reduction happens**: in the worker, never in the core and never
   in a Controller. The core validates a hook frame against the session's
   runtime generation, writes `last-hook-event.json` and records the raw
   `last_hook` on the manifest; the worker
-  (`crates/paneflow-serve/src/activity.rs`) turns that stream into a state and
-  publishes it with an `activity_source` of `hooks`, `screen` or `none`. The
-  GPUI app subscribes and renders; it computes no lifecycle of its own.
+  (`crates/paneflow-serve/src/hook_state.rs`) turns that stream into a state
+  and `crates/paneflow-serve/src/state.rs` publishes it with an
+  `activity_source` of `hooks`, `screen` or `none`. The GPUI app subscribes and
+  renders; it computes no lifecycle of its own.
 - **States**: thinking, waiting for input (with the actual prompt text),
   finished, errored (non-zero exit). Each state routes to the UI - and to your own tooling, since
   the same events are observable over IPC.
@@ -394,6 +396,47 @@ stale code.
   signal, because the worker owns no PTY. When the app ships a newer worker it
   stops the old one with a five second drain and starts its own; the sessions
   list is identical across the swap.
+- **The activity reducer.** `hook_state.rs` holds one latch per session.
+  `Start` and `UserPromptSubmit` open a turn and arm a five-minute lease;
+  `Stop` settles it as completed; `StopFailure` and `Idle` settle it without
+  completion; Codex's `Interrupt` settles it as cancelled and only a new
+  opening event re-arms it; `PermissionRequest` (except
+  `tool_name = AskUserQuestion`) asks for input. `SessionStart`,
+  `SubagentStart`, `SubagentStop` and informational notifications latch hook
+  ownership and change nothing. A `Stop` whose payload counts pending
+  `background_tasks` keeps the pane busy until the count reaches zero.
+- **The lease bounds a lost stop.** Every busy turn carries a deadline five
+  minutes past its last changed screen signal. The live reducer consumes only
+  the host's `screen_changed_at_ms`; raw PTY output growth never re-arms the
+  lease. The host's separate `output_changed_at_ms` timestamp may anchor a
+  recovered opening seed, so output written before a worker restart is not
+  mistaken for new live activity. When the deadline passes the session settles
+  to idle without completion and the worker writes a generation-scoped
+  watermark to `<session dir>/hook-expiry.json`, so a restart cannot revive the
+  turn.
+- **Generations reject stale events.** A frame naming a runtime generation
+  below the manifest's is refused. An untagged settling event arriving within
+  30 seconds of an in-place relaunch is quarantined until the replacement
+  runtime opens a turn of its own. For sessions whose launch command is not
+  hook-capable, a change in the observed foreground identity
+  (`runtime_id:pid:pid_started_at`) resets the latch while keeping the
+  generation; the first sighting is recorded, never treated as an edge.
+- **Restart replays the durable seed.** `last-hook-event.json` is read with its
+  own file handle for both metadata and bytes, capped at 64 KiB, and applied
+  with the file's mtime as the event time. An opening event's lease is anchored
+  at `max(seed mtime, activity signal)`; a seed holding a stop uses only its own
+  mtime, so a later repaint cannot reopen a finished turn.
+  `hook-cancellation.json` is restored before the seed, so an escape fence
+  survives the restart.
+- **The worker decides notifications.** Only a hook-sourced completed `Stop`
+  earns a `Finished` decision, and only a `PermissionRequest` or a
+  `menu_prompt_active` false-to-true edge earns `Needs input`, deduplicated to
+  one per ten seconds. The decision rides on the `agent.event` frame as
+  `notify`; the Controller decides whether the user already saw the pane and
+  delivers it. Failures, expiries and cancellations never notify, and every
+  settled turn is recorded in the worker's bounded activity log
+  (`agent.activity_log`) as `completed`, `failed:<reason>`, `expired` or
+  `cancelled`.
 - **Capabilities, not probes.** `worker.hello` answers a `WorkerIdentity`
   carrying the set in `protocol/host-capabilities-v1.json`. A Controller reads
   that set once and never discovers a feature by trying it.

@@ -155,7 +155,10 @@ impl AgentEvent {
             pid,
             tool_name: optional_text(params, &["tool_name"]),
             message: optional_text(params, &["message"]),
-            summary: optional_text(params, &["last_result", "summary", "result"]),
+            summary: optional_text(
+                params,
+                &["last_assistant_message", "last_result", "summary", "result"],
+            ),
             exit_code,
             emitted_at_ms: params.get("emitted_at_ms").and_then(Value::as_u64),
             received_at_ms: None,
@@ -218,6 +221,7 @@ impl AgentEvent {
 pub struct AgentSnapshotEntry {
     pub session: SessionId,
     pub generation: SessionGeneration,
+    pub launch_shell: String,
     pub live: bool,
     pub lifecycle: SessionLifecycle,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -230,6 +234,18 @@ pub struct AgentSnapshotEntry {
     pub cwd: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_hook: Option<HookRecord>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_changed_at_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub generation_started_at_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub screen_changed_at_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub screen_activity: Option<String>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub menu_prompt_active: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub observed_runtime: Option<String>,
     #[serde(default)]
     pub host_protocol_version: u32,
     #[serde(default, skip_serializing_if = "String::is_empty")]

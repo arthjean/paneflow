@@ -11,10 +11,11 @@ use paneflow_ipc_client::line_wire::{LineRead, Wire};
 use serde_json::{Value, json};
 
 use crate::protocol::{
-    ERR_BUSY, ERR_FRAME_TOO_LARGE, ERR_HANDSHAKE_REQUIRED, ERR_INTERNAL, ERR_INVALID_REQUEST,
-    ERR_METHOD_NOT_FOUND, ERR_PARSE, MAX_CONTROL_FRAME_BYTES, METHOD_AGENT_FOLLOW,
-    METHOD_AGENT_SNAPSHOT, METHOD_HOST_HELLO, METHOD_WORKER_HELLO, METHOD_WORKER_SHUTDOWN,
-    METHOD_WORKER_STATUS, WorkerIdentity, error_envelope, result_envelope,
+    DEFAULT_ACTIVITY_LOG_LIMIT, ERR_BUSY, ERR_FRAME_TOO_LARGE, ERR_HANDSHAKE_REQUIRED,
+    ERR_INTERNAL, ERR_INVALID_REQUEST, ERR_METHOD_NOT_FOUND, ERR_PARSE, MAX_CONTROL_FRAME_BYTES,
+    METHOD_AGENT_ACTIVITY_LOG, METHOD_AGENT_FOLLOW, METHOD_AGENT_SNAPSHOT, METHOD_HOST_HELLO,
+    METHOD_WORKER_HELLO, METHOD_WORKER_SHUTDOWN, METHOD_WORKER_STATUS, WorkerIdentity,
+    error_envelope, result_envelope,
 };
 use crate::state::WorkerState;
 
@@ -35,6 +36,7 @@ pub const WORKER_ANSWERED: &[&str] = &[
     METHOD_WORKER_SHUTDOWN,
     METHOD_AGENT_SNAPSHOT,
     METHOD_AGENT_FOLLOW,
+    METHOD_AGENT_ACTIVITY_LOG,
     "fleet.list",
     "surface.status",
 ];
@@ -458,6 +460,14 @@ fn dispatch(worker: &Worker, method: &str, params: &Value) -> Result<Value, Disp
         }
         METHOD_WORKER_STATUS => Ok(worker.status_frame()),
         METHOD_AGENT_SNAPSHOT => Ok(worker.snapshot_frame()),
+        METHOD_AGENT_ACTIVITY_LOG => {
+            let limit = params["limit"]
+                .as_u64()
+                .and_then(|limit| usize::try_from(limit).ok())
+                .filter(|limit| *limit > 0)
+                .unwrap_or(DEFAULT_ACTIVITY_LOG_LIMIT);
+            Ok(json!({"entries": worker.lock_state().activity_log().to_values(limit)}))
+        }
         "fleet.list" => Ok(worker.fleet_list()),
         "surface.status" => {
             let proxied = crate::core_link::call_core(&worker.core_endpoint, method, params)
@@ -579,6 +589,7 @@ mod tests {
         assert!(!is_proxied("fleet.list"));
         assert!(!is_proxied("surface.status"));
         assert!(!is_proxied(METHOD_AGENT_SNAPSHOT));
+        assert!(!is_proxied(METHOD_AGENT_ACTIVITY_LOG));
         assert!(!is_proxied(METHOD_AGENT_FOLLOW));
         assert!(!is_proxied(METHOD_WORKER_STATUS));
         assert!(is_proxied("session.list"));

@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use std::io::{Read, Write};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, SyncSender, sync_channel};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -127,6 +127,7 @@ enum Message {
 struct Shared {
     exit: Mutex<Option<ExitOutcome>>,
     stop_requested: AtomicBool,
+    output_changed_at_ms: AtomicU64,
 }
 
 impl Shared {
@@ -156,6 +157,7 @@ impl SessionRuntime {
         let shared = Arc::new(Shared {
             exit: Mutex::new(None),
             stop_requested: AtomicBool::new(false),
+            output_changed_at_ms: AtomicU64::new(0),
         });
         let thread_shared = Arc::clone(&shared);
         let thread_tx = tx.clone();
@@ -196,6 +198,11 @@ impl SessionRuntime {
 
     pub fn exit(&self) -> Option<ExitOutcome> {
         self.shared.exit()
+    }
+
+    pub fn output_changed_at_ms(&self) -> Option<u64> {
+        let changed_at = self.shared.output_changed_at_ms.load(Ordering::Acquire);
+        (changed_at != 0).then_some(changed_at)
     }
 
     pub fn is_live(&self) -> bool {
@@ -443,6 +450,9 @@ fn write_pty_queue(mut writer: Box<dyn Write + Send>, rx: Receiver<Vec<u8>>) {
 impl Session {
     fn feed(&mut self, chunk: &[u8]) {
         self.tail.append(chunk);
+        self.shared
+            .output_changed_at_ms
+            .store(crate::manifest::now_ms(), Ordering::Release);
         if let Err(error) = self.terminal.feed(chunk) {
             log::warn!("paneflow-host: terminal feed failed: {error}");
         }

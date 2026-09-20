@@ -3,8 +3,7 @@ use std::time::Duration;
 use paneflow_host::agent::{AgentEvent, AgentEventKind, MAX_AGENT_TEXT_BYTES};
 use paneflow_host::manifest::SessionLifecycle;
 use paneflow_ipc_client::agent::{
-    AgentState, AgentStateSource, FieldUpdate, SOURCE_TAKEOVER_SILENCE, accepts_event,
-    accepts_source, next_waiting_since, reduce_lifecycle_event,
+    AgentState, SOURCE_TAKEOVER_SILENCE, accepts_event, state_for_exit,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -31,8 +30,31 @@ pub struct AgentSummary {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_event_at_ms: Option<u64>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub errored: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub stale: bool,
     pub updated_at_ms: u64,
+}
+
+impl AgentSummary {
+    pub fn declared(tool: &str, now_ms: u64) -> Self {
+        Self {
+            tool: tool.to_owned(),
+            state: AgentState::Finished.wire_str().to_string(),
+            source: "hook".to_string(),
+            active_tool_name: None,
+            message: None,
+            last_result: None,
+            provider_session_id: None,
+            transcript_path: None,
+            pid: None,
+            waiting_since_ms: None,
+            last_event_at_ms: None,
+            errored: false,
+            stale: false,
+            updated_at_ms: now_ms,
+        }
+    }
 }
 
 fn clamp_text(raw: &str) -> String {
@@ -81,7 +103,7 @@ pub fn apply_event(
             {
                 AgentDecision::Stale("a foreign process cannot end this run")
             }
-            Some(summary) if summary.state == AgentState::Errored.wire_str() => {
+            Some(summary) if summary.errored => {
                 AgentDecision::Stale("an errored run keeps its outcome")
             }
             _ => AgentDecision::Clear,
@@ -89,85 +111,57 @@ pub fn apply_event(
     }
 
     if let Some(summary) = existing {
-        let silence = silence_since(summary.updated_at_ms, now_ms);
         if !accepts_event(summary.last_event_at_ms, event.emitted_at_ms) {
             return AgentDecision::Stale("an out-of-order event never rewrites a newer run");
         }
-        let held = AgentStateSource::parse(&summary.source).unwrap_or(AgentStateSource::Hook);
-        if !accepts_source(Some((held, silence)), event.source) {
-            return AgentDecision::Stale("a weaker source never talks over a live stronger one");
-        }
+        let silence = silence_since(summary.updated_at_ms, now_ms);
         if !accepts_process(summary, event, silence) {
             return AgentDecision::Stale("a stale process identity never ends a newer run");
         }
     }
 
-    let Some(lifecycle) = event.lifecycle() else {
-        let mut summary = existing.cloned().unwrap_or_else(|| AgentSummary {
-            tool: event.tool.clone(),
-            state: AgentState::Finished.wire_str().to_string(),
-            source: event.source.wire_str().to_string(),
-            active_tool_name: None,
-            message: None,
-            last_result: None,
-            provider_session_id: None,
-            transcript_path: None,
-            pid: event.pid,
-            waiting_since_ms: None,
-            last_event_at_ms: event.emitted_at_ms,
-            stale: false,
-            updated_at_ms: now_ms,
-        });
-        summary.tool = event.tool.clone();
-        summary.pid = event.pid.or(summary.pid);
-        summary.stale = false;
-        summary.last_event_at_ms = event.emitted_at_ms.or(summary.last_event_at_ms);
-        summary.provider_session_id =
-            optional_payload_text(event, "session_id").or(summary.provider_session_id);
-        summary.transcript_path =
-            optional_payload_text(event, "transcript_path").or(summary.transcript_path);
-        summary.updated_at_ms = now_ms;
-        return AgentDecision::Update(Box::new(summary));
-    };
+    let mut summary = existing
+        .cloned()
+        .unwrap_or_else(|| AgentSummary::declared(&event.tool, now_ms));
+    summary.tool = event.tool.clone();
+    summary.pid = event.pid.or(summary.pid);
+    summary.stale = false;
+    summary.last_event_at_ms = event.emitted_at_ms.or(summary.last_event_at_ms);
+    summary.provider_session_id =
+        optional_payload_text(event, "session_id").or(summary.provider_session_id);
+    summary.transcript_path =
+        optional_payload_text(event, "transcript_path").or(summary.transcript_path);
+    summary.updated_at_ms = now_ms;
 
-    let transition = reduce_lifecycle_event(lifecycle);
-    let previous_state = existing.and_then(|summary| AgentState::parse(&summary.state));
-    let waiting_since_ms = next_waiting_since(
-        previous_state
-            .as_ref()
-            .map(|state| (state, existing.and_then(|summary| summary.waiting_since_ms))),
-        &transition.state,
-        now_ms,
-    );
-    let message = match transition.message {
-        FieldUpdate::Keep => existing.and_then(|summary| summary.message.clone()),
-        FieldUpdate::Set(message) => message,
-    };
-    let last_result = match transition.last_result {
-        FieldUpdate::Keep => existing.and_then(|summary| summary.last_result.clone()),
-        FieldUpdate::Set(result) => result,
-    };
-    AgentDecision::Update(Box::new(AgentSummary {
-        tool: event.tool.clone(),
-        state: transition.state.wire_str().to_string(),
-        source: event.source.wire_str().to_string(),
-        active_tool_name: transition.active_tool_name,
-        message,
-        last_result,
-        provider_session_id: optional_payload_text(event, "session_id")
-            .or_else(|| existing.and_then(|summary| summary.provider_session_id.clone())),
-        transcript_path: optional_payload_text(event, "transcript_path")
-            .or_else(|| existing.and_then(|summary| summary.transcript_path.clone())),
-        pid: event
-            .pid
-            .or_else(|| existing.and_then(|summary| summary.pid)),
-        waiting_since_ms,
-        last_event_at_ms: event
-            .emitted_at_ms
-            .or_else(|| existing.and_then(|summary| summary.last_event_at_ms)),
-        stale: false,
-        updated_at_ms: now_ms,
-    }))
+    match event.kind {
+        AgentEventKind::PromptSubmit => {
+            summary.active_tool_name = None;
+            summary.message = None;
+            summary.errored = false;
+        }
+        AgentEventKind::ToolUse => {
+            summary.active_tool_name = event.tool_name.clone();
+        }
+        AgentEventKind::Notification => {
+            summary.active_tool_name = None;
+            summary.message = event.message.clone();
+        }
+        AgentEventKind::Stop => {
+            summary.active_tool_name = None;
+            summary.message = None;
+            if !event.is_interrupt() {
+                summary.last_result = event.summary.clone();
+            }
+        }
+        AgentEventKind::Exit => {
+            summary.active_tool_name = None;
+            summary.message = None;
+            summary.errored = state_for_exit(event.exit_code.unwrap_or(0)) == AgentState::Errored;
+        }
+        AgentEventKind::SessionStart | AgentEventKind::SessionEnd => {}
+    }
+
+    AgentDecision::Update(Box::new(summary))
 }
 
 fn optional_payload_text(event: &AgentEvent, key: &str) -> Option<String> {
@@ -222,29 +216,20 @@ mod tests {
     }
 
     #[test]
-    fn a_prompt_then_a_notification_carries_the_question_and_stamps_waiting() {
+    fn a_prompt_then_a_notification_carries_the_question_and_the_tool_identity() {
         let prompt = updated(apply_event(
             None,
             &event(AgentEventKind::PromptSubmit, Some(10), Some(42)),
             1_000,
         ));
-        assert_eq!(prompt.state, "thinking");
+        assert_eq!(prompt.tool, "claude");
         assert_eq!(prompt.pid, Some(42));
-        assert_eq!(prompt.waiting_since_ms, None);
+        assert_eq!(prompt.message, None);
 
         let mut asking = event(AgentEventKind::Notification, Some(20), Some(42));
         asking.message = Some("Approve edit?".to_string());
         let waiting = updated(apply_event(Some(&prompt), &asking, 2_000));
-        assert_eq!(waiting.state, "waiting_for_input");
         assert_eq!(waiting.message.as_deref(), Some("Approve edit?"));
-        assert_eq!(waiting.waiting_since_ms, Some(2_000));
-
-        let renotified = updated(apply_event(Some(&waiting), &asking, 3_000));
-        assert_eq!(
-            renotified.waiting_since_ms,
-            Some(2_000),
-            "a second question does not restart the wait"
-        );
     }
 
     #[test]
@@ -259,27 +244,23 @@ mod tests {
             &event(AgentEventKind::Stop, Some(99_000), Some(42)),
             1_100,
         );
-        assert!(
-            matches!(late, AgentDecision::Stale(_)),
-            "a frame that arrives out of order inside the reorder window is refused"
-        );
+        assert!(matches!(late, AgentDecision::Stale(_)));
 
         let fresh = apply_event(
             Some(&current),
             &event(AgentEventKind::Stop, Some(100_001), Some(42)),
             1_200,
         );
-        assert_eq!(updated(fresh).state, "finished");
+        assert_eq!(updated(fresh).last_event_at_ms, Some(100_001));
 
         let clock_jump = apply_event(
             Some(&current),
             &event(AgentEventKind::Stop, Some(1_000), Some(42)),
             1_300,
         );
-        assert_eq!(
-            updated(clock_jump).state,
-            "finished",
-            "a wall-clock jump is not reordering and still reduces"
+        assert!(
+            matches!(clock_jump, AgentDecision::Update(_)),
+            "a wall-clock jump is not reordering and still records"
         );
     }
 
@@ -302,37 +283,18 @@ mod tests {
             &event(AgentEventKind::PromptSubmit, None, Some(77)),
             1_500,
         );
-        assert_eq!(
-            updated(foreign_start).pid,
-            Some(77),
-            "a new run in the same session still takes over"
-        );
+        assert_eq!(updated(foreign_start).pid, Some(77));
 
         let long_after = apply_event(
             Some(&current),
             &event(AgentEventKind::Exit, None, Some(77)),
             1_000 + SOURCE_TAKEOVER_SILENCE.as_millis() as u64,
         );
-        assert_eq!(updated(long_after).state, "finished");
+        assert!(matches!(long_after, AgentDecision::Update(_)));
     }
 
     #[test]
-    fn a_weaker_source_never_talks_over_a_live_hook() {
-        let hooked = updated(apply_event(
-            None,
-            &event(AgentEventKind::PromptSubmit, None, Some(42)),
-            1_000,
-        ));
-        let mut observed = event(AgentEventKind::Stop, None, Some(42));
-        observed.source = AgentStateSource::Terminal;
-        assert!(matches!(
-            apply_event(Some(&hooked), &observed, 1_500),
-            AgentDecision::Stale(_)
-        ));
-    }
-
-    #[test]
-    fn session_end_clears_unless_the_run_errored_or_a_foreign_process_asks() {
+    fn a_crash_records_the_error_and_session_end_keeps_that_outcome() {
         let running = updated(apply_event(
             None,
             &event(AgentEventKind::PromptSubmit, None, Some(42)),
@@ -358,7 +320,7 @@ mod tests {
         let mut crashed = event(AgentEventKind::Exit, None, Some(42));
         crashed.exit_code = Some(1);
         let errored = updated(apply_event(Some(&running), &crashed, 1_200));
-        assert_eq!(errored.state, "errored");
+        assert!(errored.errored);
         assert!(matches!(
             apply_event(
                 Some(&errored),
@@ -367,31 +329,12 @@ mod tests {
             ),
             AgentDecision::Stale(_)
         ));
-    }
 
-    #[test]
-    fn a_declaration_records_the_tool_without_inventing_a_turn() {
-        let declared = updated(apply_event(
-            None,
-            &event(AgentEventKind::SessionStart, Some(5), Some(42)),
-            1_000,
-        ));
-        assert_eq!(declared.tool, "claude");
-        assert_eq!(declared.state, "finished");
-
-        let working = updated(apply_event(
-            Some(&declared),
-            &event(AgentEventKind::PromptSubmit, Some(6), Some(42)),
-            1_100,
-        ));
-        let redeclared = updated(apply_event(
-            Some(&working),
-            &event(AgentEventKind::SessionStart, Some(7), Some(42)),
-            1_200,
-        ));
-        assert_eq!(
-            redeclared.state, "thinking",
-            "a declaration never resets a running turn"
+        let mut interrupted = event(AgentEventKind::Exit, None, Some(42));
+        interrupted.exit_code = Some(130);
+        assert!(
+            !updated(apply_event(Some(&running), &interrupted, 1_400)).errored,
+            "a human interrupt is not a crash"
         );
     }
 
@@ -402,6 +345,7 @@ mod tests {
             &event(AgentEventKind::PromptSubmit, None, Some(42)),
             1_000,
         ));
+        busy.state = AgentState::Thinking.wire_str().to_string();
         reconcile_adopted(&mut busy, &SessionLifecycle::Running, 2_000);
         assert!(!busy.stale, "a session the host still owns stays live");
 
@@ -414,6 +358,7 @@ mod tests {
             &event(AgentEventKind::Stop, None, Some(42)),
             1_000,
         ));
+        finished.state = AgentState::Finished.wire_str().to_string();
         reconcile_adopted(&mut finished, &SessionLifecycle::Lost, 3_000);
         assert!(!finished.stale, "a finished run is already an outcome");
     }

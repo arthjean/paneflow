@@ -520,11 +520,26 @@ impl SessionHost {
     }
 
     pub fn agent_snapshot(&self) -> Vec<AgentSnapshotEntry> {
+        let output_changes: BTreeMap<SessionId, u64> = {
+            let sessions = self.lock_sessions();
+            sessions
+                .iter()
+                .filter_map(|(session, record)| {
+                    record.runtime.as_deref().and_then(|runtime| {
+                        runtime
+                            .output_changed_at_ms()
+                            .map(|changed_at| (session.clone(), changed_at))
+                    })
+                })
+                .collect()
+        };
         self.list(None)
             .into_iter()
             .map(|summary| AgentSnapshotEntry {
+                output_changed_at_ms: output_changes.get(&summary.manifest.session).copied(),
                 session: summary.manifest.session,
                 generation: summary.manifest.generation,
+                launch_shell: summary.manifest.launch.shell.clone(),
                 live: summary.live,
                 lifecycle: summary.manifest.lifecycle,
                 process: summary.manifest.process,
@@ -532,6 +547,11 @@ impl SessionHost {
                 title: summary.manifest.title,
                 cwd: Some(summary.manifest.current_cwd.unwrap_or(summary.manifest.cwd)),
                 last_hook: summary.manifest.last_hook,
+                generation_started_at_ms: summary.manifest.generation_started_at_ms,
+                screen_changed_at_ms: summary.manifest.screen_changed_at_ms,
+                screen_activity: summary.manifest.screen_activity,
+                menu_prompt_active: summary.manifest.menu_prompt_active,
+                observed_runtime: summary.manifest.observed_runtime,
                 host_protocol_version: summary.manifest.host_protocol_version,
                 host_build_id: summary.manifest.host_build_id,
             })
@@ -692,6 +712,11 @@ impl SessionHost {
             title: request.title.clone(),
             current_cwd: None,
             last_hook: None,
+            generation_started_at_ms: Some(created),
+            screen_changed_at_ms: None,
+            screen_activity: None,
+            menu_prompt_active: false,
+            observed_runtime: None,
             host_protocol_version: HOST_PROTOCOL_VERSION,
             host_build_id: crate::protocol::host_build_id(),
             created_at_ms: created,
@@ -776,6 +801,11 @@ impl SessionHost {
             guard.process = None;
             guard.current_cwd = None;
             guard.last_hook = None;
+            guard.generation_started_at_ms = Some(now_ms());
+            guard.screen_changed_at_ms = None;
+            guard.screen_activity = None;
+            guard.menu_prompt_active = false;
+            guard.observed_runtime = None;
             guard.host_protocol_version = HOST_PROTOCOL_VERSION;
             guard.host_build_id = crate::protocol::host_build_id();
             guard.launch.args.clear();
@@ -1398,6 +1428,11 @@ mod tests {
             title: Some("claude \u{00b7} feat/a-reasonably-long-branch-name".to_string()),
             current_cwd: Some(cwd.display().to_string()),
             last_hook: None,
+            generation_started_at_ms: None,
+            screen_changed_at_ms: None,
+            screen_activity: None,
+            menu_prompt_active: false,
+            observed_runtime: None,
             host_protocol_version: HOST_PROTOCOL_VERSION,
             host_build_id: crate::protocol::host_build_id(),
             created_at_ms: updated_at_ms,
@@ -1439,6 +1474,11 @@ mod tests {
                 title: None,
                 current_cwd: None,
                 last_hook: None,
+                generation_started_at_ms: None,
+                screen_changed_at_ms: None,
+                screen_activity: None,
+                menu_prompt_active: false,
+                observed_runtime: None,
                 host_protocol_version: HOST_PROTOCOL_VERSION,
                 host_build_id: crate::protocol::host_build_id(),
                 created_at_ms: updated_at_ms,

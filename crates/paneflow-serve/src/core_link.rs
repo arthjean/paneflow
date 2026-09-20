@@ -69,6 +69,26 @@ pub fn call_core(endpoint: &Path, method: &str, params: &Value) -> Result<Value,
     control.request(method, params.clone())
 }
 
+pub fn menu_prompt_active(
+    endpoint: &Path,
+    session: &paneflow_config::schema::SessionId,
+    deadline: Duration,
+) -> Option<bool> {
+    let mut control = HostControl::connect_with_deadline(endpoint, CLIENT_NAME, deadline).ok()?;
+    let snapshot = control
+        .request_with_deadline(
+            paneflow_ipc_client::host_control::METHOD_AGENT_SNAPSHOT,
+            json!({}),
+            deadline,
+        )
+        .ok()?;
+    snapshot["sessions"]
+        .as_array()?
+        .iter()
+        .find(|row| row["session"].as_str() == Some(session.as_str()))
+        .map(|row| row["menu_prompt_active"].as_bool().unwrap_or(false))
+}
+
 fn follow_once(endpoint: &Path, tx: &SyncSender<CoreFrame>) -> Result<(), String> {
     let mut control = HostControl::connect(endpoint, CLIENT_NAME)?;
     let header = control.request(METHOD_AGENT_FOLLOW, json!({}))?;

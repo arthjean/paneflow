@@ -95,6 +95,42 @@ impl HostAgentView {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum WorkerNotificationKind {
+    Finished,
+    NeedsInput,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct WorkerNotification {
+    pub(crate) kind: WorkerNotificationKind,
+    pub(crate) runtime_label: String,
+    pub(crate) body: Option<String>,
+}
+
+impl WorkerNotification {
+    pub(crate) fn from_frame(frame: &Value) -> Option<Self> {
+        let notify = frame.get("notify")?;
+        let kind = match notify.get("kind").and_then(Value::as_str)? {
+            "finished" => WorkerNotificationKind::Finished,
+            "needs_input" => WorkerNotificationKind::NeedsInput,
+            _ => return None,
+        };
+        Some(Self {
+            kind,
+            runtime_label: notify
+                .get("runtime_label")
+                .and_then(Value::as_str)
+                .unwrap_or("Agent")
+                .to_owned(),
+            body: notify
+                .get("body")
+                .and_then(Value::as_str)
+                .map(str::to_owned),
+        })
+    }
+}
+
 pub(crate) fn row_from_snapshot(entry: &Value) -> Option<HostAgentRow> {
     let session = SessionId::parse(entry.get("session")?.as_str()?).ok()?;
     let live = entry
@@ -513,59 +549,8 @@ impl PaneFlowApp {
             self.apply_projected_agent_metadata(&kind, &params, workspace_id, surface_id, cx);
         }
         let next_state = row.as_ref().and_then(|row| row.state);
-        let hook_finished = next_state == Some(AgentState::Finished)
-            && previous_state != Some(AgentState::Finished)
-            && row
-                .as_ref()
-                .is_some_and(|row| row.activity_source.is_hooks())
-            && frame.get("event_source").and_then(Value::as_str) != Some("interrupt");
-        if hook_finished {
-            let visible = self.surfaces_under_user_eye(workspace_id, cx);
-            let notify = self.cached_config.clone();
-            if let Some(workspace) = self
-                .workspaces
-                .iter_mut()
-                .find(|workspace| workspace.id == workspace_id)
-            {
-                let seen = crate::app::agent_status::completion_was_seen(
-                    visible.as_ref(),
-                    Some(surface_id),
-                ) || workspace.muted;
-                workspace
-                    .agent_completion_notification
-                    .record_finished(seen, Some(surface_id));
-                if let Some(row) = row.as_ref()
-                    && let Some(tool) = row.tool
-                {
-                    crate::app::ipc_handler::fire_turn_end_notification(
-                        tool,
-                        &workspace.title,
-                        row.last_result.as_deref(),
-                        &notify,
-                        seen,
-                        cx.background_executor().clone(),
-                    );
-                }
-            }
-        }
-        if next_state == Some(AgentState::WaitingForInput)
-            && previous_state != Some(AgentState::WaitingForInput)
-            && let Some(row) = row.as_ref()
-            && let Some(tool) = row.tool
-            && let Some(workspace) = self
-                .workspaces
-                .iter()
-                .find(|workspace| workspace.id == workspace_id)
-        {
-            crate::app::ipc_handler::fire_attention_notification(
-                tool,
-                &workspace.title,
-                row.message.as_deref(),
-                &self.cached_config,
-                self.session_is_seen(workspace_id, row.pid.unwrap_or(surface_id as u32), cx)
-                    || workspace.muted,
-                cx.background_executor().clone(),
-            );
+        if let Some(decision) = WorkerNotification::from_frame(frame) {
+            self.deliver_worker_notification(&decision, workspace_id, surface_id, cx);
         }
         if next_state == Some(AgentState::Errored)
             && previous_state != Some(AgentState::Errored)
@@ -596,6 +581,54 @@ impl PaneFlowApp {
             self.broadcast_ai_frame(&kind, &params);
         }
         cx.notify();
+    }
+
+    fn deliver_worker_notification(
+        &mut self,
+        decision: &WorkerNotification,
+        workspace_id: u64,
+        surface_id: u64,
+        cx: &mut Context<Self>,
+    ) {
+        let visible = self.surfaces_under_user_eye(workspace_id, cx);
+        let config = self.cached_config.clone();
+        let executor = cx.background_executor().clone();
+        let Some(workspace) = self
+            .workspaces
+            .iter_mut()
+            .find(|workspace| workspace.id == workspace_id)
+        else {
+            return;
+        };
+        let seen =
+            crate::app::agent_status::completion_was_seen(visible.as_ref(), Some(surface_id))
+                || workspace.muted;
+        let notification = match decision.kind {
+            WorkerNotificationKind::Finished => {
+                workspace
+                    .agent_completion_notification
+                    .record_finished(seen, Some(surface_id));
+                crate::agents::notifications::DesktopNotification::turn_finished_for(
+                    &decision.runtime_label,
+                    &workspace.title,
+                    decision.body.as_deref(),
+                )
+            }
+            WorkerNotificationKind::NeedsInput => {
+                crate::agents::notifications::DesktopNotification::needs_input_for(
+                    &decision.runtime_label,
+                    &workspace.title,
+                    decision.body.as_deref(),
+                )
+            }
+        };
+        crate::app::ipc_handler::fire_worker_notification(
+            notification,
+            &config,
+            seen,
+            Some(surface_id),
+            executor,
+        );
     }
 
     pub(crate) fn host_agent_row(&self, session: &SessionId) -> Option<&HostAgentRow> {
@@ -846,5 +879,43 @@ mod tests {
         assert!(view.advertises("agent.follow"));
         assert!(view.advertises("restart.recommendation"));
         assert!(!view.advertises("screen.scan"));
+    }
+
+    #[test]
+    fn the_controller_delivers_the_workers_decision_and_never_infers_one_of_its_own() {
+        let finished = WorkerNotification::from_frame(&json!({
+            "status": "idle",
+            "activity_source": "hooks",
+            "notify": {"kind": "finished", "runtime_label": "Claude Code", "body": "2 files changed"},
+        }))
+        .expect("a worker completion reaches the desktop");
+        assert_eq!(finished.kind, WorkerNotificationKind::Finished);
+        assert_eq!(finished.runtime_label, "Claude Code");
+        assert_eq!(finished.body.as_deref(), Some("2 files changed"));
+
+        let asking = WorkerNotification::from_frame(&json!({
+            "notify": {"kind": "needs_input", "runtime_label": "Codex", "body": null},
+        }))
+        .expect("a worker attention edge reaches the desktop");
+        assert_eq!(asking.kind, WorkerNotificationKind::NeedsInput);
+        assert_eq!(asking.body, None);
+
+        assert_eq!(
+            WorkerNotification::from_frame(&json!({
+                "status": "idle",
+                "activity_source": "screen",
+                "notify": Value::Null,
+            })),
+            None,
+            "a screen-sourced settle carries no decision, so the desktop stays quiet"
+        );
+        assert_eq!(
+            WorkerNotification::from_frame(&json!({"status": "idle", "outcome": "expired"})),
+            None
+        );
+        assert_eq!(
+            WorkerNotification::from_frame(&json!({"notify": {"kind": "alert"}})),
+            None
+        );
     }
 }

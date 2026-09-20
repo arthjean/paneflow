@@ -92,6 +92,16 @@ pub struct SessionManifest {
     pub current_cwd: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_hook: Option<HookRecord>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub generation_started_at_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub screen_changed_at_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub screen_activity: Option<String>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub menu_prompt_active: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub observed_runtime: Option<String>,
     #[serde(default)]
     pub host_protocol_version: u32,
     #[serde(default, skip_serializing_if = "String::is_empty")]
@@ -281,6 +291,11 @@ mod tests {
             title: None,
             current_cwd: None,
             last_hook: None,
+            generation_started_at_ms: None,
+            screen_changed_at_ms: None,
+            screen_activity: None,
+            menu_prompt_active: false,
+            observed_runtime: None,
             host_protocol_version: crate::protocol::HOST_PROTOCOL_VERSION,
             host_build_id: crate::protocol::host_build_id(),
             created_at_ms: 1,

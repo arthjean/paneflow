@@ -2,7 +2,7 @@
 
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use paneflow_host::protocol::{ClientHello, METHOD_AGENT_EVENT};
 use paneflow_host::{HostClient, SessionSummary};
@@ -206,7 +206,11 @@ fn the_worker_owns_the_home_reduces_for_controllers_and_rebuilds_after_a_restart
         )
         .expect("the late session hook reaches the core");
     let late_projected = next_projected_event(&mut follower);
-    assert_eq!(late_projected["session"], late_session.to_string());
+    assert_eq!(
+        late_projected["session"],
+        late_session.to_string(),
+        "unexpected frame: {late_projected}"
+    );
     assert_eq!(late_projected["agent"]["state"], "thinking");
     assert!(
         late_child.is_provably_live(),
@@ -230,7 +234,11 @@ fn the_worker_owns_the_home_reduces_for_controllers_and_rebuilds_after_a_restart
         .expect("the core accepts the hook frame");
 
     let projected = next_projected_event(&mut follower);
-    assert_eq!(projected["session"], session.to_string());
+    assert_eq!(
+        projected["session"],
+        session.to_string(),
+        "unexpected frame: {projected}"
+    );
     assert_eq!(projected["kind"], "ai.prompt_submit");
     assert_eq!(
         projected["agent"]["state"], "thinking",
@@ -238,6 +246,66 @@ fn the_worker_owns_the_home_reduces_for_controllers_and_rebuilds_after_a_restart
     );
     assert_eq!(projected["activity_source"], "hooks");
     assert_eq!(projected["status"], "busy");
+    assert!(
+        projected["notify"].is_null(),
+        "an opening event is not a completion: {projected}"
+    );
+    assert_eq!(projected["runtime_id"], "com.anthropic.claude-code");
+
+    owner
+        .call(
+            METHOD_AGENT_EVENT,
+            json!({
+                "session": session,
+                "kind": "ai.stop",
+                "tool": "claude",
+                "emitted_at_ms": 1_100,
+                "runtime_generation": generation,
+                "hook_payload": {
+                    "hook_event_name": "Stop",
+                    "last_result": "2 files changed",
+                },
+            }),
+        )
+        .expect("the core accepts the stop frame");
+    let settled = next_projected_event(&mut follower);
+    assert_eq!(settled["status"], "idle", "unexpected frame: {settled}");
+    assert_eq!(settled["outcome"], "completed");
+    assert_eq!(settled["notify"]["kind"], "finished");
+    assert_eq!(settled["notify"]["runtime_label"], "Claude Code");
+    assert_eq!(settled["notify"]["body"], "2 files changed");
+
+    let history = control
+        .request(
+            paneflow_serve::protocol::METHOD_AGENT_ACTIVITY_LOG,
+            json!({}),
+        )
+        .expect("the worker serves its activity log");
+    assert!(
+        history["entries"]
+            .as_array()
+            .expect("entries")
+            .iter()
+            .any(|entry| entry["session"] == session.to_string()
+                && entry["outcome"] == "completed"),
+        "the settled turn is recorded: {history}"
+    );
+
+    owner
+        .call(
+            METHOD_AGENT_EVENT,
+            json!({
+                "session": session,
+                "kind": "ai.prompt_submit",
+                "tool": "claude",
+                "emitted_at_ms": 1_200,
+                "runtime_generation": generation,
+                "hook_payload": {"hook_event_name": "UserPromptSubmit"},
+            }),
+        )
+        .expect("the core accepts the second opening frame");
+    let reopened = next_projected_event(&mut follower);
+    assert_eq!(reopened["status"], "busy", "unexpected frame: {reopened}");
 
     let scrollback_marker = "worker-restart-keeps-scrollback";
     owner
@@ -355,10 +423,76 @@ fn the_worker_owns_the_home_reduces_for_controllers_and_rebuilds_after_a_restart
         "a worker replacement never signals a terminal"
     );
 
+    let session_dir = paneflow_home::host_session_data_dir_in(home.path(), session.as_str());
+    paneflow_serve::hook_assets::record_hook_expiry(
+        &session_dir,
+        generation.get(),
+        SystemTime::now() + paneflow_serve::hook_state::HOOK_IDLE_TIMEOUT,
+    )
+    .expect("the lease expiry is persisted before the worker restarts");
     replacement.stop();
+    let expired_worker = paneflow_serve::open(home.path()).expect("the expired turn is rebuilt");
+    let expired = expired_worker
+        .worker()
+        .lock_state()
+        .get(&session)
+        .cloned()
+        .expect("the expired session remains projected");
+    assert_eq!(expired.status(), "idle");
+    assert_eq!(expired.outcome.as_deref(), Some("expired"));
+    assert!(
+        child.is_provably_live(),
+        "replaying a durable expiry never signals the PTY"
+    );
+
+    owner
+        .call(
+            "session.stop",
+            json!({"session": late_session, "generation": late_generation}),
+        )
+        .expect("the first late-session generation stops");
+    let restarted_late: SessionSummary = serde_json::from_value(
+        owner
+            .call("session.restart", json!({"session": late_session}))
+            .expect("the late session restarts into generation two"),
+    )
+    .expect("the restart returns a session summary");
+    let stale = owner
+        .call(
+            METHOD_AGENT_EVENT,
+            json!({
+                "session": late_session,
+                "kind": "ai.stop",
+                "tool": "codex",
+                "runtime_generation": late_generation,
+                "hook_payload": {"hook_event_name": "Stop"},
+            }),
+        )
+        .expect("the core returns a provenance decision");
+    assert_eq!(stale["accepted"], false);
+    assert_eq!(
+        stale["reason"],
+        "the event names a generation this session has left"
+    );
+
+    let fresh = owner
+        .call(
+            METHOD_AGENT_EVENT,
+            json!({
+                "session": late_session,
+                "kind": "ai.prompt_submit",
+                "tool": "codex",
+                "runtime_generation": restarted_late.manifest.generation,
+                "hook_payload": {"hook_event_name": "UserPromptSubmit"},
+            }),
+        )
+        .expect("the replacement generation reports normally");
+    assert_eq!(fresh["accepted"], true);
+
+    expired_worker.stop();
     let _ = owner.call(
         "session.stop",
-        json!({"session": late_session, "generation": late_generation}),
+        json!({"session": late_session, "generation": restarted_late.manifest.generation}),
     );
     let _ = owner.call(
         "session.stop",
