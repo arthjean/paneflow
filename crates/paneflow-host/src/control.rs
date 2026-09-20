@@ -459,7 +459,7 @@ mod tests {
                 screen_changed_at_ms: None,
                 screen_activity: None,
                 menu_prompt_active: false,
-                observed_runtime: None,
+                runtime: None,
                 host_protocol_version: crate::protocol::HOST_PROTOCOL_VERSION,
                 host_build_id: crate::protocol::host_build_id(),
                 created_at_ms: 1,

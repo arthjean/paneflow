@@ -67,6 +67,12 @@ pub struct Checkpoint {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ViewportScan {
+    pub screen: String,
+    pub foreground_process_group: Option<i32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OutputSlice {
     pub offset: u64,
     pub data: Vec<u8>,
@@ -103,6 +109,7 @@ pub struct SpawnError(pub String);
 enum Command {
     Checkpoint(SyncSender<Result<Checkpoint, RuntimeError>>),
     Text(SyncSender<Result<String, RuntimeError>>),
+    Viewport(SyncSender<Result<ViewportScan, RuntimeError>>),
     BracketedPaste(SyncSender<Result<bool, RuntimeError>>),
     Output {
         from: u64,
@@ -232,11 +239,19 @@ impl SessionRuntime {
         &self,
         build: impl FnOnce(SyncSender<Result<T, RuntimeError>>) -> Command,
     ) -> Result<T, RuntimeError> {
+        self.ask_within(REQUEST_DEADLINE, build)
+    }
+
+    fn ask_within<T>(
+        &self,
+        budget: Duration,
+        build: impl FnOnce(SyncSender<Result<T, RuntimeError>>) -> Command,
+    ) -> Result<T, RuntimeError> {
         let (reply_tx, reply_rx) = sync_channel(1);
-        self.send_bounded(Message::Command(build(reply_tx)), REQUEST_DEADLINE)?;
-        match reply_rx.recv_timeout(REQUEST_DEADLINE) {
+        self.send_bounded(Message::Command(build(reply_tx)), budget)?;
+        match reply_rx.recv_timeout(budget) {
             Ok(result) => result,
-            Err(RecvTimeoutError::Timeout) => Err(RuntimeError::Deadline(REQUEST_DEADLINE)),
+            Err(RecvTimeoutError::Timeout) => Err(RuntimeError::Deadline(budget)),
             Err(RecvTimeoutError::Disconnected) => Err(RuntimeError::Gone),
         }
     }
@@ -247,6 +262,10 @@ impl SessionRuntime {
 
     pub fn text(&self) -> Result<String, RuntimeError> {
         self.ask(Command::Text)
+    }
+
+    pub fn viewport_scan(&self, budget: Duration) -> Result<ViewportScan, RuntimeError> {
+        self.ask_within(budget, Command::Viewport)
     }
 
     pub fn bracketed_paste_enabled(&self) -> Result<bool, RuntimeError> {
@@ -513,6 +532,9 @@ impl Session {
             Command::Text(reply) => {
                 let _ = reply.send(self.text());
             }
+            Command::Viewport(reply) => {
+                let _ = reply.send(self.viewport_scan());
+            }
             Command::BracketedPaste(reply) => {
                 let modes = self
                     .terminal
@@ -589,6 +611,29 @@ impl Session {
             (None, false) => screen,
             (None, true) => String::new(),
         })
+    }
+
+    fn viewport_scan(&mut self) -> Result<ViewportScan, RuntimeError> {
+        let screen = self
+            .terminal
+            .format(ghostty::FormatterOptions::plain_text())
+            .map_err(|e| RuntimeError::Engine(e.to_string()))?;
+        Ok(ViewportScan {
+            screen,
+            foreground_process_group: self.foreground_process_group(),
+        })
+    }
+
+    #[cfg(unix)]
+    fn foreground_process_group(&self) -> Option<i32> {
+        self.master
+            .as_ref()
+            .and_then(|master| master.process_group_leader())
+    }
+
+    #[cfg(not(unix))]
+    fn foreground_process_group(&self) -> Option<i32> {
+        None
     }
 
     fn output(&self, from: u64, max: usize) -> Result<OutputSlice, RuntimeError> {

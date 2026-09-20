@@ -172,6 +172,13 @@ pub fn runtime_by_script_path(path: &str) -> Option<&'static Runtime> {
     })
 }
 
+pub fn runtime_for_tool(tool: &str) -> Option<&'static Runtime> {
+    runtime_by_command_alias(tool)
+        .or_else(|| runtime_by_slug(tool))
+        .or_else(|| runtime_by_process_alias(tool))
+        .or_else(|| runtime_by_id(tool))
+}
+
 pub fn runtime_for_integration_install(slug: &str) -> Result<&'static Runtime, String> {
     let runtime = runtime_by_slug(slug).ok_or_else(|| format!("unknown runtime '{slug}'"))?;
     if !runtime.capabilities.contains(&"integration_install") {

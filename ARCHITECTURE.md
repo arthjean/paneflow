@@ -437,6 +437,31 @@ stale code.
   settled turn is recorded in the worker's bounded activity log
   (`agent.activity_log`) as `completed`, `failed:<reason>`, `expired` or
   `cancelled`.
+- **The host viewport scan.** Every 500 ms the host thread named
+  `paneflow-host-viewport` asks each live session for its rendered screen and
+  its foreground process group, then edge-writes four manifest fields:
+  `screen_changed_at_ms` when the screen text hash changes (coalesced to one
+  stamp per second, so an idle TUI repainting identical content costs zero
+  writes), `screen_activity` from the observed runtime's declared `[screen]`
+  rules over the bottom 15 non-blank lines, `menu_prompt_active` when the
+  viewport carries an agent-drawn select-menu footer, and `observed_runtime`
+  with the foreground runtime identity. Nothing is written when nothing
+  changed. The worker consumes the three signals below the hooks: a hook latch
+  ignores `screen_activity`, an unlatched session maps it to busy/idle with
+  `activity_source = screen`, and a detected menu overrides busy/idle with
+  attention while `menu_attention_detection` is enabled.
+- **Foreground runtime observation.** The scan matches the foreground job
+  against the catalog: the process-group leader first, then the best of
+  `Direct` over `Wrapper` strength, smallest ancestry depth, lowest pid. A
+  `node`, `bun`, `python`, `sh -c`, `env` or `npx` wrapper is resolved through
+  its script path against the runtime's `script_path_signatures`, so an
+  npm-installed Claude running under `node.exe` on Windows is recognized;
+  ambiguous interpreter flags (`-e`, `-c`, `-m`) never name a runtime.
+  Persisted argv evidence stops at the cell that established the match, is
+  bounded to 8 cells and 1 KiB, and is omitted for wrapper matches. The
+  observation is refused outright when the session leader's recorded kernel
+  start time no longer matches. Unix reads the PTY's foreground process group;
+  Windows walks the child process tree and reads each PEB command line.
 - **Capabilities, not probes.** `worker.hello` answers a `WorkerIdentity`
   carrying the set in `protocol/host-capabilities-v1.json`. A Controller reads
   that set once and never discovers a feature by trying it.

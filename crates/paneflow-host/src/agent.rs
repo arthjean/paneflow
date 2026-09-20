@@ -245,7 +245,7 @@ pub struct AgentSnapshotEntry {
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub menu_prompt_active: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub observed_runtime: Option<String>,
+    pub observed_runtime: Option<crate::runtime_observer::RuntimeObservation>,
     #[serde(default)]
     pub host_protocol_version: u32,
     #[serde(default, skip_serializing_if = "String::is_empty")]

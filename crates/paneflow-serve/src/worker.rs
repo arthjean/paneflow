@@ -101,6 +101,7 @@ fn open_with_build_id(home: &Path, build_id: String) -> Result<RunningWorker, Wo
         capabilities: advertised_capabilities(),
     };
     let mut state = WorkerState::new(home);
+    state.set_menu_attention_detection(menu_attention_detection(home));
     let rebuilt = state.rebuild_from_home(home);
     log::info!("paneflow-serve: rebuilt {rebuilt} sessions from manifests and seeds");
     let worker = Arc::new(Worker {
@@ -135,6 +136,11 @@ pub fn open(home: &Path) -> Result<RunningWorker, WorkerError> {
     let build_id = crate::protocol::executable_build_id(&executable)
         .map_err(|error| WorkerError::Storage(error.to_string()))?;
     open_with_build_id(home, build_id)
+}
+
+fn menu_attention_detection(home: &Path) -> bool {
+    paneflow_config::loader::load_config_from_path(&home.join("paneflow.json"))
+        .menu_attention_detection_enabled()
 }
 
 fn write_instance_record(worker: &Worker) {
@@ -311,4 +317,26 @@ fn with_type(mut frame: Value, kind: &str) -> Value {
         map.insert("type".to_string(), Value::from(kind));
     }
     frame
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn open_with_config(home: &Path, body: &str) -> RunningWorker {
+        std::fs::write(home.join("paneflow.json"), body).expect("the config is written");
+        open_with_build_id(home, "test-build".to_string()).expect("the worker opens")
+    }
+
+    #[test]
+    fn menu_attention_detection_defaults_on_and_the_setting_turns_it_off() {
+        let home = tempfile::tempdir().expect("a temporary home");
+        let running = open_with_config(home.path(), "{}");
+        assert!(running.worker().lock_state().menu_attention_detection());
+        running.stop();
+
+        let running = open_with_config(home.path(), r#"{"menu_attention_detection": false}"#);
+        assert!(!running.worker().lock_state().menu_attention_detection());
+        running.stop();
+    }
 }

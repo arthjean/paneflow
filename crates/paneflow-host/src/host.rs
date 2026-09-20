@@ -301,7 +301,24 @@ impl SessionHost {
         host.adopt_previous_records();
         host.trim_terminated_records();
         host.write_instance_record()?;
+        crate::viewport_scan::spawn(&host);
         Ok(host)
+    }
+
+    pub(crate) fn live_scan_targets(
+        &self,
+    ) -> Vec<(SessionId, Arc<Mutex<SessionManifest>>, Arc<SessionRuntime>)> {
+        self.lock_sessions()
+            .iter()
+            .filter(|(_, record)| record.is_live())
+            .filter_map(|(session, record)| {
+                Some((
+                    session.clone(),
+                    Arc::clone(&record.manifest),
+                    record.runtime.clone()?,
+                ))
+            })
+            .collect()
     }
 
     pub fn retire(&self) {
@@ -551,7 +568,10 @@ impl SessionHost {
                 screen_changed_at_ms: summary.manifest.screen_changed_at_ms,
                 screen_activity: summary.manifest.screen_activity,
                 menu_prompt_active: summary.manifest.menu_prompt_active,
-                observed_runtime: summary.manifest.observed_runtime,
+                observed_runtime: summary
+                    .manifest
+                    .runtime
+                    .and_then(|runtime| runtime.current_observation),
                 host_protocol_version: summary.manifest.host_protocol_version,
                 host_build_id: summary.manifest.host_build_id,
             })
@@ -716,7 +736,7 @@ impl SessionHost {
             screen_changed_at_ms: None,
             screen_activity: None,
             menu_prompt_active: false,
-            observed_runtime: None,
+            runtime: None,
             host_protocol_version: HOST_PROTOCOL_VERSION,
             host_build_id: crate::protocol::host_build_id(),
             created_at_ms: created,
@@ -805,7 +825,7 @@ impl SessionHost {
             guard.screen_changed_at_ms = None;
             guard.screen_activity = None;
             guard.menu_prompt_active = false;
-            guard.observed_runtime = None;
+            guard.runtime = None;
             guard.host_protocol_version = HOST_PROTOCOL_VERSION;
             guard.host_build_id = crate::protocol::host_build_id();
             guard.launch.args.clear();
@@ -1118,7 +1138,7 @@ impl SessionHost {
             .map_err(|e| HostError::Storage(format!("cannot write the session manifest: {e}")))
     }
 
-    fn update(
+    pub(crate) fn update(
         &self,
         manifest: &Arc<Mutex<SessionManifest>>,
         apply: impl FnOnce(&mut SessionManifest),
@@ -1432,7 +1452,7 @@ mod tests {
             screen_changed_at_ms: None,
             screen_activity: None,
             menu_prompt_active: false,
-            observed_runtime: None,
+            runtime: None,
             host_protocol_version: HOST_PROTOCOL_VERSION,
             host_build_id: crate::protocol::host_build_id(),
             created_at_ms: updated_at_ms,
@@ -1478,7 +1498,7 @@ mod tests {
                 screen_changed_at_ms: None,
                 screen_activity: None,
                 menu_prompt_active: false,
-                observed_runtime: None,
+                runtime: None,
                 host_protocol_version: HOST_PROTOCOL_VERSION,
                 host_build_id: crate::protocol::host_build_id(),
                 created_at_ms: updated_at_ms,
@@ -1742,6 +1762,57 @@ mod tests {
         );
 
         let _ = host.stop(&created.manifest.session, None);
+    }
+
+    #[test]
+    fn the_viewport_scan_stamps_the_screen_and_flags_an_agent_drawn_menu() {
+        let home = tempfile::tempdir().unwrap();
+        let endpoint = home.path().join("host.sock");
+        let host = SessionHost::open(home.path(), &endpoint).unwrap();
+        let created = host.create(shell_request(100, 24)).unwrap();
+        let session = created.manifest.session.clone();
+        assert!(created.manifest.screen_changed_at_ms.is_none());
+        assert!(!created.manifest.menu_prompt_active);
+
+        assert!(
+            wait_until(Duration::from_secs(15), || {
+                host.inspect(&session)
+                    .is_ok_and(|summary| summary.manifest.screen_changed_at_ms.is_some())
+            }),
+            "the scan stamps the first painted screen"
+        );
+        let stamped = host.inspect(&session).unwrap().manifest;
+        assert!(!stamped.menu_prompt_active);
+        assert!(
+            stamped.runtime.is_none(),
+            "a plain shell is never mistaken for an agent runtime"
+        );
+
+        host.input(
+            &session,
+            Some(SessionGeneration::FIRST),
+            b"echo Enter to select - up/down to navigate - Esc to cancel
+"
+            .to_vec(),
+        )
+        .unwrap();
+        assert!(
+            wait_until(Duration::from_secs(15), || {
+                host.inspect(&session)
+                    .is_ok_and(|summary| summary.manifest.menu_prompt_active)
+            }),
+            "an agent-drawn menu footer reaches the manifest without any hook"
+        );
+        let asking = host.inspect(&session).unwrap().manifest;
+        assert!(asking.screen_changed_at_ms >= stamped.screen_changed_at_ms);
+        assert!(
+            read_manifest(&crate::manifest::manifest_path(home.path(), &session))
+                .unwrap()
+                .menu_prompt_active,
+            "the edge is persisted, not only held in memory"
+        );
+
+        host.stop(&session, None).unwrap();
     }
 
     #[test]

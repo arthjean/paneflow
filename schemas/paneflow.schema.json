@@ -329,6 +329,11 @@
       "description": "Anti-injection fence on the surface.read CLI/IPC path, independent of ai_unrestricted. Null/true (default) wraps returned terminal text in an <untrusted_terminal_output> marker so a malicious peer pane cannot hijack a conductor reading it. False returns raw text (an assumed risk). Stays ON by default even in free-access mode because the fence protects the AI, it does not bridle it.",
       "default": true
     },
+    "menu_attention_detection": {
+      "type": ["boolean", "null"],
+      "description": "Attention badge for agent-drawn select menus. Claude and Codex numbered prompts fire no lifecycle hook, so the host scans the visible viewport for their footer hints and the worker turns a detected menu into Attention. Null/true (default) keeps the badge; false leaves such a session on its hook- or screen-derived state.",
+      "default": true
+    },
     "on_quit": {
       "type": ["string", "null"],
       "enum": ["ask", "keep", "stop", null],

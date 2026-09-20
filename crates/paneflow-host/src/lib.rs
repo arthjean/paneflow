@@ -17,12 +17,16 @@ pub mod env;
 pub mod helpers;
 pub mod host;
 pub mod manifest;
+pub mod menu_prompt;
 pub mod process;
 pub mod protocol;
 pub mod pty;
 pub mod runtime;
+pub mod runtime_observer;
+pub mod screen_activity;
 pub mod server;
 pub mod tail;
+pub mod viewport_scan;
 
 pub use paneflow_config::schema::{HostInstanceToken, SessionGeneration, SessionId, WorkspaceId};
 
@@ -36,5 +40,6 @@ pub use host::{
 pub use manifest::{HookRecord, SessionLaunch, SessionLifecycle, SessionManifest};
 pub use process::{ProcessIdentity, ProcessVerdict};
 pub use protocol::{ClientHello, EngineIdentity, HOST_PROTOCOL_VERSION, HostIdentity};
-pub use runtime::Checkpoint;
+pub use runtime::{Checkpoint, ViewportScan};
+pub use runtime_observer::RuntimeObservation;
 pub use server::{ServerHandle, serve};

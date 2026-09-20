@@ -7,10 +7,17 @@ use paneflow_config::schema::{HostInstanceToken, SessionGeneration, SessionId, W
 use serde::{Deserialize, Serialize};
 
 use crate::process::ProcessIdentity;
+use crate::runtime_observer::RuntimeObservation;
 
 pub const MANIFEST_SCHEMA_VERSION: u32 = 1;
 
 pub const MAX_MANIFEST_BYTES: u64 = 64 * 1024;
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HostedSessionRuntime {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub current_observation: Option<RuntimeObservation>,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SessionLaunch {
@@ -101,7 +108,7 @@ pub struct SessionManifest {
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub menu_prompt_active: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub observed_runtime: Option<String>,
+    pub runtime: Option<HostedSessionRuntime>,
     #[serde(default)]
     pub host_protocol_version: u32,
     #[serde(default, skip_serializing_if = "String::is_empty")]
@@ -295,7 +302,7 @@ mod tests {
             screen_changed_at_ms: None,
             screen_activity: None,
             menu_prompt_active: false,
-            observed_runtime: None,
+            runtime: None,
             host_protocol_version: crate::protocol::HOST_PROTOCOL_VERSION,
             host_build_id: crate::protocol::host_build_id(),
             created_at_ms: 1,
@@ -335,6 +342,31 @@ mod tests {
                 .to_string_lossy()
                 .contains(".tmp.")),
             "no temporary file survives an atomic replacement"
+        );
+    }
+
+    #[test]
+    fn a_runtime_observation_uses_the_nested_manifest_contract() {
+        let mut manifest = sample(SessionId::new());
+        manifest.runtime = Some(HostedSessionRuntime {
+            current_observation: Some(RuntimeObservation {
+                id: "com.anthropic.claude-code".to_string(),
+                pid: 42,
+                pid_started_at: Some(7),
+                process_group: 42,
+                process_name: "claude".to_string(),
+                argv: Some(vec!["claude".to_string()]),
+            }),
+        });
+        let value = serde_json::to_value(&manifest).unwrap();
+        assert_eq!(
+            value["runtime"]["current_observation"]["id"],
+            "com.anthropic.claude-code"
+        );
+        assert!(value.get("observed_runtime").is_none());
+        assert_eq!(
+            serde_json::from_value::<SessionManifest>(value).unwrap(),
+            manifest
         );
     }
 

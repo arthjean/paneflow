@@ -28,6 +28,20 @@ generation guard and durable seed replay follow that design. Paneflow's socket
 transport, manifest types, notification decision and Controller projection are
 its own.
 
+The host viewport scan in `crates/paneflow-host/src/screen_activity.rs`,
+`crates/paneflow-host/src/menu_prompt.rs` and
+`crates/paneflow-host/src/runtime_observer.rs` is ported from Unpeel's
+`crates/unpeel-core/src/screen_activity.rs`,
+`crates/unpeel-core/src/menu_prompt.rs`,
+`crates/unpeel-core/src/runtime_observer.rs` and the `ScreenChangeTracker` and
+500 ms menu job of `crates/unpeel-core/src/session_host.rs` at commit
+`443877b`, together with the Claude approval fixture
+`runtimes/claude-code/fixtures/approval-menu.txt`. The bottom-window screen
+classifier, the marker lists and adjacency rule of the menu detector, and the
+leader-first wrapper-aware runtime matcher follow that design. Paneflow's
+manifest fields, scan scheduling, Windows foreground implementation and
+Controller projection are its own.
+
 ```
 MIT License
 

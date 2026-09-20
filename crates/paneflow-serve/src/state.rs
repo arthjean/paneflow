@@ -6,6 +6,7 @@ use paneflow_agent_config::runtime_catalog::{Runtime, RuntimeLifecycleSource};
 use paneflow_config::schema::{SessionGeneration, SessionId, WorkspaceId};
 use paneflow_host::agent::AgentEvent;
 use paneflow_host::manifest::{SessionLifecycle, SessionManifest};
+use paneflow_host::runtime_observer::RuntimeObservation;
 use paneflow_host::{ProcessIdentity, ProcessVerdict};
 use paneflow_ipc_client::agent::{AgentState, next_waiting_since};
 use serde_json::{Value, json};
@@ -115,7 +116,7 @@ pub struct SessionEntry {
     pub output_changed_at_ms: Option<u64>,
     pub screen_activity: Option<String>,
     pub menu_prompt_active: bool,
-    pub observed_runtime: Option<String>,
+    pub observed_runtime: Option<RuntimeObservation>,
     pub updated_at_ms: u64,
 }
 
@@ -146,7 +147,9 @@ impl SessionEntry {
             output_changed_at_ms: None,
             screen_activity: manifest.screen_activity,
             menu_prompt_active: manifest.menu_prompt_active,
-            observed_runtime: manifest.observed_runtime,
+            observed_runtime: manifest
+                .runtime
+                .and_then(|runtime| runtime.current_observation),
             updated_at_ms: manifest.updated_at_ms,
         };
         entry.refresh_health();
@@ -173,6 +176,17 @@ impl SessionEntry {
         self.activity
             .as_ref()
             .and_then(|summary| runtime_for_tool(&summary.tool))
+            .or_else(|| {
+                self.observed_runtime
+                    .as_ref()
+                    .and_then(RuntimeObservation::runtime)
+            })
+    }
+
+    fn foreground_identity(&self) -> Option<String> {
+        self.observed_runtime
+            .as_ref()
+            .map(RuntimeObservation::identity)
     }
 
     pub fn runtime_label(&self) -> String {
@@ -215,12 +229,7 @@ impl SessionEntry {
     }
 }
 
-pub fn runtime_for_tool(tool: &str) -> Option<&'static Runtime> {
-    paneflow_agent_config::runtime_catalog::runtime_by_command_alias(tool)
-        .or_else(|| paneflow_agent_config::runtime_catalog::runtime_by_slug(tool))
-        .or_else(|| paneflow_agent_config::runtime_catalog::runtime_by_process_alias(tool))
-        .or_else(|| paneflow_agent_config::runtime_catalog::runtime_by_id(tool))
-}
+pub use paneflow_agent_config::runtime_catalog::runtime_for_tool;
 
 fn screen_fallback(entry: &SessionEntry) -> Option<Status> {
     let runtime = entry.runtime()?;
@@ -261,6 +270,10 @@ impl WorkerState {
 
     pub fn set_menu_attention_detection(&mut self, enabled: bool) {
         self.menu_attention_detection = enabled;
+    }
+
+    pub fn menu_attention_detection(&self) -> bool {
+        self.menu_attention_detection
     }
 
     pub fn len(&self) -> usize {
@@ -427,7 +440,7 @@ impl WorkerState {
         let generation = entry.generation.get();
         let generation_started_at_ms = entry.generation_started_at_ms;
         let launch_hook_capable = entry.launch_hook_capable;
-        let observed_runtime = entry.observed_runtime.clone();
+        let foreground_identity = entry.foreground_identity();
         let hook_event_name = frame["hook_payload"]["hook_event_name"]
             .as_str()
             .unwrap_or_else(|| event.kind.wire_str())
@@ -446,7 +459,7 @@ impl WorkerState {
         self.engine.bind_session_dir(&session, &dir);
         if !launch_hook_capable {
             self.engine
-                .observe_foreground_runtime(&session, observed_runtime.as_deref());
+                .observe_foreground_runtime(&session, foreground_identity.as_deref());
         }
         let accepted = self.engine.apply_hook_event(
             &session,
@@ -499,7 +512,7 @@ impl WorkerState {
         let generation_started_at_ms = entry.generation_started_at_ms;
         let activity_signal = entry.activity_signal;
         let menu_prompt_active = entry.menu_prompt_active;
-        let observed_runtime = entry.observed_runtime.clone();
+        let foreground_identity = entry.foreground_identity();
         let running = entry.lifecycle.is_running();
         let errored = entry
             .activity
@@ -511,7 +524,7 @@ impl WorkerState {
             .observe_runtime_launch(session, generation, generation_started_at_ms);
         if !launch_hook_capable {
             self.engine
-                .observe_foreground_runtime(session, observed_runtime.as_deref());
+                .observe_foreground_runtime(session, foreground_identity.as_deref());
         }
         self.engine.bind_session_dir(session, &dir);
         if hook_capable {
@@ -752,9 +765,9 @@ fn merge_core_row(session: SessionId, raw: &Value, held: Option<SessionEntry>) -
         output_changed_at_ms: raw["output_changed_at_ms"].as_u64(),
         screen_activity: raw["screen_activity"].as_str().map(str::to_owned),
         menu_prompt_active: raw["menu_prompt_active"].as_bool().unwrap_or_default(),
-        observed_runtime: raw["observed_runtime"]
-            .as_str()
-            .map(str::to_owned)
+        observed_runtime: serde_json::from_value(raw["observed_runtime"].clone())
+            .ok()
+            .flatten()
             .or_else(|| {
                 held.as_ref()
                     .and_then(|entry| entry.observed_runtime.clone())
@@ -779,6 +792,17 @@ mod tests {
     use paneflow_host::manifest::{
         HookRecord, MANIFEST_SCHEMA_VERSION, SessionLaunch, write_manifest,
     };
+
+    fn observation(id: &str, pid: u32, started_at: u64) -> RuntimeObservation {
+        RuntimeObservation {
+            id: id.to_string(),
+            pid,
+            pid_started_at: Some(started_at),
+            process_group: pid,
+            process_name: "agent".to_string(),
+            argv: None,
+        }
+    }
 
     const LAUNCHED_AT: u64 = 1_000;
 
@@ -806,7 +830,7 @@ mod tests {
             screen_changed_at_ms: None,
             screen_activity: None,
             menu_prompt_active: false,
-            observed_runtime: None,
+            runtime: None,
             host_protocol_version: paneflow_host::HOST_PROTOCOL_VERSION,
             host_build_id: "test-build".to_string(),
             created_at_ms: 1,
@@ -1334,7 +1358,7 @@ mod tests {
         let session = SessionId::new();
         let mut state = running_state(home.path(), &session);
         state.sessions.get_mut(&session).unwrap().observed_runtime =
-            Some("com.anthropic.claude-code:10:5".to_string());
+            Some(observation("com.anthropic.claude-code", 10, 5));
         state.apply_core_event(&frame(
             &session,
             "ai.prompt_submit",
@@ -1351,7 +1375,7 @@ mod tests {
         );
 
         state.sessions.get_mut(&session).unwrap().observed_runtime =
-            Some("com.openai.codex:11:6".to_string());
+            Some(observation("com.openai.codex", 11, 6));
         state.sweep(SystemTime::now(), &|_| Some(false));
         assert_eq!(
             state.get(&session).unwrap().status(),
@@ -1374,7 +1398,7 @@ mod tests {
         let mut state = WorkerState::new(home.path());
         state.rebuild_from_home(home.path());
         state.sessions.get_mut(&session).unwrap().observed_runtime =
-            Some("com.anthropic.claude-code:10:5".to_string());
+            Some(observation("com.anthropic.claude-code", 10, 5));
         state.apply_core_event(&frame(
             &session,
             "ai.prompt_submit",
@@ -1382,7 +1406,7 @@ mod tests {
             json!({}),
         ));
         state.sessions.get_mut(&session).unwrap().observed_runtime =
-            Some("com.anthropic.claude-code:11:6".to_string());
+            Some(observation("com.anthropic.claude-code", 11, 6));
         state.sweep(SystemTime::now(), &|_| Some(false));
         assert_eq!(state.get(&session).unwrap().status(), "busy");
         assert_eq!(
@@ -1559,6 +1583,47 @@ mod tests {
         assert_eq!(entry.status(), "busy");
         assert_eq!(entry.activity_source, ActivitySource::Screen);
         assert_eq!(entry.outcome, None);
+    }
+
+    #[test]
+    fn an_observed_runtime_without_any_hook_takes_the_screen_verdict() {
+        let home = tempfile::tempdir().unwrap();
+        let session = SessionId::new();
+        let raw = json!({
+            "session": session,
+            "generation": SessionGeneration::FIRST,
+            "live": true,
+            "lifecycle": SessionLifecycle::Running,
+            "screen_activity": SCREEN_WORKING,
+            "observed_runtime": observation("com.anthropic.claude-code", 10, 5),
+        });
+        let mut state = WorkerState::new(home.path());
+        state.apply_core_snapshot(&[raw]);
+        let entry = state.get(&session).expect("the screen tier projects");
+        assert_eq!(
+            entry.runtime().map(|runtime| runtime.slug),
+            Some("claude-code")
+        );
+        assert_eq!(entry.status(), "busy");
+        assert_eq!(entry.activity_source, ActivitySource::Screen);
+        assert_eq!(entry.outcome, None);
+    }
+
+    #[test]
+    fn a_hook_latch_ignores_the_screen_verdict_that_contradicts_it() {
+        let home = tempfile::tempdir().unwrap();
+        let session = SessionId::new();
+        let mut state = running_state(home.path(), &session);
+        state.sessions.get_mut(&session).unwrap().screen_activity = Some(SCREEN_IDLE.to_string());
+        state.apply_core_event(&frame(
+            &session,
+            "ai.prompt_submit",
+            "UserPromptSubmit",
+            json!({}),
+        ));
+        let entry = state.get(&session).expect("the latched session projects");
+        assert_eq!(entry.status(), "busy");
+        assert_eq!(entry.activity_source, ActivitySource::Hooks);
     }
 
     #[test]
