@@ -70,6 +70,15 @@ pub(crate) enum Apply {
     Settings(SettingsSection),
 }
 
+impl Apply {
+    pub(crate) fn applies_in_place(&self) -> bool {
+        match self {
+            Apply::Setting { .. } | Apply::Theme(_) | Apply::Mode(_) => true,
+            Apply::Workspace(_) | Apply::Tab(_) | Apply::Action(_) | Apply::Settings(_) => false,
+        }
+    }
+}
+
 pub(crate) struct ScopeValue {
     pub(crate) label: String,
     pub(crate) current: bool,
@@ -1279,6 +1288,24 @@ mod tests {
                 command.label
             );
         }
+    }
+
+    #[test]
+    fn only_the_preference_values_apply_in_place() {
+        assert!(
+            Apply::Setting {
+                key: "font_size",
+                nested: false,
+                value: json!(14),
+            }
+            .applies_in_place()
+        );
+        assert!(Apply::Theme(0).applies_in_place());
+        assert!(Apply::Mode(ThemeMode::Dark).applies_in_place());
+        assert!(!Apply::Workspace(0).applies_in_place());
+        assert!(!Apply::Tab(0).applies_in_place());
+        assert!(!Apply::Action("split_vertically").applies_in_place());
+        assert!(!Apply::Settings(SettingsSection::General).applies_in_place());
     }
 
     #[test]

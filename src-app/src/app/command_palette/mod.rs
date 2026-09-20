@@ -252,6 +252,26 @@ impl PaneFlowApp {
         cx.notify();
     }
 
+    fn preview_palette_value(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(scope) = self.command_palette_scope else {
+            return;
+        };
+        let Some(source) = self
+            .command_palette_rows(cx)
+            .get(self.command_palette_selected)
+            .map(|row| row.source)
+        else {
+            return;
+        };
+        let Some(value) = scope.values(self).into_iter().nth(source) else {
+            return;
+        };
+        if value.current || !value.apply.applies_in_place() {
+            return;
+        }
+        self.apply_scope_value(value, window, cx);
+    }
+
     fn enter_palette_scope(&mut self, scope: Scope, cx: &mut Context<Self>) {
         self.command_palette_scope = Some(scope);
         self.reset_palette_input(Some(scope), cx);
@@ -317,11 +337,16 @@ impl PaneFlowApp {
         let Some(source) = self.command_palette_rows(cx).get(idx).map(|row| row.source) else {
             return;
         };
+        self.command_palette_select(idx, cx);
 
         if let Some(scope) = self.command_palette_scope {
             let Some(value) = scope.values(self).into_iter().nth(source) else {
                 return;
             };
+            if value.apply.applies_in_place() {
+                self.apply_scope_value(value, window, cx);
+                return;
+            }
             self.close_command_palette(window, cx);
             self.apply_scope_value(value, window, cx);
             return;
@@ -345,7 +370,6 @@ impl PaneFlowApp {
             }
             Kind::Toggle { read, write } => {
                 let next = !read(self);
-                self.close_command_palette(window, cx);
                 write(self, next, cx);
             }
         }
@@ -393,12 +417,14 @@ impl PaneFlowApp {
             "up" => {
                 if selected > 0 {
                     self.command_palette_select(selected - 1, cx);
+                    self.preview_palette_value(window, cx);
                 }
                 cx.stop_propagation();
             }
             "down" => {
                 if selected + 1 < len {
                     self.command_palette_select(selected + 1, cx);
+                    self.preview_palette_value(window, cx);
                 }
                 cx.stop_propagation();
             }

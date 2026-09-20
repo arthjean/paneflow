@@ -31,9 +31,9 @@ fn read_config_theme_name() -> Option<String> {
     paneflow_config::loader::load_config().theme
 }
 
-fn resolve_theme() -> TerminalTheme {
-    if let Some(name) = read_config_theme_name() {
-        if let Some(theme) = theme_by_name(&name) {
+fn resolve_theme_name(name: Option<&str>) -> TerminalTheme {
+    if let Some(name) = name {
+        if let Some(theme) = theme_by_name(name) {
             return apply_surface_overrides(theme);
         }
         log::warn!("Unknown theme '{}', using default", name);
@@ -41,6 +41,41 @@ fn resolve_theme() -> TerminalTheme {
     apply_surface_overrides(paneflow_dark())
 }
 
+fn resolve_theme() -> TerminalTheme {
+    resolve_theme_name(read_config_theme_name().as_deref())
+}
+
+fn install_theme(
+    cache: &mut Option<CachedTheme>,
+    theme: TerminalTheme,
+    mtime: Option<SystemTime>,
+) -> TerminalTheme {
+    let changed = cache.as_ref().is_some_and(|cached| cached.theme != theme);
+    *cache = Some(CachedTheme {
+        theme,
+        mtime,
+        last_check: Instant::now(),
+    });
+    if changed {
+        THEME_GENERATION.fetch_add(1, Ordering::AcqRel);
+    }
+    theme
+}
+
+pub fn set_active_theme(name: Option<&str>) {
+    let theme = resolve_theme_name(name);
+    let mut cache = THEME_CACHE.lock();
+    let mtime = cache.as_ref().and_then(|cached| cached.mtime);
+    install_theme(&mut cache, theme, mtime);
+}
+
+fn reload_theme() {
+    let mtime = config_mtime();
+    let theme = resolve_theme();
+    install_theme(&mut THEME_CACHE.lock(), theme, mtime);
+}
+
+#[cfg(test)]
 pub fn invalidate_theme_cache() {
     *THEME_CACHE.lock() = None;
     THEME_GENERATION.fetch_add(1, Ordering::AcqRel);
@@ -75,17 +110,7 @@ pub fn active_theme() -> TerminalTheme {
     };
 
     if needs_reload {
-        let had_cached_theme = cache.is_some();
-        let theme = resolve_theme();
-        *cache = Some(CachedTheme {
-            theme,
-            mtime: current_mtime,
-            last_check: Instant::now(),
-        });
-        if had_cached_theme {
-            THEME_GENERATION.fetch_add(1, Ordering::AcqRel);
-        }
-        theme
+        install_theme(&mut cache, resolve_theme(), current_mtime)
     } else {
         #[allow(clippy::expect_used)]
         let cached = cache
@@ -233,7 +258,7 @@ fn event_loop(
 }
 
 fn fire_reload(callback: &Arc<dyn Fn() + Send + Sync>) {
-    invalidate_theme_cache();
+    reload_theme();
     callback();
 }
 
@@ -271,6 +296,17 @@ mod tests {
 
     fn write_config(path: &std::path::Path, theme: &str) {
         std::fs::write(path, format!(r#"{{"theme": "{theme}"}}"#)).unwrap();
+    }
+
+    #[test]
+    fn installing_the_same_theme_twice_bumps_the_generation_once() {
+        let _g = serial();
+        set_active_theme(Some("Vercel Dark"));
+        let before = theme_generation();
+        set_active_theme(Some("Vercel Dark"));
+        assert_eq!(theme_generation(), before);
+        set_active_theme(Some("Claude Dark"));
+        assert_eq!(theme_generation(), before + 1);
     }
 
     #[test]

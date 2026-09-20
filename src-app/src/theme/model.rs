@@ -2,7 +2,7 @@ use gpui::{Hsla, Rgba};
 
 use crate::terminal::element::{MIN_APCA_CONTRAST, ensure_minimum_contrast};
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq)]
 pub struct TerminalTheme {
     pub ui: Option<UiColors>,
     pub background: Hsla,
@@ -37,7 +37,7 @@ pub struct TerminalTheme {
     pub syntax: SyntaxPalette,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq)]
 pub struct SyntaxPalette {
     pub comment: Hsla,
     pub comment_doc: Hsla,
@@ -444,7 +444,7 @@ pub(super) fn apply_surface_overrides(mut theme: TerminalTheme) -> TerminalTheme
     theme
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq)]
 pub struct UiColors {
     pub use_theme_diff_washes: bool,
     pub base: Hsla,
