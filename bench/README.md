@@ -39,6 +39,7 @@ shared allocator.
 | `publish_echo_220x60` | ns | One keystroke echo on the bottom row, then snapshot plus conversion. Only one row changed. |
 | `publish_scroll_120x40` | ns | The scroll case on a 120x40 grid, the size of a typical split pane. |
 | `layout_220x60` | ns | The layout pass over a full 220x60 snapshot: run batching, background rectangles, contrast checks. |
+| `layout_220x60_acc60` | ns | The same layout pass with the automatic contrast correction on at Lc 60. Compared against `layout_220x60` at the end of the run: the suite prints a `PANEFLOW_BENCH_WARNING` when the correction costs more than 10%. |
 | `layout_echo_{uncached,cached}_220x60` | ns | Paired native echo, publication and layout workloads with and without retained row layouts. |
 | `layout_scroll_{uncached,cached}_220x60` | ns | The same pair with full-viewport scrolling; checks the cost when every row changes. |
 | `service_spaces_220x60`, `service_spaces_8192`, `service_text_220x60` | ns | Service-output parsing and extraction for blank redraws, a long blank line and ordinary styled output. |

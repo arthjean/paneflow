@@ -95,7 +95,13 @@ pub(crate) fn ensure_minimum_contrast(
     if min_lc <= 0.0 {
         return fg;
     }
-    contrast_cache_get_or_insert(fg, bg, min_lc, harmony)
+    let key = ContrastKey::new(fg, bg);
+    let threshold = ContrastThreshold::quantized(min_lc);
+    let corrected = contrast_cache_get_or_insert(key, threshold, harmony);
+    Hsla {
+        a: fg.a,
+        ..corrected
+    }
 }
 
 #[cfg(test)]
@@ -111,6 +117,17 @@ pub(super) fn oklch_of(color: Hsla) -> Oklch {
 #[cfg(test)]
 pub(super) fn corrected_without_harmony(fg: Hsla, bg: Hsla, min_lc: f32) -> Hsla {
     compute_minimum_contrast(fg, bg, min_lc, None)
+}
+
+#[cfg(test)]
+fn uncached_minimum_contrast(fg: Hsla, bg: Hsla, min_lc: f32) -> Hsla {
+    let key = ContrastKey::new(fg, bg);
+    compute_minimum_contrast(
+        key.foreground(),
+        key.background(),
+        ContrastThreshold::quantized(min_lc).lc(),
+        None,
+    )
 }
 
 #[cfg(test)]
@@ -188,66 +205,134 @@ fn packed_srgb(color: Hsla) -> u32 {
     (channel(rgba.r) << 16) | (channel(rgba.g) << 8) | channel(rgba.b)
 }
 
+fn unpacked_srgb(packed: u32) -> Hsla {
+    rgb_to_hsla(
+        ((packed >> 16) & 0xff) as u8,
+        ((packed >> 8) & 0xff) as u8,
+        (packed & 0xff) as u8,
+    )
+}
+
 pub(super) fn is_same_visible_color(a: Hsla, b: Hsla) -> bool {
     packed_srgb(a) == packed_srgb(b)
 }
 
-const CONTRAST_CACHE_SLOTS: usize = 128;
+const CONTRAST_CACHE_SLOTS: usize = 4096;
+const THRESHOLD_SCALE: f32 = 512.0;
+const THRESHOLD_CEILING: f32 = 127.0;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct ContrastKey(u64);
+
+impl ContrastKey {
+    fn new(fg: Hsla, bg: Hsla) -> Self {
+        Self((u64::from(packed_srgb(fg)) << 32) | u64::from(packed_srgb(bg)))
+    }
+
+    fn foreground(self) -> Hsla {
+        unpacked_srgb((self.0 >> 32) as u32)
+    }
+
+    fn background(self) -> Hsla {
+        unpacked_srgb(self.0 as u32)
+    }
+
+    fn slot(self) -> usize {
+        let mut hash = self.0 ^ 0xcbf2_9ce4_8422_2325;
+        hash ^= hash >> 33;
+        hash = hash.wrapping_mul(0xff51_afd7_ed55_8ccd);
+        hash ^= hash >> 33;
+        hash = hash.wrapping_mul(0xc4ce_b9fe_1a85_ec53);
+        hash ^= hash >> 33;
+        (hash as usize) % CONTRAST_CACHE_SLOTS
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct ContrastThreshold(u16);
+
+impl ContrastThreshold {
+    fn quantized(min_lc: f32) -> Self {
+        let clamped = min_lc.clamp(0.0, THRESHOLD_CEILING);
+        Self((clamped * THRESHOLD_SCALE).round() as u16)
+    }
+
+    fn lc(self) -> f32 {
+        f32::from(self.0) / THRESHOLD_SCALE
+    }
+}
 
 #[derive(Clone, Copy)]
 struct ContrastEntry {
-    key: [u32; 11],
+    key: ContrastKey,
+    harmony: u64,
     value: Hsla,
+    threshold: ContrastThreshold,
+}
+
+struct ContrastCache {
+    generation: u64,
+    entries: [Option<ContrastEntry>; CONTRAST_CACHE_SLOTS],
 }
 
 thread_local! {
-    static CONTRAST_CACHE: std::cell::RefCell<[Option<ContrastEntry>; CONTRAST_CACHE_SLOTS]> =
-        const { std::cell::RefCell::new([None; CONTRAST_CACHE_SLOTS]) };
+    static CONTRAST_CACHE: std::cell::RefCell<ContrastCache> = const {
+        std::cell::RefCell::new(ContrastCache {
+            generation: 0,
+            entries: [None; CONTRAST_CACHE_SLOTS],
+        })
+    };
 }
 
-fn contrast_key(fg: Hsla, bg: Hsla, min_lc: f32, harmony_id: u64) -> [u32; 11] {
-    [
-        fg.h.to_bits(),
-        fg.s.to_bits(),
-        fg.l.to_bits(),
-        fg.a.to_bits(),
-        bg.h.to_bits(),
-        bg.s.to_bits(),
-        bg.l.to_bits(),
-        bg.a.to_bits(),
-        min_lc.to_bits(),
-        (harmony_id >> 32) as u32,
-        harmony_id as u32,
-    ]
+#[cfg(test)]
+thread_local! {
+    static CONTRAST_HITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static CONTRAST_MISSES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
-fn contrast_slot(key: &[u32; 11]) -> usize {
-    let mut hash = 0xcbf2_9ce4_8422_2325_u64;
-    for word in key {
-        hash ^= u64::from(*word);
-        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
-    }
-    (hash as usize) % CONTRAST_CACHE_SLOTS
+#[cfg(test)]
+pub(crate) fn take_contrast_cache_stats() -> (usize, usize) {
+    (
+        CONTRAST_HITS.with(|hits| hits.replace(0)),
+        CONTRAST_MISSES.with(|misses| misses.replace(0)),
+    )
 }
 
 fn contrast_cache_get_or_insert(
-    fg: Hsla,
-    bg: Hsla,
-    min_lc: f32,
+    key: ContrastKey,
+    threshold: ContrastThreshold,
     harmony: Option<&HarmonyTargets>,
 ) -> Hsla {
-    let key = contrast_key(fg, bg, min_lc, harmony.map_or(0, |harmony| harmony.id));
-    let slot = contrast_slot(&key);
+    let generation = crate::theme::theme_generation();
+    let harmony_id = harmony.map_or(0, |harmony| harmony.id);
+    let slot = key.slot();
     CONTRAST_CACHE.with(|cache| {
-        if let Ok(cache) = cache.try_borrow()
-            && let Some(entry) = cache[slot].as_ref()
-            && entry.key == key
-        {
-            return entry.value;
-        }
-        let value = compute_minimum_contrast(fg, bg, min_lc, harmony);
         if let Ok(mut cache) = cache.try_borrow_mut() {
-            cache[slot] = Some(ContrastEntry { key, value });
+            if cache.generation != generation {
+                cache.entries.fill(None);
+                cache.generation = generation;
+            }
+            if let Some(entry) = cache.entries[slot].as_ref()
+                && entry.key == key
+                && entry.threshold == threshold
+                && entry.harmony == harmony_id
+            {
+                #[cfg(test)]
+                CONTRAST_HITS.with(|hits| hits.set(hits.get() + 1));
+                return entry.value;
+            }
+        }
+        #[cfg(test)]
+        CONTRAST_MISSES.with(|misses| misses.set(misses.get() + 1));
+        let value =
+            compute_minimum_contrast(key.foreground(), key.background(), threshold.lc(), harmony);
+        if let Ok(mut cache) = cache.try_borrow_mut() {
+            cache.entries[slot] = Some(ContrastEntry {
+                key,
+                harmony: harmony_id,
+                value,
+                threshold,
+            });
         }
         value
     })
@@ -490,16 +575,16 @@ mod tests {
 
         for (fg, bg) in &pairs {
             let cached = ensure_minimum_contrast(*fg, *bg, min_lc, None);
-            let direct = compute_minimum_contrast(*fg, *bg, min_lc, None);
+            let direct = uncached_minimum_contrast(*fg, *bg, min_lc);
             assert_eq!(
                 (cached.h, cached.s, cached.l, cached.a),
-                (direct.h, direct.s, direct.l, direct.a),
+                (direct.h, direct.s, direct.l, fg.a),
                 "cache diverged for fg={fg:?} bg={bg:?}"
             );
         }
         for (fg, bg) in &pairs {
             let cached = ensure_minimum_contrast(*fg, *bg, min_lc, None);
-            let direct = compute_minimum_contrast(*fg, *bg, min_lc, None);
+            let direct = uncached_minimum_contrast(*fg, *bg, min_lc);
             assert_eq!(
                 (cached.h, cached.s, cached.l),
                 (direct.h, direct.s, direct.l)
@@ -528,7 +613,127 @@ mod tests {
             (strict.l, strict.s),
             "a stricter threshold must move the foreground further"
         );
-        assert_eq!(strict.l, compute_minimum_contrast(fg, bg, 75.0, None).l);
+        assert_eq!(strict.l, uncached_minimum_contrast(fg, bg, 75.0).l);
+    }
+
+    #[test]
+    fn the_contrast_key_packs_both_colors_into_one_word() {
+        let fg = rgb_to_hsla(0x12, 0x34, 0x56);
+        let bg = rgb_to_hsla(0xab, 0xcd, 0xef);
+        let key = ContrastKey::new(fg, bg);
+        assert_eq!(key.0, 0x0012_3456_00ab_cdef);
+        assert_eq!(packed_srgb(key.foreground()), 0x0012_3456);
+        assert_eq!(packed_srgb(key.background()), 0x00ab_cdef);
+        let translucent = Hsla { a: 0.25, ..fg };
+        assert_eq!(ContrastKey::new(translucent, bg), key);
+    }
+
+    #[test]
+    fn the_threshold_field_round_trips_through_sixteen_bits() {
+        for lc in [0.5_f32, 45.0, 60.0, 75.0, 90.0] {
+            let threshold = ContrastThreshold::quantized(lc);
+            assert!((threshold.lc() - lc).abs() <= 1.0 / THRESHOLD_SCALE);
+        }
+        assert_eq!(
+            ContrastThreshold::quantized(400.0),
+            ContrastThreshold::quantized(THRESHOLD_CEILING)
+        );
+    }
+
+    #[test]
+    fn a_cache_hit_returns_the_stored_color_without_recomputing() {
+        let bg = rgb_to_hsla(0xf4, 0xf4, 0xf0);
+        let mut attempt = 0u8;
+        loop {
+            let fg = rgb_to_hsla(0xc8, 0xc8, 0x40 + attempt);
+            let generation = crate::theme::theme_generation();
+            let _ = take_contrast_cache_stats();
+            let first = ensure_minimum_contrast(fg, bg, 60.0, None);
+            let (cold_hits, cold_misses) = take_contrast_cache_stats();
+            let second = ensure_minimum_contrast(fg, bg, 60.0, None);
+            let (warm_hits, warm_misses) = take_contrast_cache_stats();
+            if crate::theme::theme_generation() == generation {
+                assert_eq!(
+                    (cold_hits, cold_misses),
+                    (0, 1),
+                    "the first lookup must compute once"
+                );
+                assert_eq!(
+                    (warm_hits, warm_misses),
+                    (1, 0),
+                    "the second lookup must not recompute"
+                );
+                assert_eq!((first.h, first.s, first.l), (second.h, second.s, second.l));
+                break;
+            }
+            attempt += 1;
+            assert!(
+                attempt < 5,
+                "the theme generation kept moving during the measurement"
+            );
+        }
+    }
+
+    #[test]
+    fn the_alpha_of_the_caller_survives_a_cache_hit() {
+        let fg = rgb_to_hsla(0x80, 0x90, 0x30);
+        let bg = rgb_to_hsla(0xfa, 0xfa, 0xfa);
+        let opaque = ensure_minimum_contrast(fg, bg, 60.0, None);
+        let dim = ensure_minimum_contrast(Hsla { a: 0.5, ..fg }, bg, 60.0, None);
+        assert_eq!((opaque.a, dim.a), (1.0, 0.5));
+        assert_eq!((opaque.h, opaque.s, opaque.l), (dim.h, dim.s, dim.l));
+    }
+
+    #[test]
+    fn a_theme_generation_change_clears_the_cache_before_the_next_lookup() {
+        let bg = rgb_to_hsla(0xfb, 0xfb, 0xfb);
+        let mut attempt = 0u8;
+        loop {
+            let fg = rgb_to_hsla(0x30, 0x90, 0xc0 + attempt);
+            let generation = crate::theme::theme_generation();
+            let _ = take_contrast_cache_stats();
+            let _ = ensure_minimum_contrast(fg, bg, 60.0, None);
+            let _ = ensure_minimum_contrast(fg, bg, 60.0, None);
+            let (hits, _) = take_contrast_cache_stats();
+            if crate::theme::theme_generation() == generation {
+                assert_eq!(
+                    hits, 1,
+                    "the pair must be cached before the generation moves"
+                );
+                crate::theme::invalidate_theme_cache();
+                let _ = ensure_minimum_contrast(fg, bg, 60.0, None);
+                let (hits, misses) = take_contrast_cache_stats();
+                assert_eq!(
+                    (hits, misses),
+                    (0, 1),
+                    "a new theme generation must clear the cache before serving anything"
+                );
+                break;
+            }
+            attempt += 1;
+            assert!(
+                attempt < 5,
+                "the theme generation kept moving during the measurement"
+            );
+        }
+    }
+
+    #[test]
+    fn the_cache_answers_from_a_worker_thread_without_a_global_lock() {
+        let handle = std::thread::spawn(|| {
+            let fg = rgb_to_hsla(0x99, 0x70, 0x20);
+            let bg = rgb_to_hsla(0xf2, 0xf2, 0xf2);
+            let _ = take_contrast_cache_stats();
+            let direct = uncached_minimum_contrast(fg, bg, 60.0);
+            let cached = ensure_minimum_contrast(fg, bg, 60.0, None);
+            let (_, misses) = take_contrast_cache_stats();
+            assert_eq!(misses, 1, "a fresh thread starts with an empty cache");
+            assert_eq!(
+                (cached.h, cached.s, cached.l),
+                (direct.h, direct.s, direct.l)
+            );
+        });
+        handle.join().expect("the worker thread must not panic");
     }
 
     fn hue_gap(a: f32, b: f32) -> f32 {

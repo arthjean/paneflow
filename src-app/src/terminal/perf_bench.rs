@@ -93,8 +93,16 @@ fn layout(
     rows: usize,
     theme: &crate::theme::TerminalTheme,
     palette: &ThemePalette,
+    minimum_contrast: f32,
 ) {
-    let state = layout_from_snapshot(layout_inputs(content, cols, rows, theme, palette));
+    let state = layout_from_snapshot(layout_inputs(
+        content,
+        cols,
+        rows,
+        theme,
+        palette,
+        minimum_contrast,
+    ));
     std::hint::black_box(state);
 }
 
@@ -104,6 +112,7 @@ fn layout_inputs<'a>(
     rows: usize,
     theme: &'a crate::theme::TerminalTheme,
     palette: &'a ThemePalette,
+    minimum_contrast: f32,
 ) -> LayoutInputs<'a> {
     LayoutInputs {
         cells: content.cells.clone(),
@@ -128,7 +137,7 @@ fn layout_inputs<'a>(
         exit_signal: None,
         integrated_glyphs_enabled: true,
         color_emoji_enabled: true,
-        minimum_contrast: 0.0,
+        minimum_contrast,
     }
 }
 
@@ -183,16 +192,46 @@ fn publish_scenarios(metrics: &mut Vec<Metric>) -> Content {
     sample.expect("the 220x60 scenario publishes at least once")
 }
 
-fn layout_scenario(metrics: &mut Vec<Metric>, content: &Content) {
+const ACC_OVERHEAD_BUDGET_PERCENT: f64 = 10.0;
+
+fn acc_overhead_percent(baseline_ns: f64, corrected_ns: f64) -> Option<f64> {
+    (baseline_ns > 0.0).then(|| (corrected_ns - baseline_ns) / baseline_ns * 100.0)
+}
+
+fn acc_overhead_line(baseline_ns: f64, corrected_ns: f64) -> String {
+    match acc_overhead_percent(baseline_ns, corrected_ns) {
+        None => "PANEFLOW_BENCH_NOTE layout_220x60 reported no timing, so the layout_220x60_acc60 delta is unavailable".to_owned(),
+        Some(delta) if delta > ACC_OVERHEAD_BUDGET_PERCENT => format!(
+            "PANEFLOW_BENCH_WARNING layout_220x60_acc60 is {delta:+.1}% against layout_220x60, above the {ACC_OVERHEAD_BUDGET_PERCENT:.0}% contrast correction budget"
+        ),
+        Some(delta) => format!(
+            "PANEFLOW_BENCH_NOTE layout_220x60_acc60 is {delta:+.1}% against layout_220x60, within the {ACC_OVERHEAD_BUDGET_PERCENT:.0}% contrast correction budget"
+        ),
+    }
+}
+
+fn layout_scenario(metrics: &mut Vec<Metric>, content: &Content) -> String {
     let theme = crate::theme::paneflow_dark();
     let palette = ThemePalette::from_theme(&theme);
-    metrics.push(measure(
+    let automatic = paneflow_config::schema::TerminalConfig::DEFAULT_MINIMUM_CONTRAST;
+    let baseline = measure(
         "layout_220x60",
         "window-free layout pass over a full 220x60 snapshot: batched runs, background rects, contrast",
         10,
         200,
-        || layout(content, 220, 60, &theme, &palette),
-    ));
+        || layout(content, 220, 60, &theme, &palette, 0.0),
+    );
+    let corrected = measure(
+        "layout_220x60_acc60",
+        "the same layout pass with the automatic contrast correction on: truecolor and indexed foregrounds corrected once per run",
+        10,
+        200,
+        || layout(content, 220, 60, &theme, &palette, automatic),
+    );
+    let delta = acc_overhead_line(baseline.value, corrected.value);
+    metrics.push(baseline);
+    metrics.push(corrected);
+    delta
 }
 
 fn incremental_layout_scenarios(metrics: &mut Vec<Metric>) {
@@ -214,7 +253,7 @@ fn incremental_layout_scenarios(metrics: &mut Vec<Metric>) {
             let chunk = if scrolling { scroll_chunk(index) } else { echo_chunk(index, 60) };
             terminal.feed(&chunk).expect("benchmark output parses");
             let content = publisher.publish(&mut terminal);
-            let inputs = layout_inputs(content, 220, 60, &theme, &palette);
+            let inputs = layout_inputs(content, 220, 60, &theme, &palette, 0.0);
             let state = if cached {
                 layout_from_snapshot_cached(inputs, &content.row_versions, 0, &mut cache)
             } else {
@@ -415,7 +454,7 @@ fn terminal_pipeline_benchmark() {
     let timed_started = Instant::now();
     let cpu_before = process_cpu_time();
     let sample = publish_scenarios(&mut metrics);
-    layout_scenario(&mut metrics, &sample);
+    let acc_delta = layout_scenario(&mut metrics, &sample);
     incremental_layout_scenarios(&mut metrics);
     service_tail_scenarios(&mut metrics);
     line_text_scenario(&mut metrics);
@@ -424,6 +463,7 @@ fn terminal_pipeline_benchmark() {
     pipeline_scenario(&mut metrics);
     let cpu_share = (process_cpu_time() - cpu_before).as_secs_f64()
         / timed_started.elapsed().as_secs_f64().max(f64::EPSILON);
+    println!("{acc_delta}");
     println!("PANEFLOW_BENCH_NOTE cpu share over the timed scenarios: {cpu_share:.2}");
     if cpu_share < 0.9 {
         println!(
@@ -445,5 +485,23 @@ mod tests {
     #[test]
     fn the_gate_simulation_never_publishes_more_than_once_per_chunk() {
         assert!(simulate_gate_trickle(Duration::from_millis(2), 100) <= 100);
+    }
+
+    #[test]
+    fn the_acc_delta_survives_a_corpus_with_nothing_to_correct() {
+        assert_eq!(acc_overhead_percent(0.0, 0.0), None);
+        assert!(acc_overhead_line(0.0, 0.0).contains("PANEFLOW_BENCH_NOTE"));
+        let unchanged = acc_overhead_percent(1_000.0, 1_000.0).expect("a timed baseline compares");
+        assert!(unchanged.abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn the_acc_delta_is_flagged_past_the_budget() {
+        let within = acc_overhead_line(1_000.0, 1_090.0);
+        assert!(within.contains("PANEFLOW_BENCH_NOTE"), "{within}");
+        assert!(within.contains("+9.0%"), "{within}");
+        let over = acc_overhead_line(1_000.0, 1_130.0);
+        assert!(over.contains("PANEFLOW_BENCH_WARNING"), "{over}");
+        assert!(over.contains("+13.0%"), "{over}");
     }
 }

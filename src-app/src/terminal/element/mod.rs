@@ -998,6 +998,7 @@ pub(crate) fn layout_from_snapshot_cached(
         let mut last_line: i32 = i32::MIN;
         let mut previous_cell_had_extras = false;
         let mut last_symbol: Option<(i32, usize)> = None;
+        let mut run_correction: Option<(Color, Color, Hsla)> = None;
 
         for (index, cell) in cells.iter().enumerate() {
             let Cell {
@@ -1037,35 +1038,48 @@ pub(crate) fn layout_from_snapshot_cached(
             let bg =
                 terminal_panel_background(raw_bg, convert_color(raw_bg, theme, palette), theme);
 
-            if minimum_contrast > 0.0
-                && is_correctable_source(raw_fg)
-                && !is_decorative_character(*c)
-                && !is_same_visible_color(fg, bg)
-            {
-                fg = ensure_minimum_contrast(fg, bg, minimum_contrast, harmony.as_ref());
-            }
-
-            if flags.contains(CellFlags::DIM) {
-                fg.a *= 0.5;
-            }
-
-            if let Some(sel) = &selection_range
-                && !is_decorative_character(*c)
-                && is_cell_in_selection(point, sel, display_offset)
-            {
-                fg = theme.selection_foreground;
-            }
-
-            if !is_decorative_character(*c)
+            let decorative = is_decorative_character(*c);
+            let searched = !decorative
                 && search_cover
                     .get(point.line.0 as usize)
                     .is_some_and(|spans| {
                         spans
                             .iter()
                             .any(|(start, end)| (*start..=*end).contains(&point.column.0))
-                    })
-            {
+                    });
+            let selected = !decorative
+                && selection_range
+                    .as_ref()
+                    .is_some_and(|sel| is_cell_in_selection(point, sel, display_offset));
+
+            if searched {
                 fg = search_foreground;
+            } else if selected {
+                fg = theme.selection_foreground;
+            } else {
+                if minimum_contrast > 0.0
+                    && is_correctable_source(raw_fg)
+                    && !decorative
+                    && !is_same_visible_color(fg, bg)
+                {
+                    fg = match run_correction {
+                        Some((run_fg, run_bg, corrected))
+                            if run_fg == raw_fg && run_bg == raw_bg =>
+                        {
+                            corrected
+                        }
+                        _ => {
+                            let corrected =
+                                ensure_minimum_contrast(fg, bg, minimum_contrast, harmony.as_ref());
+                            run_correction = Some((raw_fg, raw_bg, corrected));
+                            corrected
+                        }
+                    };
+                }
+
+                if flags.contains(CellFlags::DIM) {
+                    fg.a *= 0.5;
+                }
             }
 
             let cell_cols = if flags.contains(CellFlags::WIDE_CHAR) {
@@ -3607,6 +3621,163 @@ mod golden_frame_tests {
         }
     }
 
+    const WIDE_COLS: usize = 220;
+
+    fn run_wide(
+        cells: Vec<Cell>,
+        theme: &crate::theme::TerminalTheme,
+        minimum_contrast: f32,
+        selection: Option<SelectionRange>,
+        highlights: &[SearchHighlight],
+    ) -> LayoutState {
+        let palette = ThemePalette::from_theme(theme);
+        layout_from_snapshot(LayoutInputs {
+            cells: cells.into(),
+            cursor: None,
+            selection_range: selection,
+            copy_mode_cursor: None,
+            search_highlights: highlights,
+            display_offset: 0,
+            history_size: 0,
+            desired_cols: WIDE_COLS,
+            desired_rows: ROWS,
+            first_visible_row: 0,
+            last_visible_row: ROWS as i32,
+            dims: test_dims(),
+            base_font: test_font(),
+            theme,
+            palette: &palette,
+            exited: None,
+            exit_signal: None,
+            integrated_glyphs_enabled: false,
+            color_emoji_enabled: true,
+            minimum_contrast,
+        })
+    }
+
+    fn run_texts(state: &LayoutState) -> Vec<String> {
+        state
+            .batched_runs()
+            .map(|run| run.text.to_string())
+            .collect()
+    }
+
+    #[test]
+    fn a_single_color_line_is_corrected_once_for_the_whole_run() {
+        let theme = corpus_theme("Paneflow Light");
+        let cells = text_row(0, &"x".repeat(WIDE_COLS), pale_spec(), CellFlags::empty());
+        let _ = color::take_correction_calls();
+        let state = run_wide(cells, &theme, 60.0, None, &[]);
+        assert_eq!(
+            color::take_correction_calls(),
+            1,
+            "a 220-column single-color line must cost one correction"
+        );
+        let runs: Vec<_> = state.batched_runs().collect();
+        assert_eq!(runs.len(), 1, "the line must batch into a single run");
+        assert_eq!(runs[0].text.chars().count(), WIDE_COLS);
+    }
+
+    #[test]
+    fn a_decorative_glyph_forms_its_own_uncorrected_run_between_corrected_neighbors() {
+        let theme = corpus_theme("Paneflow Light");
+        let palette = ThemePalette::from_theme(&theme);
+        let uncorrected = convert_color(pale_spec(), &theme, &palette);
+        let cells = text_row(0, "ab\u{2592}cd", pale_spec(), CellFlags::empty());
+        let _ = color::take_correction_calls();
+        let state = run_wide(cells, &theme, 60.0, None, &[]);
+        assert_eq!(
+            color::take_correction_calls(),
+            1,
+            "the neighbors of a decorative cell must share one correction"
+        );
+        let runs: Vec<_> = state.batched_runs().collect();
+        assert_eq!(run_texts(&state), ["ab", "\u{2592}", "cd"]);
+        assert_eq!(runs[1].color, uncorrected, "the decorative cell is spared");
+        assert_ne!(runs[0].color, uncorrected, "its neighbors are corrected");
+        assert_eq!(runs[0].color, runs[2].color);
+    }
+
+    #[test]
+    fn a_dim_cell_splits_the_run_so_alpha_stays_per_cell() {
+        let theme = corpus_theme("Paneflow Light");
+        let mut cells = Vec::new();
+        for (col, c) in "abcde".chars().enumerate() {
+            let flags = if col == 2 {
+                CellFlags::DIM
+            } else {
+                CellFlags::empty()
+            };
+            cells.push(cell(0, col, c, pale_spec(), default_bg(), flags));
+        }
+        let _ = color::take_correction_calls();
+        let state = run_wide(cells, &theme, 60.0, None, &[]);
+        assert_eq!(
+            color::take_correction_calls(),
+            1,
+            "a dim cell reuses the run's correction"
+        );
+        let runs: Vec<_> = state.batched_runs().collect();
+        assert_eq!(run_texts(&state), ["ab", "c", "de"]);
+        assert_eq!(runs[1].color.a, runs[0].color.a * 0.5);
+        assert_eq!(
+            (runs[1].color.h, runs[1].color.s, runs[1].color.l),
+            (runs[0].color.h, runs[0].color.s, runs[0].color.l)
+        );
+    }
+
+    #[test]
+    fn a_selected_run_keeps_the_selection_foreground_and_is_never_corrected() {
+        let theme = corpus_theme("Paneflow Light");
+        let cells = text_row(0, "owner", pale_spec(), CellFlags::empty());
+        let selection = SelectionRange {
+            start: GridPoint::new(0, 0),
+            end: GridPoint::new(0, 4),
+            is_block: false,
+        };
+        let _ = color::take_correction_calls();
+        let state = run_wide(cells, &theme, 60.0, Some(selection), &[]);
+        assert_eq!(
+            color::take_correction_calls(),
+            0,
+            "a fully selected run must not pay for a correction"
+        );
+        let runs: Vec<_> = state.batched_runs().collect();
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0].color, theme.selection_foreground);
+    }
+
+    #[test]
+    fn a_search_match_splits_the_run_and_keeps_the_search_foreground() {
+        let theme = corpus_theme("Paneflow Light");
+        let cells = text_row(0, "owner", pale_spec(), CellFlags::empty());
+        let highlights = [SearchHighlight {
+            start: GridPoint::new(0, 0),
+            end: GridPoint::new(0, 1),
+            is_active: true,
+        }];
+        let _ = color::take_correction_calls();
+        let state = run_wide(cells, &theme, 60.0, None, &highlights);
+        assert_eq!(
+            color::take_correction_calls(),
+            1,
+            "only the uncovered tail of the run is corrected"
+        );
+        let runs: Vec<_> = state.batched_runs().collect();
+        assert_eq!(run_texts(&state), ["ow", "ner"]);
+        assert_eq!(
+            runs[0].color,
+            Hsla {
+                h: 0.0,
+                s: 0.0,
+                l: 0.1,
+                a: 1.0,
+            },
+            "the highlighted segment keeps the search foreground"
+        );
+        assert_ne!(runs[1].color, runs[0].color);
+    }
+
     const CORPUS_COLS: usize = 80;
     const CORPUS_ROWS: usize = 16;
     const CORPUS_FIXTURES: &[&str] =
@@ -3880,6 +4051,47 @@ mod golden_frame_tests {
             let _ = writeln!(report, "{gap}");
         }
         assert_golden_text("contrast_corpus_light_indexed_gap", report);
+    }
+
+    #[test]
+    fn the_corpus_second_pass_is_served_by_the_contrast_cache() {
+        let automatic = paneflow_config::schema::TerminalConfig::DEFAULT_MINIMUM_CONTRAST;
+        let theme = corpus_theme("Paneflow Light");
+        let palette = ThemePalette::from_theme(&theme);
+        let contents: Vec<Content> = CORPUS_FIXTURES
+            .iter()
+            .map(|fixture| corpus_content(fixture))
+            .collect();
+        let mut attempt = 0usize;
+        let (hits, lookups) = loop {
+            let generation = crate::theme::theme_generation();
+            for content in &contents {
+                let _ = corpus_layout(content, &theme, &palette, automatic);
+            }
+            let _ = color::take_contrast_cache_stats();
+            for content in &contents {
+                let _ = corpus_layout(content, &theme, &palette, automatic);
+            }
+            let (hits, misses) = color::take_contrast_cache_stats();
+            if crate::theme::theme_generation() == generation {
+                break (hits, hits + misses);
+            }
+            attempt += 1;
+            assert!(
+                attempt < 5,
+                "the theme generation kept moving during the measurement"
+            );
+        };
+        assert!(
+            lookups >= 50,
+            "the corpus must reach the contrast cache, got {lookups} lookups"
+        );
+        let rate = hits as f64 / lookups as f64;
+        assert!(
+            rate >= 0.99,
+            "the second pass must hit the cache, got {:.3} over {lookups} lookups",
+            rate
+        );
     }
 
     #[test]
