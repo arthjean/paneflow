@@ -153,6 +153,15 @@ startup trace in `src-app/src/startup_trace.rs` and compares against
 `#[global_allocator]` in `src-app/src/bench_harness.rs`; see
 [bench/README.md](bench/README.md).
 
+Never pass `--profile <run-name>` to isolate a build, a probe, or a benchmark
+run. Cargo materializes a complete target tree per profile name, so one profile
+per run grows `target/` without bound: by September 2026 this workspace and its
+sibling had accumulated 217 throwaway profiles for roughly 290 GB. Declare the
+profiles you need in `Cargo.toml` and reuse them. When a run genuinely needs an
+isolated build tree, for instance two benchmark runs in parallel, set
+`CARGO_TARGET_DIR` to a scratch directory outside the repository and delete it
+when the run ends.
+
 `tasks/` is a local, untracked scratch area for PRDs and story status files. It
 is not part of the repository, so never reference it from a tracked document and
 never assume another agent can read it.
