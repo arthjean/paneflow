@@ -301,10 +301,10 @@
         },
         "minimum_contrast": {
           "type": ["number", "null"],
-          "description": "Minimum APCA lightness contrast (Lc) enforced between text and its cell background, on the theme's ANSI colors only. 0 leaves theme colors untouched. Hot-reloaded.",
+          "description": "Minimum APCA lightness contrast (Lc) enforced between text and its cell background, on the colors a program chose (truecolor and palette indices 16 to 255). The theme's own sixteen ANSI colors, foreground and background are never corrected. Unset means Auto, which is 60 on every theme; 0 disables the correction. Hot-reloaded.",
           "minimum": 0.0,
           "maximum": 90.0,
-          "default": 0.0
+          "default": 60.0
         }
       }
     },

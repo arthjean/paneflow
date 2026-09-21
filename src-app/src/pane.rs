@@ -590,10 +590,10 @@ impl Pane {
             .terminal
             .as_ref()
             .is_none_or(|terminal| terminal.resolved_color_emoji());
-        let minimum_contrast = config
-            .terminal
-            .as_ref()
-            .map_or(0.0, |terminal| terminal.resolved_minimum_contrast());
+        let minimum_contrast = config.terminal.as_ref().map_or_else(
+            || paneflow_config::schema::TerminalConfig::default().resolved_minimum_contrast(),
+            paneflow_config::schema::TerminalConfig::resolved_minimum_contrast,
+        );
         let cursor_color_override = config
             .terminal
             .as_ref()

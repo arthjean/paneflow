@@ -24,7 +24,7 @@ pub(super) mod pixel_probe;
 mod sprites;
 
 use crate::theme::ThemePalette;
-use color::{convert_color, rgb_to_hsla};
+use color::{convert_color, is_same_visible_color, rgb_to_hsla};
 #[cfg(test)]
 pub(crate) use font::base_font;
 pub use font::{
@@ -48,7 +48,7 @@ pub(crate) use color::apca_contrast;
 pub(crate) use color::ensure_minimum_contrast;
 pub(crate) use paint::scrollbar::ScrollbarMetrics;
 
-pub(crate) const MIN_APCA_CONTRAST: f32 = 45.0;
+pub(crate) const SELECTION_MIN_APCA_CONTRAST: f32 = 45.0;
 
 fn is_decorative_character(ch: char) -> bool {
     matches!(
@@ -56,12 +56,15 @@ fn is_decorative_character(ch: char) -> bool {
         0x2500..=0x257F
         | 0x2580..=0x259F
         | 0x25A0..=0x25FF
-        | 0xE0B0..=0xE0B7
-        | 0xE0B8..=0xE0BF
-        | 0xE0C0..=0xE0CA
-        | 0xE0CC..=0xE0D1
-        | 0xE0D2..=0xE0D7
+        | 0x2800..=0x28FF
+        | 0xE0B0..=0xE0D7
+        | 0x1CC00..=0x1CEBF
+        | 0x1FB00..=0x1FBFF
     )
+}
+
+fn is_correctable_source(color: Color) -> bool {
+    matches!(color, Color::Spec(_) | Color::Indexed(16..=255))
 }
 
 fn is_cell_in_selection(point: GridPoint, sel: &SelectionRange, display_offset: usize) -> bool {
@@ -1031,13 +1034,16 @@ pub(crate) fn layout_from_snapshot_cached(
             let bg =
                 terminal_panel_background(raw_bg, convert_color(raw_bg, theme, palette), theme);
 
-            if flags.contains(CellFlags::DIM) {
-                fg.a *= 0.5;
+            if minimum_contrast > 0.0
+                && is_correctable_source(raw_fg)
+                && !is_decorative_character(*c)
+                && !is_same_visible_color(fg, bg)
+            {
+                fg = ensure_minimum_contrast(fg, bg, minimum_contrast);
             }
 
-            let skip_contrast = matches!(raw_fg, Color::Spec(_) | Color::Indexed(16..=255));
-            if minimum_contrast > 0.0 && !is_decorative_character(*c) && !skip_contrast {
-                fg = ensure_minimum_contrast(fg, bg, minimum_contrast);
+            if flags.contains(CellFlags::DIM) {
+                fg.a *= 0.5;
             }
 
             if let Some(sel) = &selection_range
@@ -2102,6 +2108,7 @@ mod golden_frame_tests {
 
     const COLS: usize = 12;
     const ROWS: usize = 4;
+    const TEST_MINIMUM_CONTRAST: f32 = 45.0;
 
     fn test_dims() -> CellDimensions {
         CellDimensions {
@@ -2222,7 +2229,7 @@ mod golden_frame_tests {
             exit_signal: None,
             integrated_glyphs_enabled,
             color_emoji_enabled: true,
-            minimum_contrast: MIN_APCA_CONTRAST,
+            minimum_contrast: TEST_MINIMUM_CONTRAST,
         })
     }
 
@@ -2251,7 +2258,7 @@ mod golden_frame_tests {
             exit_signal: None,
             integrated_glyphs_enabled: true,
             color_emoji_enabled: true,
-            minimum_contrast: MIN_APCA_CONTRAST,
+            minimum_contrast: 0.0,
         }
     }
 
@@ -2372,7 +2379,7 @@ mod golden_frame_tests {
                 3 => generation = 2,
                 4 => inputs.display_offset = 1,
                 5 => inputs.desired_cols += 1,
-                _ => inputs.minimum_contrast = 0.0,
+                _ => inputs.minimum_contrast = TEST_MINIMUM_CONTRAST,
             }
             let second = layout_from_snapshot_cached(inputs, &[1; ROWS], generation, &mut cache);
             assert!(
@@ -2439,7 +2446,7 @@ mod golden_frame_tests {
             exit_signal: None,
             integrated_glyphs_enabled: true,
             color_emoji_enabled: true,
-            minimum_contrast: MIN_APCA_CONTRAST,
+            minimum_contrast: TEST_MINIMUM_CONTRAST,
         })
     }
 
@@ -2471,7 +2478,7 @@ mod golden_frame_tests {
             exit_signal: None,
             integrated_glyphs_enabled: true,
             color_emoji_enabled: true,
-            minimum_contrast: MIN_APCA_CONTRAST,
+            minimum_contrast: TEST_MINIMUM_CONTRAST,
         });
         assert_eq!(layout.search_rects.len(), 2);
         assert_eq!(layout.search_rects[0].line, 0);
@@ -3377,6 +3384,226 @@ mod golden_frame_tests {
         );
     }
 
+    fn run_with_contrast(
+        cells: Vec<Cell>,
+        theme: &crate::theme::TerminalTheme,
+        minimum_contrast: f32,
+    ) -> LayoutState {
+        let palette = ThemePalette::from_theme(theme);
+        layout_from_snapshot(LayoutInputs {
+            cells: cells.into(),
+            cursor: None,
+            selection_range: None,
+            copy_mode_cursor: None,
+            search_highlights: &[],
+            display_offset: 0,
+            history_size: 0,
+            desired_cols: COLS,
+            desired_rows: ROWS,
+            first_visible_row: 0,
+            last_visible_row: ROWS as i32,
+            dims: test_dims(),
+            base_font: test_font(),
+            theme,
+            palette: &palette,
+            exited: None,
+            exit_signal: None,
+            integrated_glyphs_enabled: false,
+            color_emoji_enabled: true,
+            minimum_contrast,
+        })
+    }
+
+    fn only_run_color(state: &LayoutState) -> Hsla {
+        state
+            .batched_runs()
+            .next()
+            .expect("the fixture must lay out one run")
+            .color
+    }
+
+    fn pale_spec() -> Color {
+        Color::Spec(Rgb {
+            r: 255,
+            g: 245,
+            b: 190,
+        })
+    }
+
+    fn default_background_color(theme: &crate::theme::TerminalTheme) -> Hsla {
+        let palette = ThemePalette::from_theme(theme);
+        terminal_panel_background(
+            default_bg(),
+            convert_color(default_bg(), theme, &palette),
+            theme,
+        )
+    }
+
+    #[test]
+    fn truecolor_and_indexed_foregrounds_are_corrected() {
+        let theme = corpus_theme("Paneflow Light");
+        let bg = default_background_color(&theme);
+        let mut moved = 0usize;
+        for source in [pale_spec(), Color::Indexed(230)] {
+            let _ = color::take_correction_calls();
+            let cells = text_row(0, "owner", source, CellFlags::empty());
+            let uncorrected = only_run_color(&run_with_contrast(cells.clone(), &theme, 0.0));
+            assert_eq!(
+                color::take_correction_calls(),
+                0,
+                "{source:?}: a zero threshold must call no correction"
+            );
+
+            let corrected = only_run_color(&run_with_contrast(cells, &theme, 60.0));
+            assert!(
+                color::take_correction_calls() > 0,
+                "{source:?}: the correction must run on a program-chosen color"
+            );
+            let lc = apca_contrast(corrected, bg).abs();
+            assert!(
+                lc >= 60.0,
+                "{source:?}: the corrected foreground must reach the threshold, Lc {lc:.1}"
+            );
+            if apca_contrast(uncorrected, bg).abs() < 60.0 {
+                moved += 1;
+                assert_ne!(
+                    (corrected.h, corrected.s, corrected.l),
+                    (uncorrected.h, uncorrected.s, uncorrected.l),
+                    "{source:?}: an illegible foreground must move"
+                );
+            }
+        }
+        assert!(
+            moved > 0,
+            "at least one fixture must start below the threshold for this test to mean anything"
+        );
+    }
+
+    #[test]
+    fn the_themes_own_colors_are_never_corrected() {
+        let theme = corpus_theme("Paneflow Dark");
+        let mut sources = vec![
+            Color::Named(NamedColor::Red),
+            Color::Named(NamedColor::Blue),
+            Color::Named(NamedColor::Magenta),
+            Color::Named(NamedColor::Foreground),
+        ];
+        sources.extend((0u8..16).map(Color::Indexed));
+        for source in sources {
+            let _ = color::take_correction_calls();
+            let cells = text_row(0, "theme", source, CellFlags::empty());
+            let corrected = only_run_color(&run_with_contrast(cells.clone(), &theme, 90.0));
+            assert_eq!(
+                color::take_correction_calls(),
+                0,
+                "{source:?}: the theme's own colors must never reach the correction"
+            );
+            let uncorrected = only_run_color(&run_with_contrast(cells, &theme, 0.0));
+            assert_eq!(
+                (corrected.h, corrected.s, corrected.l, corrected.a),
+                (uncorrected.h, uncorrected.s, uncorrected.l, uncorrected.a),
+                "{source:?}: the theme's own colors must render identically at any threshold"
+            );
+        }
+    }
+
+    #[test]
+    fn a_foreground_equal_to_its_background_is_left_untouched() {
+        let theme = corpus_theme("Paneflow Light");
+        let spec = pale_spec();
+        let cells: Vec<Cell> = "shape"
+            .chars()
+            .enumerate()
+            .map(|(col, c)| cell(0, col, c, spec, spec, CellFlags::empty()))
+            .collect();
+        let _ = color::take_correction_calls();
+        let corrected = only_run_color(&run_with_contrast(cells.clone(), &theme, 90.0));
+        assert_eq!(
+            color::take_correction_calls(),
+            0,
+            "a cell drawn in its own background color must never be corrected"
+        );
+        let untouched = only_run_color(&run_with_contrast(cells, &theme, 0.0));
+        assert_eq!(corrected, untouched);
+    }
+
+    #[test]
+    fn a_decorative_codepoint_is_never_corrected() {
+        let theme = corpus_theme("Paneflow Light");
+        let spec = pale_spec();
+        let cells: Vec<Cell> = "\u{2500}\u{2591}\u{2801}"
+            .chars()
+            .enumerate()
+            .map(|(col, c)| cell(0, col, c, spec, default_bg(), CellFlags::empty()))
+            .collect();
+        let _ = color::take_correction_calls();
+        let state = run_with_contrast(cells.clone(), &theme, 90.0);
+        assert_eq!(
+            color::take_correction_calls(),
+            0,
+            "decorative glyphs must never reach the correction"
+        );
+        let uncorrected = run_with_contrast(cells, &theme, 0.0);
+        let corrected_colors: Vec<Hsla> = state.batched_runs().map(|run| run.color).collect();
+        let plain_colors: Vec<Hsla> = uncorrected.batched_runs().map(|run| run.color).collect();
+        assert_eq!(corrected_colors, plain_colors);
+    }
+
+    #[test]
+    fn dim_halves_the_alpha_after_the_correction() {
+        let theme = corpus_theme("Paneflow Light");
+        let spec = pale_spec();
+        let opaque = only_run_color(&run_with_contrast(
+            text_row(0, "dim", spec, CellFlags::empty()),
+            &theme,
+            60.0,
+        ));
+        let dimmed = only_run_color(&run_with_contrast(
+            text_row(0, "dim", spec, CellFlags::DIM),
+            &theme,
+            60.0,
+        ));
+        assert_eq!(
+            (dimmed.h, dimmed.s, dimmed.l),
+            (opaque.h, opaque.s, opaque.l),
+            "the correction must run on the opaque color"
+        );
+        assert!(
+            (dimmed.a - opaque.a * 0.5).abs() < 1e-6,
+            "dim text must stay dim, alpha {}",
+            dimmed.a
+        );
+    }
+
+    #[test]
+    fn the_decorative_ranges_cover_every_ghostty_graphics_block() {
+        let ranges: &[(&str, u32, u32)] = &[
+            ("Box Drawing", 0x2500, 0x257F),
+            ("Block Elements", 0x2580, 0x259F),
+            ("Geometric Shapes", 0x25A0, 0x25FF),
+            ("Braille Patterns", 0x2800, 0x28FF),
+            ("Powerline (Private Use)", 0xE0B0, 0xE0D7),
+            ("Symbols for Legacy Computing Supplement", 0x1CC00, 0x1CEBF),
+            ("Symbols for Legacy Computing", 0x1FB00, 0x1FBFF),
+        ];
+        for (block, first, last) in ranges {
+            for codepoint in [*first, (first + last) / 2, *last] {
+                let ch = char::from_u32(codepoint)
+                    .unwrap_or_else(|| panic!("{block}: U+{codepoint:04X} must be a char"));
+                assert!(
+                    is_decorative_character(ch),
+                    "{block}: U+{codepoint:04X} must be decorative"
+                );
+            }
+        }
+        for ch in ['a', 'Z', '0', '\u{4E2D}', '\u{00E9}', ' ', '\u{2713}'] {
+            assert!(
+                !is_decorative_character(ch),
+                "{ch:?} is text, not a graphics element"
+            );
+        }
+    }
+
     const CORPUS_COLS: usize = 80;
     const CORPUS_ROWS: usize = 16;
     const CORPUS_FIXTURES: &[&str] = &["lsd-la.ansi", "btop.ansi", "lazygit.ansi"];
@@ -3429,6 +3656,7 @@ mod golden_frame_tests {
         content: &Content,
         theme: &crate::theme::TerminalTheme,
         palette: &ThemePalette,
+        minimum_contrast: f32,
     ) -> LayoutState {
         layout_from_snapshot(LayoutInputs {
             cells: content.cells.clone(),
@@ -3450,7 +3678,7 @@ mod golden_frame_tests {
             exit_signal: None,
             integrated_glyphs_enabled: true,
             color_emoji_enabled: true,
-            minimum_contrast: 0.0,
+            minimum_contrast,
         })
     }
 
@@ -3501,7 +3729,10 @@ mod golden_frame_tests {
     }
 
     struct CorpusCell {
+        line: i32,
+        col: usize,
         source: Option<Color>,
+        color: Hsla,
         lc: f32,
         baseline_lc: f32,
     }
@@ -3530,7 +3761,10 @@ mod golden_frame_tests {
                     _ => run.color,
                 };
                 measured.push(CorpusCell {
+                    line: run.line,
+                    col,
                     source,
+                    color: run.color,
                     lc: apca_contrast(run.color, bg).abs(),
                     baseline_lc: apca_contrast(baseline, bg).abs(),
                 });
@@ -3578,7 +3812,7 @@ mod golden_frame_tests {
                 for name in [preset.light, preset.dark] {
                     let theme = corpus_theme(name);
                     let palette = ThemePalette::from_theme(&theme);
-                    let state = corpus_layout(&content, &theme, &palette);
+                    let state = corpus_layout(&content, &theme, &palette, 0.0);
                     let cells = corpus_cells(&content, &state, &theme);
                     assert!(
                         cells.len() > 40,
@@ -3601,7 +3835,7 @@ mod golden_frame_tests {
             for preset in crate::theme::PRESETS {
                 let theme = corpus_theme(preset.light);
                 let palette = ThemePalette::from_theme(&theme);
-                let state = corpus_layout(&content, &theme, &palette);
+                let state = corpus_layout(&content, &theme, &palette, 0.0);
                 for cell in corpus_cells(&content, &state, &theme) {
                     let Some(Color::Indexed(index)) = cell.source else {
                         continue;
@@ -3645,6 +3879,7 @@ mod golden_frame_tests {
     #[test]
     fn the_corpus_legibility_share_is_recorded_per_preset() {
         use std::fmt::Write as _;
+        let automatic = paneflow_config::schema::TerminalConfig::DEFAULT_MINIMUM_CONTRAST;
         let mut report = String::new();
         for fixture in CORPUS_FIXTURES {
             let content = corpus_content(fixture);
@@ -3652,8 +3887,10 @@ mod golden_frame_tests {
                 for name in [preset.light, preset.dark] {
                     let theme = corpus_theme(name);
                     let palette = ThemePalette::from_theme(&theme);
-                    let state = corpus_layout(&content, &theme, &palette);
+                    let state = corpus_layout(&content, &theme, &palette, 0.0);
                     let cells = corpus_cells(&content, &state, &theme);
+                    let corrected_state = corpus_layout(&content, &theme, &palette, automatic);
+                    let corrected = corpus_cells(&content, &corrected_state, &theme);
                     let total = cells.len();
                     let indexed = cells
                         .iter()
@@ -3663,15 +3900,116 @@ mod golden_frame_tests {
                     let at_60 = cells.iter().filter(|cell| cell.lc >= 60.0).count();
                     let xterm_45 = cells.iter().filter(|cell| cell.baseline_lc >= 45.0).count();
                     let xterm_60 = cells.iter().filter(|cell| cell.baseline_lc >= 60.0).count();
+                    let acc_45 = corrected.iter().filter(|cell| cell.lc >= 45.0).count();
+                    let acc_60 = corrected.iter().filter(|cell| cell.lc >= 60.0).count();
+                    let acc_indexed_60 = corrected
+                        .iter()
+                        .filter(|cell| matches!(cell.source, Some(Color::Indexed(16..=255))))
+                        .filter(|cell| cell.lc >= 60.0)
+                        .count();
                     let _ = writeln!(
                         report,
                         "{fixture} {name}: cells={total} indexed={indexed} lc45={at_45} \
-                         lc60={at_60} xterm_lc45={xterm_45} xterm_lc60={xterm_60}"
+                         lc60={at_60} xterm_lc45={xterm_45} xterm_lc60={xterm_60} \
+                         acc_lc45={acc_45} acc_lc60={acc_60} acc_indexed_lc60={acc_indexed_60}"
                     );
                 }
             }
         }
         assert_golden_text("contrast_corpus_share", report);
+    }
+
+    #[test]
+    fn the_automatic_default_lifts_foreign_colors_and_spares_the_theme() {
+        let automatic = paneflow_config::schema::TerminalConfig::DEFAULT_MINIMUM_CONTRAST;
+        assert_eq!(automatic, 60.0);
+        for fixture in CORPUS_FIXTURES {
+            let content = corpus_content(fixture);
+            for preset in crate::theme::PRESETS {
+                for name in [preset.light, preset.dark] {
+                    let theme = corpus_theme(name);
+                    let palette = ThemePalette::from_theme(&theme);
+                    let off = corpus_cells(
+                        &content,
+                        &corpus_layout(&content, &theme, &palette, 0.0),
+                        &theme,
+                    );
+                    let on = corpus_cells(
+                        &content,
+                        &corpus_layout(&content, &theme, &palette, automatic),
+                        &theme,
+                    );
+                    assert_eq!(off.len(), on.len(), "{name}/{fixture}: cell count");
+                    for (off, on) in off.iter().zip(&on) {
+                        assert_eq!((off.line, off.col), (on.line, on.col));
+                        match on.source {
+                            Some(Color::Spec(_)) | Some(Color::Indexed(16..=255)) => assert!(
+                                on.lc >= automatic || on.lc >= off.lc,
+                                "{name}/{fixture} L{} C{}: a foreign color must not lose \
+                                 contrast, Lc {:.1} from {:.1}",
+                                on.line,
+                                on.col,
+                                on.lc,
+                                off.lc
+                            ),
+                            _ => assert_eq!(
+                                on.color, off.color,
+                                "{name}/{fixture} L{} C{}: the theme's own color must be \
+                                 byte-identical with the correction on",
+                                on.line, on.col
+                            ),
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn the_lsd_greens_reach_the_automatic_threshold_on_paneflow_dark() {
+        let automatic = paneflow_config::schema::TerminalConfig::DEFAULT_MINIMUM_CONTRAST;
+        let content = corpus_content("lsd-la.ansi");
+        let theme = corpus_theme("Paneflow Dark");
+        let palette = ThemePalette::from_theme(&theme);
+        let off = corpus_cells(
+            &content,
+            &corpus_layout(&content, &theme, &palette, 0.0),
+            &theme,
+        );
+        let on = corpus_cells(
+            &content,
+            &corpus_layout(&content, &theme, &palette, automatic),
+            &theme,
+        );
+        let measured = off
+            .iter()
+            .zip(&on)
+            .filter(|(off, _)| off.source == Some(Color::Indexed(40)))
+            .count();
+        assert!(
+            measured > 0,
+            "the lsd fixture must carry index 40 cells for this test to mean anything"
+        );
+        for (off, on) in off.iter().zip(&on) {
+            if off.source != Some(Color::Indexed(40)) {
+                continue;
+            }
+            assert!(
+                off.lc < automatic,
+                "L{} C{}: index 40 is the regression baseline, it must start below Lc \
+                 {automatic}, got {:.1}",
+                off.line,
+                off.col,
+                off.lc
+            );
+            assert!(
+                on.lc >= automatic,
+                "L{} C{}: index 40 must be lifted to Lc {automatic}, got {:.1}",
+                on.line,
+                on.col,
+                on.lc
+            );
+        }
     }
 
     #[test]
@@ -3697,7 +4035,7 @@ mod golden_frame_tests {
         for name in ["Paneflow Light", "Paneflow Dark"] {
             let theme = corpus_theme(name);
             let palette = ThemePalette::from_theme(&theme);
-            let state = corpus_layout(&content, &theme, &palette);
+            let state = corpus_layout(&content, &theme, &palette, 0.0);
             let run = state
                 .batched_runs()
                 .find(|run| run.text.contains("magenta"))

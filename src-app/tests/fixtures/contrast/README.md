@@ -30,7 +30,10 @@ The corpus feeds two committed goldens in
 - `contrast_corpus_share.txt` - per fixture and preset variant, the number of
   measured text cells, how many are indexed, and how many reach APCA Lc 45 and
   Lc 60, both with the render palette and with the xterm cube formula it
-  replaced (`xterm_lc45`, `xterm_lc60`).
+  replaced (`xterm_lc45`, `xterm_lc60`). Since US-006 the same row also records
+  the counts with the automatic correction on at its Lc 60 default
+  (`acc_lc45`, `acc_lc60`) and how many indexed cells clear Lc 60 once
+  corrected (`acc_indexed_lc60`).
 - `contrast_corpus_light_indexed_gap.txt` - every indexed cell that still falls
   below Lc 45 on a light preset before any contrast correction runs.
 

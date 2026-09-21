@@ -335,10 +335,17 @@ fn test_scroll_multiplier_resolver_default_and_clamp() {
 
 #[test]
 fn test_minimum_contrast_resolver_default_clamp_and_non_finite() {
+    use crate::schema::MinimumContrast;
+
+    assert_eq!(
+        TerminalConfig::default().minimum_contrast(),
+        MinimumContrast::Automatic,
+        "absent → automatic"
+    );
     assert_eq!(
         TerminalConfig::default().resolved_minimum_contrast(),
-        0.0,
-        "absent → off"
+        TerminalConfig::DEFAULT_MINIMUM_CONTRAST,
+        "automatic → Lc 60"
     );
     assert_eq!(
         TerminalConfig {
@@ -350,12 +357,12 @@ fn test_minimum_contrast_resolver_default_clamp_and_non_finite() {
     );
     assert_eq!(
         TerminalConfig {
-            minimum_contrast: Some(-3.0),
+            minimum_contrast: Some(0.0),
             ..Default::default()
         }
         .resolved_minimum_contrast(),
         0.0,
-        "negative → off"
+        "an explicit zero is the only off switch"
     );
     assert_eq!(
         TerminalConfig {
@@ -366,19 +373,44 @@ fn test_minimum_contrast_resolver_default_clamp_and_non_finite() {
         TerminalConfig::MAX_MINIMUM_CONTRAST,
         "above max → clamped"
     );
-    assert_eq!(
-        TerminalConfig {
-            minimum_contrast: Some(f32::NAN),
+    for rejected in [-5.0, f32::NAN, f32::INFINITY] {
+        let config = TerminalConfig {
+            minimum_contrast: Some(rejected),
             ..Default::default()
-        }
-        .resolved_minimum_contrast(),
-        0.0,
-        "NaN → off"
-    );
-    let parsed: TerminalConfig = serde_json::from_str(r#"{"minimum_contrast": "45"}"#).unwrap();
+        };
+        assert!(
+            matches!(config.minimum_contrast(), MinimumContrast::Rejected(_)),
+            "{rejected} must be rejected rather than clamped"
+        );
+        assert_eq!(
+            config.resolved_minimum_contrast(),
+            TerminalConfig::DEFAULT_MINIMUM_CONTRAST,
+            "{rejected} → automatic"
+        );
+    }
+    let parsed: TerminalConfig = serde_json::from_str(r#"{"minimum_contrast": "abc"}"#).unwrap();
     assert_eq!(
         parsed.minimum_contrast, None,
         "lenient parse drops a string"
+    );
+    assert_eq!(
+        parsed.resolved_minimum_contrast(),
+        TerminalConfig::DEFAULT_MINIMUM_CONTRAST,
+        "a dropped string falls back to automatic"
+    );
+}
+
+#[test]
+fn test_minimum_contrast_survives_an_absent_terminal_block() {
+    let config = parse_and_validate(r#"{}"#);
+    assert!(config.terminal.is_none());
+    assert_eq!(
+        config.terminal.as_ref().map_or_else(
+            || TerminalConfig::default().resolved_minimum_contrast(),
+            TerminalConfig::resolved_minimum_contrast,
+        ),
+        TerminalConfig::DEFAULT_MINIMUM_CONTRAST,
+        "a fresh install with no terminal block still gets the automatic default"
     );
 }
 

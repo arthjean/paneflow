@@ -84,10 +84,32 @@ pub(crate) fn apca_contrast(text: Hsla, bg: Hsla) -> f32 {
 }
 
 pub(crate) fn ensure_minimum_contrast(fg: Hsla, bg: Hsla, min_lc: f32) -> Hsla {
+    #[cfg(test)]
+    CORRECTION_CALLS.with(|calls| calls.set(calls.get() + 1));
     if min_lc <= 0.0 {
         return fg;
     }
     contrast_cache_get_or_insert(fg, bg, min_lc)
+}
+
+#[cfg(test)]
+thread_local! {
+    static CORRECTION_CALLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+pub(crate) fn take_correction_calls() -> usize {
+    CORRECTION_CALLS.with(|calls| calls.replace(0))
+}
+
+fn packed_srgb(color: Hsla) -> u32 {
+    let rgba = Rgba::from(color);
+    let channel = |value: f32| (value.clamp(0.0, 1.0) * 255.0).round() as u32;
+    (channel(rgba.r) << 16) | (channel(rgba.g) << 8) | channel(rgba.b)
+}
+
+pub(super) fn is_same_visible_color(a: Hsla, b: Hsla) -> bool {
+    packed_srgb(a) == packed_srgb(b)
 }
 
 const CONTRAST_CACHE_SLOTS: usize = 128;
@@ -294,6 +316,21 @@ pub(super) fn rgb_to_hsla(r: u8, g: u8, b: u8) -> Hsla {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_same_visible_color_ignores_alpha_and_hue_of_greys() {
+        let opaque = Hsla {
+            h: 0.3,
+            s: 0.0,
+            l: 0.5,
+            a: 1.0,
+        };
+        let translucent = Hsla { a: 0.4, ..opaque };
+        let other_hue = Hsla { h: 0.8, ..opaque };
+        assert!(is_same_visible_color(opaque, translucent));
+        assert!(is_same_visible_color(opaque, other_hue));
+        assert!(!is_same_visible_color(opaque, Hsla { l: 0.9, ..opaque }));
+    }
 
     #[test]
     fn the_contrast_cache_never_changes_the_answer() {

@@ -1,6 +1,6 @@
 use gpui::{Hsla, Rgba};
 
-use crate::terminal::element::{MIN_APCA_CONTRAST, ensure_minimum_contrast};
+use crate::terminal::element::{SELECTION_MIN_APCA_CONTRAST, ensure_minimum_contrast};
 
 #[derive(Clone, Copy, PartialEq)]
 pub struct TerminalTheme {
@@ -416,8 +416,11 @@ impl TerminalTheme {
             a: 1.0,
             ..self.selection
         };
-        self.selection_foreground =
-            ensure_minimum_contrast(self.foreground, selection_bg_opaque, MIN_APCA_CONTRAST);
+        self.selection_foreground = ensure_minimum_contrast(
+            self.foreground,
+            selection_bg_opaque,
+            SELECTION_MIN_APCA_CONTRAST,
+        );
     }
 }
 
@@ -717,8 +720,8 @@ mod tests {
         };
         let lc = apca_contrast(theme.selection_foreground, bg_opaque).abs();
         assert!(
-            lc >= MIN_APCA_CONTRAST,
-            "{label}: APCA Lc({lc}) < {MIN_APCA_CONTRAST} for selection_foreground vs selection"
+            lc >= SELECTION_MIN_APCA_CONTRAST,
+            "{label}: APCA Lc({lc}) < {SELECTION_MIN_APCA_CONTRAST} for selection_foreground vs selection"
         );
     }
 

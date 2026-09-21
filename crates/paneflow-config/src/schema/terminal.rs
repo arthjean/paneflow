@@ -7,6 +7,24 @@ use std::collections::HashMap;
 
 pub const APPLE_SYSTEM_BLUE_HEX: &str = "#007AFF";
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum MinimumContrast {
+    Automatic,
+    Rejected(f32),
+    Explicit(f32),
+}
+
+impl MinimumContrast {
+    pub fn lc(self) -> f32 {
+        match self {
+            Self::Automatic | Self::Rejected(_) => TerminalConfig::DEFAULT_MINIMUM_CONTRAST,
+            Self::Explicit(lc) => lc,
+        }
+    }
+}
+
+static MINIMUM_CONTRAST_WARNING: std::sync::Once = std::sync::Once::new();
+
 pub fn normalize_hex_color(raw: &str) -> Option<String> {
     let hex = raw.trim().strip_prefix('#').unwrap_or(raw.trim());
     let expanded = match hex.len() {
@@ -159,6 +177,7 @@ impl TerminalConfig {
     pub const MAX_SCROLL_MULTIPLIER: f32 = 10.0;
 
     pub const MAX_MINIMUM_CONTRAST: f32 = 90.0;
+    pub const DEFAULT_MINIMUM_CONTRAST: f32 = 60.0;
 
     pub fn resolved_integrated_glyphs(&self) -> bool {
         self.integrated_glyphs.unwrap_or(true)
@@ -172,12 +191,27 @@ impl TerminalConfig {
         self.scrollbar.unwrap_or(true)
     }
 
-    pub fn resolved_minimum_contrast(&self) -> f32 {
-        let raw = self.minimum_contrast.unwrap_or(0.0);
-        if !raw.is_finite() {
-            return 0.0;
+    pub fn minimum_contrast(&self) -> MinimumContrast {
+        match self.minimum_contrast {
+            None => MinimumContrast::Automatic,
+            Some(raw) if !raw.is_finite() || raw < 0.0 => MinimumContrast::Rejected(raw),
+            Some(raw) => MinimumContrast::Explicit(raw.min(Self::MAX_MINIMUM_CONTRAST)),
         }
-        raw.clamp(0.0, Self::MAX_MINIMUM_CONTRAST)
+    }
+
+    pub fn resolved_minimum_contrast(&self) -> f32 {
+        let resolution = self.minimum_contrast();
+        if let MinimumContrast::Rejected(raw) = resolution {
+            MINIMUM_CONTRAST_WARNING.call_once(|| {
+                tracing::warn!(
+                    target: "paneflow_config::terminal",
+                    requested = raw,
+                    automatic = Self::DEFAULT_MINIMUM_CONTRAST,
+                    "terminal.minimum_contrast is not a number; using Auto",
+                );
+            });
+        }
+        resolution.lc()
     }
 
     pub fn normalized_cursor_color(&self) -> Option<String> {
