@@ -1,5 +1,6 @@
 use gpui::{Hsla, Rgba};
 
+use super::oklab::{Oklab, Oklch, hsla_to_oklab, hsla_to_oklch, oklch_to_hsla_in_gamut};
 use crate::terminal::types::{Color, NamedColor};
 use crate::theme::{TerminalTheme, ThemePalette};
 
@@ -83,13 +84,92 @@ pub(crate) fn apca_contrast(text: Hsla, bg: Hsla) -> f32 {
     }
 }
 
-pub(crate) fn ensure_minimum_contrast(fg: Hsla, bg: Hsla, min_lc: f32) -> Hsla {
+pub(crate) fn ensure_minimum_contrast(
+    fg: Hsla,
+    bg: Hsla,
+    min_lc: f32,
+    harmony: Option<&HarmonyTargets>,
+) -> Hsla {
     #[cfg(test)]
     CORRECTION_CALLS.with(|calls| calls.set(calls.get() + 1));
     if min_lc <= 0.0 {
         return fg;
     }
-    contrast_cache_get_or_insert(fg, bg, min_lc)
+    contrast_cache_get_or_insert(fg, bg, min_lc, harmony)
+}
+
+#[cfg(test)]
+pub(super) fn oklab_of(color: Hsla) -> Oklab {
+    hsla_to_oklab(color)
+}
+
+#[cfg(test)]
+pub(super) fn oklch_of(color: Hsla) -> Oklch {
+    hsla_to_oklch(color)
+}
+
+#[cfg(test)]
+pub(super) fn corrected_without_harmony(fg: Hsla, bg: Hsla, min_lc: f32) -> Hsla {
+    compute_minimum_contrast(fg, bg, min_lc, None)
+}
+
+#[cfg(test)]
+pub(super) fn nearest_theme_color(theme: &TerminalTheme, color: Hsla) -> Hsla {
+    HarmonyTargets::from_theme(theme).nearest(hsla_to_oklab(color))
+}
+
+const HARMONY_TARGET_COUNT: usize = 18;
+
+pub(crate) struct HarmonyTargets {
+    id: u64,
+    targets: [(Hsla, Oklab); HARMONY_TARGET_COUNT],
+}
+
+impl HarmonyTargets {
+    #[must_use]
+    pub(crate) fn from_theme(theme: &TerminalTheme) -> Self {
+        let colors = [
+            theme.foreground,
+            theme.dim_foreground,
+            theme.black,
+            theme.red,
+            theme.green,
+            theme.yellow,
+            theme.blue,
+            theme.magenta,
+            theme.cyan,
+            theme.white,
+            theme.bright_black,
+            theme.bright_red,
+            theme.bright_green,
+            theme.bright_yellow,
+            theme.bright_blue,
+            theme.bright_magenta,
+            theme.bright_cyan,
+            theme.bright_white,
+        ];
+        let mut id = 0xcbf2_9ce4_8422_2325_u64;
+        let mut targets = [(colors[0], hsla_to_oklab(colors[0])); HARMONY_TARGET_COUNT];
+        for (slot, color) in colors.into_iter().enumerate() {
+            id ^= u64::from(packed_srgb(color));
+            id = id.wrapping_mul(0x0000_0100_0000_01b3);
+            targets[slot] = (color, hsla_to_oklab(color));
+        }
+        Self { id, targets }
+    }
+
+    fn nearest(&self, lab: Oklab) -> Hsla {
+        let mut nearest = self.targets[0].0;
+        let mut shortest = f32::INFINITY;
+        for (color, target) in &self.targets {
+            let distance = lab.distance(*target);
+            if distance < shortest {
+                shortest = distance;
+                nearest = *color;
+            }
+        }
+        nearest
+    }
 }
 
 #[cfg(test)]
@@ -116,7 +196,7 @@ const CONTRAST_CACHE_SLOTS: usize = 128;
 
 #[derive(Clone, Copy)]
 struct ContrastEntry {
-    key: [u32; 9],
+    key: [u32; 11],
     value: Hsla,
 }
 
@@ -125,7 +205,7 @@ thread_local! {
         const { std::cell::RefCell::new([None; CONTRAST_CACHE_SLOTS]) };
 }
 
-fn contrast_key(fg: Hsla, bg: Hsla, min_lc: f32) -> [u32; 9] {
+fn contrast_key(fg: Hsla, bg: Hsla, min_lc: f32, harmony_id: u64) -> [u32; 11] {
     [
         fg.h.to_bits(),
         fg.s.to_bits(),
@@ -136,10 +216,12 @@ fn contrast_key(fg: Hsla, bg: Hsla, min_lc: f32) -> [u32; 9] {
         bg.l.to_bits(),
         bg.a.to_bits(),
         min_lc.to_bits(),
+        (harmony_id >> 32) as u32,
+        harmony_id as u32,
     ]
 }
 
-fn contrast_slot(key: &[u32; 9]) -> usize {
+fn contrast_slot(key: &[u32; 11]) -> usize {
     let mut hash = 0xcbf2_9ce4_8422_2325_u64;
     for word in key {
         hash ^= u64::from(*word);
@@ -148,8 +230,13 @@ fn contrast_slot(key: &[u32; 9]) -> usize {
     (hash as usize) % CONTRAST_CACHE_SLOTS
 }
 
-fn contrast_cache_get_or_insert(fg: Hsla, bg: Hsla, min_lc: f32) -> Hsla {
-    let key = contrast_key(fg, bg, min_lc);
+fn contrast_cache_get_or_insert(
+    fg: Hsla,
+    bg: Hsla,
+    min_lc: f32,
+    harmony: Option<&HarmonyTargets>,
+) -> Hsla {
+    let key = contrast_key(fg, bg, min_lc, harmony.map_or(0, |harmony| harmony.id));
     let slot = contrast_slot(&key);
     CONTRAST_CACHE.with(|cache| {
         if let Ok(cache) = cache.try_borrow()
@@ -158,7 +245,7 @@ fn contrast_cache_get_or_insert(fg: Hsla, bg: Hsla, min_lc: f32) -> Hsla {
         {
             return entry.value;
         }
-        let value = compute_minimum_contrast(fg, bg, min_lc);
+        let value = compute_minimum_contrast(fg, bg, min_lc, harmony);
         if let Ok(mut cache) = cache.try_borrow_mut() {
             cache[slot] = Some(ContrastEntry { key, value });
         }
@@ -166,82 +253,130 @@ fn contrast_cache_get_or_insert(fg: Hsla, bg: Hsla, min_lc: f32) -> Hsla {
     })
 }
 
-fn compute_minimum_contrast(fg: Hsla, bg: Hsla, min_lc: f32) -> Hsla {
+const MONOCHROME_BLACK: Hsla = Hsla {
+    h: 0.0,
+    s: 0.0,
+    l: 0.0,
+    a: 1.0,
+};
+const MONOCHROME_WHITE: Hsla = Hsla {
+    h: 0.0,
+    s: 0.0,
+    l: 1.0,
+    a: 1.0,
+};
+const CHROMA_LADDER: [f32; 5] = [0.8, 0.6, 0.4, 0.2, 0.0];
+const HARMONY_CHROMA_SCALE: f32 = 0.6;
+const HARMONY_CHROMA_FLOOR: f32 = 0.02;
+const LIGHTNESS_STEPS: usize = 20;
+
+fn compute_minimum_contrast(
+    fg: Hsla,
+    bg: Hsla,
+    min_lc: f32,
+    harmony: Option<&HarmonyTargets>,
+) -> Hsla {
     if apca_contrast(fg, bg).abs() >= min_lc {
         return fg;
     }
 
-    let adjusted = adjust_lightness_for_apca(fg, bg, min_lc);
-    if apca_contrast(adjusted, bg).abs() >= min_lc {
-        return adjusted;
-    }
+    let source = hsla_to_oklch(fg);
 
-    for &sat_mult in &[0.8, 0.6, 0.4, 0.2, 0.0] {
-        let desat = Hsla {
-            s: fg.s * sat_mult,
-            ..fg
+    for scale in std::iter::once(1.0).chain(CHROMA_LADDER) {
+        let candidate = Oklch {
+            c: source.c * scale,
+            ..source
         };
-        let adjusted = adjust_lightness_for_apca(desat, bg, min_lc);
-        if apca_contrast(adjusted, bg).abs() >= min_lc {
-            return adjusted;
+        let Some(corrected) = bisect_lightness_either_way(candidate, bg, min_lc, fg.a) else {
+            continue;
+        };
+        let Some(harmony) = harmony else {
+            return corrected;
+        };
+        let realized = hsla_to_oklch(corrected).c;
+        let drained =
+            source.c >= HARMONY_CHROMA_FLOOR && realized < source.c * HARMONY_CHROMA_SCALE;
+        let collapsed = source.c >= HARMONY_CHROMA_FLOOR && realized < HARMONY_CHROMA_FLOOR;
+        if !drained && !collapsed {
+            return corrected;
         }
+        return pull_to_theme(corrected, bg, min_lc, fg.a, harmony);
     }
 
-    let black = Hsla {
-        h: 0.0,
-        s: 0.0,
-        l: 0.0,
-        a: fg.a,
-    };
-    let white = Hsla {
-        h: 0.0,
-        s: 0.0,
-        l: 1.0,
-        a: fg.a,
-    };
-    if apca_contrast(white, bg).abs() > apca_contrast(black, bg).abs() {
-        white
-    } else {
-        black
-    }
+    monochrome_fallback(bg, fg.a)
 }
 
-fn adjust_lightness_for_apca(fg: Hsla, bg: Hsla, min_lc: f32) -> Hsla {
-    let bg_lum = srgb_to_y(bg);
-    let should_darken = bg_lum > 0.5;
+fn resolve_lightness(color: Oklch, lightness: f32, alpha: f32) -> Hsla {
+    oklch_to_hsla_in_gamut(
+        Oklch {
+            l: lightness,
+            ..color
+        },
+        alpha,
+    )
+}
 
-    let (mut lo, mut hi) = if should_darken {
-        (0.0, fg.l)
-    } else {
-        (fg.l, 1.0)
-    };
-    let mut best_l = fg.l;
+fn darkening_direction(bg: Hsla) -> bool {
+    srgb_to_y(bg) > 0.5
+}
 
-    for _ in 0..20 {
-        let mid = (lo + hi) * 0.5;
-        let test = Hsla { l: mid, ..fg };
-        let contrast = apca_contrast(test, bg).abs();
+fn bisect_lightness_either_way(color: Oklch, bg: Hsla, min_lc: f32, alpha: f32) -> Option<Hsla> {
+    let darken = darkening_direction(bg);
+    bisect_lightness(color, bg, min_lc, darken, alpha)
+        .or_else(|| bisect_lightness(color, bg, min_lc, !darken, alpha))
+}
 
-        if contrast >= min_lc {
-            best_l = mid;
-            if should_darken {
-                lo = mid;
-            } else {
-                hi = mid;
-            }
-        } else if should_darken {
-            hi = mid;
+fn bisect_lightness(color: Oklch, bg: Hsla, min_lc: f32, darken: bool, alpha: f32) -> Option<Hsla> {
+    let limit = if darken { 0.0 } else { 1.0 };
+    let mut best = resolve_lightness(color, limit, alpha);
+    if apca_contrast(best, bg).abs() < min_lc {
+        return None;
+    }
+    let mut near = color.l.clamp(0.0, 1.0);
+    let mut far = limit;
+    for _ in 0..LIGHTNESS_STEPS {
+        let mid = (near + far) * 0.5;
+        let candidate = resolve_lightness(color, mid, alpha);
+        if apca_contrast(candidate, bg).abs() >= min_lc {
+            best = candidate;
+            far = mid;
         } else {
-            lo = mid;
-        }
-
-        if (contrast - min_lc).abs() < 1.0 {
-            best_l = mid;
-            break;
+            near = mid;
         }
     }
+    Some(best)
+}
 
-    Hsla { l: best_l, ..fg }
+fn pull_to_theme(
+    corrected: Hsla,
+    bg: Hsla,
+    min_lc: f32,
+    alpha: f32,
+    harmony: &HarmonyTargets,
+) -> Hsla {
+    let nearest = harmony.nearest(hsla_to_oklab(corrected));
+    let target = Hsla {
+        a: alpha,
+        ..nearest
+    };
+    if apca_contrast(target, bg).abs() >= min_lc {
+        return target;
+    }
+    let lch = hsla_to_oklch(target);
+    bisect_lightness_either_way(lch, bg, min_lc, alpha).unwrap_or(corrected)
+}
+
+fn monochrome_fallback(bg: Hsla, alpha: f32) -> Hsla {
+    let extreme =
+        if apca_contrast(MONOCHROME_BLACK, bg).abs() >= apca_contrast(MONOCHROME_WHITE, bg).abs() {
+            MONOCHROME_BLACK
+        } else {
+            MONOCHROME_WHITE
+        };
+    Hsla {
+        a: alpha,
+        ..extreme
+    }
 }
 
 pub(super) fn convert_color(color: Color, theme: &TerminalTheme, palette: &ThemePalette) -> Hsla {
@@ -354,8 +489,8 @@ mod tests {
         }
 
         for (fg, bg) in &pairs {
-            let cached = ensure_minimum_contrast(*fg, *bg, min_lc);
-            let direct = compute_minimum_contrast(*fg, *bg, min_lc);
+            let cached = ensure_minimum_contrast(*fg, *bg, min_lc, None);
+            let direct = compute_minimum_contrast(*fg, *bg, min_lc, None);
             assert_eq!(
                 (cached.h, cached.s, cached.l, cached.a),
                 (direct.h, direct.s, direct.l, direct.a),
@@ -363,8 +498,8 @@ mod tests {
             );
         }
         for (fg, bg) in &pairs {
-            let cached = ensure_minimum_contrast(*fg, *bg, min_lc);
-            let direct = compute_minimum_contrast(*fg, *bg, min_lc);
+            let cached = ensure_minimum_contrast(*fg, *bg, min_lc, None);
+            let direct = compute_minimum_contrast(*fg, *bg, min_lc, None);
             assert_eq!(
                 (cached.h, cached.s, cached.l),
                 (direct.h, direct.s, direct.l)
@@ -386,14 +521,294 @@ mod tests {
             l: 0.48,
             a: 1.0,
         };
-        let lenient = ensure_minimum_contrast(fg, bg, 15.0);
-        let strict = ensure_minimum_contrast(fg, bg, 75.0);
+        let lenient = ensure_minimum_contrast(fg, bg, 15.0, None);
+        let strict = ensure_minimum_contrast(fg, bg, 75.0, None);
         assert_ne!(
             (lenient.l, lenient.s),
             (strict.l, strict.s),
             "a stricter threshold must move the foreground further"
         );
-        assert_eq!(strict.l, compute_minimum_contrast(fg, bg, 75.0).l);
+        assert_eq!(strict.l, compute_minimum_contrast(fg, bg, 75.0, None).l);
+    }
+
+    fn hue_gap(a: f32, b: f32) -> f32 {
+        let gap = (a - b).abs();
+        gap.min(360.0 - gap)
+    }
+
+    #[test]
+    fn the_correction_keeps_the_hue_when_the_gamut_leaves_the_chroma_alone() {
+        let backgrounds = [
+            Hsla {
+                h: 0.0,
+                s: 0.0,
+                l: 0.98,
+                a: 1.0,
+            },
+            Hsla {
+                h: 0.0,
+                s: 0.0,
+                l: 0.09,
+                a: 1.0,
+            },
+        ];
+        let mut checked = 0usize;
+        for bg in backgrounds {
+            for step in 0..24 {
+                let fg = Hsla {
+                    h: step as f32 / 24.0,
+                    s: 0.45,
+                    l: 0.5,
+                    a: 1.0,
+                };
+                let source = hsla_to_oklch(fg);
+                let corrected = compute_minimum_contrast(fg, bg, 60.0, None);
+                let result = hsla_to_oklch(corrected);
+                if result.c < source.c * 0.999 {
+                    continue;
+                }
+                checked += 1;
+                assert!(
+                    apca_contrast(corrected, bg).abs() >= 60.0,
+                    "the correction must reach the threshold for {fg:?}"
+                );
+                let drift = hue_gap(source.h, result.h);
+                assert!(
+                    drift <= 2.0,
+                    "an untouched chroma must keep the hue, {fg:?} drifted {drift} degrees"
+                );
+            }
+        }
+        assert!(
+            checked > 10,
+            "the fixture must exercise corrections that keep their chroma, got {checked}"
+        );
+    }
+
+    #[test]
+    fn the_correction_stops_at_the_lightness_closest_to_the_original() {
+        let bg = Hsla {
+            h: 0.0,
+            s: 0.0,
+            l: 0.98,
+            a: 1.0,
+        };
+        let fg = Hsla {
+            h: 0.13,
+            s: 0.8,
+            l: 0.62,
+            a: 1.0,
+        };
+        let corrected = compute_minimum_contrast(fg, bg, 60.0, None);
+        let source = hsla_to_oklch(fg);
+        let result = hsla_to_oklch(corrected);
+        assert!(
+            result.l < source.l,
+            "a light background must darken the foreground"
+        );
+        let short_of_it = oklch_to_hsla_in_gamut(
+            Oklch {
+                l: result.l + (source.l - result.l) * 0.25,
+                ..result
+            },
+            fg.a,
+        );
+        assert!(
+            apca_contrast(short_of_it, bg).abs() < 60.0,
+            "a lightness closer to the original must miss the threshold"
+        );
+    }
+
+    #[test]
+    fn an_unreachable_threshold_falls_back_to_black_or_white() {
+        let light_bg = Hsla {
+            h: 0.0,
+            s: 0.0,
+            l: 1.0,
+            a: 1.0,
+        };
+        let dark_bg = Hsla {
+            h: 0.0,
+            s: 0.0,
+            l: 0.0,
+            a: 1.0,
+        };
+        let fg = Hsla {
+            h: 0.6,
+            s: 0.7,
+            l: 0.5,
+            a: 1.0,
+        };
+        let on_light = compute_minimum_contrast(fg, light_bg, 200.0, None);
+        let on_dark = compute_minimum_contrast(fg, dark_bg, 200.0, None);
+        assert_eq!((on_light.s, on_light.l), (0.0, 0.0));
+        assert_eq!((on_dark.s, on_dark.l), (0.0, 1.0));
+    }
+
+    #[test]
+    fn a_mid_grey_background_keeps_the_hue_instead_of_collapsing_to_black() {
+        for level in [180u8, 185, 191] {
+            let bg = rgb_to_hsla(level, level, level);
+            for (r, g, b) in [(120u8, 170u8, 255u8), (230, 120, 40), (90, 200, 120)] {
+                let fg = rgb_to_hsla(r, g, b);
+                let corrected = compute_minimum_contrast(fg, bg, 60.0, None);
+                assert!(
+                    apca_contrast(corrected, bg).abs() >= 60.0,
+                    "grey {level}: rgb({r},{g},{b}) must reach the threshold"
+                );
+                let result = hsla_to_oklch(corrected);
+                assert!(
+                    result.c >= HARMONY_CHROMA_FLOOR,
+                    "grey {level}: rgb({r},{g},{b}) must not collapse to the monochrome                      fallback, chroma {}",
+                    result.c
+                );
+                let drift = hue_gap(hsla_to_oklch(fg).h, result.h);
+                assert!(
+                    drift <= 2.0,
+                    "grey {level}: rgb({r},{g},{b}) drifted {drift} degrees"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_source_below_the_chroma_floor_is_never_pulled() {
+        for name in ["Paneflow Light", "Paneflow Dark"] {
+            let theme = crate::theme::theme_by_name(name).expect("the preset must exist");
+            let harmony = HarmonyTargets::from_theme(&theme);
+            let mut checked = 0usize;
+            for bg in [theme.ansi_background, rgb_to_hsla(185, 185, 185)] {
+                for level in [40u8, 110, 150, 200] {
+                    for tint in [0u8, 4, 8] {
+                        let fg = rgb_to_hsla(level, level.saturating_sub(tint), level);
+                        if hsla_to_oklch(fg).c >= HARMONY_CHROMA_FLOOR {
+                            continue;
+                        }
+                        checked += 1;
+                        let plain = compute_minimum_contrast(fg, bg, 60.0, None);
+                        let pulled = compute_minimum_contrast(fg, bg, 60.0, Some(&harmony));
+                        assert_eq!(
+                            (plain.h, plain.s, plain.l),
+                            (pulled.h, pulled.s, pulled.l),
+                            "{name}: rgb({level},{},{level}) started below the chroma floor and                              must never be tinted by the pull",
+                            level.saturating_sub(tint)
+                        );
+                    }
+                }
+            }
+            assert!(
+                checked >= 8,
+                "{name}: the fixture must exercise near-neutral sources, got {checked}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_drained_chroma_is_pulled_onto_a_theme_color() {
+        let theme = crate::theme::theme_by_name("Paneflow Dark").expect("the preset must exist");
+        let harmony = HarmonyTargets::from_theme(&theme);
+        let bg = theme.ansi_background;
+        let fg = rgb_to_hsla(255, 0, 255);
+        let plain = compute_minimum_contrast(fg, bg, 60.0, None);
+        let pulled = compute_minimum_contrast(fg, bg, 60.0, Some(&harmony));
+
+        let source_chroma = hsla_to_oklch(fg).c;
+        assert!(
+            hsla_to_oklch(plain).c < source_chroma * HARMONY_CHROMA_SCALE,
+            "the fixture must drain more than 40% of the chroma"
+        );
+        assert_ne!(
+            (plain.h, plain.s, plain.l),
+            (pulled.h, pulled.s, pulled.l),
+            "a drained chroma must move onto the theme"
+        );
+        assert!(
+            apca_contrast(pulled, bg).abs() >= 60.0,
+            "the pulled color must still meet the threshold"
+        );
+        let target = harmony.nearest(hsla_to_oklab(plain));
+        assert!(
+            hue_gap(hsla_to_oklch(pulled).h, hsla_to_oklch(target).h) <= 2.0,
+            "the pull must land on the hue of the nearest theme color"
+        );
+    }
+
+    #[test]
+    fn a_mild_chroma_reduction_is_never_pulled() {
+        let theme = crate::theme::theme_by_name("Paneflow Light").expect("the preset must exist");
+        let harmony = HarmonyTargets::from_theme(&theme);
+        let bg = theme.ansi_background;
+        let mut checked = 0usize;
+        for (r, g, b) in [
+            (255u8, 255u8, 0u8),
+            (0, 255, 0),
+            (120, 170, 255),
+            (255, 170, 0),
+        ] {
+            let fg = rgb_to_hsla(r, g, b);
+            let plain = compute_minimum_contrast(fg, bg, 60.0, None);
+            if hsla_to_oklch(plain).c < hsla_to_oklch(fg).c * HARMONY_CHROMA_SCALE {
+                continue;
+            }
+            checked += 1;
+            let pulled = compute_minimum_contrast(fg, bg, 60.0, Some(&harmony));
+            assert_eq!(
+                (plain.h, plain.s, plain.l),
+                (pulled.h, pulled.s, pulled.l),
+                "rgb({r},{g},{b}) kept its chroma and must not be pulled"
+            );
+            let drift = hue_gap(hsla_to_oklch(fg).h, hsla_to_oklch(pulled).h);
+            assert!(
+                drift <= 2.0,
+                "rgb({r},{g},{b}) drifted {drift} degrees without a chroma reduction"
+            );
+        }
+        assert!(
+            checked >= 3,
+            "the fixture must exercise mild reductions, got {checked}"
+        );
+    }
+
+    #[test]
+    fn an_already_neutral_color_is_never_tinted_by_the_pull() {
+        let theme = crate::theme::theme_by_name("Paneflow Light").expect("the preset must exist");
+        let harmony = HarmonyTargets::from_theme(&theme);
+        let bg = theme.ansi_background;
+        for level in [150u8, 200, 255] {
+            let fg = rgb_to_hsla(level, level, level);
+            let pulled = compute_minimum_contrast(fg, bg, 60.0, Some(&harmony));
+            assert!(
+                hsla_to_oklch(pulled).c < HARMONY_CHROMA_FLOOR,
+                "grey {level} must stay neutral, got chroma {}",
+                hsla_to_oklch(pulled).c
+            );
+        }
+    }
+
+    #[test]
+    fn the_cache_keys_on_the_harmony_targets() {
+        let light = crate::theme::theme_by_name("Paneflow Light").expect("the preset must exist");
+        let dark = crate::theme::theme_by_name("Paneflow Dark").expect("the preset must exist");
+        let light_harmony = HarmonyTargets::from_theme(&light);
+        let dark_harmony = HarmonyTargets::from_theme(&dark);
+        assert_ne!(
+            light_harmony.id, dark_harmony.id,
+            "two presets must not share a harmony identity"
+        );
+        let fg = rgb_to_hsla(255, 0, 255);
+        let bg = dark.ansi_background;
+        let with_dark = ensure_minimum_contrast(fg, bg, 60.0, Some(&dark_harmony));
+        let with_light = ensure_minimum_contrast(fg, bg, 60.0, Some(&light_harmony));
+        assert_eq!(
+            with_dark,
+            compute_minimum_contrast(fg, bg, 60.0, Some(&dark_harmony)),
+            "the cache must not serve another theme's answer"
+        );
+        assert_eq!(
+            with_light,
+            compute_minimum_contrast(fg, bg, 60.0, Some(&light_harmony)),
+            "the cache must not serve another theme's answer"
+        );
     }
 
     #[test]

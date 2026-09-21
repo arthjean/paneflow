@@ -18,13 +18,14 @@ mod face_tables;
 mod font;
 mod geometry;
 mod hyperlink;
+mod oklab;
 mod paint;
 #[cfg(debug_assertions)]
 pub(super) mod pixel_probe;
 mod sprites;
 
 use crate::theme::ThemePalette;
-use color::{convert_color, is_same_visible_color, rgb_to_hsla};
+use color::{HarmonyTargets, convert_color, is_same_visible_color, rgb_to_hsla};
 #[cfg(test)]
 pub(crate) use font::base_font;
 pub use font::{
@@ -985,6 +986,8 @@ pub(crate) fn layout_from_snapshot_cached(
         }
     }
 
+    let harmony = (minimum_contrast > 0.0).then(|| HarmonyTargets::from_theme(theme));
+
     let build_row = |cells: &[Cell]| {
         let mut batch = BatchAccumulator::new(base_font.clone());
         let mut rects: Vec<LayoutRect> = Vec::new();
@@ -1039,7 +1042,7 @@ pub(crate) fn layout_from_snapshot_cached(
                 && !is_decorative_character(*c)
                 && !is_same_visible_color(fg, bg)
             {
-                fg = ensure_minimum_contrast(fg, bg, minimum_contrast);
+                fg = ensure_minimum_contrast(fg, bg, minimum_contrast, harmony.as_ref());
             }
 
             if flags.contains(CellFlags::DIM) {
@@ -3606,7 +3609,8 @@ mod golden_frame_tests {
 
     const CORPUS_COLS: usize = 80;
     const CORPUS_ROWS: usize = 16;
-    const CORPUS_FIXTURES: &[&str] = &["lsd-la.ansi", "btop.ansi", "lazygit.ansi"];
+    const CORPUS_FIXTURES: &[&str] =
+        &["lsd-la.ansi", "btop.ansi", "lazygit.ansi", "agent-cli.ansi"];
     const CORPUS_TIER: f32 = 45.0;
 
     fn corpus_fixture_dir() -> std::path::PathBuf {
@@ -3733,6 +3737,7 @@ mod golden_frame_tests {
         col: usize,
         source: Option<Color>,
         color: Hsla,
+        bg: Hsla,
         lc: f32,
         baseline_lc: f32,
     }
@@ -3765,6 +3770,7 @@ mod golden_frame_tests {
                     col,
                     source,
                     color: run.color,
+                    bg,
                     lc: apca_contrast(run.color, bg).abs(),
                     baseline_lc: apca_contrast(baseline, bg).abs(),
                 });
@@ -3963,6 +3969,280 @@ mod golden_frame_tests {
                 }
             }
         }
+    }
+
+    fn corpus_hue_drift(before: f32, after: f32) -> f32 {
+        let gap = (before - after).abs();
+        gap.min(360.0 - gap)
+    }
+
+    struct HarmonyRow {
+        distance: f32,
+        source_chroma: f32,
+        realized_chroma: f32,
+        hue_drift: f32,
+    }
+
+    fn lsd_harmony_rows(
+        theme: &crate::theme::TerminalTheme,
+        content: &Content,
+    ) -> std::collections::BTreeMap<u8, HarmonyRow> {
+        let automatic = paneflow_config::schema::TerminalConfig::DEFAULT_MINIMUM_CONTRAST;
+        let palette = ThemePalette::from_theme(theme);
+        let off = corpus_cells(
+            content,
+            &corpus_layout(content, theme, &palette, 0.0),
+            theme,
+        );
+        let on = corpus_cells(
+            content,
+            &corpus_layout(content, theme, &palette, automatic),
+            theme,
+        );
+        let foreground = color::oklab_of(theme.foreground);
+        let dim = color::oklab_of(theme.dim_foreground);
+        let mut rows = std::collections::BTreeMap::new();
+        for (off, on) in off.iter().zip(&on) {
+            let Some(Color::Indexed(index)) = off.source else {
+                continue;
+            };
+            if index < 16 {
+                continue;
+            }
+            let before = color::oklch_of(off.color);
+            let after = color::oklch_of(on.color);
+            let corrected = color::oklab_of(on.color);
+            rows.insert(
+                index,
+                HarmonyRow {
+                    distance: corrected.distance(foreground).min(corrected.distance(dim)),
+                    source_chroma: before.c,
+                    realized_chroma: after.c,
+                    hue_drift: corpus_hue_drift(before.h, after.h),
+                },
+            );
+        }
+        rows
+    }
+
+    #[test]
+    fn the_lsd_harmony_is_recorded_per_preset() {
+        use std::fmt::Write as _;
+        let content = corpus_content("lsd-la.ansi");
+        let mut report = String::new();
+        let mut measured = 0usize;
+        for preset in crate::theme::PRESETS {
+            for name in [preset.light, preset.dark] {
+                let theme = corpus_theme(name);
+                for (index, row) in lsd_harmony_rows(&theme, &content) {
+                    measured += 1;
+                    let _ = writeln!(
+                        report,
+                        "{name} idx {index}: dist {:.3} chroma {:.4} -> {:.4} hue_drift {:.2}",
+                        row.distance, row.source_chroma, row.realized_chroma, row.hue_drift
+                    );
+                }
+            }
+        }
+        assert!(
+            measured > 100,
+            "the harmony golden must cover the indexed columns of every variant, got {measured}"
+        );
+        assert_golden_text("contrast_corpus_harmony", report);
+    }
+
+    #[test]
+    fn the_lsd_columns_keep_their_hue_on_the_theme_palette() {
+        let content = corpus_content("lsd-la.ansi");
+        let mut checked = 0usize;
+        for preset in crate::theme::PRESETS {
+            for name in [preset.light, preset.dark] {
+                let theme = corpus_theme(name);
+                let rows = lsd_harmony_rows(&theme, &content);
+                for (index, tier) in [(230u8, 2.0f32), (187, 2.0), (229, 2.0), (40, 5.0)] {
+                    let Some(row) = rows.get(&index) else {
+                        panic!("{name}: the lsd fixture must carry index {index}");
+                    };
+                    checked += 1;
+                    assert!(
+                        row.hue_drift <= tier,
+                        "{name} idx {index}: the theme palette needs no chroma reduction, so the \
+                         hue must hold within {tier} degrees, drifted {:.2}",
+                        row.hue_drift
+                    );
+                    assert!(
+                        row.realized_chroma >= row.source_chroma * 0.6,
+                        "{name} idx {index}: a pull here would collapse a distinct column onto \
+                         the theme text color, chroma {:.4} -> {:.4}",
+                        row.source_chroma,
+                        row.realized_chroma
+                    );
+                }
+            }
+        }
+        assert_eq!(checked, 40, "every variant must contribute four columns");
+    }
+
+    struct PullRow {
+        source_chroma: f32,
+        realized_chroma: f32,
+        pulled: bool,
+        distance: f32,
+    }
+
+    fn agent_pull_rows(
+        theme: &crate::theme::TerminalTheme,
+        content: &Content,
+    ) -> std::collections::BTreeMap<(u8, u8, u8), PullRow> {
+        let automatic = paneflow_config::schema::TerminalConfig::DEFAULT_MINIMUM_CONTRAST;
+        let palette = ThemePalette::from_theme(theme);
+        let off = corpus_cells(
+            content,
+            &corpus_layout(content, theme, &palette, 0.0),
+            theme,
+        );
+        let on = corpus_cells(
+            content,
+            &corpus_layout(content, theme, &palette, automatic),
+            theme,
+        );
+        let mut rows = std::collections::BTreeMap::new();
+        for (off, on) in off.iter().zip(&on) {
+            let Some(Color::Spec(rgb)) = off.source else {
+                continue;
+            };
+            let plain = color::corrected_without_harmony(off.color, off.bg, automatic);
+            let pulled = (plain.h, plain.s, plain.l) != (on.color.h, on.color.s, on.color.l);
+            let target = color::nearest_theme_color(theme, plain);
+            rows.insert(
+                (rgb.r, rgb.g, rgb.b),
+                PullRow {
+                    source_chroma: color::oklch_of(off.color).c,
+                    realized_chroma: color::oklch_of(plain).c,
+                    pulled,
+                    distance: color::oklab_of(on.color).distance(color::oklab_of(target)),
+                },
+            );
+        }
+        rows
+    }
+
+    #[test]
+    fn the_truecolor_pull_is_recorded_per_preset() {
+        use std::fmt::Write as _;
+        let content = corpus_content("agent-cli.ansi");
+        let mut report = String::new();
+        let mut pulls = 0usize;
+        for preset in crate::theme::PRESETS {
+            for name in [preset.light, preset.dark] {
+                let theme = corpus_theme(name);
+                for ((r, g, b), row) in agent_pull_rows(&theme, &content) {
+                    if row.pulled {
+                        pulls += 1;
+                    }
+                    let ratio = if row.source_chroma > 0.0 {
+                        row.realized_chroma / row.source_chroma
+                    } else {
+                        1.0
+                    };
+                    let _ = writeln!(
+                        report,
+                        "{name} rgb({r},{g},{b}): ratio {ratio:.2} pulled {} dist {:.3}",
+                        row.pulled, row.distance
+                    );
+                }
+            }
+        }
+        assert!(
+            pulls > 0,
+            "the agent fixture must exercise the harmony pull, otherwise the golden records              nothing and US-009 stays unjudged"
+        );
+        assert_golden_text("contrast_corpus_pull", report);
+    }
+
+    #[test]
+    fn a_drained_truecolor_reaches_the_theme_through_the_layout() {
+        let theme = corpus_theme("Paneflow Dark");
+        let bg = default_background_color(&theme);
+        let source = Color::Spec(Rgb {
+            r: 255,
+            g: 0,
+            b: 255,
+        });
+        let cells = text_row(0, "magenta", source, CellFlags::empty());
+        let uncorrected = only_run_color(&run_with_contrast(cells.clone(), &theme, 0.0));
+        let corrected = only_run_color(&run_with_contrast(cells, &theme, 60.0));
+        let plain = color::corrected_without_harmony(uncorrected, bg, 60.0);
+
+        assert!(
+            apca_contrast(corrected, bg).abs() >= 60.0,
+            "the pulled color must meet the threshold"
+        );
+        assert_ne!(
+            (corrected.h, corrected.s, corrected.l),
+            (plain.h, plain.s, plain.l),
+            "the layout must apply the theme pull, not the bare lightness move"
+        );
+        let target = color::nearest_theme_color(&theme, plain);
+        assert!(
+            color::oklab_of(corrected).distance(color::oklab_of(target))
+                < color::oklab_of(plain).distance(color::oklab_of(target)),
+            "the pull must land closer to its theme target than the bare correction"
+        );
+    }
+
+    #[test]
+    fn the_corpus_keeps_its_hues_through_the_perceptual_correction() {
+        let automatic = paneflow_config::schema::TerminalConfig::DEFAULT_MINIMUM_CONTRAST;
+        let mut checked = 0usize;
+        for fixture in CORPUS_FIXTURES {
+            let content = corpus_content(fixture);
+            for preset in crate::theme::PRESETS {
+                for name in [preset.light, preset.dark] {
+                    let theme = corpus_theme(name);
+                    let palette = ThemePalette::from_theme(&theme);
+                    let off = corpus_cells(
+                        &content,
+                        &corpus_layout(&content, &theme, &palette, 0.0),
+                        &theme,
+                    );
+                    let on = corpus_cells(
+                        &content,
+                        &corpus_layout(&content, &theme, &palette, automatic),
+                        &theme,
+                    );
+                    for (off, on) in off.iter().zip(&on) {
+                        let plain = if off.source.is_some_and(is_correctable_source) {
+                            color::corrected_without_harmony(off.color, off.bg, automatic)
+                        } else {
+                            on.color
+                        };
+                        if (plain.h, plain.s, plain.l) != (on.color.h, on.color.s, on.color.l) {
+                            continue;
+                        }
+                        let before = color::oklch_of(off.color);
+                        let after = color::oklch_of(plain);
+                        if before.c < 0.02 || after.c < before.c * 0.6 {
+                            continue;
+                        }
+                        checked += 1;
+                        let gap = (before.h - after.h).abs();
+                        let drift = gap.min(360.0 - gap);
+                        assert!(
+                            drift <= 2.0,
+                            "{name}/{fixture} L{} C{}: hue drifted {drift:.2} degrees without a \
+                             chroma reduction",
+                            on.line,
+                            on.col
+                        );
+                    }
+                }
+            }
+        }
+        assert!(
+            checked > 500,
+            "the corpus must exercise chroma-preserving corrections, got {checked}"
+        );
     }
 
     #[test]

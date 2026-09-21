@@ -420,6 +420,7 @@ impl TerminalTheme {
             self.foreground,
             selection_bg_opaque,
             SELECTION_MIN_APCA_CONTRAST,
+            None,
         );
     }
 }
