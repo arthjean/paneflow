@@ -406,7 +406,7 @@ const CHROME_BACKGROUND_HEX: u32 = 0x141414;
 const TERMINAL_BACKGROUND_HEX: u32 = 0x181818;
 const BORDER_HEX: u32 = 0x252525;
 
-fn is_light_theme(theme: &TerminalTheme) -> bool {
+pub(super) fn is_light_theme(theme: &TerminalTheme) -> bool {
     theme.background.l > 0.5
 }
 

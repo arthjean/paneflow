@@ -1,0 +1,2 @@
+Claude Light lsd-la.ansi idx 124 Lc 43.0
+Paneflow Light lsd-la.ansi idx 124 Lc 40.3

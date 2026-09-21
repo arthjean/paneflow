@@ -7,6 +7,8 @@ use std::time::{Duration, Instant};
 
 use futures::channel::mpsc::{UnboundedReceiver, UnboundedSender, unbounded};
 use paneflow_terminal_ghostty as ghostty;
+
+use crate::theme::ghostty_rgb;
 use parking_lot::RwLock;
 use portable_pty::{CommandBuilder, PtySize};
 
@@ -3718,15 +3720,6 @@ fn update_shared_selection(inner: &SessionInner, selection: Option<SelectionRang
     queue_wakeup(inner);
 }
 
-fn ghostty_rgb(color: gpui::Hsla) -> ghostty::Rgb {
-    let rgba = gpui::Rgba::from(color);
-    ghostty::Rgb {
-        r: (rgba.r.clamp(0.0, 1.0) * 255.0) as u8,
-        g: (rgba.g.clamp(0.0, 1.0) * 255.0) as u8,
-        b: (rgba.b.clamp(0.0, 1.0) * 255.0) as u8,
-    }
-}
-
 const TERMINFO_NAME: &str = "xterm-256color";
 
 const SCROLLBACK_BYTES_PER_LINE: usize = 1024;
@@ -3765,38 +3758,7 @@ fn configure_embedder_options(terminal: &mut ghostty::DisplayTerminal, max_scrol
 }
 
 fn current_ghostty_palette() -> [ghostty::Rgb; ghostty::PALETTE_LEN] {
-    let theme = crate::theme::active_theme();
-    let mut base = ghostty::default_palette();
-    for (slot, color) in [
-        theme.black,
-        theme.red,
-        theme.green,
-        theme.yellow,
-        theme.blue,
-        theme.magenta,
-        theme.cyan,
-        theme.white,
-        theme.bright_black,
-        theme.bright_red,
-        theme.bright_green,
-        theme.bright_yellow,
-        theme.bright_blue,
-        theme.bright_magenta,
-        theme.bright_cyan,
-        theme.bright_white,
-    ]
-    .into_iter()
-    .enumerate()
-    {
-        base[slot] = ghostty_rgb(color);
-    }
-    ghostty::generate_palette(
-        Some(&base),
-        &ghostty::PaletteMask::default(),
-        ghostty_rgb(theme.ansi_background),
-        ghostty_rgb(theme.foreground),
-        false,
-    )
+    crate::theme::generated_terminal_palette(&crate::theme::active_theme())
 }
 
 fn current_ghostty_appearance() -> ghostty::TerminalAppearance {

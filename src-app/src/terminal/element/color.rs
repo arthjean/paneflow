@@ -1,7 +1,7 @@
 use gpui::{Hsla, Rgba};
 
 use crate::terminal::types::{Color, NamedColor};
-use crate::theme::TerminalTheme;
+use crate::theme::{TerminalTheme, ThemePalette};
 
 struct ApcaConstants {
     main_trc: f32,
@@ -222,11 +222,11 @@ fn adjust_lightness_for_apca(fg: Hsla, bg: Hsla, min_lc: f32) -> Hsla {
     Hsla { l: best_l, ..fg }
 }
 
-pub(super) fn convert_color(color: Color, theme: &TerminalTheme) -> Hsla {
+pub(super) fn convert_color(color: Color, theme: &TerminalTheme, palette: &ThemePalette) -> Hsla {
     match color {
         Color::Named(name) => named_color(name, theme),
         Color::Spec(rgb) => rgb_to_hsla(rgb.r, rgb.g, rgb.b),
-        Color::Indexed(i) => indexed_color(i, theme),
+        Color::Indexed(i) => indexed_color(i, theme, palette),
     }
 }
 
@@ -253,7 +253,7 @@ fn named_color(name: NamedColor, theme: &TerminalTheme) -> Hsla {
     }
 }
 
-fn indexed_color(i: u8, theme: &TerminalTheme) -> Hsla {
+fn indexed_color(i: u8, theme: &TerminalTheme, palette: &ThemePalette) -> Hsla {
     if i < 16 {
         return named_color(
             match i {
@@ -279,19 +279,7 @@ fn indexed_color(i: u8, theme: &TerminalTheme) -> Hsla {
         );
     }
 
-    if i < 232 {
-        let idx = i - 16;
-        let r_idx = idx / 36;
-        let g_idx = (idx % 36) / 6;
-        let b_idx = idx % 6;
-        let r = if r_idx == 0 { 0 } else { 55 + 40 * r_idx };
-        let g = if g_idx == 0 { 0 } else { 55 + 40 * g_idx };
-        let b = if b_idx == 0 { 0 } else { 55 + 40 * b_idx };
-        return rgb_to_hsla(r, g, b);
-    }
-
-    let gray = 8 + 10 * (i - 232);
-    rgb_to_hsla(gray, gray, gray)
+    palette.color(i)
 }
 
 pub(super) fn rgb_to_hsla(r: u8, g: u8, b: u8) -> Hsla {
@@ -374,14 +362,101 @@ mod tests {
     #[test]
     fn default_ground_colors_use_the_terminal_theme_slots() {
         let theme = crate::theme::paneflow_dark();
+        let palette = ThemePalette::from_theme(&theme);
 
         assert_eq!(
-            convert_color(Color::Named(NamedColor::Foreground), &theme),
+            convert_color(Color::Named(NamedColor::Foreground), &theme, &palette),
             theme.foreground
         );
         assert_eq!(
-            convert_color(Color::Named(NamedColor::Background), &theme),
+            convert_color(Color::Named(NamedColor::Background), &theme, &palette),
             theme.ansi_background
         );
+    }
+
+    fn preset(name: &str) -> TerminalTheme {
+        crate::theme::theme_by_name(name).unwrap_or_else(|| panic!("preset {name} must exist"))
+    }
+
+    #[test]
+    fn the_cube_and_grey_ramp_resolve_from_the_theme_palette() {
+        for name in crate::theme::THEMES {
+            let theme = preset(name.0);
+            let palette = ThemePalette::from_theme(&theme);
+            for index in 16u8..=255 {
+                assert_eq!(
+                    convert_color(Color::Indexed(index), &theme, &palette),
+                    palette.color(index),
+                    "{}: index {index} must resolve from the render palette",
+                    name.0
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn the_first_sixteen_indices_stay_on_the_named_slots() {
+        let theme = preset("Paneflow Light");
+        let palette = ThemePalette::from_theme(&theme);
+        let expected = [
+            NamedColor::Black,
+            NamedColor::Red,
+            NamedColor::Green,
+            NamedColor::Yellow,
+            NamedColor::Blue,
+            NamedColor::Magenta,
+            NamedColor::Cyan,
+            NamedColor::White,
+            NamedColor::BrightBlack,
+            NamedColor::BrightRed,
+            NamedColor::BrightGreen,
+            NamedColor::BrightYellow,
+            NamedColor::BrightBlue,
+            NamedColor::BrightMagenta,
+            NamedColor::BrightCyan,
+            NamedColor::BrightWhite,
+        ];
+        for (index, name) in expected.into_iter().enumerate() {
+            let index = u8::try_from(index).expect("ansi index fits a u8");
+            assert_eq!(
+                convert_color(Color::Indexed(index), &theme, &palette),
+                named_color(name, &theme),
+                "index {index} must keep the named ANSI slot"
+            );
+        }
+    }
+
+    #[test]
+    fn the_light_cube_replaces_the_illegible_xterm_corners() {
+        let theme = preset("Paneflow Light");
+        let palette = ThemePalette::from_theme(&theme);
+        for (index, xterm) in [(230u8, (255u8, 255u8, 215u8)), (187, (215, 215, 175))] {
+            let baseline = rgb_to_hsla(xterm.0, xterm.1, xterm.2);
+            let baseline_lc = apca_contrast(baseline, theme.ansi_background).abs();
+            assert!(
+                baseline_lc < 25.0,
+                "the xterm cube value for index {index} is the illegible baseline, Lc {baseline_lc}"
+            );
+            let resolved = convert_color(Color::Indexed(index), &theme, &palette);
+            let resolved_lc = apca_contrast(resolved, theme.ansi_background).abs();
+            assert!(
+                resolved_lc > 45.0,
+                "index {index} must resolve to a legible theme color, Lc {resolved_lc}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_light_grey_ramp_keeps_its_steps_legible() {
+        let theme = preset("Paneflow Light");
+        let palette = ThemePalette::from_theme(&theme);
+        for index in 240u8..=255 {
+            let resolved = convert_color(Color::Indexed(index), &theme, &palette);
+            let lc = apca_contrast(resolved, theme.ansi_background).abs();
+            assert!(
+                lc > 45.0,
+                "grey ramp index {index} must stay legible on a light theme, Lc {lc}"
+            );
+        }
     }
 }

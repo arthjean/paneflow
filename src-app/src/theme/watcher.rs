@@ -56,9 +56,12 @@ fn install_theme(
         mtime,
         last_check: Instant::now(),
     });
-    if changed {
-        THEME_GENERATION.fetch_add(1, Ordering::AcqRel);
-    }
+    let generation = if changed {
+        THEME_GENERATION.fetch_add(1, Ordering::AcqRel) + 1
+    } else {
+        theme_generation()
+    };
+    super::palette::install_palette(&theme, generation);
     theme
 }
 

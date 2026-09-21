@@ -23,6 +23,7 @@ mod paint;
 pub(super) mod pixel_probe;
 mod sprites;
 
+use crate::theme::ThemePalette;
 use color::{convert_color, rgb_to_hsla};
 #[cfg(test)]
 pub(crate) use font::base_font;
@@ -168,11 +169,17 @@ fn terminal_panel_background(
     }
 }
 
+#[derive(Clone, Copy)]
+pub(super) struct RenderColors<'a> {
+    pub theme: &'a crate::theme::TerminalTheme,
+    pub palette: &'a ThemePalette,
+}
+
 fn resolved_cell_background(
     cell_fg: Color,
     cell_bg: Color,
     flags: CellFlags,
-    theme: &crate::theme::TerminalTheme,
+    colors: RenderColors<'_>,
 ) -> Hsla {
     let raw_bg = if flags.contains(CellFlags::INVERSE) {
         cell_fg
@@ -183,7 +190,11 @@ fn resolved_cell_background(
     if matches!(raw_bg, Color::Named(NamedColor::Background)) {
         gpui::transparent_black()
     } else {
-        terminal_panel_background(raw_bg, convert_color(raw_bg, theme), theme)
+        terminal_panel_background(
+            raw_bg,
+            convert_color(raw_bg, colors.theme, colors.palette),
+            colors.theme,
+        )
     }
 }
 
@@ -330,7 +341,7 @@ pub(crate) struct CursorInfo {
 struct CursorCellContext<'a> {
     desired_cols: usize,
     desired_rows: usize,
-    theme: &'a crate::theme::TerminalTheme,
+    colors: RenderColors<'a>,
 }
 
 fn selection_marker_cursor(
@@ -357,7 +368,7 @@ fn selection_marker_cursor(
                 cell.flags.contains(CellFlags::BOLD) || cell.flags.contains(CellFlags::BOLD_ITALIC),
                 cell.flags.contains(CellFlags::ITALIC)
                     || cell.flags.contains(CellFlags::BOLD_ITALIC),
-                resolved_cell_background(cell.fg, cell.bg, cell.flags, ctx.theme),
+                resolved_cell_background(cell.fg, cell.bg, cell.flags, ctx.colors),
             )
         })
         .unwrap_or((
@@ -369,7 +380,7 @@ fn selection_marker_cursor(
                 Color::Named(NamedColor::Foreground),
                 Color::Named(NamedColor::Background),
                 CellFlags::empty(),
-                ctx.theme,
+                ctx.colors,
             ),
         ));
 
@@ -391,7 +402,7 @@ fn cursor_from_content(
     focused: bool,
     cursor_color: Hsla,
     default_cursor_shape: CursorShape,
-    theme: &crate::theme::TerminalTheme,
+    colors: RenderColors<'_>,
 ) -> Option<CursorInfo> {
     if matches!(cursor.shape, CursorShape::Hidden) || !focused {
         return None;
@@ -414,7 +425,7 @@ fn cursor_from_content(
         col: cursor.point.column.0,
         shape,
         color: cursor_color,
-        cell_bg: resolved_cell_background(cursor.fg, cursor.bg, cursor.flags, theme),
+        cell_bg: resolved_cell_background(cursor.fg, cursor.bg, cursor.flags, colors),
         wide: cursor.wide,
         text,
         bold: cursor.bold,
@@ -444,6 +455,7 @@ pub(crate) struct LayoutInputs<'a> {
     pub dims: CellDimensions,
     pub base_font: Font,
     pub theme: &'a crate::theme::TerminalTheme,
+    pub palette: &'a ThemePalette,
     pub exited: Option<i32>,
     pub exit_signal: Option<String>,
     pub integrated_glyphs_enabled: bool,
@@ -734,12 +746,16 @@ impl TerminalElement {
         let history_size = content.history_size;
         let selection_range = content.selection;
 
+        let palette = crate::theme::active_palette();
         let cursor_snapshot = cursor_from_content(
             content.cursor,
             self.focused,
             cursor_color,
             self.default_cursor_shape,
-            &theme,
+            RenderColors {
+                theme: &theme,
+                palette: &palette,
+            },
         );
         let copy_mode_cursor =
             focused_copy_mode_cursor(self.copy_mode_cursor.as_ref(), self.focused);
@@ -798,6 +814,7 @@ impl TerminalElement {
                 dims,
                 base_font: self.frame_metrics.base_font.clone(),
                 theme: &theme,
+                palette: &palette,
                 exited: self.exited,
                 exit_signal: self.exit_signal.clone(),
                 integrated_glyphs_enabled: self.integrated_glyphs_enabled,
@@ -858,12 +875,15 @@ pub(crate) fn layout_from_snapshot_cached(
         dims,
         base_font,
         theme,
+        palette,
         exited,
         exit_signal,
         integrated_glyphs_enabled,
         color_emoji_enabled,
         minimum_contrast,
     } = inputs;
+
+    let colors = RenderColors { theme, palette };
 
     let background_color = gpui::transparent_black();
     let selection_color = theme.selection;
@@ -879,7 +899,7 @@ pub(crate) fn layout_from_snapshot_cached(
         let cursor_ctx = CursorCellContext {
             desired_cols,
             desired_rows,
-            theme,
+            colors,
         };
 
         let main = selection_marker_cursor(
@@ -1007,8 +1027,9 @@ pub(crate) fn layout_from_snapshot_cached(
             } else {
                 (*cell_fg, *cell_bg)
             };
-            let mut fg = convert_color(raw_fg, theme);
-            let bg = terminal_panel_background(raw_bg, convert_color(raw_bg, theme), theme);
+            let mut fg = convert_color(raw_fg, theme, palette);
+            let bg =
+                terminal_panel_background(raw_bg, convert_color(raw_bg, theme, palette), theme);
 
             if flags.contains(CellFlags::DIM) {
                 fg.a *= 0.5;
@@ -1043,7 +1064,7 @@ pub(crate) fn layout_from_snapshot_cached(
             } else {
                 1
             };
-            let cell_bg_color = resolved_cell_background(*cell_fg, *cell_bg, flags, theme);
+            let cell_bg_color = resolved_cell_background(*cell_fg, *cell_bg, flags, colors);
             match &mut current_rect {
                 Some(rect)
                     if rect.line == point.line.0
@@ -2077,6 +2098,7 @@ impl LayoutState {
 mod golden_frame_tests {
     use super::*;
     use crate::terminal::types::{RenderableCursor, Rgb};
+    use paneflow_terminal_ghostty as ghostty;
 
     const COLS: usize = 12;
     const ROWS: usize = 4;
@@ -2195,6 +2217,7 @@ mod golden_frame_tests {
             dims: test_dims(),
             base_font: test_font(),
             theme: &theme,
+            palette: &ThemePalette::from_theme(&theme),
             exited: None,
             exit_signal: None,
             integrated_glyphs_enabled,
@@ -2206,6 +2229,7 @@ mod golden_frame_tests {
     fn cached_inputs<'a>(
         cells: Arc<[Cell]>,
         theme: &'a crate::theme::TerminalTheme,
+        palette: &'a ThemePalette,
     ) -> LayoutInputs<'a> {
         LayoutInputs {
             cells,
@@ -2222,12 +2246,20 @@ mod golden_frame_tests {
             dims: test_dims(),
             base_font: test_font(),
             theme,
+            palette,
             exited: None,
             exit_signal: None,
             integrated_glyphs_enabled: true,
             color_emoji_enabled: true,
             minimum_contrast: MIN_APCA_CONTRAST,
         }
+    }
+
+    fn test_colors<'a>(
+        theme: &'a crate::theme::TerminalTheme,
+        palette: &'a ThemePalette,
+    ) -> RenderColors<'a> {
+        RenderColors { theme, palette }
     }
 
     fn cached_test_cells() -> Arc<[Cell]> {
@@ -2244,10 +2276,11 @@ mod golden_frame_tests {
     #[test]
     fn row_cache_rebuilds_only_changed_rows_across_skipped_publications() {
         let theme = crate::theme::paneflow_dark();
+        let palette = ThemePalette::from_theme(&theme);
         let cells = cached_test_cells();
         let mut cache = RowLayoutCache::default();
         let first = layout_from_snapshot_cached(
-            cached_inputs(cells.clone(), &theme),
+            cached_inputs(cells.clone(), &theme, &palette),
             &[1; ROWS],
             1,
             &mut cache,
@@ -2262,7 +2295,7 @@ mod golden_frame_tests {
         let mut versions = [1; ROWS];
         versions[1] = 9;
         let second = layout_from_snapshot_cached(
-            cached_inputs(changed.clone(), &theme),
+            cached_inputs(changed.clone(), &theme, &palette),
             &versions,
             1,
             &mut cache,
@@ -2270,7 +2303,7 @@ mod golden_frame_tests {
         for row in 0..ROWS {
             assert_eq!(Arc::ptr_eq(&first.rows[row], &second.rows[row]), row != 1);
         }
-        let full = layout_from_snapshot(cached_inputs(changed.clone(), &theme));
+        let full = layout_from_snapshot(cached_inputs(changed.clone(), &theme, &palette));
         assert_eq!(second.golden_repr(), full.golden_repr());
         assert_eq!(Arc::strong_count(&cells), 1);
         assert_eq!(Arc::strong_count(&changed), 1);
@@ -2279,15 +2312,16 @@ mod golden_frame_tests {
     #[test]
     fn row_cache_updates_cursor_and_metadata_without_rebuilding_cells() {
         let theme = crate::theme::paneflow_dark();
+        let palette = ThemePalette::from_theme(&theme);
         let cells = cached_test_cells();
         let mut cache = RowLayoutCache::default();
         let first = layout_from_snapshot_cached(
-            cached_inputs(cells.clone(), &theme),
+            cached_inputs(cells.clone(), &theme, &palette),
             &[1; ROWS],
             1,
             &mut cache,
         );
-        let mut inputs = cached_inputs(cells, &theme);
+        let mut inputs = cached_inputs(cells, &theme, &palette);
         inputs.cursor = Some(cursor_at(3, CursorShape::Beam, None));
         inputs.history_size = 100;
         inputs.exited = Some(0);
@@ -2308,6 +2342,7 @@ mod golden_frame_tests {
     #[test]
     fn row_cache_invalidates_selection_search_geometry_theme_and_scroll() {
         let theme = crate::theme::paneflow_dark();
+        let palette = ThemePalette::from_theme(&theme);
         let cells = cached_test_cells();
         let highlight = [SearchHighlight {
             start: GridPoint::new(0, 0),
@@ -2317,12 +2352,12 @@ mod golden_frame_tests {
         for scenario in 0..7 {
             let mut cache = RowLayoutCache::default();
             let first = layout_from_snapshot_cached(
-                cached_inputs(cells.clone(), &theme),
+                cached_inputs(cells.clone(), &theme, &palette),
                 &[1; ROWS],
                 1,
                 &mut cache,
             );
-            let mut inputs = cached_inputs(cells.clone(), &theme);
+            let mut inputs = cached_inputs(cells.clone(), &theme, &palette);
             let mut generation = 1;
             match scenario {
                 0 => {
@@ -2354,15 +2389,21 @@ mod golden_frame_tests {
     #[test]
     fn row_cache_without_complete_versions_rebuilds_every_row() {
         let theme = crate::theme::paneflow_dark();
+        let palette = ThemePalette::from_theme(&theme);
         let cells = cached_test_cells();
         let mut cache = RowLayoutCache::default();
         let first = layout_from_snapshot_cached(
-            cached_inputs(cells.clone(), &theme),
+            cached_inputs(cells.clone(), &theme, &palette),
             &[1; ROWS],
             1,
             &mut cache,
         );
-        let second = layout_from_snapshot_cached(cached_inputs(cells, &theme), &[1], 1, &mut cache);
+        let second = layout_from_snapshot_cached(
+            cached_inputs(cells, &theme, &palette),
+            &[1],
+            1,
+            &mut cache,
+        );
         assert!(
             first
                 .rows
@@ -2393,6 +2434,7 @@ mod golden_frame_tests {
             dims: test_dims(),
             base_font: test_font(),
             theme: &theme,
+            palette: &ThemePalette::from_theme(&theme),
             exited: None,
             exit_signal: None,
             integrated_glyphs_enabled: true,
@@ -2424,6 +2466,7 @@ mod golden_frame_tests {
             dims: test_dims(),
             base_font: test_font(),
             theme: &theme,
+            palette: &ThemePalette::from_theme(&theme),
             exited: None,
             exit_signal: None,
             integrated_glyphs_enabled: true,
@@ -2893,6 +2936,7 @@ mod golden_frame_tests {
             dims: test_dims(),
             base_font: test_font(),
             theme: &theme,
+            palette: &ThemePalette::from_theme(&theme),
             exited: None,
             exit_signal: None,
             integrated_glyphs_enabled: true,
@@ -2901,7 +2945,7 @@ mod golden_frame_tests {
         });
         assert_eq!(
             state.batched_runs().next().unwrap().color,
-            convert_color(low, &theme)
+            convert_color(low, &theme, &ThemePalette::from_theme(&theme))
         );
     }
 
@@ -2923,6 +2967,7 @@ mod golden_frame_tests {
             dims: test_dims(),
             base_font: test_font(),
             theme: &theme,
+            palette: &ThemePalette::from_theme(&theme),
             exited: None,
             exit_signal: None,
             integrated_glyphs_enabled: true,
@@ -2944,13 +2989,28 @@ mod golden_frame_tests {
     fn unfocused_terminal_hides_live_cursor() {
         let cursor = renderable_cursor_at(0, CursorShape::Block, 'a');
         let theme = crate::theme::paneflow_dark();
+        let palette = ThemePalette::from_theme(&theme);
 
         assert!(
-            cursor_from_content(cursor, true, white(), CursorShape::Block, &theme).is_some(),
+            cursor_from_content(
+                cursor,
+                true,
+                white(),
+                CursorShape::Block,
+                test_colors(&theme, &palette)
+            )
+            .is_some(),
             "focused terminals should keep the live cursor"
         );
         assert!(
-            cursor_from_content(cursor, false, white(), CursorShape::Block, &theme).is_none(),
+            cursor_from_content(
+                cursor,
+                false,
+                white(),
+                CursorShape::Block,
+                test_colors(&theme, &palette)
+            )
+            .is_none(),
             "unfocused terminals must not paint a hollow cursor outline"
         );
     }
@@ -2959,8 +3019,15 @@ mod golden_frame_tests {
     fn configured_custom_cursor_shapes_override_native_fallbacks() {
         let block_cursor = renderable_cursor_at(0, CursorShape::Block, 'a');
         let theme = crate::theme::paneflow_dark();
-        let vintage =
-            cursor_from_content(block_cursor, true, white(), CursorShape::Vintage, &theme).unwrap();
+        let palette = ThemePalette::from_theme(&theme);
+        let vintage = cursor_from_content(
+            block_cursor,
+            true,
+            white(),
+            CursorShape::Vintage,
+            test_colors(&theme, &palette),
+        )
+        .unwrap();
         assert_eq!(vintage.shape, CursorShape::Vintage);
         assert!(
             vintage.text.is_none(),
@@ -2973,7 +3040,7 @@ mod golden_frame_tests {
             true,
             white(),
             CursorShape::DoubleUnderline,
-            &theme,
+            test_colors(&theme, &palette),
         )
         .unwrap();
         assert_eq!(double.shape, CursorShape::DoubleUnderline);
@@ -2982,6 +3049,7 @@ mod golden_frame_tests {
     #[test]
     fn block_cursor_carries_cell_background_for_inverse_text() {
         let theme = crate::theme::paneflow_dark();
+        let palette = ThemePalette::from_theme(&theme);
         let explicit_bg = Color::Spec(Rgb {
             r: 12,
             g: 34,
@@ -2990,20 +3058,38 @@ mod golden_frame_tests {
         let mut cursor = renderable_cursor_at(0, CursorShape::Block, 'x');
         cursor.bg = explicit_bg;
 
-        let info = cursor_from_content(cursor, true, white(), CursorShape::Block, &theme)
-            .expect("cursor visible");
+        let info = cursor_from_content(
+            cursor,
+            true,
+            white(),
+            CursorShape::Block,
+            test_colors(&theme, &palette),
+        )
+        .expect("cursor visible");
         assert_eq!(info.cell_bg, rgb_to_hsla(12, 34, 56));
 
         let mut inverse = renderable_cursor_at(0, CursorShape::Block, 'x');
         inverse.fg = Color::Spec(Rgb { r: 90, g: 8, b: 7 });
         inverse.flags = CellFlags::INVERSE;
-        let info = cursor_from_content(inverse, true, white(), CursorShape::Block, &theme)
-            .expect("cursor visible");
+        let info = cursor_from_content(
+            inverse,
+            true,
+            white(),
+            CursorShape::Block,
+            test_colors(&theme, &palette),
+        )
+        .expect("cursor visible");
         assert_eq!(info.cell_bg, rgb_to_hsla(90, 8, 7));
 
         let transparent = renderable_cursor_at(0, CursorShape::Block, 'x');
-        let info = cursor_from_content(transparent, true, white(), CursorShape::Block, &theme)
-            .expect("cursor visible");
+        let info = cursor_from_content(
+            transparent,
+            true,
+            white(),
+            CursorShape::Block,
+            test_colors(&theme, &palette),
+        )
+        .expect("cursor visible");
         assert_eq!(info.cell_bg.a, 0.0);
     }
 
@@ -3119,6 +3205,7 @@ mod golden_frame_tests {
             dims: test_dims(),
             base_font: test_font(),
             theme: &theme,
+            palette: &ThemePalette::from_theme(&theme),
             exited: None,
             exit_signal: None,
             integrated_glyphs_enabled: true,
@@ -3191,6 +3278,7 @@ mod golden_frame_tests {
             dims: test_dims(),
             base_font: test_font(),
             theme: &theme,
+            palette: &ThemePalette::from_theme(&theme),
             exited: None,
             exit_signal: None,
             integrated_glyphs_enabled: true,
@@ -3275,6 +3363,7 @@ mod golden_frame_tests {
             dims: test_dims(),
             base_font: test_font(),
             theme: &theme,
+            palette: &ThemePalette::from_theme(&theme),
             exited: None,
             exit_signal: None,
             integrated_glyphs_enabled: true,
@@ -3285,6 +3374,427 @@ mod golden_frame_tests {
         assert!(
             state.rects.iter().all(|rect| rect.color == card_bg),
             "neutral panel backgrounds should align with the Codex panel color"
+        );
+    }
+
+    const CORPUS_COLS: usize = 80;
+    const CORPUS_ROWS: usize = 16;
+    const CORPUS_FIXTURES: &[&str] = &["lsd-la.ansi", "btop.ansi", "lazygit.ansi"];
+    const CORPUS_TIER: f32 = 45.0;
+
+    fn corpus_fixture_dir() -> std::path::PathBuf {
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/contrast")
+    }
+
+    fn corpus_stream(name: &str) -> Vec<u8> {
+        let path = corpus_fixture_dir().join(name);
+        let raw = std::fs::read(&path).unwrap_or_else(|error| {
+            panic!(
+                "contrast corpus fixture {} could not be read: {error}",
+                path.display()
+            )
+        });
+        assert!(
+            !raw.is_empty(),
+            "contrast corpus fixture {} is empty",
+            path.display()
+        );
+        let mut stream = Vec::with_capacity(raw.len() + 64);
+        for byte in raw {
+            match byte {
+                b'\r' => {}
+                b'\n' => stream.extend_from_slice(b"\r\n"),
+                other => stream.push(other),
+            }
+        }
+        stream
+    }
+
+    fn corpus_content(name: &str) -> Content {
+        let size = ghostty::WindowSize::new(CORPUS_COLS, CORPUS_ROWS, 8, 16)
+            .expect("the corpus grid is valid");
+        let mut terminal =
+            ghostty::DisplayTerminal::new(size, 256, ghostty::TerminalAppearance::default())
+                .expect("libghostty must initialize");
+        terminal
+            .feed(&corpus_stream(name))
+            .expect("the corpus fixture must parse");
+        let snapshot = terminal
+            .snapshot()
+            .expect("the corpus snapshot must succeed");
+        crate::terminal::ghostty_session::CellMirror::default().publish(snapshot)
+    }
+
+    fn corpus_layout(
+        content: &Content,
+        theme: &crate::theme::TerminalTheme,
+        palette: &ThemePalette,
+    ) -> LayoutState {
+        layout_from_snapshot(LayoutInputs {
+            cells: content.cells.clone(),
+            cursor: None,
+            selection_range: None,
+            copy_mode_cursor: None,
+            search_highlights: &[],
+            display_offset: 0,
+            history_size: 0,
+            desired_cols: CORPUS_COLS,
+            desired_rows: CORPUS_ROWS,
+            first_visible_row: 0,
+            last_visible_row: CORPUS_ROWS as i32,
+            dims: test_dims(),
+            base_font: test_font(),
+            theme,
+            palette,
+            exited: None,
+            exit_signal: None,
+            integrated_glyphs_enabled: true,
+            color_emoji_enabled: true,
+            minimum_contrast: 0.0,
+        })
+    }
+
+    fn composite_over(top: Hsla, under: Hsla) -> Hsla {
+        if top.a >= 1.0 {
+            return top;
+        }
+        let top_rgba = gpui::Rgba::from(top);
+        let under_rgba = gpui::Rgba::from(under);
+        let mix = |a: f32, b: f32| a * top_rgba.a + b * (1.0 - top_rgba.a);
+        Hsla::from(gpui::Rgba {
+            r: mix(top_rgba.r, under_rgba.r),
+            g: mix(top_rgba.g, under_rgba.g),
+            b: mix(top_rgba.b, under_rgba.b),
+            a: 1.0,
+        })
+    }
+
+    fn corpus_background_grid(
+        state: &LayoutState,
+        theme: &crate::theme::TerminalTheme,
+    ) -> Vec<Hsla> {
+        let mut grid = vec![theme.ansi_background; CORPUS_COLS * CORPUS_ROWS];
+        for rect in &state.rects {
+            for line in rect.line..rect.line.saturating_add(rect.num_lines as i32) {
+                if line < 0 || line >= CORPUS_ROWS as i32 {
+                    continue;
+                }
+                for col in rect.col..rect.col.saturating_add(rect.num_cols) {
+                    if col >= CORPUS_COLS {
+                        continue;
+                    }
+                    grid[line as usize * CORPUS_COLS + col] =
+                        composite_over(rect.color, theme.ansi_background);
+                }
+            }
+        }
+        grid
+    }
+
+    fn corpus_source_colors(content: &Content) -> std::collections::HashMap<(i32, usize), Color> {
+        content
+            .cells
+            .iter()
+            .filter(|cell| !cell.flags.contains(CellFlags::INVERSE))
+            .map(|cell| ((cell.point.line.0, cell.point.column.0), cell.fg))
+            .collect()
+    }
+
+    struct CorpusCell {
+        source: Option<Color>,
+        lc: f32,
+        baseline_lc: f32,
+    }
+
+    fn corpus_cells(
+        content: &Content,
+        state: &LayoutState,
+        theme: &crate::theme::TerminalTheme,
+    ) -> Vec<CorpusCell> {
+        let backgrounds = corpus_background_grid(state, theme);
+        let sources = corpus_source_colors(content);
+        let mut measured = Vec::new();
+        for run in state.batched_runs() {
+            if run.line < 0 || run.line >= CORPUS_ROWS as i32 {
+                continue;
+            }
+            for (offset, ch) in run.text.chars().enumerate() {
+                let col = run.col_start + offset;
+                if ch == ' ' || ch == '\0' || is_decorative_character(ch) || col >= CORPUS_COLS {
+                    continue;
+                }
+                let bg = backgrounds[run.line as usize * CORPUS_COLS + col];
+                let source = sources.get(&(run.line, col)).copied();
+                let baseline = match source {
+                    Some(Color::Indexed(index)) if index >= 16 => xterm_cube_color(index),
+                    _ => run.color,
+                };
+                measured.push(CorpusCell {
+                    source,
+                    lc: apca_contrast(run.color, bg).abs(),
+                    baseline_lc: apca_contrast(baseline, bg).abs(),
+                });
+            }
+        }
+        measured
+    }
+
+    fn xterm_cube_color(index: u8) -> Hsla {
+        if index < 232 {
+            let offset = index - 16;
+            let axis = |value: u8| if value == 0 { 0 } else { 55 + 40 * value };
+            return rgb_to_hsla(axis(offset / 36), axis((offset % 36) / 6), axis(offset % 6));
+        }
+        let grey = 8 + 10 * (index - 232);
+        rgb_to_hsla(grey, grey, grey)
+    }
+
+    fn corpus_theme(name: &str) -> crate::theme::TerminalTheme {
+        crate::theme::theme_by_name(name).unwrap_or_else(|| panic!("preset {name} must exist"))
+    }
+
+    #[test]
+    fn a_missing_corpus_fixture_fails_with_its_path() {
+        let previous = std::panic::take_hook();
+        std::panic::set_hook(Box::new(|_| {}));
+        let missing = std::panic::catch_unwind(|| corpus_stream("does-not-exist.ansi"));
+        std::panic::set_hook(previous);
+        let payload = missing.expect_err("a missing fixture must fail the test");
+        let message = payload
+            .downcast_ref::<String>()
+            .cloned()
+            .unwrap_or_default();
+        assert!(
+            message.contains("does-not-exist.ansi") && message.contains("fixtures"),
+            "the failure must name the fixture path, got {message:?}"
+        );
+    }
+
+    #[test]
+    fn the_corpus_renders_text_on_every_preset() {
+        for fixture in CORPUS_FIXTURES {
+            let content = corpus_content(fixture);
+            for preset in crate::theme::PRESETS {
+                for name in [preset.light, preset.dark] {
+                    let theme = corpus_theme(name);
+                    let palette = ThemePalette::from_theme(&theme);
+                    let state = corpus_layout(&content, &theme, &palette);
+                    let cells = corpus_cells(&content, &state, &theme);
+                    assert!(
+                        cells.len() > 40,
+                        "{name}/{fixture}: the corpus must render text cells, got {}",
+                        cells.len()
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn light_presets_keep_indexed_corpus_text_legible_without_correction() {
+        use std::fmt::Write as _;
+        let mut measured = 0usize;
+        let mut gap_indices = std::collections::BTreeSet::new();
+        let mut gaps = std::collections::BTreeSet::new();
+        for fixture in CORPUS_FIXTURES {
+            let content = corpus_content(fixture);
+            for preset in crate::theme::PRESETS {
+                let theme = corpus_theme(preset.light);
+                let palette = ThemePalette::from_theme(&theme);
+                let state = corpus_layout(&content, &theme, &palette);
+                for cell in corpus_cells(&content, &state, &theme) {
+                    let Some(Color::Indexed(index)) = cell.source else {
+                        continue;
+                    };
+                    if index < 16 {
+                        continue;
+                    }
+                    measured += 1;
+                    assert!(
+                        index < 232 || cell.lc >= CORPUS_TIER,
+                        "{}/{fixture}: grey ramp index {index} must stay legible, Lc {:.1}",
+                        preset.light,
+                        cell.lc
+                    );
+                    if cell.lc < CORPUS_TIER {
+                        gap_indices.insert(index);
+                        gaps.insert(format!(
+                            "{} {fixture} idx {index} Lc {:.1}",
+                            preset.light, cell.lc
+                        ));
+                    }
+                }
+            }
+        }
+        assert!(
+            measured > 300,
+            "the corpus must measure indexed text on every light preset, got {measured}"
+        );
+        assert!(
+            gap_indices.len() <= 1,
+            "the render palette must leave at most one indexed color below Lc {CORPUS_TIER} \
+             before any correction runs, got {gap_indices:?}"
+        );
+        let mut report = String::new();
+        for gap in gaps {
+            let _ = writeln!(report, "{gap}");
+        }
+        assert_golden_text("contrast_corpus_light_indexed_gap", report);
+    }
+
+    #[test]
+    fn the_corpus_legibility_share_is_recorded_per_preset() {
+        use std::fmt::Write as _;
+        let mut report = String::new();
+        for fixture in CORPUS_FIXTURES {
+            let content = corpus_content(fixture);
+            for preset in crate::theme::PRESETS {
+                for name in [preset.light, preset.dark] {
+                    let theme = corpus_theme(name);
+                    let palette = ThemePalette::from_theme(&theme);
+                    let state = corpus_layout(&content, &theme, &palette);
+                    let cells = corpus_cells(&content, &state, &theme);
+                    let total = cells.len();
+                    let indexed = cells
+                        .iter()
+                        .filter(|cell| matches!(cell.source, Some(Color::Indexed(16..=255))))
+                        .count();
+                    let at_45 = cells.iter().filter(|cell| cell.lc >= 45.0).count();
+                    let at_60 = cells.iter().filter(|cell| cell.lc >= 60.0).count();
+                    let xterm_45 = cells.iter().filter(|cell| cell.baseline_lc >= 45.0).count();
+                    let xterm_60 = cells.iter().filter(|cell| cell.baseline_lc >= 60.0).count();
+                    let _ = writeln!(
+                        report,
+                        "{fixture} {name}: cells={total} indexed={indexed} lc45={at_45} \
+                         lc60={at_60} xterm_lc45={xterm_45} xterm_lc60={xterm_60}"
+                    );
+                }
+            }
+        }
+        assert_golden_text("contrast_corpus_share", report);
+    }
+
+    #[test]
+    fn a_libghostty_palette_cell_reaches_the_pixel_through_the_render_palette() {
+        let size = ghostty::WindowSize::new(CORPUS_COLS, CORPUS_ROWS, 8, 16)
+            .expect("the corpus grid is valid");
+        let mut terminal =
+            ghostty::DisplayTerminal::new(size, 256, ghostty::TerminalAppearance::default())
+                .expect("libghostty must initialize");
+        terminal
+            .feed(b"\x1b[38;5;200mmagenta\x1b[0m")
+            .expect("the indexed sequence must parse");
+        let snapshot = terminal.snapshot().expect("the snapshot must succeed");
+        let content = crate::terminal::ghostty_session::CellMirror::default().publish(snapshot);
+        assert!(
+            content
+                .cells
+                .iter()
+                .any(|cell| cell.fg == Color::Indexed(200)),
+            "libghostty must report the palette index rather than a resolved color"
+        );
+
+        for name in ["Paneflow Light", "Paneflow Dark"] {
+            let theme = corpus_theme(name);
+            let palette = ThemePalette::from_theme(&theme);
+            let state = corpus_layout(&content, &theme, &palette);
+            let run = state
+                .batched_runs()
+                .find(|run| run.text.contains("magenta"))
+                .expect("the indexed run must be laid out");
+            assert_eq!(
+                run.color,
+                palette.color(200),
+                "{name}: index 200 must paint the render palette entry"
+            );
+        }
+    }
+
+    #[test]
+    fn a_theme_change_never_serves_a_stale_palette_entry() {
+        let cells: Arc<[Cell]> =
+            text_row(0, "indexed", Color::Indexed(200), CellFlags::empty()).into();
+        let light = corpus_theme("Paneflow Light");
+        let light_palette = ThemePalette::with_generation(&light, 41);
+        let dark = corpus_theme("Paneflow Dark");
+        let dark_palette = ThemePalette::with_generation(&dark, 42);
+        assert_ne!(
+            light_palette.color(200),
+            dark_palette.color(200),
+            "the two presets must disagree for this test to mean anything"
+        );
+
+        let mut cache = RowLayoutCache::default();
+        let first = layout_from_snapshot_cached(
+            cached_inputs(cells.clone(), &light, &light_palette),
+            &[1; ROWS],
+            light_palette.generation(),
+            &mut cache,
+        );
+        assert_eq!(
+            first.batched_runs().next().expect("a run").color,
+            light_palette.color(200)
+        );
+
+        let second = layout_from_snapshot_cached(
+            cached_inputs(cells, &dark, &dark_palette),
+            &[1; ROWS],
+            dark_palette.generation(),
+            &mut cache,
+        );
+        assert_eq!(
+            second.batched_runs().next().expect("a run").color,
+            dark_palette.color(200),
+            "a new theme generation must re-resolve the indexed color"
+        );
+    }
+
+    #[test]
+    fn inverse_cells_swap_after_the_palette_resolves_both_sides() {
+        let theme = corpus_theme("Paneflow Light");
+        let palette = ThemePalette::from_theme(&theme);
+        let cells = vec![cell(
+            0,
+            0,
+            'z',
+            Color::Indexed(200),
+            Color::Indexed(33),
+            CellFlags::INVERSE,
+        )];
+        let state = layout_from_snapshot(LayoutInputs {
+            cells: cells.into(),
+            cursor: None,
+            selection_range: None,
+            copy_mode_cursor: None,
+            search_highlights: &[],
+            display_offset: 0,
+            history_size: 0,
+            desired_cols: COLS,
+            desired_rows: ROWS,
+            first_visible_row: 0,
+            last_visible_row: ROWS as i32,
+            dims: test_dims(),
+            base_font: test_font(),
+            theme: &theme,
+            palette: &palette,
+            exited: None,
+            exit_signal: None,
+            integrated_glyphs_enabled: true,
+            color_emoji_enabled: true,
+            minimum_contrast: 0.0,
+        });
+
+        assert_eq!(
+            state.batched_runs().next().expect("a run").color,
+            palette.color(33),
+            "the inverse foreground must be the palette entry of the cell background"
+        );
+        assert!(
+            state
+                .rects
+                .iter()
+                .any(|rect| rect.color == palette.color(200)),
+            "the inverse background must be the palette entry of the cell foreground"
         );
     }
 }

@@ -4,6 +4,8 @@ use std::time::{Duration, Instant};
 use gpui::{Font, FontStyle, FontWeight, px};
 use paneflow_terminal_ghostty as ghostty;
 
+use crate::theme::ThemePalette;
+
 use crate::bench_harness::{
     Direction, Metric, allocation_counters, measure, process_cpu_time, publish,
     refuse_debug_profile,
@@ -85,8 +87,14 @@ fn bench_font() -> Font {
     }
 }
 
-fn layout(content: &Content, cols: usize, rows: usize, theme: &crate::theme::TerminalTheme) {
-    let state = layout_from_snapshot(layout_inputs(content, cols, rows, theme));
+fn layout(
+    content: &Content,
+    cols: usize,
+    rows: usize,
+    theme: &crate::theme::TerminalTheme,
+    palette: &ThemePalette,
+) {
+    let state = layout_from_snapshot(layout_inputs(content, cols, rows, theme, palette));
     std::hint::black_box(state);
 }
 
@@ -95,6 +103,7 @@ fn layout_inputs<'a>(
     cols: usize,
     rows: usize,
     theme: &'a crate::theme::TerminalTheme,
+    palette: &'a ThemePalette,
 ) -> LayoutInputs<'a> {
     LayoutInputs {
         cells: content.cells.clone(),
@@ -114,6 +123,7 @@ fn layout_inputs<'a>(
         },
         base_font: bench_font(),
         theme,
+        palette,
         exited: None,
         exit_signal: None,
         integrated_glyphs_enabled: true,
@@ -175,17 +185,19 @@ fn publish_scenarios(metrics: &mut Vec<Metric>) -> Content {
 
 fn layout_scenario(metrics: &mut Vec<Metric>, content: &Content) {
     let theme = crate::theme::paneflow_dark();
+    let palette = ThemePalette::from_theme(&theme);
     metrics.push(measure(
         "layout_220x60",
         "window-free layout pass over a full 220x60 snapshot: batched runs, background rects, contrast",
         10,
         200,
-        || layout(content, 220, 60, &theme),
+        || layout(content, 220, 60, &theme, &palette),
     ));
 }
 
 fn incremental_layout_scenarios(metrics: &mut Vec<Metric>) {
     let theme = crate::theme::paneflow_dark();
+    let palette = ThemePalette::from_theme(&theme);
     for (name, cached, scrolling) in [
         ("layout_echo_uncached_220x60", false, false),
         ("layout_echo_cached_220x60", true, false),
@@ -202,7 +214,7 @@ fn incremental_layout_scenarios(metrics: &mut Vec<Metric>) {
             let chunk = if scrolling { scroll_chunk(index) } else { echo_chunk(index, 60) };
             terminal.feed(&chunk).expect("benchmark output parses");
             let content = publisher.publish(&mut terminal);
-            let inputs = layout_inputs(content, 220, 60, &theme);
+            let inputs = layout_inputs(content, 220, 60, &theme, &palette);
             let state = if cached {
                 layout_from_snapshot_cached(inputs, &content.row_versions, 0, &mut cache)
             } else {

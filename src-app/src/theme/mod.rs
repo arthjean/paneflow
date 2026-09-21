@@ -1,5 +1,6 @@
 mod builtin;
 mod model;
+mod palette;
 mod signal;
 mod watcher;
 
@@ -10,6 +11,10 @@ pub use builtin::{
     vercel_dark, vercel_light,
 };
 pub use model::{DiffColors, SyntaxPalette, TerminalTheme, UiColors, ui_colors, ui_colors_with};
+pub(crate) use palette::ghostty_rgb;
+pub use palette::{
+    PALETTE_LEN, ThemePalette, active_palette, generated_terminal_palette, palette_is_harmonious,
+};
 pub use signal::{
     ThemeSignal, ThemeSignalGlobal, install_theme_signal, publish_theme_generation, theme_signal,
 };
