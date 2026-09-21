@@ -81,8 +81,9 @@ name, and the agent starts inside the worktree directory.
   />
 </figure>
 
-The same flow exists in two other places:
+The same flow exists in three other places:
 
+- The **Launch Pad** has a "New branch" field and the same "From" select.
 - The tab's context menu offers **New branch…** for a tab that already
   exists.
 - `paneflow up` and flows take `worktree` and `from` fields; see

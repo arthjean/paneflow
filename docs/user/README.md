@@ -13,10 +13,10 @@
 - [Themes](themes.md): Choose Paneflow's bundled themes from Settings or paneflow.json. One Dark and PaneFlow Light ship today and hot-reload without restart.
 - [Troubleshooting](troubleshooting.md): Diagnose Paneflow launch, rendering, configuration, shortcut, theme, PATH, and signing issues with the shortest confirmed fix first.
 - [Worktrees](worktrees.md): Run several branches of one repository side by side in Paneflow with managed Git worktrees, snapshots before removal, and a Settings page to control where they live.
-- [Conductor](conductor.md): Coordinate Paneflow panes from the public paneflow CLI: discover agents, read state, dispatch safely, wait for results, and keep peer output untrusted.
-- [Conductor reference](conductor/reference.md): CLI verbs, JSON-RPC methods, fields, events, config keys, and exit codes for the Paneflow Conductor control plane.
 - [Configuration](configuration.md): Customize Paneflow with a single paneflow.json file - default shell, theme, keybindings, window decorations, and more.
 - [paneflow.json Schema Reference](configuration/schema.md): Every paneflow.json key with its type, default, apply timing, and runtime notes.
+- [Conductor](conductor.md): Coordinate Paneflow panes from the public paneflow CLI: discover agents, read state, dispatch safely, wait for results, and keep peer output untrusted.
+- [Conductor reference](conductor/reference.md): CLI verbs, JSON-RPC methods, fields, events, config keys, and exit codes for the Paneflow Conductor control plane.
 - [Install Paneflow](installation.md): Install Paneflow on Linux, macOS, or Windows in under two minutes.
 - [Install Paneflow on Linux](installation/linux.md): Install Paneflow on Ubuntu, Debian, Fedora, openSUSE, Arch, or any modern Linux with AppImage, .deb, .rpm, or tarball.
 - [Install Paneflow on macOS](installation/macos.md): Install Paneflow on macOS 13 Ventura or later with Homebrew or the signed and notarized Apple Silicon DMG.

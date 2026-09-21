@@ -127,7 +127,7 @@ CLI binary. `false` hides the button. `true` forces it visible.
 | `terminal.cursor_blink` | string/null | `terminal_controlled` | New terminal | `on`, `off`, or `terminal_controlled`. |
 | `terminal.env` | object/null | none | New terminal | Environment variables injected into every new terminal. Per-surface `env` wins. Values are passed through verbatim: no `~` and no `$NAME` expansion, unlike `agent_profiles.*.env`. |
 | `terminal.scroll_multiplier` | number/null | `1.0` | New terminal view | Range `0.1` to `10.0`. Ignored in mouse-reporting and alternate-screen scroll paths. |
-| `terminal.minimum_contrast` | number/null | `0.0` | Hot reload | Minimum APCA lightness contrast (Lc) enforced between text and its cell background, on the theme's ANSI colors only. `0` leaves theme colors untouched; Zed uses `45`. Range `0` to `90`. |
+| `terminal.minimum_contrast` | number/null | Auto (Lc 60) | Hot reload | Minimum APCA lightness contrast (Lc) between text and its cell background, applied only to the colors a program chose: truecolor and palette indices 16 to 255. The theme's own sixteen ANSI colors, foreground and background are never corrected. Unset means Auto, which is Lc 60 on every theme; `0` disables the correction. Range `0` to `90`. |
 
 ## `agent_panel`
 
@@ -152,8 +152,8 @@ Profile entries under `agent_panel.profiles` use this shape:
 ## `worktrees`
 
 Paneflow creates a git worktree when you open a branch from the "New pane"
-palette or `paneflow up`. Nothing is written inside the checkout: the
-ownership marker lives in the worktree's own git dir
+palette, the Launch Pad, or `paneflow up`. Nothing is written inside the
+checkout: the ownership marker lives in the worktree's own git dir
 (`.git/worktrees/<name>/` in the main repository), so `git status` stays
 clean and the marker disappears with the worktree. Settings > Worktrees edits
 the same keys and lists the worktrees Paneflow manages.
@@ -197,9 +197,9 @@ Delete drops the ref. A clean worktree leaves no snapshot.
 
 `agent_profiles` is a list. Each entry adds a launcher item that runs one of
 the built-in agents with extra environment variables and arguments. Profiles
-show up in the pane palette next to the built-in agents, and keep the base
-agent's status tracking, hooks, and sessions. Settings > Agents > Profiles
-edits the same list.
+show up in the pane palette and the worktree launch pad next to the built-in
+agents, and keep the base agent's status tracking, hooks, and sessions.
+Settings > Agents > Profiles edits the same list.
 
 | Key | Type | Default | Notes |
 | --- | --- | --- | --- |

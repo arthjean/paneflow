@@ -32,6 +32,29 @@ remain available in [`paneflow.json`](/docs/configuration/schema).
 | Agents | Which agents the launcher shows, with their installed version, custom agent profiles, Claude Code full access, AI free access, and the injection fence. | `*_button_visible`, `agent_profiles`, `claude_code_bypass_permissions`, `ai_unrestricted`, `ai_injection_fence` | Launcher and access changes hot-reload. |
 | Plugins | Installs or repairs the bundled `paneflow-mcp` bridge for Claude Code, Codex, Gemini, and opencode. | Agent config files, not `paneflow.json` | Re-run after a Paneflow update or when an agent config changes. |
 
+## Terminal contrast
+
+Paneflow raises the contrast of text a program colored itself when it
+lands too close to its background. Settings > Terminal exposes it as
+**Minimum contrast**, and the command palette carries the same values
+under `Minimum contrast`.
+
+| Row value | `terminal.minimum_contrast` | Effect |
+| --- | --- | --- |
+| Auto | key absent | APCA Lc 60 on every theme, light and dark. |
+| Off | `0` | No correction. Programs keep the colors they asked for. |
+| 45, 60, 75, 90 | that number | An explicit APCA Lc target, clamped to the `0` to `90` range. |
+
+Only the colors a program chose are corrected: truecolor and palette
+indices 16 to 255. The theme's own sixteen ANSI colors, its foreground
+and its background are never corrected, so a theme still looks like
+itself. Corrected text keeps its hue, and lands on the nearest theme
+color when the correction has to drain its saturation.
+
+Changes hot-reload: every open terminal repaints on the next frame. To
+turn the correction off everywhere, set `"minimum_contrast": 0` under
+`terminal` in [`paneflow.json`](/docs/configuration/schema).
+
 ## AI access vs MCP
 
 The Agents page controls how Paneflow launches agents and how much

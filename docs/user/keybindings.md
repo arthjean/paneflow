@@ -74,6 +74,7 @@ text in a terminal pane and copies Markdown in a Markdown pane.
 | App views | `toggle_broadcast_member` | `Cmd/Ctrl+Shift+B` |
 | App views | `open_broadcast_groups` | `Cmd/Ctrl+Shift+M` |
 | App views | `open_attention_queue` | `Cmd/Ctrl+Shift+U` |
+| App views | `open_launch_pad` | `Cmd/Ctrl+Shift+L` |
 | Terminal pane | `terminal_copy` | `Ctrl+Shift+C` |
 | Terminal pane | `terminal_paste` | `Ctrl+Shift+V` |
 | Terminal pane | `terminal_copy` | `Cmd+C (macOS only)` |

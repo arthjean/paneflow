@@ -38,7 +38,7 @@ text unless you deliberately pass `--raw`.
 | `paneflow mcp install` | Let MCP-capable agents read panes | No |
 | `paneflow up <file>` | Create a named workspace from TOML | Prefill only |
 | `paneflow flow run <file>` | Run a local multi-agent DAG | Only when a step submits |
-| `paneflow integrations install <runtime>` | Report agent lifecycle state to Paneflow | No |
+| `paneflow hooks setup` | Report agent lifecycle state to Paneflow | No |
 
 The CLI and MCP bridge use the same local socket. Inside a Paneflow
 pane, `PANEFLOW_SOCKET_PATH` is injected automatically. Outside
@@ -71,29 +71,6 @@ paneflow watch --type ai.notification --type surface_changed
 
 `watch` streams newline-delimited JSON from `events.subscribe` until
 you stop it.
-
-`sessions` reads the same reduced projection the desktop sidebar shows,
-straight from the per-home worker, with no running window needed:
-
-```bash
-paneflow sessions
-paneflow sessions --follow --json
-paneflow sessions ack 01JABCDEFGHJKMNPQRSTVWXYZ
-```
-
-The first line is a bootstrap carrying the worker identity and the
-capabilities it advertises; after it, one frame per reduced transition with
-`status`, `activity`, `activity_source`, `runtime_id`, `unread` and
-`updated_at_ms`. `--follow` reconnects on its own when the worker restarts: the
-bootstrap it prints then carries `resumed: true`, the whole fleet under
-`sessions`, and under `fresh` only the rows whose state moved while the
-link was down, so a script can pick up where it left off without
-replaying rows. A feature the bootstrap does not advertise is refused
-before anything reaches the wire, with `capability not advertised:
-<name>`; the CLI never probes for one.
-
-`ack` lowers the `unread` flag the worker raised on a finished turn, the
-same flag the desktop lowers when you look at the pane.
 
 ## How do I write safely?
 
@@ -206,16 +183,14 @@ status, notifications, `ps`, `status`, and `watch`; they are not a
 generic workflow trigger system.
 
 ```bash
-paneflow integrations list
-paneflow integrations install claude
-paneflow integrations install codex
-paneflow integrations remove claude
+paneflow hooks setup
+paneflow hooks status
+paneflow hooks uninstall
 ```
 
-Claude Code and Codex integrations are installed once in their global
-configuration and remain inert outside a hosted Paneflow pane. Codex asks you
-to trust the new hooks once with `/hooks`. Agents without an integration can
-still run in panes, but fleet state and lifecycle events are limited.
+Persistent setup is Claude Code scoped. Codex gets per-launch hooks
+through the shim. Agents without a hook surface can still run in panes,
+but fleet state and lifecycle events are limited.
 
 ## Related
 
