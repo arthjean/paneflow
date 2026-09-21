@@ -33,6 +33,7 @@ pub(crate) enum Scope {
     LineHeight,
     CellWidth,
     CursorShape,
+    MinimumContrast,
     DefaultShell,
     DefaultEditor,
     OnQuit,
@@ -101,6 +102,7 @@ impl Scope {
             Scope::LineHeight => "Line height",
             Scope::CellWidth => "Cell width",
             Scope::CursorShape => "Cursor shape",
+            Scope::MinimumContrast => "Minimum contrast",
             Scope::DefaultShell => "Shell",
             Scope::DefaultEditor => "Editor",
             Scope::OnQuit => "On quit",
@@ -145,6 +147,9 @@ impl Scope {
             Scope::LineHeight => line_height_values(app),
             Scope::CellWidth => cell_width_values(app),
             Scope::CursorShape => cursor_shape_values(app),
+            Scope::MinimumContrast => {
+                minimum_contrast_values(&app.cached_config.terminal.clone().unwrap_or_default())
+            }
             Scope::DefaultShell => shell_values(app),
             Scope::DefaultEditor => editor_values(app),
             Scope::OnQuit => on_quit_values(app),
@@ -392,6 +397,27 @@ fn cursor_shape_values(app: &PaneFlowApp) -> Vec<ScopeValue> {
         },
     })
     .collect()
+}
+
+fn minimum_contrast_values(terminal: &paneflow_config::schema::TerminalConfig) -> Vec<ScopeValue> {
+    use crate::settings::tabs::terminal::{
+        MINIMUM_CONTRAST_STEPS, minimum_contrast_setting, minimum_contrast_step,
+    };
+
+    let current = minimum_contrast_step(terminal);
+    MINIMUM_CONTRAST_STEPS
+        .iter()
+        .enumerate()
+        .map(|(index, (label, _))| ScopeValue {
+            label: (*label).to_string(),
+            current: index == current,
+            apply: Apply::Setting {
+                key: "minimum_contrast",
+                nested: true,
+                value: minimum_contrast_setting(index),
+            },
+        })
+        .collect()
 }
 
 fn cursor_shape_key(shape: paneflow_config::schema::CursorShapeConfig) -> &'static str {
@@ -1000,6 +1026,12 @@ pub(crate) const COMMANDS: &[Command] = &[
         kind: Kind::Scope(Scope::CursorShape),
     },
     Command {
+        label: "Minimum contrast",
+        keywords: "legibility readability apca light theme accessibility",
+        needs: Needs::Always,
+        kind: Kind::Scope(Scope::MinimumContrast),
+    },
+    Command {
         label: "Integrated glyphs",
         keywords: "appearance powerline box drawing",
         needs: Needs::Always,
@@ -1262,6 +1294,7 @@ mod tests {
             Scope::LineHeight,
             Scope::CellWidth,
             Scope::CursorShape,
+            Scope::MinimumContrast,
             Scope::DefaultShell,
             Scope::DefaultEditor,
             Scope::OnQuit,
@@ -1306,6 +1339,48 @@ mod tests {
         assert!(!Apply::Tab(0).applies_in_place());
         assert!(!Apply::Action("split_vertically").applies_in_place());
         assert!(!Apply::Settings(SettingsSection::General).applies_in_place());
+    }
+
+    #[test]
+    fn the_minimum_contrast_scope_marks_auto_and_applies_in_place() {
+        use paneflow_config::schema::TerminalConfig;
+
+        let unset = minimum_contrast_values(&TerminalConfig::default());
+        assert_eq!(unset.len(), 6);
+        let marked: Vec<&str> = unset
+            .iter()
+            .filter(|value| value.current)
+            .map(|value| value.label.as_str())
+            .collect();
+        assert_eq!(marked, vec!["Auto"]);
+        assert!(unset[0].apply.applies_in_place());
+        assert!(matches!(
+            unset[0].apply,
+            Apply::Setting {
+                key: "minimum_contrast",
+                nested: true,
+                value: Value::Null,
+            }
+        ));
+        assert!(matches!(
+            unset[1].apply,
+            Apply::Setting {
+                key: "minimum_contrast",
+                nested: true,
+                ..
+            }
+        ));
+
+        let explicit = minimum_contrast_values(&TerminalConfig {
+            minimum_contrast: Some(75.0),
+            ..TerminalConfig::default()
+        });
+        let marked: Vec<&str> = explicit
+            .iter()
+            .filter(|value| value.current)
+            .map(|value| value.label.as_str())
+            .collect();
+        assert_eq!(marked, vec!["75"]);
     }
 
     #[test]
