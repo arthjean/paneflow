@@ -4,7 +4,9 @@ use gpui::{
 };
 use serde_json::{Value, json};
 
-use paneflow_config::schema::{CursorShapeConfig, normalize_hex_color};
+use paneflow_config::schema::{
+    CursorShapeConfig, MinimumContrast, TerminalConfig, normalize_hex_color,
+};
 
 use crate::settings::components::{
     SETTINGS_CONTROL_CORNER_RADIUS, deferred_select_menu, hairline, menu_row, section_header,
@@ -33,6 +35,38 @@ const CURSOR_COLOR_SWATCHES: [u32; 16] = [
     0x007aff, 0x0a84ff, 0x5aa6ff, 0x57d5c4, 0x57d992, 0xffd166, 0xff6f6a, 0xc79bff, 0x3f4451,
     0xf0f3f7, 0x4c6fff, 0x315ecf, 0x40c878, 0xf89850, 0xf87878, 0xd8d0d0,
 ];
+
+pub(crate) const MINIMUM_CONTRAST_STEPS: [(&str, Option<f32>); 6] = [
+    ("Auto", None),
+    ("Off", Some(0.0)),
+    ("45", Some(45.0)),
+    ("60", Some(60.0)),
+    ("75", Some(75.0)),
+    ("90", Some(90.0)),
+];
+
+pub(crate) fn minimum_contrast_step(terminal: &TerminalConfig) -> usize {
+    match terminal.minimum_contrast() {
+        MinimumContrast::Automatic | MinimumContrast::Rejected(_) => 0,
+        MinimumContrast::Explicit(lc) => MINIMUM_CONTRAST_STEPS
+            .iter()
+            .enumerate()
+            .skip(1)
+            .min_by(|(_, (_, left)), (_, (_, right))| {
+                let left = left.map_or(f32::INFINITY, |step| (step - lc).abs());
+                let right = right.map_or(f32::INFINITY, |step| (step - lc).abs());
+                left.total_cmp(&right)
+            })
+            .map_or(0, |(index, _)| index),
+    }
+}
+
+pub(crate) fn minimum_contrast_setting(step: usize) -> Value {
+    MINIMUM_CONTRAST_STEPS
+        .get(step)
+        .and_then(|(_, lc)| *lc)
+        .map_or(Value::Null, |lc| json!(lc))
+}
 
 fn hex_string_from_u32(hex: u32) -> String {
     format!("#{hex:06X}")
@@ -276,6 +310,10 @@ impl PaneFlowApp {
                     ui,
                     cx,
                 ),
+            )
+            .row(
+                &search::MINIMUM_CONTRAST,
+                self.terminal_minimum_contrast_row(minimum_contrast_step(&terminal), ui, cx),
             );
 
         let content = div()
@@ -789,60 +827,181 @@ impl PaneFlowApp {
             this.persist_setting(false, config_key, json!(round(value + step)), cx);
         });
 
-        let button = |btn_id: String, glyph: &'static str, disabled: bool| {
-            let hover_bg = if disabled {
-                ui.subtle
-            } else {
-                lighter_control_hover(ui.subtle)
-            };
-            div()
-                .id(SharedString::from(btn_id))
-                .flex()
-                .items_center()
-                .justify_center()
-                .w(px(24.))
-                .h(px(24.))
-                .rounded(SETTINGS_CONTROL_CORNER_RADIUS)
-                .bg(ui.subtle)
-                .text_size(px(15.))
-                .text_color(if disabled { ui.muted } else { ui.text })
-                .animated_hover_bg(ui.subtle, hover_bg)
-                .child(glyph)
-        };
+        stepper_frame(
+            ui,
+            title,
+            description,
+            format!("{value:.decimals$}"),
+            stepper_button(format!("{id}-dec"), "−", at_min, ui)
+                .when(!at_min, move |b| b.on_click(dec)),
+            stepper_button(format!("{id}-inc"), "+", at_max, ui)
+                .when(!at_max, move |b| b.on_click(inc)),
+        )
+    }
 
-        div()
-            .flex()
-            .flex_row()
-            .items_center()
-            .gap(px(16.))
-            .px(px(12.))
-            .py(px(10.))
-            .child(setting_text(ui, title, description))
-            .child(
-                div()
-                    .flex_shrink_0()
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .gap(px(6.))
-                    .child(
-                        button(format!("{id}-dec"), "−", at_min)
-                            .when(!at_min, move |b| b.on_click(dec)),
-                    )
-                    .child(
-                        div()
-                            .w(px(48.))
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .text_size(px(12.))
-                            .text_color(ui.text)
-                            .child(format!("{value:.decimals$}")),
-                    )
-                    .child(
-                        button(format!("{id}-inc"), "+", at_max)
-                            .when(!at_max, move |b| b.on_click(inc)),
-                    ),
-            )
+    fn terminal_minimum_contrast_row(
+        &self,
+        step: usize,
+        ui: crate::theme::UiColors,
+        cx: &mut Context<Self>,
+    ) -> gpui::AnyElement {
+        let id = "term-minimum-contrast";
+        let at_min = step == 0;
+        let at_max = step + 1 >= MINIMUM_CONTRAST_STEPS.len();
+        let label = MINIMUM_CONTRAST_STEPS
+            .get(step)
+            .map_or_else(String::new, |(label, _)| (*label).to_string());
+
+        let previous = minimum_contrast_setting(step.saturating_sub(1));
+        let next = minimum_contrast_setting((step + 1).min(MINIMUM_CONTRAST_STEPS.len() - 1));
+        let dec = cx.listener(move |this, _: &ClickEvent, _w, cx| {
+            this.persist_setting(true, "minimum_contrast", previous.clone(), cx);
+        });
+        let inc = cx.listener(move |this, _: &ClickEvent, _w, cx| {
+            this.persist_setting(true, "minimum_contrast", next.clone(), cx);
+        });
+
+        stepper_frame(
+            ui,
+            search::MINIMUM_CONTRAST.title,
+            search::MINIMUM_CONTRAST.description,
+            label,
+            stepper_button(format!("{id}-dec"), "−", at_min, ui)
+                .when(!at_min, move |b| b.on_click(dec)),
+            stepper_button(format!("{id}-inc"), "+", at_max, ui)
+                .when(!at_max, move |b| b.on_click(inc)),
+        )
+        .into_any_element()
+    }
+}
+
+fn stepper_button(
+    id: String,
+    glyph: &'static str,
+    disabled: bool,
+    ui: crate::theme::UiColors,
+) -> crate::ui_primitives::AnimatedHover {
+    let hover_bg = if disabled {
+        ui.subtle
+    } else {
+        lighter_control_hover(ui.subtle)
+    };
+    div()
+        .id(SharedString::from(id))
+        .flex()
+        .items_center()
+        .justify_center()
+        .w(px(24.))
+        .h(px(24.))
+        .rounded(SETTINGS_CONTROL_CORNER_RADIUS)
+        .bg(ui.subtle)
+        .text_size(px(15.))
+        .text_color(if disabled { ui.muted } else { ui.text })
+        .animated_hover_bg(ui.subtle, hover_bg)
+        .child(glyph)
+}
+
+fn stepper_frame(
+    ui: crate::theme::UiColors,
+    title: &'static str,
+    description: &'static str,
+    label: String,
+    decrement: crate::ui_primitives::AnimatedHover,
+    increment: crate::ui_primitives::AnimatedHover,
+) -> gpui::Div {
+    div()
+        .flex()
+        .flex_row()
+        .items_center()
+        .gap(px(16.))
+        .px(px(12.))
+        .py(px(10.))
+        .child(setting_text(ui, title, description))
+        .child(
+            div()
+                .flex_shrink_0()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap(px(6.))
+                .child(decrement)
+                .child(
+                    div()
+                        .w(px(48.))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .text_size(px(12.))
+                        .text_color(ui.text)
+                        .child(label),
+                )
+                .child(increment),
+        )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn with_contrast(minimum_contrast: Option<f32>) -> TerminalConfig {
+        TerminalConfig {
+            minimum_contrast,
+            ..TerminalConfig::default()
+        }
+    }
+
+    #[test]
+    fn the_ladder_starts_on_auto_when_the_key_is_unset_or_unusable() {
+        assert_eq!(minimum_contrast_step(&with_contrast(None)), 0);
+        assert_eq!(minimum_contrast_step(&with_contrast(Some(f32::NAN))), 0);
+        assert_eq!(minimum_contrast_step(&with_contrast(Some(-5.0))), 0);
+        assert_eq!(minimum_contrast_setting(0), Value::Null);
+    }
+
+    #[test]
+    fn an_explicit_value_lands_on_the_nearest_step_without_rewriting_it() {
+        assert_eq!(minimum_contrast_step(&with_contrast(Some(0.0))), 1);
+        assert_eq!(minimum_contrast_step(&with_contrast(Some(72.5))), 4);
+        assert_eq!(MINIMUM_CONTRAST_STEPS[4].0, "75");
+        assert_eq!(minimum_contrast_step(&with_contrast(Some(60.0))), 3);
+        assert_eq!(minimum_contrast_step(&with_contrast(Some(120.0))), 5);
+        assert_eq!(with_contrast(Some(72.5)).minimum_contrast().lc(), 72.5);
+    }
+
+    #[test]
+    fn every_step_persists_the_value_the_row_advertises() {
+        let persisted: Vec<Value> = (0..MINIMUM_CONTRAST_STEPS.len())
+            .map(minimum_contrast_setting)
+            .collect();
+        assert_eq!(
+            persisted,
+            vec![
+                Value::Null,
+                json!(0.0),
+                json!(45.0),
+                json!(60.0),
+                json!(75.0),
+                json!(90.0)
+            ]
+        );
+        for (index, value) in persisted.iter().enumerate() {
+            let config: TerminalConfig = serde_json::from_value(json!({
+                "minimum_contrast": value.clone(),
+            }))
+            .expect("terminal config round trip");
+            assert_eq!(minimum_contrast_step(&config), index);
+        }
+    }
+
+    #[test]
+    fn turning_the_correction_off_resolves_to_zero_while_auto_resolves_to_sixty() {
+        let off: TerminalConfig =
+            serde_json::from_value(json!({ "minimum_contrast": minimum_contrast_setting(1) }))
+                .expect("terminal config round trip");
+        assert_eq!(off.resolved_minimum_contrast(), 0.0);
+        assert_eq!(
+            with_contrast(None).resolved_minimum_contrast(),
+            TerminalConfig::DEFAULT_MINIMUM_CONTRAST
+        );
     }
 }

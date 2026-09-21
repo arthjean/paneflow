@@ -375,6 +375,22 @@ mod tests {
     use serde_json::{Value, json};
 
     #[test]
+    fn the_minimum_contrast_ladder_writes_off_and_removes_the_key_on_auto() {
+        use crate::settings::tabs::terminal::minimum_contrast_setting;
+
+        let mut json = json!({"terminal": {"minimum_contrast": 75.0, "color_emoji": true}});
+        apply_terminal_field(&mut json, "minimum_contrast", minimum_contrast_setting(1));
+        assert_eq!(json["terminal"]["minimum_contrast"], json!(0.0));
+
+        apply_terminal_field(&mut json, "minimum_contrast", minimum_contrast_setting(0));
+        assert!(
+            json["terminal"].get("minimum_contrast").is_none(),
+            "Auto must remove the key: {json}"
+        );
+        assert_eq!(json["terminal"]["color_emoji"], json!(true));
+    }
+
+    #[test]
     fn write_config_is_atomic_and_leaves_no_temp() {
         let dir = tempfile::TempDir::new().unwrap();
         let p = dir.path().join("paneflow.json");

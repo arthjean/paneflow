@@ -93,6 +93,11 @@ pub(crate) const COLOR_EMOJI: SettingCopy = SettingCopy {
     title: "Color emoji",
     description: "Render emoji in color when the platform font stack supports it.",
 };
+pub(crate) const MINIMUM_CONTRAST: SettingCopy = SettingCopy {
+    title: "Minimum contrast",
+    description: "Raises text contrast against its background. Auto uses 60 on every theme and \
+                  never changes the theme's own colors.",
+};
 pub(crate) const SCROLLBAR: SettingCopy = SettingCopy {
     title: "Scrollbar",
     description: "Overlay scrollbar that appears while scrolling or hovering the right edge. \
@@ -169,6 +174,7 @@ const TERMINAL_COPIES: &[&SettingCopy] = &[
     &INTEGRATED_GLYPHS,
     &COLOR_EMOJI,
     &SCROLLBAR,
+    &MINIMUM_CONTRAST,
     &ACRYLIC_MATERIAL,
 ];
 #[cfg(not(target_os = "windows"))]
@@ -183,6 +189,7 @@ const TERMINAL_COPIES: &[&SettingCopy] = &[
     &INTEGRATED_GLYPHS,
     &COLOR_EMOJI,
     &SCROLLBAR,
+    &MINIMUM_CONTRAST,
 ];
 const WORKTREES_COPIES: &[&SettingCopy] =
     &[&WORKTREE_ROOT, &AUTO_REMOVE_WORKTREES, &WORKTREE_KEEP_LIMIT];
@@ -508,6 +515,7 @@ mod tests {
     fn query_matches_setting_copy_across_title_and_description() {
         assert!(section_matches(SettingsSection::General, "opening files"));
         assert!(section_matches(SettingsSection::Terminal, "hot-reloads"));
+        assert!(section_matches(SettingsSection::Terminal, "contrast"));
         assert!(section_matches(SettingsSection::Worktrees, "snapshots"));
         assert!(!section_matches(SettingsSection::McpServers, "worktree"));
     }

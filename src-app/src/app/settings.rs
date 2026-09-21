@@ -137,7 +137,7 @@ impl PaneFlowApp {
                 ws.propagate_config(&self.cached_config, cx);
             }
         }
-        if nested && matches!(key, "integrated_glyphs" | "color_emoji" | "cursor_color") {
+        if nested && terminal_key_repaints_open_terminals(key) {
             for ws in &self.workspaces {
                 ws.propagate_config(&self.cached_config, cx);
             }
@@ -372,4 +372,57 @@ impl PaneFlowApp {
 
 fn normalized_shell_setting(shell: Option<&str>) -> &str {
     shell.map(str::trim).filter(|s| !s.is_empty()).unwrap_or("")
+}
+
+fn terminal_key_repaints_open_terminals(key: &str) -> bool {
+    matches!(
+        key,
+        "integrated_glyphs" | "color_emoji" | "cursor_color" | "minimum_contrast"
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_hot_reloading_terminal_key_reaches_the_open_terminals() {
+        for key in [
+            "integrated_glyphs",
+            "color_emoji",
+            "cursor_color",
+            "minimum_contrast",
+        ] {
+            assert!(terminal_key_repaints_open_terminals(key), "{key}");
+        }
+        assert!(!terminal_key_repaints_open_terminals("cursor_shape"));
+        assert!(!terminal_key_repaints_open_terminals("scrollback_lines"));
+    }
+
+    #[test]
+    fn the_settings_ladder_rewrites_the_resolved_threshold_through_the_config_writer() {
+        let config = paneflow_config::schema::PaneFlowConfig::default();
+        let off = config_writer::with_field(
+            &config,
+            true,
+            "minimum_contrast",
+            crate::settings::tabs::terminal::minimum_contrast_setting(1),
+        );
+        let terminal = off.terminal.clone().unwrap_or_default();
+        assert_eq!(terminal.resolved_minimum_contrast(), 0.0);
+
+        let auto = config_writer::with_field(
+            &off,
+            true,
+            "minimum_contrast",
+            crate::settings::tabs::terminal::minimum_contrast_setting(0),
+        );
+        assert_eq!(
+            auto.terminal
+                .clone()
+                .unwrap_or_default()
+                .resolved_minimum_contrast(),
+            paneflow_config::schema::TerminalConfig::DEFAULT_MINIMUM_CONTRAST
+        );
+    }
 }
