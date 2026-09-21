@@ -3961,7 +3961,7 @@ mod golden_frame_tests {
     }
 
     fn corpus_theme(name: &str) -> crate::theme::TerminalTheme {
-        crate::theme::theme_by_name(name).unwrap_or_else(|| panic!("preset {name} must exist"))
+        crate::theme::app_theme_by_name(name).unwrap_or_else(|| panic!("preset {name} must exist"))
     }
 
     #[test]
@@ -4377,11 +4377,11 @@ mod golden_frame_tests {
         let theme = corpus_theme("Paneflow Dark");
         let bg = default_background_color(&theme);
         let source = Color::Spec(Rgb {
-            r: 255,
-            g: 0,
-            b: 255,
+            r: 139,
+            g: 92,
+            b: 246,
         });
-        let cells = text_row(0, "magenta", source, CellFlags::empty());
+        let cells = text_row(0, "violet", source, CellFlags::empty());
         let uncorrected = only_run_color(&run_with_contrast(cells.clone(), &theme, 0.0));
         let corrected = only_run_color(&run_with_contrast(cells, &theme, 60.0));
         let plain = color::corrected_without_harmony(uncorrected, bg, 60.0);

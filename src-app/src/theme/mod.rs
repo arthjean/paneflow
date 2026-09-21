@@ -22,6 +22,11 @@ pub use signal::{
 pub use watcher::invalidate_theme_cache;
 pub use watcher::{ThemeWatcher, active_theme, config_mtime, set_active_theme, theme_generation};
 
+#[cfg(test)]
+pub(crate) fn app_theme_by_name(name: &str) -> Option<TerminalTheme> {
+    theme_by_name(name).map(model::apply_surface_overrides)
+}
+
 const SELECTION_BLUE: u32 = 0x2259b9;
 
 pub fn selection_color() -> gpui::Hsla {
