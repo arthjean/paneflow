@@ -569,7 +569,7 @@ pub fn ui_colors_with(theme: &TerminalTheme) -> UiColors {
             group_7: h(0xfe640b),
             group_8: h(0x7287fd),
             agent_error: h(0xd20f39),
-            agent_claude: h(0xe89271),
+            agent_claude: h(0xde8968),
             agent_codex: h(0x5b6cff),
         }
     } else {
@@ -683,7 +683,7 @@ mod tests {
                 h(0x1f1f1e),
                 h(0x1f1f1e),
                 h(0x262626),
-                h(0xd97757),
+                h(0xe78363),
                 false,
             ),
             (
@@ -934,6 +934,329 @@ mod tests {
             assert!(
                 lc > 5.0,
                 "Latte: syntax slot #{i} too close to background (APCA Lc {lc:.1})"
+            );
+        }
+    }
+
+    const UI_TEXT_TIER: f32 = 60.0;
+    const UI_SUPPORT_TIER: f32 = 45.0;
+    const UI_DECORATIVE_TIER: f32 = 30.0;
+
+    struct RoleRow {
+        role: &'static str,
+        surface: &'static str,
+        foreground: Hsla,
+        background: Hsla,
+        tier: f32,
+    }
+
+    fn role_row(
+        role: &'static str,
+        surface: &'static str,
+        foreground: Hsla,
+        background: Hsla,
+        tier: f32,
+    ) -> RoleRow {
+        let background = Hsla {
+            a: 1.0,
+            ..background
+        };
+        let foreground = if foreground.a < 1.0 {
+            Hsla {
+                a: 1.0,
+                ..background.blend(foreground)
+            }
+        } else {
+            foreground
+        };
+        RoleRow {
+            role,
+            surface,
+            foreground,
+            background,
+            tier,
+        }
+    }
+
+    fn ui_role_rows(theme: &TerminalTheme) -> Vec<RoleRow> {
+        let ui = ui_colors_with(theme);
+        let added_wash = ui.surface.blend(ui.vc_added_background);
+        let deleted_wash = ui.surface.blend(ui.vc_deleted_background);
+        vec![
+            role_row("text", "base", ui.text, ui.base, UI_TEXT_TIER),
+            role_row("text", "surface", ui.text, ui.surface, UI_TEXT_TIER),
+            role_row("text", "overlay", ui.text, ui.overlay, UI_TEXT_TIER),
+            role_row(
+                "text",
+                "tool_card_header_bg",
+                ui.text,
+                ui.tool_card_header_bg,
+                UI_TEXT_TIER,
+            ),
+            role_row("muted", "base", ui.muted, ui.base, UI_SUPPORT_TIER),
+            role_row("muted", "surface", ui.muted, ui.surface, UI_SUPPORT_TIER),
+            role_row("muted", "overlay", ui.muted, ui.overlay, UI_SUPPORT_TIER),
+            role_row("accent", "base", ui.accent, ui.base, UI_SUPPORT_TIER),
+            role_row("accent", "surface", ui.accent, ui.surface, UI_SUPPORT_TIER),
+            role_row(
+                "vc_added",
+                "surface",
+                ui.vc_added,
+                ui.surface,
+                UI_SUPPORT_TIER,
+            ),
+            role_row(
+                "vc_modified",
+                "surface",
+                ui.vc_modified,
+                ui.surface,
+                UI_SUPPORT_TIER,
+            ),
+            role_row(
+                "vc_deleted",
+                "surface",
+                ui.vc_deleted,
+                ui.surface,
+                UI_SUPPORT_TIER,
+            ),
+            role_row(
+                "vc_conflict",
+                "surface",
+                ui.vc_conflict,
+                ui.surface,
+                UI_SUPPORT_TIER,
+            ),
+            role_row(
+                "agent_error",
+                "surface",
+                ui.agent_error,
+                ui.surface,
+                UI_SUPPORT_TIER,
+            ),
+            role_row(
+                "agent_claude",
+                "surface",
+                ui.agent_claude,
+                ui.surface,
+                UI_SUPPORT_TIER,
+            ),
+            role_row(
+                "agent_codex",
+                "surface",
+                ui.agent_codex,
+                ui.surface,
+                UI_SUPPORT_TIER,
+            ),
+            role_row(
+                "group_1",
+                "surface",
+                ui.group_1,
+                ui.surface,
+                UI_DECORATIVE_TIER,
+            ),
+            role_row(
+                "group_2",
+                "surface",
+                ui.group_2,
+                ui.surface,
+                UI_DECORATIVE_TIER,
+            ),
+            role_row(
+                "group_3",
+                "surface",
+                ui.group_3,
+                ui.surface,
+                UI_DECORATIVE_TIER,
+            ),
+            role_row(
+                "group_4",
+                "surface",
+                ui.group_4,
+                ui.surface,
+                UI_DECORATIVE_TIER,
+            ),
+            role_row(
+                "group_5",
+                "surface",
+                ui.group_5,
+                ui.surface,
+                UI_DECORATIVE_TIER,
+            ),
+            role_row(
+                "group_6",
+                "surface",
+                ui.group_6,
+                ui.surface,
+                UI_DECORATIVE_TIER,
+            ),
+            role_row(
+                "group_7",
+                "surface",
+                ui.group_7,
+                ui.surface,
+                UI_DECORATIVE_TIER,
+            ),
+            role_row(
+                "group_8",
+                "surface",
+                ui.group_8,
+                ui.surface,
+                UI_DECORATIVE_TIER,
+            ),
+            role_row(
+                "text",
+                "vc_word_added over vc_added_background",
+                ui.text,
+                added_wash.blend(ui.vc_word_added),
+                UI_SUPPORT_TIER,
+            ),
+            role_row(
+                "text",
+                "vc_word_deleted over vc_deleted_background",
+                ui.text,
+                deleted_wash.blend(ui.vc_word_deleted),
+                UI_SUPPORT_TIER,
+            ),
+            role_row(
+                "on_selection_color",
+                "selection_color",
+                crate::theme::on_selection_color(),
+                crate::theme::selection_color(),
+                UI_TEXT_TIER,
+            ),
+        ]
+    }
+
+    fn ansi_slots(theme: &TerminalTheme) -> [(&'static str, Hsla); 16] {
+        [
+            ("black", theme.black),
+            ("red", theme.red),
+            ("green", theme.green),
+            ("yellow", theme.yellow),
+            ("blue", theme.blue),
+            ("magenta", theme.magenta),
+            ("cyan", theme.cyan),
+            ("white", theme.white),
+            ("bright_black", theme.bright_black),
+            ("bright_red", theme.bright_red),
+            ("bright_green", theme.bright_green),
+            ("bright_yellow", theme.bright_yellow),
+            ("bright_blue", theme.bright_blue),
+            ("bright_magenta", theme.bright_magenta),
+            ("bright_cyan", theme.bright_cyan),
+            ("bright_white", theme.bright_white),
+        ]
+    }
+
+    const ANSI_BACKGROUND_ENDPOINT_LC: f32 = 1.0;
+
+    fn ansi_background_endpoint_slots(theme: &TerminalTheme) -> Vec<&'static str> {
+        ansi_slots(theme)
+            .into_iter()
+            .filter(|(_, color)| {
+                apca_contrast(*color, theme.ansi_background).abs() < ANSI_BACKGROUND_ENDPOINT_LC
+            })
+            .map(|(slot, _)| slot)
+            .collect()
+    }
+
+    fn ansi_role_rows(theme: &TerminalTheme) -> Vec<RoleRow> {
+        let endpoints = ansi_background_endpoint_slots(theme);
+        ansi_slots(theme)
+            .into_iter()
+            .filter(|(slot, _)| !endpoints.contains(slot))
+            .map(|(slot, color)| {
+                role_row(
+                    slot,
+                    "ansi_background",
+                    color,
+                    theme.ansi_background,
+                    UI_SUPPORT_TIER,
+                )
+            })
+            .collect()
+    }
+
+    fn preset_variants() -> Vec<(&'static str, TerminalTheme)> {
+        let mut variants = Vec::new();
+        for preset in crate::theme::PRESETS {
+            for name in [preset.light, preset.dark] {
+                let theme = theme_by_name(name).expect("bundled preset variant missing");
+                variants.push((name, apply_surface_overrides(theme)));
+            }
+        }
+        variants
+    }
+
+    #[test]
+    fn every_ui_role_meets_its_apca_tier_on_every_preset_variant() {
+        let mut failures: Vec<String> = Vec::new();
+        for (name, theme) in preset_variants() {
+            let rows = ui_role_rows(&theme)
+                .into_iter()
+                .chain(ansi_role_rows(&theme));
+            for row in rows {
+                let lc = apca_contrast(row.foreground, row.background).abs();
+                if lc + 1e-3 < row.tier {
+                    failures.push(format!(
+                        "{name}: {} on {} measures APCA Lc {lc:.1}, tier requires {:.0}",
+                        row.role, row.surface, row.tier
+                    ));
+                }
+            }
+        }
+        assert!(
+            failures.is_empty(),
+            "UI role contrast table failures ({}):\n{}",
+            failures.len(),
+            failures.join("\n")
+        );
+    }
+
+    #[test]
+    fn the_role_table_covers_every_preset_variant_and_both_polarities() {
+        let variants = preset_variants();
+        assert_eq!(variants.len(), crate::theme::PRESETS.len() * 2);
+        assert_eq!(
+            variants.iter().filter(|(_, t)| is_light_theme(t)).count(),
+            crate::theme::PRESETS.len()
+        );
+        for (_, theme) in &variants {
+            assert_eq!(ui_role_rows(theme).len(), 27);
+            assert_eq!(ansi_slots(theme).len(), 16);
+            assert_eq!(
+                ansi_role_rows(theme).len() + ansi_background_endpoint_slots(theme).len(),
+                16
+            );
+        }
+    }
+
+    #[test]
+    fn only_a_palette_background_endpoint_is_exempt_from_the_ansi_rows() {
+        let pinned: &[(&str, &[&str])] = &[
+            ("Paneflow Light", &[]),
+            ("Paneflow Dark", &["black"]),
+            ("Vercel Light", &[]),
+            ("Vercel Dark", &["black"]),
+            ("Claude Light", &[]),
+            ("Claude Dark", &["black"]),
+            ("Cursor Light", &[]),
+            ("Cursor Dark", &["black"]),
+            ("Tailwind Light", &["bright_white"]),
+            ("Tailwind Dark", &["black"]),
+        ];
+        let variants = preset_variants();
+        assert_eq!(pinned.len(), variants.len());
+        for (name, theme) in variants {
+            let endpoints = ansi_background_endpoint_slots(&theme);
+            let (_, expected) = pinned
+                .iter()
+                .find(|(preset, _)| *preset == name)
+                .expect("every preset variant needs a pinned endpoint list");
+            assert_eq!(
+                &endpoints[..],
+                *expected,
+                "{name} exempts the wrong ANSI slots from the role table"
             );
         }
     }
