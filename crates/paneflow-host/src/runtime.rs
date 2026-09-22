@@ -696,7 +696,7 @@ fn run(
             Ok(()) => break,
             Err(_) => {
                 session.mark_unverified(RUNTIME_PANIC_REASON.to_string());
-                session.retire_terminal();
+                session.retire_engine();
             }
         }
     }
@@ -1321,6 +1321,11 @@ impl Session {
     fn retire_terminal(&mut self) {
         self.writer = None;
         self.release_master();
+        self.retire_engine();
+    }
+
+    fn retire_engine(&mut self) {
+        self.writer = None;
         self.terminal = None;
         if self.completed {
             self.shared.inbox.close();
@@ -1978,8 +1983,9 @@ mod tests {
             "a panic leaves the session unverified, never exited"
         );
         assert!(runtime.exit().is_none());
+        assert!(wait_until(Duration::from_secs(5), || runtime.retired()));
         assert!(
-            process.is_provably_live(),
+            !wait_until(Duration::from_secs(1), || !process.is_provably_live()),
             "the child survives the runtime panic under a recovery owner"
         );
         assert!(matches!(
