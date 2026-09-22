@@ -22,6 +22,7 @@ pub mod host;
 pub mod maintenance;
 pub mod manifest;
 pub mod menu_prompt;
+pub mod persistence;
 pub mod process;
 pub mod protocol;
 pub mod pty;
@@ -40,7 +41,7 @@ pub use agent::{AgentEvent, AgentEventKind, AgentSnapshotEntry};
 pub use bootstrap::{
     BootstrapError, HostAdoption, Probe, ensure_host_running, probe, stop_incompatible_host,
 };
-pub use client::{Attachment, HostClient, HostClientError, OutputEnd};
+pub use client::{Attachment, HostClient, HostClientError, OutputEnd, SessionTextReply};
 pub use host::{
     CreateSession, HostError, INACTIVE_ROWS_PER_WORKSPACE, MAX_PENDING_LAUNCHES, SessionHost,
     SessionReconnection, SessionRow, SessionSummary, SessionText, ShutdownReport,

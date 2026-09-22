@@ -31,6 +31,8 @@ const PANES_A_HEAVY_WORKSPACE_ATTACHES: usize = 48;
 const CONTROL_CALLS_IN_FLIGHT: usize = 8;
 
 const MAX_CONNECTIONS: usize = 128;
+pub const RESERVED_CONTROL_CONNECTIONS: usize = 8;
+const MAX_STREAMING_CONNECTIONS: usize = MAX_CONNECTIONS - RESERVED_CONTROL_CONNECTIONS;
 
 #[cfg(windows)]
 const WINDOWS_PIPE_SDDL: &str = "D:P(A;;GA;;;OW)";
@@ -223,6 +225,47 @@ impl ConnectionGuard {
 impl Drop for ConnectionGuard {
     fn drop(&mut self) {
         self.0.fetch_sub(1, Ordering::AcqRel);
+    }
+}
+
+struct StreamingGuard<'a>(&'a AtomicUsize);
+
+impl<'a> StreamingGuard<'a> {
+    fn acquire(host: &'a SessionHost) -> Option<Self> {
+        let counter = host.streaming_connections();
+        loop {
+            let current = counter.load(Ordering::Acquire);
+            if current >= MAX_STREAMING_CONNECTIONS {
+                return None;
+            }
+            if counter
+                .compare_exchange(current, current + 1, Ordering::AcqRel, Ordering::Acquire)
+                .is_ok()
+            {
+                return Some(Self(counter));
+            }
+        }
+    }
+}
+
+impl Drop for StreamingGuard<'_> {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::AcqRel);
+    }
+}
+
+fn refuse_streaming(wire: &mut Wire, id: &Value) -> Flow {
+    let envelope = error_envelope(
+        id,
+        ERR_BUSY,
+        format!(
+            "host busy: {MAX_STREAMING_CONNECTIONS} streaming connections are active; {RESERVED_CONTROL_CONNECTIONS} slots stay reserved for control"
+        ),
+        None,
+    );
+    match wire.write_json(&envelope) {
+        Ok(()) => Flow::Continue,
+        Err(_) => Flow::Close,
     }
 }
 
@@ -445,7 +488,7 @@ fn handle_connection(mut wire: Wire, host: Arc<SessionHost>, shutdown: Arc<Atomi
                     Some(Ok(result)) => result_envelope(&id, result),
                     Some(Err(error)) => control_error_to_envelope(&id, error),
                     None => match dispatch(&host, method, &params) {
-                        Ok(result) => result_envelope(&id, result),
+                        Ok(result) => fit_control_frame(&id, result_envelope(&id, result)),
                         Err(error) => error_to_envelope(&id, error),
                     },
                 };
@@ -594,6 +637,7 @@ fn error_to_envelope(id: &Value, error: DispatchError) -> Value {
                     Some(json!({"tail_start": tail_start, "tail_end": tail_end})),
                 ),
                 HostError::Runtime(RuntimeError::Deadline(_)) => (ERR_DEADLINE, None),
+                HostError::Durability(_) => (protocol::ERR_DURABILITY, None),
                 HostError::Runtime(_) | HostError::Storage(_) => (ERR_INTERNAL, None),
             };
             error_envelope(id, code, error.to_string(), data)
@@ -632,12 +676,53 @@ fn to_value<T: serde::Serialize>(value: &T) -> Value {
     serde_json::to_value(value).unwrap_or(Value::Null)
 }
 
+const TEXT_FRAME_BUDGET_BYTES: usize = 48 * 1024;
+const TEXT_FRAME_ENCODED_BUDGET_BYTES: usize = 56 * 1024;
+const _: () = assert!(TEXT_FRAME_ENCODED_BUDGET_BYTES + 4096 <= protocol::MAX_CONTROL_FRAME_BYTES);
+
+fn text_frame(text: &str, from: u64) -> (&str, Option<u64>) {
+    let mut start = usize::try_from(from).unwrap_or(text.len()).min(text.len());
+    while !text.is_char_boundary(start) {
+        start += 1;
+    }
+    let mut end = (start + TEXT_FRAME_BUDGET_BYTES).min(text.len());
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    loop {
+        let chunk = &text[start..end];
+        let encoded = serde_json::to_string(chunk).map_or(usize::MAX, |json| json.len());
+        if encoded <= TEXT_FRAME_ENCODED_BUDGET_BYTES || chunk.is_empty() {
+            let next = (end < text.len()).then_some(end as u64);
+            return (chunk, next);
+        }
+        end = start + (end - start) / 2;
+        while !text.is_char_boundary(end) {
+            end -= 1;
+        }
+    }
+}
+
+fn fit_control_frame(id: &Value, envelope: Value) -> Value {
+    let encoded = serde_json::to_vec(&envelope).map_or(usize::MAX, |bytes| bytes.len());
+    if encoded <= protocol::MAX_CONTROL_FRAME_BYTES {
+        return envelope;
+    }
+    error_envelope(
+        id,
+        ERR_FRAME_TOO_LARGE,
+        "reply exceeds the 64 KiB control frame limit",
+        None,
+    )
+}
+
 fn dispatch(host: &SessionHost, method: &str, params: &Value) -> Result<Value, DispatchError> {
     match method {
         "host.hello" => Ok(to_value(host.identity())),
         "host.status" => {
             let sessions = host.list(None);
             let live = sessions.iter().filter(|s| s.live).count();
+            let resources = host.resource_report();
             Ok(json!({
                 "identity": host.identity(),
                 "sessions": sessions.len(),
@@ -645,6 +730,19 @@ fn dispatch(host: &SessionHost, method: &str, params: &Value) -> Result<Value, D
                 "methods": protocol::METHODS,
                 "helpers": {
                     "ai_hook_dir": host.helper_dir().map(|dir| dir.display().to_string()),
+                },
+                "resources": {
+                    "persistence": resources.persistence,
+                    "checkpoints": resources.checkpoints,
+                    "live_runtimes": resources.live_runtimes,
+                    "pending_launches": resources.pending_launches,
+                    "connections": {
+                        "streaming": host.streaming_connections().load(Ordering::Acquire),
+                        "streaming_limit": MAX_STREAMING_CONNECTIONS,
+                        "limit": MAX_CONNECTIONS,
+                        "reserved_control": RESERVED_CONTROL_CONNECTIONS,
+                    },
+                    "sessions": resources.sessions,
                 },
             }))
         }
@@ -722,13 +820,17 @@ fn dispatch(host: &SessionHost, method: &str, params: &Value) -> Result<Value, D
         }
         "session.text" => {
             let session = param_session(params)?;
+            let from = params["from"].as_u64().unwrap_or(0);
             let text = host.text(&session)?;
+            let (chunk, next_offset) = text_frame(&text.text, from);
             Ok(json!({
                 "session": session,
-                "text": text.text,
+                "text": chunk,
                 "live": text.live,
                 "available": text.available,
                 "complete": text.complete,
+                "total_bytes": text.text.len(),
+                "next_offset": next_offset,
             }))
         }
         METHOD_AGENT_SNAPSHOT => Ok(json!({
@@ -796,6 +898,9 @@ fn stream_agent_follow(
 }
 
 fn stream_attach(wire: &mut Wire, host: &SessionHost, id: &Value, params: &Value) -> Flow {
+    let Some(_streaming) = StreamingGuard::acquire(host) else {
+        return refuse_streaming(wire, id);
+    };
     let checkpoint = match param_session(params)
         .and_then(|session| Ok((session, param_generation(params)?)))
         .and_then(|(session, generation)| {
@@ -879,6 +984,9 @@ fn stream_output(
                 Err(_) => Flow::Close,
             };
         }
+    };
+    let Some(_streaming) = StreamingGuard::acquire(host) else {
+        return refuse_streaming(wire, id);
     };
     let generation = match generation {
         Some(generation) => generation,
@@ -1044,6 +1152,128 @@ mod tests {
         let host = SessionHost::open(home.path(), &endpoint).unwrap();
         let server = ServerHandle::spawn(Arc::clone(&host), endpoint).unwrap();
         (home, host, server)
+    }
+
+    #[test]
+    fn a_text_frame_stops_at_its_budget_on_a_char_boundary_and_resumes_at_the_next_offset() {
+        let text = "é".repeat(TEXT_FRAME_BUDGET_BYTES);
+        let (first, next) = text_frame(&text, 0);
+        assert!(first.len() <= TEXT_FRAME_BUDGET_BYTES);
+        assert!(first.chars().all(|c| c == 'é'));
+        let next = next.expect("more text follows");
+        let (second, rest) = text_frame(&text, next);
+        assert_eq!(first.len() + second.len(), text.len());
+        assert_eq!(rest, None);
+        let escapes = "\u{1b}".repeat(TEXT_FRAME_BUDGET_BYTES);
+        let (chunk, _) = text_frame(&escapes, 0);
+        assert!(serde_json::to_string(chunk).unwrap().len() <= TEXT_FRAME_ENCODED_BUDGET_BYTES);
+        assert!(!chunk.is_empty());
+        let (past_end, none) = text_frame("abc", 10);
+        assert_eq!((past_end, none), ("", None));
+    }
+
+    #[test]
+    fn an_oversized_reply_is_refused_as_a_frame_error_instead_of_closing_the_connection() {
+        let id = json!(7);
+        let oversized = result_envelope(&id, json!({"text": "x".repeat(MAX_CONTROL_FRAME_BYTES)}));
+        let fitted = fit_control_frame(&id, oversized);
+        assert_eq!(fitted["error"]["code"], ERR_FRAME_TOO_LARGE);
+        assert_eq!(fitted["id"], id);
+        let small = result_envelope(&id, json!({"text": "ok"}));
+        assert_eq!(fit_control_frame(&id, small.clone()), small);
+    }
+
+    #[test]
+    fn host_status_reports_queue_capacities_and_reserved_control_slots() {
+        let (_home, host, server) = start();
+        let hello = ClientHello::local("paneflow-host-test");
+        let mut client = HostClient::connect(server.endpoint(), &hello).unwrap();
+        let created = host
+            .create(serde_json::from_value(shell_create_params()).unwrap())
+            .unwrap();
+        let session = created.manifest.session;
+        let status = client.call("host.status", json!({})).unwrap();
+        let resources = &status["resources"];
+        assert_eq!(
+            resources["persistence"]["budget_bytes"],
+            crate::persistence::QUEUE_BUDGET_BYTES
+        );
+        assert_eq!(resources["checkpoints"]["max_concurrent"], 2);
+        assert_eq!(resources["connections"]["limit"], MAX_CONNECTIONS);
+        assert_eq!(
+            resources["connections"]["reserved_control"],
+            RESERVED_CONTROL_CONNECTIONS
+        );
+        assert_eq!(resources["live_runtimes"], 1);
+        let entry = resources["sessions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|entry| entry["session"] == json!(session))
+            .unwrap()
+            .clone();
+        assert!(entry["runtime"]["tail_allocated_bytes"].is_u64());
+        assert!(entry["runtime"]["tail_retained_bytes"].is_u64());
+        assert_eq!(entry["runtime"]["inbox_budget_bytes"], 2 * 1024 * 1024);
+        host.stop(&session, None).unwrap();
+        server.stop().unwrap();
+    }
+
+    #[test]
+    fn streaming_followers_leave_reserved_slots_for_control_requests() {
+        let (_home, host, server) = start();
+        let created = host
+            .create(serde_json::from_value(shell_create_params()).unwrap())
+            .unwrap();
+        let session = created.manifest.session;
+        let stop = Arc::new(AtomicBool::new(false));
+        let mut followers = Vec::new();
+        for index in 0..MAX_STREAMING_CONNECTIONS {
+            let endpoint = server.endpoint().to_path_buf();
+            let session = session.clone();
+            let stop = Arc::clone(&stop);
+            followers.push(std::thread::spawn(move || {
+                let hello = ClientHello::local(format!("follower-{index}"));
+                let mut client = HostClient::connect(&endpoint, &hello).unwrap();
+                client
+                    .output(
+                        &session,
+                        None,
+                        0,
+                        true,
+                        |_, _| true,
+                        || !stop.load(Ordering::Acquire),
+                    )
+                    .map(|_| ())
+            }));
+        }
+        let registered = Instant::now() + Duration::from_secs(20);
+        while host.streaming_connections().load(Ordering::Acquire) < MAX_STREAMING_CONNECTIONS {
+            assert!(Instant::now() < registered, "every follower registers");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        let hello = ClientHello::local("control");
+        let mut control = HostClient::connect(server.endpoint(), &hello).unwrap();
+        let refused = control.output(&session, None, 0, true, |_, _| true, || true);
+        assert_eq!(refused.err().and_then(|e| e.code()), Some(ERR_BUSY));
+        let summary = control.inspect(&session).unwrap();
+        assert!(summary.live, "control keeps working at the streaming limit");
+        let status = control.call("host.status", json!({})).unwrap();
+        assert_eq!(
+            status["resources"]["connections"]["streaming"],
+            MAX_STREAMING_CONNECTIONS
+        );
+        stop.store(true, Ordering::Release);
+        for follower in followers {
+            follower.join().unwrap().unwrap();
+        }
+        let drained = Instant::now() + Duration::from_secs(20);
+        while host.streaming_connections().load(Ordering::Acquire) != 0 {
+            assert!(Instant::now() < drained, "every streaming slot is released");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        host.stop(&session, None).unwrap();
+        server.stop().unwrap();
     }
 
     #[cfg(windows)]

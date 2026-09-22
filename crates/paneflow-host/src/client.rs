@@ -66,6 +66,14 @@ pub struct Attachment {
     pub checkpoint: Checkpoint,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SessionTextReply {
+    pub text: String,
+    pub live: bool,
+    pub available: bool,
+    pub complete: bool,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct OutputEnd {
     pub next_offset: u64,
@@ -184,6 +192,29 @@ impl HostClient {
 
     pub fn inspect(&mut self, session: &SessionId) -> Result<SessionSummary, HostClientError> {
         self.call_summary("session.inspect", json!({"session": session}))
+    }
+
+    pub fn text(&mut self, session: &SessionId) -> Result<SessionTextReply, HostClientError> {
+        let mut reply = SessionTextReply {
+            text: String::new(),
+            live: false,
+            available: false,
+            complete: false,
+        };
+        let mut from = 0u64;
+        loop {
+            let frame = self.call("session.text", json!({"session": session, "from": from}))?;
+            reply
+                .text
+                .push_str(frame["text"].as_str().unwrap_or_default());
+            reply.live = frame["live"].as_bool().unwrap_or(false);
+            reply.available = frame["available"].as_bool().unwrap_or(false);
+            reply.complete = frame["complete"].as_bool().unwrap_or(false);
+            match frame["next_offset"].as_u64() {
+                Some(next) if next > from => from = next,
+                _ => return Ok(reply),
+            }
+        }
     }
 
     pub fn create(&mut self, request: &CreateSession) -> Result<SessionSummary, HostClientError> {

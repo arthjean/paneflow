@@ -16,6 +16,7 @@ pub struct StreamStatus {
     pub end_offset: u64,
     pub live: bool,
     pub retained_bytes: usize,
+    pub allocated_bytes: usize,
 }
 
 struct StreamState {
@@ -75,6 +76,7 @@ impl OutputStream {
                 .tail
                 .as_ref()
                 .map_or(0, |tail| (tail.end_offset() - tail.start_offset()) as usize),
+            allocated_bytes: state.tail.as_ref().map_or(0, OutputTail::allocated_bytes),
         }
     }
 

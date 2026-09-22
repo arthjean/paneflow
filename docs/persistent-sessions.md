@@ -30,6 +30,17 @@ and quit**, and **Cancel** choices. Stops that already completed remain
 completed. A timeout does not mean that an owned process was discarded; its
 host retains responsibility for recovery.
 
+Session records are saved off the terminal path. Ordinary state such as the
+last screen activity is written shortly after it changes. Creating,
+restarting, and accepting an agent event wait up to five seconds for the record
+to reach disk and report a storage error otherwise. The final record of an
+ended session is retried until it can be written, and the session shows the
+pending storage error until then. Final output is retained as bounded text:
+Paneflow keeps the end of a long session output, and the record says when the
+text was truncated, never written, or later evicted. A session whose terminal,
+input, or attachment queues are full refuses the extra work with a visible busy
+error instead of growing without limit, and other sessions keep running.
+
 If all process owners have resolved but final state could not be saved,
 Paneflow reports the storage problem separately. **Quit with unsaved final
 state** exits only the desktop. It does not install an update, force the host

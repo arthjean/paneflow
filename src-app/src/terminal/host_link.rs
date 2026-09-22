@@ -435,13 +435,11 @@ pub(crate) enum ResolveOutcome {
 }
 
 fn final_text_of(client: &mut HostClient, session: &SessionId) -> Option<FinalText> {
-    let value = client
-        .call("session.text", serde_json::json!({"session": session}))
-        .ok()?;
+    let reply = client.text(session).ok()?;
     Some(FinalText {
-        text: value["text"].as_str().unwrap_or_default().to_string(),
-        available: value["available"].as_bool().unwrap_or(false),
-        complete: value["complete"].as_bool().unwrap_or(false),
+        text: reply.text,
+        available: reply.available,
+        complete: reply.complete,
     })
 }
 

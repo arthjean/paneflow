@@ -586,6 +586,19 @@ fn windows_process_entries() -> io::Result<Vec<(u32, u32)>> {
         .collect())
 }
 
+#[cfg(windows)]
+fn windows_root_exit_time_bounds_adoption(
+    root_started_at: Option<u64>,
+    root_exited_at: Option<u64>,
+    child_started_at: Option<u64>,
+) -> bool {
+    match (root_started_at, child_started_at) {
+        (Some(_), Some(child)) if root_exited_at.is_some_and(|exit| child > exit) => false,
+        (Some(parent), Some(child)) => child >= parent,
+        _ => true,
+    }
+}
+
 #[cfg(all(windows, test))]
 fn windows_descendants_postorder(root_pid: u32, entries: &[(u32, u32)]) -> Vec<u32> {
     fn visit(
@@ -675,7 +688,7 @@ impl WindowsTerminationHandle {
         self.handle.as_raw_handle()
     }
 
-    fn started_at(&self) -> Option<u64> {
+    fn times(&self) -> Option<(u64, u64)> {
         use windows_sys::Win32::Foundation::FILETIME;
         use windows_sys::Win32::System::Threading::GetProcessTimes;
         let mut creation: FILETIME = unsafe { std::mem::zeroed() };
@@ -685,8 +698,23 @@ impl WindowsTerminationHandle {
         let ok = unsafe {
             GetProcessTimes(self.raw(), &mut creation, &mut exit, &mut kernel, &mut user)
         };
-        (ok != 0)
-            .then(|| (u64::from(creation.dwHighDateTime) << 32) | u64::from(creation.dwLowDateTime))
+        (ok != 0).then(|| {
+            (
+                (u64::from(creation.dwHighDateTime) << 32) | u64::from(creation.dwLowDateTime),
+                (u64::from(exit.dwHighDateTime) << 32) | u64::from(exit.dwLowDateTime),
+            )
+        })
+    }
+
+    fn started_at(&self) -> Option<u64> {
+        self.times().map(|(creation, _)| creation)
+    }
+
+    fn exited_at(&self) -> Option<u64> {
+        if !self.exited() {
+            return None;
+        }
+        self.times().map(|(_, exit)| exit).filter(|exit| *exit != 0)
     }
 
     fn exited(&self) -> bool {
@@ -747,6 +775,7 @@ impl WindowsProcessTreeOwner {
         let mut index = 0;
         while index < self.handles.len() {
             let root = self.handles[index].identity;
+            let root_exited_at = self.handles[index].exited_at();
             index += 1;
             for (pid, parent) in &entries {
                 if *parent != root.pid || *pid == root.pid {
@@ -758,9 +787,15 @@ impl WindowsProcessTreeOwner {
                 {
                     continue;
                 }
+                if !windows_root_exit_time_bounds_adoption(
+                    root.started_at,
+                    root_exited_at,
+                    identity.started_at,
+                ) {
+                    continue;
+                }
                 match (root.started_at, identity.started_at) {
-                    (Some(parent), Some(child)) if child >= parent => {}
-                    (Some(_), Some(_)) => continue,
+                    (Some(_), Some(_)) => {}
                     _ => {
                         if identity.verify() != ProcessVerdict::Gone {
                             self.unresolved.push(identity);
@@ -861,6 +896,41 @@ pub fn terminate_windows_process_tree(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(windows)]
+    #[test]
+    fn a_child_born_after_the_root_exit_belongs_to_a_recycled_pid_not_to_the_root() {
+        assert!(windows_root_exit_time_bounds_adoption(
+            Some(100),
+            None,
+            Some(150)
+        ));
+        assert!(windows_root_exit_time_bounds_adoption(
+            Some(100),
+            Some(200),
+            Some(150)
+        ));
+        assert!(!windows_root_exit_time_bounds_adoption(
+            Some(100),
+            Some(200),
+            Some(201)
+        ));
+        assert!(!windows_root_exit_time_bounds_adoption(
+            Some(100),
+            None,
+            Some(50)
+        ));
+        assert!(windows_root_exit_time_bounds_adoption(
+            None,
+            Some(200),
+            Some(500)
+        ));
+        assert!(windows_root_exit_time_bounds_adoption(
+            Some(100),
+            Some(200),
+            None
+        ));
+    }
 
     #[cfg(target_os = "macos")]
     #[test]

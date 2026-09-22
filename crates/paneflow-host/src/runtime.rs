@@ -20,6 +20,8 @@ const PTY_INBOX_BYTES: usize = 2 * 1024 * 1024;
 const DRAIN_SLICE_BYTES: usize = 64 * 1024;
 const CONTROL_QUEUE_SLOTS: usize = 64;
 const INPUT_QUEUE_SLOTS: usize = 64;
+pub const MAX_INPUT_QUEUE_BYTES: usize = 2 * 1024 * 1024;
+pub const PTY_INBOX_CHUNK_SLOTS: usize = 64;
 const QUEUE_RETRY: Duration = Duration::from_millis(5);
 const PROCESS_SCAN_INTERVAL: Duration = Duration::from_millis(500);
 const DESCENDANT_RECONCILE_MIN: Duration = Duration::from_millis(100);
@@ -144,6 +146,7 @@ pub struct SpawnError(pub String);
 
 enum Command {
     Checkpoint(SyncSender<Result<Checkpoint, RuntimeError>>),
+    CheckpointSize(SyncSender<Result<usize, RuntimeError>>),
     Text(SyncSender<Result<String, RuntimeError>>),
     Viewport(SyncSender<Result<ViewportScan, RuntimeError>>),
     BracketedPaste(SyncSender<Result<bool, RuntimeError>>),
@@ -208,6 +211,14 @@ impl PtyInbox {
         !notify || tx.send(Message::OutputReady).is_ok()
     }
 
+    fn usage(&self) -> (usize, usize) {
+        let state = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        (state.bytes, state.chunks.len())
+    }
+
     fn take_slice(&self, max_bytes: usize) -> (VecDeque<Vec<u8>>, bool) {
         let mut state = self
             .state
@@ -244,10 +255,23 @@ impl PtyInbox {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize)]
+pub struct RuntimeResources {
+    pub tail_retained_bytes: usize,
+    pub tail_allocated_bytes: usize,
+    pub tail_budget_bytes: usize,
+    pub inbox_bytes: usize,
+    pub inbox_chunks: usize,
+    pub inbox_budget_bytes: usize,
+    pub input_queued_bytes: usize,
+    pub input_budget_bytes: usize,
+}
+
 struct Shared {
     exit: Mutex<Option<ExitOutcome>>,
     unverified: Mutex<Option<String>>,
     descendants_unresolved: AtomicUsize,
+    input_queued_bytes: AtomicUsize,
     stop_requested: AtomicBool,
     retired: AtomicBool,
     output_changed_at_ms: AtomicU64,
@@ -261,6 +285,7 @@ impl Shared {
             exit: Mutex::new(None),
             unverified: Mutex::new(None),
             descendants_unresolved: AtomicUsize::new(0),
+            input_queued_bytes: AtomicUsize::new(0),
             stop_requested: AtomicBool::new(false),
             retired: AtomicBool::new(false),
             output_changed_at_ms: AtomicU64::new(0),
@@ -506,6 +531,25 @@ impl SessionRuntime {
 
     pub fn checkpoint(&self) -> Result<Checkpoint, RuntimeError> {
         self.ask(Command::Checkpoint)
+    }
+
+    pub fn checkpoint_size(&self) -> Result<usize, RuntimeError> {
+        self.ask(Command::CheckpointSize)
+    }
+
+    pub fn resources(&self) -> RuntimeResources {
+        let stream = self.shared.stream.status();
+        let (inbox_bytes, inbox_chunks) = self.shared.inbox.usage();
+        RuntimeResources {
+            tail_retained_bytes: stream.retained_bytes,
+            tail_allocated_bytes: stream.allocated_bytes,
+            tail_budget_bytes: MAX_OUTPUT_TAIL_BYTES,
+            inbox_bytes,
+            inbox_chunks,
+            inbox_budget_bytes: PTY_INBOX_BYTES,
+            input_queued_bytes: self.shared.input_queued_bytes.load(Ordering::Acquire),
+            input_budget_bytes: MAX_INPUT_QUEUE_BYTES,
+        }
     }
 
     pub fn text(&self) -> Result<String, RuntimeError> {
@@ -875,14 +919,16 @@ fn wire_pty(
     let writer = master
         .take_writer()
         .map_err(|e| format!("failed to take the PTY writer: {e}"))?;
+    let reader_shared = Arc::clone(&shared);
+    let accounting = shared;
     std::thread::Builder::new()
         .name("paneflow-host-pty-reader".into())
-        .spawn(move || read_pty(reader, tx, shared))
+        .spawn(move || read_pty(reader, tx, reader_shared))
         .map_err(|e| format!("failed to start the PTY reader: {e}"))?;
     let (input_tx, input_rx) = sync_channel::<Vec<u8>>(INPUT_QUEUE_SLOTS);
     std::thread::Builder::new()
         .name("paneflow-host-pty-writer".into())
-        .spawn(move || write_pty_queue(writer, input_rx))
+        .spawn(move || write_pty_queue(writer, input_rx, accounting))
         .map_err(|e| format!("failed to start the PTY writer: {e}"))?;
     Ok(input_tx)
 }
@@ -907,12 +953,21 @@ fn read_pty(mut reader: Box<dyn Read + Send>, tx: SyncSender<Message>, shared: A
     let _ = tx.send(Message::Eof);
 }
 
-fn write_pty_queue(mut writer: Box<dyn Write + Send>, rx: Receiver<Vec<u8>>) {
+fn write_pty_queue(mut writer: Box<dyn Write + Send>, rx: Receiver<Vec<u8>>, shared: Arc<Shared>) {
     while let Ok(bytes) = rx.recv() {
-        if let Err(error) = writer.write_all(&bytes).and_then(|()| writer.flush()) {
+        let written = writer.write_all(&bytes).and_then(|()| writer.flush());
+        shared
+            .input_queued_bytes
+            .fetch_sub(bytes.len(), Ordering::AcqRel);
+        if let Err(error) = written {
             log::debug!("paneflow-host: PTY write failed, closing the input queue: {error}");
             break;
         }
+    }
+    while let Ok(bytes) = rx.try_recv() {
+        shared
+            .input_queued_bytes
+            .fetch_sub(bytes.len(), Ordering::AcqRel);
     }
 }
 
@@ -974,7 +1029,7 @@ impl Session {
         for event in terminal.drain_events() {
             match event {
                 ghostty::BackendEvent::WritePty(bytes) => {
-                    if let Err(error) = write_pty(&mut self.writer, &bytes) {
+                    if let Err(error) = write_pty(&mut self.writer, &self.shared, bytes) {
                         log::debug!("paneflow-host: terminal reply to the PTY failed: {error}");
                     }
                 }
@@ -1023,6 +1078,13 @@ impl Session {
                     self.rows,
                 ));
             }
+            Command::CheckpointSize(reply) => {
+                let _ = reply.send(
+                    terminal
+                        .encode_snapshot_size()
+                        .map_err(|e| RuntimeError::Engine(e.to_string())),
+                );
+            }
             Command::Text(reply) => {
                 let _ = reply.send(text(terminal));
             }
@@ -1039,8 +1101,7 @@ impl Session {
                 let result = if self.exit.is_some() || self.writer.is_none() {
                     Err(RuntimeError::NotLive)
                 } else {
-                    write_pty(&mut self.writer, &bytes)
-                        .map(|()| bytes.len())
+                    write_pty(&mut self.writer, &self.shared, bytes)
                         .map_err(|e| RuntimeError::Pty(e.to_string()))
                 };
                 let _ = reply.send(result);
@@ -1403,6 +1464,9 @@ fn refuse(command: Command, error: RuntimeError) {
         Command::Input(_, reply) => {
             let _ = reply.send(Err(error));
         }
+        Command::CheckpointSize(reply) => {
+            let _ = reply.send(Err(error));
+        }
         Command::Resize { reply, .. } => {
             let _ = reply.send(Err(error));
         }
@@ -1412,7 +1476,11 @@ fn refuse(command: Command, error: RuntimeError) {
     }
 }
 
-fn write_pty(writer: &mut Option<SyncSender<Vec<u8>>>, bytes: &[u8]) -> std::io::Result<()> {
+fn write_pty(
+    writer: &mut Option<SyncSender<Vec<u8>>>,
+    shared: &Shared,
+    bytes: Vec<u8>,
+) -> std::io::Result<usize> {
     use std::sync::mpsc::TrySendError;
     let Some(sender) = writer.as_ref() else {
         return Err(std::io::Error::new(
@@ -1420,13 +1488,28 @@ fn write_pty(writer: &mut Option<SyncSender<Vec<u8>>>, bytes: &[u8]) -> std::io:
             "the PTY writer is closed",
         ));
     };
-    match sender.try_send(bytes.to_vec()) {
-        Ok(()) => Ok(()),
-        Err(TrySendError::Full(_)) => Err(std::io::Error::new(
+    let len = bytes.len();
+    let queued = shared.input_queued_bytes.load(Ordering::Acquire);
+    if queued.saturating_add(len) > MAX_INPUT_QUEUE_BYTES {
+        return Err(std::io::Error::new(
             std::io::ErrorKind::WouldBlock,
-            "the child is not reading its input; the input queue is full",
-        )),
+            format!(
+                "the child is not reading its input; {queued} bytes are queued against a {MAX_INPUT_QUEUE_BYTES} byte budget"
+            ),
+        ));
+    }
+    shared.input_queued_bytes.fetch_add(len, Ordering::AcqRel);
+    match sender.try_send(bytes) {
+        Ok(()) => Ok(len),
+        Err(TrySendError::Full(_)) => {
+            shared.input_queued_bytes.fetch_sub(len, Ordering::AcqRel);
+            Err(std::io::Error::new(
+                std::io::ErrorKind::WouldBlock,
+                "the child is not reading its input; the input queue is full",
+            ))
+        }
         Err(TrySendError::Disconnected(_)) => {
+            shared.input_queued_bytes.fetch_sub(len, Ordering::AcqRel);
             *writer = None;
             Err(std::io::Error::new(
                 std::io::ErrorKind::BrokenPipe,
@@ -1716,11 +1799,18 @@ mod tests {
             match runtime.input(chunk.clone()) {
                 Ok(_) => {}
                 Err(RuntimeError::Pty(reason)) => {
-                    assert!(reason.contains("input queue is full"), "{reason}");
+                    assert!(
+                        reason.contains("input queue is full") || reason.contains("byte budget"),
+                        "{reason}"
+                    );
                 }
                 Err(other) => panic!("blocked input surfaced {other:?}"),
             }
             slowest = slowest.max(started.elapsed());
+            assert!(
+                runtime.resources().input_queued_bytes <= MAX_INPUT_QUEUE_BYTES,
+                "US-012: queued input stays within its byte budget"
+            );
         }
         assert!(
             slowest < Duration::from_secs(1),

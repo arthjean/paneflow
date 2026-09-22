@@ -639,11 +639,12 @@ an event before commit if its manifest would exceed the 64 KiB reload limit.
 Workers reject older revisions and recover newer accepted state from snapshots or
 disk, including when the compact seed write fails. A full worker queue reconnects
 for a new snapshot instead of silently dropping accepted state. Hook seeds and cancellation
-markers are written through `write_atomically_in_existing_dir` under the same
-ledger that `session.remove` marks removed, so a delayed write cannot recreate
-a removed session directory. The fixtures behind these guarantees are
+markers are written on the persistence writer thread as exclusive jobs that
+re-check the session ledger `session.remove` marks removed, so a delayed write
+cannot recreate a removed session directory. The fixtures behind these guarantees are
 `crates/paneflow-host/src/bin/paneflow-session-fixture.rs` (idle, echo, flood,
-delayed exit, blocked stdin, descendants, split escape and UTF-8 sequences) and
+paced stream, deterministic history, delayed exit, blocked stdin, descendants,
+split escape and UTF-8 sequences) and
 `crates/paneflow-host/tests/ownership_probes.rs`. Development recovery commands, all scoped by
 `PANEFLOW_HOME`:
 
@@ -666,6 +667,55 @@ each manifest (identity, cwd, launch metadata, lifecycle, process identity
 with kernel start time, agent summary). A manifest or PID alone never proves
 ownership: a new host instance marks inherited running records `lost` and
 refuses to signal them.
+
+### Persistence service and resource budgets
+
+Nothing on the PTY path, the runtime thread, or a control connection writes a
+manifest. `crates/paneflow-host/src/persistence.rs` owns one writer thread,
+`paneflow-host-persist`, and three write classes. `Metadata` (viewport scans,
+resize, bind, activity) is coalesced to the latest revision per session and
+served round-robin, so a chatty session cannot starve another; a write starts
+within 250 ms of submission when storage is healthy. `Critical` (create,
+restart, adoption, accepted agent events) is queued in order and the caller
+waits at most five seconds for the acknowledgement, then receives a typed
+`HostError::Durability`. `Final` (exit, unverified) is never dropped: a final
+revision that cannot be written is retained and retried every five seconds
+until storage recovers, and the per-session ledger keeps the failure visible
+through `session.inspect` as `durability_error` until a later revision lands.
+Critical and final revisions are fsynced before the atomic rename; the parent
+directory is synced on Unix. Every revision carries a per-session number
+assigned under the manifest lock, and the writer discards a revision older than
+the one already on disk or submitted after the session was marked removed. The
+queue is bounded at 8 MiB with a 16 KiB final-revision reservation per live
+session: when the budget is exhausted, metadata is rejected with
+`QueueFull`, critical waits, and final still fits its reservation.
+`session.remove` and record trimming use the writer as a barrier, so a manifest
+deleted by the host is never resurrected by a job queued earlier.
+
+Every other queue has a byte budget and a typed refusal. The output tail is
+allocated exactly and never doubles past its 8 MiB cap. Input queued toward a
+child that stopped reading is capped at 2 MiB, after which `session.input`
+returns busy instead of buffering. Checkpoint capture admits two concurrent
+captures and 256 MiB of staged bytes, waits five seconds for a slot, and the
+staged bytes are released when the attachment result is dropped. Terminal
+dimensions above 4,194,304 cells are refused before reaching the engine. Of
+the 128 accepted connections, eight are reserved for control: the 121st
+streaming follower is refused with `ERR_BUSY` while `session.inspect` and
+`session.stop` still answer. `host.status` reports all of these under
+`resources` (queued and peak persistence bytes, pending final revisions,
+rejected metadata, staged checkpoints, live runtimes, pending launches,
+connection counts, and per-session tail and input usage), and
+`paneflow host status` prints them. Bounded final text (up to 512 KiB) is
+larger than one 64 KiB control frame, so `session.text` answers in frames of
+at most 48 KiB of text with `next_offset` and `total_bytes`;
+`HostClient::text` reads them back in order, and any other reply that would
+exceed the frame limit is refused with `ERR_FRAME_TOO_LARGE` instead of
+closing the connection. On Windows, descendant discovery ignores a process
+whose creation time is later than the exit time of the parent handle it hangs
+from: after the root exits its PID can be recycled, and the children of the
+new owner are not the root's descendants. The qualification runbook in
+[docs/release/persistent-qualification.md](docs/release/persistent-qualification.md)
+maps each budget to the test or workload that proves it.
 
 ### Attachment and the client mirror
 

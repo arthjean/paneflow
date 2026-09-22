@@ -189,6 +189,21 @@ pub fn write_manifest(home: &Path, manifest: &SessionManifest) -> io::Result<Pat
     Ok(path)
 }
 
+pub fn write_manifest_bytes(
+    home: &Path,
+    session: &SessionId,
+    bytes: &[u8],
+    durable: bool,
+) -> io::Result<PathBuf> {
+    let path = manifest_path(home, session);
+    let parent = path
+        .parent()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "path has no parent"))?;
+    std::fs::create_dir_all(parent)?;
+    write_atomically_with(&path, bytes, durable)?;
+    Ok(path)
+}
+
 static TEMPORARY_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 pub fn write_atomically(path: &Path, bytes: &[u8]) -> io::Result<()> {
@@ -200,6 +215,10 @@ pub fn write_atomically(path: &Path, bytes: &[u8]) -> io::Result<()> {
 }
 
 pub fn write_atomically_in_existing_dir(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    write_atomically_with(path, bytes, false)
+}
+
+pub fn write_atomically_with(path: &Path, bytes: &[u8], durable: bool) -> io::Result<()> {
     let parent = path
         .parent()
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "path has no parent"))?;
@@ -212,7 +231,11 @@ pub fn write_atomically_in_existing_dir(path: &Path, bytes: &[u8]) -> io::Result
         std::process::id(),
         TEMPORARY_SEQUENCE.fetch_add(1, Ordering::Relaxed)
     ));
-    std::fs::write(&tmp, bytes)?;
+    let written = write_temporary(&tmp, bytes, durable);
+    if let Err(error) = written {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(error);
+    }
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -221,7 +244,7 @@ pub fn write_atomically_in_existing_dir(path: &Path, bytes: &[u8]) -> io::Result
     let mut attempt = 0;
     loop {
         match std::fs::rename(&tmp, path) {
-            Ok(()) => return Ok(()),
+            Ok(()) => break,
             Err(error) if error.kind() == io::ErrorKind::PermissionDenied && attempt < 5 => {
                 attempt += 1;
                 std::thread::sleep(Duration::from_millis(20));
@@ -232,29 +255,40 @@ pub fn write_atomically_in_existing_dir(path: &Path, bytes: &[u8]) -> io::Result
             }
         }
     }
+    if durable {
+        sync_directory(parent);
+    }
+    Ok(())
 }
+
+fn write_temporary(tmp: &Path, bytes: &[u8], durable: bool) -> io::Result<()> {
+    use std::io::Write;
+    let mut file = std::fs::File::create(tmp)?;
+    file.write_all(bytes)?;
+    if durable {
+        file.sync_all()?;
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn sync_directory(parent: &Path) {
+    if let Ok(dir) = std::fs::File::open(parent) {
+        let _ = dir.sync_all();
+    }
+}
+
+#[cfg(not(unix))]
+fn sync_directory(_parent: &Path) {}
 
 pub const LAST_HOOK_EVENT_FILE: &str = "last-hook-event.json";
 
-pub fn write_last_hook_event(
-    home: &Path,
-    session: &SessionId,
+pub fn encode_hook_seed(
     hook_event_name: &str,
     tool_name: Option<&str>,
     runtime_generation: SessionGeneration,
     revision: u64,
-) -> io::Result<PathBuf> {
-    let directory = paneflow_home::host_session_data_dir_in(home, session.as_str());
-    if !directory.is_dir() {
-        return Err(io::Error::new(
-            io::ErrorKind::NotFound,
-            format!(
-                "the session data directory {} is gone; the seed is not written",
-                directory.display()
-            ),
-        ));
-    }
-    let path = directory.join(LAST_HOOK_EVENT_FILE);
+) -> Vec<u8> {
     let mut seed = serde_json::Map::new();
     seed.insert(
         "hook_event_name".into(),
@@ -271,9 +305,40 @@ pub fn write_last_hook_event(
         serde_json::Value::from(runtime_generation.get()),
     );
     seed.insert("revision".into(), serde_json::Value::from(revision));
-    let bytes = serde_json::to_vec(&serde_json::Value::Object(seed)).map_err(io::Error::other)?;
-    write_atomically_in_existing_dir(&path, &bytes)?;
+    serde_json::to_vec(&serde_json::Value::Object(seed)).unwrap_or_default()
+}
+
+pub fn write_hook_seed(
+    home: &Path,
+    session: &SessionId,
+    bytes: &[u8],
+    durable: bool,
+) -> io::Result<PathBuf> {
+    let directory = paneflow_home::host_session_data_dir_in(home, session.as_str());
+    if !directory.is_dir() {
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            format!(
+                "the session data directory {} is gone; the seed is not written",
+                directory.display()
+            ),
+        ));
+    }
+    let path = directory.join(LAST_HOOK_EVENT_FILE);
+    write_atomically_with(&path, bytes, durable)?;
     Ok(path)
+}
+
+pub fn write_last_hook_event(
+    home: &Path,
+    session: &SessionId,
+    hook_event_name: &str,
+    tool_name: Option<&str>,
+    runtime_generation: SessionGeneration,
+    revision: u64,
+) -> io::Result<PathBuf> {
+    let bytes = encode_hook_seed(hook_event_name, tool_name, runtime_generation, revision);
+    write_hook_seed(home, session, &bytes, false)
 }
 
 pub fn remove_session_data(home: &Path, session: &SessionId) {

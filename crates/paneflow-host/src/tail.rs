@@ -30,19 +30,37 @@ impl OutputTail {
         self.start + self.bytes.len() as u64
     }
 
+    pub fn allocated_bytes(&self) -> usize {
+        self.bytes.capacity()
+    }
+
+    pub fn retained_bytes(&self) -> usize {
+        self.bytes.len()
+    }
+
     pub fn append(&mut self, chunk: &[u8]) {
         if chunk.len() >= self.capacity {
             let keep = &chunk[chunk.len() - self.capacity..];
             self.start = self.end_offset() + (chunk.len() - keep.len()) as u64;
             self.bytes.clear();
+            self.reserve_exact_for(keep.len());
             self.bytes.extend(keep);
             return;
         }
-        self.bytes.extend(chunk);
-        let excess = self.bytes.len().saturating_sub(self.capacity);
+        let excess = (self.bytes.len() + chunk.len()).saturating_sub(self.capacity);
         if excess > 0 {
             self.bytes.drain(..excess);
             self.start += excess as u64;
+        }
+        self.reserve_exact_for(chunk.len());
+        self.bytes.extend(chunk);
+    }
+
+    fn reserve_exact_for(&mut self, additional: usize) {
+        let needed = self.bytes.len() + additional;
+        if needed > self.bytes.capacity() {
+            let target = needed.max(self.bytes.capacity() * 2).min(self.capacity);
+            self.bytes.reserve_exact(target - self.bytes.len());
         }
     }
 
@@ -65,6 +83,24 @@ impl OutputTail {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_allocation_never_exceeds_the_physical_budget_while_filling() {
+        let capacity = 1024 * 1024;
+        let mut tail = OutputTail::new(capacity);
+        let chunk = vec![b'x'; 32 * 1024];
+        for _ in 0..200 {
+            tail.append(&chunk);
+            assert!(
+                tail.allocated_bytes() <= capacity,
+                "allocated {} exceeds the {capacity} byte budget",
+                tail.allocated_bytes()
+            );
+        }
+        assert_eq!(tail.retained_bytes(), capacity);
+        assert_eq!(tail.end_offset(), 200 * 32 * 1024);
+        assert_eq!(tail.start_offset(), 200 * 32 * 1024 - capacity as u64);
+    }
 
     #[test]
     fn offsets_are_monotonic_and_eviction_moves_the_start() {

@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 use std::time::{Duration, Instant};
 
@@ -13,7 +13,11 @@ use crate::agent::{AgentBus, AgentEvent, AgentSnapshotEntry, AgentSubscription};
 use crate::bootstrap::{OwnerLock, OwnerLockError};
 use crate::manifest::{
     HostedSessionRuntime, MANIFEST_SCHEMA_VERSION, ManifestError, SessionLaunch, SessionLifecycle,
-    SessionManifest, now_ms, read_manifest, write_atomically, write_manifest,
+    SessionManifest, now_ms, read_manifest, write_atomically,
+};
+use crate::persistence::{
+    CRITICAL_DEADLINE, ManifestRevision, PersistError, Persistence, QueueReport,
+    SessionPersistence, WriteClass,
 };
 use crate::protocol::{HOST_PROTOCOL_VERSION, HostIdentity, local_engine_identity};
 use crate::runtime::{
@@ -31,8 +35,171 @@ const MAX_LAUNCH_ENV_ENTRIES: usize = 256;
 const MAX_HOOK_RECEIPTS: usize = 16;
 const LATE_LAUNCH_WAIT: Duration = Duration::from_secs(3600);
 pub const STOP_ACTION_BUDGET: Duration = Duration::from_secs(5);
+pub const MAX_CONCURRENT_CHECKPOINTS: usize = 2;
+pub const CHECKPOINT_STAGING_BUDGET_BYTES: usize = 256 * 1024 * 1024;
+pub const CHECKPOINT_ADMISSION_DEADLINE: Duration = Duration::from_secs(5);
+pub const MAX_TERMINAL_CELLS: u32 = 4_194_304;
 
 pub type OperationId = u64;
+
+#[derive(Default)]
+struct StagingState {
+    active: usize,
+    bytes: usize,
+    peak_bytes: usize,
+    refused: u64,
+}
+
+#[derive(Default)]
+struct CheckpointStaging {
+    state: Mutex<StagingState>,
+    released: std::sync::Condvar,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct StagingReport {
+    pub active: usize,
+    pub max_concurrent: usize,
+    pub staged_bytes: usize,
+    pub peak_staged_bytes: usize,
+    pub budget_bytes: usize,
+    pub refused: u64,
+}
+
+impl CheckpointStaging {
+    fn lock(&self) -> std::sync::MutexGuard<'_, StagingState> {
+        self.state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    fn admit(self: &Arc<Self>, bytes: usize, deadline: Instant) -> Result<StagingLease, HostError> {
+        if bytes > CHECKPOINT_STAGING_BUDGET_BYTES {
+            self.lock().refused += 1;
+            return Err(HostError::Busy(format!(
+                "a {bytes} byte checkpoint exceeds the {CHECKPOINT_STAGING_BUDGET_BYTES} byte staging budget"
+            )));
+        }
+        let mut state = self.lock();
+        loop {
+            let fits = state.active < MAX_CONCURRENT_CHECKPOINTS
+                && state.bytes.saturating_add(bytes) <= CHECKPOINT_STAGING_BUDGET_BYTES;
+            if fits {
+                state.active += 1;
+                state.bytes += bytes;
+                state.peak_bytes = state.peak_bytes.max(state.bytes);
+                return Ok(StagingLease {
+                    staging: Arc::clone(self),
+                    bytes,
+                });
+            }
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                state.refused += 1;
+                return Err(HostError::Busy(format!(
+                    "checkpoint staging is at capacity ({} of {MAX_CONCURRENT_CHECKPOINTS} captures, {} of {CHECKPOINT_STAGING_BUDGET_BYTES} bytes); retry when an attachment finishes",
+                    state.active, state.bytes
+                )));
+            }
+            let (guard, _) = self
+                .released
+                .wait_timeout(state, remaining)
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            state = guard;
+        }
+    }
+
+    fn report(&self) -> StagingReport {
+        let state = self.lock();
+        StagingReport {
+            active: state.active,
+            max_concurrent: MAX_CONCURRENT_CHECKPOINTS,
+            staged_bytes: state.bytes,
+            peak_staged_bytes: state.peak_bytes,
+            budget_bytes: CHECKPOINT_STAGING_BUDGET_BYTES,
+            refused: state.refused,
+        }
+    }
+}
+
+pub struct StagingLease {
+    staging: Arc<CheckpointStaging>,
+    bytes: usize,
+}
+
+impl StagingLease {
+    fn adjust(&mut self, actual: usize) {
+        let mut state = self.staging.lock();
+        state.bytes = state
+            .bytes
+            .saturating_sub(self.bytes)
+            .saturating_add(actual);
+        state.peak_bytes = state.peak_bytes.max(state.bytes);
+        self.bytes = actual;
+    }
+}
+
+impl Drop for StagingLease {
+    fn drop(&mut self) {
+        let mut state = self.staging.lock();
+        state.active = state.active.saturating_sub(1);
+        state.bytes = state.bytes.saturating_sub(self.bytes);
+        drop(state);
+        self.staging.released.notify_all();
+    }
+}
+
+pub struct StagedCheckpoint {
+    checkpoint: Checkpoint,
+    _lease: StagingLease,
+}
+
+impl StagedCheckpoint {
+    pub fn into_inner(self) -> Checkpoint {
+        self.checkpoint
+    }
+}
+
+impl std::ops::Deref for StagedCheckpoint {
+    type Target = Checkpoint;
+
+    fn deref(&self) -> &Checkpoint {
+        &self.checkpoint
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct SessionResources {
+    pub session: SessionId,
+    pub generation: SessionGeneration,
+    pub runtime: crate::runtime::RuntimeResources,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ResourceReport {
+    pub persistence: QueueReport,
+    pub checkpoints: StagingReport,
+    pub live_runtimes: usize,
+    pub pending_launches: usize,
+    pub sessions: Vec<SessionResources>,
+}
+
+pub fn validate_dimensions(cols: u16, rows: u16) -> Result<(), HostError> {
+    if cols == 0 || rows == 0 {
+        return Err(HostError::InvalidRequest(
+            "terminal dimensions must be non-zero".to_string(),
+        ));
+    }
+    let cells = u32::from(cols)
+        .checked_mul(u32::from(rows))
+        .ok_or_else(|| HostError::InvalidRequest("terminal dimensions overflow".to_string()))?;
+    if cells > MAX_TERMINAL_CELLS {
+        return Err(HostError::InvalidRequest(format!(
+            "a {cols}x{rows} terminal exceeds the {MAX_TERMINAL_CELLS} cell limit"
+        )));
+    }
+    Ok(())
+}
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CreateSession {
@@ -203,9 +370,11 @@ pub enum HostError {
     Runtime(#[from] RuntimeError),
     #[error("host storage error: {0}")]
     Storage(String),
+    #[error("persistence failed: {0}")]
+    Durability(#[from] PersistError),
 }
 
-type Durability = Arc<Mutex<Option<String>>>;
+type Durability = Arc<SessionPersistence>;
 
 #[derive(Default)]
 struct SeedLedger {
@@ -263,7 +432,7 @@ impl SessionRecord {
             input: Arc::new(Mutex::new(SessionInput::default())),
             escape_fence,
             seed: Arc::new(Mutex::new(SeedLedger::default())),
-            durability: Arc::new(Mutex::new(None)),
+            durability: Arc::new(SessionPersistence::default()),
         }
     }
 
@@ -364,7 +533,9 @@ type BarrierHook = Arc<dyn Fn(Barrier) + Send + Sync>;
 pub struct SessionHost {
     home: PathBuf,
     identity: HostIdentity,
-    manifest_writer: Arc<Mutex<()>>,
+    persistence: Persistence,
+    staging: Arc<CheckpointStaging>,
+    streaming_connections: AtomicUsize,
     sessions: Mutex<BTreeMap<SessionId, SessionRecord>>,
     agent_bus: AgentBus,
     helper_dir: Option<PathBuf>,
@@ -534,10 +705,15 @@ impl SessionHost {
             }
         };
         let (permissions, submit_paste_delay) = load_control_settings(home);
+        let persistence = Persistence::start(home).map_err(|error| {
+            HostError::Storage(format!("cannot start the persistence service: {error}"))
+        })?;
         let host = Arc::new_cyclic(|weak| Self {
             home: home.to_path_buf(),
             identity,
-            manifest_writer: Arc::new(Mutex::new(())),
+            persistence,
+            staging: Arc::new(CheckpointStaging::default()),
+            streaming_connections: AtomicUsize::new(0),
             sessions: Mutex::new(BTreeMap::new()),
             agent_bus: AgentBus::new(),
             helper_dir,
@@ -618,34 +794,81 @@ impl SessionHost {
             .collect()
     }
 
-    pub(crate) fn commit_marker<T>(
+    pub(crate) fn commit_marker<T: Send + 'static>(
         &self,
         session: &SessionId,
         generation: SessionGeneration,
-        write: impl FnOnce(&Path) -> T,
+        write: impl FnOnce(&Path) -> T + Send + 'static,
     ) -> Option<T> {
         let (manifest, seed) = {
             let sessions = self.lock_sessions();
             let record = sessions.get(session)?;
             (Arc::clone(&record.manifest), Arc::clone(&record.seed))
         };
-        let ledger = seed
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if ledger.removed {
-            return None;
+        let directory = self.session_data_dir(session);
+        let named = session.clone();
+        let written = self.persistence.run_exclusive(CRITICAL_DEADLINE, move || {
+            let ledger = seed
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if ledger.removed {
+                return None;
+            }
+            let current = manifest
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .generation;
+            if current != generation {
+                log::debug!(
+                    "paneflow-host: marker for session {named} generation {generation} dropped; the session is at {current}"
+                );
+                return None;
+            }
+            Some(write(&directory))
+        });
+        match written {
+            Ok(marker) => marker,
+            Err(error) => {
+                log::warn!("paneflow-host: marker of session {session} not recorded: {error}");
+                None
+            }
         }
-        let current = manifest
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .generation;
-        if current != generation {
-            log::debug!(
-                "paneflow-host: marker for session {session} generation {generation} dropped; the session is at {current}"
-            );
-            return None;
+    }
+
+    pub fn persistence_report(&self) -> QueueReport {
+        self.persistence.report()
+    }
+
+    pub(crate) fn streaming_connections(&self) -> &AtomicUsize {
+        &self.streaming_connections
+    }
+
+    pub fn resource_report(&self) -> ResourceReport {
+        let sessions = self.lock_sessions();
+        let live_runtimes = sessions.values().filter(|record| record.is_live()).count();
+        let pending_launches = sessions
+            .values()
+            .filter(|record| record.launch.is_some())
+            .count();
+        let per_session = sessions
+            .iter()
+            .filter_map(|(session, record)| {
+                let runtime = record.runtime.as_deref()?;
+                Some(SessionResources {
+                    session: session.clone(),
+                    generation: runtime.generation(),
+                    runtime: runtime.resources(),
+                })
+            })
+            .collect();
+        drop(sessions);
+        ResourceReport {
+            persistence: self.persistence.report(),
+            checkpoints: self.staging.report(),
+            live_runtimes,
+            pending_launches,
+            sessions: per_session,
         }
-        Some(write(&self.session_data_dir(session)))
     }
 
     pub(crate) fn announce_cancellation(
@@ -686,14 +909,20 @@ impl SessionHost {
 
     pub fn retire(&self) {
         let path = paneflow_home::host_instance_record_path_in(&self.home);
-        let _guard = self.lock_writer();
-        if let Err(error) = std::fs::remove_file(&path)
-            && error.kind() != std::io::ErrorKind::NotFound
-        {
-            log::warn!(
-                "paneflow-host: cannot remove the instance record {}: {error}",
-                path.display()
-            );
+        let removed = self.persistence.run_exclusive(CRITICAL_DEADLINE, move || {
+            match std::fs::remove_file(&path) {
+                Ok(()) => Ok(()),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+                Err(error) => Err(format!(
+                    "cannot remove the instance record {}: {error}",
+                    path.display()
+                )),
+            }
+        });
+        match removed {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => log::warn!("paneflow-host: {error}"),
+            Err(error) => log::warn!("paneflow-host: instance record not retired: {error}"),
         }
     }
 
@@ -748,15 +977,11 @@ impl SessionHost {
         let path = paneflow_home::host_instance_record_path_in(&self.home);
         let json = serde_json::to_vec_pretty(&self.identity)
             .map_err(|e| HostError::Storage(e.to_string()))?;
-        let _guard = self.lock_writer();
-        write_atomically(&path, &json)
+        self.persistence
+            .run_exclusive(CRITICAL_DEADLINE, move || {
+                write_atomically(&path, &json).map_err(|e| e.to_string())
+            })?
             .map_err(|e| HostError::Storage(format!("cannot write the instance record: {e}")))
-    }
-
-    fn lock_writer(&self) -> std::sync::MutexGuard<'_, ()> {
-        self.manifest_writer
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
     fn adopt_previous_records(&self) {
@@ -817,9 +1042,8 @@ impl SessionHost {
                 );
             }
         }
-        let _guard = self.lock_writer();
         for manifest in rewrites {
-            if let Err(error) = write_manifest(&self.home, &manifest) {
+            if let Err(error) = self.persist_record(&manifest.session, WriteClass::Critical) {
                 log::warn!(
                     "paneflow-host: cannot record the adopted session {}: {error}",
                     manifest.session
@@ -842,11 +1066,7 @@ impl SessionHost {
             .clone();
         let live = record.is_live();
         let owned = manifest.host_instance == self.identity.host_instance;
-        let durability_error = record
-            .durability
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .clone();
+        let durability_error = record.durability.error();
         SessionSummary {
             manifest,
             live,
@@ -868,26 +1088,32 @@ impl SessionHost {
     pub fn trim_terminated_records_at(&self, now: u64) {
         let dropped = {
             let mut sessions = self.lock_sessions();
-            let dropped: Vec<(SessionId, Arc<Mutex<SeedLedger>>)> = sessions
+            let dropped: Vec<(SessionId, Arc<Mutex<SeedLedger>>, Durability)> = sessions
                 .iter()
                 .filter(|(_, record)| !record.owns_process())
                 .filter_map(|(id, record)| {
                     let manifest = record.manifest.lock().ok()?;
                     let max_age = record_max_age_ms(&manifest.lifecycle)?;
                     let stale = now.saturating_sub(manifest.updated_at_ms) > max_age;
-                    stale.then(|| (id.clone(), Arc::clone(&record.seed)))
+                    stale.then(|| {
+                        (
+                            id.clone(),
+                            Arc::clone(&record.seed),
+                            Arc::clone(&record.durability),
+                        )
+                    })
                 })
                 .collect();
             if dropped.is_empty() {
                 return;
             }
-            for (id, _) in &dropped {
+            for (id, _, _) in &dropped {
                 sessions.remove(id);
             }
             dropped
         };
-        for (id, seed) in &dropped {
-            self.delete_record_files(id, seed);
+        for (id, seed, durability) in &dropped {
+            self.delete_record_files(id, seed, durability);
         }
         log::info!(
             "paneflow-host: dropped {} session records past their retention",
@@ -895,21 +1121,21 @@ impl SessionHost {
         );
     }
 
-    fn delete_record_files(&self, session: &SessionId, seed: &Arc<Mutex<SeedLedger>>) {
-        let mut ledger = seed
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        ledger.removed = true;
-        let _guard = self.lock_writer();
-        let path = crate::manifest::manifest_path(&self.home, session);
-        match std::fs::remove_file(&path) {
-            Ok(()) => {}
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(error) => {
-                log::warn!("paneflow-host: cannot delete the manifest of {session}: {error}")
-            }
+    fn delete_record_files(
+        &self,
+        session: &SessionId,
+        seed: &Arc<Mutex<SeedLedger>>,
+        durability: &Durability,
+    ) {
+        seed.lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .removed = true;
+        if let Err(error) = self
+            .persistence
+            .remove_and_wait(session, durability, CRITICAL_DEADLINE)
+        {
+            log::warn!("paneflow-host: cannot delete the record of {session}: {error}");
         }
-        crate::manifest::remove_session_data(&self.home, session);
     }
 
     pub fn list(&self, workspace: Option<&WorkspaceId>) -> Vec<SessionSummary> {
@@ -1006,12 +1232,16 @@ impl SessionHost {
     }
 
     pub fn ingest_agent_event(&self, event: &AgentEvent) -> Result<IngestOutcome, HostError> {
-        let (manifest, seed) = {
+        let (manifest, seed, durability) = {
             let sessions = self.lock_sessions();
             let record = sessions
                 .get(&event.session)
                 .ok_or_else(|| HostError::SessionNotFound(event.session.clone()))?;
-            (Arc::clone(&record.manifest), Arc::clone(&record.seed))
+            (
+                Arc::clone(&record.manifest),
+                Arc::clone(&record.seed),
+                Arc::clone(&record.durability),
+            )
         };
         let mut ledger = seed
             .lock()
@@ -1072,7 +1302,10 @@ impl SessionHost {
                 let revision = *revision;
                 let snapshot = guard.clone();
                 drop(guard);
-                let persistence_error = self.persist_snapshot(&snapshot).err();
+                let persistence_error = self
+                    .persist(&manifest, &durability, WriteClass::Critical)
+                    .err()
+                    .map(|error| error.to_string());
                 return Ok(IngestOutcome {
                     ack: json!({
                         "accepted": true,
@@ -1145,7 +1378,10 @@ impl SessionHost {
         };
         let revision = snapshot.hook_revision;
         let generation = snapshot.generation;
-        let persistence_error = self.persist_snapshot(&snapshot).err();
+        let persistence_error = self
+            .persist(&manifest, &durability, WriteClass::Critical)
+            .err()
+            .map(|error| error.to_string());
         if ledger.receipts.len() >= MAX_HOOK_RECEIPTS {
             ledger.receipts.pop_front();
         }
@@ -1197,6 +1433,7 @@ impl SessionHost {
         };
         let cols = request.cols.filter(|c| *c > 0).unwrap_or(DEFAULT_COLS);
         let rows = request.rows.filter(|r| *r > 0).unwrap_or(DEFAULT_ROWS);
+        validate_dimensions(cols, rows)?;
         let env = self.launch_env(
             &session,
             SessionGeneration::FIRST,
@@ -1243,6 +1480,7 @@ impl SessionHost {
             updated_at_ms: created,
         }));
         let operation = self.next_operation();
+        let durability;
         {
             let mut sessions = self.lock_sessions();
             if sessions.contains_key(&session) {
@@ -1257,6 +1495,8 @@ impl SessionHost {
                 cancelled: false,
                 fallback_owner: None,
             });
+            self.persistence.reserve_final(&record.durability);
+            durability = Arc::clone(&record.durability);
             sessions.insert(session.clone(), record);
         }
         let session_dir = self.session_data_dir(&session);
@@ -1268,13 +1508,10 @@ impl SessionHost {
                 ))
             })
             .and_then(|()| {
-                let snapshot = manifest
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner)
-                    .clone();
-                self.persist_snapshot(&snapshot).map_err(|error| {
-                    HostError::Storage(format!("cannot write the session manifest: {error}"))
-                })
+                self.persist(&manifest, &durability, WriteClass::Critical)
+                    .map_err(|error| {
+                        HostError::Storage(format!("cannot write the session manifest: {error}"))
+                    })
             });
         if let Err(error) = prepared {
             let mut sessions = self.lock_sessions();
@@ -1285,6 +1522,8 @@ impl SessionHost {
             {
                 sessions.remove(&session);
             }
+            drop(sessions);
+            self.persistence.remove(&session, &durability);
             return Err(error);
         }
 
@@ -1374,7 +1613,7 @@ impl SessionHost {
         if ledger.removed {
             return Err(HostError::SessionNotFound(session.clone()));
         }
-        let (manifest, spec) = {
+        let (manifest, spec, durability) = {
             let mut sessions = self.lock_sessions();
             let record = sessions
                 .get_mut(session)
@@ -1440,21 +1679,15 @@ impl SessionHost {
                 fallback_owner: None,
             });
             record.set_escape_fence(false);
-            *record
-                .durability
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
-            (manifest, spec)
+            record.durability.clear_error();
+            self.persistence.reserve_final(&record.durability);
+            (manifest, spec, Arc::clone(&record.durability))
         };
         #[cfg(test)]
         self.barrier(Barrier::RestartPersist);
         #[cfg(not(test))]
         self.barrier(());
-        let snapshot = manifest
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .clone();
-        if let Err(error) = self.persist_snapshot(&snapshot) {
+        if let Err(error) = self.persist(&manifest, &durability, WriteClass::Critical) {
             let mut sessions = self.lock_sessions();
             if let Some(record) = sessions.get_mut(session)
                 && record
@@ -1469,6 +1702,8 @@ impl SessionHost {
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner) = prior;
                 record.set_escape_fence(fenced);
+                drop(sessions);
+                self.persist_final(&manifest, &durability);
             }
             return Err(HostError::Storage(format!(
                 "cannot write the restart of {session}; the previous state is kept: {error}"
@@ -1729,13 +1964,13 @@ impl SessionHost {
                     reason: reason.clone(),
                 };
                 guard.updated_at_ms = now_ms();
-                Some((guard.clone(), Arc::clone(&record.durability)))
+                Some((Arc::clone(&record.manifest), Arc::clone(&record.durability)))
             } else {
                 None
             }
         };
-        if let Some((snapshot, durability)) = snapshot {
-            self.persist_with_durability(&snapshot, &durability);
+        if let Some((manifest, durability)) = snapshot {
+            self.persist_final(&manifest, &durability);
         }
         HostError::SpawnFailed {
             session: session.clone(),
@@ -1803,8 +2038,9 @@ impl SessionHost {
         if cancelled {
             return self.stop(session, Some(runtime.generation()));
         }
-        let summary = self.inspect(session)?;
-        self.persist_snapshot(&summary.manifest).ok();
+        if let Err(error) = self.persist_record(session, WriteClass::Critical) {
+            log::warn!("paneflow-host: launch of {session} is not durable yet: {error}");
+        }
         self.inspect(session)
     }
 
@@ -1875,15 +2111,17 @@ impl SessionHost {
                 {
                     return Err(HostError::ProcessUnverified(session.clone()));
                 }
-                let summary = self.summary_of(record);
+                let (manifest, durability) =
+                    (Arc::clone(&record.manifest), Arc::clone(&record.durability));
                 drop(sessions);
-                self.persist_snapshot(&summary.manifest).ok();
+                self.persist_final(&manifest, &durability);
                 return self.inspect(session);
             };
             if !runtime.owns_process() && runtime.unverified().is_none() {
-                let summary = self.summary_of(record);
+                let (manifest, durability) =
+                    (Arc::clone(&record.manifest), Arc::clone(&record.durability));
                 drop(sessions);
-                self.persist_snapshot(&summary.manifest).ok();
+                self.persist_final(&manifest, &durability);
                 return self.inspect(session);
             }
             (manifest, runtime, Arc::clone(&record.durability))
@@ -1900,25 +2138,25 @@ impl SessionHost {
         self.barrier(Barrier::StopCommit);
         #[cfg(not(test))]
         self.barrier(());
-        let snapshot = {
+        let settled = {
             let mut guard = manifest
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
             if guard.generation == runtime.generation() {
                 guard.lifecycle = lifecycle_after_stop(&report);
                 guard.updated_at_ms = now_ms();
-                Some(guard.clone())
+                true
             } else {
                 log::debug!(
                     "paneflow-host: stop outcome of session {session} generation {} dropped; the session is at {}",
                     runtime.generation(),
                     guard.generation
                 );
-                None
+                false
             }
         };
-        if let Some(snapshot) = snapshot {
-            self.persist_with_durability(&snapshot, &durability);
+        if settled {
+            self.persist_final(&manifest, &durability);
         }
         if let Some(reason) = report.unverified {
             return Err(HostError::OwnershipUnresolved {
@@ -1930,7 +2168,7 @@ impl SessionHost {
     }
 
     pub fn remove(&self, session: &SessionId) -> Result<SessionManifest, HostError> {
-        let (removed, seed) = {
+        let (removed, seed, durability) = {
             let mut sessions = self.lock_sessions();
             let record = sessions
                 .get(session)
@@ -1962,24 +2200,16 @@ impl SessionHost {
                 });
             }
             let seed = Arc::clone(&record.seed);
+            let durability = Arc::clone(&record.durability);
             sessions.remove(session);
-            (manifest, seed)
+            (manifest, seed, durability)
         };
-        let mut ledger = seed
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        ledger.removed = true;
-        let _guard = self.lock_writer();
-        let path = crate::manifest::manifest_path(&self.home, session);
-        let outcome = match std::fs::remove_file(&path) {
-            Ok(()) => Ok(removed),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(removed),
-            Err(error) => Err(HostError::Storage(format!(
-                "cannot delete the manifest of {session}: {error}"
-            ))),
-        };
-        crate::manifest::remove_session_data(&self.home, session);
-        outcome
+        seed.lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .removed = true;
+        self.persistence
+            .remove_and_wait(session, &durability, CRITICAL_DEADLINE)?;
+        Ok(removed)
     }
 
     fn with_live_runtime<T>(
@@ -2018,8 +2248,18 @@ impl SessionHost {
         &self,
         session: &SessionId,
         generation: Option<SessionGeneration>,
-    ) -> Result<Checkpoint, HostError> {
-        self.with_live_runtime(session, generation, SessionRuntime::checkpoint)
+    ) -> Result<StagedCheckpoint, HostError> {
+        let estimate =
+            self.with_live_runtime(session, generation, SessionRuntime::checkpoint_size)?;
+        let mut lease = self
+            .staging
+            .admit(estimate, Instant::now() + CHECKPOINT_ADMISSION_DEADLINE)?;
+        let checkpoint = self.with_live_runtime(session, generation, SessionRuntime::checkpoint)?;
+        lease.adjust(checkpoint.snapshot.len());
+        Ok(StagedCheckpoint {
+            checkpoint,
+            _lease: lease,
+        })
     }
 
     pub fn text(&self, session: &SessionId) -> Result<SessionText, HostError> {
@@ -2188,9 +2428,15 @@ impl SessionHost {
             )
         };
         let binding = bound.map(|bound| bound.id.to_string());
-        self.commit(&manifest, &durability, Some(current), |m| {
-            m.runtime = with_launch_binding(m.runtime.take(), binding);
-        });
+        self.commit(
+            &manifest,
+            &durability,
+            Some(current),
+            WriteClass::Metadata,
+            |m| {
+                m.runtime = with_launch_binding(m.runtime.take(), binding);
+            },
+        );
         let fenced = bound.is_some_and(|bound| bound.lifecycle.escape_cancels_turn);
         if let Some(record) = self.lock_sessions().get_mut(session)
             && record.generation() == current
@@ -2222,6 +2468,7 @@ impl SessionHost {
                 )
             })
         };
+        validate_dimensions(cols, rows)?;
         let expected = target.as_ref().map(|(_, _, current)| *current);
         self.with_live_runtime(session, generation.or(expected), |runtime| {
             runtime.resize(cols, rows)
@@ -2234,10 +2481,16 @@ impl SessionHost {
                 guard.launch.cols != cols || guard.launch.rows != rows
             };
             if changed {
-                self.commit(&manifest, &durability, Some(current), |m| {
-                    m.launch.cols = cols;
-                    m.launch.rows = rows;
-                });
+                self.commit(
+                    &manifest,
+                    &durability,
+                    Some(current),
+                    WriteClass::Metadata,
+                    |m| {
+                        m.launch.cols = cols;
+                        m.launch.rows = rows;
+                    },
+                );
             }
         }
         Ok(())
@@ -2378,16 +2631,13 @@ impl SessionHost {
             })
             .collect();
         if remaining.is_empty() {
-            let failures: Vec<_> = self
-                .list(None)
-                .into_iter()
-                .filter_map(|summary| self.persist_snapshot(&summary.manifest).err())
-                .collect();
-            if failures.is_empty() {
-                Ok(ShutdownReport { ended, unresolved })
-            } else {
-                self.shutting_down.store(false, Ordering::Release);
-                Err(HostError::Storage(failures.join("; ")))
+            let budget = deadline.saturating_duration_since(Instant::now());
+            match self.persistence.drain(budget) {
+                Ok(()) => Ok(ShutdownReport { ended, unresolved }),
+                Err(failures) => {
+                    self.shutting_down.store(false, Ordering::Release);
+                    Err(HostError::Storage(failures.join("; ")))
+                }
             }
         } else {
             self.shutting_down.store(false, Ordering::Release);
@@ -2397,49 +2647,43 @@ impl SessionHost {
         }
     }
 
-    fn persist_snapshot(&self, snapshot: &SessionManifest) -> Result<(), String> {
+    fn persist(
+        &self,
+        manifest: &Arc<Mutex<SessionManifest>>,
+        durability: &Durability,
+        class: WriteClass,
+    ) -> Result<(), PersistError> {
         #[cfg(test)]
         self.barrier(Barrier::ManifestPersist);
-        let _writer = self.lock_writer();
+        let (snapshot, revision) = {
+            let guard = manifest
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            (guard.clone(), durability.next_revision())
+        };
+        let record = ManifestRevision::encode(&snapshot, revision, durability, class)?;
+        match class {
+            WriteClass::Critical => self.persistence.submit_and_wait(record, CRITICAL_DEADLINE),
+            WriteClass::Metadata | WriteClass::Final => self.persistence.submit(record),
+        }
+    }
+
+    fn persist_final(&self, manifest: &Arc<Mutex<SessionManifest>>, durability: &Durability) {
+        if let Err(error) = self.persist(manifest, durability, WriteClass::Final) {
+            log::warn!("paneflow-host: {error}");
+        }
+    }
+
+    fn persist_record(&self, session: &SessionId, class: WriteClass) -> Result<(), PersistError> {
         let target = {
             let sessions = self.lock_sessions();
             sessions
-                .get(&snapshot.session)
+                .get(session)
                 .map(|record| (Arc::clone(&record.manifest), Arc::clone(&record.durability)))
         };
-        let Some((manifest, durability)) = target else {
-            return Ok(());
-        };
-        let current = manifest
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .clone();
-        let manifest_written = write_manifest(&self.home, &current)
-            .map(|_| ())
-            .map_err(|error| format!("cannot write the manifest of {}: {error}", current.session));
-        let seed_written = match current.last_hook.as_ref() {
-            Some(hook) => crate::manifest::write_last_hook_event(
-                &self.home,
-                &current.session,
-                &hook.hook_event_name,
-                hook.tool_name.as_deref(),
-                current.generation,
-                current.hook_revision,
-            )
-            .map(|_| ())
-            .map_err(|error| format!("hook seed: {error}")),
+        match target {
+            Some((manifest, durability)) => self.persist(&manifest, &durability, class),
             None => Ok(()),
-        };
-        let outcome = manifest_written.and(seed_written);
-        *durability
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) = outcome.clone().err();
-        outcome
-    }
-
-    fn persist_with_durability(&self, snapshot: &SessionManifest, _durability: &Durability) {
-        if let Err(error) = self.persist_snapshot(snapshot) {
-            log::warn!("paneflow-host: {error}");
         }
     }
 
@@ -2448,9 +2692,10 @@ impl SessionHost {
         manifest: &Arc<Mutex<SessionManifest>>,
         durability: &Durability,
         expected_generation: Option<SessionGeneration>,
+        class: WriteClass,
         apply: impl FnOnce(&mut SessionManifest),
     ) -> bool {
-        let snapshot = {
+        let changed = {
             let sessions = self.lock_sessions();
             if !sessions
                 .values()
@@ -2471,11 +2716,29 @@ impl SessionHost {
                 );
                 return false;
             }
+            let before = guard.clone();
             apply(&mut guard);
-            guard.updated_at_ms = now_ms();
-            guard.clone()
+            let changed = *guard != before;
+            if changed {
+                guard.updated_at_ms = now_ms();
+            }
+            changed
         };
-        self.persist_with_durability(&snapshot, durability);
+        if changed {
+            match class {
+                WriteClass::Final => self.persist_final(manifest, durability),
+                WriteClass::Metadata => {
+                    if let Err(error) = self.persist(manifest, durability, WriteClass::Metadata) {
+                        log::debug!("paneflow-host: metadata revision deferred: {error}");
+                    }
+                }
+                WriteClass::Critical => {
+                    if let Err(error) = self.persist(manifest, durability, WriteClass::Critical) {
+                        log::warn!("paneflow-host: {error}");
+                    }
+                }
+            }
+        }
         true
     }
 
@@ -2497,6 +2760,7 @@ impl SessionHost {
             &target.manifest,
             &durability,
             Some(target.generation),
+            WriteClass::Metadata,
             apply,
         )
     }
@@ -2522,10 +2786,16 @@ impl SessionHost {
                 host.complete_session(&session, &manifest, &durability, record);
                 return;
             }
+            let class = if lifecycle_settled || matches!(notice, RuntimeNotice::Unverified(_)) {
+                WriteClass::Final
+            } else {
+                WriteClass::Metadata
+            };
             host.commit(
                 &manifest,
                 &durability,
                 Some(generation),
+                class,
                 |guard| match notice {
                     RuntimeNotice::Title(title) => guard.title = Some(title),
                     RuntimeNotice::WorkingDirectory(cwd) => guard.current_cwd = Some(cwd),
@@ -2573,20 +2843,37 @@ impl SessionHost {
             return;
         }
         let text_bytes = record.text.len() as u64;
-        let written = if record.text.is_empty() {
-            Ok(0)
-        } else {
-            crate::cold_text::write(&self.home, session, &record.text)
-        };
-        let text_available = match written {
-            Ok(_) => !record.text.is_empty(),
-            Err(error) => {
-                log::warn!(
-                    "paneflow-host: final output of session {session} is not retained: {error}"
-                );
-                false
-            }
-        };
+        let text_available = !record.text.is_empty();
+        if text_available {
+            let home = self.home.clone();
+            let host = self.weak_self();
+            let text_session = session.clone();
+            let text_manifest = Arc::clone(manifest);
+            let text_durability = Arc::clone(durability);
+            let generation = record.generation;
+            let text = record.text;
+            self.persistence.spawn_exclusive(move || {
+                if let Err(error) = crate::cold_text::write(&home, &text_session, &text) {
+                    log::warn!(
+                        "paneflow-host: final output of session {text_session} is not retained: {error}"
+                    );
+                    if let Some(host) = host.upgrade() {
+                        host.commit(
+                            &text_manifest,
+                            &text_durability,
+                            Some(generation),
+                            WriteClass::Final,
+                            |guard| {
+                                if let Some(final_output) = guard.final_output.as_mut() {
+                                    final_output.text_available = false;
+                                }
+                            },
+                        );
+                    }
+                }
+                Ok(())
+            });
+        }
         let final_output = crate::manifest::FinalOutput {
             offset: record.final_offset,
             complete: record.complete,
@@ -2605,9 +2892,15 @@ impl SessionHost {
                 });
             }
         }
-        self.commit(manifest, durability, Some(record.generation), |guard| {
-            guard.final_output = Some(final_output);
-        });
+        self.commit(
+            manifest,
+            durability,
+            Some(record.generation),
+            WriteClass::Final,
+            |guard| {
+                guard.final_output = Some(final_output);
+            },
+        );
         self.release_retired_runtime(session, record.generation);
     }
 
@@ -2915,6 +3208,94 @@ mod tests {
             std::thread::sleep(Duration::from_millis(30));
         }
         false
+    }
+
+    #[test]
+    fn checkpoint_staging_admits_two_captures_and_the_third_waits_for_a_release() {
+        let staging = Arc::new(CheckpointStaging::default());
+        let soon = || Instant::now() + Duration::from_millis(100);
+        let first = staging.admit(1024, soon()).unwrap();
+        let second = staging.admit(2048, soon()).unwrap();
+        let refused = staging.admit(1, soon());
+        assert!(matches!(refused, Err(HostError::Busy(_))));
+        assert_eq!(staging.report().active, MAX_CONCURRENT_CHECKPOINTS);
+        assert_eq!(staging.report().staged_bytes, 3072);
+        assert_eq!(staging.report().refused, 1);
+        drop(first);
+        let third = staging.admit(4096, soon()).unwrap();
+        assert_eq!(staging.report().staged_bytes, 6144);
+        let oversized = staging.admit(CHECKPOINT_STAGING_BUDGET_BYTES + 1, soon());
+        assert!(matches!(oversized, Err(HostError::Busy(_))));
+        let over_budget = staging.admit(CHECKPOINT_STAGING_BUDGET_BYTES - 6144 + 1, soon());
+        assert!(matches!(over_budget, Err(HostError::Busy(_))));
+        drop(second);
+        drop(third);
+        let report = staging.report();
+        assert_eq!((report.active, report.staged_bytes), (0, 0));
+        assert_eq!(report.peak_staged_bytes, 6144);
+    }
+
+    #[test]
+    fn a_staged_checkpoint_releases_its_admission_when_dropped() {
+        let home = tempfile::tempdir().unwrap();
+        let host = SessionHost::open(home.path(), Path::new("staging")).unwrap();
+        let session = host.create(shell_request(80, 24)).unwrap().manifest.session;
+        let staged = host.checkpoint(&session, None).unwrap();
+        let held = host.resource_report().checkpoints;
+        assert_eq!(held.active, 1);
+        assert_eq!(held.staged_bytes, staged.snapshot.len());
+        assert!(held.staged_bytes > 0);
+        drop(staged);
+        let released = host.resource_report().checkpoints;
+        assert_eq!((released.active, released.staged_bytes), (0, 0));
+        let resources = host.resource_report();
+        let runtime = resources
+            .sessions
+            .iter()
+            .find(|entry| entry.session == session)
+            .unwrap()
+            .runtime;
+        assert_eq!(
+            runtime.tail_budget_bytes,
+            crate::protocol::MAX_OUTPUT_TAIL_BYTES
+        );
+        assert!(runtime.tail_allocated_bytes >= runtime.tail_retained_bytes);
+        assert!(runtime.tail_allocated_bytes <= runtime.tail_budget_bytes);
+        assert_eq!(
+            runtime.input_budget_bytes,
+            crate::runtime::MAX_INPUT_QUEUE_BYTES
+        );
+        host.stop(&session, None).unwrap();
+    }
+
+    #[test]
+    fn oversized_terminal_dimensions_are_refused_before_reaching_the_engine() {
+        assert!(validate_dimensions(80, 24).is_ok());
+        assert!(validate_dimensions(4096, 1024).is_ok());
+        assert!(matches!(
+            validate_dimensions(0, 24),
+            Err(HostError::InvalidRequest(_))
+        ));
+        assert!(matches!(
+            validate_dimensions(u16::MAX, u16::MAX),
+            Err(HostError::InvalidRequest(_))
+        ));
+        let home = tempfile::tempdir().unwrap();
+        let host = SessionHost::open(home.path(), Path::new("dimensions")).unwrap();
+        let mut request = shell_request(80, 24);
+        request.cols = Some(u16::MAX);
+        request.rows = Some(u16::MAX);
+        assert!(matches!(
+            host.create(request),
+            Err(HostError::InvalidRequest(_))
+        ));
+        let session = host.create(shell_request(80, 24)).unwrap().manifest.session;
+        assert!(matches!(
+            host.resize(&session, None, u16::MAX, u16::MAX),
+            Err(HostError::InvalidRequest(_))
+        ));
+        assert!(host.inspect(&session).unwrap().live);
+        host.stop(&session, None).unwrap();
     }
 
     fn exited_manifest(home: &Path, workspace: &WorkspaceId, updated_at_ms: u64) -> SessionId {
@@ -3235,7 +3616,9 @@ mod tests {
             let record = &sessions[&live.manifest.session];
             (Arc::clone(&record.manifest), Arc::clone(&record.durability))
         };
-        host.commit(&manifest, &durability, None, |m| m.updated_at_ms = 1);
+        host.commit(&manifest, &durability, None, WriteClass::Metadata, |m| {
+            m.updated_at_ms = 1
+        });
 
         host.trim_terminated_records();
 
@@ -3551,8 +3934,15 @@ mod tests {
             !process.is_provably_live(),
             "the owned process tree is gone"
         );
+        assert!(
+            wait_until(Duration::from_secs(5), || {
+                read_manifest(&manifest_path).is_ok_and(|on_disk| {
+                    matches!(on_disk.lifecycle, SessionLifecycle::Exited { .. })
+                })
+            }),
+            "the final lifecycle revision reaches disk without blocking the stop"
+        );
         let on_disk = read_manifest(&manifest_path).unwrap();
-        assert!(matches!(on_disk.lifecycle, SessionLifecycle::Exited { .. }));
         assert_eq!(on_disk.session, session, "identity survives the exit");
         let again = host.stop(&session, None).unwrap();
         assert!(!again.live, "stopping an exited session is idempotent");
@@ -4061,6 +4451,7 @@ mod tests {
         let host = SessionHost::open(home.path(), Path::new("persist-failure")).unwrap();
         let session = host.create(shell_request(80, 24)).unwrap().manifest.session;
         let prior = host.stop(&session, None).unwrap();
+        host.persistence.drain(Duration::from_secs(5)).unwrap();
         let sessions_dir = paneflow_home::host_sessions_dir_in(home.path());
         let blocked = sessions_dir.clone();
         host.set_barrier(Arc::new(move |point| {
@@ -4090,6 +4481,61 @@ mod tests {
             SessionGeneration::FIRST.next()
         );
         host.stop(&session, None).unwrap();
+    }
+
+    #[test]
+    fn a_create_whose_persist_times_out_leaves_no_manifest_behind() {
+        let home = tempfile::tempdir().unwrap();
+        let host = SessionHost::open(home.path(), Path::new("persist-timeout")).unwrap();
+        let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+        host.persistence.spawn_exclusive(move || {
+            let _ = release_rx.recv_timeout(Duration::from_secs(30));
+            Ok(())
+        });
+        let mut request = shell_request(80, 24);
+        let session = SessionId::new();
+        request.session = Some(session.clone());
+        let failed = host.create(request);
+        assert!(
+            matches!(failed, Err(HostError::Storage(_))),
+            "a stalled writer is a typed storage error: {failed:?}"
+        );
+        assert!(matches!(
+            host.inspect(&session),
+            Err(HostError::SessionNotFound(_))
+        ));
+        release_tx.send(()).unwrap();
+        host.persistence.drain(Duration::from_secs(5)).unwrap();
+        assert!(
+            !crate::manifest::manifest_path(home.path(), &session).exists(),
+            "the revision queued before the failure is discarded, not written later"
+        );
+        assert!(!host.session_data_dir(&session).exists());
+    }
+
+    #[test]
+    fn a_restart_whose_persist_times_out_keeps_the_prior_record_on_disk() {
+        let home = tempfile::tempdir().unwrap();
+        let host = SessionHost::open(home.path(), Path::new("restart-timeout")).unwrap();
+        let session = host.create(shell_request(80, 24)).unwrap().manifest.session;
+        let prior = host.stop(&session, None).unwrap();
+        host.persistence.drain(Duration::from_secs(5)).unwrap();
+        let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+        host.persistence.spawn_exclusive(move || {
+            let _ = release_rx.recv_timeout(Duration::from_secs(30));
+            Ok(())
+        });
+        let failed = host.restart(&session, Some(SessionGeneration::FIRST));
+        assert!(matches!(failed, Err(HostError::Storage(_))), "{failed:?}");
+        release_tx.send(()).unwrap();
+        host.persistence.drain(Duration::from_secs(5)).unwrap();
+        let on_disk =
+            read_manifest(&crate::manifest::manifest_path(home.path(), &session)).unwrap();
+        assert_eq!(on_disk.generation, SessionGeneration::FIRST);
+        assert_eq!(on_disk.lifecycle, prior.manifest.lifecycle);
+        let restored = host.inspect(&session).unwrap();
+        assert_eq!(restored.manifest.generation, SessionGeneration::FIRST);
+        assert!(!restored.pending_launch);
     }
 
     #[test]

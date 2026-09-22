@@ -38,9 +38,10 @@ fn scan_once(host: &Arc<SessionHost>, now: SystemTime) {
         };
         for captured in signals {
             let generation = captured.generation;
+            let signal = captured.signal;
             let marker = host
-                .commit_marker(&session, generation, |directory| {
-                    record(directory, generation.get(), captured.signal)
+                .commit_marker(&session, generation, move |directory| {
+                    record(directory, generation.get(), signal)
                 })
                 .flatten();
             if let Some(marker) = marker {
