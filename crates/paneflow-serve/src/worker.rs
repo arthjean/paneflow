@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::Mutex;
+use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
@@ -131,11 +132,14 @@ fn open_with_build_id(home: &Path, build_id: String) -> Result<RunningWorker, Wo
 }
 
 pub fn open(home: &Path) -> Result<RunningWorker, WorkerError> {
-    let executable =
-        std::env::current_exe().map_err(|error| WorkerError::Storage(error.to_string()))?;
-    let build_id = crate::protocol::executable_build_id(&executable)
+    static BUILD_ID: OnceLock<String> = OnceLock::new();
+    if let Some(build_id) = BUILD_ID.get() {
+        return open_with_build_id(home, build_id.clone());
+    }
+    let build_id = std::env::current_exe()
+        .and_then(|executable| crate::protocol::executable_build_id(&executable))
         .map_err(|error| WorkerError::Storage(error.to_string()))?;
-    open_with_build_id(home, build_id)
+    open_with_build_id(home, BUILD_ID.get_or_init(|| build_id).clone())
 }
 
 fn menu_attention_detection(home: &Path) -> bool {
