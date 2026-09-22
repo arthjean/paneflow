@@ -562,6 +562,7 @@ jobs:
           path: |
             target/aarch64-apple-darwin/release/paneflow
             target/aarch64-apple-darwin/release/paneflow-host
+            target/aarch64-apple-darwin/release/paneflow-session-fixture
           if-no-files-found: error
           retention-days: 7
 
@@ -628,7 +629,7 @@ jobs:
         # Linux outputs (https://github.com/actions/upload-artifact/issues/38).
         # Without this, `bundle-macos.sh`'s `install -m 0755` would copy
         # a non-executable file and `open` would fail with EACCES.
-        run: chmod +x target/aarch64-apple-darwin/release/paneflow target/aarch64-apple-darwin/release/paneflow-host
+        run: chmod +x target/aarch64-apple-darwin/release/paneflow target/aarch64-apple-darwin/release/paneflow-host target/aarch64-apple-darwin/release/paneflow-session-fixture
 
       - name: Bundle .app
         # Reuse the production bundling script so the smoke test exercises
@@ -641,18 +642,28 @@ jobs:
           set -euo pipefail
           bash scripts/bundle-macos.sh --version "0.0.0-ci" --arch aarch64
 
-      - name: Seed a session with one terminal pane
-        # Since the welcome screen (#74) a fresh home opens without a
-        # terminal, and the `font: family=` gate below only fires
-        # when a terminal pane renders. Seed the same one-terminal session
-        # the startup bench uses so the gate keeps checking the terminal
-        # rendering path rather than the welcome screen.
+      - name: Create a persistent fixture session
         run: |
           set -euo pipefail
-          mkdir -p "$HOME/.paneflow"
-          cat > "$HOME/.paneflow/session.json" <<EOF_SESSION
-          {"version":2,"active_workspace":0,"workspaces":[{"title":"smoke","cwd":"$GITHUB_WORKSPACE","tabs":[{"title":"","title_source":"preset","layout":{"type":"pane","surfaces":[{"surface_type":"terminal","name":"Terminal","command":null,"cwd":"$GITHUB_WORKSPACE","env":null,"focus":true}]}}]}]}
-          EOF_SESSION
+          export PANEFLOW_HOME="$RUNNER_TEMP/paneflow-render-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          export PANEFLOW_SOCKET_PATH="/tmp/paneflow-render-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.sock"
+          printf 'PANEFLOW_HOME=%s\nPANEFLOW_SOCKET_PATH=%s\n' "$PANEFLOW_HOME" "$PANEFLOW_SOCKET_PATH" >> "$GITHUB_ENV"
+          mkdir -p "$PANEFLOW_HOME"
+          printf '%s' '{"telemetry":{"enabled":false},"terminal":{"cursor_blink":"off"}}' > "$PANEFLOW_HOME/paneflow.json"
+          printf '%s' '{"version":3,"active_workspace":0,"workspaces":[]}' > "$PANEFLOW_HOME/session.json"
+          printf '%s' '{"width":1200,"height":800}' > "$PANEFLOW_HOME/window-state.json"
+          printf '%s' '7f03d6ba-1249-4a78-92dc-96f77e8d10a2' > "$PANEFLOW_HOME/telemetry_id"
+          "$GITHUB_WORKSPACE/dist/PaneFlow.app/Contents/MacOS/paneflow" host start
+          "$GITHUB_WORKSPACE/dist/PaneFlow.app/Contents/MacOS/paneflow-host" --home "$PANEFLOW_HOME" session create \
+            --cwd "$GITHUB_WORKSPACE" --shell "$GITHUB_WORKSPACE/target/aarch64-apple-darwin/release/paneflow-session-fixture" -- idle > created-session.json
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          session_id = json.loads(Path("created-session.json").read_text())["session"]
+          surface = {"surface_type": "terminal", "name": "Fixture", "session": session_id}
+          workspace = {"title": "smoke", "cwd": os.environ["GITHUB_WORKSPACE"], "tabs": [{"title": "Fixture", "layout": {"type": "pane", "surfaces": [surface]}}]}
+          Path(os.environ["PANEFLOW_HOME"], "session.json").write_text(json.dumps({"version": 3, "active_workspace": 0, "workspaces": [workspace]}))
+          PY
 
       - name: Launch .app and capture screenshot
         run: |
@@ -668,6 +679,7 @@ jobs:
           RUST_LOG=info "$APP/Contents/MacOS/paneflow" \
             >paneflow.log 2>&1 &
           APP_PID=$!
+          trap 'kill "$APP_PID" 2>/dev/null || true; sleep 2; kill -9 "$APP_PID" 2>/dev/null || true; wait "$APP_PID" 2>/dev/null || true' EXIT
 
           # Poll for the first-paint marker instead of betting the job on a
           # fixed cold-launch budget. Typical first paint on macos-14 (M1,
@@ -686,6 +698,20 @@ jobs:
             sleep 1
           done
 
+          fixture_ready=false
+          launched_at=$SECONDS
+          while [ $((SECONDS - launched_at)) -lt 90 ]; do
+            if "$APP/Contents/MacOS/paneflow" ls > surfaces.json 2>fixture-read.err.log; then
+              surface_id=$(python3 -c 'import json; s=json.load(open("surfaces.json"))["surfaces"]; print(s[0]["surface_id"] if len(s) == 1 else "")')
+              if [ -n "$surface_id" ] && "$APP/Contents/MacOS/paneflow" read "$surface_id" --raw > fixture-output.txt 2>>fixture-read.err.log && grep -q 'fixture idle' fixture-output.txt; then
+                fixture_ready=true
+                break
+              fi
+            fi
+            kill -0 "$APP_PID" 2>/dev/null || break
+            sleep 1
+          done
+
           # The log line fires when the renderer resolves the font, a moment
           # before the frame is actually presented. Let the compositor land it
           # before the screenshot.
@@ -694,14 +720,10 @@ jobs:
           # `-x` skips the camera-shutter sound; captures every display.
           screencapture -x screenshot.png
 
-          # Clean shutdown so the runner doesn't carry a live paneflow
-          # process into the next step. SIGTERM lets GPUI's Drop chain
-          # (PTY shutdown, IPC socket cleanup) run; SIGKILL is the belt
-          # in case the main thread is blocked.
-          kill "$APP_PID" 2>/dev/null || true
-          sleep 2
-          kill -9 "$APP_PID" 2>/dev/null || true
-          wait "$APP_PID" 2>/dev/null || true
+          if [ "$fixture_ready" != true ]; then
+            echo "::error::The restored terminal never exposed the owned fixture output through paneflow read."
+            exit 1
+          fi
 
           # HARD GATE: the resolved-font log line must be present.
           # Absence means the app crashed before reaching
@@ -712,6 +734,14 @@ jobs:
           if ! grep "font: family=" paneflow.log; then
             echo "::error::No 'font: family=' line in app log. The app likely crashed before first render - paneflow.log + screenshot.png artifacts will pin down the exact failure."
             exit 1
+          fi
+
+      - name: Stop isolated persistent runtime
+        if: always()
+        run: |
+          if [ -n "${PANEFLOW_HOME:-}" ] && [ -x dist/PaneFlow.app/Contents/MacOS/paneflow ]; then
+            dist/PaneFlow.app/Contents/MacOS/paneflow serve stop || true
+            dist/PaneFlow.app/Contents/MacOS/paneflow host stop --force
           fi
 
       - name: OCR sanity check (text rendered?)
@@ -745,6 +775,10 @@ jobs:
           path: |
             screenshot.png
             paneflow.log
+            created-session.json
+            surfaces.json
+            fixture-output.txt
+            fixture-read.err.log
           if-no-files-found: warn
           retention-days: 7
 
@@ -951,7 +985,10 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: paneflow-x86_64-pc-windows-msvc
-          path: target/x86_64-pc-windows-msvc/release/paneflow.exe
+          path: |
+            target/x86_64-pc-windows-msvc/release/paneflow.exe
+            target/x86_64-pc-windows-msvc/release/paneflow-host.exe
+            target/x86_64-pc-windows-msvc/release/paneflow-session-fixture.exe
           if-no-files-found: error
           retention-days: 7
 
@@ -1000,17 +1037,33 @@ jobs:
           name: paneflow-x86_64-pc-windows-msvc
           path: target/x86_64-pc-windows-msvc/release/
 
-      - name: Seed a session with one terminal pane
-        # Same reason as the macOS smoke: the welcome screen (#74) renders
-        # no terminal, and the font gate needs one.
+      - name: Create a persistent fixture session
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $home_dir = Join-Path $env:USERPROFILE '.paneflow'
+          $env:PANEFLOW_HOME = Join-Path $env:RUNNER_TEMP "paneflow-render-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT"
+          $env:PANEFLOW_SOCKET_PATH = "\\.\pipe\paneflow-render-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT"
+          "PANEFLOW_HOME=$env:PANEFLOW_HOME" | Add-Content $env:GITHUB_ENV
+          "PANEFLOW_SOCKET_PATH=$env:PANEFLOW_SOCKET_PATH" | Add-Content $env:GITHUB_ENV
+          $home_dir = $env:PANEFLOW_HOME
           New-Item -ItemType Directory -Force -Path $home_dir | Out-Null
           $cwd = $env:GITHUB_WORKSPACE
+          '{"telemetry":{"enabled":false},"terminal":{"cursor_blink":"off"}}' | Set-Content (Join-Path $home_dir 'paneflow.json')
+          '{"version":3,"active_workspace":0,"workspaces":[]}' | Set-Content (Join-Path $home_dir 'session.json')
+          '{"width":1200,"height":800}' | Set-Content (Join-Path $home_dir 'window-state.json')
+          '7f03d6ba-1249-4a78-92dc-96f77e8d10a2' | Set-Content (Join-Path $home_dir 'telemetry_id')
+          $exe = (Resolve-Path 'target/x86_64-pc-windows-msvc/release/paneflow.exe').Path
+          $hostExe = (Resolve-Path 'target/x86_64-pc-windows-msvc/release/paneflow-host.exe').Path
+          $fixtureExe = (Resolve-Path 'target/x86_64-pc-windows-msvc/release/paneflow-session-fixture.exe').Path
+          & $exe host start
+          if ($LASTEXITCODE -ne 0) { throw 'The isolated host could not start' }
+          $created = & $hostExe --home $home_dir session create --cwd $cwd --shell $fixtureExe -- idle
+          if ($LASTEXITCODE -ne 0) { throw 'The owned fixture session could not start' }
+          $created | Set-Content created-session.json
+          $sessionId = ($created | ConvertFrom-Json).session
+          if (-not $sessionId) { throw 'The host did not return a persistent session identity' }
           $session = @{
-            version = 2
+            version = 3
             active_workspace = 0
             workspaces = @(@{
               title = 'smoke'
@@ -1023,7 +1076,7 @@ jobs:
                   surfaces = @(@{
                     surface_type = 'terminal'
                     name = 'Terminal'
-                    command = $null
+                    session = $sessionId
                     cwd = $cwd
                     env = $null
                     focus = $true
@@ -1050,53 +1103,74 @@ jobs:
           # for it.
           $env:RUST_LOG = 'info'
           $proc = Start-Process -FilePath $exe `
+                                -WindowStyle Normal `
                                 -PassThru `
                                 -RedirectStandardOutput 'paneflow.log' `
                                 -RedirectStandardError  'paneflow.err.log'
+          try {
 
-          # Poll for the first-paint marker rather than betting the job on a
-          # fixed cold-launch budget; the font gate below is HARD, so a
-          # contended runner that pushed past a flat 10s sleep would have
-          # failed the job for a timing race, not a rendering regression.
-          # stdout and stderr are separate files here, and env_logger writes
-          # to stderr, so watch both.
-          $deadline = (Get-Date).AddSeconds(90)
-          while ((Get-Date) -lt $deadline) {
-            $seen = @('paneflow.log', 'paneflow.err.log') |
-              Where-Object { Test-Path -LiteralPath $_ } |
-              ForEach-Object { Select-String -Path $_ -Pattern 'font: family=' -SimpleMatch -Quiet } |
-              Where-Object { $_ }
-            if ($seen) { break }
-            if ($proc.HasExited) { break }
-            Start-Sleep -Seconds 1
-          }
+            # Poll for the first-paint marker rather than betting the job on a
+            # fixed cold-launch budget; the font gate below is HARD, so a
+            # contended runner that pushed past a flat 10s sleep would have
+            # failed the job for a timing race, not a rendering regression.
+            # stdout and stderr are separate files here, and env_logger writes
+            # to stderr, so watch both.
+            $deadline = (Get-Date).AddSeconds(90)
+            while ((Get-Date) -lt $deadline) {
+              $seen = @('paneflow.log', 'paneflow.err.log') |
+                Where-Object { Test-Path -LiteralPath $_ } |
+                ForEach-Object { Select-String -Path $_ -Pattern 'font: family=' -SimpleMatch -Quiet } |
+                Where-Object { $_ }
+              if ($seen) { break }
+              if ($proc.HasExited) { break }
+              Start-Sleep -Seconds 1
+            }
 
-          # The log line fires when the renderer resolves the font, a moment
-          # before the frame is actually presented.
-          Start-Sleep -Seconds 3
+            $fixtureReady = $false
+            $deadline = (Get-Date).AddSeconds(90)
+            while ((Get-Date) -lt $deadline) {
+              $listed = & $exe ls 2>fixture-read.err.log
+              if ($LASTEXITCODE -eq 0) {
+                $listed | Set-Content surfaces.json
+                $surfaces = @(($listed | ConvertFrom-Json).surfaces)
+                if ($surfaces.Count -eq 1 -and $surfaces[0].surface_id) {
+                  $output = & $exe read ([string]$surfaces[0].surface_id) --raw 2>>fixture-read.err.log
+                  if ($LASTEXITCODE -eq 0 -and ($output -join "`n").Contains('fixture idle')) {
+                    $output | Set-Content fixture-output.txt
+                    $fixtureReady = $true
+                    break
+                  }
+                }
+              }
+              if ($proc.HasExited) { break }
+              Start-Sleep -Seconds 1
+            }
 
-          # Capture the primary display via System.Drawing - works on
-          # every windows-2022 runner without external tooling. The
-          # bounds-then-CopyFromScreen pattern is the canonical .NET
-          # screenshot recipe used by every Windows GUI CI setup.
-          Add-Type -AssemblyName System.Windows.Forms
-          Add-Type -AssemblyName System.Drawing
-          $bounds = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
-          $bmp = New-Object System.Drawing.Bitmap($bounds.Width, $bounds.Height)
-          $g   = [System.Drawing.Graphics]::FromImage($bmp)
-          $g.CopyFromScreen($bounds.Location, [System.Drawing.Point]::Empty, $bounds.Size)
-          $bmp.Save("$pwd\screenshot.png", [System.Drawing.Imaging.ImageFormat]::Png)
-          $g.Dispose()
-          $bmp.Dispose()
+            # The log line fires when the renderer resolves the font, a moment
+            # before the frame is actually presented.
+            Start-Sleep -Seconds 3
 
-          # Clean shutdown. Stop-Process is SIGTERM-equivalent; -Force
-          # is the SIGKILL belt for a wedged main thread. Tolerate a
-          # process that already exited.
-          if (-not $proc.HasExited) {
-            Stop-Process -Id $proc.Id -ErrorAction SilentlyContinue
-            Start-Sleep -Seconds 2
+            # Capture the primary display via System.Drawing - works on
+            # every windows-2022 runner without external tooling. The
+            # bounds-then-CopyFromScreen pattern is the canonical .NET
+            # screenshot recipe used by every Windows GUI CI setup.
+            Add-Type -AssemblyName System.Windows.Forms
+            Add-Type -AssemblyName System.Drawing
+            $bounds = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+            $bmp = New-Object System.Drawing.Bitmap($bounds.Width, $bounds.Height)
+            $g   = [System.Drawing.Graphics]::FromImage($bmp)
+            $g.CopyFromScreen($bounds.Location, [System.Drawing.Point]::Empty, $bounds.Size)
+            $bmp.Save("$pwd\screenshot.png", [System.Drawing.Imaging.ImageFormat]::Png)
+            $g.Dispose()
+            $bmp.Dispose()
+
+            if (-not $fixtureReady) {
+              throw 'The restored terminal never exposed the owned fixture output through paneflow read'
+            }
+          } finally {
             if (-not $proc.HasExited) {
-              Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+              $proc.Kill()
+              if (-not $proc.WaitForExit(5000)) { throw 'The owned desktop did not exit' }
             }
           }
 
@@ -1114,6 +1188,17 @@ jobs:
           }
           $fontLine | ForEach-Object { Write-Output $_.Line }
 
+      - name: Stop isolated persistent runtime
+        if: always()
+        shell: pwsh
+        run: |
+          $exe = 'target/x86_64-pc-windows-msvc/release/paneflow.exe'
+          if ($env:PANEFLOW_HOME -and (Test-Path -LiteralPath $exe)) {
+            & $exe serve stop
+            & $exe host stop --force
+            if ($LASTEXITCODE -ne 0) { throw 'The isolated host could not stop' }
+          }
+
       - name: Upload visual smoke artifacts
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -1122,6 +1207,11 @@ jobs:
           path: |
             screenshot.png
             paneflow.log
+            paneflow.err.log
+            created-session.json
+            surfaces.json
+            fixture-output.txt
+            fixture-read.err.log
           if-no-files-found: warn
           retention-days: 7
 
