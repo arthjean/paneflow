@@ -729,6 +729,7 @@ pub(crate) struct WindowsProcessTreeOwner {
     handles: Vec<WindowsTerminationHandle>,
     unresolved: Vec<ProcessIdentity>,
     snapshot_failed: bool,
+    inherited_links: Vec<(u32, u32)>,
 }
 
 #[cfg(windows)]
@@ -739,9 +740,22 @@ impl WindowsProcessTreeOwner {
             handles: Vec::new(),
             unresolved: Vec::new(),
             snapshot_failed: false,
+            inherited_links: Vec::new(),
         };
         owner.retain(root);
+        if let Ok(entries) = windows_process_entries() {
+            owner.record_inherited_links(root.pid, &entries);
+        }
         owner
+    }
+
+    fn record_inherited_links(&mut self, parent: u32, entries: &[(u32, u32)]) {
+        self.inherited_links.extend(
+            entries
+                .iter()
+                .copied()
+                .filter(|&(child, linked)| linked == parent && child != parent),
+        );
     }
 
     fn retain(&mut self, identity: ProcessIdentity) {
@@ -764,20 +778,20 @@ impl WindowsProcessTreeOwner {
     }
 
     pub(crate) fn discover(&mut self) {
-        let entries = match windows_process_entries() {
-            Ok(entries) => entries,
-            Err(_) => {
-                self.snapshot_failed = true;
-                return;
-            }
-        };
+        match windows_process_entries() {
+            Ok(entries) => self.discover_in(&entries),
+            Err(_) => self.snapshot_failed = true,
+        }
+    }
+
+    fn discover_in(&mut self, entries: &[(u32, u32)]) {
         self.snapshot_failed = false;
         let mut index = 0;
         while index < self.handles.len() {
             let root = self.handles[index].identity;
             let root_exited_at = self.handles[index].exited_at();
             index += 1;
-            for (pid, parent) in &entries {
+            for (pid, parent) in entries {
                 if *parent != root.pid || *pid == root.pid {
                     continue;
                 }
@@ -797,7 +811,9 @@ impl WindowsProcessTreeOwner {
                 match (root.started_at, identity.started_at) {
                     (Some(_), Some(_)) => {}
                     _ => {
-                        if identity.verify() != ProcessVerdict::Gone {
+                        if !self.inherited_links.contains(&(*pid, root.pid))
+                            && identity.verify() != ProcessVerdict::Gone
+                        {
                             self.unresolved.push(identity);
                         }
                         continue;
@@ -806,7 +822,8 @@ impl WindowsProcessTreeOwner {
                 match WindowsTerminationHandle::open(identity) {
                     Ok(process) => match windows_process_entries() {
                         Ok(current) if current.contains(&(*pid, root.pid)) => {
-                            self.handles.push(process)
+                            self.handles.push(process);
+                            self.record_inherited_links(*pid, entries);
                         }
                         Ok(_) => {}
                         Err(_) => {
@@ -994,6 +1011,42 @@ mod tests {
         assert!(actual.is_provably_live());
         child.kill().unwrap();
         child.wait().unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_stale_parent_link_without_a_start_time_is_never_adopted() {
+        let system = ProcessIdentity::capture(4);
+        let mut root = std::process::Command::new("cmd.exe")
+            .args(["/D", "/Q", "/C", "pause"])
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
+        let identity = ProcessIdentity::capture(root.id());
+        let stale_link = [(system.pid, identity.pid)];
+
+        let mut inherited = WindowsProcessTreeOwner::new(identity);
+        inherited.record_inherited_links(identity.pid, &stale_link);
+        inherited.discover_in(&stale_link);
+        assert_eq!(
+            inherited.unresolved(),
+            0,
+            "a process that listed this pid as its parent before the root existed is not its child"
+        );
+
+        let mut late = WindowsProcessTreeOwner::new(identity);
+        late.discover_in(&stale_link);
+        if system.started_at.is_none() {
+            assert_eq!(
+                late.unresolved(),
+                1,
+                "a link that appears after the root exists stays unresolved without a start time"
+            );
+        }
+
+        root.kill().unwrap();
+        root.wait().unwrap();
     }
 
     #[cfg(windows)]
