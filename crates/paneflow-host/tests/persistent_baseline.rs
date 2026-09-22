@@ -13,6 +13,13 @@ use paneflow_ipc_client::host_control::HostControl;
 use paneflow_ipc_client::{IpcClient, IpcTransport};
 use serde_json::{Value, json};
 
+#[path = "persistent_baseline/workloads.rs"]
+mod workloads;
+
+use workloads::{Decision, FixtureLedger, automated_only, seed_failure, verdict};
+
+pub const SCHEMA_VERSION: u64 = 3;
+
 const SCENARIOS: [usize; 4] = [0, 1, 10, 50];
 const SETTLE: Duration = Duration::from_secs(4);
 const WINDOW: Duration = Duration::from_secs(10);
@@ -431,6 +438,83 @@ fn resident_bytes(pid: u32) -> Option<u64> {
 #[cfg(not(any(windows, target_os = "linux")))]
 fn resident_bytes(_pid: u32) -> Option<u64> {
     None
+}
+
+#[cfg(windows)]
+fn process_counters(pid: u32) -> (Option<u64>, Option<u64>) {
+    use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
+    use windows_sys::Win32::System::Diagnostics::ToolHelp::{
+        CreateToolhelp32Snapshot, TH32CS_SNAPTHREAD, THREADENTRY32, Thread32First, Thread32Next,
+    };
+    use windows_sys::Win32::System::Threading::{
+        GetProcessHandleCount, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
+    };
+    let handles = {
+        let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
+        if handle.is_null() {
+            None
+        } else {
+            let mut count = 0u32;
+            let queried = unsafe { GetProcessHandleCount(handle, &mut count) };
+            unsafe {
+                CloseHandle(handle);
+            }
+            (queried != 0).then_some(u64::from(count))
+        }
+    };
+    let threads = {
+        let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0) };
+        if snapshot == INVALID_HANDLE_VALUE {
+            None
+        } else {
+            let mut entry: THREADENTRY32 = unsafe { std::mem::zeroed() };
+            entry.dwSize = std::mem::size_of::<THREADENTRY32>() as u32;
+            let mut count = 0u64;
+            let mut more = unsafe { Thread32First(snapshot, &mut entry) } != 0;
+            while more {
+                if entry.th32OwnerProcessID == pid {
+                    count += 1;
+                }
+                more = unsafe { Thread32Next(snapshot, &mut entry) } != 0;
+            }
+            unsafe {
+                CloseHandle(snapshot);
+            }
+            Some(count)
+        }
+    };
+    (threads, handles)
+}
+
+#[cfg(target_os = "linux")]
+fn process_counters(pid: u32) -> (Option<u64>, Option<u64>) {
+    let threads = std::fs::read_to_string(format!("/proc/{pid}/status"))
+        .ok()
+        .and_then(|status| {
+            status
+                .lines()
+                .find(|line| line.starts_with("Threads:"))
+                .and_then(|line| line.split_whitespace().nth(1))
+                .and_then(|count| count.parse::<u64>().ok())
+        });
+    let fds = std::fs::read_dir(format!("/proc/{pid}/fd"))
+        .ok()
+        .map(|entries| entries.count() as u64);
+    (threads, fds)
+}
+
+#[cfg(not(any(windows, target_os = "linux")))]
+fn process_counters(_pid: u32) -> (Option<u64>, Option<u64>) {
+    (None, None)
+}
+
+fn counters_json(pid: u32) -> Value {
+    let (threads, handles) = process_counters(pid);
+    json!({
+        "threads": threads,
+        "handles_or_fds": handles,
+        "note": if threads.is_none() || handles.is_none() { "unavailable on this platform sampler; never zero" } else { "Windows handles or Linux descriptors plus thread count" },
+    })
 }
 
 fn role_of(thread_name: &str) -> &'static str {
@@ -915,6 +999,7 @@ fn process_sample(pid: u32, before: &Attribution, after: &Attribution, window: D
     json!({
         "pid": pid,
         "resident_bytes": resident_bytes(pid),
+        "counters": counters_json(pid),
         "cpu": cpu,
         "attribution": after.quality(),
     })
@@ -989,52 +1074,187 @@ fn paused_follower_probe(client: &mut HostClient, endpoint: &Path) -> Value {
     })
 }
 
-fn compare(document: &Value) {
-    let Some(path) = std::env::var_os("PANEFLOW_BENCH_BASELINE") else {
-        println!("no baseline configured; nothing to compare against");
-        return;
-    };
-    let Ok(bytes) = std::fs::read(&path) else {
-        println!("baseline {} is not readable", Path::new(&path).display());
-        return;
-    };
-    let Ok(baseline) = serde_json::from_slice::<Value>(&bytes) else {
-        println!("baseline {} is not JSON", Path::new(&path).display());
-        return;
-    };
-    if baseline["schema_version"] != document["schema_version"]
-        || baseline["topology"] != document["topology"]
-        || baseline["machine"] != document["machine"]
-        || baseline["toolchain"]["profile"] != document["toolchain"]["profile"]
-    {
-        println!(
-            "baseline topology, schema, machine, or profile differs; no performance comparison is valid"
-        );
-        return;
+fn baseline_document() -> Option<Value> {
+    let path = std::env::var_os("PANEFLOW_BENCH_BASELINE")?;
+    let bytes = std::fs::read(&path).ok()?;
+    serde_json::from_slice::<Value>(&bytes).ok()
+}
+
+fn baseline_matches(baseline: &Value, document: &Value) -> bool {
+    baseline["schema_version"] == document["schema_version"]
+        && baseline["topology"] == document["topology"]
+        && baseline["machine"] == document["machine"]
+        && baseline["toolchain"]["profile"] == document["toolchain"]["profile"]
+}
+
+fn baseline_throughput(document: &Value) -> Option<f64> {
+    let baseline = baseline_document()?;
+    baseline_matches(&baseline, document)
+        .then(|| baseline["workloads"]["W03"]["single_flood"]["mib_per_s"].as_f64())
+        .flatten()
+}
+
+fn compare(document: &Value, decisions: &[Decision]) -> String {
+    let mut text = String::new();
+    let baseline = baseline_document();
+    let comparable = baseline
+        .as_ref()
+        .is_some_and(|baseline| baseline_matches(baseline, document));
+    match (&baseline, comparable) {
+        (None, _) => text.push_str("no comparable baseline configured; thresholds only\n"),
+        (Some(_), false) => text.push_str(
+            "baseline topology, schema, machine, or profile differs; no performance comparison is valid\n",
+        ),
+        (Some(_), true) => {}
     }
-    println!(
-        "{:<10} {:>14} {:>14} {:>16} {:>16}",
-        "sessions", "cpu% now", "cpu% base", "rss now", "rss base"
-    );
+    let base = baseline.filter(|_| comparable);
+    let metric = |doc: &Value, path: &[&str]| -> Option<f64> {
+        let mut cursor = doc;
+        for key in path {
+            cursor = &cursor[*key];
+        }
+        cursor.as_f64()
+    };
+    text.push_str(&format!(
+        "{:<44} {:>14} {:>14} {:>22} {:>8}\n",
+        "metric", "candidate", "baseline", "threshold", "result"
+    ));
     for scenario in document["scenarios"].as_array().into_iter().flatten() {
         let sessions = scenario["sessions"].as_u64().unwrap_or(0);
-        let base = baseline["scenarios"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .find(|candidate| candidate["sessions"].as_u64() == Some(sessions));
-        let now_cpu = scenario["host"]["cpu"]["total_cpu_percent"].as_f64();
-        let base_cpu = base.and_then(|b| b["host"]["cpu"]["total_cpu_percent"].as_f64());
-        let now_rss = scenario["host"]["resident_bytes"].as_u64();
-        let base_rss = base.and_then(|b| b["host"]["resident_bytes"].as_u64());
-        println!(
-            "{sessions:<10} {:>14} {:>14} {:>16} {:>16}",
-            now_cpu.map_or("pending".to_string(), |v| format!("{v:.3}")),
-            base_cpu.map_or("n/a".to_string(), |v| format!("{v:.3}")),
-            now_rss.map_or("pending".to_string(), |v| v.to_string()),
-            base_rss.map_or("n/a".to_string(), |v| v.to_string()),
-        );
+        let base_scenario = base.as_ref().and_then(|b| {
+            b["scenarios"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .find(|candidate| candidate["sessions"].as_u64() == Some(sessions))
+                .cloned()
+        });
+        for (label, path) in [
+            ("host cpu %", ["host", "cpu", "total_cpu_percent"]),
+            ("host rss bytes", ["host", "resident_bytes", ""]),
+        ] {
+            let path: Vec<&str> = path.iter().copied().filter(|p| !p.is_empty()).collect();
+            let now = metric(scenario, &path);
+            let before = base_scenario.as_ref().and_then(|b| metric(b, &path));
+            text.push_str(&format!(
+                "{:<44} {:>14} {:>14} {:>22} {:>8}\n",
+                format!("W01 {sessions} sessions {label}"),
+                now.map_or("pending".to_string(), |v| format!("{v:.3}")),
+                before.map_or("n/a".to_string(), |v| format!("{v:.3}")),
+                "informational",
+                "-"
+            ));
+        }
     }
+    let workload_rows: [(&str, &[&str]); 6] = [
+        (
+            "W02 attach p95 ms",
+            &["workloads", "W02", "sequential_attach_ms", "p95"],
+        ),
+        (
+            "W02 concurrent total ms",
+            &["workloads", "W02", "concurrent_total_ms"],
+        ),
+        (
+            "W03 single flood MiB/s",
+            &["workloads", "W03", "single_flood", "mib_per_s"],
+        ),
+        (
+            "W03 idle echo p95 ms",
+            &["workloads", "W03", "idle_echo_ms", "p95"],
+        ),
+        (
+            "W03 loaded echo p95 ms",
+            &["workloads", "W03", "loaded_echo_ms", "p95"],
+        ),
+        (
+            "W05 final host rss bytes",
+            &["workloads", "W05", "final", "host_resident_bytes"],
+        ),
+    ];
+    for (label, path) in workload_rows {
+        let now = metric(document, path);
+        let before = base.as_ref().and_then(|b| metric(b, path));
+        let decision = decisions.iter().find(|d| {
+            label.contains(d.workload)
+                && d.metric
+                    .split(' ')
+                    .next()
+                    .is_some_and(|w| label.to_lowercase().contains(&w.to_lowercase()))
+        });
+        text.push_str(&format!(
+            "{:<44} {:>14} {:>14} {:>22} {:>8}\n",
+            label,
+            now.map_or("pending".to_string(), |v| format!("{v:.3}")),
+            before.map_or("n/a".to_string(), |v| format!("{v:.3}")),
+            decision.map_or("informational".to_string(), |d| d.threshold.clone()),
+            decision.map_or("-", |d| d.result)
+        ));
+    }
+    text.push_str("\nthreshold decisions:\n");
+    for decision in decisions {
+        text.push_str(&format!(
+            "  {:<28} {:<8} {} {}\n",
+            decision.id,
+            decision.result,
+            decision.metric,
+            if decision.reason.is_empty() {
+                String::new()
+            } else {
+                format!("({})", decision.reason)
+            }
+        ));
+    }
+    text
+}
+
+fn write_document(path: &Path, document: &Value) {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).unwrap();
+    }
+    std::fs::write(path, serde_json::to_vec_pretty(document).unwrap()).unwrap();
+}
+
+#[test]
+fn a_seeded_failure_fails_the_run_and_retains_its_artifact() {
+    let mut decisions = vec![workloads::decide(
+        "NFR-09.attach_p95",
+        "W02",
+        "sequential reattachment p95 ms",
+        "<= 1000",
+        Some(12.0),
+        |v| v <= 1000.0,
+        "",
+    )];
+    assert!(verdict(&decisions, &[]).is_ok());
+    decisions.push(Decision {
+        id: "SEEDED".to_string(),
+        workload: "harness",
+        metric: "seeded known failure".to_string(),
+        threshold: "never passes".to_string(),
+        observed: json!("test"),
+        result: "fail",
+        reason: "seeded".to_string(),
+    });
+    let failures = verdict(&decisions, &[]).unwrap_err();
+    assert_eq!(failures.len(), 1);
+    assert!(failures[0].starts_with("SEEDED"));
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("persistent-seeded.json");
+    let document = json!({
+        "schema_version": SCHEMA_VERSION,
+        "thresholds": decisions.iter().map(Decision::to_json).collect::<Vec<_>>(),
+    });
+    write_document(&path, &document);
+    let retained: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    assert_eq!(retained["thresholds"][1]["result"], "fail");
+    let prior = vec![retained["thresholds"][1].clone()];
+    let passing = vec![decisions[0].clone()];
+    let retried = verdict(&passing, &prior).unwrap_err();
+    assert!(
+        retried[0].starts_with("retained first failure"),
+        "a retry keeps the first failure: {retried:?}"
+    );
 }
 
 #[test]
@@ -1064,9 +1284,13 @@ fn persistent_session_baseline() {
     let hello = ClientHello::local("persistent-bench");
     let mut client = HostClient::connect(&endpoint, &hello).unwrap();
     let host_pid = adoption.identity.pid;
-    let worker = WorkerProcess::start(home.path());
+    let host_identity = paneflow_host::ProcessIdentity::capture(host_pid);
+    let mut worker = WorkerProcess::start(home.path());
     let worker_pid = worker.as_ref().map(|worker| worker.child.id());
     let runner_pid = std::process::id();
+    let protocol = workloads::protocol();
+    let ledger = FixtureLedger::new();
+    let mut decisions: Vec<Decision> = Vec::new();
 
     let mut scenarios = Vec::new();
     let mut open: Vec<paneflow_host::SessionId> = Vec::new();
@@ -1087,6 +1311,7 @@ fn persistent_session_baseline() {
                 })
                 .expect("the fixture session starts");
             create_elapsed += create_started.elapsed();
+            ledger.record(&mut client, &created.manifest.session);
             if std::env::var_os("PANEFLOW_BENCH_DESKTOP").is_none()
                 && std::env::var_os("PANEFLOW_BENCH_NO_FOLLOWERS").is_none()
             {
@@ -1161,30 +1386,115 @@ fn persistent_session_baseline() {
     }
 
     let paused_follower = paused_follower_probe(&mut client, &endpoint);
+    let w04_worker = workloads::workload_worker_replacement(
+        home.path(),
+        &mut worker,
+        &mut client,
+        &endpoint,
+        &open,
+        &ledger,
+        &protocol,
+        &mut decisions,
+    );
     for follower in &followers {
         follower.stop.store(true, Ordering::Release);
     }
     for follower in &followers {
         follower.finish();
     }
-    drop(worker);
     for session in &open {
         client.stop(session, None).unwrap();
     }
-    let _ = client.call("host.shutdown", json!({}));
+    let w02 = workloads::workload_history(&mut client, &endpoint, &ledger, &mut decisions);
+    let baseline_topology = json!({
+        "schema_version": SCHEMA_VERSION,
+        "topology": topology_label(worker_pid.is_some()),
+        "machine": machine(),
+        "toolchain": toolchain(),
+    });
+    let w03 = workloads::workload_throughput(
+        &mut client,
+        &endpoint,
+        &ledger,
+        &protocol,
+        baseline_throughput(&baseline_topology),
+        &mut decisions,
+    );
+    let w05 = workloads::workload_churn(
+        &mut client,
+        &endpoint,
+        host_pid,
+        &ledger,
+        &protocol,
+        &mut decisions,
+    );
+    drop(worker);
+    let shutdown = client.call("host.shutdown", json!({}));
     drop(client);
     let deadline = Instant::now() + Duration::from_secs(10);
-    while !matches!(
-        bootstrap::probe(home.path(), &endpoint, &hello),
-        bootstrap::Probe::Unreachable(_)
-    ) && Instant::now() < deadline
+    while (host_identity.is_provably_live()
+        || !matches!(
+            bootstrap::probe(home.path(), &endpoint, &hello),
+            bootstrap::Probe::Unreachable(_)
+        ))
+        && Instant::now() < deadline
     {
         std::thread::sleep(Duration::from_millis(50));
     }
+    let host_exited = !host_identity.is_provably_live();
+    decisions.push(workloads::decide(
+        "NFR-12.host_shutdown",
+        "harness",
+        "host process exited after an acknowledged shutdown",
+        "acknowledged and exited within 10 s",
+        Some(if shutdown.is_ok() && host_exited {
+            1.0
+        } else {
+            0.0
+        }),
+        |v| v == 1.0,
+        "",
+    ));
 
+    let survivors = ledger.survivors();
+    decisions.push(workloads::decide(
+        "NFR-12.fixture_orphans",
+        "harness",
+        "fixture processes still alive after host shutdown",
+        "== 0",
+        Some(survivors.len() as f64),
+        |v| v == 0.0,
+        "",
+    ));
+    seed_failure(&mut decisions);
+    let prior = workloads::prior_failures();
+    let workloads_json = json!({
+        "W01": {"status": "measured", "scenarios": "see scenarios[]", "topology": topology_label(worker_pid.is_some()), "note": "short-window CPU and memory samples; the 300 s three-run acceptance window is executed by the platform runbook"},
+        "W02": w02,
+        "W03": w03,
+        "W04": {
+            "worker_replacement": w04_worker,
+            "paused_follower": paused_follower,
+            "saved_layout_restoration_after_host_loss": automated_only("W04", &["paneflow-app terminal::host_link::tests::every_retained_end_state_restores_without_creating_a_process", "paneflow-app app::hosted_sessions::tests::a_pane_restored_into_an_ended_session_resumes_without_an_attachment"], &[]),
+            "control_disconnect_mid_paste": automated_only("W04", &["paneflow-host server::tests::a_connection_lost_before_the_input_ack_reports_unknown_delivery_without_a_resend", "paneflow-host server::tests::repeated_disconnects_deliver_each_input_once_and_release_every_connection_thread"], &[]),
+            "output_eviction_and_generation_change": automated_only("W04", &["paneflow-host server::tests::a_follower_resumes_after_the_checkpoint_survives_idle_keepalives_and_sees_the_exit", "paneflow-app terminal::ghostty_session::tests::repeated_attach_and_detach_with_filled_scrollback_retains_no_checkpoint_bytes"], &[]),
+            "gui_force_quit": automated_only("W04", &[], &["desktop forced termination with live sessions: qualification runbook cell D-11"]),
+        },
+        "W05": w05,
+        "W06": {
+            "storage_faults": automated_only("W06", &["paneflow-host persistence::tests::a_failed_final_revision_is_retained_and_retried_after_storage_recovers", "paneflow-host persistence::tests::a_stalled_exclusive_job_times_out_the_waiter_without_losing_the_queue", "paneflow-host persistence::tests::metadata_admission_respects_the_byte_budget_and_reservations", "paneflow-host host::tests::a_restart_whose_persist_fails_restores_the_prior_record_without_a_stranded_start", "paneflow-host host::tests::shutdown_keeps_unsaved_final_state_owned_until_retry_succeeds", "paneflow-host host::tests::a_duplicate_hook_retries_failed_seed_persistence_without_another_notification"], &[]),
+            "lifecycle_faults": automated_only("W06", &["paneflow-host host::tests::a_stop_during_the_launch_terminates_the_child_instead_of_publishing_it", "paneflow-host host::tests::a_scan_waiting_to_persist_cannot_overwrite_a_restarted_generation", "paneflow-host host::tests::a_scan_waiting_to_persist_cannot_recreate_a_removed_record", "paneflow-host tests/ownership_probes.rs", "paneflow-host tests/lifecycle.rs"], &[]),
+            "capacity_faults": automated_only("W06", &["paneflow-host host::tests::checkpoint_staging_admits_two_captures_and_the_third_waits_for_a_release", "paneflow-host host::tests::oversized_terminal_dimensions_are_refused_before_reaching_the_engine", "paneflow-host server::tests::streaming_followers_leave_reserved_slots_for_control_requests", "paneflow-host runtime::tests::a_child_that_stops_reading_its_input_never_starves_the_control_path"], &[]),
+            "stop_all_and_shutdown_rpc_failure": automated_only("W06", &["paneflow-app app::quit_dialog tests", "paneflow-host host::tests::shutdown_keeps_unsaved_final_state_owned_until_retry_succeeds"], &["failed stop-all through the native quit dialog: qualification runbook cell D-09"]),
+        },
+        "W07": automated_only("W07", &["paneflow-app pane::tests::a_natural_exit_keeps_the_surface_as_a_passive_final_view", "paneflow-app app::hosted_sessions::tests::every_unattached_session_is_listed_exactly_once_across_workspaces_and_the_fallback_group", "paneflow-app app::hosted_sessions::tests::a_fallback_workspace_prefers_the_recorded_cwd_and_falls_back_to_home", "paneflow-app app::sidebar::tests::a_disconnected_host_reads_as_stale_never_as_idle_or_finished"], &["native desktop usage after idle, resize, paste, search: runbook cells D-01 to D-10"]),
+        "W08": {"status": "pending", "reason": "the 8-hour endurance run is executed on the designated qualification machines per the runbook; this run records no endurance evidence"},
+    });
     let document = json!({
         "suite": "paneflow-persistent-bench",
-        "schema_version": 2,
+        "schema_version": SCHEMA_VERSION,
+        "protocol": protocol.label,
+        "acceptance_grade": protocol.acceptance_grade,
         "stamp": stamp(),
         "commit": git(&["rev-parse", "HEAD"]),
         "commit_short": std::env::var("PANEFLOW_BENCH_SHA").ok(),
@@ -1208,8 +1518,13 @@ fn persistent_session_baseline() {
             "args": std::env::args().collect::<Vec<_>>(),
         },
         "scenarios": scenarios,
-        "faults": {"paused_follower": paused_follower},
-        "topology": if std::env::var_os("PANEFLOW_BENCH_DESKTOP").is_some() { "host-worker-native-desktop" } else if std::env::var_os("PANEFLOW_BENCH_NO_FOLLOWERS").is_some() { if worker_pid.is_some() { "host-worker" } else { "host-only" } } else if worker_pid.is_some() { "host-worker-headless-followers" } else { "host-headless-followers" },
+        "workloads": workloads_json,
+        "thresholds": decisions.iter().map(Decision::to_json).collect::<Vec<_>>(),
+        "prior_failures": prior,
+        "retry_policy": "none: the scripts never retry; a rerun passes PANEFLOW_BENCH_PRIOR_RESULT so the first failure stays in the evidence",
+        "fixtures": {"owned": ledger.len(), "survivors_after_shutdown": survivors, "host_shutdown": shutdown.as_ref().map(|value| value.clone()).unwrap_or_else(|error| json!({"error": error.to_string()})), "host_exited": host_exited, "cleanup": "only recorded session/process identities are checked; the host owns and stops its fixtures on a private PANEFLOW_HOME"},
+        "allocator": "no custom global allocator in the host or the fixture; native memory comes from OS counters",
+        "topology": topology_label(worker_pid.is_some()),
         "controller": std::env::var_os("PANEFLOW_BENCH_CONTROLLER").map(|path| executable_identity(Path::new(&path))),
         "native_environments": {"windows": cfg!(windows), "linux": cfg!(target_os = "linux"), "macos": cfg!(target_os = "macos"), "note": "false means pending, not passed"},
         "unmeasured": [
@@ -1218,15 +1533,34 @@ fn persistent_session_baseline() {
             "host memory after 24 hours of idle sessions",
         ],
     });
+    let mut document = document;
+    let comparison = compare(&document, &decisions);
+    document["comparison"] = json!({"text": comparison, "baseline": std::env::var_os("PANEFLOW_BENCH_BASELINE").map(|p| Path::new(&p).display().to_string())});
     let path = output_path();
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).unwrap();
-    }
-    std::fs::write(&path, serde_json::to_vec_pretty(&document).unwrap()).unwrap();
+    write_document(&path, &document);
     println!("result: {}", path.display());
-    compare(&document);
+    print!("{comparison}");
     assert_eq!(
         document["source_unchanged_during_measurement"], true,
         "source changed during measurement; result is not candidate-qualified"
     );
+    if let Err(failures) = verdict(&decisions, &prior) {
+        panic!(
+            "persistent-path thresholds failed; the artifact is retained at {}:\n{}",
+            path.display(),
+            failures.join("\n")
+        );
+    }
+}
+
+fn topology_label(worker: bool) -> &'static str {
+    if std::env::var_os("PANEFLOW_BENCH_DESKTOP").is_some() {
+        "host-worker-native-desktop"
+    } else if std::env::var_os("PANEFLOW_BENCH_NO_FOLLOWERS").is_some() {
+        if worker { "host-worker" } else { "host-only" }
+    } else if worker {
+        "host-worker-headless-followers"
+    } else {
+        "host-headless-followers"
+    }
 }

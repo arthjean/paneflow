@@ -3,7 +3,11 @@ param(
     [switch]$SetBaseline,
     [switch]$WithWorker,
     [switch]$WithDesktop,
-    [switch]$NoFollowers
+    [switch]$NoFollowers,
+    [switch]$Quick,
+    [switch]$SeedFailure,
+    [string]$Prior,
+    [string]$WorkerReplacement
 )
 
 $ErrorActionPreference = "Stop"
@@ -30,7 +34,7 @@ cargo build --release --locked -p paneflow-host
 if ($LASTEXITCODE -ne 0) {
     exit $LASTEXITCODE
 }
-if ($WithWorker -or $WithDesktop) {
+if ($WithWorker -or $WithDesktop -or $WorkerReplacement) {
     cargo build --release --locked -p paneflow-app
     if ($LASTEXITCODE -ne 0) {
         exit $LASTEXITCODE
@@ -49,19 +53,41 @@ if ($NoFollowers) {
 } else {
     Remove-Item Env:PANEFLOW_BENCH_NO_FOLLOWERS -ErrorAction SilentlyContinue
 }
+if ($Quick) {
+    $env:PANEFLOW_BENCH_QUICK = "1"
+} else {
+    Remove-Item Env:PANEFLOW_BENCH_QUICK -ErrorAction SilentlyContinue
+}
+if ($SeedFailure) {
+    $env:PANEFLOW_BENCH_SEED_FAILURE = "1"
+} else {
+    Remove-Item Env:PANEFLOW_BENCH_SEED_FAILURE -ErrorAction SilentlyContinue
+}
+if ($Prior) {
+    $env:PANEFLOW_BENCH_PRIOR_RESULT = $Prior
+} else {
+    Remove-Item Env:PANEFLOW_BENCH_PRIOR_RESULT -ErrorAction SilentlyContinue
+}
+if ($WorkerReplacement) {
+    $env:PANEFLOW_BENCH_CONTROLLER_REPLACEMENT = $WorkerReplacement
+} else {
+    Remove-Item Env:PANEFLOW_BENCH_CONTROLLER_REPLACEMENT -ErrorAction SilentlyContinue
+}
 
 cargo test --release --locked -p paneflow-host --test persistent_baseline `
     persistent_session_baseline `
     -- --ignored --exact --nocapture --test-threads=1
-if ($LASTEXITCODE -ne 0) {
-    exit $LASTEXITCODE
-}
+$status = $LASTEXITCODE
 
 if (-not (Test-Path $out)) {
     Write-Error "benchmark produced no result file: $out"
     exit 1
 }
 Write-Host "result: $out"
+if ($status -ne 0) {
+    Write-Error "persistent-path thresholds failed (exit $status); the artifact above is retained and a rerun must pass -Prior $out"
+    exit $status
+}
 if ($SetBaseline) {
     Copy-Item $out "bench/persistent-baseline.json" -Force
     Write-Host "baseline: bench/persistent-baseline.json now points at $sha"

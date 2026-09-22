@@ -458,6 +458,29 @@ fn the_fixture_modes_are_driven_through_the_real_host_ipc() {
                 )
             })
     }));
+    assert!(wait_until(Duration::from_secs(10), || {
+        client.text(&flood.manifest.session).is_ok()
+    }));
+    let final_text = client.text(&flood.manifest.session).unwrap();
+    assert!(
+        final_text.text.len() > 64 * 1024,
+        "the retained final text spans several control frames: {} bytes",
+        final_text.text.len()
+    );
+    assert!(
+        final_text.text.ends_with("fixture flood done\n")
+            || final_text.text.ends_with("fixture flood done")
+    );
+    assert!(final_text.available && final_text.complete && !final_text.live);
+    let single_frame = client
+        .call("session.text", json!({"session": flood.manifest.session}))
+        .unwrap();
+    assert!(single_frame["next_offset"].as_u64().is_some());
+    assert_eq!(
+        single_frame["total_bytes"].as_u64(),
+        Some(final_text.text.len() as u64)
+    );
+    assert!(client.inspect(&flood.manifest.session).is_ok());
 
     for session in [echo.manifest.session, split.manifest.session] {
         let _ = client.stop(&session, None);

@@ -59,8 +59,10 @@ The document records what a review needs to trust a number: commit, an FNV-1a
 fingerprint of the uncommitted diff, OS, architecture, CPU model, logical CPU
 count, RAM, rustc version, build profile, the terminal engine identity the
 host reported, the PTY implementation, the fixture invocation and the scenario
-list. The schema version is 2. Fingerprints include tracked and untracked
+list. The schema version is 3. Fingerprints include tracked and untracked
 source contents; controller executable identity is recorded when supplied.
+A fingerprint that changes between the start and the end of a run fails the
+run: the result is not candidate-qualified.
 `--with-worker` (`-WithWorker`) starts the existing `paneflow serve run` entry
 point and attributes its CPU separately. `--with-desktop` includes the worker
 and attributes native mirror, follower, and runtime threads separately from
@@ -110,7 +112,61 @@ scripts/bench-persistent.sh --with-worker  # existing worker plus headless attac
 scripts/bench-persistent.sh --with-desktop # native desktop restoration and per-process CPU
 scripts/bench-persistent.sh --no-followers # W01 host-only topology
 scripts/bench-persistent.sh --with-worker --no-followers # W01 host+worker topology
+scripts/bench-persistent.sh --quick        # smoke protocol: 5 s streams, 200 echo samples, 2 worker cycles
+scripts/bench-persistent.sh --worker-replacement <paneflow-exe> # W04 build replacement with that worker binary
+scripts/bench-persistent.sh --prior <result.json>  # rerun that keeps the earlier failures in the record
+scripts/bench-persistent.sh --seed-failure # proves a failed decision exits nonzero and retains the artifact
 ```
+
+### Workloads W02 to W08 and threshold decisions
+
+Schema 3 runs W02, W03, W04 (worker replacement), and W05 after the W01
+samples, in the same isolated home, and records a decision list under
+`thresholds`. W02 fills one session with `history 10000` (deterministic
+ANSI and Unicode lines), attaches ten times sequentially, ten times
+concurrently, then cycles 100 attach/detach rounds, and checks that the
+checkpoint bytes are identical every time and that the host reports zero
+staged checkpoint bytes afterwards (`NFR-09.attach_p95`,
+`NFR-09.concurrent_total`, `NFR-06.checkpoint_release`,
+`W02.content_equivalence`). W03 measures one 32 MiB flood through a follower,
+an echo probe at idle and while ten `stream` fixtures emit 1 MiB/s each, and
+per-stream fairness (`NFR-08.idle_p95`, `NFR-08.idle_p99`, `NFR-08.loaded_p95`,
+`NFR-08.throughput_ratio` against the matched baseline when one exists). W04
+kills and restarts the existing worker, or replaces its binary with
+`--worker-replacement`, while fixtures run, and checks that every child
+identity and generation survives (`NFR-11.worker_cycles`). W05 runs ten
+batches of fifty `flood 65536` sessions, waits for their exits, and checks
+that the host releases every runtime within five seconds, then compares
+resident memory, threads, and handles or file descriptors with the warmed
+baseline after quiescence (`NFR-04.runtime_release`, `NFR-04.reclaim_max_ms`,
+`NFR-05.memory_after_churn`, `NFR-05.memory_slope`, `NFR-05.threads`,
+`NFR-05.handles`). A batch that misses the reclaim budget records the
+runtimes still held and their inspected state. Fixture processes the run
+owned are listed with their kernel start time; the final `host.shutdown`
+must be acknowledged and the host process must exit within ten seconds
+(`NFR-12.host_shutdown`), and any fixture survivor after that fails
+`NFR-12.fixture_orphans`. A run that fails a threshold panics after writing
+its artifact, and a host that refused shutdown because of unresolved
+ownership stays alive on its private home by design: the artifact names it.
+
+W04 fault cases, W06 injected failures, and the W07 desktop entry points that
+live in the unit and integration suites are recorded as `automated_tests`
+with their test names; the W07 interactive cells and the W08 endurance run
+are recorded as `pending` with the runbook cell that supplies them. The full
+protocol (60 s streams, 1,000 echo samples, 60 s quiescence, ten worker
+cycles) is the default; `--quick` (`-Quick`) shortens every window for CI
+and rehearsals and labels the record `smoke`. Threads and handles are
+sampled on Windows and Linux; on macOS they are `pending`.
+
+Any failed decision makes the test exit nonzero after the artifact is
+written. `--prior` (`-Prior`) carries the failed decisions of an earlier
+artifact into `prior_failures` so a rerun cannot erase the first failure, and
+`--seed-failure` (`-SeedFailure`) injects one failing decision to prove that
+path; the non-ignored test
+`a_seeded_failure_fails_the_run_and_retains_its_artifact` proves it on every
+CI target. The workload inputs, thresholds, and the platform evidence they
+feed are frozen in
+[docs/release/persistent-qualification.md](../docs/release/persistent-qualification.md).
 
 ## Terminal suite
 

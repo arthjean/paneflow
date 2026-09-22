@@ -2,7 +2,7 @@ use std::io::{Read, Write};
 use std::process::{Command, ExitCode, Stdio};
 use std::time::Duration;
 
-const USAGE: &str = "paneflow-session-fixture <idle|echo|flood <bytes>|delayed-exit <ms> <code>|blocked-stdin|descendants <count> <parent-ms>|descendants-orphan <count> <parent-ms>|split-sequences>";
+const USAGE: &str = "paneflow-session-fixture <idle|echo|flood <bytes>|stream <bytes-per-second> <seconds>|history <lines>|delayed-exit <ms> <code>|blocked-stdin|descendants <count> <parent-ms>|descendants-orphan <count> <parent-ms>|split-sequences>";
 
 const FLOOD_CHUNK: &[u8] = b"0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ\r\n";
 
@@ -13,6 +13,11 @@ fn main() -> ExitCode {
         "idle" => idle(),
         "echo" => echo(),
         "flood" => flood(arg_u64(&args, 1).unwrap_or(1 << 20)),
+        "stream" => stream(
+            arg_u64(&args, 1).unwrap_or(1 << 20),
+            arg_u64(&args, 2).unwrap_or(60),
+        ),
+        "history" => history(arg_u64(&args, 1).unwrap_or(10_000)),
         "delayed-exit" => delayed_exit(
             arg_u64(&args, 1).unwrap_or(500),
             arg_u64(&args, 2).unwrap_or(0),
@@ -91,6 +96,55 @@ fn flood(bytes: u64) -> Result<(), u8> {
     }
     stdout.flush().map_err(|_| 3)?;
     announce("fixture flood done")
+}
+
+fn stream(bytes_per_second: u64, seconds: u64) -> Result<(), u8> {
+    announce("fixture stream")?;
+    let mut stdout = std::io::stdout().lock();
+    let started = std::time::Instant::now();
+    let total = Duration::from_secs(seconds);
+    let mut written = 0u64;
+    while started.elapsed() < total {
+        let due = (started.elapsed().as_secs_f64() * bytes_per_second as f64) as u64;
+        if written >= due {
+            std::thread::sleep(Duration::from_millis(2));
+            continue;
+        }
+        let take = usize::try_from(due - written)
+            .unwrap_or(FLOOD_CHUNK.len())
+            .min(FLOOD_CHUNK.len());
+        stdout.write_all(&FLOOD_CHUNK[..take]).map_err(|_| 3)?;
+        written += take as u64;
+        if written % (64 * 1024) < FLOOD_CHUNK.len() as u64 {
+            stdout.flush().map_err(|_| 3)?;
+        }
+    }
+    stdout.flush().map_err(|_| 3)?;
+    announce(&format!("fixture stream done {written}"))
+}
+
+fn history(lines: u64) -> Result<(), u8> {
+    let palette = ["31", "32", "33", "34", "35", "36"];
+    let words = [
+        "alpha", "beta", "gamma", "délta", "epsilon", "ζeta", "eta", "theta",
+    ];
+    {
+        let mut stdout = std::io::stdout().lock();
+        for index in 0..lines {
+            let color = palette[(index % palette.len() as u64) as usize];
+            let word = words[(index % words.len() as u64) as usize];
+            let line = format!(
+                "\x1b[{color}m{index:06}\x1b[0m {word} \x1b[1m{:08x}\x1b[22m ok\r\n",
+                index.wrapping_mul(0x9e37_79b9)
+            );
+            stdout.write_all(line.as_bytes()).map_err(|_| 3)?;
+        }
+        stdout.flush().map_err(|_| 3)?;
+    }
+    announce("fixture history done")?;
+    loop {
+        std::thread::sleep(Duration::from_secs(3600));
+    }
 }
 
 fn delayed_exit(milliseconds: u64, code: u64) -> Result<(), u8> {
