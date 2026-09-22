@@ -1325,7 +1325,6 @@ impl Session {
     }
 
     fn retire_engine(&mut self) {
-        self.writer = None;
         self.terminal = None;
         if self.completed {
             self.shared.inbox.close();
