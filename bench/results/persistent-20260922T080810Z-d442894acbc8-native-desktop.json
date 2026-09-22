@@ -1,0 +1,1974 @@
+{
+  "commit": "d442894acbc86039dceafc8eb7b2a380daa485c0",
+  "commit_short": null,
+  "controller": {
+    "bytes": 76106752,
+    "fnv1a64": "ffcfbf8a190a02a0",
+    "path": "C:\\dev\\paneflow\\target\\release\\paneflow.exe"
+  },
+  "diff": {
+    "bytes": 446960,
+    "dirty": true,
+    "fnv1a64": "ee47b728e251ffc7",
+    "untracked_paths": [
+      "bench/persistent-baseline.json",
+      "bench/results/persistent-20260921T213231Z-d442894acbc8.json",
+      "crates/paneflow-host/src/bin/paneflow-session-fixture.rs",
+      "crates/paneflow-host/tests/ownership_probes.rs",
+      "crates/paneflow-host/tests/persistent_baseline.rs",
+      "docs/persistent-sessions.md",
+      "scripts/bench-persistent.ps1",
+      "scripts/bench-persistent.sh"
+    ]
+  },
+  "engine": {
+    "api_version": "0.1.0",
+    "app_version": "1.3.2-dev+0c2a290d3",
+    "engine": "libghostty-vt",
+    "source_sha": "0c2a290d3a3e2a599be3a43435d778a5896667ee"
+  },
+  "executables": {
+    "fixture": {
+      "bytes": 244224,
+      "fnv1a64": "55b1a870b70827c3",
+      "path": "C:\\dev\\paneflow\\target\\release\\paneflow-session-fixture.exe"
+    },
+    "host": {
+      "bytes": 7964160,
+      "fnv1a64": "43dcaf6b27f59d2f",
+      "path": "C:\\dev\\paneflow\\target\\release\\paneflow-host.exe"
+    }
+  },
+  "faults": {
+    "paused_follower": {
+      "independent_inspect_ms": 0.0756,
+      "independent_reattach_ms": 0.1064,
+      "paused_ms": 300.6687,
+      "result": "pass",
+      "scope": "one follower pauses receipt; independent real IPC inspect and attachment complete; no queue-capacity claim",
+      "watchdog_s": 5
+    }
+  },
+  "host": {
+    "build_id": "0.16.0+0c2a290d3a3e",
+    "protocol": 1,
+    "version": "0.16.0"
+  },
+  "invocation": {
+    "args": [
+      "C:\\dev\\paneflow\\target\\release\\deps\\persistent_baseline-ae1e150e37928f34.exe",
+      "persistent_session_baseline",
+      "--ignored",
+      "--exact",
+      "--nocapture",
+      "--test-threads=1"
+    ],
+    "fixture": "C:\\dev\\paneflow\\target\\release\\paneflow-session-fixture.exe",
+    "fixture_mode": "idle",
+    "scenarios": [
+      0,
+      1,
+      10,
+      50
+    ],
+    "settle_s": 4.0,
+    "test": "persistent_session_baseline",
+    "window_s": 10.0
+  },
+  "machine": {
+    "arch": "x86_64",
+    "cpu_model": "AMD64 Family 25 Model 97 Stepping 2, AuthenticAMD",
+    "hostname_hash": "27c35a214898caba",
+    "logical_cpus": 16,
+    "os": "windows",
+    "os_build": "Microsoft Windows [version 10.0.26200.9457]",
+    "total_ram_bytes": 33459585024
+  },
+  "native_environments": {
+    "linux": false,
+    "macos": false,
+    "note": "false means pending, not passed",
+    "windows": true
+  },
+  "pty": "ConPTY via portable-pty 0.9",
+  "scenarios": [
+    {
+      "attach_ms": [],
+      "attachments": 0,
+      "checkpoint_bytes": [],
+      "create_all_ms": 0.0,
+      "create_per_session_ms": null,
+      "desktop_geometry": null,
+      "desktop_mirrors": {
+        "attribution": "exact thread names",
+        "cpu": {
+          "by_role_cpu_percent": {
+            "main": 0.46389772719209343,
+            "other": 0.6185303029227912
+          },
+          "by_thread_cpu_ns": {
+            "DManip Delegate Thread": 0,
+            "VSyncProvider": 46875000,
+            "async-io": 0,
+            "blocking-1": 0,
+            "linger pool (persist.)": 0,
+            "main": 46875000,
+            "notify-rs windows loop": 0,
+            "paneflow-ipc": 0,
+            "paneflow-worker-agents": 0,
+            "unnamed-10056": 0,
+            "unnamed-10152": 0,
+            "unnamed-10336": 0,
+            "unnamed-10456": 0,
+            "unnamed-10544": 0,
+            "unnamed-11116": 0,
+            "unnamed-12428": 0,
+            "unnamed-12584": 0,
+            "unnamed-12632": 0,
+            "unnamed-13240": 0,
+            "unnamed-13372": 0,
+            "unnamed-13460": 0,
+            "unnamed-16004": 0,
+            "unnamed-16488": 0,
+            "unnamed-17044": 0,
+            "unnamed-17412": 0,
+            "unnamed-18608": 0,
+            "unnamed-19068": 0,
+            "unnamed-20260": 0,
+            "unnamed-20696": 0,
+            "unnamed-21568": 0,
+            "unnamed-21676": 0,
+            "unnamed-22060": 15625000,
+            "unnamed-22336": 0,
+            "unnamed-23276": 0,
+            "unnamed-24096": 0,
+            "unnamed-2472": 0,
+            "unnamed-24744": 0,
+            "unnamed-24772": 0,
+            "unnamed-25128": 0,
+            "unnamed-25188": 0,
+            "unnamed-25192": 0,
+            "unnamed-25244": 0,
+            "unnamed-25284": 0,
+            "unnamed-25440": 0,
+            "unnamed-25524": 0,
+            "unnamed-25576": 0,
+            "unnamed-25624": 0,
+            "unnamed-26648": 0,
+            "unnamed-26680": 0,
+            "unnamed-26712": 0,
+            "unnamed-27504": 0,
+            "unnamed-27720": 0,
+            "unnamed-28084": 0,
+            "unnamed-28156": 0,
+            "unnamed-28280": 0,
+            "unnamed-28532": 0,
+            "unnamed-28928": 0,
+            "unnamed-29112": 0,
+            "unnamed-29304": 0,
+            "unnamed-29396": 0,
+            "unnamed-29500": 0,
+            "unnamed-29672": 0,
+            "unnamed-3460": 0,
+            "unnamed-4176": 0,
+            "unnamed-4480": 0,
+            "unnamed-5148": 0,
+            "unnamed-5224": 0,
+            "unnamed-5564": 0,
+            "unnamed-6936": 0,
+            "unnamed-7188": 0,
+            "unnamed-7284": 0,
+            "unnamed-7612": 0,
+            "unnamed-852": 0,
+            "unnamed-9144": 0,
+            "unnamed-9848": 0,
+            "unnamed-9980": 0
+          },
+          "total_cpu_percent": 1.0824280301148845
+        },
+        "pid": 22880,
+        "resident_bytes": 135880704
+      },
+      "desktop_panes_prepared": {
+        "all_80x24": true,
+        "elapsed_ms": 0.0019,
+        "panes": 0,
+        "preparation": "each pane focused once through existing IPC; first pane restored visible before sampling"
+      },
+      "desktop_restore": {
+        "proof": "every restored surface.read contains fixture idle",
+        "ready_ms": 452.08189999999996,
+        "surfaces": {
+          "pane_count": 0,
+          "surfaces": [],
+          "workspace": 0
+        }
+      },
+      "headless_follower_count": 0,
+      "headless_followers": {
+        "attribution": "exact thread names",
+        "cpu": {
+          "by_role_cpu_percent": {
+            "main": 0.0,
+            "other": 1.2370606058455824
+          },
+          "by_thread_cpu_ns": {
+            "linger pool (persist.)": 0,
+            "main": 0,
+            "persistent_session_baseline": 125000000,
+            "unnamed-13496": 0,
+            "unnamed-21592": 0,
+            "unnamed-9200": 0
+          },
+          "total_cpu_percent": 1.2370606058455824
+        },
+        "pid": 10424,
+        "resident_bytes": 6963200
+      },
+      "host": {
+        "attribution": "exact thread names",
+        "cpu": {
+          "by_role_cpu_percent": {
+            "host.cancellation_scan": 0.0,
+            "host.ipc_connection": 0.0,
+            "host.viewport_scan": 0.0,
+            "main": 0.0,
+            "other": 0.0
+          },
+          "by_thread_cpu_ns": {
+            "main": 0,
+            "paneflow-host-cancellation": 0,
+            "paneflow-host-conn": 0,
+            "paneflow-host-viewport": 0,
+            "unnamed-15236": 0,
+            "unnamed-17232": 0,
+            "unnamed-17456": 0
+          },
+          "total_cpu_percent": 0.0
+        },
+        "pid": 6140,
+        "resident_bytes": 9003008
+      },
+      "list_ms": 0.0533,
+      "observed_dimensions": [],
+      "sessions": 0,
+      "sessions_created": 0,
+      "window_s": 10.1045979,
+      "worker": {
+        "attribution": "exact thread names",
+        "cpu": {
+          "by_role_cpu_percent": {
+            "main": 0.0,
+            "other": 0.1546325757306978,
+            "worker.core_link": 0.0
+          },
+          "by_thread_cpu_ns": {
+            "linger pool (persist.)": 0,
+            "main": 0,
+            "paneflow-serve-accept": 0,
+            "paneflow-serve-conn": 15625000,
+            "paneflow-serve-core": 0,
+            "paneflow-serve-pump": 0,
+            "unnamed-16628": 0,
+            "unnamed-22076": 0,
+            "unnamed-24836": 0
+          },
+          "total_cpu_percent": 0.1546325757306978
+        },
+        "pid": 13080,
+        "resident_bytes": 15941632
+      }
+    },
+    {
+      "attach_ms": [],
+      "attachments": 1,
+      "checkpoint_bytes": [],
+      "create_all_ms": 13.0124,
+      "create_per_session_ms": 13.0124,
+      "desktop_geometry": {
+        "attempts": 5,
+        "elapsed_ms": 1517.1728,
+        "result": "80x24 observed",
+        "window_height": 672,
+        "window_width": 1150
+      },
+      "desktop_mirrors": {
+        "attribution": "exact thread names",
+        "cpu": {
+          "by_role_cpu_percent": {
+            "desktop.attached_runtime": 0.0,
+            "desktop.follower": 0.0,
+            "main": 0.308302118278248,
+            "other": 0.616604236556496
+          },
+          "by_thread_cpu_ns": {
+            "DManip Delegate Thread": 0,
+            "VSyncProvider": 62500000,
+            "async-io": 0,
+            "blocking-1": 0,
+            "blocking-2": 0,
+            "linger pool (persist.)": 0,
+            "main": 31250000,
+            "notify-rs windows loop": 0,
+            "paneflow-ghostty-attached": 0,
+            "paneflow-ghostty-follower": 0,
+            "paneflow-ipc": 0,
+            "paneflow-worker-agents": 0,
+            "unnamed-10468": 0,
+            "unnamed-10732": 0,
+            "unnamed-12660": 0,
+            "unnamed-13260": 0,
+            "unnamed-13592": 0,
+            "unnamed-13920": 0,
+            "unnamed-13948": 0,
+            "unnamed-15340": 0,
+            "unnamed-15780": 0,
+            "unnamed-17104": 0,
+            "unnamed-17608": 0,
+            "unnamed-20772": 0,
+            "unnamed-21072": 0,
+            "unnamed-21088": 0,
+            "unnamed-2272": 0,
+            "unnamed-22932": 0,
+            "unnamed-23000": 0,
+            "unnamed-23036": 0,
+            "unnamed-23268": 0,
+            "unnamed-23292": 0,
+            "unnamed-24028": 0,
+            "unnamed-24580": 0,
+            "unnamed-24616": 0,
+            "unnamed-25008": 0,
+            "unnamed-25124": 0,
+            "unnamed-25320": 0,
+            "unnamed-25348": 0,
+            "unnamed-25380": 0,
+            "unnamed-25384": 0,
+            "unnamed-25780": 0,
+            "unnamed-25984": 0,
+            "unnamed-26560": 0,
+            "unnamed-26996": 0,
+            "unnamed-27016": 0,
+            "unnamed-27032": 0,
+            "unnamed-27108": 0,
+            "unnamed-27188": 0,
+            "unnamed-27268": 0,
+            "unnamed-27288": 0,
+            "unnamed-27364": 0,
+            "unnamed-27616": 0,
+            "unnamed-27660": 0,
+            "unnamed-27796": 0,
+            "unnamed-28368": 0,
+            "unnamed-28400": 0,
+            "unnamed-28480": 0,
+            "unnamed-28556": 0,
+            "unnamed-28736": 0,
+            "unnamed-28804": 0,
+            "unnamed-28876": 0,
+            "unnamed-28904": 0,
+            "unnamed-28996": 0,
+            "unnamed-29324": 0,
+            "unnamed-29528": 0,
+            "unnamed-3916": 0,
+            "unnamed-4240": 0,
+            "unnamed-4676": 0,
+            "unnamed-4828": 0,
+            "unnamed-4964": 0,
+            "unnamed-5904": 0,
+            "unnamed-6260": 0,
+            "unnamed-6464": 0,
+            "unnamed-6576": 0,
+            "unnamed-7348": 0,
+            "unnamed-7812": 0,
+            "unnamed-8068": 0,
+            "unnamed-8624": 0
+          },
+          "total_cpu_percent": 0.924906354834744
+        },
+        "pid": 23444,
+        "resident_bytes": 140455936
+      },
+      "desktop_panes_prepared": {
+        "all_80x24": true,
+        "elapsed_ms": 57.109899999999996,
+        "panes": 1,
+        "preparation": "each pane focused once through existing IPC; first pane restored visible before sampling"
+      },
+      "desktop_restore": {
+        "proof": "every restored surface.read contains fixture idle",
+        "ready_ms": 395.51399999999995,
+        "surfaces": {
+          "pane_count": 1,
+          "surfaces": [
+            {
+              "cmd": null,
+              "cwd": "C:\\Users\\Arthur\\AppData\\Local\\Temp\\paneflow-ep001-baseline-f8f07c493bd04cb09ee88c729fb8f70f\\",
+              "name": "0344c010-718d-4283-9375-d5a54e06a764",
+              "scope": "workspace",
+              "surface_id": 4294967301,
+              "tab_id": 1,
+              "tab_title": "0344c010-718d-4283-9375-d5a54e06a764",
+              "title": "Terminal",
+              "workspace": 0,
+              "workspace_id": 1
+            }
+          ],
+          "workspace": 0
+        }
+      },
+      "headless_follower_count": 0,
+      "headless_followers": {
+        "attribution": "exact thread names",
+        "cpu": {
+          "by_role_cpu_percent": {
+            "main": 0.0,
+            "other": 1.233208473112992
+          },
+          "by_thread_cpu_ns": {
+            "linger pool (persist.)": 0,
+            "main": 0,
+            "persistent_session_baseline": 125000000
+          },
+          "total_cpu_percent": 1.233208473112992
+        },
+        "pid": 10424,
+        "resident_bytes": 7335936
+      },
+      "host": {
+        "attribution": "exact thread names",
+        "cpu": {
+          "by_role_cpu_percent": {
+            "host.cancellation_scan": 0.0,
+            "host.ipc_connection": 0.308302118278248,
+            "host.pty_reader": 0.0,
+            "host.pty_writer": 0.0,
+            "host.session": 1.387359532252116,
+            "host.viewport_scan": 0.924906354834744,
+            "main": 0.0,
+            "other": 0.0
+          },
+          "by_thread_cpu_ns": {
+            "main": 0,
+            "paneflow-host-cancellation": 0,
+            "paneflow-host-conn": 31250000,
+            "paneflow-host-pty-reader": 0,
+            "paneflow-host-pty-writer": 0,
+            "paneflow-host-session": 140625000,
+            "paneflow-host-viewport": 93750000,
+            "unnamed-15236": 0,
+            "unnamed-27136": 0,
+            "unnamed-4536": 0
+          },
+          "total_cpu_percent": 2.620568005365108
+        },
+        "pid": 6140,
+        "resident_bytes": 13635584
+      },
+      "list_ms": 0.0948,
+      "observed_dimensions": [
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "0344c010-718d-4283-9375-d5a54e06a764"
+        }
+      ],
+      "sessions": 1,
+      "sessions_created": 1,
+      "window_s": 10.1361613,
+      "worker": {
+        "attribution": "exact thread names",
+        "cpu": {
+          "by_role_cpu_percent": {
+            "main": 0.0,
+            "other": 0.154151059139124,
+            "worker.core_link": 0.0
+          },
+          "by_thread_cpu_ns": {
+            "linger pool (persist.)": 0,
+            "main": 0,
+            "paneflow-serve-accept": 0,
+            "paneflow-serve-conn": 15625000,
+            "paneflow-serve-core": 0,
+            "paneflow-serve-pump": 0,
+            "unnamed-14152": 0,
+            "unnamed-14832": 0,
+            "unnamed-16628": 0
+          },
+          "total_cpu_percent": 0.154151059139124
+        },
+        "pid": 13080,
+        "resident_bytes": 16547840
+      }
+    },
+    {
+      "attach_ms": [],
+      "attachments": 10,
+      "checkpoint_bytes": [],
+      "create_all_ms": 65.9144,
+      "create_per_session_ms": 7.323822222222223,
+      "desktop_geometry": {
+        "attempts": 5,
+        "elapsed_ms": 1516.3323,
+        "result": "80x24 observed",
+        "window_height": 672,
+        "window_width": 1150
+      },
+      "desktop_mirrors": {
+        "attribution": "exact thread names",
+        "cpu": {
+          "by_role_cpu_percent": {
+            "desktop.attached_runtime": 0.30886576189918935,
+            "desktop.follower": 0.0,
+            "main": 0.15443288094959468,
+            "other": 0.4632986428487841
+          },
+          "by_thread_cpu_ns": {
+            "DManip Delegate Thread": 0,
+            "VSyncProvider": 31250000,
+            "async-io": 15625000,
+            "blocking-1": 0,
+            "blocking-2": 0,
+            "linger pool (persist.)": 0,
+            "main": 15625000,
+            "notify-rs windows loop": 0,
+            "paneflow-ghostty-attached": 31250000,
+            "paneflow-ghostty-follower": 0,
+            "paneflow-ipc": 0,
+            "paneflow-worker-agents": 0,
+            "unnamed-10700": 0,
+            "unnamed-12188": 0,
+            "unnamed-12608": 0,
+            "unnamed-13016": 0,
+            "unnamed-13400": 0,
+            "unnamed-13716": 0,
+            "unnamed-14004": 0,
+            "unnamed-15092": 0,
+            "unnamed-15156": 0,
+            "unnamed-15456": 0,
+            "unnamed-16592": 0,
+            "unnamed-17144": 0,
+            "unnamed-21108": 0,
+            "unnamed-22024": 0,
+            "unnamed-22500": 0,
+            "unnamed-22548": 0,
+            "unnamed-2384": 0,
+            "unnamed-23904": 0,
+            "unnamed-24020": 0,
+            "unnamed-24664": 0,
+            "unnamed-24856": 0,
+            "unnamed-24904": 0,
+            "unnamed-25036": 0,
+            "unnamed-25056": 0,
+            "unnamed-25260": 0,
+            "unnamed-25268": 0,
+            "unnamed-25276": 0,
+            "unnamed-25308": 0,
+            "unnamed-25444": 0,
+            "unnamed-25688": 0,
+            "unnamed-25788": 0,
+            "unnamed-25832": 0,
+            "unnamed-25888": 0,
+            "unnamed-25956": 0,
+            "unnamed-25980": 0,
+            "unnamed-26048": 0,
+            "unnamed-26320": 0,
+            "unnamed-26516": 0,
+            "unnamed-26696": 0,
+            "unnamed-26816": 0,
+            "unnamed-26876": 0,
+            "unnamed-26928": 0,
+            "unnamed-26932": 0,
+            "unnamed-26960": 0,
+            "unnamed-26968": 0,
+            "unnamed-27332": 0,
+            "unnamed-27824": 0,
+            "unnamed-27956": 0,
+            "unnamed-27972": 0,
+            "unnamed-28008": 0,
+            "unnamed-28012": 0,
+            "unnamed-28024": 0,
+            "unnamed-28220": 0,
+            "unnamed-28252": 0,
+            "unnamed-28256": 0,
+            "unnamed-28336": 0,
+            "unnamed-28340": 0,
+            "unnamed-28428": 0,
+            "unnamed-28560": 0,
+            "unnamed-28696": 0,
+            "unnamed-28776": 0,
+            "unnamed-28824": 0,
+            "unnamed-29072": 0,
+            "unnamed-3180": 0,
+            "unnamed-3340": 0,
+            "unnamed-3544": 0,
+            "unnamed-4156": 0,
+            "unnamed-4368": 0,
+            "unnamed-4972": 0,
+            "unnamed-5004": 0,
+            "unnamed-5056": 0,
+            "unnamed-6632": 0,
+            "unnamed-6784": 0,
+            "unnamed-7016": 0,
+            "unnamed-7160": 0,
+            "unnamed-7800": 0
+          },
+          "total_cpu_percent": 0.9265972856975682
+        },
+        "pid": 6232,
+        "resident_bytes": 158547968
+      },
+      "desktop_panes_prepared": {
+        "all_80x24": true,
+        "elapsed_ms": 521.162,
+        "panes": 10,
+        "preparation": "each pane focused once through existing IPC; first pane restored visible before sampling"
+      },
+      "desktop_restore": {
+        "proof": "every restored surface.read contains fixture idle",
+        "ready_ms": 866.7145,
+        "surfaces": {
+          "pane_count": 10,
+          "surfaces": [
+            {
+              "cmd": null,
+              "cwd": "C:\\Users\\Arthur\\AppData\\Local\\Temp\\paneflow-ep001-baseline-f8f07c493bd04cb09ee88c729fb8f70f\\",
+              "name": "0344c010-718d-4283-9375-d5a54e06a764",
+              "scope": "workspace",
+              "surface_id": 4294967301,
+              "tab_id": 1,
+              "tab_title": "0344c010-718d-4283-9375-d5a54e06a764",
+              "title": "Terminal",
+              "workspace": 0,
+              "workspace_id": 1
+            },
+            {
+              "cmd": null,
+              "cwd": "C:\\Users\\Arthur\\AppData\\Local\\Temp\\paneflow-ep001-baseline-f8f07c493bd04cb09ee88c729fb8f70f\\",
+              "name": "86f902a5-96aa-473e-8f1e-58facc0def6e",
+              "scope": "workspace",
+              "surface_id": 4294967304,
+              "tab_id": 2,
+              "tab_title": "86f902a5-96aa-473e-8f1e-58facc0def6e",
+              "title": "Terminal",
+              "workspace": 0,
+              "workspace_id": 1
+            },
+            {
+              "cmd": null,
+              "cwd": "C:\\Users\\Arthur\\AppData\\Local\\Temp\\paneflow-ep001-baseline-f8f07c493bd04cb09ee88c729fb8f70f\\",
+              "name": "ce224e35-a75a-4c6e-a2dc-a950c83921c2",
+              "scope": "workspace",
+              "surface_id": 4294967307,
+              "tab_id": 3,
+              "tab_title": "ce224e35-a75a-4c6e-a2dc-a950c83921c2",
+              "title": "Terminal",
+              "workspace": 0,
+              "workspace_id": 1
+            },
+            {
+              "cmd": null,
+              "cwd": "C:\\Users\\Arthur\\AppData\\Local\\Temp\\paneflow-ep001-baseline-f8f07c493bd04cb09ee88c729fb8f70f\\",
+              "name": "95cddcab-a11c-45cd-8daf-5c5aeeead37f",
+              "scope": "workspace",
+              "surface_id": 4294967310,
+              "tab_id": 4,
+              "tab_title": "95cddcab-a11c-45cd-8daf-5c5aeeead37f",
+              "title": "Terminal",
+              "workspace": 0,
+              "workspace_id": 1
+            },
+            {
+              "cmd": null,
+              "cwd": "C:\\Users\\Arthur\\AppData\\Local\\Temp\\paneflow-ep001-baseline-f8f07c493bd04cb09ee88c729fb8f70f\\",
+              "name": "aff979d0-d471-433e-a604-002bf58ae922",
+              "scope": "workspace",
+              "surface_id": 4294967313,
+              "tab_id": 5,
+              "tab_title": "aff979d0-d471-433e-a604-002bf58ae922",
+              "title": "Terminal",
+              "workspace": 0,
+              "workspace_id": 1
+            },
+            {
+              "cmd": null,
+              "cwd": "C:\\Users\\Arthur\\AppData\\Local\\Temp\\paneflow-ep001-baseline-f8f07c493bd04cb09ee88c729fb8f70f\\",
+              "name": "ebef8b8b-bf08-4ac1-abed-ca46ba9d3f40",
+              "scope": "workspace",
+              "surface_id": 4294967316,
+              "tab_id": 6,
+              "tab_title": "ebef8b8b-bf08-4ac1-abed-ca46ba9d3f40",
+              "title": "Terminal",
+              "workspace": 0,
+              "workspace_id": 1
+            },
+            {
+              "cmd": null,
+              "cwd": "C:\\Users\\Arthur\\AppData\\Local\\Temp\\paneflow-ep001-baseline-f8f07c493bd04cb09ee88c729fb8f70f\\",
+              "name": "9bd50207-2adc-4267-ae9c-7232940e480e",
+              "scope": "workspace",
+              "surface_id": 4294967319,
+              "tab_id": 7,
+              "tab_title": "9bd50207-2adc-4267-ae9c-7232940e480e",
+              "title": "Terminal",
+              "workspace": 0,
+              "workspace_id": 1
+            },
+            {
+              "cmd": null,
+              "cwd": "C:\\Users\\Arthur\\AppData\\Local\\Temp\\paneflow-ep001-baseline-f8f07c493bd04cb09ee88c729fb8f70f\\",
+              "name": "3b1fe107-03fb-4afe-928e-a162d047e711",
+              "scope": "workspace",
+              "surface_id": 4294967322,
+              "tab_id": 8,
+              "tab_title": "3b1fe107-03fb-4afe-928e-a162d047e711",
+              "title": "Terminal",
+              "workspace": 0,
+              "workspace_id": 1
+            },
+            {
+              "cmd": null,
+              "cwd": "C:\\Users\\Arthur\\AppData\\Local\\Temp\\paneflow-ep001-baseline-f8f07c493bd04cb09ee88c729fb8f70f\\",
+              "name": "3ae8a16c-d94e-40e6-820c-15058d8868fa",
+              "scope": "workspace",
+              "surface_id": 4294967325,
+              "tab_id": 9,
+              "tab_title": "3ae8a16c-d94e-40e6-820c-15058d8868fa",
+              "title": "Terminal",
+              "workspace": 0,
+              "workspace_id": 1
+            },
+            {
+              "cmd": null,
+              "cwd": "C:\\Users\\Arthur\\AppData\\Local\\Temp\\paneflow-ep001-baseline-f8f07c493bd04cb09ee88c729fb8f70f\\",
+              "name": "78bbfb9a-7da1-4283-9d78-734cef3afe92",
+              "scope": "workspace",
+              "surface_id": 4294967328,
+              "tab_id": 10,
+              "tab_title": "78bbfb9a-7da1-4283-9d78-734cef3afe92",
+              "title": "Terminal",
+              "workspace": 0,
+              "workspace_id": 1
+            }
+          ],
+          "workspace": 0
+        }
+      },
+      "headless_follower_count": 0,
+      "headless_followers": {
+        "attribution": "exact thread names",
+        "cpu": {
+          "by_role_cpu_percent": {
+            "main": 0.0,
+            "other": 1.2354630475967574
+          },
+          "by_thread_cpu_ns": {
+            "linger pool (persist.)": 0,
+            "main": 0,
+            "persistent_session_baseline": 125000000
+          },
+          "total_cpu_percent": 1.2354630475967574
+        },
+        "pid": 10424,
+        "resident_bytes": 7417856
+      },
+      "host": {
+        "attribution": "exact thread names",
+        "cpu": {
+          "by_role_cpu_percent": {
+            "host.cancellation_scan": 0.0,
+            "host.ipc_connection": 0.9265972856975682,
+            "host.pty_reader": 0.0,
+            "host.pty_writer": 0.0,
+            "host.session": 11.891331833118791,
+            "host.viewport_scan": 6.486180999882977,
+            "main": 0.0,
+            "other": 0.0
+          },
+          "by_thread_cpu_ns": {
+            "main": 0,
+            "paneflow-host-cancellation": 0,
+            "paneflow-host-conn": 93750000,
+            "paneflow-host-pty-reader": 0,
+            "paneflow-host-pty-writer": 0,
+            "paneflow-host-session": 1203125000,
+            "paneflow-host-viewport": 656250000,
+            "unnamed-15236": 0,
+            "unnamed-27136": 0,
+            "unnamed-4536": 0
+          },
+          "total_cpu_percent": 19.304110118699334
+        },
+        "pid": 6140,
+        "resident_bytes": 16502784
+      },
+      "list_ms": 0.24889999999999998,
+      "observed_dimensions": [
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "0344c010-718d-4283-9375-d5a54e06a764"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "86f902a5-96aa-473e-8f1e-58facc0def6e"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "ce224e35-a75a-4c6e-a2dc-a950c83921c2"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "95cddcab-a11c-45cd-8daf-5c5aeeead37f"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "aff979d0-d471-433e-a604-002bf58ae922"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "ebef8b8b-bf08-4ac1-abed-ca46ba9d3f40"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "9bd50207-2adc-4267-ae9c-7232940e480e"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "3b1fe107-03fb-4afe-928e-a162d047e711"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "3ae8a16c-d94e-40e6-820c-15058d8868fa"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "78bbfb9a-7da1-4283-9d78-734cef3afe92"
+        }
+      ],
+      "sessions": 10,
+      "sessions_created": 9,
+      "window_s": 10.117664,
+      "worker": {
+        "attribution": "exact thread names",
+        "cpu": {
+          "by_role_cpu_percent": {
+            "main": 0.0,
+            "other": 0.0,
+            "worker.core_link": 0.0
+          },
+          "by_thread_cpu_ns": {
+            "linger pool (persist.)": 0,
+            "main": 0,
+            "paneflow-serve-accept": 0,
+            "paneflow-serve-conn": 0,
+            "paneflow-serve-core": 0,
+            "paneflow-serve-pump": 0,
+            "unnamed-14152": 0,
+            "unnamed-14832": 0,
+            "unnamed-16628": 0
+          },
+          "total_cpu_percent": 0.0
+        },
+        "pid": 13080,
+        "resident_bytes": 16834560
+      }
+    },
+    {
+      "attach_ms": [],
+      "attachments": 50,
+      "checkpoint_bytes": [],
+      "create_all_ms": 303.3785,
+      "create_per_session_ms": 7.584462499999999,
+      "desktop_geometry": {
+        "attempts": 5,
+        "elapsed_ms": 1516.0513,
+        "result": "80x24 observed",
+        "window_height": 672,
+        "window_width": 1150
+      },
+      "desktop_mirrors": {
+        "attribution": "exact thread names",
+        "cpu": {
+          "by_role_cpu_percent": {
+            "desktop.attached_runtime": 0.0,
+            "desktop.follower": 0.0,
+            "main": 1.0792952043936448,
+            "other": 0.7709251459954605
+          },
+          "by_thread_cpu_ns": {
+            "DManip Delegate Thread": 0,
+            "VSyncProvider": 15625000,
+            "async-io": 31250000,
+            "blocking-1": 0,
+            "blocking-2": 0,
+            "blocking-3": 0,
+            "linger pool (persist.)": 0,
+            "main": 109375000,
+            "notify-rs windows loop": 0,
+            "paneflow-ghostty-attached": 0,
+            "paneflow-ghostty-follower": 0,
+            "paneflow-ipc": 0,
+            "paneflow-worker-agents": 0,
+            "unnamed-1100": 0,
+            "unnamed-11456": 0,
+            "unnamed-11508": 0,
+            "unnamed-13832": 0,
+            "unnamed-14244": 0,
+            "unnamed-14968": 0,
+            "unnamed-15228": 0,
+            "unnamed-15464": 0,
+            "unnamed-16244": 0,
+            "unnamed-16480": 0,
+            "unnamed-16824": 0,
+            "unnamed-16872": 0,
+            "unnamed-17424": 0,
+            "unnamed-17692": 0,
+            "unnamed-18764": 0,
+            "unnamed-18844": 0,
+            "unnamed-18904": 0,
+            "unnamed-1964": 0,
+            "unnamed-19648": 0,
+            "unnamed-20440": 0,
+            "unnamed-21068": 0,
+            "unnamed-21564": 0,
+            "unnamed-21688": 0,
+            "unnamed-22428": 0,
+            "unnamed-22816": 0,
+            "unnamed-22880": 0,
+            "unnamed-22932": 0,
+            "unnamed-23292": 0,
+            "unnamed-23588": 0,
+            "unnamed-25076": 0,
+            "unnamed-25160": 0,
+            "unnamed-25220": 0,
+            "unnamed-25384": 0,
+            "unnamed-25672": 0,
+            "unnamed-25856": 0,
+            "unnamed-2612": 0,
+            "unnamed-26284": 0,
+            "unnamed-26292": 0,
+            "unnamed-26412": 15625000,
+            "unnamed-26500": 0,
+            "unnamed-26560": 0,
+            "unnamed-26740": 0,
+            "unnamed-26836": 0,
+            "unnamed-26868": 0,
+            "unnamed-27016": 0,
+            "unnamed-27088": 0,
+            "unnamed-27108": 0,
+            "unnamed-27188": 0,
+            "unnamed-27204": 0,
+            "unnamed-27288": 0,
+            "unnamed-27556": 15625000,
+            "unnamed-27576": 0,
+            "unnamed-27796": 0,
+            "unnamed-28264": 0,
+            "unnamed-28268": 0,
+            "unnamed-28288": 0,
+            "unnamed-28368": 0,
+            "unnamed-28400": 0,
+            "unnamed-28460": 0,
+            "unnamed-28464": 0,
+            "unnamed-28736": 0,
+            "unnamed-28904": 0,
+            "unnamed-28908": 0,
+            "unnamed-28996": 0,
+            "unnamed-29020": 0,
+            "unnamed-29192": 0,
+            "unnamed-29452": 0,
+            "unnamed-29528": 0,
+            "unnamed-3232": 0,
+            "unnamed-3640": 0,
+            "unnamed-4648": 0,
+            "unnamed-4828": 0,
+            "unnamed-4832": 0,
+            "unnamed-484": 0,
+            "unnamed-5132": 0,
+            "unnamed-5808": 0,
+            "unnamed-6260": 0,
+            "unnamed-6892": 0,
+            "unnamed-7008": 0,
+            "unnamed-7340": 0,
+            "unnamed-7920": 0,
+            "unnamed-8068": 0,
+            "unnamed-8624": 0,
+            "unnamed-8700": 0,
+            "unnamed-8776": 0,
+            "unnamed-9000": 0,
+            "unnamed-9484": 0
+          },
+          "total_cpu_percent": 1.8502203503891053
+        },
+        "pid": 14848,
+        "resident_bytes": 224018432
+      },
+      "desktop_panes_prepared": {
+        "all_80x24": true,
+        "elapsed_ms": 2631.544,
+        "panes": 50,
+        "preparation": "each pane focused once through existing IPC; first pane restored visible before sampling"
+      },
+      "desktop_restore": {
+        "proof": "every restored surface.read contains fixture idle",
+        "ready_ms": 2948.3806,
+        "surfaces": {
+          "pane_count": 32,
+          "surfaces": [
+            {
+              "cmd": null,
+              "cwd": "C:\\Users\\Arthur\\AppData\\Local\\Temp\\paneflow-ep001-baseline-f8f07c493bd04cb09ee88c729fb8f70f\\",
+              "name": "0344c010-718d-4283-9375-d5a54e06a764",
+              "scope": "workspace",
+              "surface_id": 4294967301,
+              "tab_id": 1,
+              "tab_title": "0344c010-718d-4283-9375-d5a54e06a764",
+              "title": "Terminal",
+              "workspace": 0,
+              "workspace_id": 1
+            },
+            {
+              "cmd": null,
+              "cwd": "C:\\Users\\Arthur\\AppData\\Local\\Temp\\paneflow-ep001-baseline-f8f07c493bd04cb09ee88c729fb8f70f\\",
+              "name": "86f902a5-96aa-473e-8f1e-58facc0def6e",
+              "scope": "workspace",
+              "surface_id": 4294967304,
+              "tab_id": 2,
+              "tab_title": "86f902a5-96aa-473e-8f1e-58facc0def6e",
+              "title": "Terminal",
+              "workspace": 0,
+              "workspace_id": 1
+            },
+            {
+              "cmd": null,
+              "cwd": "C:\\Users\\Arthur\\AppData\\Local\\Temp\\paneflow-ep001-baseline-f8f07c493bd04cb09ee88c729fb8f70f\\",
+              "name": "ce224e35-a75a-4c6e-a2dc-a950c83921c2",
+              "scope": "workspace",
+              "surface_id": 4294967307,
+              "tab_id": 3,
+              "tab_title": "ce224e35-a75a-4c6e-a2dc-a950c83921c2",
+              "title": "Terminal",
+              "workspace": 0,
+              "workspace_id": 1
+            },
+            {
+              "cmd": null,
+              "cwd": "C:\\Users\\Arthur\\AppData\\Local\\Temp\\paneflow-ep001-baseline-f8f07c493bd04cb09ee88c729fb8f70f\\",
+              "name": "95cddcab-a11c-45cd-8daf-5c5aeeead37f",
+              "scope": "workspace",
+              "surface_id": 4294967310,
+              "tab_id": 4,
+              "tab_title": "95cddcab-a11c-45cd-8daf-5c5aeeead37f",
+              "title": "Terminal",
+              "workspace": 0,
+              "workspace_id": 1
+            },
+            {
+              "cmd": null,
+              "cwd": "C:\\Users\\Arthur\\AppData\\Local\\Temp\\paneflow-ep001-baseline-f8f07c493bd04cb09ee88c729fb8f70f\\",
+              "name": "aff979d0-d471-433e-a604-002bf58ae922",
+              "scope": "workspace",
+              "surface_id": 4294967313,
+              "tab_id": 5,
+              "tab_title": "aff979d0-d471-433e-a604-002bf58ae922",
+              "title": "Terminal",
+              "workspace": 0,
+              "workspace_id": 1
+            },
+            {
+              "cmd": null,
+              "cwd": "C:\\Users\\Arthur\\AppData\\Local\\Temp\\paneflow-ep001-baseline-f8f07c493bd04cb09ee88c729fb8f70f\\",
+              "name": "ebef8b8b-bf08-4ac1-abed-ca46ba9d3f40",
+              "scope": "workspace",
+              "surface_id": 4294967316,
+              "tab_id": 6,
+              "tab_title": "ebef8b8b-bf08-4ac1-abed-ca46ba9d3f40",
+              "title": "Terminal",
+              "workspace": 0,
+              "workspace_id": 1
+            },
+            {
+              "cmd": null,
+              "cwd": "C:\\Users\\Arthur\\AppData\\Local\\Temp\\paneflow-ep001-baseline-f8f07c493bd04cb09ee88c729fb8f70f\\",
+              "name": "9bd50207-2adc-4267-ae9c-7232940e480e",
+              "scope": "workspace",
+              "surface_id": 4294967319,
+              "tab_id": 7,
+              "tab_title": "9bd50207-2adc-4267-ae9c-7232940e480e",
+              "title": "Terminal",
+              "workspace": 0,
+              "workspace_id": 1
+            },
+            {
+              "cmd": null,
+              "cwd": "C:\\Users\\Arthur\\AppData\\Local\\Temp\\paneflow-ep001-baseline-f8f07c493bd04cb09ee88c729fb8f70f\\",
+              "name": "3b1fe107-03fb-4afe-928e-a162d047e711",
+              "scope": "workspace",
+              "surface_id": 4294967322,
+              "tab_id": 8,
+              "tab_title": "3b1fe107-03fb-4afe-928e-a162d047e711",
+              "title": "Terminal",
+              "workspace": 0,
+              "workspace_id": 1
+            },
+            {
+              "cmd": null,
+              "cwd": "C:\\Users\\Arthur\\AppData\\Local\\Temp\\paneflow-ep001-baseline-f8f07c493bd04cb09ee88c729fb8f70f\\",
+              "name": "3ae8a16c-d94e-40e6-820c-15058d8868fa",
+              "scope": "workspace",
+              "surface_id": 4294967325,
+              "tab_id": 9,
+              "tab_title": "3ae8a16c-d94e-40e6-820c-15058d8868fa",
+              "title": "Terminal",
+              "workspace": 0,
+              "workspace_id": 1
+            },
+            {
+              "cmd": null,
+              "cwd": "C:\\Users\\Arthur\\AppData\\Local\\Temp\\paneflow-ep001-baseline-f8f07c493bd04cb09ee88c729fb8f70f\\",
+              "name": "78bbfb9a-7da1-4283-9d78-734cef3afe92",
+              "scope": "workspace",
+              "surface_id": 4294967328,
+              "tab_id": 10,
+              "tab_title": "78bbfb9a-7da1-4283-9d78-734cef3afe92",
+              "title": "Terminal",
+              "workspace": 0,
+              "workspace_id": 1
+            },
+            {
+              "cmd": null,
+              "cwd": "C:\\Users\\Arthur\\AppData\\Local\\Temp\\paneflow-ep001-baseline-f8f07c493bd04cb09ee88c729fb8f70f\\",
+              "name": "bd664a3f-bfbe-4ebb-ae6d-2e424d1b5bdf",
+              "scope": "workspace",
+              "surface_id": 4294967331,
+              "tab_id": 11,
+              "tab_title": "bd664a3f-bfbe-4ebb-ae6d-2e424d1b5bdf",
+              "title": "Terminal",
+              "workspace": 0,
+              "workspace_id": 1
+            },
+            {
+              "cmd": null,
+              "cwd": "C:\\Users\\Arthur\\AppData\\Local\\Temp\\paneflow-ep001-baseline-f8f07c493bd04cb09ee88c729fb8f70f\\",
+              "name": "5447694b-2182-4bda-93d6-6632413e9cd3",
+              "scope": "workspace",
+              "surface_id": 4294967334,
+              "tab_id": 12,
+              "tab_title": "5447694b-2182-4bda-93d6-6632413e9cd3",
+              "title": "Terminal",
+              "workspace": 0,
+              "workspace_id": 1
+            },
+            {
+              "cmd": null,
+              "cwd": "C:\\Users\\Arthur\\AppData\\Local\\Temp\\paneflow-ep001-baseline-f8f07c493bd04cb09ee88c729fb8f70f\\",
+              "name": "b76ecdfb-fc74-4c5d-8448-330c6ee03e20",
+              "scope": "workspace",
+              "surface_id": 4294967337,
+              "tab_id": 13,
+              "tab_title": "b76ecdfb-fc74-4c5d-8448-330c6ee03e20",
+              "title": "Terminal",
+              "workspace": 0,
+              "workspace_id": 1
+            },
+            {
+              "cmd": null,
+              "cwd": "C:\\Users\\Arthur\\AppData\\Local\\Temp\\paneflow-ep001-baseline-f8f07c493bd04cb09ee88c729fb8f70f\\",
+              "name": "f5a8d0e6-5f53-4cd4-a8aa-64fb52e910c8",
+              "scope": "workspace",
+              "surface_id": 4294967340,
+              "tab_id": 14,
+              "tab_title": "f5a8d0e6-5f53-4cd4-a8aa-64fb52e910c8",
+              "title": "Terminal",
+              "workspace": 0,
+              "workspace_id": 1
+            },
+            {
+              "cmd": null,
+              "cwd": "C:\\Users\\Arthur\\AppData\\Local\\Temp\\paneflow-ep001-baseline-f8f07c493bd04cb09ee88c729fb8f70f\\",
+              "name": "4b1020b6-d5d0-460c-8a4f-0dd736f17c28",
+              "scope": "workspace",
+              "surface_id": 4294967343,
+              "tab_id": 15,
+              "tab_title": "4b1020b6-d5d0-460c-8a4f-0dd736f17c28",
+              "title": "Terminal",
+              "workspace": 0,
+              "workspace_id": 1
+            },
+            {
+              "cmd": null,
+              "cwd": "C:\\Users\\Arthur\\AppData\\Local\\Temp\\paneflow-ep001-baseline-f8f07c493bd04cb09ee88c729fb8f70f\\",
+              "name": "c7ccc1a0-9e7c-48cb-b8ce-32cd444b238d",
+              "scope": "workspace",
+              "surface_id": 4294967346,
+              "tab_id": 16,
+              "tab_title": "c7ccc1a0-9e7c-48cb-b8ce-32cd444b238d",
+              "title": "Terminal",
+              "workspace": 0,
+              "workspace_id": 1
+            },
+            {
+              "cmd": null,
+              "cwd": "C:\\Users\\Arthur\\AppData\\Local\\Temp\\paneflow-ep001-baseline-f8f07c493bd04cb09ee88c729fb8f70f\\",
+              "name": "ced046ce-0c0f-4268-b124-d75a82ee587c",
+              "scope": "workspace",
+              "surface_id": 4294967349,
+              "tab_id": 17,
+              "tab_title": "ced046ce-0c0f-4268-b124-d75a82ee587c",
+              "title": "Terminal",
+              "workspace": 0,
+              "workspace_id": 1
+            },
+            {
+              "cmd": null,
+              "cwd": "C:\\Users\\Arthur\\AppData\\Local\\Temp\\paneflow-ep001-baseline-f8f07c493bd04cb09ee88c729fb8f70f\\",
+              "name": "92d042c2-7986-4439-8495-78eddd46498e",
+              "scope": "workspace",
+              "surface_id": 4294967352,
+              "tab_id": 18,
+              "tab_title": "92d042c2-7986-4439-8495-78eddd46498e",
+              "title": "Terminal",
+              "workspace": 0,
+              "workspace_id": 1
+            },
+            {
+              "cmd": null,
+              "cwd": "C:\\Users\\Arthur\\AppData\\Local\\Temp\\paneflow-ep001-baseline-f8f07c493bd04cb09ee88c729fb8f70f\\",
+              "name": "b5a3837a-5a54-47f2-ac78-40b344d998a2",
+              "scope": "workspace",
+              "surface_id": 4294967355,
+              "tab_id": 19,
+              "tab_title": "b5a3837a-5a54-47f2-ac78-40b344d998a2",
+              "title": "Terminal",
+              "workspace": 0,
+              "workspace_id": 1
+            },
+            {
+              "cmd": null,
+              "cwd": "C:\\Users\\Arthur\\AppData\\Local\\Temp\\paneflow-ep001-baseline-f8f07c493bd04cb09ee88c729fb8f70f\\",
+              "name": "69e5c3b1-4c62-4677-9d24-aa2b66e5e4d1",
+              "scope": "workspace",
+              "surface_id": 4294967358,
+              "tab_id": 20,
+              "tab_title": "69e5c3b1-4c62-4677-9d24-aa2b66e5e4d1",
+              "title": "Terminal",
+              "workspace": 0,
+              "workspace_id": 1
+            },
+            {
+              "cmd": null,
+              "cwd": "C:\\Users\\Arthur\\AppData\\Local\\Temp\\paneflow-ep001-baseline-f8f07c493bd04cb09ee88c729fb8f70f\\",
+              "name": "206c0d29-28bf-4406-b67c-e87fda4ab183",
+              "scope": "workspace",
+              "surface_id": 4294967361,
+              "tab_id": 21,
+              "tab_title": "206c0d29-28bf-4406-b67c-e87fda4ab183",
+              "title": "Terminal",
+              "workspace": 0,
+              "workspace_id": 1
+            },
+            {
+              "cmd": null,
+              "cwd": "C:\\Users\\Arthur\\AppData\\Local\\Temp\\paneflow-ep001-baseline-f8f07c493bd04cb09ee88c729fb8f70f\\",
+              "name": "0c59a074-786f-4125-b9f2-c76b6eb45856",
+              "scope": "workspace",
+              "surface_id": 4294967364,
+              "tab_id": 22,
+              "tab_title": "0c59a074-786f-4125-b9f2-c76b6eb45856",
+              "title": "Terminal",
+              "workspace": 0,
+              "workspace_id": 1
+            },
+            {
+              "cmd": null,
+              "cwd": "C:\\Users\\Arthur\\AppData\\Local\\Temp\\paneflow-ep001-baseline-f8f07c493bd04cb09ee88c729fb8f70f\\",
+              "name": "166bd82f-c264-45bd-ae14-82f1ca63a575",
+              "scope": "workspace",
+              "surface_id": 4294967367,
+              "tab_id": 23,
+              "tab_title": "166bd82f-c264-45bd-ae14-82f1ca63a575",
+              "title": "Terminal",
+              "workspace": 0,
+              "workspace_id": 1
+            },
+            {
+              "cmd": null,
+              "cwd": "C:\\Users\\Arthur\\AppData\\Local\\Temp\\paneflow-ep001-baseline-f8f07c493bd04cb09ee88c729fb8f70f\\",
+              "name": "148fc566-8eaf-48c2-89ba-64be8f2c0d05",
+              "scope": "workspace",
+              "surface_id": 4294967370,
+              "tab_id": 24,
+              "tab_title": "148fc566-8eaf-48c2-89ba-64be8f2c0d05",
+              "title": "Terminal",
+              "workspace": 0,
+              "workspace_id": 1
+            },
+            {
+              "cmd": null,
+              "cwd": "C:\\Users\\Arthur\\AppData\\Local\\Temp\\paneflow-ep001-baseline-f8f07c493bd04cb09ee88c729fb8f70f\\",
+              "name": "67285769-e7b6-4cce-968a-26557be23562",
+              "scope": "workspace",
+              "surface_id": 4294967373,
+              "tab_id": 25,
+              "tab_title": "67285769-e7b6-4cce-968a-26557be23562",
+              "title": "Terminal",
+              "workspace": 0,
+              "workspace_id": 1
+            },
+            {
+              "cmd": null,
+              "cwd": "C:\\Users\\Arthur\\AppData\\Local\\Temp\\paneflow-ep001-baseline-f8f07c493bd04cb09ee88c729fb8f70f\\",
+              "name": "9f926bba-45f6-47ef-8aeb-5918eff1760e",
+              "scope": "workspace",
+              "surface_id": 4294967376,
+              "tab_id": 26,
+              "tab_title": "9f926bba-45f6-47ef-8aeb-5918eff1760e",
+              "title": "Terminal",
+              "workspace": 0,
+              "workspace_id": 1
+            },
+            {
+              "cmd": null,
+              "cwd": "C:\\Users\\Arthur\\AppData\\Local\\Temp\\paneflow-ep001-baseline-f8f07c493bd04cb09ee88c729fb8f70f\\",
+              "name": "0ae88a77-1df1-477e-8dc9-49bf018e2781",
+              "scope": "workspace",
+              "surface_id": 4294967379,
+              "tab_id": 27,
+              "tab_title": "0ae88a77-1df1-477e-8dc9-49bf018e2781",
+              "title": "Terminal",
+              "workspace": 0,
+              "workspace_id": 1
+            },
+            {
+              "cmd": null,
+              "cwd": "C:\\Users\\Arthur\\AppData\\Local\\Temp\\paneflow-ep001-baseline-f8f07c493bd04cb09ee88c729fb8f70f\\",
+              "name": "c822062f-75d7-4585-9e0c-8c7af943e0a5",
+              "scope": "workspace",
+              "surface_id": 4294967382,
+              "tab_id": 28,
+              "tab_title": "c822062f-75d7-4585-9e0c-8c7af943e0a5",
+              "title": "Terminal",
+              "workspace": 0,
+              "workspace_id": 1
+            },
+            {
+              "cmd": null,
+              "cwd": null,
+              "name": "c0bae187-f3b5-4209-ae27-b89a91d6ef88",
+              "scope": "workspace",
+              "surface_id": 4294967385,
+              "tab_id": 29,
+              "tab_title": "c0bae187-f3b5-4209-ae27-b89a91d6ef88",
+              "title": "Terminal",
+              "workspace": 0,
+              "workspace_id": 1
+            },
+            {
+              "cmd": null,
+              "cwd": "C:\\Users\\Arthur\\AppData\\Local\\Temp\\paneflow-ep001-baseline-f8f07c493bd04cb09ee88c729fb8f70f\\",
+              "name": "603531f1-8dad-4578-ae70-afa8628dd594",
+              "scope": "workspace",
+              "surface_id": 4294967388,
+              "tab_id": 30,
+              "tab_title": "603531f1-8dad-4578-ae70-afa8628dd594",
+              "title": "Terminal",
+              "workspace": 0,
+              "workspace_id": 1
+            },
+            {
+              "cmd": null,
+              "cwd": "C:\\Users\\Arthur\\AppData\\Local\\Temp\\paneflow-ep001-baseline-f8f07c493bd04cb09ee88c729fb8f70f\\",
+              "name": "3175c405-ec67-43b8-aaa0-ac7c0397d598",
+              "scope": "workspace",
+              "surface_id": 4294967391,
+              "tab_id": 31,
+              "tab_title": "3175c405-ec67-43b8-aaa0-ac7c0397d598",
+              "title": "Terminal",
+              "workspace": 0,
+              "workspace_id": 1
+            },
+            {
+              "cmd": null,
+              "cwd": "C:\\Users\\Arthur\\AppData\\Local\\Temp\\paneflow-ep001-baseline-f8f07c493bd04cb09ee88c729fb8f70f\\",
+              "name": "c77db2c3-8818-44bd-b5da-3a6f430ed660",
+              "scope": "workspace",
+              "surface_id": 4294967394,
+              "tab_id": 32,
+              "tab_title": "c77db2c3-8818-44bd-b5da-3a6f430ed660",
+              "title": "Terminal",
+              "workspace": 0,
+              "workspace_id": 1
+            },
+            {
+              "cmd": null,
+              "cwd": "C:\\Users\\Arthur\\AppData\\Local\\Temp\\paneflow-ep001-baseline-f8f07c493bd04cb09ee88c729fb8f70f\\",
+              "name": "d4cca0e9-81f7-4990-90ba-5a8a3b16dfb4",
+              "scope": "workspace",
+              "surface_id": 4294967397,
+              "tab_id": 33,
+              "tab_title": "d4cca0e9-81f7-4990-90ba-5a8a3b16dfb4",
+              "title": "Terminal",
+              "workspace": 1,
+              "workspace_id": 2
+            },
+            {
+              "cmd": null,
+              "cwd": "C:\\Users\\Arthur\\AppData\\Local\\Temp\\paneflow-ep001-baseline-f8f07c493bd04cb09ee88c729fb8f70f\\",
+              "name": "ef222979-e5e3-4e19-b97f-0517cb904222",
+              "scope": "workspace",
+              "surface_id": 4294967400,
+              "tab_id": 34,
+              "tab_title": "ef222979-e5e3-4e19-b97f-0517cb904222",
+              "title": "Terminal",
+              "workspace": 1,
+              "workspace_id": 2
+            },
+            {
+              "cmd": null,
+              "cwd": "C:\\Users\\Arthur\\AppData\\Local\\Temp\\paneflow-ep001-baseline-f8f07c493bd04cb09ee88c729fb8f70f\\",
+              "name": "15cba5b9-9a47-4b5f-852d-f629e7cce22d",
+              "scope": "workspace",
+              "surface_id": 4294967403,
+              "tab_id": 35,
+              "tab_title": "15cba5b9-9a47-4b5f-852d-f629e7cce22d",
+              "title": "Terminal",
+              "workspace": 1,
+              "workspace_id": 2
+            },
+            {
+              "cmd": null,
+              "cwd": "C:\\Users\\Arthur\\AppData\\Local\\Temp\\paneflow-ep001-baseline-f8f07c493bd04cb09ee88c729fb8f70f\\",
+              "name": "9d331948-247e-47d0-9792-fbff4a0dede7",
+              "scope": "workspace",
+              "surface_id": 4294967406,
+              "tab_id": 36,
+              "tab_title": "9d331948-247e-47d0-9792-fbff4a0dede7",
+              "title": "Terminal",
+              "workspace": 1,
+              "workspace_id": 2
+            },
+            {
+              "cmd": null,
+              "cwd": "C:\\Users\\Arthur\\AppData\\Local\\Temp\\paneflow-ep001-baseline-f8f07c493bd04cb09ee88c729fb8f70f\\",
+              "name": "96073840-a59f-4c67-963c-4e86315a255a",
+              "scope": "workspace",
+              "surface_id": 4294967409,
+              "tab_id": 37,
+              "tab_title": "96073840-a59f-4c67-963c-4e86315a255a",
+              "title": "Terminal",
+              "workspace": 1,
+              "workspace_id": 2
+            },
+            {
+              "cmd": null,
+              "cwd": "C:\\Users\\Arthur\\AppData\\Local\\Temp\\paneflow-ep001-baseline-f8f07c493bd04cb09ee88c729fb8f70f\\",
+              "name": "eb66922a-f947-4984-b930-909bb582683e",
+              "scope": "workspace",
+              "surface_id": 4294967412,
+              "tab_id": 38,
+              "tab_title": "eb66922a-f947-4984-b930-909bb582683e",
+              "title": "Terminal",
+              "workspace": 1,
+              "workspace_id": 2
+            },
+            {
+              "cmd": null,
+              "cwd": "C:\\Users\\Arthur\\AppData\\Local\\Temp\\paneflow-ep001-baseline-f8f07c493bd04cb09ee88c729fb8f70f\\",
+              "name": "7d7c27db-7c92-41c5-ade5-75fd27aa97fe",
+              "scope": "workspace",
+              "surface_id": 4294967415,
+              "tab_id": 39,
+              "tab_title": "7d7c27db-7c92-41c5-ade5-75fd27aa97fe",
+              "title": "Terminal",
+              "workspace": 1,
+              "workspace_id": 2
+            },
+            {
+              "cmd": null,
+              "cwd": "C:\\Users\\Arthur\\AppData\\Local\\Temp\\paneflow-ep001-baseline-f8f07c493bd04cb09ee88c729fb8f70f\\",
+              "name": "a05052e0-566b-454f-a5a8-2d11db244bf8",
+              "scope": "workspace",
+              "surface_id": 4294967418,
+              "tab_id": 40,
+              "tab_title": "a05052e0-566b-454f-a5a8-2d11db244bf8",
+              "title": "Terminal",
+              "workspace": 1,
+              "workspace_id": 2
+            },
+            {
+              "cmd": null,
+              "cwd": "C:\\Users\\Arthur\\AppData\\Local\\Temp\\paneflow-ep001-baseline-f8f07c493bd04cb09ee88c729fb8f70f\\",
+              "name": "c98c397a-6976-4917-8fe5-97a00995d5a8",
+              "scope": "workspace",
+              "surface_id": 4294967421,
+              "tab_id": 41,
+              "tab_title": "c98c397a-6976-4917-8fe5-97a00995d5a8",
+              "title": "Terminal",
+              "workspace": 1,
+              "workspace_id": 2
+            },
+            {
+              "cmd": null,
+              "cwd": "C:\\Users\\Arthur\\AppData\\Local\\Temp\\paneflow-ep001-baseline-f8f07c493bd04cb09ee88c729fb8f70f\\",
+              "name": "fccd2f8d-41df-4839-a33e-72425583ef5c",
+              "scope": "workspace",
+              "surface_id": 4294967424,
+              "tab_id": 42,
+              "tab_title": "fccd2f8d-41df-4839-a33e-72425583ef5c",
+              "title": "Terminal",
+              "workspace": 1,
+              "workspace_id": 2
+            },
+            {
+              "cmd": null,
+              "cwd": "C:\\Users\\Arthur\\AppData\\Local\\Temp\\paneflow-ep001-baseline-f8f07c493bd04cb09ee88c729fb8f70f\\",
+              "name": "4eb44784-5469-4e77-88a7-b0f13845b042",
+              "scope": "workspace",
+              "surface_id": 4294967427,
+              "tab_id": 43,
+              "tab_title": "4eb44784-5469-4e77-88a7-b0f13845b042",
+              "title": "Terminal",
+              "workspace": 1,
+              "workspace_id": 2
+            },
+            {
+              "cmd": null,
+              "cwd": null,
+              "name": "de670895-bb2f-4a36-b06c-1686058ffb6c",
+              "scope": "workspace",
+              "surface_id": 4294967430,
+              "tab_id": 44,
+              "tab_title": "de670895-bb2f-4a36-b06c-1686058ffb6c",
+              "title": "Terminal",
+              "workspace": 1,
+              "workspace_id": 2
+            },
+            {
+              "cmd": null,
+              "cwd": null,
+              "name": "59fd8b1b-6b61-4d09-861c-5e9215685211",
+              "scope": "workspace",
+              "surface_id": 4294967433,
+              "tab_id": 45,
+              "tab_title": "59fd8b1b-6b61-4d09-861c-5e9215685211",
+              "title": "Terminal",
+              "workspace": 1,
+              "workspace_id": 2
+            },
+            {
+              "cmd": null,
+              "cwd": "C:\\Users\\Arthur\\AppData\\Local\\Temp\\paneflow-ep001-baseline-f8f07c493bd04cb09ee88c729fb8f70f\\",
+              "name": "33ebc1a6-464a-4a7b-9e50-85eeeb29c459",
+              "scope": "workspace",
+              "surface_id": 4294967436,
+              "tab_id": 46,
+              "tab_title": "33ebc1a6-464a-4a7b-9e50-85eeeb29c459",
+              "title": "Terminal",
+              "workspace": 1,
+              "workspace_id": 2
+            },
+            {
+              "cmd": null,
+              "cwd": "C:\\Users\\Arthur\\AppData\\Local\\Temp\\paneflow-ep001-baseline-f8f07c493bd04cb09ee88c729fb8f70f\\",
+              "name": "643f4b0a-86e5-49b0-888e-8880f672ec25",
+              "scope": "workspace",
+              "surface_id": 4294967439,
+              "tab_id": 47,
+              "tab_title": "643f4b0a-86e5-49b0-888e-8880f672ec25",
+              "title": "Terminal",
+              "workspace": 1,
+              "workspace_id": 2
+            },
+            {
+              "cmd": null,
+              "cwd": null,
+              "name": "c83d6a1f-e495-4f1f-b38c-9463cee3f641",
+              "scope": "workspace",
+              "surface_id": 4294967442,
+              "tab_id": 48,
+              "tab_title": "c83d6a1f-e495-4f1f-b38c-9463cee3f641",
+              "title": "Terminal",
+              "workspace": 1,
+              "workspace_id": 2
+            },
+            {
+              "cmd": null,
+              "cwd": null,
+              "name": "b49e7719-810c-4ea2-a4c2-b41992ec1fa9",
+              "scope": "workspace",
+              "surface_id": 4294967445,
+              "tab_id": 49,
+              "tab_title": "b49e7719-810c-4ea2-a4c2-b41992ec1fa9",
+              "title": "Terminal",
+              "workspace": 1,
+              "workspace_id": 2
+            },
+            {
+              "cmd": null,
+              "cwd": null,
+              "name": "11d51918-408b-4775-87bb-7531ca2f1f28",
+              "scope": "workspace",
+              "surface_id": 4294967448,
+              "tab_id": 50,
+              "tab_title": "11d51918-408b-4775-87bb-7531ca2f1f28",
+              "title": "Terminal",
+              "workspace": 1,
+              "workspace_id": 2
+            }
+          ],
+          "workspace": 0
+        }
+      },
+      "headless_follower_count": 0,
+      "headless_followers": {
+        "attribution": "exact thread names",
+        "cpu": {
+          "by_role_cpu_percent": {
+            "main": 0.0,
+            "other": 1.387665262791829
+          },
+          "by_thread_cpu_ns": {
+            "linger pool (persist.)": 0,
+            "main": 0,
+            "persistent_session_baseline": 140625000
+          },
+          "total_cpu_percent": 1.387665262791829
+        },
+        "pid": 10424,
+        "resident_bytes": 7958528
+      },
+      "host": {
+        "attribution": "exact thread names",
+        "cpu": {
+          "by_role_cpu_percent": {
+            "host.cancellation_scan": 0.0,
+            "host.ipc_connection": 8.480176605950065,
+            "host.pty_reader": 0.0,
+            "host.pty_writer": 0.0,
+            "host.session": 69.84581822718873,
+            "host.viewport_scan": 32.22467110261025,
+            "main": 0.0,
+            "other": 0.0
+          },
+          "by_thread_cpu_ns": {
+            "main": 0,
+            "paneflow-host-cancellation": 0,
+            "paneflow-host-conn": 859375000,
+            "paneflow-host-pty-reader": 0,
+            "paneflow-host-pty-writer": 0,
+            "paneflow-host-session": 7078125000,
+            "paneflow-host-viewport": 3265625000,
+            "unnamed-27136": 0,
+            "unnamed-4536": 0
+          },
+          "total_cpu_percent": 110.55066593574905
+        },
+        "pid": 6140,
+        "resident_bytes": 27660288
+      },
+      "list_ms": 1.1804999999999999,
+      "observed_dimensions": [
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "0344c010-718d-4283-9375-d5a54e06a764"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "86f902a5-96aa-473e-8f1e-58facc0def6e"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "ce224e35-a75a-4c6e-a2dc-a950c83921c2"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "95cddcab-a11c-45cd-8daf-5c5aeeead37f"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "aff979d0-d471-433e-a604-002bf58ae922"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "ebef8b8b-bf08-4ac1-abed-ca46ba9d3f40"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "9bd50207-2adc-4267-ae9c-7232940e480e"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "3b1fe107-03fb-4afe-928e-a162d047e711"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "3ae8a16c-d94e-40e6-820c-15058d8868fa"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "78bbfb9a-7da1-4283-9d78-734cef3afe92"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "bd664a3f-bfbe-4ebb-ae6d-2e424d1b5bdf"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "5447694b-2182-4bda-93d6-6632413e9cd3"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "b76ecdfb-fc74-4c5d-8448-330c6ee03e20"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "f5a8d0e6-5f53-4cd4-a8aa-64fb52e910c8"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "4b1020b6-d5d0-460c-8a4f-0dd736f17c28"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "c7ccc1a0-9e7c-48cb-b8ce-32cd444b238d"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "ced046ce-0c0f-4268-b124-d75a82ee587c"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "92d042c2-7986-4439-8495-78eddd46498e"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "b5a3837a-5a54-47f2-ac78-40b344d998a2"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "69e5c3b1-4c62-4677-9d24-aa2b66e5e4d1"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "206c0d29-28bf-4406-b67c-e87fda4ab183"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "0c59a074-786f-4125-b9f2-c76b6eb45856"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "166bd82f-c264-45bd-ae14-82f1ca63a575"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "148fc566-8eaf-48c2-89ba-64be8f2c0d05"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "67285769-e7b6-4cce-968a-26557be23562"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "9f926bba-45f6-47ef-8aeb-5918eff1760e"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "0ae88a77-1df1-477e-8dc9-49bf018e2781"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "c822062f-75d7-4585-9e0c-8c7af943e0a5"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "c0bae187-f3b5-4209-ae27-b89a91d6ef88"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "603531f1-8dad-4578-ae70-afa8628dd594"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "3175c405-ec67-43b8-aaa0-ac7c0397d598"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "c77db2c3-8818-44bd-b5da-3a6f430ed660"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "d4cca0e9-81f7-4990-90ba-5a8a3b16dfb4"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "ef222979-e5e3-4e19-b97f-0517cb904222"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "15cba5b9-9a47-4b5f-852d-f629e7cce22d"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "9d331948-247e-47d0-9792-fbff4a0dede7"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "96073840-a59f-4c67-963c-4e86315a255a"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "eb66922a-f947-4984-b930-909bb582683e"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "7d7c27db-7c92-41c5-ade5-75fd27aa97fe"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "a05052e0-566b-454f-a5a8-2d11db244bf8"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "c98c397a-6976-4917-8fe5-97a00995d5a8"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "fccd2f8d-41df-4839-a33e-72425583ef5c"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "4eb44784-5469-4e77-88a7-b0f13845b042"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "de670895-bb2f-4a36-b06c-1686058ffb6c"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "59fd8b1b-6b61-4d09-861c-5e9215685211"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "33ebc1a6-464a-4a7b-9e50-85eeeb29c459"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "643f4b0a-86e5-49b0-888e-8880f672ec25"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "c83d6a1f-e495-4f1f-b38c-9463cee3f641"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "b49e7719-810c-4ea2-a4c2-b41992ec1fa9"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "11d51918-408b-4775-87bb-7531ca2f1f28"
+        }
+      ],
+      "sessions": 50,
+      "sessions_created": 40,
+      "window_s": 10.1339281,
+      "worker": {
+        "attribution": "exact thread names",
+        "cpu": {
+          "by_role_cpu_percent": {
+            "main": 0.0,
+            "other": 0.1541850291990921,
+            "worker.core_link": 0.0
+          },
+          "by_thread_cpu_ns": {
+            "linger pool (persist.)": 0,
+            "main": 0,
+            "paneflow-serve-accept": 0,
+            "paneflow-serve-conn": 0,
+            "paneflow-serve-core": 0,
+            "paneflow-serve-pump": 15625000,
+            "unnamed-14152": 0,
+            "unnamed-14832": 0,
+            "unnamed-16628": 0
+          },
+          "total_cpu_percent": 0.1541850291990921
+        },
+        "pid": 13080,
+        "resident_bytes": 16711680
+      }
+    }
+  ],
+  "schema_version": 2,
+  "seed": null,
+  "seed_note": "the fixture is deterministic and the runner draws no random input",
+  "source_unchanged_during_measurement": true,
+  "stamp": "20260922T080810Z",
+  "suite": "paneflow-persistent-bench",
+  "toolchain": {
+    "profile": "release",
+    "rustc": "rustc 1.98.0 (88d9e12ae 2026-08-18)"
+  },
+  "topology": "host-worker-native-desktop",
+  "unmeasured": [
+    "keystroke to pixel latency of a hosted pane (needs the desktop; see scripts/bench-terminal)",
+    "reattach time after a desktop restart with 50 sessions",
+    "host memory after 24 hours of idle sessions"
+  ]
+}

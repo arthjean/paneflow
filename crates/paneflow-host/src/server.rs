@@ -16,9 +16,10 @@ use crate::manifest::now_ms;
 use crate::protocol::{
     self, ClientHello, DATA_CHUNK_RAW_BYTES, ERR_BUSY, ERR_CHECKPOINT_TOO_LARGE, ERR_DEADLINE,
     ERR_ENGINE_REQUIRED, ERR_FRAME_TOO_LARGE, ERR_GENERATION_MISMATCH, ERR_HANDSHAKE_REQUIRED,
-    ERR_INCOMPATIBLE, ERR_INTERNAL, ERR_INVALID_PARAMS, ERR_INVALID_REQUEST, ERR_METHOD_NOT_FOUND,
-    ERR_NO_CONTROLLER, ERR_OUTPUT_EVICTED, ERR_PARSE, ERR_PROCESS_UNVERIFIED, ERR_SESSION_LIVE,
-    ERR_SESSION_NOT_FOUND, ERR_SESSION_NOT_LIVE, ERR_SPAWN_FAILED, HOST_PROTOCOL_VERSION,
+    ERR_INCOMPATIBLE, ERR_INTERNAL, ERR_INVALID_PARAMS, ERR_INVALID_REQUEST, ERR_LAUNCH_PENDING,
+    ERR_METHOD_NOT_FOUND, ERR_NO_CONTROLLER, ERR_OUTPUT_EVICTED, ERR_OWNERSHIP_UNRESOLVED,
+    ERR_PARSE, ERR_PROCESS_UNVERIFIED, ERR_SESSION_LIVE, ERR_SESSION_NOT_FOUND,
+    ERR_SESSION_NOT_LIVE, ERR_SHUTTING_DOWN, ERR_SPAWN_FAILED, HOST_PROTOCOL_VERSION,
     METHOD_AGENT_EVENT, METHOD_AGENT_FOLLOW, METHOD_AGENT_SNAPSHOT, encode_data, error_envelope,
     result_envelope,
 };
@@ -70,9 +71,7 @@ impl ServerHandle {
 
     pub fn stop(mut self) -> io::Result<()> {
         self.shutdown.store(true, Ordering::Release);
-        if let Ok(name) = self.endpoint.as_path().to_fs_name::<GenericFilePath>() {
-            let _ = Stream::connect(name);
-        }
+        wake_accept_loop(&self.endpoint);
         match self.thread.take() {
             Some(thread) => thread
                 .join()
@@ -86,9 +85,7 @@ impl Drop for ServerHandle {
     fn drop(&mut self) {
         if let Some(thread) = self.thread.take() {
             self.shutdown.store(true, Ordering::Release);
-            if let Ok(name) = self.endpoint.as_path().to_fs_name::<GenericFilePath>() {
-                let _ = Stream::connect(name);
-            }
+            wake_accept_loop(&self.endpoint);
             let _ = thread.join();
         }
         #[cfg(unix)]
@@ -347,13 +344,31 @@ fn handle_connection(mut wire: Wire, host: Arc<SessionHost>, shutdown: Arc<Atomi
                     .and_then(Value::as_bool)
                     .unwrap_or(false);
                 let envelope = match host.request_shutdown(force) {
-                    Ok(ended) => result_envelope(
+                    Ok(report) => result_envelope(
                         &id,
                         json!({
                             "stopping": true,
                             "host_instance": host.instance(),
-                            "ended_sessions": ended.len(),
+                            "ended_sessions": report.ended.len(),
+                            "unresolved": report.unresolved,
                         }),
+                    ),
+                    Err(HostError::SessionsUnresolved { sessions }) => error_envelope(
+                        &id,
+                        ERR_OWNERSHIP_UNRESOLVED,
+                        HostError::SessionsUnresolved {
+                            sessions: sessions.clone(),
+                        }
+                        .to_string(),
+                        Some(
+                            json!({"unresolved": sessions, "owned_sessions": host.owned_sessions()}),
+                        ),
+                    ),
+                    Err(HostError::Storage(reason)) => error_envelope(
+                        &id,
+                        protocol::ERR_DURABILITY,
+                        reason,
+                        Some(json!({"owned_sessions": host.owned_sessions()})),
                     ),
                     Err(error) => {
                         let live = host.live_sessions();
@@ -372,6 +387,23 @@ fn handle_connection(mut wire: Wire, host: Arc<SessionHost>, shutdown: Arc<Atomi
                     wake_accept_loop(Path::new(&host.identity().endpoint));
                     return;
                 }
+                match written {
+                    Ok(()) => Flow::Continue,
+                    Err(_) => Flow::Close,
+                }
+            }
+            METHOD_AGENT_EVENT => {
+                let ingested = AgentEvent::from_params(&params)
+                    .map_err(DispatchError::Params)
+                    .and_then(|mut event| {
+                        event.received_at_ms = Some(now_ms());
+                        host.ingest_agent_event(&event).map_err(DispatchError::Host)
+                    });
+                let envelope = match ingested {
+                    Ok(outcome) => result_envelope(&id, outcome.ack),
+                    Err(error) => error_to_envelope(&id, error),
+                };
+                let written = wire.write_json(&envelope);
                 match written {
                     Ok(()) => Flow::Continue,
                     Err(_) => Flow::Close,
@@ -407,6 +439,16 @@ fn handle_connection(mut wire: Wire, host: Arc<SessionHost>, shutdown: Arc<Atomi
 }
 
 fn wake_accept_loop(endpoint: &Path) {
+    #[cfg(windows)]
+    {
+        use interprocess::ConnectWaitMode;
+        use interprocess::os::windows::named_pipe::{DuplexPipeStream, pipe_mode};
+        let _ = DuplexPipeStream::<pipe_mode::Bytes>::connect_by_path_with_wait_mode(
+            endpoint.as_os_str(),
+            ConnectWaitMode::Timeout(Duration::from_millis(250)),
+        );
+    }
+    #[cfg(not(windows))]
     if let Ok(name) = endpoint.to_fs_name::<GenericFilePath>() {
         let _ = Stream::connect(name);
     }
@@ -435,17 +477,12 @@ fn handshake(host: &SessionHost, params: &Value) -> Result<(Value, bool), (Strin
             serde_json::to_value(&incompatibility).unwrap_or(Value::Null),
         )
     })?;
-    protocol::check_build(&identity.version, hello.build.as_deref()).map_err(
-        |incompatibility| {
-            (
-                format!(
-                    "client {} was built from another Paneflow release: {incompatibility}",
-                    hello.client
-                ),
-                serde_json::to_value(&incompatibility).unwrap_or(Value::Null),
-            )
-        },
-    )?;
+    if let Some(drift) = protocol::build_drift(&identity.version, hello.build.as_deref()) {
+        log::info!(
+            "paneflow-host: client {} was built from another Paneflow release ({drift}); protocol and engine decide compatibility",
+            hello.client
+        );
+    }
     let offers_engine = hello.attaches();
     serde_json::to_value(identity)
         .map(|identity| (identity, offers_engine))
@@ -501,6 +538,16 @@ fn error_to_envelope(id: &Value, error: DispatchError) -> Value {
                 HostError::SessionLive(_) | HostError::SessionsLive { .. } => {
                     (ERR_SESSION_LIVE, None)
                 }
+                HostError::SessionsUnresolved { sessions } => (
+                    ERR_OWNERSHIP_UNRESOLVED,
+                    Some(json!({"unresolved": sessions})),
+                ),
+                HostError::LaunchPending(_) => (ERR_LAUNCH_PENDING, None),
+                HostError::OwnershipUnresolved { reason, .. } => {
+                    (ERR_OWNERSHIP_UNRESOLVED, Some(json!({"reason": reason})))
+                }
+                HostError::Busy(_) => (ERR_BUSY, None),
+                HostError::ShuttingDown => (ERR_SHUTTING_DOWN, None),
                 HostError::OwnerBusy(_) => (ERR_INTERNAL, None),
                 HostError::ProcessUnverified(_) => (ERR_PROCESS_UNVERIFIED, None),
                 HostError::SpawnFailed { .. } => (ERR_SPAWN_FAILED, None),
@@ -591,20 +638,6 @@ fn dispatch(host: &SessionHost, method: &str, params: &Value) -> Result<Value, D
                 .map_err(|e| DispatchError::Params(format!("invalid create request: {e}")))?;
             Ok(to_value(&host.create(request)?))
         }
-        "session.ensure" => {
-            let session = param_session(params)?;
-            let workspace = match params.get("workspace").and_then(Value::as_str) {
-                Some(raw) => Some(
-                    WorkspaceId::parse(raw).map_err(|e| DispatchError::Params(e.to_string()))?,
-                ),
-                None => None,
-            };
-            let cwd = params
-                .get("cwd")
-                .and_then(Value::as_str)
-                .map(str::to_string);
-            Ok(to_value(&host.ensure(session, workspace, cwd)?))
-        }
         "session.inspect" => {
             let session = param_session(params)?;
             Ok(to_value(&host.inspect(&session)?))
@@ -666,11 +699,6 @@ fn dispatch(host: &SessionHost, method: &str, params: &Value) -> Result<Value, D
             "host_instance": host.instance(),
             "sessions": host.agent_snapshot(),
         })),
-        METHOD_AGENT_EVENT => {
-            let mut event = AgentEvent::from_params(params).map_err(DispatchError::Params)?;
-            event.received_at_ms = Some(crate::manifest::now_ms());
-            Ok(host.ingest_agent_event(&event)?)
-        }
         _ => Err(DispatchError::MethodNotFound(method.to_string())),
     }
 }
@@ -994,6 +1022,59 @@ mod tests {
     }
 
     #[test]
+    fn an_unread_agent_ack_cannot_delay_notifications_or_reorder_parallel_connections() {
+        let (_home, host, server) = start();
+        let created = host
+            .create(serde_json::from_value(shell_create_params()).unwrap())
+            .unwrap();
+        let session = created.manifest.session;
+        let subscription = host.subscribe_agents();
+        let mut first = paneflow_ipc_client::host_control::HostControl::connect(
+            server.endpoint(),
+            "delayed-ack",
+        )
+        .unwrap();
+        let mut second =
+            HostClient::connect(server.endpoint(), &ClientHello::control("next-ack")).unwrap();
+        let params = json!({
+            "session": session,
+            "runtime_generation": 1,
+            "kind": "ai.prompt_submit",
+            "tool": "claude",
+            "emitted_at_ms": 10,
+            "hook_payload": {"hook_event_name": "UserPromptSubmit"},
+        });
+        first
+            .write_request(METHOD_AGENT_EVENT, params.clone())
+            .unwrap();
+        let initial = subscription
+            .frames
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap();
+        assert_eq!(initial["revision"], 1);
+        let mut next = params.clone();
+        next["emitted_at_ms"] = json!(11);
+        next["kind"] = json!("ai.stop");
+        next["hook_payload"]["hook_event_name"] = json!("Stop");
+        let ack = second.call(METHOD_AGENT_EVENT, next).unwrap();
+        assert_eq!(ack["revision"], 2);
+        assert_eq!(
+            subscription
+                .frames
+                .recv_timeout(Duration::from_secs(5))
+                .unwrap()["revision"],
+            2
+        );
+        drop(first);
+        let duplicate = second.call(METHOD_AGENT_EVENT, params).unwrap();
+        assert_eq!(duplicate["duplicate"], true);
+        assert_eq!(duplicate["revision"], 1);
+        assert!(subscription.frames.try_recv().is_err());
+        host.stop(&session, None).unwrap();
+        server.stop().unwrap();
+    }
+
+    #[test]
     fn a_client_handshakes_creates_attaches_streams_and_stops_over_the_endpoint() {
         let (_home, host, server) = start();
         let hello = ClientHello::local("paneflow-host-test");
@@ -1305,18 +1386,33 @@ mod tests {
         );
     }
 
+    #[cfg(windows)]
     #[test]
-    fn a_client_from_another_release_is_refused_while_control_clients_are_not() {
+    fn a_second_shutdown_wakeup_is_bounded_when_an_accepted_pipe_outlives_its_listener() {
+        let home = tempfile::tempdir().unwrap();
+        let endpoint = test_endpoint(home.path());
+        let listener = bind(&endpoint).unwrap();
+        let connected =
+            Stream::connect(endpoint.as_path().to_fs_name::<GenericFilePath>().unwrap()).unwrap();
+        let accepted = listener.accept().unwrap();
+        drop(listener);
+        let started = Instant::now();
+        wake_accept_loop(&endpoint);
+        assert!(started.elapsed() < Duration::from_secs(2));
+        drop(accepted);
+        drop(connected);
+    }
+
+    #[test]
+    fn a_client_from_another_release_attaches_when_protocol_and_engine_agree() {
         let (_home, _host, server) = start();
         let mut stale = ClientHello::local("paneflow-host-test");
         stale.build = Some("0.0.0-stale".to_string());
-        let refused = match HostClient::connect(server.endpoint(), &stale) {
-            Ok(_) => panic!("a desktop from another release must be refused"),
-            Err(error) => error,
-        };
+        let attached = HostClient::connect(server.endpoint(), &stale);
         assert!(
-            matches!(refused, HostClientError::Incompatible(_)),
-            "a desktop from another release is refused: {refused:?}"
+            attached.is_ok(),
+            "the build identity is diagnostic only; protocol and engine decide: {:?}",
+            attached.err()
         );
 
         let control = ClientHello::control("paneflow-host-test");

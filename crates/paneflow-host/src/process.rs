@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::io;
+#[cfg(windows)]
 use std::time::Duration;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -23,18 +24,21 @@ impl ProcessIdentity {
 
     pub fn verify(&self) -> ProcessVerdict {
         let Some(recorded) = self.started_at else {
-            return ProcessVerdict::Unverifiable;
+            return if process_is_absent(self.pid) {
+                ProcessVerdict::Gone
+            } else {
+                ProcessVerdict::Unverifiable
+            };
         };
         match process_start_time(self.pid) {
-            Some(observed) if observed == recorded => {
-                if process_is_running(self.pid) {
-                    ProcessVerdict::Live
-                } else {
-                    ProcessVerdict::Gone
-                }
-            }
+            Some(observed) if observed == recorded => match process_is_running(self.pid) {
+                Some(true) => ProcessVerdict::Live,
+                Some(false) => ProcessVerdict::Gone,
+                None => ProcessVerdict::Unverifiable,
+            },
             Some(_) => ProcessVerdict::Unverifiable,
-            None => ProcessVerdict::Gone,
+            None if process_is_absent(self.pid) => ProcessVerdict::Gone,
+            None => ProcessVerdict::Unverifiable,
         }
     }
 }
@@ -57,7 +61,37 @@ impl ProcessVerdict {
 }
 
 #[cfg(windows)]
-fn process_is_running(pid: u32) -> bool {
+fn process_is_absent(pid: u32) -> bool {
+    use windows_sys::Win32::Foundation::{CloseHandle, ERROR_INVALID_PARAMETER};
+    use windows_sys::Win32::System::Threading::{OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION};
+    let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
+    if handle.is_null() {
+        io::Error::last_os_error().raw_os_error() == Some(ERROR_INVALID_PARAMETER as i32)
+    } else {
+        unsafe {
+            CloseHandle(handle);
+        }
+        false
+    }
+}
+
+#[cfg(unix)]
+fn process_is_absent(pid: u32) -> bool {
+    let Ok(pid) = i32::try_from(pid) else {
+        return false;
+    };
+    pid > 0
+        && unsafe { libc::kill(pid, 0) } != 0
+        && io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH)
+}
+
+#[cfg(not(any(windows, unix)))]
+fn process_is_absent(_pid: u32) -> bool {
+    false
+}
+
+#[cfg(windows)]
+fn process_is_running(pid: u32) -> Option<bool> {
     use windows_sys::Win32::Foundation::{CloseHandle, STILL_ACTIVE};
     use windows_sys::Win32::System::Threading::{
         GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
@@ -65,31 +99,29 @@ fn process_is_running(pid: u32) -> bool {
 
     let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
     if handle.is_null() {
-        return false;
+        return None;
     }
     let mut code = 0u32;
     let ok = unsafe { GetExitCodeProcess(handle, &mut code) };
     unsafe { CloseHandle(handle) };
-    ok != 0 && code == STILL_ACTIVE as u32
+    (ok != 0).then_some(code == STILL_ACTIVE as u32)
 }
 
 #[cfg(target_os = "linux")]
-fn process_is_running(pid: u32) -> bool {
+fn process_is_running(pid: u32) -> Option<bool> {
     std::fs::read_to_string(format!("/proc/{pid}/stat"))
         .ok()
         .and_then(|stat| {
             stat.rsplit_once(')')
                 .and_then(|(_, rest)| rest.split_whitespace().next().map(str::to_owned))
         })
-        .is_some_and(|state| state != "Z" && state != "X")
+        .map(|state| state != "Z" && state != "X")
 }
 
 #[cfg(target_os = "macos")]
-fn process_is_running(pid: u32) -> bool {
+fn process_is_running(pid: u32) -> Option<bool> {
     let pid = i32::try_from(pid).ok().filter(|pid| *pid > 0);
-    let Some(pid) = pid else {
-        return false;
-    };
+    let pid = pid?;
     let mut info: libc::proc_bsdinfo = unsafe { std::mem::zeroed() };
     let size = std::mem::size_of::<libc::proc_bsdinfo>() as i32;
     let written = unsafe {
@@ -101,12 +133,12 @@ fn process_is_running(pid: u32) -> bool {
             size,
         )
     };
-    written == size && info.pbi_status != libc::SZOMB
+    (written == size).then_some(info.pbi_status != libc::SZOMB)
 }
 
 #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
-fn process_is_running(_pid: u32) -> bool {
-    false
+fn process_is_running(_pid: u32) -> Option<bool> {
+    None
 }
 
 #[cfg(windows)]
@@ -172,24 +204,314 @@ pub fn verified_process_group(child_pid: u32) -> Option<i32> {
 }
 
 #[cfg(unix)]
-pub const UNIX_SHUTDOWN_GRACE: Duration = Duration::from_millis(100);
+pub(crate) struct UnixProcessTreeOwner {
+    root: ProcessIdentity,
+    group: Option<i32>,
+    descendants: Vec<ProcessIdentity>,
+    snapshot_failed: bool,
+    #[cfg(target_os = "macos")]
+    root_reaped: bool,
+}
+
+#[cfg(target_os = "linux")]
+fn unix_process_entries() -> io::Result<Vec<(ProcessIdentity, u32, i32)>> {
+    let mut entries = Vec::new();
+    for entry in std::fs::read_dir("/proc")? {
+        let entry = entry?;
+        let Some(pid) = entry
+            .file_name()
+            .to_str()
+            .and_then(|name| name.parse::<u32>().ok())
+        else {
+            continue;
+        };
+        let stat = match std::fs::read_to_string(entry.path().join("stat")) {
+            Ok(stat) => stat,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(error),
+        };
+        let Some((_, stat)) = stat.rsplit_once(')') else {
+            continue;
+        };
+        let fields: Vec<_> = stat.split_whitespace().collect();
+        if fields.len() < 20 || fields[0] == "Z" || fields[0] == "X" {
+            continue;
+        }
+        if let (Ok(parent), Ok(group), Ok(started)) =
+            (fields[1].parse(), fields[2].parse(), fields[19].parse())
+        {
+            entries.push((
+                ProcessIdentity {
+                    pid,
+                    started_at: Some(started),
+                },
+                parent,
+                group,
+            ));
+        }
+    }
+    Ok(entries)
+}
+
+#[cfg(target_os = "macos")]
+fn unix_process_entries() -> io::Result<Vec<(ProcessIdentity, u32, i32)>> {
+    let bytes = unsafe { libc::proc_listpids(1, 0, std::ptr::null_mut(), 0) };
+    if bytes <= 0 {
+        return Err(io::Error::last_os_error());
+    }
+    let mut pids = vec![0i32; bytes as usize / std::mem::size_of::<i32>() + 1024];
+    let written = unsafe {
+        libc::proc_listpids(
+            1,
+            0,
+            pids.as_mut_ptr().cast(),
+            std::mem::size_of_val(pids.as_slice()) as i32,
+        )
+    };
+    if written <= 0 {
+        return Err(io::Error::last_os_error());
+    }
+    let mut entries = Vec::new();
+    for pid in pids
+        .into_iter()
+        .take(written as usize / std::mem::size_of::<i32>())
+        .filter(|pid| *pid > 0)
+    {
+        let mut info: libc::proc_bsdinfo = unsafe { std::mem::zeroed() };
+        let size = std::mem::size_of::<libc::proc_bsdinfo>() as i32;
+        let written = unsafe {
+            libc::proc_pidinfo(pid, libc::PROC_PIDTBSDINFO, 0, (&raw mut info).cast(), size)
+        };
+        if written == size && info.pbi_status != libc::SZOMB {
+            entries.push((
+                ProcessIdentity {
+                    pid: pid as u32,
+                    started_at: Some(
+                        info.pbi_start_tvsec.saturating_mul(1_000_000) + info.pbi_start_tvusec,
+                    ),
+                },
+                info.pbi_ppid,
+                info.pbi_pgid as i32,
+            ));
+        }
+    }
+    Ok(entries)
+}
 
 #[cfg(unix)]
-pub fn terminate_process_group(group: i32, grace: Duration) {
-    unsafe {
-        libc::kill(-group, libc::SIGTERM);
+impl UnixProcessTreeOwner {
+    pub(crate) fn new(root: ProcessIdentity) -> Self {
+        Self {
+            root,
+            group: verified_process_group(root.pid),
+            descendants: Vec::new(),
+            snapshot_failed: false,
+            #[cfg(target_os = "macos")]
+            root_reaped: false,
+        }
     }
-    let deadline = std::time::Instant::now() + grace;
-    while std::time::Instant::now() < deadline {
-        let group_exists = unsafe { libc::kill(-group, 0) == 0 }
-            || io::Error::last_os_error().raw_os_error() == Some(libc::EPERM);
-        if !group_exists {
+
+    pub(crate) fn root_is_running(&self) -> bool {
+        self.root.is_provably_live()
+    }
+
+    pub(crate) fn discover(&mut self) {
+        if self.root.pid == 0 || self.root.started_at.is_none() {
+            self.snapshot_failed = true;
             return;
         }
-        std::thread::sleep(Duration::from_millis(10));
+        let entries = match unix_process_entries() {
+            Ok(entries) => entries,
+            Err(_) => {
+                self.snapshot_failed = true;
+                return;
+            }
+        };
+        self.snapshot_failed = false;
+        let root_retained = self.root.started_at.is_some()
+            && process_start_time(self.root.pid) == self.root.started_at;
+        let group_retained = root_retained
+            || self.descendants.iter().any(|known| {
+                known.verify() == ProcessVerdict::Live
+                    && self.group == Some(unsafe { libc::getpgid(known.pid as i32) })
+            });
+        if !group_retained {
+            self.group = None;
+        }
+        loop {
+            let before = self.descendants.len();
+            for (identity, parent, group) in &entries {
+                if identity.pid == self.root.pid || self.descendants.contains(identity) {
+                    continue;
+                }
+                let related = (root_retained && *parent == self.root.pid)
+                    || self.group == Some(*group)
+                    || self.descendants.iter().any(|known| {
+                        known.pid == *parent && known.verify() == ProcessVerdict::Live
+                    });
+                if related
+                    && !matches!((self.root.started_at, identity.started_at), (Some(root), Some(child)) if child < root)
+                {
+                    self.descendants.push(*identity);
+                }
+            }
+            if self.descendants.len() == before {
+                break;
+            }
+        }
+        if self.root.verify() == ProcessVerdict::Gone
+            && !entries
+                .iter()
+                .any(|(_, _, group)| self.group == Some(*group))
+        {
+            self.group = None;
+        }
     }
-    unsafe {
-        libc::kill(-group, libc::SIGKILL);
+
+    pub(crate) fn unresolved(&mut self) -> usize {
+        self.descendants
+            .retain(|identity| identity.verify() != ProcessVerdict::Gone);
+        self.descendants.len() + usize::from(self.snapshot_failed)
+    }
+
+    #[cfg(target_os = "macos")]
+    pub(crate) fn root_reaped(&mut self) {
+        self.root_reaped = true;
+    }
+
+    pub(crate) fn signal(&mut self, force: bool) {
+        self.discover();
+        let signal = if force { libc::SIGKILL } else { libc::SIGTERM };
+        for identity in self
+            .descendants
+            .iter()
+            .rev()
+            .chain(std::iter::once(&self.root))
+        {
+            if identity.verify() == ProcessVerdict::Live {
+                #[cfg(target_os = "linux")]
+                signal_verified_unix(*identity, signal);
+                #[cfg(target_os = "macos")]
+                if *identity == self.root && !self.root_reaped {
+                    if unsafe { libc::kill(identity.pid as i32, signal) } != 0 {
+                        log::warn!(
+                            "paneflow-host: retained root pid={} signal failed: {}",
+                            identity.pid,
+                            io::Error::last_os_error()
+                        );
+                    }
+                } else if let Err(error) =
+                    MacSignalTarget::acquire(*identity).and_then(|target| target.signal(signal))
+                {
+                    log::warn!(
+                        "paneflow-host: descendant pid={} signal is unresolved: {error}",
+                        identity.pid
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn signal_verified_unix(identity: ProcessIdentity, signal: i32) {
+    use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+    let fd = unsafe { libc::syscall(libc::SYS_pidfd_open, identity.pid, 0) };
+    if fd < 0 {
+        return;
+    }
+    let handle = unsafe { OwnedFd::from_raw_fd(fd as i32) };
+    if identity.verify() == ProcessVerdict::Live {
+        unsafe {
+            libc::syscall(
+                libc::SYS_pidfd_send_signal,
+                handle.as_raw_fd(),
+                signal,
+                std::ptr::null::<libc::siginfo_t>(),
+                0,
+            );
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+#[repr(C)]
+struct MacProcessUniqueInfo {
+    uuid: [u8; 16],
+    unique_id: u64,
+    parent_unique_id: u64,
+    pid_version: i32,
+    reserved: [u32; 5],
+}
+
+#[cfg(target_os = "macos")]
+#[repr(C)]
+struct MacProcessBsdUniqueInfo {
+    bsd: libc::proc_bsdinfo,
+    unique: MacProcessUniqueInfo,
+}
+
+#[cfg(target_os = "macos")]
+struct MacSignalTarget {
+    audit_token: [u32; 8],
+}
+
+#[cfg(target_os = "macos")]
+impl MacSignalTarget {
+    fn acquire(identity: ProcessIdentity) -> io::Result<Self> {
+        const PROC_PIDT_BSDINFOWITHUNIQID: i32 = 18;
+        let pid = i32::try_from(identity.pid)
+            .ok()
+            .filter(|pid| *pid > 0)
+            .ok_or_else(|| io::Error::from_raw_os_error(libc::EINVAL))?;
+        let mut info: MacProcessBsdUniqueInfo = unsafe { std::mem::zeroed() };
+        let size = std::mem::size_of::<MacProcessBsdUniqueInfo>() as i32;
+        let written = unsafe {
+            libc::proc_pidinfo(
+                pid,
+                PROC_PIDT_BSDINFOWITHUNIQID,
+                0,
+                (&raw mut info).cast(),
+                size,
+            )
+        };
+        if written != size {
+            return Err(io::Error::last_os_error());
+        }
+        let started_at =
+            info.bsd.pbi_start_tvsec.saturating_mul(1_000_000) + info.bsd.pbi_start_tvusec;
+        if info.bsd.pbi_pid != identity.pid
+            || identity.started_at != Some(started_at)
+            || info.bsd.pbi_status == libc::SZOMB
+        {
+            return Err(io::Error::from_raw_os_error(libc::ESRCH));
+        }
+        let mut audit_token = [0; 8];
+        audit_token[5] = identity.pid;
+        audit_token[7] = info.unique.pid_version as u32;
+        Ok(Self { audit_token })
+    }
+
+    fn signal(&self, signal: i32) -> io::Result<()> {
+        type SignalWithAuditToken = unsafe extern "C" fn(*const [u32; 8], i32) -> i32;
+        static SIGNAL: std::sync::OnceLock<Option<SignalWithAuditToken>> =
+            std::sync::OnceLock::new();
+        let signal_with_token = SIGNAL
+            .get_or_init(|| {
+                let address = unsafe {
+                    libc::dlsym(libc::RTLD_DEFAULT, c"proc_signal_with_audittoken".as_ptr())
+                };
+                (!address.is_null()).then(|| unsafe {
+                    std::mem::transmute::<*mut libc::c_void, SignalWithAuditToken>(address)
+                })
+            })
+            .ok_or_else(|| io::Error::from_raw_os_error(libc::ENOSYS))?;
+        let status = unsafe { signal_with_token(&raw const self.audit_token, signal) };
+        if status == 0 {
+            Ok(())
+        } else {
+            Err(io::Error::from_raw_os_error(status))
+        }
     }
 }
 
@@ -264,7 +586,7 @@ fn windows_process_entries() -> io::Result<Vec<(u32, u32)>> {
         .collect())
 }
 
-#[cfg(windows)]
+#[cfg(all(windows, test))]
 fn windows_descendants_postorder(root_pid: u32, entries: &[(u32, u32)]) -> Vec<u32> {
     fn visit(
         pid: u32,
@@ -294,7 +616,7 @@ fn windows_descendants_postorder(root_pid: u32, entries: &[(u32, u32)]) -> Vec<u
     out
 }
 
-#[cfg(windows)]
+#[cfg(all(windows, test))]
 fn windows_process_tree_targets(
     root_pid: u32,
     entries: &[(u32, u32)],
@@ -316,159 +638,215 @@ fn windows_wait_timeout_ms(remaining: Duration) -> Option<u32> {
 
 #[cfg(windows)]
 struct WindowsTerminationHandle {
-    pid: u32,
-    handle: windows_sys::Win32::Foundation::HANDLE,
+    identity: ProcessIdentity,
+    handle: std::os::windows::io::OwnedHandle,
 }
 
 #[cfg(windows)]
-impl Drop for WindowsTerminationHandle {
-    fn drop(&mut self) {
-        unsafe {
-            windows_sys::Win32::Foundation::CloseHandle(self.handle);
-        }
-    }
-}
-
-#[cfg(windows)]
-fn request_windows_pid_termination(
-    pid: u32,
-    result: &mut WindowsProcessTreeTerminationResult,
-) -> Option<WindowsTerminationHandle> {
-    use windows_sys::Win32::Foundation::{WAIT_FAILED, WAIT_OBJECT_0, WAIT_TIMEOUT};
-    use windows_sys::Win32::System::Threading::{
-        OpenProcess, PROCESS_TERMINATE, TerminateProcess, WaitForSingleObject,
-    };
-    const SYNCHRONIZE: u32 = 0x0010_0000;
-
-    let handle = unsafe { OpenProcess(PROCESS_TERMINATE | SYNCHRONIZE, 0, pid) };
-    if handle.is_null() {
-        let os_error = io::Error::last_os_error().raw_os_error();
-        result.failures = result.failures.saturating_add(1);
-        log::debug!(
-            "paneflow-host: process cleanup could not open pid={pid} (os_error={os_error:?})"
-        );
-        return None;
-    }
-    let process = WindowsTerminationHandle { pid, handle };
-
-    match unsafe { WaitForSingleObject(process.handle, 0) } {
-        WAIT_OBJECT_0 => {
-            result.already_exited = result.already_exited.saturating_add(1);
-            return None;
-        }
-        WAIT_TIMEOUT => {}
-        WAIT_FAILED => {
-            let os_error = io::Error::last_os_error().raw_os_error();
-            result.failures = result.failures.saturating_add(1);
-            log::warn!(
-                "paneflow-host: process cleanup precheck failed for pid={pid} (os_error={os_error:?})"
-            );
-        }
-        status => {
-            result.failures = result.failures.saturating_add(1);
-            log::warn!(
-                "paneflow-host: process cleanup precheck returned status={status:#x} for pid={pid}"
-            );
-        }
-    }
-
-    if unsafe { TerminateProcess(process.handle, 1) } == 0 {
-        let terminate_error = io::Error::last_os_error().raw_os_error();
-        let exited = unsafe { WaitForSingleObject(process.handle, 0) } == WAIT_OBJECT_0;
-        if exited {
-            result.already_exited = result.already_exited.saturating_add(1);
-        } else {
-            result.failures = result.failures.saturating_add(1);
-            log::debug!(
-                "paneflow-host: process cleanup could not terminate pid={pid} (os_error={terminate_error:?})"
-            );
-        }
-        return None;
-    }
-
-    result.terminate_requested = result.terminate_requested.saturating_add(1);
-    Some(process)
-}
-
-#[cfg(windows)]
-fn wait_for_windows_terminations(
-    handles: Vec<WindowsTerminationHandle>,
-    deadline: std::time::Instant,
-    result: &mut WindowsProcessTreeTerminationResult,
-) {
-    use windows_sys::Win32::Foundation::{WAIT_FAILED, WAIT_OBJECT_0, WAIT_TIMEOUT};
-    use windows_sys::Win32::System::Threading::WaitForSingleObject;
-
-    if handles.is_empty() {
-        return;
-    }
-
-    let remaining = deadline.saturating_duration_since(std::time::Instant::now());
-    if windows_wait_timeout_ms(remaining).is_none() {
-        result.deadline_exhausted = true;
-        result.timed_out = result.timed_out.saturating_add(handles.len());
-        return;
-    }
-
-    let mut pending = Vec::with_capacity(handles.len());
-    for process in handles {
-        match unsafe { WaitForSingleObject(process.handle, 0) } {
-            WAIT_OBJECT_0 => {}
-            WAIT_TIMEOUT => pending.push(process),
-            WAIT_FAILED => {
-                let os_error = io::Error::last_os_error().raw_os_error();
-                result.failures = result.failures.saturating_add(1);
-                log::warn!(
-                    "paneflow-host: process cleanup wait failed for pid={} (os_error={os_error:?})",
-                    process.pid
-                );
-            }
-            status => {
-                result.failures = result.failures.saturating_add(1);
-                log::warn!(
-                    "paneflow-host: process cleanup wait returned status={status:#x} for pid={}",
-                    process.pid
-                );
-            }
-        }
-    }
-
-    let pending_count = pending.len();
-    for (index, process) in pending.into_iter().enumerate() {
-        let remaining = deadline.saturating_duration_since(std::time::Instant::now());
-        let Some(timeout_ms) = windows_wait_timeout_ms(remaining) else {
-            result.deadline_exhausted = true;
-            result.timed_out = result
-                .timed_out
-                .saturating_add(pending_count.saturating_sub(index));
-            break;
+impl WindowsTerminationHandle {
+    fn open(identity: ProcessIdentity) -> io::Result<Self> {
+        use std::os::windows::io::FromRawHandle;
+        use windows_sys::Win32::System::Threading::{
+            OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_TERMINATE,
         };
+        let handle = unsafe {
+            OpenProcess(
+                PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_TERMINATE | 0x0010_0000,
+                0,
+                identity.pid,
+            )
+        };
+        if handle.is_null() {
+            return Err(io::Error::last_os_error());
+        }
+        let handle = unsafe { std::os::windows::io::OwnedHandle::from_raw_handle(handle) };
+        let process = Self { identity, handle };
+        if process.started_at() != identity.started_at || identity.started_at.is_none() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "process identity changed before its termination handle was acquired",
+            ));
+        }
+        Ok(process)
+    }
 
-        match unsafe { WaitForSingleObject(process.handle, timeout_ms) } {
-            WAIT_OBJECT_0 => {}
-            WAIT_TIMEOUT => {
-                result.deadline_exhausted = true;
-                result.timed_out = result
-                    .timed_out
-                    .saturating_add(pending_count.saturating_sub(index));
-                break;
+    fn raw(&self) -> windows_sys::Win32::Foundation::HANDLE {
+        use std::os::windows::io::AsRawHandle;
+        self.handle.as_raw_handle()
+    }
+
+    fn started_at(&self) -> Option<u64> {
+        use windows_sys::Win32::Foundation::FILETIME;
+        use windows_sys::Win32::System::Threading::GetProcessTimes;
+        let mut creation: FILETIME = unsafe { std::mem::zeroed() };
+        let mut exit: FILETIME = unsafe { std::mem::zeroed() };
+        let mut kernel: FILETIME = unsafe { std::mem::zeroed() };
+        let mut user: FILETIME = unsafe { std::mem::zeroed() };
+        let ok = unsafe {
+            GetProcessTimes(self.raw(), &mut creation, &mut exit, &mut kernel, &mut user)
+        };
+        (ok != 0)
+            .then(|| (u64::from(creation.dwHighDateTime) << 32) | u64::from(creation.dwLowDateTime))
+    }
+
+    fn exited(&self) -> bool {
+        (unsafe { windows_sys::Win32::System::Threading::WaitForSingleObject(self.raw(), 0) })
+            == windows_sys::Win32::Foundation::WAIT_OBJECT_0
+    }
+}
+
+#[cfg(windows)]
+pub(crate) struct WindowsProcessTreeOwner {
+    root: ProcessIdentity,
+    handles: Vec<WindowsTerminationHandle>,
+    unresolved: Vec<ProcessIdentity>,
+    snapshot_failed: bool,
+}
+
+#[cfg(windows)]
+impl WindowsProcessTreeOwner {
+    pub(crate) fn new(root: ProcessIdentity) -> Self {
+        let mut owner = Self {
+            root,
+            handles: Vec::new(),
+            unresolved: Vec::new(),
+            snapshot_failed: false,
+        };
+        owner.retain(root);
+        owner
+    }
+
+    fn retain(&mut self, identity: ProcessIdentity) {
+        if self
+            .handles
+            .iter()
+            .any(|process| process.identity == identity)
+            || self.unresolved.contains(&identity)
+        {
+            return;
+        }
+        match WindowsTerminationHandle::open(identity) {
+            Ok(process) => self.handles.push(process),
+            Err(_) => self.unresolved.push(identity),
+        }
+    }
+
+    pub(crate) fn root_is_running(&self) -> bool {
+        self.root.is_provably_live()
+    }
+
+    pub(crate) fn discover(&mut self) {
+        let entries = match windows_process_entries() {
+            Ok(entries) => entries,
+            Err(_) => {
+                self.snapshot_failed = true;
+                return;
             }
-            WAIT_FAILED => {
-                let os_error = io::Error::last_os_error().raw_os_error();
-                result.failures = result.failures.saturating_add(1);
-                log::warn!(
-                    "paneflow-host: process cleanup wait failed for pid={} (os_error={os_error:?})",
-                    process.pid
-                );
-            }
-            status => {
-                result.failures = result.failures.saturating_add(1);
-                log::warn!(
-                    "paneflow-host: process cleanup wait returned status={status:#x} for pid={}",
-                    process.pid
-                );
+        };
+        self.snapshot_failed = false;
+        let mut index = 0;
+        while index < self.handles.len() {
+            let root = self.handles[index].identity;
+            index += 1;
+            for (pid, parent) in &entries {
+                if *parent != root.pid || *pid == root.pid {
+                    continue;
+                }
+                let identity = ProcessIdentity::capture(*pid);
+                if self.handles.iter().any(|known| known.identity == identity)
+                    || self.unresolved.contains(&identity)
+                {
+                    continue;
+                }
+                match (root.started_at, identity.started_at) {
+                    (Some(parent), Some(child)) if child >= parent => {}
+                    (Some(_), Some(_)) => continue,
+                    _ => {
+                        if identity.verify() != ProcessVerdict::Gone {
+                            self.unresolved.push(identity);
+                        }
+                        continue;
+                    }
+                }
+                match WindowsTerminationHandle::open(identity) {
+                    Ok(process) => match windows_process_entries() {
+                        Ok(current) if current.contains(&(*pid, root.pid)) => {
+                            self.handles.push(process)
+                        }
+                        Ok(_) => {}
+                        Err(_) => {
+                            self.snapshot_failed = true;
+                        }
+                    },
+                    Err(_) => match windows_process_entries() {
+                        Ok(current)
+                            if current.contains(&(*pid, root.pid))
+                                && identity.verify() == ProcessVerdict::Live =>
+                        {
+                            self.unresolved.push(identity)
+                        }
+                        Ok(_) => {
+                            if identity.verify() == ProcessVerdict::Unverifiable {
+                                self.unresolved.push(identity);
+                            }
+                        }
+                        Err(_) => self.snapshot_failed = true,
+                    },
+                }
             }
         }
+    }
+
+    pub(crate) fn unresolved(&mut self) -> usize {
+        self.unresolved
+            .retain(|identity| identity.verify() != ProcessVerdict::Gone);
+        self.handles
+            .iter()
+            .filter(|process| process.identity != self.root && !process.exited())
+            .count()
+            + self.unresolved.len()
+            + usize::from(self.snapshot_failed)
+    }
+
+    pub(crate) fn terminate(
+        &mut self,
+        deadline: std::time::Instant,
+    ) -> WindowsProcessTreeTerminationResult {
+        use windows_sys::Win32::Foundation::WAIT_OBJECT_0;
+        use windows_sys::Win32::System::Threading::{TerminateProcess, WaitForSingleObject};
+        self.discover();
+        let retry = std::mem::take(&mut self.unresolved);
+        for identity in retry {
+            if identity.verify() != ProcessVerdict::Gone {
+                self.retain(identity);
+            }
+        }
+        let mut result = WindowsProcessTreeTerminationResult::default();
+        for process in self.handles.iter().rev() {
+            result.targeted += 1;
+            if process.exited() {
+                result.already_exited += 1;
+            } else if process.started_at() != process.identity.started_at {
+                result.failures += 1;
+            } else if unsafe { TerminateProcess(process.raw(), 1) } != 0 {
+                result.terminate_requested += 1;
+            } else if !process.exited() {
+                result.failures += 1;
+            }
+        }
+        for process in &self.handles {
+            if process.exited() {
+                continue;
+            }
+            let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+            let timeout = windows_wait_timeout_ms(remaining).unwrap_or(0);
+            if unsafe { WaitForSingleObject(process.raw(), timeout) } != WAIT_OBJECT_0 {
+                result.timed_out += 1;
+            }
+        }
+        result.failures += self.unresolved.len() + usize::from(self.snapshot_failed);
+        result.deadline_exhausted = result.timed_out > 0 && std::time::Instant::now() >= deadline;
+        result
     }
 }
 
@@ -477,66 +855,104 @@ pub fn terminate_windows_process_tree(
     root_pid: u32,
     deadline: std::time::Instant,
 ) -> WindowsProcessTreeTerminationResult {
-    let mut result = WindowsProcessTreeTerminationResult::default();
-    if root_pid == 0 {
-        return result;
-    }
-
-    const KILL_PASSES: usize = 3;
-    let mut targeted = std::collections::HashSet::new();
-    let mut handles = Vec::new();
-    for pass in 0..KILL_PASSES {
-        if pass > 0 && std::time::Instant::now() >= deadline {
-            result.deadline_exhausted = true;
-            break;
-        }
-
-        let (entries, snapshot_failed) = match windows_process_entries() {
-            Ok(entries) => (entries, false),
-            Err(error) => {
-                result.failures = result.failures.saturating_add(1);
-                log::warn!(
-                    "paneflow-host: process cleanup snapshot failed for root_pid={root_pid} (os_error={:?})",
-                    error.raw_os_error()
-                );
-                (Vec::new(), true)
-            }
-        };
-        let targets = windows_process_tree_targets(root_pid, &entries, pass == 0);
-        let had_descendants = targets.iter().any(|pid| *pid != root_pid);
-        for pid in targets {
-            if !targeted.insert(pid) {
-                continue;
-            }
-            result.targeted = result.targeted.saturating_add(1);
-            if let Some(handle) = request_windows_pid_termination(pid, &mut result) {
-                handles.push(handle);
-            }
-        }
-
-        if pass > 0 && !snapshot_failed && !had_descendants {
-            break;
-        }
-    }
-
-    wait_for_windows_terminations(handles, deadline, &mut result);
-    if result.failures != 0 || result.timed_out != 0 {
-        log::warn!(
-            "paneflow-host: process cleanup incomplete (root_pid={root_pid}, targeted={}, terminate_requested={}, already_exited={}, failures={}, timed_out={}, deadline_exhausted={})",
-            result.targeted,
-            result.terminate_requested,
-            result.already_exited,
-            result.failures,
-            result.timed_out,
-            result.deadline_exhausted
-        );
-    }
-    result
+    WindowsProcessTreeOwner::new(ProcessIdentity::capture(root_pid)).terminate(deadline)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn mac_signals_check_kernel_pid_versions_without_a_task_control_port() {
+        use std::os::unix::process::ExitStatusExt;
+
+        assert_eq!(std::mem::size_of::<MacProcessUniqueInfo>(), 56);
+        for signal in [libc::SIGTERM, libc::SIGKILL] {
+            let mut child = std::process::Command::new("/bin/sleep")
+                .arg("30")
+                .spawn()
+                .unwrap();
+            let actual = ProcessIdentity::capture(child.id());
+            let stale = ProcessIdentity {
+                started_at: actual.started_at.map(|time| time.wrapping_add(1)),
+                ..actual
+            };
+            assert!(MacSignalTarget::acquire(stale).is_err());
+            let target = MacSignalTarget::acquire(actual).unwrap();
+            let mut stale_token = MacSignalTarget {
+                audit_token: target.audit_token,
+            };
+            stale_token.audit_token[7] = stale_token.audit_token[7].wrapping_add(1);
+            assert_eq!(
+                stale_token.signal(signal).unwrap_err().raw_os_error(),
+                Some(libc::ESRCH)
+            );
+            assert!(actual.is_provably_live());
+            target.signal(signal).unwrap();
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+            let status = loop {
+                if let Some(status) = child.try_wait().unwrap() {
+                    break status;
+                }
+                assert!(std::time::Instant::now() < deadline);
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            };
+            assert_eq!(status.signal(), Some(signal));
+            assert_eq!(actual.verify(), ProcessVerdict::Gone);
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_mismatched_identity_never_signals_the_process_behind_the_pid() {
+        let mut child = std::process::Command::new("cmd.exe")
+            .args(["/D", "/Q", "/C", "pause"])
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
+        let actual = ProcessIdentity::capture(child.id());
+        let stale = ProcessIdentity {
+            started_at: actual.started_at.map(|time| time.wrapping_add(1)),
+            ..actual
+        };
+        let mut owner = WindowsProcessTreeOwner::new(stale);
+        let result = owner.terminate(std::time::Instant::now() + Duration::from_millis(20));
+        assert_eq!(result.terminate_requested, 0);
+        assert!(owner.unresolved() > 0);
+        assert!(actual.is_provably_live());
+        child.kill().unwrap();
+        child.wait().unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn retained_descendant_handles_settle_after_the_root_has_exited() {
+        let mut root = std::process::Command::new("cmd.exe")
+            .args(["/D", "/Q", "/C", "pause"])
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
+        let mut child = std::process::Command::new("cmd.exe")
+            .args(["/D", "/Q", "/C", "pause"])
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
+        let mut owner = WindowsProcessTreeOwner::new(ProcessIdentity::capture(root.id()));
+        let descendant = ProcessIdentity::capture(child.id());
+        owner.retain(descendant);
+        root.kill().unwrap();
+        root.wait().unwrap();
+        assert_eq!(owner.unresolved(), 1);
+        assert!(descendant.is_provably_live());
+        owner.terminate(std::time::Instant::now() + Duration::from_secs(2));
+        assert_eq!(owner.unresolved(), 0);
+        assert!(!descendant.is_provably_live());
+        child.wait().unwrap();
+    }
 
     #[test]
     fn the_current_process_proves_its_own_identity() {

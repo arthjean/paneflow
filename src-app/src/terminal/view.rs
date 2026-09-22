@@ -420,7 +420,7 @@ impl TerminalView {
                 user_env,
                 profile: TerminalSurfaceProfile::Normal,
             },
-            SessionIntent::Resume,
+            SessionIntent::Reattach,
             Some(session),
             cx,
         )
@@ -433,6 +433,27 @@ impl TerminalView {
         cx: &mut Context<Self>,
     ) -> Self {
         Self::attach_restored(workspace_id, cwd, None, session, cx)
+    }
+
+    pub(crate) fn attach_restarting(
+        workspace_id: u64,
+        cwd: Option<std::path::PathBuf>,
+        session: paneflow_config::schema::SessionId,
+        expected: Option<paneflow_config::schema::SessionGeneration>,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        Self::open(
+            HostedLaunch {
+                workspace_id,
+                cwd,
+                initial_size: None,
+                user_env: None,
+                profile: TerminalSurfaceProfile::Normal,
+            },
+            SessionIntent::Restart { expected },
+            Some(session),
+            cx,
+        )
     }
 
     fn open(
@@ -575,12 +596,17 @@ impl TerminalView {
     }
 
     pub(crate) fn resume_hosted_session(&mut self, cx: &mut Context<Self>) {
-        let intent = match &self.terminal.host_link {
-            HostLinkState::Ended(end) if end.restartable() => SessionIntent::Resume,
-            HostLinkState::Unavailable(_) => match self.session_intent {
-                SessionIntent::Create => SessionIntent::Resume,
-                other => other,
-            },
+        let observed = self
+            .terminal
+            .hosted
+            .as_ref()
+            .map(|hosted| hosted.generation);
+        let (intent, fresh_identity) = match &self.terminal.host_link {
+            HostLinkState::Ended(end) => {
+                let intent = end.intent(observed);
+                (intent, intent == SessionIntent::Create)
+            }
+            HostLinkState::Unavailable(_) => (SessionIntent::Reattach, false),
             _ => return,
         };
         self.session_intent = intent;
@@ -592,7 +618,11 @@ impl TerminalView {
             params.profile,
             params.shell_quoting,
         );
-        fresh.session_id = self.terminal.session_id.clone();
+        fresh.session_id = if fresh_identity {
+            paneflow_config::schema::SessionId::new()
+        } else {
+            self.terminal.session_id.clone()
+        };
         fresh.custom_name = self.terminal.custom_name.take();
         fresh.font_size_override = self.terminal.font_size_override;
         fresh.detected_agent = self.terminal.detected_agent;
@@ -607,16 +637,57 @@ impl TerminalView {
         cx.notify();
     }
 
+    pub(crate) fn stop_incompatible_host_and_restart(&mut self, cx: &mut Context<Self>) {
+        if !matches!(
+            &self.terminal.host_link,
+            HostLinkState::Ended(end) if end.kind == crate::terminal::host_link::HostLinkEndKind::Incompatible
+        ) {
+            return;
+        }
+        self.terminal.mark_host_link(HostLinkState::Unavailable(
+            "Stopping the incompatible local host".to_string(),
+        ));
+        cx.notify();
+        let executor = cx.background_executor().clone();
+        cx.spawn(
+            async move |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
+                let stopped = executor
+                    .spawn(async move { host_link::stop_incompatible_host() })
+                    .await;
+                let _ = this.update(cx, |view, cx| match stopped {
+                    Ok(()) => {
+                        view.session_intent = SessionIntent::Reattach;
+                        view.resume_hosted_session(cx);
+                    }
+                    Err(error) => {
+                        view.terminal
+                            .mark_host_link(HostLinkState::Unavailable(format!(
+                                "The incompatible local host could not be stopped: {error}"
+                            )));
+                        cx.notify();
+                    }
+                });
+            },
+        )
+        .detach();
+    }
+
     fn render_host_link_bar(
         &self,
         ui: crate::theme::UiColors,
         cx: &mut Context<Self>,
     ) -> Option<gpui::AnyElement> {
-        let (text, action) = match &self.terminal.host_link {
+        let (text, action, secondary) = match &self.terminal.host_link {
             HostLinkState::Attaching | HostLinkState::Attached => return None,
-            HostLinkState::Reconnecting => ("Reconnecting to the local host".to_string(), None),
-            HostLinkState::Ended(end) => (end.detail.clone(), end.action_label()),
-            HostLinkState::Unavailable(message) => (message.clone(), Some("Retry")),
+            HostLinkState::Reconnecting => {
+                ("Reconnecting to the local host".to_string(), None, None)
+            }
+            HostLinkState::Ended(end) => (
+                end.detail.clone(),
+                end.action_label(),
+                end.secondary_action_label(),
+            ),
+            HostLinkState::Unavailable(message) => (message.clone(), Some("Retry"), None),
         };
 
         let mut bar = div()
@@ -641,6 +712,16 @@ impl TerminalView {
                 ui,
                 cx.listener(|this, _: &gpui::ClickEvent, _, cx| {
                     this.resume_hosted_session(cx);
+                }),
+            ));
+        }
+        if let Some(label) = secondary {
+            bar = bar.child(crate::settings::components::secondary_button(
+                "host-link-secondary-action",
+                label,
+                ui,
+                cx.listener(|this, _: &gpui::ClickEvent, _, cx| {
+                    this.stop_incompatible_host_and_restart(cx);
                 }),
             ));
         }

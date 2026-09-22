@@ -212,7 +212,7 @@ jobs:
       - name: Release candidate and package smoke binary
         run: |
           cargo build --release --locked \
-            -p paneflow-app \
+            -p paneflow-app -p paneflow-host \
             --target "${{ matrix.target }}"
           cargo build --release --locked \
             -p paneflow-ghostty-smoke \

@@ -1,0 +1,776 @@
+{
+  "commit": "d442894acbc86039dceafc8eb7b2a380daa485c0",
+  "commit_short": null,
+  "controller": {
+    "bytes": 76106752,
+    "fnv1a64": "ffcfbf8a190a02a0",
+    "path": "C:\\dev\\paneflow\\target\\release\\paneflow.exe"
+  },
+  "diff": {
+    "bytes": 446960,
+    "dirty": true,
+    "fnv1a64": "ee47b728e251ffc7",
+    "untracked_paths": [
+      "bench/persistent-baseline.json",
+      "bench/results/persistent-20260921T213231Z-d442894acbc8.json",
+      "crates/paneflow-host/src/bin/paneflow-session-fixture.rs",
+      "crates/paneflow-host/tests/ownership_probes.rs",
+      "crates/paneflow-host/tests/persistent_baseline.rs",
+      "docs/persistent-sessions.md",
+      "scripts/bench-persistent.ps1",
+      "scripts/bench-persistent.sh"
+    ]
+  },
+  "engine": {
+    "api_version": "0.1.0",
+    "app_version": "1.3.2-dev+0c2a290d3",
+    "engine": "libghostty-vt",
+    "source_sha": "0c2a290d3a3e2a599be3a43435d778a5896667ee"
+  },
+  "executables": {
+    "fixture": {
+      "bytes": 244224,
+      "fnv1a64": "55b1a870b70827c3",
+      "path": "C:\\dev\\paneflow\\target\\release\\paneflow-session-fixture.exe"
+    },
+    "host": {
+      "bytes": 7964160,
+      "fnv1a64": "43dcaf6b27f59d2f",
+      "path": "C:\\dev\\paneflow\\target\\release\\paneflow-host.exe"
+    }
+  },
+  "faults": {
+    "paused_follower": {
+      "independent_inspect_ms": 0.13019999999999998,
+      "independent_reattach_ms": 0.12029999999999999,
+      "paused_ms": 300.6835,
+      "result": "pass",
+      "scope": "one follower pauses receipt; independent real IPC inspect and attachment complete; no queue-capacity claim",
+      "watchdog_s": 5
+    }
+  },
+  "host": {
+    "build_id": "0.16.0+0c2a290d3a3e",
+    "protocol": 1,
+    "version": "0.16.0"
+  },
+  "invocation": {
+    "args": [
+      "C:\\dev\\paneflow\\target\\release\\deps\\persistent_baseline-ae1e150e37928f34.exe",
+      "persistent_session_baseline",
+      "--ignored",
+      "--exact",
+      "--nocapture",
+      "--test-threads=1"
+    ],
+    "fixture": "C:\\dev\\paneflow\\target\\release\\paneflow-session-fixture.exe",
+    "fixture_mode": "idle",
+    "scenarios": [
+      0,
+      1,
+      10,
+      50
+    ],
+    "settle_s": 4.0,
+    "test": "persistent_session_baseline",
+    "window_s": 10.0
+  },
+  "machine": {
+    "arch": "x86_64",
+    "cpu_model": "AMD64 Family 25 Model 97 Stepping 2, AuthenticAMD",
+    "hostname_hash": "27c35a214898caba",
+    "logical_cpus": 16,
+    "os": "windows",
+    "os_build": "Microsoft Windows [version 10.0.26200.9457]",
+    "total_ram_bytes": 33459585024
+  },
+  "native_environments": {
+    "linux": false,
+    "macos": false,
+    "note": "false means pending, not passed",
+    "windows": true
+  },
+  "pty": "ConPTY via portable-pty 0.9",
+  "scenarios": [
+    {
+      "attach_ms": [],
+      "attachments": 0,
+      "checkpoint_bytes": [],
+      "create_all_ms": 0.0,
+      "create_per_session_ms": null,
+      "desktop_geometry": null,
+      "desktop_mirrors": {
+        "pending": "PANEFLOW_BENCH_DESKTOP was not supplied; desktop mirrors and GPUI deadlines are unmeasured"
+      },
+      "desktop_panes_prepared": null,
+      "desktop_restore": null,
+      "headless_follower_count": 0,
+      "headless_followers": {
+        "attribution": "exact thread names",
+        "cpu": {
+          "by_role_cpu_percent": {
+            "main": 0.0,
+            "other": 0.7752275978921191
+          },
+          "by_thread_cpu_ns": {
+            "linger pool (persist.)": 0,
+            "main": 0,
+            "persistent_session_baseline": 78125000,
+            "unnamed-13624": 0,
+            "unnamed-23452": 0,
+            "unnamed-2564": 0
+          },
+          "total_cpu_percent": 0.7752275978921191
+        },
+        "pid": 2752,
+        "resident_bytes": 6795264
+      },
+      "host": {
+        "attribution": "exact thread names",
+        "cpu": {
+          "by_role_cpu_percent": {
+            "host.cancellation_scan": 0.0,
+            "host.ipc_connection": 0.0,
+            "host.viewport_scan": 0.0,
+            "main": 0.0,
+            "other": 0.0
+          },
+          "by_thread_cpu_ns": {
+            "main": 0,
+            "paneflow-host-cancellation": 0,
+            "paneflow-host-conn": 0,
+            "paneflow-host-viewport": 0,
+            "unnamed-11260": 0,
+            "unnamed-24636": 0,
+            "unnamed-4772": 0
+          },
+          "total_cpu_percent": 0.0
+        },
+        "pid": 5772,
+        "resident_bytes": 8957952
+      },
+      "list_ms": 0.0773,
+      "observed_dimensions": [],
+      "sessions": 0,
+      "sessions_created": 0,
+      "window_s": 10.0776856,
+      "worker": {
+        "attribution": "exact thread names",
+        "cpu": {
+          "by_role_cpu_percent": {
+            "main": 0.0,
+            "other": 0.0,
+            "worker.core_link": 0.0
+          },
+          "by_thread_cpu_ns": {
+            "linger pool (persist.)": 0,
+            "main": 0,
+            "paneflow-serve-accept": 0,
+            "paneflow-serve-core": 0,
+            "paneflow-serve-pump": 0,
+            "unnamed-15236": 0,
+            "unnamed-16244": 0,
+            "unnamed-17456": 0
+          },
+          "total_cpu_percent": 0.0
+        },
+        "pid": 21144,
+        "resident_bytes": 15671296
+      }
+    },
+    {
+      "attach_ms": [],
+      "attachments": 0,
+      "checkpoint_bytes": [],
+      "create_all_ms": 13.7017,
+      "create_per_session_ms": 13.7017,
+      "desktop_geometry": null,
+      "desktop_mirrors": {
+        "pending": "PANEFLOW_BENCH_DESKTOP was not supplied; desktop mirrors and GPUI deadlines are unmeasured"
+      },
+      "desktop_panes_prepared": null,
+      "desktop_restore": null,
+      "headless_follower_count": 0,
+      "headless_followers": {
+        "attribution": "exact thread names",
+        "cpu": {
+          "by_role_cpu_percent": {
+            "main": 0.0,
+            "other": 0.620785579816463
+          },
+          "by_thread_cpu_ns": {
+            "linger pool (persist.)": 0,
+            "main": 0,
+            "persistent_session_baseline": 62500000,
+            "unnamed-13624": 0,
+            "unnamed-23452": 0,
+            "unnamed-2564": 0
+          },
+          "total_cpu_percent": 0.620785579816463
+        },
+        "pid": 2752,
+        "resident_bytes": 6942720
+      },
+      "host": {
+        "attribution": "exact thread names",
+        "cpu": {
+          "by_role_cpu_percent": {
+            "host.cancellation_scan": 0.0,
+            "host.ipc_connection": 0.15519639495411575,
+            "host.pty_reader": 0.0,
+            "host.pty_writer": 0.0,
+            "host.session": 0.9311783697246945,
+            "host.viewport_scan": 1.241571159632926,
+            "main": 0.0,
+            "other": 0.0
+          },
+          "by_thread_cpu_ns": {
+            "main": 0,
+            "paneflow-host-cancellation": 0,
+            "paneflow-host-conn": 15625000,
+            "paneflow-host-pty-reader": 0,
+            "paneflow-host-pty-writer": 0,
+            "paneflow-host-session": 93750000,
+            "paneflow-host-viewport": 125000000,
+            "unnamed-11260": 0,
+            "unnamed-24636": 0,
+            "unnamed-4772": 0
+          },
+          "total_cpu_percent": 2.327945924311736
+        },
+        "pid": 5772,
+        "resident_bytes": 13459456
+      },
+      "list_ms": 0.096,
+      "observed_dimensions": [
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "e7eae1c9-1188-4e39-94e1-404a2d0460cb"
+        }
+      ],
+      "sessions": 1,
+      "sessions_created": 1,
+      "window_s": 10.0678885,
+      "worker": {
+        "attribution": "exact thread names",
+        "cpu": {
+          "by_role_cpu_percent": {
+            "main": 0.0,
+            "other": 0.0,
+            "worker.core_link": 0.0
+          },
+          "by_thread_cpu_ns": {
+            "linger pool (persist.)": 0,
+            "main": 0,
+            "paneflow-serve-accept": 0,
+            "paneflow-serve-core": 0,
+            "paneflow-serve-pump": 0,
+            "unnamed-15236": 0,
+            "unnamed-16244": 0,
+            "unnamed-17456": 0
+          },
+          "total_cpu_percent": 0.0
+        },
+        "pid": 21144,
+        "resident_bytes": 15847424
+      }
+    },
+    {
+      "attach_ms": [],
+      "attachments": 0,
+      "checkpoint_bytes": [],
+      "create_all_ms": 65.27850000000001,
+      "create_per_session_ms": 7.253166666666668,
+      "desktop_geometry": null,
+      "desktop_mirrors": {
+        "pending": "PANEFLOW_BENCH_DESKTOP was not supplied; desktop mirrors and GPUI deadlines are unmeasured"
+      },
+      "desktop_panes_prepared": null,
+      "desktop_restore": null,
+      "headless_follower_count": 0,
+      "headless_followers": {
+        "attribution": "exact thread names",
+        "cpu": {
+          "by_role_cpu_percent": {
+            "main": 0.0,
+            "other": 0.7755633831396085
+          },
+          "by_thread_cpu_ns": {
+            "linger pool (persist.)": 0,
+            "main": 0,
+            "persistent_session_baseline": 78125000
+          },
+          "total_cpu_percent": 0.7755633831396085
+        },
+        "pid": 2752,
+        "resident_bytes": 6975488
+      },
+      "host": {
+        "attribution": "exact thread names",
+        "cpu": {
+          "by_role_cpu_percent": {
+            "host.cancellation_scan": 0.0,
+            "host.ipc_connection": 0.1551126766279217,
+            "host.pty_reader": 0.0,
+            "host.pty_writer": 0.0,
+            "host.session": 6.824957771628553,
+            "host.viewport_scan": 5.739169035233103,
+            "main": 0.0,
+            "other": 0.0
+          },
+          "by_thread_cpu_ns": {
+            "main": 0,
+            "paneflow-host-cancellation": 0,
+            "paneflow-host-conn": 15625000,
+            "paneflow-host-pty-reader": 0,
+            "paneflow-host-pty-writer": 0,
+            "paneflow-host-session": 687500000,
+            "paneflow-host-viewport": 578125000,
+            "unnamed-11260": 0,
+            "unnamed-11816": 0,
+            "unnamed-8840": 0
+          },
+          "total_cpu_percent": 12.719239483489577
+        },
+        "pid": 5772,
+        "resident_bytes": 15310848
+      },
+      "list_ms": 0.2407,
+      "observed_dimensions": [
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "e7eae1c9-1188-4e39-94e1-404a2d0460cb"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "a70cf388-816f-4bfa-ba36-c3dea4ed0e2f"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "b00bc700-b6f9-4a0d-ab5c-4958180b311d"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "f3049cfd-47c3-46cb-8921-d2740b5d0a29"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "f85f062f-83ef-4f50-8bb9-514e85df16ca"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "14c0dc6d-32ff-4f35-ad18-5b60148221b3"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "4514689f-339a-4d09-a14c-31d0c4726a62"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "6957ad1d-4f6d-4131-997e-50a412e5bdab"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "ee81b695-1499-4a9a-bd8f-79b91f713898"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "ed7c6b13-681a-4ca5-a8cd-53929ac2047e"
+        }
+      ],
+      "sessions": 10,
+      "sessions_created": 9,
+      "window_s": 10.0733224,
+      "worker": {
+        "attribution": "exact thread names",
+        "cpu": {
+          "by_role_cpu_percent": {
+            "main": 0.0,
+            "other": 0.1551126766279217,
+            "worker.core_link": 0.0
+          },
+          "by_thread_cpu_ns": {
+            "linger pool (persist.)": 0,
+            "main": 0,
+            "paneflow-serve-accept": 0,
+            "paneflow-serve-core": 0,
+            "paneflow-serve-pump": 15625000,
+            "unnamed-15464": 0,
+            "unnamed-16244": 0,
+            "unnamed-7008": 0
+          },
+          "total_cpu_percent": 0.1551126766279217
+        },
+        "pid": 21144,
+        "resident_bytes": 16400384
+      }
+    },
+    {
+      "attach_ms": [],
+      "attachments": 0,
+      "checkpoint_bytes": [],
+      "create_all_ms": 287.41679999999997,
+      "create_per_session_ms": 7.185419999999999,
+      "desktop_geometry": null,
+      "desktop_mirrors": {
+        "pending": "PANEFLOW_BENCH_DESKTOP was not supplied; desktop mirrors and GPUI deadlines are unmeasured"
+      },
+      "desktop_panes_prepared": null,
+      "desktop_restore": null,
+      "headless_follower_count": 0,
+      "headless_followers": {
+        "attribution": "exact thread names",
+        "cpu": {
+          "by_role_cpu_percent": {
+            "main": 0.0,
+            "other": 0.9297088169835617
+          },
+          "by_thread_cpu_ns": {
+            "linger pool (persist.)": 0,
+            "main": 0,
+            "persistent_session_baseline": 93750000
+          },
+          "total_cpu_percent": 0.9297088169835617
+        },
+        "pid": 2752,
+        "resident_bytes": 7262208
+      },
+      "host": {
+        "attribution": "exact thread names",
+        "cpu": {
+          "by_role_cpu_percent": {
+            "host.cancellation_scan": 0.0,
+            "host.ipc_connection": 0.0,
+            "host.pty_reader": 0.0,
+            "host.pty_writer": 0.0,
+            "host.session": 62.75534514639042,
+            "host.viewport_scan": 27.27145863151781,
+            "main": 0.0,
+            "other": 0.0
+          },
+          "by_thread_cpu_ns": {
+            "main": 0,
+            "paneflow-host-cancellation": 0,
+            "paneflow-host-conn": 0,
+            "paneflow-host-pty-reader": 0,
+            "paneflow-host-pty-writer": 0,
+            "paneflow-host-session": 6328125000,
+            "paneflow-host-viewport": 2750000000,
+            "unnamed-11260": 0,
+            "unnamed-11816": 0,
+            "unnamed-8840": 0
+          },
+          "total_cpu_percent": 90.02680377790823
+        },
+        "pid": 5772,
+        "resident_bytes": 23928832
+      },
+      "list_ms": 1.0686,
+      "observed_dimensions": [
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "e7eae1c9-1188-4e39-94e1-404a2d0460cb"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "a70cf388-816f-4bfa-ba36-c3dea4ed0e2f"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "b00bc700-b6f9-4a0d-ab5c-4958180b311d"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "f3049cfd-47c3-46cb-8921-d2740b5d0a29"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "f85f062f-83ef-4f50-8bb9-514e85df16ca"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "14c0dc6d-32ff-4f35-ad18-5b60148221b3"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "4514689f-339a-4d09-a14c-31d0c4726a62"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "6957ad1d-4f6d-4131-997e-50a412e5bdab"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "ee81b695-1499-4a9a-bd8f-79b91f713898"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "ed7c6b13-681a-4ca5-a8cd-53929ac2047e"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "06de4256-13d3-4a5d-bd78-1b72b9584d05"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "f7b00bf1-7802-4e64-89ab-a260f3a36a5a"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "e7a990c6-90ae-45af-8526-73a182d31502"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "c326daf5-01a2-4fab-bae8-ed8b067158d3"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "8d5f56bb-8c83-4a97-8df7-4e636673a287"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "697c3af0-b95f-4163-bd56-07107050feb5"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "895d44da-35fd-4f05-afbb-f82dd6ff43d1"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "7633aaab-05c0-40b3-865c-440d59464026"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "caffcc68-4ce1-4622-bdbb-850f56141046"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "840c4c99-987b-453f-a4e2-c3b4c2f3a560"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "7b47937f-349c-4bfc-a7bf-44d377598756"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "31f203f8-9117-41f3-83ae-efd0d6f75728"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "6a678a39-4576-4236-8653-08c0e16a9dff"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "be7dc05e-14a0-4561-a505-48af0d58f61d"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "9d0cf6ce-167d-4446-8ef1-fd893892ff49"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "818bf162-6aef-40f1-850e-25d353217b3a"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "385caefe-510b-4057-8687-98323e5fdab3"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "eff58361-75b2-4084-8c3f-961b5301dc4d"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "529ddd8e-6485-4489-8069-3e58821d4bff"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "cdf13b9f-057d-4895-8770-12afde7f38c4"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "da13c352-c8a4-40a4-bf60-a5cbaaea5558"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "a4d20fd3-78ee-4c07-9f60-22227ca21d75"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "83d0be92-d495-4b6b-9dd5-cf8ac17c7208"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "f41d0795-3b9b-4ff8-92fd-f0c0ec3868d3"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "b1909a46-785e-4b30-8333-a916597486cf"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "f32a2c42-3add-4830-9b56-033188161a0c"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "f751caf4-503e-4471-9c5f-624a69f679e2"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "117c8fd7-7257-48ce-af15-3ae78c92a66f"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "cf353a4a-9bda-483c-9574-e73c12330012"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "f033dc60-4778-416c-93fe-d00fe01e1c09"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "db483fae-a237-4cf0-a05b-523e85c4e46e"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "a9476706-53c5-4158-9370-24e0b9b1b398"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "a61ef8a9-b098-42c4-ab9b-e07dd2bdba0c"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "20b600a9-b8e8-4231-90dd-2df75e442c11"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "5db189d0-20c4-4f3f-96a7-ddec8db56dbc"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "cec37d6f-9fe9-45ad-a7ad-82a51ef67156"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "95194706-4c9b-4b60-818c-8fde7d196737"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "b499dc48-9152-4494-8721-9dfa72c0c4d2"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "21140338-333a-4aef-be9f-6c91ba8e6352"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "86300be7-5f90-4532-94d2-39239923db30"
+        }
+      ],
+      "sessions": 50,
+      "sessions_created": 40,
+      "window_s": 10.0838024,
+      "worker": {
+        "attribution": "exact thread names",
+        "cpu": {
+          "by_role_cpu_percent": {
+            "main": 0.0,
+            "other": 0.15495146949726027,
+            "worker.core_link": 0.0
+          },
+          "by_thread_cpu_ns": {
+            "linger pool (persist.)": 0,
+            "main": 0,
+            "paneflow-serve-accept": 0,
+            "paneflow-serve-core": 0,
+            "paneflow-serve-pump": 15625000,
+            "unnamed-15464": 0,
+            "unnamed-16244": 0,
+            "unnamed-7008": 0
+          },
+          "total_cpu_percent": 0.15495146949726027
+        },
+        "pid": 21144,
+        "resident_bytes": 17244160
+      }
+    }
+  ],
+  "schema_version": 2,
+  "seed": null,
+  "seed_note": "the fixture is deterministic and the runner draws no random input",
+  "source_unchanged_during_measurement": true,
+  "stamp": "20260922T080711Z",
+  "suite": "paneflow-persistent-bench",
+  "toolchain": {
+    "profile": "release",
+    "rustc": "rustc 1.98.0 (88d9e12ae 2026-08-18)"
+  },
+  "topology": "host-worker",
+  "unmeasured": [
+    "keystroke to pixel latency of a hosted pane (needs the desktop; see scripts/bench-terminal)",
+    "reattach time after a desktop restart with 50 sessions",
+    "host memory after 24 hours of idle sessions"
+  ]
+}

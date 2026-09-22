@@ -5067,20 +5067,18 @@ fn end_from_host(client: &mut HostClient, attachment: &HostAttachment) -> HostLi
             }
             match summary.reconnection(&owner) {
                 paneflow_host::SessionReconnection::Live
-                | paneflow_host::SessionReconnection::Starting => HostLinkEnd {
-                    kind: super::host_link::HostLinkEndKind::Lost,
-                    detail: "The local host stopped streaming this session.".to_string(),
-                },
+                | paneflow_host::SessionReconnection::Starting => HostLinkEnd::attach_refused(
+                    "The local host stopped streaming this session.".to_string(),
+                ),
                 other => HostLinkEnd::from_reconnection(other, generation),
             }
         }
         Err(error) if error.code() == Some(paneflow_host::protocol::ERR_SESSION_NOT_FOUND) => {
             HostLinkEnd::missing()
         }
-        Err(error) => HostLinkEnd {
-            kind: super::host_link::HostLinkEndKind::Lost,
-            detail: format!("The local host could not report the session state: {error}"),
-        },
+        Err(error) => HostLinkEnd::attach_refused(format!(
+            "The local host could not report the session state: {error}"
+        )),
     }
 }
 

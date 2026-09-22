@@ -186,10 +186,13 @@ impl PaneFlowApp {
         if !self.host_agents_are_settled() {
             return AgentReading::Unknown;
         }
-        let hosted = self
-            .host_agent_row(session)
-            .and_then(|row| row.state.filter(|_| !row.stale));
-        AgentReading::Known(hosted.or(local))
+        let Some(row) = self.host_agent_row(session) else {
+            return AgentReading::Unknown;
+        };
+        if row.stale {
+            return AgentReading::Unknown;
+        }
+        AgentReading::Known(row.state.or(local))
     }
 
     fn local_agent_state(&self, surface: u64) -> Option<AgentState> {

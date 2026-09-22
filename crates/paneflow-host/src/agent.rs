@@ -207,6 +207,8 @@ impl AgentEvent {
             "tool": self.tool,
             "pid": self.pid,
             "tool_name": self.tool_name,
+            "message": self.message,
+            "summary": self.summary,
             "exit_code": self.exit_code,
             "emitted_at_ms": self.emitted_at_ms,
             "received_at_ms": self.received_at_ms,
@@ -234,6 +236,8 @@ pub struct AgentSnapshotEntry {
     pub cwd: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_hook: Option<HookRecord>,
+    #[serde(default)]
+    pub hook_revision: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub output_changed_at_ms: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

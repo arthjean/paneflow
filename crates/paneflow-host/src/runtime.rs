@@ -1,7 +1,8 @@
 use std::collections::BTreeMap;
 use std::io::{Read, Write};
+use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, SyncSender, sync_channel};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -19,8 +20,8 @@ const OUTPUT_QUEUE_SLOTS: usize = 64;
 const INPUT_QUEUE_SLOTS: usize = 64;
 const QUEUE_RETRY: Duration = Duration::from_millis(5);
 const RUNTIME_TICK: Duration = Duration::from_millis(20);
-const STARTUP_DEADLINE: Duration = Duration::from_secs(10);
-const STOP_BUDGET: Duration = Duration::from_secs(5);
+pub const STARTUP_DEADLINE: Duration = Duration::from_secs(10);
+pub const STOP_BUDGET: Duration = Duration::from_secs(5);
 const CELL_WIDTH_PX: u32 = 8;
 const CELL_HEIGHT_PX: u32 = 16;
 const TERMINFO_NAME: &str = "xterm-256color";
@@ -29,6 +30,9 @@ const MAX_SCROLLBACK_BYTES: usize = 128 * 1024 * 1024;
 pub const CONTINUATION_MAX_BYTES: usize = 64 * 1024;
 const NEWLINE: &str = "\n";
 const NEWLINE_CHAR: char = '\n';
+const RUNTIME_PANIC_REASON: &str =
+    "the session runtime panicked; its child process is held for recovery";
+const LATE_LAUNCH_CANCELLED: &str = "the launch was cancelled before its process was published";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SpawnSpec {
@@ -52,7 +56,7 @@ pub enum RuntimeNotice {
     Title(String),
     WorkingDirectory(String),
     Exited(ExitOutcome),
-    Lost,
+    Unverified(String),
 }
 
 pub type RuntimeObserver = Arc<dyn Fn(RuntimeNotice) + Send + Sync>;
@@ -80,6 +84,13 @@ pub struct OutputSlice {
     pub live: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct StopReport {
+    pub exit: Option<ExitOutcome>,
+    pub descendants_unresolved: usize,
+    pub unverified: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum RuntimeError {
     #[error("the session runtime is gone")]
@@ -88,6 +99,8 @@ pub enum RuntimeError {
     Deadline(Duration),
     #[error("the session is not running")]
     NotLive,
+    #[error("the session process could not be verified: {0}")]
+    Unverified(String),
     #[error("terminal state of {bytes} bytes exceeds the {limit}-byte attachment limit")]
     CheckpointTooLarge { bytes: usize, limit: usize },
     #[error("output offset {requested} was evicted; the tail now covers {tail_start}..{tail_end}")]
@@ -122,7 +135,12 @@ enum Command {
         rows: u16,
         reply: SyncSender<Result<(), RuntimeError>>,
     },
-    Stop(SyncSender<Option<ExitOutcome>>),
+    Stop {
+        deadline: Instant,
+        reply: SyncSender<StopReport>,
+    },
+    #[cfg(test)]
+    InjectPanic,
 }
 
 enum Message {
@@ -133,16 +151,42 @@ enum Message {
 
 struct Shared {
     exit: Mutex<Option<ExitOutcome>>,
+    unverified: Mutex<Option<String>>,
+    descendants_unresolved: AtomicUsize,
     stop_requested: AtomicBool,
     output_changed_at_ms: AtomicU64,
 }
 
 impl Shared {
+    fn new() -> Arc<Self> {
+        Arc::new(Self {
+            exit: Mutex::new(None),
+            unverified: Mutex::new(None),
+            descendants_unresolved: AtomicUsize::new(0),
+            stop_requested: AtomicBool::new(false),
+            output_changed_at_ms: AtomicU64::new(0),
+        })
+    }
+
     fn exit(&self) -> Option<ExitOutcome> {
         self.exit
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clone()
+    }
+
+    fn unverified(&self) -> Option<String> {
+        self.unverified
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+
+    fn set_unverified(&self, reason: Option<String>) {
+        *self
+            .unverified
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = reason;
     }
 }
 
@@ -153,19 +197,79 @@ pub struct SessionRuntime {
     process: ProcessIdentity,
 }
 
+pub struct LaunchHandle {
+    tx: SyncSender<Message>,
+    shared: Arc<Shared>,
+    generation: SessionGeneration,
+    startup_rx: Receiver<Result<ProcessIdentity, String>>,
+}
+
+pub enum LaunchWait {
+    Ready(SessionRuntime),
+    Recovery(SessionRuntime),
+    Failed(String),
+    Pending(LaunchHandle),
+}
+
+#[derive(Clone)]
+pub struct LaunchCancel(Arc<Shared>);
+
+impl LaunchCancel {
+    pub fn cancel(&self) {
+        self.0.stop_requested.store(true, Ordering::Release);
+    }
+}
+
+impl LaunchHandle {
+    pub fn wait(self, budget: Duration) -> LaunchWait {
+        match self.startup_rx.recv_timeout(budget) {
+            Ok(Ok(process)) => {
+                if self.shared.stop_requested.load(Ordering::Acquire) {
+                    self.shared
+                        .set_unverified(Some(LATE_LAUNCH_CANCELLED.into()));
+                }
+                let runtime = SessionRuntime {
+                    tx: self.tx,
+                    shared: self.shared,
+                    generation: self.generation,
+                    process,
+                };
+                if runtime.unverified().is_some() {
+                    LaunchWait::Recovery(runtime)
+                } else {
+                    LaunchWait::Ready(runtime)
+                }
+            }
+            Ok(Err(reason)) => LaunchWait::Failed(reason),
+            Err(RecvTimeoutError::Timeout) => LaunchWait::Pending(self),
+            Err(RecvTimeoutError::Disconnected) => {
+                LaunchWait::Failed("the session thread ended before reporting its start".into())
+            }
+        }
+    }
+
+    pub fn cancel(&self) {
+        self.shared.stop_requested.store(true, Ordering::Release);
+    }
+
+    pub fn canceller(&self) -> LaunchCancel {
+        LaunchCancel(Arc::clone(&self.shared))
+    }
+
+    pub fn generation(&self) -> SessionGeneration {
+        self.generation
+    }
+}
+
 impl SessionRuntime {
-    pub fn spawn(
+    pub fn launch(
         spec: SpawnSpec,
         generation: SessionGeneration,
         observer: RuntimeObserver,
-    ) -> Result<Self, SpawnError> {
+    ) -> Result<LaunchHandle, SpawnError> {
         let (tx, rx) = sync_channel::<Message>(OUTPUT_QUEUE_SLOTS);
         let (startup_tx, startup_rx) = sync_channel::<Result<ProcessIdentity, String>>(1);
-        let shared = Arc::new(Shared {
-            exit: Mutex::new(None),
-            stop_requested: AtomicBool::new(false),
-            output_changed_at_ms: AtomicU64::new(0),
-        });
+        let shared = Shared::new();
         let thread_shared = Arc::clone(&shared);
         let thread_tx = tx.clone();
         std::thread::Builder::new()
@@ -182,17 +286,34 @@ impl SessionRuntime {
                 )
             })
             .map_err(|e| SpawnError(format!("could not start the session thread: {e}")))?;
-        let process = match startup_rx.recv_timeout(STARTUP_DEADLINE) {
-            Ok(Ok(process)) => process,
-            Ok(Err(reason)) => return Err(SpawnError(reason)),
-            Err(_) => return Err(SpawnError("the session did not start in time".to_string())),
-        };
-        Ok(Self {
+        Ok(LaunchHandle {
             tx,
             shared,
             generation,
-            process,
+            startup_rx,
         })
+    }
+
+    pub fn spawn(
+        spec: SpawnSpec,
+        generation: SessionGeneration,
+        observer: RuntimeObserver,
+    ) -> Result<Self, SpawnError> {
+        match Self::launch(spec, generation, observer)?.wait(STARTUP_DEADLINE) {
+            LaunchWait::Ready(runtime) => Ok(runtime),
+            LaunchWait::Recovery(runtime) => {
+                let reason = runtime
+                    .unverified()
+                    .unwrap_or_else(|| "startup needs recovery".into());
+                let _ = runtime.stop();
+                Err(SpawnError(reason))
+            }
+            LaunchWait::Failed(reason) => Err(SpawnError(reason)),
+            LaunchWait::Pending(handle) => {
+                handle.cancel();
+                Err(SpawnError("the session did not start in time".to_string()))
+            }
+        }
     }
 
     pub fn generation(&self) -> SessionGeneration {
@@ -207,13 +328,25 @@ impl SessionRuntime {
         self.shared.exit()
     }
 
+    pub fn unverified(&self) -> Option<String> {
+        self.shared.unverified()
+    }
+
+    pub fn descendants_unresolved(&self) -> usize {
+        self.shared.descendants_unresolved.load(Ordering::Acquire)
+    }
+
     pub fn output_changed_at_ms(&self) -> Option<u64> {
         let changed_at = self.shared.output_changed_at_ms.load(Ordering::Acquire);
         (changed_at != 0).then_some(changed_at)
     }
 
     pub fn is_live(&self) -> bool {
-        self.shared.exit().is_none()
+        self.shared.exit().is_none() && self.shared.unverified().is_none()
+    }
+
+    pub fn owns_process(&self) -> bool {
+        self.shared.exit().is_none() || self.descendants_unresolved() > 0
     }
 
     fn send_bounded(&self, message: Message, budget: Duration) -> Result<(), RuntimeError> {
@@ -287,17 +420,38 @@ impl SessionRuntime {
         self.ask(|reply| Command::Resize { cols, rows, reply })
     }
 
-    pub fn stop(&self) -> Result<Option<ExitOutcome>, RuntimeError> {
+    pub fn stop(&self) -> Result<StopReport, RuntimeError> {
+        self.stop_until(Instant::now() + STOP_BUDGET)
+    }
+
+    pub fn stop_until(&self, deadline: Instant) -> Result<StopReport, RuntimeError> {
         self.shared.stop_requested.store(true, Ordering::Release);
         let (reply_tx, reply_rx) = sync_channel(1);
-        self.send_bounded(Message::Command(Command::Stop(reply_tx)), REQUEST_DEADLINE)?;
-        match reply_rx.recv_timeout(STOP_BUDGET + REQUEST_DEADLINE) {
-            Ok(outcome) => Ok(outcome),
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        self.send_bounded(
+            Message::Command(Command::Stop {
+                deadline,
+                reply: reply_tx,
+            }),
+            remaining,
+        )?;
+        match reply_rx.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
+            Ok(report) => Ok(report),
             Err(RecvTimeoutError::Timeout) => Err(RuntimeError::Deadline(STOP_BUDGET)),
             Err(RecvTimeoutError::Disconnected) => Err(RuntimeError::Gone),
         }
     }
+
+    #[cfg(test)]
+    pub(crate) fn inject_panic(&self) {
+        let _ = self.send_bounded(Message::Command(Command::InjectPanic), REQUEST_DEADLINE);
+    }
 }
+
+#[cfg(unix)]
+use crate::process::UnixProcessTreeOwner as ProcessTreeOwner;
+#[cfg(windows)]
+use crate::process::WindowsProcessTreeOwner as ProcessTreeOwner;
 
 struct Session {
     terminal: ghostty::DisplayTerminal,
@@ -306,10 +460,13 @@ struct Session {
     master: Option<Box<dyn portable_pty::MasterPty + Send>>,
     child: Box<dyn portable_pty::Child + Send + Sync>,
     child_pid: u32,
+    process_tree: ProcessTreeOwner,
+    next_process_scan: Instant,
     cols: u16,
     rows: u16,
     reader_eof: bool,
     exit: Option<ExitOutcome>,
+    descendants_unresolved: usize,
     generation: SessionGeneration,
     observer: RuntimeObserver,
     shared: Arc<Shared>,
@@ -331,19 +488,86 @@ fn run(
             return;
         }
     };
-    let _ = startup_tx.send(Ok(ProcessIdentity::capture(session.child_pid)));
+    if shared.stop_requested.load(Ordering::Acquire) {
+        session.mark_unverified(LATE_LAUNCH_CANCELLED.to_string());
+    }
+    if startup_tx
+        .send(Ok(ProcessIdentity::capture(session.child_pid)))
+        .is_err()
+    {
+        recover_without_requester(&mut session);
+        return;
+    }
+    if shared.unverified().is_some() {
+        recovery_loop(&mut session, &rx);
+        return;
+    }
+    let served = catch_unwind(AssertUnwindSafe(|| serve_loop(&mut session, &rx)));
+    match served {
+        Ok(()) => session.shutdown(),
+        Err(_) => {
+            session.mark_unverified(RUNTIME_PANIC_REASON.to_string());
+            recovery_loop(&mut session, &rx);
+        }
+    }
+}
 
+fn serve_loop(session: &mut Session, rx: &Receiver<Message>) {
     loop {
         match rx.recv_timeout(RUNTIME_TICK) {
             Ok(Message::Output(chunk)) => session.feed(&chunk),
             Ok(Message::Eof) => session.reader_eof = true,
             Ok(Message::Command(command)) => session.handle(command),
             Err(RecvTimeoutError::Timeout) => {}
-            Err(RecvTimeoutError::Disconnected) => break,
+            Err(RecvTimeoutError::Disconnected) => return,
         }
         session.observe_exit();
     }
-    session.shutdown();
+}
+
+fn recovery_loop(session: &mut Session, rx: &Receiver<Message>) {
+    loop {
+        let message = match rx.recv() {
+            Ok(message) => message,
+            Err(_) => break,
+        };
+        let Message::Command(command) = message else {
+            continue;
+        };
+        let outcome = catch_unwind(AssertUnwindSafe(|| {
+            session.handle_while_unverified(command)
+        }));
+        if outcome.is_err() {
+            log::error!(
+                "paneflow-host: the recovery owner of pid={} panicked again",
+                session.child_pid
+            );
+        }
+        if stop_is_confirmed(&session.report()) {
+            break;
+        }
+    }
+    if !stop_is_confirmed(&session.report()) {
+        recover_without_requester(session);
+    }
+    let _ = catch_unwind(AssertUnwindSafe(|| {
+        session.writer = None;
+        session.release_master();
+    }));
+}
+
+fn stop_is_confirmed(report: &StopReport) -> bool {
+    report.exit.is_some() && report.unverified.is_none() && report.descendants_unresolved == 0
+}
+
+fn recover_without_requester(session: &mut Session) {
+    loop {
+        let outcome = catch_unwind(AssertUnwindSafe(|| session.terminate()));
+        if outcome.as_ref().is_ok_and(stop_is_confirmed) {
+            return;
+        }
+        std::thread::sleep(Duration::from_secs(1));
+    }
 }
 
 fn new_terminal(spec: &SpawnSpec) -> Result<ghostty::DisplayTerminal, String> {
@@ -396,20 +620,74 @@ fn start(
     for (key, value) in &spec.env {
         command.env(key, value);
     }
+    #[cfg(debug_assertions)]
+    if let Some(delay) = spec
+        .env
+        .get("PANEFLOW_TEST_SPAWN_DELAY_MS")
+        .and_then(|delay| delay.parse::<u64>().ok())
+    {
+        std::thread::sleep(Duration::from_millis(delay.min(30_000)));
+    }
     let child = pair
         .slave
         .spawn_command(command)
         .map_err(|e| format!("failed to spawn {} in the PTY: {e}", spec.shell))?;
     let child_pid = child.process_id().unwrap_or(0);
-    let reader = pair
-        .master
+    drop(pair.slave);
+    let mut session = Session {
+        terminal,
+        tail: OutputTail::new(MAX_OUTPUT_TAIL_BYTES),
+        writer: None,
+        master: Some(pair.master),
+        child,
+        child_pid,
+        process_tree: ProcessTreeOwner::new(ProcessIdentity::capture(child_pid)),
+        next_process_scan: Instant::now(),
+        cols: spec.cols,
+        rows: spec.rows,
+        reader_eof: false,
+        exit: None,
+        descendants_unresolved: 0,
+        generation,
+        observer,
+        shared: Arc::clone(shared),
+    };
+    let wired = catch_unwind(AssertUnwindSafe(|| {
+        #[cfg(test)]
+        if spec.env.contains_key("PANEFLOW_TEST_WIRING_PANIC") {
+            panic!("injected PTY wiring panic");
+        }
+        #[cfg(test)]
+        if spec.env.contains_key("PANEFLOW_TEST_WIRING_FAILURE") {
+            return Err("injected PTY thread creation failure".into());
+        }
+        session
+            .master
+            .as_ref()
+            .ok_or_else(|| "the PTY master is missing".to_string())
+            .and_then(|master| wire_pty(master.as_ref(), tx))
+    }))
+    .unwrap_or_else(|_| Err("PTY wiring panicked after child creation".into()));
+    if ProcessIdentity::capture(child_pid).started_at.is_none() {
+        session.mark_unverified("the spawned child identity could not be captured".into());
+    }
+    match wired {
+        Ok(writer) => session.writer = Some(writer),
+        Err(reason) => session.mark_unverified(reason),
+    }
+    Ok(session)
+}
+
+fn wire_pty(
+    master: &(dyn portable_pty::MasterPty + Send),
+    tx: SyncSender<Message>,
+) -> Result<SyncSender<Vec<u8>>, String> {
+    let reader = master
         .try_clone_reader()
         .map_err(|e| format!("failed to clone the PTY reader: {e}"))?;
-    let writer = pair
-        .master
+    let writer = master
         .take_writer()
         .map_err(|e| format!("failed to take the PTY writer: {e}"))?;
-    drop(pair.slave);
     std::thread::Builder::new()
         .name("paneflow-host-pty-reader".into())
         .spawn(move || read_pty(reader, tx))
@@ -419,22 +697,7 @@ fn start(
         .name("paneflow-host-pty-writer".into())
         .spawn(move || write_pty_queue(writer, input_rx))
         .map_err(|e| format!("failed to start the PTY writer: {e}"))?;
-
-    Ok(Session {
-        terminal,
-        tail: OutputTail::new(MAX_OUTPUT_TAIL_BYTES),
-        writer: Some(input_tx),
-        master: Some(pair.master),
-        child,
-        child_pid,
-        cols: spec.cols,
-        rows: spec.rows,
-        reader_eof: false,
-        exit: None,
-        generation,
-        observer,
-        shared: Arc::clone(shared),
-    })
+    Ok(input_tx)
 }
 
 fn read_pty(mut reader: Box<dyn Read + Send>, tx: SyncSender<Message>) {
@@ -558,10 +821,48 @@ impl Session {
             Command::Resize { cols, rows, reply } => {
                 let _ = reply.send(self.resize(cols, rows));
             }
-            Command::Stop(reply) => {
-                self.terminate();
-                let _ = reply.send(self.exit.clone());
+            Command::Stop { deadline, reply } => {
+                let report = self.terminate_until(deadline);
+                let _ = reply.send(report);
             }
+            #[cfg(test)]
+            Command::InjectPanic => panic!("injected runtime panic"),
+        }
+    }
+
+    fn handle_while_unverified(&mut self, command: Command) {
+        let reason = self
+            .shared
+            .unverified()
+            .unwrap_or_else(|| RUNTIME_PANIC_REASON.to_string());
+        match command {
+            Command::Stop { deadline, reply } => {
+                let report = self.terminate_until(deadline);
+                let _ = reply.send(report);
+            }
+            Command::Checkpoint(reply) => {
+                let _ = reply.send(Err(RuntimeError::Unverified(reason)));
+            }
+            Command::Text(reply) => {
+                let _ = reply.send(Err(RuntimeError::Unverified(reason)));
+            }
+            Command::Viewport(reply) => {
+                let _ = reply.send(Err(RuntimeError::Unverified(reason)));
+            }
+            Command::BracketedPaste(reply) => {
+                let _ = reply.send(Err(RuntimeError::Unverified(reason)));
+            }
+            Command::Output { reply, .. } => {
+                let _ = reply.send(Err(RuntimeError::Unverified(reason)));
+            }
+            Command::Input(_, reply) => {
+                let _ = reply.send(Err(RuntimeError::Unverified(reason)));
+            }
+            Command::Resize { reply, .. } => {
+                let _ = reply.send(Err(RuntimeError::Unverified(reason)));
+            }
+            #[cfg(test)]
+            Command::InjectPanic => panic!("injected runtime panic"),
         }
     }
 
@@ -680,24 +981,59 @@ impl Session {
     }
 
     fn observe_exit(&mut self) {
+        if Instant::now() >= self.next_process_scan {
+            self.process_tree.discover();
+            self.next_process_scan = Instant::now() + Duration::from_millis(500);
+        }
         if self.exit.is_some() {
+            let before = self.descendants_unresolved;
+            self.refresh_descendants();
+            if before > 0 && self.descendants_unresolved == 0 {
+                self.shared.set_unverified(None);
+                if let Some(outcome) = &self.exit {
+                    (self.observer)(RuntimeNotice::Exited(outcome.clone()));
+                }
+            }
             return;
         }
+        if !self.process_tree.root_is_running() {
+            self.process_tree.discover();
+        }
         match self.child.try_wait() {
-            Ok(Some(status)) => self.record_exit(exit_outcome(&status)),
-            Ok(None) => {}
-            Err(error) => {
-                log::warn!("paneflow-host: child wait failed: {error}");
-                self.record_exit(ExitOutcome {
-                    code: -1,
-                    signal: None,
-                });
+            Ok(Some(status)) => {
+                self.process_tree.discover();
+                self.refresh_descendants();
+                self.record_exit(exit_outcome(&status));
             }
+            Ok(None) => {}
+            Err(error) => self.mark_unverified(format!("child wait failed: {error}")),
         }
     }
 
+    fn refresh_descendants(&mut self) {
+        self.descendants_unresolved = self.process_tree.unresolved();
+        self.shared
+            .descendants_unresolved
+            .store(self.descendants_unresolved, Ordering::Release);
+    }
+
+    fn mark_unverified(&mut self, reason: String) {
+        if self.shared.unverified().as_deref() == Some(reason.as_str()) {
+            return;
+        }
+        log::warn!(
+            "paneflow-host: child pid={} ownership is unverified: {reason}",
+            self.child_pid
+        );
+        self.shared.set_unverified(Some(reason.clone()));
+        (self.observer)(RuntimeNotice::Unverified(reason));
+    }
+
     fn record_exit(&mut self, outcome: ExitOutcome) {
+        #[cfg(target_os = "macos")]
+        self.process_tree.root_reaped();
         self.exit = Some(outcome.clone());
+        self.shared.set_unverified(None);
         *self
             .shared
             .exit
@@ -705,7 +1041,14 @@ impl Session {
             .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(outcome.clone());
         self.writer = None;
         self.release_master();
-        (self.observer)(RuntimeNotice::Exited(outcome));
+        if self.descendants_unresolved == 0 {
+            (self.observer)(RuntimeNotice::Exited(outcome));
+        } else {
+            self.mark_unverified(format!(
+                "{} descendant process(es) remain unresolved",
+                self.descendants_unresolved
+            ));
+        }
     }
 
     fn release_master(&mut self) {
@@ -716,42 +1059,71 @@ impl Session {
         }
     }
 
-    fn terminate(&mut self) {
-        if self.exit.is_some() {
-            return;
+    fn report(&self) -> StopReport {
+        StopReport {
+            exit: self.exit.clone(),
+            descendants_unresolved: self.descendants_unresolved,
+            unverified: self.shared.unverified(),
         }
+    }
+
+    fn terminate(&mut self) -> StopReport {
+        self.terminate_until(Instant::now() + STOP_BUDGET)
+    }
+
+    fn terminate_until(&mut self, deadline: Instant) -> StopReport {
         self.writer = None;
-        let deadline = Instant::now() + STOP_BUDGET;
-        terminate_child(self.child.as_mut(), self.child_pid, deadline);
+        #[cfg(windows)]
+        let _ = self.process_tree.terminate(deadline);
+        #[cfg(unix)]
+        self.process_tree.signal(false);
+        #[cfg(unix)]
+        let force_at = Instant::now() + Duration::from_millis(100);
         loop {
-            match self.child.try_wait() {
-                Ok(Some(status)) => {
-                    self.record_exit(exit_outcome(&status));
-                    return;
+            #[cfg(unix)]
+            if Instant::now() >= force_at {
+                self.process_tree.signal(true);
+            }
+            if self.exit.is_none() {
+                match self.child.try_wait() {
+                    Ok(Some(status)) => {
+                        self.refresh_descendants();
+                        self.record_exit(exit_outcome(&status));
+                    }
+                    Ok(None) => {}
+                    Err(error) => {
+                        self.mark_unverified(format!(
+                            "child wait after termination failed: {error}"
+                        ));
+                        return self.report();
+                    }
                 }
-                Ok(None) => {}
-                Err(error) => {
-                    log::warn!("paneflow-host: child wait after termination failed: {error}");
-                    break;
+            }
+            self.refresh_descendants();
+            if self.exit.is_some() && self.descendants_unresolved == 0 {
+                self.shared.set_unverified(None);
+                if let Some(outcome) = &self.exit {
+                    (self.observer)(RuntimeNotice::Exited(outcome.clone()));
                 }
+                return self.report();
             }
             if Instant::now() >= deadline {
                 break;
             }
-            std::thread::sleep(Duration::from_millis(10));
+            std::thread::sleep(
+                Duration::from_millis(10).min(deadline.saturating_duration_since(Instant::now())),
+            );
         }
-        log::warn!(
-            "paneflow-host: child pid={} did not exit within {STOP_BUDGET:?} after termination",
-            self.child_pid
-        );
-        self.writer = None;
-        self.release_master();
-        (self.observer)(RuntimeNotice::Lost);
+        self.mark_unverified(format!(
+            "child pid={} or {} descendant process(es) remain unresolved after termination",
+            self.child_pid, self.descendants_unresolved
+        ));
+        self.report()
     }
 
     fn shutdown(mut self) {
-        if self.exit.is_none() && self.shared.stop_requested.load(Ordering::Acquire) {
-            self.terminate();
+        if !stop_is_confirmed(&self.report()) {
+            recover_without_requester(&mut self);
         }
         self.writer = None;
         self.release_master();
@@ -771,28 +1143,6 @@ fn pty_size(cols: u16, rows: u16) -> PtySize {
         cols,
         pixel_width: u16::try_from(u32::from(cols) * CELL_WIDTH_PX).unwrap_or(u16::MAX),
         pixel_height: u16::try_from(u32::from(rows) * CELL_HEIGHT_PX).unwrap_or(u16::MAX),
-    }
-}
-
-#[cfg(unix)]
-fn terminate_child(child: &mut dyn portable_pty::Child, child_pid: u32, _deadline: Instant) {
-    match crate::process::verified_process_group(child_pid) {
-        Some(group) => {
-            crate::process::terminate_process_group(group, crate::process::UNIX_SHUTDOWN_GRACE);
-        }
-        None => {
-            if let Err(error) = child.kill() {
-                log::debug!("paneflow-host: child kill failed: {error}");
-            }
-        }
-    }
-}
-
-#[cfg(windows)]
-fn terminate_child(child: &mut dyn portable_pty::Child, child_pid: u32, deadline: Instant) {
-    let _ = crate::process::terminate_windows_process_tree(child_pid, deadline);
-    if let Err(error) = child.kill() {
-        log::debug!("paneflow-host: child kill failed: {error}");
     }
 }
 
@@ -886,8 +1236,9 @@ mod tests {
             "offsets never go backwards"
         );
 
-        let exit = runtime.stop().expect("stop completes");
-        assert!(exit.is_some(), "stop records an exit outcome");
+        let report = runtime.stop().expect("stop completes");
+        assert!(report.exit.is_some(), "stop records an exit outcome");
+        assert_eq!(report.unverified, None);
         assert!(!runtime.is_live());
         assert_eq!(runtime.input(b"x".to_vec()), Err(RuntimeError::NotLive));
         let observed = notices.lock().unwrap();
@@ -897,6 +1248,42 @@ mod tests {
                 .any(|n| matches!(n, RuntimeNotice::Exited(_))),
             "the observer sees the exit"
         );
+    }
+
+    #[test]
+    fn startup_wiring_failures_and_panics_retain_a_stoppable_owner() {
+        for fault in ["PANEFLOW_TEST_WIRING_FAILURE", "PANEFLOW_TEST_WIRING_PANIC"] {
+            let mut spec = echo_shell_spec(80, 24);
+            spec.env.insert(fault.into(), "1".into());
+            let launch =
+                SessionRuntime::launch(spec, SessionGeneration::FIRST, Arc::new(|_| {})).unwrap();
+            let LaunchWait::Recovery(runtime) = launch.wait(STARTUP_DEADLINE) else {
+                panic!("wiring fault must retain the native child");
+            };
+            assert!(runtime.owns_process());
+            let identity = runtime.process();
+            assert!(stop_is_confirmed(&runtime.stop().unwrap()));
+            assert!(!identity.is_provably_live());
+        }
+    }
+
+    #[test]
+    fn a_startup_deadline_then_cancellation_retains_the_late_child() {
+        let mut spec = echo_shell_spec(80, 24);
+        spec.env
+            .insert("PANEFLOW_TEST_SPAWN_DELAY_MS".into(), "100".into());
+        let launch =
+            SessionRuntime::launch(spec, SessionGeneration::FIRST, Arc::new(|_| {})).unwrap();
+        let LaunchWait::Pending(launch) = launch.wait(Duration::from_millis(10)) else {
+            panic!("spawn must remain pending after its caller deadline");
+        };
+        launch.cancel();
+        let LaunchWait::Recovery(runtime) = launch.wait(STARTUP_DEADLINE) else {
+            panic!("late child must transfer to recovery");
+        };
+        let identity = runtime.process();
+        assert!(stop_is_confirmed(&runtime.stop().unwrap()));
+        assert!(!identity.is_provably_live());
     }
 
     #[test]
@@ -940,5 +1327,71 @@ mod tests {
             Err(RuntimeError::OutputEvicted { requested, .. }) if requested == beyond
         ));
         let _ = runtime.stop();
+    }
+
+    #[test]
+    fn a_cancelled_launch_terminates_the_late_child_instead_of_publishing_it() {
+        let observer: RuntimeObserver = Arc::new(|_| {});
+        let handle =
+            SessionRuntime::launch(echo_shell_spec(80, 24), SessionGeneration::FIRST, observer)
+                .expect("the session thread starts");
+        handle.cancel();
+        let outcome = handle.wait(Duration::from_secs(30));
+        match outcome {
+            LaunchWait::Recovery(runtime) => {
+                assert!(!runtime.is_live());
+                assert!(runtime.owns_process());
+                let process = runtime.process();
+                let report = runtime.stop().expect("the recovery owner accepts stop");
+                assert!(stop_is_confirmed(&report), "{report:?}");
+                assert!(!process.is_provably_live());
+            }
+            LaunchWait::Failed(reason) => {
+                panic!("a created child must transfer to its recovery owner: {reason}")
+            }
+            LaunchWait::Ready(_) => panic!("a cancelled launch must never publish a runtime"),
+            LaunchWait::Pending(_) => panic!("the cancellation must resolve within the budget"),
+        }
+    }
+
+    #[test]
+    fn a_runtime_panic_keeps_the_child_owned_until_an_explicit_stop_confirms_its_exit() {
+        let notices = Arc::new(Mutex::new(Vec::new()));
+        let sink = Arc::clone(&notices);
+        let observer: RuntimeObserver = Arc::new(move |notice| sink.lock().unwrap().push(notice));
+        let runtime =
+            SessionRuntime::spawn(echo_shell_spec(80, 24), SessionGeneration::FIRST, observer)
+                .expect("shell spawns");
+        let process = runtime.process();
+        runtime.inject_panic();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while runtime.unverified().is_none() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert_eq!(
+            runtime.unverified().as_deref(),
+            Some(RUNTIME_PANIC_REASON),
+            "a panic leaves the session unverified, never exited"
+        );
+        assert!(runtime.exit().is_none());
+        assert!(
+            process.is_provably_live(),
+            "the child survives the runtime panic under a recovery owner"
+        );
+        assert!(matches!(
+            runtime.checkpoint(),
+            Err(RuntimeError::Unverified(_))
+        ));
+        let report = runtime.stop().expect("the recovery owner answers a stop");
+        assert!(report.exit.is_some(), "the stop confirms the child outcome");
+        assert!(!process.is_provably_live());
+        assert!(
+            notices
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|n| matches!(n, RuntimeNotice::Unverified(_))),
+            "the observer saw the unverified transition"
+        );
     }
 }

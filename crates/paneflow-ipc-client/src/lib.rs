@@ -165,7 +165,8 @@ pub fn socket_is_listening(socket: &Path) -> bool {
 
 #[cfg(windows)]
 pub mod windows_pipe {
-    use super::{io, Duration, Stream};
+    use super::{io, Duration};
+    use interprocess::os::windows::named_pipe::{pipe_mode, DuplexPipeStream};
     use std::os::windows::io::{AsHandle, AsRawHandle};
     use windows_sys::Win32::Foundation::{
         CloseHandle, ERROR_BROKEN_PIPE, ERROR_IO_PENDING, ERROR_PIPE_NOT_CONNECTED, HANDLE,
@@ -194,9 +195,8 @@ pub mod windows_pipe {
         }
     }
 
-    fn pipe_handle(stream: &Stream) -> HANDLE {
-        let Stream::NamedPipe(pipe) = stream;
-        pipe.as_handle().as_raw_handle() as HANDLE
+    fn pipe_handle(stream: &DuplexPipeStream<pipe_mode::Bytes>) -> HANDLE {
+        stream.as_handle().as_raw_handle() as HANDLE
     }
 
     fn closed_pipe(error: &io::Error) -> bool {
@@ -242,7 +242,11 @@ pub mod windows_pipe {
         }
     }
 
-    pub fn write_all(stream: &Stream, mut payload: &[u8], timeout: Duration) -> io::Result<()> {
+    pub fn write_all(
+        stream: &DuplexPipeStream<pipe_mode::Bytes>,
+        mut payload: &[u8],
+        timeout: Duration,
+    ) -> io::Result<()> {
         let deadline = std::time::Instant::now() + timeout;
         let handle = pipe_handle(stream);
 
@@ -284,7 +288,11 @@ pub mod windows_pipe {
         Ok(())
     }
 
-    pub fn read_some(stream: &Stream, buffer: &mut [u8], timeout: Duration) -> io::Result<usize> {
+    pub fn read_some(
+        stream: &DuplexPipeStream<pipe_mode::Bytes>,
+        buffer: &mut [u8],
+        timeout: Duration,
+    ) -> io::Result<usize> {
         if timeout.is_zero() {
             return Err(io::Error::new(
                 io::ErrorKind::TimedOut,
@@ -337,7 +345,8 @@ fn write_all_with_deadline(
     payload: &[u8],
     timeout: Duration,
 ) -> io::Result<()> {
-    windows_pipe::write_all(stream, payload, timeout)
+    let Stream::NamedPipe(stream) = stream;
+    windows_pipe::write_all(stream.inner(), payload, timeout)
 }
 
 #[cfg(windows)]
@@ -355,7 +364,8 @@ fn read_line_with_deadline(stream: &mut Stream, timeout: Duration) -> io::Result
         }
         let remaining = deadline.saturating_duration_since(Instant::now());
         let read_buffer_len = capacity.min(chunk.len());
-        match windows_pipe::read_some(stream, &mut chunk[..read_buffer_len], remaining) {
+        let Stream::NamedPipe(stream) = stream;
+        match windows_pipe::read_some(stream.inner(), &mut chunk[..read_buffer_len], remaining) {
             Ok(0) if out.is_empty() => {
                 return Err(io::Error::new(
                     io::ErrorKind::UnexpectedEof,

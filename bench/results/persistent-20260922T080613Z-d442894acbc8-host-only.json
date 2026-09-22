@@ -1,0 +1,692 @@
+{
+  "commit": "d442894acbc86039dceafc8eb7b2a380daa485c0",
+  "commit_short": null,
+  "controller": null,
+  "diff": {
+    "bytes": 446960,
+    "dirty": true,
+    "fnv1a64": "ee47b728e251ffc7",
+    "untracked_paths": [
+      "bench/persistent-baseline.json",
+      "bench/results/persistent-20260921T213231Z-d442894acbc8.json",
+      "crates/paneflow-host/src/bin/paneflow-session-fixture.rs",
+      "crates/paneflow-host/tests/ownership_probes.rs",
+      "crates/paneflow-host/tests/persistent_baseline.rs",
+      "docs/persistent-sessions.md",
+      "scripts/bench-persistent.ps1",
+      "scripts/bench-persistent.sh"
+    ]
+  },
+  "engine": {
+    "api_version": "0.1.0",
+    "app_version": "1.3.2-dev+0c2a290d3",
+    "engine": "libghostty-vt",
+    "source_sha": "0c2a290d3a3e2a599be3a43435d778a5896667ee"
+  },
+  "executables": {
+    "fixture": {
+      "bytes": 244224,
+      "fnv1a64": "55b1a870b70827c3",
+      "path": "C:\\dev\\paneflow\\target\\release\\paneflow-session-fixture.exe"
+    },
+    "host": {
+      "bytes": 7964160,
+      "fnv1a64": "43dcaf6b27f59d2f",
+      "path": "C:\\dev\\paneflow\\target\\release\\paneflow-host.exe"
+    }
+  },
+  "faults": {
+    "paused_follower": {
+      "independent_inspect_ms": 0.1105,
+      "independent_reattach_ms": 0.12469999999999999,
+      "paused_ms": 300.7245,
+      "result": "pass",
+      "scope": "one follower pauses receipt; independent real IPC inspect and attachment complete; no queue-capacity claim",
+      "watchdog_s": 5
+    }
+  },
+  "host": {
+    "build_id": "0.16.0+0c2a290d3a3e",
+    "protocol": 1,
+    "version": "0.16.0"
+  },
+  "invocation": {
+    "args": [
+      "C:\\dev\\paneflow\\target\\release\\deps\\persistent_baseline-ae1e150e37928f34.exe",
+      "persistent_session_baseline",
+      "--ignored",
+      "--exact",
+      "--nocapture",
+      "--test-threads=1"
+    ],
+    "fixture": "C:\\dev\\paneflow\\target\\release\\paneflow-session-fixture.exe",
+    "fixture_mode": "idle",
+    "scenarios": [
+      0,
+      1,
+      10,
+      50
+    ],
+    "settle_s": 4.0,
+    "test": "persistent_session_baseline",
+    "window_s": 10.0
+  },
+  "machine": {
+    "arch": "x86_64",
+    "cpu_model": "AMD64 Family 25 Model 97 Stepping 2, AuthenticAMD",
+    "hostname_hash": "27c35a214898caba",
+    "logical_cpus": 16,
+    "os": "windows",
+    "os_build": "Microsoft Windows [version 10.0.26200.9457]",
+    "total_ram_bytes": 33459585024
+  },
+  "native_environments": {
+    "linux": false,
+    "macos": false,
+    "note": "false means pending, not passed",
+    "windows": true
+  },
+  "pty": "ConPTY via portable-pty 0.9",
+  "scenarios": [
+    {
+      "attach_ms": [],
+      "attachments": 0,
+      "checkpoint_bytes": [],
+      "create_all_ms": 0.0,
+      "create_per_session_ms": null,
+      "desktop_geometry": null,
+      "desktop_mirrors": {
+        "pending": "PANEFLOW_BENCH_DESKTOP was not supplied; desktop mirrors and GPUI deadlines are unmeasured"
+      },
+      "desktop_panes_prepared": null,
+      "desktop_restore": null,
+      "headless_follower_count": 0,
+      "headless_followers": {
+        "attribution": "exact thread names",
+        "cpu": {
+          "by_role_cpu_percent": {
+            "main": 0.0,
+            "other": 0.4665153727041323
+          },
+          "by_thread_cpu_ns": {
+            "linger pool (persist.)": 0,
+            "main": 0,
+            "persistent_session_baseline": 46875000,
+            "unnamed-25324": 0,
+            "unnamed-26580": 0,
+            "unnamed-9000": 0
+          },
+          "total_cpu_percent": 0.4665153727041323
+        },
+        "pid": 5808,
+        "resident_bytes": 6737920
+      },
+      "host": {
+        "attribution": "exact thread names",
+        "cpu": {
+          "by_role_cpu_percent": {
+            "host.cancellation_scan": 0.0,
+            "host.ipc_connection": 0.0,
+            "host.viewport_scan": 0.0,
+            "main": 0.0,
+            "other": 0.0
+          },
+          "by_thread_cpu_ns": {
+            "main": 0,
+            "paneflow-host-cancellation": 0,
+            "paneflow-host-conn": 0,
+            "paneflow-host-viewport": 0,
+            "unnamed-25220": 0,
+            "unnamed-3604": 0,
+            "unnamed-4220": 0
+          },
+          "total_cpu_percent": 0.0
+        },
+        "pid": 24952,
+        "resident_bytes": 8896512
+      },
+      "list_ms": 0.0843,
+      "observed_dimensions": [],
+      "sessions": 0,
+      "sessions_created": 0,
+      "window_s": 10.0479004,
+      "worker": {
+        "pending": "PANEFLOW_BENCH_CONTROLLER was not supplied; build paneflow and pass its executable"
+      }
+    },
+    {
+      "attach_ms": [],
+      "attachments": 0,
+      "checkpoint_bytes": [],
+      "create_all_ms": 13.9992,
+      "create_per_session_ms": 13.9992,
+      "desktop_geometry": null,
+      "desktop_mirrors": {
+        "pending": "PANEFLOW_BENCH_DESKTOP was not supplied; desktop mirrors and GPUI deadlines are unmeasured"
+      },
+      "desktop_panes_prepared": null,
+      "desktop_restore": null,
+      "headless_follower_count": 0,
+      "headless_followers": {
+        "attribution": "exact thread names",
+        "cpu": {
+          "by_role_cpu_percent": {
+            "main": 0.0,
+            "other": 0.4665660649037739
+          },
+          "by_thread_cpu_ns": {
+            "linger pool (persist.)": 0,
+            "main": 0,
+            "persistent_session_baseline": 46875000,
+            "unnamed-25324": 0,
+            "unnamed-26580": 0,
+            "unnamed-9000": 0
+          },
+          "total_cpu_percent": 0.4665660649037739
+        },
+        "pid": 5808,
+        "resident_bytes": 6864896
+      },
+      "host": {
+        "attribution": "exact thread names",
+        "cpu": {
+          "by_role_cpu_percent": {
+            "host.cancellation_scan": 0.0,
+            "host.ipc_connection": 0.0,
+            "host.pty_reader": 0.0,
+            "host.pty_writer": 0.0,
+            "host.session": 1.3996981947113216,
+            "host.viewport_scan": 1.088654151442139,
+            "main": 0.0,
+            "other": 0.0
+          },
+          "by_thread_cpu_ns": {
+            "main": 0,
+            "paneflow-host-cancellation": 0,
+            "paneflow-host-conn": 0,
+            "paneflow-host-pty-reader": 0,
+            "paneflow-host-pty-writer": 0,
+            "paneflow-host-session": 140625000,
+            "paneflow-host-viewport": 109375000,
+            "unnamed-25220": 0,
+            "unnamed-3604": 0,
+            "unnamed-4220": 0
+          },
+          "total_cpu_percent": 2.4883523461534605
+        },
+        "pid": 24952,
+        "resident_bytes": 13275136
+      },
+      "list_ms": 0.1015,
+      "observed_dimensions": [
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "c765bde7-5013-4886-a2ac-94a24f2252a2"
+        }
+      ],
+      "sessions": 1,
+      "sessions_created": 1,
+      "window_s": 10.0468087,
+      "worker": {
+        "pending": "PANEFLOW_BENCH_CONTROLLER was not supplied; build paneflow and pass its executable"
+      }
+    },
+    {
+      "attach_ms": [],
+      "attachments": 0,
+      "checkpoint_bytes": [],
+      "create_all_ms": 66.1622,
+      "create_per_session_ms": 7.351355555555555,
+      "desktop_geometry": null,
+      "desktop_mirrors": {
+        "pending": "PANEFLOW_BENCH_DESKTOP was not supplied; desktop mirrors and GPUI deadlines are unmeasured"
+      },
+      "desktop_panes_prepared": null,
+      "desktop_restore": null,
+      "headless_follower_count": 0,
+      "headless_followers": {
+        "attribution": "exact thread names",
+        "cpu": {
+          "by_role_cpu_percent": {
+            "main": 0.0,
+            "other": 0.46663482831750586
+          },
+          "by_thread_cpu_ns": {
+            "linger pool (persist.)": 0,
+            "main": 0,
+            "persistent_session_baseline": 46875000
+          },
+          "total_cpu_percent": 0.46663482831750586
+        },
+        "pid": 5808,
+        "resident_bytes": 6934528
+      },
+      "host": {
+        "attribution": "exact thread names",
+        "cpu": {
+          "by_role_cpu_percent": {
+            "host.cancellation_scan": 0.0,
+            "host.ipc_connection": 0.0,
+            "host.pty_reader": 0.0,
+            "host.pty_writer": 0.0,
+            "host.session": 9.332696566350117,
+            "host.viewport_scan": 5.444072997037568,
+            "main": 0.0,
+            "other": 0.0
+          },
+          "by_thread_cpu_ns": {
+            "main": 0,
+            "paneflow-host-cancellation": 0,
+            "paneflow-host-conn": 0,
+            "paneflow-host-pty-reader": 0,
+            "paneflow-host-pty-writer": 0,
+            "paneflow-host-session": 937500000,
+            "paneflow-host-viewport": 546875000,
+            "unnamed-3232": 0,
+            "unnamed-4220": 0,
+            "unnamed-4812": 0
+          },
+          "total_cpu_percent": 14.776769563387685
+        },
+        "pid": 24952,
+        "resident_bytes": 15380480
+      },
+      "list_ms": 0.2496,
+      "observed_dimensions": [
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "c765bde7-5013-4886-a2ac-94a24f2252a2"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "3e7481f7-8820-42ed-9fd7-a345d1b378d7"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "b6a9cba6-d954-4c0c-9557-329a1257118e"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "fc59e16d-4950-4895-896a-57e0e3d5a028"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "d936dcfb-b6fd-4c66-bcdb-79d759689919"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "8970725d-f076-4202-b73f-3b5c8916637c"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "6c8561ca-e27d-45c6-91ed-f45353c7ec01"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "44adbd44-e2b9-4af0-b7a2-76e622ccc1d2"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "191bf1bd-f168-4e04-9dee-32cc903a9b2d"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "22c37ed0-36ea-44b5-981e-b8354b989204"
+        }
+      ],
+      "sessions": 10,
+      "sessions_created": 9,
+      "window_s": 10.0453282,
+      "worker": {
+        "pending": "PANEFLOW_BENCH_CONTROLLER was not supplied; build paneflow and pass its executable"
+      }
+    },
+    {
+      "attach_ms": [],
+      "attachments": 0,
+      "checkpoint_bytes": [],
+      "create_all_ms": 303.6162,
+      "create_per_session_ms": 7.590405,
+      "desktop_geometry": null,
+      "desktop_mirrors": {
+        "pending": "PANEFLOW_BENCH_DESKTOP was not supplied; desktop mirrors and GPUI deadlines are unmeasured"
+      },
+      "desktop_panes_prepared": null,
+      "desktop_restore": null,
+      "headless_follower_count": 0,
+      "headless_followers": {
+        "attribution": "exact thread names",
+        "cpu": {
+          "by_role_cpu_percent": {
+            "main": 0.0,
+            "other": 0.621720251591186
+          },
+          "by_thread_cpu_ns": {
+            "linger pool (persist.)": 0,
+            "main": 0,
+            "persistent_session_baseline": 62500000
+          },
+          "total_cpu_percent": 0.621720251591186
+        },
+        "pid": 5808,
+        "resident_bytes": 7274496
+      },
+      "host": {
+        "attribution": "exact thread names",
+        "cpu": {
+          "by_role_cpu_percent": {
+            "host.cancellation_scan": 0.0,
+            "host.ipc_connection": 0.0,
+            "host.pty_reader": 0.0,
+            "host.pty_writer": 0.0,
+            "host.session": 73.20755962486216,
+            "host.viewport_scan": 27.355691070012185,
+            "main": 0.0,
+            "other": 0.0
+          },
+          "by_thread_cpu_ns": {
+            "main": 0,
+            "paneflow-host-cancellation": 0,
+            "paneflow-host-conn": 0,
+            "paneflow-host-pty-reader": 0,
+            "paneflow-host-pty-writer": 0,
+            "paneflow-host-session": 7359375000,
+            "paneflow-host-viewport": 2750000000,
+            "unnamed-3232": 0,
+            "unnamed-4220": 0,
+            "unnamed-4812": 0
+          },
+          "total_cpu_percent": 100.56325069487436
+        },
+        "pid": 24952,
+        "resident_bytes": 24023040
+      },
+      "list_ms": 0.9986,
+      "observed_dimensions": [
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "c765bde7-5013-4886-a2ac-94a24f2252a2"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "3e7481f7-8820-42ed-9fd7-a345d1b378d7"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "b6a9cba6-d954-4c0c-9557-329a1257118e"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "fc59e16d-4950-4895-896a-57e0e3d5a028"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "d936dcfb-b6fd-4c66-bcdb-79d759689919"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "8970725d-f076-4202-b73f-3b5c8916637c"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "6c8561ca-e27d-45c6-91ed-f45353c7ec01"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "44adbd44-e2b9-4af0-b7a2-76e622ccc1d2"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "191bf1bd-f168-4e04-9dee-32cc903a9b2d"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "22c37ed0-36ea-44b5-981e-b8354b989204"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "da4db890-be9b-409b-b64b-f0663b253ff3"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "729a5011-d4ee-44f0-89cf-7d8cb3627b6a"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "3b06351e-727e-4181-a0bb-06fc6d3c025f"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "4895f834-85f3-4f04-92d2-a2bf8cee46d2"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "929c686e-e848-42ef-b803-737a9c6819f8"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "3c00faa9-d906-4163-9ea0-cac81045ae75"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "2ab2bc9d-b3a1-4a77-a3cf-c4d075885417"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "1153b6a9-fa47-4c89-a04d-e1c9f7fca632"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "ff280b16-4a4c-4795-a3ac-2a6897137f1a"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "ec741c80-9c6c-4b81-9f35-fc1641c5b970"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "19a227fb-9a09-4ecb-8e95-11a9e587eba4"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "9178170b-c334-4676-99a8-26d1e1abde64"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "0ad07823-2bf9-4c4a-9d88-538f6e706660"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "f1b13e92-22ad-4b38-b416-bc21b1c8c534"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "98de19a3-855c-41bf-bd87-630819b46dc5"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "7518680c-bbc8-42d9-9414-407e20841ad0"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "2cbaa091-85e3-4ed8-8900-27e5d1c92eb6"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "f804912a-9866-46ce-b77a-1f7338b2e0db"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "dd5a5b43-4ad1-4a00-bfa1-b89a8d054e55"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "99044a26-2116-4288-aa71-cf8d9815b817"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "2a2e4e11-ca31-4ed7-b9ea-05f60374e86a"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "6c6e39c5-5c5b-4d58-ace0-37c8c7207718"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "fe449968-606f-4fd8-9be7-bbe6cc221ccc"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "e6134cb8-16f6-49a9-a967-46eb0bc91a23"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "8d41a7f2-9e63-48fb-9317-476c38f1757f"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "3514774f-3ea8-46ca-8d8f-d900fc1f4bb2"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "7ed2cc30-1c81-4c56-804a-9cffcdf96a18"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "c4694321-e04f-45b8-863e-913674f691cb"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "de403a2d-52f7-48b8-95b3-3b2278ad8101"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "e004e090-0c4a-4777-bf43-549ec8de3ec4"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "faf86fd2-4c13-452b-b4dd-48dc21f8f42f"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "92d4b348-82c5-477b-83f6-b19a7a8ea3b9"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "6513035f-b772-46c7-9d58-3d9caee50619"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "05bba075-d6bd-4e13-9b56-e6a187d0dcd0"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "d879fce8-6fc4-4ee7-8976-91122ad032d4"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "f52805f4-29c9-45e0-8a40-360e7adba2d3"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "c2e9f69d-5c25-489c-93ed-17e7fd536c8a"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "c61c6f7f-5255-470a-8c76-af0f80eefa34"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "16f40b68-b31b-4dd2-9695-69244aefa9f0"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "63ace6fb-de6b-45da-868c-b0f67ac2b231"
+        }
+      ],
+      "sessions": 50,
+      "sessions_created": 40,
+      "window_s": 10.0527528,
+      "worker": {
+        "pending": "PANEFLOW_BENCH_CONTROLLER was not supplied; build paneflow and pass its executable"
+      }
+    }
+  ],
+  "schema_version": 2,
+  "seed": null,
+  "seed_note": "the fixture is deterministic and the runner draws no random input",
+  "source_unchanged_during_measurement": true,
+  "stamp": "20260922T080613Z",
+  "suite": "paneflow-persistent-bench",
+  "toolchain": {
+    "profile": "release",
+    "rustc": "rustc 1.98.0 (88d9e12ae 2026-08-18)"
+  },
+  "topology": "host-only",
+  "unmeasured": [
+    "keystroke to pixel latency of a hosted pane (needs the desktop; see scripts/bench-terminal)",
+    "reattach time after a desktop restart with 50 sessions",
+    "host memory after 24 hours of idle sessions"
+  ]
+}

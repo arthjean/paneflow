@@ -244,6 +244,7 @@ struct SelfUpdateState {
     update_attempt_count: u32,
     download_generation: u64,
     dismissed_version: Option<String>,
+    staged_msi: Option<update::windows::msi::StagedMsiUpdate>,
 }
 
 const PRIMARY_SIDEBAR_ANIMATION_MS: u64 = 280;

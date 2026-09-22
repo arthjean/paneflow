@@ -1,0 +1,193 @@
+{
+  "commit": "d442894acbc86039dceafc8eb7b2a380daa485c0",
+  "commit_short": "d442894acbc8",
+  "diff": {
+    "bytes": 223130,
+    "dirty": true,
+    "fnv1a64": "9559b56b4f9981c3"
+  },
+  "engine": {
+    "api_version": "0.1.0",
+    "app_version": "1.3.2-dev+0c2a290d3",
+    "engine": "libghostty-vt",
+    "source_sha": "0c2a290d3a3e2a599be3a43435d778a5896667ee"
+  },
+  "host": {
+    "build_id": "0.16.0+0c2a290d3a3e",
+    "protocol": 1,
+    "version": "0.16.0"
+  },
+  "invocation": {
+    "args": [
+      "C:\\dev\\paneflow\\target\\release\\deps\\persistent_baseline-ae1e150e37928f34.exe",
+      "persistent_session_baseline",
+      "--ignored",
+      "--exact",
+      "--nocapture",
+      "--test-threads=1"
+    ],
+    "fixture": "C:\\dev\\paneflow\\target\\release\\paneflow-session-fixture.exe",
+    "fixture_mode": "idle",
+    "scenarios": [
+      1,
+      10,
+      50
+    ],
+    "settle_s": 4.0,
+    "test": "persistent_session_baseline",
+    "window_s": 10.0
+  },
+  "machine": {
+    "arch": "x86_64",
+    "cpu_model": "AMD64 Family 25 Model 97 Stepping 2, AuthenticAMD",
+    "hostname_hash": "27c35a214898caba",
+    "logical_cpus": 16,
+    "os": "windows",
+    "total_ram_bytes": 33459585024
+  },
+  "pty": "ConPTY via portable-pty 0.9",
+  "scenarios": [
+    {
+      "create_all_ms": 39.4681,
+      "create_per_session_ms": 39.4681,
+      "desktop_mirrors": {
+        "pending": "the GPUI desktop is not part of this headless runner; measure with the app attached"
+      },
+      "host": {
+        "attribution": "exact thread names",
+        "cpu": {
+          "by_role_cpu_percent": {
+            "host.cancellation_scan": 0.0,
+            "host.ipc_connection": 0.0,
+            "host.main": 0.0,
+            "host.other": 0.0,
+            "host.pty_reader": 0.0,
+            "host.pty_writer": 0.0,
+            "host.session": 0.15581360349188408,
+            "host.viewport_scan": 0.9348816209513043
+          },
+          "by_thread_cpu_ns": {
+            "main": 0,
+            "paneflow-host-cancellation": 0,
+            "paneflow-host-conn": 0,
+            "paneflow-host-pty-reader": 0,
+            "paneflow-host-pty-writer": 0,
+            "paneflow-host-session": 15625000,
+            "paneflow-host-viewport": 93750000,
+            "unnamed-12012": 0,
+            "unnamed-25680": 0,
+            "unnamed-9764": 0
+          },
+          "total_cpu_percent": 1.0906952244431884
+        },
+        "pid": 22520,
+        "resident_bytes": 13979648
+      },
+      "list_ms": 0.13549999999999998,
+      "sessions": 1,
+      "window_s": 10.0280076,
+      "worker": {
+        "pending": "paneflow-serve is not started by this runner; measure it with the desktop attached"
+      }
+    },
+    {
+      "create_all_ms": 71.33019999999999,
+      "create_per_session_ms": 7.133019999999999,
+      "desktop_mirrors": {
+        "pending": "the GPUI desktop is not part of this headless runner; measure with the app attached"
+      },
+      "host": {
+        "attribution": "exact thread names",
+        "cpu": {
+          "by_role_cpu_percent": {
+            "host.cancellation_scan": 0.0,
+            "host.ipc_connection": 0.0,
+            "host.main": 0.0,
+            "host.other": 0.0,
+            "host.pty_reader": 0.0,
+            "host.pty_writer": 0.0,
+            "host.session": 0.4675777265302615,
+            "host.viewport_scan": 6.234369687070153
+          },
+          "by_thread_cpu_ns": {
+            "main": 0,
+            "paneflow-host-cancellation": 0,
+            "paneflow-host-conn": 0,
+            "paneflow-host-pty-reader": 0,
+            "paneflow-host-pty-writer": 0,
+            "paneflow-host-session": 46875000,
+            "paneflow-host-viewport": 625000000,
+            "unnamed-12012": 0,
+            "unnamed-25680": 0,
+            "unnamed-9764": 0
+          },
+          "total_cpu_percent": 6.701947413600415
+        },
+        "pid": 22520,
+        "resident_bytes": 16306176
+      },
+      "list_ms": 0.2388,
+      "sessions": 10,
+      "window_s": 10.0250712,
+      "worker": {
+        "pending": "paneflow-serve is not started by this runner; measure it with the desktop attached"
+      }
+    },
+    {
+      "create_all_ms": 281.6368,
+      "create_per_session_ms": 5.6327359999999995,
+      "desktop_mirrors": {
+        "pending": "the GPUI desktop is not part of this headless runner; measure with the app attached"
+      },
+      "host": {
+        "attribution": "exact thread names",
+        "cpu": {
+          "by_role_cpu_percent": {
+            "host.cancellation_scan": 0.0,
+            "host.ipc_connection": 0.0,
+            "host.main": 0.0,
+            "host.other": 0.0,
+            "host.pty_reader": 0.0,
+            "host.pty_writer": 0.0,
+            "host.session": 6.386552276142308,
+            "host.viewport_scan": 26.948135213966324
+          },
+          "by_thread_cpu_ns": {
+            "main": 0,
+            "paneflow-host-cancellation": 0,
+            "paneflow-host-conn": 0,
+            "paneflow-host-pty-reader": 0,
+            "paneflow-host-pty-writer": 0,
+            "paneflow-host-session": 640625000,
+            "paneflow-host-viewport": 2703125000,
+            "unnamed-13676": 0,
+            "unnamed-25680": 0,
+            "unnamed-9388": 0
+          },
+          "total_cpu_percent": 33.334687490108635
+        },
+        "pid": 22520,
+        "resident_bytes": 24678400
+      },
+      "list_ms": 1.1280000000000001,
+      "sessions": 50,
+      "window_s": 10.0308425,
+      "worker": {
+        "pending": "paneflow-serve is not started by this runner; measure it with the desktop attached"
+      }
+    }
+  ],
+  "seed": null,
+  "seed_note": "the fixture is deterministic and the runner draws no random input",
+  "stamp": "20260921T213231Z",
+  "suite": "paneflow-persistent-bench",
+  "toolchain": {
+    "profile": "release",
+    "rustc": "rustc 1.98.0 (88d9e12ae 2026-08-18)"
+  },
+  "unmeasured": [
+    "keystroke to pixel latency of a hosted pane (needs the desktop; see scripts/bench-terminal)",
+    "reattach time after a desktop restart with 50 sessions",
+    "host memory after 24 hours of idle sessions"
+  ]
+}

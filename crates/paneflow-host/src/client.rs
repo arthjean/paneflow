@@ -31,6 +31,10 @@ pub enum HostClientError {
 }
 
 impl HostClientError {
+    pub fn is_endpoint_absent(&self) -> bool {
+        matches!(self, Self::Unreachable { source, .. } if matches!(source.kind(), io::ErrorKind::NotFound | io::ErrorKind::ConnectionRefused))
+    }
+
     pub fn code(&self) -> Option<i64> {
         match self {
             Self::Rpc { code, .. } => Some(*code),
@@ -122,11 +126,9 @@ impl HostClient {
         .map_err(|incompatibility: Incompatibility| {
             HostClientError::Incompatible(incompatibility.to_string())
         })?;
-        protocol::check_build(&identity.version, hello.build.as_deref()).map_err(
-            |incompatibility: Incompatibility| {
-                HostClientError::Incompatible(incompatibility.to_string())
-            },
-        )?;
+        if let Some(drift) = protocol::build_drift(&identity.version, hello.build.as_deref()) {
+            log::info!("paneflow-host client: {drift}; protocol and engine decide compatibility");
+        }
         client.identity = identity;
         Ok(client)
     }
@@ -423,4 +425,56 @@ fn result_or_error(value: Value) -> Result<Value, HostClientError> {
         .get("result")
         .cloned()
         .ok_or_else(|| HostClientError::Protocol("frame carries neither result nor error".into()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[cfg(windows)]
+    #[test]
+    fn a_busy_pipe_without_an_acceptor_times_out_without_claiming_the_host_is_absent() {
+        use interprocess::local_socket::{GenericFilePath, ListenerOptions, Stream, prelude::*};
+        let endpoint = std::path::PathBuf::from(format!(
+            r"\\.\pipe\paneflow-connect-deadline-{}",
+            SessionId::new()
+        ));
+        let listener = ListenerOptions::new()
+            .name(endpoint.as_path().to_fs_name::<GenericFilePath>().unwrap())
+            .create_sync()
+            .unwrap();
+        let held =
+            Stream::connect(endpoint.as_path().to_fs_name::<GenericFilePath>().unwrap()).unwrap();
+        let accepted = listener.accept().unwrap();
+        drop(listener);
+        let started = std::time::Instant::now();
+        let error = match HostClient::connect(&endpoint, &ClientHello::control("bounded-probe")) {
+            Ok(_) => panic!("an endpoint with no acceptor cannot handshake"),
+            Err(error) => error,
+        };
+        assert!(started.elapsed() < REQUEST_DEADLINE + std::time::Duration::from_secs(2));
+        assert!(!error.is_endpoint_absent());
+        assert!(
+            matches!(error, HostClientError::Unreachable { source, .. } if source.kind() == io::ErrorKind::TimedOut)
+        );
+        drop(accepted);
+        drop(held);
+    }
+
+    #[test]
+    fn an_inaccessible_or_stalled_endpoint_is_not_an_absent_host() {
+        for (kind, absent) in [
+            (io::ErrorKind::NotFound, true),
+            (io::ErrorKind::ConnectionRefused, true),
+            (io::ErrorKind::PermissionDenied, false),
+            (io::ErrorKind::TimedOut, false),
+            (io::ErrorKind::WouldBlock, false),
+        ] {
+            let error = HostClientError::Unreachable {
+                endpoint: "fixture".into(),
+                source: io::Error::from(kind),
+            };
+            assert_eq!(error.is_endpoint_absent(), absent);
+        }
+    }
 }

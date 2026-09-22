@@ -504,7 +504,7 @@ impl PaneFlowApp {
             let resume = session.clone();
             context_menu = context_menu.child(self.render_select_menu_item(
                 "session-context-resume".into(),
-                "Resume",
+                "Restart",
                 None,
                 ui,
                 cx.listener(move |this, _: &ClickEvent, window, cx| {

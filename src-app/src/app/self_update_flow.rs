@@ -519,23 +519,14 @@ impl PaneFlowApp {
                 match result {
                     Ok(staged) => {
                         let _ = this.update(cx, |app, cx| {
-                            app.self_update.self_update_status = update::SelfUpdateStatus::Idle;
-                            app.save_session_before_exit(cx, move |app, cx| {
-                                match update::windows::msi::spawn_relay(staged) {
-                                    Ok(()) => {
-                                        log::info!(
-                                            "self-update/msi: relay spawned - quitting so msiexec can replace paneflow.exe"
-                                        );
-                                        app.self_update.self_update_status =
-                                            update::SelfUpdateStatus::Installing;
-                                        cx.notify();
-                                        cx.quit();
-                                    }
-                                    Err(err) => {
-                                        app.record_update_failure("msi-relay", &err, cx);
-                                    }
-                                }
-                            });
+                            log::info!(
+                                "self-update/msi: staged - the restart goes through the session stop and host shutdown before the relay runs"
+                            );
+                            app.self_update.staged_msi = Some(staged);
+                            app.self_update.self_update_status =
+                                update::SelfUpdateStatus::ReadyToRestart;
+                            cx.notify();
+                            app.request_update_restart(cx);
                         });
                     }
                     Err(err) => {

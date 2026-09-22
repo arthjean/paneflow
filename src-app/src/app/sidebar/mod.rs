@@ -1640,11 +1640,7 @@ impl PaneFlowApp {
                 .cursor_pointer()
                 .delayed_tooltip(crate::ui_primitives::text_tooltip(tooltip))
                 .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
-                    if click_session.live {
-                        this.open_session_in_layout(ws_idx, click_session.clone(), window, cx);
-                    } else {
-                        this.resume_listed_session(ws_idx, click_session.clone(), window, cx);
-                    }
+                    this.open_session_in_layout(ws_idx, click_session.clone(), window, cx);
                     cx.stop_propagation();
                 }))
                 .on_aux_click(cx.listener(move |this, event: &ClickEvent, _window, cx| {

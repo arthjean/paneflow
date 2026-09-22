@@ -189,9 +189,12 @@ fn read_stdin_json(event: HookEvent) -> Option<Value> {
         diagnose(&format!("{}: empty stdin", event.name()));
         return None;
     }
-    match serde_json::from_slice(&bytes) {
-        Ok(value) => Some(value),
-        Err(_) => {
+    match std::str::from_utf8(&bytes)
+        .ok()
+        .and_then(|text| serde_json::from_str(text).ok())
+    {
+        Some(value) => Some(value),
+        None => {
             diagnose(&format!("{}: invalid stdin JSON", event.name()));
             None
         }

@@ -98,6 +98,9 @@ pub(crate) fn lifecycle_sentence(lifecycle: &SessionLifecycle) -> String {
         },
         SessionLifecycle::Failed { reason } => format!("Failed to start: {reason}"),
         SessionLifecycle::Lost => "Lost: its process did not survive".to_string(),
+        SessionLifecycle::Unverified { reason } => {
+            format!("Unverified: the host still owns its process ({reason})")
+        }
     }
 }
 
@@ -551,14 +554,36 @@ impl PaneFlowApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.open_session_in_layout_with(ws_idx, listed, false, window, cx);
+    }
+
+    fn open_session_in_layout_with(
+        &mut self,
+        ws_idx: usize,
+        listed: OwnedSession,
+        restart: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if ws_idx >= self.workspaces.len() {
             return;
         }
         self.active_idx = ws_idx;
         let ws_id = self.workspaces[ws_idx].id;
         let cwd = std::path::PathBuf::from(&listed.cwd);
-        let terminal = cx
-            .new(|cx| TerminalView::attach_existing(ws_id, Some(cwd), listed.session.clone(), cx));
+        let terminal = cx.new(|cx| {
+            if restart {
+                TerminalView::attach_restarting(
+                    ws_id,
+                    Some(cwd),
+                    listed.session.clone(),
+                    Some(listed.generation),
+                    cx,
+                )
+            } else {
+                TerminalView::attach_existing(ws_id, Some(cwd), listed.session.clone(), cx)
+            }
+        });
         if let Some(title) = listed.title.clone() {
             terminal.update(cx, |view, _| view.terminal.title = title);
         }
@@ -605,7 +630,8 @@ impl PaneFlowApp {
             cx.notify();
             return;
         }
-        self.open_session_in_layout(ws_idx, listed, window, cx);
+        let restart = !listed.live;
+        self.open_session_in_layout_with(ws_idx, listed, restart, window, cx);
     }
 
     fn pane_holding_terminal(

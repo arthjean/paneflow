@@ -105,7 +105,7 @@ pub fn record_submission(
 
 fn write_marker(path: &Path, marker: &Cancellation) -> io::Result<()> {
     let bytes = serde_json::to_vec(marker).map_err(io::Error::other)?;
-    crate::manifest::write_atomically(path, &bytes)
+    crate::manifest::write_atomically_in_existing_dir(path, &bytes)
 }
 
 pub struct AssetLock {

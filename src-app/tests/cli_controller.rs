@@ -101,6 +101,14 @@ fn shell_params() -> Value {
 #[test]
 fn the_cli_renders_the_same_session_projection_as_the_app_and_survives_a_worker_restart() {
     let home = tempfile::tempdir().expect("a temporary home");
+    for (name, contents) in [
+        ("paneflow.json", "{}"),
+        ("session.json", "{}"),
+        ("window-state.json", "{}"),
+        ("telemetry_id", "7f03d6ba-1249-4a78-92dc-96f77e8d10a2"),
+    ] {
+        std::fs::write(home.path().join(name), contents).expect("isolated Controller state");
+    }
     let core_endpoint = paneflow_home::host_endpoint_path(home.path());
     let core = paneflow_host::SessionHost::open(home.path(), &core_endpoint).expect("a core opens");
     let core_server = paneflow_host::ServerHandle::spawn(Arc::clone(&core), core_endpoint.clone())
@@ -206,10 +214,11 @@ fn the_cli_renders_the_same_session_projection_as_the_app_and_survives_a_worker_
     let restarted = Instant::now();
     let replacement =
         paneflow_serve::open(home.path()).expect("a replacement worker takes the home");
+    let startup = restarted.elapsed();
     let resumed = follower.next_of_type("bootstrap", RECONNECT_BUDGET + LINE_WAIT);
     assert!(
         restarted.elapsed() < RECONNECT_BUDGET,
-        "the CLI resumed in {:?}, over the {RECONNECT_BUDGET:?} budget",
+        "the CLI resumed in {:?} (worker startup {startup:?}), over the {RECONNECT_BUDGET:?} budget",
         restarted.elapsed()
     );
     assert_eq!(resumed["resumed"], true);

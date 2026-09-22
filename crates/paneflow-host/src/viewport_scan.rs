@@ -4,7 +4,7 @@ use std::sync::{Arc, Weak};
 use std::time::Duration;
 
 use paneflow_agent_config::runtime_catalog;
-use paneflow_config::schema::SessionId;
+use paneflow_config::schema::{SessionGeneration, SessionId};
 
 use crate::host::SessionHost;
 use crate::manifest::{HostedSessionRuntime, now_ms};
@@ -138,8 +138,10 @@ pub fn spawn(host: &Arc<SessionHost>) {
     }
 }
 
+type TrackerKey = (SessionId, SessionGeneration);
+
 fn scan_loop(host: Weak<SessionHost>) {
-    let mut trackers: BTreeMap<SessionId, ViewportTracker> = BTreeMap::new();
+    let mut trackers: BTreeMap<TrackerKey, ViewportTracker> = BTreeMap::new();
     loop {
         std::thread::sleep(VIEWPORT_SCAN_INTERVAL);
         let Some(host) = host.upgrade() else {
@@ -149,31 +151,39 @@ fn scan_loop(host: Weak<SessionHost>) {
     }
 }
 
-fn scan_once(host: &Arc<SessionHost>, trackers: &mut BTreeMap<SessionId, ViewportTracker>) {
+fn scan_once(host: &Arc<SessionHost>, trackers: &mut BTreeMap<TrackerKey, ViewportTracker>) {
     let targets = host.live_scan_targets();
-    trackers.retain(|session, _| targets.iter().any(|(id, _, _)| id == session));
-    for (session, manifest, runtime) in targets {
-        let Ok(scan) = runtime.viewport_scan(VIEWPORT_SCAN_BUDGET) else {
+    trackers.retain(|(session, generation), _| {
+        targets
+            .iter()
+            .any(|target| target.session == *session && target.generation == *generation)
+    });
+    for target in targets {
+        let Ok(scan) = target.runtime.viewport_scan(VIEWPORT_SCAN_BUDGET) else {
             continue;
         };
         let observation =
-            observe_foreground_runtime(runtime.process(), scan.foreground_process_group);
-        let declared_tool = manifest
+            observe_foreground_runtime(target.runtime.process(), scan.foreground_process_group);
+        let declared_tool = target
+            .manifest
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .last_hook
             .as_ref()
             .map(|hook| hook.tool.clone());
-        let edges = trackers.entry(session).or_default().observe(
-            &scan.screen,
-            observation,
-            declared_tool.as_deref(),
-            now_ms(),
-        );
+        let edges = trackers
+            .entry((target.session.clone(), target.generation))
+            .or_default()
+            .observe(
+                &scan.screen,
+                observation,
+                declared_tool.as_deref(),
+                now_ms(),
+            );
         if !edges.write_due {
             continue;
         }
-        host.update(&manifest, |record| {
+        host.commit_scan(&target, |record| {
             if let Some(stamp) = edges.screen_changed_at_ms {
                 record.screen_changed_at_ms = Some(stamp);
             }
