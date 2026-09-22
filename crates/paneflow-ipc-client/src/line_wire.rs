@@ -5,6 +5,8 @@ use std::time::Duration;
 use interprocess::local_socket::Stream;
 #[cfg(not(windows))]
 use interprocess::local_socket::{prelude::*, GenericFilePath};
+#[cfg(windows)]
+use interprocess::os::windows::named_pipe::{local_socket, pipe_mode, DuplexPipeStream};
 
 pub const WRITE_DEADLINE: Duration = Duration::from_secs(5);
 
@@ -14,10 +16,26 @@ pub enum LineRead {
     TooLong,
 }
 
+#[cfg(windows)]
+enum WindowsWireStream {
+    Accepted(local_socket::Stream),
+    Connected(DuplexPipeStream<pipe_mode::Bytes>),
+}
+
+#[cfg(windows)]
+impl WindowsWireStream {
+    fn pipe(&self) -> &DuplexPipeStream<pipe_mode::Bytes> {
+        match self {
+            Self::Accepted(stream) => stream.inner(),
+            Self::Connected(stream) => stream,
+        }
+    }
+}
+
 pub struct Wire {
     max_frame: usize,
     #[cfg(windows)]
-    stream: Stream,
+    stream: WindowsWireStream,
     #[cfg(windows)]
     pending: Vec<u8>,
     #[cfg(not(windows))]
@@ -38,21 +56,16 @@ impl Wire {
     ) -> io::Result<Self> {
         #[cfg(windows)]
         {
-            use interprocess::os::windows::named_pipe::{
-                local_socket, pipe_mode, DuplexPipeStream,
-            };
             use interprocess::ConnectWaitMode;
-            use std::os::windows::io::OwnedHandle;
             let pipe = DuplexPipeStream::<pipe_mode::Bytes>::connect_by_path_with_wait_mode(
                 endpoint.as_os_str(),
                 ConnectWaitMode::Timeout(timeout),
             )?;
-            let handle: OwnedHandle = pipe
-                .try_into()
-                .map_err(|_| io::Error::other("cannot transfer an unsplit named pipe handle"))?;
-            let stream = local_socket::Stream::try_from(handle)
-                .map_err(|error| io::Error::other(error.to_string()))?;
-            Self::new(Stream::NamedPipe(stream), max_frame)
+            Ok(Self {
+                max_frame,
+                stream: WindowsWireStream::Connected(pipe),
+                pending: Vec::new(),
+            })
         }
         #[cfg(not(windows))]
         {
@@ -65,9 +78,10 @@ impl Wire {
     pub fn new(stream: Stream, max_frame: usize) -> io::Result<Self> {
         #[cfg(windows)]
         {
+            let Stream::NamedPipe(stream) = stream;
             Ok(Self {
                 max_frame,
-                stream,
+                stream: WindowsWireStream::Accepted(stream),
                 pending: Vec::new(),
             })
         }
@@ -133,7 +147,7 @@ impl Wire {
                 return Ok(LineRead::TooLong);
             }
             let remaining = deadline.saturating_duration_since(std::time::Instant::now());
-            let read = match read_some(&self.stream, &mut scratch, remaining) {
+            let read = match read_some(self.stream.pipe(), &mut scratch, remaining) {
                 Ok(read) => read,
                 Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
                 Err(error) => return Err(error),
@@ -174,7 +188,7 @@ impl Wire {
     pub fn write_raw_with_timeout(&mut self, payload: &[u8], timeout: Duration) -> io::Result<()> {
         #[cfg(windows)]
         {
-            crate::windows_pipe::write_all(&self.stream, payload, timeout)
+            crate::windows_pipe::write_all(self.stream.pipe(), payload, timeout)
         }
         #[cfg(not(windows))]
         {
