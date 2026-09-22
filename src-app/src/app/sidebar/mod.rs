@@ -17,7 +17,7 @@ use crate::{
     WorkspaceDragPreview, ai_types,
     ai_types::AgentState,
     app::host_agents::HostAgentRow,
-    app::hosted_sessions::{OwnedSession, lifecycle_sentence, relative_age},
+    app::hosted_sessions::{OwnedSession, SessionRowScope, lifecycle_sentence, relative_age},
     app::pull_request::PullRequest,
     pane_drag::PaneDrag,
     settings::components::with_alpha,
@@ -703,6 +703,7 @@ impl PaneFlowApp {
         }
 
         list = self.render_workspace_rows(list, ui, window, cx);
+        list = self.render_fallback_session_group(list, ui, cx);
         sidebar = sidebar.child(self.sidebar_list_wrapper(list, cx));
         sidebar = sidebar.child(self.render_sidebar_settings_footer(window, cx));
         sidebar
@@ -1309,6 +1310,7 @@ impl PaneFlowApp {
                 .text_color(text_color)
                 .text_size(px(14.))
                 .line_height(px(SIDEBAR_ROW_LINE_HEIGHT))
+                .font_weight(FontWeight::MEDIUM)
                 .child(self.sidebar_filter_label(title.clone(), cx))
         };
 
@@ -1501,7 +1503,13 @@ impl PaneFlowApp {
 
         let row = sidebar_row(row_shell, tab_group, resting_bg, hovered_bg, body);
         let hidden_rows = if tab_idx + 1 == ws.tab_count() {
-            self.render_session_rows(ws_idx, title_indent, content_width, ui, cx)
+            self.render_session_rows(
+                SessionRowScope::Workspace(ws_idx),
+                title_indent,
+                content_width,
+                ui,
+                cx,
+            )
         } else {
             Vec::new()
         };
@@ -1519,22 +1527,72 @@ impl PaneFlowApp {
             .children(hidden_rows)
     }
 
+    fn render_fallback_session_group(
+        &self,
+        list: gpui::Stateful<gpui::Div>,
+        ui: crate::theme::UiColors,
+        cx: &mut Context<Self>,
+    ) -> gpui::Stateful<gpui::Div> {
+        let rows = self.render_session_rows(
+            SessionRowScope::Fallback,
+            SIDEBAR_FOLDER_SLOT_WIDTH + SIDEBAR_TITLE_ROW_GAP,
+            SIDEBAR_WORKSPACE_ROW_CONTENT_WIDTH,
+            ui,
+            cx,
+        );
+        if rows.is_empty() {
+            return list;
+        }
+        let header = div()
+            .id("sidebar-other-sessions")
+            .flex_none()
+            .mx(px(SIDEBAR_ROW_MARGIN_X))
+            .mt(px(8.))
+            .px(px(SIDEBAR_ROW_PADDING_X))
+            .py(px(SIDEBAR_ROW_PADDING_Y))
+            .text_size(px(13.))
+            .text_color(ui.muted)
+            .child("Other sessions");
+        list.child(header).child(
+            div()
+                .id("sidebar-other-sessions-rows")
+                .mx(px(SIDEBAR_ROW_MARGIN_X))
+                .flex_none()
+                .flex()
+                .flex_col()
+                .children(rows),
+        )
+    }
+
     fn render_session_rows(
         &self,
-        ws_idx: usize,
+        scope: SessionRowScope,
         title_indent: f32,
         content_width: f32,
         ui: crate::theme::UiColors,
         cx: &mut Context<Self>,
     ) -> Vec<AnyElement> {
-        let ws = &self.workspaces[ws_idx];
-        let workspace_id = ws.durable_id.clone();
-        let listed = self.owned_sessions_for_workspace(ws, cx);
+        let (listed, expanded, expand_target, scope_key) = match scope {
+            SessionRowScope::Workspace(ws_idx) => {
+                let ws = &self.workspaces[ws_idx];
+                (
+                    self.owned_sessions_for_workspace(ws, cx),
+                    self.ended_sessions_expanded(ws),
+                    Some(ws.durable_id.clone()),
+                    ws_idx.to_string(),
+                )
+            }
+            SessionRowScope::Fallback => (
+                self.fallback_owned_sessions(cx),
+                self.fallback_sessions_expanded(),
+                None,
+                "fallback".to_string(),
+            ),
+        };
         if listed.is_empty() {
             return Vec::new();
         }
         let cap = usize::from(self.cached_config.resolved_sidebar_ended_sessions());
-        let expanded = self.ended_sessions_expanded(ws);
         let ended_total = listed.iter().filter(|session| !session.live).count();
         let (shown_ended, collapsed) = ended_preview(ended_total, cap, expanded);
         let hover_bg = crate::app::constants::sidebar_tab_hover_background();
@@ -1640,7 +1698,7 @@ impl PaneFlowApp {
                 .cursor_pointer()
                 .delayed_tooltip(crate::ui_primitives::text_tooltip(tooltip))
                 .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
-                    this.open_session_in_layout(ws_idx, click_session.clone(), window, cx);
+                    this.open_listed_session(scope, click_session.clone(), window, cx);
                     cx.stop_propagation();
                 }))
                 .on_aux_click(cx.listener(move |this, event: &ClickEvent, _window, cx| {
@@ -1649,7 +1707,7 @@ impl PaneFlowApp {
                     {
                         this.dismiss_transient_surfaces();
                         this.session_menu_open = Some(crate::SessionContextMenu {
-                            ws_idx,
+                            scope,
                             session: Box::new(menu_session.clone()),
                             position,
                         });
@@ -1661,7 +1719,7 @@ impl PaneFlowApp {
         }
 
         if collapsed > 0 {
-            let group = SharedString::from(format!("session-more-group-{ws_idx}"));
+            let group = SharedString::from(format!("session-more-group-{scope_key}"));
             let body = div()
                 .flex()
                 .flex_row()
@@ -1689,13 +1747,16 @@ impl PaneFlowApp {
                         .child(collapsed_sessions_label(collapsed)),
                 );
             let shell = sidebar_row_shell()
-                .id(SharedString::from(format!("session-more-{ws_idx}")))
+                .id(SharedString::from(format!("session-more-{scope_key}")))
                 .cursor_pointer()
                 .delayed_tooltip(crate::ui_primitives::text_tooltip(
-                    "Nothing is pruned: show every ended session of this workspace.".to_string(),
+                    "Nothing is pruned: show every ended session of this group.".to_string(),
                 ))
                 .on_click(cx.listener(move |this, _: &ClickEvent, _window, cx| {
-                    this.expand_ended_sessions(workspace_id.clone(), cx);
+                    match expand_target.clone() {
+                        Some(workspace_id) => this.expand_ended_sessions(workspace_id, cx),
+                        None => this.expand_fallback_sessions(cx),
+                    }
                     cx.stop_propagation();
                 }));
             rows.push(sidebar_row(shell, group, None, Some(hover_bg), body).into_any_element());

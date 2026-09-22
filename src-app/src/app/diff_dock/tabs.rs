@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use gpui::{AppContext, Context, Entity, Focusable, Window};
+use gpui::{AppContext, Context, Focusable, Window};
 
 use super::code::view::CodeView;
 use super::model::{DiffDockTab, MAX_DIFF_FILE_TABS};
@@ -44,14 +44,11 @@ impl PaneFlowApp {
         let cwd = self.new_terminal_cwd(cwd);
 
         let terminal = cx.new(|cx| TerminalView::with_cwd(ws_id, cwd, None, cx));
-        cx.subscribe(
-            &terminal,
-            |this, terminal: Entity<TerminalView>, event: &TerminalEvent, cx| {
-                if matches!(event, TerminalEvent::ChildExited) {
-                    this.close_diff_terminal_tab(&terminal, cx);
-                }
-            },
-        )
+        cx.subscribe(&terminal, |_, _, event: &TerminalEvent, cx| {
+            if matches!(event, TerminalEvent::ChildExited) {
+                cx.notify();
+            }
+        })
         .detach();
 
         let focus = terminal.read(cx).focus_handle(cx);
@@ -259,17 +256,6 @@ impl PaneFlowApp {
         self.close_diff_new_tab_menu(cx);
         self.diff_dock.diff_branch_menu = None;
         cx.notify();
-    }
-
-    fn close_diff_terminal_tab(&mut self, terminal: &Entity<TerminalView>, cx: &mut Context<Self>) {
-        let found = self
-            .diff_dock
-            .diff_tabs
-            .iter()
-            .position(|tab| matches!(tab, DiffDockTab::Terminal(t) if t == terminal));
-        if let Some(index) = found {
-            self.remove_diff_tab(index, cx);
-        }
     }
 }
 

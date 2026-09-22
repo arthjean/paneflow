@@ -121,7 +121,6 @@ pub enum PaneEvent {
     SurfacesChanged,
     CloseRequested,
     CloseSurfaceRequested(Entity<crate::terminal::TerminalView>),
-    SurfaceExited(Entity<crate::terminal::TerminalView>),
     Split(crate::layout::SplitDirection),
     ToggleAgentSessions,
     ToggleDiffDock,
@@ -315,20 +314,6 @@ impl Pane {
             Some(terminal) => cx.emit(PaneEvent::CloseSurfaceRequested(terminal)),
             None => self.remove_surface_at(idx, cx),
         }
-    }
-
-    pub(crate) fn surface_exited(&mut self, idx: usize, cx: &mut Context<Self>) {
-        if idx >= self.surfaces.len() {
-            return;
-        }
-        if self.surfaces.len() == 1 {
-            cx.emit(PaneEvent::Remove);
-            return;
-        }
-        if let Some(terminal) = crate::app::hosted_sessions::surface_terminal(&self.surfaces[idx]) {
-            cx.emit(PaneEvent::SurfaceExited(terminal));
-        }
-        self.remove_surface_at(idx, cx);
     }
 
     pub(crate) fn remove_surface(
@@ -613,35 +598,25 @@ impl Pane {
     }
 
     fn subscribe_terminal(terminal: &Entity<TerminalView>, cx: &mut Context<Self>) {
-        cx.subscribe(
-            terminal,
-            |this, terminal, event: &TerminalEvent, cx| match event {
-                TerminalEvent::ChildExited => {
-                    if let Some(idx) = this
-                        .surfaces
-                        .iter()
-                        .position(|surface| surface.as_terminal() == Some(&terminal))
-                    {
-                        this.surface_exited(idx, cx);
-                    }
-                }
-                TerminalEvent::TitleChanged | TerminalEvent::HostLinkResolved => {
-                    cx.notify();
-                }
-                TerminalEvent::CwdChanged(_)
-                | TerminalEvent::ActivityBurst
-                | TerminalEvent::ServiceDetected(_)
-                | TerminalEvent::CancelSwapMode
-                | TerminalEvent::SelectionCopied
-                | TerminalEvent::OpenMarkdownPath(_)
-                | TerminalEvent::OpenCodePath { .. }
-                | TerminalEvent::FontZoomChanged
-                | TerminalEvent::FleetSearchRequested { .. }
-                | TerminalEvent::AgentProgressChanged { .. }
-                | TerminalEvent::ProgramNotification { .. }
-                | TerminalEvent::ShellPromptReady => {}
-            },
-        )
+        cx.subscribe(terminal, |_, _, event: &TerminalEvent, cx| match event {
+            TerminalEvent::ChildExited
+            | TerminalEvent::TitleChanged
+            | TerminalEvent::HostLinkResolved => {
+                cx.notify();
+            }
+            TerminalEvent::CwdChanged(_)
+            | TerminalEvent::ActivityBurst
+            | TerminalEvent::ServiceDetected(_)
+            | TerminalEvent::CancelSwapMode
+            | TerminalEvent::SelectionCopied
+            | TerminalEvent::OpenMarkdownPath(_)
+            | TerminalEvent::OpenCodePath { .. }
+            | TerminalEvent::FontZoomChanged
+            | TerminalEvent::FleetSearchRequested { .. }
+            | TerminalEvent::AgentProgressChanged { .. }
+            | TerminalEvent::ProgramNotification { .. }
+            | TerminalEvent::ShellPromptReady => {}
+        })
         .detach();
     }
 
@@ -2048,12 +2023,12 @@ mod tests {
         let pane = tabbed_pane(1, cx);
         let requested = std::rc::Rc::new(std::cell::Cell::new(false));
         let requested_for_sub = requested.clone();
-        let exited = std::rc::Rc::new(std::cell::Cell::new(false));
-        let exited_for_sub = exited.clone();
+        let removed = std::rc::Rc::new(std::cell::Cell::new(false));
+        let removed_for_sub = removed.clone();
         cx.update(|_, cx| {
             cx.subscribe(&pane, move |_, event: &PaneEvent, _| match event {
                 PaneEvent::CloseRequested => requested_for_sub.set(true),
-                PaneEvent::Remove => exited_for_sub.set(true),
+                PaneEvent::Remove => removed_for_sub.set(true),
                 _ => {}
             })
             .detach();
@@ -2064,49 +2039,54 @@ mod tests {
             requested.get(),
             "closing the last tab asks the owner to close the pane"
         );
-        assert!(!exited.get(), "no removal happens before the owner decides");
-
-        pane.update(cx, |pane, cx| pane.surface_exited(0, cx));
         assert!(
-            exited.get(),
-            "a child that exited removes the pane without asking"
+            !removed.get(),
+            "no removal happens before the owner decides"
         );
         assert_eq!(tab_state(&pane, cx), (1, 0));
     }
 
     #[gpui::test]
-    fn a_child_that_exits_beside_other_tabs_hands_its_session_back(cx: &mut TestAppContext) {
+    fn a_natural_exit_keeps_the_surface_as_a_passive_final_view(cx: &mut TestAppContext) {
         let cx = cx.add_empty_window();
-        let pane = tabbed_pane(2, cx);
-        let terminal = cx.update(|_, cx| {
-            pane.read(cx).surfaces()[0]
-                .as_terminal()
-                .expect("a terminal surface")
-                .clone()
-        });
-        let forgotten = std::rc::Rc::new(std::cell::RefCell::new(None));
-        let forgotten_for_sub = forgotten.clone();
-        cx.update(|_, cx| {
-            cx.subscribe(&pane, move |_, event: &PaneEvent, _| {
-                if let PaneEvent::SurfaceExited(exited) = event {
-                    *forgotten_for_sub.borrow_mut() = Some(exited.clone());
-                }
-            })
-            .detach();
-        });
+        for count in [1usize, 2] {
+            let pane = tabbed_pane(count, cx);
+            let terminal = cx.update(|_, cx| {
+                pane.read(cx).surfaces()[0]
+                    .as_terminal()
+                    .expect("a terminal surface")
+                    .clone()
+            });
+            let events = std::rc::Rc::new(std::cell::Cell::new(0usize));
+            let events_for_sub = events.clone();
+            cx.update(|_, cx| {
+                cx.subscribe(&pane, move |_, _: &PaneEvent, _| {
+                    events_for_sub.set(events_for_sub.get() + 1);
+                })
+                .detach();
+            });
 
-        pane.update(cx, |pane, cx| pane.surface_exited(0, cx));
+            terminal.update(cx, |_, cx| {
+                cx.emit(crate::terminal::TerminalEvent::ChildExited)
+            });
 
-        assert_eq!(
-            forgotten.borrow().as_ref(),
-            Some(&terminal),
-            "the pane hands the exited terminal back so its session is forgotten"
-        );
-        assert_eq!(tab_state(&pane, cx), (1, 0));
+            assert_eq!(
+                events.get(),
+                0,
+                "US-009: a natural exit never asks the owner to stop or remove anything"
+            );
+            assert_eq!(tab_state(&pane, cx), (count, 0));
+            cx.update(|_, cx| {
+                assert!(
+                    pane.read(cx).contains_terminal(&terminal),
+                    "US-009: the exited terminal stays in place as a final view"
+                );
+            });
+        }
     }
 
     #[gpui::test]
-    fn moving_a_surface_keeps_the_terminal_and_routes_its_exit_to_the_destination(
+    fn moving_a_surface_keeps_the_terminal_and_its_final_view_in_the_destination(
         cx: &mut TestAppContext,
     ) {
         let cx = cx.add_empty_window();
@@ -2124,7 +2104,10 @@ mod tests {
             cx.emit(crate::terminal::TerminalEvent::ChildExited)
         });
         assert_eq!(tab_state(&source, cx), (1, 0));
-        assert_eq!(tab_state(&target, cx), (1, 0));
+        assert_eq!(tab_state(&target, cx), (2, 1));
+        cx.update(|_, cx| {
+            assert_eq!(target.read(cx).active_terminal_opt(), Some(&terminal));
+        });
     }
 
     #[test]

@@ -455,7 +455,7 @@ impl PaneFlowApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let ws_idx = menu.ws_idx;
+        let scope = menu.scope;
         let session = *menu.session;
         let menu_pos =
             clamped_context_menu_position(menu.position, px(220.), px(8. + 2. * 28.), window);
@@ -481,7 +481,7 @@ impl PaneFlowApp {
                 ui,
                 cx.listener(move |this, _: &ClickEvent, window, cx| {
                     this.session_menu_open = None;
-                    this.open_session_in_layout(ws_idx, open.clone(), window, cx);
+                    this.open_listed_session(scope, open.clone(), window, cx);
                     cx.stop_propagation();
                 }),
             ));
@@ -509,7 +509,7 @@ impl PaneFlowApp {
                 ui,
                 cx.listener(move |this, _: &ClickEvent, window, cx| {
                     this.session_menu_open = None;
-                    this.resume_listed_session(ws_idx, resume.clone(), window, cx);
+                    this.resume_listed_session(scope, resume.clone(), window, cx);
                     cx.stop_propagation();
                 }),
             ));

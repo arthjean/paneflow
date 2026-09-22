@@ -10,7 +10,7 @@ use paneflow_config::schema::{TerminalConfig, TerminalSurfaceProfile};
 use super::TerminalState;
 use super::element::TerminalElement;
 use super::host_link::{
-    self, AttachRequest, HostLinkEnd, HostLinkState, HostedAttachment, ResolveOutcome,
+    self, AttachRequest, FinalText, HostLinkEnd, HostLinkState, HostedAttachment, ResolveOutcome,
     SessionIntent,
 };
 use super::pty_session::{
@@ -241,6 +241,7 @@ pub struct TerminalView {
     session_intent: SessionIntent,
     saved_scrollback: Option<String>,
     pump_epoch: u64,
+    exit_announced: bool,
 }
 
 impl TerminalView {
@@ -504,19 +505,20 @@ impl TerminalView {
                             .unwrap_or_default()
                             .resolved_scrollback_lines_for_profile(profile);
                         match host_link::resolve(request) {
-                            Ok(ResolveOutcome::Attached(hosted)) => {
+                            Ok(ResolveOutcome::Attached(hosted, snapshot)) => {
                                 match ghostty.start_attached(
                                     ghostty_pending,
                                     hosted.attachment.clone(),
+                                    snapshot,
                                     max_scrollback,
                                 ) {
                                     Ok(()) => AttachOutcome::Attached(hosted),
                                     Err(error) => AttachOutcome::MirrorFailed(error),
                                 }
                             }
-                            Ok(ResolveOutcome::Ended(end)) => {
+                            Ok(ResolveOutcome::Ended(end, final_text)) => {
                                 let _ = ghostty.start_display(ghostty_pending, max_scrollback);
-                                AttachOutcome::Ended(end)
+                                AttachOutcome::Ended(end, final_text)
                             }
                             Err(error) => {
                                 let _ = ghostty.start_display(ghostty_pending, max_scrollback);
@@ -542,8 +544,16 @@ impl TerminalView {
                                 view.terminal.notify_window_size(size);
                             }
                         }
-                        AttachOutcome::Ended(end) => {
-                            view.restore_saved_scrollback();
+                        AttachOutcome::Ended(end, final_text) => {
+                            match final_text {
+                                Some(final_text)
+                                    if final_text.available && !final_text.text.is_empty() =>
+                                {
+                                    view.saved_scrollback = None;
+                                    view.terminal.write_output(final_text.text.as_bytes());
+                                }
+                                _ => view.restore_saved_scrollback(),
+                            }
                             view.needs_initial_clear
                                 .store(false, std::sync::atomic::Ordering::Relaxed);
                             view.terminal.mark_host_link(HostLinkState::Ended(end));
@@ -894,6 +904,7 @@ impl TerminalView {
             session_intent: SessionIntent::Create,
             saved_scrollback: None,
             pump_epoch: 0,
+            exit_announced: false,
         }
     }
 
@@ -939,7 +950,7 @@ impl HostedLaunch {
 
 enum AttachOutcome {
     Attached(Box<HostedAttachment>),
-    Ended(HostLinkEnd),
+    Ended(HostLinkEnd, Option<FinalText>),
     Unavailable(String),
     MirrorFailed(GhosttyStartError),
 }
@@ -1560,9 +1571,8 @@ fn spawn_event_pump_task(
                                 cx.emit(TerminalEvent::AgentProgressChanged { busy: is_busy });
                             }
 
-                            if view.terminal.exited.is_some()
-                                && view.terminal.should_close_on_exit()
-                            {
+                            if view.terminal.retains_final_view() && !view.exit_announced {
+                                view.exit_announced = true;
                                 cx.emit(TerminalEvent::ChildExited);
                             }
                             if view.terminal.title != old_title {

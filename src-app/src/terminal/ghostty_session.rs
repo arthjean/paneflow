@@ -16,7 +16,7 @@ use paneflow_host::protocol::ERR_OUTPUT_EVICTED;
 use paneflow_host::{HostClient, HostClientError};
 
 use super::clipboard_gate::ClipboardGate;
-use super::host_link::{HostAttachment, HostLinkEnd, HostLinkState};
+use super::host_link::{CheckpointPayload, HostAttachment, HostLinkEnd, HostLinkState};
 use super::marks::{CommandMark, Osc133Scanner, RawMark, SharedMarkRing};
 use super::pty_session::{ForegroundSignalMask, SpawnParams};
 use super::service_detector::ServiceOutputTail;
@@ -412,7 +412,7 @@ enum RuntimeMessage {
         reply: SyncSender<()>,
     },
     RestoreCheckpoint {
-        snapshot: Vec<u8>,
+        snapshot: CheckpointPayload,
     },
     #[cfg(test)]
     SimulateWorkerCrash,
@@ -512,6 +512,26 @@ impl RuntimeMailbox {
             && let Some(RuntimeMessage::ScrollToViewportRow(queued_row)) = state.queue.back_mut()
         {
             *queued_row = *row;
+            return Ok(());
+        }
+        if let RuntimeMessage::RestoreCheckpoint { snapshot } = message {
+            for queued in state.queue.iter_mut() {
+                if let RuntimeMessage::RestoreCheckpoint { snapshot: pending } = queued {
+                    *pending = snapshot;
+                    return Ok(());
+                }
+            }
+            if state.control_count >= CONTROL_CAPACITY {
+                return Err(TrySendError::Full(RuntimeMessage::RestoreCheckpoint {
+                    snapshot,
+                }));
+            }
+            state.control_count += 1;
+            state
+                .queue
+                .push_back(RuntimeMessage::RestoreCheckpoint { snapshot });
+            drop(state);
+            self.ready.notify_one();
             return Ok(());
         }
         if state.control_count >= CONTROL_CAPACITY {
@@ -1234,6 +1254,7 @@ impl GhosttySession {
         &self,
         pending: GhosttyRuntimePending,
         attachment: HostAttachment,
+        snapshot: CheckpointPayload,
         max_scrollback: usize,
     ) -> Result<(), GhosttyStartError> {
         let (startup_tx, startup_rx) = sync_channel(1);
@@ -1248,6 +1269,7 @@ impl GhosttySession {
                         inner,
                         runtime_mailbox,
                         attachment,
+                        snapshot,
                         max_scrollback,
                         startup_tx,
                     );
@@ -4503,7 +4525,121 @@ fn grid_metrics_from_ghostty(content: &ghostty::Content) -> GridMetrics {
 }
 
 const FOLLOW_RECONNECT_DELAY: Duration = Duration::from_millis(500);
+const FOLLOW_RECONNECT_MAX_DELAY: Duration = Duration::from_secs(5);
+const FOLLOW_RECONNECT_SLICE: Duration = Duration::from_millis(50);
 const CONTROL_RECONNECT_BACKOFF: Duration = Duration::from_millis(500);
+const CONTROL_REQUEST_SLOTS: usize = 64;
+
+struct ReconnectBackoff {
+    delay: Duration,
+}
+
+impl ReconnectBackoff {
+    fn new() -> Self {
+        Self {
+            delay: FOLLOW_RECONNECT_DELAY,
+        }
+    }
+
+    fn reset(&mut self) {
+        self.delay = FOLLOW_RECONNECT_DELAY;
+    }
+
+    fn wait(&mut self, link: &HostLinkShared) -> bool {
+        let deadline = Instant::now() + self.delay;
+        self.delay = (self.delay * 2).min(FOLLOW_RECONNECT_MAX_DELAY);
+        while Instant::now() < deadline {
+            if link.stopped() {
+                return false;
+            }
+            std::thread::sleep(FOLLOW_RECONNECT_SLICE.min(deadline - Instant::now()));
+        }
+        !link.stopped()
+    }
+}
+
+enum ControlRequest {
+    Input(Vec<u8>),
+    BindRuntime(Option<&'static str>),
+    Resize { cols: u16, rows: u16 },
+    Release,
+}
+
+struct ControlLink {
+    tx: SyncSender<ControlRequest>,
+}
+
+impl ControlLink {
+    fn spawn(
+        attachment: &HostAttachment,
+        link: Arc<HostLinkShared>,
+        inner: Arc<SessionInner>,
+    ) -> Self {
+        let (tx, rx) = sync_channel::<ControlRequest>(CONTROL_REQUEST_SLOTS);
+        let mut control = HostControl::new(attachment);
+        let spawned = std::thread::Builder::new()
+            .name("paneflow-ghostty-control".into())
+            .spawn(move || {
+                while let Ok(request) = rx.recv() {
+                    match request {
+                        ControlRequest::Input(bytes) => control.send_input(&inner, &link, &bytes),
+                        ControlRequest::BindRuntime(runtime_id) => {
+                            control.bind_runtime(&link, runtime_id);
+                        }
+                        ControlRequest::Resize { cols, rows } => {
+                            if let Err(error) = control.resize(&link, cols, rows) {
+                                log::warn!(
+                                    target: "paneflow::terminal::ghostty",
+                                    "hosted resize to {cols}x{rows} was not applied by the host: {error}"
+                                );
+                            }
+                        }
+                        ControlRequest::Release => control.release(),
+                    }
+                }
+            });
+        if let Err(error) = spawned {
+            log::error!(
+                target: "paneflow::terminal::ghostty",
+                "could not start the host control thread: {error}"
+            );
+        }
+        Self { tx }
+    }
+
+    fn send_input(&self, inner: &SessionInner, bytes: &[u8]) {
+        if bytes.is_empty() {
+            return;
+        }
+        match self.tx.try_send(ControlRequest::Input(bytes.to_vec())) {
+            Ok(()) => {}
+            Err(TrySendError::Full(_)) => reject_input(
+                inner,
+                "host",
+                "the host control queue is full; input discarded before it was sent",
+            ),
+            Err(TrySendError::Disconnected(_)) => reject_input(
+                inner,
+                "host",
+                "the host control link is closed; input discarded",
+            ),
+        }
+    }
+
+    fn bind_runtime(&self, runtime_id: Option<&'static str>) {
+        let _ = self.tx.try_send(ControlRequest::BindRuntime(runtime_id));
+    }
+
+    fn resize(&self, cols: u16, rows: u16) -> Result<(), String> {
+        self.tx
+            .try_send(ControlRequest::Resize { cols, rows })
+            .map_err(|_| "the host control queue did not accept the resize".to_string())
+    }
+
+    fn release(&self) {
+        let _ = self.tx.try_send(ControlRequest::Release);
+    }
+}
 const CONTROL_SEND_RETRY: Duration = Duration::from_millis(5);
 const CONTROL_SEND_BUDGET: Duration = Duration::from_secs(5);
 
@@ -4630,6 +4766,11 @@ impl HostControl {
         self.last_failure = Some(Instant::now());
     }
 
+    fn release(&mut self) {
+        self.gone = true;
+        self.client = None;
+    }
+
     fn send_input(&mut self, inner: &SessionInner, link: &HostLinkShared, bytes: &[u8]) {
         if bytes.is_empty() {
             return;
@@ -4644,7 +4785,17 @@ impl HostControl {
             return;
         };
         if let Err(error) = client.input(&session, generation, bytes) {
-            reject_input(inner, "host", format!("{error}; input not resent"));
+            if error.is_connection_loss() {
+                reject_input(
+                    inner,
+                    "host",
+                    format!(
+                        "input delivery could not be confirmed ({error}); check the terminal before sending it again"
+                    ),
+                );
+            } else {
+                reject_input(inner, "host", format!("{error}; input not resent"));
+            }
             self.note_failure(&error);
         }
     }
@@ -4682,6 +4833,7 @@ fn run_attached_runtime(
     inner: Arc<SessionInner>,
     mailbox: Arc<RuntimeMailbox>,
     attachment: HostAttachment,
+    snapshot: CheckpointPayload,
     max_scrollback: usize,
     startup_tx: SyncSender<Result<(), String>>,
 ) {
@@ -4691,11 +4843,10 @@ fn run_attached_runtime(
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .requested;
-    let mut terminal = match restore_terminal_from_checkpoint(
-        &attachment.checkpoint.snapshot,
-        initial_size,
-        max_scrollback,
-    ) {
+    let restored =
+        restore_terminal_from_checkpoint(snapshot.as_slice(), initial_size, max_scrollback);
+    drop(snapshot);
+    let mut terminal = match restored {
         Ok(terminal) => terminal,
         Err(error) => {
             let _ = startup_tx.send(Err(error));
@@ -4714,7 +4865,7 @@ fn run_attached_runtime(
 
     let link = Arc::new(HostLinkShared::default());
     link.attached.store(true, Ordering::Release);
-    let mut control = HostControl::new(&attachment);
+    let control = ControlLink::spawn(&attachment, link.clone(), inner.clone());
     {
         let follower_attachment = attachment.clone();
         let follower_mailbox = mailbox.clone();
@@ -4828,6 +4979,7 @@ fn run_attached_runtime(
                 let _ = publish_gate.publish_now(&inner, &mut terminal);
                 if let Some(end) = link.ended() {
                     stop_session_input(&inner);
+                    control.release();
                     if let Some((code, signal)) = end.exit() {
                         publish_child_exit_once(&inner, code, signal);
                     }
@@ -4842,7 +4994,10 @@ fn run_attached_runtime(
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner)
                     .requested;
-                match restore_terminal_from_checkpoint(&snapshot, size, max_scrollback) {
+                let restored =
+                    restore_terminal_from_checkpoint(snapshot.as_slice(), size, max_scrollback);
+                drop(snapshot);
+                match restored {
                     Ok(restored) => {
                         terminal = restored;
                         marks_scanner = Osc133Scanner::default();
@@ -4869,7 +5024,7 @@ fn run_attached_runtime(
             }
             Ok(Some(RuntimeMessage::Input(bytes))) => {
                 release_queued_input_bytes(&inner, bytes.len());
-                control.send_input(&inner, &link, &bytes);
+                control.send_input(&inner, &bytes);
                 notify_command_capacity(&inner);
             }
             Ok(Some(RuntimeMessage::KeyInput(input))) => {
@@ -4878,7 +5033,7 @@ fn run_attached_runtime(
                     std::mem::size_of::<ghostty::KeyInput>().saturating_add(input.text.len()),
                 );
                 match terminal.encode_key(&input) {
-                    Ok(bytes) => control.send_input(&inner, &link, &bytes),
+                    Ok(bytes) => control.send_input(&inner, &bytes),
                     Err(error) => reject_input(&inner, "key", error),
                 }
                 notify_command_capacity(&inner);
@@ -4890,7 +5045,7 @@ fn run_attached_runtime(
                 );
                 for _ in 0..repeat {
                     match terminal.encode_mouse(input) {
-                        Ok(bytes) => control.send_input(&inner, &link, &bytes),
+                        Ok(bytes) => control.send_input(&inner, &bytes),
                         Err(error) => {
                             reject_input(&inner, "mouse", error);
                             break;
@@ -4902,7 +5057,7 @@ fn run_attached_runtime(
             Ok(Some(RuntimeMessage::FocusInput(event))) => {
                 release_queued_input_bytes(&inner, std::mem::size_of::<ghostty::FocusEvent>());
                 match terminal.encode_focus(event) {
-                    Ok(bytes) => control.send_input(&inner, &link, &bytes),
+                    Ok(bytes) => control.send_input(&inner, &bytes),
                     Err(error) => reject_input(&inner, "focus", error),
                 }
                 notify_command_capacity(&inner);
@@ -4927,7 +5082,7 @@ fn run_attached_runtime(
                                 Ok(())
                             });
                         match drained {
-                            Ok(()) => control.send_input(&inner, &link, &pasted),
+                            Ok(()) => control.send_input(&inner, &pasted),
                             Err(error) => {
                                 if !runtime_failed {
                                     let _ = inner
@@ -4956,7 +5111,7 @@ fn run_attached_runtime(
                             .unwrap_or(u16::MAX);
                         let rows = u16::try_from(size.rows.clamp(1, usize::from(u16::MAX)))
                             .unwrap_or(u16::MAX);
-                        control.resize(&link, cols, rows)
+                        control.resize(cols, rows)
                     })
                     .and_then(|()| publish_gate.publish_now(&inner, &mut terminal));
                 let resize_succeeded = match resized {
@@ -4978,7 +5133,7 @@ fn run_attached_runtime(
                 panic!("Ghostty runtime worker failure injected for test");
             }
             Ok(Some(RuntimeMessage::BindRuntime(runtime_id))) => {
-                control.bind_runtime(&link, runtime_id);
+                control.bind_runtime(runtime_id);
             }
             Ok(Some(RuntimeMessage::Shutdown)) => break,
             Ok(Some(RuntimeMessage::WriteOutput { reply, .. })) => {
@@ -5088,9 +5243,10 @@ fn follow_host_output(
     link: Arc<HostLinkShared>,
     inner: Arc<SessionInner>,
 ) {
-    let mut next_offset = attachment.checkpoint.offset;
+    let mut next_offset = attachment.offset;
     let mut need_checkpoint = false;
     let mut reconnecting = false;
+    let mut backoff = ReconnectBackoff::new();
     let announce = |state: HostLinkState| {
         let _ = inner
             .events_tx
@@ -5116,7 +5272,9 @@ fn follow_host_output(
             Err(_) => {
                 lose_link(&mut reconnecting);
                 need_checkpoint = true;
-                std::thread::sleep(FOLLOW_RECONNECT_DELAY);
+                if !backoff.wait(&link) {
+                    return;
+                }
                 continue;
             }
         };
@@ -5132,7 +5290,7 @@ fn follow_host_output(
                         &mailbox,
                         &link,
                         RuntimeMessage::RestoreCheckpoint {
-                            snapshot: fresh.checkpoint.snapshot,
+                            snapshot: CheckpointPayload::new(fresh.checkpoint.snapshot),
                         },
                     ) {
                         return;
@@ -5145,7 +5303,9 @@ fn follow_host_output(
                 }
                 Err(error) if error.is_connection_loss() => {
                     lose_link(&mut reconnecting);
-                    std::thread::sleep(FOLLOW_RECONNECT_DELAY);
+                    if !backoff.wait(&link) {
+                        return;
+                    }
                     continue;
                 }
                 Err(error) => {
@@ -5159,6 +5319,7 @@ fn follow_host_output(
             }
         }
         link.attached.store(true, Ordering::Release);
+        backoff.reset();
         if reconnecting {
             reconnecting = false;
             announce(HostLinkState::Attached);
@@ -5208,7 +5369,9 @@ fn follow_host_output(
             Ok(_) => {
                 lose_link(&mut reconnecting);
                 need_checkpoint = true;
-                std::thread::sleep(FOLLOW_RECONNECT_DELAY);
+                if !backoff.wait(&link) {
+                    return;
+                }
             }
             Err(error) if error.code() == Some(ERR_OUTPUT_EVICTED) => {
                 need_checkpoint = true;
@@ -5221,7 +5384,9 @@ fn follow_host_output(
             Err(_) => {
                 lose_link(&mut reconnecting);
                 need_checkpoint = true;
-                std::thread::sleep(FOLLOW_RECONNECT_DELAY);
+                if !backoff.wait(&link) {
+                    return;
+                }
             }
         }
     }
@@ -5232,6 +5397,29 @@ mod tests {
     use super::super::pty_session::{BackendInputResult, TerminalState};
     use super::*;
     use paneflow_config::schema::TerminalSurfaceProfile;
+
+    static CHECKPOINT_ACCOUNTING: Mutex<()> = Mutex::new(());
+
+    fn checkpoint_accounting_lock() -> std::sync::MutexGuard<'static, ()> {
+        CHECKPOINT_ACCOUNTING
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    fn test_attachment(
+        endpoint: &std::path::Path,
+        hello: &paneflow_host::ClientHello,
+        session: &paneflow_config::schema::SessionId,
+        attachment: paneflow_host::Attachment,
+    ) -> (HostAttachment, CheckpointPayload) {
+        HostAttachment::from_checkpoint(
+            endpoint.to_path_buf(),
+            hello.clone(),
+            session.clone(),
+            attachment.host_instance,
+            attachment.checkpoint,
+        )
+    }
 
     fn attached_host_endpoint(home: &std::path::Path) -> std::path::PathBuf {
         let unique = format!(
@@ -5258,6 +5446,8 @@ mod tests {
         use crate::terminal::host_link::HostLinkEndKind;
         use paneflow_host::server::ServerHandle;
         use paneflow_host::{ClientHello, CreateSession, HostClient, SessionHost};
+
+        let _accounting = checkpoint_accounting_lock();
 
         let home = tempfile::tempdir().expect("host home");
         let endpoint = attached_host_endpoint(home.path());
@@ -5336,21 +5526,23 @@ mod tests {
 
         let size = TerminalWindowSize::new(80, 24, 8, 16);
         let (mirror, pending, mut events_rx) = GhosttySession::pending(size);
+        let checkpoint_bytes = attachment.checkpoint.snapshot.len();
+        let checkpoint_offset = attachment.checkpoint.offset;
+        let test_attachment = test_attachment(&endpoint, &hello, &session, attachment);
+        assert_eq!(
+            crate::terminal::host_link::retained_checkpoint_bytes(),
+            checkpoint_bytes,
+            "the one-shot payload is the only retained copy"
+        );
         mirror
-            .start_attached(
-                pending,
-                HostAttachment {
-                    endpoint: endpoint.clone(),
-                    hello: hello.clone(),
-                    session: session.clone(),
-                    generation,
-                    host_instance: attachment.host_instance.clone(),
-                    checkpoint: attachment.checkpoint.clone(),
-                },
-                1_000,
-            )
+            .start_attached(pending, test_attachment.0.clone(), test_attachment.1, 1_000)
             .expect("attached mirror");
         mirror.promote();
+        assert_eq!(
+            crate::terminal::host_link::retained_checkpoint_bytes(),
+            0,
+            "the checkpoint payload is released after decoding"
+        );
 
         let restored = mirror.screen_text().unwrap_or_default();
         assert!(
@@ -5376,7 +5568,7 @@ mod tests {
             "input reaches the host and its output streams back: {mirrored:?}"
         );
         let mut streamed = Vec::new();
-        let mut streamed_offset = attachment.checkpoint.offset;
+        let mut streamed_offset = checkpoint_offset;
         let deadline = Instant::now() + Duration::from_secs(30);
         while Instant::now() < deadline {
             streamed_offset = client
@@ -5430,6 +5622,15 @@ mod tests {
             "{ended:?}"
         );
         assert!(!HostLinkState::Ended(ended).accepts_input());
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while server.active_connections() > 1 && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(25));
+        }
+        assert_eq!(
+            server.active_connections(),
+            1,
+            "US-009: a passive final view keeps no host connection besides the test's own client"
+        );
 
         mirror.shutdown();
         server.stop().expect("server stop");
@@ -5439,6 +5640,8 @@ mod tests {
     fn the_first_render_resize_keeps_the_restored_scrollback_of_an_attached_mirror() {
         use paneflow_host::server::ServerHandle;
         use paneflow_host::{ClientHello, CreateSession, HostClient, SessionHost};
+
+        let _accounting = checkpoint_accounting_lock();
 
         let home = tempfile::tempdir().expect("host home");
         let endpoint = attached_host_endpoint(home.path());
@@ -5505,17 +5708,12 @@ mod tests {
             .expect("checkpoint");
         let (mirror, pending, _events_rx) =
             GhosttySession::pending(TerminalWindowSize::new(80, 24, 8, 16));
+        let test_attachment = test_attachment(&endpoint, &hello, &session, attachment);
         mirror
             .start_attached(
                 pending,
-                HostAttachment {
-                    endpoint: endpoint.clone(),
-                    hello: hello.clone(),
-                    session: session.clone(),
-                    generation,
-                    host_instance: attachment.host_instance.clone(),
-                    checkpoint: attachment.checkpoint.clone(),
-                },
+                test_attachment.0.clone(),
+                test_attachment.1,
                 10_000,
             )
             .expect("attached mirror");
@@ -5554,9 +5752,149 @@ mod tests {
     }
 
     #[test]
+    fn repeated_attach_and_detach_with_filled_scrollback_retains_no_checkpoint_bytes() {
+        use paneflow_host::server::ServerHandle;
+        use paneflow_host::{ClientHello, CreateSession, HostClient, SessionHost};
+
+        let _accounting = checkpoint_accounting_lock();
+        let home = tempfile::tempdir().expect("host home");
+        let endpoint = attached_host_endpoint(home.path());
+        let host = SessionHost::open(home.path(), &endpoint).expect("session host");
+        let server = ServerHandle::spawn(Arc::clone(&host), endpoint.clone()).expect("host server");
+        let hello = ClientHello::local("paneflow-desktop-test");
+        let mut client = HostClient::connect(&endpoint, &hello).expect("control connection");
+
+        #[cfg(windows)]
+        let (shell, args, fill) = (
+            "cmd.exe",
+            vec!["/Q".to_string(), "/D".to_string()],
+            "for /L %i in (1,1,300) do @echo FILL-LINE-%i\r\n",
+        );
+        #[cfg(unix)]
+        let (shell, args, fill) = (
+            "/bin/sh",
+            Vec::<String>::new(),
+            "i=0; while [ $i -lt 300 ]; do i=$((i+1)); echo FILL-LINE-$i; done\n",
+        );
+        let created = client
+            .create(&CreateSession {
+                session: None,
+                workspace: None,
+                cwd: Some(std::env::temp_dir().display().to_string()),
+                shell: Some(shell.to_string()),
+                args,
+                env: Default::default(),
+                cols: Some(80),
+                rows: Some(24),
+                title: None,
+            })
+            .expect("hosted session");
+        let session = created.manifest.session.clone();
+        let generation = created.manifest.generation;
+        client
+            .input(&session, generation, fill.as_bytes())
+            .expect("fill the scrollback");
+        let mut drained = Vec::new();
+        let mut offset = 0;
+        let deadline = Instant::now() + Duration::from_secs(30);
+        while Instant::now() < deadline {
+            offset = client
+                .output(
+                    &session,
+                    Some(generation),
+                    offset,
+                    false,
+                    |_, bytes| {
+                        drained.extend_from_slice(bytes);
+                        true
+                    },
+                    || true,
+                )
+                .expect("drain the host tail")
+                .next_offset;
+            if String::from_utf8_lossy(&drained).contains("FILL-LINE-300") {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(25));
+        }
+        assert!(
+            String::from_utf8_lossy(&drained).contains("FILL-LINE-300"),
+            "the scrollback is filled before the attach cycles start"
+        );
+        assert_eq!(crate::terminal::host_link::retained_checkpoint_bytes(), 0);
+
+        for cycle in 0..5 {
+            let attachment = client
+                .attach(&session, Some(generation))
+                .expect("checkpoint");
+            assert!(
+                !attachment.checkpoint.snapshot.is_empty(),
+                "cycle {cycle}: the filled scrollback produces a checkpoint"
+            );
+            let (mirror, pending, _events_rx) =
+                GhosttySession::pending(TerminalWindowSize::new(80, 24, 8, 16));
+            let (host_attachment, payload) =
+                test_attachment(&endpoint, &hello, &session, attachment);
+            mirror
+                .start_attached(pending, host_attachment, payload, 1_000)
+                .expect("attached mirror");
+            mirror.promote();
+            assert_eq!(
+                crate::terminal::host_link::retained_checkpoint_bytes(),
+                0,
+                "US-008: cycle {cycle} releases its checkpoint after decoding"
+            );
+            let restored = mirror.screen_text().unwrap_or_default();
+            assert!(
+                restored.contains("FILL-LINE-300"),
+                "US-008: cycle {cycle} restores the filled screen: {restored:?}"
+            );
+            mirror.shutdown();
+            drop(mirror);
+        }
+        assert_eq!(
+            crate::terminal::host_link::retained_checkpoint_bytes(),
+            0,
+            "US-008: five attach/detach cycles leave no serialized checkpoint resident"
+        );
+
+        let attachment = client
+            .attach(&session, Some(generation))
+            .expect("checkpoint");
+        let (host_attachment, genuine) = test_attachment(&endpoint, &hello, &session, attachment);
+        drop(genuine);
+        let (mirror, pending, _events_rx) =
+            GhosttySession::pending(TerminalWindowSize::new(80, 24, 8, 16));
+        let corrupt = CheckpointPayload::new(vec![0xFF; 96]);
+        let refused = mirror.start_attached(pending, host_attachment, corrupt, 1_000);
+        assert!(
+            refused.is_err(),
+            "US-008: an undecodable checkpoint is refused instead of restoring stale state"
+        );
+        assert_eq!(
+            crate::terminal::host_link::retained_checkpoint_bytes(),
+            0,
+            "US-008: a rejected checkpoint releases its payload"
+        );
+        drop(mirror);
+        let after = client.inspect(&session).expect("the record survives");
+        assert!(
+            after.live && after.owned,
+            "a rejected checkpoint never stops the host session: {after:?}"
+        );
+
+        client
+            .stop(&session, Some(generation))
+            .expect("explicit session stop");
+        server.stop().expect("server stop");
+    }
+
+    #[test]
     fn dropping_the_attached_mirror_leaves_the_hosted_session_running() {
         use paneflow_host::server::ServerHandle;
         use paneflow_host::{ClientHello, CreateSession, HostClient, SessionHost};
+
+        let _accounting = checkpoint_accounting_lock();
 
         let home = tempfile::tempdir().expect("host home");
         let endpoint = attached_host_endpoint(home.path());
@@ -5591,19 +5929,9 @@ mod tests {
             .expect("checkpoint");
         let (mirror, pending, _events_rx) =
             GhosttySession::pending(TerminalWindowSize::new(80, 24, 8, 16));
+        let test_attachment = test_attachment(&endpoint, &hello, &session, attachment);
         mirror
-            .start_attached(
-                pending,
-                HostAttachment {
-                    endpoint: endpoint.clone(),
-                    hello: hello.clone(),
-                    session: session.clone(),
-                    generation,
-                    host_instance: attachment.host_instance.clone(),
-                    checkpoint: attachment.checkpoint.clone(),
-                },
-                1_000,
-            )
+            .start_attached(pending, test_attachment.0.clone(), test_attachment.1, 1_000)
             .expect("attached mirror");
         mirror.promote();
 

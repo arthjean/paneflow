@@ -10,10 +10,16 @@ use crate::layout::{LayoutTree, SplitDirection};
 use crate::pane::{Pane, PaneSurface};
 use crate::terminal::TerminalView;
 use crate::terminal::host_link::{self, HostLinkState};
-use crate::workspace::{Tab, Workspace};
+use crate::workspace::{MAX_WORKSPACES, Tab, Workspace, next_workspace_id};
 use crate::{HidePane, PaneFlowApp, RemoveEndedSessions, ResumeEndedSessions, StopSession};
 
 pub(crate) type StopTarget = (PathBuf, SessionId, SessionGeneration);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SessionRowScope {
+    Workspace(usize),
+    Fallback,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct OwnedSession {
@@ -48,6 +54,7 @@ pub(crate) struct OwnedSessions {
     unknown: HashSet<SessionId>,
     forgetting: HashSet<SessionId>,
     expanded: HashSet<WorkspaceId>,
+    fallback_expanded: bool,
     refresh_generation: u64,
 }
 
@@ -165,6 +172,35 @@ fn visible_session_rows(
         .collect();
     order_session_rows(&mut visible);
     visible
+}
+
+fn fallback_session_rows(
+    rows: &[OwnedSession],
+    open: &[OpenWorkspace],
+    attached: &HashSet<SessionId>,
+    forgetting: &HashSet<SessionId>,
+) -> Vec<OwnedSession> {
+    let mut visible: Vec<OwnedSession> = rows
+        .iter()
+        .filter(|session| {
+            !open
+                .iter()
+                .any(|ws| session_belongs_to(session, &ws.id, open))
+        })
+        .filter(|session| !attached.contains(&session.session))
+        .filter(|session| !forgetting.contains(&session.session))
+        .cloned()
+        .collect();
+    order_session_rows(&mut visible);
+    visible
+}
+
+pub(crate) fn fallback_workspace_dir(recorded: &str, home: Option<PathBuf>) -> Option<PathBuf> {
+    let recorded = PathBuf::from(recorded);
+    if !recorded.as_os_str().is_empty() && recorded.is_dir() {
+        return Some(recorded);
+    }
+    home.filter(|home| home.is_dir())
 }
 
 fn stop_and_forget(targets: Vec<StopTarget>) -> Vec<SessionId> {
@@ -521,6 +557,16 @@ impl PaneFlowApp {
         cx.notify();
     }
 
+    fn open_workspaces(&self) -> Vec<OpenWorkspace> {
+        self.workspaces
+            .iter()
+            .map(|ws| OpenWorkspace {
+                id: ws.durable_id.clone(),
+                root: PathBuf::from(&ws.cwd),
+            })
+            .collect()
+    }
+
     pub(crate) fn owned_sessions_for_workspace(
         &self,
         ws: &Workspace,
@@ -530,31 +576,112 @@ impl PaneFlowApp {
             return Vec::new();
         }
         let attached = self.attached_session_ids(cx);
-        let open: Vec<OpenWorkspace> = self
-            .workspaces
-            .iter()
-            .map(|ws| OpenWorkspace {
-                id: ws.durable_id.clone(),
-                root: PathBuf::from(&ws.cwd),
-            })
-            .collect();
         visible_session_rows(
             &self.owned_sessions.rows,
             &ws.durable_id,
-            &open,
+            &self.open_workspaces(),
             &attached,
             &self.owned_sessions.forgetting,
         )
     }
 
-    pub(crate) fn open_session_in_layout(
+    pub(crate) fn fallback_owned_sessions(&self, cx: &App) -> Vec<OwnedSession> {
+        if self.owned_sessions.rows.is_empty() {
+            return Vec::new();
+        }
+        let attached = self.attached_session_ids(cx);
+        fallback_session_rows(
+            &self.owned_sessions.rows,
+            &self.open_workspaces(),
+            &attached,
+            &self.owned_sessions.forgetting,
+        )
+    }
+
+    pub(crate) fn fallback_sessions_expanded(&self) -> bool {
+        self.owned_sessions.fallback_expanded
+    }
+
+    pub(crate) fn expand_fallback_sessions(&mut self, cx: &mut Context<Self>) {
+        self.owned_sessions.fallback_expanded = true;
+        cx.notify();
+    }
+
+    pub(crate) fn open_listed_session(
         &mut self,
-        ws_idx: usize,
+        scope: SessionRowScope,
         listed: OwnedSession,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.open_session_in_layout_with(ws_idx, listed, false, window, cx);
+        match scope {
+            SessionRowScope::Workspace(ws_idx) => {
+                self.open_session_in_layout_with(ws_idx, listed, false, window, cx);
+            }
+            SessionRowScope::Fallback => self.open_fallback_session(listed, false, window, cx),
+        }
+    }
+
+    fn open_fallback_session(
+        &mut self,
+        listed: OwnedSession,
+        restart: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.active_idx < self.workspaces.len() {
+            let ws_idx = self.active_idx;
+            self.open_session_in_layout_with(ws_idx, listed, restart, window, cx);
+            return;
+        }
+        if self.workspaces.len() >= MAX_WORKSPACES {
+            self.show_toast(
+                format!("Maximum workspace count reached ({MAX_WORKSPACES})"),
+                cx,
+            );
+            return;
+        }
+        let Some(cwd) = fallback_workspace_dir(&listed.cwd, dirs::home_dir()) else {
+            self.show_toast(
+                format!(
+                    "No accessible directory for this session: {} is missing and no home directory was found",
+                    listed.cwd
+                ),
+                cx,
+            );
+            return;
+        };
+        let ws_id = next_workspace_id();
+        let terminal = cx.new(|cx| {
+            if restart {
+                TerminalView::attach_restarting(
+                    ws_id,
+                    Some(cwd.clone()),
+                    listed.session.clone(),
+                    Some(listed.generation),
+                    cx,
+                )
+            } else {
+                TerminalView::attach_existing(ws_id, Some(cwd.clone()), listed.session.clone(), cx)
+            }
+        });
+        if let Some(title) = listed.title.clone() {
+            terminal.update(cx, |view, _| view.terminal.title = title);
+        }
+        let surface_id = terminal.entity_id().as_u64();
+        let pane = self.create_pane(terminal, ws_id, cx);
+        let ws = Workspace::with_cwd_and_id(ws_id, listed.label(), cwd, pane.clone());
+        self.watch_git_dir(&ws);
+        Self::spawn_initial_git_stats(ws_id, ws.cwd.clone(), cx);
+        self.workspaces.push(ws);
+        self.active_idx = self.workspaces.len() - 1;
+        self.seed_surface_from_host(&listed.session, ws_id, surface_id, cx);
+        self.owned_sessions
+            .rows
+            .retain(|row| row.session != listed.session);
+        pane.read(cx).focus_handle(cx).focus(window, cx);
+        self.save_session(cx);
+        cx.notify();
     }
 
     fn open_session_in_layout_with(
@@ -610,7 +737,7 @@ impl PaneFlowApp {
 
     pub(crate) fn resume_listed_session(
         &mut self,
-        ws_idx: usize,
+        scope: SessionRowScope,
         listed: OwnedSession,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -631,7 +758,12 @@ impl PaneFlowApp {
             return;
         }
         let restart = !listed.live;
-        self.open_session_in_layout_with(ws_idx, listed, restart, window, cx);
+        match scope {
+            SessionRowScope::Workspace(ws_idx) => {
+                self.open_session_in_layout_with(ws_idx, listed, restart, window, cx);
+            }
+            SessionRowScope::Fallback => self.open_fallback_session(listed, restart, window, cx),
+        }
     }
 
     fn pane_holding_terminal(
@@ -932,6 +1064,122 @@ mod tests {
             "the sidebar source has nothing left to list"
         );
         server.stop().expect("the host server stops");
+    }
+
+    #[test]
+    fn every_unattached_session_is_listed_exactly_once_across_workspaces_and_the_fallback_group() {
+        let repo = WorkspaceId::new();
+        let closed = WorkspaceId::new();
+        let open = vec![OpenWorkspace {
+            id: repo.clone(),
+            root: PathBuf::from("/repo"),
+        }];
+        let mut in_repo = row(true, 1);
+        in_repo.workspace = Some(repo.clone());
+        let mut closed_but_under_repo = row(true, 2);
+        closed_but_under_repo.workspace = Some(closed.clone());
+        let mut closed_elsewhere = row(true, 3);
+        closed_elsewhere.workspace = Some(closed);
+        closed_elsewhere.cwd = "/elsewhere/app".to_string();
+        let mut deleted_cwd = row(false, 4);
+        deleted_cwd.cwd = "/gone/project".to_string();
+        let mut attached = row(true, 5);
+        attached.cwd = "/elsewhere/attached".to_string();
+        let rows = vec![
+            in_repo.clone(),
+            closed_but_under_repo.clone(),
+            closed_elsewhere.clone(),
+            deleted_cwd.clone(),
+            attached.clone(),
+        ];
+        let attached_ids: HashSet<SessionId> = [attached.session.clone()].into_iter().collect();
+        let forgetting = HashSet::new();
+
+        let workspace_rows: Vec<SessionId> =
+            visible_session_rows(&rows, &repo, &open, &attached_ids, &forgetting)
+                .into_iter()
+                .map(|row| row.session)
+                .collect();
+        let fallback_rows: Vec<SessionId> =
+            fallback_session_rows(&rows, &open, &attached_ids, &forgetting)
+                .into_iter()
+                .map(|row| row.session)
+                .collect();
+
+        assert_eq!(
+            workspace_rows,
+            vec![
+                closed_but_under_repo.session.clone(),
+                in_repo.session.clone()
+            ]
+        );
+        assert_eq!(
+            fallback_rows,
+            vec![
+                closed_elsewhere.session.clone(),
+                deleted_cwd.session.clone()
+            ]
+        );
+        for row in &rows {
+            let shown = workspace_rows
+                .iter()
+                .filter(|id| **id == row.session)
+                .count()
+                + fallback_rows
+                    .iter()
+                    .filter(|id| **id == row.session)
+                    .count();
+            let expected = usize::from(!attached_ids.contains(&row.session));
+            assert_eq!(
+                shown, expected,
+                "US-010: {} is listed exactly once",
+                row.session
+            );
+        }
+
+        let no_workspaces: Vec<OpenWorkspace> = Vec::new();
+        let orphaned: Vec<SessionId> =
+            fallback_session_rows(&rows, &no_workspaces, &attached_ids, &forgetting)
+                .into_iter()
+                .map(|row| row.session)
+                .collect();
+        assert_eq!(
+            orphaned.len(),
+            4,
+            "US-010: with zero workspaces every unattached session lands in the fallback group"
+        );
+    }
+
+    #[test]
+    fn a_fallback_workspace_prefers_the_recorded_cwd_and_falls_back_to_home() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let recorded = temp.path().join("recorded");
+        let home = temp.path().join("home");
+        std::fs::create_dir_all(&recorded).expect("recorded dir");
+        std::fs::create_dir_all(&home).expect("home dir");
+
+        assert_eq!(
+            fallback_workspace_dir(&recorded.display().to_string(), Some(home.clone())),
+            Some(recorded.clone())
+        );
+        let deleted = temp.path().join("deleted");
+        assert_eq!(
+            fallback_workspace_dir(&deleted.display().to_string(), Some(home.clone())),
+            Some(home.clone())
+        );
+        assert_eq!(fallback_workspace_dir("", Some(home.clone())), Some(home));
+        assert_eq!(
+            fallback_workspace_dir(
+                &deleted.display().to_string(),
+                Some(temp.path().join("no-home"))
+            ),
+            None,
+            "US-010: without any accessible directory the row is kept and reported"
+        );
+        assert_eq!(
+            fallback_workspace_dir(&deleted.display().to_string(), None),
+            None
+        );
     }
 
     #[test]

@@ -192,7 +192,7 @@ pub(crate) struct WorkspaceContextMenu {
 
 #[derive(Clone)]
 pub(crate) struct SessionContextMenu {
-    pub(crate) ws_idx: usize,
+    pub(crate) scope: crate::app::hosted_sessions::SessionRowScope,
     pub(crate) session: Box<crate::app::hosted_sessions::OwnedSession>,
     pub(crate) position: Point<Pixels>,
 }

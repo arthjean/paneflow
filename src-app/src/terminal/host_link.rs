@@ -161,7 +161,59 @@ pub(crate) struct HostLinkEnd {
     observed_generation: Option<SessionGeneration>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct FinalText {
+    pub(crate) text: String,
+    pub(crate) available: bool,
+    pub(crate) complete: bool,
+}
+
+pub(crate) static RETAINED_CHECKPOINT_BYTES: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+
+#[cfg(test)]
+pub(crate) fn retained_checkpoint_bytes() -> usize {
+    RETAINED_CHECKPOINT_BYTES.load(std::sync::atomic::Ordering::Acquire)
+}
+
+#[derive(Debug)]
+pub(crate) struct CheckpointPayload {
+    bytes: Vec<u8>,
+}
+
+impl CheckpointPayload {
+    pub(crate) fn new(bytes: Vec<u8>) -> Self {
+        RETAINED_CHECKPOINT_BYTES.fetch_add(bytes.len(), std::sync::atomic::Ordering::AcqRel);
+        Self { bytes }
+    }
+
+    pub(crate) fn as_slice(&self) -> &[u8] {
+        &self.bytes
+    }
+}
+
+impl Drop for CheckpointPayload {
+    fn drop(&mut self) {
+        RETAINED_CHECKPOINT_BYTES.fetch_sub(self.bytes.len(), std::sync::atomic::Ordering::AcqRel);
+    }
+}
+
 impl HostLinkEnd {
+    pub(crate) fn note_final_output(&mut self, final_text: Option<&FinalText>) {
+        if !matches!(self.kind, HostLinkEndKind::Exited { .. }) {
+            return;
+        }
+        match final_text {
+            Some(text) if !text.available => {
+                self.detail = format!("{}. Final output is no longer available.", self.detail);
+            }
+            Some(text) if !text.complete => {
+                self.detail = format!("{}. Some final output could not be collected.", self.detail);
+            }
+            _ => {}
+        }
+    }
+
     pub(crate) fn exited(code: i32, signal: Option<String>) -> Self {
         let detail = match &signal {
             Some(signal) => format!("Session ended ({signal})"),
@@ -334,7 +386,27 @@ pub(crate) struct HostAttachment {
     pub(crate) session: SessionId,
     pub(crate) generation: SessionGeneration,
     pub(crate) host_instance: HostInstanceToken,
-    pub(crate) checkpoint: Checkpoint,
+    pub(crate) offset: u64,
+}
+
+impl HostAttachment {
+    pub(crate) fn from_checkpoint(
+        endpoint: PathBuf,
+        hello: ClientHello,
+        session: SessionId,
+        host_instance: HostInstanceToken,
+        checkpoint: Checkpoint,
+    ) -> (Self, CheckpointPayload) {
+        let attachment = Self {
+            endpoint,
+            hello,
+            session,
+            generation: checkpoint.generation,
+            host_instance,
+            offset: checkpoint.offset,
+        };
+        (attachment, CheckpointPayload::new(checkpoint.snapshot))
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -358,8 +430,31 @@ pub(super) struct AttachRequest {
 }
 
 pub(crate) enum ResolveOutcome {
-    Attached(Box<HostedAttachment>),
-    Ended(HostLinkEnd),
+    Attached(Box<HostedAttachment>, CheckpointPayload),
+    Ended(HostLinkEnd, Option<FinalText>),
+}
+
+fn final_text_of(client: &mut HostClient, session: &SessionId) -> Option<FinalText> {
+    let value = client
+        .call("session.text", serde_json::json!({"session": session}))
+        .ok()?;
+    Some(FinalText {
+        text: value["text"].as_str().unwrap_or_default().to_string(),
+        available: value["available"].as_bool().unwrap_or(false),
+        complete: value["complete"].as_bool().unwrap_or(false),
+    })
+}
+
+fn ended_with_final_text(
+    client: &mut HostClient,
+    session: &SessionId,
+    mut end: HostLinkEnd,
+) -> ResolveOutcome {
+    let final_text = matches!(end.kind, HostLinkEndKind::Exited { .. })
+        .then(|| final_text_of(client, session))
+        .flatten();
+    end.note_final_output(final_text.as_ref());
+    ResolveOutcome::Ended(end, final_text)
 }
 
 fn create_request(request: &AttachRequest) -> CreateSession {
@@ -410,7 +505,10 @@ fn resolve_at(
         Ok(client) => client,
         Err(HostLinkError::Client(HostClientError::Incompatible(message)))
         | Err(HostLinkError::Bootstrap(BootstrapError::Incompatible(_, message))) => {
-            return Ok(ResolveOutcome::Ended(HostLinkEnd::incompatible(message)));
+            return Ok(ResolveOutcome::Ended(
+                HostLinkEnd::incompatible(message),
+                None,
+            ));
         }
         Err(error) => return Err(error),
     };
@@ -418,25 +516,27 @@ fn resolve_at(
     let live = match (request.intent, existing) {
         (_, Some(summary)) if summary.live && summary.owned => summary,
         (_, Some(summary)) if summary.owned && summary.pending_launch => {
-            return Ok(ResolveOutcome::Ended(HostLinkEnd::starting()));
+            return Ok(ResolveOutcome::Ended(HostLinkEnd::starting(), None));
         }
         (SessionIntent::Create, None) => client.create(&create_request(&request))?,
         (SessionIntent::Create, Some(summary)) => {
-            return Ok(ResolveOutcome::Ended(end_of(&client, &summary)));
+            let end = end_of(&client, &summary);
+            return Ok(ended_with_final_text(&mut client, &request.session, end));
         }
         (SessionIntent::Reattach, None) => {
-            return Ok(ResolveOutcome::Ended(HostLinkEnd::missing()));
+            return Ok(ResolveOutcome::Ended(HostLinkEnd::missing(), None));
         }
         (SessionIntent::Reattach, Some(summary)) => {
-            return Ok(ResolveOutcome::Ended(end_of(&client, &summary)));
+            let end = end_of(&client, &summary);
+            return Ok(ended_with_final_text(&mut client, &request.session, end));
         }
         (SessionIntent::Restart { .. }, None) => {
-            return Ok(ResolveOutcome::Ended(HostLinkEnd::missing()));
+            return Ok(ResolveOutcome::Ended(HostLinkEnd::missing(), None));
         }
         (SessionIntent::Restart { expected }, Some(summary)) => {
             let end = end_of(&client, &summary);
             if !end.restartable() || expected.is_none() {
-                return Ok(ResolveOutcome::Ended(end));
+                return Ok(ended_with_final_text(&mut client, &request.session, end));
             }
             match client.restart(&request.session, expected) {
                 Ok(restarted) => restarted,
@@ -444,9 +544,10 @@ fn resolve_at(
                     match inspect_optional(&mut client, &request.session)? {
                         Some(current) if current.live && current.owned => current,
                         Some(current) => {
-                            return Ok(ResolveOutcome::Ended(end_of(&client, &current)));
+                            let end = end_of(&client, &current);
+                            return Ok(ended_with_final_text(&mut client, &request.session, end));
                         }
-                        None => return Ok(ResolveOutcome::Ended(HostLinkEnd::missing())),
+                        None => return Ok(ResolveOutcome::Ended(HostLinkEnd::missing(), None)),
                     }
                 }
                 Err(error) => return Err(error.into()),
@@ -457,28 +558,32 @@ fn resolve_at(
     let attachment = match client.attach(&request.session, Some(generation)) {
         Ok(attachment) => attachment,
         Err(error) if error.code() == Some(ERR_CHECKPOINT_TOO_LARGE) => {
-            return Ok(ResolveOutcome::Ended(HostLinkEnd::attach_refused(
-                error.to_string(),
-            )));
+            return Ok(ResolveOutcome::Ended(
+                HostLinkEnd::attach_refused(error.to_string()),
+                None,
+            ));
         }
         Err(error) => return Err(error.into()),
     };
-    Ok(ResolveOutcome::Attached(Box::new(HostedAttachment {
-        attachment: HostAttachment {
-            endpoint: target.endpoint,
-            hello: hello(),
-            session: request.session,
-            generation,
-            host_instance: attachment.host_instance,
-            checkpoint: attachment.checkpoint,
-        },
-        pid: live.manifest.process.map(|p| p.pid).unwrap_or(0),
-        cwd: live
-            .manifest
-            .current_cwd
-            .clone()
-            .unwrap_or(live.manifest.cwd),
-    })))
+    let (attachment, snapshot) = HostAttachment::from_checkpoint(
+        target.endpoint,
+        hello(),
+        request.session,
+        attachment.host_instance,
+        attachment.checkpoint,
+    );
+    Ok(ResolveOutcome::Attached(
+        Box::new(HostedAttachment {
+            attachment,
+            pid: live.manifest.process.map(|p| p.pid).unwrap_or(0),
+            cwd: live
+                .manifest
+                .current_cwd
+                .clone()
+                .unwrap_or(live.manifest.cwd),
+        }),
+        snapshot,
+    ))
 }
 
 pub(crate) fn stop_session(
@@ -1110,7 +1215,7 @@ mod tests {
                 target.clone(),
             )
             .unwrap();
-            assert!(matches!(outcome, ResolveOutcome::Ended(_)));
+            assert!(matches!(outcome, ResolveOutcome::Ended(..)));
             assert_eq!(host.list(None).len(), 1);
             assert_eq!(
                 host.inspect(&failed).unwrap().manifest.generation,
@@ -1185,7 +1290,7 @@ mod tests {
                     },
                 )
                 .unwrap();
-                assert!(matches!(result, ResolveOutcome::Ended(_)));
+                assert!(matches!(result, ResolveOutcome::Ended(..)));
                 assert_eq!(
                     host.inspect(session).unwrap().manifest.generation,
                     SessionGeneration::FIRST

@@ -1025,7 +1025,6 @@ impl TerminalState {
         )
     }
 
-    #[allow(dead_code)]
     pub fn write_output(&self, bytes: &[u8]) {
         let mut converted = Vec::with_capacity(bytes.len());
         let mut prev = 0u8;
@@ -1380,10 +1379,8 @@ impl TerminalState {
         self.notify_or_buffer(input.into());
     }
 
-    pub fn should_close_on_exit(&self) -> bool {
-        self.keyboard_input_sent
-            .load(std::sync::atomic::Ordering::Relaxed)
-            || self.exited == Some(0)
+    pub fn retains_final_view(&self) -> bool {
+        self.exited.is_some()
     }
 
     pub fn extract_scrollback(&self) -> Option<String> {
@@ -2003,25 +2000,31 @@ mod tests {
     }
 
     #[test]
-    fn close_on_exit_discriminator_covers_both_branches() {
+    fn natural_exit_retains_the_final_view_on_every_branch() {
+        let live = TerminalState::new_display_only(24, 80);
+        assert!(
+            !live.retains_final_view(),
+            "US-009: a live terminal is not a final view"
+        );
+
         let mut clean = TerminalState::new_display_only(24, 80);
         clean.exited = Some(0);
         assert!(
-            clean.should_close_on_exit(),
-            "US-002: a clean exit (code 0) must close the pane"
+            clean.retains_final_view(),
+            "US-009: a clean exit keeps the passive final view"
         );
 
         let mut failed = TerminalState::new_display_only(24, 80);
         failed.exited = Some(127);
         assert!(
-            !failed.should_close_on_exit(),
-            "US-002: a non-zero exit with no input must keep the pane open"
+            failed.retains_final_view(),
+            "US-009: a non-zero exit without input keeps the passive final view"
         );
 
         failed.write_to_pty(b"x".as_slice());
         assert!(
-            failed.should_close_on_exit(),
-            "US-002: after user input, a non-zero exit must close the pane"
+            failed.retains_final_view(),
+            "US-009: prior keyboard input never turns an exit into a close"
         );
     }
 

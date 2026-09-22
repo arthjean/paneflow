@@ -696,23 +696,45 @@ still reach the desktop live; they are never replayed from a restored
 snapshot.
 
 A follower thread (`paneflow-ghostty-follower`) streams `session.output` from
-the checkpoint offset with `follow=true`. The host emits a keepalive frame
-every two seconds while idle; the follower skips overlapping bytes, treats a
-gap or `ERR_OUTPUT_EVICTED` as a request for a fresh checkpoint
-(`RuntimeMessage::RestoreCheckpoint` replaces the mirror), reconnects every
-500 ms after a connection loss, and verifies the host instance token on every
-reconnect so a replaced host is reported as `host_replaced` instead of being
-followed. Frames from a previous generation or attach attempt are discarded
+the checkpoint offset with `follow=true`. On the host, followers wait on the
+session's `OutputStream` (a mutex and condvar in
+`crates/paneflow-host/src/stream.rs`) for a publication past their offset, the
+end of the stream, or a keepalive deadline; nothing polls. The host emits a
+keepalive frame every two seconds while idle; the follower skips overlapping
+bytes, treats a gap or `ERR_OUTPUT_EVICTED` as a request for a fresh
+checkpoint (`RuntimeMessage::RestoreCheckpoint` replaces the mirror, and a
+replacement still queued is overwritten rather than stacked), reconnects with
+an exponential backoff from 500 ms to 5 s that a stop cancels, and verifies
+the host instance token on every reconnect so a replaced host is reported as
+`host_replaced` instead of being followed. The attachment checkpoint itself
+is a one-shot `CheckpointPayload`: it is decoded once into the mirror and
+dropped, so no serialized snapshot stays resident after a restore. Frames from a previous generation or attach attempt are discarded
 by the runtime's stop flag. When the stream ends with `live: false`, the
 follower classifies the end through `session.inspect` (exited with code or
-signal, failed, lost, restarted, missing).
+signal, failed, lost, restarted, missing). Once a child exits, the host
+drains the PTY for at most two seconds, retires the terminal, releases the
+tail after a one second grace, and keeps a completed record: exit outcome,
+final offset, completeness, and up to 512 KiB of final screen text in a
+`final-output.txt` cold file capped at 64 MiB per home. `session.text`
+serves that text, or says it is unavailable, without any launch; opening an
+ended record from the sidebar shows it read-only. A maintenance thread runs
+retention (24 h for finished records, 30 d for interrupted ones) at most
+once a minute.
 
 `TerminalState.host_link` carries `HostLinkState`: `Attaching`, `Attached`,
 `Reconnecting`, `Ended(HostLinkEnd)` or `Unavailable`. Input is accepted only
 while attaching or attached; in every other state the input dispatcher
-rejects it and pending input is cleared, never queued for a later resend. A
-`session.input` call that fails after a disconnect is reported as rejected
-and not retried. `render_host_link_overlay` draws the reconnecting, ended and
+rejects it and pending input is cleared, never queued for a later resend.
+Control requests (input, runtime binding, resize) leave the mirror loop
+through a bounded queue to a dedicated `paneflow-ghostty-control` thread, so
+a slow host never stalls rendering. When the stream ends, the mirror releases
+that control connection, so a passive final view holds no host connection and
+no host thread. A `session.input` call that fails after
+a disconnect is reported as delivery unknown, never resent: only input the
+host refused before reading it is known to be unsent. Control connections
+have no idle expiry; the host bounds the handshake and partial frames, not
+silence, so the first key after an hour of idling goes through the same
+connection exactly once. `render_host_link_overlay` draws the reconnecting, ended and
 unavailable states over the last rendered frame; Enter on an ended or
 unavailable terminal runs `resume_hosted_session`, which re-resolves the same
 `SessionId` with the `Resume` intent.
@@ -737,7 +759,7 @@ enforces.
 |---|---|
 | Close pane (shortcut, pane menu, detached window shortcut), close surface tab, close diff dock terminal | stopped and its record removed, or asked for when an agent is thinking or waiting |
 | Close tab, close workspace | every contained session stopped and its record removed, one dialog for the whole action |
-| Child exit | the surface goes and its record with it; the last surface closes its pane through the same stop path |
+| Child exit | nothing closes: the surface stays as a passive final view (zero or nonzero code, with or without prior input) until the user closes it through one of the rows above |
 | Hide pane from layout (`hide_pane` action, pane menu) | kept running, the `Detach` intent skips the stop, never asks |
 | Any close while the local host is unreachable | the views are removed, no stop is attempted and a toast says the session state is unknown |
 | Return a detached pane to its window | untouched |
@@ -751,7 +773,14 @@ record of `session.list`, live or ended, whose id no attached view carries;
 the sidebar lists them under the workspace's last tab, live rows first and
 then ended rows by the most recent lifecycle change. A record the desktop
 cannot parse is skipped with a log line and the rest of the list renders; a
-failed listing keeps the previous rows and marks them stale. Ended rows are
+failed listing keeps the previous rows and marks them stale. A record no open
+workspace claims, because its workspace is closed or its cwd lies outside
+every open root, lands once in an `Other sessions` group below the workspace
+rows, which also renders with zero workspaces. Opening a row from that group
+attaches in the active workspace or, with no workspace open, creates one on
+the recorded cwd when it still exists, else on the home directory; when
+neither is accessible or the workspace limit is reached, the row stays and a
+toast says why. Ended rows are
 dimmed, carry no agent lane, and the ones beyond `sidebar_ended_sessions`
 (default 5) collapse under one row. Left-click reopens a live row through
 `attach_existing` and resumes an ended one; right-click offers Open in layout

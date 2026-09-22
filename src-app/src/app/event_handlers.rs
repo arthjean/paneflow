@@ -487,9 +487,6 @@ impl PaneFlowApp {
                     cx,
                 );
             }
-            pane::PaneEvent::SurfaceExited(terminal) => {
-                self.stop_terminals(vec![terminal.clone()], cx);
-            }
             pane::PaneEvent::NewTab => {
                 let ws_id = pane.read(cx).workspace_id;
                 if !pane.read(cx).can_add_surface() {
