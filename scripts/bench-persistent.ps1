@@ -7,7 +7,9 @@ param(
     [switch]$Quick,
     [switch]$SeedFailure,
     [string]$Prior,
-    [string]$WorkerReplacement
+    [string]$WorkerReplacement,
+    [int]$Endurance = 0,
+    [int]$IdleMinutes = 0
 )
 
 $ErrorActionPreference = "Stop"
@@ -18,7 +20,19 @@ $dirty = if ((git status --porcelain --untracked-files=no | Measure-Object).Coun
 $stamp = (Get-Date).ToUniversalTime().ToString("yyyyMMddTHHmmssZ")
 New-Item -ItemType Directory -Force -Path "bench/results" | Out-Null
 $root = (Get-Location).Path
-$out = Join-Path $root "bench/results/persistent-$stamp-$sha.json"
+$suite = if ($Endurance -gt 0) { "persistent-endurance" } else { "persistent" }
+$test = if ($Endurance -gt 0) { "persistent_session_endurance" } else { "persistent_session_baseline" }
+$out = Join-Path $root "bench/results/$suite-$stamp-$sha.json"
+if ($Endurance -gt 0) {
+    $env:PANEFLOW_BENCH_ENDURANCE_MINUTES = "$Endurance"
+} else {
+    Remove-Item Env:PANEFLOW_BENCH_ENDURANCE_MINUTES -ErrorAction SilentlyContinue
+}
+if ($IdleMinutes -gt 0) {
+    $env:PANEFLOW_BENCH_IDLE_MINUTES = "$IdleMinutes"
+} else {
+    Remove-Item Env:PANEFLOW_BENCH_IDLE_MINUTES -ErrorAction SilentlyContinue
+}
 
 $env:PANEFLOW_BENCH_OUT = $out
 $env:PANEFLOW_BENCH_SHA = $sha
@@ -75,7 +89,7 @@ if ($WorkerReplacement) {
 }
 
 cargo test --release --locked -p paneflow-host --test persistent_baseline `
-    persistent_session_baseline `
+    $test `
     -- --ignored --exact --nocapture --test-threads=1
 $status = $LASTEXITCODE
 
@@ -88,7 +102,7 @@ if ($status -ne 0) {
     Write-Error "persistent-path thresholds failed (exit $status); the artifact above is retained and a rerun must pass -Prior $out"
     exit $status
 }
-if ($SetBaseline) {
+if ($SetBaseline -and $Endurance -eq 0) {
     Copy-Item $out "bench/persistent-baseline.json" -Force
     Write-Host "baseline: bench/persistent-baseline.json now points at $sha"
 }

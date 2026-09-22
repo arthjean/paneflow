@@ -11,8 +11,12 @@ quick=false
 seed_failure=false
 prior=""
 replacement=""
+endurance=""
+idle_minutes=""
 while [ $# -gt 0 ]; do
   case "$1" in
+    --endurance) shift; endurance="${1:-}" ;;
+    --idle-minutes) shift; idle_minutes="${1:-}" ;;
     --set-baseline) mode="set-baseline" ;;
     --with-worker) worker=true ;;
     --with-desktop) worker=true; desktop=true ;;
@@ -34,7 +38,21 @@ fi
 stamp=$(date -u +%Y%m%dT%H%M%SZ)
 mkdir -p bench/results
 root=$(pwd)
-out="$root/bench/results/persistent-${stamp}-${sha}.json"
+suite="persistent"
+test="persistent_session_baseline"
+if [ -n "$endurance" ]; then
+  suite="persistent-endurance"
+  test="persistent_session_endurance"
+  export PANEFLOW_BENCH_ENDURANCE_MINUTES="$endurance"
+else
+  unset PANEFLOW_BENCH_ENDURANCE_MINUTES
+fi
+if [ -n "$idle_minutes" ]; then
+  export PANEFLOW_BENCH_IDLE_MINUTES="$idle_minutes"
+else
+  unset PANEFLOW_BENCH_IDLE_MINUTES
+fi
+out="$root/bench/results/${suite}-${stamp}-${sha}.json"
 
 export PANEFLOW_BENCH_OUT="$out"
 export PANEFLOW_BENCH_SHA="$sha"
@@ -84,7 +102,7 @@ fi
 
 set +e
 cargo test --release --locked -p paneflow-host --test persistent_baseline \
-  persistent_session_baseline \
+  "$test" \
   -- --ignored --exact --nocapture --test-threads=1
 status=$?
 set -e
@@ -98,7 +116,7 @@ if [ "$status" -ne 0 ]; then
   echo "persistent-path thresholds failed (exit $status); the artifact above is retained and a rerun must pass --prior $out" >&2
   exit "$status"
 fi
-if [ "$mode" = "set-baseline" ]; then
+if [ "$mode" = "set-baseline" ] && [ -z "$endurance" ]; then
   cp "$out" bench/persistent-baseline.json
   echo "baseline: bench/persistent-baseline.json now points at $sha"
 fi

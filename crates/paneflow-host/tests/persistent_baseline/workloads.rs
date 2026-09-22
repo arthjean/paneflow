@@ -443,8 +443,8 @@ pub fn workload_history(
     })
 }
 
-struct EchoProbe {
-    session: SessionId,
+pub struct EchoProbe {
+    pub session: SessionId,
     generation: paneflow_host::SessionGeneration,
     received: Arc<Mutex<Vec<(u64, Instant)>>>,
     stop: Arc<AtomicBool>,
@@ -452,7 +452,7 @@ struct EchoProbe {
 }
 
 impl EchoProbe {
-    fn start(client: &mut HostClient, endpoint: &Path, ledger: &FixtureLedger) -> Self {
+    pub fn start(client: &mut HostClient, endpoint: &Path, ledger: &FixtureLedger) -> Self {
         let created = client.create(&fixture(&["echo"])).expect("echo fixture");
         let session = created.manifest.session;
         ledger.record(client, &session);
@@ -513,7 +513,7 @@ impl EchoProbe {
         }
     }
 
-    fn measure(&self, client: &mut HostClient, samples: usize) -> Vec<f64> {
+    pub fn measure(&self, client: &mut HostClient, samples: usize) -> Vec<f64> {
         let mut sent = Vec::with_capacity(samples);
         for number in 0..samples as u64 {
             let line = format!("PFECHO-{number}\r");
@@ -543,7 +543,31 @@ impl EchoProbe {
         latencies
     }
 
-    fn finish(self, client: &mut HostClient) {
+    pub fn first_input(&self, client: &mut HostClient, wait: Duration) -> Value {
+        let number = 9_000_000u64;
+        let line = format!("PFECHO-{number}\r");
+        let at = Instant::now();
+        let accepted = client
+            .input(&self.session, self.generation, line.as_bytes())
+            .map_err(|error| error.to_string());
+        std::thread::sleep(wait);
+        let mut received = self.received.lock().unwrap();
+        let echoes: Vec<f64> = received
+            .iter()
+            .filter(|(seen, _)| *seen == number)
+            .map(|(_, when)| when.saturating_duration_since(at).as_secs_f64() * 1000.0)
+            .collect();
+        received.clear();
+        json!({
+            "sent_bytes": line.len(),
+            "accepted": accepted,
+            "echoes": echoes.len(),
+            "latency_ms": echoes.first(),
+            "wait_s": wait.as_secs_f64(),
+        })
+    }
+
+    pub fn finish(self, client: &mut HostClient) {
         self.stop.store(true, Ordering::Release);
         let _ = self.finished.recv_timeout(Duration::from_secs(5));
         let _ = client.stop(&self.session, Some(self.generation));
@@ -950,6 +974,58 @@ pub fn workload_churn(
     })
 }
 
+pub fn cycle_worker(
+    home: &Path,
+    live: super::WorkerProcess,
+    cycle: usize,
+    executable: &std::ffi::OsStr,
+    replacement: Option<&std::ffi::OsStr>,
+) -> (super::WorkerProcess, Value) {
+    let crash = cycle.is_multiple_of(2);
+    let build_replacement = replacement.is_some() && !crash;
+    let started = Instant::now();
+    let mut live = live;
+    if crash {
+        let _ = live.child.kill();
+        let _ = live.child.wait();
+        std::mem::forget(live);
+    } else {
+        drop(live);
+    }
+    let next = if build_replacement {
+        replacement.unwrap().to_os_string()
+    } else {
+        executable.to_os_string()
+    };
+    let live = super::WorkerProcess::start_enabled(home, next);
+    let restart_ms = started.elapsed().as_secs_f64() * 1000.0;
+    let status = paneflow_ipc_client::host_control::HostControl::connect_with_deadline(
+        &live.endpoint,
+        "persistent-bench",
+        Duration::from_secs(5),
+    )
+    .and_then(|mut control| control.request("worker.status", json!({})));
+    let projection = status
+        .as_ref()
+        .ok()
+        .and_then(|s| s["session_count"].as_u64());
+    let core_connected = status
+        .as_ref()
+        .ok()
+        .and_then(|s| s["core_connected"].as_bool());
+    let record = json!({
+        "cycle": cycle,
+        "kind": if crash { "crash" } else { "deliberate restart" },
+        "build_replacement": build_replacement,
+        "restart_ms": restart_ms,
+        "worker_status": status.as_ref().ok(),
+        "worker_error": status.as_ref().err(),
+        "projection_sessions": projection,
+        "core_connected": core_connected,
+    });
+    (live, record)
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn workload_worker_replacement(
     home: &Path,
@@ -976,37 +1052,9 @@ pub fn workload_worker_replacement(
     let mut live = current;
     let mut unchanged = true;
     for cycle in 0..protocol.worker_cycles {
-        let build_replacement = replacement.is_some() && cycle % 2 == 1;
-        let crash = cycle % 2 == 0;
-        let started = Instant::now();
-        if crash {
-            let _ = live.child.kill();
-            let _ = live.child.wait();
-            std::mem::forget(live);
-        } else {
-            drop(live);
-        }
-        let next = if build_replacement {
-            replacement.clone().unwrap()
-        } else {
-            executable.clone()
-        };
-        live = super::WorkerProcess::start_enabled(home, next);
-        let restart_ms = started.elapsed().as_secs_f64() * 1000.0;
-        let status = paneflow_ipc_client::host_control::HostControl::connect_with_deadline(
-            &live.endpoint,
-            "persistent-bench",
-            Duration::from_secs(5),
-        )
-        .and_then(|mut control| control.request("worker.status", json!({})));
-        let projection = status
-            .as_ref()
-            .ok()
-            .and_then(|s| s["session_count"].as_u64());
-        let core_connected = status
-            .as_ref()
-            .ok()
-            .and_then(|s| s["core_connected"].as_bool());
+        let (next, mut record) =
+            cycle_worker(home, live, cycle, &executable, replacement.as_deref());
+        live = next;
         let after: Vec<_> = before
             .iter()
             .map(|m| client.inspect(&m.session).unwrap().manifest)
@@ -1016,18 +1064,9 @@ pub fn workload_worker_replacement(
         });
         unchanged &= same;
         let latencies = echo.measure(client, 20);
-        cycles.push(json!({
-            "cycle": cycle,
-            "kind": if crash { "crash" } else { "deliberate restart" },
-            "build_replacement": build_replacement,
-            "restart_ms": restart_ms,
-            "worker_status": status.as_ref().ok(),
-            "worker_error": status.as_ref().err(),
-            "projection_sessions": projection,
-            "core_connected": core_connected,
-            "identities_unchanged": same,
-            "echo_after_ms": stats(&latencies, 20),
-        }));
+        record["identities_unchanged"] = json!(same);
+        record["echo_after_ms"] = stats(&latencies, 20);
+        cycles.push(record);
     }
     let identity_count = before.len();
     let after_total: Vec<_> = before

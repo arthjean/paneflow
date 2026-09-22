@@ -95,6 +95,10 @@ fn executable_identity(path: &Path) -> Value {
 }
 
 fn diff_fingerprint() -> Value {
+    diff_fingerprint_excluding(None)
+}
+
+fn diff_fingerprint_excluding(own_output: Option<&Path>) -> Value {
     let Some(root) = git(&["rev-parse", "--show-toplevel"]) else {
         return json!({"dirty": null, "note": "repository root unavailable"});
     };
@@ -120,6 +124,9 @@ fn diff_fingerprint() -> Value {
         .filter(|name| !name.is_empty())
     {
         let path = String::from_utf8_lossy(name).into_owned();
+        if own_output.and_then(Path::file_name) == Path::new(&path).file_name() {
+            continue;
+        }
         let Ok(contents) = std::fs::read(Path::new(&root).join(&path)) else {
             return json!({"dirty": true, "note": "untracked content unreadable", "path": path});
         };
@@ -1257,12 +1264,7 @@ fn a_seeded_failure_fails_the_run_and_retains_its_artifact() {
     );
 }
 
-#[test]
-#[ignore = "baseline measurement; run through scripts/bench-persistent.sh or .ps1"]
-fn persistent_session_baseline() {
-    allow_breakaway_like_the_desktop_does();
-    let source_fingerprint = diff_fingerprint();
-    let home = tempfile::tempdir().unwrap();
+fn seed_home(home: &Path) {
     for (name, contents) in [
         (
             "paneflow.json",
@@ -1275,8 +1277,72 @@ fn persistent_session_baseline() {
         ("window-state.json", r#"{"width":1200,"height":800}"#),
         ("telemetry_id", "7f03d6ba-1249-4a78-92dc-96f77e8d10a2"),
     ] {
-        std::fs::write(home.path().join(name), contents).unwrap();
+        std::fs::write(home.join(name), contents).unwrap();
     }
+}
+
+fn shutdown_host(
+    decisions: &mut Vec<Decision>,
+    client: HostClient,
+    host_identity: &paneflow_host::ProcessIdentity,
+    home: &Path,
+    endpoint: &Path,
+    hello: &ClientHello,
+    ledger: &FixtureLedger,
+) -> Value {
+    let mut client = client;
+    let shutdown = client.call("host.shutdown", json!({}));
+    drop(client);
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while (host_identity.is_provably_live()
+        || !matches!(
+            bootstrap::probe(home, endpoint, hello),
+            bootstrap::Probe::Unreachable(_)
+        ))
+        && Instant::now() < deadline
+    {
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    let host_exited = !host_identity.is_provably_live();
+    decisions.push(workloads::decide(
+        "NFR-12.host_shutdown",
+        "harness",
+        "host process exited after an acknowledged shutdown",
+        "acknowledged and exited within 10 s",
+        Some(if shutdown.is_ok() && host_exited {
+            1.0
+        } else {
+            0.0
+        }),
+        |v| v == 1.0,
+        "",
+    ));
+    let survivors = ledger.survivors();
+    decisions.push(workloads::decide(
+        "NFR-12.fixture_orphans",
+        "harness",
+        "fixture processes still alive after host shutdown",
+        "== 0",
+        Some(survivors.len() as f64),
+        |v| v == 0.0,
+        "",
+    ));
+    json!({
+        "owned": ledger.len(),
+        "survivors_after_shutdown": survivors,
+        "host_shutdown": shutdown.as_ref().map(|value| value.clone()).unwrap_or_else(|error| json!({"error": error.to_string()})),
+        "host_exited": host_exited,
+        "cleanup": "only recorded session/process identities are checked; the host owns and stops its fixtures on a private PANEFLOW_HOME",
+    })
+}
+
+#[test]
+#[ignore = "baseline measurement; run through scripts/bench-persistent.sh or .ps1"]
+fn persistent_session_baseline() {
+    allow_breakaway_like_the_desktop_does();
+    let source_fingerprint = diff_fingerprint();
+    let home = tempfile::tempdir().unwrap();
+    seed_home(home.path());
     let endpoint = paneflow_host::endpoint::host_endpoint_path(home.path());
     let adoption =
         bootstrap::ensure_host_running(home.path(), &host_executable(), "persistent-bench")
@@ -1429,43 +1495,15 @@ fn persistent_session_baseline() {
         &mut decisions,
     );
     drop(worker);
-    let shutdown = client.call("host.shutdown", json!({}));
-    drop(client);
-    let deadline = Instant::now() + Duration::from_secs(10);
-    while (host_identity.is_provably_live()
-        || !matches!(
-            bootstrap::probe(home.path(), &endpoint, &hello),
-            bootstrap::Probe::Unreachable(_)
-        ))
-        && Instant::now() < deadline
-    {
-        std::thread::sleep(Duration::from_millis(50));
-    }
-    let host_exited = !host_identity.is_provably_live();
-    decisions.push(workloads::decide(
-        "NFR-12.host_shutdown",
-        "harness",
-        "host process exited after an acknowledged shutdown",
-        "acknowledged and exited within 10 s",
-        Some(if shutdown.is_ok() && host_exited {
-            1.0
-        } else {
-            0.0
-        }),
-        |v| v == 1.0,
-        "",
-    ));
-
-    let survivors = ledger.survivors();
-    decisions.push(workloads::decide(
-        "NFR-12.fixture_orphans",
-        "harness",
-        "fixture processes still alive after host shutdown",
-        "== 0",
-        Some(survivors.len() as f64),
-        |v| v == 0.0,
-        "",
-    ));
+    let fixtures = shutdown_host(
+        &mut decisions,
+        client,
+        &host_identity,
+        home.path(),
+        &endpoint,
+        &hello,
+        &ledger,
+    );
     seed_failure(&mut decisions);
     let prior = workloads::prior_failures();
     let workloads_json = json!({
@@ -1522,7 +1560,7 @@ fn persistent_session_baseline() {
         "thresholds": decisions.iter().map(Decision::to_json).collect::<Vec<_>>(),
         "prior_failures": prior,
         "retry_policy": "none: the scripts never retry; a rerun passes PANEFLOW_BENCH_PRIOR_RESULT so the first failure stays in the evidence",
-        "fixtures": {"owned": ledger.len(), "survivors_after_shutdown": survivors, "host_shutdown": shutdown.as_ref().map(|value| value.clone()).unwrap_or_else(|error| json!({"error": error.to_string()})), "host_exited": host_exited, "cleanup": "only recorded session/process identities are checked; the host owns and stops its fixtures on a private PANEFLOW_HOME"},
+        "fixtures": fixtures,
         "allocator": "no custom global allocator in the host or the fixture; native memory comes from OS counters",
         "topology": topology_label(worker_pid.is_some()),
         "controller": std::env::var_os("PANEFLOW_BENCH_CONTROLLER").map(|path| executable_identity(Path::new(&path))),
@@ -1563,4 +1601,638 @@ fn topology_label(worker: bool) -> &'static str {
     } else {
         "host-headless-followers"
     }
+}
+
+const ENDURANCE_RETAINED_IDLE: usize = 9;
+const ENDURANCE_BURST_SIZE: usize = 10;
+
+struct EndurancePlan {
+    duration: Duration,
+    idle: Duration,
+    required: Duration,
+    worker_cycles: usize,
+    desktop_cycles: usize,
+    burst_interval: Duration,
+    sample_interval: Duration,
+}
+
+impl EndurancePlan {
+    fn from_env() -> Self {
+        let env_u64 = |name: &str, default: u64| {
+            std::env::var(name)
+                .ok()
+                .and_then(|value| value.parse().ok())
+                .unwrap_or(default)
+        };
+        Self {
+            duration: Duration::from_secs(60 * env_u64("PANEFLOW_BENCH_ENDURANCE_MINUTES", 480)),
+            idle: Duration::from_secs(60 * env_u64("PANEFLOW_BENCH_IDLE_MINUTES", 30)),
+            required: Duration::from_secs(
+                60 * env_u64("PANEFLOW_BENCH_ENDURANCE_REQUIRED_MINUTES", 480),
+            ),
+            worker_cycles: env_u64("PANEFLOW_BENCH_WORKER_CYCLES", 100) as usize,
+            desktop_cycles: env_u64("PANEFLOW_BENCH_DESKTOP_CYCLES", 100) as usize,
+            burst_interval: Duration::from_secs(60 * env_u64("PANEFLOW_BENCH_BURST_MINUTES", 5)),
+            sample_interval: Duration::from_secs(env_u64("PANEFLOW_BENCH_SAMPLE_SECONDS", 60)),
+        }
+    }
+
+    fn acceptance_grade(&self, desktop: bool) -> bool {
+        self.duration >= self.required
+            && self.idle >= Duration::from_secs(30 * 60)
+            && self.worker_cycles >= 100
+            && desktop
+            && self.desktop_cycles >= 100
+    }
+
+    fn to_json(&self, desktop: bool) -> Value {
+        json!({
+            "duration_s": self.duration.as_secs(),
+            "required_duration_s": self.required.as_secs(),
+            "idle_s": self.idle.as_secs(),
+            "worker_cycles": self.worker_cycles,
+            "desktop_cycles": self.desktop_cycles,
+            "burst_interval_s": self.burst_interval.as_secs(),
+            "burst_size": ENDURANCE_BURST_SIZE,
+            "sample_interval_s": self.sample_interval.as_secs(),
+            "retained_sessions": ENDURANCE_RETAINED_IDLE + 1,
+            "acceptance_grade": self.acceptance_grade(desktop),
+            "label": if self.acceptance_grade(desktop) { "endurance" } else { "rehearsal" },
+        })
+    }
+}
+
+fn retained_identities(
+    client: &mut HostClient,
+    sessions: &[SessionId],
+) -> Vec<paneflow_host::SessionManifest> {
+    sessions
+        .iter()
+        .map(|session| client.inspect(session).unwrap().manifest)
+        .collect()
+}
+
+fn identities_unchanged(
+    client: &mut HostClient,
+    before: &[paneflow_host::SessionManifest],
+) -> bool {
+    before.iter().all(|earlier| {
+        client.inspect(&earlier.session).is_ok_and(|now| {
+            now.live
+                && now.manifest.generation == earlier.generation
+                && now.manifest.process == earlier.process
+        })
+    })
+}
+
+fn endurance_burst(
+    client: &mut HostClient,
+    endpoint: &Path,
+    ledger: &FixtureLedger,
+    retained: usize,
+    index: usize,
+) -> Value {
+    let started = Instant::now();
+    let flood = workloads::W05_FLOOD_BYTES.to_string();
+    let mut sessions = Vec::with_capacity(ENDURANCE_BURST_SIZE);
+    for _ in 0..ENDURANCE_BURST_SIZE {
+        let created = client
+            .create(&workloads::fixture(&["flood", &flood]))
+            .expect("burst fixture");
+        ledger.record(client, &created.manifest.session);
+        sessions.push(created.manifest.session);
+    }
+    for session in &sessions {
+        let mut follower = HostClient::connect(endpoint, &ClientHello::local("w08-burst")).unwrap();
+        let _ = follower.attach(session, None);
+    }
+    let exit_deadline = Instant::now() + Duration::from_secs(120);
+    loop {
+        if sessions
+            .iter()
+            .all(|session| client.inspect(session).is_ok_and(|summary| !summary.live))
+        {
+            break;
+        }
+        assert!(
+            Instant::now() < exit_deadline,
+            "endurance burst {index} exit watchdog"
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    let exited_at = Instant::now();
+    let reclaim_deadline = exited_at + Duration::from_secs(workloads::NFR04_RECLAIM_S as u64 + 1);
+    let mut reclaimed_ms = None;
+    let mut unreclaimed = Value::Null;
+    loop {
+        let status = client.call("host.status", json!({})).unwrap();
+        let live = status["resources"]["live_runtimes"]
+            .as_u64()
+            .unwrap_or(u64::MAX);
+        let held = status["resources"]["sessions"]
+            .as_array()
+            .map(|entries| {
+                entries
+                    .iter()
+                    .filter(|entry| sessions.iter().any(|s| entry["session"] == json!(s)))
+                    .count()
+            })
+            .unwrap_or(usize::MAX);
+        if live == retained as u64 && held == 0 {
+            reclaimed_ms = Some(exited_at.elapsed().as_secs_f64() * 1000.0);
+            break;
+        }
+        if Instant::now() >= reclaim_deadline {
+            unreclaimed = json!({"live_runtimes": live, "held_burst_runtimes": held});
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    }
+    for session in &sessions {
+        let _ = client.remove(session);
+    }
+    json!({
+        "burst": index,
+        "sessions": ENDURANCE_BURST_SIZE,
+        "elapsed_ms": started.elapsed().as_secs_f64() * 1000.0,
+        "runtime_reclaimed_ms": reclaimed_ms,
+        "unreclaimed": unreclaimed,
+    })
+}
+
+fn endurance_sample(
+    client: &mut HostClient,
+    host_pid: u32,
+    worker_pid: Option<u32>,
+    retained: &[SessionId],
+    elapsed: Duration,
+    phase: &str,
+) -> Value {
+    let status = client
+        .call("host.status", json!({}))
+        .map(|status| status["resources"].clone())
+        .unwrap_or(Value::Null);
+    let summaries: Vec<_> = retained
+        .iter()
+        .filter_map(|session| client.inspect(session).ok())
+        .collect();
+    let unresolved: usize = summaries
+        .iter()
+        .map(|summary| summary.descendants_unresolved)
+        .sum();
+    let durability_errors = summaries
+        .iter()
+        .filter(|summary| summary.durability_error.is_some())
+        .count();
+    let counters = process_counters(host_pid);
+    json!({
+        "elapsed_s": elapsed.as_secs(),
+        "phase": phase,
+        "host_resident_bytes": resident_bytes(host_pid),
+        "host_threads": counters.0,
+        "host_handles": counters.1,
+        "worker_resident_bytes": worker_pid.and_then(resident_bytes),
+        "live_runtimes": status["live_runtimes"],
+        "pending_launches": status["pending_launches"],
+        "persistence": status["persistence"],
+        "checkpoints": status["checkpoints"],
+        "retained_live": summaries.iter().filter(|summary| summary.live).count(),
+        "retained_descendants_unresolved": unresolved,
+        "retained_durability_errors": durability_errors,
+    })
+}
+
+#[test]
+#[ignore = "endurance measurement; run through scripts/bench-persistent.sh --endurance or .ps1 -Endurance"]
+fn persistent_session_endurance() {
+    allow_breakaway_like_the_desktop_does();
+    let plan = EndurancePlan::from_env();
+    let desktop_enabled = std::env::var_os("PANEFLOW_BENCH_DESKTOP").is_some();
+    let path = output_path();
+    let source_fingerprint = diff_fingerprint_excluding(Some(&path));
+    let home = tempfile::tempdir().unwrap();
+    seed_home(home.path());
+    let endpoint = paneflow_host::endpoint::host_endpoint_path(home.path());
+    let adoption =
+        bootstrap::ensure_host_running(home.path(), &host_executable(), "persistent-bench")
+            .expect("the detached host starts");
+    let hello = ClientHello::local("persistent-bench");
+    let mut client = HostClient::connect(&endpoint, &hello).unwrap();
+    let mut idle_control =
+        HostClient::connect(&endpoint, &ClientHello::local("persistent-endurance-idle")).unwrap();
+    let host_pid = adoption.identity.pid;
+    let host_identity = paneflow_host::ProcessIdentity::capture(host_pid);
+    let mut worker = WorkerProcess::start(home.path());
+    let worker_executable = std::env::var_os("PANEFLOW_BENCH_CONTROLLER");
+    let replacement = std::env::var_os("PANEFLOW_BENCH_CONTROLLER_REPLACEMENT");
+    let ledger = FixtureLedger::new();
+    let mut decisions: Vec<Decision> = Vec::new();
+
+    let mut idle_sessions = Vec::with_capacity(ENDURANCE_RETAINED_IDLE);
+    for _ in 0..ENDURANCE_RETAINED_IDLE {
+        let created = client
+            .create(&workloads::fixture(&["idle"]))
+            .expect("retained idle fixture");
+        ledger.record(&mut client, &created.manifest.session);
+        idle_sessions.push(created.manifest.session);
+    }
+    let echo = workloads::EchoProbe::start(&mut client, &endpoint, &ledger);
+    let mut retained = idle_sessions.clone();
+    retained.push(echo.session.clone());
+    let identities = retained_identities(&mut client, &retained);
+
+    let started = Instant::now();
+    let idle_end = started + plan.idle;
+    let active = plan.duration.saturating_sub(plan.idle);
+    let slot = |cycles: usize, index: usize| {
+        idle_end + active.mul_f64((index as f64 + 0.5) / cycles.max(1) as f64)
+    };
+    let mut samples = vec![endurance_sample(
+        &mut client,
+        host_pid,
+        worker.as_ref().map(|w| w.child.id()),
+        &retained,
+        Duration::ZERO,
+        "start",
+    )];
+    let mut bursts = Vec::new();
+    let mut worker_cycles = Vec::new();
+    let mut desktop_cycles = Vec::new();
+    let mut first_input = Value::Null;
+    let mut identity_checks = Vec::new();
+    let mut next_sample = started + plan.sample_interval;
+    let mut next_burst = started + plan.burst_interval;
+    let mut worker_index = 0usize;
+    let mut desktop_index = 0usize;
+    let document = |status: &str,
+                    samples: &[Value],
+                    bursts: &[Value],
+                    worker_cycles: &[Value],
+                    desktop_cycles: &[Value],
+                    first_input: &Value,
+                    identity_checks: &[Value],
+                    decisions: &[Decision],
+                    extra: Value| {
+        let mut document = json!({
+            "suite": "paneflow-persistent-endurance",
+            "schema_version": SCHEMA_VERSION,
+            "status": status,
+            "plan": plan.to_json(desktop_enabled),
+            "protocol": plan.to_json(desktop_enabled)["label"],
+            "acceptance_grade": plan.acceptance_grade(desktop_enabled),
+            "stamp": stamp(),
+            "commit": git(&["rev-parse", "HEAD"]),
+            "commit_short": std::env::var("PANEFLOW_BENCH_SHA").ok(),
+            "diff": source_fingerprint,
+            "source_unchanged_during_measurement": source_fingerprint == diff_fingerprint_excluding(Some(&path)),
+            "machine": machine(),
+            "toolchain": toolchain(),
+            "engine": adoption.identity.engine,
+            "host": {"version": adoption.identity.version, "protocol": adoption.identity.protocol, "build_id": adoption.identity.build_id},
+            "executables": {"host": executable_identity(&host_executable()), "fixture": executable_identity(&fixture_executable())},
+            "controller": worker_executable.as_ref().map(|path| executable_identity(Path::new(path))),
+            "controller_replacement": replacement.as_ref().map(|path| executable_identity(Path::new(path))),
+            "pty": if cfg!(windows) { "ConPTY via portable-pty 0.9" } else { "posix openpty via portable-pty 0.9" },
+            "topology": topology_label(worker_executable.is_some()),
+            "invocation": {"test": "persistent_session_endurance", "fixture": fixture_executable().display().to_string(), "args": std::env::args().collect::<Vec<_>>()},
+            "retained": retained,
+            "workloads": {"W08": {
+                "status": if status == "complete" { "measured" } else { status },
+                "elapsed_s": started.elapsed().as_secs(),
+                "samples": samples,
+                "bursts": bursts,
+                "worker_cycles": worker_cycles,
+                "desktop_cycles": if desktop_enabled { json!(desktop_cycles) } else { json!({"pending": "PANEFLOW_BENCH_DESKTOP was not supplied; the 100 desktop detach/reopen cycles need the native desktop"}) },
+                "idle_first_input": first_input,
+                "identity_checks": identity_checks,
+            }},
+            "thresholds": decisions.iter().map(Decision::to_json).collect::<Vec<_>>(),
+            "prior_failures": workloads::prior_failures(),
+            "retry_policy": "none: the scripts never retry; a rerun passes PANEFLOW_BENCH_PRIOR_RESULT so the first failure stays in the evidence",
+            "allocator": "no custom global allocator in the host or the fixture; native memory comes from OS counters",
+            "native_environments": {"windows": cfg!(windows), "linux": cfg!(target_os = "linux"), "macos": cfg!(target_os = "macos"), "note": "false means pending, not passed"},
+        });
+        if let Value::Object(fields) = extra {
+            for (key, value) in fields {
+                document[key] = value;
+            }
+        }
+        document
+    };
+    write_document(
+        &path,
+        &document(
+            "running",
+            &samples,
+            &bursts,
+            &worker_cycles,
+            &desktop_cycles,
+            &first_input,
+            &identity_checks,
+            &decisions,
+            json!({}),
+        ),
+    );
+
+    loop {
+        let now = Instant::now();
+        if now >= started + plan.duration {
+            break;
+        }
+        let in_idle = now < idle_end;
+        if now >= next_sample {
+            samples.push(endurance_sample(
+                &mut client,
+                host_pid,
+                worker.as_ref().map(|w| w.child.id()),
+                &retained,
+                started.elapsed(),
+                if in_idle { "idle-control" } else { "active" },
+            ));
+            identity_checks.push(json!({"elapsed_s": started.elapsed().as_secs(), "unchanged": identities_unchanged(&mut client, &identities)}));
+            next_sample += plan.sample_interval;
+            write_document(
+                &path,
+                &document(
+                    "running",
+                    &samples,
+                    &bursts,
+                    &worker_cycles,
+                    &desktop_cycles,
+                    &first_input,
+                    &identity_checks,
+                    &decisions,
+                    json!({}),
+                ),
+            );
+        }
+        if now >= next_burst {
+            bursts.push(endurance_burst(
+                &mut client,
+                &endpoint,
+                &ledger,
+                retained.len(),
+                bursts.len(),
+            ));
+            next_burst += plan.burst_interval;
+        }
+        if !in_idle && first_input.is_null() {
+            first_input = echo.first_input(&mut idle_control, Duration::from_secs(2));
+            first_input["idle_s"] = json!(started.elapsed().as_secs());
+        }
+        if !in_idle
+            && worker_index < plan.worker_cycles
+            && now >= slot(plan.worker_cycles, worker_index)
+        {
+            let record = match (worker.take(), worker_executable.as_deref()) {
+                (Some(live), Some(executable)) => {
+                    let (next, mut record) = workloads::cycle_worker(
+                        home.path(),
+                        live,
+                        worker_index,
+                        executable,
+                        replacement.as_deref(),
+                    );
+                    worker = Some(next);
+                    record["elapsed_s"] = json!(started.elapsed().as_secs());
+                    record["identities_unchanged"] =
+                        json!(identities_unchanged(&mut client, &identities));
+                    record
+                }
+                _ => {
+                    json!({"cycle": worker_index, "pending": "PANEFLOW_BENCH_CONTROLLER was not supplied; worker cycles need the existing worker"})
+                }
+            };
+            worker_cycles.push(record);
+            worker_index += 1;
+        }
+        if !in_idle
+            && desktop_enabled
+            && desktop_index < plan.desktop_cycles
+            && now >= slot(plan.desktop_cycles, desktop_index)
+        {
+            let desktop = DesktopProcess::start_enabled(home.path(), &idle_sessions);
+            let ready_ms = desktop.restored_ms;
+            drop(desktop);
+            desktop_cycles.push(json!({
+                "cycle": desktop_index,
+                "elapsed_s": started.elapsed().as_secs(),
+                "ready_ms": ready_ms,
+                "identities_unchanged": identities_unchanged(&mut client, &identities),
+            }));
+            desktop_index += 1;
+        }
+        std::thread::sleep(Duration::from_millis(250));
+    }
+    samples.push(endurance_sample(
+        &mut client,
+        host_pid,
+        worker.as_ref().map(|w| w.child.id()),
+        &retained,
+        started.elapsed(),
+        "end",
+    ));
+    let final_unchanged = identities_unchanged(&mut client, &identities);
+    identity_checks
+        .push(json!({"elapsed_s": started.elapsed().as_secs(), "unchanged": final_unchanged}));
+
+    let warmed = samples
+        .get(1)
+        .or(samples.first())
+        .cloned()
+        .unwrap_or(Value::Null);
+    let last = samples.last().cloned().unwrap_or(Value::Null);
+    let delta = |key: &str| {
+        last[key]
+            .as_u64()
+            .zip(warmed[key].as_u64())
+            .map(|(after, before)| after as f64 - before as f64)
+    };
+    let allowance = warmed["host_resident_bytes"]
+        .as_u64()
+        .map(|w| (w as f64 * 0.10).max(workloads::NFR05_FLOOR_BYTES));
+    decisions.push(workloads::decide(
+        "NFR-05.memory_after_endurance",
+        "W08",
+        "host resident bytes at the end minus the first post-warmup sample",
+        "<= max(16 MiB, 10% of warmed)",
+        delta("host_resident_bytes"),
+        |v| allowance.is_some_and(|a| v <= a),
+        "resident memory is unavailable on this platform sampler",
+    ));
+    decisions.push(workloads::decide(
+        "NFR-05.threads_after_endurance",
+        "W08",
+        "host threads at the end minus the first post-warmup sample",
+        &format!("<= {}", workloads::NFR05_COUNTER_SLACK),
+        delta("host_threads"),
+        |v| v <= workloads::NFR05_COUNTER_SLACK as f64,
+        "thread count is unavailable on this platform sampler",
+    ));
+    decisions.push(workloads::decide(
+        "NFR-05.handles_after_endurance",
+        "W08",
+        "host handles or file descriptors at the end minus the first post-warmup sample",
+        &format!("<= {}", workloads::NFR05_COUNTER_SLACK),
+        delta("host_handles"),
+        |v| v <= workloads::NFR05_COUNTER_SLACK as f64,
+        "handle or descriptor count is unavailable on this platform sampler",
+    ));
+    decisions.push(workloads::decide(
+        "NFR-04.burst_release",
+        "W08",
+        "bursts whose runtimes released within the reclaim budget",
+        &format!(
+            "all {} within {} s",
+            bursts.len(),
+            workloads::NFR04_RECLAIM_S
+        ),
+        Some(
+            bursts
+                .iter()
+                .filter(|b| !b["runtime_reclaimed_ms"].is_null())
+                .count() as f64,
+        ),
+        |v| v == bursts.len() as f64,
+        "",
+    ));
+    decisions.push(workloads::decide(
+        "NFR-11.worker_cycles",
+        "W08",
+        "worker cycles with unchanged child identities and generations",
+        &format!("all {} cycles", plan.worker_cycles),
+        worker_executable.is_some().then(|| {
+            worker_cycles
+                .iter()
+                .filter(|c| c["identities_unchanged"] == true)
+                .count() as f64
+        }),
+        |v| v == plan.worker_cycles as f64,
+        "PANEFLOW_BENCH_CONTROLLER was not supplied",
+    ));
+    decisions.push(workloads::decide(
+        "NFR-11.desktop_cycles",
+        "W08",
+        "desktop detach/reopen cycles with unchanged child identities and generations",
+        &format!("all {} cycles", plan.desktop_cycles),
+        desktop_enabled.then(|| {
+            desktop_cycles
+                .iter()
+                .filter(|c| c["identities_unchanged"] == true)
+                .count() as f64
+        }),
+        |v| v == plan.desktop_cycles as f64,
+        "PANEFLOW_BENCH_DESKTOP was not supplied",
+    ));
+    decisions.push(workloads::decide(
+        "NFR-11.idle_first_input",
+        "W08",
+        "echoes of the first input on the control connection left untouched for the idle interval",
+        "== 1",
+        first_input["echoes"].as_u64().map(|v| v as f64),
+        |v| v == 1.0,
+        "the idle interval did not elapse within the run",
+    ));
+    decisions.push(workloads::decide(
+        "NFR-12.retained_identities",
+        "W08",
+        "identity checks where every retained session kept its generation and process",
+        &format!("all {}", identity_checks.len()),
+        Some(
+            identity_checks
+                .iter()
+                .filter(|c| c["unchanged"] == true)
+                .count() as f64,
+        ),
+        |v| v == identity_checks.len() as f64,
+        "",
+    ));
+    let ownership_violations = samples
+        .iter()
+        .filter(|sample| {
+            sample["live_runtimes"]
+                .as_u64()
+                .is_none_or(|live| live > (retained.len() + ENDURANCE_BURST_SIZE) as u64)
+                || sample["pending_launches"]
+                    .as_u64()
+                    .is_none_or(|pending| pending > ENDURANCE_BURST_SIZE as u64)
+                || sample["retained_descendants_unresolved"]
+                    .as_u64()
+                    .is_none_or(|n| n > 0)
+        })
+        .count();
+    decisions.push(workloads::decide(
+        "NFR-12.ownership_counters",
+        "W08",
+        "samples where live runtimes, pending launches, or unresolved descendants exceeded the retained set plus one burst",
+        "== 0, and the final sample owns exactly the retained set",
+        Some(
+            ownership_violations as f64
+                + if last["live_runtimes"] == json!(retained.len()) && last["pending_launches"] == json!(0) { 0.0 } else { 1.0 },
+        ),
+        |v| v == 0.0,
+        "",
+    ));
+
+    echo.finish(&mut client);
+    for session in &idle_sessions {
+        client.stop(session, None).unwrap();
+    }
+    drop(idle_control);
+    drop(worker);
+    let shutdown = shutdown_host(
+        &mut decisions,
+        client,
+        &host_identity,
+        home.path(),
+        &endpoint,
+        &hello,
+        &ledger,
+    );
+    seed_failure(&mut decisions);
+    let prior = workloads::prior_failures();
+    let document = document(
+        "complete",
+        &samples,
+        &bursts,
+        &worker_cycles,
+        &desktop_cycles,
+        &first_input,
+        &identity_checks,
+        &decisions,
+        json!({"fixtures": shutdown, "comparison": {"text": compare_endurance(&decisions), "baseline": Value::Null}}),
+    );
+    write_document(&path, &document);
+    println!("result: {}", path.display());
+    print!("{}", compare_endurance(&decisions));
+    assert_eq!(
+        document["source_unchanged_during_measurement"], true,
+        "source changed during measurement; result is not candidate-qualified"
+    );
+    if let Err(failures) = verdict(&decisions, &prior) {
+        panic!(
+            "endurance thresholds failed; the artifact is retained at {}:\n{}",
+            path.display(),
+            failures.join("\n")
+        );
+    }
+}
+
+fn compare_endurance(decisions: &[Decision]) -> String {
+    let mut text = String::from("decision | observed | threshold | result\n");
+    for decision in decisions {
+        text.push_str(&format!(
+            "{} | {} | {} | {}{}\n",
+            decision.id,
+            decision.observed,
+            decision.threshold,
+            decision.result,
+            if decision.reason.is_empty() {
+                String::new()
+            } else {
+                format!(" ({})", decision.reason)
+            }
+        ));
+    }
+    text
 }

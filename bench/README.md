@@ -151,8 +151,16 @@ ownership stays alive on its private home by design: the artifact names it.
 
 W04 fault cases, W06 injected failures, and the W07 desktop entry points that
 live in the unit and integration suites are recorded as `automated_tests`
-with their test names; the W07 interactive cells and the W08 endurance run
-are recorded as `pending` with the runbook cell that supplies them. The full
+with their test names; the W07 interactive cells are recorded as `pending`
+with the runbook cell that supplies them, and the baseline record leaves W08
+`pending` because the endurance run is a separate ignored test in the same
+target, `persistent_session_endurance` (`--endurance <minutes>` /
+`-Endurance <minutes>`, output `bench/results/persistent-endurance-<stamp>-<sha>.json`):
+it retains ten fixtures for the whole run, bursts ten flood sessions every few
+minutes, spreads the worker and desktop cycles after an untouched idle interval,
+checks that the first input on the idle control connection echoes exactly once,
+samples host memory, threads, handles, and ownership counters at a fixed
+interval, and rewrites its document at every sample. The full
 protocol (60 s streams, 1,000 echo samples, 60 s quiescence, ten worker
 cycles) is the default; `--quick` (`-Quick`) shortens every window for CI
 and rehearsals and labels the record `smoke`. Threads and handles are
