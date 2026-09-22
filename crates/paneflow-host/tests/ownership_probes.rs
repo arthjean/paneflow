@@ -184,7 +184,7 @@ fn h01_a_blocking_wait_and_independent_killer_run_concurrently() {
 }
 
 #[test]
-fn h01_root_exit_is_observed_while_a_descendant_holds_the_pty_open() {
+fn h01_root_exit_and_pty_hangup_do_not_prove_descendant_exit() {
     let pair = paneflow_host::pty::open(PtySize {
         rows: 24,
         cols: 80,
@@ -240,6 +240,9 @@ fn h01_root_exit_is_observed_while_a_descendant_holds_the_pty_open() {
         .map(|pid| paneflow_host::process::ProcessIdentity::capture(*pid))
         .collect();
     let status = child.wait().unwrap();
+    #[cfg(target_os = "macos")]
+    let eof_before_cleanup = eof_rx.recv_timeout(Duration::from_secs(5)).is_ok();
+    #[cfg(not(target_os = "macos"))]
     let eof_before_cleanup = eof_rx.try_recv().is_ok();
     let descendant_alive = identities
         .iter()
@@ -265,14 +268,22 @@ fn h01_root_exit_is_observed_while_a_descendant_holds_the_pty_open() {
         descendant_alive,
         "the descendant survives the direct root exit"
     );
+    #[cfg(not(target_os = "macos"))]
     assert!(
         !eof_before_cleanup,
         "native child wait completes independently of PTY EOF"
     );
+    #[cfg(target_os = "macos")]
+    assert!(
+        eof_before_cleanup,
+        "macOS hangs up the session leader's terminal while the descendant remains alive"
+    );
     assert!(wait_until(Duration::from_secs(5), || identities
         .iter()
         .all(|identity| !identity.is_provably_live())));
-    assert!(eof_rx.recv_timeout(Duration::from_secs(5)).is_ok());
+    if !eof_before_cleanup {
+        assert!(eof_rx.recv_timeout(Duration::from_secs(5)).is_ok());
+    }
 }
 
 #[test]

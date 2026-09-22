@@ -211,8 +211,6 @@ pub(crate) struct UnixProcessTreeOwner {
     snapshot_failed: bool,
     #[cfg(target_os = "macos")]
     root_reaped: bool,
-    #[cfg(target_os = "macos")]
-    tasks: Vec<MacTaskHandle>,
 }
 
 #[cfg(target_os = "linux")]
@@ -310,8 +308,6 @@ impl UnixProcessTreeOwner {
             snapshot_failed: false,
             #[cfg(target_os = "macos")]
             root_reaped: false,
-            #[cfg(target_os = "macos")]
-            tasks: Vec::new(),
         }
     }
 
@@ -375,9 +371,6 @@ impl UnixProcessTreeOwner {
     pub(crate) fn unresolved(&mut self) -> usize {
         self.descendants
             .retain(|identity| identity.verify() != ProcessVerdict::Gone);
-        #[cfg(target_os = "macos")]
-        self.tasks
-            .retain(|task| self.descendants.contains(&task.identity));
         self.descendants.len() + usize::from(self.snapshot_failed)
     }
 
@@ -407,27 +400,13 @@ impl UnixProcessTreeOwner {
                             io::Error::last_os_error()
                         );
                     }
-                } else if force {
-                    if !self.tasks.iter().any(|task| task.identity == *identity) {
-                        match MacTaskHandle::acquire(*identity) {
-                            Ok(task) => self.tasks.push(task),
-                            Err(error) => {
-                                log::warn!(
-                                    "paneflow-host: descendant pid={} remains owned: {error}",
-                                    identity.pid
-                                );
-                                continue;
-                            }
-                        }
-                    }
-                    if let Some(task) = self.tasks.iter().find(|task| task.identity == *identity)
-                        && let Err(error) = task.terminate()
-                    {
-                        log::warn!(
-                            "paneflow-host: descendant pid={} termination is unresolved: {error}",
-                            identity.pid
-                        );
-                    }
+                } else if let Err(error) =
+                    MacSignalTarget::acquire(*identity).and_then(|target| target.signal(signal))
+                {
+                    log::warn!(
+                        "paneflow-host: descendant pid={} signal is unresolved: {error}",
+                        identity.pid
+                    );
                 }
             }
         }
@@ -456,65 +435,82 @@ fn signal_verified_unix(identity: ProcessIdentity, signal: i32) {
 }
 
 #[cfg(target_os = "macos")]
-struct MacTaskHandle {
-    identity: ProcessIdentity,
-    port: libc::mach_port_t,
+#[repr(C)]
+struct MacProcessUniqueInfo {
+    uuid: [u8; 16],
+    unique_id: u64,
+    parent_unique_id: u64,
+    pid_version: i32,
+    reserved: [u32; 5],
 }
 
 #[cfg(target_os = "macos")]
-unsafe extern "C" {
-    fn mach_port_deallocate(
-        task: libc::mach_port_t,
-        name: libc::mach_port_t,
-    ) -> libc::kern_return_t;
+#[repr(C)]
+struct MacProcessBsdUniqueInfo {
+    bsd: libc::proc_bsdinfo,
+    unique: MacProcessUniqueInfo,
 }
 
 #[cfg(target_os = "macos")]
-#[allow(
-    deprecated,
-    reason = "libc exposes the process task port without adding another Mach dependency"
-)]
-fn own_mach_task() -> libc::mach_port_t {
-    unsafe { libc::mach_task_self() }
+struct MacSignalTarget {
+    audit_token: [u32; 8],
 }
 
 #[cfg(target_os = "macos")]
-impl MacTaskHandle {
-    fn acquire(identity: ProcessIdentity) -> Result<Self, String> {
-        if identity.verify() != ProcessVerdict::Live {
-            return Err("the retained process identity is not verified".into());
+impl MacSignalTarget {
+    fn acquire(identity: ProcessIdentity) -> io::Result<Self> {
+        const PROC_PIDT_BSDINFOWITHUNIQID: i32 = 18;
+        let pid = i32::try_from(identity.pid)
+            .ok()
+            .filter(|pid| *pid > 0)
+            .ok_or_else(|| io::Error::from_raw_os_error(libc::EINVAL))?;
+        let mut info: MacProcessBsdUniqueInfo = unsafe { std::mem::zeroed() };
+        let size = std::mem::size_of::<MacProcessBsdUniqueInfo>() as i32;
+        let written = unsafe {
+            libc::proc_pidinfo(
+                pid,
+                PROC_PIDT_BSDINFOWITHUNIQID,
+                0,
+                (&raw mut info).cast(),
+                size,
+            )
+        };
+        if written != size {
+            return Err(io::Error::last_os_error());
         }
-        let mut port = 0;
-        let status = unsafe { libc::task_for_pid(own_mach_task(), identity.pid as i32, &mut port) };
-        if status != libc::KERN_SUCCESS || port == 0 {
-            return Err(format!(
-                "task_for_pid could not acquire a safe termination handle (Mach status {status})"
-            ));
+        let started_at =
+            info.bsd.pbi_start_tvsec.saturating_mul(1_000_000) + info.bsd.pbi_start_tvusec;
+        if info.bsd.pbi_pid != identity.pid
+            || identity.started_at != Some(started_at)
+            || info.bsd.pbi_status == libc::SZOMB
+        {
+            return Err(io::Error::from_raw_os_error(libc::ESRCH));
         }
-        let task = Self { identity, port };
-        if identity.verify() != ProcessVerdict::Live {
-            return Err("the process identity changed while acquiring its task port".into());
-        }
-        Ok(task)
+        let mut audit_token = [0; 8];
+        audit_token[5] = identity.pid;
+        audit_token[7] = info.unique.pid_version as u32;
+        Ok(Self { audit_token })
     }
 
-    fn terminate(&self) -> Result<(), String> {
-        let status = unsafe { libc::task_terminate(self.port) };
-        if status == libc::KERN_SUCCESS {
+    fn signal(&self, signal: i32) -> io::Result<()> {
+        type SignalWithAuditToken = unsafe extern "C" fn(*const [u32; 8], i32) -> i32;
+        static SIGNAL: std::sync::OnceLock<Option<SignalWithAuditToken>> =
+            std::sync::OnceLock::new();
+        let signal_with_token = SIGNAL
+            .get_or_init(|| {
+                let address = unsafe {
+                    libc::dlsym(libc::RTLD_DEFAULT, c"proc_signal_with_audittoken".as_ptr())
+                };
+                (!address.is_null()).then(|| unsafe {
+                    std::mem::transmute::<*mut libc::c_void, SignalWithAuditToken>(address)
+                })
+            })
+            .ok_or_else(|| io::Error::from_raw_os_error(libc::ENOSYS))?;
+        let status = unsafe { signal_with_token(&raw const self.audit_token, signal) };
+        if status == 0 {
             Ok(())
         } else {
-            Err(format!(
-                "task_terminate did not confirm a termination request (Mach status {status})"
-            ))
-        }
-    }
-}
-
-#[cfg(target_os = "macos")]
-impl Drop for MacTaskHandle {
-    fn drop(&mut self) {
-        unsafe {
-            mach_port_deallocate(own_mach_task(), self.port);
+            Err(io::Error::from_raw_os_error(status))
         }
     }
 }
@@ -865,6 +861,47 @@ pub fn terminate_windows_process_tree(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn mac_signals_check_kernel_pid_versions_without_a_task_control_port() {
+        use std::os::unix::process::ExitStatusExt;
+
+        assert_eq!(std::mem::size_of::<MacProcessUniqueInfo>(), 56);
+        for signal in [libc::SIGTERM, libc::SIGKILL] {
+            let mut child = std::process::Command::new("/bin/sleep")
+                .arg("30")
+                .spawn()
+                .unwrap();
+            let actual = ProcessIdentity::capture(child.id());
+            let stale = ProcessIdentity {
+                started_at: actual.started_at.map(|time| time.wrapping_add(1)),
+                ..actual
+            };
+            assert!(MacSignalTarget::acquire(stale).is_err());
+            let target = MacSignalTarget::acquire(actual).unwrap();
+            let mut stale_token = MacSignalTarget {
+                audit_token: target.audit_token,
+            };
+            stale_token.audit_token[7] = stale_token.audit_token[7].wrapping_add(1);
+            assert_eq!(
+                stale_token.signal(signal).unwrap_err().raw_os_error(),
+                Some(libc::ESRCH)
+            );
+            assert!(actual.is_provably_live());
+            target.signal(signal).unwrap();
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+            let status = loop {
+                if let Some(status) = child.try_wait().unwrap() {
+                    break status;
+                }
+                assert!(std::time::Instant::now() < deadline);
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            };
+            assert_eq!(status.signal(), Some(signal));
+            assert_eq!(actual.verify(), ProcessVerdict::Gone);
+        }
+    }
 
     #[cfg(windows)]
     #[test]
