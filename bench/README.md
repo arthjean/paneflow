@@ -6,7 +6,8 @@ comes from one of the suites below, run with the scripts described here, and
 the raw result of each run is archived next to the baseline it is compared
 against.
 
-There are three suites, three baselines, and three result prefixes:
+There are three suites, three baselines, and three result prefixes, plus one
+cross-application comparison described at the end:
 
 | Suite | Test | Script | Baseline | Result files |
 |---|---|---|---|---|
@@ -275,6 +276,9 @@ scripts/bench-terminal.sh                 # Linux, macOS
 scripts/bench-terminal.ps1                # Windows
 scripts/bench-editor.sh                   # Linux, macOS
 scripts/bench-editor.ps1                  # Windows
+scripts/bench-startup.sh                  # Linux, macOS
+scripts/bench-startup.ps1                 # Windows
+scripts/bench-startup-compare.sh          # macOS only: Paneflow vs cmux
 ```
 
 `scripts/bench-editor.sh --help` (and `scripts/bench-editor.ps1 -Help`)
@@ -440,3 +444,65 @@ The mark names are the metric names, so adding a mark adds a metric and the
 comparison table reports it as new. The `cpu_share` field is `0.0` for this
 suite: the timed work happens in a child process, so the harness cannot
 attribute a core share to it.
+
+## Startup comparison against cmux
+
+`scripts/bench-startup-compare.sh` measures Paneflow and
+[cmux](https://github.com/manaflow-ai/cmux) with one external probe,
+`scripts/bench-startup-compare.swift`, so that neither app reports its own
+number. cmux is a macOS application, so the comparison only runs on a Mac.
+Its result lands in `bench/results/startup-compare-<stamp>-<sha>.json`.
+
+The probe spawns the executable directly, then polls the window server every
+millisecond. Both timers start at the `posix_spawn` call, so the dynamic
+loader, the framework initialization, and the app's own startup path are all
+inside the number, for both apps alike.
+
+| Metric | Unit | What it captures |
+|---|---|---|
+| `window_onscreen_ms` | ms | From spawn to the first window of the process that the window server lists on screen at layer 0 with a non-zero alpha and a size above one pixel. This is what a user perceives as "the app is here". |
+| `first_paint_ms` | ms | From spawn to the first capture of that window whose pixels are not a single uniform color, sampled on a 48 by 48 grid. An AppKit window can be on screen before its content view has drawn; this metric closes that gap. It reads the window through `CGWindowListCreateImage`, which needs Screen Recording permission for the terminal running the script; without it the probe prints a `PANEFLOW_BENCH_WARNING`, records the metric as `null`, and keeps going. `--no-paint` skips it. |
+
+Each metric is reported as the median, p95, minimum and mean over the timed
+launches, and the table adds the ratio of each app's median to Paneflow's.
+The document records the macOS version, the CPU model, both app versions
+(`paneflow --version` and cmux's `CFBundleShortVersionString`), the Paneflow
+commit, and whether the worktree was dirty.
+
+Protocol, identical for both apps:
+
+1. One untimed warm-up launch per app (`--warmups`), which absorbs the first
+   Gatekeeper assessment of a fresh binary and whatever an app creates on its
+   first run.
+2. Timed launches alternate between the two apps, Paneflow first, so a thermal
+   or cache drift during the run spreads over both instead of penalizing the
+   second one. `--runs` sets the count per app, ten by default.
+3. Every launch ends with `SIGKILL` once its metrics are in, followed by a one
+   second pause. A kill instead of a quit keeps cmux's quit confirmation from
+   blocking the run and leaves both apps' persisted state as the warm-up left it.
+
+Paneflow runs against a seeded `PANEFLOW_HOME` under the system temp directory
+(an empty session, so the first frame is the welcome screen, a 1400 by 900
+window, and a private `PANEFLOW_SOCKET_PATH` so a running Paneflow is neither
+disturbed nor mistaken for the benched instance). The seed writes every file
+that `migrate_legacy_home` would otherwise copy from the developer's real home,
+as the startup suite does. cmux has no equivalent switch: it starts from the
+state under the current user's `~/Library`, which is why the script refuses to
+run while cmux is open and why the Mac should hold a cmux that restores a
+single default workspace. The two windows are therefore not the same size,
+and the comparison is between each app's own default first screen.
+
+Without arguments the script builds Paneflow under the release profile and
+uses `/Applications/cmux.app`, or downloads the latest `cmux-macos.dmg`
+release (`--cmux-version` pins one) when cmux is not installed. `--paneflow`
+and `--cmux` accept explicit paths, including a `PaneFlow.app` bundle from
+`scripts/bundle-macos.sh` when the shipped artifact is what should be measured.
+
+The `Startup comparison (Paneflow vs cmux)` workflow runs the same script on a
+GitHub `macos-14` runner on demand and publishes the table in the job summary
+with the JSON as an artifact. That runner is a virtual machine with a
+paravirtualized GPU, so its absolute numbers are not the numbers of a laptop;
+they are still a valid comparison because both apps launch on the same
+machine in the same run. Publish numbers from real hardware whenever one is
+available, and name the machine next to them.
+
