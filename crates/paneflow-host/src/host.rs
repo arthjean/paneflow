@@ -4456,8 +4456,18 @@ mod tests {
         let blocked = sessions_dir.clone();
         host.set_barrier(Arc::new(move |point| {
             if point == Barrier::RestartPersist && blocked.is_dir() {
-                std::fs::remove_dir_all(&blocked).unwrap();
-                std::fs::write(&blocked, b"not a directory").unwrap();
+                let deadline = Instant::now() + Duration::from_secs(5);
+                loop {
+                    let replaced = std::fs::remove_dir_all(&blocked)
+                        .and_then(|()| std::fs::write(&blocked, b"not a directory"));
+                    match replaced {
+                        Ok(()) => break,
+                        Err(_) if Instant::now() < deadline => {
+                            std::thread::sleep(Duration::from_millis(20));
+                        }
+                        Err(error) => panic!("cannot replace the sessions directory: {error}"),
+                    }
+                }
             }
         }));
         let failed = host.restart(&session, Some(SessionGeneration::FIRST));
@@ -4842,8 +4852,17 @@ mod tests {
         let session = host.create(shell_request(80, 24)).unwrap().manifest.session;
         host.stop(&session, None).unwrap();
         let path = crate::manifest::manifest_path(home.path(), &session);
-        std::fs::remove_file(&path).unwrap();
-        std::fs::create_dir(&path).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let replaced = std::fs::remove_file(&path).and_then(|()| std::fs::create_dir(&path));
+            match replaced {
+                Ok(()) => break,
+                Err(_) if Instant::now() < deadline => {
+                    std::thread::sleep(Duration::from_millis(20));
+                }
+                Err(error) => panic!("cannot replace the manifest with a directory: {error}"),
+            }
+        }
         assert!(matches!(
             host.request_shutdown(false),
             Err(HostError::Storage(_))

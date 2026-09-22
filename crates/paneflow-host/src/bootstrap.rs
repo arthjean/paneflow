@@ -815,4 +815,68 @@ mod tests {
             "no owner record appears without a running host"
         );
     }
+
+    #[cfg(windows)]
+    const BREAKAWAY_DENIED_PROBE: &str = "PANEFLOW_BREAKAWAY_DENIED_PROBE";
+
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "helper subprocess for the breakaway denial test"]
+    fn breakaway_denied_probe() {
+        use windows_sys::Win32::System::JobObjects::{
+            AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+            JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectExtendedLimitInformation,
+            SetInformationJobObject,
+        };
+        use windows_sys::Win32::System::Threading::GetCurrentProcess;
+
+        if std::env::var_os(BREAKAWAY_DENIED_PROBE).is_none() {
+            return;
+        }
+        let job = unsafe { CreateJobObjectW(std::ptr::null(), std::ptr::null()) };
+        assert!(!job.is_null());
+        let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = unsafe { std::mem::zeroed() };
+        info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        let set = unsafe {
+            SetInformationJobObject(
+                job,
+                JobObjectExtendedLimitInformation,
+                (&raw const info).cast(),
+                std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+            )
+        };
+        assert!(set != 0);
+        assert!(unsafe { AssignProcessToJobObject(job, GetCurrentProcess()) } != 0);
+
+        let log = tempfile::tempdir().unwrap();
+        let executable = std::env::current_exe().unwrap();
+        let spawned = spawn_detached(
+            &executable,
+            &[std::ffi::OsStr::new("--list")],
+            &log.path().join("host.log"),
+        );
+        assert!(
+            matches!(spawned, Err(BootstrapError::BreakawayDenied(_))),
+            "a job without breakaway must surface BreakawayDenied, got {:?}",
+            spawned.err()
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_job_that_denies_breakaway_reports_it_without_starting_a_host() {
+        let status = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "bootstrap::tests::breakaway_denied_probe",
+                "--exact",
+                "--ignored",
+                "--test-threads=1",
+            ])
+            .env(BREAKAWAY_DENIED_PROBE, "1")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .unwrap();
+        assert!(status.success(), "the probe subprocess failed: {status}");
+    }
 }
