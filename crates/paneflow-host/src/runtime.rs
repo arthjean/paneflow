@@ -26,6 +26,8 @@ const QUEUE_RETRY: Duration = Duration::from_millis(5);
 const PROCESS_SCAN_INTERVAL: Duration = Duration::from_millis(500);
 const DESCENDANT_RECONCILE_MIN: Duration = Duration::from_millis(100);
 const DESCENDANT_RECONCILE_MAX: Duration = Duration::from_secs(1);
+#[cfg(target_os = "linux")]
+const ROOT_EXIT_DISCOVERY_DEADLINE: Duration = Duration::from_secs(2);
 const UNATTENDED_STOP_RETRY: Duration = Duration::from_secs(1);
 #[cfg(unix)]
 const FORCE_SIGNAL_AFTER: Duration = Duration::from_millis(100);
@@ -168,6 +170,8 @@ enum Message {
     OutputReady,
     Eof,
     ChildExited(Result<ExitOutcome, String>),
+    #[cfg(target_os = "linux")]
+    RootExiting(SyncSender<()>),
     Command(Command),
 }
 
@@ -734,6 +738,11 @@ fn serve_loop(session: &mut Session, rx: &Receiver<Message>) {
             Ok(Message::OutputReady) => output_pending = session.drain_inbox(),
             Ok(Message::Eof) => session.reader_eof = true,
             Ok(Message::ChildExited(outcome)) => session.on_child_exited(outcome),
+            #[cfg(target_os = "linux")]
+            Ok(Message::RootExiting(ack)) => {
+                session.on_root_exiting();
+                let _ = ack.send(());
+            }
             Ok(Message::Command(command)) => session.handle(command),
             Err(RecvTimeoutError::Timeout) => {}
             Err(RecvTimeoutError::Disconnected) => {
@@ -852,7 +861,7 @@ fn start(
     let fail_wait = spec.env.contains_key("PANEFLOW_TEST_WAIT_FAILURE");
     #[cfg(not(test))]
     let fail_wait = false;
-    let waited = spawn_child_waiter(child, tx.clone(), fail_wait);
+    let waited = spawn_child_waiter(child, child_pid, tx.clone(), fail_wait);
     if let Err(reason) = waited {
         session.waiter_failed = true;
         session.mark_unverified(reason);
@@ -885,6 +894,7 @@ fn start(
 
 fn spawn_child_waiter(
     mut child: Box<dyn portable_pty::Child + Send + Sync>,
+    child_pid: u32,
     tx: SyncSender<Message>,
     fail_wait: bool,
 ) -> Result<(), String> {
@@ -898,6 +908,15 @@ fn spawn_child_waiter(
                 let _ = child.wait();
                 return;
             }
+            #[cfg(target_os = "linux")]
+            if crate::process::await_exit_unreaped(child_pid) {
+                let (ack_tx, ack_rx) = sync_channel::<()>(1);
+                if tx.send(Message::RootExiting(ack_tx)).is_ok() {
+                    let _ = ack_rx.recv_timeout(ROOT_EXIT_DISCOVERY_DEADLINE);
+                }
+            }
+            #[cfg(not(target_os = "linux"))]
+            let _ = child_pid;
             let outcome = child
                 .wait()
                 .map(|status| exit_outcome(&status))
@@ -1165,6 +1184,12 @@ impl Session {
         self.cols = cols;
         self.rows = rows;
         Ok(())
+    }
+
+    #[cfg(target_os = "linux")]
+    fn on_root_exiting(&mut self) {
+        self.process_tree.discover();
+        self.refresh_descendants();
     }
 
     fn on_child_exited(&mut self, outcome: Result<ExitOutcome, String>) {
@@ -1855,6 +1880,33 @@ mod tests {
         assert_eq!(report.exit, None);
         assert!(report.unverified.is_some(), "{report:?}");
         assert!(!runtime.process().is_provably_live());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_descendant_started_just_before_the_root_exits_stays_owned_until_the_stop() {
+        let mut spec = echo_shell_spec(80, 24);
+        spec.args = vec![
+            "-c".into(),
+            "sleep 0.3; (trap '' HUP; exec sleep 30) & exit 0".into(),
+        ];
+        let runtime = SessionRuntime::spawn(spec, SessionGeneration::FIRST, Arc::new(|_| {}))
+            .expect("shell spawns");
+        let root = runtime.process();
+        assert!(wait_until(Duration::from_secs(5), || runtime
+            .exit()
+            .is_some()));
+        assert!(!root.is_provably_live());
+        assert_eq!(
+            runtime.descendants_unresolved(),
+            1,
+            "the background child that outlived the root is owned"
+        );
+        assert!(runtime.unverified().is_some());
+        assert!(runtime.owns_process());
+        let report = runtime.stop().expect("stop answers");
+        assert_eq!(report.descendants_unresolved, 0, "{report:?}");
+        assert!(report.unverified.is_none(), "{report:?}");
     }
 
     #[test]

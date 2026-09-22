@@ -434,6 +434,22 @@ fn signal_verified_unix(identity: ProcessIdentity, signal: i32) {
     }
 }
 
+#[cfg(target_os = "linux")]
+pub(crate) fn await_exit_unreaped(pid: u32) -> bool {
+    let id = libc::id_t::from(pid);
+    loop {
+        let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
+        let waited =
+            unsafe { libc::waitid(libc::P_PID, id, &mut info, libc::WEXITED | libc::WNOWAIT) };
+        if waited == 0 {
+            return true;
+        }
+        if io::Error::last_os_error().kind() != io::ErrorKind::Interrupted {
+            return false;
+        }
+    }
+}
+
 #[cfg(target_os = "macos")]
 #[repr(C)]
 struct MacProcessUniqueInfo {
