@@ -3077,6 +3077,24 @@ mod tests {
             "a plain shell is never mistaken for an agent runtime"
         );
 
+        let manifest = Arc::clone(&host.lock_sessions()[&session].manifest);
+        let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let release_rx = Mutex::new(release_rx);
+        let once = AtomicBool::new(false);
+        host.set_barrier(Arc::new(move |point| {
+            if point == Barrier::ManifestPersist
+                && manifest.lock().unwrap().menu_prompt_active
+                && !once.swap(true, Ordering::SeqCst)
+            {
+                entered_tx.send(()).unwrap();
+                release_rx
+                    .lock()
+                    .unwrap()
+                    .recv_timeout(Duration::from_secs(15))
+                    .unwrap();
+            }
+        }));
         host.input(
             &session,
             Some(SessionGeneration::FIRST),
@@ -3094,10 +3112,20 @@ mod tests {
         );
         let asking = host.inspect(&session).unwrap().manifest;
         assert!(asking.screen_changed_at_ms >= stamped.screen_changed_at_ms);
+        entered_rx.recv_timeout(Duration::from_secs(15)).unwrap();
+        let path = crate::manifest::manifest_path(home.path(), &session);
+        let persisted_while_paused = read_manifest(&path).unwrap().menu_prompt_active;
+        release_tx.send(()).unwrap();
+        host.set_barrier(Arc::new(|_| {}));
         assert!(
-            read_manifest(&crate::manifest::manifest_path(home.path(), &session))
-                .unwrap()
-                .menu_prompt_active,
+            !persisted_while_paused,
+            "inspection observes the viewport edge before its persistence completes"
+        );
+        assert!(wait_until(Duration::from_secs(15), || {
+            read_manifest(&path).is_ok_and(|manifest| manifest.menu_prompt_active)
+        }));
+        assert!(
+            read_manifest(&path).unwrap().menu_prompt_active,
             "the edge is persisted, not only held in memory"
         );
 
