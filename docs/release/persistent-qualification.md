@@ -59,7 +59,7 @@ boundaries it touched and invalidates the evidence that depends on them:
 
 | Changed boundary | Files | Invalidated evidence |
 |---|---|---|
-| Session lifecycle, ownership, persistence | `crates/paneflow-host/src/{host,runtime,persistence,manifest,cold_text}.rs` | Every W01-W08 cell on every OS |
+| Session lifecycle, ownership, persistence | `crates/paneflow-host/src/{host,runtime,process,persistence,manifest,cold_text,viewport_scan,cancellation_scan}.rs` | Every W01-W08 cell on every OS |
 | IPC protocol or framing | `crates/paneflow-host/src/{protocol,server,client,control}.rs`, `crates/paneflow-ipc-client/` | W02, W03, W04, W06, W08 on every OS |
 | Terminal engine pin or PTY adapter | `native/libghostty/`, `native/conpty/`, `crates/paneflow-host/src/pty/` | Every cell on the affected OS; W02, W03 on every OS |
 | Worker projection | `crates/paneflow-serve/` | W04 worker cells, W07, W08 on every OS |
@@ -76,7 +76,7 @@ artifacts stay archived under their own SHA and are not merged.
 
 | Cell | OS | Architecture | Package route | Required |
 |---|---|---|---|---|
-| WIN10 | Windows 10 x64 | x86_64 | MSI | yes |
+| WIN10 | Windows 10 x64 | x86_64 | MSI | no: assumed equivalent to WIN11 and recorded as untested in the report |
 | WIN11 | Windows 11 x64 | x86_64 | MSI | yes |
 | LIN-X64 | Linux x86_64 (Fedora and Ubuntu/Debian, Wayland and X11) | x86_64 | deb, rpm, AppImage/tarball | yes |
 | LIN-ARM64 | Linux aarch64 | aarch64 | deb, rpm | yes, endurance shortened to 2 h |
@@ -101,7 +101,9 @@ required cell is a release blocker (NFR-14).
   performance thresholds.
 - Windows: the bundled ConPTY from `native/conpty/manifest.json` must be the
   one the host loads; the run records the loaded module path, version, and
-  SHA-256 (`host.status` and the host log).
+  SHA-256, taken from the `OpenConsole.exe` command line of a live session and
+  the files under `%USERPROFILE%\.paneflow\cache\conpty\<version>\` (`host.status`
+  does not report it).
 - Linux: `/proc` readable for the host, worker, and desktop PIDs (thread and fd
   sampling).
 - macOS: thread and handle sampling is not implemented by the harness; those
@@ -123,7 +125,7 @@ driven by `scripts/bench-persistent.sh` / `.ps1`. Every fixture is a mode of
 | W05 churn | 10 batches of 50 `flood 65536` create/end/detach, RSS, thread and handle deltas, NFR-04 reclaim probe, retention with injected time | `workloads::workload_churn`, `records_past_their_retention_release_their_cold_text_under_an_injected_clock` | 5 s quiescence (quick); 60 s (full) |
 | W06 injected failures | disk full/denied, stalled storage, corrupt manifest and cold text, delayed spawn, wait failure, runtime panic, old-generation scans, shutdown RPC failure | the unit and integration tests listed under `workloads.W06.automated_tests` | `cargo test --workspace --locked` |
 | W07 native desktop | resize, paste, search, natural exit with both exit codes and with/without prior input, ended-row opening, stale activity at close, fallback discovery | desktop entry-point tests listed under `workloads.W07.automated_tests`, plus the D-cells below | interactive |
-| W08 endurance | 10 live fixtures, periodic bursts and churn, 100 desktop detach/reopen cycles, 100 worker cycles, one control connection untouched for 30 min | not automated; scripted from the same fixtures on the qualification machine | 8 h (2 h on LIN-ARM64) |
+| W08 endurance | 9 `idle` fixtures plus one `echo` fixture retained for the whole run; a burst of 10 `flood 65536` sessions every 5 min; 100 desktop detach/reopen cycles and 100 worker crash/restart cycles spread evenly after the idle interval; one control connection untouched for the first 30 min, then the first input on it must echo exactly once | `persistent_session_endurance` (`scripts/bench-persistent.sh --endurance <minutes>` / `.ps1 -Endurance <minutes>`, `--idle-minutes` / `-IdleMinutes` for the idle interval) | 480 min (120 min on LIN-ARM64, with `PANEFLOW_BENCH_ENDURANCE_REQUIRED_MINUTES=120`); shorter runs are recorded as `rehearsal` and never as acceptance evidence |
 
 Invocation:
 
@@ -134,10 +136,18 @@ scripts/bench-persistent.sh --quick                      # smoke protocol for CI
 scripts/bench-persistent.sh --worker-replacement <exe>   # W04 build replacement with the given worker binary
 scripts/bench-persistent.sh --prior <result.json>        # rerun after a failure; the prior failures stay in the record
 scripts/bench-persistent.sh --seed-failure               # proves nonzero exit and artifact retention
+scripts/bench-persistent.sh --with-desktop --endurance 480 --idle-minutes 30   # W08; writes persistent-endurance-<stamp>-<sha>.json
 ```
 
 The PowerShell script takes `-WithWorker`, `-WithDesktop`, `-Quick`,
-`-WorkerReplacement`, `-Prior`, and `-SeedFailure`.
+`-WorkerReplacement`, `-Prior`, `-SeedFailure`, `-Endurance <minutes>`, and
+`-IdleMinutes <minutes>`. The endurance run reads
+`PANEFLOW_BENCH_WORKER_CYCLES`, `PANEFLOW_BENCH_DESKTOP_CYCLES`,
+`PANEFLOW_BENCH_BURST_MINUTES`, `PANEFLOW_BENCH_SAMPLE_SECONDS`, and
+`PANEFLOW_BENCH_ENDURANCE_REQUIRED_MINUTES` for rehearsals and for the LIN-ARM64
+budget; any value below the W08 row marks the artifact `rehearsal`. The document
+is rewritten at every sample, so a deadlock or a watchdog panic leaves the last
+sample on disk.
 
 ## Thresholds
 
@@ -157,6 +167,10 @@ reason and never counts as a pass.
 | `NFR-12.host_shutdown` | all | the host acknowledges the final shutdown and its process exits within 10 s |
 | `NFR-12.fixture_orphans` | all | 0 fixture processes provably alive after the run |
 | `W02.content_equivalence` | W02 | identical checkpoint bytes across all attachments |
+| `NFR-05.memory_after_endurance`, `NFR-05.threads_after_endurance`, `NFR-05.handles_after_endurance` | W08 | same rules as the W05 decisions, between the first post-warmup sample and the last |
+| `NFR-04.burst_release` | W08 | every burst's runtimes released within 5 s of exit while the retained sessions stay live |
+| `NFR-11.worker_cycles`, `NFR-11.desktop_cycles`, `NFR-11.idle_first_input` | W08 | 0 identity or generation changes across the 100 worker and 100 desktop cycles; exactly one echo of the first input after the idle interval |
+| `NFR-12.retained_identities`, `NFR-12.ownership_counters` | W08 | every retained session keeps its generation and process at every sample; live runtimes, pending launches, and unresolved descendants never exceed the retained set plus one burst, and the final sample owns exactly the retained set |
 
 W03 also records `fairness_min_over_max` across the ten paced streams as a
 reported value without a threshold.
@@ -192,7 +206,9 @@ this on every CI target.
 The per-OS report adds: OS edition and build, architecture, package identity
 and installed paths, the candidate manifest, screenshots or recordings for the
 interactive cells, and one row per cell of the matrix below with `pass`,
-`fail`, `unavailable`, or `pending` and a reason.
+`fail`, `unavailable`, or `pending` and a reason. Reports live under
+`docs/release/qualification/`, one file per OS and date, for example
+[windows-20260922.md](qualification/windows-20260922.md).
 
 ## Platform flush contract
 

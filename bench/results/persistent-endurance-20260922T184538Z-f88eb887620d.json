@@ -1,0 +1,1361 @@
+{
+  "acceptance_grade": false,
+  "allocator": "no custom global allocator in the host or the fixture; native memory comes from OS counters",
+  "commit": "f88eb887620d707784a3f9e597a7bdf6e8e83f27",
+  "commit_short": "f88eb887620d",
+  "comparison": {
+    "baseline": null,
+    "text": "decision | observed | threshold | result\nNFR-05.memory_after_endurance | 3153920.0 | <= max(16 MiB, 10% of warmed) | pass\nNFR-05.threads_after_endurance | -3.0 | <= 2 | pass\nNFR-05.handles_after_endurance | -2.0 | <= 2 | pass\nNFR-04.burst_release | 5.0 | all 5 within 5 s | pass\nNFR-11.worker_cycles | 6.0 | all 6 cycles | pass\nNFR-11.desktop_cycles | 4.0 | all 4 cycles | pass\nNFR-11.idle_first_input | 1.0 | == 1 | pass\nNFR-12.retained_identities | 24.0 | all 24 | pass\nNFR-12.ownership_counters | 0.0 | == 0, and the final sample owns exactly the retained set | pass\nNFR-12.host_shutdown | 1.0 | acknowledged and exited within 10 s | pass\nNFR-12.fixture_orphans | 0.0 | == 0 | pass\n"
+  },
+  "controller": {
+    "bytes": 76182016,
+    "fnv1a64": "3bd6c298cc445d3b",
+    "path": "C:\\dev\\paneflow\\target\\release\\paneflow.exe"
+  },
+  "controller_replacement": null,
+  "diff": {
+    "bytes": 1170525,
+    "dirty": true,
+    "fnv1a64": "094248dfa079b525",
+    "untracked_paths": [
+      "bench/results/candidate-f88eb887620d-x86_64-pc-windows-msvc.json",
+      "bench/results/persistent-20260922T152115Z-f88eb887620d.json",
+      "bench/results/persistent-20260922T152808Z-f88eb887620d.json",
+      "bench/results/persistent-20260922T155203Z-f88eb887620d.json",
+      "bench/results/persistent-20260922T155455Z-f88eb887620d.json",
+      "bench/results/persistent-20260922T155852Z-f88eb887620d.json",
+      "bench/results/persistent-20260922T161520Z-f88eb887620d.json",
+      "bench/results/persistent-20260922T183138Z-f88eb887620d.json",
+      "bench/results/persistent-20260922T183552Z-f88eb887620d.json",
+      "bench/results/persistent-20260922T184042Z-f88eb887620d.json",
+      "bench/results/persistent-endurance-20260922T153326Z-f88eb887620d.json",
+      "bench/results/persistent-endurance-20260922T160259Z-f88eb887620d.json",
+      "docs/release/qualification/windows-20260922.md"
+    ]
+  },
+  "engine": {
+    "api_version": "0.1.0",
+    "app_version": "1.3.2-dev+0c2a290d3",
+    "engine": "libghostty-vt",
+    "source_sha": "0c2a290d3a3e2a599be3a43435d778a5896667ee"
+  },
+  "executables": {
+    "fixture": {
+      "bytes": 248832,
+      "fnv1a64": "e05c5d73e59c464a",
+      "path": "C:\\dev\\paneflow\\target\\release\\paneflow-session-fixture.exe"
+    },
+    "host": {
+      "bytes": 8229888,
+      "fnv1a64": "9e807b656f2c646f",
+      "path": "C:\\dev\\paneflow\\target\\release\\paneflow-host.exe"
+    }
+  },
+  "fixtures": {
+    "cleanup": "only recorded session/process identities are checked; the host owns and stops its fixtures on a private PANEFLOW_HOME",
+    "host_exited": true,
+    "host_shutdown": {
+      "ended_sessions": 0,
+      "host_instance": "5c7e9c0b-89a1-473d-8281-d2efee9abe7e",
+      "stopping": true,
+      "unresolved": []
+    },
+    "owned": 60,
+    "survivors_after_shutdown": []
+  },
+  "host": {
+    "build_id": "0.16.0+0c2a290d3a3e",
+    "protocol": 1,
+    "version": "0.16.0"
+  },
+  "invocation": {
+    "args": [
+      "C:\\dev\\paneflow\\target\\release\\deps\\persistent_baseline-ae1e150e37928f34.exe",
+      "persistent_session_endurance",
+      "--ignored",
+      "--exact",
+      "--nocapture",
+      "--test-threads=1"
+    ],
+    "fixture": "C:\\dev\\paneflow\\target\\release\\paneflow-session-fixture.exe",
+    "test": "persistent_session_endurance"
+  },
+  "machine": {
+    "arch": "x86_64",
+    "cpu_model": "AMD64 Family 25 Model 97 Stepping 2, AuthenticAMD",
+    "hostname_hash": "27c35a214898caba",
+    "logical_cpus": 16,
+    "os": "windows",
+    "os_build": "Microsoft Windows [version 10.0.26200.9457]",
+    "total_ram_bytes": 33459585024
+  },
+  "native_environments": {
+    "linux": false,
+    "macos": false,
+    "note": "false means pending, not passed",
+    "windows": true
+  },
+  "plan": {
+    "acceptance_grade": false,
+    "burst_interval_s": 120,
+    "burst_size": 10,
+    "desktop_cycles": 4,
+    "duration_s": 720,
+    "idle_s": 240,
+    "label": "rehearsal",
+    "required_duration_s": 28800,
+    "retained_sessions": 10,
+    "sample_interval_s": 30,
+    "worker_cycles": 6
+  },
+  "prior_failures": [],
+  "protocol": "rehearsal",
+  "pty": "ConPTY via portable-pty 0.9",
+  "retained": [
+    "d009bbd3-eb07-47be-a08c-1e9d8ae4c177",
+    "30987e03-f9cd-47e5-9ed5-897deb809296",
+    "99c01653-eb5a-419d-a595-15b34e2e4b04",
+    "16b11d98-3742-40a5-b7de-aff3941e4896",
+    "52e9766f-5e25-4f20-9fd8-af6f0f17973e",
+    "74e310fa-5e9e-422f-9303-fa52b06958a0",
+    "5d3ba192-8c73-48a1-838b-de4bb012107a",
+    "f3b12fab-73cb-4129-a277-7c4db4de7aeb",
+    "8132a09f-0a46-4dac-8be2-19f7c99eb2ae",
+    "23b8f034-c58e-4e63-8386-2e9fae2e42db"
+  ],
+  "retry_policy": "none: the scripts never retry; a rerun passes PANEFLOW_BENCH_PRIOR_RESULT so the first failure stays in the evidence",
+  "schema_version": 3,
+  "source_unchanged_during_measurement": true,
+  "stamp": "20260922T184538Z",
+  "status": "complete",
+  "suite": "paneflow-persistent-endurance",
+  "thresholds": [
+    {
+      "id": "NFR-05.memory_after_endurance",
+      "metric": "host resident bytes at the end minus the first post-warmup sample",
+      "observed": 3153920.0,
+      "reason": "",
+      "result": "pass",
+      "threshold": "<= max(16 MiB, 10% of warmed)",
+      "workload": "W08"
+    },
+    {
+      "id": "NFR-05.threads_after_endurance",
+      "metric": "host threads at the end minus the first post-warmup sample",
+      "observed": -3.0,
+      "reason": "",
+      "result": "pass",
+      "threshold": "<= 2",
+      "workload": "W08"
+    },
+    {
+      "id": "NFR-05.handles_after_endurance",
+      "metric": "host handles or file descriptors at the end minus the first post-warmup sample",
+      "observed": -2.0,
+      "reason": "",
+      "result": "pass",
+      "threshold": "<= 2",
+      "workload": "W08"
+    },
+    {
+      "id": "NFR-04.burst_release",
+      "metric": "bursts whose runtimes released within the reclaim budget",
+      "observed": 5.0,
+      "reason": "",
+      "result": "pass",
+      "threshold": "all 5 within 5 s",
+      "workload": "W08"
+    },
+    {
+      "id": "NFR-11.worker_cycles",
+      "metric": "worker cycles with unchanged child identities and generations",
+      "observed": 6.0,
+      "reason": "",
+      "result": "pass",
+      "threshold": "all 6 cycles",
+      "workload": "W08"
+    },
+    {
+      "id": "NFR-11.desktop_cycles",
+      "metric": "desktop detach/reopen cycles with unchanged child identities and generations",
+      "observed": 4.0,
+      "reason": "",
+      "result": "pass",
+      "threshold": "all 4 cycles",
+      "workload": "W08"
+    },
+    {
+      "id": "NFR-11.idle_first_input",
+      "metric": "echoes of the first input on the control connection left untouched for the idle interval",
+      "observed": 1.0,
+      "reason": "",
+      "result": "pass",
+      "threshold": "== 1",
+      "workload": "W08"
+    },
+    {
+      "id": "NFR-12.retained_identities",
+      "metric": "identity checks where every retained session kept its generation and process",
+      "observed": 24.0,
+      "reason": "",
+      "result": "pass",
+      "threshold": "all 24",
+      "workload": "W08"
+    },
+    {
+      "id": "NFR-12.ownership_counters",
+      "metric": "samples where live runtimes, pending launches, or unresolved descendants exceeded the retained set plus one burst",
+      "observed": 0.0,
+      "reason": "",
+      "result": "pass",
+      "threshold": "== 0, and the final sample owns exactly the retained set",
+      "workload": "W08"
+    },
+    {
+      "id": "NFR-12.host_shutdown",
+      "metric": "host process exited after an acknowledged shutdown",
+      "observed": 1.0,
+      "reason": "",
+      "result": "pass",
+      "threshold": "acknowledged and exited within 10 s",
+      "workload": "harness"
+    },
+    {
+      "id": "NFR-12.fixture_orphans",
+      "metric": "fixture processes still alive after host shutdown",
+      "observed": 0.0,
+      "reason": "",
+      "result": "pass",
+      "threshold": "== 0",
+      "workload": "harness"
+    }
+  ],
+  "toolchain": {
+    "profile": "release",
+    "rustc": "rustc 1.98.0 (88d9e12ae 2026-08-18)"
+  },
+  "topology": "host-worker-native-desktop",
+  "workloads": {
+    "W08": {
+      "bursts": [
+        {
+          "burst": 0,
+          "elapsed_ms": 621.6596,
+          "runtime_reclaimed_ms": 26.1572,
+          "sessions": 10,
+          "unreclaimed": null
+        },
+        {
+          "burst": 1,
+          "elapsed_ms": 722.1967999999999,
+          "runtime_reclaimed_ms": 0.2582,
+          "sessions": 10,
+          "unreclaimed": null
+        },
+        {
+          "burst": 2,
+          "elapsed_ms": 622.7455,
+          "runtime_reclaimed_ms": 0.26580000000000004,
+          "sessions": 10,
+          "unreclaimed": null
+        },
+        {
+          "burst": 3,
+          "elapsed_ms": 710.7879,
+          "runtime_reclaimed_ms": 0.174,
+          "sessions": 10,
+          "unreclaimed": null
+        },
+        {
+          "burst": 4,
+          "elapsed_ms": 834.1446,
+          "runtime_reclaimed_ms": 0.4462,
+          "sessions": 10,
+          "unreclaimed": null
+        }
+      ],
+      "desktop_cycles": [
+        {
+          "cycle": 0,
+          "elapsed_s": 301,
+          "identities_unchanged": true,
+          "ready_ms": 1157.5773
+        },
+        {
+          "cycle": 1,
+          "elapsed_s": 421,
+          "identities_unchanged": true,
+          "ready_ms": 1123.5214
+        },
+        {
+          "cycle": 2,
+          "elapsed_s": 541,
+          "identities_unchanged": true,
+          "ready_ms": 1116.0112
+        },
+        {
+          "cycle": 3,
+          "elapsed_s": 661,
+          "identities_unchanged": true,
+          "ready_ms": 1046.4544
+        }
+      ],
+      "elapsed_s": 721,
+      "identity_checks": [
+        {
+          "elapsed_s": 30,
+          "unchanged": true
+        },
+        {
+          "elapsed_s": 60,
+          "unchanged": true
+        },
+        {
+          "elapsed_s": 90,
+          "unchanged": true
+        },
+        {
+          "elapsed_s": 120,
+          "unchanged": true
+        },
+        {
+          "elapsed_s": 150,
+          "unchanged": true
+        },
+        {
+          "elapsed_s": 180,
+          "unchanged": true
+        },
+        {
+          "elapsed_s": 210,
+          "unchanged": true
+        },
+        {
+          "elapsed_s": 240,
+          "unchanged": true
+        },
+        {
+          "elapsed_s": 270,
+          "unchanged": true
+        },
+        {
+          "elapsed_s": 300,
+          "unchanged": true
+        },
+        {
+          "elapsed_s": 330,
+          "unchanged": true
+        },
+        {
+          "elapsed_s": 360,
+          "unchanged": true
+        },
+        {
+          "elapsed_s": 390,
+          "unchanged": true
+        },
+        {
+          "elapsed_s": 420,
+          "unchanged": true
+        },
+        {
+          "elapsed_s": 450,
+          "unchanged": true
+        },
+        {
+          "elapsed_s": 480,
+          "unchanged": true
+        },
+        {
+          "elapsed_s": 510,
+          "unchanged": true
+        },
+        {
+          "elapsed_s": 540,
+          "unchanged": true
+        },
+        {
+          "elapsed_s": 570,
+          "unchanged": true
+        },
+        {
+          "elapsed_s": 600,
+          "unchanged": true
+        },
+        {
+          "elapsed_s": 630,
+          "unchanged": true
+        },
+        {
+          "elapsed_s": 660,
+          "unchanged": true
+        },
+        {
+          "elapsed_s": 690,
+          "unchanged": true
+        },
+        {
+          "elapsed_s": 720,
+          "unchanged": true
+        }
+      ],
+      "idle_first_input": {
+        "accepted": {
+          "Ok": 15
+        },
+        "echoes": 1,
+        "idle_s": 243,
+        "latency_ms": 0.5031,
+        "sent_bytes": 15,
+        "wait_s": 2.0
+      },
+      "samples": [
+        {
+          "checkpoints": {
+            "active": 0,
+            "budget_bytes": 268435456,
+            "max_concurrent": 2,
+            "peak_staged_bytes": 1169,
+            "refused": 0,
+            "staged_bytes": 0
+          },
+          "elapsed_s": 0,
+          "host_handles": 244,
+          "host_resident_bytes": 15728640,
+          "host_threads": 52,
+          "live_runtimes": 10,
+          "pending_launches": 0,
+          "persistence": {
+            "budget_bytes": 8388608,
+            "metadata_rejected": 0,
+            "peak_queued_bytes": 1270,
+            "pending_final_revisions": 0,
+            "queued_bytes": 0,
+            "queued_jobs": 0,
+            "reserved_bytes": 163840
+          },
+          "phase": "start",
+          "retained_descendants_unresolved": 0,
+          "retained_durability_errors": 0,
+          "retained_live": 10,
+          "worker_resident_bytes": 15695872
+        },
+        {
+          "checkpoints": {
+            "active": 0,
+            "budget_bytes": 268435456,
+            "max_concurrent": 2,
+            "peak_staged_bytes": 1169,
+            "refused": 0,
+            "staged_bytes": 0
+          },
+          "elapsed_s": 30,
+          "host_handles": 245,
+          "host_resident_bytes": 16105472,
+          "host_threads": 52,
+          "live_runtimes": 10,
+          "pending_launches": 0,
+          "persistence": {
+            "budget_bytes": 8388608,
+            "metadata_rejected": 0,
+            "peak_queued_bytes": 1270,
+            "pending_final_revisions": 0,
+            "queued_bytes": 0,
+            "queued_jobs": 0,
+            "reserved_bytes": 163840
+          },
+          "phase": "idle-control",
+          "retained_descendants_unresolved": 0,
+          "retained_durability_errors": 0,
+          "retained_live": 10,
+          "worker_resident_bytes": 16023552
+        },
+        {
+          "checkpoints": {
+            "active": 0,
+            "budget_bytes": 268435456,
+            "max_concurrent": 2,
+            "peak_staged_bytes": 1169,
+            "refused": 0,
+            "staged_bytes": 0
+          },
+          "elapsed_s": 60,
+          "host_handles": 245,
+          "host_resident_bytes": 16117760,
+          "host_threads": 51,
+          "live_runtimes": 10,
+          "pending_launches": 0,
+          "persistence": {
+            "budget_bytes": 8388608,
+            "metadata_rejected": 0,
+            "peak_queued_bytes": 1270,
+            "pending_final_revisions": 0,
+            "queued_bytes": 0,
+            "queued_jobs": 0,
+            "reserved_bytes": 163840
+          },
+          "phase": "idle-control",
+          "retained_descendants_unresolved": 0,
+          "retained_durability_errors": 0,
+          "retained_live": 10,
+          "worker_resident_bytes": 16027648
+        },
+        {
+          "checkpoints": {
+            "active": 0,
+            "budget_bytes": 268435456,
+            "max_concurrent": 2,
+            "peak_staged_bytes": 1169,
+            "refused": 0,
+            "staged_bytes": 0
+          },
+          "elapsed_s": 90,
+          "host_handles": 245,
+          "host_resident_bytes": 16023552,
+          "host_threads": 51,
+          "live_runtimes": 10,
+          "pending_launches": 0,
+          "persistence": {
+            "budget_bytes": 8388608,
+            "metadata_rejected": 0,
+            "peak_queued_bytes": 1270,
+            "pending_final_revisions": 0,
+            "queued_bytes": 0,
+            "queued_jobs": 0,
+            "reserved_bytes": 163840
+          },
+          "phase": "idle-control",
+          "retained_descendants_unresolved": 0,
+          "retained_durability_errors": 0,
+          "retained_live": 10,
+          "worker_resident_bytes": 16179200
+        },
+        {
+          "checkpoints": {
+            "active": 0,
+            "budget_bytes": 268435456,
+            "max_concurrent": 2,
+            "peak_staged_bytes": 1169,
+            "refused": 0,
+            "staged_bytes": 0
+          },
+          "elapsed_s": 120,
+          "host_handles": 245,
+          "host_resident_bytes": 16003072,
+          "host_threads": 51,
+          "live_runtimes": 10,
+          "pending_launches": 0,
+          "persistence": {
+            "budget_bytes": 8388608,
+            "metadata_rejected": 0,
+            "peak_queued_bytes": 1270,
+            "pending_final_revisions": 0,
+            "queued_bytes": 0,
+            "queued_jobs": 0,
+            "reserved_bytes": 163840
+          },
+          "phase": "idle-control",
+          "retained_descendants_unresolved": 0,
+          "retained_durability_errors": 0,
+          "retained_live": 10,
+          "worker_resident_bytes": 16027648
+        },
+        {
+          "checkpoints": {
+            "active": 0,
+            "budget_bytes": 268435456,
+            "max_concurrent": 2,
+            "peak_staged_bytes": 67703,
+            "refused": 0,
+            "staged_bytes": 0
+          },
+          "elapsed_s": 150,
+          "host_handles": 243,
+          "host_resident_bytes": 17297408,
+          "host_threads": 49,
+          "live_runtimes": 10,
+          "pending_launches": 0,
+          "persistence": {
+            "budget_bytes": 8388608,
+            "metadata_rejected": 0,
+            "peak_queued_bytes": 1686,
+            "pending_final_revisions": 0,
+            "queued_bytes": 0,
+            "queued_jobs": 0,
+            "reserved_bytes": 163840
+          },
+          "phase": "idle-control",
+          "retained_descendants_unresolved": 0,
+          "retained_durability_errors": 0,
+          "retained_live": 10,
+          "worker_resident_bytes": 15806464
+        },
+        {
+          "checkpoints": {
+            "active": 0,
+            "budget_bytes": 268435456,
+            "max_concurrent": 2,
+            "peak_staged_bytes": 67703,
+            "refused": 0,
+            "staged_bytes": 0
+          },
+          "elapsed_s": 180,
+          "host_handles": 243,
+          "host_resident_bytes": 17346560,
+          "host_threads": 49,
+          "live_runtimes": 10,
+          "pending_launches": 0,
+          "persistence": {
+            "budget_bytes": 8388608,
+            "metadata_rejected": 0,
+            "peak_queued_bytes": 1686,
+            "pending_final_revisions": 0,
+            "queued_bytes": 0,
+            "queued_jobs": 0,
+            "reserved_bytes": 163840
+          },
+          "phase": "idle-control",
+          "retained_descendants_unresolved": 0,
+          "retained_durability_errors": 0,
+          "retained_live": 10,
+          "worker_resident_bytes": 15626240
+        },
+        {
+          "checkpoints": {
+            "active": 0,
+            "budget_bytes": 268435456,
+            "max_concurrent": 2,
+            "peak_staged_bytes": 67703,
+            "refused": 0,
+            "staged_bytes": 0
+          },
+          "elapsed_s": 210,
+          "host_handles": 243,
+          "host_resident_bytes": 17371136,
+          "host_threads": 49,
+          "live_runtimes": 10,
+          "pending_launches": 0,
+          "persistence": {
+            "budget_bytes": 8388608,
+            "metadata_rejected": 0,
+            "peak_queued_bytes": 1686,
+            "pending_final_revisions": 0,
+            "queued_bytes": 0,
+            "queued_jobs": 0,
+            "reserved_bytes": 163840
+          },
+          "phase": "idle-control",
+          "retained_descendants_unresolved": 0,
+          "retained_durability_errors": 0,
+          "retained_live": 10,
+          "worker_resident_bytes": 15626240
+        },
+        {
+          "checkpoints": {
+            "active": 0,
+            "budget_bytes": 268435456,
+            "max_concurrent": 2,
+            "peak_staged_bytes": 67703,
+            "refused": 0,
+            "staged_bytes": 0
+          },
+          "elapsed_s": 240,
+          "host_handles": 243,
+          "host_resident_bytes": 17330176,
+          "host_threads": 49,
+          "live_runtimes": 10,
+          "pending_launches": 0,
+          "persistence": {
+            "budget_bytes": 8388608,
+            "metadata_rejected": 0,
+            "peak_queued_bytes": 1686,
+            "pending_final_revisions": 0,
+            "queued_bytes": 0,
+            "queued_jobs": 0,
+            "reserved_bytes": 163840
+          },
+          "phase": "active",
+          "retained_descendants_unresolved": 0,
+          "retained_durability_errors": 0,
+          "retained_live": 10,
+          "worker_resident_bytes": 15814656
+        },
+        {
+          "checkpoints": {
+            "active": 0,
+            "budget_bytes": 268435456,
+            "max_concurrent": 2,
+            "peak_staged_bytes": 67703,
+            "refused": 0,
+            "staged_bytes": 0
+          },
+          "elapsed_s": 270,
+          "host_handles": 243,
+          "host_resident_bytes": 17907712,
+          "host_threads": 49,
+          "live_runtimes": 10,
+          "pending_launches": 0,
+          "persistence": {
+            "budget_bytes": 8388608,
+            "metadata_rejected": 0,
+            "peak_queued_bytes": 1728,
+            "pending_final_revisions": 0,
+            "queued_bytes": 0,
+            "queued_jobs": 0,
+            "reserved_bytes": 163840
+          },
+          "phase": "active",
+          "retained_descendants_unresolved": 0,
+          "retained_durability_errors": 0,
+          "retained_live": 10,
+          "worker_resident_bytes": 15626240
+        },
+        {
+          "checkpoints": {
+            "active": 0,
+            "budget_bytes": 268435456,
+            "max_concurrent": 2,
+            "peak_staged_bytes": 67703,
+            "refused": 0,
+            "staged_bytes": 0
+          },
+          "elapsed_s": 300,
+          "host_handles": 243,
+          "host_resident_bytes": 18092032,
+          "host_threads": 51,
+          "live_runtimes": 10,
+          "pending_launches": 0,
+          "persistence": {
+            "budget_bytes": 8388608,
+            "metadata_rejected": 0,
+            "peak_queued_bytes": 1728,
+            "pending_final_revisions": 0,
+            "queued_bytes": 0,
+            "queued_jobs": 0,
+            "reserved_bytes": 163840
+          },
+          "phase": "active",
+          "retained_descendants_unresolved": 0,
+          "retained_durability_errors": 0,
+          "retained_live": 10,
+          "worker_resident_bytes": 15806464
+        },
+        {
+          "checkpoints": {
+            "active": 0,
+            "budget_bytes": 268435456,
+            "max_concurrent": 2,
+            "peak_staged_bytes": 67703,
+            "refused": 0,
+            "staged_bytes": 0
+          },
+          "elapsed_s": 330,
+          "host_handles": 243,
+          "host_resident_bytes": 17616896,
+          "host_threads": 51,
+          "live_runtimes": 10,
+          "pending_launches": 0,
+          "persistence": {
+            "budget_bytes": 8388608,
+            "metadata_rejected": 0,
+            "peak_queued_bytes": 2854,
+            "pending_final_revisions": 0,
+            "queued_bytes": 0,
+            "queued_jobs": 0,
+            "reserved_bytes": 163840
+          },
+          "phase": "active",
+          "retained_descendants_unresolved": 0,
+          "retained_durability_errors": 0,
+          "retained_live": 10,
+          "worker_resident_bytes": 16261120
+        },
+        {
+          "checkpoints": {
+            "active": 0,
+            "budget_bytes": 268435456,
+            "max_concurrent": 2,
+            "peak_staged_bytes": 67703,
+            "refused": 0,
+            "staged_bytes": 0
+          },
+          "elapsed_s": 360,
+          "host_handles": 243,
+          "host_resident_bytes": 17616896,
+          "host_threads": 51,
+          "live_runtimes": 10,
+          "pending_launches": 0,
+          "persistence": {
+            "budget_bytes": 8388608,
+            "metadata_rejected": 0,
+            "peak_queued_bytes": 2854,
+            "pending_final_revisions": 0,
+            "queued_bytes": 0,
+            "queued_jobs": 0,
+            "reserved_bytes": 163840
+          },
+          "phase": "active",
+          "retained_descendants_unresolved": 0,
+          "retained_durability_errors": 0,
+          "retained_live": 10,
+          "worker_resident_bytes": 16470016
+        },
+        {
+          "checkpoints": {
+            "active": 0,
+            "budget_bytes": 268435456,
+            "max_concurrent": 2,
+            "peak_staged_bytes": 67703,
+            "refused": 0,
+            "staged_bytes": 0
+          },
+          "elapsed_s": 390,
+          "host_handles": 243,
+          "host_resident_bytes": 18243584,
+          "host_threads": 51,
+          "live_runtimes": 10,
+          "pending_launches": 0,
+          "persistence": {
+            "budget_bytes": 8388608,
+            "metadata_rejected": 0,
+            "peak_queued_bytes": 2854,
+            "pending_final_revisions": 0,
+            "queued_bytes": 0,
+            "queued_jobs": 0,
+            "reserved_bytes": 163840
+          },
+          "phase": "active",
+          "retained_descendants_unresolved": 0,
+          "retained_durability_errors": 0,
+          "retained_live": 10,
+          "worker_resident_bytes": 16420864
+        },
+        {
+          "checkpoints": {
+            "active": 0,
+            "budget_bytes": 268435456,
+            "max_concurrent": 2,
+            "peak_staged_bytes": 67703,
+            "refused": 0,
+            "staged_bytes": 0
+          },
+          "elapsed_s": 420,
+          "host_handles": 243,
+          "host_resident_bytes": 18214912,
+          "host_threads": 49,
+          "live_runtimes": 10,
+          "pending_launches": 0,
+          "persistence": {
+            "budget_bytes": 8388608,
+            "metadata_rejected": 0,
+            "peak_queued_bytes": 2854,
+            "pending_final_revisions": 0,
+            "queued_bytes": 0,
+            "queued_jobs": 0,
+            "reserved_bytes": 163840
+          },
+          "phase": "active",
+          "retained_descendants_unresolved": 0,
+          "retained_durability_errors": 0,
+          "retained_live": 10,
+          "worker_resident_bytes": 17022976
+        },
+        {
+          "checkpoints": {
+            "active": 0,
+            "budget_bytes": 268435456,
+            "max_concurrent": 2,
+            "peak_staged_bytes": 67703,
+            "refused": 0,
+            "staged_bytes": 0
+          },
+          "elapsed_s": 450,
+          "host_handles": 243,
+          "host_resident_bytes": 18468864,
+          "host_threads": 49,
+          "live_runtimes": 10,
+          "pending_launches": 0,
+          "persistence": {
+            "budget_bytes": 8388608,
+            "metadata_rejected": 0,
+            "peak_queued_bytes": 2854,
+            "pending_final_revisions": 0,
+            "queued_bytes": 0,
+            "queued_jobs": 0,
+            "reserved_bytes": 163840
+          },
+          "phase": "active",
+          "retained_descendants_unresolved": 0,
+          "retained_durability_errors": 0,
+          "retained_live": 10,
+          "worker_resident_bytes": 16416768
+        },
+        {
+          "checkpoints": {
+            "active": 0,
+            "budget_bytes": 268435456,
+            "max_concurrent": 2,
+            "peak_staged_bytes": 67703,
+            "refused": 0,
+            "staged_bytes": 0
+          },
+          "elapsed_s": 480,
+          "host_handles": 243,
+          "host_resident_bytes": 18468864,
+          "host_threads": 49,
+          "live_runtimes": 10,
+          "pending_launches": 0,
+          "persistence": {
+            "budget_bytes": 8388608,
+            "metadata_rejected": 0,
+            "peak_queued_bytes": 2854,
+            "pending_final_revisions": 0,
+            "queued_bytes": 0,
+            "queued_jobs": 0,
+            "reserved_bytes": 163840
+          },
+          "phase": "active",
+          "retained_descendants_unresolved": 0,
+          "retained_durability_errors": 0,
+          "retained_live": 10,
+          "worker_resident_bytes": 17006592
+        },
+        {
+          "checkpoints": {
+            "active": 0,
+            "budget_bytes": 268435456,
+            "max_concurrent": 2,
+            "peak_staged_bytes": 67703,
+            "refused": 0,
+            "staged_bytes": 0
+          },
+          "elapsed_s": 510,
+          "host_handles": 243,
+          "host_resident_bytes": 19456000,
+          "host_threads": 49,
+          "live_runtimes": 10,
+          "pending_launches": 0,
+          "persistence": {
+            "budget_bytes": 8388608,
+            "metadata_rejected": 0,
+            "peak_queued_bytes": 3293,
+            "pending_final_revisions": 0,
+            "queued_bytes": 0,
+            "queued_jobs": 0,
+            "reserved_bytes": 163840
+          },
+          "phase": "active",
+          "retained_descendants_unresolved": 0,
+          "retained_durability_errors": 0,
+          "retained_live": 10,
+          "worker_resident_bytes": 16814080
+        },
+        {
+          "checkpoints": {
+            "active": 0,
+            "budget_bytes": 268435456,
+            "max_concurrent": 2,
+            "peak_staged_bytes": 67703,
+            "refused": 0,
+            "staged_bytes": 0
+          },
+          "elapsed_s": 540,
+          "host_handles": 243,
+          "host_resident_bytes": 19480576,
+          "host_threads": 49,
+          "live_runtimes": 10,
+          "pending_launches": 0,
+          "persistence": {
+            "budget_bytes": 8388608,
+            "metadata_rejected": 0,
+            "peak_queued_bytes": 3293,
+            "pending_final_revisions": 0,
+            "queued_bytes": 0,
+            "queued_jobs": 0,
+            "reserved_bytes": 163840
+          },
+          "phase": "active",
+          "retained_descendants_unresolved": 0,
+          "retained_durability_errors": 0,
+          "retained_live": 10,
+          "worker_resident_bytes": 16408576
+        },
+        {
+          "checkpoints": {
+            "active": 0,
+            "budget_bytes": 268435456,
+            "max_concurrent": 2,
+            "peak_staged_bytes": 67703,
+            "refused": 0,
+            "staged_bytes": 0
+          },
+          "elapsed_s": 570,
+          "host_handles": 243,
+          "host_resident_bytes": 19296256,
+          "host_threads": 49,
+          "live_runtimes": 10,
+          "pending_launches": 0,
+          "persistence": {
+            "budget_bytes": 8388608,
+            "metadata_rejected": 0,
+            "peak_queued_bytes": 3293,
+            "pending_final_revisions": 0,
+            "queued_bytes": 0,
+            "queued_jobs": 0,
+            "reserved_bytes": 163840
+          },
+          "phase": "active",
+          "retained_descendants_unresolved": 0,
+          "retained_durability_errors": 0,
+          "retained_live": 10,
+          "worker_resident_bytes": 16855040
+        },
+        {
+          "checkpoints": {
+            "active": 0,
+            "budget_bytes": 268435456,
+            "max_concurrent": 2,
+            "peak_staged_bytes": 67703,
+            "refused": 0,
+            "staged_bytes": 0
+          },
+          "elapsed_s": 600,
+          "host_handles": 243,
+          "host_resident_bytes": 19329024,
+          "host_threads": 51,
+          "live_runtimes": 10,
+          "pending_launches": 0,
+          "persistence": {
+            "budget_bytes": 8388608,
+            "metadata_rejected": 0,
+            "peak_queued_bytes": 3293,
+            "pending_final_revisions": 0,
+            "queued_bytes": 0,
+            "queued_jobs": 0,
+            "reserved_bytes": 163840
+          },
+          "phase": "active",
+          "retained_descendants_unresolved": 0,
+          "retained_durability_errors": 0,
+          "retained_live": 10,
+          "worker_resident_bytes": 17076224
+        },
+        {
+          "checkpoints": {
+            "active": 0,
+            "budget_bytes": 268435456,
+            "max_concurrent": 2,
+            "peak_staged_bytes": 67703,
+            "refused": 0,
+            "staged_bytes": 0
+          },
+          "elapsed_s": 630,
+          "host_handles": 243,
+          "host_resident_bytes": 19632128,
+          "host_threads": 51,
+          "live_runtimes": 10,
+          "pending_launches": 0,
+          "persistence": {
+            "budget_bytes": 8388608,
+            "metadata_rejected": 0,
+            "peak_queued_bytes": 3293,
+            "pending_final_revisions": 0,
+            "queued_bytes": 0,
+            "queued_jobs": 0,
+            "reserved_bytes": 163840
+          },
+          "phase": "active",
+          "retained_descendants_unresolved": 0,
+          "retained_durability_errors": 0,
+          "retained_live": 10,
+          "worker_resident_bytes": 16424960
+        },
+        {
+          "checkpoints": {
+            "active": 0,
+            "budget_bytes": 268435456,
+            "max_concurrent": 2,
+            "peak_staged_bytes": 67703,
+            "refused": 0,
+            "staged_bytes": 0
+          },
+          "elapsed_s": 660,
+          "host_handles": 243,
+          "host_resident_bytes": 19632128,
+          "host_threads": 51,
+          "live_runtimes": 10,
+          "pending_launches": 0,
+          "persistence": {
+            "budget_bytes": 8388608,
+            "metadata_rejected": 0,
+            "peak_queued_bytes": 3293,
+            "pending_final_revisions": 0,
+            "queued_bytes": 0,
+            "queued_jobs": 0,
+            "reserved_bytes": 163840
+          },
+          "phase": "active",
+          "retained_descendants_unresolved": 0,
+          "retained_durability_errors": 0,
+          "retained_live": 10,
+          "worker_resident_bytes": 17014784
+        },
+        {
+          "checkpoints": {
+            "active": 0,
+            "budget_bytes": 268435456,
+            "max_concurrent": 2,
+            "peak_staged_bytes": 67703,
+            "refused": 0,
+            "staged_bytes": 0
+          },
+          "elapsed_s": 690,
+          "host_handles": 243,
+          "host_resident_bytes": 19259392,
+          "host_threads": 49,
+          "live_runtimes": 10,
+          "pending_launches": 0,
+          "persistence": {
+            "budget_bytes": 8388608,
+            "metadata_rejected": 0,
+            "peak_queued_bytes": 3293,
+            "pending_final_revisions": 0,
+            "queued_bytes": 0,
+            "queued_jobs": 0,
+            "reserved_bytes": 163840
+          },
+          "phase": "active",
+          "retained_descendants_unresolved": 0,
+          "retained_durability_errors": 0,
+          "retained_live": 10,
+          "worker_resident_bytes": 16515072
+        },
+        {
+          "checkpoints": {
+            "active": 0,
+            "budget_bytes": 268435456,
+            "max_concurrent": 2,
+            "peak_staged_bytes": 67703,
+            "refused": 0,
+            "staged_bytes": 0
+          },
+          "elapsed_s": 720,
+          "host_handles": 243,
+          "host_resident_bytes": 19259392,
+          "host_threads": 49,
+          "live_runtimes": 10,
+          "pending_launches": 0,
+          "persistence": {
+            "budget_bytes": 8388608,
+            "metadata_rejected": 0,
+            "peak_queued_bytes": 3293,
+            "pending_final_revisions": 0,
+            "queued_bytes": 0,
+            "queued_jobs": 0,
+            "reserved_bytes": 163840
+          },
+          "phase": "end",
+          "retained_descendants_unresolved": 0,
+          "retained_durability_errors": 0,
+          "retained_live": 10,
+          "worker_resident_bytes": 17039360
+        }
+      ],
+      "status": "measured",
+      "worker_cycles": [
+        {
+          "build_replacement": false,
+          "core_connected": true,
+          "cycle": 0,
+          "elapsed_s": 280,
+          "identities_unchanged": true,
+          "kind": "crash",
+          "projection_sessions": 10,
+          "restart_ms": 108.7573,
+          "worker_error": null,
+          "worker_status": {
+            "capabilities": [
+              "agent.snapshot",
+              "agent.follow",
+              "restart.recommendation",
+              "control.proxy",
+              "fleet.projection",
+              "integrations.refresh",
+              "activity.reducer",
+              "activity.notifications",
+              "agent.unread",
+              "agent.activity_log"
+            ],
+            "core_connected": true,
+            "endpoint": "\\\\.\\pipe\\paneflow-serve-034ddc8685109d23",
+            "home": "C:\\Users\\Arthur\\AppData\\Local\\Temp\\.tmpdngNVO",
+            "pid": 24248,
+            "protocol": 1,
+            "session_count": 10,
+            "version": "0.16.0"
+          }
+        },
+        {
+          "build_replacement": false,
+          "core_connected": true,
+          "cycle": 1,
+          "elapsed_s": 361,
+          "identities_unchanged": true,
+          "kind": "deliberate restart",
+          "projection_sessions": 10,
+          "restart_ms": 209.95530000000002,
+          "worker_error": null,
+          "worker_status": {
+            "capabilities": [
+              "agent.snapshot",
+              "agent.follow",
+              "restart.recommendation",
+              "control.proxy",
+              "fleet.projection",
+              "integrations.refresh",
+              "activity.reducer",
+              "activity.notifications",
+              "agent.unread",
+              "agent.activity_log"
+            ],
+            "core_connected": true,
+            "endpoint": "\\\\.\\pipe\\paneflow-serve-034ddc8685109d23",
+            "home": "C:\\Users\\Arthur\\AppData\\Local\\Temp\\.tmpdngNVO",
+            "pid": 25524,
+            "protocol": 1,
+            "session_count": 10,
+            "version": "0.16.0"
+          }
+        },
+        {
+          "build_replacement": false,
+          "core_connected": true,
+          "cycle": 2,
+          "elapsed_s": 440,
+          "identities_unchanged": true,
+          "kind": "crash",
+          "projection_sessions": 10,
+          "restart_ms": 109.9555,
+          "worker_error": null,
+          "worker_status": {
+            "capabilities": [
+              "agent.snapshot",
+              "agent.follow",
+              "restart.recommendation",
+              "control.proxy",
+              "fleet.projection",
+              "integrations.refresh",
+              "activity.reducer",
+              "activity.notifications",
+              "agent.unread",
+              "agent.activity_log"
+            ],
+            "core_connected": true,
+            "endpoint": "\\\\.\\pipe\\paneflow-serve-034ddc8685109d23",
+            "home": "C:\\Users\\Arthur\\AppData\\Local\\Temp\\.tmpdngNVO",
+            "pid": 21624,
+            "protocol": 1,
+            "session_count": 10,
+            "version": "0.16.0"
+          }
+        },
+        {
+          "build_replacement": false,
+          "core_connected": true,
+          "cycle": 3,
+          "elapsed_s": 520,
+          "identities_unchanged": true,
+          "kind": "deliberate restart",
+          "projection_sessions": 10,
+          "restart_ms": 180.29670000000002,
+          "worker_error": null,
+          "worker_status": {
+            "capabilities": [
+              "agent.snapshot",
+              "agent.follow",
+              "restart.recommendation",
+              "control.proxy",
+              "fleet.projection",
+              "integrations.refresh",
+              "activity.reducer",
+              "activity.notifications",
+              "agent.unread",
+              "agent.activity_log"
+            ],
+            "core_connected": true,
+            "endpoint": "\\\\.\\pipe\\paneflow-serve-034ddc8685109d23",
+            "home": "C:\\Users\\Arthur\\AppData\\Local\\Temp\\.tmpdngNVO",
+            "pid": 30324,
+            "protocol": 1,
+            "session_count": 10,
+            "version": "0.16.0"
+          }
+        },
+        {
+          "build_replacement": false,
+          "core_connected": true,
+          "cycle": 4,
+          "elapsed_s": 601,
+          "identities_unchanged": true,
+          "kind": "crash",
+          "projection_sessions": 10,
+          "restart_ms": 109.9886,
+          "worker_error": null,
+          "worker_status": {
+            "capabilities": [
+              "agent.snapshot",
+              "agent.follow",
+              "restart.recommendation",
+              "control.proxy",
+              "fleet.projection",
+              "integrations.refresh",
+              "activity.reducer",
+              "activity.notifications",
+              "agent.unread",
+              "agent.activity_log"
+            ],
+            "core_connected": true,
+            "endpoint": "\\\\.\\pipe\\paneflow-serve-034ddc8685109d23",
+            "home": "C:\\Users\\Arthur\\AppData\\Local\\Temp\\.tmpdngNVO",
+            "pid": 3204,
+            "protocol": 1,
+            "session_count": 10,
+            "version": "0.16.0"
+          }
+        },
+        {
+          "build_replacement": false,
+          "core_connected": true,
+          "cycle": 5,
+          "elapsed_s": 680,
+          "identities_unchanged": true,
+          "kind": "deliberate restart",
+          "projection_sessions": 10,
+          "restart_ms": 207.3185,
+          "worker_error": null,
+          "worker_status": {
+            "capabilities": [
+              "agent.snapshot",
+              "agent.follow",
+              "restart.recommendation",
+              "control.proxy",
+              "fleet.projection",
+              "integrations.refresh",
+              "activity.reducer",
+              "activity.notifications",
+              "agent.unread",
+              "agent.activity_log"
+            ],
+            "core_connected": true,
+            "endpoint": "\\\\.\\pipe\\paneflow-serve-034ddc8685109d23",
+            "home": "C:\\Users\\Arthur\\AppData\\Local\\Temp\\.tmpdngNVO",
+            "pid": 19644,
+            "protocol": 1,
+            "session_count": 10,
+            "version": "0.16.0"
+          }
+        }
+      ]
+    }
+  }
+}
