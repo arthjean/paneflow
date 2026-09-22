@@ -1847,10 +1847,14 @@ mod tests {
         let home = tempfile::tempdir().unwrap();
         let session = SessionId::new();
         let mut record = manifest(session.clone(), None);
-        record.process = Some(ProcessIdentity {
-            pid: u32::MAX - 1,
-            started_at: Some(7),
-        });
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+            .arg("--list")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
+        record.process = Some(ProcessIdentity::capture(child.id()));
+        assert!(child.wait().unwrap().success());
         write_manifest(home.path(), &record).unwrap();
 
         let mut state = WorkerState::new(home.path());
