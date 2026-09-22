@@ -133,6 +133,7 @@ fn bind(endpoint: &Path) -> io::Result<Listener> {
                         format!("{} exists and is not a socket", endpoint.display()),
                     ));
                 }
+                ensure_unserved(endpoint)?;
                 std::fs::remove_file(endpoint)?;
             }
             Err(error) if error.kind() == io::ErrorKind::NotFound => {}
@@ -162,6 +163,34 @@ fn bind(endpoint: &Path) -> io::Result<Listener> {
     }
     log::info!("paneflow-host: listening on {}", endpoint.display());
     Ok(listener)
+}
+
+#[cfg(unix)]
+fn ensure_unserved(endpoint: &Path) -> io::Result<()> {
+    let (sender, receiver) = std::sync::mpsc::channel();
+    let target = endpoint.to_path_buf();
+    std::thread::Builder::new()
+        .name("paneflow-host-endpoint-probe".into())
+        .spawn(move || {
+            let _ = sender.send(std::os::unix::net::UnixStream::connect(target).map(drop));
+        })?;
+    match receiver.recv_timeout(HANDSHAKE_DEADLINE) {
+        Err(_) | Ok(Ok(())) => Err(io::Error::new(
+            io::ErrorKind::AddrInUse,
+            format!(
+                "{} is served by another live process; it is left untouched",
+                endpoint.display()
+            ),
+        )),
+        Ok(Err(error)) if error.kind() == io::ErrorKind::ConnectionRefused => Ok(()),
+        Ok(Err(error)) => Err(io::Error::new(
+            error.kind(),
+            format!(
+                "{} could not be probed ({error}); it is left untouched",
+                endpoint.display()
+            ),
+        )),
+    }
 }
 
 fn accept_loop(
@@ -1321,6 +1350,28 @@ mod tests {
             0o600
         );
         drop(listener);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_served_endpoint_is_never_taken_over_while_a_stale_one_is_reclaimed() {
+        let (_home, _host, server) = start();
+        let refused = bind(server.endpoint()).expect_err("a served endpoint is refused");
+        assert_eq!(refused.kind(), io::ErrorKind::AddrInUse, "{refused}");
+        let hello = ClientHello::local("paneflow-host-test");
+        assert!(
+            HostClient::connect(server.endpoint(), &hello).is_ok(),
+            "the serving host keeps its endpoint"
+        );
+
+        let stale_home = tempfile::tempdir().unwrap();
+        let stale = test_endpoint(stale_home.path());
+        drop(std::os::unix::net::UnixListener::bind(&stale).unwrap());
+        assert!(
+            stale.exists(),
+            "a listener that exits leaves its socket file"
+        );
+        drop(bind(&stale).expect("a socket nobody serves is reclaimed"));
     }
 
     #[test]
