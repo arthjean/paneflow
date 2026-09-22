@@ -6,20 +6,111 @@ comes from one of the suites below, run with the scripts described here, and
 the raw result of each run is archived next to the baseline it is compared
 against.
 
-There are three suites, three baselines, and three result prefixes:
+There are four suites, four baselines, and four result prefixes:
 
 | Suite | Test | Script | Baseline | Result files |
 |---|---|---|---|---|
 | `paneflow-terminal-bench` | `terminal::perf_bench::terminal_pipeline_benchmark` | `scripts/bench-terminal.sh` / `.ps1` | `bench/baseline.json` | `bench/results/<stamp>-<sha>.json` |
 | `paneflow-editor-bench` | `app::diff_dock::code::perf_bench::editor_pipeline_benchmark` | `scripts/bench-editor.sh` / `.ps1` | `bench/editor-baseline.json` | `bench/results/editor-<stamp>-<sha>.json` |
 | `paneflow-startup-bench` | `startup_bench::startup_first_frame_benchmark` | `scripts/bench-startup.sh` / `.ps1` | `bench/startup-baseline.json` | `bench/results/startup-<stamp>-<sha>.json` |
+| `paneflow-persistent-bench` | `tests/persistent_baseline.rs::persistent_session_baseline` (crate `paneflow-host`) | `scripts/bench-persistent.sh` / `.ps1` | `bench/persistent-baseline.json` | `bench/results/persistent-<stamp>-<sha>.json` |
 
-All three suites share one harness, `src-app/src/bench_harness.rs`: the metric
+The first three suites share one harness, `src-app/src/bench_harness.rs`: the metric
 type, the timing helpers, the JSON document, the comparison table, and the
 single `#[global_allocator]` the test binary installs. That allocator counts
 allocated bytes, allocation calls, and live bytes (allocations minus
 deallocations), which is how a retained-memory metric can be reported at all.
 It exists only in `cfg(test)` builds.
+
+## Persistent session suite
+
+The suite is the ignored integration test `persistent_session_baseline` in
+`crates/paneflow-host/tests/persistent_baseline.rs`. It starts the real
+detached host from the release build, drives it through the real IPC endpoint
+and samples an empty topology, then opens 1, 10 and 50 sessions running
+`paneflow-session-fixture idle`, the deterministic fixture executable of the
+host crate at 80x24 (no shell syntax, no randomness). Every session attaches
+through `session.attach` and follows `session.output` by default. The
+`--no-followers` (`-NoFollowers`) option isolates the host-only or host+worker
+topology for comparison; its record explicitly reports zero attachments.
+With `--with-desktop`
+(`-WithDesktop` on Windows), the native app restores the exact host session
+identities from an isolated saved layout instead of using headless followers.
+It verifies `surface.read` contains the fixture announcement for every pane
+before sampling. One pane is visible; the other tabs are in the background.
+The runner closes only its own desktop process after each sample, then verifies
+the original host sessions remain live. On Windows it adjusts only that owned
+window until the host reports a stable 80x24 visible grid. Every record includes
+observed per-session dimensions. Each restored pane is then focused once
+through the existing IPC so background panes adopt that calibrated size; the
+first pane is made visible again before settling and sampling. Other native desktops currently record the
+geometry deviation and require manual window calibration for exact W01 sizing.
+For each scenario it settles for
+four seconds, then samples per-thread CPU time of the host process over a ten
+second window and attributes it by thread name: `host.session`,
+`host.pty_reader`, `host.pty_writer`, `host.viewport_scan`,
+`host.cancellation_scan`, `host.ipc_connection`, `host.ipc_accept`,
+`host.launch_owner`, `host.main`, `host.other`. It also records the creation
+time per session, real attachment latency and checkpoint size, the
+`session.list` round trip and resident memory. A bounded paused-follower probe
+records independent inspect and reattach latency while one receiver is paused.
+
+The document records what a review needs to trust a number: commit, an FNV-1a
+fingerprint of the uncommitted diff, OS, architecture, CPU model, logical CPU
+count, RAM, rustc version, build profile, the terminal engine identity the
+host reported, the PTY implementation, the fixture invocation and the scenario
+list. The schema version is 2. Fingerprints include tracked and untracked
+source contents; controller executable identity is recorded when supplied.
+`--with-worker` (`-WithWorker`) starts the existing `paneflow serve run` entry
+point and attributes its CPU separately. `--with-desktop` includes the worker
+and attributes native mirror, follower, and runtime threads separately from
+the host viewport and cancellation scans. Cursor blinking and telemetry are
+disabled in the isolated fixture configuration. Native desktop runs require a
+working graphical session and display a benchmark window.
+
+Anything the runner cannot measure is written as `pending` with the reason,
+never as a zero. The default run has headless followers; worker and native
+desktop numbers require their respective options. Per-thread attribution on
+macOS is not implemented. Linux `comm` truncates names to 15 bytes; ambiguous
+prefixes are reported as merged, never attributed to a guessed worker. Thread
+CPU deltas aggregate duplicate names before subtracting the baseline. These
+short samples establish a baseline, not the 300-second, three-repetition
+performance acceptance gate. Native timer wake reasons, allocation ownership,
+and complete W01-W08 qualification remain unmeasured unless a separate native
+trace supplies that evidence.
+
+The 2026-09-21 persistent result is a host-only historical sample. It does not
+exercise attachment, a paused follower, a delayed spawn, or the desktop and
+worker process set. Its diff fingerprint excludes untracked sources, and its
+creation cost at 10/50 sessions divides the incremental batch by the cumulative
+session count. New runs include untracked file contents in the fingerprint and
+divide by the number actually created. The historical JSON is retained as
+recorded and cannot certify the complete persistent path or native waiter
+behavior on Linux and macOS.
+
+The selected `persistent-baseline.json` is the Windows native desktop run from
+2026-09-22. Its companion runs isolate the [host](results/persistent-20260922T080613Z-d442894acbc8-host-only.json),
+[host and worker](results/persistent-20260922T080711Z-d442894acbc8-host-worker.json),
+and [host, worker, and desktop](results/persistent-20260922T080810Z-d442894acbc8-native-desktop.json).
+All three measured the same source fingerprint `ee47b728e251ffc7`, with
+0/1/10/50 sessions at an observed 80x24 and a passing paused-follower probe.
+The native run restored all 50 existing sessions through the desktop. These
+records establish a measured reference; they do not claim a performance
+improvement or satisfy the longer performance acceptance window.
+The [runtime identity receipt](results/persistent-20260922T081128Z-d442894acbc8-conpty-identity.json)
+records Windows build 26200.9457, the engine revision, and the loaded ConPTY
+1.24.260710001 module path, file version, and SHA-256 matching the pinned payload.
+It was collected after all samples from a fresh isolated host using the same
+release executable.
+
+```bash
+scripts/bench-persistent.sh                 # writes bench/results/persistent-<stamp>-<sha>.json and compares
+scripts/bench-persistent.sh --set-baseline  # also copies the result to bench/persistent-baseline.json
+scripts/bench-persistent.sh --with-worker  # existing worker plus headless attachments
+scripts/bench-persistent.sh --with-desktop # native desktop restoration and per-process CPU
+scripts/bench-persistent.sh --no-followers # W01 host-only topology
+scripts/bench-persistent.sh --with-worker --no-followers # W01 host+worker topology
+```
 
 ## Terminal suite
 

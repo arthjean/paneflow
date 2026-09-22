@@ -1,0 +1,39 @@
+{
+  "observed_at_utc": "2026-09-22T08:11:28.690414Z",
+  "observation_scope": "Fresh isolated host using the exact release executable measured immediately beforehand; module enumeration occurs after all benchmark windows",
+  "host_pid": 25972,
+  "host_birth_utc": "2026-09-22T08:11:28.5023066Z",
+  "home": "C:\\Users\\Arthur\\AppData\\Local\\Temp\\paneflow-ep001-conpty-b58acb4b1f5747cba1982985da67c53d",
+  "session": "a66feb6c-b0f9-4c32-9aee-c3e455552e0a",
+  "host_sha256": "286A6B285E70E808A99526D49690FC9A4D3F6DC988A729171218CF57EA84CBFD",
+  "baseline_source_fingerprint": "ee47b728e251ffc7",
+  "machine": {
+    "arch": "x86_64",
+    "cpu_model": "AMD64 Family 25 Model 97 Stepping 2, AuthenticAMD",
+    "hostname_hash": "27c35a214898caba",
+    "logical_cpus": 16,
+    "os": "windows",
+    "os_build": "Microsoft Windows [version 10.0.26200.9457]",
+    "total_ram_bytes": 33459585024
+  },
+  "engine": {
+    "api_version": "0.1.0",
+    "app_version": "1.3.2-dev+0c2a290d3",
+    "engine": "libghostty-vt",
+    "source_sha": "0c2a290d3a3e2a599be3a43435d778a5896667ee"
+  },
+  "conpty": {
+    "path": "C:\\Users\\Arthur\\.paneflow\\cache\\conpty\\1.24.260710001\\x86_64-pc-windows-msvc\\conpty.dll",
+    "file_version": "1.24.2607.10001",
+    "product_version": "1.24.260710001",
+    "package_version": "1.24.260710001",
+    "sha256": "39FBA2713E2495117B1591AE8C32A3B904BEA7AA66069CF7815E2844C76D75D8",
+    "matches_pinned_payload": true
+  },
+  "retained_host_handle": true,
+  "host_protocol": {
+    "build_id": "0.16.0+0c2a290d3a3e",
+    "protocol": 1,
+    "version": "0.16.0"
+  }
+}
