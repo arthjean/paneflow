@@ -13,9 +13,10 @@ use crate::ai_types::AgentState;
 use crate::settings::components::{
     card_color, destructive_button, secondary_button, setting_text, toggle_pill, with_alpha,
 };
-use crate::terminal::host_link::{self, HostLinkState};
+use crate::terminal::host_link::{self, HostLinkState, StopAllOutcome};
 use crate::ui_primitives::squircle::{squircle_border, squircle_fill};
 use crate::ui_primitives::{BODY, LABEL_SM, TITLE};
+use crate::update;
 
 const DIALOG_WIDTH: Pixels = px(460.);
 const CARD_RADIUS: Pixels = crate::app::constants::PANE_CARD_RADIUS;
@@ -47,11 +48,39 @@ pub(crate) fn quit_plan(policy: OnQuit, live_sessions: usize) -> QuitPlan {
     }
 }
 
-pub(crate) fn update_restart_plan(policy: OnQuit, live_sessions: usize) -> QuitPlan {
-    if live_sessions == 0 || policy == OnQuit::Stop {
-        QuitPlan::StopEverything
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct UpdatePreflight {
+    pub(crate) replacement_ready: bool,
+    pub(crate) host_serving: Option<usize>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum UpdateRestartPlan {
+    Proceed(QuitPlan),
+    Deferred(String),
+}
+
+pub(crate) fn update_restart_plan(
+    policy: OnQuit,
+    live_sessions: usize,
+    preflight: UpdatePreflight,
+) -> UpdateRestartPlan {
+    if !preflight.replacement_ready {
+        return UpdateRestartPlan::Deferred(
+            "The replacement is not staged on disk; download the update again before restarting."
+                .to_string(),
+        );
+    }
+    let Some(serving) = preflight.host_serving else {
+        return UpdateRestartPlan::Deferred(
+            "The running session host could not be checked; retry before replacing it.".into(),
+        );
+    };
+    let serving = serving.max(live_sessions);
+    if serving == 0 || policy == OnQuit::Stop {
+        UpdateRestartPlan::Proceed(QuitPlan::StopEverything)
     } else {
-        QuitPlan::Ask
+        UpdateRestartPlan::Proceed(QuitPlan::Ask)
     }
 }
 
@@ -95,6 +124,7 @@ pub(crate) struct QuitDialog {
     remember: bool,
     stopping: bool,
     focused: bool,
+    failure: Option<StopAllOutcome>,
 }
 
 impl PaneFlowApp {
@@ -114,13 +144,47 @@ impl PaneFlowApp {
         if self.quit_dialog.is_some() || self.session_exit_pending {
             return;
         }
-        let sessions = self.live_session_targets(cx).len();
-        match update_restart_plan(self.cached_config.resolved_on_quit(), sessions) {
-            QuitPlan::StopEverything | QuitPlan::QuitNow => {
-                self.exit_stopping_everything(ExitKind::UpdateRestart, cx)
-            }
-            QuitPlan::Ask => self.open_exit_dialog(ExitKind::UpdateRestart, sessions, cx),
-        }
+        let staged = self.self_update.staged_msi.clone();
+        self.session_exit_pending = true;
+        let executor = cx.background_executor().clone();
+        cx.spawn(async move |this, cx: &mut AsyncApp| {
+            let preflight = executor
+                .spawn(async move {
+                    let artifacts_ready = std::env::current_exe()
+                        .ok()
+                        .zip(paneflow_home::paneflow_home())
+                        .is_some_and(|(controller, home)| {
+                            paneflow_host::bootstrap::preflight_replacement(&controller, &home)
+                                .is_ok()
+                        });
+                    UpdatePreflight {
+                        replacement_ready: artifacts_ready
+                            && staged
+                                .as_ref()
+                                .is_none_or(update::windows::msi::StagedMsiUpdate::is_staged),
+                        host_serving: host_link::host_is_serving(),
+                    }
+                })
+                .await;
+            let _ = this.update(cx, |app, cx| {
+                app.session_exit_pending = false;
+                let sessions = app.live_session_targets(cx).len();
+                match update_restart_plan(app.cached_config.resolved_on_quit(), sessions, preflight)
+                {
+                    UpdateRestartPlan::Deferred(reason) => {
+                        log::warn!("self-update: restart deferred: {reason}");
+                        app.show_toast(format!("Update deferred: {reason}"), cx);
+                    }
+                    UpdateRestartPlan::Proceed(QuitPlan::StopEverything | QuitPlan::QuitNow) => {
+                        app.exit_stopping_everything(ExitKind::UpdateRestart, cx);
+                    }
+                    UpdateRestartPlan::Proceed(QuitPlan::Ask) => {
+                        app.open_exit_dialog(ExitKind::UpdateRestart, sessions, cx);
+                    }
+                }
+            });
+        })
+        .detach();
     }
 
     fn open_exit_dialog(&mut self, kind: ExitKind, sessions: usize, cx: &mut Context<Self>) {
@@ -133,8 +197,87 @@ impl PaneFlowApp {
             remember: false,
             stopping: false,
             focused: false,
+            failure: None,
         });
         cx.notify();
+    }
+
+    fn report_stop_failure(
+        &mut self,
+        kind: ExitKind,
+        outcome: StopAllOutcome,
+        cx: &mut Context<Self>,
+    ) {
+        log::warn!(
+            "paneflow: the stop-everything exit could not be confirmed: {}",
+            outcome.user_message()
+        );
+        self.session_exit_pending = false;
+        let sessions = self.live_session_targets(cx).len();
+        let (working, waiting) = self.busy_agent_counts();
+        let remember = self
+            .quit_dialog
+            .as_ref()
+            .is_some_and(|dialog| dialog.remember);
+        self.quit_dialog = Some(QuitDialog {
+            kind,
+            sessions,
+            working,
+            waiting,
+            remember,
+            stopping: false,
+            focused: false,
+            failure: Some(outcome),
+        });
+        cx.notify();
+    }
+
+    fn quit_with_unsaved_final_state(&mut self, cx: &mut Context<Self>) {
+        let Some(dialog) = self.quit_dialog.as_ref() else {
+            return;
+        };
+        if !dialog
+            .failure
+            .as_ref()
+            .is_some_and(StopAllOutcome::durability_only)
+        {
+            return;
+        }
+        self.finish_quit(cx);
+    }
+
+    fn finish_update_restart(&mut self, cx: &mut Context<Self>) {
+        match self.self_update.staged_msi.clone() {
+            Some(staged) => {
+                let executor = cx.background_executor().clone();
+                cx.spawn(async move |this, cx: &mut AsyncApp| {
+                    let result = executor
+                        .spawn(async move { update::windows::msi::spawn_relay(staged) })
+                        .await;
+                    let _ = this.update(cx, |app, cx| match result {
+                        Ok(()) => {
+                            app.self_update.staged_msi = None;
+                            log::info!(
+                                "self-update/msi: sessions stopped and host shut down - relay spawned, quitting so msiexec can replace the binaries"
+                            );
+                            app.self_update.self_update_status =
+                                update::SelfUpdateStatus::Installing;
+                            app.finish_quit(cx);
+                        }
+                        Err(err) => {
+                            app.session_exit_pending = false;
+                            app.quit_dialog = None;
+                            app.record_update_failure("msi-relay", &err, cx);
+                        }
+                    });
+                })
+                .detach();
+            }
+            None => {
+                log::info!("self-update: sessions stopped - invoking cx.restart()");
+                cx.restart();
+            }
+        }
     }
 
     pub(crate) fn close_quit_dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -230,14 +373,17 @@ impl PaneFlowApp {
             cx.notify();
             let executor = cx.background_executor().clone();
             cx.spawn(async move |this, cx: &mut AsyncApp| {
-                executor
+                let outcome = executor
                     .spawn(async move { host_link::stop_sessions_and_shutdown(targets, endpoint) })
                     .await;
-                let _ = this.update(cx, |app, cx| match kind {
-                    ExitKind::Quit => app.finish_quit(cx),
-                    ExitKind::UpdateRestart => {
-                        log::info!("self-update: sessions stopped - invoking cx.restart()");
-                        cx.restart();
+                let _ = this.update(cx, |app, cx| {
+                    if !outcome.confirmed() {
+                        app.report_stop_failure(kind, outcome, cx);
+                        return;
+                    }
+                    match kind {
+                        ExitKind::Quit => app.finish_quit(cx),
+                        ExitKind::UpdateRestart => app.finish_update_restart(cx),
                     }
                 });
             })
@@ -300,18 +446,49 @@ impl PaneFlowApp {
         let ui = crate::theme::ui_colors();
         let stopping = dialog.stopping;
         let kind = dialog.kind;
-        let (question, explanation_text, stop_label): (&str, &str, &str) = match kind {
-            ExitKind::Quit => (
+        let failure = dialog.failure.clone();
+        let durability_only = failure
+            .as_ref()
+            .is_some_and(StopAllOutcome::durability_only);
+        let (question, explanation_text, stop_label): (&str, String, &str) = match (kind, &failure)
+        {
+            (ExitKind::Quit, None) => (
                 "Quit Paneflow?",
                 "Keep them running and they are right there the next time Paneflow opens. \
-                 Stop everything to end every session and the processes it started.",
+                 Stop everything to end every session and the processes it started."
+                    .to_string(),
                 "Stop everything and quit",
             ),
-            ExitKind::UpdateRestart => (
+            (ExitKind::UpdateRestart, None) => (
                 "Restart into the new version?",
                 "The update replaces the session host, which ends every running session and \
-                 the processes it started. Cancel to keep them going and restart later.",
+                 the processes it started. Cancel to keep them going and restart later."
+                    .to_string(),
                 "Stop everything and restart",
+            ),
+            (_, Some(outcome)) if durability_only => (
+                "The final state could not be saved",
+                format!(
+                    "Every session stopped. {}. Retry the save, or leave with the final state unsaved.",
+                    outcome.user_message()
+                ),
+                "Retry",
+            ),
+            (ExitKind::Quit, Some(outcome)) => (
+                "Some sessions could not be confirmed stopped",
+                format!(
+                    "{}. The local host keeps owning them; nothing was assumed. Retry, keep them running and quit, or cancel.",
+                    outcome.user_message()
+                ),
+                "Retry",
+            ),
+            (ExitKind::UpdateRestart, Some(outcome)) => (
+                "The update cannot replace the host yet",
+                format!(
+                    "{}. The local host keeps owning them, so the replacement is deferred. Retry, or cancel and update later.",
+                    outcome.user_message()
+                ),
+                "Retry",
             ),
         };
         let summary = if stopping {
@@ -405,17 +582,35 @@ impl PaneFlowApp {
                             cx.stop_propagation();
                         }),
                     ))
-                    .when(kind == ExitKind::Quit, |footer| {
+                    .when(durability_only, |footer| {
                         footer.child(secondary_button(
-                            "quit-dialog-keep",
-                            "Keep sessions running",
+                            "quit-dialog-unsaved",
+                            "Quit with unsaved final state",
                             ui,
                             cx.listener(|this, _: &ClickEvent, _, cx| {
-                                this.quit_keeping_sessions(cx);
+                                this.quit_with_unsaved_final_state(cx);
                                 cx.stop_propagation();
                             }),
                         ))
                     })
+                    .when(
+                        (kind == ExitKind::Quit || failure.is_some()) && !durability_only,
+                        |footer| {
+                            footer.child(secondary_button(
+                                "quit-dialog-keep",
+                                if failure.is_some() {
+                                    "Keep running and quit"
+                                } else {
+                                    "Keep sessions running"
+                                },
+                                ui,
+                                cx.listener(|this, _: &ClickEvent, _, cx| {
+                                    this.quit_keeping_sessions(cx);
+                                    cx.stop_propagation();
+                                }),
+                            ))
+                        },
+                    )
             });
 
         let card = div()
@@ -437,9 +632,10 @@ impl PaneFlowApp {
                     .flex_col()
                     .child(header)
                     .child(explanation)
-                    .when(!stopping && kind == ExitKind::Quit, |body| {
-                        body.child(remember_row)
-                    })
+                    .when(
+                        !stopping && kind == ExitKind::Quit && failure.is_none(),
+                        |body| body.child(remember_row),
+                    )
                     .child(footer),
             )
             .child(squircle_border(
@@ -492,14 +688,48 @@ mod tests {
 
     #[test]
     fn an_update_restart_never_pretends_sessions_can_be_kept() {
+        let ready = UpdatePreflight {
+            replacement_ready: true,
+            host_serving: Some(0),
+        };
         for policy in [OnQuit::Ask, OnQuit::Keep, OnQuit::Stop] {
-            assert_eq!(update_restart_plan(policy, 0), QuitPlan::StopEverything);
+            assert_eq!(
+                update_restart_plan(policy, 0, ready),
+                UpdateRestartPlan::Proceed(QuitPlan::StopEverything)
+            );
         }
-        assert_eq!(update_restart_plan(OnQuit::Ask, 2), QuitPlan::Ask);
-        assert_eq!(update_restart_plan(OnQuit::Keep, 2), QuitPlan::Ask);
         assert_eq!(
-            update_restart_plan(OnQuit::Stop, 2),
-            QuitPlan::StopEverything
+            update_restart_plan(OnQuit::Ask, 2, ready),
+            UpdateRestartPlan::Proceed(QuitPlan::Ask)
+        );
+        assert_eq!(
+            update_restart_plan(OnQuit::Keep, 2, ready),
+            UpdateRestartPlan::Proceed(QuitPlan::Ask)
+        );
+        assert_eq!(
+            update_restart_plan(OnQuit::Stop, 2, ready),
+            UpdateRestartPlan::Proceed(QuitPlan::StopEverything)
+        );
+    }
+
+    #[test]
+    fn an_update_preflight_defers_a_missing_replacement_and_counts_the_host_sessions() {
+        let missing = UpdatePreflight {
+            replacement_ready: false,
+            host_serving: Some(0),
+        };
+        assert!(matches!(
+            update_restart_plan(OnQuit::Stop, 0, missing),
+            UpdateRestartPlan::Deferred(reason) if reason.contains("not staged")
+        ));
+        let host_busy = UpdatePreflight {
+            replacement_ready: true,
+            host_serving: Some(3),
+        };
+        assert_eq!(
+            update_restart_plan(OnQuit::Keep, 0, host_busy),
+            UpdateRestartPlan::Proceed(QuitPlan::Ask),
+            "sessions the desktop does not show still hold the host binary in use"
         );
     }
 

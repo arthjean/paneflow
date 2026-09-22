@@ -46,11 +46,21 @@ pub enum SessionLifecycle {
         reason: String,
     },
     Lost,
+    Unverified {
+        reason: String,
+    },
 }
 
 impl SessionLifecycle {
     pub fn is_running(&self) -> bool {
         matches!(self, Self::Starting | Self::Running)
+    }
+
+    pub fn holds_ownership(&self) -> bool {
+        matches!(
+            self,
+            Self::Starting | Self::Running | Self::Unverified { .. }
+        )
     }
 
     pub fn label(&self) -> &'static str {
@@ -60,6 +70,7 @@ impl SessionLifecycle {
             Self::Exited { .. } => "exited",
             Self::Failed { .. } => "failed",
             Self::Lost => "lost",
+            Self::Unverified { .. } => "unverified",
         }
     }
 }

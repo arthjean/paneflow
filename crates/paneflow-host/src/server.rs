@@ -16,9 +16,10 @@ use crate::manifest::now_ms;
 use crate::protocol::{
     self, ClientHello, DATA_CHUNK_RAW_BYTES, ERR_BUSY, ERR_CHECKPOINT_TOO_LARGE, ERR_DEADLINE,
     ERR_ENGINE_REQUIRED, ERR_FRAME_TOO_LARGE, ERR_GENERATION_MISMATCH, ERR_HANDSHAKE_REQUIRED,
-    ERR_INCOMPATIBLE, ERR_INTERNAL, ERR_INVALID_PARAMS, ERR_INVALID_REQUEST, ERR_METHOD_NOT_FOUND,
-    ERR_NO_CONTROLLER, ERR_OUTPUT_EVICTED, ERR_PARSE, ERR_PROCESS_UNVERIFIED, ERR_SESSION_LIVE,
-    ERR_SESSION_NOT_FOUND, ERR_SESSION_NOT_LIVE, ERR_SPAWN_FAILED, HOST_PROTOCOL_VERSION,
+    ERR_INCOMPATIBLE, ERR_INTERNAL, ERR_INVALID_PARAMS, ERR_INVALID_REQUEST, ERR_LAUNCH_PENDING,
+    ERR_METHOD_NOT_FOUND, ERR_NO_CONTROLLER, ERR_OUTPUT_EVICTED, ERR_OWNERSHIP_UNRESOLVED,
+    ERR_PARSE, ERR_PROCESS_UNVERIFIED, ERR_SESSION_LIVE, ERR_SESSION_NOT_FOUND,
+    ERR_SESSION_NOT_LIVE, ERR_SHUTTING_DOWN, ERR_SPAWN_FAILED, HOST_PROTOCOL_VERSION,
     METHOD_AGENT_EVENT, METHOD_AGENT_FOLLOW, METHOD_AGENT_SNAPSHOT, encode_data, error_envelope,
     result_envelope,
 };
@@ -70,9 +71,7 @@ impl ServerHandle {
 
     pub fn stop(mut self) -> io::Result<()> {
         self.shutdown.store(true, Ordering::Release);
-        if let Ok(name) = self.endpoint.as_path().to_fs_name::<GenericFilePath>() {
-            let _ = Stream::connect(name);
-        }
+        wake_accept_loop(&self.endpoint);
         match self.thread.take() {
             Some(thread) => thread
                 .join()
@@ -86,9 +85,7 @@ impl Drop for ServerHandle {
     fn drop(&mut self) {
         if let Some(thread) = self.thread.take() {
             self.shutdown.store(true, Ordering::Release);
-            if let Ok(name) = self.endpoint.as_path().to_fs_name::<GenericFilePath>() {
-                let _ = Stream::connect(name);
-            }
+            wake_accept_loop(&self.endpoint);
             let _ = thread.join();
         }
         #[cfg(unix)]
@@ -347,13 +344,31 @@ fn handle_connection(mut wire: Wire, host: Arc<SessionHost>, shutdown: Arc<Atomi
                     .and_then(Value::as_bool)
                     .unwrap_or(false);
                 let envelope = match host.request_shutdown(force) {
-                    Ok(ended) => result_envelope(
+                    Ok(report) => result_envelope(
                         &id,
                         json!({
                             "stopping": true,
                             "host_instance": host.instance(),
-                            "ended_sessions": ended.len(),
+                            "ended_sessions": report.ended.len(),
+                            "unresolved": report.unresolved,
                         }),
+                    ),
+                    Err(HostError::SessionsUnresolved { sessions }) => error_envelope(
+                        &id,
+                        ERR_OWNERSHIP_UNRESOLVED,
+                        HostError::SessionsUnresolved {
+                            sessions: sessions.clone(),
+                        }
+                        .to_string(),
+                        Some(
+                            json!({"unresolved": sessions, "owned_sessions": host.owned_sessions()}),
+                        ),
+                    ),
+                    Err(HostError::Storage(reason)) => error_envelope(
+                        &id,
+                        protocol::ERR_DURABILITY,
+                        reason,
+                        Some(json!({"owned_sessions": host.owned_sessions()})),
                     ),
                     Err(error) => {
                         let live = host.live_sessions();
@@ -407,6 +422,16 @@ fn handle_connection(mut wire: Wire, host: Arc<SessionHost>, shutdown: Arc<Atomi
 }
 
 fn wake_accept_loop(endpoint: &Path) {
+    #[cfg(windows)]
+    {
+        use interprocess::ConnectWaitMode;
+        use interprocess::os::windows::named_pipe::{DuplexPipeStream, pipe_mode};
+        let _ = DuplexPipeStream::<pipe_mode::Bytes>::connect_by_path_with_wait_mode(
+            endpoint.as_os_str(),
+            ConnectWaitMode::Timeout(Duration::from_millis(250)),
+        );
+    }
+    #[cfg(not(windows))]
     if let Ok(name) = endpoint.to_fs_name::<GenericFilePath>() {
         let _ = Stream::connect(name);
     }
@@ -496,6 +521,16 @@ fn error_to_envelope(id: &Value, error: DispatchError) -> Value {
                 HostError::SessionLive(_) | HostError::SessionsLive { .. } => {
                     (ERR_SESSION_LIVE, None)
                 }
+                HostError::SessionsUnresolved { sessions } => (
+                    ERR_OWNERSHIP_UNRESOLVED,
+                    Some(json!({"unresolved": sessions})),
+                ),
+                HostError::LaunchPending(_) => (ERR_LAUNCH_PENDING, None),
+                HostError::OwnershipUnresolved { reason, .. } => {
+                    (ERR_OWNERSHIP_UNRESOLVED, Some(json!({"reason": reason})))
+                }
+                HostError::Busy(_) => (ERR_BUSY, None),
+                HostError::ShuttingDown => (ERR_SHUTTING_DOWN, None),
                 HostError::OwnerBusy(_) => (ERR_INTERNAL, None),
                 HostError::ProcessUnverified(_) => (ERR_PROCESS_UNVERIFIED, None),
                 HostError::SpawnFailed { .. } => (ERR_SPAWN_FAILED, None),
@@ -1284,6 +1319,23 @@ mod tests {
             HostClient::connect(&endpoint, &hello).is_err(),
             "the endpoint is gone once the server stopped"
         );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_second_shutdown_wakeup_is_bounded_when_an_accepted_pipe_outlives_its_listener() {
+        let home = tempfile::tempdir().unwrap();
+        let endpoint = test_endpoint(home.path());
+        let listener = bind(&endpoint).unwrap();
+        let connected =
+            Stream::connect(endpoint.as_path().to_fs_name::<GenericFilePath>().unwrap()).unwrap();
+        let accepted = listener.accept().unwrap();
+        drop(listener);
+        let started = Instant::now();
+        wake_accept_loop(&endpoint);
+        assert!(started.elapsed() < Duration::from_secs(2));
+        drop(accepted);
+        drop(connected);
     }
 
     #[test]

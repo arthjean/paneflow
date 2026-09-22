@@ -98,6 +98,9 @@ pub(crate) fn lifecycle_sentence(lifecycle: &SessionLifecycle) -> String {
         },
         SessionLifecycle::Failed { reason } => format!("Failed to start: {reason}"),
         SessionLifecycle::Lost => "Lost: its process did not survive".to_string(),
+        SessionLifecycle::Unverified { reason } => {
+            format!("Unverified: the host still owns its process ({reason})")
+        }
     }
 }
 

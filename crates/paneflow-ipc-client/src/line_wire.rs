@@ -2,7 +2,9 @@ use std::io;
 use std::path::Path;
 use std::time::Duration;
 
-use interprocess::local_socket::{prelude::*, GenericFilePath, Stream};
+use interprocess::local_socket::Stream;
+#[cfg(not(windows))]
+use interprocess::local_socket::{prelude::*, GenericFilePath};
 
 pub const WRITE_DEADLINE: Duration = Duration::from_secs(5);
 
@@ -26,8 +28,38 @@ pub struct Wire {
 
 impl Wire {
     pub fn connect(endpoint: &Path, max_frame: usize) -> io::Result<Self> {
-        let name = endpoint.to_fs_name::<GenericFilePath>()?;
-        Self::new(Stream::connect(name)?, max_frame)
+        Self::connect_with_timeout(endpoint, max_frame, crate::host_control::REQUEST_DEADLINE)
+    }
+
+    pub fn connect_with_timeout(
+        endpoint: &Path,
+        max_frame: usize,
+        timeout: Duration,
+    ) -> io::Result<Self> {
+        #[cfg(windows)]
+        {
+            use interprocess::os::windows::named_pipe::{
+                local_socket, pipe_mode, DuplexPipeStream,
+            };
+            use interprocess::ConnectWaitMode;
+            use std::os::windows::io::OwnedHandle;
+            let pipe = DuplexPipeStream::<pipe_mode::Bytes>::connect_by_path_with_wait_mode(
+                endpoint.as_os_str(),
+                ConnectWaitMode::Timeout(timeout),
+            )?;
+            let handle: OwnedHandle = pipe
+                .try_into()
+                .map_err(|_| io::Error::other("cannot transfer an unsplit named pipe handle"))?;
+            let stream = local_socket::Stream::try_from(handle)
+                .map_err(|error| io::Error::other(error.to_string()))?;
+            Self::new(Stream::NamedPipe(stream), max_frame)
+        }
+        #[cfg(not(windows))]
+        {
+            let _ = timeout;
+            let name = endpoint.to_fs_name::<GenericFilePath>()?;
+            Self::new(Stream::connect(name)?, max_frame)
+        }
     }
 
     pub fn new(stream: Stream, max_frame: usize) -> io::Result<Self> {
@@ -164,5 +196,47 @@ impl Wire {
     ) -> io::Result<()> {
         let line = serde_json::to_vec(value).map_err(io::Error::other)?;
         self.write_line_with_timeout(&line, timeout)
+    }
+}
+
+#[cfg(all(test, windows))]
+mod tests {
+    use super::*;
+    use interprocess::local_socket::{prelude::*, GenericFilePath, ListenerOptions};
+
+    #[test]
+    fn a_busy_windows_pipe_obeys_the_requested_connect_timeout() {
+        let home = tempfile::tempdir().unwrap();
+        let endpoint = std::path::PathBuf::from(format!(
+            r"\\.\pipe\paneflow-wire-timeout-{}-{}",
+            std::process::id(),
+            home.path().file_name().unwrap().to_string_lossy()
+        ));
+        let listener = ListenerOptions::new()
+            .name(endpoint.as_path().to_fs_name::<GenericFilePath>().unwrap())
+            .create_sync()
+            .unwrap();
+        let held =
+            Stream::connect(endpoint.as_path().to_fs_name::<GenericFilePath>().unwrap()).unwrap();
+        let accepted = listener.accept().unwrap();
+        drop(listener);
+        let started = std::time::Instant::now();
+        let error = match Wire::connect_with_timeout(&endpoint, 1024, Duration::from_millis(100)) {
+            Ok(_) => panic!("no acceptor remains"),
+            Err(error) => error,
+        };
+        assert_eq!(error.kind(), io::ErrorKind::TimedOut);
+        assert!(started.elapsed() < Duration::from_secs(2));
+        let control = crate::host_control::HostControl::open(
+            &endpoint,
+            "bounded-control",
+            Duration::from_millis(100),
+        );
+        assert!(
+            matches!(control, Err(crate::host_control::ControlConnectError::Transport(error)) if error.kind() == io::ErrorKind::TimedOut)
+        );
+        assert!(started.elapsed() < Duration::from_secs(2));
+        drop(accepted);
+        drop(held);
     }
 }

@@ -14,16 +14,21 @@ use crate::manifest::{
 };
 use crate::protocol::{HOST_PROTOCOL_VERSION, HostIdentity, local_engine_identity};
 use crate::runtime::{
-    Checkpoint, OutputSlice, RuntimeError, RuntimeNotice, RuntimeObserver, SessionRuntime,
-    SpawnSpec,
+    Checkpoint, LaunchCancel, LaunchWait, OutputSlice, RuntimeError, RuntimeNotice,
+    RuntimeObserver, STARTUP_DEADLINE, SessionRuntime, SpawnSpec, StopReport,
 };
 use crate::session_input::SessionInput;
 
 pub const DEFAULT_COLS: u16 = 80;
 pub const DEFAULT_ROWS: u16 = 24;
 pub const DEFAULT_SCROLLBACK_LINES: usize = 10_000;
+pub const MAX_PENDING_LAUNCHES: usize = 8;
 const MAX_LAUNCH_ARGS: usize = 64;
 const MAX_LAUNCH_ENV_ENTRIES: usize = 256;
+const LATE_LAUNCH_WAIT: Duration = Duration::from_secs(3600);
+pub const STOP_ACTION_BUDGET: Duration = Duration::from_secs(5);
+
+pub type OperationId = u64;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CreateSession {
@@ -53,6 +58,18 @@ pub struct SessionSummary {
     pub manifest: SessionManifest,
     pub live: bool,
     pub owned: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub pending_launch: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub launch_operation: Option<OperationId>,
+    #[serde(default, skip_serializing_if = "is_zero_usize")]
+    pub descendants_unresolved: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub durability_error: Option<String>,
+}
+
+fn is_zero_usize(value: &usize) -> bool {
+    *value == 0
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -73,11 +90,21 @@ pub enum SessionReconnection {
         current_owner: HostInstanceToken,
     },
     Lost,
+    Unverified {
+        reason: String,
+    },
 }
 
 impl SessionSummary {
     pub fn reconnection(&self, current_owner: &HostInstanceToken) -> SessionReconnection {
-        if self.live && self.owned {
+        if self.owned
+            && let SessionLifecycle::Unverified { reason } = &self.manifest.lifecycle
+        {
+            return SessionReconnection::Unverified {
+                reason: reason.clone(),
+            };
+        }
+        if self.owned && (self.pending_launch || self.live) {
             return match self.manifest.lifecycle {
                 SessionLifecycle::Starting => SessionReconnection::Starting,
                 _ => SessionReconnection::Live,
@@ -91,7 +118,10 @@ impl SessionSummary {
             SessionLifecycle::Failed { reason } => SessionReconnection::Failed {
                 reason: reason.clone(),
             },
-            SessionLifecycle::Lost | SessionLifecycle::Starting | SessionLifecycle::Running
+            SessionLifecycle::Lost
+            | SessionLifecycle::Starting
+            | SessionLifecycle::Running
+            | SessionLifecycle::Unverified { .. }
                 if &self.manifest.host_instance != current_owner =>
             {
                 SessionReconnection::HostReplaced {
@@ -99,11 +129,34 @@ impl SessionSummary {
                     current_owner: current_owner.clone(),
                 }
             }
+            SessionLifecycle::Unverified { reason } => SessionReconnection::Unverified {
+                reason: reason.clone(),
+            },
             SessionLifecycle::Lost | SessionLifecycle::Starting | SessionLifecycle::Running => {
                 SessionReconnection::Lost
             }
         }
     }
+
+    pub fn owns_process(&self) -> bool {
+        self.pending_launch
+            || self.live
+            || self.descendants_unresolved > 0
+            || matches!(self.manifest.lifecycle, SessionLifecycle::Unverified { .. })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UnresolvedSession {
+    pub session: SessionId,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ShutdownReport {
+    pub ended: Vec<SessionSummary>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub unresolved: Vec<UnresolvedSession>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -124,6 +177,16 @@ pub enum HostError {
     SessionLive(SessionId),
     #[error("{count} live session(s) remain; stop them before stopping the host")]
     SessionsLive { count: usize },
+    #[error("{} session(s) could not be confirmed stopped; the host keeps owning them", .sessions.len())]
+    SessionsUnresolved { sessions: Vec<UnresolvedSession> },
+    #[error("session {0} is still starting; its process is being checked")]
+    LaunchPending(SessionId),
+    #[error("session {session} has unresolved process ownership: {reason}")]
+    OwnershipUnresolved { session: SessionId, reason: String },
+    #[error("the host is at capacity: {0}")]
+    Busy(String),
+    #[error("the host is shutting down and accepts no new process")]
+    ShuttingDown,
     #[error("{0}")]
     OwnerBusy(String),
     #[error("session {0} has no owned process handle in this host instance; nothing was signaled")]
@@ -138,9 +201,19 @@ pub enum HostError {
     Storage(String),
 }
 
+
+struct PendingLaunch {
+    operation: OperationId,
+    generation: SessionGeneration,
+    cancel: Option<LaunchCancel>,
+    cancelled: bool,
+    fallback_owner: Option<crate::runtime::LaunchHandle>,
+}
+
 struct SessionRecord {
     manifest: Arc<Mutex<SessionManifest>>,
     runtime: Option<Arc<SessionRuntime>>,
+    launch: Option<PendingLaunch>,
     input: Arc<Mutex<SessionInput>>,
     escape_fence: bool,
 }
@@ -157,6 +230,7 @@ impl SessionRecord {
         Self {
             manifest,
             runtime: None,
+            launch: None,
             input: Arc::new(Mutex::new(SessionInput::default())),
             escape_fence,
         }
@@ -164,6 +238,25 @@ impl SessionRecord {
 
     fn is_live(&self) -> bool {
         self.runtime.as_deref().is_some_and(SessionRuntime::is_live)
+    }
+
+    fn owns_process(&self) -> bool {
+        self.launch.is_some()
+            || self
+                .runtime
+                .as_deref()
+                .is_some_and(|runtime| runtime.owns_process() || runtime.unverified().is_some())
+            || self.lifecycle_holds_ownership()
+    }
+
+    fn lifecycle_holds_ownership(&self) -> bool {
+        matches!(
+            self.manifest
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .lifecycle,
+            SessionLifecycle::Unverified { .. }
+        )
     }
 
     fn set_escape_fence(&mut self, fenced: bool) {
@@ -224,6 +317,9 @@ pub struct SessionHost {
     helper_dir: Option<PathBuf>,
     permissions: crate::control::ControlPermissions,
     submit_paste_delay: std::time::Duration,
+    shutting_down: AtomicBool,
+    #[cfg(test)]
+    fail_launch_owner_spawn: AtomicBool,
     _owner: OwnerLock,
 }
 
@@ -235,7 +331,9 @@ const INTERRUPTED_RECORD_MAX_AGE_MS: u64 = 30 * 24 * 60 * 60 * 1000;
 
 fn record_max_age_ms(lifecycle: &SessionLifecycle) -> Option<u64> {
     match lifecycle {
-        SessionLifecycle::Starting | SessionLifecycle::Running => None,
+        SessionLifecycle::Starting
+        | SessionLifecycle::Running
+        | SessionLifecycle::Unverified { .. } => None,
         SessionLifecycle::Lost => Some(INTERRUPTED_RECORD_MAX_AGE_MS),
         SessionLifecycle::Exited { .. } | SessionLifecycle::Failed { .. } => {
             Some(FINISHED_RECORD_MAX_AGE_MS)
@@ -275,6 +373,7 @@ impl SessionRow {
             manifest,
             live,
             owned,
+            ..
         } = summary;
         Self {
             session: manifest.session,
@@ -303,7 +402,7 @@ pub fn inactive_window(
     summaries.sort_unstable_by_key(|summary| std::cmp::Reverse(summary.manifest.updated_at_ms));
     let mut seen: HashMap<Option<WorkspaceId>, usize> = HashMap::new();
     summaries.retain(|summary| {
-        if summary.live {
+        if summary.owns_process() {
             return true;
         }
         let counted = seen.entry(summary.manifest.workspace.clone()).or_default();
@@ -363,6 +462,9 @@ impl SessionHost {
             helper_dir,
             permissions,
             submit_paste_delay,
+            shutting_down: AtomicBool::new(false),
+            #[cfg(test)]
+            fail_launch_owner_spawn: AtomicBool::new(false),
             _owner: owner,
         });
         host.adopt_previous_records();
@@ -410,6 +512,7 @@ impl SessionHost {
     pub(crate) fn live_scan_targets(
         &self,
     ) -> Vec<(SessionId, Arc<Mutex<SessionManifest>>, Arc<SessionRuntime>)> {
+        self.reconcile_late_launches();
         self.lock_sessions()
             .iter()
             .filter(|(_, record)| record.is_live())
@@ -466,6 +569,17 @@ impl SessionHost {
 
     pub fn unsubscribe_agents(&self, id: u64) {
         self.agent_bus.unsubscribe(id);
+    }
+
+    pub fn is_shutting_down(&self) -> bool {
+        self.shutting_down.load(Ordering::Acquire)
+    }
+
+    pub fn pending_launches(&self) -> usize {
+        self.lock_sessions()
+            .values()
+            .filter(|record| record.launch.is_some())
+            .count()
     }
 
     fn write_instance_record(&self) -> Result<(), HostError> {
@@ -556,10 +670,22 @@ impl SessionHost {
             .clone();
         let live = record.is_live();
         let owned = manifest.host_instance == self.identity.host_instance;
+        let durability_error = record
+            .durability
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
         SessionSummary {
             manifest,
             live,
             owned,
+            pending_launch: record.launch.is_some(),
+            launch_operation: record.launch.as_ref().map(|launch| launch.operation),
+            descendants_unresolved: record
+                .runtime
+                .as_deref()
+                .map_or(0, SessionRuntime::descendants_unresolved),
+            durability_error,
         }
     }
 
@@ -569,7 +695,7 @@ impl SessionHost {
             let mut sessions = self.lock_sessions();
             let dropped: Vec<SessionId> = sessions
                 .iter()
-                .filter(|(_, record)| !record.is_live())
+                .filter(|(_, record)| !record.owns_process())
                 .filter_map(|(id, record)| {
                     let manifest = record.manifest.lock().ok()?;
                     let max_age = record_max_age_ms(&manifest.lifecycle)?;
@@ -778,6 +904,9 @@ impl SessionHost {
                 "at most {MAX_LAUNCH_ENV_ENTRIES} environment entries are accepted"
             )));
         }
+        if self.is_shutting_down() {
+            return Err(HostError::ShuttingDown);
+        }
         let session = request.session.clone().unwrap_or_default();
         let cwd = resolve_cwd(request.cwd.as_deref());
         let shell = match request
@@ -791,13 +920,6 @@ impl SessionHost {
         };
         let cols = request.cols.filter(|c| *c > 0).unwrap_or(DEFAULT_COLS);
         let rows = request.rows.filter(|r| *r > 0).unwrap_or(DEFAULT_ROWS);
-        let session_dir = paneflow_home::host_session_data_dir_in(&self.home, session.as_str());
-        std::fs::create_dir_all(&session_dir).map_err(|error| {
-            HostError::Storage(format!(
-                "cannot create session data directory {}: {error}",
-                session_dir.display()
-            ))
-        })?;
         let env = self.launch_env(
             &session,
             SessionGeneration::FIRST,
@@ -841,15 +963,49 @@ impl SessionHost {
             created_at_ms: created,
             updated_at_ms: created,
         }));
+        let operation = self.next_operation();
         {
             let mut sessions = self.lock_sessions();
             if sessions.contains_key(&session) {
                 return Err(HostError::SessionExists { session });
             }
-            sessions.insert(session.clone(), SessionRecord::fresh(Arc::clone(&manifest)));
+            self.admit_launch(&sessions)?;
+            let mut record = SessionRecord::fresh(Arc::clone(&manifest));
+            record.launch = Some(PendingLaunch {
+                operation,
+                generation: SessionGeneration::FIRST,
+                cancel: None,
+                cancelled: false,
+                fallback_owner: None,
+            });
+            sessions.insert(session.clone(), record);
         }
-        if let Err(error) = self.persist(&manifest) {
-            self.lock_sessions().remove(&session);
+        let session_dir = self.session_data_dir(&session);
+        let prepared = std::fs::create_dir_all(&session_dir)
+            .map_err(|error| {
+                HostError::Storage(format!(
+                    "cannot create session data directory {}: {error}",
+                    session_dir.display()
+                ))
+            })
+            .and_then(|()| {
+                let snapshot = manifest
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .clone();
+                self.persist_snapshot(&snapshot).map_err(|error| {
+                    HostError::Storage(format!("cannot write the session manifest: {error}"))
+                })
+            });
+        if let Err(error) = prepared {
+            let mut sessions = self.lock_sessions();
+            if sessions
+                .get(&session)
+                .and_then(|record| record.launch.as_ref())
+                .is_some_and(|launch| launch.operation == operation)
+            {
+                sessions.remove(&session);
+            }
             return Err(error);
         }
 
@@ -862,11 +1018,27 @@ impl SessionHost {
             rows,
             scrollback_lines: DEFAULT_SCROLLBACK_LINES,
         };
-        let created = self.launch(session, manifest, spec, SessionGeneration::FIRST);
+        let created = self.launch(session, manifest, spec, SessionGeneration::FIRST, operation);
         if created.is_ok() {
             self.trim_terminated_records();
         }
         created
+    }
+
+    fn admit_launch(&self, sessions: &BTreeMap<SessionId, SessionRecord>) -> Result<(), HostError> {
+        if self.is_shutting_down() {
+            return Err(HostError::ShuttingDown);
+        }
+        let pending = sessions
+            .values()
+            .filter(|record| record.launch.is_some())
+            .count();
+        if pending >= MAX_PENDING_LAUNCHES {
+            return Err(HostError::Busy(format!(
+                "{pending} launches are still unresolved; retry when one finishes"
+            )));
+        }
+        Ok(())
     }
 
     pub fn restart(
@@ -946,80 +1118,332 @@ impl SessionHost {
         self.launch(session.clone(), manifest, spec, next)
     }
 
+    fn refuse_replacement(
+        &self,
+        session: &SessionId,
+        record: &SessionRecord,
+        current: &SessionManifest,
+    ) -> Result<(), HostError> {
+        if record.launch.is_some() {
+            return Err(HostError::LaunchPending(session.clone()));
+        }
+        if record.is_live() || current.lifecycle == SessionLifecycle::Starting {
+            return Err(HostError::SessionLive(session.clone()));
+        }
+        if let Some(reason) = record
+            .runtime
+            .as_deref()
+            .and_then(SessionRuntime::unverified)
+        {
+            return Err(HostError::OwnershipUnresolved {
+                session: session.clone(),
+                reason,
+            });
+        }
+        if let Some(runtime) = record.runtime.as_deref()
+            && runtime.descendants_unresolved() > 0
+        {
+            return Err(HostError::OwnershipUnresolved {
+                session: session.clone(),
+                reason: format!(
+                    "{} descendant process(es) of the previous generation are unresolved",
+                    runtime.descendants_unresolved()
+                ),
+            });
+        }
+        if let SessionLifecycle::Unverified { reason } = &current.lifecycle
+            && current.host_instance == self.identity.host_instance
+        {
+            return Err(HostError::OwnershipUnresolved {
+                session: session.clone(),
+                reason: reason.clone(),
+            });
+        }
+        Ok(())
+    }
+
     fn launch(
         &self,
         session: SessionId,
         manifest: Arc<Mutex<SessionManifest>>,
         spec: SpawnSpec,
         generation: SessionGeneration,
+        operation: OperationId,
     ) -> Result<SessionSummary, HostError> {
-        let observer = self.observer_for(Arc::clone(&manifest));
-        let spawned = SessionRuntime::spawn(spec, generation, observer);
-        let runtime = match spawned {
-            Ok(runtime) => runtime,
-            Err(error) => {
-                self.update(&manifest, |m| {
-                    m.lifecycle = SessionLifecycle::Failed {
-                        reason: error.0.clone(),
-                    };
-                });
-                return Err(HostError::SpawnFailed {
-                    session,
-                    reason: error.0,
-                });
-            }
+        let durability = {
+            let sessions = self.lock_sessions();
+            sessions
+                .get(&session)
+                .map(|record| Arc::clone(&record.durability))
+                .unwrap_or_default()
         };
-        let process = runtime.process();
-        let binding = {
-            let guard = manifest
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            launch_binding_for_command(&guard.launch.shell).map(|bound| bound.id.to_string())
+        let observer = self.observer_for(Arc::clone(&manifest), durability, generation);
+        let handle = match SessionRuntime::launch(spec, generation, observer) {
+            Ok(handle) => handle,
+            Err(error) => return Err(self.fail_launch(&session, operation, error.0)),
         };
-        let escape_fence = binding
-            .as_deref()
-            .and_then(paneflow_agent_config::runtime_by_id)
-            .is_some_and(|bound| bound.lifecycle.escape_cancels_turn);
-        self.update(&manifest, |m| {
-            m.runtime = with_launch_binding(m.runtime.take(), binding);
-            m.lifecycle = if runtime.is_live() {
-                SessionLifecycle::Running
-            } else {
-                match runtime.exit() {
-                    Some(exit) => SessionLifecycle::Exited {
-                        code: exit.code,
-                        signal: exit.signal,
-                    },
-                    None => SessionLifecycle::Running,
+        {
+            let mut sessions = self.lock_sessions();
+            match sessions.get_mut(&session).and_then(|record| {
+                record
+                    .launch
+                    .as_mut()
+                    .filter(|launch| launch.operation == operation)
+            }) {
+                Some(launch) => {
+                    launch.cancel = Some(handle.canceller());
+                    if launch.cancelled {
+                        handle.cancel();
+                    }
                 }
-            };
-            m.process = Some(process);
-        });
-        let runtime = Arc::new(runtime);
-        let mut sessions = self.lock_sessions();
-        let record = sessions
-            .entry(session)
-            .or_insert_with(|| SessionRecord::fresh(Arc::clone(&manifest)));
-        record.runtime = Some(runtime);
-        record.set_escape_fence(escape_fence);
-        Ok(self.summary_of(record))
+                None => {
+                    handle.cancel();
+                    drop(sessions);
+                    self.own_late_launch(session.clone(), operation, handle);
+                    return Err(HostError::SessionNotFound(session));
+                }
+            }
+        }
+        match handle.wait(STARTUP_DEADLINE) {
+            LaunchWait::Ready(runtime) | LaunchWait::Recovery(runtime) => {
+                self.commit_launch(&session, operation, runtime)
+            }
+            LaunchWait::Failed(reason) => Err(self.fail_launch(&session, operation, reason)),
+            LaunchWait::Pending(handle) => {
+                log::warn!(
+                    "paneflow-host: session {session} did not start within {STARTUP_DEADLINE:?}; the launch stays owned until it resolves"
+                );
+                self.own_late_launch(session.clone(), operation, handle);
+                Err(HostError::LaunchPending(session))
+            }
+        }
     }
 
-    pub fn ensure(
+    fn own_late_launch(
         &self,
         session: SessionId,
-        workspace: Option<WorkspaceId>,
-        cwd: Option<String>,
-    ) -> Result<SessionSummary, HostError> {
-        if let Ok(existing) = self.inspect(&session) {
-            return Ok(existing);
+        operation: OperationId,
+        handle: crate::runtime::LaunchHandle,
+    ) {
+        let host = self.weak_self();
+        let named = session.clone();
+        let retained = Arc::new(Mutex::new(Some(handle)));
+        let task_retained = Arc::clone(&retained);
+        let task = move || {
+            let Some(mut handle) = task_retained
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .take()
+            else {
+                return;
+            };
+            let outcome = loop {
+                match handle.wait(LATE_LAUNCH_WAIT) {
+                    LaunchWait::Pending(again) => handle = again,
+                    other => break other,
+                }
+            };
+            let Some(host) = host.upgrade() else {
+                if let LaunchWait::Ready(runtime) | LaunchWait::Recovery(runtime) = outcome {
+                    let _ = runtime.stop();
+                }
+                return;
+            };
+            host.settle_late_launch(&session, operation, outcome);
+        };
+        #[cfg(test)]
+        let fail_spawn = self.fail_launch_owner_spawn.swap(false, Ordering::AcqRel);
+        #[cfg(not(test))]
+        let fail_spawn = false;
+        let spawned = if fail_spawn {
+            Err(std::io::Error::other(
+                "injected launch owner thread creation failure",
+            ))
+        } else {
+            std::thread::Builder::new()
+                .name("paneflow-host-launch-owner".into())
+                .spawn(task)
+        };
+        if let Err(error) = spawned {
+            log::error!(
+                "paneflow-host: cannot start the late launch owner of {named}: {error}; the existing scan retains recovery"
+            );
+            let handle = retained
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .take();
+            if let Some(launch) = self
+                .lock_sessions()
+                .get_mut(&named)
+                .and_then(|record| record.launch.as_mut())
+                .filter(|launch| launch.operation == operation)
+            {
+                launch.fallback_owner = handle;
+            }
         }
-        self.create(CreateSession {
-            session: Some(session),
-            workspace,
-            cwd,
-            ..CreateSession::default()
-        })
+    }
+
+    fn reconcile_late_launches(&self) {
+        let pending: Vec<_> = self
+            .lock_sessions()
+            .iter_mut()
+            .filter_map(|(session, record)| {
+                let launch = record.launch.as_mut()?;
+                Some((
+                    session.clone(),
+                    launch.operation,
+                    launch.fallback_owner.take()?,
+                ))
+            })
+            .collect();
+        for (session, operation, handle) in pending {
+            match handle.wait(std::time::Duration::ZERO) {
+                LaunchWait::Pending(handle) => {
+                    if let Some(launch) = self
+                        .lock_sessions()
+                        .get_mut(&session)
+                        .and_then(|record| record.launch.as_mut())
+                        .filter(|launch| launch.operation == operation)
+                    {
+                        launch.fallback_owner = Some(handle);
+                    }
+                }
+                outcome => self.settle_late_launch(&session, operation, outcome),
+            }
+        }
+    }
+
+    fn settle_late_launch(&self, session: &SessionId, operation: OperationId, outcome: LaunchWait) {
+        match outcome {
+            LaunchWait::Ready(runtime) | LaunchWait::Recovery(runtime) => {
+                if let Err(error) = self.commit_launch(session, operation, runtime) {
+                    log::warn!(
+                        "paneflow-host: late launch of session {session} settled with {error}"
+                    );
+                }
+            }
+            LaunchWait::Failed(reason) => {
+                let error = self.fail_launch(session, operation, reason);
+                log::warn!("paneflow-host: late launch of session {session}: {error}");
+            }
+            LaunchWait::Pending(_) => {}
+        }
+    }
+
+    fn weak_self(&self) -> Weak<Self> {
+        self.weak.clone()
+    }
+
+    fn fail_launch(
+        &self,
+        session: &SessionId,
+        operation: OperationId,
+        reason: String,
+    ) -> HostError {
+        let snapshot = {
+            let mut sessions = self.lock_sessions();
+            let Some(record) = sessions.get_mut(session) else {
+                return HostError::SpawnFailed {
+                    session: session.clone(),
+                    reason,
+                };
+            };
+            let owns = record
+                .launch
+                .as_ref()
+                .is_some_and(|launch| launch.operation == operation);
+            if !owns {
+                return HostError::SpawnFailed {
+                    session: session.clone(),
+                    reason,
+                };
+            }
+            let launch_generation = record.launch.take().map(|launch| launch.generation);
+            let mut guard = record
+                .manifest
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if Some(guard.generation) == launch_generation {
+                guard.lifecycle = SessionLifecycle::Failed {
+                    reason: reason.clone(),
+                };
+                guard.updated_at_ms = now_ms();
+                Some((guard.clone(), Arc::clone(&record.durability)))
+            } else {
+                None
+            }
+        };
+        if let Some((snapshot, durability)) = snapshot {
+            self.persist_with_durability(&snapshot, &durability);
+        }
+        HostError::SpawnFailed {
+            session: session.clone(),
+            reason,
+        }
+    }
+
+    fn commit_launch(
+        &self,
+        session: &SessionId,
+        operation: OperationId,
+        runtime: SessionRuntime,
+    ) -> Result<SessionSummary, HostError> {
+        #[cfg(test)]
+        self.barrier(Barrier::LaunchCommit);
+        #[cfg(not(test))]
+        self.barrier(());
+        let process = runtime.process();
+        let runtime = Arc::new(runtime);
+        let cancelled = {
+            let mut sessions = self.lock_sessions();
+            let record = sessions
+                .get_mut(session)
+                .ok_or_else(|| HostError::SessionNotFound(session.clone()))?;
+            let launch = record
+                .launch
+                .as_ref()
+                .filter(|launch| launch.operation == operation)
+                .ok_or_else(|| HostError::SessionNotFound(session.clone()))?;
+            let cancelled = launch.cancelled;
+            let mut guard = record
+                .manifest
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let binding =
+                launch_binding_for_command(&guard.launch.shell).map(|bound| bound.id.to_string());
+            let fenced = binding
+                .as_deref()
+                .and_then(paneflow_agent_config::runtime_by_id)
+                .is_some_and(|bound| bound.lifecycle.escape_cancels_turn);
+            guard.runtime = with_launch_binding(guard.runtime.take(), binding);
+            guard.process = Some(process);
+            guard.lifecycle = if cancelled {
+                SessionLifecycle::Unverified {
+                    reason: "the cancelled launch is being stopped".into(),
+                }
+            } else if let Some(reason) = runtime.unverified() {
+                SessionLifecycle::Unverified { reason }
+            } else if let Some(exit) = runtime.exit() {
+                SessionLifecycle::Exited {
+                    code: exit.code,
+                    signal: exit.signal,
+                }
+            } else {
+                SessionLifecycle::Running
+            };
+            guard.updated_at_ms = now_ms();
+            drop(guard);
+            record.runtime = Some(Arc::clone(&runtime));
+            record.launch = None;
+            record.set_escape_fence(fenced);
+            cancelled
+        };
+        if cancelled {
+            return self.stop(session, Some(runtime.generation()));
+        }
+        let summary = self.inspect(session)?;
+        self.persist_snapshot(&summary.manifest).ok();
+        self.inspect(session)
     }
 
     pub fn stop(
@@ -1027,10 +1451,40 @@ impl SessionHost {
         session: &SessionId,
         generation: Option<SessionGeneration>,
     ) -> Result<SessionSummary, HostError> {
-        let (manifest, runtime) = {
-            let sessions = self.lock_sessions();
+        let deadline = Instant::now() + STOP_ACTION_BUDGET;
+        let operation = self.next_operation();
+        let host = self.weak_self().upgrade().ok_or(HostError::ShuttingDown)?;
+        let named = session.clone();
+        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+        std::thread::Builder::new()
+            .name("paneflow-host-stop".into())
+            .spawn(move || {
+                let _ = sender.send(host.stop_until(&named, generation, deadline));
+            })
+            .map_err(|error| HostError::OwnershipUnresolved {
+                session: session.clone(),
+                reason: format!("cannot start stop operation: {error}"),
+            })?;
+        receiver
+            .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+            .unwrap_or_else(|_| {
+                Err(HostError::OwnershipUnresolved {
+                    session: session.clone(),
+                    reason: format!("stop operation {operation} exceeded its deadline; the host retains it for recovery"),
+                })
+            })
+    }
+
+    fn stop_until(
+        &self,
+        session: &SessionId,
+        generation: Option<SessionGeneration>,
+        deadline: Instant,
+    ) -> Result<SessionSummary, HostError> {
+        let (manifest, runtime, durability) = {
+            let mut sessions = self.lock_sessions();
             let record = sessions
-                .get(session)
+                .get_mut(session)
                 .ok_or_else(|| HostError::SessionNotFound(session.clone()))?;
             let manifest = Arc::clone(&record.manifest);
             let current = manifest
@@ -1046,25 +1500,68 @@ impl SessionHost {
                     requested,
                 });
             }
-            if !record.is_live() {
-                if current.lifecycle.is_running() || current.lifecycle == SessionLifecycle::Lost {
+            if let Some(launch) = record.launch.as_mut() {
+                launch.cancelled = true;
+                if let Some(cancel) = launch.cancel.as_ref() {
+                    cancel.cancel();
+                }
+                return Err(HostError::LaunchPending(session.clone()));
+            }
+            let Some(runtime) = record.runtime.clone() else {
+                if current.lifecycle.holds_ownership()
+                    || current.lifecycle == SessionLifecycle::Lost
+                {
                     return Err(HostError::ProcessUnverified(session.clone()));
                 }
-                return Ok(self.summary_of(record));
+                let summary = self.summary_of(record);
+                drop(sessions);
+                self.persist_snapshot(&summary.manifest).ok();
+                return self.inspect(session);
+            };
+            if !runtime.owns_process() && runtime.unverified().is_none() {
+                let summary = self.summary_of(record);
+                drop(sessions);
+                self.persist_snapshot(&summary.manifest).ok();
+                return self.inspect(session);
             }
-            let runtime = record
-                .runtime
-                .clone()
-                .ok_or_else(|| HostError::ProcessUnverified(session.clone()))?;
-            (manifest, runtime)
+            (manifest, runtime, Arc::clone(&record.durability))
         };
-        let exit = runtime.stop()?;
-        if let Some(exit) = exit {
-            self.update(&manifest, |m| {
-                m.lifecycle = SessionLifecycle::Exited {
-                    code: exit.code,
-                    signal: exit.signal.clone(),
-                };
+        let report = match runtime.stop_until(deadline) {
+            Ok(report) => report,
+            Err(error) => StopReport {
+                exit: runtime.exit(),
+                descendants_unresolved: runtime.descendants_unresolved(),
+                unverified: Some(format!("the stop could not be confirmed: {error}")),
+            },
+        };
+        #[cfg(test)]
+        self.barrier(Barrier::StopCommit);
+        #[cfg(not(test))]
+        self.barrier(());
+        let snapshot = {
+            let mut guard = manifest
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if guard.generation == runtime.generation() {
+                guard.lifecycle = lifecycle_after_stop(&report);
+                guard.updated_at_ms = now_ms();
+                Some(guard.clone())
+            } else {
+                log::debug!(
+                    "paneflow-host: stop outcome of session {session} generation {} dropped; the session is at {}",
+                    runtime.generation(),
+                    guard.generation
+                );
+                None
+            }
+        };
+        if let Some(snapshot) = snapshot {
+            self.persist_with_durability(&snapshot, &durability);
+        }
+        if let Some(reason) = report.unverified {
+            return Err(HostError::OwnershipUnresolved {
+                session: session.clone(),
+                reason,
             });
         }
         self.inspect(session)
@@ -1081,8 +1578,26 @@ impl SessionHost {
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .clone();
+            if record.launch.is_some() {
+                return Err(HostError::LaunchPending(session.clone()));
+            }
             if record.is_live() || manifest.lifecycle.is_running() {
                 return Err(HostError::SessionLive(session.clone()));
+            }
+            if record.owns_process() && manifest.host_instance == self.identity.host_instance {
+                let reason = record
+                    .runtime
+                    .as_deref()
+                    .and_then(SessionRuntime::unverified)
+                    .or_else(|| match &manifest.lifecycle {
+                        SessionLifecycle::Unverified { reason } => Some(reason.clone()),
+                        _ => None,
+                    })
+                    .unwrap_or_else(|| "descendant processes are unresolved".to_string());
+                return Err(HostError::OwnershipUnresolved {
+                    session: session.clone(),
+                    reason,
+                });
             }
             sessions.remove(session);
             manifest
@@ -1124,6 +1639,9 @@ impl SessionHost {
                         requested,
                     });
                 }
+            }
+            if record.launch.is_some() {
+                return Err(HostError::LaunchPending(session.clone()));
             }
             record
                 .runtime
@@ -1267,30 +1785,152 @@ impl SessionHost {
         self.list(None).into_iter().filter(|s| s.live).collect()
     }
 
+    pub fn owned_sessions(&self) -> Vec<SessionSummary> {
+        self.list(None)
+            .into_iter()
+            .filter(|s| s.owned && s.owns_process())
+            .collect()
+    }
+
     pub fn live_session_count(&self) -> usize {
         self.live_sessions().len()
     }
 
-    pub fn request_shutdown(&self, force: bool) -> Result<Vec<SessionSummary>, HostError> {
-        let live = self.live_sessions();
-        if live.is_empty() {
-            return Ok(Vec::new());
-        }
-        if !force {
-            return Err(HostError::SessionsLive { count: live.len() });
-        }
+    pub fn request_shutdown(&self, force: bool) -> Result<ShutdownReport, HostError> {
+        let deadline = Instant::now() + STOP_ACTION_BUDGET;
+        let operation = self.next_operation();
+        let host = self.weak_self().upgrade().ok_or(HostError::ShuttingDown)?;
+        let (sender, receiver) = std::sync::mpsc::sync_channel(0);
+        std::thread::Builder::new()
+            .name("paneflow-host-shutdown".into())
+            .spawn(move || {
+                let result = host.shutdown_until(force, deadline);
+                if sender.send(result).is_err() {
+                    host.shutting_down.store(false, Ordering::Release);
+                }
+            })
+            .map_err(|error| HostError::Storage(format!("cannot start shutdown: {error}")))?;
+        receiver
+            .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+            .unwrap_or_else(|_| {
+                let sessions = self.owned_sessions().into_iter().map(|summary| UnresolvedSession {
+                    session: summary.manifest.session,
+                    reason: format!("shutdown operation {operation} exceeded its deadline; generation {} remains owned (launch operation: {:?})", summary.manifest.generation, summary.launch_operation),
+                }).collect::<Vec<_>>();
+                if sessions.is_empty() {
+                    Err(HostError::Storage("shutdown persistence deadline expired; final state remains pending".into()))
+                } else {
+                    Err(HostError::SessionsUnresolved { sessions })
+                }
+            })
+    }
+
+    fn shutdown_until(&self, force: bool, deadline: Instant) -> Result<ShutdownReport, HostError> {
+        let owned = {
+            let sessions = self.lock_sessions();
+            if self.is_shutting_down() {
+                return Err(HostError::ShuttingDown);
+            }
+            let owned: Vec<_> = sessions
+                .values()
+                .filter(|record| record.owns_process())
+                .map(|record| self.summary_of(record))
+                .filter(|summary| summary.owned)
+                .collect();
+            if !force && !owned.is_empty() {
+                return Err(HostError::SessionsLive { count: owned.len() });
+            }
+            self.shutting_down.store(true, Ordering::Release);
+            owned
+        };
         let mut ended = Vec::new();
-        for summary in live {
-            if let Ok(stopped) = self.stop(&summary.manifest.session, None) {
-                ended.push(stopped);
+        let mut unresolved = Vec::new();
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let mut pending = Vec::new();
+        for summary in owned {
+            let session = summary.manifest.session;
+            let host = self.weak_self().upgrade().ok_or(HostError::ShuttingDown)?;
+            let sender = sender.clone();
+            let named = session.clone();
+            let generation = summary.manifest.generation;
+            let spawned = std::thread::Builder::new()
+                .name("paneflow-host-shutdown-stop".into())
+                .spawn(move || {
+                    let result = host.stop_until(&named, Some(generation), deadline);
+                    let _ = sender.send((named, result));
+                });
+            if let Err(error) = spawned {
+                unresolved.push(UnresolvedSession {
+                    session,
+                    reason: error.to_string(),
+                });
+            } else {
+                pending.push(session);
             }
         }
-        let remaining = self.live_sessions();
+        drop(sender);
+        while !pending.is_empty() {
+            let Ok((session, result)) =
+                receiver.recv_timeout(deadline.saturating_duration_since(Instant::now()))
+            else {
+                break;
+            };
+            pending.retain(|id| *id != session);
+            match result {
+                Ok(stopped) if stopped.descendants_unresolved > 0 => {
+                    unresolved.push(UnresolvedSession {
+                        session,
+                        reason: format!(
+                            "{} descendant process(es) could not be confirmed terminated",
+                            stopped.descendants_unresolved
+                        ),
+                    });
+                }
+                Ok(stopped) => ended.push(stopped),
+                Err(error) => unresolved.push(UnresolvedSession {
+                    session,
+                    reason: error.to_string(),
+                }),
+            }
+        }
+        unresolved.extend(pending.into_iter().map(|session| UnresolvedSession {
+            session,
+            reason: "shutdown deadline expired; the stop operation remains owned".into(),
+        }));
+        if !unresolved.is_empty() {
+            self.shutting_down.store(false, Ordering::Release);
+            return Err(HostError::SessionsUnresolved {
+                sessions: unresolved,
+            });
+        }
+        let remaining: Vec<UnresolvedSession> = self
+            .owned_sessions()
+            .into_iter()
+            .map(|summary| UnresolvedSession {
+                reason: unresolved
+                    .iter()
+                    .find(|entry| entry.session == summary.manifest.session)
+                    .map(|entry| entry.reason.clone())
+                    .unwrap_or_else(|| "still owned after the stop".to_string()),
+                session: summary.manifest.session,
+            })
+            .collect();
         if remaining.is_empty() {
-            Ok(ended)
+            let failures: Vec<_> = self
+                .list(None)
+                .into_iter()
+                .filter_map(|summary| self.persist_snapshot(&summary.manifest).err())
+                .collect();
+            if failures.is_empty() {
+                Ok(ShutdownReport { ended, unresolved })
+            } else {
+                self.shutting_down.store(false, Ordering::Release);
+                Err(HostError::Storage(failures.join("; ")))
+            }
         } else {
-            Err(HostError::SessionsLive {
-                count: remaining.len(),
+            self.shutting_down.store(false, Ordering::Release);
+            Err(HostError::SessionsUnresolved {
+                sessions: remaining,
             })
         }
     }
@@ -1360,6 +2000,31 @@ impl SessionHost {
                 );
             }
         })
+    }
+}
+
+fn lifecycle_after_stop(report: &StopReport) -> SessionLifecycle {
+    if let Some(reason) = &report.unverified {
+        return SessionLifecycle::Unverified {
+            reason: reason.clone(),
+        };
+    }
+    if report.descendants_unresolved > 0 {
+        return SessionLifecycle::Unverified {
+            reason: format!(
+                "{} descendant process(es) remain unresolved",
+                report.descendants_unresolved
+            ),
+        };
+    }
+    match &report.exit {
+        Some(exit) => SessionLifecycle::Exited {
+            code: exit.code,
+            signal: exit.signal.clone(),
+        },
+        None => SessionLifecycle::Unverified {
+            reason: "the stop returned neither an exit nor a failure".into(),
+        },
     }
 }
 
@@ -1543,6 +2208,57 @@ mod tests {
     use super::*;
     use std::time::{Duration, Instant};
 
+    #[test]
+    fn shutdown_deadline_is_shared_by_stalled_stops_and_keeps_inspection_responsive() {
+        let home = tempfile::tempdir().unwrap();
+        let host = SessionHost::open(home.path(), Path::new("shared-stop-deadline")).unwrap();
+        let mut sessions = Vec::new();
+        for _ in 0..3 {
+            sessions.push(host.create(shell_request(80, 24)).unwrap().manifest.session);
+        }
+        let release = Arc::new((Mutex::new(false), std::sync::Condvar::new()));
+        let blocked = Arc::clone(&release);
+        let entered = Arc::new(AtomicUsize::new(0));
+        let count = Arc::clone(&entered);
+        host.set_barrier(Arc::new(move |point| {
+            if point == Barrier::StopCommit {
+                count.fetch_add(1, Ordering::SeqCst);
+                let (lock, wake) = &*blocked;
+                let guard = lock.lock().unwrap();
+                drop(wake.wait_while(guard, |released| !*released).unwrap());
+            }
+        }));
+        let running = Arc::clone(&host);
+        let started = Instant::now();
+        let stopping = std::thread::spawn(move || running.request_shutdown(true));
+        assert!(wait_until(Duration::from_secs(3), || entered
+            .load(Ordering::SeqCst)
+            == 3));
+        let inspect_started = Instant::now();
+        for session in &sessions {
+            assert!(host.inspect(session).is_ok());
+        }
+        assert!(inspect_started.elapsed() < Duration::from_secs(1));
+        let result = stopping.join().unwrap();
+        let elapsed = started.elapsed();
+        let (lock, wake) = &*release;
+        *lock.lock().unwrap() = true;
+        wake.notify_all();
+        host.set_barrier(Arc::new(|_| {}));
+        assert!(
+            result.is_err(),
+            "a pending commit cannot acknowledge shutdown"
+        );
+        assert!(
+            elapsed < STOP_ACTION_BUDGET + Duration::from_secs(1),
+            "{elapsed:?}"
+        );
+        assert!(wait_until(Duration::from_secs(3), || !host.is_shutting_down()));
+        for session in sessions {
+            host.stop(&session, None).unwrap();
+        }
+    }
+
     fn shell_request(cols: u16, rows: u16) -> CreateSession {
         #[cfg(windows)]
         let (shell, args) = (
@@ -1674,6 +2390,10 @@ mod tests {
             },
             live,
             owned: true,
+            pending_launch: false,
+            launch_operation: None,
+            descendants_unresolved: 0,
+            durability_error: None,
         }
     }
 
@@ -2380,7 +3100,13 @@ mod tests {
             Err(HostError::SessionsLive { count: 1 })
         ));
         host.stop(&session, None).unwrap();
-        assert_eq!(host.request_shutdown(false), Ok(Vec::new()));
+        assert_eq!(
+            host.request_shutdown(false),
+            Ok(ShutdownReport {
+                ended: Vec::new(),
+                unresolved: Vec::new(),
+            })
+        );
     }
 
     #[test]
@@ -2535,4 +3261,270 @@ mod tests {
             "a missing helper directory is reported, never invented"
         );
     }
+    #[test]
+    fn a_stop_during_the_launch_terminates_the_child_instead_of_publishing_it() {
+        let home = tempfile::tempdir().unwrap();
+        let host = SessionHost::open(home.path(), Path::new("late-child")).unwrap();
+        let weak = Arc::downgrade(&host);
+        let fired = Arc::new(AtomicUsize::new(0));
+        let counter = Arc::clone(&fired);
+        let id = SessionId::new();
+        let racing = id.clone();
+        host.set_barrier(Arc::new(move |point| {
+            if point == Barrier::LaunchCommit
+                && counter.fetch_add(1, Ordering::SeqCst) == 0
+                && let Some(host) = weak.upgrade()
+            {
+                assert!(
+                    matches!(host.stop(&racing, None), Err(HostError::LaunchPending(_))),
+                    "a stop during the launch is refused as pending, never advertised as done"
+                );
+                assert!(matches!(
+                    host.remove(&racing),
+                    Err(HostError::LaunchPending(_))
+                ));
+                assert!(matches!(
+                    host.restart(&racing, None),
+                    Err(HostError::LaunchPending(_))
+                ));
+            }
+        }));
+        let created = host
+            .create(CreateSession {
+                session: Some(id.clone()),
+                ..shell_request(80, 24)
+            })
+            .unwrap();
+        assert!(
+            !created.live,
+            "the cancelled launch never publishes a live session"
+        );
+        assert!(!created.pending_launch);
+        assert!(matches!(
+            created.manifest.lifecycle,
+            SessionLifecycle::Exited { .. }
+        ));
+        let process = created
+            .manifest
+            .process
+            .expect("the late child identity is recorded");
+        assert!(!process.is_provably_live(), "the late child was terminated");
+        host.set_barrier(Arc::new(|_| {}));
+    }
+
+    #[test]
+    fn launch_owner_thread_failure_is_reconciled_by_the_existing_scan() {
+        let home = tempfile::tempdir().unwrap();
+        let host = SessionHost::open(home.path(), Path::new("launch-owner-failure")).unwrap();
+        let created = host.create(shell_request(80, 24)).unwrap();
+        let session = created.manifest.session.clone();
+        host.stop(&session, Some(created.manifest.generation))
+            .unwrap();
+        let mut spec = SpawnSpec {
+            shell: created.manifest.launch.shell.clone(),
+            args: Vec::new(),
+            cwd: std::env::temp_dir(),
+            env: BTreeMap::new(),
+            cols: 80,
+            rows: 24,
+            scrollback_lines: 500,
+        };
+        spec.env
+            .insert("PANEFLOW_TEST_SPAWN_DELAY_MS".into(), "100".into());
+        let handle =
+            SessionRuntime::launch(spec, created.manifest.generation, Arc::new(|_| {})).unwrap();
+        {
+            let mut sessions = host.lock_sessions();
+            let record = sessions.get_mut(&session).unwrap();
+            record.runtime = None;
+            record.manifest.lock().unwrap().lifecycle = SessionLifecycle::Starting;
+            record.launch = Some(PendingLaunch {
+                operation: 99,
+                generation: created.manifest.generation,
+                cancel: Some(handle.canceller()),
+                cancelled: false,
+                fallback_owner: None,
+            });
+        }
+        host.fail_launch_owner_spawn.store(true, Ordering::Release);
+        host.own_late_launch(session.clone(), 99, handle);
+        assert!(host.inspect(&session).unwrap().pending_launch);
+        assert!(wait_until(Duration::from_secs(5), || {
+            let summary = host.inspect(&session).unwrap();
+            !summary.pending_launch && summary.live
+        }));
+        let summary = host.inspect(&session).unwrap();
+        let identity = summary.manifest.process.unwrap();
+        assert!(identity.is_provably_live());
+        assert!(
+            !host
+                .stop(&session, Some(summary.manifest.generation))
+                .unwrap()
+                .owns_process()
+        );
+        assert!(!identity.is_provably_live());
+    }
+
+    #[test]
+    fn admission_stops_at_eight_unresolved_launches() {
+        let home = tempfile::tempdir().unwrap();
+        let host = SessionHost::open(home.path(), Path::new("admission")).unwrap();
+        {
+            let mut sessions = host.lock_sessions();
+            for index in 0..MAX_PENDING_LAUNCHES {
+                let session = SessionId::new();
+                let mut record = SessionRecord::fresh(Arc::new(Mutex::new(SessionManifest {
+                    schema: MANIFEST_SCHEMA_VERSION,
+                    session: session.clone(),
+                    workspace: None,
+                    generation: SessionGeneration::FIRST,
+                    host_instance: host.instance().clone(),
+                    cwd: std::env::temp_dir().display().to_string(),
+                    launch: SessionLaunch {
+                        shell: "sh".to_string(),
+                        args: Vec::new(),
+                        env: BTreeMap::new(),
+                        cols: 80,
+                        rows: 24,
+                    },
+                    lifecycle: SessionLifecycle::Starting,
+                    process: None,
+                    title: None,
+                    current_cwd: None,
+                    last_hook: None,
+                    hook_revision: 0,
+                    generation_started_at_ms: None,
+                    screen_changed_at_ms: None,
+                    screen_activity: None,
+                    menu_prompt_active: false,
+                    runtime: None,
+                    host_protocol_version: HOST_PROTOCOL_VERSION,
+                    host_build_id: crate::protocol::host_build_id(),
+                    created_at_ms: now_ms(),
+                    updated_at_ms: now_ms(),
+                })));
+                record.launch = Some(PendingLaunch {
+                    operation: index as u64 + 1,
+                    generation: SessionGeneration::FIRST,
+                    cancel: None,
+                    cancelled: false,
+                    fallback_owner: None,
+                });
+                sessions.insert(session, record);
+            }
+        }
+        assert_eq!(host.pending_launches(), MAX_PENDING_LAUNCHES);
+        assert!(matches!(
+            host.create(shell_request(80, 24)),
+            Err(HostError::Busy(_))
+        ));
+        let summaries = host.list(None);
+        assert!(
+            summaries.iter().all(|summary| summary.pending_launch
+                && summary.reconnection(host.instance()) == SessionReconnection::Starting),
+            "a pending launch is reported as starting, never as a verified process"
+        );
+        host.lock_sessions().clear();
+    }
+
+    #[test]
+    fn a_panicked_runtime_keeps_ownership_until_a_stop_confirms_the_exit() {
+        let home = tempfile::tempdir().unwrap();
+        let host = SessionHost::open(home.path(), Path::new("panic")).unwrap();
+        let created = host.create(shell_request(80, 24)).unwrap();
+        let session = created.manifest.session.clone();
+        let process = created.manifest.process.unwrap();
+        let runtime = host.lock_sessions()[&session].runtime.clone().unwrap();
+        runtime.inject_panic();
+        assert!(
+            wait_until(Duration::from_secs(5), || {
+                matches!(
+                    host.inspect(&session).unwrap().manifest.lifecycle,
+                    SessionLifecycle::Unverified { .. }
+                )
+            }),
+            "the panic surfaces as an unverified record"
+        );
+        let unverified = host.inspect(&session).unwrap();
+        assert!(unverified.owns_process());
+        assert!(matches!(
+            unverified.reconnection(host.instance()),
+            SessionReconnection::Unverified { .. }
+        ));
+        assert!(process.is_provably_live(), "no signal was fabricated");
+        assert!(matches!(
+            host.remove(&session),
+            Err(HostError::OwnershipUnresolved { .. })
+        ));
+        assert!(matches!(
+            host.restart(&session, None),
+            Err(HostError::OwnershipUnresolved { .. })
+        ));
+        assert!(matches!(
+            host.checkpoint(&session, None),
+            Err(HostError::Runtime(RuntimeError::Unverified(_)))
+        ));
+        let stopped = host.stop(&session, None).unwrap();
+        assert!(matches!(
+            stopped.manifest.lifecycle,
+            SessionLifecycle::Exited { .. }
+        ));
+        assert!(!process.is_provably_live());
+        host.remove(&session).unwrap();
+    }
+
+    #[test]
+    fn a_forced_shutdown_with_unresolved_ownership_keeps_the_host_serving() {
+        let home = tempfile::tempdir().unwrap();
+        let host = SessionHost::open(home.path(), Path::new("shutdown")).unwrap();
+        let session = unverified_record(&host, "the wait handle was lost");
+        let refused = host.request_shutdown(true);
+        assert!(
+            matches!(
+                &refused,
+                Err(HostError::SessionsUnresolved { sessions })
+                    if sessions.len() == 1 && sessions[0].session == session
+            ),
+            "the shutdown names the unresolved session: {refused:?}"
+        );
+        assert!(!host.is_shutting_down());
+        assert!(host.create(shell_request(80, 24)).is_ok());
+        for summary in host.live_sessions() {
+            host.stop(&summary.manifest.session, None).unwrap();
+        }
+        host.lock_sessions().remove(&session);
+        assert!(host.request_shutdown(false).is_ok());
+        assert!(host.is_shutting_down());
+        assert!(matches!(
+            host.create(shell_request(80, 24)),
+            Err(HostError::ShuttingDown)
+        ));
+    }
+
+    #[test]
+    fn shutdown_keeps_unsaved_final_state_owned_until_retry_succeeds() {
+        let home = tempfile::tempdir().unwrap();
+        let host = SessionHost::open(home.path(), Path::new("shutdown-durability")).unwrap();
+        let session = host.create(shell_request(80, 24)).unwrap().manifest.session;
+        host.stop(&session, None).unwrap();
+        let path = crate::manifest::manifest_path(home.path(), &session);
+        std::fs::remove_file(&path).unwrap();
+        std::fs::create_dir(&path).unwrap();
+        assert!(matches!(
+            host.request_shutdown(false),
+            Err(HostError::Storage(_))
+        ));
+        assert!(!host.is_shutting_down());
+        let summary = host.inspect(&session).unwrap();
+        assert!(!summary.owns_process());
+        assert!(summary.durability_error.is_some());
+        std::fs::remove_dir(&path).unwrap();
+        assert!(host.request_shutdown(false).is_ok());
+        assert!(host.is_shutting_down());
+        assert!(host.inspect(&session).unwrap().durability_error.is_none());
+        let stored = read_manifest(&path).unwrap();
+        assert!(matches!(stored.lifecycle, SessionLifecycle::Exited { .. }));
+    }
+
+
 }

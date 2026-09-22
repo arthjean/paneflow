@@ -119,7 +119,8 @@ impl HostControl {
         client: &str,
         deadline: Duration,
     ) -> Result<Self, ControlConnectError> {
-        let wire = Wire::connect(endpoint, MAX_CONTROL_FRAME_BYTES)
+        let started = std::time::Instant::now();
+        let wire = Wire::connect_with_timeout(endpoint, MAX_CONTROL_FRAME_BYTES, deadline)
             .map_err(ControlConnectError::Transport)?;
         let mut control = Self {
             wire,
@@ -127,7 +128,11 @@ impl HostControl {
             identity: Value::Null,
         };
         control.identity = control
-            .request_with_deadline(METHOD_HOST_HELLO, control_hello(client), deadline)
+            .request_with_deadline(
+                METHOD_HOST_HELLO,
+                control_hello(client),
+                deadline.saturating_sub(started.elapsed()),
+            )
             .map_err(ControlConnectError::Handshake)?;
         Ok(control)
     }

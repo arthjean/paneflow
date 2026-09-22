@@ -467,6 +467,10 @@ mod tests {
             },
             live: true,
             owned: true,
+            pending_launch: false,
+            launch_operation: None,
+            descendants_unresolved: 0,
+            durability_error: None,
         }
     }
 

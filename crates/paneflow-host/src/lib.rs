@@ -39,8 +39,8 @@ pub use bootstrap::{
 };
 pub use client::{Attachment, HostClient, HostClientError, OutputEnd};
 pub use host::{
-    CreateSession, HostError, INACTIVE_ROWS_PER_WORKSPACE, SessionHost, SessionReconnection,
-    SessionRow, SessionSummary,
+    CreateSession, HostError, INACTIVE_ROWS_PER_WORKSPACE, MAX_PENDING_LAUNCHES, SessionHost,
+    SessionReconnection, SessionRow, SessionSummary, ShutdownReport, UnresolvedSession,
 };
 pub use manifest::{
     HookRecord, HostedSessionRuntime, SessionLaunch, SessionLifecycle, SessionManifest,

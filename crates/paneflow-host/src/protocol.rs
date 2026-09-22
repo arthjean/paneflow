@@ -46,6 +46,10 @@ pub const ERR_SPAWN_FAILED: i64 = -32027;
 pub const ERR_DEADLINE: i64 = -32028;
 pub const ERR_SESSION_LIVE: i64 = -32029;
 pub const ERR_ENGINE_REQUIRED: i64 = -32031;
+pub const ERR_LAUNCH_PENDING: i64 = -32032;
+pub const ERR_OWNERSHIP_UNRESOLVED: i64 = -32033;
+pub const ERR_SHUTTING_DOWN: i64 = -32034;
+pub const ERR_DURABILITY: i64 = -32035;
 
 pub const METHODS: &[&str] = &[
     "host.hello",
