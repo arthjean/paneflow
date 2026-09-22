@@ -53,7 +53,6 @@ pub const METHODS: &[&str] = &[
     "host.shutdown",
     "session.list",
     "session.create",
-    "session.ensure",
     "session.inspect",
     "session.stop",
     "session.restart",
@@ -203,14 +202,12 @@ pub fn check_compatibility(
     Ok(())
 }
 
-pub fn check_build(expected: &str, offered: Option<&str>) -> Result<(), Incompatibility> {
-    let Some(offered) = offered else {
-        return Ok(());
-    };
+pub fn build_drift(expected: &str, offered: Option<&str>) -> Option<Incompatibility> {
+    let offered = offered?;
     if expected == offered {
-        return Ok(());
+        return None;
     }
-    Err(Incompatibility::Build {
+    Some(Incompatibility::Build {
         expected: expected.to_string(),
         offered: offered.to_string(),
     })
@@ -327,15 +324,15 @@ mod tests {
     }
 
     #[test]
-    fn a_build_mismatch_is_incompatible_and_control_clients_skip_the_check() {
-        assert_eq!(check_build(LOCAL_BUILD_VERSION, None), Ok(()));
+    fn a_build_mismatch_is_reported_as_drift_and_control_clients_skip_the_check() {
+        assert_eq!(build_drift(LOCAL_BUILD_VERSION, None), None);
         assert_eq!(
-            check_build(LOCAL_BUILD_VERSION, Some(LOCAL_BUILD_VERSION)),
-            Ok(())
+            build_drift(LOCAL_BUILD_VERSION, Some(LOCAL_BUILD_VERSION)),
+            None
         );
         assert_eq!(
-            check_build("0.15.1", Some("0.15.0")),
-            Err(Incompatibility::Build {
+            build_drift("0.15.1", Some("0.15.0")),
+            Some(Incompatibility::Build {
                 expected: "0.15.1".to_string(),
                 offered: "0.15.0".to_string()
             })

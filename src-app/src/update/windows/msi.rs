@@ -52,6 +52,79 @@ pub struct StagedMsiUpdate {
     restart_path: PathBuf,
 }
 
+impl StagedMsiUpdate {
+    pub fn is_staged(&self) -> bool {
+        std::fs::File::open(&self.msi_path)
+            .and_then(|file| file.metadata())
+            .is_ok_and(|metadata| metadata.is_file() && metadata.len() > 0)
+            && self
+                .restart_path
+                .parent()
+                .is_some_and(std::path::Path::is_dir)
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn installed_host_is_replaceable(restart_path: &Path) -> Result<()> {
+    use std::os::windows::fs::OpenOptionsExt;
+    let directory = restart_path
+        .parent()
+        .context("installed application has no directory")?;
+    let host = directory.join(paneflow_host::bootstrap::HOST_EXECUTABLE_FILE_NAME);
+    std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .share_mode(windows_sys::Win32::Storage::FileSystem::FILE_SHARE_READ)
+        .open(&host)
+        .with_context(|| format!("{} is in use or cannot be replaced; keep the current version and retry after its sessions stop", host.display()))?;
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+const HOST_RELEASE_TIMEOUT: Duration = Duration::from_secs(30);
+
+#[cfg(target_os = "windows")]
+const RELAY_EXIT_HOST_STILL_SERVING: i32 = 3;
+
+#[cfg(target_os = "windows")]
+fn host_still_serving(relay_log_path: &Path) -> Option<String> {
+    let home = paneflow_home::paneflow_home()?;
+    let endpoint = paneflow_host::endpoint::host_endpoint_path(&home);
+    let hello = paneflow_host::ClientHello::control("paneflow-msi-relay");
+    let started = std::time::Instant::now();
+    loop {
+        match paneflow_host::probe(&home, &endpoint, &hello) {
+            paneflow_host::Probe::Unreachable(_) => return None,
+            paneflow_host::Probe::Running(identity) => {
+                if started.elapsed() >= HOST_RELEASE_TIMEOUT {
+                    return Some(format!(
+                        "the session host pid={} still serves {}",
+                        identity.pid,
+                        endpoint.display()
+                    ));
+                }
+            }
+            paneflow_host::Probe::Incompatible(message)
+            | paneflow_host::Probe::Faulted(message) => {
+                if started.elapsed() >= HOST_RELEASE_TIMEOUT {
+                    return Some(format!(
+                        "something still answers on {}: {message}",
+                        endpoint.display()
+                    ));
+                }
+            }
+        }
+        append_relay_log(
+            relay_log_path,
+            &format!(
+                "waiting for the session host to release {}",
+                endpoint.display()
+            ),
+        );
+        std::thread::sleep(Duration::from_millis(u64::from(WINDOWS_WAIT_SLICE_MS)));
+    }
+}
+
 #[allow(dead_code)]
 pub fn install(asset_url: &str) -> Result<PathBuf> {
     let restart_path = super::super::installed_binary_path()?;
@@ -290,6 +363,23 @@ fn run_native_relay(invocation: RelayInvocation) -> Result<i32> {
 
     wait_for_parent_exit(invocation.parent_pid, &invocation.relay_log_path);
     std::thread::sleep(Duration::from_millis(350));
+
+    if let Some(reason) = host_still_serving(&invocation.relay_log_path).or_else(|| {
+        installed_host_is_replaceable(&invocation.restart_path)
+            .err()
+            .map(|error| format!("{error:#}"))
+    }) {
+        append_relay_log(
+            &invocation.relay_log_path,
+            &format!(
+                "update deferred: {reason}; msiexec is not run because the host binary is in use; relaunching the current version"
+            ),
+        );
+        relaunch_paneflow(&invocation.restart_path, &invocation.relay_log_path)
+            .context("relaunch after deferring the update")?;
+        schedule_relay_cleanup(&invocation.relay_log_path);
+        return Ok(RELAY_EXIT_HOST_STILL_SERVING);
+    }
 
     let result = run_msiexec_for_relay(
         &invocation.msi_path,
@@ -641,6 +731,7 @@ fn msiexec_args(msi: &Path, log: &Path) -> Vec<std::ffi::OsString> {
         msi.as_os_str().to_os_string(),
         OsString::from("/qb"),
         OsString::from("/norestart"),
+        OsString::from("MSIRESTARTMANAGERCONTROL=Disable"),
         OsString::from("/l*v"),
         log.as_os_str().to_os_string(),
     ]
@@ -909,6 +1000,7 @@ impl Msiexec for MsiexecProcessRunner {
             .arg(msi)
             .arg("/qb")
             .arg("/norestart")
+            .arg("MSIRESTARTMANAGERCONTROL=Disable")
             .arg("/l*v")
             .arg(log);
         let out = paneflow_process::run_with_timeout(cmd, MSIEXEC_TIMEOUT, NATIVE_STDOUT_CAP)
@@ -942,6 +1034,37 @@ fn msiexec_exe() -> Option<PathBuf> {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn installation_preflight_detects_an_in_use_host_without_an_endpoint() {
+        use std::os::windows::process::CommandExt;
+        let directory = tempfile::tempdir().unwrap();
+        let restart = directory.path().join("paneflow.exe");
+        let host = directory
+            .path()
+            .join(paneflow_host::bootstrap::HOST_EXECUTABLE_FILE_NAME);
+        let shell = PathBuf::from(std::env::var_os("SystemRoot").unwrap())
+            .join("System32")
+            .join("cmd.exe");
+        std::fs::copy(shell, &host).unwrap();
+        let bytes = std::fs::read(&host).unwrap();
+        let mut retained = Command::new(&host)
+            .args(["/D", "/Q", "/C", "pause"])
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .creation_flags(windows_sys::Win32::System::Threading::CREATE_NO_WINDOW)
+            .spawn()
+            .unwrap();
+        let busy = installed_host_is_replaceable(&restart).is_err();
+        let still_live = retained.try_wait().unwrap().is_none();
+        retained.kill().unwrap();
+        retained.wait().unwrap();
+        assert!(busy);
+        assert!(still_live);
+        assert_eq!(std::fs::read(&host).unwrap(), bytes);
+        assert!(installed_host_is_replaceable(&restart).is_ok());
+    }
     use super::*;
     use std::cell::Cell;
 
@@ -1054,7 +1177,7 @@ mod tests {
                 Path::new("C:\\Users\\Example\\AppData\\Local\\Temp\\paneflow update.msi"),
                 Path::new("C:\\Users\\Example\\AppData\\Local\\Temp\\paneflow msi.log"),
             )),
-            "/i \"C:\\Users\\Example\\AppData\\Local\\Temp\\paneflow update.msi\" /qb /norestart /l*v \"C:\\Users\\Example\\AppData\\Local\\Temp\\paneflow msi.log\""
+            "/i \"C:\\Users\\Example\\AppData\\Local\\Temp\\paneflow update.msi\" /qb /norestart MSIRESTARTMANAGERCONTROL=Disable /l*v \"C:\\Users\\Example\\AppData\\Local\\Temp\\paneflow msi.log\""
         );
     }
 

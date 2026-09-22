@@ -435,17 +435,12 @@ fn handshake(host: &SessionHost, params: &Value) -> Result<(Value, bool), (Strin
             serde_json::to_value(&incompatibility).unwrap_or(Value::Null),
         )
     })?;
-    protocol::check_build(&identity.version, hello.build.as_deref()).map_err(
-        |incompatibility| {
-            (
-                format!(
-                    "client {} was built from another Paneflow release: {incompatibility}",
-                    hello.client
-                ),
-                serde_json::to_value(&incompatibility).unwrap_or(Value::Null),
-            )
-        },
-    )?;
+    if let Some(drift) = protocol::build_drift(&identity.version, hello.build.as_deref()) {
+        log::info!(
+            "paneflow-host: client {} was built from another Paneflow release ({drift}); protocol and engine decide compatibility",
+            hello.client
+        );
+    }
     let offers_engine = hello.attaches();
     serde_json::to_value(identity)
         .map(|identity| (identity, offers_engine))
@@ -590,20 +585,6 @@ fn dispatch(host: &SessionHost, method: &str, params: &Value) -> Result<Value, D
             let request: CreateSession = serde_json::from_value(params.clone())
                 .map_err(|e| DispatchError::Params(format!("invalid create request: {e}")))?;
             Ok(to_value(&host.create(request)?))
-        }
-        "session.ensure" => {
-            let session = param_session(params)?;
-            let workspace = match params.get("workspace").and_then(Value::as_str) {
-                Some(raw) => Some(
-                    WorkspaceId::parse(raw).map_err(|e| DispatchError::Params(e.to_string()))?,
-                ),
-                None => None,
-            };
-            let cwd = params
-                .get("cwd")
-                .and_then(Value::as_str)
-                .map(str::to_string);
-            Ok(to_value(&host.ensure(session, workspace, cwd)?))
         }
         "session.inspect" => {
             let session = param_session(params)?;
@@ -1306,17 +1287,15 @@ mod tests {
     }
 
     #[test]
-    fn a_client_from_another_release_is_refused_while_control_clients_are_not() {
+    fn a_client_from_another_release_attaches_when_protocol_and_engine_agree() {
         let (_home, _host, server) = start();
         let mut stale = ClientHello::local("paneflow-host-test");
         stale.build = Some("0.0.0-stale".to_string());
-        let refused = match HostClient::connect(server.endpoint(), &stale) {
-            Ok(_) => panic!("a desktop from another release must be refused"),
-            Err(error) => error,
-        };
+        let attached = HostClient::connect(server.endpoint(), &stale);
         assert!(
-            matches!(refused, HostClientError::Incompatible(_)),
-            "a desktop from another release is refused: {refused:?}"
+            attached.is_ok(),
+            "the build identity is diagnostic only; protocol and engine decide: {:?}",
+            attached.err()
         );
 
         let control = ClientHello::control("paneflow-host-test");

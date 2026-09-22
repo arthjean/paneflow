@@ -34,7 +34,9 @@ pub mod viewport_scan;
 pub use paneflow_config::schema::{HostInstanceToken, SessionGeneration, SessionId, WorkspaceId};
 
 pub use agent::{AgentEvent, AgentEventKind, AgentSnapshotEntry};
-pub use bootstrap::{BootstrapError, HostAdoption, Probe, ensure_host_running, probe};
+pub use bootstrap::{
+    BootstrapError, HostAdoption, Probe, ensure_host_running, probe, stop_incompatible_host,
+};
 pub use client::{Attachment, HostClient, HostClientError, OutputEnd};
 pub use host::{
     CreateSession, HostError, INACTIVE_ROWS_PER_WORKSPACE, SessionHost, SessionReconnection,

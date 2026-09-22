@@ -126,7 +126,14 @@ pub fn probe(home: &Path, endpoint: &Path, hello: &ClientHello) -> Probe {
             }
             Probe::Running(Box::new(identity))
         }
-        Err(HostClientError::Unreachable { source, .. }) => Probe::Unreachable(source),
+        Err(HostClientError::Unreachable { source, .. })
+            if matches!(
+                source.kind(),
+                io::ErrorKind::NotFound | io::ErrorKind::ConnectionRefused
+            ) =>
+        {
+            Probe::Unreachable(source)
+        }
         Err(HostClientError::Incompatible(message)) => Probe::Incompatible(message),
         Err(other) => Probe::Faulted(other.to_string()),
     }
@@ -203,10 +210,15 @@ pub fn resolve_host_executable(controller_exe: &Path) -> Result<PathBuf, Bootstr
     }
 }
 
-fn retire_host(home: &Path, endpoint: &Path) -> Result<(), String> {
+pub fn stop_incompatible_host(home: &Path, endpoint: &Path) -> Result<(), String> {
     let hello = ClientHello::control("paneflow-bootstrap");
     let mut client =
         HostClient::connect(endpoint, &hello).map_err(|error| format!("host.hello: {error}"))?;
+    if paneflow_home::home_fingerprint(Path::new(&client.identity().home))
+        != paneflow_home::home_fingerprint(home)
+    {
+        return Err("the endpoint belongs to another state home; its host was left running".into());
+    }
     client
         .call("host.shutdown", serde_json::json!({"force": true}))
         .map_err(|error| format!("host.shutdown: {error}"))?;
@@ -224,6 +236,41 @@ fn retire_host(home: &Path, endpoint: &Path) -> Result<(), String> {
         }
         std::thread::sleep(STARTUP_POLL);
     }
+}
+
+pub fn preflight_replacement(controller: &Path, home: &Path) -> Result<PathBuf, String> {
+    let executable = resolve_host_executable(controller).map_err(|error| error.to_string())?;
+    let helpers = crate::helpers::resolve_hook_dir(Some(&executable), home)
+        .map_err(|error| error.to_string())?;
+    for path in [
+        &executable,
+        &helpers.join(crate::helpers::file_name(crate::helpers::AI_HOOK_STEM)),
+    ] {
+        let file =
+            File::open(path).map_err(|error| format!("cannot read {}: {error}", path.display()))?;
+        let metadata = file
+            .metadata()
+            .map_err(|error| format!("cannot inspect {}: {error}", path.display()))?;
+        if !metadata.is_file() || metadata.len() == 0 {
+            return Err(format!(
+                "{} is not a nonempty executable file",
+                path.display()
+            ));
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            if metadata.permissions().mode() & 0o111 == 0 {
+                return Err(format!("{} is not executable", path.display()));
+            }
+        }
+    }
+    Ok(executable)
+}
+
+pub fn stop_for_replacement(controller: &Path, home: &Path, endpoint: &Path) -> Result<(), String> {
+    preflight_replacement(controller, home)?;
+    stop_incompatible_host(home, endpoint)
 }
 
 pub fn ensure_host_running(
@@ -244,15 +291,10 @@ pub fn ensure_host_running(
         }
         Probe::Incompatible(message) => {
             log::warn!(
-                "paneflow-host: retiring the host on {} built from another release: {message}",
+                "paneflow-host: the host on {} is incompatible with this controller and is left running: {message}",
                 endpoint.display()
             );
-            if let Err(error) = retire_host(home, &endpoint) {
-                return Err(BootstrapError::Incompatible(
-                    endpoint,
-                    format!("{message}; it could not be retired: {error}"),
-                ));
-            }
+            return Err(BootstrapError::Incompatible(endpoint, message));
         }
         Probe::Faulted(message) => return Err(BootstrapError::EndpointFaulted(endpoint, message)),
         Probe::Unreachable(_) => {}
@@ -631,6 +673,65 @@ mod tests {
     use super::*;
 
     #[test]
+    fn replacement_preflight_and_wrong_home_never_stop_live_sessions() {
+        let home = tempfile::tempdir().unwrap();
+        let package = tempfile::tempdir().unwrap();
+        let endpoint = host_endpoint_path(home.path());
+        let host = crate::SessionHost::open(home.path(), &endpoint).unwrap();
+        let server =
+            crate::ServerHandle::spawn(std::sync::Arc::clone(&host), endpoint.clone()).unwrap();
+        let created = host.create(crate::CreateSession::default()).unwrap();
+        let session = &created.manifest.session;
+        let identity = created.manifest.process;
+        let controller = package.path().join(crate::helpers::file_name("paneflow"));
+        let replacement = package.path().join(HOST_EXECUTABLE_FILE_NAME);
+        let helper = package
+            .path()
+            .join(crate::helpers::file_name(crate::helpers::AI_HOOK_STEM));
+        for build in ["0.0.0-old", "999.0.0-new", env!("CARGO_PKG_VERSION")] {
+            let mut hello = ClientHello::local("compatibility-live");
+            hello.build = Some(build.into());
+            let mut client = HostClient::connect(&endpoint, &hello).unwrap();
+            let attached = client
+                .attach(session, Some(created.manifest.generation))
+                .unwrap();
+            assert_eq!(attached.host_instance, host.identity().host_instance);
+            assert_eq!(client.inspect(session).unwrap().manifest.process, identity);
+        }
+        for protocol_mismatch in [true, false] {
+            let mut hello = ClientHello::local("compatibility-live");
+            if protocol_mismatch {
+                hello.protocol += 1;
+            } else {
+                hello.engine.as_mut().unwrap().source_sha = "different-engine".into();
+            }
+            assert!(matches!(
+                HostClient::connect(&endpoint, &hello),
+                Err(HostClientError::Incompatible(_))
+            ));
+            assert!(host.inspect(session).unwrap().live);
+            assert_eq!(host.inspect(session).unwrap().manifest.process, identity);
+        }
+        for stage in 0..3 {
+            if stage == 1 {
+                std::fs::write(&replacement, b"replacement").unwrap();
+            }
+            if stage == 2 {
+                std::fs::create_dir(&helper).unwrap();
+            }
+            assert!(stop_for_replacement(&controller, home.path(), &endpoint).is_err());
+            let current = host.inspect(session).unwrap();
+            assert!(current.live);
+            assert_eq!(current.manifest.process, identity);
+            assert_eq!(current.manifest.generation, created.manifest.generation);
+        }
+        assert!(stop_incompatible_host(package.path(), &endpoint).is_err());
+        assert!(host.inspect(session).unwrap().live);
+        host.stop(session, None).unwrap();
+        server.stop().unwrap();
+    }
+
+    #[test]
     fn the_host_executable_is_resolved_beside_the_controller_and_never_elsewhere() {
         let dir = tempfile::tempdir().unwrap();
         let controller = dir.path().join("paneflow");
@@ -645,7 +746,7 @@ mod tests {
     }
 
     #[test]
-    fn a_running_host_is_retired_so_a_replacement_can_take_the_endpoint() {
+    fn an_explicit_stop_retires_a_running_host_so_a_replacement_can_take_the_endpoint() {
         let home = tempfile::tempdir().unwrap();
         #[cfg(windows)]
         let endpoint = PathBuf::from(format!(
@@ -664,7 +765,7 @@ mod tests {
             Probe::Running(_)
         ));
 
-        retire_host(home.path(), &endpoint).unwrap();
+        stop_incompatible_host(home.path(), &endpoint).unwrap();
 
         assert!(matches!(
             probe(home.path(), &endpoint, &hello),
