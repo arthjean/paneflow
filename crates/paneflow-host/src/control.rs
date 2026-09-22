@@ -267,7 +267,7 @@ fn answer(
                 .map(|lines| lines.clamp(1, MAX_READ_LINES))
                 .unwrap_or(DEFAULT_READ_LINES);
             let offset = param_usize(params, "offset").unwrap_or(0);
-            let full = host.text(&session)?;
+            let full = host.text(&session)?.text;
             let (text, returned, total, eof) = paginate_scrollback(&full, lines, offset);
             if offset > total {
                 return Err(ControlError::Params(format!(
@@ -318,7 +318,7 @@ fn answer(
             let max_matches = param_usize(params, "max_matches")
                 .map(|max| max.clamp(1, MAX_SEARCH_MATCHES))
                 .unwrap_or(DEFAULT_SEARCH_MATCHES);
-            let full = host.text(&session)?;
+            let full = host.text(&session)?.text;
             let (matches, truncated) = search_text(&full, pattern, max_matches);
             let matches: Vec<Value> = matches
                 .into_iter()
@@ -461,6 +461,7 @@ mod tests {
                 screen_activity: None,
                 menu_prompt_active: false,
                 runtime: None,
+                final_output: None,
                 host_protocol_version: crate::protocol::HOST_PROTOCOL_VERSION,
                 host_build_id: crate::protocol::host_build_id(),
                 created_at_ms: 1,

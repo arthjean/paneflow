@@ -1,10 +1,10 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 use std::io::{Read, Write};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
-use std::sync::mpsc::{Receiver, RecvTimeoutError, SyncSender, sync_channel};
-use std::sync::{Arc, Mutex};
+use std::sync::mpsc::{Receiver, RecvTimeoutError, SyncSender, TryRecvError, sync_channel};
+use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
 use paneflow_config::schema::SessionGeneration;
@@ -13,13 +13,25 @@ use portable_pty::{CommandBuilder, PtySize};
 
 use crate::process::ProcessIdentity;
 use crate::protocol::{MAX_CHECKPOINT_BYTES, MAX_OUTPUT_TAIL_BYTES, REQUEST_DEADLINE};
-use crate::tail::OutputTail;
+use crate::stream::OutputStream;
 
 const READ_CHUNK_BYTES: usize = 32 * 1024;
-const OUTPUT_QUEUE_SLOTS: usize = 64;
+const PTY_INBOX_BYTES: usize = 2 * 1024 * 1024;
+const DRAIN_SLICE_BYTES: usize = 64 * 1024;
+const CONTROL_QUEUE_SLOTS: usize = 64;
 const INPUT_QUEUE_SLOTS: usize = 64;
 const QUEUE_RETRY: Duration = Duration::from_millis(5);
-const RUNTIME_TICK: Duration = Duration::from_millis(20);
+const PROCESS_SCAN_INTERVAL: Duration = Duration::from_millis(500);
+const DESCENDANT_RECONCILE_MIN: Duration = Duration::from_millis(100);
+const DESCENDANT_RECONCILE_MAX: Duration = Duration::from_secs(1);
+const UNATTENDED_STOP_RETRY: Duration = Duration::from_secs(1);
+#[cfg(unix)]
+const FORCE_SIGNAL_AFTER: Duration = Duration::from_millis(100);
+#[cfg(windows)]
+const TREE_TERMINATE_WAIT: Duration = Duration::from_millis(250);
+pub const FINAL_DRAIN_BUDGET: Duration = Duration::from_secs(2);
+const TAIL_RELEASE_GRACE: Duration = Duration::from_secs(1);
+pub const FINAL_TEXT_MAX_BYTES: usize = 512 * 1024;
 pub const STARTUP_DEADLINE: Duration = Duration::from_secs(10);
 pub const STOP_BUDGET: Duration = Duration::from_secs(5);
 const CELL_WIDTH_PX: u32 = 8;
@@ -33,6 +45,7 @@ const NEWLINE_CHAR: char = '\n';
 const RUNTIME_PANIC_REASON: &str =
     "the session runtime panicked; its child process is held for recovery";
 const LATE_LAUNCH_CANCELLED: &str = "the launch was cancelled before its process was published";
+const EXIT_UNOBSERVED: &str = "the child exit status was not observed";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SpawnSpec {
@@ -52,11 +65,21 @@ pub struct ExitOutcome {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CompletedRecord {
+    pub generation: SessionGeneration,
+    pub exit: ExitOutcome,
+    pub final_offset: u64,
+    pub complete: bool,
+    pub text: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RuntimeNotice {
     Title(String),
     WorkingDirectory(String),
     Exited(ExitOutcome),
     Unverified(String),
+    Completed(CompletedRecord),
 }
 
 pub type RuntimeObserver = Arc<dyn Fn(RuntimeNotice) + Send + Sync>;
@@ -124,11 +147,6 @@ enum Command {
     Text(SyncSender<Result<String, RuntimeError>>),
     Viewport(SyncSender<Result<ViewportScan, RuntimeError>>),
     BracketedPaste(SyncSender<Result<bool, RuntimeError>>),
-    Output {
-        from: u64,
-        max: usize,
-        reply: SyncSender<Result<OutputSlice, RuntimeError>>,
-    },
     Input(Vec<u8>, SyncSender<Result<usize, RuntimeError>>),
     Resize {
         cols: u16,
@@ -144,9 +162,86 @@ enum Command {
 }
 
 enum Message {
-    Output(Vec<u8>),
+    OutputReady,
     Eof,
+    ChildExited(Result<ExitOutcome, String>),
     Command(Command),
+}
+
+#[derive(Default)]
+struct InboxState {
+    chunks: VecDeque<Vec<u8>>,
+    bytes: usize,
+    notified: bool,
+    closed: bool,
+}
+
+#[derive(Default)]
+struct PtyInbox {
+    state: Mutex<InboxState>,
+    drained: Condvar,
+}
+
+impl PtyInbox {
+    fn push(&self, chunk: Vec<u8>, tx: &SyncSender<Message>) -> bool {
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        while !state.closed
+            && state.bytes + chunk.len() > PTY_INBOX_BYTES
+            && !state.chunks.is_empty()
+        {
+            state = self
+                .drained
+                .wait(state)
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+        }
+        if state.closed {
+            return true;
+        }
+        state.bytes += chunk.len();
+        state.chunks.push_back(chunk);
+        let notify = !state.notified;
+        state.notified = true;
+        drop(state);
+        !notify || tx.send(Message::OutputReady).is_ok()
+    }
+
+    fn take_slice(&self, max_bytes: usize) -> (VecDeque<Vec<u8>>, bool) {
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut taken = VecDeque::new();
+        let mut taken_bytes = 0usize;
+        while let Some(chunk) = state.chunks.front() {
+            if taken_bytes > 0 && taken_bytes + chunk.len() > max_bytes {
+                break;
+            }
+            taken_bytes += chunk.len();
+            let chunk = state.chunks.pop_front().unwrap_or_default();
+            taken.push_back(chunk);
+        }
+        state.bytes = state.bytes.saturating_sub(taken_bytes);
+        let more = !state.chunks.is_empty();
+        state.notified = more;
+        drop(state);
+        self.drained.notify_all();
+        (taken, more)
+    }
+
+    fn close(&self) {
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        state.closed = true;
+        state.chunks.clear();
+        state.bytes = 0;
+        drop(state);
+        self.drained.notify_all();
+    }
 }
 
 struct Shared {
@@ -154,7 +249,10 @@ struct Shared {
     unverified: Mutex<Option<String>>,
     descendants_unresolved: AtomicUsize,
     stop_requested: AtomicBool,
+    retired: AtomicBool,
     output_changed_at_ms: AtomicU64,
+    stream: Arc<OutputStream>,
+    inbox: PtyInbox,
 }
 
 impl Shared {
@@ -164,7 +262,10 @@ impl Shared {
             unverified: Mutex::new(None),
             descendants_unresolved: AtomicUsize::new(0),
             stop_requested: AtomicBool::new(false),
+            retired: AtomicBool::new(false),
             output_changed_at_ms: AtomicU64::new(0),
+            stream: OutputStream::new(MAX_OUTPUT_TAIL_BYTES),
+            inbox: PtyInbox::default(),
         })
     }
 
@@ -267,7 +368,7 @@ impl SessionRuntime {
         generation: SessionGeneration,
         observer: RuntimeObserver,
     ) -> Result<LaunchHandle, SpawnError> {
-        let (tx, rx) = sync_channel::<Message>(OUTPUT_QUEUE_SLOTS);
+        let (tx, rx) = sync_channel::<Message>(CONTROL_QUEUE_SLOTS);
         let (startup_tx, startup_rx) = sync_channel::<Result<ProcessIdentity, String>>(1);
         let shared = Shared::new();
         let thread_shared = Arc::clone(&shared);
@@ -349,6 +450,14 @@ impl SessionRuntime {
         self.shared.exit().is_none() || self.descendants_unresolved() > 0
     }
 
+    pub fn retired(&self) -> bool {
+        self.shared.retired.load(Ordering::Acquire)
+    }
+
+    pub fn stream(&self) -> Arc<OutputStream> {
+        Arc::clone(&self.shared.stream)
+    }
+
     fn send_bounded(&self, message: Message, budget: Duration) -> Result<(), RuntimeError> {
         use std::sync::mpsc::TrySendError;
         let deadline = Instant::now() + budget;
@@ -380,6 +489,12 @@ impl SessionRuntime {
         budget: Duration,
         build: impl FnOnce(SyncSender<Result<T, RuntimeError>>) -> Command,
     ) -> Result<T, RuntimeError> {
+        if self.retired() {
+            return Err(match self.unverified() {
+                Some(reason) => RuntimeError::Unverified(reason),
+                None => RuntimeError::NotLive,
+            });
+        }
         let (reply_tx, reply_rx) = sync_channel(1);
         self.send_bounded(Message::Command(build(reply_tx)), budget)?;
         match reply_rx.recv_timeout(budget) {
@@ -406,7 +521,14 @@ impl SessionRuntime {
     }
 
     pub fn output(&self, from: u64, max: usize) -> Result<OutputSlice, RuntimeError> {
-        self.ask(|reply| Command::Output { from, max, reply })
+        self.shared
+            .stream
+            .read(from, max)
+            .map_err(|evicted| RuntimeError::OutputEvicted {
+                requested: evicted.requested,
+                tail_start: evicted.tail_start,
+                tail_end: evicted.tail_end,
+            })
     }
 
     pub fn input(&self, bytes: Vec<u8>) -> Result<usize, RuntimeError> {
@@ -426,6 +548,17 @@ impl SessionRuntime {
 
     pub fn stop_until(&self, deadline: Instant) -> Result<StopReport, RuntimeError> {
         self.shared.stop_requested.store(true, Ordering::Release);
+        if self.retired()
+            && self.exit().is_some()
+            && self.descendants_unresolved() == 0
+            && self.unverified().is_none()
+        {
+            return Ok(StopReport {
+                exit: self.exit(),
+                descendants_unresolved: 0,
+                unverified: None,
+            });
+        }
         let (reply_tx, reply_rx) = sync_channel(1);
         let remaining = deadline.saturating_duration_since(Instant::now());
         self.send_bounded(
@@ -453,23 +586,38 @@ use crate::process::UnixProcessTreeOwner as ProcessTreeOwner;
 #[cfg(windows)]
 use crate::process::WindowsProcessTreeOwner as ProcessTreeOwner;
 
+struct PendingStop {
+    deadline: Instant,
+    replies: Vec<SyncSender<StopReport>>,
+    #[cfg(unix)]
+    force_at: Option<Instant>,
+}
+
 struct Session {
-    terminal: ghostty::DisplayTerminal,
-    tail: OutputTail,
+    terminal: Option<ghostty::DisplayTerminal>,
     writer: Option<SyncSender<Vec<u8>>>,
     master: Option<Box<dyn portable_pty::MasterPty + Send>>,
-    child: Box<dyn portable_pty::Child + Send + Sync>,
     child_pid: u32,
     process_tree: ProcessTreeOwner,
-    next_process_scan: Instant,
     cols: u16,
     rows: u16,
     reader_eof: bool,
     exit: Option<ExitOutcome>,
+    exit_published: bool,
     descendants_unresolved: usize,
     generation: SessionGeneration,
     observer: RuntimeObserver,
     shared: Arc<Shared>,
+    next_process_scan: Option<Instant>,
+    reconcile_at: Option<Instant>,
+    reconcile_backoff: Duration,
+    drain_deadline: Option<Instant>,
+    tail_release_at: Option<Instant>,
+    stop: Option<PendingStop>,
+    unattended: bool,
+    waiter_failed: bool,
+    unobserved_exit: bool,
+    completed: bool,
 }
 
 fn run(
@@ -495,79 +643,75 @@ fn run(
         .send(Ok(ProcessIdentity::capture(session.child_pid)))
         .is_err()
     {
-        recover_without_requester(&mut session);
-        return;
+        session.unattended = true;
+        session.begin_stop(None, Instant::now() + STOP_BUDGET);
     }
-    if shared.unverified().is_some() {
-        recovery_loop(&mut session, &rx);
-        return;
-    }
-    let served = catch_unwind(AssertUnwindSafe(|| serve_loop(&mut session, &rx)));
-    match served {
-        Ok(()) => session.shutdown(),
-        Err(_) => {
-            session.mark_unverified(RUNTIME_PANIC_REASON.to_string());
-            recovery_loop(&mut session, &rx);
+    loop {
+        let served = catch_unwind(AssertUnwindSafe(|| serve_loop(&mut session, &rx)));
+        match served {
+            Ok(()) => break,
+            Err(_) => {
+                session.mark_unverified(RUNTIME_PANIC_REASON.to_string());
+                session.retire_terminal();
+            }
         }
     }
+    let _ = catch_unwind(AssertUnwindSafe(|| session.retire_terminal()));
 }
 
 fn serve_loop(session: &mut Session, rx: &Receiver<Message>) {
+    let mut disconnected = false;
+    let mut output_pending = false;
     loop {
-        match rx.recv_timeout(RUNTIME_TICK) {
-            Ok(Message::Output(chunk)) => session.feed(&chunk),
+        let deadline = session.next_deadline();
+        let received = if disconnected {
+            match deadline {
+                Some(deadline) => {
+                    std::thread::sleep(deadline.saturating_duration_since(Instant::now()));
+                    Err(RecvTimeoutError::Timeout)
+                }
+                None => return,
+            }
+        } else if output_pending {
+            match rx.try_recv() {
+                Ok(message) => Ok(message),
+                Err(TryRecvError::Empty) => Ok(Message::OutputReady),
+                Err(TryRecvError::Disconnected) => Err(RecvTimeoutError::Disconnected),
+            }
+        } else {
+            match deadline {
+                Some(deadline) => {
+                    rx.recv_timeout(deadline.saturating_duration_since(Instant::now()))
+                }
+                None => rx.recv().map_err(|_| RecvTimeoutError::Disconnected),
+            }
+        };
+        match received {
+            Ok(Message::OutputReady) => output_pending = session.drain_inbox(),
             Ok(Message::Eof) => session.reader_eof = true,
+            Ok(Message::ChildExited(outcome)) => session.on_child_exited(outcome),
             Ok(Message::Command(command)) => session.handle(command),
             Err(RecvTimeoutError::Timeout) => {}
-            Err(RecvTimeoutError::Disconnected) => return,
+            Err(RecvTimeoutError::Disconnected) => {
+                disconnected = true;
+                if session.finished() {
+                    return;
+                }
+                if session.stop.is_none() {
+                    session.unattended = true;
+                    session.begin_stop(None, Instant::now() + STOP_BUDGET);
+                }
+            }
         }
-        session.observe_exit();
-    }
-}
-
-fn recovery_loop(session: &mut Session, rx: &Receiver<Message>) {
-    loop {
-        let message = match rx.recv() {
-            Ok(message) => message,
-            Err(_) => break,
-        };
-        let Message::Command(command) = message else {
-            continue;
-        };
-        let outcome = catch_unwind(AssertUnwindSafe(|| {
-            session.handle_while_unverified(command)
-        }));
-        if outcome.is_err() {
-            log::error!(
-                "paneflow-host: the recovery owner of pid={} panicked again",
-                session.child_pid
-            );
-        }
-        if stop_is_confirmed(&session.report()) {
-            break;
+        session.advance();
+        if session.finished() {
+            return;
         }
     }
-    if !stop_is_confirmed(&session.report()) {
-        recover_without_requester(session);
-    }
-    let _ = catch_unwind(AssertUnwindSafe(|| {
-        session.writer = None;
-        session.release_master();
-    }));
 }
 
 fn stop_is_confirmed(report: &StopReport) -> bool {
     report.exit.is_some() && report.unverified.is_none() && report.descendants_unresolved == 0
-}
-
-fn recover_without_requester(session: &mut Session) {
-    loop {
-        let outcome = catch_unwind(AssertUnwindSafe(|| session.terminate()));
-        if outcome.as_ref().is_ok_and(stop_is_confirmed) {
-            return;
-        }
-        std::thread::sleep(Duration::from_secs(1));
-    }
 }
 
 fn new_terminal(spec: &SpawnSpec) -> Result<ghostty::DisplayTerminal, String> {
@@ -635,23 +779,40 @@ fn start(
     let child_pid = child.process_id().unwrap_or(0);
     drop(pair.slave);
     let mut session = Session {
-        terminal,
-        tail: OutputTail::new(MAX_OUTPUT_TAIL_BYTES),
+        terminal: Some(terminal),
         writer: None,
         master: Some(pair.master),
-        child,
         child_pid,
         process_tree: ProcessTreeOwner::new(ProcessIdentity::capture(child_pid)),
-        next_process_scan: Instant::now(),
         cols: spec.cols,
         rows: spec.rows,
         reader_eof: false,
         exit: None,
+        exit_published: false,
         descendants_unresolved: 0,
         generation,
         observer,
         shared: Arc::clone(shared),
+        next_process_scan: Some(Instant::now()),
+        reconcile_at: None,
+        reconcile_backoff: DESCENDANT_RECONCILE_MIN,
+        drain_deadline: None,
+        tail_release_at: None,
+        stop: None,
+        unattended: false,
+        waiter_failed: false,
+        unobserved_exit: false,
+        completed: false,
     };
+    #[cfg(test)]
+    let fail_wait = spec.env.contains_key("PANEFLOW_TEST_WAIT_FAILURE");
+    #[cfg(not(test))]
+    let fail_wait = false;
+    let waited = spawn_child_waiter(child, tx.clone(), fail_wait);
+    if let Err(reason) = waited {
+        session.waiter_failed = true;
+        session.mark_unverified(reason);
+    }
     let wired = catch_unwind(AssertUnwindSafe(|| {
         #[cfg(test)]
         if spec.env.contains_key("PANEFLOW_TEST_WIRING_PANIC") {
@@ -665,7 +826,7 @@ fn start(
             .master
             .as_ref()
             .ok_or_else(|| "the PTY master is missing".to_string())
-            .and_then(|master| wire_pty(master.as_ref(), tx))
+            .and_then(|master| wire_pty(master.as_ref(), tx, Arc::clone(shared)))
     }))
     .unwrap_or_else(|_| Err("PTY wiring panicked after child creation".into()));
     if ProcessIdentity::capture(child_pid).started_at.is_none() {
@@ -678,9 +839,35 @@ fn start(
     Ok(session)
 }
 
+fn spawn_child_waiter(
+    mut child: Box<dyn portable_pty::Child + Send + Sync>,
+    tx: SyncSender<Message>,
+    fail_wait: bool,
+) -> Result<(), String> {
+    std::thread::Builder::new()
+        .name("paneflow-host-child-waiter".into())
+        .spawn(move || {
+            if fail_wait {
+                let _ = tx.send(Message::ChildExited(Err(
+                    "injected child wait failure".to_string()
+                )));
+                let _ = child.wait();
+                return;
+            }
+            let outcome = child
+                .wait()
+                .map(|status| exit_outcome(&status))
+                .map_err(|error| format!("child wait failed: {error}"));
+            let _ = tx.send(Message::ChildExited(outcome));
+        })
+        .map(|_| ())
+        .map_err(|e| format!("failed to start the child waiter: {e}"))
+}
+
 fn wire_pty(
     master: &(dyn portable_pty::MasterPty + Send),
     tx: SyncSender<Message>,
+    shared: Arc<Shared>,
 ) -> Result<SyncSender<Vec<u8>>, String> {
     let reader = master
         .try_clone_reader()
@@ -690,7 +877,7 @@ fn wire_pty(
         .map_err(|e| format!("failed to take the PTY writer: {e}"))?;
     std::thread::Builder::new()
         .name("paneflow-host-pty-reader".into())
-        .spawn(move || read_pty(reader, tx))
+        .spawn(move || read_pty(reader, tx, shared))
         .map_err(|e| format!("failed to start the PTY reader: {e}"))?;
     let (input_tx, input_rx) = sync_channel::<Vec<u8>>(INPUT_QUEUE_SLOTS);
     std::thread::Builder::new()
@@ -700,13 +887,13 @@ fn wire_pty(
     Ok(input_tx)
 }
 
-fn read_pty(mut reader: Box<dyn Read + Send>, tx: SyncSender<Message>) {
+fn read_pty(mut reader: Box<dyn Read + Send>, tx: SyncSender<Message>, shared: Arc<Shared>) {
     let mut buffer = vec![0u8; READ_CHUNK_BYTES];
     loop {
         match reader.read(&mut buffer) {
             Ok(0) => break,
             Ok(read) => {
-                if tx.send(Message::Output(buffer[..read].to_vec())).is_err() {
+                if !shared.inbox.push(buffer[..read].to_vec(), &tx) {
                     return;
                 }
             }
@@ -729,19 +916,65 @@ fn write_pty_queue(mut writer: Box<dyn Write + Send>, rx: Receiver<Vec<u8>>) {
     }
 }
 
+fn earliest(deadlines: impl IntoIterator<Item = Option<Instant>>) -> Option<Instant> {
+    deadlines.into_iter().flatten().min()
+}
+
 impl Session {
+    fn next_deadline(&self) -> Option<Instant> {
+        let stop = self.stop.as_ref().map(|stop| {
+            #[cfg(unix)]
+            let force = stop.force_at;
+            #[cfg(not(unix))]
+            let force = None;
+            let poll = (self.exit.is_none() || self.descendants_unresolved > 0)
+                .then(|| Instant::now() + DESCENDANT_RECONCILE_MIN);
+            earliest([Some(stop.deadline), force, poll]).unwrap_or(stop.deadline)
+        });
+        earliest([
+            self.next_process_scan,
+            self.reconcile_at,
+            self.drain_deadline,
+            self.tail_release_at,
+            stop,
+        ])
+    }
+
+    fn finished(&self) -> bool {
+        self.completed
+            && self.tail_release_at.is_none()
+            && self.stop.is_none()
+            && self.exit.is_some()
+            && self.descendants_unresolved == 0
+            && self.shared.unverified().is_none()
+    }
+
+    fn drain_inbox(&mut self) -> bool {
+        let (chunks, more) = self.shared.inbox.take_slice(DRAIN_SLICE_BYTES);
+        for chunk in chunks {
+            self.feed(&chunk);
+        }
+        more
+    }
+
     fn feed(&mut self, chunk: &[u8]) {
-        self.tail.append(chunk);
+        self.shared.stream.append(chunk);
         self.shared
             .output_changed_at_ms
             .store(crate::manifest::now_ms(), Ordering::Release);
-        if let Err(error) = self.terminal.feed(chunk) {
+        if self.next_process_scan.is_none() && self.exit.is_none() {
+            self.next_process_scan = Some(Instant::now() + PROCESS_SCAN_INTERVAL);
+        }
+        let Some(terminal) = self.terminal.as_mut() else {
+            return;
+        };
+        if let Err(error) = terminal.feed(chunk) {
             log::warn!("paneflow-host: terminal feed failed: {error}");
         }
-        for event in self.terminal.drain_events() {
+        for event in terminal.drain_events() {
             match event {
                 ghostty::BackendEvent::WritePty(bytes) => {
-                    if let Err(error) = self.write_pty(&bytes) {
+                    if let Err(error) = write_pty(&mut self.writer, &bytes) {
                         log::debug!("paneflow-host: terminal reply to the PTY failed: {error}");
                     }
                 }
@@ -763,56 +996,50 @@ impl Session {
         }
     }
 
-    fn write_pty(&mut self, bytes: &[u8]) -> std::io::Result<()> {
-        use std::sync::mpsc::TrySendError;
-        let Some(writer) = self.writer.as_ref() else {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::BrokenPipe,
-                "the PTY writer is closed",
-            ));
-        };
-        match writer.try_send(bytes.to_vec()) {
-            Ok(()) => Ok(()),
-            Err(TrySendError::Full(_)) => Err(std::io::Error::new(
-                std::io::ErrorKind::WouldBlock,
-                "the child is not reading its input; the input queue is full",
-            )),
-            Err(TrySendError::Disconnected(_)) => {
-                self.writer = None;
-                Err(std::io::Error::new(
-                    std::io::ErrorKind::BrokenPipe,
-                    "the PTY writer is closed",
-                ))
-            }
-        }
-    }
-
     fn handle(&mut self, command: Command) {
+        if let Command::Stop { deadline, reply } = command {
+            self.begin_stop(Some(reply), deadline);
+            return;
+        }
+        #[cfg(test)]
+        if let Command::InjectPanic = command {
+            panic!("injected runtime panic");
+        }
+        if let Some(reason) = self.shared.unverified() {
+            refuse(command, RuntimeError::Unverified(reason));
+            return;
+        }
+        let Some(terminal) = self.terminal.as_mut() else {
+            refuse(command, RuntimeError::NotLive);
+            return;
+        };
         match command {
             Command::Checkpoint(reply) => {
-                let _ = reply.send(self.checkpoint());
+                let _ = reply.send(checkpoint(
+                    terminal,
+                    self.generation,
+                    self.shared.stream.end_offset(),
+                    self.cols,
+                    self.rows,
+                ));
             }
             Command::Text(reply) => {
-                let _ = reply.send(self.text());
+                let _ = reply.send(text(terminal));
             }
             Command::Viewport(reply) => {
                 let _ = reply.send(self.viewport_scan());
             }
             Command::BracketedPaste(reply) => {
-                let modes = self
-                    .terminal
+                let modes = terminal
                     .modes()
                     .map_err(|e| RuntimeError::Engine(e.to_string()));
                 let _ = reply.send(modes.map(|modes| modes.bracketed_paste));
-            }
-            Command::Output { from, max, reply } => {
-                let _ = reply.send(self.output(from, max));
             }
             Command::Input(bytes, reply) => {
                 let result = if self.exit.is_some() || self.writer.is_none() {
                     Err(RuntimeError::NotLive)
                 } else {
-                    self.write_pty(&bytes)
+                    write_pty(&mut self.writer, &bytes)
                         .map(|()| bytes.len())
                         .map_err(|e| RuntimeError::Pty(e.to_string()))
                 };
@@ -821,107 +1048,21 @@ impl Session {
             Command::Resize { cols, rows, reply } => {
                 let _ = reply.send(self.resize(cols, rows));
             }
-            Command::Stop { deadline, reply } => {
-                let report = self.terminate_until(deadline);
-                let _ = reply.send(report);
-            }
+            Command::Stop { .. } => {}
             #[cfg(test)]
-            Command::InjectPanic => panic!("injected runtime panic"),
+            Command::InjectPanic => {}
         }
-    }
-
-    fn handle_while_unverified(&mut self, command: Command) {
-        let reason = self
-            .shared
-            .unverified()
-            .unwrap_or_else(|| RUNTIME_PANIC_REASON.to_string());
-        match command {
-            Command::Stop { deadline, reply } => {
-                let report = self.terminate_until(deadline);
-                let _ = reply.send(report);
-            }
-            Command::Checkpoint(reply) => {
-                let _ = reply.send(Err(RuntimeError::Unverified(reason)));
-            }
-            Command::Text(reply) => {
-                let _ = reply.send(Err(RuntimeError::Unverified(reason)));
-            }
-            Command::Viewport(reply) => {
-                let _ = reply.send(Err(RuntimeError::Unverified(reason)));
-            }
-            Command::BracketedPaste(reply) => {
-                let _ = reply.send(Err(RuntimeError::Unverified(reason)));
-            }
-            Command::Output { reply, .. } => {
-                let _ = reply.send(Err(RuntimeError::Unverified(reason)));
-            }
-            Command::Input(_, reply) => {
-                let _ = reply.send(Err(RuntimeError::Unverified(reason)));
-            }
-            Command::Resize { reply, .. } => {
-                let _ = reply.send(Err(RuntimeError::Unverified(reason)));
-            }
-            #[cfg(test)]
-            Command::InjectPanic => panic!("injected runtime panic"),
-        }
-    }
-
-    fn checkpoint(&mut self) -> Result<Checkpoint, RuntimeError> {
-        let bytes = self
-            .terminal
-            .encode_snapshot_size()
-            .map_err(|e| RuntimeError::Engine(e.to_string()))?;
-        if bytes > MAX_CHECKPOINT_BYTES {
-            return Err(RuntimeError::CheckpointTooLarge {
-                bytes,
-                limit: MAX_CHECKPOINT_BYTES,
-            });
-        }
-        let snapshot = self
-            .terminal
-            .encode_snapshot()
-            .map_err(|e| RuntimeError::Engine(e.to_string()))?;
-        if snapshot.len() > MAX_CHECKPOINT_BYTES {
-            return Err(RuntimeError::CheckpointTooLarge {
-                bytes: snapshot.len(),
-                limit: MAX_CHECKPOINT_BYTES,
-            });
-        }
-        Ok(Checkpoint {
-            generation: self.generation,
-            offset: self.tail.end_offset(),
-            cols: self.cols,
-            rows: self.rows,
-            snapshot,
-        })
-    }
-
-    fn text(&mut self) -> Result<String, RuntimeError> {
-        let history = self
-            .terminal
-            .extract_scrollback()
-            .map_err(|e| RuntimeError::Engine(e.to_string()))?;
-        let screen = self
-            .terminal
-            .format(ghostty::FormatterOptions::plain_text())
-            .map_err(|e| RuntimeError::Engine(e.to_string()))?;
-        let screen = screen.trim_end_matches([NEWLINE_CHAR, ' ']).to_string();
-        Ok(match (history, screen.is_empty()) {
-            (Some(history), false) => [history, screen].join(NEWLINE),
-            (Some(history), true) => history,
-            (None, false) => screen,
-            (None, true) => String::new(),
-        })
     }
 
     fn viewport_scan(&mut self) -> Result<ViewportScan, RuntimeError> {
-        let screen = self
-            .terminal
+        let foreground_process_group = self.foreground_process_group();
+        let terminal = self.terminal.as_mut().ok_or(RuntimeError::NotLive)?;
+        let screen = terminal
             .format(ghostty::FormatterOptions::plain_text())
             .map_err(|e| RuntimeError::Engine(e.to_string()))?;
         Ok(ViewportScan {
             screen,
-            foreground_process_group: self.foreground_process_group(),
+            foreground_process_group,
         })
     }
 
@@ -935,23 +1076,6 @@ impl Session {
     #[cfg(not(unix))]
     fn foreground_process_group(&self) -> Option<i32> {
         None
-    }
-
-    fn output(&self, from: u64, max: usize) -> Result<OutputSlice, RuntimeError> {
-        let (offset, data) =
-            self.tail
-                .read_from(from, max)
-                .map_err(|evicted| RuntimeError::OutputEvicted {
-                    requested: evicted.requested,
-                    tail_start: evicted.tail_start,
-                    tail_end: evicted.tail_end,
-                })?;
-        Ok(OutputSlice {
-            offset,
-            data,
-            end_offset: self.tail.end_offset(),
-            live: self.exit.is_none() || !self.reader_eof,
-        })
     }
 
     fn resize(&mut self, cols: u16, rows: u16) -> Result<(), RuntimeError> {
@@ -973,6 +1097,8 @@ impl Session {
         )
         .map_err(|e| RuntimeError::Engine(e.to_string()))?;
         self.terminal
+            .as_mut()
+            .ok_or(RuntimeError::NotLive)?
             .resize(size)
             .map_err(|e| RuntimeError::Engine(e.to_string()))?;
         self.cols = cols;
@@ -980,33 +1106,67 @@ impl Session {
         Ok(())
     }
 
-    fn observe_exit(&mut self) {
-        if Instant::now() >= self.next_process_scan {
-            self.process_tree.discover();
-            self.next_process_scan = Instant::now() + Duration::from_millis(500);
-        }
-        if self.exit.is_some() {
-            let before = self.descendants_unresolved;
-            self.refresh_descendants();
-            if before > 0 && self.descendants_unresolved == 0 {
-                self.shared.set_unverified(None);
-                if let Some(outcome) = &self.exit {
-                    (self.observer)(RuntimeNotice::Exited(outcome.clone()));
-                }
-            }
-            return;
-        }
-        if !self.process_tree.root_is_running() {
-            self.process_tree.discover();
-        }
-        match self.child.try_wait() {
-            Ok(Some(status)) => {
+    fn on_child_exited(&mut self, outcome: Result<ExitOutcome, String>) {
+        match outcome {
+            Ok(outcome) => {
                 self.process_tree.discover();
                 self.refresh_descendants();
-                self.record_exit(exit_outcome(&status));
+                self.record_exit(outcome);
             }
-            Ok(None) => {}
-            Err(error) => self.mark_unverified(format!("child wait failed: {error}")),
+            Err(reason) => {
+                self.waiter_failed = true;
+                self.mark_unverified(reason);
+                self.schedule_reconcile();
+            }
+        }
+    }
+
+    fn advance(&mut self) {
+        let now = Instant::now();
+        if self.next_process_scan.is_some_and(|at| now >= at) {
+            self.next_process_scan = None;
+            if self.exit.is_none() {
+                self.process_tree.discover();
+            }
+        }
+        if self.reconcile_at.is_some_and(|at| now >= at) {
+            self.reconcile_at = None;
+            self.reconcile_descendants();
+        }
+        if self.drain_deadline.is_some_and(|at| now >= at) {
+            self.drain_deadline = None;
+            self.finalize(false);
+        }
+        if self.exit.is_some() && self.reader_eof && !self.completed {
+            self.drain_deadline = None;
+            self.finalize(true);
+        }
+        if self.tail_release_at.is_some_and(|at| now >= at) {
+            self.tail_release_at = None;
+            self.shared.stream.release();
+        }
+        self.advance_stop(now);
+    }
+
+    fn schedule_reconcile(&mut self) {
+        if self.reconcile_at.is_none() {
+            self.reconcile_at = Some(Instant::now() + self.reconcile_backoff);
+            self.reconcile_backoff = (self.reconcile_backoff * 2).min(DESCENDANT_RECONCILE_MAX);
+        }
+    }
+
+    fn reconcile_descendants(&mut self) {
+        if self.exit.is_none() {
+            return;
+        }
+        let before = self.descendants_unresolved;
+        self.refresh_descendants();
+        if self.descendants_unresolved == 0 {
+            if before > 0 || !self.exit_published {
+                self.publish_exit();
+            }
+        } else {
+            self.schedule_reconcile();
         }
     }
 
@@ -1029,7 +1189,19 @@ impl Session {
         (self.observer)(RuntimeNotice::Unverified(reason));
     }
 
+    fn publish_exit(&mut self) {
+        let Some(outcome) = self.exit.clone() else {
+            return;
+        };
+        self.shared.set_unverified(None);
+        self.exit_published = true;
+        (self.observer)(RuntimeNotice::Exited(outcome));
+    }
+
     fn record_exit(&mut self, outcome: ExitOutcome) {
+        if self.exit.is_some() {
+            return;
+        }
         #[cfg(target_os = "macos")]
         self.process_tree.root_reaped();
         self.exit = Some(outcome.clone());
@@ -1038,17 +1210,61 @@ impl Session {
             .shared
             .exit
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(outcome.clone());
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(outcome);
         self.writer = None;
+        self.next_process_scan = None;
         self.release_master();
+        if !self.reader_eof {
+            self.drain_deadline = Some(Instant::now() + FINAL_DRAIN_BUDGET);
+        }
         if self.descendants_unresolved == 0 {
-            (self.observer)(RuntimeNotice::Exited(outcome));
+            self.publish_exit();
         } else {
             self.mark_unverified(format!(
                 "{} descendant process(es) remain unresolved",
                 self.descendants_unresolved
             ));
+            self.reconcile_backoff = DESCENDANT_RECONCILE_MIN;
+            self.schedule_reconcile();
         }
+    }
+
+    fn finalize(&mut self, complete: bool) {
+        if self.completed {
+            return;
+        }
+        let Some(exit) = self.exit.clone() else {
+            return;
+        };
+        while self.drain_inbox() {}
+        self.completed = true;
+        let text = self
+            .terminal
+            .as_mut()
+            .and_then(|terminal| text(terminal).ok())
+            .map(|text| bounded_final_text(text, FINAL_TEXT_MAX_BYTES))
+            .unwrap_or_default();
+        self.shared.stream.finish();
+        let final_offset = self.shared.stream.end_offset();
+        self.retire_terminal();
+        self.tail_release_at = Some(Instant::now() + TAIL_RELEASE_GRACE);
+        (self.observer)(RuntimeNotice::Completed(CompletedRecord {
+            generation: self.generation,
+            exit,
+            final_offset,
+            complete: complete && self.reader_eof,
+            text,
+        }));
+    }
+
+    fn retire_terminal(&mut self) {
+        self.writer = None;
+        self.release_master();
+        self.terminal = None;
+        if self.completed {
+            self.shared.inbox.close();
+        }
+        self.shared.retired.store(true, Ordering::Release);
     }
 
     fn release_master(&mut self) {
@@ -1067,67 +1283,218 @@ impl Session {
         }
     }
 
-    fn terminate(&mut self) -> StopReport {
-        self.terminate_until(Instant::now() + STOP_BUDGET)
-    }
-
-    fn terminate_until(&mut self, deadline: Instant) -> StopReport {
+    fn begin_stop(&mut self, reply: Option<SyncSender<StopReport>>, deadline: Instant) {
         self.writer = None;
-        #[cfg(windows)]
-        let _ = self.process_tree.terminate(deadline);
-        #[cfg(unix)]
-        self.process_tree.signal(false);
-        #[cfg(unix)]
-        let force_at = Instant::now() + Duration::from_millis(100);
-        loop {
+        if let Some(pending) = self.stop.as_mut() {
+            pending.replies.extend(reply);
+            pending.deadline = pending.deadline.max(deadline);
+            return;
+        }
+        self.stop = Some(PendingStop {
+            deadline,
+            replies: reply.into_iter().collect(),
             #[cfg(unix)]
-            if Instant::now() >= force_at {
-                self.process_tree.signal(true);
-            }
-            if self.exit.is_none() {
-                match self.child.try_wait() {
-                    Ok(Some(status)) => {
-                        self.refresh_descendants();
-                        self.record_exit(exit_outcome(&status));
-                    }
-                    Ok(None) => {}
-                    Err(error) => {
-                        self.mark_unverified(format!(
-                            "child wait after termination failed: {error}"
-                        ));
-                        return self.report();
-                    }
-                }
-            }
-            self.refresh_descendants();
-            if self.exit.is_some() && self.descendants_unresolved == 0 {
-                self.shared.set_unverified(None);
-                if let Some(outcome) = &self.exit {
-                    (self.observer)(RuntimeNotice::Exited(outcome.clone()));
-                }
-                return self.report();
-            }
-            if Instant::now() >= deadline {
-                break;
-            }
-            std::thread::sleep(
-                Duration::from_millis(10).min(deadline.saturating_duration_since(Instant::now())),
-            );
-        }
-        self.mark_unverified(format!(
-            "child pid={} or {} descendant process(es) remain unresolved after termination",
-            self.child_pid, self.descendants_unresolved
-        ));
-        self.report()
+            force_at: Some(Instant::now() + FORCE_SIGNAL_AFTER),
+        });
+        self.signal_tree(false, deadline);
+        self.advance_stop(Instant::now());
     }
 
-    fn shutdown(mut self) {
-        if !stop_is_confirmed(&self.report()) {
-            recover_without_requester(&mut self);
+    fn signal_tree(&mut self, force: bool, deadline: Instant) {
+        #[cfg(windows)]
+        {
+            let _ = force;
+            let wait_until = deadline.min(Instant::now() + TREE_TERMINATE_WAIT);
+            let _ = self.process_tree.terminate(wait_until);
         }
-        self.writer = None;
-        self.release_master();
+        #[cfg(unix)]
+        {
+            let _ = deadline;
+            self.process_tree.signal(force);
+        }
     }
+
+    fn advance_stop(&mut self, now: Instant) {
+        let Some(deadline) = self.stop.as_ref().map(|stop| stop.deadline) else {
+            return;
+        };
+        #[cfg(unix)]
+        {
+            let force_due = self
+                .stop
+                .as_ref()
+                .is_some_and(|stop| stop.force_at.is_some_and(|at| now >= at));
+            if force_due {
+                if let Some(stop) = self.stop.as_mut() {
+                    stop.force_at = None;
+                }
+                self.signal_tree(true, deadline);
+            }
+        }
+        if self.exit.is_none() && self.waiter_failed {
+            self.reconcile_unobserved_exit();
+        }
+        self.refresh_descendants();
+        let confirmed = self.exit.is_some() && self.descendants_unresolved == 0;
+        if confirmed {
+            if !self.exit_published {
+                self.publish_exit();
+            }
+            self.complete_stop();
+            return;
+        }
+        if self.unobserved_exit && self.descendants_unresolved == 0 {
+            self.complete_stop();
+            return;
+        }
+        if now >= deadline {
+            self.mark_unverified(format!(
+                "child pid={} or {} descendant process(es) remain unresolved after termination",
+                self.child_pid, self.descendants_unresolved
+            ));
+            self.complete_stop();
+        }
+    }
+
+    fn reconcile_unobserved_exit(&mut self) {
+        if self.shared.unverified().is_none() || self.process_tree.root_is_running() {
+            return;
+        }
+        let root = ProcessIdentity::capture(self.child_pid);
+        if root.verify() == crate::process::ProcessVerdict::Gone {
+            self.unobserved_exit = true;
+            self.mark_unverified(format!("{EXIT_UNOBSERVED}; the process is gone"));
+        }
+    }
+
+    fn complete_stop(&mut self) {
+        let Some(stop) = self.stop.take() else {
+            return;
+        };
+        let report = self.report();
+        for reply in stop.replies {
+            let _ = reply.send(report.clone());
+        }
+        if self.unattended && !stop_is_confirmed(&report) && !self.unobserved_exit {
+            self.stop = Some(PendingStop {
+                deadline: Instant::now() + UNATTENDED_STOP_RETRY + STOP_BUDGET,
+                replies: Vec::new(),
+                #[cfg(unix)]
+                force_at: Some(Instant::now() + UNATTENDED_STOP_RETRY),
+            });
+        }
+    }
+}
+
+fn refuse(command: Command, error: RuntimeError) {
+    match command {
+        Command::Checkpoint(reply) => {
+            let _ = reply.send(Err(error));
+        }
+        Command::Text(reply) => {
+            let _ = reply.send(Err(error));
+        }
+        Command::Viewport(reply) => {
+            let _ = reply.send(Err(error));
+        }
+        Command::BracketedPaste(reply) => {
+            let _ = reply.send(Err(error));
+        }
+        Command::Input(_, reply) => {
+            let _ = reply.send(Err(error));
+        }
+        Command::Resize { reply, .. } => {
+            let _ = reply.send(Err(error));
+        }
+        Command::Stop { .. } => {}
+        #[cfg(test)]
+        Command::InjectPanic => {}
+    }
+}
+
+fn write_pty(writer: &mut Option<SyncSender<Vec<u8>>>, bytes: &[u8]) -> std::io::Result<()> {
+    use std::sync::mpsc::TrySendError;
+    let Some(sender) = writer.as_ref() else {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::BrokenPipe,
+            "the PTY writer is closed",
+        ));
+    };
+    match sender.try_send(bytes.to_vec()) {
+        Ok(()) => Ok(()),
+        Err(TrySendError::Full(_)) => Err(std::io::Error::new(
+            std::io::ErrorKind::WouldBlock,
+            "the child is not reading its input; the input queue is full",
+        )),
+        Err(TrySendError::Disconnected(_)) => {
+            *writer = None;
+            Err(std::io::Error::new(
+                std::io::ErrorKind::BrokenPipe,
+                "the PTY writer is closed",
+            ))
+        }
+    }
+}
+
+fn checkpoint(
+    terminal: &mut ghostty::DisplayTerminal,
+    generation: SessionGeneration,
+    offset: u64,
+    cols: u16,
+    rows: u16,
+) -> Result<Checkpoint, RuntimeError> {
+    let bytes = terminal
+        .encode_snapshot_size()
+        .map_err(|e| RuntimeError::Engine(e.to_string()))?;
+    if bytes > MAX_CHECKPOINT_BYTES {
+        return Err(RuntimeError::CheckpointTooLarge {
+            bytes,
+            limit: MAX_CHECKPOINT_BYTES,
+        });
+    }
+    let snapshot = terminal
+        .encode_snapshot()
+        .map_err(|e| RuntimeError::Engine(e.to_string()))?;
+    if snapshot.len() > MAX_CHECKPOINT_BYTES {
+        return Err(RuntimeError::CheckpointTooLarge {
+            bytes: snapshot.len(),
+            limit: MAX_CHECKPOINT_BYTES,
+        });
+    }
+    Ok(Checkpoint {
+        generation,
+        offset,
+        cols,
+        rows,
+        snapshot,
+    })
+}
+
+fn text(terminal: &mut ghostty::DisplayTerminal) -> Result<String, RuntimeError> {
+    let history = terminal
+        .extract_scrollback()
+        .map_err(|e| RuntimeError::Engine(e.to_string()))?;
+    let screen = terminal
+        .format(ghostty::FormatterOptions::plain_text())
+        .map_err(|e| RuntimeError::Engine(e.to_string()))?;
+    let screen = screen.trim_end_matches([NEWLINE_CHAR, ' ']).to_string();
+    Ok(match (history, screen.is_empty()) {
+        (Some(history), false) => [history, screen].join(NEWLINE),
+        (Some(history), true) => history,
+        (None, false) => screen,
+        (None, true) => String::new(),
+    })
+}
+
+pub fn bounded_final_text(text: String, max_bytes: usize) -> String {
+    if text.len() <= max_bytes {
+        return text;
+    }
+    let mut start = text.len() - max_bytes;
+    while !text.is_char_boundary(start) {
+        start += 1;
+    }
+    text[start..].to_string()
 }
 
 fn exit_outcome(status: &portable_pty::ExitStatus) -> ExitOutcome {
@@ -1180,12 +1547,25 @@ mod tests {
             if String::from_utf8_lossy(&collected).contains(marker) {
                 return (offset, collected);
             }
-            std::thread::sleep(Duration::from_millis(30));
+            runtime
+                .stream()
+                .wait_past(offset, Instant::now() + Duration::from_millis(200));
         }
         panic!(
             "marker {marker:?} never appeared; got {:?}",
             String::from_utf8_lossy(&collected)
         );
+    }
+
+    fn wait_until(deadline: Duration, mut check: impl FnMut() -> bool) -> bool {
+        let until = Instant::now() + deadline;
+        while Instant::now() < until {
+            if check() {
+                return true;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        false
     }
 
     #[test]
@@ -1241,6 +1621,18 @@ mod tests {
         assert_eq!(report.unverified, None);
         assert!(!runtime.is_live());
         assert_eq!(runtime.input(b"x".to_vec()), Err(RuntimeError::NotLive));
+        assert!(
+            wait_until(Duration::from_secs(5), || runtime.retired()),
+            "a confirmed exit retires the terminal runtime"
+        );
+        assert!(
+            wait_until(Duration::from_secs(5), || runtime
+                .stream()
+                .status()
+                .retained_bytes
+                == 0),
+            "the live tail is released within the retirement budget"
+        );
         let observed = notices.lock().unwrap();
         assert!(
             observed
@@ -1248,6 +1640,121 @@ mod tests {
                 .any(|n| matches!(n, RuntimeNotice::Exited(_))),
             "the observer sees the exit"
         );
+        let completed = observed
+            .iter()
+            .find_map(|n| match n {
+                RuntimeNotice::Completed(record) => Some(record.clone()),
+                _ => None,
+            })
+            .expect("the observer receives the completed record");
+        assert!(completed.text.contains("PANEFLOW_HOST_ALPHA"));
+        assert!(completed.final_offset >= offset);
+    }
+
+    #[test]
+    fn natural_exit_drains_the_final_output_before_the_stream_ends() {
+        let notices = Arc::new(Mutex::new(Vec::new()));
+        let sink = Arc::clone(&notices);
+        let observer: RuntimeObserver = Arc::new(move |notice| sink.lock().unwrap().push(notice));
+        let runtime =
+            SessionRuntime::spawn(echo_shell_spec(80, 24), SessionGeneration::FIRST, observer)
+                .expect("shell spawns");
+        runtime
+            .input(b"echo PANEFLOW_LAST_WORDS\r\nexit\r\n".to_vec())
+            .expect("input accepted");
+        let stream = runtime.stream();
+        let mut offset = 0;
+        let mut collected = Vec::new();
+        let deadline = Instant::now() + Duration::from_secs(20);
+        loop {
+            let slice = runtime.output(offset, 64 * 1024).expect("readable");
+            collected.extend_from_slice(&slice.data);
+            offset = slice.offset + slice.data.len() as u64;
+            if !slice.live && slice.end_offset <= offset {
+                break;
+            }
+            assert!(Instant::now() < deadline, "the stream must end after exit");
+            stream.wait_past(offset, Instant::now() + Duration::from_millis(500));
+        }
+        assert!(String::from_utf8_lossy(&collected).contains("PANEFLOW_LAST_WORDS"));
+        assert!(wait_until(Duration::from_secs(5), || runtime.retired()));
+        let observed = notices.lock().unwrap();
+        let completed = observed
+            .iter()
+            .find_map(|n| match n {
+                RuntimeNotice::Completed(record) => Some(record.clone()),
+                _ => None,
+            })
+            .expect("completed record");
+        assert!(completed.complete, "EOF followed the exit: {completed:?}");
+        assert_eq!(completed.final_offset, offset);
+        assert!(completed.text.contains("PANEFLOW_LAST_WORDS"));
+    }
+
+    #[test]
+    fn a_child_that_stops_reading_its_input_never_starves_the_control_path() {
+        let runtime = SessionRuntime::spawn(
+            echo_shell_spec(80, 24),
+            SessionGeneration::FIRST,
+            Arc::new(|_| {}),
+        )
+        .expect("shell spawns");
+        runtime
+            .input(b"echo BLOCK_READY\r\n".to_vec())
+            .expect("input accepted");
+        wait_for_output(&runtime, "BLOCK_READY", 0);
+        #[cfg(windows)]
+        let hold = b"ping -n 6 127.0.0.1 >nul\r\n".to_vec();
+        #[cfg(unix)]
+        let hold = b"sleep 5\n".to_vec();
+        runtime.input(hold).expect("the holding command starts");
+        std::thread::sleep(Duration::from_millis(300));
+        let chunk = vec![b' '; READ_CHUNK_BYTES];
+        let mut slowest = Duration::ZERO;
+        for _ in 0..(INPUT_QUEUE_SLOTS * 3) {
+            let started = Instant::now();
+            match runtime.input(chunk.clone()) {
+                Ok(_) => {}
+                Err(RuntimeError::Pty(reason)) => {
+                    assert!(reason.contains("input queue is full"), "{reason}");
+                }
+                Err(other) => panic!("blocked input surfaced {other:?}"),
+            }
+            slowest = slowest.max(started.elapsed());
+        }
+        assert!(
+            slowest < Duration::from_secs(1),
+            "US-007: input never blocks the runtime thread, slowest call {slowest:?}"
+        );
+        let started = Instant::now();
+        let checkpoint = runtime.checkpoint().expect("the runtime still answers");
+        assert!(
+            started.elapsed() < Duration::from_secs(2),
+            "US-007: a blocked writer leaves the control path responsive"
+        );
+        assert_eq!(checkpoint.generation, SessionGeneration::FIRST);
+        assert!(runtime.is_live(), "refused input never ends the session");
+        let report = runtime.stop().expect("stop answers");
+        assert!(report.exit.is_some(), "the stop confirms the child exit");
+        assert_eq!(report.descendants_unresolved, 0);
+    }
+
+    #[test]
+    fn a_child_wait_failure_stays_unverified_without_a_fabricated_exit() {
+        let mut spec = echo_shell_spec(80, 24);
+        spec.env
+            .insert("PANEFLOW_TEST_WAIT_FAILURE".into(), "1".into());
+        let runtime = SessionRuntime::spawn(spec, SessionGeneration::FIRST, Arc::new(|_| {}))
+            .expect("shell spawns");
+        assert!(wait_until(Duration::from_secs(5), || runtime
+            .unverified()
+            .is_some()));
+        assert_eq!(runtime.exit(), None, "no exit code is fabricated");
+        assert!(runtime.owns_process());
+        let report = runtime.stop().expect("stop answers");
+        assert_eq!(report.exit, None);
+        assert!(report.unverified.is_some(), "{report:?}");
+        assert!(!runtime.process().is_provably_live());
     }
 
     #[test]
@@ -1330,6 +1837,14 @@ mod tests {
     }
 
     #[test]
+    fn final_text_keeps_its_tail_on_a_char_boundary() {
+        let text = format!("{}é{}", "a".repeat(10), "b".repeat(5));
+        let bounded = bounded_final_text(text, 7);
+        assert_eq!(bounded, "é".to_string() + &"b".repeat(5));
+        assert_eq!(bounded_final_text("short".into(), 512), "short");
+    }
+
+    #[test]
     fn a_cancelled_launch_terminates_the_late_child_instead_of_publishing_it() {
         let observer: RuntimeObserver = Arc::new(|_| {});
         let handle =
@@ -1364,10 +1879,9 @@ mod tests {
                 .expect("shell spawns");
         let process = runtime.process();
         runtime.inject_panic();
-        let deadline = Instant::now() + Duration::from_secs(5);
-        while runtime.unverified().is_none() && Instant::now() < deadline {
-            std::thread::sleep(Duration::from_millis(20));
-        }
+        assert!(wait_until(Duration::from_secs(5), || runtime
+            .unverified()
+            .is_some()));
         assert_eq!(
             runtime.unverified().as_deref(),
             Some(RUNTIME_PANIC_REASON),
@@ -1380,7 +1894,7 @@ mod tests {
         );
         assert!(matches!(
             runtime.checkpoint(),
-            Err(RuntimeError::Unverified(_))
+            Err(RuntimeError::Unverified(_)) | Err(RuntimeError::NotLive)
         ));
         let report = runtime.stop().expect("the recovery owner answers a stop");
         assert!(report.exit.is_some(), "the stop confirms the child outcome");

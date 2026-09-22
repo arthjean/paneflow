@@ -156,6 +156,10 @@ impl HostClient {
             LineRead::TooLong => Err(HostClientError::Protocol(
                 "host frame exceeds the 64 KiB control frame limit".to_string(),
             )),
+            LineRead::Idle => Err(HostClientError::Io(io::Error::new(
+                io::ErrorKind::TimedOut,
+                format!("the host sent no frame within {REQUEST_DEADLINE:?}"),
+            ))),
         }
     }
 

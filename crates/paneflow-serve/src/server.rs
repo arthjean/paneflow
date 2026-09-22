@@ -399,7 +399,7 @@ fn handle_connection(mut wire: Wire, worker: Arc<Worker>, shutdown: Arc<AtomicBo
         }
         let line = match wire.read_line(IDLE_TIMEOUT) {
             Ok(LineRead::Line(line)) => line,
-            Ok(LineRead::Eof) => return,
+            Ok(LineRead::Eof) | Ok(LineRead::Idle) => return,
             Ok(LineRead::TooLong) => {
                 let _ = wire.write_json(&error_envelope(
                     &Value::Null,

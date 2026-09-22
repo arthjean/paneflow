@@ -170,6 +170,11 @@ impl HostControl {
                         "the local Paneflow host oversized its {method} reply"
                     ));
                 }
+                Ok(LineRead::Idle) => {
+                    return Err(format!(
+                        "paneflow host request {method} timed out after {deadline:?}"
+                    ));
+                }
                 Err(error) => {
                     return Err(format!("paneflow host request {method} failed: {error}"));
                 }
@@ -196,6 +201,10 @@ impl HostControl {
             Ok(LineRead::TooLong) => Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "the local Paneflow host oversized a stream frame",
+            )),
+            Ok(LineRead::Idle) => Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "the local Paneflow host sent no stream frame within the timeout",
             )),
             Err(error) => Err(error),
         }

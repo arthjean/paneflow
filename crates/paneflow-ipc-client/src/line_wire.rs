@@ -14,6 +14,14 @@ pub enum LineRead {
     Line(String),
     Eof,
     TooLong,
+    Idle,
+}
+
+fn is_timeout(error: &io::Error) -> bool {
+    matches!(
+        error.kind(),
+        io::ErrorKind::TimedOut | io::ErrorKind::WouldBlock
+    )
 }
 
 #[cfg(windows)]
@@ -107,9 +115,16 @@ impl Wire {
             if remaining == 0 {
                 return Ok(LineRead::TooLong);
             }
-            let read = (&mut self.reader)
+            let read = match (&mut self.reader)
                 .take(remaining as u64)
-                .read_until(b'\n', &mut buf)?;
+                .read_until(b'\n', &mut buf)
+            {
+                Ok(read) => read,
+                Err(error) if is_timeout(&error) && buf.is_empty() => {
+                    return Ok(LineRead::Idle);
+                }
+                Err(error) => return Err(error),
+            };
             if read == 0 {
                 return Ok(if buf.is_empty() {
                     LineRead::Eof
@@ -150,6 +165,9 @@ impl Wire {
             let read = match read_some(self.stream.pipe(), &mut scratch, remaining) {
                 Ok(read) => read,
                 Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+                Err(error) if is_timeout(&error) && self.pending.is_empty() => {
+                    return Ok(LineRead::Idle);
+                }
                 Err(error) => return Err(error),
             };
             if read == 0 {

@@ -40,13 +40,17 @@ const _: () = assert!(
         >= PANES_A_HEAVY_WORKSPACE_ATTACHES * CONTROL_CONNECTIONS_PER_PANE
             + CONTROL_CALLS_IN_FLIGHT
 );
-const IDLE_TIMEOUT: Duration = Duration::from_secs(60);
-const FOLLOW_POLL: Duration = Duration::from_millis(15);
+const HANDSHAKE_DEADLINE: Duration = protocol::REQUEST_DEADLINE;
+const CONTROL_IDLE_SLICE: Duration = Duration::from_secs(30);
 pub const FOLLOW_KEEPALIVE: Duration = Duration::from_secs(2);
+
+#[cfg(test)]
+static DROP_CONNECTION_AFTER_INPUT: AtomicBool = AtomicBool::new(false);
 
 pub struct ServerHandle {
     endpoint: PathBuf,
     shutdown: Arc<AtomicBool>,
+    active: Arc<AtomicUsize>,
     thread: Option<JoinHandle<io::Result<()>>>,
 }
 
@@ -54,19 +58,26 @@ impl ServerHandle {
     pub fn spawn(host: Arc<SessionHost>, endpoint: PathBuf) -> io::Result<Self> {
         let listener = bind(&endpoint)?;
         let shutdown = Arc::new(AtomicBool::new(false));
+        let active = Arc::new(AtomicUsize::new(0));
         let flag = Arc::clone(&shutdown);
+        let counter = Arc::clone(&active);
         let thread = std::thread::Builder::new()
             .name("paneflow-host-accept".into())
-            .spawn(move || accept_loop(listener, host, flag))?;
+            .spawn(move || accept_loop(listener, host, flag, counter))?;
         Ok(Self {
             endpoint,
             shutdown,
+            active,
             thread: Some(thread),
         })
     }
 
     pub fn endpoint(&self) -> &Path {
         &self.endpoint
+    }
+
+    pub fn active_connections(&self) -> usize {
+        self.active.load(Ordering::Acquire)
     }
 
     pub fn stop(mut self) -> io::Result<()> {
@@ -97,7 +108,7 @@ impl Drop for ServerHandle {
 
 pub fn serve(host: Arc<SessionHost>, endpoint: &Path, shutdown: Arc<AtomicBool>) -> io::Result<()> {
     let listener = bind(endpoint)?;
-    let served = accept_loop(listener, host, shutdown);
+    let served = accept_loop(listener, host, shutdown, Arc::new(AtomicUsize::new(0)));
     #[cfg(unix)]
     {
         let _ = std::fs::remove_file(endpoint);
@@ -155,8 +166,8 @@ fn accept_loop(
     listener: Listener,
     host: Arc<SessionHost>,
     shutdown: Arc<AtomicBool>,
+    active: Arc<AtomicUsize>,
 ) -> io::Result<()> {
-    let active = Arc::new(AtomicUsize::new(0));
     for connection in listener.incoming() {
         if shutdown.load(Ordering::Acquire) {
             break;
@@ -239,9 +250,20 @@ fn handle_connection(mut wire: Wire, host: Arc<SessionHost>, shutdown: Arc<Atomi
         if shutdown.load(Ordering::Acquire) {
             return;
         }
-        let line = match wire.read_line(IDLE_TIMEOUT) {
+        let slice = if greeted {
+            CONTROL_IDLE_SLICE
+        } else {
+            HANDSHAKE_DEADLINE
+        };
+        let line = match wire.read_line(slice) {
             Ok(LineRead::Line(line)) => line,
             Ok(LineRead::Eof) => return,
+            Ok(LineRead::Idle) => {
+                if greeted {
+                    continue;
+                }
+                return;
+            }
             Ok(LineRead::TooLong) => {
                 let _ = wire.write_json(&error_envelope(
                     &Value::Null,
@@ -384,6 +406,7 @@ fn handle_connection(mut wire: Wire, host: Arc<SessionHost>, shutdown: Arc<Atomi
                 let written = wire.write_json(&envelope);
                 if stopping {
                     shutdown.store(true, Ordering::Release);
+                    host.wake_followers();
                     wake_accept_loop(Path::new(&host.identity().endpoint));
                     return;
                 }
@@ -426,6 +449,12 @@ fn handle_connection(mut wire: Wire, host: Arc<SessionHost>, shutdown: Arc<Atomi
                         Err(error) => error_to_envelope(&id, error),
                     },
                 };
+                #[cfg(test)]
+                if method == "session.input"
+                    && DROP_CONNECTION_AFTER_INPUT.swap(false, Ordering::AcqRel)
+                {
+                    return;
+                }
                 match wire.write_json(&envelope) {
                     Ok(()) => Flow::Continue,
                     Err(_) => Flow::Close,
@@ -693,7 +722,14 @@ fn dispatch(host: &SessionHost, method: &str, params: &Value) -> Result<Value, D
         }
         "session.text" => {
             let session = param_session(params)?;
-            Ok(json!({"session": session, "text": host.text(&session)?}))
+            let text = host.text(&session)?;
+            Ok(json!({
+                "session": session,
+                "text": text.text,
+                "live": text.live,
+                "available": text.available,
+                "complete": text.complete,
+            }))
         }
         METHOD_AGENT_SNAPSHOT => Ok(json!({
             "host_instance": host.instance(),
@@ -732,7 +768,7 @@ fn stream_agent_follow(
                 Err(_) => Flow::Close,
             };
         }
-        match subscription.frames.recv_timeout(FOLLOW_POLL) {
+        match subscription.frames.recv_timeout(FOLLOW_KEEPALIVE) {
             Ok(frame) => {
                 if wire.write_json(&frame).is_err() {
                     host.unsubscribe_agents(subscription.id);
@@ -869,9 +905,32 @@ fn stream_output(
     if wire.write_json(&header).is_err() {
         return Flow::Close;
     }
+    let stream = match host.output_stream(&session, Some(generation)) {
+        Ok(stream) => stream,
+        Err(error) => {
+            let _ = wire.write_json(&error_to_envelope(&Value::Null, error.into()));
+            return Flow::Close;
+        }
+    };
     let mut last_frame_at = std::time::Instant::now();
     loop {
-        let slice = match host.output(&session, Some(generation), offset, DATA_CHUNK_RAW_BYTES) {
+        let read = match &stream {
+            Ok(stream) => stream
+                .read(offset, DATA_CHUNK_RAW_BYTES)
+                .map_err(|evicted| RuntimeError::OutputEvicted {
+                    requested: evicted.requested,
+                    tail_start: evicted.tail_start,
+                    tail_end: evicted.tail_end,
+                })
+                .map_err(HostError::from),
+            Err(end) if offset == end.end_offset => Ok(end.clone()),
+            Err(end) => Err(HostError::Runtime(RuntimeError::OutputEvicted {
+                requested: offset,
+                tail_start: end.end_offset,
+                tail_end: end.end_offset,
+            })),
+        };
+        let slice = match read {
             Ok(slice) => slice,
             Err(error) => {
                 let _ = wire.write_json(&error_to_envelope(&Value::Null, error.into()));
@@ -894,17 +953,6 @@ fn stream_output(
             if slice.end_offset > offset {
                 continue;
             }
-        } else if follow && last_frame_at.elapsed() >= FOLLOW_KEEPALIVE {
-            let line = json!({
-                "type": "keepalive",
-                "session": session,
-                "generation": generation,
-                "offset": offset,
-            });
-            if wire.write_json(&line).is_err() {
-                return Flow::Close;
-            }
-            last_frame_at = std::time::Instant::now();
         }
         let finished = !follow || !slice.live || shutdown.load(Ordering::Acquire);
         if finished && slice.end_offset <= offset {
@@ -920,14 +968,38 @@ fn stream_output(
                 Err(_) => Flow::Close,
             };
         }
-        std::thread::sleep(FOLLOW_POLL);
+        let Ok(stream) = &stream else {
+            continue;
+        };
+        let keepalive_at = last_frame_at + FOLLOW_KEEPALIVE;
+        match stream.wait_past(offset, keepalive_at) {
+            crate::stream::StreamWait::Published | crate::stream::StreamWait::Ended => {}
+            crate::stream::StreamWait::Deadline => {
+                if shutdown.load(Ordering::Acquire) {
+                    continue;
+                }
+                let line = json!({
+                    "type": "keepalive",
+                    "session": session,
+                    "generation": generation,
+                    "offset": offset,
+                });
+                if wire.write_json(&line).is_err() {
+                    return Flow::Close;
+                }
+                last_frame_at = std::time::Instant::now();
+            }
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::client::{HostClient, HostClientError};
+    use crate::SessionLifecycle;
+    use crate::client::{HostClient, HostClientError, OutputEnd};
+    use crate::host::SessionSummary;
+    use crate::protocol::ERR_OUTPUT_EVICTED;
     use crate::protocol::{ERR_HANDSHAKE_REQUIRED, ERR_SESSION_LIVE, MAX_CONTROL_FRAME_BYTES};
 
     use std::sync::atomic::AtomicU64;
@@ -1522,5 +1594,863 @@ mod tests {
         assert_eq!(refusal["error"]["code"], ERR_FRAME_TOO_LARGE);
         assert!(host.list(None).is_empty());
         server.stop().unwrap();
+    }
+
+    fn shell_line(windows: &str, unix: &str) -> Vec<u8> {
+        if cfg!(windows) {
+            format!("{windows}\r\n").into_bytes()
+        } else {
+            format!("{unix}\n").into_bytes()
+        }
+    }
+
+    fn visible_text(raw: &str) -> String {
+        let mut visible = String::new();
+        let mut chars = raw.chars().peekable();
+        while let Some(c) = chars.next() {
+            if c != '\u{1b}' {
+                visible.push(c);
+                continue;
+            }
+            match chars.next() {
+                Some('[') => {
+                    for c in chars.by_ref() {
+                        if ('\u{40}'..='\u{7e}').contains(&c) {
+                            break;
+                        }
+                    }
+                }
+                Some(']') => {
+                    let mut previous = '\0';
+                    for c in chars.by_ref() {
+                        if c == '\u{7}' || (previous == '\u{1b}' && c == '\\') {
+                            break;
+                        }
+                        previous = c;
+                    }
+                }
+                _ => {}
+            }
+        }
+        visible
+    }
+
+    fn wait_until(budget: Duration, mut check: impl FnMut() -> bool) -> bool {
+        let deadline = Instant::now() + budget;
+        loop {
+            if check() {
+                return true;
+            }
+            if Instant::now() >= deadline {
+                return false;
+            }
+            std::thread::sleep(Duration::from_millis(25));
+        }
+    }
+
+    fn create_shell(client: &mut HostClient) -> (SessionId, SessionGeneration) {
+        let created = client
+            .create(&serde_json::from_value(shell_create_params()).unwrap())
+            .unwrap();
+        (created.manifest.session, created.manifest.generation)
+    }
+
+    fn read_until_marker(
+        client: &mut HostClient,
+        session: &SessionId,
+        generation: SessionGeneration,
+        offset: &mut u64,
+        marker: &str,
+        budget: Duration,
+    ) -> String {
+        let mut collected = Vec::new();
+        let deadline = Instant::now() + budget;
+        while Instant::now() < deadline {
+            *offset = client
+                .output(
+                    session,
+                    Some(generation),
+                    *offset,
+                    false,
+                    |_, bytes| {
+                        collected.extend_from_slice(bytes);
+                        true
+                    },
+                    || true,
+                )
+                .unwrap()
+                .next_offset;
+            if String::from_utf8_lossy(&collected).contains(marker) {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(30));
+        }
+        String::from_utf8_lossy(&collected).into_owned()
+    }
+
+    fn wait_ended(host: &SessionHost, session: &SessionId, budget: Duration) -> SessionSummary {
+        assert!(
+            wait_until(budget, || host.inspect(session).is_ok_and(|summary| {
+                !summary.live
+                    && !summary.pending_launch
+                    && !matches!(
+                        summary.manifest.lifecycle,
+                        SessionLifecycle::Starting | SessionLifecycle::Running
+                    )
+            })),
+            "the session ends within {budget:?}"
+        );
+        host.inspect(session).unwrap()
+    }
+
+    fn spawn_follower(
+        endpoint: PathBuf,
+        hello: ClientHello,
+        session: SessionId,
+        generation: SessionGeneration,
+        from: u64,
+        pause_first_frame: Option<Duration>,
+    ) -> JoinHandle<Result<(OutputEnd, String), HostClientError>> {
+        std::thread::spawn(move || {
+            let mut client = HostClient::connect(&endpoint, &hello)?;
+            let mut streamed = Vec::new();
+            let mut paused = pause_first_frame;
+            let end = client.output(
+                &session,
+                Some(generation),
+                from,
+                true,
+                |_, bytes| {
+                    if let Some(pause) = paused.take() {
+                        std::thread::sleep(pause);
+                    }
+                    streamed.extend_from_slice(bytes);
+                    true
+                },
+                || true,
+            )?;
+            Ok((end, String::from_utf8_lossy(&streamed).into_owned()))
+        })
+    }
+
+    #[test]
+    fn an_output_flood_reaches_every_follower_and_a_paused_follower_never_stalls_control() {
+        let (_home, _host, server) = start();
+        let hello = ClientHello::local("paneflow-host-test");
+        let mut control = HostClient::connect(server.endpoint(), &hello).unwrap();
+        let (session, generation) = create_shell(&mut control);
+        let mut offset = 0;
+        control
+            .input(
+                &session,
+                generation,
+                &shell_line("echo READY-MARK", "echo READY-MARK"),
+            )
+            .unwrap();
+        read_until_marker(
+            &mut control,
+            &session,
+            generation,
+            &mut offset,
+            "READY-MARK",
+            Duration::from_secs(15),
+        );
+        let from = control
+            .attach(&session, Some(generation))
+            .unwrap()
+            .checkpoint
+            .offset;
+
+        let followers: Vec<_> = [None, None, Some(Duration::from_millis(1500))]
+            .into_iter()
+            .map(|pause| {
+                spawn_follower(
+                    server.endpoint().to_path_buf(),
+                    hello.clone(),
+                    session.clone(),
+                    generation,
+                    from,
+                    pause,
+                )
+            })
+            .collect();
+        std::thread::sleep(Duration::from_millis(200));
+
+        control
+            .input(
+                &session,
+                generation,
+                &shell_line(
+                    "for /L %i in (1,1,6000) do @echo FLOOD-LINE-%i",
+                    "i=0; while [ $i -lt 6000 ]; do i=$((i+1)); echo FLOOD-LINE-$i; done",
+                ),
+            )
+            .unwrap();
+        let mut slowest = Duration::ZERO;
+        for _ in 0..10 {
+            let started = Instant::now();
+            control.inspect(&session).unwrap();
+            slowest = slowest.max(started.elapsed());
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        assert!(
+            slowest < Duration::from_secs(2),
+            "US-006: a paused follower must not hold the control path, slowest inspect {slowest:?}"
+        );
+        control
+            .input(
+                &session,
+                generation,
+                &shell_line("echo FLOOD-END", "echo FLOOD-END"),
+            )
+            .expect("the control path accepts input after the flood");
+        read_until_marker(
+            &mut control,
+            &session,
+            generation,
+            &mut offset,
+            "FLOOD-END",
+            Duration::from_secs(30),
+        );
+        let stopped = control.stop(&session, Some(generation)).unwrap();
+        assert!(!stopped.live);
+
+        for (index, follower) in followers.into_iter().enumerate() {
+            match follower.join().unwrap() {
+                Ok((end, text)) => {
+                    assert!(!end.live, "follower {index} sees the end of the stream");
+                    assert!(
+                        text.contains("FLOOD-LINE-6000") && text.contains("FLOOD-END"),
+                        "follower {index} received the whole flood"
+                    );
+                }
+                Err(error) => assert_eq!(
+                    error.code(),
+                    Some(ERR_OUTPUT_EVICTED),
+                    "follower {index} is told explicitly when the tail was evicted: {error}"
+                ),
+            }
+        }
+        server.stop().unwrap();
+    }
+
+    #[test]
+    fn an_exit_without_output_ends_the_follower_and_leaves_an_empty_completed_text() {
+        let (_home, host, server) = start();
+        let hello = ClientHello::local("paneflow-host-test");
+        let mut control = HostClient::connect(server.endpoint(), &hello).unwrap();
+        #[cfg(windows)]
+        let (shell, args) = ("cmd.exe", vec!["/Q", "/D", "/C", "exit 0"]);
+        #[cfg(unix)]
+        let (shell, args) = ("/bin/sh", vec!["-c", "exit 0"]);
+        let created = control
+            .create(
+                &serde_json::from_value(json!({
+                    "shell": shell,
+                    "args": args,
+                    "cwd": std::env::temp_dir().display().to_string(),
+                    "cols": 80,
+                    "rows": 24,
+                }))
+                .unwrap(),
+            )
+            .unwrap();
+        let session = created.manifest.session.clone();
+        let generation = created.manifest.generation;
+        let follower = spawn_follower(
+            server.endpoint().to_path_buf(),
+            hello.clone(),
+            session.clone(),
+            generation,
+            0,
+            None,
+        );
+        let summary = wait_ended(&host, &session, Duration::from_secs(15));
+        assert!(matches!(
+            summary.manifest.lifecycle,
+            SessionLifecycle::Exited { code: 0, .. }
+        ));
+        let (end, text) = follower.join().unwrap().unwrap();
+        assert!(!end.live);
+        assert!(!end.stopped_by_client);
+        assert!(
+            visible_text(&text).trim().is_empty(),
+            "nothing was fabricated for a silent exit: {text:?}"
+        );
+
+        let final_text = control
+            .call("session.text", json!({"session": session}))
+            .unwrap();
+        assert_eq!(final_text["live"], false);
+        assert_eq!(final_text["text"], "");
+        assert_eq!(final_text["complete"], true);
+        assert!(
+            wait_until(Duration::from_secs(5), || matches!(
+                host.output_stream(&session, None),
+                Ok(Err(_))
+            )),
+            "NFR-04: the runtime is released within 5 s of the exit"
+        );
+        server.stop().unwrap();
+    }
+
+    #[test]
+    fn a_natural_exit_keeps_a_cold_record_releases_the_runtime_and_removal_drops_the_text() {
+        let (home, host, server) = start();
+        let hello = ClientHello::local("paneflow-host-test");
+        let mut control = HostClient::connect(server.endpoint(), &hello).unwrap();
+        let (session, generation) = create_shell(&mut control);
+        let mut offset = 0;
+        control
+            .input(
+                &session,
+                generation,
+                &shell_line("echo NATURAL_MA^RKER", "echo NATURAL_MA''RKER"),
+            )
+            .unwrap();
+        read_until_marker(
+            &mut control,
+            &session,
+            generation,
+            &mut offset,
+            "NATURAL_MARKER",
+            Duration::from_secs(15),
+        );
+        control
+            .input(&session, generation, &shell_line("exit", "exit"))
+            .unwrap();
+        let summary = wait_ended(&host, &session, Duration::from_secs(15));
+        assert!(
+            matches!(summary.manifest.lifecycle, SessionLifecycle::Exited { .. }),
+            "a natural exit is recorded as exited: {:?}",
+            summary.manifest.lifecycle
+        );
+        assert!(
+            wait_until(Duration::from_secs(5), || matches!(
+                host.output_stream(&session, None),
+                Ok(Err(_))
+            )),
+            "NFR-04: a completed session keeps no runtime, tail, or terminal"
+        );
+        let final_output = host
+            .inspect(&session)
+            .unwrap()
+            .manifest
+            .final_output
+            .expect("a completed record carries its final output metadata");
+        assert!(
+            final_output.complete,
+            "the PTY reached EOF before the drain budget"
+        );
+        assert!(final_output.text_available);
+        assert!(final_output.text_bytes as usize <= crate::runtime::FINAL_TEXT_MAX_BYTES);
+        let cold = crate::cold_text::path(home.path(), &session);
+        assert!(cold.is_file(), "the final text is kept as a cold file");
+
+        let final_text = control
+            .call("session.text", json!({"session": session}))
+            .unwrap();
+        assert_eq!(final_text["live"], false, "{final_text}");
+        assert_eq!(final_text["available"], true, "{final_text}");
+        assert_eq!(final_text["complete"], true, "{final_text}");
+        assert!(
+            final_text["text"]
+                .as_str()
+                .unwrap()
+                .contains("NATURAL_MARKER"),
+            "the retained text is the final screen: {final_text}"
+        );
+        let refused = control.attach(&session, Some(generation));
+        assert!(
+            refused.is_err(),
+            "opening an ended record never attaches or launches"
+        );
+        let ended = control
+            .output(
+                &session,
+                Some(generation),
+                final_output.offset,
+                true,
+                |_, _| true,
+                || true,
+            )
+            .unwrap();
+        assert!(
+            !ended.live,
+            "a follower of a completed record ends immediately"
+        );
+
+        control.remove(&session).unwrap();
+        assert!(!cold.exists(), "removal releases the cold text");
+        assert!(matches!(
+            host.text(&session),
+            Err(HostError::SessionNotFound(_))
+        ));
+        server.stop().unwrap();
+    }
+
+    #[test]
+    fn a_stop_racing_a_natural_exit_settles_on_a_single_confirmed_exit() {
+        let (_home, host, server) = start();
+        let hello = ClientHello::local("paneflow-host-test");
+        let mut control = HostClient::connect(server.endpoint(), &hello).unwrap();
+        let mut stopper = HostClient::connect(server.endpoint(), &hello).unwrap();
+        let (session, generation) = create_shell(&mut control);
+        let mut offset = 0;
+        control
+            .input(
+                &session,
+                generation,
+                &shell_line("echo RACE-READY", "echo RACE-READY"),
+            )
+            .unwrap();
+        read_until_marker(
+            &mut control,
+            &session,
+            generation,
+            &mut offset,
+            "RACE-READY",
+            Duration::from_secs(15),
+        );
+        control
+            .input(&session, generation, &shell_line("exit", "exit"))
+            .unwrap();
+        let stopped = stopper.stop(&session, Some(generation)).unwrap();
+        assert!(!stopped.live);
+        assert!(matches!(
+            stopped.manifest.lifecycle,
+            SessionLifecycle::Exited { .. }
+        ));
+        let summary = wait_ended(&host, &session, Duration::from_secs(15));
+        assert_eq!(summary.manifest.generation, generation);
+        assert_eq!(summary.descendants_unresolved, 0);
+        assert!(
+            wait_until(Duration::from_secs(5), || host
+                .inspect(&session)
+                .unwrap()
+                .manifest
+                .final_output
+                .is_some()),
+            "exactly one completed record follows the racing stop"
+        );
+        assert!(
+            wait_until(Duration::from_secs(5), || matches!(
+                host.output_stream(&session, None),
+                Ok(Err(_))
+            )),
+            "the runtime is released after the race"
+        );
+        server.stop().unwrap();
+    }
+
+    #[test]
+    fn a_held_open_descendant_bounds_the_final_drain_and_marks_the_output_incomplete() {
+        let (_home, host, server) = start();
+        let hello = ClientHello::local("paneflow-host-test");
+        let mut control = HostClient::connect(server.endpoint(), &hello).unwrap();
+        let (session, generation) = create_shell(&mut control);
+        let mut offset = 0;
+        control
+            .input(
+                &session,
+                generation,
+                &shell_line("echo HOLD-READY", "echo HOLD-READY"),
+            )
+            .unwrap();
+        read_until_marker(
+            &mut control,
+            &session,
+            generation,
+            &mut offset,
+            "HOLD-READY",
+            Duration::from_secs(15),
+        );
+        control
+            .input(
+                &session,
+                generation,
+                &shell_line("start /b ping -n 8 127.0.0.1 >nul", "sleep 7 &"),
+            )
+            .unwrap();
+        std::thread::sleep(Duration::from_millis(500));
+        let exit_sent_at = Instant::now();
+        control
+            .input(&session, generation, &shell_line("exit", "exit"))
+            .unwrap();
+        assert!(
+            wait_until(Duration::from_secs(10), || host
+                .inspect(&session)
+                .unwrap()
+                .manifest
+                .final_output
+                .is_some()),
+            "US-007: the final drain is bounded even while a descendant holds the PTY"
+        );
+        let drained_after = exit_sent_at.elapsed();
+        assert!(
+            drained_after < Duration::from_secs(6),
+            "the drain budget, not the descendant, decides when the record completes: {drained_after:?}"
+        );
+        let final_text = control
+            .call("session.text", json!({"session": session}))
+            .unwrap();
+        assert_eq!(final_text["live"], false);
+        if cfg!(unix) {
+            assert_eq!(
+                final_text["complete"], false,
+                "output cut by the drain budget is reported incomplete"
+            );
+        }
+        let summary = host.inspect(&session).unwrap();
+        assert!(
+            !summary.live,
+            "the session is no longer live once the shell exited"
+        );
+        assert!(
+            wait_until(Duration::from_secs(20), || matches!(
+                host.inspect(&session).unwrap().manifest.lifecycle,
+                SessionLifecycle::Exited { .. }
+            )),
+            "the exit is confirmed once the descendant is gone"
+        );
+        assert!(
+            wait_until(Duration::from_secs(5), || matches!(
+                host.output_stream(&session, None),
+                Ok(Err(_))
+            )),
+            "NFR-04: the runtime is released within 5 s of the confirmed exit"
+        );
+        server.stop().unwrap();
+    }
+
+    #[test]
+    fn a_lost_data_directory_reports_unavailable_text_without_blocking_retirement() {
+        let (home, host, server) = start();
+        let hello = ClientHello::local("paneflow-host-test");
+        let mut control = HostClient::connect(server.endpoint(), &hello).unwrap();
+        let (session, generation) = create_shell(&mut control);
+        let mut offset = 0;
+        control
+            .input(
+                &session,
+                generation,
+                &shell_line("echo LOST-DIR", "echo LOST-DIR"),
+            )
+            .unwrap();
+        read_until_marker(
+            &mut control,
+            &session,
+            generation,
+            &mut offset,
+            "LOST-DIR",
+            Duration::from_secs(15),
+        );
+        let data_dir = paneflow_home::host_session_data_dir_in(home.path(), session.as_str());
+        std::fs::remove_dir_all(&data_dir).unwrap();
+        control
+            .input(&session, generation, &shell_line("exit", "exit"))
+            .unwrap();
+        wait_ended(&host, &session, Duration::from_secs(15));
+        assert!(
+            wait_until(Duration::from_secs(5), || matches!(
+                host.output_stream(&session, None),
+                Ok(Err(_))
+            )),
+            "US-009: a durability failure still retires the runtime"
+        );
+        let final_output = host
+            .inspect(&session)
+            .unwrap()
+            .manifest
+            .final_output
+            .expect("the completed record is still committed");
+        assert!(!final_output.text_available);
+        let final_text = control
+            .call("session.text", json!({"session": session}))
+            .unwrap();
+        assert_eq!(final_text["live"], false);
+        assert_eq!(final_text["available"], false);
+        assert_eq!(final_text["text"], "");
+        server.stop().unwrap();
+    }
+
+    #[test]
+    fn records_past_their_retention_release_their_cold_text_under_an_injected_clock() {
+        let (home, host, server) = start();
+        let hello = ClientHello::local("paneflow-host-test");
+        let mut control = HostClient::connect(server.endpoint(), &hello).unwrap();
+        let mut sessions = Vec::new();
+        for index in 0..3 {
+            let (session, generation) = create_shell(&mut control);
+            let mut offset = 0;
+            let marker = format!("CHURN-{index}");
+            control
+                .input(
+                    &session,
+                    generation,
+                    &shell_line(&format!("echo {marker}"), &format!("echo {marker}")),
+                )
+                .unwrap();
+            read_until_marker(
+                &mut control,
+                &session,
+                generation,
+                &mut offset,
+                &marker,
+                Duration::from_secs(15),
+            );
+            control
+                .input(&session, generation, &shell_line("exit", "exit"))
+                .unwrap();
+            sessions.push(session);
+        }
+        for session in &sessions {
+            wait_ended(&host, session, Duration::from_secs(15));
+            assert!(
+                wait_until(Duration::from_secs(5), || crate::cold_text::path(
+                    home.path(),
+                    session
+                )
+                .is_file()),
+                "each churned session leaves a cold file"
+            );
+        }
+        let now = now_ms();
+        host.trim_terminated_records_at(now + crate::host::FINISHED_RECORD_MAX_AGE_MS / 2);
+        assert_eq!(
+            host.list(None).len(),
+            3,
+            "young records survive maintenance"
+        );
+        host.trim_terminated_records_at(now + crate::host::FINISHED_RECORD_MAX_AGE_MS + 60_000);
+        assert!(host.list(None).is_empty(), "aged records are dropped");
+        for session in &sessions {
+            assert!(
+                !crate::cold_text::path(home.path(), session).exists(),
+                "the cold cache is released with the record"
+            );
+            assert!(matches!(
+                host.text(session),
+                Err(HostError::SessionNotFound(_))
+            ));
+        }
+        assert_eq!(
+            crate::cold_text::enforce_budget(home.path(), crate::cold_text::COLD_TEXT_BUDGET_BYTES),
+            0
+        );
+        server.stop().unwrap();
+    }
+
+    fn idle_control_connection_delivers_the_first_key_exactly_once(idle: Duration) {
+        let (_home, host, server) = start();
+        let hello = ClientHello::local("paneflow-host-test");
+        let mut control = HostClient::connect(server.endpoint(), &hello).unwrap();
+        let (session, generation) = create_shell(&mut control);
+        let mut offset = 0;
+        control
+            .input(
+                &session,
+                generation,
+                &shell_line("echo IDLE-READY", "echo IDLE-READY"),
+            )
+            .unwrap();
+        read_until_marker(
+            &mut control,
+            &session,
+            generation,
+            &mut offset,
+            "IDLE-READY",
+            Duration::from_secs(15),
+        );
+        let from = control
+            .attach(&session, Some(generation))
+            .unwrap()
+            .checkpoint
+            .offset;
+        let follower = spawn_follower(
+            server.endpoint().to_path_buf(),
+            hello.clone(),
+            session.clone(),
+            generation,
+            from,
+            None,
+        );
+        std::thread::sleep(idle);
+        control
+            .input(
+                &session,
+                generation,
+                &shell_line("echo IDLE_RES^ULT", "echo IDLE_RES''ULT"),
+            )
+            .unwrap();
+        let text = read_until_marker(
+            &mut control,
+            &session,
+            generation,
+            &mut offset,
+            "IDLE_RESULT",
+            Duration::from_secs(15),
+        );
+        assert_eq!(
+            visible_text(&text).matches("IDLE_RESULT").count(),
+            1,
+            "US-010: the first key after {idle:?} idle is delivered exactly once: {text:?}"
+        );
+        let stopped = control.stop(&session, Some(generation)).unwrap();
+        assert!(!stopped.live);
+        let (end, streamed) = follower.join().unwrap().unwrap();
+        assert!(
+            !end.live,
+            "the follower outlives the idle period on keepalives"
+        );
+        assert_eq!(
+            visible_text(&streamed).matches("IDLE_RESULT").count(),
+            1,
+            "the follower saw the single delivery: {streamed:?}"
+        );
+        wait_ended(&host, &session, Duration::from_secs(15));
+        server.stop().unwrap();
+    }
+
+    #[test]
+    fn repeated_disconnects_deliver_each_input_once_and_release_every_connection_thread() {
+        let (_home, host, server) = start();
+        let hello = ClientHello::local("paneflow-host-test");
+        let mut control = HostClient::connect(server.endpoint(), &hello).unwrap();
+        let (session, generation) = create_shell(&mut control);
+        let mut offset = 0;
+        control
+            .input(
+                &session,
+                generation,
+                &shell_line("echo RECONNECT-READY", "echo RECONNECT-READY"),
+            )
+            .unwrap();
+        read_until_marker(
+            &mut control,
+            &session,
+            generation,
+            &mut offset,
+            "RECONNECT-READY",
+            Duration::from_secs(15),
+        );
+        let baseline = server.active_connections();
+        let rounds = 12;
+        for round in 0..rounds {
+            let mut peer = HostClient::connect(server.endpoint(), &hello).unwrap();
+            peer.input(
+                &session,
+                generation,
+                &shell_line(
+                    &format!("echo RC-{round}-MA^RK"),
+                    &format!("echo RC-{round}-MA''RK"),
+                ),
+            )
+            .unwrap();
+            drop(peer);
+        }
+        let text = read_until_marker(
+            &mut control,
+            &session,
+            generation,
+            &mut offset,
+            &format!("RC-{}-MARK", rounds - 1),
+            Duration::from_secs(30),
+        );
+        let visible = visible_text(&text);
+        for round in 0..rounds {
+            assert_eq!(
+                visible.matches(&format!("RC-{round}-MARK")).count(),
+                1,
+                "US-010: input sent over a dropped control connection is delivered once: {visible:?}"
+            );
+        }
+        assert!(
+            wait_until(Duration::from_secs(5), || server.active_connections()
+                <= baseline),
+            "US-010: dropped control connections release their host threads, {} still open",
+            server.active_connections()
+        );
+        let stopped = control.stop(&session, Some(generation)).unwrap();
+        assert!(!stopped.live);
+        wait_ended(&host, &session, Duration::from_secs(15));
+        server.stop().unwrap();
+    }
+
+    #[test]
+    fn a_connection_lost_before_the_input_ack_reports_unknown_delivery_without_a_resend() {
+        let (_home, host, server) = start();
+        let hello = ClientHello::local("paneflow-host-test");
+        let mut control = HostClient::connect(server.endpoint(), &hello).unwrap();
+        let (session, generation) = create_shell(&mut control);
+        let mut offset = 0;
+        control
+            .input(
+                &session,
+                generation,
+                &shell_line("echo PASTE-READY", "echo PASTE-READY"),
+            )
+            .unwrap();
+        read_until_marker(
+            &mut control,
+            &session,
+            generation,
+            &mut offset,
+            "PASTE-READY",
+            Duration::from_secs(15),
+        );
+        let mut pasting = HostClient::connect(server.endpoint(), &hello).unwrap();
+        let paste = shell_line("echo PASTE-DELIV^ERED", "echo PASTE-DELIV''ERED");
+        DROP_CONNECTION_AFTER_INPUT.store(true, Ordering::Release);
+        let error = pasting
+            .input(&session, generation, &paste)
+            .expect_err("the peer vanished before acknowledging the paste");
+        assert!(
+            error.is_connection_loss(),
+            "a missing acknowledgement is a connection loss, not a refusal: {error}"
+        );
+        assert!(
+            !DROP_CONNECTION_AFTER_INPUT.load(Ordering::Acquire),
+            "the fault fired exactly once"
+        );
+        let text = read_until_marker(
+            &mut control,
+            &session,
+            generation,
+            &mut offset,
+            "PASTE-DELIVERED",
+            Duration::from_secs(15),
+        );
+        assert_eq!(
+            visible_text(&text).matches("PASTE-DELIVERED").count(),
+            1,
+            "US-010: the bytes the host read before the loss ran exactly once and were never resent: {text:?}"
+        );
+        drop(pasting);
+        let stopped = control.stop(&session, Some(generation)).unwrap();
+        assert!(!stopped.live);
+        wait_ended(&host, &session, Duration::from_secs(15));
+        server.stop().unwrap();
+    }
+
+    #[test]
+    fn a_control_connection_idle_for_over_a_minute_still_delivers_the_first_key_once() {
+        let idle = std::env::var("PANEFLOW_TEST_IDLE_SECS")
+            .ok()
+            .and_then(|value| value.parse::<u64>().ok())
+            .unwrap_or(61);
+        idle_control_connection_delivers_the_first_key_exactly_once(Duration::from_secs(idle));
+    }
+
+    #[test]
+    #[ignore = "five minute idle soak; run explicitly"]
+    fn a_control_connection_idle_for_five_minutes_still_delivers_the_first_key_once() {
+        idle_control_connection_delivers_the_first_key_exactly_once(Duration::from_secs(300));
+    }
+
+    #[test]
+    #[ignore = "thirty minute idle soak; run explicitly"]
+    fn a_control_connection_idle_for_thirty_minutes_still_delivers_the_first_key_once() {
+        idle_control_connection_delivers_the_first_key_exactly_once(Duration::from_secs(1800));
     }
 }

@@ -17,8 +17,8 @@ use crate::manifest::{
 };
 use crate::protocol::{HOST_PROTOCOL_VERSION, HostIdentity, local_engine_identity};
 use crate::runtime::{
-    Checkpoint, LaunchCancel, LaunchWait, OutputSlice, RuntimeError, RuntimeNotice,
-    RuntimeObserver, STARTUP_DEADLINE, SessionRuntime, SpawnSpec, StopReport,
+    Checkpoint, CompletedRecord, LaunchCancel, LaunchWait, OutputSlice, RuntimeError,
+    RuntimeNotice, RuntimeObserver, STARTUP_DEADLINE, SessionRuntime, SpawnSpec, StopReport,
 };
 use crate::session_input::SessionInput;
 
@@ -221,9 +221,24 @@ struct PendingLaunch {
     fallback_owner: Option<crate::runtime::LaunchHandle>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct CompletedRuntime {
+    generation: SessionGeneration,
+    final_offset: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SessionText {
+    pub text: String,
+    pub live: bool,
+    pub available: bool,
+    pub complete: bool,
+}
+
 struct SessionRecord {
     manifest: Arc<Mutex<SessionManifest>>,
     runtime: Option<Arc<SessionRuntime>>,
+    completed: Option<CompletedRuntime>,
     launch: Option<PendingLaunch>,
     input: Arc<Mutex<SessionInput>>,
     escape_fence: bool,
@@ -243,6 +258,7 @@ impl SessionRecord {
         Self {
             manifest,
             runtime: None,
+            completed: None,
             launch: None,
             input: Arc::new(Mutex::new(SessionInput::default())),
             escape_fence,
@@ -366,7 +382,7 @@ pub struct SessionHost {
 
 pub const INACTIVE_ROWS_PER_WORKSPACE: usize = 5;
 
-const FINISHED_RECORD_MAX_AGE_MS: u64 = 24 * 60 * 60 * 1000;
+pub(crate) const FINISHED_RECORD_MAX_AGE_MS: u64 = 24 * 60 * 60 * 1000;
 
 const INTERRUPTED_RECORD_MAX_AGE_MS: u64 = 30 * 24 * 60 * 60 * 1000;
 
@@ -541,7 +557,30 @@ impl SessionHost {
         host.write_instance_record()?;
         crate::viewport_scan::spawn(&host);
         crate::cancellation_scan::spawn(&host);
+        crate::maintenance::spawn(&host);
         Ok(host)
+    }
+
+    pub fn run_maintenance(&self) {
+        self.trim_terminated_records();
+        let evicted =
+            crate::cold_text::enforce_budget(&self.home, crate::cold_text::COLD_TEXT_BUDGET_BYTES);
+        if evicted > 0 {
+            log::info!(
+                "paneflow-host: evicted {evicted} final output file(s) past the cold budget"
+            );
+        }
+    }
+
+    pub fn wake_followers(&self) {
+        let streams: Vec<_> = self
+            .lock_sessions()
+            .values()
+            .filter_map(|record| record.runtime.as_deref().map(SessionRuntime::stream))
+            .collect();
+        for stream in streams {
+            stream.wake();
+        }
     }
 
     #[cfg(test)]
@@ -823,7 +862,10 @@ impl SessionHost {
     }
 
     fn trim_terminated_records(&self) {
-        let now = now_ms();
+        self.trim_terminated_records_at(now_ms());
+    }
+
+    pub fn trim_terminated_records_at(&self, now: u64) {
         let dropped = {
             let mut sessions = self.lock_sessions();
             let dropped: Vec<(SessionId, Arc<Mutex<SeedLedger>>)> = sessions
@@ -1194,6 +1236,7 @@ impl SessionHost {
             screen_activity: None,
             menu_prompt_active: false,
             runtime: None,
+            final_output: None,
             host_protocol_version: HOST_PROTOCOL_VERSION,
             host_build_id: crate::protocol::host_build_id(),
             created_at_ms: created,
@@ -1752,6 +1795,7 @@ impl SessionHost {
             guard.updated_at_ms = now_ms();
             drop(guard);
             record.runtime = Some(Arc::clone(&runtime));
+            record.completed = None;
             record.launch = None;
             record.set_escape_fence(fenced);
             cancelled
@@ -1978,8 +2022,82 @@ impl SessionHost {
         self.with_live_runtime(session, generation, SessionRuntime::checkpoint)
     }
 
-    pub fn text(&self, session: &SessionId) -> Result<String, HostError> {
-        self.with_live_runtime(session, None, SessionRuntime::text)
+    pub fn text(&self, session: &SessionId) -> Result<SessionText, HostError> {
+        let (runtime, final_output) = {
+            let sessions = self.lock_sessions();
+            let record = sessions
+                .get(session)
+                .ok_or_else(|| HostError::SessionNotFound(session.clone()))?;
+            if record.launch.is_some() {
+                return Err(HostError::LaunchPending(session.clone()));
+            }
+            let live = record.runtime.clone().filter(|runtime| !runtime.retired());
+            let final_output = record
+                .manifest
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .final_output
+                .clone();
+            (live, final_output)
+        };
+        if let Some(runtime) = runtime {
+            let text = runtime.text()?;
+            return Ok(SessionText {
+                text,
+                live: true,
+                available: true,
+                complete: false,
+            });
+        }
+        let Some(final_output) = final_output else {
+            return Err(HostError::SessionNotLive(session.clone()));
+        };
+        let text = final_output
+            .text_available
+            .then(|| crate::cold_text::read(&self.home, session))
+            .flatten();
+        Ok(SessionText {
+            available: text.is_some(),
+            text: text.unwrap_or_default(),
+            live: false,
+            complete: final_output.complete,
+        })
+    }
+
+    pub fn output_stream(
+        &self,
+        session: &SessionId,
+        generation: Option<SessionGeneration>,
+    ) -> Result<Result<Arc<crate::stream::OutputStream>, OutputSlice>, HostError> {
+        let sessions = self.lock_sessions();
+        let record = sessions
+            .get(session)
+            .ok_or_else(|| HostError::SessionNotFound(session.clone()))?;
+        if let Some(requested) = generation {
+            let current = record.generation();
+            if requested != current {
+                return Err(HostError::GenerationMismatch {
+                    session: session.clone(),
+                    current,
+                    requested,
+                });
+            }
+        }
+        if record.launch.is_some() {
+            return Err(HostError::LaunchPending(session.clone()));
+        }
+        if let Some(runtime) = record.runtime.as_deref() {
+            return Ok(Ok(runtime.stream()));
+        }
+        let completed = record
+            .completed
+            .ok_or_else(|| HostError::SessionNotLive(session.clone()))?;
+        Ok(Err(OutputSlice {
+            offset: completed.final_offset,
+            data: Vec::new(),
+            end_offset: completed.final_offset,
+            live: false,
+        }))
     }
 
     pub fn bracketed_paste_enabled(&self, session: &SessionId) -> Result<bool, HostError> {
@@ -1993,7 +2111,22 @@ impl SessionHost {
         from: u64,
         max: usize,
     ) -> Result<OutputSlice, HostError> {
-        self.with_live_runtime(session, generation, |runtime| runtime.output(from, max))
+        match self.output_stream(session, generation)? {
+            Ok(stream) => stream
+                .read(from, max)
+                .map_err(|evicted| RuntimeError::OutputEvicted {
+                    requested: evicted.requested,
+                    tail_start: evicted.tail_start,
+                    tail_end: evicted.tail_end,
+                })
+                .map_err(HostError::from),
+            Err(end) if from == end.end_offset => Ok(end),
+            Err(end) => Err(HostError::Runtime(RuntimeError::OutputEvicted {
+                requested: from,
+                tail_start: end.end_offset,
+                tail_end: end.end_offset,
+            })),
+        }
     }
 
     pub fn input(
@@ -2379,6 +2512,16 @@ impl SessionHost {
             let Some(host) = host.upgrade() else {
                 return;
             };
+            let session = manifest
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .session
+                .clone();
+            let lifecycle_settled = matches!(notice, RuntimeNotice::Exited(_));
+            if let RuntimeNotice::Completed(record) = notice {
+                host.complete_session(&session, &manifest, &durability, record);
+                return;
+            }
             host.commit(
                 &manifest,
                 &durability,
@@ -2395,9 +2538,96 @@ impl SessionHost {
                     RuntimeNotice::Unverified(reason) => {
                         guard.lifecycle = SessionLifecycle::Unverified { reason };
                     }
+                    RuntimeNotice::Completed(_) => {}
                 },
             );
+            if lifecycle_settled {
+                host.release_retired_runtime(&session, generation);
+            }
         })
+    }
+
+    fn complete_session(
+        &self,
+        session: &SessionId,
+        manifest: &Arc<Mutex<SessionManifest>>,
+        durability: &Durability,
+        record: CompletedRecord,
+    ) {
+        let owned = {
+            let sessions = self.lock_sessions();
+            sessions
+                .get(session)
+                .is_some_and(|held| Arc::ptr_eq(&held.manifest, manifest))
+                && manifest
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .generation
+                    == record.generation
+        };
+        if !owned {
+            log::debug!(
+                "paneflow-host: final output of session {session} generation {} dropped; the record moved on",
+                record.generation
+            );
+            return;
+        }
+        let text_bytes = record.text.len() as u64;
+        let written = if record.text.is_empty() {
+            Ok(0)
+        } else {
+            crate::cold_text::write(&self.home, session, &record.text)
+        };
+        let text_available = match written {
+            Ok(_) => !record.text.is_empty(),
+            Err(error) => {
+                log::warn!(
+                    "paneflow-host: final output of session {session} is not retained: {error}"
+                );
+                false
+            }
+        };
+        let final_output = crate::manifest::FinalOutput {
+            offset: record.final_offset,
+            complete: record.complete,
+            text_bytes,
+            text_available,
+        };
+        {
+            let mut sessions = self.lock_sessions();
+            if let Some(held) = sessions
+                .get_mut(session)
+                .filter(|held| Arc::ptr_eq(&held.manifest, manifest))
+            {
+                held.completed = Some(CompletedRuntime {
+                    generation: record.generation,
+                    final_offset: record.final_offset,
+                });
+            }
+        }
+        self.commit(manifest, durability, Some(record.generation), |guard| {
+            guard.final_output = Some(final_output);
+        });
+        self.release_retired_runtime(session, record.generation);
+    }
+
+    fn release_retired_runtime(&self, session: &SessionId, generation: SessionGeneration) {
+        let mut sessions = self.lock_sessions();
+        let Some(record) = sessions.get_mut(session) else {
+            return;
+        };
+        let releasable = record.runtime.as_deref().is_some_and(|runtime| {
+            runtime.generation() == generation
+                && runtime.retired()
+                && runtime.exit().is_some()
+                && !runtime.owns_process()
+                && runtime.unverified().is_none()
+        }) && record
+            .completed
+            .is_some_and(|completed| completed.generation == generation);
+        if releasable {
+            record.runtime = None;
+        }
     }
 }
 
@@ -2737,6 +2967,7 @@ mod tests {
             screen_activity: None,
             menu_prompt_active: false,
             runtime: None,
+            final_output: None,
             host_protocol_version: HOST_PROTOCOL_VERSION,
             host_build_id: crate::protocol::host_build_id(),
             created_at_ms: updated_at_ms,
@@ -2784,6 +3015,7 @@ mod tests {
                 screen_activity: None,
                 menu_prompt_active: false,
                 runtime: None,
+                final_output: None,
                 host_protocol_version: HOST_PROTOCOL_VERSION,
                 host_build_id: crate::protocol::host_build_id(),
                 created_at_ms: updated_at_ms,
@@ -3326,7 +3558,7 @@ mod tests {
         assert!(!again.live, "stopping an exited session is idempotent");
         assert!(matches!(
             host.input(&session, None, b"x".to_vec()),
-            Err(HostError::Runtime(RuntimeError::NotLive))
+            Err(HostError::Runtime(RuntimeError::NotLive)) | Err(HostError::SessionNotLive(_))
         ));
     }
 
@@ -3735,6 +3967,7 @@ mod tests {
             screen_activity: None,
             menu_prompt_active: false,
             runtime: None,
+            final_output: None,
             host_protocol_version: HOST_PROTOCOL_VERSION,
             host_build_id: crate::protocol::host_build_id(),
             created_at_ms: now_ms(),
@@ -3996,6 +4229,7 @@ mod tests {
                     screen_activity: None,
                     menu_prompt_active: false,
                     runtime: None,
+                    final_output: None,
                     host_protocol_version: HOST_PROTOCOL_VERSION,
                     host_build_id: crate::protocol::host_build_id(),
                     created_at_ms: now_ms(),

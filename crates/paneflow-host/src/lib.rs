@@ -12,12 +12,14 @@ pub mod agent;
 pub mod bootstrap;
 pub mod cancellation_scan;
 pub mod client;
+pub mod cold_text;
 pub mod control;
 pub mod endpoint;
 pub mod env;
 pub mod helpers;
 pub mod hook_assets;
 pub mod host;
+pub mod maintenance;
 pub mod manifest;
 pub mod menu_prompt;
 pub mod process;
@@ -28,6 +30,7 @@ pub mod runtime_observer;
 pub mod screen_activity;
 pub mod server;
 pub mod session_input;
+pub mod stream;
 pub mod tail;
 pub mod viewport_scan;
 
@@ -40,10 +43,11 @@ pub use bootstrap::{
 pub use client::{Attachment, HostClient, HostClientError, OutputEnd};
 pub use host::{
     CreateSession, HostError, INACTIVE_ROWS_PER_WORKSPACE, MAX_PENDING_LAUNCHES, SessionHost,
-    SessionReconnection, SessionRow, SessionSummary, ShutdownReport, UnresolvedSession,
+    SessionReconnection, SessionRow, SessionSummary, SessionText, ShutdownReport,
+    UnresolvedSession,
 };
 pub use manifest::{
-    HookRecord, HostedSessionRuntime, SessionLaunch, SessionLifecycle, SessionManifest,
+    FinalOutput, HookRecord, HostedSessionRuntime, SessionLaunch, SessionLifecycle, SessionManifest,
 };
 pub use process::{ProcessIdentity, ProcessVerdict};
 pub use protocol::{ClientHello, EngineIdentity, HOST_PROTOCOL_VERSION, HostIdentity};

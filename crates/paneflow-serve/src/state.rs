@@ -956,6 +956,7 @@ mod tests {
             screen_activity: None,
             menu_prompt_active: false,
             runtime: None,
+            final_output: None,
             host_protocol_version: paneflow_host::HOST_PROTOCOL_VERSION,
             host_build_id: "test-build".to_string(),
             created_at_ms: 1,

@@ -77,6 +77,14 @@ impl SessionLifecycle {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FinalOutput {
+    pub offset: u64,
+    pub complete: bool,
+    pub text_bytes: u64,
+    pub text_available: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HookRecord {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub event: Option<serde_json::Value>,
@@ -129,6 +137,8 @@ pub struct SessionManifest {
     pub menu_prompt_active: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub runtime: Option<HostedSessionRuntime>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub final_output: Option<FinalOutput>,
     #[serde(default)]
     pub host_protocol_version: u32,
     #[serde(default, skip_serializing_if = "String::is_empty")]
@@ -360,6 +370,7 @@ mod tests {
             screen_activity: None,
             menu_prompt_active: false,
             runtime: None,
+            final_output: None,
             host_protocol_version: crate::protocol::HOST_PROTOCOL_VERSION,
             host_build_id: crate::protocol::host_build_id(),
             created_at_ms: 1,
