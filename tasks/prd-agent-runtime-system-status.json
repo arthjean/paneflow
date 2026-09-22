@@ -1,0 +1,348 @@
+{
+  "prd": {
+    "file": "tasks/prd-agent-runtime-system.md",
+    "title": "Agent Runtime System",
+    "created_at": "2026-09-19",
+    "status": "IN_PROGRESS"
+  },
+  "epics": [
+    {
+      "id": "EP-001",
+      "title": "Runtime Catalog",
+      "status": "DONE",
+      "priority": "P0",
+      "stories_total": 3,
+      "stories_done": 3
+    },
+    {
+      "id": "EP-002",
+      "title": "Global Hook Integrations",
+      "status": "DONE",
+      "priority": "P0",
+      "stories_total": 5,
+      "stories_done": 5
+    },
+    {
+      "id": "EP-003",
+      "title": "PTY Core, Worker and Controller Split",
+      "status": "DONE",
+      "priority": "P0",
+      "stories_total": 3,
+      "stories_done": 3
+    },
+    {
+      "id": "EP-004",
+      "title": "Activity Reducer",
+      "status": "DONE",
+      "priority": "P0",
+      "stories_total": 3,
+      "stories_done": 3
+    },
+    {
+      "id": "EP-005",
+      "title": "Host Viewport Scan",
+      "status": "DONE",
+      "priority": "P1",
+      "stories_total": 3,
+      "stories_done": 3
+    },
+    {
+      "id": "EP-006",
+      "title": "Escape Cancellation and Background Agents",
+      "status": "DONE",
+      "priority": "P1",
+      "stories_total": 2,
+      "stories_done": 2
+    },
+    {
+      "id": "EP-007",
+      "title": "Remote Controller Proof",
+      "status": "DONE",
+      "priority": "P2",
+      "stories_total": 1,
+      "stories_done": 1
+    }
+  ],
+  "stories": [
+    {
+      "id": "US-001",
+      "title": "Catalog schema and generated registry",
+      "epic": "EP-001",
+      "status": "DONE",
+      "priority": "P0",
+      "size": "L",
+      "blocked_by": [],
+      "started_at": "2026-09-19",
+      "completed_at": "2026-09-19",
+      "reviewed_at": "2026-09-19"
+    },
+    {
+      "id": "US-002",
+      "title": "Migrate consumers to the catalog",
+      "epic": "EP-001",
+      "status": "DONE",
+      "priority": "P0",
+      "size": "L",
+      "blocked_by": [
+        "US-001"
+      ],
+      "started_at": "2026-09-19",
+      "completed_at": "2026-09-19",
+      "reviewed_at": "2026-09-19"
+    },
+    {
+      "id": "US-003",
+      "title": "Descriptors for the 18 shipped runtimes",
+      "epic": "EP-001",
+      "status": "DONE",
+      "priority": "P0",
+      "size": "M",
+      "blocked_by": [
+        "US-001"
+      ],
+      "started_at": "2026-09-19",
+      "completed_at": "2026-09-19",
+      "reviewed_at": "2026-09-19"
+    },
+    {
+      "id": "US-004",
+      "title": "Hook reporter with env gate, generation, seed and bounded delivery",
+      "epic": "EP-002",
+      "status": "DONE",
+      "priority": "P0",
+      "size": "L",
+      "blocked_by": [
+        "US-002"
+      ],
+      "started_at": "2026-09-19",
+      "completed_at": "2026-09-19",
+      "reviewed_at": "2026-09-19"
+    },
+    {
+      "id": "US-005",
+      "title": "Claude and Codex installers",
+      "epic": "EP-002",
+      "status": "DONE",
+      "priority": "P0",
+      "size": "L",
+      "blocked_by": [
+        "US-004"
+      ],
+      "started_at": "2026-09-19",
+      "completed_at": "2026-09-19",
+      "reviewed_at": "2026-09-19"
+    },
+    {
+      "id": "US-006",
+      "title": "Integration management surface",
+      "epic": "EP-002",
+      "status": "DONE",
+      "priority": "P0",
+      "size": "M",
+      "blocked_by": [
+        "US-005"
+      ],
+      "started_at": "2026-09-19",
+      "completed_at": "2026-09-19",
+      "reviewed_at": "2026-09-19"
+    },
+    {
+      "id": "US-007",
+      "title": "Retire per-launch hooks, the Claude registry and the Codex transcript reader",
+      "epic": "EP-002",
+      "status": "DONE",
+      "priority": "P0",
+      "size": "M",
+      "blocked_by": [
+        "US-005"
+      ],
+      "started_at": "2026-09-19",
+      "completed_at": "2026-09-19",
+      "reviewed_at": "2026-09-19"
+    },
+    {
+      "id": "US-008",
+      "title": "Host session environment and seed on receipt",
+      "epic": "EP-002",
+      "status": "DONE",
+      "priority": "P0",
+      "size": "M",
+      "blocked_by": [
+        "US-004"
+      ],
+      "started_at": "2026-09-19",
+      "completed_at": "2026-09-19",
+      "reviewed_at": "2026-09-19"
+    },
+    {
+      "id": "US-009",
+      "title": "Freeze the PTY core protocol",
+      "epic": "EP-003",
+      "status": "DONE",
+      "priority": "P0",
+      "size": "L",
+      "blocked_by": [
+        "US-008"
+      ],
+      "started_at": "2026-09-20",
+      "completed_at": "2026-09-20",
+      "reviewed_at": "2026-09-20"
+    },
+    {
+      "id": "US-010",
+      "title": "paneflow serve worker lifecycle",
+      "epic": "EP-003",
+      "status": "DONE",
+      "priority": "P0",
+      "size": "L",
+      "blocked_by": [
+        "US-009"
+      ],
+      "started_at": "2026-09-20",
+      "completed_at": "2026-09-20",
+      "reviewed_at": "2026-09-20"
+    },
+    {
+      "id": "US-011",
+      "title": "The GPUI app as a Controller",
+      "epic": "EP-003",
+      "status": "DONE",
+      "priority": "P0",
+      "size": "L",
+      "blocked_by": [
+        "US-010"
+      ],
+      "started_at": "2026-09-20",
+      "completed_at": "2026-09-20",
+      "reviewed_at": "2026-09-20"
+    },
+    {
+      "id": "US-012",
+      "title": "HookState reducer with lease, generation and foreground identity",
+      "epic": "EP-004",
+      "status": "DONE",
+      "priority": "P0",
+      "size": "L",
+      "blocked_by": [
+        "US-010"
+      ],
+      "started_at": "2026-09-20",
+      "completed_at": "2026-09-20",
+      "reviewed_at": "2026-09-20"
+    },
+    {
+      "id": "US-013",
+      "title": "Durable seed replay, expiry and cancellation sync",
+      "epic": "EP-004",
+      "status": "DONE",
+      "priority": "P0",
+      "size": "M",
+      "blocked_by": [
+        "US-012"
+      ],
+      "started_at": "2026-09-20",
+      "completed_at": "2026-09-20",
+      "reviewed_at": "2026-09-20"
+    },
+    {
+      "id": "US-014",
+      "title": "Notifications and completion rules",
+      "epic": "EP-004",
+      "status": "DONE",
+      "priority": "P0",
+      "size": "M",
+      "blocked_by": [
+        "US-012"
+      ],
+      "started_at": "2026-09-20",
+      "completed_at": "2026-09-20",
+      "reviewed_at": "2026-09-20"
+    },
+    {
+      "id": "US-015",
+      "title": "Screen change stamp and declarative screen tier",
+      "epic": "EP-005",
+      "status": "DONE",
+      "priority": "P1",
+      "size": "M",
+      "blocked_by": [
+        "US-009",
+        "US-003"
+      ],
+      "started_at": "2026-09-20",
+      "completed_at": "2026-09-20",
+      "reviewed_at": "2026-09-20"
+    },
+    {
+      "id": "US-016",
+      "title": "Agent-drawn menu detector",
+      "epic": "EP-005",
+      "status": "DONE",
+      "priority": "P1",
+      "size": "M",
+      "blocked_by": [
+        "US-015"
+      ],
+      "started_at": "2026-09-20",
+      "completed_at": "2026-09-20",
+      "reviewed_at": "2026-09-20"
+    },
+    {
+      "id": "US-017",
+      "title": "Wrapper-aware foreground observation",
+      "epic": "EP-005",
+      "status": "DONE",
+      "priority": "P1",
+      "size": "M",
+      "blocked_by": [
+        "US-009",
+        "US-003"
+      ],
+      "started_at": "2026-09-20",
+      "completed_at": "2026-09-20",
+      "reviewed_at": "2026-09-20"
+    },
+    {
+      "id": "US-018",
+      "title": "Escape cancellation fence",
+      "epic": "EP-006",
+      "status": "DONE",
+      "priority": "P1",
+      "size": "L",
+      "blocked_by": [
+        "US-013"
+      ],
+      "started_at": "2026-09-20",
+      "completed_at": "2026-09-20",
+      "reviewed_at": "2026-09-20"
+    },
+    {
+      "id": "US-019",
+      "title": "Background agent markers",
+      "epic": "EP-006",
+      "status": "DONE",
+      "priority": "P1",
+      "size": "M",
+      "blocked_by": [
+        "US-012"
+      ],
+      "started_at": "2026-09-20",
+      "completed_at": "2026-09-20",
+      "reviewed_at": "2026-09-20"
+    },
+    {
+      "id": "US-020",
+      "title": "CLI Controller over the worker protocol",
+      "epic": "EP-007",
+      "status": "DONE",
+      "priority": "P2",
+      "size": "M",
+      "blocked_by": [
+        "US-011"
+      ],
+      "started_at": "2026-09-20",
+      "completed_at": "2026-09-20",
+      "reviewed_at": "2026-09-20"
+    }
+  ]
+}

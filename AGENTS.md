@@ -162,9 +162,11 @@ isolated build tree, for instance two benchmark runs in parallel, set
 `CARGO_TARGET_DIR` to a scratch directory outside the repository and delete it
 when the run ends.
 
-`tasks/` is a local, untracked scratch area for PRDs and story status files. It
-is not part of the repository, so never reference it from a tracked document and
-never assume another agent can read it.
+`tasks/` holds the tracked PRDs (`tasks/prd-*.md`) and their story status files
+(`tasks/prd-*-status.json`). Everything else under it, including every
+subdirectory, is local, untracked evidence and review scratch space: never
+assume another agent can read it, and a tracked document that names such a path
+must state that it is local evidence.
 
 ## No comments in source code
 

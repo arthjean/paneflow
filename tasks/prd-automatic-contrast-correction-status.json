@@ -1,0 +1,292 @@
+{
+  "prd": {
+    "file": "tasks/prd-automatic-contrast-correction.md",
+    "title": "Automatic Contrast Correction",
+    "created_at": "2026-09-20",
+    "status": "DONE",
+    "completed_at": "2026-09-21"
+  },
+  "epics": [
+    {
+      "id": "EP-001",
+      "title": "Theme-derived 256-color palette in the renderer",
+      "status": "DONE",
+      "priority": "P0",
+      "stories_total": 3,
+      "stories_done": 3
+    },
+    {
+      "id": "EP-002",
+      "title": "Correction coverage and skip rules",
+      "status": "DONE",
+      "priority": "P0",
+      "stories_total": 3,
+      "stories_done": 3
+    },
+    {
+      "id": "EP-003",
+      "title": "Perceptual correction",
+      "status": "DONE",
+      "priority": "P0",
+      "stories_total": 3,
+      "stories_done": 3
+    },
+    {
+      "id": "EP-004",
+      "title": "Performance",
+      "status": "DONE",
+      "priority": "P1",
+      "stories_total": 3,
+      "stories_done": 3
+    },
+    {
+      "id": "EP-005",
+      "title": "Settings, palette and documentation",
+      "status": "DONE",
+      "priority": "P1",
+      "stories_total": 3,
+      "stories_done": 3
+    },
+    {
+      "id": "EP-006",
+      "title": "UI role contrast invariants",
+      "status": "DONE",
+      "priority": "P1",
+      "stories_total": 2,
+      "stories_done": 2
+    }
+  ],
+  "stories": [
+    {
+      "id": "US-001",
+      "title": "Build a 256-entry render palette per theme",
+      "epic": "EP-001",
+      "status": "DONE",
+      "priority": "P0",
+      "size": "M",
+      "blocked_by": [],
+      "started_at": "2026-09-21",
+      "completed_at": "2026-09-21",
+      "reviewed_at": "2026-09-21"
+    },
+    {
+      "id": "US-002",
+      "title": "Resolve indexed colors from the render palette",
+      "epic": "EP-001",
+      "status": "DONE",
+      "priority": "P0",
+      "size": "S",
+      "blocked_by": [
+        "US-001"
+      ],
+      "started_at": "2026-09-21",
+      "completed_at": "2026-09-21",
+      "reviewed_at": "2026-09-21"
+    },
+    {
+      "id": "US-003",
+      "title": "Corpus guard for the cube anchors and the light-theme grey ramp",
+      "epic": "EP-001",
+      "status": "DONE",
+      "priority": "P1",
+      "size": "M",
+      "blocked_by": [
+        "US-002"
+      ],
+      "started_at": "2026-09-21",
+      "completed_at": "2026-09-21",
+      "reviewed_at": "2026-09-21"
+    },
+    {
+      "id": "US-004",
+      "title": "Correct truecolor and indexed foregrounds",
+      "epic": "EP-002",
+      "status": "DONE",
+      "priority": "P0",
+      "size": "S",
+      "blocked_by": [
+        "US-002"
+      ],
+      "started_at": "2026-09-21",
+      "completed_at": "2026-09-21",
+      "reviewed_at": "2026-09-21"
+    },
+    {
+      "id": "US-005",
+      "title": "Align decorative codepoints with Ghostty",
+      "epic": "EP-002",
+      "status": "DONE",
+      "priority": "P0",
+      "size": "XS",
+      "blocked_by": [],
+      "started_at": "2026-09-21",
+      "completed_at": "2026-09-21",
+      "reviewed_at": "2026-09-21"
+    },
+    {
+      "id": "US-006",
+      "title": "Automatic default threshold",
+      "epic": "EP-002",
+      "status": "DONE",
+      "priority": "P0",
+      "size": "S",
+      "blocked_by": [
+        "US-004"
+      ],
+      "started_at": "2026-09-21",
+      "completed_at": "2026-09-21",
+      "reviewed_at": "2026-09-21"
+    },
+    {
+      "id": "US-007",
+      "title": "OKLab and OKLCH conversions with gamut clipping",
+      "epic": "EP-003",
+      "status": "DONE",
+      "priority": "P0",
+      "size": "M",
+      "blocked_by": [],
+      "started_at": "2026-09-21",
+      "completed_at": "2026-09-21",
+      "reviewed_at": "2026-09-21"
+    },
+    {
+      "id": "US-008",
+      "title": "Bisect lightness in OKLCH",
+      "epic": "EP-003",
+      "status": "DONE",
+      "priority": "P0",
+      "size": "M",
+      "blocked_by": [
+        "US-004",
+        "US-007"
+      ],
+      "started_at": "2026-09-21",
+      "completed_at": "2026-09-21",
+      "reviewed_at": "2026-09-21"
+    },
+    {
+      "id": "US-009",
+      "title": "Harmonize corrected hues with the theme palette",
+      "epic": "EP-003",
+      "status": "DONE",
+      "priority": "P1",
+      "size": "L",
+      "blocked_by": [
+        "US-008"
+      ],
+      "started_at": "2026-09-21",
+      "completed_at": "2026-09-21",
+      "reviewed_at": "2026-09-21"
+    },
+    {
+      "id": "US-010",
+      "title": "Packed sRGB contrast cache",
+      "epic": "EP-004",
+      "status": "DONE",
+      "priority": "P0",
+      "size": "M",
+      "blocked_by": [
+        "US-004"
+      ],
+      "started_at": "2026-09-21",
+      "completed_at": "2026-09-21",
+      "reviewed_at": "2026-09-21"
+    },
+    {
+      "id": "US-011",
+      "title": "Hoist correction to the text run",
+      "epic": "EP-004",
+      "status": "DONE",
+      "priority": "P1",
+      "size": "M",
+      "blocked_by": [
+        "US-010"
+      ],
+      "started_at": "2026-09-21",
+      "completed_at": "2026-09-21",
+      "reviewed_at": "2026-09-21"
+    },
+    {
+      "id": "US-012",
+      "title": "Bench guard for ACC",
+      "epic": "EP-004",
+      "status": "DONE",
+      "priority": "P1",
+      "size": "S",
+      "blocked_by": [
+        "US-011"
+      ],
+      "started_at": "2026-09-21",
+      "completed_at": "2026-09-21",
+      "reviewed_at": "2026-09-21"
+    },
+    {
+      "id": "US-013",
+      "title": "Minimum contrast row in Settings > Terminal",
+      "epic": "EP-005",
+      "status": "DONE",
+      "priority": "P1",
+      "size": "M",
+      "blocked_by": [
+        "US-006"
+      ],
+      "started_at": "2026-09-21",
+      "completed_at": "2026-09-21",
+      "reviewed_at": "2026-09-21"
+    },
+    {
+      "id": "US-014",
+      "title": "Command palette scope for minimum contrast",
+      "epic": "EP-005",
+      "status": "DONE",
+      "priority": "P2",
+      "size": "S",
+      "blocked_by": [
+        "US-013"
+      ],
+      "started_at": "2026-09-21",
+      "completed_at": "2026-09-21",
+      "reviewed_at": "2026-09-21"
+    },
+    {
+      "id": "US-015",
+      "title": "User documentation for ACC",
+      "epic": "EP-005",
+      "status": "DONE",
+      "priority": "P2",
+      "size": "XS",
+      "blocked_by": [
+        "US-013"
+      ],
+      "started_at": "2026-09-21",
+      "completed_at": "2026-09-21",
+      "reviewed_at": "2026-09-21"
+    },
+    {
+      "id": "US-016",
+      "title": "Role-by-surface APCA invariant table",
+      "epic": "EP-006",
+      "status": "DONE",
+      "priority": "P1",
+      "size": "M",
+      "blocked_by": [],
+      "started_at": "2026-09-21",
+      "completed_at": "2026-09-21",
+      "reviewed_at": "2026-09-21"
+    },
+    {
+      "id": "US-017",
+      "title": "Fix the presets that fail the table",
+      "epic": "EP-006",
+      "status": "DONE",
+      "priority": "P1",
+      "size": "M",
+      "blocked_by": [
+        "US-016"
+      ],
+      "started_at": "2026-09-21",
+      "completed_at": "2026-09-21",
+      "reviewed_at": "2026-09-21"
+    }
+  ]
+}

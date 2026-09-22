@@ -49,8 +49,11 @@ LOG_*.text
 # Local-only PRDs, spikes, and task-tracking notes (kept out of the public repo)
 /paneflow-site/tasks/
 
-# Local PRD and story-status scratch area (see AGENTS.md): never tracked.
-/tasks/
+# PRDs and their story-status files are tracked; everything else under tasks/
+# is local evidence and review scratch space (see AGENTS.md).
+/tasks/*
+!/tasks/prd-*.md
+!/tasks/prd-*-status.json
 
 # Local-only logo explorations (kept out of the public repo)
 /logo-concepts/
