@@ -36,7 +36,7 @@ impl CoreLink {
                         Ok(()) => "the core ended the agent stream".to_string(),
                         Err(reason) => reason,
                     };
-                    if send(&tx, CoreFrame::Disconnected(reason)).is_err() {
+                    if tx.send(CoreFrame::Disconnected(reason)).is_err() {
                         return;
                     }
                     std::thread::sleep(RECONNECT_DELAY);
@@ -122,7 +122,22 @@ fn follow_once(endpoint: &Path, tx: &SyncSender<CoreFrame>) -> Result<(), String
 fn send(tx: &SyncSender<CoreFrame>, frame: CoreFrame) -> Result<(), String> {
     match tx.try_send(frame) {
         Ok(()) => Ok(()),
-        Err(TrySendError::Full(_)) => Ok(()),
+        Err(TrySendError::Full(_)) => {
+            Err("the worker fell behind and needs a fresh snapshot".to_string())
+        }
         Err(TrySendError::Disconnected(_)) => Err("the worker stopped reading".to_string()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_full_worker_queue_reconnects_instead_of_silently_losing_an_accepted_event() {
+        let (tx, rx) = sync_channel(1);
+        send(&tx, CoreFrame::Snapshot(Vec::new())).unwrap();
+        assert!(send(&tx, CoreFrame::Event(Box::new(json!({"revision": 2})))).is_err());
+        assert!(matches!(rx.recv().unwrap(), CoreFrame::Snapshot(_)));
     }
 }

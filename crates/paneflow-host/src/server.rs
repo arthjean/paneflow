@@ -392,6 +392,23 @@ fn handle_connection(mut wire: Wire, host: Arc<SessionHost>, shutdown: Arc<Atomi
                     Err(_) => Flow::Close,
                 }
             }
+            METHOD_AGENT_EVENT => {
+                let ingested = AgentEvent::from_params(&params)
+                    .map_err(DispatchError::Params)
+                    .and_then(|mut event| {
+                        event.received_at_ms = Some(now_ms());
+                        host.ingest_agent_event(&event).map_err(DispatchError::Host)
+                    });
+                let envelope = match ingested {
+                    Ok(outcome) => result_envelope(&id, outcome.ack),
+                    Err(error) => error_to_envelope(&id, error),
+                };
+                let written = wire.write_json(&envelope);
+                match written {
+                    Ok(()) => Flow::Continue,
+                    Err(_) => Flow::Close,
+                }
+            }
             _ => {
                 let answered = crate::control::dispatch(
                     &host,
@@ -682,11 +699,6 @@ fn dispatch(host: &SessionHost, method: &str, params: &Value) -> Result<Value, D
             "host_instance": host.instance(),
             "sessions": host.agent_snapshot(),
         })),
-        METHOD_AGENT_EVENT => {
-            let mut event = AgentEvent::from_params(params).map_err(DispatchError::Params)?;
-            event.received_at_ms = Some(crate::manifest::now_ms());
-            Ok(host.ingest_agent_event(&event)?)
-        }
         _ => Err(DispatchError::MethodNotFound(method.to_string())),
     }
 }
@@ -1007,6 +1019,59 @@ mod tests {
             0o600
         );
         drop(listener);
+    }
+
+    #[test]
+    fn an_unread_agent_ack_cannot_delay_notifications_or_reorder_parallel_connections() {
+        let (_home, host, server) = start();
+        let created = host
+            .create(serde_json::from_value(shell_create_params()).unwrap())
+            .unwrap();
+        let session = created.manifest.session;
+        let subscription = host.subscribe_agents();
+        let mut first = paneflow_ipc_client::host_control::HostControl::connect(
+            server.endpoint(),
+            "delayed-ack",
+        )
+        .unwrap();
+        let mut second =
+            HostClient::connect(server.endpoint(), &ClientHello::control("next-ack")).unwrap();
+        let params = json!({
+            "session": session,
+            "runtime_generation": 1,
+            "kind": "ai.prompt_submit",
+            "tool": "claude",
+            "emitted_at_ms": 10,
+            "hook_payload": {"hook_event_name": "UserPromptSubmit"},
+        });
+        first
+            .write_request(METHOD_AGENT_EVENT, params.clone())
+            .unwrap();
+        let initial = subscription
+            .frames
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap();
+        assert_eq!(initial["revision"], 1);
+        let mut next = params.clone();
+        next["emitted_at_ms"] = json!(11);
+        next["kind"] = json!("ai.stop");
+        next["hook_payload"]["hook_event_name"] = json!("Stop");
+        let ack = second.call(METHOD_AGENT_EVENT, next).unwrap();
+        assert_eq!(ack["revision"], 2);
+        assert_eq!(
+            subscription
+                .frames
+                .recv_timeout(Duration::from_secs(5))
+                .unwrap()["revision"],
+            2
+        );
+        drop(first);
+        let duplicate = second.call(METHOD_AGENT_EVENT, params).unwrap();
+        assert_eq!(duplicate["duplicate"], true);
+        assert_eq!(duplicate["revision"], 1);
+        assert!(subscription.frames.try_recv().is_err());
+        host.stop(&session, None).unwrap();
+        server.stop().unwrap();
     }
 
     #[test]

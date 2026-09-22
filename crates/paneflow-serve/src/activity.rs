@@ -92,6 +92,11 @@ pub fn apply_event(
     event: &AgentEvent,
     now_ms: u64,
 ) -> AgentDecision {
+    if let Some(summary) = existing
+        && !accepts_event(summary.last_event_at_ms, event.emitted_at_ms)
+    {
+        return AgentDecision::Stale("an out-of-order event never rewrites a newer run");
+    }
     if event.kind == AgentEventKind::SessionEnd {
         return match existing {
             Some(summary)
@@ -111,9 +116,6 @@ pub fn apply_event(
     }
 
     if let Some(summary) = existing {
-        if !accepts_event(summary.last_event_at_ms, event.emitted_at_ms) {
-            return AgentDecision::Stale("an out-of-order event never rewrites a newer run");
-        }
         let silence = silence_since(summary.updated_at_ms, now_ms);
         if !accepts_process(summary, event, silence) {
             return AgentDecision::Stale("a stale process identity never ends a newer run");
@@ -336,6 +338,23 @@ mod tests {
             !updated(apply_event(Some(&running), &interrupted, 1_400)).errored,
             "a human interrupt is not a crash"
         );
+    }
+
+    #[test]
+    fn an_older_session_end_from_the_same_process_cannot_clear_a_newer_submission() {
+        let running = updated(apply_event(
+            None,
+            &event(AgentEventKind::PromptSubmit, Some(2_000), Some(42)),
+            2_000,
+        ));
+        assert!(matches!(
+            apply_event(
+                Some(&running),
+                &event(AgentEventKind::SessionEnd, Some(1_999), Some(42)),
+                2_100,
+            ),
+            AgentDecision::Stale(_)
+        ));
     }
 
     #[test]

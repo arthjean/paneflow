@@ -245,6 +245,7 @@ fn a_gpu_free_client_drives_agents_and_surfaces_while_no_window_is_open() {
     let summary: SessionSummary =
         serde_json::from_value(owner.call("session.create", shell_params()).unwrap()).unwrap();
     let session = summary.manifest.session.to_string();
+    let generation = summary.manifest.generation;
 
     let mut follower = HostControl::connect(&endpoint, "agent-follower")
         .expect("a client with no engine connects");
@@ -304,6 +305,7 @@ fn a_gpu_free_client_drives_agents_and_surfaces_while_no_window_is_open() {
             json!({
                 "session": session,
                 "kind": "ai.prompt_submit",
+                "runtime_generation": generation,
                 "tool": "claude",
                 "event_source": "hook",
                 "emitted_at_ms": 1_000,
@@ -332,6 +334,7 @@ fn a_gpu_free_client_drives_agents_and_surfaces_while_no_window_is_open() {
             json!({
                 "session": session,
                 "kind": "ai.notification",
+                "runtime_generation": generation,
                 "tool": "claude",
                 "event_source": "hook",
                 "emitted_at_ms": 2_000,
@@ -401,6 +404,7 @@ fn a_gpu_free_client_drives_agents_and_surfaces_while_no_window_is_open() {
                 "kind": "ai.stop",
                 "tool": "claude",
                 "event_source": "interrupt",
+                "runtime_generation": generation,
                 "emitted_at_ms": 3_000,
                 "hook_payload": {"last_result": "partial"},
             }),

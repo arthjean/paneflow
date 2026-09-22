@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use paneflow_config::schema::{HostInstanceToken, SessionGeneration, SessionId, WorkspaceId};
@@ -77,6 +78,10 @@ impl SessionLifecycle {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HookRecord {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub event: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub activity_event: Option<serde_json::Value>,
     pub hook_event_name: String,
     pub tool: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -112,6 +117,8 @@ pub struct SessionManifest {
     pub current_cwd: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_hook: Option<HookRecord>,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub hook_revision: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub generation_started_at_ms: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -128,6 +135,10 @@ pub struct SessionManifest {
     pub host_build_id: String,
     pub created_at_ms: u64,
     pub updated_at_ms: u64,
+}
+
+fn is_zero(value: &u64) -> bool {
+    *value == 0
 }
 
 pub fn now_ms() -> u64 {
@@ -158,20 +169,39 @@ pub fn manifest_path(home: &Path, session: &SessionId) -> PathBuf {
 pub fn write_manifest(home: &Path, manifest: &SessionManifest) -> io::Result<PathBuf> {
     let path = manifest_path(home, &manifest.session);
     let json = serde_json::to_vec_pretty(manifest).map_err(io::Error::other)?;
+    if json.len() as u64 > MAX_MANIFEST_BYTES {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "session manifest exceeds its reload size limit",
+        ));
+    }
     write_atomically(&path, &json)?;
     Ok(path)
 }
+
+static TEMPORARY_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 pub fn write_atomically(path: &Path, bytes: &[u8]) -> io::Result<()> {
     let parent = path
         .parent()
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "path has no parent"))?;
     std::fs::create_dir_all(parent)?;
+    write_atomically_in_existing_dir(path, bytes)
+}
+
+pub fn write_atomically_in_existing_dir(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "path has no parent"))?;
     let file_name = path
         .file_name()
         .and_then(|n| n.to_str())
         .unwrap_or("record.json");
-    let tmp = parent.join(format!(".{file_name}.tmp.{}", std::process::id()));
+    let tmp = parent.join(format!(
+        ".{file_name}.tmp.{}.{}",
+        std::process::id(),
+        TEMPORARY_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+    ));
     std::fs::write(&tmp, bytes)?;
     #[cfg(unix)]
     {
@@ -194,15 +224,27 @@ pub fn write_atomically(path: &Path, bytes: &[u8]) -> io::Result<()> {
     }
 }
 
+pub const LAST_HOOK_EVENT_FILE: &str = "last-hook-event.json";
+
 pub fn write_last_hook_event(
     home: &Path,
     session: &SessionId,
     hook_event_name: &str,
     tool_name: Option<&str>,
     runtime_generation: SessionGeneration,
+    revision: u64,
 ) -> io::Result<PathBuf> {
-    let path = paneflow_home::host_session_data_dir_in(home, session.as_str())
-        .join("last-hook-event.json");
+    let directory = paneflow_home::host_session_data_dir_in(home, session.as_str());
+    if !directory.is_dir() {
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            format!(
+                "the session data directory {} is gone; the seed is not written",
+                directory.display()
+            ),
+        ));
+    }
+    let path = directory.join(LAST_HOOK_EVENT_FILE);
     let mut seed = serde_json::Map::new();
     seed.insert(
         "hook_event_name".into(),
@@ -218,8 +260,9 @@ pub fn write_last_hook_event(
         "runtime_generation".into(),
         serde_json::Value::from(runtime_generation.get()),
     );
+    seed.insert("revision".into(), serde_json::Value::from(revision));
     let bytes = serde_json::to_vec(&serde_json::Value::Object(seed)).map_err(io::Error::other)?;
-    write_atomically(&path, &bytes)?;
+    write_atomically_in_existing_dir(&path, &bytes)?;
     Ok(path)
 }
 
@@ -311,6 +354,7 @@ mod tests {
             title: None,
             current_cwd: None,
             last_hook: None,
+            hook_revision: 0,
             generation_started_at_ms: None,
             screen_changed_at_ms: None,
             screen_activity: None,

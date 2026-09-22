@@ -455,6 +455,7 @@ mod tests {
                 title: title.map(str::to_string),
                 current_cwd: None,
                 last_hook: None,
+                hook_revision: 0,
                 generation_started_at_ms: None,
                 screen_changed_at_ms: None,
                 screen_activity: None,
@@ -551,6 +552,8 @@ mod tests {
     #[test]
     fn the_status_row_reports_the_raw_hook_and_never_a_reduced_state() {
         let hook = HookRecord {
+            event: None,
+            activity_event: None,
             hook_event_name: "UserPromptSubmit".to_string(),
             tool: "claude".to_string(),
             tool_name: None,

@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, Weak};
@@ -27,6 +28,7 @@ pub const DEFAULT_SCROLLBACK_LINES: usize = 10_000;
 pub const MAX_PENDING_LAUNCHES: usize = 8;
 const MAX_LAUNCH_ARGS: usize = 64;
 const MAX_LAUNCH_ENV_ENTRIES: usize = 256;
+const MAX_HOOK_RECEIPTS: usize = 16;
 const LATE_LAUNCH_WAIT: Duration = Duration::from_secs(3600);
 pub const STOP_ACTION_BUDGET: Duration = Duration::from_secs(5);
 
@@ -457,6 +459,30 @@ fn without_launch_environment(mut summary: SessionSummary) -> SessionSummary {
     summary
 }
 
+pub struct IngestOutcome {
+    pub ack: Value,
+    pub frame: Option<Value>,
+}
+
+fn receipt_key(event: &AgentEvent) -> u64 {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    event.generation.hash(&mut hasher);
+    event.message.hash(&mut hasher);
+    event.summary.hash(&mut hasher);
+    event.exit_code.hash(&mut hasher);
+    event.kind.wire_str().hash(&mut hasher);
+    event.tool.hash(&mut hasher);
+    event.tool_name.hash(&mut hasher);
+    event.pid.hash(&mut hasher);
+    event.emitted_at_ms.hash(&mut hasher);
+    event
+        .event_source
+        .map(|source| source.as_str())
+        .hash(&mut hasher);
+    event.payload.to_string().hash(&mut hasher);
+    hasher.finish()
+}
+
 impl SessionHost {
     pub fn open(home: &Path, endpoint: &Path) -> Result<Arc<Self>, HostError> {
         std::fs::create_dir_all(paneflow_home::host_sessions_dir_in(home))
@@ -664,6 +690,10 @@ impl SessionHost {
         self.agent_bus.unsubscribe(id);
     }
 
+    pub fn publish_agent_frame(&self, frame: &Value) {
+        self.agent_bus.broadcast(frame);
+    }
+
     pub fn is_shutting_down(&self) -> bool {
         self.shutting_down.load(Ordering::Acquire)
     }
@@ -796,40 +826,48 @@ impl SessionHost {
         let now = now_ms();
         let dropped = {
             let mut sessions = self.lock_sessions();
-            let dropped: Vec<SessionId> = sessions
+            let dropped: Vec<(SessionId, Arc<Mutex<SeedLedger>>)> = sessions
                 .iter()
                 .filter(|(_, record)| !record.owns_process())
                 .filter_map(|(id, record)| {
                     let manifest = record.manifest.lock().ok()?;
                     let max_age = record_max_age_ms(&manifest.lifecycle)?;
                     let stale = now.saturating_sub(manifest.updated_at_ms) > max_age;
-                    stale.then(|| id.clone())
+                    stale.then(|| (id.clone(), Arc::clone(&record.seed)))
                 })
                 .collect();
             if dropped.is_empty() {
                 return;
             }
-            for id in &dropped {
+            for (id, _) in &dropped {
                 sessions.remove(id);
             }
             dropped
         };
-        let _guard = self.lock_writer();
-        for id in &dropped {
-            let path = crate::manifest::manifest_path(&self.home, id);
-            match std::fs::remove_file(&path) {
-                Ok(()) => {}
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-                Err(error) => {
-                    log::warn!("paneflow-host: cannot delete the manifest of {id}: {error}")
-                }
-            }
-            crate::manifest::remove_session_data(&self.home, id);
+        for (id, seed) in &dropped {
+            self.delete_record_files(id, seed);
         }
         log::info!(
             "paneflow-host: dropped {} session records past their retention",
             dropped.len()
         );
+    }
+
+    fn delete_record_files(&self, session: &SessionId, seed: &Arc<Mutex<SeedLedger>>) {
+        let mut ledger = seed
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        ledger.removed = true;
+        let _guard = self.lock_writer();
+        let path = crate::manifest::manifest_path(&self.home, session);
+        match std::fs::remove_file(&path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                log::warn!("paneflow-host: cannot delete the manifest of {session}: {error}")
+            }
+        }
+        crate::manifest::remove_session_data(&self.home, session);
     }
 
     pub fn list(&self, workspace: Option<&WorkspaceId>) -> Vec<SessionSummary> {
@@ -892,6 +930,7 @@ impl SessionHost {
                 title: summary.manifest.title,
                 cwd: Some(summary.manifest.current_cwd.unwrap_or(summary.manifest.cwd)),
                 last_hook: summary.manifest.last_hook,
+                hook_revision: summary.manifest.hook_revision,
                 generation_started_at_ms: summary.manifest.generation_started_at_ms,
                 screen_changed_at_ms: summary.manifest.screen_changed_at_ms,
                 screen_activity: summary.manifest.screen_activity,
@@ -924,76 +963,169 @@ impl SessionHost {
         )
     }
 
-    pub fn ingest_agent_event(&self, event: &AgentEvent) -> Result<Value, HostError> {
-        let manifest = {
+    pub fn ingest_agent_event(&self, event: &AgentEvent) -> Result<IngestOutcome, HostError> {
+        let (manifest, seed) = {
             let sessions = self.lock_sessions();
             let record = sessions
                 .get(&event.session)
                 .ok_or_else(|| HostError::SessionNotFound(event.session.clone()))?;
-            Arc::clone(&record.manifest)
+            (Arc::clone(&record.manifest), Arc::clone(&record.seed))
         };
-        let generation = {
-            let guard = manifest
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            guard.generation
-        };
-        if let Some(requested) = event.generation
-            && requested != generation
-        {
-            let reason = if requested < generation {
-                "the event names a generation this session has left"
-            } else {
-                "the event names a generation this session has not reached"
-            };
-            log::warn!(
-                "agent event rejected for session {}: runtime generation {} does not match current generation {}: {reason}",
-                event.session,
-                requested,
-                generation
-            );
-            return Ok(json!({
-                "accepted": false,
-                "reason": reason,
-                "session": event.session,
-                "generation": generation,
-            }));
+        let mut ledger = seed
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if ledger.removed {
+            return Err(HostError::SessionNotFound(event.session.clone()));
         }
+        let key = receipt_key(event);
         let hook_event_name = event
             .payload
             .get("hook_event_name")
             .and_then(Value::as_str)
             .unwrap_or_else(|| event.kind.wire_str())
             .to_string();
-        crate::manifest::write_last_hook_event(
-            &self.home,
-            &event.session,
-            &hook_event_name,
-            event.tool_name.as_deref(),
-            generation,
-        )
-        .map_err(|error| HostError::Storage(error.to_string()))?;
-        let record = crate::manifest::HookRecord {
-            hook_event_name,
-            tool: event.tool.clone(),
-            tool_name: event.tool_name.clone(),
-            pid: event.pid,
-            runtime_generation: generation,
-            provider_session_id: payload_text(event, "session_id"),
-            transcript_path: payload_text(event, "transcript_path"),
-            emitted_at_ms: event.emitted_at_ms,
-            received_at_ms: event.received_at_ms.unwrap_or_else(now_ms),
+        let (snapshot, record) = {
+            let mut guard = manifest
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let generation = guard.generation;
+            if event.generation != Some(generation) {
+                let reason = match event.generation {
+                    None => "the event lacks its captured runtime generation",
+                    Some(requested) if requested < generation => {
+                        "the event names a generation this session has left"
+                    }
+                    Some(_) => "the event names a generation this session has not reached",
+                };
+                log::warn!(
+                    "agent event rejected for session {}: runtime generation {:?} does not match current generation {}: {reason}",
+                    event.session,
+                    event.generation,
+                    generation
+                );
+                return Ok(IngestOutcome {
+                    ack: json!({
+                        "accepted": false,
+                        "reason": reason,
+                        "session": event.session,
+                        "generation": generation,
+                        "revision": guard.hook_revision,
+                    }),
+                    frame: None,
+                });
+            }
+            if guard.host_instance != self.identity.host_instance {
+                return Ok(IngestOutcome {
+                    ack: json!({
+                        "accepted": false,
+                        "reason": "the event belongs to a previous host instance",
+                        "session": event.session,
+                        "generation": generation,
+                        "revision": guard.hook_revision,
+                    }),
+                    frame: None,
+                });
+            }
+            if let Some((_, revision)) = ledger.receipts.iter().find(|(held, _)| *held == key) {
+                let revision = *revision;
+                let snapshot = guard.clone();
+                drop(guard);
+                let persistence_error = self.persist_snapshot(&snapshot).err();
+                return Ok(IngestOutcome {
+                    ack: json!({
+                        "accepted": true,
+                        "duplicate": true,
+                        "durable": persistence_error.is_none(),
+                        "persistence_error": persistence_error,
+                        "session": event.session,
+                        "generation": generation,
+                        "revision": revision,
+                        "last_hook": snapshot.last_hook,
+                    }),
+                    frame: None,
+                });
+            }
+            if !paneflow_ipc_client::agent::accepts_event(
+                guard.last_hook.as_ref().and_then(|hook| hook.emitted_at_ms),
+                event.emitted_at_ms,
+            ) {
+                return Ok(IngestOutcome {
+                    ack: json!({
+                        "accepted": false,
+                        "reason": "an out-of-order event never replaces newer accepted state",
+                        "session": event.session,
+                        "generation": generation,
+                        "revision": guard.hook_revision,
+                    }),
+                    frame: None,
+                });
+            }
+            let received_at_ms = event.received_at_ms.unwrap_or_else(now_ms);
+            let revision = guard.hook_revision.saturating_add(1);
+            let mut accepted_frame = event.to_frame(generation);
+            accepted_frame["revision"] = json!(revision);
+            accepted_frame["received_at_ms"] = json!(received_at_ms);
+            let activity_event = match event.kind {
+                crate::agent::AgentEventKind::SessionStart
+                | crate::agent::AgentEventKind::ToolUse
+                | crate::agent::AgentEventKind::SessionEnd => guard
+                    .last_hook
+                    .as_ref()
+                    .and_then(|hook| hook.activity_event.clone()),
+                _ => Some(accepted_frame.clone()),
+            };
+            let record = crate::manifest::HookRecord {
+                event: Some(accepted_frame),
+                activity_event,
+                hook_event_name: hook_event_name.clone(),
+                tool: event.tool.clone(),
+                tool_name: event.tool_name.clone(),
+                pid: event.pid,
+                runtime_generation: generation,
+                provider_session_id: payload_text(event, "session_id"),
+                transcript_path: payload_text(event, "transcript_path"),
+                emitted_at_ms: event.emitted_at_ms,
+                received_at_ms,
+            };
+            let mut snapshot = guard.clone();
+            snapshot.last_hook = Some(record.clone());
+            snapshot.hook_revision = revision;
+            snapshot.updated_at_ms = now_ms();
+            let encoded = serde_json::to_vec_pretty(&snapshot)
+                .map_err(|error| HostError::InvalidRequest(error.to_string()))?;
+            if encoded.len() as u64 > crate::manifest::MAX_MANIFEST_BYTES {
+                return Err(HostError::InvalidRequest(
+                    "the event exceeds the recoverable session manifest size limit".to_string(),
+                ));
+            }
+            *guard = snapshot.clone();
+            (snapshot, record)
         };
-        let stored = record.clone();
-        self.update(&manifest, move |m| m.last_hook = Some(stored));
-        self.agent_bus.broadcast(&event.to_frame(generation));
-        Ok(json!({
-            "accepted": true,
-            "session": event.session,
-            "generation": generation,
-            "received_at_ms": event.received_at_ms,
-            "last_hook": record,
-        }))
+        let revision = snapshot.hook_revision;
+        let generation = snapshot.generation;
+        let persistence_error = self.persist_snapshot(&snapshot).err();
+        if ledger.receipts.len() >= MAX_HOOK_RECEIPTS {
+            ledger.receipts.pop_front();
+        }
+        ledger.receipts.push_back((key, revision));
+        let frame = record.event.clone();
+        if let Some(frame) = frame.as_ref() {
+            self.publish_agent_frame(frame);
+        }
+        drop(ledger);
+        Ok(IngestOutcome {
+            ack: json!({
+                "accepted": true,
+                "durable": persistence_error.is_none(),
+                "persistence_error": persistence_error,
+                "session": event.session,
+                "generation": generation,
+                "revision": revision,
+                "received_at_ms": event.received_at_ms,
+                "last_hook": record,
+            }),
+            frame,
+        })
     }
 
     pub fn create(&self, request: CreateSession) -> Result<SessionSummary, HostError> {
@@ -1056,6 +1188,7 @@ impl SessionHost {
             title: request.title.clone(),
             current_cwd: None,
             last_hook: None,
+            hook_revision: 0,
             generation_started_at_ms: Some(created),
             screen_changed_at_ms: None,
             screen_activity: None,
@@ -1753,7 +1886,7 @@ impl SessionHost {
     }
 
     pub fn remove(&self, session: &SessionId) -> Result<SessionManifest, HostError> {
-        let removed = {
+        let (removed, seed) = {
             let mut sessions = self.lock_sessions();
             let record = sessions
                 .get(session)
@@ -1784,9 +1917,14 @@ impl SessionHost {
                     reason,
                 });
             }
+            let seed = Arc::clone(&record.seed);
             sessions.remove(session);
-            manifest
+            (manifest, seed)
         };
+        let mut ledger = seed
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        ledger.removed = true;
         let _guard = self.lock_writer();
         let path = crate::manifest::manifest_path(&self.home, session);
         let outcome = match std::fs::remove_file(&path) {
@@ -2593,6 +2731,7 @@ mod tests {
             title: Some("claude \u{00b7} feat/a-reasonably-long-branch-name".to_string()),
             current_cwd: Some(cwd.display().to_string()),
             last_hook: None,
+            hook_revision: 0,
             generation_started_at_ms: None,
             screen_changed_at_ms: None,
             screen_activity: None,
@@ -2639,6 +2778,7 @@ mod tests {
                 title: None,
                 current_cwd: None,
                 last_hook: None,
+                hook_revision: 0,
                 generation_started_at_ms: None,
                 screen_changed_at_ms: None,
                 screen_activity: None,
@@ -3182,7 +3322,16 @@ mod tests {
         }))
         .unwrap();
         let response = host.ingest_agent_event(&accepted).unwrap();
-        assert_eq!(response["accepted"], true);
+        assert_eq!(response.ack["accepted"], true);
+        assert_eq!(response.ack["durable"], true);
+        assert_eq!(response.ack["revision"], 1);
+        assert!(response.frame.is_some(), "a fresh event is broadcast");
+        let mut unfenced = accepted.clone();
+        unfenced.generation = None;
+        let rejected = host.ingest_agent_event(&unfenced).unwrap();
+        assert_eq!(rejected.ack["accepted"], false);
+        assert_eq!(rejected.ack["revision"], 1);
+        assert!(rejected.frame.is_none());
         let seed_path = paneflow_home::host_session_data_dir_in(home.path(), session.as_str())
             .join("last-hook-event.json");
         let seed: Value = serde_json::from_slice(&std::fs::read(seed_path).unwrap()).unwrap();
@@ -3191,15 +3340,20 @@ mod tests {
             json!({
                 "hook_event_name": "PermissionRequest",
                 "tool_name": "AskUserQuestion",
-                "runtime_generation": 1
+                "runtime_generation": 1,
+                "revision": 1
             })
         );
 
         host.stop(&session, None).unwrap();
         host.restart(&session, None).unwrap();
         let rejected = host.ingest_agent_event(&accepted).unwrap();
-        assert_eq!(rejected["accepted"], false);
-        assert_eq!(rejected["generation"], 2);
+        assert_eq!(rejected.ack["accepted"], false);
+        assert_eq!(rejected.ack["generation"], 2);
+        assert!(
+            rejected.frame.is_none(),
+            "a rejected event is never broadcast"
+        );
         host.stop(&session, None).unwrap();
     }
 
@@ -3272,6 +3426,23 @@ mod tests {
         assert!(!adopted.owned);
         assert_eq!(adopted.manifest.lifecycle, SessionLifecycle::Lost);
         assert_ne!(&adopted.manifest.host_instance, host.instance());
+        let subscription = host.subscribe_agents();
+        let event = AgentEvent::from_params(&json!({
+            "session": session,
+            "runtime_generation": adopted.manifest.generation,
+            "kind": "ai.prompt_submit",
+            "tool": "claude",
+        }))
+        .unwrap();
+        let rejected = host.ingest_agent_event(&event).unwrap();
+        assert_eq!(rejected.ack["accepted"], false);
+        assert_eq!(
+            rejected.ack["reason"],
+            "the event belongs to a previous host instance"
+        );
+        assert_eq!(host.inspect(&session).unwrap().manifest.hook_revision, 0);
+        assert!(read_manifest(&manifest_path).unwrap().last_hook.is_none());
+        assert!(subscription.frames.try_recv().is_err());
         assert_eq!(
             read_manifest(&manifest_path).unwrap().lifecycle,
             SessionLifecycle::Lost
@@ -3931,6 +4102,32 @@ mod tests {
     }
 
     #[test]
+    fn a_scan_waiting_to_persist_cannot_recreate_a_removed_record() {
+        let home = tempfile::tempdir().unwrap();
+        let host = SessionHost::open(home.path(), Path::new("scan-remove")).unwrap();
+        let session = host.create(shell_request(80, 24)).unwrap().manifest.session;
+        let target = host
+            .live_scan_targets()
+            .into_iter()
+            .find(|target| target.session == session)
+            .unwrap();
+        host.stop(&session, None).unwrap();
+        let weak = Arc::downgrade(&host);
+        let named = session.clone();
+        let once = AtomicBool::new(false);
+        host.set_barrier(Arc::new(move |point| {
+            if point == Barrier::ManifestPersist && !once.swap(true, Ordering::SeqCst) {
+                weak.upgrade().unwrap().remove(&named).unwrap();
+            }
+        }));
+        assert!(host.commit_scan(&target, |manifest| manifest.title = Some("old scan".into())));
+        host.set_barrier(Arc::new(|_| {}));
+        assert!(!crate::manifest::manifest_path(home.path(), &session).exists());
+        assert!(!host.session_data_dir(&session).exists());
+        assert!(!host.commit_scan(&target, |_| panic!("removed state cannot be updated")));
+    }
+
+    #[test]
     fn shutdown_keeps_unsaved_final_state_owned_until_retry_succeeds() {
         let home = tempfile::tempdir().unwrap();
         let host = SessionHost::open(home.path(), Path::new("shutdown-durability")).unwrap();
@@ -3953,5 +4150,229 @@ mod tests {
         assert!(host.inspect(&session).unwrap().durability_error.is_none());
         let stored = read_manifest(&path).unwrap();
         assert!(matches!(stored.lifecycle, SessionLifecycle::Exited { .. }));
+    }
+
+    #[test]
+    fn a_duplicate_hook_retries_failed_seed_persistence_without_another_notification() {
+        let home = tempfile::tempdir().unwrap();
+        let host = SessionHost::open(home.path(), Path::new("seed-retry")).unwrap();
+        let session = host.create(shell_request(80, 24)).unwrap().manifest.session;
+        let path = host
+            .session_data_dir(&session)
+            .join(crate::manifest::LAST_HOOK_EVENT_FILE);
+        std::fs::create_dir(&path).unwrap();
+        let event = AgentEvent::from_params(&json!({
+            "session": session, "runtime_generation": 1,
+            "kind": "ai.stop", "tool": "claude", "emitted_at_ms": 42,
+        }))
+        .unwrap();
+        let first = host.ingest_agent_event(&event).unwrap();
+        assert_eq!(first.ack["durable"], false);
+        let retry = host.ingest_agent_event(&event).unwrap();
+        assert_eq!(retry.ack["durable"], false);
+        assert!(retry.frame.is_none());
+        std::fs::remove_dir(&path).unwrap();
+        let recovered = host.ingest_agent_event(&event).unwrap();
+        assert_eq!(recovered.ack["durable"], true);
+        assert_eq!(recovered.ack["revision"], first.ack["revision"]);
+        assert!(recovered.frame.is_none());
+        let seed: Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+        assert_eq!(seed["revision"], first.ack["revision"]);
+        assert!(host.inspect(&session).unwrap().durability_error.is_none());
+        host.stop(&session, None).unwrap();
+    }
+
+    #[test]
+    fn a_retried_agent_event_after_an_ambiguous_ack_is_acknowledged_but_not_notified_twice() {
+        let home = tempfile::tempdir().unwrap();
+        let host = SessionHost::open(home.path(), Path::new("receipts")).unwrap();
+        let session = host.create(shell_request(80, 24)).unwrap().manifest.session;
+        let event = crate::agent::AgentEvent::from_params(&json!({
+            "session": session,
+            "runtime_generation": 1,
+            "kind": "ai.stop",
+            "tool": "claude",
+            "emitted_at_ms": 1_700_000_000_000u64,
+            "hook_payload": {"hook_event_name": "Stop"}
+        }))
+        .unwrap();
+        let first = host.ingest_agent_event(&event).unwrap();
+        assert_eq!(first.ack["revision"], 1);
+        assert!(first.frame.is_some());
+        let retried = host.ingest_agent_event(&event).unwrap();
+        assert_eq!(retried.ack["accepted"], true);
+        assert_eq!(retried.ack["duplicate"], true);
+        assert_eq!(retried.ack["revision"], 1);
+        assert_eq!(retried.ack["durable"], true);
+        assert!(retried.frame.is_none(), "a retry never notifies twice");
+        assert_eq!(host.inspect(&session).unwrap().manifest.hook_revision, 1);
+        let next = crate::agent::AgentEvent::from_params(&json!({
+            "session": session,
+            "runtime_generation": 1,
+            "kind": "ai.stop",
+            "tool": "claude",
+            "emitted_at_ms": 1_700_000_000_001u64,
+            "hook_payload": {"hook_event_name": "Stop"}
+        }))
+        .unwrap();
+        let advanced = host.ingest_agent_event(&next).unwrap();
+        assert_eq!(advanced.ack["revision"], 2);
+        assert!(advanced.frame.is_some());
+        host.stop(&session, None).unwrap();
+    }
+
+    #[test]
+    fn parallel_hook_commits_publish_in_revision_order_before_returning_acknowledgements() {
+        let home = tempfile::tempdir().unwrap();
+        let host = SessionHost::open(home.path(), Path::new("parallel-hook-order")).unwrap();
+        let session = host.create(shell_request(80, 24)).unwrap().manifest.session;
+        let subscription = host.subscribe_agents();
+        let start = Arc::new(std::sync::Barrier::new(3));
+        let mut threads = Vec::new();
+        for message in ["first", "second"] {
+            let host = Arc::clone(&host);
+            let session = session.clone();
+            let start = Arc::clone(&start);
+            threads.push(std::thread::spawn(move || {
+                let event = AgentEvent::from_params(&json!({
+                    "session": session, "runtime_generation": 1,
+                    "kind": "ai.notification", "tool": "claude", "message": message,
+                    "hook_payload": {"hook_event_name": "PermissionRequest"},
+                }))
+                .unwrap();
+                start.wait();
+                host.ingest_agent_event(&event).unwrap()
+            }));
+        }
+        start.wait();
+        let first = subscription
+            .frames
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap();
+        let second = subscription
+            .frames
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap();
+        assert_eq!(first["revision"], 1);
+        assert_eq!(second["revision"], 2);
+        for thread in threads {
+            assert_eq!(thread.join().unwrap().ack["accepted"], true);
+        }
+        assert_eq!(
+            host.agent_snapshot()[0]
+                .last_hook
+                .as_ref()
+                .unwrap()
+                .event
+                .as_ref(),
+            Some(&second)
+        );
+        host.stop(&session, None).unwrap();
+    }
+
+    #[test]
+    fn accepted_hook_frames_fit_the_reload_limit_and_oversized_events_never_commit() {
+        let home = tempfile::tempdir().unwrap();
+        let host = SessionHost::open(home.path(), Path::new("hook-size-limit")).unwrap();
+        let session = host.create(shell_request(80, 24)).unwrap().manifest.session;
+        let mut event = AgentEvent::from_params(&json!({
+            "session": session, "runtime_generation": 1,
+            "kind": "ai.prompt_submit", "tool": "claude",
+            "hook_payload": {"hook_event_name": "UserPromptSubmit", "padding": "x".repeat(28 * 1024)},
+        })).unwrap();
+        let accepted = host.ingest_agent_event(&event).unwrap();
+        assert_eq!(accepted.ack["durable"], true);
+        let path = crate::manifest::manifest_path(home.path(), &session);
+        let size = std::fs::metadata(&path).unwrap().len();
+        assert!(size > 48 * 1024 && size <= crate::manifest::MAX_MANIFEST_BYTES);
+        let stored = read_manifest(&path).unwrap();
+        assert_eq!(stored.hook_revision, 1);
+        event.payload["padding"] = json!("x".repeat(40 * 1024));
+        assert!(matches!(
+            host.ingest_agent_event(&event),
+            Err(HostError::InvalidRequest(_))
+        ));
+        assert_eq!(host.inspect(&session).unwrap().manifest.hook_revision, 1);
+        assert_eq!(read_manifest(&path).unwrap().hook_revision, 1);
+        let mut oversized = stored;
+        oversized.title = Some("x".repeat(crate::manifest::MAX_MANIFEST_BYTES as usize));
+        assert_eq!(
+            crate::manifest::write_manifest(home.path(), &oversized)
+                .unwrap_err()
+                .kind(),
+            std::io::ErrorKind::InvalidData
+        );
+        assert_eq!(read_manifest(&path).unwrap().hook_revision, 1);
+        host.stop(&session, None).unwrap();
+    }
+
+    #[test]
+    fn a_delayed_seed_or_marker_write_never_recreates_a_removed_session_directory() {
+        let home = tempfile::tempdir().unwrap();
+        let host = SessionHost::open(home.path(), Path::new("seed-barrier")).unwrap();
+        let session = host.create(shell_request(80, 24)).unwrap().manifest.session;
+        let directory = host.session_data_dir(&session);
+        assert!(directory.is_dir());
+        let event = crate::agent::AgentEvent::from_params(&json!({
+            "session": session,
+            "runtime_generation": 1,
+            "kind": "ai.stop",
+            "tool": "claude",
+            "hook_payload": {"hook_event_name": "Stop"}
+        }))
+        .unwrap();
+        host.stop(&session, None).unwrap();
+        host.remove(&session).unwrap();
+        assert!(!directory.exists());
+        assert!(matches!(
+            host.ingest_agent_event(&event),
+            Err(HostError::SessionNotFound(_))
+        ));
+        assert!(
+            host.commit_marker(&session, SessionGeneration::FIRST, |dir| {
+                crate::hook_assets::record_cancellation(dir, 1, std::time::SystemTime::now())
+            })
+            .is_none(),
+            "a marker for a removed session is dropped at the barrier"
+        );
+        let late_seed = crate::manifest::write_last_hook_event(
+            home.path(),
+            &session,
+            "Stop",
+            None,
+            SessionGeneration::FIRST,
+            1,
+        );
+        assert!(
+            late_seed.is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound),
+            "a late seed write is refused instead of recreating the directory"
+        );
+        assert!(
+            crate::hook_assets::record_cancellation(&directory, 1, std::time::SystemTime::now())
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            !directory.exists(),
+            "nothing recreated {}",
+            directory.display()
+        );
+    }
+
+    #[test]
+    fn a_marker_captured_under_generation_one_is_dropped_once_generation_two_runs() {
+        let home = tempfile::tempdir().unwrap();
+        let host = SessionHost::open(home.path(), Path::new("marker-generation")).unwrap();
+        let session = host.create(shell_request(80, 24)).unwrap().manifest.session;
+        host.stop(&session, None).unwrap();
+        host.restart(&session, None).unwrap();
+        let stale = host.commit_marker(&session, SessionGeneration::FIRST, |_| ());
+        assert!(
+            stale.is_none(),
+            "the captured generation is re-checked at commit"
+        );
+        let current = host.commit_marker(&session, SessionGeneration::FIRST.next(), |_| ());
+        assert!(current.is_some());
+        host.stop(&session, None).unwrap();
     }
 }

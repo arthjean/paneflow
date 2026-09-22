@@ -96,6 +96,7 @@ impl Health {
 
 #[derive(Debug, Clone)]
 pub struct SessionEntry {
+    pub hook_revision: u64,
     pub session: SessionId,
     pub generation: SessionGeneration,
     pub generation_started_at_ms: Option<u64>,
@@ -125,6 +126,7 @@ impl SessionEntry {
     fn from_manifest(manifest: SessionManifest) -> Self {
         let launch_hook_capable = command_is_hook_capable(&manifest.launch.shell);
         let mut entry = Self {
+            hook_revision: 0,
             session: manifest.session,
             generation: manifest.generation,
             generation_started_at_ms: manifest.generation_started_at_ms,
@@ -206,6 +208,7 @@ impl SessionEntry {
         let mut value = json!({
             "session": self.session,
             "generation": self.generation,
+            "hook_revision": self.hook_revision,
             "workspace": self.workspace,
             "title": self.title,
             "cwd": self.cwd,
@@ -321,6 +324,7 @@ impl WorkerState {
             }
         };
         let mut rebuilt = BTreeMap::new();
+        let mut accepted_events = Vec::new();
         for path in paths {
             let manifest = match paneflow_host::manifest::read_manifest(&path) {
                 Ok(manifest) => manifest,
@@ -332,12 +336,19 @@ impl WorkerState {
                     continue;
                 }
             };
+            if let Some(hook) = manifest.last_hook.as_ref() {
+                accepted_events.extend(hook.activity_event.clone());
+                accepted_events.extend(hook.event.clone());
+            }
             let entry = SessionEntry::from_manifest(manifest);
             rebuilt.insert(entry.session.clone(), entry);
         }
         self.sessions = rebuilt;
         let live: BTreeSet<SessionId> = self.sessions.keys().cloned().collect();
         self.engine.retain_sessions(&live);
+        for frame in accepted_events {
+            self.apply_core_event(&frame);
+        }
         let now = SystemTime::now();
         for session in live {
             self.derive(&session, now, &|_| None);
@@ -358,6 +369,7 @@ impl WorkerState {
     pub fn apply_core_snapshot(&mut self, entries: &[Value]) -> Vec<Projection> {
         let mut seen = BTreeSet::new();
         let mut discovered = BTreeSet::new();
+        let mut recovered = BTreeMap::new();
         for raw in entries {
             let Some(session) = raw["session"]
                 .as_str()
@@ -366,21 +378,41 @@ impl WorkerState {
                 continue;
             };
             seen.insert(session.clone());
+            if let Some(held) = self.sessions.get(&session)
+                && raw["generation"]
+                    .as_u64()
+                    .is_some_and(|generation| generation < held.generation.get())
+            {
+                continue;
+            }
             let held = self.sessions.remove(&session);
             if held.is_none() {
                 discovered.insert(session.clone());
             }
-            let mut entry = merge_core_row(session, raw, held);
+            let mut entry = merge_core_row(session.clone(), raw, held);
             entry.refresh_health();
             self.sessions.insert(entry.session.clone(), entry);
+            for field in ["activity_event", "event"] {
+                if let Some(frame) = raw["last_hook"][field].as_object()
+                    && let Some(projection) = self.apply_core_event(&Value::Object(frame.clone()))
+                {
+                    recovered.insert(session.clone(), projection);
+                }
+            }
         }
         self.sessions.retain(|session, _| seen.contains(session));
         self.engine.retain_sessions(&seen);
         let now = SystemTime::now();
         seen.into_iter()
             .filter_map(|session| {
-                let projection = self.derive(&session, now, &|_| None)?;
-                let announce = (projection.changed && !discovered.contains(&session))
+                let mut projection = self.derive(&session, now, &|_| None)?;
+                let recovered_event = recovered.contains_key(&session);
+                if let Some(recovery) = recovered.remove(&session) {
+                    projection.changed |= recovery.changed;
+                    projection.notification = projection.notification.or(recovery.notification);
+                }
+                let announce = (projection.changed
+                    && (recovered_event || !discovered.contains(&session)))
                     || projection.notification.is_some();
                 announce.then_some(projection)
             })
@@ -418,6 +450,12 @@ impl WorkerState {
     pub fn apply_core_event(&mut self, frame: &Value) -> Option<Projection> {
         let event = AgentEvent::from_params(frame).ok()?;
         let entry = self.sessions.get_mut(&event.session)?;
+        let revision = frame["revision"].as_u64().unwrap_or(0);
+        if (revision > 0 && revision <= entry.hook_revision)
+            || (revision == 0 && entry.hook_revision > 0)
+        {
+            return None;
+        }
         if let Some(requested) = event.generation
             && requested != entry.generation
         {
@@ -428,7 +466,8 @@ impl WorkerState {
             );
             return None;
         }
-        let now_ms = now_ms();
+        entry.hook_revision = revision;
+        let now_ms = frame["received_at_ms"].as_u64().unwrap_or_else(now_ms);
         let session = event.session.clone();
         let previous_activity = entry.activity.clone();
         let previous_updated_at_ms = entry.updated_at_ms;
@@ -460,6 +499,10 @@ impl WorkerState {
         let generation = entry.generation.get();
         let generation_started_at_ms = entry.generation_started_at_ms;
         let launch_hook_capable = entry.launch_hook_capable;
+        let output_changed_at_ms = entry.output_changed_at_ms;
+        let anchor_start_to_output = entry
+            .runtime()
+            .is_none_or(|runtime| runtime.lifecycle.anchor_start_event_to_output);
         let foreground_identity = entry.foreground_identity();
         let hook_event_name = frame["hook_payload"]["hook_event_name"]
             .as_str()
@@ -505,6 +548,26 @@ impl WorkerState {
             }
             return None;
         }
+        let canonical = crate::hook_state::normalize_event_name(&raw_name);
+        if revision > 0
+            && matches!(
+                canonical.as_str(),
+                crate::hook_state::EVENT_USER_PROMPT_SUBMIT | crate::hook_state::EVENT_START
+            )
+        {
+            let event_at = at_unix_ms(now_ms);
+            let lease_at = if canonical == crate::hook_state::EVENT_USER_PROMPT_SUBMIT
+                || anchor_start_to_output
+            {
+                output_changed_at_ms
+                    .map(at_unix_ms)
+                    .map_or(event_at, |output| output.max(event_at))
+            } else {
+                event_at
+            };
+            self.engine
+                .restore_opening_lease(&session, &dir, generation, event_at, lease_at);
+        }
         self.derive(&session, at_unix_ms(now_ms), &|_| None)
     }
 
@@ -547,7 +610,7 @@ impl WorkerState {
                 .observe_foreground_runtime(session, foreground_identity.as_deref());
         }
         self.engine.bind_session_dir(session, &dir);
-        if hook_capable {
+        if hook_capable && entry.hook_revision == 0 {
             self.engine.seed_from_disk(
                 session,
                 &dir,
@@ -555,6 +618,15 @@ impl WorkerState {
                 generation_started_at_ms,
                 generation,
                 entry.output_changed_at_ms,
+            );
+        } else if hook_capable {
+            self.engine
+                .sync_cancellation_from_disk(session, &dir, generation);
+            self.engine.sync_background_from_disk(
+                session,
+                &dir,
+                generation,
+                generation_started_at_ms,
             );
         }
         self.engine
@@ -763,6 +835,10 @@ fn merge_core_row(session: SessionId, raw: &Value, held: Option<SessionEntry>) -
         .as_str()
         .map(|tool| AgentSummary::declared(tool, now_ms()));
     SessionEntry {
+        hook_revision: held
+            .as_ref()
+            .filter(|entry| entry.generation == generation)
+            .map_or(0, |entry| entry.hook_revision),
         session,
         generation,
         generation_started_at_ms: raw["generation_started_at_ms"].as_u64().or_else(|| {
@@ -874,6 +950,7 @@ mod tests {
             title: None,
             current_cwd: None,
             last_hook,
+            hook_revision: 0,
             generation_started_at_ms: Some(LAUNCHED_AT),
             screen_changed_at_ms: None,
             screen_activity: None,
@@ -888,6 +965,8 @@ mod tests {
 
     fn hook(name: &str, generation: SessionGeneration) -> HookRecord {
         HookRecord {
+            event: None,
+            activity_event: None,
             hook_event_name: name.to_string(),
             tool: "claude".to_string(),
             tool_name: None,
@@ -933,6 +1012,126 @@ mod tests {
             .unwrap();
         seed.set_times(std::fs::FileTimes::new().set_modified(modified_at))
             .unwrap();
+    }
+
+    #[test]
+    fn revisioned_host_snapshots_recover_a_lost_notification_and_reject_queued_older_events() {
+        let home = tempfile::tempdir().unwrap();
+        let host = paneflow_host::host::SessionHost::open(home.path(), Path::new("hook-recovery"))
+            .unwrap();
+        #[cfg(windows)]
+        let (shell, args) = ("cmd.exe", vec!["/Q".to_string(), "/D".to_string()]);
+        #[cfg(unix)]
+        let (shell, args) = ("/bin/sh", Vec::new());
+        let created = host
+            .create(paneflow_host::host::CreateSession {
+                shell: Some(shell.to_string()),
+                args,
+                cwd: Some(home.path().display().to_string()),
+                ..Default::default()
+            })
+            .unwrap();
+        let session = created.manifest.session;
+        let snapshot = || {
+            host.agent_snapshot()
+                .into_iter()
+                .map(|entry| serde_json::to_value(entry).unwrap())
+                .collect::<Vec<_>>()
+        };
+        let mut state = WorkerState::new(home.path());
+        state.apply_core_snapshot(&snapshot());
+        let accepted = |kind: &str, name: &str, timestamp: u64| {
+            let mut raw = frame(&session, kind, name, json!({}));
+            raw["runtime_generation"] = json!(1);
+            raw["emitted_at_ms"] = json!(timestamp);
+            host.ingest_agent_event(&AgentEvent::from_params(&raw).unwrap())
+                .unwrap()
+        };
+        let first = accepted("ai.prompt_submit", "UserPromptSubmit", 10);
+        state
+            .apply_core_event(first.frame.as_ref().unwrap())
+            .unwrap();
+        assert_eq!(state.get(&session).unwrap().status(), "busy");
+        let blocked_seed = paneflow_home::host_session_data_dir_in(home.path(), session.as_str())
+            .join(hook_assets::SEED_FILE);
+        std::fs::remove_file(&blocked_seed).unwrap();
+        std::fs::create_dir(&blocked_seed).unwrap();
+        let second = accepted("ai.notification", "PermissionRequest", 11);
+        assert_eq!(second.ack["durable"], false);
+        assert!(second.ack["persistence_error"].as_str().is_some());
+        let projections = state.apply_core_snapshot(&snapshot());
+        assert_eq!(state.get(&session).unwrap().status(), "attention");
+        assert_eq!(state.get(&session).unwrap().hook_revision, 2);
+        assert!(!projections.is_empty());
+        assert!(
+            state
+                .apply_core_event(first.frame.as_ref().unwrap())
+                .is_none()
+        );
+        assert!(
+            state
+                .apply_core_event(second.frame.as_ref().unwrap())
+                .is_none()
+        );
+        assert_eq!(state.get(&session).unwrap().status(), "attention");
+        assert!(state.apply_core_snapshot(&snapshot()).is_empty());
+        let mut replacement = WorkerState::new(home.path());
+        replacement.rebuild_from_home(home.path());
+        assert_eq!(replacement.get(&session).unwrap().hook_revision, 2);
+        assert_eq!(replacement.get(&session).unwrap().status(), "attention");
+        let mut stale = AgentEvent::from_params(first.frame.as_ref().unwrap()).unwrap();
+        stale.kind = paneflow_host::agent::AgentEventKind::SessionEnd;
+        assert_eq!(
+            host.ingest_agent_event(&stale).unwrap().ack["accepted"],
+            false
+        );
+        assert_eq!(host.agent_snapshot()[0].hook_revision, 2);
+        std::fs::remove_dir(&blocked_seed).unwrap();
+        let retry = accepted("ai.notification", "PermissionRequest", 11);
+        assert_eq!(retry.ack["durable"], true);
+        assert_eq!(retry.ack["duplicate"], true);
+        assert!(retry.frame.is_none());
+        accepted("ai.tool_use", "PreToolUse", 12);
+        let mut replacement = WorkerState::new(home.path());
+        replacement.rebuild_from_home(home.path());
+        assert_eq!(replacement.get(&session).unwrap().hook_revision, 3);
+        assert_eq!(replacement.get(&session).unwrap().status(), "attention");
+        let mut background = frame(
+            &session,
+            "ai.stop",
+            "Stop",
+            json!({"background_tasks": true}),
+        );
+        background["runtime_generation"] = json!(1);
+        background["emitted_at_ms"] = json!(13);
+        let pending = host
+            .ingest_agent_event(&AgentEvent::from_params(&background).unwrap())
+            .unwrap();
+        replacement
+            .apply_core_event(pending.frame.as_ref().unwrap())
+            .unwrap();
+        assert_eq!(replacement.get(&session).unwrap().status(), "busy");
+        let mut restored = WorkerState::new(home.path());
+        restored.rebuild_from_home(home.path());
+        assert_eq!(restored.get(&session).unwrap().status(), "busy");
+        host.stop(&session, None).unwrap();
+    }
+
+    #[test]
+    fn an_older_generation_snapshot_cannot_roll_back_a_current_worker_row() {
+        let home = tempfile::tempdir().unwrap();
+        let session = SessionId::new();
+        let mut state = WorkerState::new(home.path());
+        state.apply_core_snapshot(&[
+            json!({"session": session, "generation": 2, "lifecycle": "running"}),
+        ]);
+        state.apply_core_snapshot(&[
+            json!({"session": session, "generation": 1, "lifecycle": "running"}),
+        ]);
+        assert_eq!(
+            state.get(&session).unwrap().generation,
+            SessionGeneration::FIRST.next()
+        );
     }
 
     fn running_state(home: &Path, session: &SessionId) -> WorkerState {

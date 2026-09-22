@@ -746,7 +746,18 @@ impl ActivityEngine {
         if !accepted || !starts_turn(&canonical) {
             return;
         }
-        let expired = hook_assets::hook_turn_expired(session_dir, current_generation, seed_at);
+        self.restore_opening_lease(session, session_dir, current_generation, seed_at, lease_at);
+    }
+
+    pub fn restore_opening_lease(
+        &mut self,
+        session: &SessionId,
+        session_dir: &Path,
+        current_generation: u64,
+        event_at: SystemTime,
+        lease_at: SystemTime,
+    ) {
+        let expired = hook_assets::hook_turn_expired(session_dir, current_generation, event_at);
         if let Some(entry) = self.entries.get_mut(session) {
             if expired {
                 entry.completed = false;
