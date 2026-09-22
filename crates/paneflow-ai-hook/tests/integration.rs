@@ -251,6 +251,68 @@ fn hand_typed_claude_events_use_the_host_protocol() {
 }
 
 #[test]
+fn stdin_preserves_utf8_and_escaped_unicode_prompts() {
+    for payload in [
+        "{\"prompt\":\"Bonjour, 世界\"}",
+        r#"{"prompt":"Bonjour, \u4e16\u754c"}"#,
+    ] {
+        let host = MockHost::start();
+        let (status, _, stdout) = run_reporter(
+            Path::new(HOOK_BIN),
+            "UserPromptSubmit",
+            &HookEnv {
+                endpoint: Some(&host.endpoint),
+                session: Some(SESSION_ID),
+                session_dir: None,
+                tool: "claude",
+                generation: Some(7),
+                hook_log: None,
+            },
+            payload.as_bytes(),
+        );
+        assert!(status.success());
+        assert!(stdout.is_empty());
+        assert_eq!(
+            host.event()["params"]["hook_payload"]["prompt"],
+            "Bonjour, 世界"
+        );
+    }
+}
+
+#[test]
+fn malformed_stdin_is_rejected_before_delivery_or_fallback() {
+    for payload in [
+        b"{\"prompt\":\"\xff\"}".as_slice(),
+        br#"{"prompt":"\ud800"}"#,
+        b"{]",
+    ] {
+        let (endpoint, _keepalive) = unique_ipc_path();
+        let directory = tempfile::tempdir().expect("session directory");
+        let log = directory.path().join("hook.log");
+        let (status, _, stdout) = run_reporter(
+            Path::new(HOOK_BIN),
+            "UserPromptSubmit",
+            &HookEnv {
+                endpoint: Some(&endpoint),
+                session: Some(SESSION_ID),
+                session_dir: Some(directory.path()),
+                tool: "claude",
+                generation: Some(7),
+                hook_log: Some(&log),
+            },
+            payload,
+        );
+        assert!(status.success());
+        assert!(stdout.is_empty());
+        assert_eq!(
+            std::fs::read_to_string(log).expect("diagnostic"),
+            "paneflow-ai-hook: UserPromptSubmit: invalid stdin JSON\n"
+        );
+        assert!(!directory.path().join("last-hook-event.json").exists());
+    }
+}
+
+#[test]
 fn missing_session_is_an_immediate_no_op_without_files_or_network() {
     let directory = tempfile::tempdir().expect("temp directory");
     let log = directory.path().join("hook.log");
