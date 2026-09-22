@@ -1838,8 +1838,14 @@ mod tests {
         let mut spec = echo_shell_spec(80, 24);
         spec.env
             .insert("PANEFLOW_TEST_WAIT_FAILURE".into(), "1".into());
-        let runtime = SessionRuntime::spawn(spec, SessionGeneration::FIRST, Arc::new(|_| {}))
-            .expect("shell spawns");
+        let launched = SessionRuntime::launch(spec, SessionGeneration::FIRST, Arc::new(|_| {}))
+            .expect("the session thread starts")
+            .wait(STARTUP_DEADLINE);
+        let runtime = match launched {
+            LaunchWait::Ready(runtime) | LaunchWait::Recovery(runtime) => runtime,
+            LaunchWait::Failed(reason) => panic!("the shell must spawn: {reason}"),
+            LaunchWait::Pending(_) => panic!("the shell must spawn within the startup deadline"),
+        };
         assert!(wait_until(Duration::from_secs(5), || runtime
             .unverified()
             .is_some()));

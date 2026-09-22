@@ -4850,19 +4850,31 @@ mod tests {
         let home = tempfile::tempdir().unwrap();
         let host = SessionHost::open(home.path(), Path::new("shutdown-durability")).unwrap();
         let session = host.create(shell_request(80, 24)).unwrap().manifest.session;
-        host.stop(&session, None).unwrap();
         let path = crate::manifest::manifest_path(home.path(), &session);
-        let deadline = Instant::now() + Duration::from_secs(5);
-        loop {
-            let replaced = std::fs::remove_file(&path).and_then(|()| std::fs::create_dir(&path));
-            match replaced {
-                Ok(()) => break,
-                Err(_) if Instant::now() < deadline => {
-                    std::thread::sleep(Duration::from_millis(20));
-                }
-                Err(error) => panic!("cannot replace the manifest with a directory: {error}"),
+        let blocked = path.clone();
+        host.set_barrier(Arc::new(move |point| {
+            if point != Barrier::StopCommit {
+                return;
             }
-        }
+            let deadline = Instant::now() + Duration::from_secs(5);
+            loop {
+                let replaced = std::fs::remove_file(&blocked)
+                    .or_else(|error| match error.kind() {
+                        std::io::ErrorKind::NotFound => Ok(()),
+                        _ => Err(error),
+                    })
+                    .and_then(|()| std::fs::create_dir(&blocked));
+                match replaced {
+                    Ok(()) => break,
+                    Err(_) if Instant::now() < deadline => {
+                        std::thread::sleep(Duration::from_millis(20));
+                    }
+                    Err(error) => panic!("cannot replace the manifest with a directory: {error}"),
+                }
+            }
+        }));
+        host.stop(&session, None).unwrap();
+        host.set_barrier(Arc::new(|_| {}));
         assert!(matches!(
             host.request_shutdown(false),
             Err(HostError::Storage(_))
