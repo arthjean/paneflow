@@ -1,5 +1,7 @@
 use std::time::{Duration, SystemTime};
 
+use paneflow_config::schema::SessionGeneration;
+
 pub const ESCAPE_SETTLE: Duration = Duration::from_millis(150);
 
 const ESC: u8 = 0x1b;
@@ -14,16 +16,27 @@ pub enum InputSignal {
     Submitted(SystemTime),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CapturedSignal {
+    pub generation: SessionGeneration,
+    pub signal: InputSignal,
+}
+
 #[derive(Debug, Default)]
 pub struct SessionInput {
     buffer: Vec<u8>,
     lone_escape_at: Option<SystemTime>,
     bracketed_paste: bool,
-    pending: Vec<InputSignal>,
+    generation: Option<SessionGeneration>,
+    pending: Vec<CapturedSignal>,
 }
 
 impl SessionInput {
-    pub fn observe(&mut self, bytes: &[u8], now: SystemTime) {
+    pub fn observe(&mut self, bytes: &[u8], now: SystemTime, generation: SessionGeneration) {
+        if self.generation != Some(generation) {
+            self.clear();
+            self.generation = Some(generation);
+        }
         self.settle(now);
         self.buffer.extend_from_slice(bytes);
         self.consume(now);
@@ -41,7 +54,7 @@ impl SessionInput {
         self.push(InputSignal::Cancelled(escape_at));
     }
 
-    pub fn take_pending(&mut self) -> Vec<InputSignal> {
+    pub fn take_pending(&mut self) -> Vec<CapturedSignal> {
         std::mem::take(&mut self.pending)
     }
 
@@ -52,8 +65,11 @@ impl SessionInput {
     }
 
     fn push(&mut self, signal: InputSignal) {
+        let Some(generation) = self.generation else {
+            return;
+        };
         if self.pending.len() < MAX_PENDING_SIGNALS {
-            self.pending.push(signal);
+            self.pending.push(CapturedSignal { generation, signal });
         }
     }
 
@@ -169,6 +185,15 @@ mod tests {
     use super::*;
     use std::time::UNIX_EPOCH;
 
+    const GEN: SessionGeneration = SessionGeneration::FIRST;
+
+    fn captured(signal: InputSignal) -> CapturedSignal {
+        CapturedSignal {
+            generation: GEN,
+            signal,
+        }
+    }
+
     fn at(milliseconds: u64) -> SystemTime {
         UNIX_EPOCH + Duration::from_millis(milliseconds)
     }
@@ -176,7 +201,7 @@ mod tests {
     #[test]
     fn a_bare_escape_settles_into_a_cancellation_only_after_the_quiet_window() {
         let mut input = SessionInput::default();
-        input.observe(b"\x1b", at(1_000));
+        input.observe(b"\x1b", at(1_000), GEN);
         assert!(input.take_pending().is_empty());
 
         input.settle(at(1_100));
@@ -188,7 +213,7 @@ mod tests {
         input.settle(at(1_150));
         assert_eq!(
             input.take_pending(),
-            vec![InputSignal::Cancelled(at(1_000))]
+            vec![captured(InputSignal::Cancelled(at(1_000)))]
         );
         assert!(input.take_pending().is_empty());
     }
@@ -204,7 +229,7 @@ mod tests {
             &b"\x1b[27;5u"[..],
         ] {
             let mut input = SessionInput::default();
-            input.observe(sequence, at(1_000));
+            input.observe(sequence, at(1_000), GEN);
             input.settle(at(2_000));
             assert!(
                 input.take_pending().is_empty(),
@@ -216,8 +241,8 @@ mod tests {
     #[test]
     fn a_sequence_split_across_two_writes_never_settles_as_an_escape() {
         let mut input = SessionInput::default();
-        input.observe(b"\x1b", at(1_000));
-        input.observe(b"[A", at(1_050));
+        input.observe(b"\x1b", at(1_000), GEN);
+        input.observe(b"[A", at(1_050), GEN);
         input.settle(at(3_000));
         assert!(input.take_pending().is_empty());
     }
@@ -225,55 +250,55 @@ mod tests {
     #[test]
     fn a_kitty_escape_press_cancels_and_its_release_does_not() {
         let mut input = SessionInput::default();
-        input.observe(b"\x1b[27u", at(1_000));
+        input.observe(b"\x1b[27u", at(1_000), GEN);
         assert_eq!(
             input.take_pending(),
-            vec![InputSignal::Cancelled(at(1_000))]
+            vec![captured(InputSignal::Cancelled(at(1_000)))]
         );
 
-        input.observe(b"\x1b[27;1u", at(1_200));
+        input.observe(b"\x1b[27;1u", at(1_200), GEN);
         assert_eq!(
             input.take_pending(),
-            vec![InputSignal::Cancelled(at(1_200))]
+            vec![captured(InputSignal::Cancelled(at(1_200)))]
         );
 
-        input.observe(b"\x1b[27;1:3u", at(1_400));
+        input.observe(b"\x1b[27;1:3u", at(1_400), GEN);
         assert!(input.take_pending().is_empty());
     }
 
     #[test]
     fn a_submission_is_a_carriage_return_outside_bracketed_paste() {
         let mut input = SessionInput::default();
-        input.observe(b"hello\r", at(1_000));
+        input.observe(b"hello\r", at(1_000), GEN);
         assert_eq!(
             input.take_pending(),
-            vec![InputSignal::Submitted(at(1_000))]
+            vec![captured(InputSignal::Submitted(at(1_000)))]
         );
 
-        input.observe(b"\x1b[200~line\rmore\r\x1b[201~", at(2_000));
+        input.observe(b"\x1b[200~line\rmore\r\x1b[201~", at(2_000), GEN);
         assert!(
             input.take_pending().is_empty(),
             "a pasted newline is content, not a submission"
         );
 
-        input.observe(b"\r", at(3_000));
+        input.observe(b"\r", at(3_000), GEN);
         assert_eq!(
             input.take_pending(),
-            vec![InputSignal::Submitted(at(3_000))]
+            vec![captured(InputSignal::Submitted(at(3_000)))]
         );
     }
 
     #[test]
     fn an_escape_then_an_enter_records_both_in_order() {
         let mut input = SessionInput::default();
-        input.observe(b"\x1b", at(1_000));
+        input.observe(b"\x1b", at(1_000), GEN);
         input.settle(at(1_200));
-        input.observe(b"retry\r", at(1_400));
+        input.observe(b"retry\r", at(1_400), GEN);
         assert_eq!(
             input.take_pending(),
             vec![
-                InputSignal::Cancelled(at(1_000)),
-                InputSignal::Submitted(at(1_400)),
+                captured(InputSignal::Cancelled(at(1_000))),
+                captured(InputSignal::Submitted(at(1_400))),
             ]
         );
     }
@@ -281,23 +306,23 @@ mod tests {
     #[test]
     fn an_escape_followed_by_a_late_key_settles_before_the_key_is_read() {
         let mut input = SessionInput::default();
-        input.observe(b"\x1b", at(1_000));
-        input.observe(b"a", at(1_400));
+        input.observe(b"\x1b", at(1_000), GEN);
+        input.observe(b"a", at(1_400), GEN);
         assert_eq!(
             input.take_pending(),
-            vec![InputSignal::Cancelled(at(1_000))]
+            vec![captured(InputSignal::Cancelled(at(1_000)))]
         );
     }
 
     #[test]
     fn an_unterminated_sequence_is_dropped_instead_of_growing_without_bound() {
         let mut input = SessionInput::default();
-        input.observe(b"\x1b[", at(1_000));
-        input.observe(&vec![b'0'; MAX_SEQUENCE_BYTES * 2], at(1_050));
-        input.observe(b"\r", at(1_100));
+        input.observe(b"\x1b[", at(1_000), GEN);
+        input.observe(&vec![b'0'; MAX_SEQUENCE_BYTES * 2], at(1_050), GEN);
+        input.observe(b"\r", at(1_100), GEN);
         assert_eq!(
             input.take_pending(),
-            vec![InputSignal::Submitted(at(1_100))]
+            vec![captured(InputSignal::Submitted(at(1_100)))]
         );
         assert!(input.buffer.len() < MAX_SEQUENCE_BYTES);
     }

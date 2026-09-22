@@ -28,7 +28,7 @@ fn scan_loop(host: Weak<SessionHost>) {
 }
 
 fn scan_once(host: &Arc<SessionHost>, now: SystemTime) {
-    for (session, manifest, input) in host.fenced_input_targets() {
+    for (session, input) in host.fenced_input_targets() {
         let signals = {
             let mut guard = input
                 .lock()
@@ -36,19 +36,16 @@ fn scan_once(host: &Arc<SessionHost>, now: SystemTime) {
             guard.settle(now);
             guard.take_pending()
         };
-        if signals.is_empty() {
-            continue;
-        }
-        let generation = manifest
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .generation;
-        let directory = host.session_data_dir(&session);
-        for marker in signals
-            .into_iter()
-            .filter_map(|signal| record(&directory, generation.get(), signal))
-        {
-            host.announce_cancellation(&session, generation, &marker);
+        for captured in signals {
+            let generation = captured.generation;
+            let marker = host
+                .commit_marker(&session, generation, |directory| {
+                    record(directory, generation.get(), captured.signal)
+                })
+                .flatten();
+            if let Some(marker) = marker {
+                host.announce_cancellation(&session, generation, &marker);
+            }
         }
     }
 }

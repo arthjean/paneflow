@@ -589,12 +589,62 @@ why `scripts/dev.ps1` and `scripts/dev.sh` build both binaries and run
 | `paneflow host stop` when idle | exits, removes `instance.json` | none live | manifests kept |
 | Host process death or reboot | gone | processes gone | next host marks running records `lost`, never signals them |
 | `session.restart` on an exited or lost record | same host | new generation, recorded shell with no arguments, no input or command replay | `generation + 1`, current owner |
-| Incompatible host on the endpoint | left running | untouched | unchanged; the controller reports the mismatch |
+| Incompatible host on the endpoint | left running | untouched | unchanged; the controller reports the mismatch, the pane offers Retry and an explicit "Stop host and restart" |
+| Stop or shutdown that cannot be confirmed (wait failed, descendants unresolved, runtime panic) | keeps running and keeps owning the process | `lifecycle: unverified`, never `exited` | the desktop keeps its window open with Retry / Keep running and quit / Cancel |
 
 Reconnection classification lives in `SessionSummary::reconnection`: `live`,
 `starting`, `exited`, `failed`, `host_replaced` (the record's owner is not the
-current instance) or `lost`. `paneflow host status` and `paneflow-host session
-inspect` print it. Development recovery commands, all scoped by
+current instance), `lost` or `unverified`. `paneflow host status` and
+`paneflow-host session inspect` print it.
+
+The desktop never creates or restarts a process implicitly. `host_link::resolve`
+carries one of three intents: `Create` (a new pane, a fresh `SessionId`),
+`Reattach` (a restored layout, a sidebar row, a Retry) which only attaches to a
+live owned session and otherwise ends the pane with the host's reconnection
+state, and `Restart { expected }` which is the explicit Restart button, the
+sidebar context menu or the "Resume Ended Sessions" command and submits the
+generation the desktop observed so two restarts of one generation commit at
+most one new generation. A record the host does not know ends the pane as
+`missing`; its action is "New terminal" with a fresh id, never a silent create
+under the old id. Build identity (`host_build_id`) is diagnostic only: the
+handshake accepts a client from another release when the protocol version and
+the terminal engine agree, logs the drift, and the compatibility fixtures in
+`crates/paneflow-host/src/server.rs` pin that contract.
+
+Every lifecycle request and every asynchronous completion names its generation.
+A launch is registered as an operation until it is conclusive: the requester
+may disconnect, the startup deadline may pass, and the host keeps the
+`LaunchHandle` under a `paneflow-host-launch-owner` thread until the child
+reports or fails, then re-checks the record and the operation at commit. A stop
+that raced a restart drops its outcome when the generation moved on, so a stop
+of generation N never writes `exited` into N+1. A restart is transactional:
+the previous manifest is restored when its persist fails and no `starting`
+record is stranded. Viewport scans, cancellation markers, hook events and the
+`SessionInput` escape fence capture the generation they observed and are
+re-checked when they commit (`SessionHost::commit_scan`, `commit_marker`,
+`ingest_agent_event`). Admission is bounded at eight unresolved launches
+(`MAX_PENDING_LAUNCHES`); a pending launch is reported as `starting`, never as
+a verified process. No registry lock is held across PTY I/O, process waits or
+observer callbacks: the map lock brackets record lookups and commits only.
+
+Agent events require the generation captured by their producer. They commit,
+attempt persistence, and publish a nonblocking notification under the session
+ledger before the acknowledgement is written. Parallel requests therefore publish
+in revision order even when a requester stops reading its acknowledgement.
+The ack carries `revision`, `durable` and `persistence_error`; a retry of the
+same event after an ambiguous ack is acknowledged as `duplicate` from a bounded
+per-session receipt ledger and never notified twice. The manifest retains the
+latest event and latest activity transition as two bounded frames; ingress rejects
+an event before commit if its manifest would exceed the 64 KiB reload limit.
+Workers reject older revisions and recover newer accepted state from snapshots or
+disk, including when the compact seed write fails. A full worker queue reconnects
+for a new snapshot instead of silently dropping accepted state. Hook seeds and cancellation
+markers are written through `write_atomically_in_existing_dir` under the same
+ledger that `session.remove` marks removed, so a delayed write cannot recreate
+a removed session directory. The fixtures behind these guarantees are
+`crates/paneflow-host/src/bin/paneflow-session-fixture.rs` (idle, echo, flood,
+delayed exit, blocked stdin, descendants, split escape and UTF-8 sequences) and
+`crates/paneflow-host/tests/ownership_probes.rs`. Development recovery commands, all scoped by
 `PANEFLOW_HOME`:
 
 ```bash
@@ -755,6 +805,25 @@ Windows MSI relay), all driven by one in-app updater. Update artifacts are verif
 **fails closed**: an unsigned or tampered artifact is rejected, never installed.
 macOS builds add Developer ID / notarization checks with Team ID pinning;
 Windows MSI updates add `WinVerifyTrust` before `msiexec` runs.
+
+Every restart into a new version goes through the quit dialog's stop-everything
+path (`quit_dialog.rs`), including the Windows MSI route: the staged MSI is
+preflighted (`UpdatePreflight`: the replacement exists on disk, the host still
+serves sessions), the desktop stops every hosted session through the single
+`host_link::stop_session` call site, waits for the confirmed outcomes and the
+`host.shutdown` acknowledgment, and only then spawns the MSI relay. An
+unconfirmed stop keeps the window open with Retry, Keep running and quit, and
+Cancel. A shared five-second action deadline reports unresolved identities while
+the host retains pending ownership. A storage-only failure offers Quit with
+unsaved final state, which exits only the desktop and never installs the update. The relay itself does not rely on the desktop PID
+alone: after the parent exits it probes the host endpoint for up to thirty
+seconds and, if a host still serves, skips `msiexec`, logs the deferral in its
+relay log and relaunches the current version, because the host binary next to
+`paneflow.exe` may still be in use. The relay also opens the installed host for
+replacement access, so a retained binary with an unavailable endpoint defers
+installation too. It preserves the staged MSI on deferral and disables Installer
+Restart Manager shutdown. User-facing recovery choices are documented in
+[Persistent sessions and updates](docs/persistent-sessions.md).
 
 ## Telemetry (opt-in, fail-closed)
 
