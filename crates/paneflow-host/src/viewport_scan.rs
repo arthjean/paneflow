@@ -27,6 +27,11 @@ struct ScreenChangeTracker {
 }
 
 impl ScreenChangeTracker {
+    fn write_pending(&self) -> bool {
+        self.changed_at_ms
+            .is_some_and(|changed| Some(changed) != self.written_at_ms)
+    }
+
     fn observe(&mut self, hash: u64, now_ms: u64) -> Option<u64> {
         if self.last_hash != Some(hash) {
             self.last_hash = Some(hash);
@@ -53,6 +58,7 @@ pub struct ViewportTracker {
     screen_activity: Option<String>,
     menu_prompt_active: bool,
     observation: Option<RuntimeObservation>,
+    scanned_output_end: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -65,6 +71,14 @@ pub struct ViewportEdges {
 }
 
 impl ViewportTracker {
+    pub fn scan_due(&self, output_end: u64) -> bool {
+        self.scanned_output_end != Some(output_end) || self.screen.write_pending()
+    }
+
+    pub fn record_scanned_output(&mut self, output_end: u64) {
+        self.scanned_output_end = Some(output_end);
+    }
+
     pub fn observe(
         &mut self,
         screen: &str,
@@ -159,6 +173,14 @@ fn scan_once(host: &Arc<SessionHost>, trackers: &mut BTreeMap<TrackerKey, Viewpo
             .any(|target| target.session == *session && target.generation == *generation)
     });
     for target in targets {
+        let key = (target.session.clone(), target.generation);
+        let output_end = target.runtime.stream().end_offset();
+        if trackers
+            .get(&key)
+            .is_some_and(|tracker| !tracker.scan_due(output_end))
+        {
+            continue;
+        }
         let Ok(scan) = target.runtime.viewport_scan(VIEWPORT_SCAN_BUDGET) else {
             continue;
         };
@@ -171,15 +193,14 @@ fn scan_once(host: &Arc<SessionHost>, trackers: &mut BTreeMap<TrackerKey, Viewpo
             .last_hook
             .as_ref()
             .map(|hook| hook.tool.clone());
-        let edges = trackers
-            .entry((target.session.clone(), target.generation))
-            .or_default()
-            .observe(
-                &scan.screen,
-                observation,
-                declared_tool.as_deref(),
-                now_ms(),
-            );
+        let tracker = trackers.entry(key).or_default();
+        let edges = tracker.observe(
+            &scan.screen,
+            observation,
+            declared_tool.as_deref(),
+            now_ms(),
+        );
+        tracker.record_scanned_output(output_end);
         if !edges.write_due {
             continue;
         }
@@ -219,6 +240,49 @@ mod tests {
             process_name: "claude".to_string(),
             argv: Some(vec!["claude".to_string()]),
         }
+    }
+
+    #[test]
+    fn a_session_without_new_output_is_not_rescanned_until_bytes_arrive() {
+        let mut tracker = ViewportTracker::default();
+        assert!(tracker.scan_due(0));
+        tracker.observe("$ ", None, None, 1_000);
+        tracker.record_scanned_output(0);
+        assert!(!tracker.scan_due(0));
+        assert!(tracker.scan_due(12));
+        tracker.record_scanned_output(12);
+        assert!(!tracker.scan_due(12));
+    }
+
+    #[test]
+    fn a_coalesced_screen_change_is_still_written_after_the_output_stops() {
+        let mut tracker = ViewportTracker::default();
+        assert_eq!(
+            tracker
+                .observe("first", None, None, 1_000)
+                .screen_changed_at_ms,
+            Some(1_000)
+        );
+        tracker.record_scanned_output(5);
+        assert_eq!(
+            tracker
+                .observe("second", None, None, 1_500)
+                .screen_changed_at_ms,
+            None
+        );
+        tracker.record_scanned_output(9);
+        assert!(
+            tracker.scan_due(9),
+            "the coalesced change is pending, so the quiet session is scanned again"
+        );
+        assert_eq!(
+            tracker
+                .observe("second", None, None, 2_000)
+                .screen_changed_at_ms,
+            Some(1_500)
+        );
+        tracker.record_scanned_output(9);
+        assert!(!tracker.scan_due(9));
     }
 
     #[test]
