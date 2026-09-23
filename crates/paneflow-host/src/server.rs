@@ -2158,13 +2158,6 @@ mod tests {
             visible_text(&text).trim().is_empty(),
             "nothing was fabricated for a silent exit: {text:?}"
         );
-
-        let final_text = control
-            .call("session.text", json!({"session": session}))
-            .unwrap();
-        assert_eq!(final_text["live"], false);
-        assert_eq!(final_text["text"], "");
-        assert_eq!(final_text["complete"], true);
         assert!(
             wait_until(Duration::from_secs(5), || matches!(
                 host.output_stream(&session, None),
@@ -2172,6 +2165,13 @@ mod tests {
             )),
             "NFR-04: the runtime is released within 5 s of the exit"
         );
+
+        let final_text = control
+            .call("session.text", json!({"session": session}))
+            .unwrap();
+        assert_eq!(final_text["live"], false);
+        assert_eq!(final_text["text"], "");
+        assert_eq!(final_text["complete"], true);
         server.stop().unwrap();
     }
 
