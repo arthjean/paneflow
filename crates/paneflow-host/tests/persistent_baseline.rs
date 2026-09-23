@@ -1507,7 +1507,7 @@ fn persistent_session_baseline() {
     seed_failure(&mut decisions);
     let prior = workloads::prior_failures();
     let workloads_json = json!({
-        "W01": {"status": "measured", "scenarios": "see scenarios[]", "topology": topology_label(worker_pid.is_some()), "note": "short-window CPU and memory samples; the 300 s three-run acceptance window is executed by the platform runbook"},
+        "W01": {"status": "measured", "scenarios": "see scenarios[]", "topology": topology_label(worker_pid.is_some()), "note": "short-window CPU and memory samples; this window decides NFR-01"},
         "W02": w02,
         "W03": w03,
         "W04": {

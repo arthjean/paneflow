@@ -120,7 +120,7 @@ driven by `scripts/bench-persistent.sh` / `.ps1`. Every fixture is a mode of
 
 | Workload | Fixture and inputs | Automated by | Protocol |
 |---|---|---|---|
-| W01 baseline | `idle` at 80x24; 0/1/10/50 sessions; host-only, host+worker, host+worker+desktop | `persistent_session_baseline` W01 section | 4 s settle, 10 s sample (quick); 30 s settle, 300 s sample, 3 runs per mode for the NFR-01 gate |
+| W01 baseline | `idle` at 80x24; 0/1/10/50 sessions; host-only, host+worker, host+worker+desktop | `persistent_session_baseline` W01 section | 4 s settle, 10 s sample; this window decides NFR-01 |
 | W02 history | `history 10000` (deterministic ANSI and Unicode lines), 10 sequential attachments, 10 concurrent, 100 attach/detach cycles | `workloads::workload_history` | same in both protocols |
 | W03 throughput | `flood 33554432` for the single-stream number; 10 x `stream 1048576 <seconds>`; `echo` fixture probed at idle and under load | `workloads::workload_throughput` | 5 s streams and 200 echo samples (quick); 60 s and 1,000 samples (full) |
 | W04 faults | paused follower; worker kill/restart and build replacement with sessions live; generation change; output eviction; control disconnect | `paused_follower_probe`, `workloads::workload_worker_replacement`, plus the automated tests listed under `workloads.W04.automated_tests` | 2 worker cycles (quick); 10 (full); 100 in the endurance run |
@@ -203,7 +203,7 @@ W03 also records `fairness_min_over_max` across the ten paced streams as a
 reported value without a threshold.
 
 NFR-01, NFR-02, NFR-03, NFR-07, NFR-10, NFR-13, and NFR-15 are decided by the
-unit and integration tests in the coverage ledger, by the 300 s W01 sample on
+unit and integration tests in the coverage ledger, by the W01 short window on
 the qualification machine, or by the native trace the report attaches. The
 harness records them as `automated_tests` or `pending`, never as a number it
 did not measure.
@@ -294,7 +294,7 @@ inferred pass.
 | A01 | `replacement_preflight_and_wrong_home_never_stop_live_sessions`, `a_client_from_another_release_attaches_when_protocol_and_engine_agree`, `an_update_preflight_defers_a_missing_replacement_and_counts_the_host_sessions` | upgrade cells, D-03 |
 | A02 | `a_pane_restored_into_an_ended_session_resumes_without_an_attachment`, W02 `NFR-06.checkpoint_release` | D-01 |
 | A03 | `a_natural_exit_keeps_a_cold_record_releases_the_runtime_and_removal_drops_the_text`, `records_past_their_retention_release_their_cold_text_under_an_injected_clock`, W05 `NFR-04.runtime_release` | none required |
-| A04 | `a_follower_resumes_after_the_checkpoint_survives_idle_keepalives_and_sees_the_exit`, W01 wait-reason attribution | W01 300 s sample |
+| A04 | `a_follower_resumes_after_the_checkpoint_survives_idle_keepalives_and_sees_the_exit`, W01 wait-reason attribution | W01 short window |
 | A05 | the three `a_control_connection_idle_for_*` tests, `a_connection_lost_before_the_input_ack_reports_unknown_delivery_without_a_resend` | W08 30 min idle control |
 | A06 | `metadata_revisions_coalesce_to_the_latest_and_a_critical_barrier_completes`, `an_older_revision_queued_behind_a_newer_one_never_regresses_the_file`, `a_metadata_write_starts_within_the_flush_bound`, `metadata_admission_respects_the_byte_budget_and_reservations` | none required |
 | A07 | `a_stop_of_generation_one_never_writes_exited_into_generation_two`, `a_stop_racing_a_natural_exit_settles_on_a_single_confirmed_exit` | none required |
@@ -336,7 +336,7 @@ inferred pass.
 
 | NFR | Automated cases or harness decision | Platform evidence |
 |---|---|---|
-| NFR-01 | W01 CPU attribution | 300 s W01 sample, 3 runs per mode, per OS |
+| NFR-01 | W01 CPU attribution | W01 short window at 50 sessions, per OS |
 | NFR-02 | W01 wait-reason attribution, `a_follower_resumes_after_the_checkpoint_survives_idle_keepalives_and_sees_the_exit` | native trace per OS |
 | NFR-03 | W01 memory per session | per-OS native allocation evidence |
 | NFR-04 | `NFR-04.runtime_release`, `NFR-04.reclaim_max_ms`, `a_natural_exit_keeps_a_cold_record_releases_the_runtime_and_removal_drops_the_text` | none required |
