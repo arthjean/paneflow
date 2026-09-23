@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "candidate_sha": "462b4fc66dd225579cd997e0dcb6ea1393c2caab",
+  "dirty": false,
+  "target": "x86_64-unknown-linux-gnu",
+  "profile": "release",
+  "recorded_at": "2026-09-23T11:58:18Z",
+  "preflight": "pass",
+  "failures": [],
+  "artifacts": {
+    "desktop": {"path": "target/release/paneflow", "present": true, "required": true, "bytes": 86268160, "sha256": "f8d58708f1d41e75c77c00d10c372d1704128c90565809d5fdfb743602b20be8"},
+    "host": {"path": "target/release/paneflow-host", "present": true, "required": true, "bytes": 7020520, "sha256": "21fcb3c7c39bb045916ec0de2f5a214414242262f6b37cb0ff8b2b39b533e512"},
+    "fixture": {"path": "target/release/paneflow-session-fixture", "present": true, "required": false, "bytes": 407232, "sha256": "69f4a79aac03a4ddb0442166be967161ebd1e171767c10a875f401d12f237304"},
+    "helper.paneflow-shim": {"path": "target/embed-build/x86_64-unknown-linux-gnu/release-min/paneflow-shim", "present": true, "required": true, "bytes": 367960, "sha256": "950745714158b3eb5ee12c9d1b9b376bf5878029b59671bff64a5155e2a7a287"},
+    "helper.paneflow-ai-hook": {"path": "target/embed-build/x86_64-unknown-linux-gnu/release-min/paneflow-ai-hook", "present": true, "required": true, "bytes": 385696, "sha256": "e020d261be6e7d80ddecc2f4f03c8851a0aff2cc1316003d735c53e3772179ad"},
+    "helper.paneflow-mcp": {"path": "target/embed-build/x86_64-unknown-linux-gnu/release-min/paneflow-mcp", "present": true, "required": true, "bytes": 463992, "sha256": "14c3b16cc93acb931431193e3c6db6bb763d3e85516249ea0de012e38c38bab2"},
+    "engine.manifest": {"path": "native/libghostty/manifest.toml", "present": true, "required": true, "bytes": 6287, "sha256": "af9690ca45475daf0030d0f269f4e9ad830c4505a076eaf2bfd890ef7c17b1f0"},
+    "engine.libghostty-vt.a": {"path": "native/libghostty/prebuilt/x86_64-unknown-linux-gnu/lib/libghostty-vt.a", "present": true, "required": true, "bytes": 3364206, "sha256": "eebee5d8dcc7fcdf4a354760dd6287db4ae0f79b5ed8a2d91e30e78669cdd520"},
+    "conpty.manifest": {"path": "native/conpty/manifest.json", "present": true, "required": true, "bytes": 678, "sha256": "ae67a924131d4f950fffab96ee17a23c64e301c6c13fc23ae33f266ab131edaa"}
+  }
+}
