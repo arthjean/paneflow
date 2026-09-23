@@ -10,6 +10,7 @@
 | 1.2 | 2026-09-22 | Arthur Jean | Amend the EP-005 Linux qualification scope: ARM64 evidence from the native CI job, Fedora as the only full native cell, other distributions as container host-only evidence, an endurance rehearsal instead of the 8-hour run, and a short manual smoke instead of the interactive passes |
 | 1.3 | 2026-09-23 | Arthur Jean | Remove the 300 s, three-run W01 window from every qualification: NFR-01 is decided on the harness short window |
 | 1.4 | 2026-09-23 | Arthur Jean | Drop the Stop-everything check from the Linux manual smoke: a non-root user cannot start a pane process that survives the stop, so the unresolved stop-all path is covered by automated tests |
+| 1.5 | 2026-09-23 | Arthur Jean | Align the EP-006 macOS qualification with EP-004 and EP-005: the W08 evidence is an endurance rehearsal that passes every decision, and the 8-hour run is optional on every platform; NFR-11 cycle counts and NFR-12 follow |
 
 ## Problem Statement
 
@@ -585,6 +586,8 @@ Scope amended by Arthur on 2026-09-22. Native Linux ARM64 hardware is not availa
 
 Prepare everything before Arthur provisions the rental, then validate the completed Apple Silicon application, host, and resource budgets on the physical remote Mac.
 
+Scope amended by Arthur on 2026-09-23, matching EP-004 and EP-005: the W08 evidence on the rented Mac is an endurance rehearsal that passes every decision, and the 8-hour run is optional. A rehearsal of the package on the hosted macOS runner may precede the rental; it never decides a threshold.
+
 **Definition of Done:** US-019 preparation and US-020 execution are reviewed; the candidate has native macOS ARM64 lifecycle, UI, and performance evidence; artifacts are exported and rental termination is verified. No Intel macOS qualification is implied.
 
 #### US-019: Prepare the macOS qualification package before rental
@@ -600,7 +603,7 @@ Prepare everything before Arthur provisions the rental, then validate the comple
 - [ ] Arthur receives a preflight with current hourly quote, applicable taxes/extras, available Apple Silicon model, compatible macOS image, minimum rental, expected total, and explicit termination procedure. The earlier EUR 2.64 estimate is not treated as a current quote.
 - [ ] Prepare Windows SSH/VNC access instructions, a launchable on-machine preflight for Metal/session access and disk capacity, and evidence-export commands. Actual access and machine checks occur in US-020 after provisioning. A nondefault OS reinstall is avoided unless necessary and budgeted.
 - [ ] Use existing signed artifacts when available. If ad-hoc signing is used for isolated runtime qualification, record that Gatekeeper/notarized distribution is not thereby certified; no production signing secret is copied to the rental.
-- [ ] The 24-hour schedule below includes the 8-hour endurance run, failure triage, evidence export, and shutdown/deletion buffer. A delayed provisioning or unavailable machine leaves execution pending and never fabricates a pass.
+- [ ] The 24-hour schedule below includes the W08 endurance rehearsal, failure triage, evidence export, and shutdown/deletion buffer. A delayed provisioning or unavailable machine leaves execution pending and never fabricates a pass.
 - [ ] Provisioning remains Arthur's action. The runbook verifies any available auto-delete setting and its semantics instead of assuming the machine expires automatically at 24 hours.
 
 #### US-020: Execute and report native macOS qualification
@@ -614,7 +617,7 @@ Prepare everything before Arthur provisions the rental, then validate the comple
 - [ ] Before collecting qualification data, verify Windows-to-Mac SSH/VNC access, a working Metal-capable graphical session, sufficient disk space, and a sample evidence export. Record hardware, OS/build, storage, VNC method, package hashes, and candidate SHA; launch the bundled host and desktop in the private qualification home.
 - [ ] Execute the functional matrix and Desktop lifecycle and recovery actions table: detach/reopen, worker death/replacement, zero-launch restoration after host loss, fallback access without an original workspace/cwd, ended-row viewing, explicit restart/stop, idle input, concurrent operations, failed persistence, stale activity, unresolved stop-all, and compatible/incompatible upgrades.
 - [ ] Exercise the native GPUI/Metal view interactively, including glyphs, resize, paste, search, final output, and reconnection. Record local input/echo timing separately from VNC display/network latency.
-- [ ] W01-W08 provide per-machine baseline/candidate CPU, resident/physical-memory, thread, FD, and ownership evidence, with 8 hours of endurance and all applicable NFR decisions.
+- [ ] W01-W07 provide per-machine baseline/candidate CPU, resident/physical-memory, thread, FD, and ownership evidence with all applicable NFR decisions, and a W08 endurance rehearsal passes every decision (idle first input echoed once, retained identities unchanged, no orphan, no ownership-counter growth); the 8-hour run is optional.
 - [ ] A failed lifecycle case, Metal/access failure, or resource-budget miss remains unqualified. Fixes use a newly identified candidate and rerun the affected native checks; expiration of the rental is not a waiver.
 - [ ] Export raw measurements, logs, screenshots, package fingerprints, and the pass/fail ledger before teardown. Remove fixture credentials if any were created, and verify the rental is deleted or its scheduled deletion has actually completed.
 - [ ] Report Apple Silicon qualification only. macOS Intel, physical peripherals, local-display latency, and production notarization remain separate unless independently exercised and evidenced.
@@ -703,7 +706,7 @@ Native terminal memory, image resources, allocator overhead, and thread stacks a
 | Windows x64 | Native Rust/lifecycle gates and packaged helper checks | Windows 11 native suites, harness workloads, and manual smoke; Windows 10 assumed equivalent; 8-hour soak optional |
 | Linux x64 | Native gates on Fedora; Ubuntu, Debian, Arch, openSUSE host lifecycle cases from the tarball in containers | Fedora Wayland and X11 (XWayland) harness desktop runs and manual smoke; x64 performance host and endurance rehearsal; 8-hour soak optional |
 | Linux ARM64 | Native `ubuntu-22.04-arm` CI gates: clippy, workspace tests, release build | None required; render smoke, performance matrix, and 2-hour soak recorded unavailable |
-| macOS ARM64 | Actual executed macOS CI gates and available render smoke | Scaleway physical Apple Silicon GUI/core/performance matrix and 8-hour soak in the 24-hour rental |
+| macOS ARM64 | Actual executed macOS CI gates and available render smoke | Scaleway physical Apple Silicon GUI/core/performance matrix and endurance rehearsal in the 24-hour rental; 8-hour soak optional |
 | macOS Intel / Windows ARM64 | Preserve applicable portable source paths | Not shipping with the current archive manifest; no qualification claim in this delivery |
 
 macOS rental plan, elapsed from successful provisioning:
@@ -714,9 +717,9 @@ macOS rental plan, elapsed from successful provisioning:
 | Hours 0-2 | SSH/VNC/Metal checks, download and hash verification, isolated homes, environment and baseline capture |
 | Hours 2-6 | Functional and failure matrix, installed-app and upgrade/reconnect exercises |
 | Hours 6-10 | Repeated baseline/candidate short performance matrix and profiling |
-| Hours 10-18 | 8-hour endurance run with scheduled fixture churn/reconnections |
-| Hours 18-22 | Analyze evidence, focused reruns if time permits, document unresolved cases |
-| Hours 22-24 | Export and verify artifacts, clean fixtures, terminate rental and verify deletion/billing end |
+| Hours 10-12 | W08 endurance rehearsal with scheduled fixture churn/reconnections |
+| Hours 12-22 | Analyze evidence, focused reruns if time permits, document unresolved cases; the optional 8-hour run only when it ends before hour 22 |
+| Hours 22-24 | Export and verify artifacts, clean fixtures, terminate rental once the 24-hour minimum lease has elapsed and verify deletion/billing end |
 
 This schedule is a preparation budget. If access, builds, or failures consume it, record incomplete qualification and arrange a separate authorized session; do not weaken acceptance criteria to fit the clock. VNC is for interaction, not the measurement clock for local rendering latency.
 
@@ -736,8 +739,8 @@ All thresholds below are acceptance targets to validate on release builds, not c
 | NFR-08 | Local input-to-echo publication p95 <= 30 ms and p99 <= 100 ms at idle; with 10 other sessions emitting 1 MiB/s each, focused echo p95 <= 50 ms; persistent-path throughput >= 90% of the matched baseline | W03/W07, at least 1,000 sequenced echo samples per run. Use local monotonic timestamps through the rendered-content publication boundary, not VNC or network display time. |
 | NFR-09 | A live 80x24 session with 10,000 populated history lines attaches through checkpoint+first publication in p95 <= 1,000 ms for 10 repetitions; 10 simultaneous attachments complete in <= 5 s on the qualified machine | W02 with fixed corpus and bounded admission. A larger admitted snapshot is reported separately and never mistaken for this workload. |
 | NFR-10 | Startup response deadline 10 s, stop action budget 5 s, abnormal final drain <= 2 s; deadline expiry returns pending/unverified where necessary rather than false completion | W04/W06; responsiveness is measured separately from eventual ownership resolution. Every late-created fixture child remains tracked and is reconciled. |
-| NFR-11 | 0 unexpected child exits or generation changes across 100 desktop detach/reopen cycles and 100 worker kill/restart or replacement cycles; 0 duplicate committed launches across 1,000 deterministic concurrent-transition schedules; 0 lost/duplicated first echo after 61 s, 5 min, and 30 min idle | W04/W08 plus barrier-based fault tests. Worker cycles include both crash recovery and build replacement. Every failed repetition remains in the evidence. |
-| NFR-12 | 0 orphan fixture processes, ownership leaks, or deadlocks during each required endurance run; short-lived fixture effects recover within the existing resource deadlines | W08, 8 hours on primary Windows/Linux/macOS machines and 2 hours on Linux ARM64. |
+| NFR-11 | 0 unexpected child exits or generation changes across 100 desktop detach/reopen cycles and 100 worker kill/restart or replacement cycles; 0 duplicate committed launches across 1,000 deterministic concurrent-transition schedules; 0 lost/duplicated first echo after 61 s, 5 min, and 30 min idle | W04/W08 plus barrier-based fault tests. Worker cycles include both crash recovery and build replacement. The 100-cycle counts apply to the optional 8-hour W08 run; the required W04 runs and endurance rehearsal record their own cycle counts, each with 0 identity or generation changes. Every failed repetition remains in the evidence. |
+| NFR-12 | 0 orphan fixture processes, ownership leaks, or deadlocks during each required endurance run; short-lived fixture effects recover within the existing resource deadlines | W08 endurance rehearsal on the primary Windows, Linux, and macOS machines; the 8-hour run is optional and Linux ARM64 runs none. |
 | NFR-13 | 0 foreign or identity-mismatched processes signaled in the process-safety suite; preserve 64 KiB control-frame and 64 MiB checkpoint limits; unauthorized cross-user endpoint access is rejected | Native protocol/security fixtures, including malformed lengths, concurrent requests, and permission changes. |
 | NFR-14 | 100% of required scenario/platform cells have an explicit result at the candidate SHA; 0 missing/skipped required cells are counted as passed | US-014 ledger and the three qualification reports. A changed shared core invalidates corresponding prior evidence. |
 | NFR-15 | 0 implicit launches from restoration/retry/ordinary row opening; 0 successful stop-all results while owned processes or launches remain unresolved; 100% of unattached live/unverified sessions represented exactly once after each successful list publication | W04/W06/W07 and desktop entry-point assertions, including no open workspace, missing cwd, recents eviction, stale activity, final-view retention, and shutdown RPC failure. Known rows survive failed refreshes with explicit stale state. |
