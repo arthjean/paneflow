@@ -965,6 +965,29 @@ mod tests {
         ));
     }
 
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn an_exited_root_keeps_its_identity_and_group_until_it_is_reaped() {
+        let mut child = std::process::Command::new("/bin/sh")
+            .args(["-c", "sleep 0.2; exit 0"])
+            .spawn()
+            .expect("shell spawns");
+        let pid = child.id();
+        let started = process_start_time(pid);
+        assert!(started.is_some(), "the live root has a start time");
+        assert!(
+            await_exit_unreaped(pid),
+            "the exit is observed without reaping"
+        );
+        assert_eq!(
+            process_start_time(pid),
+            started,
+            "the unreaped root still reports its start time"
+        );
+        assert!(child.wait().expect("reap").success());
+        assert_eq!(process_start_time(pid), None, "the reaped root is gone");
+    }
+
     #[cfg(target_os = "macos")]
     #[test]
     fn mac_signals_check_kernel_pid_versions_without_a_task_control_port() {

@@ -1916,10 +1916,24 @@ mod tests {
             .exit()
             .is_some()));
         assert!(!root.is_provably_live());
+        let survivors = || {
+            let listing = std::process::Command::new("ps")
+                .args(["-axo", "pid,ppid,pgid,stat,command"])
+                .output()
+                .map(|output| String::from_utf8_lossy(&output.stdout).into_owned())
+                .unwrap_or_default();
+            listing
+                .lines()
+                .filter(|line| line.contains("sleep 30"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
         assert_eq!(
             runtime.descendants_unresolved(),
             1,
-            "the background child that outlived the root is owned"
+            "the background child that outlived root pid {} is owned; processes:\n{}",
+            root.pid,
+            survivors()
         );
         assert!(runtime.unverified().is_some());
         assert!(runtime.owns_process());
