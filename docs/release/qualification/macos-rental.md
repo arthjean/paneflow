@@ -158,7 +158,11 @@ export path before the evidence matters.
 | M14-evidence-export | the evidence archive is written and lists |
 
 A failed M03, M04, M12, or M13 stops the qualification: record the Mac as
-unavailable for the cells that need it and never substitute a pass.
+unavailable for the cells that need it and never substitute a pass. The
+package workflow's rehearsal runs on a virtual `macos-14` runner whose
+paravirtual GPU has no Graphics/Displays section in `system_profiler`, so M04
+fails there while M13 still renders through Metal; on the physical Mac mini
+both must pass.
 
 ## Qualification commands
 
