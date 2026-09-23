@@ -763,6 +763,16 @@ fn serve_loop(session: &mut Session, rx: &Receiver<Message>) {
     }
 }
 
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
+fn release_freed_heap() {
+    unsafe {
+        libc::malloc_trim(0);
+    }
+}
+
+#[cfg(not(all(target_os = "linux", target_env = "gnu")))]
+fn release_freed_heap() {}
+
 fn stop_is_confirmed(report: &StopReport) -> bool {
     report.exit.is_some() && report.unverified.is_none() && report.descendants_unresolved == 0
 }
@@ -1347,6 +1357,7 @@ impl Session {
         self.writer = None;
         self.release_master();
         self.retire_engine();
+        release_freed_heap();
     }
 
     fn retire_engine(&mut self) {

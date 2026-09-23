@@ -12,6 +12,8 @@ const EXIT_RUNTIME: i32 = 1;
 const EXIT_USAGE: i32 = 2;
 const EXIT_UNREACHABLE: i32 = 3;
 const CLIENT_NAME: &str = "paneflow-host-cli";
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
+const HOST_MALLOC_ARENAS: i32 = 2;
 
 #[derive(Parser)]
 #[command(
@@ -143,6 +145,7 @@ fn identity(home: &Path) -> i32 {
 }
 
 fn serve(home: &Path, endpoint: Option<PathBuf>) -> i32 {
+    cap_malloc_arenas();
     let endpoint = endpoint.unwrap_or_else(|| paneflow_host::endpoint::host_endpoint_path(home));
     let host = match paneflow_host::SessionHost::open(home, &endpoint) {
         Ok(host) => host,
@@ -169,6 +172,18 @@ fn serve(home: &Path, endpoint: Option<PathBuf>) -> i32 {
         }
     }
 }
+
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
+fn cap_malloc_arenas() {
+    if std::env::var_os("MALLOC_ARENA_MAX").is_none()
+        && unsafe { libc::mallopt(libc::M_ARENA_MAX, HOST_MALLOC_ARENAS) } != 1
+    {
+        log::warn!("paneflow-host: the malloc arena count could not be capped");
+    }
+}
+
+#[cfg(not(all(target_os = "linux", target_env = "gnu")))]
+fn cap_malloc_arenas() {}
 
 fn session(home: &Path, command: SessionCommand) -> i32 {
     let endpoint = paneflow_host::endpoint::host_endpoint_path(home);
