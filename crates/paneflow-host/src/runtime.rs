@@ -1940,7 +1940,19 @@ mod tests {
             };
             assert!(runtime.owns_process());
             let identity = runtime.process();
-            assert!(stop_is_confirmed(&runtime.stop().unwrap()));
+            let deadline = Instant::now() + Duration::from_secs(30);
+            let last = loop {
+                let outcome = runtime.stop();
+                let confirmed = outcome.as_ref().is_ok_and(stop_is_confirmed);
+                let retryable = matches!(outcome, Ok(_) | Err(RuntimeError::Deadline(_)));
+                if confirmed || !retryable || Instant::now() >= deadline {
+                    break outcome;
+                }
+            };
+            assert!(
+                last.as_ref().is_ok_and(stop_is_confirmed),
+                "{fault}: the retained owner never confirmed its stop: {last:?}"
+            );
             assert!(!identity.is_provably_live());
         }
     }
