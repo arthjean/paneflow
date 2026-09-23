@@ -2844,6 +2844,33 @@ impl SessionHost {
         }
         let text_bytes = record.text.len() as u64;
         let text_available = !record.text.is_empty();
+        let final_output = crate::manifest::FinalOutput {
+            offset: record.final_offset,
+            complete: record.complete,
+            text_bytes,
+            text_available,
+        };
+        {
+            let mut sessions = self.lock_sessions();
+            if let Some(held) = sessions
+                .get_mut(session)
+                .filter(|held| Arc::ptr_eq(&held.manifest, manifest))
+            {
+                held.completed = Some(CompletedRuntime {
+                    generation: record.generation,
+                    final_offset: record.final_offset,
+                });
+            }
+        }
+        self.commit(
+            manifest,
+            durability,
+            Some(record.generation),
+            WriteClass::Final,
+            |guard| {
+                guard.final_output = Some(final_output);
+            },
+        );
         if text_available {
             let home = self.home.clone();
             let host = self.weak_self();
@@ -2874,33 +2901,6 @@ impl SessionHost {
                 Ok(())
             });
         }
-        let final_output = crate::manifest::FinalOutput {
-            offset: record.final_offset,
-            complete: record.complete,
-            text_bytes,
-            text_available,
-        };
-        {
-            let mut sessions = self.lock_sessions();
-            if let Some(held) = sessions
-                .get_mut(session)
-                .filter(|held| Arc::ptr_eq(&held.manifest, manifest))
-            {
-                held.completed = Some(CompletedRuntime {
-                    generation: record.generation,
-                    final_offset: record.final_offset,
-                });
-            }
-        }
-        self.commit(
-            manifest,
-            durability,
-            Some(record.generation),
-            WriteClass::Final,
-            |guard| {
-                guard.final_output = Some(final_output);
-            },
-        );
         self.release_retired_runtime(session, record.generation);
     }
 

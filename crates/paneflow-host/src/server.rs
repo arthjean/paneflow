@@ -2439,13 +2439,18 @@ mod tests {
             )),
             "US-009: a durability failure still retires the runtime"
         );
-        let final_output = host
-            .inspect(&session)
-            .unwrap()
-            .manifest
-            .final_output
-            .expect("the completed record is still committed");
-        assert!(!final_output.text_available);
+        assert!(
+            wait_until(Duration::from_secs(5), || {
+                let final_output = host
+                    .inspect(&session)
+                    .unwrap()
+                    .manifest
+                    .final_output
+                    .expect("the completed record is still committed");
+                !final_output.text_available
+            }),
+            "US-009: a lost data directory withdraws the final text"
+        );
         let final_text = control
             .call("session.text", json!({"session": session}))
             .unwrap();
