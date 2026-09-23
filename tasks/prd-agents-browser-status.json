@@ -1,0 +1,552 @@
+{
+  "prd": {
+    "file": "tasks/prd-agents-browser.md",
+    "title": "Navigateur intégré au dock Agents",
+    "created_at": "2026-09-05",
+    "status": "READY"
+  },
+  "epics": [
+    {
+      "id": "EP-001",
+      "title": "Qualifier le moteur, le GPU et les plateformes",
+      "status": "TODO",
+      "priority": "P0",
+      "stories_total": 5,
+      "stories_done": 0
+    },
+    {
+      "id": "EP-002",
+      "title": "Construire la frontière navigateur et ses adaptateurs",
+      "status": "TODO",
+      "priority": "P0",
+      "stories_total": 6,
+      "stories_done": 0
+    },
+    {
+      "id": "EP-003",
+      "title": "Intégrer le navigateur au dock Agents",
+      "status": "TODO",
+      "priority": "P0",
+      "stories_total": 6,
+      "stories_done": 0
+    },
+    {
+      "id": "EP-004",
+      "title": "Compléter les comportements web et la récupération",
+      "status": "TODO",
+      "priority": "P0",
+      "stories_total": 6,
+      "stories_done": 0
+    },
+    {
+      "id": "EP-005",
+      "title": "Distribuer et qualifier les packages",
+      "status": "TODO",
+      "priority": "P0",
+      "stories_total": 5,
+      "stories_done": 0
+    },
+    {
+      "id": "EP-006",
+      "title": "Ajouter les interactions agent sous contrôle du workspace",
+      "status": "TODO",
+      "priority": "P1",
+      "stories_total": 4,
+      "stories_done": 0
+    }
+  ],
+  "stories": [
+    {
+      "id": "US-001",
+      "title": "Établir le protocole de mesure et les fixtures",
+      "epic": "EP-001",
+      "priority": "P0",
+      "size": "M",
+      "blocked_by": [],
+      "status": "TODO",
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-002",
+      "title": "Valider l’hypothèse GPU sur Linux natif",
+      "epic": "EP-001",
+      "priority": "P0",
+      "size": "L",
+      "blocked_by": [
+        "US-001"
+      ],
+      "status": "TODO",
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-003",
+      "title": "Valider l’hypothèse GPU et sandbox sur macOS",
+      "epic": "EP-001",
+      "priority": "P0",
+      "size": "L",
+      "blocked_by": [
+        "US-001"
+      ],
+      "status": "TODO",
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-004",
+      "title": "Valider l’hypothèse GPU et bootstrap Windows",
+      "epic": "EP-001",
+      "priority": "P0",
+      "size": "L",
+      "blocked_by": [
+        "US-001"
+      ],
+      "status": "TODO",
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-005",
+      "title": "Prononcer le GO et figer le contrat de compatibilité",
+      "epic": "EP-001",
+      "priority": "P0",
+      "size": "M",
+      "blocked_by": [
+        "US-002",
+        "US-003",
+        "US-004"
+      ],
+      "status": "TODO",
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-006",
+      "title": "Définir les identités et le protocole privé navigateur",
+      "epic": "EP-002",
+      "priority": "P0",
+      "size": "M",
+      "blocked_by": [
+        "US-005"
+      ],
+      "status": "TODO",
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-007",
+      "title": "Superviser le host et le cycle CEF",
+      "epic": "EP-002",
+      "priority": "P0",
+      "size": "L",
+      "blocked_by": [
+        "US-006"
+      ],
+      "status": "TODO",
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-008",
+      "title": "Industrialiser la présentation GPU Linux",
+      "epic": "EP-002",
+      "priority": "P0",
+      "size": "L",
+      "blocked_by": [
+        "US-006",
+        "US-007"
+      ],
+      "status": "TODO",
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-009",
+      "title": "Industrialiser la présentation GPU macOS",
+      "epic": "EP-002",
+      "priority": "P0",
+      "size": "L",
+      "blocked_by": [
+        "US-006",
+        "US-007"
+      ],
+      "status": "TODO",
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-010",
+      "title": "Industrialiser la présentation GPU Windows",
+      "epic": "EP-002",
+      "priority": "P0",
+      "size": "L",
+      "blocked_by": [
+        "US-006",
+        "US-007"
+      ],
+      "status": "TODO",
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-011",
+      "title": "Gérer les profils persistants et leur verrouillage",
+      "epic": "EP-002",
+      "priority": "P0",
+      "size": "M",
+      "blocked_by": [
+        "US-006",
+        "US-007"
+      ],
+      "status": "TODO",
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-012",
+      "title": "Ouvrir le dock indépendamment de Git",
+      "epic": "EP-003",
+      "priority": "P0",
+      "size": "M",
+      "blocked_by": [
+        "US-006"
+      ],
+      "status": "TODO",
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-013",
+      "title": "Construire les onglets et la barre de navigation",
+      "epic": "EP-003",
+      "priority": "P0",
+      "size": "L",
+      "blocked_by": [
+        "US-008",
+        "US-009",
+        "US-010",
+        "US-011",
+        "US-012"
+      ],
+      "status": "TODO",
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-014",
+      "title": "Router les URL et les services vers le bon propriétaire",
+      "epic": "EP-003",
+      "priority": "P0",
+      "size": "M",
+      "blocked_by": [
+        "US-012",
+        "US-013"
+      ],
+      "status": "TODO",
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-015",
+      "title": "Transmettre input, IME et raccourcis sans fuite de focus",
+      "epic": "EP-003",
+      "priority": "P0",
+      "size": "L",
+      "blocked_by": [
+        "US-013"
+      ],
+      "status": "TODO",
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-016",
+      "title": "Rendre la navigation accessible et adaptée au zoom",
+      "epic": "EP-003",
+      "priority": "P0",
+      "size": "L",
+      "blocked_by": [
+        "US-013",
+        "US-015"
+      ],
+      "status": "TODO",
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-017",
+      "title": "Sauvegarder les onglets et restaurer à la demande",
+      "epic": "EP-003",
+      "priority": "P0",
+      "size": "M",
+      "blocked_by": [
+        "US-011",
+        "US-012",
+        "US-013"
+      ],
+      "status": "TODO",
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-018",
+      "title": "Gérer visibilité, limites et mise en veille explicite",
+      "epic": "EP-004",
+      "priority": "P0",
+      "size": "M",
+      "blocked_by": [
+        "US-013",
+        "US-017"
+      ],
+      "status": "TODO",
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-019",
+      "title": "Récupérer les pannes et borner la fermeture",
+      "epic": "EP-004",
+      "priority": "P0",
+      "size": "M",
+      "blocked_by": [
+        "US-007",
+        "US-008",
+        "US-009",
+        "US-010",
+        "US-018"
+      ],
+      "status": "TODO",
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-020",
+      "title": "Appliquer la politique d’origines et de permissions",
+      "epic": "EP-004",
+      "priority": "P0",
+      "size": "L",
+      "blocked_by": [
+        "US-011",
+        "US-013",
+        "US-019"
+      ],
+      "status": "TODO",
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-021",
+      "title": "Prendre en charge les dialogues, fichiers et fenêtres web",
+      "epic": "EP-004",
+      "priority": "P0",
+      "size": "L",
+      "blocked_by": [
+        "US-015",
+        "US-018",
+        "US-020"
+      ],
+      "status": "TODO",
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-022",
+      "title": "Exposer DevTools avec les API publiques CEF",
+      "epic": "EP-004",
+      "priority": "P1",
+      "size": "L",
+      "blocked_by": [
+        "US-013",
+        "US-015",
+        "US-020"
+      ],
+      "status": "TODO",
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-023",
+      "title": "Qualifier les parcours web et les frontières de sécurité",
+      "epic": "EP-004",
+      "priority": "P0",
+      "size": "M",
+      "blocked_by": [
+        "US-016",
+        "US-017",
+        "US-018",
+        "US-019",
+        "US-020",
+        "US-021",
+        "US-022"
+      ],
+      "status": "TODO",
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-024",
+      "title": "Embarquer le runtime dans les packages Linux",
+      "epic": "EP-005",
+      "priority": "P0",
+      "size": "L",
+      "blocked_by": [
+        "US-005",
+        "US-007",
+        "US-008"
+      ],
+      "status": "TODO",
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-025",
+      "title": "Signer et notariser le bundle macOS complet",
+      "epic": "EP-005",
+      "priority": "P0",
+      "size": "L",
+      "blocked_by": [
+        "US-005",
+        "US-007",
+        "US-009"
+      ],
+      "status": "TODO",
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-026",
+      "title": "Installer le bootstrap et le runtime Windows",
+      "epic": "EP-005",
+      "priority": "P0",
+      "size": "L",
+      "blocked_by": [
+        "US-005",
+        "US-007",
+        "US-010"
+      ],
+      "status": "TODO",
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-027",
+      "title": "Versionner le runtime et organiser ses mises à jour",
+      "epic": "EP-005",
+      "priority": "P0",
+      "size": "M",
+      "blocked_by": [
+        "US-024",
+        "US-025",
+        "US-026"
+      ],
+      "status": "TODO",
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-028",
+      "title": "Certifier la matrice et préparer la sortie navigateur",
+      "epic": "EP-005",
+      "priority": "P0",
+      "size": "L",
+      "blocked_by": [
+        "US-023",
+        "US-024",
+        "US-025",
+        "US-026",
+        "US-027"
+      ],
+      "status": "TODO",
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-029",
+      "title": "Exposer la découverte et les diagnostics en lecture",
+      "epic": "EP-006",
+      "priority": "P1",
+      "size": "M",
+      "blocked_by": [
+        "US-006",
+        "US-022",
+        "US-028"
+      ],
+      "status": "TODO",
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-030",
+      "title": "Autoriser les commandes d’interaction bornées",
+      "epic": "EP-006",
+      "priority": "P1",
+      "size": "L",
+      "blocked_by": [
+        "US-029"
+      ],
+      "status": "TODO",
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-031",
+      "title": "Joindre un élément ou une capture au contexte de l’agent",
+      "epic": "EP-006",
+      "priority": "P2",
+      "size": "M",
+      "blocked_by": [
+        "US-029"
+      ],
+      "status": "TODO",
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-032",
+      "title": "Certifier l’isolation et la concurrence des outils agent",
+      "epic": "EP-006",
+      "priority": "P1",
+      "size": "M",
+      "blocked_by": [
+        "US-030",
+        "US-031"
+      ],
+      "status": "TODO",
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    }
+  ]
+}
