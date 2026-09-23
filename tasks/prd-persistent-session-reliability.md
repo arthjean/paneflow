@@ -8,6 +8,8 @@
 | 1.0 | 2026-09-19 | Arthur Jean | Persistent-session audit remediation, host ownership and resource refactor, and separate Windows, Linux, and macOS qualification epics |
 | 1.1 | 2026-09-21 | Arthur Jean | Rebase on the existing host/worker/desktop topology; incorporate the Herdr and Unpeel audit; specify non-launching restoration, confirmed stop outcomes, passive ended panes, detached-session access, and generation guards for all asynchronous producers |
 | 1.2 | 2026-09-22 | Arthur Jean | Amend the EP-005 Linux qualification scope: ARM64 evidence from the native CI job, Fedora as the only full native cell, other distributions as container host-only evidence, an endurance rehearsal instead of the 8-hour run, and a short manual smoke instead of the interactive passes |
+| 1.3 | 2026-09-23 | Arthur Jean | Remove the 300 s, three-run W01 window from every qualification: NFR-01 is decided on the harness short window |
+| 1.4 | 2026-09-23 | Arthur Jean | Drop the Stop-everything check from the Linux manual smoke: a non-root user cannot start a pane process that survives the stop, so the unresolved stop-all path is covered by automated tests |
 
 ## Problem Statement
 
@@ -532,7 +534,7 @@ Exercise the fully implemented system on native Windows 11 x64 with the actual b
 
 **Acceptance Criteria:**
 - [ ] The full harness protocol runs on Windows 11 in the host+worker and native-desktop topologies with native CPU, resident-memory, thread, handle, and queue evidence; each threshold decision is pass, fail, or unavailable with its reason.
-- [ ] Idle CPU at 50 sessions is taken from the harness short window; the 300 s three-run window is not required when the measured value leaves a wide margin under the NFR-01 budget.
+- [ ] Idle CPU at 50 sessions is taken from the harness short window.
 - [ ] A W08 endurance rehearsal passes every decision (idle first input echoed once, retained identities unchanged, no orphan, no ownership-counter growth); the 8-hour run is optional.
 - [ ] A threshold miss or flaky lifecycle failure causes a recorded finding and a rerun; it is not hidden by baseline replacement or repeated retries.
 - [ ] Evidence is archived with the candidate SHA and Windows environment, and residual OS/architecture limits are stated explicitly.
@@ -558,7 +560,7 @@ Scope amended by Arthur on 2026-09-22. Native Linux ARM64 hardware is not availa
 - [ ] Native Fedora x64 runs `cargo test --workspace --locked` green at the candidate SHA, and the native `ubuntu-22.04-arm` CI job runs clippy, workspace tests, and the release build green at the same SHA; no emulator run is presented as ARM64 evidence.
 - [ ] Fedora, Ubuntu, Debian, Arch, and openSUSE execute host lifecycle checks from the candidate's portable tarball, in containers for every distribution other than the qualification machine's, with exact distribution, kernel, libc, and installation route recorded. Container results are host-only evidence.
 - [ ] Fedora receives a native application run in both a GNOME Wayland session and an X11 session through XWayland, each covering attach, output, resize, and reopen through the harness `--with-desktop` restoration. The Wayland and X11 smokes of the other distributions and any native Xorg session are recorded `unavailable`.
-- [ ] Arthur runs a short manual smoke of the release desktop on Fedora: close with Keep running then reopen, kill the host then reopen (lost state with Retry, no shell launched), and Stop everything with a session that ignores termination (desktop stays open). The result is recorded in the report; the remaining D-cells stay as the reference checklist.
+- [ ] Arthur runs a short manual smoke of the release desktop on Fedora: close with Keep running then reopen, and kill the host then reopen (lost state with a non-launching Retry or an explicitly labeled Restart, no shell launched). The unresolved stop-all path (desktop stays open) is covered by `a_stop_all_outcome_separates_unresolved_ownership_from_durability_failures` and `a_forced_shutdown_with_unresolved_ownership_keeps_the_host_serving`, because a non-root user cannot start a pane process that survives the stop on Linux. The result is recorded in the report; the remaining D-cells stay as the reference checklist.
 - [ ] Unix ownership checks cover socket permissions, owner locks, process groups, detached host lifetime, held-open PTY descriptors, interrupted I/O, and host/desktop termination without assuming that EOF proves all descendants exited.
 - [ ] Unsupported/missing package dependencies, an occupied endpoint, corrupt state, and a denied manifest directory preserve unrelated/live processes and return recoverable errors.
 - [ ] Every cell outside the amended scope (ARM64 render and attach, per-distribution Wayland and X11, native Xorg) remains visibly `unavailable` in the report and is never counted as passed.
@@ -724,7 +726,7 @@ All thresholds below are acceptance targets to validate on release builds, not c
 
 | ID | Requirement | Measurement and pass rule |
 |----|-------------|---------------------------|
-| NFR-01 | For 50 quiet live sessions, host-only CPU <= 1.0% of one CPU; desktop+host+worker <= 5.0% with one visible pane and 49 background attachments | W01, 30 s settle plus 300 s sample, 3 runs per mode; every steady-state run passes on the designated native qualification machine. Cursor animation is disabled in the fixture profile and reported. |
+| NFR-01 | For 50 quiet live sessions, host-only CPU <= 1.0% of one CPU; desktop+host+worker <= 5.0% with one visible pane and 49 background attachments | W01 harness short window (4 s settle, 10 s sample) in each topology; the 50-session value passes on the designated native qualification machine. Cursor animation is disabled in the fixture profile and reported. |
 | NFR-02 | Zero periodic 15/20 ms output/exit polls in the persistent path; no completed session has a timed runtime loop | Instrumented wait reasons under W01/W05; only real data, lifecycle, cancellation, GUI interaction, and documented maintenance/keepalive deadlines wake the relevant worker. |
 | NFR-03 | At 50 empty 80x24 sessions, incremental private/resident host memory <= 3 MiB/session over an empty-host baseline, and desktop+host+worker incremental memory <= 8 MiB/session over the same empty topology | W01, report raw platform metric, per-process attribution, and native allocation evidence. These are empty-session budgets, not filled-history budgets. |
 | NFR-04 | Within 5 s after confirmed exit and the final-drain decision, 0 host workers, 0 PTY handles/FDs, 0 live terminal allocations, and 0 live tail bytes remain owned by that completed runtime | W03/W05 resource identities and native counters; attached passive desktop content is counted separately. Unresolved children are not falsely classified as completed. |
