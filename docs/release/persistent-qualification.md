@@ -108,8 +108,11 @@ required cell is a release blocker (NFR-14).
   sampling). The socket directory (`XDG_RUNTIME_DIR`, else `TMPDIR`, else
   `/tmp`) must leave the endpoint under the 108-byte `sun_path` limit; a longer
   path is refused with an explicit error.
-- macOS: thread and handle sampling is not implemented by the harness; those
-  fields are `pending` and the report supplies `sample`/`vmmap` output.
+- macOS: the harness samples resident memory, threads, descriptors, and
+  per-thread CPU through `proc_pidinfo`; the report adds `vmmap` physical
+  footprint and `sample` call trees from `scripts/profile-host-macos.sh`. The
+  rented-Mac procedure, package, and schedule are in
+  [qualification/macos-rental.md](qualification/macos-rental.md).
 
 ## Workloads and inputs
 
