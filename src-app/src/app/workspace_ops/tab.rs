@@ -1,10 +1,17 @@
-use gpui::{App, AppContext, Context, Entity, Window};
+use std::collections::VecDeque;
+
+use gpui::{App, AppContext, AsyncApp, Context, Entity, WeakEntity, Window};
 use paneflow_config::schema::{TabTitleSource, TerminalSurfaceProfile};
 
+use super::{
+    ClosedRecord, ClosedTabRecord, capture_closed_tab_record, push_closed_record,
+    restore_closed_surface_record, take_closed_tab_record,
+};
 use crate::PaneFlowApp;
 use crate::app::close_policy::CloseTarget;
 use crate::app::workspace_ops::SurfaceLaunch;
 use crate::layout::LayoutTree;
+use crate::pane::Pane;
 use crate::terminal::TerminalView;
 use crate::workspace::Tab;
 use crate::{CloseTab, NewTab, NextTab, PreviousTab, TabDrag};
@@ -239,9 +246,12 @@ impl PaneFlowApp {
         let Some(ws) = self.workspaces.get_mut(ws_idx) else {
             return;
         };
-        if ws.close_tab(tab_idx).is_none() {
+        let ws_id = ws.id;
+        let Some(tab) = ws.close_tab(tab_idx) else {
             return;
-        }
+        };
+        let record = capture_closed_tab_record(&tab, ws_id, tab_idx, cx);
+        drop(tab);
         if self.renaming_tab.is_some_and(|(w, _)| w == ws_idx) {
             self.renaming_tab = None;
         }
@@ -257,6 +267,107 @@ impl PaneFlowApp {
         self.sync_pending_chips(cx);
         self.prune_parked_diff_docks();
         self.prune_worktree_states();
+        if let Some(record) = record {
+            let tab_id = record.tab_id;
+            push_closed_record(&mut self.closed_panes, ClosedRecord::Tab(record));
+            self.show_tab_closed_toast(tab_id, cx);
+        }
+    }
+
+    pub(crate) fn reopen_closed_tab(
+        &mut self,
+        tab_id: u64,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match take_closed_tab_record(&mut self.closed_panes, tab_id) {
+            Some(record) => self.restore_closed_tab(record, window, cx),
+            None => self.show_toast("Could not reopen the tab, it left the undo history", cx),
+        }
+    }
+
+    pub(super) fn restore_closed_tab(
+        &mut self,
+        record: ClosedTabRecord,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let ws_idx = self
+            .workspaces
+            .iter()
+            .position(|ws| ws.id == record.workspace_id)
+            .unwrap_or(self.active_idx);
+        let Some(ws) = self.workspaces.get(ws_idx) else {
+            self.closed_panes.push(ClosedRecord::Tab(record));
+            self.show_toast("No workspace to reopen the tab in", cx);
+            return;
+        };
+        if !ws.can_open_tab() {
+            self.closed_panes.push(ClosedRecord::Tab(record));
+            self.show_toast("Tab limit reached for this workspace", cx);
+            return;
+        }
+        let ws_id = ws.id;
+        let ClosedTabRecord {
+            tab_idx,
+            title,
+            title_source,
+            worktree,
+            layout,
+            surfaces,
+            ..
+        } = record;
+        let mut panes: VecDeque<Entity<Pane>> = surfaces
+            .into_iter()
+            .map(|surface| {
+                let surface = restore_closed_surface_record(surface, ws_id, cx);
+                self.create_pane_with_existing_surface(surface, ws_id, cx)
+            })
+            .collect();
+        let root = LayoutTree::from_layout_node(&layout, &mut panes, &mut |_| {
+            let cwd = self.new_terminal_cwd(None);
+            let terminal = cx.new(|cx| TerminalView::with_cwd(ws_id, cwd, None, cx));
+            self.create_pane(terminal, ws_id, cx)
+        });
+        let tab = Tab::restored(title, title_source, Some(root), None);
+        let restored_id = tab.id;
+        let ws = &mut self.workspaces[ws_idx];
+        if !ws.open_tab(tab) {
+            log::warn!("tab undo: workspace refused the tab after the cap check");
+            return;
+        }
+        let last = ws.tab_count().saturating_sub(1);
+        ws.reorder_tab(last, tab_idx.min(last));
+        ws.sidebar_expanded = true;
+        let restored_idx = ws.active_tab_idx();
+        self.focus_workspace_tab(ws_idx, restored_idx, window, cx);
+        if let Some(path) = worktree {
+            Self::rebind_restored_tab_worktree(ws_id, restored_id, path, cx);
+        }
+        self.save_session(cx);
+        cx.notify();
+    }
+
+    fn rebind_restored_tab_worktree(
+        ws_id: u64,
+        tab_id: u64,
+        path: std::path::PathBuf,
+        cx: &mut Context<Self>,
+    ) {
+        cx.spawn(async move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
+            let probe = path.clone();
+            if !smol::unblock(move || probe.is_dir()).await {
+                return;
+            }
+            let _ = cx.update(|cx| {
+                this.update(cx, |app: &mut Self, cx: &mut Context<Self>| {
+                    if let Some((ws_idx, tab_idx)) = app.tab_position(ws_id, tab_id) {
+                        app.set_tab_worktree(ws_idx, tab_idx, Some(path), cx);
+                    }
+                })
+            });
+        })
+        .detach();
     }
 
     pub(crate) fn handle_close_tab(

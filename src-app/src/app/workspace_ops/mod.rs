@@ -4,7 +4,7 @@ mod swap;
 mod tab;
 
 use gpui::{App, AppContext, ClipboardItem, Context, Entity, Focusable, PathPromptOptions, Window};
-use paneflow_config::schema::{TabTitleSource, TerminalSurfaceProfile};
+use paneflow_config::schema::{LayoutNode, TabTitleSource, TerminalSurfaceProfile};
 
 use crate::app::close_policy::CloseTarget;
 use crate::layout::{LayoutTree, MAX_PANES, SplitDirection};
@@ -28,13 +28,47 @@ pub(crate) enum WorkspaceFocusTarget {
     },
 }
 
-fn push_closed_pane_record(records: &mut Vec<ClosedPaneRecord>, mut record: ClosedPaneRecord) {
-    if let ClosedSurfaceRecord::Terminal {
-        replay: Some(replay),
-        ..
-    } = &mut record.surface
-    {
-        replay.shrink_to_fit();
+pub(crate) struct ClosedTabRecord {
+    pub(crate) tab_id: u64,
+    pub(crate) workspace_id: u64,
+    pub(crate) tab_idx: usize,
+    pub(crate) title: String,
+    pub(crate) title_source: TabTitleSource,
+    pub(crate) worktree: Option<std::path::PathBuf>,
+    pub(crate) layout: LayoutNode,
+    pub(crate) surfaces: Vec<ClosedSurfaceRecord>,
+}
+
+pub(crate) enum ClosedRecord {
+    Pane(ClosedPaneRecord),
+    Tab(ClosedTabRecord),
+}
+
+impl ClosedRecord {
+    fn surfaces(&self) -> &[ClosedSurfaceRecord] {
+        match self {
+            Self::Pane(record) => std::slice::from_ref(&record.surface),
+            Self::Tab(record) => &record.surfaces,
+        }
+    }
+
+    fn surfaces_mut(&mut self) -> &mut [ClosedSurfaceRecord] {
+        match self {
+            Self::Pane(record) => std::slice::from_mut(&mut record.surface),
+            Self::Tab(record) => &mut record.surfaces,
+        }
+    }
+}
+
+fn push_closed_record(records: &mut Vec<ClosedRecord>, mut record: ClosedRecord) {
+    for surface in record.surfaces_mut() {
+        if let ClosedSurfaceRecord::Terminal {
+            replay: Some(replay),
+            ..
+        } = surface
+        {
+            replay.shrink_to_fit();
+        }
     }
     if records.len() >= MAX_CLOSED_PANES {
         records.remove(0);
@@ -43,16 +77,26 @@ fn push_closed_pane_record(records: &mut Vec<ClosedPaneRecord>, mut record: Clos
     enforce_closed_pane_scrollback_budget(records, MAX_CLOSED_PANE_SCROLLBACK_BYTES);
 }
 
-fn enforce_closed_pane_scrollback_budget(records: &mut [ClosedPaneRecord], budget: usize) {
+fn take_closed_tab_record(records: &mut Vec<ClosedRecord>, tab_id: u64) -> Option<ClosedTabRecord> {
+    let position = records
+        .iter()
+        .rposition(|record| matches!(record, ClosedRecord::Tab(tab) if tab.tab_id == tab_id))?;
+    match records.remove(position) {
+        ClosedRecord::Tab(tab) => Some(tab),
+        ClosedRecord::Pane(_) => None,
+    }
+}
+
+fn enforce_closed_pane_scrollback_budget(records: &mut [ClosedRecord], budget: usize) {
     let mut total = closed_pane_scrollback_bytes(records);
     if total <= budget {
         return;
     }
-    for record in records.iter_mut() {
+    for surface in records.iter_mut().flat_map(ClosedRecord::surfaces_mut) {
         if total <= budget {
             break;
         }
-        if let ClosedSurfaceRecord::Terminal { replay, .. } = &mut record.surface
+        if let ClosedSurfaceRecord::Terminal { replay, .. } = surface
             && let Some(replay) = replay.take()
         {
             total = total.saturating_sub(replay.len());
@@ -60,11 +104,11 @@ fn enforce_closed_pane_scrollback_budget(records: &mut [ClosedPaneRecord], budge
     }
 }
 
-fn closed_pane_scrollback_bytes(records: &[ClosedPaneRecord]) -> usize {
+fn closed_pane_scrollback_bytes(records: &[ClosedRecord]) -> usize {
     records
         .iter()
-        .map(|record| &record.surface)
-        .filter_map(|tab| match tab {
+        .flat_map(ClosedRecord::surfaces)
+        .filter_map(|surface| match surface {
             ClosedSurfaceRecord::Terminal { replay, .. } => replay.as_ref(),
             ClosedSurfaceRecord::Markdown { .. } => None,
         })
@@ -72,13 +116,12 @@ fn closed_pane_scrollback_bytes(records: &[ClosedPaneRecord]) -> usize {
         .sum()
 }
 
-fn capture_closed_pane_record(
+fn capture_closed_surface_record(
     pane: &gpui::Entity<crate::pane::Pane>,
-    workspace_idx: usize,
     cx: &App,
-) -> ClosedPaneRecord {
+) -> ClosedSurfaceRecord {
     let pane_ref = pane.read(cx);
-    let surface = match pane_ref.surface() {
+    match pane_ref.surface() {
         crate::pane::PaneSurface::Terminal(tv) => {
             let tv_ref = tv.read(cx);
             ClosedSurfaceRecord::Terminal {
@@ -96,11 +139,42 @@ fn capture_closed_pane_record(
         crate::pane::PaneSurface::Markdown(markdown) => ClosedSurfaceRecord::Markdown {
             path: markdown.read(cx).path.clone(),
         },
-    };
+    }
+}
+
+fn capture_closed_pane_record(
+    pane: &gpui::Entity<crate::pane::Pane>,
+    workspace_idx: usize,
+    cx: &App,
+) -> ClosedPaneRecord {
     ClosedPaneRecord {
-        surface,
+        surface: capture_closed_surface_record(pane, cx),
         workspace_idx,
     }
+}
+
+fn capture_closed_tab_record(
+    tab: &crate::workspace::Tab,
+    workspace_id: u64,
+    tab_idx: usize,
+    cx: &App,
+) -> Option<ClosedTabRecord> {
+    let tree = tab.saved_layout.as_ref().or(tab.root.as_ref())?;
+    let surfaces = tree
+        .collect_leaves()
+        .iter()
+        .map(|pane| capture_closed_surface_record(pane, cx))
+        .collect();
+    Some(ClosedTabRecord {
+        tab_id: tab.id,
+        workspace_id,
+        tab_idx,
+        title: tab.title().to_string(),
+        title_source: tab.title_source(),
+        worktree: tab.worktree.clone(),
+        layout: tree.serialize_without_scrollback(cx),
+        surfaces,
+    })
 }
 
 fn restore_closed_surface_record(
@@ -564,7 +638,7 @@ impl PaneFlowApp {
     ) {
         let workspace_idx = self.active_idx;
         let record = capture_closed_pane_record(&pane, workspace_idx, cx);
-        push_closed_pane_record(&mut self.closed_panes, record);
+        push_closed_record(&mut self.closed_panes, ClosedRecord::Pane(record));
         pane.read(cx).focus_handle(cx).focus(window, cx);
 
         if let Some(ws) = self.active_workspace_mut()
@@ -617,9 +691,16 @@ impl PaneFlowApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(record) = self.closed_panes.pop() else {
-            self.show_toast("No closed pane to restore", cx);
-            return;
+        let record = match self.closed_panes.pop() {
+            Some(ClosedRecord::Pane(record)) => record,
+            Some(ClosedRecord::Tab(record)) => {
+                self.restore_closed_tab(record, window, cx);
+                return;
+            }
+            None => {
+                self.show_toast("No closed pane to restore", cx);
+                return;
+            }
         };
 
         if record.workspace_idx < self.workspaces.len() {
@@ -627,7 +708,7 @@ impl PaneFlowApp {
         }
 
         let Some(ws_id) = self.active_workspace().map(|ws| ws.id) else {
-            self.closed_panes.push(record);
+            self.closed_panes.push(ClosedRecord::Pane(record));
             self.show_toast("No active workspace to restore pane", cx);
             return;
         };
@@ -1259,16 +1340,58 @@ mod tests {
         assert_eq!(resolved, std::path::PathBuf::from(bare));
     }
 
-    fn closed_pane_record_with_replay(len: usize) -> ClosedPaneRecord {
-        ClosedPaneRecord {
-            surface: ClosedSurfaceRecord::Terminal {
-                cwd: None,
-                replay: Some(vec![b'x'; len]),
-                custom_name: None,
-                font_size: None,
-            },
-            workspace_idx: 0,
+    fn terminal_surface_with_replay(len: Option<usize>) -> ClosedSurfaceRecord {
+        ClosedSurfaceRecord::Terminal {
+            cwd: None,
+            replay: len.map(|len| vec![b'x'; len]),
+            custom_name: None,
+            font_size: None,
         }
+    }
+
+    fn closed_pane_record_with_replay(len: usize) -> ClosedRecord {
+        ClosedRecord::Pane(ClosedPaneRecord {
+            surface: terminal_surface_with_replay(Some(len)),
+            workspace_idx: 0,
+        })
+    }
+
+    fn closed_tab_record(tab_id: u64, replays: &[usize]) -> ClosedRecord {
+        ClosedRecord::Tab(ClosedTabRecord {
+            tab_id,
+            workspace_id: 1,
+            tab_idx: 0,
+            title: String::new(),
+            title_source: TabTitleSource::Preset,
+            worktree: None,
+            layout: LayoutNode::Pane {
+                surfaces: Vec::new(),
+            },
+            surfaces: replays
+                .iter()
+                .map(|len| terminal_surface_with_replay(Some(*len)))
+                .collect(),
+        })
+    }
+
+    fn has_replay(surface: &ClosedSurfaceRecord) -> bool {
+        matches!(
+            surface,
+            ClosedSurfaceRecord::Terminal {
+                replay: Some(_),
+                ..
+            }
+        )
+    }
+
+    fn tab_ids(records: &[ClosedRecord]) -> Vec<Option<u64>> {
+        records
+            .iter()
+            .map(|record| match record {
+                ClosedRecord::Tab(tab) => Some(tab.tab_id),
+                ClosedRecord::Pane(_) => None,
+            })
+            .collect()
     }
 
     #[test]
@@ -1279,30 +1402,15 @@ mod tests {
             closed_pane_record_with_replay(one_mib),
         ];
 
-        push_closed_pane_record(&mut records, closed_pane_record_with_replay(one_mib));
+        push_closed_record(&mut records, closed_pane_record_with_replay(one_mib));
 
         assert_eq!(records.len(), 3, "budget must preserve undo records");
         assert!(
-            matches!(
-                &records[0].surface,
-                ClosedSurfaceRecord::Terminal { replay: None, .. }
-            ),
+            !has_replay(&records[0].surfaces()[0]),
             "oldest scrollback should be released first"
         );
-        assert!(matches!(
-            &records[1].surface,
-            ClosedSurfaceRecord::Terminal {
-                replay: Some(_),
-                ..
-            }
-        ));
-        assert!(matches!(
-            &records[2].surface,
-            ClosedSurfaceRecord::Terminal {
-                replay: Some(_),
-                ..
-            }
-        ));
+        assert!(has_replay(&records[1].surfaces()[0]));
+        assert!(has_replay(&records[2].surfaces()[0]));
         assert_eq!(
             closed_pane_scrollback_bytes(&records),
             MAX_CLOSED_PANE_SCROLLBACK_BYTES
@@ -1312,25 +1420,160 @@ mod tests {
     #[test]
     fn closed_pane_budget_preserves_absent_scrollback_for_undo() {
         let mut records = Vec::new();
-        push_closed_pane_record(
+        push_closed_record(
             &mut records,
-            ClosedPaneRecord {
-                surface: ClosedSurfaceRecord::Terminal {
-                    cwd: None,
-                    replay: None,
-                    custom_name: None,
-                    font_size: None,
-                },
+            ClosedRecord::Pane(ClosedPaneRecord {
+                surface: terminal_surface_with_replay(None),
                 workspace_idx: 0,
-            },
+            }),
         );
 
         assert_eq!(records.len(), 1);
-        assert!(matches!(
-            &records[0].surface,
-            ClosedSurfaceRecord::Terminal { replay: None, .. }
-        ));
+        assert!(!has_replay(&records[0].surfaces()[0]));
         assert_eq!(closed_pane_scrollback_bytes(&records), 0);
+    }
+
+    #[test]
+    fn closed_tab_budget_counts_every_surface_of_the_tab() {
+        let one_mib = 1024 * 1024;
+        let mut records = vec![closed_pane_record_with_replay(one_mib)];
+
+        push_closed_record(&mut records, closed_tab_record(7, &[one_mib, one_mib]));
+
+        assert_eq!(records.len(), 2);
+        assert!(
+            !has_replay(&records[0].surfaces()[0]),
+            "the older pane releases its scrollback before the newer tab"
+        );
+        assert!(records[1].surfaces().iter().all(has_replay));
+        assert_eq!(
+            closed_pane_scrollback_bytes(&records),
+            MAX_CLOSED_PANE_SCROLLBACK_BYTES
+        );
+    }
+
+    #[test]
+    fn closed_record_cap_counts_a_tab_as_one_entry() {
+        let mut records = Vec::new();
+        for tab_id in 0..MAX_CLOSED_PANES as u64 {
+            push_closed_record(&mut records, closed_tab_record(tab_id, &[1, 1, 1]));
+        }
+        push_closed_record(&mut records, closed_pane_record_with_replay(1));
+
+        assert_eq!(records.len(), MAX_CLOSED_PANES);
+        assert_eq!(
+            tab_ids(&records)[0],
+            Some(1),
+            "the oldest record is evicted"
+        );
+        assert_eq!(tab_ids(&records).last(), Some(&None));
+    }
+
+    #[test]
+    fn take_closed_tab_record_removes_only_the_matching_tab() {
+        let mut records = vec![
+            closed_tab_record(3, &[1]),
+            closed_pane_record_with_replay(1),
+            closed_tab_record(4, &[1, 1]),
+        ];
+
+        let taken = take_closed_tab_record(&mut records, 3).map(|tab| tab.tab_id);
+
+        assert_eq!(taken, Some(3));
+        assert_eq!(tab_ids(&records), vec![None, Some(4)]);
+        assert!(take_closed_tab_record(&mut records, 3).is_none());
+        assert!(take_closed_tab_record(&mut records, 99).is_none());
+        assert_eq!(records.len(), 2);
+    }
+
+    #[gpui::test]
+    fn closed_tab_record_keeps_every_pane_in_layout_order(cx: &mut gpui::TestAppContext) {
+        use crate::workspace::Tab;
+
+        let cx = cx.add_empty_window();
+        let pane = |cx: &mut gpui::VisualTestContext| {
+            let terminal = cx.new(|cx| TerminalView::display_only_for_test(1, cx));
+            cx.new(|cx| Pane::new(terminal, 1, cx))
+        };
+        let leaf = || LayoutNode::Pane {
+            surfaces: Vec::new(),
+        };
+        let split =
+            |direction: &str, ratios: Vec<f64>, children: Vec<LayoutNode>| LayoutNode::Split {
+                direction: direction.to_string(),
+                ratio: None,
+                ratios: Some(ratios),
+                children,
+            };
+        let skeleton = split(
+            "vertical",
+            vec![0.25, 0.75],
+            vec![
+                leaf(),
+                split("horizontal", vec![0.5, 0.5], vec![leaf(), leaf()]),
+            ],
+        );
+        let (a, b, c) = (pane(cx), pane(cx), pane(cx));
+        let mut original: std::collections::VecDeque<_> = vec![a, b, c].into();
+        let tree = LayoutTree::from_layout_node(&skeleton, &mut original, &mut |_| {
+            unreachable!("the skeleton has three leaves")
+        });
+        let mut tab = Tab::new("build", Some(tree));
+        tab.worktree = Some(std::path::PathBuf::from("wt"));
+
+        let record = cx
+            .update(|_, cx| capture_closed_tab_record(&tab, 9, 2, cx))
+            .expect("a tab with panes yields a record");
+
+        assert_eq!(record.tab_id, tab.id);
+        assert_eq!(record.workspace_id, 9);
+        assert_eq!(record.tab_idx, 2);
+        assert_eq!(record.title, "build");
+        assert_eq!(record.worktree, tab.worktree);
+        assert_eq!(record.surfaces.len(), 3);
+
+        let (x, y, z) = (pane(cx), pane(cx), pane(cx));
+        let mut fresh: std::collections::VecDeque<_> = vec![x.clone(), y.clone(), z.clone()].into();
+        let rebuilt = LayoutTree::from_layout_node(&record.layout, &mut fresh, &mut |_| {
+            unreachable!("every leaf has a captured surface")
+        });
+
+        assert!(fresh.is_empty());
+        assert_eq!(rebuilt.collect_leaves(), vec![x, y, z]);
+        let rebuilt_layout = cx.update(|_, cx| rebuilt.serialize_without_scrollback(cx));
+        assert_eq!(
+            layout_shape(&rebuilt_layout),
+            "vertical[0.25,0.75](pane,horizontal[0.5,0.5](pane,pane))"
+        );
+        assert_eq!(layout_shape(&record.layout), layout_shape(&rebuilt_layout));
+    }
+
+    fn layout_shape(node: &LayoutNode) -> String {
+        match node {
+            LayoutNode::Pane { .. } => "pane".to_string(),
+            LayoutNode::Split {
+                direction,
+                children,
+                ..
+            } => {
+                let ratios: Vec<String> = node
+                    .resolved_ratios()
+                    .iter()
+                    .map(|ratio| ratio.to_string())
+                    .collect();
+                let children: Vec<String> = children.iter().map(layout_shape).collect();
+                format!("{direction}[{}]({})", ratios.join(","), children.join(","))
+            }
+        }
+    }
+
+    #[gpui::test]
+    fn closed_tab_record_is_absent_for_an_empty_tab(cx: &mut gpui::TestAppContext) {
+        let tab = crate::workspace::Tab::empty();
+
+        let record = cx.update(|cx| capture_closed_tab_record(&tab, 1, 0, cx));
+
+        assert!(record.is_none());
     }
 
     #[cfg(target_os = "linux")]

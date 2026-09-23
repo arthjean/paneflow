@@ -602,7 +602,7 @@ struct PaneFlowApp {
     windows_backdrop_light: Option<bool>,
     jump_cursor: Option<u64>,
     swap_source: Option<Entity<crate::pane::Pane>>,
-    closed_panes: Vec<ClosedPaneRecord>,
+    closed_panes: Vec<crate::app::workspace_ops::ClosedRecord>,
     owned_sessions: crate::app::hosted_sessions::OwnedSessions,
     resume_batch: Option<crate::app::hosted_sessions::ResumeBatch>,
     close_dialog: Option<crate::app::close_policy::CloseDialog>,

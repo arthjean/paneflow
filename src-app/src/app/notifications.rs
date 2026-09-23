@@ -24,6 +24,13 @@ pub(crate) enum ToastAction {
     RetryUpdate,
     OpenReleasesPage(String),
     OpenReleaseNotes(String),
+    ReopenTab(u64),
+}
+
+impl ToastAction {
+    fn reports_failure(&self) -> bool {
+        !matches!(self, Self::ReopenTab(_))
+    }
 }
 
 impl PaneFlowApp {
@@ -43,6 +50,26 @@ impl PaneFlowApp {
             },
             cx,
         );
+    }
+
+    pub(crate) fn show_tab_closed_toast(&mut self, tab_id: u64, cx: &mut Context<Self>) {
+        let message = match self.shortcut_for_action("undo_close_pane") {
+            Some(key) => format!("Tab closed. Press {key} to reopen it."),
+            None => "Tab closed".to_string(),
+        };
+        let actions = vec![ToastAction::ReopenTab(tab_id)];
+        if let Some(toast) = self.toast.as_mut()
+            && toast
+                .actions
+                .iter()
+                .any(|action| matches!(action, ToastAction::ReopenTab(_)))
+        {
+            toast.message = message;
+            toast.actions = actions;
+            cx.notify();
+            return;
+        }
+        self.push_toast(message, actions, TOAST_HOLD_MS * 2, cx);
     }
 
     pub(crate) fn show_update_error_toast(
@@ -131,11 +158,17 @@ impl PaneFlowApp {
         {
             return self.render_release_toast(toast, ui, cx);
         }
-        let is_error = has_actions || toast_message_reads_like_error(&toast.message);
-        let (icon, icon_color, max_w) = if is_error {
-            ("icons/triangle-alert.svg", ui.agent_error, px(440.))
+        let is_error = toast.actions.iter().any(ToastAction::reports_failure)
+            || toast_message_reads_like_error(&toast.message);
+        let (icon, icon_color) = if is_error {
+            ("icons/triangle-alert.svg", ui.agent_error)
         } else {
-            ("icons/check.svg", ui.vc_added, px(340.))
+            ("icons/check.svg", ui.vc_added)
+        };
+        let max_w = if is_error || has_actions {
+            px(440.)
+        } else {
+            px(340.)
         };
 
         let header = div()
@@ -173,6 +206,7 @@ impl PaneFlowApp {
                     ToastAction::OpenReleaseNotes(_) => {
                         ("View release notes", format!("toast-release-notes-{idx}"))
                     }
+                    ToastAction::ReopenTab(_) => ("Undo", format!("toast-undo-{idx}")),
                 };
                 let action_clone = action.clone();
                 let resting_background = with_alpha(ui.text, 0.08);
@@ -192,7 +226,7 @@ impl PaneFlowApp {
                     })
                     .child(label)
                     .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                    .on_click(cx.listener(move |_this, _: &ClickEvent, window, cx| {
+                    .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
                         match &action_clone {
                             ToastAction::RetryUpdate => {
                                 window.dispatch_action(Box::new(StartSelfUpdate), cx);
@@ -206,6 +240,10 @@ impl PaneFlowApp {
                                 if let Err(err) = crate::external_open::open_url(url) {
                                     log::warn!("toast: open changelog URL failed: {err}");
                                 }
+                            }
+                            ToastAction::ReopenTab(tab_id) => {
+                                this.reopen_closed_tab(*tab_id, window, cx);
+                                this.dismiss_toast(cx);
                             }
                         }
                     }));
