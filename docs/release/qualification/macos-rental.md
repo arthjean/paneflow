@@ -177,7 +177,8 @@ private home. Interactive cells use a dedicated home under
 | W01-W05 host and worker | `scripts/bench-persistent.sh --prebuilt candidate --with-worker` |
 | W01-W05 with the native desktop | `scripts/bench-persistent.sh --prebuilt candidate --with-desktop` |
 | W04 build replacement | `scripts/bench-persistent.sh --prebuilt candidate --worker-replacement candidate/bin/paneflow-worker-replacement` |
-| W08 endurance, 480 minutes | `scripts/bench-persistent.sh --prebuilt candidate --with-desktop --endurance 480 --idle-minutes 30` |
+| W08 endurance rehearsal (required) | `PANEFLOW_BENCH_BURST_MINUTES=2 PANEFLOW_BENCH_WORKER_CYCLES=6 PANEFLOW_BENCH_DESKTOP_CYCLES=4 PANEFLOW_BENCH_SAMPLE_SECONDS=30 scripts/bench-persistent.sh --prebuilt candidate --with-desktop --endurance 12 --idle-minutes 4` |
+| W08 8-hour run (optional) | `scripts/bench-persistent.sh --prebuilt candidate --with-desktop --endurance 480 --idle-minutes 30` |
 | Rerun after a failure | add `--prior bench/results/<failed result>.json` |
 | Host profiles, memory | `scripts/profile-host-macos.sh profiling/<side>/paneflow-host candidate/bin/paneflow-session-fixture memory <out> <side>` for `baseline` and `candidate` |
 | Host profiles, CPU | the same with `cpu`; `sample` writes `sample-idle-<side>.txt` and `sample-output-<side>.txt` |
@@ -201,9 +202,13 @@ Elapsed from the moment the Mac is reachable:
 | Hours 0-2 | VNC login, `caffeinate`, transfer, preflight, first evidence fetch; environment capture |
 | Hours 2-6 | host-only, host and worker, and desktop full protocols; D-cells; upgrade cell |
 | Hours 6-10 | repeated short runs, W04 build replacement, baseline and candidate profiles |
-| Hours 10-18 | W08 endurance, 480 minutes, untouched except for the scheduled cycles |
-| Hours 18-22 | analysis, focused reruns with `--prior`, unresolved cases documented |
-| Hours 22-24 | export and verify, cleanup, deletion |
+| Hours 10-12 | W08 endurance rehearsal, untouched except for the scheduled cycles |
+| Hours 12-22 | analysis, focused reruns with `--prior`, unresolved cases documented; the optional 8-hour run only if it ends before hour 22 |
+| Hours 22-24 | export and verify, cleanup, deletion once the 24-hour minimum lease has elapsed |
+
+Since PRD v1.5 the required W08 evidence is the rehearsal, as on Windows and
+Linux, so the active work fits in the first twelve hours; the lease still
+bills 24.
 
 A delay, an unavailable machine, or a failure that consumes the window leaves
 the affected cells `pending`; arrange a separate rental rather than shortening

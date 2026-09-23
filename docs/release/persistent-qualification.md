@@ -130,7 +130,7 @@ driven by `scripts/bench-persistent.sh` / `.ps1`. Every fixture is a mode of
 | W05 churn | 10 batches of 50 `flood 65536` create/end/detach, RSS, thread and handle deltas, NFR-04 reclaim probe, retention with injected time | `workloads::workload_churn`, `records_past_their_retention_release_their_cold_text_under_an_injected_clock` | 5 s quiescence (quick); 60 s (full) |
 | W06 injected failures | disk full/denied, stalled storage, corrupt manifest and cold text, delayed spawn, wait failure, runtime panic, old-generation scans, shutdown RPC failure | the unit and integration tests listed under `workloads.W06.automated_tests` | `cargo test --workspace --locked` |
 | W07 native desktop | resize, paste, search, natural exit with both exit codes and with/without prior input, ended-row opening, stale activity at close, fallback discovery | desktop entry-point tests listed under `workloads.W07.automated_tests`, plus the D-cells below | interactive |
-| W08 endurance | 9 `idle` fixtures plus one `echo` fixture retained for the whole run; a burst of 10 `flood 65536` sessions every 5 min; 100 desktop detach/reopen cycles and 100 worker crash/restart cycles spread evenly after the idle interval; one control connection untouched for the first 30 min, then the first input on it must echo exactly once | `persistent_session_endurance` (`scripts/bench-persistent.sh --endurance <minutes>` / `.ps1 -Endurance <minutes>`, `--idle-minutes` / `-IdleMinutes` for the idle interval) | 480 min (120 min on LIN-ARM64, with `PANEFLOW_BENCH_ENDURANCE_REQUIRED_MINUTES=120`); shorter runs are recorded as `rehearsal` and never as acceptance evidence |
+| W08 endurance | 9 `idle` fixtures plus one `echo` fixture retained for the whole run; a burst of 10 `flood 65536` sessions every 5 min; 100 desktop detach/reopen cycles and 100 worker crash/restart cycles spread evenly after the idle interval; one control connection untouched for the first 30 min, then the first input on it must echo exactly once | `persistent_session_endurance` (`scripts/bench-persistent.sh --endurance <minutes>` / `.ps1 -Endurance <minutes>`, `--idle-minutes` / `-IdleMinutes` for the idle interval) | A rehearsal that passes every decision is the required W08 evidence on every OS (US-016, US-018, and US-020 since PRD v1.5): 12 min with a 4 min idle interval, a burst every 2 min, 6 worker and 4 desktop cycles, a sample every 30 s. The 480 min run is optional and is the only run that carries the 100-cycle counts; Linux ARM64 runs none |
 
 Invocation:
 
@@ -141,7 +141,9 @@ scripts/bench-persistent.sh --quick                      # smoke protocol for CI
 scripts/bench-persistent.sh --worker-replacement <exe>   # W04 build replacement with the given worker binary
 scripts/bench-persistent.sh --prior <result.json>        # rerun after a failure; the prior failures stay in the record
 scripts/bench-persistent.sh --seed-failure               # proves nonzero exit and artifact retention
-scripts/bench-persistent.sh --with-desktop --endurance 480 --idle-minutes 30   # W08; writes persistent-endurance-<stamp>-<sha>.json
+PANEFLOW_BENCH_BURST_MINUTES=2 PANEFLOW_BENCH_WORKER_CYCLES=6 PANEFLOW_BENCH_DESKTOP_CYCLES=4 PANEFLOW_BENCH_SAMPLE_SECONDS=30 \
+  scripts/bench-persistent.sh --with-desktop --endurance 12 --idle-minutes 4   # required W08 rehearsal
+scripts/bench-persistent.sh --with-desktop --endurance 480 --idle-minutes 30   # optional 8-hour W08; both write persistent-endurance-<stamp>-<sha>.json
 scripts/bench-persistent.sh --prebuilt <package>/candidate --with-worker       # runs a packaged harness and binaries without Cargo
 ```
 
@@ -157,8 +159,9 @@ The PowerShell script takes `-WithWorker`, `-WithDesktop`, `-Quick`,
 `-IdleMinutes <minutes>`. The endurance run reads
 `PANEFLOW_BENCH_WORKER_CYCLES`, `PANEFLOW_BENCH_DESKTOP_CYCLES`,
 `PANEFLOW_BENCH_BURST_MINUTES`, `PANEFLOW_BENCH_SAMPLE_SECONDS`, and
-`PANEFLOW_BENCH_ENDURANCE_REQUIRED_MINUTES` for rehearsals and for the LIN-ARM64
-budget; any value below the W08 row marks the artifact `rehearsal`. The document
+`PANEFLOW_BENCH_ENDURANCE_REQUIRED_MINUTES`; a run shorter than the required
+minutes (480 by default) is labeled `rehearsal`, the label the required W08
+rehearsal carries. The document
 is rewritten at every sample, so a deadlock or a watchdog panic leaves the last
 sample on disk.
 
@@ -207,7 +210,7 @@ reason and never counts as a pass.
 | `W02.content_equivalence` | W02 | identical checkpoint bytes across all attachments |
 | `NFR-05.memory_after_endurance`, `NFR-05.threads_after_endurance`, `NFR-05.handles_after_endurance` | W08 | same rules as the W05 decisions, between the first post-warmup sample and the last |
 | `NFR-04.burst_release` | W08 | every burst's runtimes released within 5 s of exit while the retained sessions stay live |
-| `NFR-11.worker_cycles`, `NFR-11.desktop_cycles`, `NFR-11.idle_first_input` | W08 | 0 identity or generation changes across the 100 worker and 100 desktop cycles; exactly one echo of the first input after the idle interval |
+| `NFR-11.worker_cycles`, `NFR-11.desktop_cycles`, `NFR-11.idle_first_input` | W08 | 0 identity or generation changes across the run's worker and desktop cycles (100 each in the optional 480 min run); exactly one echo of the first input after the idle interval |
 | `NFR-12.retained_identities`, `NFR-12.ownership_counters` | W08 | every retained session keeps its generation and process at every sample; live runtimes, pending launches, and unresolved descendants never exceed the retained set plus one burst, and the final sample owns exactly the retained set |
 
 W03 also records `fairness_min_over_max` across the ten paced streams as a
@@ -357,8 +360,8 @@ inferred pass.
 | NFR-08 | `NFR-08.*` | full protocol per OS |
 | NFR-09 | `NFR-09.*` | full protocol per OS |
 | NFR-10 | `shutdown_deadline_is_shared_by_stalled_stops_and_keeps_inspection_responsive`, `a_startup_deadline_then_cancellation_retains_the_late_child`, `a_held_open_descendant_bounds_the_final_drain_and_marks_the_output_incomplete` | D-09 |
-| NFR-11 | `NFR-11.worker_cycles`, `concurrent_restarts_of_one_generation_commit_at_most_one_new_generation`, the three idle-control tests | W08 100 desktop and 100 worker cycles |
-| NFR-12 | `NFR-12.host_shutdown`, `NFR-12.fixture_orphans` | W08 endurance per OS |
+| NFR-11 | `NFR-11.worker_cycles`, `concurrent_restarts_of_one_generation_commit_at_most_one_new_generation`, the three idle-control tests | W08 rehearsal cycles per OS; 100 desktop and 100 worker cycles only in the optional 8-hour run |
+| NFR-12 | `NFR-12.host_shutdown`, `NFR-12.fixture_orphans` | W08 endurance rehearsal per OS |
 | NFR-13 | `an_oversized_control_frame_is_rejected_without_buffering_it`, `the_named_pipe_acl_has_no_world_or_authenticated_user_grant`, `the_unix_socket_is_owner_read_write_only`, `a_served_endpoint_is_never_taken_over_while_a_stale_one_is_reclaimed`, `an_unverifiable_pid_stays_non_resumable_and_is_never_signaled` | process-safety cells, Linux L02, L05 |
 | NFR-14 | this ledger | one row per required cell in each report |
 | NFR-15 | `every_retained_end_state_restores_without_creating_a_process`, `a_stop_all_outcome_separates_unresolved_ownership_from_durability_failures`, `every_unattached_session_is_listed_exactly_once_across_workspaces_and_the_fallback_group` | D-01, D-04, D-09 |
