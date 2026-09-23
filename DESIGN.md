@@ -214,16 +214,16 @@ inside `theme/builtin.rs`.
 | `overlay` | Shell chrome in dark, popups in light | `#141414` | `#ffffff` |
 | `border` | Hairlines, card outlines, pane card border | `#252525` | `#e6e6e6` |
 | `subtle` | Pills, inputs, toasts, resting control fill | `#2a2a2a` | `#eeeeee` |
-| `muted` | Secondary text, icons at rest, eyebrows | `#a0a0a0` | `#6a6a6a` |
+| `muted` | Secondary text, icons at rest, eyebrows | `#a0a0a0` | `#636363` |
 | `text` | Primary text, icons on hover | `#dddddd` | `#262626` |
 | `accent` | Links, selected metadata, the one primary action, info callouts | `#57d5c4` | `#4c6fff` |
 | `tool_card_header_bg` | Reserved; no surface consumes it today | `#2e2e2e` | `#f1f1f1` |
-| `vc_added`, `vc_modified`, `vc_deleted`, `vc_conflict` | Diffstat, status letters, change bars, attention border | `#57d992`, `#ffd166`, `#ff6f6a`, `#ffa657` | `#40a02b`, `#df8e1d`, `#d20f39`, `#fe640b` |
-| `vc_*_background` | Row washes in the diff | added, deleted, modified at 0.12 | at 0.16 |
-| `vc_word_added`, `vc_word_deleted` | Word washes inside a changed diff row | `vc_added`, `vc_deleted` at 0.40 | at 0.40 |
+| `vc_added`, `vc_modified`, `vc_deleted`, `vc_conflict` | Diffstat, status letters, change bars, attention border | `#57d992`, `#ffd166`, `#ff6f6a`, `#ffa657` | `#29681c`, `#df8e1d`, `#a00b2b`, `#fe640b` |
+| `vc_*_background` | Row washes in the diff | added, deleted, modified at 0.12 | `#40a02b`, `#d20f39`, `#df8e1d` at 0.16 |
+| `vc_word_added`, `vc_word_deleted` | Word washes inside a changed diff row | `vc_added`, `vc_deleted` at 0.40 | `#40a02b`, `#d20f39` at 0.40 |
 | `group_1` to `group_8` | Broadcast group stripe and picker | blue, green, yellow, red, violet, teal, orange, periwinkle | Catppuccin Latte hues |
 | `agent_claude`, `agent_codex` | Identity dots and status glyphs | `#ffa657`, `#7eb6ff` | `#e89271`, `#5b6cff` |
-| `agent_error` | Failed agent state | `#ff6f6a` | `#d20f39` |
+| `agent_error` | Failed agent state | `#ff6f6a` | `#a00b2b` |
 
 The dark work surface is `#181818` and the dark chrome is `#141414`: the
 panel is lighter than the shell around it, which is what makes the inset card
@@ -239,6 +239,12 @@ Diff colors on a dark theme fall back to Paneflow's canonical green and red
 with opaque row washes unless the preset sets `use_theme_diff_washes`;
 Vercel and Tailwind do. Status hues are functional and MUST NOT be recolored
 to match a brand when doing so weakens the meaning.
+
+In every light preset, `vc_added` and `vc_deleted` are darkened from the wash
+hue until they clear 4.5:1 on the title bar, the active and hover row tints,
+`base`, `surface`, and the diff gutter where the row wash and the gutter wash
+stack; the washes keep the lighter hue. `muted` clears 4.5:1 on the same
+sidebar tints.
 
 The terminal selection foreground is never hand-tuned: it is recomputed at
 theme load until it clears APCA Lc 45 against the selection background.
@@ -269,8 +275,9 @@ to the surfaces named:
 | `#339cff` | Toggle track when on | Platform toggle blue |
 | `#ff453a` | Destructive button | System red, white label |
 | `#007aff` | Pane and sidebar drop target, Paneflow terminal cursor | System blue for drag affordances |
-| `#fbbf24` | Sidebar bell when an agent needs input | Amber request signal, identical in every preset |
-| `#83c3ff` | Sidebar dot when an agent finished | Light blue completion signal, identical in every preset |
+| `#5aa6ff`, light `#0550ae` | Filter and settings search match text, `filter_match_color` | Match blue, identical in every preset of a variant; each value keeps 14 px semibold text at 4.5:1 on the active row tint |
+| `#fbbf24`, light `#92400e` | Sidebar bell when an agent needs input | Amber request signal, identical in every preset of a variant; the light value keeps the 10 px word at 4.5:1 |
+| `#83c3ff`, light `#0369a1` | Sidebar dot when an agent finished | Light blue completion signal, identical in every preset of a variant; the light value keeps the 10 px word at 4.5:1 |
 | `#3a83f7` | Title bar pill when a manual check finds a release | Solid update blue with a white glyph, label, and `×`, identical in every preset |
 | `hsl(40 85% 55%)`, `hsl(0 62% 56%)` | Callout warning and error | Severity hues independent of preset |
 | `#232323` / `#ffffff` | Settings card fill | Card sits one step above `base` in either lightness |
@@ -315,11 +322,11 @@ small circular controls and the explicitly round surfaces in the table.
 | Pane content inset | 10 horizontal, 6 vertical |
 | Pane header | One 44 px surface tab and action row; action gap 7 |
 | Pane tab bar | 26 chips plus 6 below, 32 total; gap 3; 8 tabs maximum |
-| Sidebar row | margin 8, padding 7 by 6, minimum height 32, content gap 3, icon-to-title gap 8, line height 20, spacing 2, radius 9 |
+| Sidebar row | margin 8, padding 7 by 6, minimum height 32, content gap 3, icon-to-title gap 8, line height 20, spacing 2 (10 before the workspace that opens a new group), radius 9 |
 | Sidebar tab icon stack | 16 px icons, cap 4, overlap 11, 24 by 24 icon card |
-| Sidebar action button | 22, gap 1; folder glyph 17 in a 20 px slot |
+| Sidebar action button | 22, gap 1; folder glyph 15 in a 20 px slot |
 | Sidebar footer | padding 0 top and 9.5 bottom; filter and gear 36 tall, gap 6, margin 8 shared with workspace rows; filter glyph 20, Settings glyph 18; filter text 15 with line height 20 and horizontal padding 10; banners margin 6 with 2 below, update banner 30 tall with padding 8 |
-| Sessions row | height 30; 5 rows per agent group before Show all |
+| Sessions row | minimum height 32, terminal glyph on the tab title column; 5 rows per agent group before Show all |
 | Settings row | padding 12 by 10, gap 16; section header bottom padding 8 |
 | Select trigger | padding 10 by 6, width 190 to 260 |
 | Menu | list padding 4, item gap 1, item height 28, width 200 to 280, max height 320 |
@@ -380,8 +387,8 @@ workspace sidebar.
 | 11 | Sidebar agent state glyphs (bell, error, pull request) and the thinking matrix |
 | 12 | Small icon button, select chevron, drag ghost |
 | 13 | Medium icon button, filter search, preset logo, menu check mark |
-| 14 | Title bar sidebar toggle, editor logos, sidebar folder, sidebar footer banners and gear |
-| 15 | Toast icon |
+| 14 | Title bar sidebar toggle, editor logos, sidebar footer banners and gear |
+| 15 | Toast icon, sidebar folder, sidebar header glyphs |
 | 16 | Sidebar tab icon, callout icon, diff dock tab icon, diff file header file-type icon |
 | 17 | Diff file header generic glyph |
 | 18 | Empty-state glyph |
@@ -405,9 +412,10 @@ to `icons/languages/`.
 | Startup splash | 2600 ms shimmer, 900 ms minimum on screen | linear | Letters at 0.54 alpha, shimmer to 0.82 |
 | Tooltip | 800 ms delay | none | `delayed_tooltip` |
 
-`reduce_motion` (Settings, Appearance) is honored in three places today:
+`reduce_motion` (Settings, Appearance) is honored in four places today:
 `animated_hover` settles instantly, the primary sidebar toggles without
-the slide, and `menu_reveal` mounts menus at rest. The dim fade, toasts, spinners, the thinking matrix, and the
+the slide, `menu_reveal` mounts menus at rest, and the sidebar thinking
+matrix holds its first frame. The dim fade, toasts, spinners, and the
 shimmers keep animating. The config description promises a static frame for
 decorative animations; that promise is **Proposed** until the remaining
 animations read the flag. Feedback is never removed, only its interpolation.
@@ -441,7 +449,7 @@ it from the content.
 
 ### 5.2 Primary sidebar, Agents mode
 
-The primary sidebar uses the platform system UI font at 14 px, Medium for workspace titles and Regular for tab titles, with more generous row sizing than the Unpeel reference. Branch labels use 14 px system text in the same family as workspace titles; diff statistics use 12 px system text. Simple rows have a 32 px minimum height and 9 px corners; Paneflow-specific Git metadata retains its second line. Folder glyphs are 17 px inside 20 px slots. Other application surfaces retain Geist.
+The primary sidebar uses the platform system UI font at 14 px, Medium for workspace and tab titles, with more generous row sizing than the Unpeel reference. Branch labels use 14 px system text in the same family as workspace titles; diff statistics use 12 px system text. Simple rows have a 32 px minimum height and 9 px corners; Paneflow-specific Git metadata retains its second line. Folder glyphs are 15 px inside 20 px slots. The active tab takes the active row tint, every other row the hover tint under the pointer. A workspace title, tab title, or branch longer than 13 characters shows its full value in a tooltip, and a session row's tooltip leads with its label. Other application surfaces retain Geist.
 
 All squircle fills and borders use three cubic Bezier segments per
 corner in `src-app/src/ui_primitives/squircle.rs`. This is an approximation of
@@ -459,20 +467,20 @@ The sidebar uses the same shared renderer as cards, menus, tooltips, Settings,
 pane surfaces, and the diff dock. Each component retains its own radius.
 
 Header row `Workspaces` at label size with two 22 px icon buttons (the
-Customize Sidebar menu behind a filter glyph, and new workspace behind a
+Customize sidebar menu behind a filter glyph, and new workspace behind a
 folder-plus glyph). A workspace is a folder row; its tabs are child rows with
 inline rename, hover actions, and reorder by drag. A tab row shows the tab
 title, the branch with its glyph, and the
 diffstat in `vc_added` and `vc_deleted`. Status sits at the trailing edge of
 both row kinds, on one X, as an 11 px glyph and a 10 px word: an amber bell
 and `Input` when the agent needs input, an `agent_error` circle-x and
-`Error` when it failed, the muted dot matrix alone while it thinks, a light
+`Error` when it failed, the dot matrix alone while it thinks, in the agent's accent when it declares one and `muted` otherwise, a light
 blue 7 px dot and `Done` with the unread count once it is finished.
 With no agent to report, the tab's pull request takes the slot in GitHub's
 state color: `Review`, `Draft`, or `Merged`. The bell and the dot use the
 fixed colors from 4.3. The slot is shared with the hover action: under the
 pointer the status turns invisible, its width kept, and the button paints
-over it. A `Customize Sidebar` menu on the rail header toggles branch,
+over it. A `Customize sidebar` menu on the rail header toggles branch,
 diffstat, pull request, and indent guide per value.
 
 Drop placeholder while dragging: margin 6, radius 8, blue at 0.10 with a 0.22
@@ -494,7 +502,7 @@ the hover tint on hover, and keeps the input visible while focused or nonempty.
 Focus and a nonempty query take the active row tint; a trailing clear button
 resets the query. Filtering matches workspace names, paths, branches, and tab
 titles without changing their order or saved expansion state. Matching tabs
-highlight matching text in blue (`#007AFF`) with semibold weight, as do
+highlight matching text in the match blue of 4.3 (`#5aa6ff`, light `#0550ae`) with semibold weight, as do
 workspace names and visible checkout labels. Matching ignores letter case.
 Matching tabs
 are revealed while filtering. Settings retains its 14 px gear and tooltip,
@@ -703,7 +711,7 @@ case-insensitive substring of its label, its keywords, a block header, or a
 setting title or description. Typing a query that no longer matches the open
 section moves the panel to the first matching section in navigation order
 without taking focus from the field. On the open page, section headers,
-titles and descriptions highlight the match in blue (`#007AFF`) semibold, the
+titles and descriptions highlight the match in the match blue of 4.3 semibold, the
 same treatment as the workspace filter. Rows whose copy does not match
 collapse, along with the hairline between them, and a block (header plus
 card) collapses when none of its rows or its header match. Dynamic content
@@ -895,6 +903,7 @@ every modal answers Enter and Escape.
 | Focus across the grid | `alt-arrow` |
 | New tab, next, previous | `secondary-shift-t`, `secondary-]`, `secondary-[` |
 | Workspaces 1 to 9 | `secondary-1` to `secondary-9` |
+| Focus the Workspaces sidebar | `secondary-alt-s`; then up, down, home, end move; enter opens; space, left, right fold; F2 renames a tab; delete closes it; alt-up and alt-down reorder; escape returns to the pane |
 | File tree in the dock | `secondary-alt-f` |
 | Composer | `secondary-shift-space` |
 | Attention queue | `secondary-shift-a` |
@@ -1019,8 +1028,8 @@ already need the same behavior.
 - `window_decorations` and `window_backdrop` are read once at startup.
 - The Linux sidebar cannot reveal a native material; it blends the tint into
   the title bar color instead.
-- `reduce_motion` stops hover interpolation and the sidebar slide only; the
-  other animations listed in 4.8 ignore it.
+- `reduce_motion` stops hover interpolation, the sidebar slide, menu reveals,
+  and the thinking matrix only; the other animations listed in 4.8 ignore it.
 - The About dialog paints its own grays (`#202020`, `#232323`, `#252525`,
   `#343434`) with a border and a shadow instead of `UiColors`. It is
   **Migration**; the next touch moves it onto the squircle card and the

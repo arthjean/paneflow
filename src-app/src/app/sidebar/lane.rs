@@ -1,14 +1,14 @@
 use gpui::{
     AnyElement, AppContext, FontWeight, InteractiveElement, IntoElement, ParentElement,
-    SharedString, Styled, div, prelude::FluentBuilder, px, rgb, svg,
+    SharedString, StatefulInteractiveElement, Styled, div, prelude::FluentBuilder, px, rgb, svg,
 };
 
 use crate::app::pull_request::{PrState, PullRequest};
 use crate::ui_primitives::TooltipDelayExt;
 
 use super::{
-    SIDEBAR_ACTION_BUTTON_SIZE, SIDEBAR_ROW_BASELINE_NUDGE, SidebarAgentState, SidebarAgentSummary,
-    SidebarTooltip, render_comet_trail_loader,
+    SIDEBAR_ACTION_BUTTON_SIZE, SidebarAgentState, SidebarAgentSummary, SidebarTooltip,
+    render_comet_trail_loader,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -81,7 +81,7 @@ fn lane_visual(lane: Lane, row_key: &str, ui: crate::theme::UiColors) -> (gpui::
     match lane {
         Lane::Agent(summary) => match summary.state {
             SidebarAgentState::NeedsInput => {
-                let color: gpui::Hsla = rgb(0xFBBF24).into();
+                let color = crate::app::constants::sidebar_needs_input_color();
                 (color, icon("icons/bell.svg", color))
             }
             SidebarAgentState::Errored => {
@@ -92,7 +92,7 @@ fn lane_visual(lane: Lane, row_key: &str, ui: crate::theme::UiColors) -> (gpui::
                 (color, render_comet_trail_loader(row_key, color))
             }
             SidebarAgentState::Finished => {
-                let color: gpui::Hsla = rgb(0x83C3FF).into();
+                let color = crate::app::constants::sidebar_finished_color();
                 (
                     color,
                     div()
@@ -134,10 +134,13 @@ pub(super) fn render_lane(
         .items_center()
         .justify_end()
         .gap(px(3.))
-        .text_size(px(10.))
+        .text_size(crate::ui_primitives::LABEL_XS)
+        .line_height(px(20.))
+        .font_features(super::tabular_numerals())
         .font_weight(FontWeight::MEDIUM)
         .whitespace_nowrap()
         .text_color(color)
+        .aria_label(tooltip.clone())
         .delayed_tooltip(move |_w, cx| {
             cx.new(|_| SidebarTooltip {
                 label: tooltip.clone(),
@@ -164,8 +167,6 @@ pub(super) fn render_lane_slot(
             };
             div()
                 .flex_none()
-                .relative()
-                .top(px(SIDEBAR_ROW_BASELINE_NUDGE))
                 .group_hover(group, |style| style.invisible())
                 .child(render_lane(lane, row_key, tooltip, ui))
                 .into_any_element()

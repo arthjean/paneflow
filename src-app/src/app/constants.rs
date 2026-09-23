@@ -227,6 +227,33 @@ pub(crate) fn sidebar_filter_icon_color() -> Hsla {
     .into()
 }
 
+pub(crate) fn sidebar_needs_input_color() -> Hsla {
+    gpui::rgb(if crate::theme::active_theme().background.l > 0.5 {
+        0x92400e
+    } else {
+        0xfbbf24
+    })
+    .into()
+}
+
+pub(crate) fn sidebar_finished_color() -> Hsla {
+    gpui::rgb(if crate::theme::active_theme().background.l > 0.5 {
+        0x0369a1
+    } else {
+        0x83c3ff
+    })
+    .into()
+}
+
+pub(crate) fn filter_match_color() -> Hsla {
+    gpui::rgb(if crate::theme::active_theme().background.l > 0.5 {
+        0x0550ae
+    } else {
+        0x5aa6ff
+    })
+    .into()
+}
+
 pub(crate) fn sidebar_tab_hover_background() -> Hsla {
     sidebar_tab_background(
         LIGHT_SIDEBAR_TAB_HOVER_OPACITY,

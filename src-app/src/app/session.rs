@@ -804,6 +804,7 @@ fn is_app_written_tab_title(title: &str) -> bool {
     let title = title.trim();
     title.is_empty()
         || title == crate::app::pane_palette::PALETTE_TAB_TITLE
+        || title == crate::app::pane_palette::PALETTE_TITLE
         || title == SHELL_PRESET_LABEL
         || TerminalAgent::all().any(|agent| agent.display_name() == title)
 }
@@ -1138,6 +1139,7 @@ mod tests {
             "Codex",
             "Terminal",
             "New pane",
+            "New tab",
             "Qoder",
         ] {
             assert_eq!(

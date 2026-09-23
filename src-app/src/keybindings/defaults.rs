@@ -361,6 +361,11 @@ pub(super) const DEFAULTS: &[DefaultBinding] = &[
         context: None,
     },
     DefaultBinding {
+        key: "secondary-alt-s",
+        action_name: "focus_workspaces_sidebar",
+        context: None,
+    },
+    DefaultBinding {
         key: "secondary-alt-m",
         action_name: "toggle_diff_dock_maximize",
         context: None,

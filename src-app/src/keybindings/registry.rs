@@ -570,6 +570,13 @@ pub(super) const ACTIONS: &[ActionMeta] = &[
         group: ShortcutGroup::Markdown,
     },
     ActionMeta {
+        name: "focus_workspaces_sidebar",
+        factory: || Box::new(crate::FocusWorkspacesSidebar),
+        context: "",
+        description: "Focus Workspaces sidebar",
+        group: ShortcutGroup::Workspaces,
+    },
+    ActionMeta {
         name: "toggle_files_sidebar",
         factory: || Box::new(crate::ToggleFilesSidebar),
         context: "",

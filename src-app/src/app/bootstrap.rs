@@ -562,6 +562,8 @@ impl PaneFlowApp {
             workspaces,
             active_idx,
             renaming_tab: None,
+            sidebar_focus: cx.focus_handle(),
+            sidebar_cursor: None,
             rename_input,
             sidebar_filter_input,
             sidebar_filter_hovered: false,

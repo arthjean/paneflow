@@ -1,11 +1,12 @@
 pub(crate) mod context_menu;
 pub(crate) mod customize_menu;
+pub(crate) mod keyboard;
 mod lane;
 
 use crate::ui_primitives::TooltipDelayExt;
 use gpui::{
     Animation, AnimationExt, AnyElement, AppContext, ClickEvent, Context, FontWeight,
-    InteractiveElement, IntoElement, KeyDownEvent, MouseButton, ParentElement, Render,
+    InteractiveElement, IntoElement, KeyDownEvent, MouseButton, ParentElement, Render, Role,
     SharedString, Styled, Window, div, prelude::*, px, svg,
 };
 
@@ -163,13 +164,15 @@ const SIDEBAR_DROP_PLACEHOLDER_BORDER_ALPHA: f32 = 0.22;
 const SIDEBAR_ACTION_BUTTON_SIZE: f32 = 22.0;
 const SIDEBAR_ACTION_BUTTON_GAP: f32 = 1.0;
 const SIDEBAR_ROW_SPACING: f32 = 2.0;
+const SIDEBAR_GROUP_SPACING: f32 = SIDEBAR_ROW_SPACING + SIDEBAR_TITLE_ROW_GAP;
 const SIDEBAR_DROP_LINE_PX: f32 = 2.0;
 const SIDEBAR_DROP_BAND_REACH: f32 = SIDEBAR_ROW_LINE_HEIGHT / 2.0 + SIDEBAR_ROW_PADDING_Y;
 const SIDEBAR_WORKSPACE_ROW_CONTENT_WIDTH: f32 =
     SIDEBAR_WIDTH - SIDEBAR_ROW_MARGIN_X * 2.0 - SIDEBAR_ROW_PADDING_X * 2.0;
 const SIDEBAR_HEADER_ICON_WIDTH: f32 = 15.0;
 const SIDEBAR_WORKSPACE_FOLDER_ICON_WIDTH: f32 = 15.0;
-pub(super) const SIDEBAR_ROW_BASELINE_NUDGE: f32 = 2.0;
+const SIDEBAR_TITLE_TOOLTIP_MIN_CHARS: usize = 13;
+const SESSION_ROW_ICON_SIZE: f32 = 12.0;
 
 fn sidebar_row_shell() -> gpui::Div {
     div()
@@ -207,12 +210,16 @@ fn sidebar_row(
     squircle_skin(shell, group, ROW_RADIUS, resting, hovered).child(body)
 }
 
+fn sidebar_cursor_ring(ui: crate::theme::UiColors) -> impl IntoElement {
+    crate::ui_primitives::squircle::squircle_border(ROW_RADIUS, px(1.), ui.text.opacity(0.35))
+}
+
 fn sidebar_hover_actions(group: SharedString) -> gpui::Div {
     div()
         .absolute()
-        .top(px((SIDEBAR_ROW_LINE_HEIGHT - SIDEBAR_ACTION_BUTTON_SIZE)
-            / 2.
-            + SIDEBAR_ROW_BASELINE_NUDGE))
+        .top(px(
+            (SIDEBAR_ROW_LINE_HEIGHT - SIDEBAR_ACTION_BUTTON_SIZE) / 2.
+        ))
         .right(px(0.))
         .flex()
         .flex_row()
@@ -226,6 +233,7 @@ fn sidebar_action_button(
     id: SharedString,
     icon: &'static str,
     icon_size: f32,
+    label: SharedString,
     ui: crate::theme::UiColors,
 ) -> gpui::Stateful<gpui::Div> {
     let active_bg = crate::app::constants::sidebar_tab_active_background();
@@ -239,17 +247,21 @@ fn sidebar_action_button(
             .items_center()
             .justify_center()
             .text_color(ui.muted),
-        group,
+        group.clone(),
         px(6.),
         None,
         Some(active_bg),
     )
+    .role(Role::Button)
+    .aria_label(label.clone())
+    .delayed_tooltip(crate::ui_primitives::text_tooltip(label))
     .child(
         svg()
             .size(px(icon_size))
             .flex_none()
             .path(icon)
-            .text_color(ui.muted),
+            .text_color(ui.muted)
+            .group_hover(group, move |style| style.text_color(ui.text)),
     )
 }
 
@@ -264,7 +276,7 @@ impl SidebarAgentSummary {
                 agent_status_sentence(self.count, "thinking", "thinking")
             }
             SidebarAgentState::Finished => {
-                "Agent finished · Click workspace or pane to dismiss".to_string()
+                "Agent finished. Click the workspace or tab to dismiss.".to_string()
             }
         }
     }
@@ -281,8 +293,8 @@ fn session_row_lane(row: &HostAgentRow) -> Option<SidebarAgentState> {
 
 fn session_row_agent_word(state: Option<AgentState>) -> &'static str {
     match state {
-        Some(AgentState::WaitingForInput) => "waiting for input",
-        Some(AgentState::Thinking) => "working",
+        Some(AgentState::WaitingForInput) => "needs input",
+        Some(AgentState::Thinking) => "thinking",
         Some(AgentState::Finished) => "finished",
         Some(AgentState::Errored) => "errored",
         None => "idle",
@@ -338,7 +350,7 @@ fn session_row_tooltip(
     }
     if restart_recommended {
         text.push_str(
-            " The terminal core serving it is older than this worker; restart it when convenient.",
+            " Paneflow was updated since it started; restart it when convenient to run the new version.",
         );
     }
     if list_stale {
@@ -386,6 +398,10 @@ impl Drop for SidebarRenderTimeCanary {
     }
 }
 
+fn tabular_numerals() -> gpui::FontFeatures {
+    gpui::FontFeatures(std::sync::Arc::new(vec![("tnum".into(), 1)]))
+}
+
 fn render_diffstat_counts(
     stats: &crate::workspace::GitDiffStats,
     ui: crate::theme::UiColors,
@@ -396,7 +412,9 @@ fn render_diffstat_counts(
         .flex_row()
         .items_center()
         .gap(px(5.))
-        .text_size(px(12.))
+        .text_size(crate::ui_primitives::BODY)
+        .line_height(px(SIDEBAR_ROW_LINE_HEIGHT))
+        .font_features(tabular_numerals())
         .child(
             div()
                 .text_color(ui.vc_added)
@@ -626,7 +644,7 @@ impl PaneFlowApp {
                 .justify_between()
                 .child(
                     div()
-                        .pl(px(8.))
+                        .pl(px(SIDEBAR_ROW_PADDING_X))
                         .text_size(px(13.))
                         .text_color(ui.muted)
                         .child("Workspaces"),
@@ -637,7 +655,7 @@ impl PaneFlowApp {
                         .flex()
                         .flex_row()
                         .items_center()
-                        .gap(px(2.))
+                        .gap(px(SIDEBAR_ACTION_BUTTON_GAP))
                         .child(customize_menu::render_customize_sidebar_button(
                             customize_menu::CustomizeMenuState {
                                 open: self.sidebar_customize_menu_open,
@@ -663,6 +681,8 @@ impl PaneFlowApp {
                                 None,
                                 Some(hover_bg),
                             )
+                            .role(Role::Button)
+                            .aria_label("New workspace")
                             .delayed_tooltip(move |_w, cx| {
                                 cx.new(|_| SidebarTooltip {
                                     label: new_workspace_tooltip.clone().into(),
@@ -677,7 +697,10 @@ impl PaneFlowApp {
                                     .size(px(SIDEBAR_HEADER_ICON_WIDTH))
                                     .flex_none()
                                     .path("icons/folder-plus.svg")
-                                    .text_color(ui.muted),
+                                    .text_color(ui.muted)
+                                    .group_hover("sidebar-new-workspace-group", move |style| {
+                                        style.text_color(ui.text)
+                                    }),
                             )
                         }),
                 ),
@@ -689,6 +712,12 @@ impl PaneFlowApp {
 
         let mut list = div()
             .id("workspace-list")
+            .role(Role::Tree)
+            .aria_label("Workspaces")
+            .track_focus(&self.sidebar_focus)
+            .on_mouse_down(MouseButton::Left, |_, window, _| window.prevent_default())
+            .key_context("WorkspacesSidebar")
+            .on_key_down(cx.listener(Self::handle_sidebar_key_down))
             .flex_1()
             .min_w_0()
             .overflow_x_hidden()
@@ -735,11 +764,7 @@ impl PaneFlowApp {
             .child(
                 div()
                     .text_size(px(11.))
-                    .text_color(if retryable {
-                        ui.agent_error
-                    } else {
-                        with_alpha(ui.muted, 0.7)
-                    })
+                    .text_color(if retryable { ui.agent_error } else { ui.muted })
                     .child(label),
             );
         if retryable {
@@ -748,6 +773,7 @@ impl PaneFlowApp {
                 squircle_skin(
                     div()
                         .id("worker-retry")
+                        .self_start()
                         .px(px(6.))
                         .py(px(2.))
                         .flex()
@@ -799,7 +825,7 @@ impl PaneFlowApp {
                             .text_center()
                             .text_size(px(11.))
                             .text_color(ui.muted)
-                            .child("Choose one of the options below to use the Workspaces rail"),
+                            .child("Open a folder to start a workspace"),
                     )
                     .child(
                         sidebar_empty_state_button("sidebar-empty-open-folder", ui)
@@ -912,6 +938,7 @@ impl PaneFlowApp {
             .trim()
             .to_lowercase();
         let rows = self.sidebar_rows(&query);
+        let keyboard_focused = self.sidebar_focus.is_focused(window);
         let topology = self
             .workspaces
             .iter()
@@ -936,25 +963,46 @@ impl PaneFlowApp {
         if rows.is_empty() && !query.is_empty() && !animating {
             list = list.child(
                 div()
-                    .px(px(16.))
+                    .px(px(SIDEBAR_ROW_MARGIN_X + SIDEBAR_ROW_PADDING_X))
                     .py(px(8.))
                     .text_color(ui.muted)
-                    .text_size(px(13.))
-                    .child("No matching workspaces"),
+                    .text_size(crate::ui_primitives::BODY_EMPHASIS)
+                    .child(format!("No workspaces or tabs match \"{query}\"")),
             );
         }
         let slots = sidebar_drop_slots(&rows, self.workspaces.len());
         for (k, (row, amount)) in animated_rows.iter().enumerate() {
-            if query.is_empty() && !animating {
-                list = list.child(self.render_drop_divider(k, slots[k], ui, cx));
+            let opens_group = matches!(row, SidebarRow::Folder(_))
+                && k.checked_sub(1)
+                    .is_some_and(|above| matches!(animated_rows[above].0, SidebarRow::Tab(..)));
+            let spacing = if opens_group {
+                SIDEBAR_GROUP_SPACING
             } else {
-                list = list.child(div().flex_none().h(px(SIDEBAR_ROW_SPACING * amount)));
+                SIDEBAR_ROW_SPACING
+            };
+            if query.is_empty() && !animating {
+                list = list.child(self.render_drop_divider(k, slots[k], spacing, ui, cx));
+            } else {
+                list = list.child(div().flex_none().h(px(spacing * amount)));
             }
             let content = match *row {
-                SidebarRow::Folder(i) => self.render_workspace_row(i, ui, cx).into_any_element(),
-                SidebarRow::Tab(i, tab_idx) => {
-                    self.render_tab_row(i, tab_idx, ui, cx).into_any_element()
-                }
+                SidebarRow::Folder(i) => self
+                    .render_workspace_row(
+                        i,
+                        keyboard_focused && self.sidebar_cursor_matches(*row),
+                        ui,
+                        cx,
+                    )
+                    .into_any_element(),
+                SidebarRow::Tab(i, tab_idx) => self
+                    .render_tab_row(
+                        i,
+                        tab_idx,
+                        keyboard_focused && self.sidebar_cursor_matches(*row),
+                        ui,
+                        cx,
+                    )
+                    .into_any_element(),
             };
             let key = *row;
             let app = cx.weak_entity();
@@ -1014,7 +1062,13 @@ impl PaneFlowApp {
             && !animating
             && let Some(&trailing) = slots.last()
         {
-            list = list.child(self.render_drop_divider(rows.len(), trailing, ui, cx));
+            list = list.child(self.render_drop_divider(
+                rows.len(),
+                trailing,
+                SIDEBAR_ROW_SPACING,
+                ui,
+                cx,
+            ));
         }
         list
     }
@@ -1023,6 +1077,7 @@ impl PaneFlowApp {
         &self,
         key: usize,
         slot: SidebarDropSlot,
+        spacing: f32,
         ui: crate::theme::UiColors,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
@@ -1035,7 +1090,7 @@ impl PaneFlowApp {
             .top(px(-SIDEBAR_DROP_BAND_REACH))
             .w_full()
             .px(px(SIDEBAR_ROW_MARGIN_X))
-            .h(px(SIDEBAR_ROW_SPACING + SIDEBAR_DROP_BAND_REACH * 2.0))
+            .h(px(spacing + SIDEBAR_DROP_BAND_REACH * 2.0))
             .flex()
             .flex_col()
             .justify_center();
@@ -1082,7 +1137,7 @@ impl PaneFlowApp {
         }
 
         div()
-            .h(px(SIDEBAR_ROW_SPACING))
+            .h(px(spacing))
             .flex_none()
             .relative()
             .child(band.child(line))
@@ -1091,6 +1146,7 @@ impl PaneFlowApp {
     fn render_workspace_row(
         &self,
         i: usize,
+        cursor: bool,
         ui: crate::theme::UiColors,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
@@ -1105,8 +1161,18 @@ impl PaneFlowApp {
         let group_name = SharedString::from(format!("ws-row-{ws_id}"));
         let is_expanded = ws.sidebar_expanded;
 
+        let title_tooltip =
+            (title.chars().count() > SIDEBAR_TITLE_TOOLTIP_MIN_CHARS).then(|| ws_title.clone());
         let row_shell = sidebar_row_shell()
             .id(SharedString::from(format!("ws-{ws_id}")))
+            .role(Role::TreeItem)
+            .aria_level(1)
+            .aria_label(ws_title.clone())
+            .aria_expanded(is_expanded)
+            .aria_selected(i == self.active_idx)
+            .when_some(title_tooltip, |shell, title| {
+                shell.delayed_tooltip(crate::ui_primitives::text_tooltip(title))
+            })
             .group(group_name.clone())
             .on_drag(
                 WorkspaceDrag {
@@ -1130,12 +1196,13 @@ impl PaneFlowApp {
                 }
                 cx.notify();
             }))
-            .on_aux_click(cx.listener(move |this, e: &ClickEvent, _window, cx| {
+            .on_aux_click(cx.listener(move |this, e: &ClickEvent, window, cx| {
                 if e.is_right_click()
                     && let Some(position) = e.mouse_position()
                 {
                     this.commit_rename(cx);
                     this.dismiss_transient_surfaces();
+                    this.place_sidebar_cursor(SidebarRow::Folder(idx), window, cx);
                     this.workspace_menu_open = Some(WorkspaceContextMenu { idx, position });
                     cx.stop_propagation();
                     cx.notify();
@@ -1183,8 +1250,6 @@ impl PaneFlowApp {
                 svg()
                     .size(px(SIDEBAR_WORKSPACE_FOLDER_ICON_WIDTH))
                     .flex_none()
-                    .relative()
-                    .top(px(SIDEBAR_ROW_BASELINE_NUDGE))
                     .path(folder_path)
                     .text_color(ui.muted),
             );
@@ -1220,17 +1285,9 @@ impl PaneFlowApp {
                     SharedString::from(format!("ws-new-tab-{ws_id}")),
                     "icons/plus.svg",
                     12.,
+                    SharedString::from(format!("New tab in {ws_title}")),
                     ui,
                 )
-                .delayed_tooltip({
-                    let label = SharedString::from(format!("New pane in {ws_title}"));
-                    move |_w, cx| {
-                        cx.new(|_| SidebarTooltip {
-                            label: label.clone(),
-                        })
-                        .into()
-                    }
-                })
                 .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
                     this.open_pane_palette(idx, window, cx);
                     cx.stop_propagation();
@@ -1238,7 +1295,8 @@ impl PaneFlowApp {
             ),
         );
 
-        let row = sidebar_row(row_shell, group_name.clone(), None, Some(hover_bg), body);
+        let row = sidebar_row(row_shell, group_name.clone(), None, Some(hover_bg), body)
+            .when(cursor, |row| row.child(sidebar_cursor_ring(ui)));
 
         div()
             .id(SharedString::from(format!("ws-drop-{ws_id}")))
@@ -1254,6 +1312,7 @@ impl PaneFlowApp {
         &self,
         ws_idx: usize,
         tab_idx: usize,
+        cursor: bool,
         ui: crate::theme::UiColors,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
@@ -1293,7 +1352,10 @@ impl PaneFlowApp {
         let lane = infer_lane(row_agent_status, self.tab_pull_request(ws, tab));
         let hover_bg = crate::app::constants::sidebar_tab_hover_background();
         let (resting_bg, hovered_bg) = if is_active_tab && is_active_workspace {
-            (Some(hover_bg), None)
+            (
+                Some(crate::app::constants::sidebar_tab_active_background()),
+                None,
+            )
         } else {
             (None, Some(hover_bg))
         };
@@ -1347,12 +1409,11 @@ impl PaneFlowApp {
                                 SharedString::from(format!("tab-detached-{tab_id}")),
                                 "icons/detach-pane.svg",
                                 12.,
+                                "Show detached pane".into(),
                                 ui,
                             )
-                            .relative()
-                            .top(px(SIDEBAR_ROW_BASELINE_NUDGE))
-                            .delayed_tooltip(crate::ui_primitives::text_tooltip(
-                                "Show detached pane",
+                            .my(px(
+                                (SIDEBAR_ROW_LINE_HEIGHT - SIDEBAR_ACTION_BUTTON_SIZE) / 2.
                             ))
                             .on_click(move |_, _, cx| {
                                 let current = detached_panes.iter().position(|pane| {
@@ -1391,17 +1452,9 @@ impl PaneFlowApp {
                     SharedString::from(format!("tab-close-{tab_id}")),
                     "icons/close.svg",
                     12.,
+                    "Close tab".into(),
                     ui,
                 )
-                .delayed_tooltip({
-                    let label = SharedString::from("Close tab");
-                    move |_w, cx| {
-                        cx.new(|_| SidebarTooltip {
-                            label: label.clone(),
-                        })
-                        .into()
-                    }
-                })
                 .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
                     if let Some((at_ws, at_tab)) = this
                         .workspaces
@@ -1423,9 +1476,19 @@ impl PaneFlowApp {
             ),
         );
 
+        let title_tooltip = (!is_renaming
+            && title.chars().count() > SIDEBAR_TITLE_TOOLTIP_MIN_CHARS)
+            .then(|| SharedString::from(title.clone()));
         let row_shell = sidebar_row_shell()
             .ml(px(row_inset))
             .id(SharedString::from(format!("tab-row-{tab_id}")))
+            .role(Role::TreeItem)
+            .aria_level(2)
+            .aria_label(SharedString::from(title.clone()))
+            .aria_selected(is_active_tab && is_active_workspace)
+            .when_some(title_tooltip, |shell, title| {
+                shell.delayed_tooltip(crate::ui_primitives::text_tooltip(title))
+            })
             .group(tab_group.clone())
             .on_drag(
                 TabDrag {
@@ -1449,12 +1512,13 @@ impl PaneFlowApp {
                 cx.stop_propagation();
                 cx.notify();
             }))
-            .on_aux_click(cx.listener(move |this, e: &ClickEvent, _window, cx| {
+            .on_aux_click(cx.listener(move |this, e: &ClickEvent, window, cx| {
                 if e.is_right_click()
                     && let Some(position) = e.mouse_position()
                 {
                     this.commit_rename(cx);
                     this.dismiss_transient_surfaces();
+                    this.place_sidebar_cursor(SidebarRow::Tab(ws_idx, tab_idx), window, cx);
                     this.tab_menu_open = Some(TabContextMenu {
                         ws_idx,
                         tab_idx,
@@ -1501,11 +1565,13 @@ impl PaneFlowApp {
             None => title_row.into_any_element(),
         };
 
-        let row = sidebar_row(row_shell, tab_group, resting_bg, hovered_bg, body);
+        let row = sidebar_row(row_shell, tab_group, resting_bg, hovered_bg, body)
+            .when(cursor, |row| row.child(sidebar_cursor_ring(ui)));
         let hidden_rows = if tab_idx + 1 == ws.tab_count() {
             self.render_session_rows(
                 SessionRowScope::Workspace(ws_idx),
                 title_indent,
+                row_inset,
                 content_width,
                 ui,
                 cx,
@@ -1522,6 +1588,7 @@ impl PaneFlowApp {
             .flex_col()
             .relative()
             .rounded(ROW_RADIUS)
+            .gap(px(SIDEBAR_ROW_SPACING))
             .when(indent_guide, |el| el.child(render_sidebar_indent_guide(ui)))
             .child(row)
             .children(hidden_rows)
@@ -1536,6 +1603,7 @@ impl PaneFlowApp {
         let rows = self.render_session_rows(
             SessionRowScope::Fallback,
             SIDEBAR_FOLDER_SLOT_WIDTH + SIDEBAR_TITLE_ROW_GAP,
+            0.,
             SIDEBAR_WORKSPACE_ROW_CONTENT_WIDTH,
             ui,
             cx,
@@ -1560,6 +1628,7 @@ impl PaneFlowApp {
                 .flex_none()
                 .flex()
                 .flex_col()
+                .gap(px(SIDEBAR_ROW_SPACING))
                 .children(rows),
         )
     }
@@ -1568,6 +1637,7 @@ impl PaneFlowApp {
         &self,
         scope: SessionRowScope,
         title_indent: f32,
+        row_inset: f32,
         content_width: f32,
         ui: crate::theme::UiColors,
         cx: &mut Context<Self>,
@@ -1596,6 +1666,7 @@ impl PaneFlowApp {
         let ended_total = listed.iter().filter(|session| !session.live).count();
         let (shown_ended, collapsed) = ended_preview(ended_total, cap, expanded);
         let hover_bg = crate::app::constants::sidebar_tab_hover_background();
+        let icon_indent = title_indent - SIDEBAR_TITLE_ROW_GAP - row_inset;
         let disconnected = self
             .host_agents_are_stale()
             .then(|| self.host_agents_disconnect_reason().unwrap_or("no stream"));
@@ -1648,11 +1719,8 @@ impl PaneFlowApp {
                 || reconnecting
                 || disconnected.is_some()
                 || agent.is_some_and(|row| row.stale);
-            let resting_color = if dimmed {
-                with_alpha(ui.muted, 0.45)
-            } else {
-                ui.muted
-            };
+            let resting_color = if dimmed { ui.muted } else { ui.text };
+            let row_tooltip = format!("{label}\n{tooltip}");
             let lane_tooltip = SharedString::from(tooltip.clone());
             let body = div()
                 .flex()
@@ -1662,14 +1730,16 @@ impl PaneFlowApp {
                 .w(px(content_width))
                 .max_w(px(content_width))
                 .min_w_0()
-                .child(div().flex_none().w(px(title_indent)))
+                .when(icon_indent > 0., |row| {
+                    row.child(div().flex_none().w(px(icon_indent)))
+                })
                 .child(
                     svg()
-                        .size(px(12.))
+                        .size(px(SESSION_ROW_ICON_SIZE))
                         .flex_none()
                         .path("icons/terminal.svg")
                         .text_color(resting_color)
-                        .group_hover(group.clone(), |style| style.text_color(ui.muted)),
+                        .group_hover(group.clone(), move |style| style.text_color(ui.text)),
                 )
                 .child(
                     div()
@@ -1679,8 +1749,8 @@ impl PaneFlowApp {
                         .whitespace_nowrap()
                         .text_ellipsis()
                         .text_color(resting_color)
-                        .group_hover(group.clone(), |style| style.text_color(ui.muted))
-                        .text_sm()
+                        .group_hover(group.clone(), move |style| style.text_color(ui.text))
+                        .text_size(crate::ui_primitives::TITLE)
                         .line_height(px(SIDEBAR_ROW_LINE_HEIGHT))
                         .child(label),
                 )
@@ -1694,9 +1764,10 @@ impl PaneFlowApp {
             let click_session = session.clone();
             let menu_session = session.clone();
             let shell = sidebar_row_shell()
+                .ml(px(row_inset))
                 .id(SharedString::from(format!("session-row-{key}")))
                 .cursor_pointer()
-                .delayed_tooltip(crate::ui_primitives::text_tooltip(tooltip))
+                .delayed_tooltip(crate::ui_primitives::text_tooltip(row_tooltip))
                 .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
                     this.open_listed_session(scope, click_session.clone(), window, cx);
                     cx.stop_propagation();
@@ -1728,11 +1799,9 @@ impl PaneFlowApp {
                 .w(px(content_width))
                 .max_w(px(content_width))
                 .min_w_0()
-                .child(
-                    div()
-                        .flex_none()
-                        .w(px(title_indent + 12. + SIDEBAR_TITLE_ROW_GAP)),
-                )
+                .child(div().flex_none().w(px(icon_indent
+                    + SIDEBAR_TITLE_ROW_GAP
+                    + SESSION_ROW_ICON_SIZE)))
                 .child(
                     div()
                         .flex_1()
@@ -1740,17 +1809,18 @@ impl PaneFlowApp {
                         .overflow_x_hidden()
                         .whitespace_nowrap()
                         .text_ellipsis()
-                        .text_color(with_alpha(ui.muted, 0.45))
-                        .group_hover(group.clone(), |style| style.text_color(ui.muted))
-                        .text_sm()
+                        .text_color(ui.muted)
+                        .group_hover(group.clone(), move |style| style.text_color(ui.text))
+                        .text_size(crate::ui_primitives::TITLE)
                         .line_height(px(SIDEBAR_ROW_LINE_HEIGHT))
                         .child(collapsed_sessions_label(collapsed)),
                 );
             let shell = sidebar_row_shell()
+                .ml(px(row_inset))
                 .id(SharedString::from(format!("session-more-{scope_key}")))
                 .cursor_pointer()
                 .delayed_tooltip(crate::ui_primitives::text_tooltip(
-                    "Nothing is pruned: show every ended session of this group.".to_string(),
+                    "Show all ended sessions".to_string(),
                 ))
                 .on_click(cx.listener(move |this, _: &ClickEvent, _window, cx| {
                     match expand_target.clone() {
@@ -1828,12 +1898,7 @@ impl PaneFlowApp {
         if !tab_diffstat_visible(show, &stats) {
             return None;
         }
-        Some(
-            render_diffstat_counts(&stats, crate::theme::ui_colors())
-                .relative()
-                .top(px(SIDEBAR_ROW_BASELINE_NUDGE))
-                .into_any_element(),
-        )
+        Some(render_diffstat_counts(&stats, crate::theme::ui_colors()).into_any_element())
     }
 
     fn render_tab_checkout_meta(
@@ -1857,9 +1922,19 @@ impl PaneFlowApp {
         let draw_counts = tab_diffstat_visible(show, &stats);
 
         let pr = self.tab_pull_request(ws, tab);
+        let branch_tooltip = match pr {
+            Some(pr) => Some(format!("{label}\n{}", lane::pull_request_tooltip(pr))),
+            None => {
+                (label.chars().count() > SIDEBAR_TITLE_TOOLTIP_MIN_CHARS).then(|| label.clone())
+            }
+        };
 
         let branch = draw_branch.then(|| {
             div()
+                .id(SharedString::from(format!("tab-branch-{}", tab.id)))
+                .when_some(branch_tooltip, |branch, text| {
+                    branch.delayed_tooltip(crate::ui_primitives::text_tooltip(text))
+                })
                 .flex()
                 .flex_row()
                 .items_center()
@@ -1995,25 +2070,27 @@ fn sidebar_agent_status_tooltip(
     }
 }
 
+const COMET_TRAIL_DOT_SIZE: f32 = 3.0;
+const COMET_TRAIL_DOT_GAP: f32 = 1.0;
+
 pub(super) fn render_comet_trail_loader(row_key: &str, color: gpui::Hsla) -> AnyElement {
     static SYNC_EPOCH: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
 
-    const MATRIX_SIZE: usize = 3;
-    const DOT_SIZE: f32 = 3.0;
-    const DOT_GAP: f32 = 1.0;
     const CYCLE_MS: u64 = 720;
     const PERIMETER: usize = 8;
-    const BASE_OPACITY: f32 = 0.06;
-    const TAIL_OPACITIES: [f32; 3] = [0.8144, 0.4864, 0.2568];
 
-    div()
+    let loader = div()
         .size(px(11.))
         .flex_none()
         .flex()
         .flex_col()
         .items_center()
         .justify_center()
-        .gap(px(DOT_GAP))
+        .gap(px(COMET_TRAIL_DOT_GAP));
+    if crate::ui_primitives::reduce_motion() {
+        return comet_trail_matrix(loader, 0, color).into_any_element();
+    }
+    loader
         .with_animation(
             SharedString::from(format!("comet-trail-{row_key}")),
             Animation::new(std::time::Duration::from_millis(CYCLE_MS)).repeat(),
@@ -2024,44 +2101,52 @@ pub(super) fn render_comet_trail_loader(row_key: &str, color: gpui::Hsla) -> Any
                     .as_millis()
                     % u128::from(CYCLE_MS);
                 let head = (cycle_elapsed * PERIMETER as u128 / u128::from(CYCLE_MS)) as usize;
-
-                loader.children((0..MATRIX_SIZE).map(|row| {
-                    div()
-                        .h(px(DOT_SIZE))
-                        .flex_none()
-                        .flex()
-                        .flex_row()
-                        .gap(px(DOT_GAP))
-                        .children((0..MATRIX_SIZE).map(move |col| {
-                            let order = match (row, col) {
-                                (0, 0) => Some(0),
-                                (0, 1) => Some(1),
-                                (0, 2) => Some(2),
-                                (1, 2) => Some(3),
-                                (2, 2) => Some(4),
-                                (2, 1) => Some(5),
-                                (2, 0) => Some(6),
-                                (1, 0) => Some(7),
-                                _ => None,
-                            };
-                            let opacity = order.map_or_else(
-                                || if head.is_multiple_of(2) { 0.1 } else { 0.18 },
-                                |order| {
-                                    let trail = (head + PERIMETER - order) % PERIMETER;
-                                    TAIL_OPACITIES.get(trail).copied().unwrap_or(BASE_OPACITY)
-                                },
-                            );
-
-                            div()
-                                .size(px(DOT_SIZE))
-                                .flex_none()
-                                .rounded_full()
-                                .bg(color.opacity(opacity))
-                        }))
-                }))
+                comet_trail_matrix(loader, head, color)
             },
         )
         .into_any_element()
+}
+
+fn comet_trail_matrix(loader: gpui::Div, head: usize, color: gpui::Hsla) -> gpui::Div {
+    const MATRIX_SIZE: usize = 3;
+    const PERIMETER: usize = 8;
+    const BASE_OPACITY: f32 = 0.06;
+    const TAIL_OPACITIES: [f32; 3] = [0.8144, 0.4864, 0.2568];
+
+    loader.children((0..MATRIX_SIZE).map(|row| {
+        div()
+            .h(px(COMET_TRAIL_DOT_SIZE))
+            .flex_none()
+            .flex()
+            .flex_row()
+            .gap(px(COMET_TRAIL_DOT_GAP))
+            .children((0..MATRIX_SIZE).map(move |col| {
+                let order = match (row, col) {
+                    (0, 0) => Some(0),
+                    (0, 1) => Some(1),
+                    (0, 2) => Some(2),
+                    (1, 2) => Some(3),
+                    (2, 2) => Some(4),
+                    (2, 1) => Some(5),
+                    (2, 0) => Some(6),
+                    (1, 0) => Some(7),
+                    _ => None,
+                };
+                let opacity = order.map_or_else(
+                    || if head.is_multiple_of(2) { 0.1 } else { 0.18 },
+                    |order| {
+                        let trail = (head + PERIMETER - order) % PERIMETER;
+                        TAIL_OPACITIES.get(trail).copied().unwrap_or(BASE_OPACITY)
+                    },
+                );
+
+                div()
+                    .size(px(COMET_TRAIL_DOT_SIZE))
+                    .flex_none()
+                    .rounded_full()
+                    .bg(color.opacity(opacity))
+            }))
+    }))
 }
 
 pub(crate) struct SidebarTooltip {
@@ -2121,12 +2206,13 @@ mod tests {
     use super::OwnedSession;
     use super::lane::{Lane, infer_lane};
     use super::{
-        ROW_RADIUS, SIDEBAR_DROP_BAND_REACH, SIDEBAR_DROP_LINE_PX, SIDEBAR_FOLDER_SLOT_WIDTH,
-        SIDEBAR_ROW_LINE_HEIGHT, SIDEBAR_ROW_MARGIN_X, SIDEBAR_ROW_PADDING_Y, SIDEBAR_ROW_SPACING,
-        SIDEBAR_WIDTH, SidebarAgentState, SidebarAgentSummary, SidebarDropSlot, SidebarRow,
-        collapsed_sessions_label, ended_preview, folder_row_sessions, reorder_target,
-        session_row_lane, session_row_tooltip, sidebar_agent_summary, sidebar_drop_slots,
-        sidebar_row_shell, tab_diffstat_visible, tab_display_title, tab_row_sessions,
+        ROW_RADIUS, SIDEBAR_ACTION_BUTTON_SIZE, SIDEBAR_DROP_BAND_REACH, SIDEBAR_DROP_LINE_PX,
+        SIDEBAR_FOLDER_SLOT_WIDTH, SIDEBAR_ROW_LINE_HEIGHT, SIDEBAR_ROW_MARGIN_X,
+        SIDEBAR_ROW_PADDING_Y, SIDEBAR_ROW_SPACING, SIDEBAR_WIDTH, SidebarAgentState,
+        SidebarAgentSummary, SidebarDropSlot, SidebarRow, collapsed_sessions_label, ended_preview,
+        folder_row_sessions, reorder_target, session_row_lane, session_row_tooltip,
+        sidebar_agent_summary, sidebar_drop_slots, sidebar_hover_actions, sidebar_row_shell,
+        tab_diffstat_visible, tab_display_title, tab_row_sessions,
     };
     use crate::agent_launcher::TerminalAgent;
     use crate::ai_types::{AgentSession, AgentState};
@@ -2200,7 +2286,7 @@ mod tests {
         let working = host_row(Some(AgentState::Thinking), false);
 
         let live = session_row_tooltip(&listed(true), Some(&working), 0, None, false, false, false);
-        assert!(live.contains("Agent working"), "{live}");
+        assert!(live.contains("Agent thinking"), "{live}");
         assert!(!live.contains("stale"), "{live}");
         assert!(live.contains("Click to reopen"), "{live}");
 
@@ -2219,7 +2305,7 @@ mod tests {
 
         let lost = host_row(Some(AgentState::Thinking), true);
         let lost = session_row_tooltip(&listed(true), Some(&lost), 0, None, false, false, false);
-        assert!(lost.contains("last seen working"), "{lost}");
+        assert!(lost.contains("last seen thinking"), "{lost}");
         assert!(lost.contains("stale"), "{lost}");
     }
 
@@ -2237,7 +2323,7 @@ mod tests {
         let older_core =
             session_row_tooltip(&listed(true), None, 120_000, None, false, false, true);
         assert!(
-            older_core.contains("older than this worker"),
+            older_core.contains("Paneflow was updated since it started"),
             "a restart recommendation is surfaced, never acted on for the user: {older_core}"
         );
     }
@@ -2408,6 +2494,58 @@ mod tests {
             px(SIDEBAR_ROW_SPACING + SIDEBAR_DROP_BAND_REACH * 2.0)
         );
         assert_eq!(line.origin.y, px(30.) + px(SIDEBAR_ROW_SPACING / 2.0 - 1.0));
+    }
+
+    #[gpui::test]
+    fn row_glyphs_share_the_row_vertical_center(cx: &mut TestAppContext) {
+        let cx = cx.add_empty_window();
+        cx.draw(
+            point(px(0.), px(0.)),
+            size(
+                AvailableSpace::Definite(px(SIDEBAR_WIDTH)),
+                AvailableSpace::Definite(px(100.)),
+            ),
+            |_, _| {
+                sidebar_row_shell()
+                    .child(
+                        div()
+                            .flex()
+                            .flex_row()
+                            .items_center()
+                            .child(
+                                div()
+                                    .flex_none()
+                                    .size(px(SIDEBAR_FOLDER_SLOT_WIDTH))
+                                    .debug_selector(|| "folder".into()),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(14.))
+                                    .line_height(px(SIDEBAR_ROW_LINE_HEIGHT))
+                                    .debug_selector(|| "title".into())
+                                    .child("paneflow"),
+                            )
+                            .child(
+                                sidebar_hover_actions("row".into()).visible().child(
+                                    div()
+                                        .size(px(SIDEBAR_ACTION_BUTTON_SIZE))
+                                        .debug_selector(|| "action".into()),
+                                ),
+                            ),
+                    )
+                    .debug_selector(|| "row".into())
+            },
+        );
+
+        let row = cx.debug_bounds("row").expect("row not painted");
+        for selector in ["folder", "title", "action"] {
+            let glyph = cx.debug_bounds(selector).expect("glyph not painted");
+            assert_eq!(
+                glyph.center().y,
+                row.center().y,
+                "{selector} is off the row's vertical center"
+            );
+        }
     }
 
     #[gpui::test]

@@ -17,7 +17,8 @@ use crate::ui_primitives::squircle::squircle_fill;
 use crate::ui_primitives::{ROW_RADIUS, squircle_skin};
 use crate::widgets::text_input::TextInput;
 
-pub(crate) const PALETTE_TAB_TITLE: &str = "New pane";
+pub(crate) const PALETTE_TITLE: &str = "New pane";
+pub(crate) const PALETTE_TAB_TITLE: &str = "New tab";
 
 const PICKER_WIDTH: f32 = 260.0;
 
@@ -659,7 +660,7 @@ impl PaneFlowApp {
             .child(if draft_open {
                 "New branch"
             } else {
-                PALETTE_TAB_TITLE
+                PALETTE_TITLE
             });
         if draft_open {
             title = title.child(

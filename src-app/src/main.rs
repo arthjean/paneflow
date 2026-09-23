@@ -509,6 +509,8 @@ struct PaneFlowApp {
     workspaces: Vec<Workspace>,
     active_idx: usize,
     renaming_tab: Option<(usize, usize)>,
+    sidebar_focus: FocusHandle,
+    sidebar_cursor: Option<app::sidebar::keyboard::SidebarCursor>,
     rename_input: gpui::Entity<crate::widgets::text_input::TextInput>,
     sidebar_filter_input: gpui::Entity<crate::widgets::text_input::TextInput>,
     sidebar_filter_hovered: bool,
@@ -1121,6 +1123,7 @@ impl Render for PaneFlowApp {
             .on_action(cx.listener(Self::handle_start_self_update))
             .on_action(cx.listener(Self::handle_dismiss_update))
             .on_action(cx.listener(Self::handle_toggle_files_sidebar))
+            .on_action(cx.listener(Self::handle_focus_workspaces_sidebar))
             .on_action(cx.listener(Self::handle_toggle_diff_dock_maximize))
             .on_action(cx.listener(Self::handle_open_composer))
             .on_action(cx.listener(Self::handle_toggle_broadcast_member))

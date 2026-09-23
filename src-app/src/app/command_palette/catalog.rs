@@ -798,6 +798,12 @@ pub(crate) const COMMANDS: &[Command] = &[
         kind: Kind::Action("jump_next_waiting"),
     },
     Command {
+        label: "Focus Workspaces sidebar",
+        keywords: "keyboard navigate rail tabs",
+        needs: Needs::Always,
+        kind: Kind::Action("focus_workspaces_sidebar"),
+    },
+    Command {
         label: "Toggle Files sidebar",
         keywords: "tree explorer",
         needs: Needs::Workspace,

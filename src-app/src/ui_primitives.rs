@@ -704,7 +704,7 @@ pub(crate) fn highlight_matches(text: String, query: &str) -> gpui::StyledText {
         (
             range,
             gpui::HighlightStyle {
-                color: Some(gpui::rgb(FOCUS_BLUE).into()),
+                color: Some(crate::app::constants::filter_match_color()),
                 font_weight: Some(FontWeight::SEMIBOLD),
                 ..Default::default()
             },

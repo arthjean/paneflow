@@ -87,6 +87,7 @@ actions!(
         ToggleBroadcastMember,
         OpenBroadcastGroups,
         ToggleFilesSidebar,
+        FocusWorkspacesSidebar,
         ToggleDiffDockMaximize,
         OpenAttentionQueue,
         DiffNewFileTab,

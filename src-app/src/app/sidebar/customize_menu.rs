@@ -1,6 +1,6 @@
 use gpui::{
     AnyElement, AppContext, ClickEvent, Context, InteractiveElement, IntoElement, MouseButton,
-    MouseUpEvent, ParentElement, StatefulInteractiveElement, Styled, deferred, div,
+    MouseUpEvent, ParentElement, Role, StatefulInteractiveElement, Styled, deferred, div,
     prelude::FluentBuilder, px, svg,
 };
 
@@ -52,7 +52,10 @@ impl PaneFlowApp {
             "indent_guide": show.indent_guide_enabled(),
         });
         if !crate::config_writer::save_config_value_checked("sidebar_show", value) {
-            self.show_toast("Could not save the sidebar setting", cx);
+            self.show_toast(
+                "Could not save the sidebar setting. Check that paneflow.json is valid and writable.",
+                cx,
+            );
             return;
         }
         self.cached_config.sidebar_show = show;
@@ -91,9 +94,11 @@ pub(super) fn render_customize_sidebar_button(
         open.then_some(hover),
         (!open).then_some(hover),
     )
+    .role(Role::Button)
+    .aria_label("Customize sidebar")
     .delayed_tooltip(|_w, cx| {
         cx.new(|_| SidebarTooltip {
-            label: "Customize Sidebar".into(),
+            label: "Customize sidebar".into(),
         })
         .into()
     })
@@ -122,6 +127,7 @@ fn render_menu(
     cx: &mut Context<PaneFlowApp>,
 ) -> AnyElement {
     let menu = menu_panel(div().id("sidebar-customize-menu"), ui)
+        .font_family("Geist")
         .w(px(MENU_WIDTH))
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
         .on_mouse_up_out(
@@ -218,6 +224,7 @@ fn render_show_submenu(
     cx: &mut Context<PaneFlowApp>,
 ) -> AnyElement {
     let menu = menu_panel(div().id("sidebar-show-submenu"), ui)
+        .font_family("Geist")
         .w(px(SUBMENU_WIDTH))
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
         .child(render_show_option(
@@ -310,7 +317,7 @@ fn menu_label(label: &'static str, ui: crate::theme::UiColors) -> AnyElement {
         .flex_1()
         .min_w_0()
         .whitespace_nowrap()
-        .text_size(px(13.))
+        .text_size(crate::ui_primitives::BODY)
         .text_color(ui.text)
         .child(label)
         .into_any_element()

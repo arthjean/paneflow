@@ -10,7 +10,7 @@ use crate::app::close_policy::CloseTarget;
 use crate::app::files_tree;
 use crate::pane::PaneSurface;
 use crate::settings::components::{
-    menu_divider_color, menu_height, menu_row, select_menu, with_alpha,
+    MENU_ROW_HEIGHT, menu_divider_color, menu_height, menu_row, select_menu, with_alpha,
 };
 use crate::ui_primitives::AnimatedHoverExt;
 use crate::{
@@ -94,7 +94,7 @@ impl PaneFlowApp {
             .rounded(px(4.))
             .text_size(px(11.))
             .text_color(ui.text)
-            .animated_hover_bg(ui.subtle.opacity(0.0), ui.subtle)
+            .animated_hover_bg(with_alpha(ui.text, 0.0), with_alpha(ui.text, 0.05))
             .on_click(on_click)
             .child(
                 div()
@@ -154,7 +154,7 @@ impl PaneFlowApp {
                 "Could not open URL - install xdg-utils (Linux), or check your default browser"
                     .to_string()
             } else {
-                format!("Could not open URL: {err}")
+                format!("Could not open the link in your default browser: {err}")
             };
             log::warn!("sidebar: open URL failed: {err}");
             self.show_toast(message, cx);
@@ -224,7 +224,7 @@ impl PaneFlowApp {
         if let Some(template_idx) = workflow_template {
             context_menu = context_menu.child(self.render_select_menu_item(
                 "workspace-context-run-workflow".into(),
-                "Run Workflow",
+                "Run workflow",
                 None,
                 ui,
                 cx.listener(move |this, _: &ClickEvent, _window, cx| {
@@ -302,7 +302,7 @@ impl PaneFlowApp {
             if cfg!(target_os = "windows") {
                 "Open in File Explorer"
             } else {
-                "Reveal in File Manager"
+                "Reveal in file manager"
             },
             reveal_shortcut,
             ui,
@@ -317,7 +317,7 @@ impl PaneFlowApp {
             .map(|s| SharedString::from(s.to_string()));
         context_menu = context_menu.child(self.render_select_menu_item(
             "workspace-context-copy".into(),
-            "Copy Path",
+            "Copy path",
             copy_shortcut,
             ui,
             cx.listener(move |this, _: &ClickEvent, _window, cx| {
@@ -332,7 +332,7 @@ impl PaneFlowApp {
                 .map(|s| SharedString::from(s.to_string()));
             context_menu = context_menu.child(self.render_select_menu_item(
                 "workspace-context-resume-ended".into(),
-                "Resume Ended Sessions",
+                "Resume ended sessions",
                 resume_shortcut,
                 ui,
                 cx.listener(move |this, _: &ClickEvent, _window, cx| {
@@ -359,7 +359,7 @@ impl PaneFlowApp {
         if has_unread {
             context_menu = context_menu.child(self.render_select_menu_item(
                 "workspace-context-mark-read".into(),
-                "Mark as Read",
+                "Mark as read",
                 None,
                 ui,
                 cx.listener(move |this, _: &ClickEvent, _window, cx| {
@@ -373,9 +373,9 @@ impl PaneFlowApp {
         context_menu = context_menu.child(self.render_select_menu_item(
             "workspace-context-mute".into(),
             if muted {
-                "Unmute Notifications"
+                "Unmute notifications"
             } else {
-                "Mute Notifications"
+                "Mute notifications"
             },
             None,
             ui,
@@ -391,53 +391,25 @@ impl PaneFlowApp {
         let close_shortcut = self
             .shortcut_for_action("close_workspace")
             .map(|s| SharedString::from(s.to_string()));
-        context_menu = context_menu.child({
-            let hover_bg = with_alpha(ui.text, 0.05);
-            let target_bg = if can_close {
-                hover_bg
-            } else {
-                hover_bg.opacity(0.0)
-            };
-            div()
-                .id("workspace-context-close")
-                .h(px(28.))
-                .px(px(8.))
-                .rounded(px(7.))
-                .flex()
-                .flex_row()
-                .items_center()
-                .gap(px(8.))
-                .text_size(px(12.))
-                .text_color(ui.muted)
-                .when(can_close, |d| d.text_color(ui.text))
-                .animated_hover_bg(hover_bg.opacity(0.0), target_bg)
-                .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+        context_menu = context_menu.child(if can_close {
+            self.render_select_menu_item(
+                "workspace-context-close".into(),
+                "Close workspace (stops its sessions)",
+                close_shortcut,
+                ui,
+                cx.listener(move |this, _: &ClickEvent, window, cx| {
                     cx.stop_propagation();
-                    if can_close {
-                        this.close_workspace_at(idx, window, cx);
-                    } else {
-                        this.workspace_menu_open = None;
-                        cx.notify();
-                    }
-                }))
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w_0()
-                        .overflow_x_hidden()
-                        .whitespace_nowrap()
-                        .text_ellipsis()
-                        .child("Close Workspace (stop sessions)"),
-                )
-                .when_some(close_shortcut, |d, shortcut| {
-                    d.child(
-                        div()
-                            .flex_none()
-                            .text_size(px(10.))
-                            .text_color(ui.muted)
-                            .child(shortcut),
-                    )
-                })
+                    this.close_workspace_at(idx, window, cx);
+                }),
+            )
+            .into_any_element()
+        } else {
+            Self::render_disabled_select_menu_item(
+                "workspace-context-close".into(),
+                "Close workspace (stops its sessions)",
+                ui,
+            )
+            .into_any_element()
         });
 
         deferred(crate::ui_primitives::menu_reveal(
@@ -458,7 +430,7 @@ impl PaneFlowApp {
         let scope = menu.scope;
         let session = *menu.session;
         let menu_pos =
-            clamped_context_menu_position(menu.position, px(220.), px(8. + 2. * 28.), window);
+            clamped_context_menu_position(menu.position, px(220.), menu_height(2., 0.), window);
 
         let mut context_menu = select_menu("session-context-menu", ui)
             .occlude()
@@ -504,7 +476,7 @@ impl PaneFlowApp {
             let resume = session.clone();
             context_menu = context_menu.child(self.render_select_menu_item(
                 "session-context-resume".into(),
-                "Restart",
+                "Resume session",
                 None,
                 ui,
                 cx.listener(move |this, _: &ClickEvent, window, cx| {
@@ -664,7 +636,7 @@ impl PaneFlowApp {
             })
             .child(self.render_select_menu_item(
                 "tab-context-close".into(),
-                "Close (stop sessions)",
+                "Close tab (stops its sessions)",
                 close_shortcut,
                 ui,
                 cx.listener(move |this, _: &ClickEvent, window, cx| {
@@ -803,7 +775,7 @@ impl PaneFlowApp {
         if let Some(value) = full_path {
             context_menu = context_menu.child(self.render_select_menu_item(
                 "pane-context-copy-path".into(),
-                "Copy Path",
+                "Copy path",
                 None,
                 ui,
                 cx.listener(move |this, _: &ClickEvent, _window, cx| {
@@ -816,7 +788,7 @@ impl PaneFlowApp {
         } else {
             context_menu = context_menu.child(Self::render_disabled_select_menu_item(
                 "pane-context-copy-path-disabled".into(),
-                "Copy Path unavailable",
+                "Copy path unavailable",
                 ui,
             ));
         }
@@ -824,7 +796,7 @@ impl PaneFlowApp {
         if let Some(value) = relative_path {
             context_menu = context_menu.child(self.render_select_menu_item(
                 "pane-context-copy-relative-path".into(),
-                "Copy Relative Path",
+                "Copy relative path",
                 None,
                 ui,
                 cx.listener(move |this, _: &ClickEvent, _window, cx| {
@@ -837,7 +809,7 @@ impl PaneFlowApp {
         } else {
             context_menu = context_menu.child(Self::render_disabled_select_menu_item(
                 "pane-context-copy-relative-path-disabled".into(),
-                "Copy Relative Path unavailable",
+                "Copy relative path unavailable",
                 ui,
             ));
         }
@@ -871,9 +843,9 @@ impl PaneFlowApp {
         context_menu = context_menu.child(self.render_select_menu_item(
             "pane-context-detach".into(),
             if source.read(cx).is_detached() {
-                "Return to Workspace"
+                "Return to workspace"
             } else {
-                "Detach into Window"
+                "Detach into window"
             },
             None,
             ui,
@@ -885,7 +857,7 @@ impl PaneFlowApp {
         ));
         context_menu = context_menu.child(self.render_select_menu_item(
             "pane-context-hide".into(),
-            "Hide from Layout (keep running)",
+            "Hide from layout (keeps running)",
             None,
             ui,
             cx.listener(move |this, _: &ClickEvent, _window, cx| {
@@ -896,7 +868,7 @@ impl PaneFlowApp {
         ));
         context_menu = context_menu.child(self.render_select_menu_item(
             "pane-context-close".into(),
-            "Close Pane (stop its sessions)",
+            "Close pane (stops its sessions)",
             None,
             ui,
             cx.listener(move |this, _: &ClickEvent, _window, cx| {
@@ -923,9 +895,8 @@ impl PaneFlowApp {
     ) -> impl IntoElement {
         div()
             .id(id)
-            .h(px(28.))
+            .h(MENU_ROW_HEIGHT)
             .px(px(8.))
-            .rounded(px(7.))
             .flex()
             .flex_row()
             .items_center()
