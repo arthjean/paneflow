@@ -23,6 +23,7 @@ outdir=$(cd "$outdir" && pwd -P)
 host_bin=$(cd "$(dirname "$host_bin")" && pwd -P)/$(basename "$host_bin")
 fixture=$(cd "$(dirname "$fixture")" && pwd -P)/$(basename "$fixture")
 work=$(mktemp -d "${TMPDIR:-/tmp}/pfp.XXXXXX")
+preexisting=" $(pgrep -f "$fixture" | tr '\n' ' ')"
 mkdir -p "$work/home"
 export PANEFLOW_HOME="$work/home"
 
@@ -103,6 +104,12 @@ sleep 6
 sample_phase "$pid" after_stop
 kill -TERM "$pid"
 wait "$pid" 2>/dev/null
-survivors=$(pgrep -f "$fixture" | tr '\n' ' ')
+survivors=""
+for survivor in $(pgrep -f "$fixture"); do
+  case "$preexisting " in
+    *" $survivor "*) ;;
+    *) survivors="$survivors$survivor " ;;
+  esac
+done
 printf '%s\tsurvivors\t%s\n' "$label" "${survivors:-none}" | tee -a "$outdir/memory.tsv"
 rm -rf "$work"
