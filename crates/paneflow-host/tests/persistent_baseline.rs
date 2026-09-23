@@ -24,12 +24,19 @@ const SCENARIOS: [usize; 4] = [0, 1, 10, 50];
 const SETTLE: Duration = Duration::from_secs(4);
 const WINDOW: Duration = Duration::from_secs(10);
 
+fn packaged_or_built(variable: &str, built: &str) -> PathBuf {
+    std::env::var_os(variable).map_or_else(|| PathBuf::from(built), PathBuf::from)
+}
+
 fn host_executable() -> PathBuf {
-    PathBuf::from(env!("CARGO_BIN_EXE_paneflow-host"))
+    packaged_or_built("PANEFLOW_BENCH_HOST", env!("CARGO_BIN_EXE_paneflow-host"))
 }
 
 fn fixture_executable() -> PathBuf {
-    PathBuf::from(env!("CARGO_BIN_EXE_paneflow-session-fixture"))
+    packaged_or_built(
+        "PANEFLOW_BENCH_FIXTURE",
+        env!("CARGO_BIN_EXE_paneflow-session-fixture"),
+    )
 }
 
 #[cfg(windows)]
@@ -403,7 +410,103 @@ fn thread_cpu(pid: u32) -> Attribution {
     Attribution::Prefix15(samples)
 }
 
-#[cfg(not(any(windows, target_os = "linux")))]
+#[cfg(target_os = "macos")]
+const PROC_PIDLISTTHREADS: libc::c_int = 6;
+
+#[cfg(target_os = "macos")]
+fn proc_list<T: Copy>(pid: libc::c_int, flavor: libc::c_int, empty: T) -> Option<Vec<T>> {
+    let mut entries = vec![empty; 256];
+    loop {
+        let capacity = libc::c_int::try_from(entries.len() * std::mem::size_of::<T>()).ok()?;
+        let returned = unsafe {
+            libc::proc_pidinfo(
+                pid,
+                flavor,
+                0,
+                entries.as_mut_ptr().cast::<libc::c_void>(),
+                capacity,
+            )
+        };
+        if returned <= 0 {
+            return None;
+        }
+        let count = returned as usize / std::mem::size_of::<T>();
+        if count < entries.len() {
+            entries.truncate(count);
+            return Some(entries);
+        }
+        entries.resize(entries.len() * 2, empty);
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn task_info(pid: u32) -> Option<libc::proc_taskinfo> {
+    let pid = libc::c_int::try_from(pid).ok()?;
+    let mut info = std::mem::MaybeUninit::<libc::proc_taskinfo>::uninit();
+    let size = std::mem::size_of::<libc::proc_taskinfo>() as libc::c_int;
+    let returned = unsafe {
+        libc::proc_pidinfo(
+            pid,
+            libc::PROC_PIDTASKINFO,
+            0,
+            info.as_mut_ptr().cast::<libc::c_void>(),
+            size,
+        )
+    };
+    (returned == size).then(|| unsafe { info.assume_init() })
+}
+
+#[cfg(target_os = "macos")]
+fn thread_cpu(pid: u32) -> Attribution {
+    let Some(handles) = libc::c_int::try_from(pid)
+        .ok()
+        .and_then(|pid| proc_list(pid, PROC_PIDLISTTHREADS, 0u64))
+    else {
+        return Attribution::Pending(format!(
+            "proc_pidinfo(PROC_PIDLISTTHREADS) failed for {pid}"
+        ));
+    };
+    let mut samples = Vec::new();
+    let mut unavailable = 0usize;
+    for handle in handles {
+        let mut info = std::mem::MaybeUninit::<libc::proc_threadinfo>::uninit();
+        let size = std::mem::size_of::<libc::proc_threadinfo>() as libc::c_int;
+        let returned = unsafe {
+            libc::proc_pidinfo(
+                pid as libc::c_int,
+                libc::PROC_PIDTHREADINFO,
+                handle,
+                info.as_mut_ptr().cast::<libc::c_void>(),
+                size,
+            )
+        };
+        if returned != size {
+            unavailable += 1;
+            continue;
+        }
+        let info = unsafe { info.assume_init() };
+        let name: Vec<u8> = info
+            .pth_name
+            .iter()
+            .take_while(|byte| **byte != 0)
+            .map(|byte| *byte as u8)
+            .collect();
+        samples.push(ThreadCpu {
+            name: String::from_utf8_lossy(&name).into_owned(),
+            cpu_ns: info.pth_user_time + info.pth_system_time,
+        });
+    }
+    if unavailable > 0 || samples.is_empty() {
+        Attribution::Pending(format!(
+            "thread CPU incomplete: {} measured, {unavailable} unavailable",
+            samples.len()
+        ))
+    } else {
+        Attribution::Exact(samples)
+    }
+}
+
+#[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
 fn thread_cpu(_pid: u32) -> Attribution {
     Attribution::Pending(
         "per-thread CPU attribution on this platform needs proc_pidinfo(PROC_PIDTHREADINFO); not implemented"
@@ -442,7 +545,12 @@ fn resident_bytes(pid: u32) -> Option<u64> {
         .map(|kib| kib * 1024)
 }
 
-#[cfg(not(any(windows, target_os = "linux")))]
+#[cfg(target_os = "macos")]
+fn resident_bytes(pid: u32) -> Option<u64> {
+    task_info(pid).map(|info| info.pti_resident_size)
+}
+
+#[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
 fn resident_bytes(_pid: u32) -> Option<u64> {
     None
 }
@@ -510,7 +618,21 @@ fn process_counters(pid: u32) -> (Option<u64>, Option<u64>) {
     (threads, fds)
 }
 
-#[cfg(not(any(windows, target_os = "linux")))]
+#[cfg(target_os = "macos")]
+fn process_counters(pid: u32) -> (Option<u64>, Option<u64>) {
+    let threads = task_info(pid).and_then(|info| u64::try_from(info.pti_threadnum).ok());
+    let empty = libc::proc_fdinfo {
+        proc_fd: 0,
+        proc_fdtype: 0,
+    };
+    let fds = libc::c_int::try_from(pid)
+        .ok()
+        .and_then(|pid| proc_list(pid, libc::PROC_PIDLISTFDS, empty))
+        .map(|entries| entries.len() as u64);
+    (threads, fds)
+}
+
+#[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
 fn process_counters(_pid: u32) -> (Option<u64>, Option<u64>) {
     (None, None)
 }
@@ -520,7 +642,7 @@ fn counters_json(pid: u32) -> Value {
     json!({
         "threads": threads,
         "handles_or_fds": handles,
-        "note": if threads.is_none() || handles.is_none() { "unavailable on this platform sampler; never zero" } else { "Windows handles or Linux descriptors plus thread count" },
+        "note": if threads.is_none() || handles.is_none() { "unavailable on this platform sampler; never zero" } else { "Windows handles, or Linux and macOS descriptors, plus thread count" },
     })
 }
 

@@ -72,8 +72,8 @@ working graphical session and display a benchmark window.
 
 Anything the runner cannot measure is written as `pending` with the reason,
 never as a zero. The default run has headless followers; worker and native
-desktop numbers require their respective options. Per-thread attribution on
-macOS is not implemented. Linux `comm` truncates names to 15 bytes; ambiguous
+desktop numbers require their respective options. macOS attributes CPU per
+thread through `proc_pidinfo` with full thread names. Linux `comm` truncates names to 15 bytes; ambiguous
 prefixes are reported as merged, never attributed to a guessed worker. Thread
 CPU deltas aggregate duplicate names before subtracting the baseline. These
 short samples establish a baseline, not the 300-second, three-repetition
