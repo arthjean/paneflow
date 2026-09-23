@@ -1899,7 +1899,7 @@ mod tests {
         let mut spec = echo_shell_spec(80, 24);
         spec.args = vec![
             "-c".into(),
-            "sleep 0.3; (trap '' HUP; exec sleep 30) & exit 0".into(),
+            "trap '' HUP; sleep 0.3; sleep 30 & exit 0".into(),
         ];
         let runtime = SessionRuntime::spawn(spec, SessionGeneration::FIRST, Arc::new(|_| {}))
             .expect("shell spawns");
