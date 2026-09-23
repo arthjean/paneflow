@@ -67,6 +67,13 @@ boundaries it touched and invalidates the evidence that depends on them:
 | Packaging or update relay | `packaging/`, `src-app/src/app/bootstrap.rs`, `src-app/src/app/ipc_handler.rs` | Package preparation and upgrade cells on the affected OS |
 | Scripts, fixtures, harness only | `scripts/`, `crates/paneflow-host/src/bin/`, `crates/paneflow-host/tests/` | Nothing, once the new harness passes the seeded-failure test |
 
+A change confined to `#[cfg(test)]` code in a file of this table invalidates
+nothing when two candidate manifests (`scripts/candidate-manifest.sh`), built
+for the same target before and after the change, record the same SHA-256 for
+the desktop, the host, the fixture, every helper, and every engine archive.
+A differing hash, or a manifest pair that cannot be compared, applies the
+file's row. The report names both manifests and the commits between them.
+
 Shared lifecycle, IPC, or engine changes therefore require renewed core
 evidence (W01-W06) on all four shipping triples, not only on the OS where the
 change was noticed. The rerun records the new `candidate_sha`; earlier
