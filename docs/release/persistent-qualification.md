@@ -78,8 +78,8 @@ artifacts stay archived under their own SHA and are not merged.
 |---|---|---|---|---|
 | WIN10 | Windows 10 x64 | x86_64 | MSI | no: assumed equivalent to WIN11 and recorded as untested in the report |
 | WIN11 | Windows 11 x64 | x86_64 | MSI | yes |
-| LIN-X64 | Linux x86_64 (Fedora and Ubuntu/Debian, Wayland and X11) | x86_64 | deb, rpm, AppImage/tarball | yes |
-| LIN-ARM64 | Linux aarch64 | aarch64 | deb, rpm | yes, endurance shortened to 2 h |
+| LIN-X64 | Fedora x86_64 natively (GNOME Wayland, and X11 through XWayland); Ubuntu, Debian, Arch, and openSUSE as host-only containers | x86_64 | tarball built like `release.yml` (ubuntu-22.04) | yes; per-distribution Wayland and X11 smokes and a native Xorg session are recorded `unavailable` |
+| LIN-ARM64 | Linux aarch64 | aarch64 | none exercised | yes, through the native `Linux aarch64` job of `run_tests.yml` (clippy, workspace tests, release build) at the candidate SHA; render smoke, performance, and endurance are recorded `unavailable` |
 | MAC-ARM | macOS Apple Silicon | aarch64 | DMG/app bundle | yes |
 | MAC-X64 | macOS Intel | x86_64 | app bundle | when hardware is available; recorded as `unavailable` otherwise, never as passed |
 
@@ -105,7 +105,9 @@ required cell is a release blocker (NFR-14).
   the files under `%USERPROFILE%\.paneflow\cache\conpty\<version>\` (`host.status`
   does not report it).
 - Linux: `/proc` readable for the host, worker, and desktop PIDs (thread and fd
-  sampling).
+  sampling). The socket directory (`XDG_RUNTIME_DIR`, else `TMPDIR`, else
+  `/tmp`) must leave the endpoint under the 108-byte `sun_path` limit; a longer
+  path is refused with an explicit error.
 - macOS: thread and handle sampling is not implemented by the harness; those
   fields are `pending` and the report supplies `sample`/`vmmap` output.
 
@@ -148,6 +150,31 @@ The PowerShell script takes `-WithWorker`, `-WithDesktop`, `-Quick`,
 budget; any value below the W08 row marks the artifact `rehearsal`. The document
 is rewritten at every sample, so a deadlock or a watchdog panic leaves the last
 sample on disk.
+
+### Linux host lifecycle checks
+
+`scripts/qualify-linux-host.sh` drives the packaged `paneflow-host` (and the
+desktop's `paneflow host` verbs when the desktop loads) through the Unix
+ownership cases on any distribution, in a private home and socket directory,
+and writes one tab-separated ledger row per check: L02 socket mode, L03
+process groups, L04 owner lock, L05 occupied endpoint, L06 a descendant that
+holds the PTY after its root exits, L07 SIGSTOP/SIGCONT during output, L08
+missing runtime libraries, L09 a read-only sessions directory, L10 host
+SIGKILL then restart (lost state, no launch), L11 a corrupt manifest, L12 an
+explicit restart, L13 detached `paneflow host start` and `host stop`, L14 no
+surviving fixture. It exits nonzero when a check fails. L09 needs a non-root
+user.
+
+```bash
+scripts/qualify-linux-host.sh --app <extracted paneflow.app> \
+  --fixture target/release/paneflow-session-fixture \
+  --out <evidence dir>/ledger.tsv --route "<distribution and install route>"
+```
+
+Each distribution runs it twice: in the bare image, where the desktop cannot
+load and L08 proves the missing-library path leaves the host untouched, and
+again after installing the runtime libraries the `.deb` and `.rpm` declare in
+`src-app/Cargo.toml`.
 
 ## Thresholds
 
@@ -197,6 +224,9 @@ Each run writes `bench/results/persistent-<stamp>-<sha>.json` with
 - `fixtures`: every fixture identity (PID and kernel start time) the run
   owned, and the survivors at the end.
 - `allocator`: `none added`; native allocations are covered by OS profiling.
+  On Linux glibc the host caps malloc arenas at 2 unless `MALLOC_ARENA_MAX`
+  is set, and trims the heap when a session runtime retires, so the W05 and
+  W08 resident-memory decisions measure retained memory, not cached arenas.
 - `comparison`: the human-readable table printed at the end of the run.
 
 The run exits nonzero when any decision fails; the artifact is retained. The
@@ -208,7 +238,8 @@ and installed paths, the candidate manifest, screenshots or recordings for the
 interactive cells, and one row per cell of the matrix below with `pass`,
 `fail`, `unavailable`, or `pending` and a reason. Reports live under
 `docs/release/qualification/`, one file per OS and date, for example
-[windows-20260922.md](qualification/windows-20260922.md).
+[windows-20260922.md](qualification/windows-20260922.md) and
+[linux-20260923.md](qualification/linux-20260923.md).
 
 ## Platform flush contract
 
@@ -277,7 +308,7 @@ inferred pass.
 | A15 | `every_unattached_session_is_listed_exactly_once_across_workspaces_and_the_fallback_group`, `a_fallback_workspace_prefers_the_recorded_cwd_and_falls_back_to_home` | D-04, D-05 |
 | A16 | `natural_exit_retains_the_final_view_on_every_branch`, `an_exit_without_output_ends_the_follower_and_leaves_an_empty_completed_text` | D-06 |
 | A17 | `a_scan_waiting_to_persist_cannot_overwrite_a_restarted_generation`, `a_marker_captured_under_generation_one_is_dropped_once_generation_two_runs`, `a_scan_waiting_to_persist_cannot_recreate_a_removed_record` | none required |
-| A18 | `h01_root_exit_and_pty_hangup_do_not_prove_descendant_exit`, `descendants_remain_recoverable_after_the_parent_exits`, `a_held_open_descendant_bounds_the_final_drain_and_marks_the_output_incomplete` | D-09 |
+| A18 | `h01_root_exit_and_pty_hangup_do_not_prove_descendant_exit`, `descendants_remain_recoverable_after_the_parent_exits`, `a_held_open_descendant_bounds_the_final_drain_and_marks_the_output_incomplete`, `a_descendant_started_just_before_the_root_exits_stays_owned_until_the_stop` (Linux) | D-09, Linux L06 |
 
 ### Functional requirements
 
@@ -317,7 +348,7 @@ inferred pass.
 | NFR-10 | `shutdown_deadline_is_shared_by_stalled_stops_and_keeps_inspection_responsive`, `a_startup_deadline_then_cancellation_retains_the_late_child`, `a_held_open_descendant_bounds_the_final_drain_and_marks_the_output_incomplete` | D-09 |
 | NFR-11 | `NFR-11.worker_cycles`, `concurrent_restarts_of_one_generation_commit_at_most_one_new_generation`, the three idle-control tests | W08 100 desktop and 100 worker cycles |
 | NFR-12 | `NFR-12.host_shutdown`, `NFR-12.fixture_orphans` | W08 endurance per OS |
-| NFR-13 | `an_oversized_control_frame_is_rejected_without_buffering_it`, `the_named_pipe_acl_has_no_world_or_authenticated_user_grant`, `the_unix_socket_is_owner_read_write_only`, `an_unverifiable_pid_stays_non_resumable_and_is_never_signaled` | process-safety cells |
+| NFR-13 | `an_oversized_control_frame_is_rejected_without_buffering_it`, `the_named_pipe_acl_has_no_world_or_authenticated_user_grant`, `the_unix_socket_is_owner_read_write_only`, `a_served_endpoint_is_never_taken_over_while_a_stale_one_is_reclaimed`, `an_unverifiable_pid_stays_non_resumable_and_is_never_signaled` | process-safety cells, Linux L02, L05 |
 | NFR-14 | this ledger | one row per required cell in each report |
 | NFR-15 | `every_retained_end_state_restores_without_creating_a_process`, `a_stop_all_outcome_separates_unresolved_ownership_from_durability_failures`, `every_unattached_session_is_listed_exactly_once_across_workspaces_and_the_fallback_group` | D-01, D-04, D-09 |
 
@@ -352,6 +383,7 @@ inferred pass.
 | 25 Natural exit | `natural_exit_retains_the_final_view_on_every_branch`, `a_natural_exit_keeps_a_cold_record_releases_the_runtime_and_removal_drops_the_text` | D-06 |
 | 26 Worker restarts | `workload_worker_replacement` (`NFR-11.worker_cycles`), `a_host_restart_marks_a_busy_record_stale_instead_of_idle`, `revisioned_host_snapshots_recover_a_lost_notification_and_reject_queued_older_events` | D-02, D-03 |
 | 27 Detached list fails | `an_unreadable_record_is_skipped_and_the_rest_of_the_listing_survives` | none required |
+| 28 Occupied endpoint | `a_served_endpoint_is_never_taken_over_while_a_stale_one_is_reclaimed` | Linux L05 |
 
 ## Agent Runtime System integration
 

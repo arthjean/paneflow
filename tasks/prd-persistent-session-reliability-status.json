@@ -41,7 +41,7 @@
     {
       "id": "EP-005",
       "title": "Linux Qualification",
-      "status": "TODO",
+      "status": "IN_REVIEW",
       "priority": "P0",
       "stories_total": 2,
       "stories_done": 0
@@ -310,13 +310,13 @@
       "id": "US-017",
       "title": "Qualify Linux lifecycle, distribution, and desktop paths",
       "epic": "EP-005",
-      "status": "TODO",
+      "status": "IN_REVIEW",
       "priority": "P0",
       "size": "XL",
       "blocked_by": [
         "US-014"
       ],
-      "started_at": null,
+      "started_at": "2026-09-22",
       "completed_at": null,
       "reviewed_at": null
     },
@@ -324,13 +324,13 @@
       "id": "US-018",
       "title": "Qualify Linux CPU, memory, and endurance",
       "epic": "EP-005",
-      "status": "TODO",
+      "status": "IN_REVIEW",
       "priority": "P0",
       "size": "L",
       "blocked_by": [
         "US-017"
       ],
-      "started_at": null,
+      "started_at": "2026-09-22",
       "completed_at": null,
       "reviewed_at": null
     },

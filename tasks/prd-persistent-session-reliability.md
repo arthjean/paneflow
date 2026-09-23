@@ -7,6 +7,7 @@
 |---------|------|--------|---------|
 | 1.0 | 2026-09-19 | Arthur Jean | Persistent-session audit remediation, host ownership and resource refactor, and separate Windows, Linux, and macOS qualification epics |
 | 1.1 | 2026-09-21 | Arthur Jean | Rebase on the existing host/worker/desktop topology; incorporate the Herdr and Unpeel audit; specify non-launching restoration, confirmed stop outcomes, passive ended panes, detached-session access, and generation guards for all asynchronous producers |
+| 1.2 | 2026-09-22 | Arthur Jean | Amend the EP-005 Linux qualification scope: ARM64 evidence from the native CI job, Fedora as the only full native cell, other distributions as container host-only evidence, an endurance rehearsal instead of the 8-hour run, and a short manual smoke instead of the interactive passes |
 
 ## Problem Statement
 
@@ -542,6 +543,8 @@ Exercise the fully implemented system on native Windows 11 x64 with the actual b
 
 Verify the complete host and desktop on Linux x64 and ARM64, including distribution packaging and both supported desktop protocols.
 
+Scope amended by Arthur on 2026-09-22. Native Linux ARM64 hardware is not available: ARM64 evidence is the native `ubuntu-22.04-arm` CI job (clippy, workspace tests, release build) at the candidate SHA, with no ARM64 render smoke, performance matrix, or endurance run. Fedora x64 on the qualification machine is the only full native cell: GNOME Wayland, and X11 through XWayland, recorded as XWayland and not as a native Xorg session. Ubuntu, Debian, Arch, and openSUSE run host lifecycle checks from the portable tarball in containers and are host-only evidence; their Wayland and X11 application smokes are recorded `unavailable`. The 8-hour W08 run is replaced by a rehearsal, and the interactive D-cell passes by a short manual smoke that Arthur runs on Fedora.
+
 **Definition of Done:** US-017 and US-018 are reviewed; required native target, distribution, and desktop coverage is explicit; core lifecycle and performance budgets pass without extrapolating from Windows or from a headless-only run.
 
 #### US-017: Qualify Linux lifecycle, distribution, and desktop paths
@@ -552,14 +555,13 @@ Verify the complete host and desktop on Linux x64 and ARM64, including distribut
 **Dependencies:** Blocked by US-014
 
 **Acceptance Criteria:**
-- [ ] Native Linux x64 and ARM64 execute the full headless lifecycle/fault matrix at the candidate SHA; emulator-only runs are labeled supplementary and do not replace native PTY/process evidence.
-- [ ] Fedora, Ubuntu, Debian, Arch, and openSUSE execute installed-package/portable-package host lifecycle checks, with exact distribution, kernel, libc, and installation route recorded.
-- [ ] Every listed distribution receives a Wayland and X11 application smoke in an actual compositor/display session, including attach, output, resize, and reopen. Containers without such a session are host-only evidence.
-- [ ] At least Fedora Wayland and Ubuntu X11 receive an interactive native GUI pass for keep-running, workspace rediscovery, first input, paste, search, and final output; the ARM64 target receives an application render/attach smoke on a native graphics-capable environment.
-- [ ] Those interactive passes execute the Desktop lifecycle and recovery actions table, including worker death/replacement, zero-launch restoration, fallback rows without an original workspace/cwd, passive ended panes on all terminal surfaces, and an unresolved stop-all that keeps the desktop open.
+- [ ] Native Fedora x64 runs `cargo test --workspace --locked` green at the candidate SHA, and the native `ubuntu-22.04-arm` CI job runs clippy, workspace tests, and the release build green at the same SHA; no emulator run is presented as ARM64 evidence.
+- [ ] Fedora, Ubuntu, Debian, Arch, and openSUSE execute host lifecycle checks from the candidate's portable tarball, in containers for every distribution other than the qualification machine's, with exact distribution, kernel, libc, and installation route recorded. Container results are host-only evidence.
+- [ ] Fedora receives a native application run in both a GNOME Wayland session and an X11 session through XWayland, each covering attach, output, resize, and reopen through the harness `--with-desktop` restoration. The Wayland and X11 smokes of the other distributions and any native Xorg session are recorded `unavailable`.
+- [ ] Arthur runs a short manual smoke of the release desktop on Fedora: close with Keep running then reopen, kill the host then reopen (lost state with Retry, no shell launched), and Stop everything with a session that ignores termination (desktop stays open). The result is recorded in the report; the remaining D-cells stay as the reference checklist.
 - [ ] Unix ownership checks cover socket permissions, owner locks, process groups, detached host lifetime, held-open PTY descriptors, interrupted I/O, and host/desktop termination without assuming that EOF proves all descendants exited.
 - [ ] Unsupported/missing package dependencies, an occupied endpoint, corrupt state, and a denied manifest directory preserve unrelated/live processes and return recoverable errors.
-- [ ] Missing distribution, architecture, or display access remains visibly unverified and prevents certification of this story's required matrix.
+- [ ] Every cell outside the amended scope (ARM64 render and attach, per-distribution Wayland and X11, native Xorg) remains visibly `unavailable` in the report and is never counted as passed.
 
 #### US-018: Qualify Linux CPU, memory, and endurance
 **Description:** As a Linux user, I want measured resource behavior and reclamation on both shipping Linux architectures.
@@ -569,10 +571,10 @@ Verify the complete host and desktop on Linux x64 and ARM64, including distribut
 **Dependencies:** Blocked by US-017
 
 **Acceptance Criteria:**
-- [ ] W01-W08 run natively on the designated x64 machine and native ARM64 machine, with independent per-machine baselines and no cross-architecture ratio presented as an optimization result.
+- [ ] W01-W08 run natively on the Fedora x64 qualification machine with its own baseline; ARM64 performance is recorded `unavailable` and no cross-architecture ratio is presented as an optimization result.
 - [ ] Heaptrack before/after captures include native terminal allocations; CPU flamegraphs cover idle and output workloads. RSS/PSS, private memory where available, threads, and FDs are recorded alongside ownership counters.
-- [ ] Wayland and X11 desktop runs distinguish GPU/rendering work from host/IPC work. A software-rendered CI environment is identified and not used as the hardware performance reference.
-- [ ] At least the primary x64 Linux environment completes the 8-hour endurance workload; ARM64 completes the full short matrix and a 2-hour endurance run with zero ownership leaks and the same resource bounds.
+- [ ] Wayland and X11 (XWayland) desktop runs distinguish GPU/rendering work from host/IPC work. A software-rendered CI environment is identified and not used as the hardware performance reference.
+- [ ] A W08 endurance rehearsal on Fedora x64 passes every decision (idle first input echoed once, retained identities unchanged, no orphan, no ownership-counter growth); the 8-hour run is optional and the ARM64 2-hour run is not required.
 - [ ] Threshold misses, accumulating FDs, unconfirmed descendants, or unavailable native metrics remain explicit blockers or missing evidence, and the report identifies the affected case and next action.
 
 ---
@@ -697,8 +699,8 @@ Native terminal memory, image resources, allocator overhead, and thread stacks a
 | Platform | Required automated evidence | Required native interactive/performance evidence |
 |----------|-----------------------------|----------------------------------------------------|
 | Windows x64 | Native Rust/lifecycle gates and packaged helper checks | Windows 11 native suites, harness workloads, and manual smoke; Windows 10 assumed equivalent; 8-hour soak optional |
-| Linux x64 | Native gates; Fedora, Ubuntu, Debian, Arch, openSUSE package/core cases; Wayland/X11 application smoke per distribution | Fedora Wayland and Ubuntu X11 interactive passes; x64 performance host and 8-hour soak |
-| Linux ARM64 | Native gates and full core/fault matrix | Native graphics render/attach smoke; performance matrix and 2-hour soak |
+| Linux x64 | Native gates on Fedora; Ubuntu, Debian, Arch, openSUSE host lifecycle cases from the tarball in containers | Fedora Wayland and X11 (XWayland) harness desktop runs and manual smoke; x64 performance host and endurance rehearsal; 8-hour soak optional |
+| Linux ARM64 | Native `ubuntu-22.04-arm` CI gates: clippy, workspace tests, release build | None required; render smoke, performance matrix, and 2-hour soak recorded unavailable |
 | macOS ARM64 | Actual executed macOS CI gates and available render smoke | Scaleway physical Apple Silicon GUI/core/performance matrix and 8-hour soak in the 24-hour rental |
 | macOS Intel / Windows ARM64 | Preserve applicable portable source paths | Not shipping with the current archive manifest; no qualification claim in this delivery |
 
