@@ -28,6 +28,12 @@ Rent only when every item holds at one candidate SHA:
    The job summary shows the package SHA-256 and the runner rehearsal ledger.
 4. The current quote below has been re-read on the day of provisioning.
 
+Before paying, the same workflow dispatched with `-f full_rehearsal=true`
+also runs the full host and worker protocol and the W08 endurance rehearsal
+from the extracted package on the hosted runner. It catches a crash, a
+deadlock, or a missing sample for free; its verdicts are rehearsals on a
+shared virtual machine and never decide a threshold.
+
 A candidate change after the package was built follows the invalidation
 table in the runbook: a change to the session lifecycle, IPC, or engine needs
 a new package and a new rental plan, never a package from an older SHA.

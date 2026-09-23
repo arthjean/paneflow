@@ -6,8 +6,10 @@ name: macos_qualification_package
 # candidate manifest, profiling builds of the candidate and pre-refactor
 # baseline hosts, and the on-machine scripts, all under one SHA256SUMS. The
 # package is then extracted on this runner and exercised through the same
-# preflight and a quick harness run; those verdicts are rehearsals and never
-# decide a threshold. See docs/release/qualification/macos-rental.md.
+# preflight and a quick harness run, plus the full host and worker protocol and
+# the W08 endurance rehearsal when full_rehearsal is set; those verdicts are
+# rehearsals and never decide a threshold. See
+# docs/release/qualification/macos-rental.md.
 on:
   workflow_dispatch:
     inputs:
@@ -21,6 +23,11 @@ on:
         required: false
         type: string
         default: f881c8bcce568c76d96ba7e691a0e26d86154215
+      full_rehearsal:
+        description: "Also run the full host and worker protocol and the W08 endurance rehearsal on the runner"
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -41,7 +48,7 @@ jobs:
   package:
     name: Build and rehearse the macOS qualification package
     runs-on: macos-14
-    timeout-minutes: 150
+    timeout-minutes: 300
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
         with:
@@ -155,6 +162,7 @@ jobs:
       - name: Rehearse the extracted package on this runner
         env:
           NAME: ${{ steps.ids.outputs.name }}
+          FULL_REHEARSAL: ${{ inputs.full_rehearsal }}
         run: |
           rehearsal="$RUNNER_TEMP/rehearsal"
           mkdir -p "$rehearsal"
@@ -168,14 +176,26 @@ jobs:
           bench=$?
           set -e
           ledger=$(ls "$rehearsal"/root/evidence/preflight-*/ledger.tsv)
-          result=$(ls "$pkg"/bench/results/persistent-*.json)
+          result=$(ls -t "$pkg"/bench/results/persistent-*.json | head -n 1)
           for check in M07-package-integrity M12-host M13-desktop M14-evidence-export; do
             grep -q "^$check	pass	" "$ledger"
           done
           jq -e '.workloads.W05.final | (.host_threads != null) and (.host_handles != null) and (.host_resident_bytes != null)' "$result"
           jq -e '.scenarios[-1].host.attribution == "exact thread names"' "$result"
+          full="skipped"
+          endurance="skipped"
+          if [ "$FULL_REHEARSAL" = "true" ]; then
+            set +e
+            "$pkg/scripts/bench-persistent.sh" --prebuilt "$pkg/candidate" --with-worker
+            full=$?
+            PANEFLOW_BENCH_BURST_MINUTES=2 PANEFLOW_BENCH_WORKER_CYCLES=6 PANEFLOW_BENCH_DESKTOP_CYCLES=4 PANEFLOW_BENCH_SAMPLE_SECONDS=30 \
+              "$pkg/scripts/bench-persistent.sh" --prebuilt "$pkg/candidate" --with-desktop --endurance 12 --idle-minutes 4
+            endurance=$?
+            set -e
+            ls "$pkg"/bench/results/persistent-endurance-*.json >/dev/null
+          fi
           mkdir -p "$RUNNER_TEMP/rehearsal-evidence"
-          cp -R "$(dirname "$ledger")" "$result" "$RUNNER_TEMP/rehearsal-evidence/"
+          cp -R "$(dirname "$ledger")" "$pkg/bench/results" "$RUNNER_TEMP/rehearsal-evidence/"
           {
             echo "## macOS qualification package"
             echo
@@ -185,6 +205,8 @@ jobs:
             echo "| SHA-256 | \`$(cut -d' ' -f1 "$RUNNER_TEMP/out/$NAME.tar.gz.sha256")\` |"
             echo "| Preflight exit (runner, rehearsal) | $preflight |"
             echo "| Quick harness exit (shared runner, rehearsal, never decides a threshold) | $bench |"
+            echo "| Full host and worker protocol exit (rehearsal) | $full |"
+            echo "| W08 endurance rehearsal exit (rehearsal) | $endurance |"
             echo
             echo '```'
             cat "$ledger"
