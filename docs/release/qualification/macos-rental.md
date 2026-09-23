@@ -1,12 +1,15 @@
 # macOS qualification on a rented Apple Silicon Mac
 
-This runbook prepares and executes the macOS half of the persistent-path
-qualification ([persistent-qualification.md](../persistent-qualification.md))
-on a Scaleway Mac mini rented for 24 hours. Everything that can be done
-without the Mac is done before the rental starts, so the paid window is spent
-on native evidence only. It covers the `MAC-ARM` cell. macOS Intel, physical
-peripherals, local display latency, and notarized distribution are outside
-this rental and stay `unavailable` unless exercised separately.
+The required macOS evidence comes from the hosted runner
+([macOS on the hosted runner](../persistent-qualification.md#macos-on-the-hosted-runner)).
+This runbook is the optional route that adds what a shared VM cannot give: a
+Scaleway Mac mini rented for 24 hours for dedicated-hardware performance, an
+interactive manual smoke on a physical Mac, and local-display latency.
+Everything that can be done without the Mac is done before the rental starts,
+so the paid window is spent on native evidence only. Its results add cells to
+the macOS report; they do not rewrite the hosted-runner verdicts. macOS
+Intel, physical peripherals, and notarized distribution stay `unavailable`
+unless exercised separately.
 
 Provisioning, payment, and deletion are the operator's actions. Nothing in
 this repository creates or deletes a rental.
@@ -22,17 +25,17 @@ Rent only when every item holds at one candidate SHA:
    `macOS aarch64 render smoke (visual)`:
    `gh workflow run run_tests.yml --ref main`, then check the run for the
    candidate SHA.
-3. `macos_qualification_package.yml` is green for the same SHA:
-   `gh workflow run macos_qualification_package.yml -f candidate_ref=<sha>`.
+3. `macos_qualification_package.yml` is green for the same SHA with the full
+   protocol:
+   `gh workflow run macos_qualification_package.yml -f candidate_ref=<sha> -f full_protocol=true`.
    Its artifact is kept 30 days; a package older than that must be rebuilt.
-   The job summary shows the package SHA-256 and the runner rehearsal ledger.
+   The job summary shows the package SHA-256 and the preflight ledger.
 4. The current quote below has been re-read on the day of provisioning.
 
-Before paying, the same workflow dispatched with `-f full_rehearsal=true`
-also runs the full host and worker protocol and the W08 endurance rehearsal
-from the extracted package on the hosted runner. It catches a crash, a
-deadlock, or a missing sample for free; its verdicts are rehearsals on a
-shared virtual machine and never decide a threshold.
+Dispatched with `-f full_protocol=true`, the same workflow runs the full
+protocol, the W08 endurance rehearsal, and the host profiles from the
+extracted package on the hosted runner. That run is the required macOS
+evidence; a rental adds to it and never replaces a failing one.
 
 A candidate change after the package was built follows the invalidation
 table in the runbook: a change to the session lifecycle, IPC, or engine needs
@@ -165,7 +168,7 @@ export path before the evidence matters.
 
 A failed M03, M04, M12, or M13 stops the qualification: record the Mac as
 unavailable for the cells that need it and never substitute a pass. The
-package workflow's rehearsal runs on a virtual `macos-14` runner whose
+package workflow runs on a virtual `macos-14` runner whose
 paravirtual GPU has no Graphics/Displays section in `system_profiler`, so M04
 fails there while M13 still renders through Metal; on the physical Mac mini
 both must pass.

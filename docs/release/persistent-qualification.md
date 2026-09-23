@@ -98,7 +98,10 @@ required cell is a release blocker (NFR-14).
   `-WithDesktop`); Wayland and X11 are separate cells on Linux.
 - No competing load on the qualification machine for performance cells. Shared
   CI runners run the functional cases and archive timings but never decide
-  performance thresholds.
+  performance thresholds, with one exception: macOS has no dedicated
+  qualification machine, so the hosted Apple Silicon runner decides the macOS
+  harness thresholds, recorded as a shared VM (see
+  [macOS on the hosted runner](#macos-on-the-hosted-runner)).
 - Windows: the bundled ConPTY from `native/conpty/manifest.json` must be the
   one the host loads; the run records the loaded module path, version, and
   SHA-256, taken from the `OpenConsole.exe` command line of a live session and
@@ -110,9 +113,7 @@ required cell is a release blocker (NFR-14).
   path is refused with an explicit error.
 - macOS: the harness samples resident memory, threads, descriptors, and
   per-thread CPU through `proc_pidinfo`; the report adds `vmmap` physical
-  footprint and `sample` call trees from `scripts/profile-host-macos.sh`. The
-  rented-Mac procedure, package, and schedule are in
-  [qualification/macos-rental.md](qualification/macos-rental.md).
+  footprint and `sample` call trees from `scripts/profile-host-macos.sh`.
 
 ## Workloads and inputs
 
@@ -189,6 +190,45 @@ Each distribution runs it twice: in the bare image, where the desktop cannot
 load and L08 proves the missing-library path leaves the host untouched, and
 again after installing the runtime libraries the `.deb` and `.rpm` declare in
 `src-app/Cargo.toml`.
+
+### macOS on the hosted runner
+
+The `MAC-ARM` cell is qualified on the hosted `macos-14` runner, an Apple M1
+virtual machine with a console graphical session. Two runs at the candidate
+SHA make the evidence:
+
+```bash
+gh workflow run run_tests.yml --ref main
+gh workflow run macos_qualification_package.yml -f candidate_ref=<sha> -f full_protocol=true
+```
+
+The first forces every leg, including `macOS aarch64 smoke build` (fmt,
+clippy, workspace tests, release build) and `macOS aarch64 render smoke
+(visual)`. The second builds the qualification package described in
+[qualification/macos-rental.md](qualification/macos-rental.md#package-contents),
+extracts it on the same runner, and runs from it, without Cargo:
+`scripts/qualify-macos-preflight.sh`, a quick run, the full protocol with the
+worker and the desktop, the W08 endurance rehearsal, and
+`scripts/profile-host-macos.sh` in memory and CPU mode for the candidate host
+and then the pre-refactor baseline host. The job fails when the full
+protocol, the rehearsal, a profile, or the candidate's survivor check fails,
+or when M07, M12, M13, or M14 does not pass. M04 fails on this VM, because
+`system_profiler` reports no Metal support there, while M13 renders the
+desktop window under GPUI and captures it; the report records both as
+observed.
+
+The job summary carries the package SHA-256, every exit code, the preflight
+ledger, and the memory table. The artifact `<package>-evidence` holds the
+preflight directory with its screenshot, the harness result documents, and
+the profiles, for 30 days; the report commits what it cites.
+
+These verdicts are shared-VM results. `NFR-08.throughput_ratio` stays
+`unavailable` without a matched baseline, and the paired baseline and
+candidate profiles from the same job stand in for the comparison.
+Dedicated-hardware performance, an interactive manual smoke on a physical
+Mac, local-display latency, and the 480 min run are recorded `unavailable`.
+Renting a physical Mac to fill those cells is optional and follows
+[qualification/macos-rental.md](qualification/macos-rental.md).
 
 ## Thresholds
 
@@ -388,7 +428,7 @@ inferred pass.
 | 16 Concurrent create/restart/remove | `concurrent_restarts_of_one_generation_commit_at_most_one_new_generation`, `a_requested_session_id_is_created_once_and_never_silently_replaced` | none required |
 | 17 Permission revoked | `a_failed_final_revision_is_retained_and_retried_after_storage_recovers`, `a_lost_data_directory_reports_unavailable_text_without_blocking_retirement` | D-10 |
 | 18 Unknown agent during close | `an_unknown_agent_state_asks_instead_of_passing_for_an_idle_shell` | D-08 |
-| 19 Rental unavailable | none; recorded as `unavailable` in the macOS report | MAC cells |
+| 19 Hosted macOS runner unavailable | none; the qualification stays incomplete and is recorded in the macOS report | MAC cells |
 | 20 Runtime panic | `a_panicked_runtime_keeps_ownership_until_a_stop_confirms_the_exit`, `a_runtime_panic_keeps_the_child_owned_until_an_explicit_stop_confirms_its_exit` | none required |
 | 21 Restore absent/ended session | `every_retained_end_state_restores_without_creating_a_process`, `a_pane_restored_into_an_ended_session_resumes_without_an_attachment` | D-07 |
 | 22 Stop-all is incomplete | `a_stop_all_outcome_separates_unresolved_ownership_from_durability_failures`, `shutdown_keeps_unsaved_final_state_owned_until_retry_succeeds` | D-09, D-10 |
