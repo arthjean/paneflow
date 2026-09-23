@@ -1,0 +1,1353 @@
+{
+  "acceptance_grade": false,
+  "allocator": "no custom global allocator in the host or the fixture; native memory comes from OS counters",
+  "commit": "afd3e18a32ae52507c24b6ac26682b9ec18d7b16",
+  "commit_short": "afd3e18a32ae",
+  "comparison": {
+    "baseline": null,
+    "text": "decision | observed | threshold | result\nNFR-05.memory_after_endurance | 1576960.0 | <= max(16 MiB, 10% of warmed) | pass\nNFR-05.threads_after_endurance | 0.0 | <= 2 | pass\nNFR-05.handles_after_endurance | 0.0 | <= 2 | pass\nNFR-04.burst_release | 5.0 | all 5 within 5 s | pass\nNFR-11.worker_cycles | 6.0 | all 6 cycles | pass\nNFR-11.desktop_cycles | 4.0 | all 4 cycles | pass\nNFR-11.idle_first_input | 1.0 | == 1 | pass\nNFR-12.retained_identities | 24.0 | all 24 | pass\nNFR-12.ownership_counters | 0.0 | == 0, and the final sample owns exactly the retained set | pass\nNFR-12.host_shutdown | 1.0 | acknowledged and exited within 10 s | pass\nNFR-12.fixture_orphans | 0.0 | == 0 | pass\n"
+  },
+  "controller": {
+    "bytes": 86268544,
+    "fnv1a64": "43747b8af460a6fd",
+    "path": "/home/arthur/dev/paneflow/target/release/paneflow"
+  },
+  "controller_replacement": null,
+  "diff": {
+    "bytes": 506161,
+    "dirty": true,
+    "fnv1a64": "2c3b6a53b34f5cbf",
+    "untracked_paths": [
+      "bench/results/candidate-afd3e18a32ae-x86_64-unknown-linux-gnu.json",
+      "bench/results/persistent-20260923T185725Z-afd3e18a32ae.json",
+      "bench/results/persistent-20260923T190101Z-afd3e18a32ae.json",
+      "bench/results/persistent-20260923T190426Z-afd3e18a32ae.json",
+      "bench/results/persistent-20260923T190810Z-afd3e18a32ae.json"
+    ]
+  },
+  "engine": {
+    "api_version": "0.1.0",
+    "app_version": "1.3.2-dev+0c2a290d3",
+    "engine": "libghostty-vt",
+    "source_sha": "0c2a290d3a3e2a599be3a43435d778a5896667ee"
+  },
+  "executables": {
+    "fixture": {
+      "bytes": 407232,
+      "fnv1a64": "a28f9bf4aa0b42fb",
+      "path": "/home/arthur/dev/paneflow/target/release/paneflow-session-fixture"
+    },
+    "host": {
+      "bytes": 6741592,
+      "fnv1a64": "57632d0f0f5a12eb",
+      "path": "/home/arthur/dev/paneflow/target/release/paneflow-host"
+    }
+  },
+  "fixtures": {
+    "cleanup": "only recorded session/process identities are checked; the host owns and stops its fixtures on a private PANEFLOW_HOME",
+    "host_exited": true,
+    "host_shutdown": {
+      "ended_sessions": 0,
+      "host_instance": "2812f93e-627d-4fb7-b3cf-84c35018a966",
+      "stopping": true,
+      "unresolved": []
+    },
+    "owned": 60,
+    "survivors_after_shutdown": []
+  },
+  "host": {
+    "build_id": "0.16.0+0c2a290d3a3e",
+    "protocol": 1,
+    "version": "0.16.0"
+  },
+  "invocation": {
+    "args": [
+      "/home/arthur/dev/paneflow/target/release/deps/persistent_baseline-1214a9b5b0f73f09",
+      "persistent_session_endurance",
+      "--ignored",
+      "--exact",
+      "--nocapture",
+      "--test-threads=1"
+    ],
+    "fixture": "/home/arthur/dev/paneflow/target/release/paneflow-session-fixture",
+    "test": "persistent_session_endurance"
+  },
+  "machine": {
+    "arch": "x86_64",
+    "cpu_model": "AMD Ryzen 7 7800X3D 8-Core Processor",
+    "hostname_hash": "1cf58166f5604e43",
+    "logical_cpus": 16,
+    "os": "linux",
+    "os_build": "Linux dune 7.2.6-200.fc44.x86_64 #1 SMP PREEMPT_DYNAMIC Mon Sep 14 22:22:41 UTC 2026 x86_64 GNU/Linux",
+    "total_ram_bytes": 32746192896
+  },
+  "native_environments": {
+    "linux": true,
+    "macos": false,
+    "note": "false means pending, not passed",
+    "windows": false
+  },
+  "plan": {
+    "acceptance_grade": false,
+    "burst_interval_s": 120,
+    "burst_size": 10,
+    "desktop_cycles": 4,
+    "duration_s": 720,
+    "idle_s": 240,
+    "label": "rehearsal",
+    "required_duration_s": 28800,
+    "retained_sessions": 10,
+    "sample_interval_s": 30,
+    "worker_cycles": 6
+  },
+  "prior_failures": [],
+  "protocol": "rehearsal",
+  "pty": "posix openpty via portable-pty 0.9",
+  "retained": [
+    "7635110a-74bc-4d35-ba8b-2372d039b9ff",
+    "e2f69e1b-2480-48bd-a112-2dd9911ae6bd",
+    "3f67cb03-c1c9-4b66-9fb0-1461aae91ee7",
+    "086e7a07-0051-433b-87dd-cd416f5802ca",
+    "b8311dd0-f641-483f-946d-1c6a8383d2d9",
+    "b950dd6b-9b13-464e-bb7a-5fa3fda5141c",
+    "2ace8c0b-e302-4df9-a61a-a414ad41c0de",
+    "52f14dde-d058-45f6-bf1b-e0a6fd58cd19",
+    "d508dabf-63df-42b3-8124-139ebaf2b2b0",
+    "3be8cc74-c64b-4c39-b754-8dbc14705589"
+  ],
+  "retry_policy": "none: the scripts never retry; a rerun passes PANEFLOW_BENCH_PRIOR_RESULT so the first failure stays in the evidence",
+  "schema_version": 3,
+  "source_unchanged_during_measurement": true,
+  "stamp": "20260923T191154Z",
+  "status": "complete",
+  "suite": "paneflow-persistent-endurance",
+  "thresholds": [
+    {
+      "id": "NFR-05.memory_after_endurance",
+      "metric": "host resident bytes at the end minus the first post-warmup sample",
+      "observed": 1576960.0,
+      "reason": "",
+      "result": "pass",
+      "threshold": "<= max(16 MiB, 10% of warmed)",
+      "workload": "W08"
+    },
+    {
+      "id": "NFR-05.threads_after_endurance",
+      "metric": "host threads at the end minus the first post-warmup sample",
+      "observed": 0.0,
+      "reason": "",
+      "result": "pass",
+      "threshold": "<= 2",
+      "workload": "W08"
+    },
+    {
+      "id": "NFR-05.handles_after_endurance",
+      "metric": "host handles or file descriptors at the end minus the first post-warmup sample",
+      "observed": 0.0,
+      "reason": "",
+      "result": "pass",
+      "threshold": "<= 2",
+      "workload": "W08"
+    },
+    {
+      "id": "NFR-04.burst_release",
+      "metric": "bursts whose runtimes released within the reclaim budget",
+      "observed": 5.0,
+      "reason": "",
+      "result": "pass",
+      "threshold": "all 5 within 5 s",
+      "workload": "W08"
+    },
+    {
+      "id": "NFR-11.worker_cycles",
+      "metric": "worker cycles with unchanged child identities and generations",
+      "observed": 6.0,
+      "reason": "",
+      "result": "pass",
+      "threshold": "all 6 cycles",
+      "workload": "W08"
+    },
+    {
+      "id": "NFR-11.desktop_cycles",
+      "metric": "desktop detach/reopen cycles with unchanged child identities and generations",
+      "observed": 4.0,
+      "reason": "",
+      "result": "pass",
+      "threshold": "all 4 cycles",
+      "workload": "W08"
+    },
+    {
+      "id": "NFR-11.idle_first_input",
+      "metric": "echoes of the first input on the control connection left untouched for the idle interval",
+      "observed": 1.0,
+      "reason": "",
+      "result": "pass",
+      "threshold": "== 1",
+      "workload": "W08"
+    },
+    {
+      "id": "NFR-12.retained_identities",
+      "metric": "identity checks where every retained session kept its generation and process",
+      "observed": 24.0,
+      "reason": "",
+      "result": "pass",
+      "threshold": "all 24",
+      "workload": "W08"
+    },
+    {
+      "id": "NFR-12.ownership_counters",
+      "metric": "samples where live runtimes, pending launches, or unresolved descendants exceeded the retained set plus one burst",
+      "observed": 0.0,
+      "reason": "",
+      "result": "pass",
+      "threshold": "== 0, and the final sample owns exactly the retained set",
+      "workload": "W08"
+    },
+    {
+      "id": "NFR-12.host_shutdown",
+      "metric": "host process exited after an acknowledged shutdown",
+      "observed": 1.0,
+      "reason": "",
+      "result": "pass",
+      "threshold": "acknowledged and exited within 10 s",
+      "workload": "harness"
+    },
+    {
+      "id": "NFR-12.fixture_orphans",
+      "metric": "fixture processes still alive after host shutdown",
+      "observed": 0.0,
+      "reason": "",
+      "result": "pass",
+      "threshold": "== 0",
+      "workload": "harness"
+    }
+  ],
+  "toolchain": {
+    "profile": "release",
+    "rustc": "rustc 1.98.0 (88d9e12ae 2026-08-18)"
+  },
+  "topology": "host-worker-native-desktop",
+  "workloads": {
+    "W08": {
+      "bursts": [
+        {
+          "burst": 0,
+          "elapsed_ms": 79.401386,
+          "runtime_reclaimed_ms": 0.21559899999999999,
+          "sessions": 10,
+          "unreclaimed": null
+        },
+        {
+          "burst": 1,
+          "elapsed_ms": 64.38063199999999,
+          "runtime_reclaimed_ms": 0.13072,
+          "sessions": 10,
+          "unreclaimed": null
+        },
+        {
+          "burst": 2,
+          "elapsed_ms": 69.170888,
+          "runtime_reclaimed_ms": 0.11637,
+          "sessions": 10,
+          "unreclaimed": null
+        },
+        {
+          "burst": 3,
+          "elapsed_ms": 64.344004,
+          "runtime_reclaimed_ms": 0.15467899999999998,
+          "sessions": 10,
+          "unreclaimed": null
+        },
+        {
+          "burst": 4,
+          "elapsed_ms": 68.68378899999999,
+          "runtime_reclaimed_ms": 0.15087,
+          "sessions": 10,
+          "unreclaimed": null
+        }
+      ],
+      "desktop_cycles": [
+        {
+          "cycle": 0,
+          "elapsed_s": 301,
+          "identities_unchanged": true,
+          "ready_ms": 988.8921339999999
+        },
+        {
+          "cycle": 1,
+          "elapsed_s": 421,
+          "identities_unchanged": true,
+          "ready_ms": 1069.79673
+        },
+        {
+          "cycle": 2,
+          "elapsed_s": 541,
+          "identities_unchanged": true,
+          "ready_ms": 994.222128
+        },
+        {
+          "cycle": 3,
+          "elapsed_s": 661,
+          "identities_unchanged": true,
+          "ready_ms": 1103.488435
+        }
+      ],
+      "elapsed_s": 720,
+      "identity_checks": [
+        {
+          "elapsed_s": 30,
+          "unchanged": true
+        },
+        {
+          "elapsed_s": 60,
+          "unchanged": true
+        },
+        {
+          "elapsed_s": 90,
+          "unchanged": true
+        },
+        {
+          "elapsed_s": 120,
+          "unchanged": true
+        },
+        {
+          "elapsed_s": 150,
+          "unchanged": true
+        },
+        {
+          "elapsed_s": 180,
+          "unchanged": true
+        },
+        {
+          "elapsed_s": 210,
+          "unchanged": true
+        },
+        {
+          "elapsed_s": 240,
+          "unchanged": true
+        },
+        {
+          "elapsed_s": 270,
+          "unchanged": true
+        },
+        {
+          "elapsed_s": 300,
+          "unchanged": true
+        },
+        {
+          "elapsed_s": 330,
+          "unchanged": true
+        },
+        {
+          "elapsed_s": 360,
+          "unchanged": true
+        },
+        {
+          "elapsed_s": 390,
+          "unchanged": true
+        },
+        {
+          "elapsed_s": 420,
+          "unchanged": true
+        },
+        {
+          "elapsed_s": 450,
+          "unchanged": true
+        },
+        {
+          "elapsed_s": 480,
+          "unchanged": true
+        },
+        {
+          "elapsed_s": 510,
+          "unchanged": true
+        },
+        {
+          "elapsed_s": 540,
+          "unchanged": true
+        },
+        {
+          "elapsed_s": 570,
+          "unchanged": true
+        },
+        {
+          "elapsed_s": 600,
+          "unchanged": true
+        },
+        {
+          "elapsed_s": 630,
+          "unchanged": true
+        },
+        {
+          "elapsed_s": 660,
+          "unchanged": true
+        },
+        {
+          "elapsed_s": 690,
+          "unchanged": true
+        },
+        {
+          "elapsed_s": 720,
+          "unchanged": true
+        }
+      ],
+      "idle_first_input": {
+        "accepted": {
+          "Ok": 15
+        },
+        "echoes": 1,
+        "idle_s": 242,
+        "latency_ms": 0.12216,
+        "sent_bytes": 15,
+        "wait_s": 2.0
+      },
+      "samples": [
+        {
+          "checkpoints": {
+            "active": 0,
+            "budget_bytes": 268435456,
+            "max_concurrent": 2,
+            "peak_staged_bytes": 1169,
+            "refused": 0,
+            "staged_bytes": 0
+          },
+          "elapsed_s": 0,
+          "host_handles": 43,
+          "host_resident_bytes": 10174464,
+          "host_threads": 49,
+          "live_runtimes": 10,
+          "pending_launches": 0,
+          "persistence": {
+            "budget_bytes": 8388608,
+            "metadata_rejected": 0,
+            "peak_queued_bytes": 627,
+            "pending_final_revisions": 0,
+            "queued_bytes": 0,
+            "queued_jobs": 0,
+            "reserved_bytes": 163840
+          },
+          "phase": "start",
+          "retained_descendants_unresolved": 0,
+          "retained_durability_errors": 0,
+          "retained_live": 10,
+          "worker_resident_bytes": 16154624
+        },
+        {
+          "checkpoints": {
+            "active": 0,
+            "budget_bytes": 268435456,
+            "max_concurrent": 2,
+            "peak_staged_bytes": 1169,
+            "refused": 0,
+            "staged_bytes": 0
+          },
+          "elapsed_s": 30,
+          "host_handles": 43,
+          "host_resident_bytes": 10285056,
+          "host_threads": 49,
+          "live_runtimes": 10,
+          "pending_launches": 0,
+          "persistence": {
+            "budget_bytes": 8388608,
+            "metadata_rejected": 0,
+            "peak_queued_bytes": 668,
+            "pending_final_revisions": 0,
+            "queued_bytes": 0,
+            "queued_jobs": 0,
+            "reserved_bytes": 163840
+          },
+          "phase": "idle-control",
+          "retained_descendants_unresolved": 0,
+          "retained_durability_errors": 0,
+          "retained_live": 10,
+          "worker_resident_bytes": 16420864
+        },
+        {
+          "checkpoints": {
+            "active": 0,
+            "budget_bytes": 268435456,
+            "max_concurrent": 2,
+            "peak_staged_bytes": 1169,
+            "refused": 0,
+            "staged_bytes": 0
+          },
+          "elapsed_s": 60,
+          "host_handles": 43,
+          "host_resident_bytes": 10285056,
+          "host_threads": 49,
+          "live_runtimes": 10,
+          "pending_launches": 0,
+          "persistence": {
+            "budget_bytes": 8388608,
+            "metadata_rejected": 0,
+            "peak_queued_bytes": 668,
+            "pending_final_revisions": 0,
+            "queued_bytes": 0,
+            "queued_jobs": 0,
+            "reserved_bytes": 163840
+          },
+          "phase": "idle-control",
+          "retained_descendants_unresolved": 0,
+          "retained_durability_errors": 0,
+          "retained_live": 10,
+          "worker_resident_bytes": 16429056
+        },
+        {
+          "checkpoints": {
+            "active": 0,
+            "budget_bytes": 268435456,
+            "max_concurrent": 2,
+            "peak_staged_bytes": 1169,
+            "refused": 0,
+            "staged_bytes": 0
+          },
+          "elapsed_s": 90,
+          "host_handles": 43,
+          "host_resident_bytes": 10285056,
+          "host_threads": 49,
+          "live_runtimes": 10,
+          "pending_launches": 0,
+          "persistence": {
+            "budget_bytes": 8388608,
+            "metadata_rejected": 0,
+            "peak_queued_bytes": 668,
+            "pending_final_revisions": 0,
+            "queued_bytes": 0,
+            "queued_jobs": 0,
+            "reserved_bytes": 163840
+          },
+          "phase": "idle-control",
+          "retained_descendants_unresolved": 0,
+          "retained_durability_errors": 0,
+          "retained_live": 10,
+          "worker_resident_bytes": 16437248
+        },
+        {
+          "checkpoints": {
+            "active": 0,
+            "budget_bytes": 268435456,
+            "max_concurrent": 2,
+            "peak_staged_bytes": 1169,
+            "refused": 0,
+            "staged_bytes": 0
+          },
+          "elapsed_s": 120,
+          "host_handles": 43,
+          "host_resident_bytes": 10285056,
+          "host_threads": 49,
+          "live_runtimes": 10,
+          "pending_launches": 0,
+          "persistence": {
+            "budget_bytes": 8388608,
+            "metadata_rejected": 0,
+            "peak_queued_bytes": 668,
+            "pending_final_revisions": 0,
+            "queued_bytes": 0,
+            "queued_jobs": 0,
+            "reserved_bytes": 163840
+          },
+          "phase": "idle-control",
+          "retained_descendants_unresolved": 0,
+          "retained_durability_errors": 0,
+          "retained_live": 10,
+          "worker_resident_bytes": 16441344
+        },
+        {
+          "checkpoints": {
+            "active": 0,
+            "budget_bytes": 268435456,
+            "max_concurrent": 2,
+            "peak_staged_bytes": 1169,
+            "refused": 0,
+            "staged_bytes": 0
+          },
+          "elapsed_s": 150,
+          "host_handles": 43,
+          "host_resident_bytes": 11411456,
+          "host_threads": 49,
+          "live_runtimes": 10,
+          "pending_launches": 0,
+          "persistence": {
+            "budget_bytes": 8388608,
+            "metadata_rejected": 0,
+            "peak_queued_bytes": 1435,
+            "pending_final_revisions": 0,
+            "queued_bytes": 0,
+            "queued_jobs": 0,
+            "reserved_bytes": 163840
+          },
+          "phase": "idle-control",
+          "retained_descendants_unresolved": 0,
+          "retained_durability_errors": 0,
+          "retained_live": 10,
+          "worker_resident_bytes": 16441344
+        },
+        {
+          "checkpoints": {
+            "active": 0,
+            "budget_bytes": 268435456,
+            "max_concurrent": 2,
+            "peak_staged_bytes": 1169,
+            "refused": 0,
+            "staged_bytes": 0
+          },
+          "elapsed_s": 180,
+          "host_handles": 43,
+          "host_resident_bytes": 11411456,
+          "host_threads": 49,
+          "live_runtimes": 10,
+          "pending_launches": 0,
+          "persistence": {
+            "budget_bytes": 8388608,
+            "metadata_rejected": 0,
+            "peak_queued_bytes": 1435,
+            "pending_final_revisions": 0,
+            "queued_bytes": 0,
+            "queued_jobs": 0,
+            "reserved_bytes": 163840
+          },
+          "phase": "idle-control",
+          "retained_descendants_unresolved": 0,
+          "retained_durability_errors": 0,
+          "retained_live": 10,
+          "worker_resident_bytes": 16445440
+        },
+        {
+          "checkpoints": {
+            "active": 0,
+            "budget_bytes": 268435456,
+            "max_concurrent": 2,
+            "peak_staged_bytes": 1169,
+            "refused": 0,
+            "staged_bytes": 0
+          },
+          "elapsed_s": 210,
+          "host_handles": 43,
+          "host_resident_bytes": 11411456,
+          "host_threads": 49,
+          "live_runtimes": 10,
+          "pending_launches": 0,
+          "persistence": {
+            "budget_bytes": 8388608,
+            "metadata_rejected": 0,
+            "peak_queued_bytes": 1435,
+            "pending_final_revisions": 0,
+            "queued_bytes": 0,
+            "queued_jobs": 0,
+            "reserved_bytes": 163840
+          },
+          "phase": "idle-control",
+          "retained_descendants_unresolved": 0,
+          "retained_durability_errors": 0,
+          "retained_live": 10,
+          "worker_resident_bytes": 16445440
+        },
+        {
+          "checkpoints": {
+            "active": 0,
+            "budget_bytes": 268435456,
+            "max_concurrent": 2,
+            "peak_staged_bytes": 1169,
+            "refused": 0,
+            "staged_bytes": 0
+          },
+          "elapsed_s": 240,
+          "host_handles": 43,
+          "host_resident_bytes": 11411456,
+          "host_threads": 49,
+          "live_runtimes": 10,
+          "pending_launches": 0,
+          "persistence": {
+            "budget_bytes": 8388608,
+            "metadata_rejected": 0,
+            "peak_queued_bytes": 1435,
+            "pending_final_revisions": 0,
+            "queued_bytes": 0,
+            "queued_jobs": 0,
+            "reserved_bytes": 163840
+          },
+          "phase": "active",
+          "retained_descendants_unresolved": 0,
+          "retained_durability_errors": 0,
+          "retained_live": 10,
+          "worker_resident_bytes": 16445440
+        },
+        {
+          "checkpoints": {
+            "active": 0,
+            "budget_bytes": 268435456,
+            "max_concurrent": 2,
+            "peak_staged_bytes": 1169,
+            "refused": 0,
+            "staged_bytes": 0
+          },
+          "elapsed_s": 270,
+          "host_handles": 43,
+          "host_resident_bytes": 11505664,
+          "host_threads": 49,
+          "live_runtimes": 10,
+          "pending_launches": 0,
+          "persistence": {
+            "budget_bytes": 8388608,
+            "metadata_rejected": 0,
+            "peak_queued_bytes": 1435,
+            "pending_final_revisions": 0,
+            "queued_bytes": 0,
+            "queued_jobs": 0,
+            "reserved_bytes": 163840
+          },
+          "phase": "active",
+          "retained_descendants_unresolved": 0,
+          "retained_durability_errors": 0,
+          "retained_live": 10,
+          "worker_resident_bytes": 16445440
+        },
+        {
+          "checkpoints": {
+            "active": 0,
+            "budget_bytes": 268435456,
+            "max_concurrent": 2,
+            "peak_staged_bytes": 1169,
+            "refused": 0,
+            "staged_bytes": 0
+          },
+          "elapsed_s": 300,
+          "host_handles": 43,
+          "host_resident_bytes": 11542528,
+          "host_threads": 49,
+          "live_runtimes": 10,
+          "pending_launches": 0,
+          "persistence": {
+            "budget_bytes": 8388608,
+            "metadata_rejected": 0,
+            "peak_queued_bytes": 1435,
+            "pending_final_revisions": 0,
+            "queued_bytes": 0,
+            "queued_jobs": 0,
+            "reserved_bytes": 163840
+          },
+          "phase": "active",
+          "retained_descendants_unresolved": 0,
+          "retained_durability_errors": 0,
+          "retained_live": 10,
+          "worker_resident_bytes": 16097280
+        },
+        {
+          "checkpoints": {
+            "active": 0,
+            "budget_bytes": 268435456,
+            "max_concurrent": 2,
+            "peak_staged_bytes": 2338,
+            "refused": 0,
+            "staged_bytes": 0
+          },
+          "elapsed_s": 330,
+          "host_handles": 43,
+          "host_resident_bytes": 11657216,
+          "host_threads": 49,
+          "live_runtimes": 10,
+          "pending_launches": 0,
+          "persistence": {
+            "budget_bytes": 8388608,
+            "metadata_rejected": 0,
+            "peak_queued_bytes": 1435,
+            "pending_final_revisions": 0,
+            "queued_bytes": 0,
+            "queued_jobs": 0,
+            "reserved_bytes": 163840
+          },
+          "phase": "active",
+          "retained_descendants_unresolved": 0,
+          "retained_durability_errors": 0,
+          "retained_live": 10,
+          "worker_resident_bytes": 16248832
+        },
+        {
+          "checkpoints": {
+            "active": 0,
+            "budget_bytes": 268435456,
+            "max_concurrent": 2,
+            "peak_staged_bytes": 2338,
+            "refused": 0,
+            "staged_bytes": 0
+          },
+          "elapsed_s": 360,
+          "host_handles": 43,
+          "host_resident_bytes": 11657216,
+          "host_threads": 49,
+          "live_runtimes": 10,
+          "pending_launches": 0,
+          "persistence": {
+            "budget_bytes": 8388608,
+            "metadata_rejected": 0,
+            "peak_queued_bytes": 1435,
+            "pending_final_revisions": 0,
+            "queued_bytes": 0,
+            "queued_jobs": 0,
+            "reserved_bytes": 163840
+          },
+          "phase": "active",
+          "retained_descendants_unresolved": 0,
+          "retained_durability_errors": 0,
+          "retained_live": 10,
+          "worker_resident_bytes": 16248832
+        },
+        {
+          "checkpoints": {
+            "active": 0,
+            "budget_bytes": 268435456,
+            "max_concurrent": 2,
+            "peak_staged_bytes": 2338,
+            "refused": 0,
+            "staged_bytes": 0
+          },
+          "elapsed_s": 390,
+          "host_handles": 43,
+          "host_resident_bytes": 11968512,
+          "host_threads": 49,
+          "live_runtimes": 10,
+          "pending_launches": 0,
+          "persistence": {
+            "budget_bytes": 8388608,
+            "metadata_rejected": 0,
+            "peak_queued_bytes": 1435,
+            "pending_final_revisions": 0,
+            "queued_bytes": 0,
+            "queued_jobs": 0,
+            "reserved_bytes": 163840
+          },
+          "phase": "active",
+          "retained_descendants_unresolved": 0,
+          "retained_durability_errors": 0,
+          "retained_live": 10,
+          "worker_resident_bytes": 16347136
+        },
+        {
+          "checkpoints": {
+            "active": 0,
+            "budget_bytes": 268435456,
+            "max_concurrent": 2,
+            "peak_staged_bytes": 2338,
+            "refused": 0,
+            "staged_bytes": 0
+          },
+          "elapsed_s": 420,
+          "host_handles": 43,
+          "host_resident_bytes": 11976704,
+          "host_threads": 49,
+          "live_runtimes": 10,
+          "pending_launches": 0,
+          "persistence": {
+            "budget_bytes": 8388608,
+            "metadata_rejected": 0,
+            "peak_queued_bytes": 1435,
+            "pending_final_revisions": 0,
+            "queued_bytes": 0,
+            "queued_jobs": 0,
+            "reserved_bytes": 163840
+          },
+          "phase": "active",
+          "retained_descendants_unresolved": 0,
+          "retained_durability_errors": 0,
+          "retained_live": 10,
+          "worker_resident_bytes": 16355328
+        },
+        {
+          "checkpoints": {
+            "active": 0,
+            "budget_bytes": 268435456,
+            "max_concurrent": 2,
+            "peak_staged_bytes": 2444,
+            "refused": 0,
+            "staged_bytes": 0
+          },
+          "elapsed_s": 450,
+          "host_handles": 43,
+          "host_resident_bytes": 12009472,
+          "host_threads": 49,
+          "live_runtimes": 10,
+          "pending_launches": 0,
+          "persistence": {
+            "budget_bytes": 8388608,
+            "metadata_rejected": 0,
+            "peak_queued_bytes": 1435,
+            "pending_final_revisions": 0,
+            "queued_bytes": 0,
+            "queued_jobs": 0,
+            "reserved_bytes": 163840
+          },
+          "phase": "active",
+          "retained_descendants_unresolved": 0,
+          "retained_durability_errors": 0,
+          "retained_live": 10,
+          "worker_resident_bytes": 16547840
+        },
+        {
+          "checkpoints": {
+            "active": 0,
+            "budget_bytes": 268435456,
+            "max_concurrent": 2,
+            "peak_staged_bytes": 2444,
+            "refused": 0,
+            "staged_bytes": 0
+          },
+          "elapsed_s": 480,
+          "host_handles": 43,
+          "host_resident_bytes": 12009472,
+          "host_threads": 49,
+          "live_runtimes": 10,
+          "pending_launches": 0,
+          "persistence": {
+            "budget_bytes": 8388608,
+            "metadata_rejected": 0,
+            "peak_queued_bytes": 1435,
+            "pending_final_revisions": 0,
+            "queued_bytes": 0,
+            "queued_jobs": 0,
+            "reserved_bytes": 163840
+          },
+          "phase": "active",
+          "retained_descendants_unresolved": 0,
+          "retained_durability_errors": 0,
+          "retained_live": 10,
+          "worker_resident_bytes": 16560128
+        },
+        {
+          "checkpoints": {
+            "active": 0,
+            "budget_bytes": 268435456,
+            "max_concurrent": 2,
+            "peak_staged_bytes": 2444,
+            "refused": 0,
+            "staged_bytes": 0
+          },
+          "elapsed_s": 510,
+          "host_handles": 43,
+          "host_resident_bytes": 11743232,
+          "host_threads": 49,
+          "live_runtimes": 10,
+          "pending_launches": 0,
+          "persistence": {
+            "budget_bytes": 8388608,
+            "metadata_rejected": 0,
+            "peak_queued_bytes": 1435,
+            "pending_final_revisions": 0,
+            "queued_bytes": 0,
+            "queued_jobs": 0,
+            "reserved_bytes": 163840
+          },
+          "phase": "active",
+          "retained_descendants_unresolved": 0,
+          "retained_durability_errors": 0,
+          "retained_live": 10,
+          "worker_resident_bytes": 16625664
+        },
+        {
+          "checkpoints": {
+            "active": 0,
+            "budget_bytes": 268435456,
+            "max_concurrent": 2,
+            "peak_staged_bytes": 2444,
+            "refused": 0,
+            "staged_bytes": 0
+          },
+          "elapsed_s": 540,
+          "host_handles": 43,
+          "host_resident_bytes": 11767808,
+          "host_threads": 49,
+          "live_runtimes": 10,
+          "pending_launches": 0,
+          "persistence": {
+            "budget_bytes": 8388608,
+            "metadata_rejected": 0,
+            "peak_queued_bytes": 1435,
+            "pending_final_revisions": 0,
+            "queued_bytes": 0,
+            "queued_jobs": 0,
+            "reserved_bytes": 163840
+          },
+          "phase": "active",
+          "retained_descendants_unresolved": 0,
+          "retained_durability_errors": 0,
+          "retained_live": 10,
+          "worker_resident_bytes": 16281600
+        },
+        {
+          "checkpoints": {
+            "active": 0,
+            "budget_bytes": 268435456,
+            "max_concurrent": 2,
+            "peak_staged_bytes": 2444,
+            "refused": 0,
+            "staged_bytes": 0
+          },
+          "elapsed_s": 570,
+          "host_handles": 43,
+          "host_resident_bytes": 11812864,
+          "host_threads": 49,
+          "live_runtimes": 10,
+          "pending_launches": 0,
+          "persistence": {
+            "budget_bytes": 8388608,
+            "metadata_rejected": 0,
+            "peak_queued_bytes": 1435,
+            "pending_final_revisions": 0,
+            "queued_bytes": 0,
+            "queued_jobs": 0,
+            "reserved_bytes": 163840
+          },
+          "phase": "active",
+          "retained_descendants_unresolved": 0,
+          "retained_durability_errors": 0,
+          "retained_live": 10,
+          "worker_resident_bytes": 16424960
+        },
+        {
+          "checkpoints": {
+            "active": 0,
+            "budget_bytes": 268435456,
+            "max_concurrent": 2,
+            "peak_staged_bytes": 2444,
+            "refused": 0,
+            "staged_bytes": 0
+          },
+          "elapsed_s": 600,
+          "host_handles": 43,
+          "host_resident_bytes": 11812864,
+          "host_threads": 49,
+          "live_runtimes": 10,
+          "pending_launches": 0,
+          "persistence": {
+            "budget_bytes": 8388608,
+            "metadata_rejected": 0,
+            "peak_queued_bytes": 1435,
+            "pending_final_revisions": 0,
+            "queued_bytes": 0,
+            "queued_jobs": 0,
+            "reserved_bytes": 163840
+          },
+          "phase": "active",
+          "retained_descendants_unresolved": 0,
+          "retained_durability_errors": 0,
+          "retained_live": 10,
+          "worker_resident_bytes": 16424960
+        },
+        {
+          "checkpoints": {
+            "active": 0,
+            "budget_bytes": 268435456,
+            "max_concurrent": 2,
+            "peak_staged_bytes": 2444,
+            "refused": 0,
+            "staged_bytes": 0
+          },
+          "elapsed_s": 630,
+          "host_handles": 43,
+          "host_resident_bytes": 11837440,
+          "host_threads": 49,
+          "live_runtimes": 10,
+          "pending_launches": 0,
+          "persistence": {
+            "budget_bytes": 8388608,
+            "metadata_rejected": 0,
+            "peak_queued_bytes": 1435,
+            "pending_final_revisions": 0,
+            "queued_bytes": 0,
+            "queued_jobs": 0,
+            "reserved_bytes": 163840
+          },
+          "phase": "active",
+          "retained_descendants_unresolved": 0,
+          "retained_durability_errors": 0,
+          "retained_live": 10,
+          "worker_resident_bytes": 16347136
+        },
+        {
+          "checkpoints": {
+            "active": 0,
+            "budget_bytes": 268435456,
+            "max_concurrent": 2,
+            "peak_staged_bytes": 2444,
+            "refused": 0,
+            "staged_bytes": 0
+          },
+          "elapsed_s": 660,
+          "host_handles": 43,
+          "host_resident_bytes": 11841536,
+          "host_threads": 49,
+          "live_runtimes": 10,
+          "pending_launches": 0,
+          "persistence": {
+            "budget_bytes": 8388608,
+            "metadata_rejected": 0,
+            "peak_queued_bytes": 1435,
+            "pending_final_revisions": 0,
+            "queued_bytes": 0,
+            "queued_jobs": 0,
+            "reserved_bytes": 163840
+          },
+          "phase": "active",
+          "retained_descendants_unresolved": 0,
+          "retained_durability_errors": 0,
+          "retained_live": 10,
+          "worker_resident_bytes": 16355328
+        },
+        {
+          "checkpoints": {
+            "active": 0,
+            "budget_bytes": 268435456,
+            "max_concurrent": 2,
+            "peak_staged_bytes": 2444,
+            "refused": 0,
+            "staged_bytes": 0
+          },
+          "elapsed_s": 690,
+          "host_handles": 43,
+          "host_resident_bytes": 11862016,
+          "host_threads": 49,
+          "live_runtimes": 10,
+          "pending_launches": 0,
+          "persistence": {
+            "budget_bytes": 8388608,
+            "metadata_rejected": 0,
+            "peak_queued_bytes": 1435,
+            "pending_final_revisions": 0,
+            "queued_bytes": 0,
+            "queued_jobs": 0,
+            "reserved_bytes": 163840
+          },
+          "phase": "active",
+          "retained_descendants_unresolved": 0,
+          "retained_durability_errors": 0,
+          "retained_live": 10,
+          "worker_resident_bytes": 16027648
+        },
+        {
+          "checkpoints": {
+            "active": 0,
+            "budget_bytes": 268435456,
+            "max_concurrent": 2,
+            "peak_staged_bytes": 2444,
+            "refused": 0,
+            "staged_bytes": 0
+          },
+          "elapsed_s": 720,
+          "host_handles": 43,
+          "host_resident_bytes": 11862016,
+          "host_threads": 49,
+          "live_runtimes": 10,
+          "pending_launches": 0,
+          "persistence": {
+            "budget_bytes": 8388608,
+            "metadata_rejected": 0,
+            "peak_queued_bytes": 1435,
+            "pending_final_revisions": 0,
+            "queued_bytes": 0,
+            "queued_jobs": 0,
+            "reserved_bytes": 163840
+          },
+          "phase": "end",
+          "retained_descendants_unresolved": 0,
+          "retained_durability_errors": 0,
+          "retained_live": 10,
+          "worker_resident_bytes": 16039936
+        }
+      ],
+      "status": "measured",
+      "worker_cycles": [
+        {
+          "build_replacement": false,
+          "core_connected": true,
+          "cycle": 0,
+          "elapsed_s": 280,
+          "identities_unchanged": true,
+          "kind": "crash",
+          "projection_sessions": 10,
+          "restart_ms": 51.021577,
+          "worker_error": null,
+          "worker_status": {
+            "capabilities": [
+              "agent.snapshot",
+              "agent.follow",
+              "restart.recommendation",
+              "control.proxy",
+              "fleet.projection",
+              "integrations.refresh",
+              "activity.reducer",
+              "activity.notifications",
+              "agent.unread",
+              "agent.activity_log"
+            ],
+            "core_connected": true,
+            "endpoint": "/run/user/1000/paneflow-serve-ffacdadc46eaa2d7.sock",
+            "home": "/tmp/.tmp63NmtJ",
+            "pid": 1059486,
+            "protocol": 1,
+            "session_count": 10,
+            "version": "0.16.0"
+          }
+        },
+        {
+          "build_replacement": false,
+          "core_connected": true,
+          "cycle": 1,
+          "elapsed_s": 360,
+          "identities_unchanged": true,
+          "kind": "deliberate restart",
+          "projection_sessions": 10,
+          "restart_ms": 175.820578,
+          "worker_error": null,
+          "worker_status": {
+            "capabilities": [
+              "agent.snapshot",
+              "agent.follow",
+              "restart.recommendation",
+              "control.proxy",
+              "fleet.projection",
+              "integrations.refresh",
+              "activity.reducer",
+              "activity.notifications",
+              "agent.unread",
+              "agent.activity_log"
+            ],
+            "core_connected": true,
+            "endpoint": "/run/user/1000/paneflow-serve-ffacdadc46eaa2d7.sock",
+            "home": "/tmp/.tmp63NmtJ",
+            "pid": 1060221,
+            "protocol": 1,
+            "session_count": 10,
+            "version": "0.16.0"
+          }
+        },
+        {
+          "build_replacement": false,
+          "core_connected": true,
+          "cycle": 2,
+          "elapsed_s": 440,
+          "identities_unchanged": true,
+          "kind": "crash",
+          "projection_sessions": 10,
+          "restart_ms": 50.852017,
+          "worker_error": null,
+          "worker_status": {
+            "capabilities": [
+              "agent.snapshot",
+              "agent.follow",
+              "restart.recommendation",
+              "control.proxy",
+              "fleet.projection",
+              "integrations.refresh",
+              "activity.reducer",
+              "activity.notifications",
+              "agent.unread",
+              "agent.activity_log"
+            ],
+            "core_connected": true,
+            "endpoint": "/run/user/1000/paneflow-serve-ffacdadc46eaa2d7.sock",
+            "home": "/tmp/.tmp63NmtJ",
+            "pid": 1060834,
+            "protocol": 1,
+            "session_count": 10,
+            "version": "0.16.0"
+          }
+        },
+        {
+          "build_replacement": false,
+          "core_connected": true,
+          "cycle": 3,
+          "elapsed_s": 520,
+          "identities_unchanged": true,
+          "kind": "deliberate restart",
+          "projection_sessions": 10,
+          "restart_ms": 150.715623,
+          "worker_error": null,
+          "worker_status": {
+            "capabilities": [
+              "agent.snapshot",
+              "agent.follow",
+              "restart.recommendation",
+              "control.proxy",
+              "fleet.projection",
+              "integrations.refresh",
+              "activity.reducer",
+              "activity.notifications",
+              "agent.unread",
+              "agent.activity_log"
+            ],
+            "core_connected": true,
+            "endpoint": "/run/user/1000/paneflow-serve-ffacdadc46eaa2d7.sock",
+            "home": "/tmp/.tmp63NmtJ",
+            "pid": 1061357,
+            "protocol": 1,
+            "session_count": 10,
+            "version": "0.16.0"
+          }
+        },
+        {
+          "build_replacement": false,
+          "core_connected": true,
+          "cycle": 4,
+          "elapsed_s": 600,
+          "identities_unchanged": true,
+          "kind": "crash",
+          "projection_sessions": 10,
+          "restart_ms": 101.360255,
+          "worker_error": null,
+          "worker_status": {
+            "capabilities": [
+              "agent.snapshot",
+              "agent.follow",
+              "restart.recommendation",
+              "control.proxy",
+              "fleet.projection",
+              "integrations.refresh",
+              "activity.reducer",
+              "activity.notifications",
+              "agent.unread",
+              "agent.activity_log"
+            ],
+            "core_connected": true,
+            "endpoint": "/run/user/1000/paneflow-serve-ffacdadc46eaa2d7.sock",
+            "home": "/tmp/.tmp63NmtJ",
+            "pid": 1064212,
+            "protocol": 1,
+            "session_count": 10,
+            "version": "0.16.0"
+          }
+        },
+        {
+          "build_replacement": false,
+          "core_connected": true,
+          "cycle": 5,
+          "elapsed_s": 680,
+          "identities_unchanged": true,
+          "kind": "deliberate restart",
+          "projection_sessions": 10,
+          "restart_ms": 175.759918,
+          "worker_error": null,
+          "worker_status": {
+            "capabilities": [
+              "agent.snapshot",
+              "agent.follow",
+              "restart.recommendation",
+              "control.proxy",
+              "fleet.projection",
+              "integrations.refresh",
+              "activity.reducer",
+              "activity.notifications",
+              "agent.unread",
+              "agent.activity_log"
+            ],
+            "core_connected": true,
+            "endpoint": "/run/user/1000/paneflow-serve-ffacdadc46eaa2d7.sock",
+            "home": "/tmp/.tmp63NmtJ",
+            "pid": 1076579,
+            "protocol": 1,
+            "session_count": 10,
+            "version": "0.16.0"
+          }
+        }
+      ]
+    }
+  }
+}
