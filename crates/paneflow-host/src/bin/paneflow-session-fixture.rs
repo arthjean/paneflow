@@ -67,6 +67,14 @@ fn idle() -> Result<(), u8> {
 }
 
 fn echo() -> Result<(), u8> {
+    #[cfg(unix)]
+    unsafe {
+        let mut termios: libc::termios = std::mem::zeroed();
+        if libc::tcgetattr(libc::STDIN_FILENO, &mut termios) == 0 {
+            termios.c_lflag &= !libc::ECHO;
+            libc::tcsetattr(libc::STDIN_FILENO, libc::TCSANOW, &termios);
+        }
+    }
     announce("fixture echo")?;
     let mut stdin = std::io::stdin().lock();
     let mut stdout = std::io::stdout().lock();
