@@ -48,7 +48,7 @@
     },
     {
       "id": "EP-006",
-      "title": "macOS Qualification on a 24-Hour Scaleway Rental",
+      "title": "macOS Qualification on the Hosted Apple Silicon Runner",
       "status": "IN_PROGRESS",
       "priority": "P0",
       "stories_total": 2,
@@ -336,7 +336,7 @@
     },
     {
       "id": "US-019",
-      "title": "Prepare the macOS qualification package before rental",
+      "title": "Prepare the macOS qualification package",
       "epic": "EP-006",
       "status": "IN_REVIEW",
       "priority": "P0",
@@ -350,7 +350,7 @@
     },
     {
       "id": "US-020",
-      "title": "Execute and report native macOS qualification",
+      "title": "Execute and report macOS qualification",
       "epic": "EP-006",
       "status": "TODO",
       "priority": "P0",

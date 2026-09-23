@@ -11,6 +11,7 @@
 | 1.3 | 2026-09-23 | Arthur Jean | Remove the 300 s, three-run W01 window from every qualification: NFR-01 is decided on the harness short window |
 | 1.4 | 2026-09-23 | Arthur Jean | Drop the Stop-everything check from the Linux manual smoke: a non-root user cannot start a pane process that survives the stop, so the unresolved stop-all path is covered by automated tests |
 | 1.5 | 2026-09-23 | Arthur Jean | Align the EP-006 macOS qualification with EP-004 and EP-005: the W08 evidence is an endurance rehearsal that passes every decision, and the 8-hour run is optional on every platform; NFR-11 cycle counts and NFR-12 follow |
+| 1.6 | 2026-09-23 | Arthur Jean | Replace the EP-006 Scaleway rental with evidence from the hosted macOS ARM64 runner: the CI gates and render smoke, then one package workflow run with the preflight, the full protocol, the W08 endurance rehearsal, and paired baseline/candidate host profiles, decide macOS at the candidate SHA; dedicated-hardware performance, an interactive manual smoke on a physical Mac, local-display latency, and the 8-hour run are recorded `unavailable`; the rental stays an optional route |
 
 ## Problem Statement
 
@@ -29,7 +30,7 @@
 
 Preserve Paneflow's detached host and libghostty architecture. Introduce one generation-aware lifecycle authority per session, event-driven output and exit delivery, explicit startup ownership, bounded queues, and a serialized persistence service outside PTY processing. Separate a live runtime from a completed session record. Consume attachment snapshots once and release live resources after confirmed exit and final-output handling.
 
-This is one integrated delivery with three implementation epics followed by three platform qualification epics. Every implementation story includes a working Windows, Linux, and macOS path. The platform epics exercise the completed system; they are not deferred platform ports. Windows and Linux use native test environments. macOS uses existing CI plus a user-provisioned Apple Silicon Mac at Scaleway for a 24-hour interactive qualification window.
+This is one integrated delivery with three implementation epics followed by three platform qualification epics. Every implementation story includes a working Windows, Linux, and macOS path. The platform epics exercise the completed system; they are not deferred platform ports. Windows and Linux use native test environments. macOS uses the hosted Apple Silicon CI runner: the CI gates and render smoke, then a packaged qualification run on the same kind of virtual machine, with the cells that need physical hardware recorded `unavailable` (amended in v1.6).
 
 The scope is the persistent core, its existing `paneflow serve` consumer, and desktop attachment/lifecycle behavior. The separate **Agent Runtime System** PRD continues to own the worker architecture, activity reducer, provider catalog, and remote Controller work. The worker already exists and is part of every integrated qualification here; scoped consumer changes may be needed to adopt the persistent-core contract, without redesigning the reducer or certifying the other PRD. This delivery does not introduce another worker, a second process owner, continuous terminal journaling, process resurrection after host death, or new shipping architectures.
 
@@ -153,7 +154,8 @@ The selected design uses Herdr as evidence for explicit ownership and staged tra
 - Windows pseudoconsole closure and child-process exit are separate facts. Close behavior differs across console versions, and output servicing must not deadlock against input or shutdown. Test the bundled ConPTY, not a guessed OS implementation. [Microsoft closure semantics](https://learn.microsoft.com/en-us/windows/console/closepseudoconsole), [pseudoconsole I/O guidance](https://learn.microsoft.com/en-us/windows/console/creating-a-pseudoconsole-session).
 - Windows `TerminateProcess` requires a handle with `PROCESS_TERMINATE` and is asynchronous for another process; successful signaling is not completion. Retained handles and a wait outcome establish child completion separately from descendant cleanup. [Microsoft termination contract](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-terminateprocess).
 - Standard GitHub-hosted macOS runners are free for public repositories; larger runners are not covered by that statement. The repository currently ships only macOS ARM64 despite Intel runners being available. [GitHub runner reference](https://docs.github.com/en/actions/reference/runners/github-hosted-runners).
-- Scaleway offers physical Apple Silicon hosts with SSH/VNC and a 24-hour minimum rental. The earlier M1 estimate was EUR 0.11/hour, or EUR 2.64 for 24 hours before applicable taxes and extras. This PRD does not guarantee that quote or availability; US-019 verifies both before provisioning. [Scaleway quickstart](https://www.scaleway.com/en/docs/apple-silicon/quickstart/), [pricing](https://www.scaleway.com/en/pricing/apple-silicon/), [minimum rental FAQ](https://www.scaleway.com/en/docs/apple-silicon/faq/).
+- The hosted `macos-14` runner is an Apple M1 virtual machine (`VirtualMac2,1`, 3 vCPUs, 7 GiB) with a console graphical session. `system_profiler` reports no Metal support there, yet the packaged desktop renders its window under GPUI: preflight M03 and M13 pass with a screenshot and M04 fails, in package workflow run 35860309088 on 2026-09-23. It is a shared VM, so its timings are not dedicated-hardware evidence, and one job runs at most 6 hours. [GitHub runner reference](https://docs.github.com/en/actions/reference/runners/github-hosted-runners), [job limits](https://docs.github.com/en/actions/reference/limits).
+- Scaleway offers physical Apple Silicon hosts with SSH/VNC and a 24-hour minimum rental; on 2026-09-23 the M4-S Mac mini was listed at EUR 0.22/hour, about EUR 5.28 for 24 hours before tax. Since v1.6 the rental is an optional route for the `unavailable` macOS cells, not a requirement. [Scaleway quickstart](https://www.scaleway.com/en/docs/apple-silicon/quickstart/), [pricing](https://www.scaleway.com/en/pricing/apple-silicon/), [minimum rental FAQ](https://www.scaleway.com/en/docs/apple-silicon/faq/).
 
 ## Assumptions & Constraints
 
@@ -165,7 +167,7 @@ The selected design uses Herdr as evidence for explicit ownership and staged tra
 | H02 | Existing operation ownership can retain a synchronous launch after caller timeout and safely clean up a late child without an untracked process | High | US-001 injects a delayed launch; US-004 implements ownership through completion. A wedged launch remains explicitly pending and blocks replacement. |
 | H03 | Snapshot and ended-runtime retention materially contribute to observed RAM concerns | Medium | US-001 records ownership counters and native memory; US-008/009 must prove release even if total RSS reductions are smaller than expected. |
 | H04 | The initial NFR budgets are achievable without changing the terminal engine or introducing a disk journal | Medium | US-001 measures the baseline, US-013 measures the candidate. A miss requires a diagnosed fix or an explicit PRD revision, not silently raised thresholds. |
-| H05 | A compatible Apple Silicon Scaleway host and an interactive Metal session are available within the chosen rental window | Medium | US-019 checks availability, OS, access instructions, and budget; US-020 verifies actual access and Metal before qualification. Missing access prevents certification. |
+| H05 | The hosted macOS ARM64 runner runs the packaged host and desktop in its graphical session and renders the GPUI window | Low | Observed on 2026-09-23 in package workflow run 35860309088 (M03 and M13 pass, screenshot); US-020 verifies it again at the candidate SHA. A failure leaves macOS unqualified; the optional rental is then the fallback route, at Arthur's decision. |
 | H06 | The existing worker and its viewport/cancellation inputs can adopt the persistent-core contract without duplicating process ownership or regressing agent projection | Medium | US-003 validates generation barriers; US-013/014 exercise worker death/restart and record consumer integration. Neither PRD is auto-certified from the other's tracker. |
 
 ### Hard Constraints
@@ -179,7 +181,7 @@ The selected design uses Herdr as evidence for explicit ownership and staged tra
 - Keep the Rust 1.98.0 toolchain, existing `portable-pty` 0.9.0 and `interprocess` 2.4.3 unless a demonstrated requirement justifies a scoped dependency change. No new Tokio reactor, database, or always-running service is part of this design.
 - Keep all per-user state under the established `paneflow-home` layout. No new global config/cache directory and no continuous raw-output journal.
 - Preserve unrelated dirty files and existing PRDs. This document and its tracker live in local, ignored `tasks/`; tracked code and documentation must not reference this local path.
-- This delivery does not authorize a rental, deployment, release, tag, issue closure, or purchase. Arthur will provision the agreed 24-hour Mac when its preparation gate is satisfied. Qualification uses isolated fixtures and the exact candidate artifacts.
+- This delivery does not authorize a rental, deployment, release, tag, issue closure, or purchase. Since v1.6 macOS qualification needs no rental; an optional rental stays Arthur's decision and purchase. Qualification uses isolated fixtures and the exact candidate artifacts.
 - Follow the repository's no-source-comments rule, helper size limits, locking rules, and attribution policy. Documentation and UI copy use US English.
 
 ### Cross-PRD ownership and sequencing
@@ -582,16 +584,16 @@ Scope amended by Arthur on 2026-09-22. Native Linux ARM64 hardware is not availa
 
 ---
 
-### EP-006: macOS Qualification on a 24-Hour Scaleway Rental
+### EP-006: macOS Qualification on the Hosted Apple Silicon Runner
 
-Prepare everything before Arthur provisions the rental, then validate the completed Apple Silicon application, host, and resource budgets on the physical remote Mac.
+Validate the completed Apple Silicon application, host, and resource budgets from the packaged candidate on the hosted `macos-14` runner, with every cell that needs physical hardware or a person at the Mac recorded explicitly.
 
-Scope amended by Arthur on 2026-09-23, matching EP-004 and EP-005: the W08 evidence on the rented Mac is an endurance rehearsal that passes every decision, and the 8-hour run is optional. A rehearsal of the package on the hosted macOS runner may precede the rental; it never decides a threshold.
+Scope amended by Arthur on 2026-09-23, matching EP-004 and EP-005. v1.5: the W08 evidence is an endurance rehearsal that passes every decision, and the 8-hour run is optional. v1.6: no rental is required. The macOS evidence is the CI gates and render smoke at the candidate SHA, plus one run of the package workflow that builds the qualification package, preflights it, and runs the full host, worker, and desktop protocol, the W08 endurance rehearsal, and paired baseline/candidate host profiles on the same hosted VM. Its verdicts are the macOS decisions of record on a shared virtual machine. Dedicated-hardware performance, an interactive manual smoke on a physical Mac, local-display latency, and the 8-hour run are recorded `unavailable`. The rental runbook stays as an optional route that can add those cells later.
 
-**Definition of Done:** US-019 preparation and US-020 execution are reviewed; the candidate has native macOS ARM64 lifecycle, UI, and performance evidence; artifacts are exported and rental termination is verified. No Intel macOS qualification is implied.
+**Definition of Done:** US-019 and US-020 are reviewed; the candidate has macOS ARM64 CI gate, render, lifecycle, and resource evidence from the hosted runner at the candidate SHA; the `unavailable` cells are explicit in the report; the raw evidence is committed with it. No Intel macOS or physical-hardware qualification is implied.
 
-#### US-019: Prepare the macOS qualification package before rental
-**Description:** As the operator, I want the build, baseline, scenarios, and remote-access checklist ready before paying for the 24-hour Mac window.
+#### US-019: Prepare the macOS qualification package
+**Description:** As the operator, I want the build, baseline, scenarios, and on-machine checks packaged and rehearsed, so macOS qualification runs the exact candidate artifacts without compiling on the measuring machine.
 
 **Priority:** P0
 **Size:** L (5 pts)
@@ -599,14 +601,13 @@ Scope amended by Arthur on 2026-09-23, matching EP-004 and EP-005: the W08 evide
 
 **Acceptance Criteria:**
 - [ ] macOS ARM64 CI has actually executed candidate build, lint, tests, and available render smoke, and artifacts include matching desktop/host/helpers, engine identity, fixture, sampler, and checksums.
-- [ ] The pre-refactor baseline and candidate packages can run in separate isolated homes on the rented Mac without rebuilding the full project during the paid window; debug symbols and optional profiling instructions are prepared separately.
-- [ ] Arthur receives a preflight with current hourly quote, applicable taxes/extras, available Apple Silicon model, compatible macOS image, minimum rental, expected total, and explicit termination procedure. The earlier EUR 2.64 estimate is not treated as a current quote.
-- [ ] Prepare Windows SSH/VNC access instructions, a launchable on-machine preflight for Metal/session access and disk capacity, and evidence-export commands. Actual access and machine checks occur in US-020 after provisioning. A nondefault OS reinstall is avoided unless necessary and budgeted.
-- [ ] Use existing signed artifacts when available. If ad-hoc signing is used for isolated runtime qualification, record that Gatekeeper/notarized distribution is not thereby certified; no production signing secret is copied to the rental.
-- [ ] The 24-hour schedule below includes the W08 endurance rehearsal, failure triage, evidence export, and shutdown/deletion buffer. A delayed provisioning or unavailable machine leaves execution pending and never fabricates a pass.
-- [ ] Provisioning remains Arthur's action. The runbook verifies any available auto-delete setting and its semantics instead of assuming the machine expires automatically at 24 hours.
+- [ ] The pre-refactor baseline and candidate hosts run from the package in separate isolated homes without rebuilding; the profiling builds keep line tables and packed debug symbols.
+- [ ] A launchable on-machine preflight checks architecture, OS, graphical session, the Metal report, disk, package integrity, quarantine, signature, competing processes, socket path, the packaged host, the packaged desktop render, and evidence export, and writes a ledger.
+- [ ] The package workflow runs the preflight, the full protocol, the W08 endurance rehearsal, and the paired host profiles on the hosted runner within one job's 6-hour cap, and fails when any of them fails.
+- [ ] Use existing signed artifacts when available. If ad-hoc signing is used for isolated runtime qualification, record that Gatekeeper/notarized distribution is not thereby certified; no production signing secret enters the package or the job.
+- [ ] The optional rental route (quote check, access preflight, schedule, teardown) stays documented in the runbook. Buying it remains Arthur's action, and no rental result is assumed.
 
-#### US-020: Execute and report native macOS qualification
+#### US-020: Execute and report macOS qualification
 **Description:** As a macOS user, I want the Apple Silicon application to pass the same persistence and resource guarantees as Windows and Linux.
 
 **Priority:** P0
@@ -614,13 +615,13 @@ Scope amended by Arthur on 2026-09-23, matching EP-004 and EP-005: the W08 evide
 **Dependencies:** Blocked by US-019
 
 **Acceptance Criteria:**
-- [ ] Before collecting qualification data, verify Windows-to-Mac SSH/VNC access, a working Metal-capable graphical session, sufficient disk space, and a sample evidence export. Record hardware, OS/build, storage, VNC method, package hashes, and candidate SHA; launch the bundled host and desktop in the private qualification home.
-- [ ] Execute the functional matrix and Desktop lifecycle and recovery actions table: detach/reopen, worker death/replacement, zero-launch restoration after host loss, fallback access without an original workspace/cwd, ended-row viewing, explicit restart/stop, idle input, concurrent operations, failed persistence, stale activity, unresolved stop-all, and compatible/incompatible upgrades.
-- [ ] Exercise the native GPUI/Metal view interactively, including glyphs, resize, paste, search, final output, and reconnection. Record local input/echo timing separately from VNC display/network latency.
-- [ ] W01-W07 provide per-machine baseline/candidate CPU, resident/physical-memory, thread, FD, and ownership evidence with all applicable NFR decisions, and a W08 endurance rehearsal passes every decision (idle first input echoed once, retained identities unchanged, no orphan, no ownership-counter growth); the 8-hour run is optional.
-- [ ] A failed lifecycle case, Metal/access failure, or resource-budget miss remains unqualified. Fixes use a newly identified candidate and rerun the affected native checks; expiration of the rental is not a waiver.
-- [ ] Export raw measurements, logs, screenshots, package fingerprints, and the pass/fail ledger before teardown. Remove fixture credentials if any were created, and verify the rental is deleted or its scheduled deletion has actually completed.
-- [ ] Report Apple Silicon qualification only. macOS Intel, physical peripherals, local-display latency, and production notarization remain separate unless independently exercised and evidenced.
+- [ ] The macOS CI legs (fmt, clippy, workspace tests, release build, render smoke) are green at the candidate SHA, or at a later SHA whose changes the candidate change rules classify as invalidating nothing.
+- [ ] One package workflow run with the full protocol at that SHA records the runner hardware, OS/build, package and candidate identities, and a preflight ledger in which M07, M12, M13, and M14 pass; the M04 Metal report and the signature status are recorded as observed.
+- [ ] W01-W07 run from the package with the worker and the desktop on the hosted runner and every harness decision passes. `NFR-08.throughput_ratio` stays `unavailable` without a matched baseline; paired baseline/candidate host memory (resident, physical footprint, threads, descriptors) and CPU sample profiles from the same runner stand in for the comparison. The W08 endurance rehearsal passes every decision (idle first input echoed once, retained identities unchanged, no orphan, no ownership-counter growth); the 8-hour run is optional.
+- [ ] Desktop evidence is the render smoke, the preflight screenshot, and the harness desktop cycles (attach, output, resize, reopen through restoration). The functional matrix and the Desktop lifecycle and recovery actions are decided by the macOS workspace tests; the interactive manual smoke on a physical Mac, local-display input latency, and dedicated-hardware performance are recorded `unavailable`.
+- [ ] A failed lifecycle case, render failure, or decision miss remains unqualified. A miss is a recorded finding and a rerun; the first failure stays in the report and is never attributed to the shared VM without evidence. Fixes use a newly identified candidate and rerun the affected checks.
+- [ ] The report records the run URL and the package SHA-256, and commits the raw result documents, the preflight ledger, the screenshot, and the profiles it cites, because workflow artifacts expire after 30 days.
+- [ ] Report Apple Silicon qualification on the hosted VM only. macOS Intel, physical hardware, peripherals, local-display latency, and production notarization remain separate unless independently exercised and evidenced.
 
 ## Functional Requirements
 
@@ -699,29 +700,28 @@ When descendants remain unresolved after final drain, retire the terminal engine
 
 Native terminal memory, image resources, allocator overhead, and thread stacks are measured in addition to these payload budgets. Existing engine safety limits continue to apply. This table does not pretend that adding payload limits equals total RSS.
 
-### Platform coverage and rental schedule
+### Platform coverage
 
 | Platform | Required automated evidence | Required native interactive/performance evidence |
 |----------|-----------------------------|----------------------------------------------------|
 | Windows x64 | Native Rust/lifecycle gates and packaged helper checks | Windows 11 native suites, harness workloads, and manual smoke; Windows 10 assumed equivalent; 8-hour soak optional |
 | Linux x64 | Native gates on Fedora; Ubuntu, Debian, Arch, openSUSE host lifecycle cases from the tarball in containers | Fedora Wayland and X11 (XWayland) harness desktop runs and manual smoke; x64 performance host and endurance rehearsal; 8-hour soak optional |
 | Linux ARM64 | Native `ubuntu-22.04-arm` CI gates: clippy, workspace tests, release build | None required; render smoke, performance matrix, and 2-hour soak recorded unavailable |
-| macOS ARM64 | Actual executed macOS CI gates and available render smoke | Scaleway physical Apple Silicon GUI/core/performance matrix and endurance rehearsal in the 24-hour rental; 8-hour soak optional |
+| macOS ARM64 | Actual executed macOS CI gates and available render smoke | Hosted `macos-14` runner (Apple M1 VM): packaged preflight, full protocol with worker and desktop, W08 endurance rehearsal, paired baseline/candidate host profiles; dedicated-hardware performance, interactive manual smoke, and 8-hour soak recorded unavailable |
 | macOS Intel / Windows ARM64 | Preserve applicable portable source paths | Not shipping with the current archive manifest; no qualification claim in this delivery |
 
-macOS rental plan, elapsed from successful provisioning:
+macOS qualification run, one package workflow job with the full protocol enabled, within the 6-hour job cap:
 
-| Window | Work |
-|--------|------|
-| Before rental | CI, packages, baseline artifacts, fixture/sampler, expected results, credentials-free runbook, current price/availability verification |
-| Hours 0-2 | SSH/VNC/Metal checks, download and hash verification, isolated homes, environment and baseline capture |
-| Hours 2-6 | Functional and failure matrix, installed-app and upgrade/reconnect exercises |
-| Hours 6-10 | Repeated baseline/candidate short performance matrix and profiling |
-| Hours 10-12 | W08 endurance rehearsal with scheduled fixture churn/reconnections |
-| Hours 12-22 | Analyze evidence, focused reruns if time permits, document unresolved cases; the optional 8-hour run only when it ends before hour 22 |
-| Hours 22-24 | Export and verify artifacts, clean fixtures, terminate rental once the 24-hour minimum lease has elapsed and verify deletion/billing end |
+| Step | Work |
+|------|------|
+| Build | Candidate app bundle, host, fixture, harness, and candidate manifest; profiling hosts at the baseline and the candidate; `SHA256SUMS` |
+| Preflight | The extracted package checked on the runner (M01-M14) with a ledger, screenshot, and evidence export |
+| Protocol | Quick run, then the full host, worker, and desktop protocol |
+| Endurance | W08 endurance rehearsal with worker and desktop cycles and the idle first-input check |
+| Profiles | Memory and CPU profiles of the baseline and candidate hosts on the same runner |
+| Archive | Package, evidence, and profiles uploaded for 30 days; the report commits what it cites |
 
-This schedule is a preparation budget. If access, builds, or failures consume it, record incomplete qualification and arrange a separate authorized session; do not weaken acceptance criteria to fit the clock. VNC is for interaction, not the measurement clock for local rendering latency.
+The optional rental: if Arthur buys a physical Mac session to fill the `unavailable` cells, `docs/release/qualification/macos-rental.md` holds the quote check, access preflight, schedule, and teardown. Its results add cells to the report; they do not rewrite the hosted-runner verdicts.
 
 ## Non-Functional Requirements
 
@@ -740,7 +740,7 @@ All thresholds below are acceptance targets to validate on release builds, not c
 | NFR-09 | A live 80x24 session with 10,000 populated history lines attaches through checkpoint+first publication in p95 <= 1,000 ms for 10 repetitions; 10 simultaneous attachments complete in <= 5 s on the qualified machine | W02 with fixed corpus and bounded admission. A larger admitted snapshot is reported separately and never mistaken for this workload. |
 | NFR-10 | Startup response deadline 10 s, stop action budget 5 s, abnormal final drain <= 2 s; deadline expiry returns pending/unverified where necessary rather than false completion | W04/W06; responsiveness is measured separately from eventual ownership resolution. Every late-created fixture child remains tracked and is reconciled. |
 | NFR-11 | 0 unexpected child exits or generation changes across 100 desktop detach/reopen cycles and 100 worker kill/restart or replacement cycles; 0 duplicate committed launches across 1,000 deterministic concurrent-transition schedules; 0 lost/duplicated first echo after 61 s, 5 min, and 30 min idle | W04/W08 plus barrier-based fault tests. Worker cycles include both crash recovery and build replacement. The 100-cycle counts apply to the optional 8-hour W08 run; the required W04 runs and endurance rehearsal record their own cycle counts, each with 0 identity or generation changes. Every failed repetition remains in the evidence. |
-| NFR-12 | 0 orphan fixture processes, ownership leaks, or deadlocks during each required endurance run; short-lived fixture effects recover within the existing resource deadlines | W08 endurance rehearsal on the primary Windows, Linux, and macOS machines; the 8-hour run is optional and Linux ARM64 runs none. |
+| NFR-12 | 0 orphan fixture processes, ownership leaks, or deadlocks during each required endurance run; short-lived fixture effects recover within the existing resource deadlines | W08 endurance rehearsal on the Windows and Linux qualification machines and on the hosted macOS runner; the 8-hour run is optional and Linux ARM64 runs none. |
 | NFR-13 | 0 foreign or identity-mismatched processes signaled in the process-safety suite; preserve 64 KiB control-frame and 64 MiB checkpoint limits; unauthorized cross-user endpoint access is rejected | Native protocol/security fixtures, including malformed lengths, concurrent requests, and permission changes. |
 | NFR-14 | 100% of required scenario/platform cells have an explicit result at the candidate SHA; 0 missing/skipped required cells are counted as passed | US-014 ledger and the three qualification reports. A changed shared core invalidates corresponding prior evidence. |
 | NFR-15 | 0 implicit launches from restoration/retry/ordinary row opening; 0 successful stop-all results while owned processes or launches remain unresolved; 100% of unattached live/unverified sessions represented exactly once after each successful list publication | W04/W06/W07 and desktop entry-point assertions, including no open workspace, missing cwd, recents eviction, stale activity, final-view retention, and shutdown RPC failure. Known rows survive failed refreshes with explicit stale state. |
@@ -782,7 +782,7 @@ Record individual run samples and report median, p95, p99, maxima, sample count,
 | 16 | Concurrent create/restart/remove | Multiple desktop/CLI callers | One authority commits one valid transition; losers get conflict/current state | "The session changed elsewhere. Refresh and retry." |
 | 17 | Permission revoked | Endpoint or state-directory access changes | No destructive fallback, bounded error, retry available | "The session host cannot access its state directory." |
 | 18 | Unknown agent during close | Missing/stale activity data | Keep activity unknown unless fresh authoritative evidence resolves it; never infer safe stop from filtered-out stale state | Existing close confirmation |
-| 19 | Rental unavailable or expires | No Mac allocation, failed VNC/Metal, time exhausted | Keep qualification incomplete; export available evidence | Operator report, no product UI |
+| 19 | Hosted macOS runner unavailable or failing | Queued job, runner image change, render failure in the VM, 6-hour cap exceeded | Keep qualification incomplete; archive available evidence; the optional rental is the fallback route | Operator report, no product UI |
 | 20 | Runtime panic | Session runtime thread failure after child launch | Supervision retains recovery ownership and reports session uncertainty | "Session monitoring failed. Process state is being checked." |
 | 21 | Restore absent/ended session | Layout restoration or ordinary row click | Keep typed missing/ended state; open retained text when available; no create/restart | Final-output view or missing-session state with separate explicit actions |
 | 22 | Stop-all is incomplete | Failed stop, unresolved descendant, shutdown RPC failure, or unacknowledged final durability | Keep desktop open; distinguish unresolved process ownership from durability-only failure after confirmed exit | Unresolved processes: Retry, Keep running and quit, Cancel. Durability-only: Retry, Quit with unsaved final state, Cancel |
@@ -806,7 +806,7 @@ All ten planning categories are covered by these 27 cases: empty, loading, error
 | 6 | Core changes bypass existing worker/scan consumers or overlap their ownership | High | High | Explicit producer inventory, capture/commit generation barriers, mandatory integrated worker tests; no duplicate service, reducer redesign, tracker edits, or automatic cross-certification |
 | 7 | Source baseline changes while implementation is in progress | High | Medium | Preserve local work, record commit/diff identity, recheck affected findings, invalidate stale qualification evidence |
 | 8 | Existing green CI skipped required jobs or retried a flake | Medium | High | Per-job result ledger, first-failure retention, required candidate matrix rather than aggregate status |
-| 9 | macOS rental is consumed by setup or unavailable hardware | Medium | Medium | Prepared artifacts, live quote/access preflight, default supported image, export/termination buffer, incomplete result if time expires |
+| 9 | The hosted macOS runner is a shared VM: timing noise, no Metal report, image drift, 6-hour job cap | Medium | Medium | Package built and preflighted in the same job, runner identity recorded, every miss kept as a finding and rerun, physical-hardware cells recorded unavailable, optional rental route documented |
 | 10 | New cold text is mistaken for durable complete history | Medium | Medium | Explicit size/eviction/completeness metadata; no journal or host-death restoration promise |
 | 11 | Snapshot capture still pauses its own session | Medium | Medium | Bound capture size/admission, measure attach/input latency; do not add speculative copy-on-write engine changes unless the documented budget fails |
 | 12 | Core correctness is hidden by launch-capable restore, automatic exit closure, or ignored quit errors | High | High | Explicit entry-point table, zero-launch assertions, passive-view tests, and aggregate stop outcomes through GUI and installer paths |
@@ -896,8 +896,8 @@ No unresolved product-scope question blocks this PRD from being READY. The follo
 | Do blocking wait and late-launch ownership behave as expected on all native adapters? | Implementer, US-001 before US-004/007 | H01/H02 evidence or an explicit blocker and revised adapter decision |
 | What are the measured release baselines on the selected machines? | Implementer, US-001; operator for each OS qualification | Raw baseline files, hardware identities, and unavailable fields explicitly marked |
 | Which existing worker and scan consumers need adaptation to the revised core contract? | Implementer, US-003/011; integration owner, US-014 | Producer inventory and candidate integration recorded; worker cases mandatory; no duplicate ownership or automatic cross-PRD status changes |
-| Which Linux/Windows environments and Scaleway image will be used? | Qualification operator, before the corresponding OS execution story | Exact supported matrix, access preflight, package identities, and explicit missing coverage |
-| What is the current Mac rental total and deletion mechanism? | Arthur, US-019 before provisioning | Verified quote/availability and explicit teardown procedure; no purchase performed by PRD generation |
+| Which Linux/Windows environments and macOS runner image will be used? | Qualification operator, before the corresponding OS execution story | Exact supported matrix, access preflight, package identities, and explicit missing coverage |
+| Is a physical Mac rental worth buying for the unavailable macOS cells? | Arthur, after US-020 | Not required since v1.6; if bought, a verified quote and teardown per the rental runbook; no purchase performed by PRD generation |
 | Are all performance budgets feasible without extending scope? | Implementer/reviewer, US-013 before qualification freeze | Pass evidence or documented bottleneck; any changed target requires a PRD changelog entry and retained original measurements |
 
 ### Pre-save validation record
