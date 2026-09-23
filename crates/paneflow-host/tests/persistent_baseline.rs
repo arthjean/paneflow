@@ -884,6 +884,7 @@ impl DesktopProcess {
         let deadline = Instant::now() + Duration::from_secs(30);
         let mut listed = 0;
         let mut ready_prefix = 0;
+        let mut last_attempt = String::from("no attempt yet");
         loop {
             assert!(
                 desktop.child.try_wait().unwrap().is_none(),
@@ -892,31 +893,44 @@ impl DesktopProcess {
             );
             assert!(
                 Instant::now() < deadline,
-                "desktop restoration watchdog: {listed} of {} surfaces listed, the first {ready_prefix} showing fixture idle\n{}\n{}",
+                "desktop restoration watchdog: {listed} of {} surfaces listed, the first {ready_prefix} showing fixture idle; last attempt: {last_attempt}\n{}\n{}",
                 sessions.len(),
                 log_tail(&log_path),
-                main_thread_stack(desktop.child.id(), home)
+                stall_samples(desktop.child.id(), home)
             );
-            if paneflow_ipc_client::socket_is_listening(&endpoint)
-                && let Ok(surfaces) = ipc.call("surface.list", json!({}))
-                && let Some(entries) = surfaces["surfaces"].as_array()
-            {
-                listed = entries.len();
-                if listed == sessions.len() {
-                    ready_prefix = entries
-                        .iter()
-                        .take_while(|surface| {
-                            ipc.call(
-                                "surface.read",
-                                json!({"surface_id": surface["surface_id"], "lines": 24}),
-                            )
-                            .is_ok_and(|result| result.to_string().contains("fixture idle"))
-                        })
-                        .count();
-                    if ready_prefix == listed {
-                        desktop.restored_ms = started.elapsed().as_secs_f64() * 1000.0;
-                        desktop.surfaces = surfaces;
-                        return desktop;
+            if !paneflow_ipc_client::socket_is_listening(&endpoint) {
+                last_attempt = "the desktop socket is not listening".into();
+            } else {
+                match ipc.call("surface.list", json!({})) {
+                    Err(error) => last_attempt = format!("surface.list failed: {error:?}"),
+                    Ok(surfaces) => {
+                        let mut complete = false;
+                        if let Some(entries) = surfaces["surfaces"].as_array() {
+                            listed = entries.len();
+                            last_attempt = format!("surface.list answered {listed} entries");
+                            if listed == sessions.len() {
+                                ready_prefix = entries
+                                    .iter()
+                                    .take_while(|surface| {
+                                        ipc.call(
+                                            "surface.read",
+                                            json!({"surface_id": surface["surface_id"], "lines": 24}),
+                                        )
+                                        .is_ok_and(|result| {
+                                            result.to_string().contains("fixture idle")
+                                        })
+                                    })
+                                    .count();
+                                complete = ready_prefix == listed;
+                            }
+                        } else {
+                            last_attempt = format!("surface.list returned {surfaces}");
+                        }
+                        if complete {
+                            desktop.restored_ms = started.elapsed().as_secs_f64() * 1000.0;
+                            desktop.surfaces = surfaces;
+                            return desktop;
+                        }
                     }
                 }
             }
@@ -926,25 +940,62 @@ impl DesktopProcess {
 }
 
 #[cfg(target_os = "macos")]
-fn main_thread_stack(pid: u32, home: &Path) -> String {
-    let path = home.join(format!("desktop-{pid}-watchdog-sample.txt"));
-    let _ = Command::new("sample")
-        .arg(pid.to_string())
-        .arg("3")
-        .arg("-file")
-        .arg(&path)
-        .output();
-    let text = std::fs::read_to_string(&path).unwrap_or_default();
-    text.lines()
-        .skip_while(|line| !(line.contains("Thread_") && line.contains("main")))
-        .take(150)
-        .map(|line| line.chars().take(220).collect::<String>())
-        .collect::<Vec<_>>()
-        .join("\n")
+fn stall_samples(desktop_pid: u32, home: &Path) -> String {
+    let dir = std::env::var_os("PANEFLOW_BENCH_OUT")
+        .map(PathBuf::from)
+        .and_then(|out| out.parent().map(Path::to_path_buf))
+        .unwrap_or_else(|| home.to_path_buf());
+    let related = Command::new("pgrep")
+        .arg("-f")
+        .arg(home)
+        .output()
+        .map(|output| String::from_utf8_lossy(&output.stdout).into_owned())
+        .unwrap_or_default();
+    let pids: Vec<u32> = std::iter::once(desktop_pid)
+        .chain(
+            related
+                .split_whitespace()
+                .filter_map(|pid| pid.parse().ok()),
+        )
+        .collect();
+    let running: Vec<_> = pids
+        .iter()
+        .filter_map(|pid| {
+            let path = dir.join(format!("watchdog-sample-{pid}.txt"));
+            Command::new("sample")
+                .arg(pid.to_string())
+                .arg("3")
+                .arg("-file")
+                .arg(&path)
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn()
+                .ok()
+                .map(|child| (child, path))
+        })
+        .collect();
+    let mut report = Vec::new();
+    for (mut child, path) in running {
+        let _ = child.wait();
+        let text = std::fs::read_to_string(&path).unwrap_or_default();
+        report.push(format!("== {}", path.display()));
+        report.extend(
+            text.lines()
+                .filter(|line| line.starts_with("Process:"))
+                .map(str::to_owned),
+        );
+        report.extend(
+            text.lines()
+                .skip_while(|line| !line.starts_with("Sort by top of stack"))
+                .take(16)
+                .map(str::to_owned),
+        );
+    }
+    report.join("\n")
 }
 
 #[cfg(not(target_os = "macos"))]
-fn main_thread_stack(_pid: u32, _home: &Path) -> String {
+fn stall_samples(_desktop_pid: u32, _home: &Path) -> String {
     String::new()
 }
 
