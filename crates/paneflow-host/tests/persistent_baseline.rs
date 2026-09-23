@@ -892,9 +892,10 @@ impl DesktopProcess {
             );
             assert!(
                 Instant::now() < deadline,
-                "desktop restoration watchdog: {listed} of {} surfaces listed, the first {ready_prefix} showing fixture idle\n{}",
+                "desktop restoration watchdog: {listed} of {} surfaces listed, the first {ready_prefix} showing fixture idle\n{}\n{}",
                 sessions.len(),
-                log_tail(&log_path)
+                log_tail(&log_path),
+                main_thread_stack(desktop.child.id(), home)
             );
             if paneflow_ipc_client::socket_is_listening(&endpoint)
                 && let Ok(surfaces) = ipc.call("surface.list", json!({}))
@@ -922,6 +923,29 @@ impl DesktopProcess {
             std::thread::sleep(Duration::from_millis(100));
         }
     }
+}
+
+#[cfg(target_os = "macos")]
+fn main_thread_stack(pid: u32, home: &Path) -> String {
+    let path = home.join(format!("desktop-{pid}-watchdog-sample.txt"));
+    let _ = Command::new("sample")
+        .arg(pid.to_string())
+        .arg("3")
+        .arg("-file")
+        .arg(&path)
+        .output();
+    let text = std::fs::read_to_string(&path).unwrap_or_default();
+    text.lines()
+        .skip_while(|line| !(line.contains("Thread_") && line.contains("main")))
+        .take(150)
+        .map(|line| line.chars().take(220).collect::<String>())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+#[cfg(not(target_os = "macos"))]
+fn main_thread_stack(_pid: u32, _home: &Path) -> String {
+    String::new()
 }
 
 fn log_tail(path: &Path) -> String {
