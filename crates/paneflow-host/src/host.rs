@@ -2844,6 +2844,39 @@ impl SessionHost {
         }
         let text_bytes = record.text.len() as u64;
         let text_available = !record.text.is_empty();
+        let text_withdrawn = Arc::new(AtomicBool::new(false));
+        if text_available {
+            let home = self.home.clone();
+            let host = self.weak_self();
+            let text_session = session.clone();
+            let text_manifest = Arc::clone(manifest);
+            let text_durability = Arc::clone(durability);
+            let withdrawn = Arc::clone(&text_withdrawn);
+            let generation = record.generation;
+            let text = record.text;
+            self.persistence.spawn_exclusive(move || {
+                if let Err(error) = crate::cold_text::write(&home, &text_session, &text) {
+                    log::warn!(
+                        "paneflow-host: final output of session {text_session} is not retained: {error}"
+                    );
+                    withdrawn.store(true, Ordering::Release);
+                    if let Some(host) = host.upgrade() {
+                        host.commit(
+                            &text_manifest,
+                            &text_durability,
+                            Some(generation),
+                            WriteClass::Final,
+                            |guard| {
+                                if let Some(final_output) = guard.final_output.as_mut() {
+                                    final_output.text_available = false;
+                                }
+                            },
+                        );
+                    }
+                }
+                Ok(())
+            });
+        }
         let final_output = crate::manifest::FinalOutput {
             offset: record.final_offset,
             complete: record.complete,
@@ -2868,39 +2901,11 @@ impl SessionHost {
             Some(record.generation),
             WriteClass::Final,
             |guard| {
+                let mut final_output = final_output;
+                final_output.text_available &= !text_withdrawn.load(Ordering::Acquire);
                 guard.final_output = Some(final_output);
             },
         );
-        if text_available {
-            let home = self.home.clone();
-            let host = self.weak_self();
-            let text_session = session.clone();
-            let text_manifest = Arc::clone(manifest);
-            let text_durability = Arc::clone(durability);
-            let generation = record.generation;
-            let text = record.text;
-            self.persistence.spawn_exclusive(move || {
-                if let Err(error) = crate::cold_text::write(&home, &text_session, &text) {
-                    log::warn!(
-                        "paneflow-host: final output of session {text_session} is not retained: {error}"
-                    );
-                    if let Some(host) = host.upgrade() {
-                        host.commit(
-                            &text_manifest,
-                            &text_durability,
-                            Some(generation),
-                            WriteClass::Final,
-                            |guard| {
-                                if let Some(final_output) = guard.final_output.as_mut() {
-                                    final_output.text_available = false;
-                                }
-                            },
-                        );
-                    }
-                }
-                Ok(())
-            });
-        }
         self.release_retired_runtime(session, record.generation);
     }
 
