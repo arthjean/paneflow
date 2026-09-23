@@ -2376,7 +2376,7 @@ mod tests {
             .call("session.text", json!({"session": session}))
             .unwrap();
         assert_eq!(final_text["live"], false);
-        if cfg!(unix) {
+        if cfg!(target_os = "linux") {
             assert_eq!(
                 final_text["complete"], false,
                 "output cut by the drain budget is reported incomplete"
