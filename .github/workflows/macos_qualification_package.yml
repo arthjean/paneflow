@@ -1,15 +1,15 @@
 name: macos_qualification_package
 
-# Builds the Apple Silicon qualification package for a candidate commit, so
-# the rented Mac runs the persistent-path qualification without compiling:
-# the candidate app bundle, the session fixture, the prebuilt harness, the
+# Builds the Apple Silicon qualification package for a candidate commit: the
+# candidate app bundle, the session fixture, the prebuilt harness, the
 # candidate manifest, profiling builds of the candidate and pre-refactor
 # baseline hosts, and the on-machine scripts, all under one SHA256SUMS. The
-# package is then extracted on this runner and exercised through the same
-# preflight and a quick harness run, plus the full host and worker protocol and
-# the W08 endurance rehearsal when full_rehearsal is set; those verdicts are
-# rehearsals and never decide a threshold. See
-# docs/release/qualification/macos-rental.md.
+# package is then extracted on this runner and exercised through the preflight
+# and a quick harness run. With full_protocol set, the same job also runs the
+# full host, worker, and desktop protocol, the W08 endurance rehearsal, and the
+# memory and CPU profiles of both hosts, and fails when any of them fails: that
+# run is the macOS qualification evidence on the hosted VM. See the macOS
+# section of docs/release/persistent-qualification.md.
 on:
   workflow_dispatch:
     inputs:
@@ -23,8 +23,8 @@ on:
         required: false
         type: string
         default: f881c8bcce568c76d96ba7e691a0e26d86154215
-      full_rehearsal:
-        description: "Also run the full host and worker protocol and the W08 endurance rehearsal on the runner"
+      full_protocol:
+        description: "Also run the full protocol, the W08 endurance rehearsal, and the host profiles as macOS qualification evidence"
         required: false
         type: boolean
         default: false
@@ -162,7 +162,7 @@ jobs:
       - name: Rehearse the extracted package on this runner
         env:
           NAME: ${{ steps.ids.outputs.name }}
-          FULL_REHEARSAL: ${{ inputs.full_rehearsal }}
+          FULL_PROTOCOL: ${{ inputs.full_protocol }}
         run: |
           rehearsal="$RUNNER_TEMP/rehearsal"
           mkdir -p "$rehearsal"
@@ -184,18 +184,37 @@ jobs:
           jq -e '.scenarios[-1].host.attribution == "exact thread names"' "$result"
           full="skipped"
           endurance="skipped"
-          if [ "$FULL_REHEARSAL" = "true" ]; then
+          profiles="skipped"
+          evidence="$RUNNER_TEMP/qualification-evidence"
+          mkdir -p "$evidence/profiles"
+          if [ "$FULL_PROTOCOL" = "true" ]; then
             set +e
-            "$pkg/scripts/bench-persistent.sh" --prebuilt "$pkg/candidate" --with-worker
+            "$pkg/scripts/bench-persistent.sh" --prebuilt "$pkg/candidate" --with-desktop
             full=$?
             PANEFLOW_BENCH_BURST_MINUTES=2 PANEFLOW_BENCH_WORKER_CYCLES=6 PANEFLOW_BENCH_DESKTOP_CYCLES=4 PANEFLOW_BENCH_SAMPLE_SECONDS=30 \
               "$pkg/scripts/bench-persistent.sh" --prebuilt "$pkg/candidate" --with-desktop --endurance 12 --idle-minutes 4
             endurance=$?
+            profiles=0
+            for side in candidate baseline; do
+              for mode in memory cpu; do
+                "$pkg/scripts/profile-host-macos.sh" "$pkg/profiling/$side/paneflow-host" "$pkg/candidate/bin/paneflow-session-fixture" "$mode" "$evidence/profiles/$mode" "$side" || profiles=1
+              done
+            done
             set -e
-            ls "$pkg"/bench/results/persistent-endurance-*.json >/dev/null
+            for phase in empty idle50 after_output after_churn after_stop; do
+              for side in candidate baseline; do
+                grep -Eq "^$side	$phase	.*phys_footprint=[0-9]" "$evidence/profiles/memory/memory.tsv" || profiles=1
+              done
+            done
+            grep -q "^candidate	survivors	none$" "$evidence/profiles/memory/memory.tsv" || profiles=1
+            grep -q "^candidate	survivors	none$" "$evidence/profiles/cpu/memory.tsv" || profiles=1
+            for side in candidate baseline; do
+              for workload in idle output; do
+                test -s "$evidence/profiles/cpu/sample-$workload-$side.txt" || profiles=1
+              done
+            done
           fi
-          mkdir -p "$RUNNER_TEMP/rehearsal-evidence"
-          cp -R "$(dirname "$ledger")" "$pkg/bench/results" "$RUNNER_TEMP/rehearsal-evidence/"
+          cp -R "$(dirname "$ledger")" "$pkg/bench/results" "$evidence/"
           {
             echo "## macOS qualification package"
             echo
@@ -203,15 +222,22 @@ jobs:
             echo "|---|---|"
             echo "| Package | \`$NAME.tar.gz\` |"
             echo "| SHA-256 | \`$(cut -d' ' -f1 "$RUNNER_TEMP/out/$NAME.tar.gz.sha256")\` |"
-            echo "| Preflight exit (runner, rehearsal) | $preflight |"
-            echo "| Quick harness exit (shared runner, rehearsal, never decides a threshold) | $bench |"
-            echo "| Full host and worker protocol exit (rehearsal) | $full |"
-            echo "| W08 endurance rehearsal exit (rehearsal) | $endurance |"
+            echo "| Preflight exit (M04 fails on the hosted VM) | $preflight |"
+            echo "| Quick harness exit | $bench |"
+            echo "| Full host, worker, and desktop protocol exit | $full |"
+            echo "| W08 endurance rehearsal exit | $endurance |"
+            echo "| Host profiles (1 when a profile or check is missing) | $profiles |"
             echo
             echo '```'
             cat "$ledger"
+            if [ -f "$evidence/profiles/memory/memory.tsv" ]; then
+              cat "$evidence/profiles/memory/memory.tsv"
+            fi
             echo '```'
           } >>"$GITHUB_STEP_SUMMARY"
+          for exit_code in "$full" "$endurance" "$profiles"; do
+            [ "$exit_code" = "skipped" ] || [ "$exit_code" -eq 0 ]
+          done
 
       - name: Upload the package
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -221,11 +247,11 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-      - name: Upload the rehearsal evidence
+      - name: Upload the qualification evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: ${{ steps.ids.outputs.name }}-rehearsal
-          path: ${{ runner.temp }}/rehearsal-evidence/
+          name: ${{ steps.ids.outputs.name }}-evidence
+          path: ${{ runner.temp }}/qualification-evidence/
           if-no-files-found: warn
           retention-days: 30
