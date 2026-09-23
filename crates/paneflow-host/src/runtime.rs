@@ -1801,6 +1801,14 @@ mod tests {
         }
         assert!(String::from_utf8_lossy(&collected).contains("PANEFLOW_LAST_WORDS"));
         assert!(wait_until(Duration::from_secs(5), || runtime.retired()));
+        assert!(
+            wait_until(Duration::from_secs(5), || notices
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|n| matches!(n, RuntimeNotice::Completed(_)))),
+            "the completed record follows the retirement"
+        );
         let observed = notices.lock().unwrap();
         let completed = observed
             .iter()

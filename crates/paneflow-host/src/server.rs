@@ -2226,7 +2226,10 @@ mod tests {
         assert!(final_output.text_available);
         assert!(final_output.text_bytes as usize <= crate::runtime::FINAL_TEXT_MAX_BYTES);
         let cold = crate::cold_text::path(home.path(), &session);
-        assert!(cold.is_file(), "the final text is kept as a cold file");
+        assert!(
+            wait_until(Duration::from_secs(5), || cold.is_file()),
+            "the final text is kept as a cold file"
+        );
 
         let final_text = control
             .call("session.text", json!({"session": session}))
