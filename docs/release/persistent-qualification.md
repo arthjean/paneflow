@@ -139,7 +139,15 @@ scripts/bench-persistent.sh --worker-replacement <exe>   # W04 build replacement
 scripts/bench-persistent.sh --prior <result.json>        # rerun after a failure; the prior failures stay in the record
 scripts/bench-persistent.sh --seed-failure               # proves nonzero exit and artifact retention
 scripts/bench-persistent.sh --with-desktop --endurance 480 --idle-minutes 30   # W08; writes persistent-endurance-<stamp>-<sha>.json
+scripts/bench-persistent.sh --prebuilt <package>/candidate --with-worker       # runs a packaged harness and binaries without Cargo
 ```
+
+`--prebuilt` takes a directory holding `candidate.json` from
+`scripts/candidate-manifest.sh`, `bin/persistent_baseline`,
+`bin/paneflow-session-fixture`, and the desktop and host either in `bin/` or
+in `PaneFlow.app/Contents/MacOS/`. The candidate identity then comes from that
+manifest instead of `git`, and the harness reads `PANEFLOW_BENCH_HOST` and
+`PANEFLOW_BENCH_FIXTURE` instead of the paths Cargo compiled in.
 
 The PowerShell script takes `-WithWorker`, `-WithDesktop`, `-Quick`,
 `-WorkerReplacement`, `-Prior`, `-SeedFailure`, `-Endurance <minutes>`, and

@@ -11,6 +11,7 @@ quick=false
 seed_failure=false
 prior=""
 replacement=""
+prebuilt=""
 endurance=""
 idle_minutes=""
 while [ $# -gt 0 ]; do
@@ -25,15 +26,48 @@ while [ $# -gt 0 ]; do
     --seed-failure) seed_failure=true ;;
     --prior) shift; prior="${1:-}" ;;
     --worker-replacement) shift; replacement="${1:-}"; worker=true ;;
+    --prebuilt) shift; prebuilt="${1:-}" ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
   shift
 done
 
-sha=$(git rev-parse --short=12 HEAD)
-dirty=false
-if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
-  dirty=true
+if [ -n "$prebuilt" ]; then
+  prebuilt=$(cd "$prebuilt" && pwd -P)
+  manifest="$prebuilt/candidate.json"
+  if [ ! -f "$manifest" ]; then
+    echo "no candidate manifest at $manifest" >&2
+    exit 2
+  fi
+  full_sha=$(sed -n 's/^  "candidate_sha": "\([0-9a-f]*\)",$/\1/p' "$manifest")
+  sha=${full_sha:0:12}
+  dirty=$(sed -n 's/^  "dirty": \([a-z]*\),$/\1/p' "$manifest")
+  if [ -z "$sha" ] || [ -z "$dirty" ]; then
+    echo "unreadable candidate manifest: $manifest" >&2
+    exit 2
+  fi
+  bin_dir="$prebuilt/bin"
+  if [ -d "$prebuilt/PaneFlow.app/Contents/MacOS" ]; then
+    bin_dir="$prebuilt/PaneFlow.app/Contents/MacOS"
+  fi
+  export PANEFLOW_BENCH_HOST="$bin_dir/paneflow-host"
+  export PANEFLOW_BENCH_FIXTURE="$prebuilt/bin/paneflow-session-fixture"
+  controller="$bin_dir/paneflow"
+  harness="$prebuilt/bin/persistent_baseline"
+  for required in "$PANEFLOW_BENCH_HOST" "$PANEFLOW_BENCH_FIXTURE" "$controller" "$harness"; do
+    if [ ! -x "$required" ]; then
+      echo "prebuilt package is missing $required" >&2
+      exit 2
+    fi
+  done
+else
+  sha=$(git rev-parse --short=12 HEAD)
+  dirty=false
+  if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
+    dirty=true
+  fi
+  unset PANEFLOW_BENCH_HOST PANEFLOW_BENCH_FIXTURE
+  controller="$(pwd)/target/release/paneflow"
 fi
 stamp=$(date -u +%Y%m%dT%H%M%SZ)
 mkdir -p bench/results
@@ -62,10 +96,14 @@ if [ -f bench/persistent-baseline.json ]; then
   export PANEFLOW_BENCH_BASELINE="$root/bench/persistent-baseline.json"
 fi
 
-cargo build --release --locked -p paneflow-host
+if [ -z "$prebuilt" ]; then
+  cargo build --release --locked -p paneflow-host
+fi
 if [ "$worker" = "true" ]; then
-  cargo build --release --locked -p paneflow-app
-  export PANEFLOW_BENCH_CONTROLLER="$root/target/release/paneflow"
+  if [ -z "$prebuilt" ]; then
+    cargo build --release --locked -p paneflow-app
+  fi
+  export PANEFLOW_BENCH_CONTROLLER="$controller"
 else
   unset PANEFLOW_BENCH_CONTROLLER
 fi
@@ -101,9 +139,13 @@ else
 fi
 
 set +e
-cargo test --release --locked -p paneflow-host --test persistent_baseline \
-  "$test" \
-  -- --ignored --exact --nocapture --test-threads=1
+if [ -n "$prebuilt" ]; then
+  "$harness" "$test" --ignored --exact --nocapture --test-threads=1
+else
+  cargo test --release --locked -p paneflow-host --test persistent_baseline \
+    "$test" \
+    -- --ignored --exact --nocapture --test-threads=1
+fi
 status=$?
 set -e
 

@@ -116,6 +116,7 @@ scripts/bench-persistent.sh --quick        # smoke protocol: 5 s streams, 200 ec
 scripts/bench-persistent.sh --worker-replacement <paneflow-exe> # W04 build replacement with that worker binary
 scripts/bench-persistent.sh --prior <result.json>  # rerun that keeps the earlier failures in the record
 scripts/bench-persistent.sh --seed-failure # proves a failed decision exits nonzero and retains the artifact
+scripts/bench-persistent.sh --prebuilt <dir> # runs a packaged harness and binaries without Cargo (see docs/release/persistent-qualification.md)
 ```
 
 ### Workloads W02 to W08 and threshold decisions
