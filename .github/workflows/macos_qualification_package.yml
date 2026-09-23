@@ -205,8 +205,9 @@ jobs:
           mkdir -p "$evidence/profiles"
           if [ "$FULL_PROTOCOL" = "true" ]; then
             set +e
-            "$pkg/scripts/bench-persistent.sh" --prebuilt "$pkg/candidate" --with-desktop
+            "$pkg/scripts/bench-persistent.sh" --prebuilt "$pkg/candidate" --with-desktop --worker-replacement "$pkg/candidate/bin/paneflow-worker-replacement"
             full=$?
+            jq -e '[.workloads.W04.worker_replacement.cycles[] | select(.build_replacement)] | length > 0' "$(ls -t "$pkg"/bench/results/persistent-2*.json | head -n 1)" || full=1
             PANEFLOW_BENCH_BURST_MINUTES=2 PANEFLOW_BENCH_WORKER_CYCLES=6 PANEFLOW_BENCH_DESKTOP_CYCLES=4 PANEFLOW_BENCH_SAMPLE_SECONDS=30 \
               "$pkg/scripts/bench-persistent.sh" --prebuilt "$pkg/candidate" --with-desktop --endurance 12 --idle-minutes 4
             endurance=$?

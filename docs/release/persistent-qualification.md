@@ -215,11 +215,13 @@ clippy, workspace tests, release build) and `macOS aarch64 render smoke
 [qualification/macos-rental.md](qualification/macos-rental.md#package-contents),
 extracts it on the same runner, and runs from it, without Cargo:
 `scripts/qualify-macos-preflight.sh`, a quick run, the full protocol with the
-worker and the desktop, the W08 endurance rehearsal, and
-`scripts/profile-host-macos.sh` in memory and CPU mode for the candidate host
-and then the pre-refactor baseline host. The job fails when the full
-protocol, the rehearsal, a profile, or the candidate's survivor check fails,
-or when M07, M12, M13, or M14 does not pass. M04 fails on this VM, because
+worker and the desktop, whose odd worker cycles restart from
+`candidate/bin/paneflow-worker-replacement` for the W04 build replacement, the
+W08 endurance rehearsal, and `scripts/profile-host-macos.sh` in memory and CPU
+mode for the candidate host and then the pre-refactor baseline host. The job
+fails when the full protocol, its build replacement, the rehearsal, a profile,
+or the candidate's survivor check fails, or when M07, M12, M13, or M14 does
+not pass. M04 fails on this VM, because
 `system_profiler` reports no Metal support there, while M13 renders the
 desktop window under GPUI and captures it; the report records both as
 observed.
