@@ -1901,7 +1901,7 @@ mod tests {
         assert!(!runtime.process().is_provably_live());
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     #[test]
     fn a_descendant_started_just_before_the_root_exits_stays_owned_until_the_stop() {
         let mut spec = echo_shell_spec(80, 24);
