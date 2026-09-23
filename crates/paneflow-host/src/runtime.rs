@@ -26,7 +26,7 @@ const QUEUE_RETRY: Duration = Duration::from_millis(5);
 const PROCESS_SCAN_INTERVAL: Duration = Duration::from_millis(500);
 const DESCENDANT_RECONCILE_MIN: Duration = Duration::from_millis(100);
 const DESCENDANT_RECONCILE_MAX: Duration = Duration::from_secs(1);
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 const ROOT_EXIT_DISCOVERY_DEADLINE: Duration = Duration::from_secs(2);
 const UNATTENDED_STOP_RETRY: Duration = Duration::from_secs(1);
 #[cfg(unix)]
@@ -170,7 +170,7 @@ enum Message {
     OutputReady,
     Eof,
     ChildExited(Result<ExitOutcome, String>),
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     RootExiting(SyncSender<()>),
     Command(Command),
 }
@@ -738,7 +738,7 @@ fn serve_loop(session: &mut Session, rx: &Receiver<Message>) {
             Ok(Message::OutputReady) => output_pending = session.drain_inbox(),
             Ok(Message::Eof) => session.reader_eof = true,
             Ok(Message::ChildExited(outcome)) => session.on_child_exited(outcome),
-            #[cfg(target_os = "linux")]
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
             Ok(Message::RootExiting(ack)) => {
                 session.on_root_exiting();
                 let _ = ack.send(());
@@ -918,14 +918,14 @@ fn spawn_child_waiter(
                 let _ = child.wait();
                 return;
             }
-            #[cfg(target_os = "linux")]
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
             if crate::process::await_exit_unreaped(child_pid) {
                 let (ack_tx, ack_rx) = sync_channel::<()>(1);
                 if tx.send(Message::RootExiting(ack_tx)).is_ok() {
                     let _ = ack_rx.recv_timeout(ROOT_EXIT_DISCOVERY_DEADLINE);
                 }
             }
-            #[cfg(not(target_os = "linux"))]
+            #[cfg(not(any(target_os = "linux", target_os = "macos")))]
             let _ = child_pid;
             let outcome = child
                 .wait()
@@ -1196,7 +1196,7 @@ impl Session {
         Ok(())
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     fn on_root_exiting(&mut self) {
         self.process_tree.discover();
         self.refresh_descendants();
@@ -1901,7 +1901,7 @@ mod tests {
         assert!(!runtime.process().is_provably_live());
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     #[test]
     fn a_descendant_started_just_before_the_root_exits_stays_owned_until_the_stop() {
         let mut spec = echo_shell_spec(80, 24);

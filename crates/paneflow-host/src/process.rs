@@ -434,7 +434,7 @@ fn signal_verified_unix(identity: ProcessIdentity, signal: i32) {
     }
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 pub(crate) fn await_exit_unreaped(pid: u32) -> bool {
     let id = libc::id_t::from(pid);
     loop {
