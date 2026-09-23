@@ -16,6 +16,15 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
   skipped with a warning in the log and no longer appears in Settings >
   Keyboard Shortcuts, so it has to be removed from `paneflow.json` by hand.
 
+### Fixed
+
+- macOS: IPC replies larger than 8 KiB, such as `surface.list` with many
+  panes or a long `surface.read`, were cut short. A socket accepted by the
+  desktop inherited the listener's nonblocking mode, so the write stopped once
+  the socket buffer filled.
+- macOS: a background process started just before a session's shell exited
+  now stays owned by that session, so stopping the session also stops it.
+
 ## [0.16.0] - 2026-09-18
 
 Terminal sessions move out of the window and into `paneflow-host`, a detached

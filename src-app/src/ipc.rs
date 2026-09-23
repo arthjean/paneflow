@@ -180,6 +180,15 @@ pub fn start_server() -> (
             loop {
                 match listener.accept() {
                     Ok(stream) => {
+                        let stream = match blocking_connection(stream) {
+                            Ok(stream) => stream,
+                            Err(e) => {
+                                log::warn!(
+                                    "paneflow: dropping an IPC connection that cannot be made blocking: {e}"
+                                );
+                                continue;
+                            }
+                        };
                         if active_connections.load(Ordering::Acquire) >= MAX_CONCURRENT_CONNECTIONS
                         {
                             reject_overloaded(stream);
@@ -577,6 +586,11 @@ fn write_overloaded_error(writer: &mut Stream, message: &str) {
 
 fn reject_overloaded(mut stream: Stream) {
     write_overloaded_error(&mut stream, "server busy: too many concurrent connections");
+}
+
+fn blocking_connection(stream: Stream) -> std::io::Result<Stream> {
+    stream.set_nonblocking(false)?;
+    Ok(stream)
 }
 
 #[cfg(unix)]
@@ -1319,6 +1333,45 @@ mod framing_tests {
             read_capped_line(&mut cur, &mut line).unwrap(),
             LineRead::Got
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_accepted_connection_delivers_a_reply_larger_than_the_socket_buffer() {
+        use interprocess::local_socket::prelude::*;
+        use interprocess::local_socket::{GenericFilePath, ListenerNonblockingMode, Stream};
+        use std::io::{Read, Write};
+        use std::time::Duration;
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("paneflow.sock");
+        let listener = super::bind_socket(&path).expect("bind");
+        listener
+            .set_nonblocking(ListenerNonblockingMode::Accept)
+            .expect("nonblocking accept");
+        let mut client =
+            Stream::connect(path.to_fs_name::<GenericFilePath>().expect("name")).expect("connect");
+        let accepted = loop {
+            match listener.accept() {
+                Ok(stream) => break stream,
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+                Err(error) => panic!("accept: {error}"),
+            }
+        };
+        let mut accepted = super::blocking_connection(accepted).expect("blocking stream");
+        let reply = vec![b'x'; 256 * 1024];
+        let expected = reply.len();
+        let writer = std::thread::spawn(move || accepted.write_all(&reply));
+        std::thread::sleep(Duration::from_millis(200));
+        let mut received = Vec::new();
+        client.read_to_end(&mut received).expect("read the reply");
+        writer
+            .join()
+            .expect("writer thread")
+            .expect("the whole reply is written");
+        assert_eq!(received.len(), expected);
     }
 
     #[cfg(unix)]
