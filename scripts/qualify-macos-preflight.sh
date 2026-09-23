@@ -178,11 +178,18 @@ if [ -x "$desktop" ]; then
   kill -0 "$desktop_pid" 2>/dev/null && alive=true
   kill -TERM "$desktop_pid" 2>/dev/null
   wait "$desktop_pid" 2>/dev/null
+  PANEFLOW_HOME="$desktop_home" "$desktop" serve stop >>"$evidence/desktop.log" 2>&1
   PANEFLOW_HOME="$desktop_home" "$desktop" host stop >>"$evidence/desktop.log" 2>&1
-  if [ "$rendered" = "true" ] && [ "$alive" = "true" ]; then
-    record M13-desktop pass "packaged desktop reached its first font configuration under Metal and stayed up; screenshot desktop.png"
+  leftover=""
+  for _ in $(seq 1 20); do
+    leftover=$(pgrep -f -- "--home $desktop_home" | tr '\n' ' ')
+    [ -z "$leftover" ] && break
+    sleep 0.5
+  done
+  if [ "$rendered" = "true" ] && [ "$alive" = "true" ] && [ -z "$leftover" ]; then
+    record M13-desktop pass "packaged desktop reached its first font configuration under Metal and stayed up; screenshot desktop.png; its worker and host stopped"
   else
-    record M13-desktop fail "desktop rendered=$rendered alive=$alive; see desktop.log and desktop.png"
+    record M13-desktop fail "desktop rendered=$rendered alive=$alive leftover=${leftover:-none}; see desktop.log and desktop.png"
   fi
 else
   record M13-desktop fail "packaged desktop missing at $desktop"

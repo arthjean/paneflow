@@ -163,7 +163,7 @@ export path before the evidence matters.
 | M10-no-competing-paneflow | no Paneflow process before the run |
 | M11-socket-path | `TMPDIR` short enough for the 104-byte `sun_path` limit |
 | M12-host | the packaged host serves a private home and runs one fixture session |
-| M13-desktop | the packaged desktop reaches its first font configuration under Metal and stays up |
+| M13-desktop | the packaged desktop reaches its first font configuration under Metal and stays up; then its worker and host stop and no process of its home remains |
 | M14-evidence-export | the evidence archive is written and lists |
 
 A failed M03, M04, M12, or M13 stops the qualification: record the Mac as
