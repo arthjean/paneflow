@@ -1,0 +1,209 @@
+name: macos_qualification_package
+
+# Builds the Apple Silicon qualification package for a candidate commit, so
+# the rented Mac runs the persistent-path qualification without compiling:
+# the candidate app bundle, the session fixture, the prebuilt harness, the
+# candidate manifest, profiling builds of the candidate and pre-refactor
+# baseline hosts, and the on-machine scripts, all under one SHA256SUMS. The
+# package is then extracted on this runner and exercised through the same
+# preflight and a quick harness run; those verdicts are rehearsals and never
+# decide a threshold. See docs/release/qualification/macos-rental.md.
+on:
+  workflow_dispatch:
+    inputs:
+      candidate_ref:
+        description: "Candidate commit or ref"
+        required: false
+        type: string
+        default: main
+      baseline_ref:
+        description: "Pre-refactor baseline commit"
+        required: false
+        type: string
+        default: f881c8bcce568c76d96ba7e691a0e26d86154215
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ inputs.candidate_ref }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash -euo pipefail {0}
+
+env:
+  CARGO_TERM_COLOR: always
+  TARGET: aarch64-apple-darwin
+
+jobs:
+  package:
+    name: Build and rehearse the macOS qualification package
+    runs-on: macos-14
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          ref: ${{ inputs.candidate_ref }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: ./.github/actions/fetch-libghostty
+
+      - name: Verify the Metal toolchain
+        run: |
+          xcrun --find metal
+          sw_vers
+          sysctl -n machdep.cpu.brand_string
+
+      - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88
+        with:
+          toolchain: "1.98.0"
+          targets: aarch64-apple-darwin
+
+      - name: Resolve identities
+        id: ids
+        env:
+          BASELINE_REF: ${{ inputs.baseline_ref }}
+        run: |
+          candidate=$(git rev-parse HEAD)
+          baseline=$(git rev-parse --verify "$BASELINE_REF^{commit}")
+          version=$(cargo metadata --no-deps --format-version 1 --locked | jq -r '.packages[] | select(.name == "paneflow-app") | .version')
+          name="paneflow-macos-qualification-${candidate:0:12}"
+          {
+            echo "candidate=$candidate"
+            echo "baseline=$baseline"
+            echo "version=$version"
+            echo "name=$name"
+            echo "package=$RUNNER_TEMP/$name"
+          } >>"$GITHUB_OUTPUT"
+
+      - name: Build the candidate release binaries and the harness
+        run: |
+          cargo build --release --locked --target "$TARGET" -p paneflow-app -p paneflow-host
+          cargo test --release --locked --target "$TARGET" -p paneflow-host --test persistent_baseline --no-run --message-format=json >"$RUNNER_TEMP/harness-build.json"
+          harness=$(jq -r 'select(.reason == "compiler-artifact" and .target.name == "persistent_baseline" and .executable != null) | .executable' "$RUNNER_TEMP/harness-build.json" | tail -n 1)
+          test -x "$harness"
+          echo "HARNESS=$harness" >>"$GITHUB_ENV"
+
+      - name: Bundle the candidate app and freeze its manifest
+        env:
+          PACKAGE: ${{ steps.ids.outputs.package }}
+          VERSION: ${{ steps.ids.outputs.version }}
+        run: |
+          bash scripts/bundle-macos.sh --version "$VERSION" --arch aarch64
+          release="target/$TARGET/release"
+          for binary in paneflow paneflow-host; do
+            cmp "$release/$binary" "dist/PaneFlow.app/Contents/MacOS/$binary"
+          done
+          mkdir -p "$PACKAGE/candidate/bin"
+          scripts/candidate-manifest.sh --target "$TARGET" --out "$PACKAGE/candidate/candidate.json"
+          grep -q '"dirty": false' "$PACKAGE/candidate/candidate.json"
+          cp -R dist/PaneFlow.app "$PACKAGE/candidate/PaneFlow.app"
+          install -m 0755 "$release/paneflow-session-fixture" "$PACKAGE/candidate/bin/paneflow-session-fixture"
+          install -m 0755 "$HARNESS" "$PACKAGE/candidate/bin/persistent_baseline"
+          install -m 0755 "$release/paneflow" "$PACKAGE/candidate/bin/paneflow-worker-replacement"
+
+      - name: Build the profiling hosts at the candidate and the baseline
+        env:
+          PACKAGE: ${{ steps.ids.outputs.package }}
+          BASELINE: ${{ steps.ids.outputs.baseline }}
+          CARGO_PROFILE_RELEASE_DEBUG: line-tables-only
+          CARGO_PROFILE_RELEASE_STRIP: none
+          CARGO_PROFILE_RELEASE_SPLIT_DEBUGINFO: packed
+        run: |
+          CARGO_TARGET_DIR="$RUNNER_TEMP/target-profiling-candidate" cargo build --release --locked --target "$TARGET" -p paneflow-host
+          git worktree add --detach "$RUNNER_TEMP/baseline-src" "$BASELINE"
+          (cd "$RUNNER_TEMP/baseline-src" && bash scripts/fetch-libghostty.sh --target "$TARGET")
+          (cd "$RUNNER_TEMP/baseline-src" && CARGO_TARGET_DIR="$RUNNER_TEMP/target-profiling-baseline" cargo build --release --locked --target "$TARGET" -p paneflow-host)
+          for side in candidate baseline; do
+            out="$RUNNER_TEMP/target-profiling-$side/$TARGET/release"
+            mkdir -p "$PACKAGE/profiling/$side"
+            install -m 0755 "$out/paneflow-host" "$PACKAGE/profiling/$side/paneflow-host"
+            if [ -d "$out/paneflow-host.dSYM" ]; then
+              cp -R "$out/paneflow-host.dSYM" "$PACKAGE/profiling/$side/"
+            fi
+          done
+
+      - name: Add the on-machine scripts, identity, and checksums
+        env:
+          PACKAGE: ${{ steps.ids.outputs.package }}
+          NAME: ${{ steps.ids.outputs.name }}
+          CANDIDATE: ${{ steps.ids.outputs.candidate }}
+          BASELINE: ${{ steps.ids.outputs.baseline }}
+        run: |
+          mkdir -p "$PACKAGE/scripts"
+          for script in bench-persistent.sh qualify-macos-preflight.sh profile-host-macos.sh; do
+            install -m 0755 "scripts/$script" "$PACKAGE/scripts/$script"
+          done
+          {
+            echo "package: $NAME"
+            echo "candidate: $CANDIDATE"
+            echo "baseline: $BASELINE"
+            echo "workflow run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+            echo "toolchain: $(rustc -V)"
+            echo "runner: $(sw_vers -productVersion) $(sw_vers -buildVersion), $(sysctl -n machdep.cpu.brand_string)"
+            echo "signing: linker ad-hoc signatures only; not Developer ID signed and not notarized, so Gatekeeper and notarized distribution are not certified by this package"
+            echo "profiling: line-tables-only debug info, unstripped, packed dSYM; both hosts are driven by the candidate fixture"
+          } >"$PACKAGE/PACKAGE.txt"
+          (cd "$PACKAGE" && find . -type f ! -name SHA256SUMS | LC_ALL=C sort | tr '\n' '\0' | xargs -0 shasum -a 256 >SHA256SUMS)
+          mkdir -p "$RUNNER_TEMP/out"
+          tar -C "$RUNNER_TEMP" -czf "$RUNNER_TEMP/out/$NAME.tar.gz" "$NAME"
+          (cd "$RUNNER_TEMP/out" && shasum -a 256 "$NAME.tar.gz" >"$NAME.tar.gz.sha256")
+
+      - name: Rehearse the extracted package on this runner
+        env:
+          NAME: ${{ steps.ids.outputs.name }}
+        run: |
+          rehearsal="$RUNNER_TEMP/rehearsal"
+          mkdir -p "$rehearsal"
+          (cd "$RUNNER_TEMP/out" && shasum -a 256 -c "$NAME.tar.gz.sha256")
+          tar -C "$rehearsal" -xzf "$RUNNER_TEMP/out/$NAME.tar.gz"
+          pkg="$rehearsal/$NAME"
+          set +e
+          "$pkg/scripts/qualify-macos-preflight.sh" --package "$pkg" --root "$rehearsal/root" --min-free-gib 5
+          preflight=$?
+          "$pkg/scripts/bench-persistent.sh" --prebuilt "$pkg/candidate" --with-worker --quick
+          bench=$?
+          set -e
+          ledger=$(ls "$rehearsal"/root/evidence/preflight-*/ledger.tsv)
+          result=$(ls "$pkg"/bench/results/persistent-*.json)
+          for check in M07-package-integrity M12-host M13-desktop M14-evidence-export; do
+            grep -q "^$check	pass	" "$ledger"
+          done
+          jq -e '.workloads.W05.final | (.host_threads != null) and (.host_handles != null) and (.host_resident_bytes != null)' "$result"
+          jq -e '.scenarios[-1].host.attribution == "exact thread names"' "$result"
+          mkdir -p "$RUNNER_TEMP/rehearsal-evidence"
+          cp -R "$(dirname "$ledger")" "$result" "$RUNNER_TEMP/rehearsal-evidence/"
+          {
+            echo "## macOS qualification package"
+            echo
+            echo "| Item | Value |"
+            echo "|---|---|"
+            echo "| Package | \`$NAME.tar.gz\` |"
+            echo "| SHA-256 | \`$(cut -d' ' -f1 "$RUNNER_TEMP/out/$NAME.tar.gz.sha256")\` |"
+            echo "| Preflight exit (runner, rehearsal) | $preflight |"
+            echo "| Quick harness exit (shared runner, rehearsal, never decides a threshold) | $bench |"
+            echo
+            echo '```'
+            cat "$ledger"
+            echo '```'
+          } >>"$GITHUB_STEP_SUMMARY"
+
+      - name: Upload the package
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ${{ steps.ids.outputs.name }}
+          path: ${{ runner.temp }}/out/
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload the rehearsal evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ${{ steps.ids.outputs.name }}-rehearsal
+          path: ${{ runner.temp }}/rehearsal-evidence/
+          if-no-files-found: warn
+          retention-days: 30
