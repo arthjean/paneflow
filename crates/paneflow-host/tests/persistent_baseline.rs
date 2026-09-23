@@ -858,8 +858,8 @@ impl DesktopProcess {
         ));
         #[cfg(not(windows))]
         let endpoint = home.join("desktop.sock");
-        let log =
-            std::fs::File::create(home.join(format!("desktop-{}.log", sessions.len()))).unwrap();
+        let log_path = home.join(format!("desktop-{}.log", sessions.len()));
+        let log = std::fs::File::create(&log_path).unwrap();
         let started = Instant::now();
         let child = Command::new(executable)
             .env("PANEFLOW_HOME", home)
@@ -882,33 +882,54 @@ impl DesktopProcess {
         };
         let ipc = IpcClient::new(endpoint.clone());
         let deadline = Instant::now() + Duration::from_secs(30);
+        let mut listed = 0;
+        let mut ready_prefix = 0;
         loop {
             assert!(
                 desktop.child.try_wait().unwrap().is_none(),
-                "desktop exited"
+                "desktop exited\n{}",
+                log_tail(&log_path)
             );
-            assert!(Instant::now() < deadline, "desktop restoration watchdog");
+            assert!(
+                Instant::now() < deadline,
+                "desktop restoration watchdog: {listed} of {} surfaces listed, the first {ready_prefix} showing fixture idle\n{}",
+                sessions.len(),
+                log_tail(&log_path)
+            );
             if paneflow_ipc_client::socket_is_listening(&endpoint)
                 && let Ok(surfaces) = ipc.call("surface.list", json!({}))
                 && let Some(entries) = surfaces["surfaces"].as_array()
-                && entries.len() == sessions.len()
             {
-                let ready = entries.iter().all(|surface| {
-                    ipc.call(
-                        "surface.read",
-                        json!({"surface_id": surface["surface_id"], "lines": 24}),
-                    )
-                    .is_ok_and(|result| result.to_string().contains("fixture idle"))
-                });
-                if ready {
-                    desktop.restored_ms = started.elapsed().as_secs_f64() * 1000.0;
-                    desktop.surfaces = surfaces;
-                    return desktop;
+                listed = entries.len();
+                if listed == sessions.len() {
+                    ready_prefix = entries
+                        .iter()
+                        .take_while(|surface| {
+                            ipc.call(
+                                "surface.read",
+                                json!({"surface_id": surface["surface_id"], "lines": 24}),
+                            )
+                            .is_ok_and(|result| result.to_string().contains("fixture idle"))
+                        })
+                        .count();
+                    if ready_prefix == listed {
+                        desktop.restored_ms = started.elapsed().as_secs_f64() * 1000.0;
+                        desktop.surfaces = surfaces;
+                        return desktop;
+                    }
                 }
             }
             std::thread::sleep(Duration::from_millis(100));
         }
     }
+}
+
+fn log_tail(path: &Path) -> String {
+    let text = std::fs::read(path)
+        .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
+        .unwrap_or_default();
+    let lines: Vec<_> = text.lines().collect();
+    lines[lines.len().saturating_sub(40)..].join("\n")
 }
 
 impl Drop for DesktopProcess {
