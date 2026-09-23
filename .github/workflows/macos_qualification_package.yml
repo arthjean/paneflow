@@ -28,6 +28,11 @@ on:
         required: false
         type: boolean
         default: false
+      profile_restore:
+        description: "Diagnostic only: sample a symbolized desktop and host while the desktop restores the W01 sessions"
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -116,11 +121,15 @@ jobs:
         env:
           PACKAGE: ${{ steps.ids.outputs.package }}
           BASELINE: ${{ steps.ids.outputs.baseline }}
+          PROFILE_RESTORE: ${{ inputs.profile_restore }}
           CARGO_PROFILE_RELEASE_DEBUG: line-tables-only
           CARGO_PROFILE_RELEASE_STRIP: none
           CARGO_PROFILE_RELEASE_SPLIT_DEBUGINFO: packed
         run: |
           CARGO_TARGET_DIR="$RUNNER_TEMP/target-profiling-candidate" cargo build --release --locked --target "$TARGET" -p paneflow-host
+          if [ "$PROFILE_RESTORE" = "true" ]; then
+            CARGO_TARGET_DIR="$RUNNER_TEMP/target-profiling-candidate" cargo build --release --locked --target "$TARGET" -p paneflow-app
+          fi
           git worktree add --detach "$RUNNER_TEMP/baseline-src" "$BASELINE"
           (cd "$RUNNER_TEMP/baseline-src" && bash scripts/fetch-libghostty.sh --target "$TARGET")
           (cd "$RUNNER_TEMP/baseline-src" && CARGO_TARGET_DIR="$RUNNER_TEMP/target-profiling-baseline" cargo build --release --locked --target "$TARGET" -p paneflow-host)
@@ -132,6 +141,13 @@ jobs:
               cp -R "$out/paneflow-host.dSYM" "$PACKAGE/profiling/$side/"
             fi
           done
+          if [ "$PROFILE_RESTORE" = "true" ]; then
+            out="$RUNNER_TEMP/target-profiling-candidate/$TARGET/release"
+            install -m 0755 "$out/paneflow" "$PACKAGE/profiling/candidate/paneflow"
+            if [ -d "$out/paneflow.dSYM" ]; then
+              cp -R "$out/paneflow.dSYM" "$PACKAGE/profiling/candidate/"
+            fi
+          fi
 
       - name: Add the on-machine scripts, identity, and checksums
         env:
@@ -238,6 +254,66 @@ jobs:
           for exit_code in "$full" "$endurance" "$profiles"; do
             [ "$exit_code" = "skipped" ] || [ "$exit_code" -eq 0 ]
           done
+
+      - name: Sample the desktop restoration (diagnostic, never evidence)
+        if: inputs.profile_restore
+        env:
+          NAME: ${{ steps.ids.outputs.name }}
+        run: |
+          pkg="$RUNNER_TEMP/rehearsal/$NAME"
+          diag="$RUNNER_TEMP/restore-diagnostic"
+          out="$RUNNER_TEMP/qualification-evidence/restore"
+          mkdir -p "$diag" "$out"
+          cp -R "$pkg/candidate" "$diag/candidate"
+          macos="$diag/candidate/PaneFlow.app/Contents/MacOS"
+          install -m 0755 "$pkg/profiling/candidate/paneflow" "$macos/paneflow"
+          install -m 0755 "$pkg/profiling/candidate/paneflow-host" "$macos/paneflow-host"
+          for dsym in paneflow.dSYM paneflow-host.dSYM; do
+            if [ -d "$pkg/profiling/candidate/$dsym" ]; then
+              cp -R "$pkg/profiling/candidate/$dsym" "$macos/"
+            fi
+          done
+          watch_desktops() {
+            local seen=" " launch=0 pid host
+            while [ "$launch" -lt 4 ] && [ ! -e "$diag/harness-done" ]; do
+              for pid in $(ps -axo pid=,command= | awk -v bin="$macos/paneflow" '$2 == bin && NF == 2 {print $1}'); do
+                case "$seen" in *" $pid "*) continue ;; esac
+                seen="$seen$pid "
+                launch=$((launch + 1))
+                ps -axo pid=,ppid=,command= >"$out/ps-launch$launch.txt"
+                sample "$pid" 25 -file "$out/sample-desktop-launch$launch.txt" >/dev/null 2>&1 &
+                for host in $(pgrep -f "$macos/paneflow-host serve"); do
+                  sample "$host" 25 -file "$out/sample-host-launch$launch-$host.txt" >/dev/null 2>&1 &
+                done
+              done
+              sleep 0.2
+            done
+            wait
+          }
+          watch_desktops &
+          watcher=$!
+          set +e
+          "$pkg/scripts/bench-persistent.sh" --prebuilt "$diag/candidate" --with-desktop --quick >"$out/harness.log" 2>&1
+          harness=$?
+          touch "$diag/harness-done"
+          wait "$watcher"
+          set -e
+          result=$(ls -t "$pkg"/bench/results/persistent-*.json | head -n 1)
+          cp "$result" "$out/"
+          {
+            echo "## Desktop restoration diagnostic"
+            echo
+            echo "Harness exit: $harness (quick protocol with the symbolized desktop and host; never evidence)"
+            echo
+            echo '```'
+            jq -c '.scenarios[] | {sessions, restore_ms: .desktop_restore.ready_ms}' "$result" || true
+            tail -n 5 "$out/harness.log"
+            for file in "$out"/sample-*.txt; do
+              echo "== $(basename "$file")"
+              sed -n '/^Sort by top of stack/,/^$/p' "$file" | head -n 25
+            done
+            echo '```'
+          } >>"$GITHUB_STEP_SUMMARY"
 
       - name: Upload the package
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
