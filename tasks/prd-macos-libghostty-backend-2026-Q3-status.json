@@ -1,0 +1,334 @@
+{
+  "prd": {
+    "file": "tasks/prd-macos-libghostty-backend-2026-Q3.md",
+    "title": "macOS libghostty Backend",
+    "created_at": "2026-08-26",
+    "status": "DONE"
+  },
+  "epics": [
+    {
+      "id": "EP-001",
+      "title": "Collapse the platform predicate behind a ghostty_native cfg alias",
+      "status": "DONE",
+      "priority": "P0",
+      "stories_total": 3,
+      "stories_done": 3,
+      "completed_at": "2026-08-27"
+    },
+    {
+      "id": "EP-002",
+      "title": "Produce a reproducible aarch64-apple-darwin archive",
+      "status": "DONE",
+      "priority": "P0",
+      "stories_total": 4,
+      "stories_done": 4
+    },
+    {
+      "id": "EP-003",
+      "title": "Open the build-support type system to a third platform",
+      "status": "DONE",
+      "priority": "P0",
+      "stories_total": 2,
+      "stories_done": 2
+    },
+    {
+      "id": "EP-004",
+      "title": "Wire the macOS runtime",
+      "status": "DONE",
+      "priority": "P0",
+      "stories_total": 3,
+      "stories_done": 3,
+      "completed_at": "2026-08-27"
+    },
+    {
+      "id": "EP-005",
+      "title": "Gate macOS in CI, packaging, and supply chain",
+      "status": "DONE",
+      "priority": "P0",
+      "stories_total": 4,
+      "stories_done": 4,
+      "completed_at": "2026-08-27"
+    },
+    {
+      "id": "EP-006",
+      "title": "Ship macOS opt-in and document the rollout",
+      "status": "DONE",
+      "priority": "P1",
+      "stories_total": 3,
+      "stories_done": 3,
+      "completed_at": "2026-08-27"
+    }
+  ],
+  "stories": [
+    {
+      "id": "US-001",
+      "title": "Emit the ghostty_native cfg from the build scripts",
+      "epic": "EP-001",
+      "status": "DONE",
+      "priority": "P0",
+      "size": "S",
+      "blocked_by": [],
+      "started_at": "2026-08-26",
+      "completed_at": "2026-08-26",
+      "reviewed_at": "2026-08-27"
+    },
+    {
+      "id": "US-002",
+      "title": "Collapse the predicate in paneflow-terminal-ghostty",
+      "epic": "EP-001",
+      "status": "DONE",
+      "priority": "P0",
+      "size": "M",
+      "blocked_by": [
+        "US-001"
+      ],
+      "started_at": "2026-08-26",
+      "completed_at": "2026-08-26",
+      "reviewed_at": "2026-08-27"
+    },
+    {
+      "id": "US-003",
+      "title": "Collapse the predicate across the src-app terminal modules",
+      "epic": "EP-001",
+      "status": "DONE",
+      "priority": "P0",
+      "size": "L",
+      "blocked_by": [
+        "US-001"
+      ],
+      "started_at": "2026-08-26",
+      "completed_at": "2026-08-27",
+      "reviewed_at": "2026-08-27"
+    },
+    {
+      "id": "US-004",
+      "title": "Validate the Linux-host cross-build of lib-vt for aarch64-macos",
+      "epic": "EP-002",
+      "status": "DONE",
+      "priority": "P0",
+      "size": "M",
+      "blocked_by": [
+        "US-001"
+      ],
+      "started_at": "2026-08-26",
+      "completed_at": "2026-08-26",
+      "reviewed_at": "2026-08-26"
+    },
+    {
+      "id": "US-005",
+      "title": "Add scripts/build-libghostty-macos.sh",
+      "epic": "EP-002",
+      "status": "DONE",
+      "priority": "P0",
+      "size": "L",
+      "blocked_by": [
+        "US-004"
+      ],
+      "started_at": "2026-08-26",
+      "completed_at": "2026-08-26",
+      "reviewed_at": "2026-08-26"
+    },
+    {
+      "id": "US-006",
+      "title": "Gate the macOS archive on byte reproducibility",
+      "epic": "EP-002",
+      "status": "DONE",
+      "priority": "P0",
+      "size": "M",
+      "blocked_by": [
+        "US-005"
+      ],
+      "started_at": "2026-08-26",
+      "completed_at": "2026-08-26",
+      "reviewed_at": "2026-08-26"
+    },
+    {
+      "id": "US-007",
+      "title": "Commit the prebuilt tree and declare the manifest target",
+      "epic": "EP-002",
+      "status": "DONE",
+      "priority": "P0",
+      "size": "M",
+      "blocked_by": [
+        "US-006",
+        "US-008"
+      ],
+      "started_at": "2026-08-26",
+      "completed_at": "2026-08-26",
+      "reviewed_at": "2026-08-26"
+    },
+    {
+      "id": "US-008",
+      "title": "Add the macOS variant to the manifest contract types",
+      "epic": "EP-003",
+      "status": "DONE",
+      "priority": "P0",
+      "size": "M",
+      "blocked_by": [
+        "US-001"
+      ],
+      "started_at": "2026-08-26",
+      "completed_at": "2026-08-26",
+      "reviewed_at": "2026-08-26"
+    },
+    {
+      "id": "US-009",
+      "title": "Extend the artifact inventory rules to macOS",
+      "epic": "EP-003",
+      "status": "DONE",
+      "priority": "P0",
+      "size": "S",
+      "blocked_by": [
+        "US-008"
+      ],
+      "started_at": "2026-08-26",
+      "completed_at": "2026-08-26",
+      "reviewed_at": "2026-08-26"
+    },
+    {
+      "id": "US-010",
+      "title": "Widen the POSIX gates in ghostty_session.rs",
+      "epic": "EP-004",
+      "status": "DONE",
+      "priority": "P0",
+      "size": "L",
+      "blocked_by": [
+        "US-003"
+      ],
+      "started_at": "2026-08-26",
+      "completed_at": "2026-08-27",
+      "reviewed_at": "2026-08-27"
+    },
+    {
+      "id": "US-011",
+      "title": "Declare the libghostty-macos feature and its target dependencies",
+      "epic": "EP-004",
+      "status": "DONE",
+      "priority": "P0",
+      "size": "M",
+      "blocked_by": [
+        "US-002",
+        "US-009",
+        "US-010"
+      ],
+      "started_at": "2026-08-26",
+      "completed_at": "2026-08-27",
+      "reviewed_at": "2026-08-27"
+    },
+    {
+      "id": "US-012",
+      "title": "Prove the Darwin process-lifecycle semantics",
+      "epic": "EP-004",
+      "status": "DONE",
+      "priority": "P0",
+      "size": "M",
+      "blocked_by": [
+        "US-011"
+      ],
+      "started_at": "2026-08-26",
+      "completed_at": "2026-08-27",
+      "reviewed_at": "2026-08-27"
+    },
+    {
+      "id": "US-013",
+      "title": "Exercise the macOS backend in macos_check",
+      "epic": "EP-005",
+      "status": "DONE",
+      "priority": "P0",
+      "size": "M",
+      "blocked_by": [
+        "US-011"
+      ],
+      "started_at": "2026-08-27",
+      "completed_at": "2026-08-27",
+      "reviewed_at": "2026-08-27"
+    },
+    {
+      "id": "US-014",
+      "title": "Add scripts/verify-libghostty-macos.sh",
+      "epic": "EP-005",
+      "status": "DONE",
+      "priority": "P0",
+      "size": "M",
+      "blocked_by": [
+        "US-007"
+      ],
+      "started_at": "2026-08-27",
+      "completed_at": "2026-08-27",
+      "reviewed_at": "2026-08-27"
+    },
+    {
+      "id": "US-015",
+      "title": "Add the libghostty-macos.yml workflow",
+      "epic": "EP-005",
+      "status": "DONE",
+      "priority": "P0",
+      "size": "M",
+      "blocked_by": [
+        "US-006",
+        "US-014"
+      ],
+      "started_at": "2026-08-27",
+      "completed_at": "2026-08-27",
+      "reviewed_at": "2026-08-27"
+    },
+    {
+      "id": "US-016",
+      "title": "Ship the macOS Ghostty backend in the release pipeline",
+      "epic": "EP-005",
+      "status": "DONE",
+      "priority": "P0",
+      "size": "M",
+      "blocked_by": [
+        "US-013",
+        "US-014"
+      ],
+      "started_at": "2026-08-27",
+      "completed_at": "2026-08-27",
+      "reviewed_at": "2026-08-27"
+    },
+    {
+      "id": "US-017",
+      "title": "Honor the explicit ghostty backend selection on macOS",
+      "epic": "EP-006",
+      "status": "DONE",
+      "priority": "P1",
+      "size": "S",
+      "blocked_by": [
+        "US-011"
+      ],
+      "started_at": "2026-08-27",
+      "completed_at": "2026-08-27",
+      "reviewed_at": "2026-08-27"
+    },
+    {
+      "id": "US-018",
+      "title": "Fall back and report on macOS backend failure",
+      "epic": "EP-006",
+      "status": "DONE",
+      "priority": "P1",
+      "size": "M",
+      "blocked_by": [
+        "US-017"
+      ],
+      "started_at": "2026-08-27",
+      "completed_at": "2026-08-27",
+      "reviewed_at": "2026-08-27"
+    },
+    {
+      "id": "US-019",
+      "title": "Document the macOS backend status",
+      "epic": "EP-006",
+      "status": "DONE",
+      "priority": "P1",
+      "size": "S",
+      "blocked_by": [
+        "US-016",
+        "US-017"
+      ],
+      "started_at": "2026-08-27",
+      "completed_at": "2026-08-27",
+      "reviewed_at": "2026-08-27"
+    }
+  ]
+}
