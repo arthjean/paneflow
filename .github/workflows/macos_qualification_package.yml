@@ -93,8 +93,8 @@ jobs:
 
       - name: Build the candidate release binaries and the harness
         run: |
-          cargo build --release --locked --target "$TARGET" -p paneflow-app -p paneflow-host
           cargo test --release --locked --target "$TARGET" -p paneflow-host --test persistent_baseline --no-run --message-format=json >"$RUNNER_TEMP/harness-build.json"
+          cargo build --release --locked --target "$TARGET" -p paneflow-app -p paneflow-host
           harness=$(jq -r 'select(.reason == "compiler-artifact" and .target.name == "persistent_baseline" and .executable != null) | .executable' "$RUNNER_TEMP/harness-build.json" | tail -n 1)
           test -x "$harness"
           echo "HARNESS=$harness" >>"$GITHUB_ENV"

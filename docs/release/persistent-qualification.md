@@ -155,6 +155,17 @@ scripts/bench-persistent.sh --with-desktop --endurance 480 --idle-minutes 30   #
 scripts/bench-persistent.sh --prebuilt <package>/candidate --with-worker       # runs a packaged harness and binaries without Cargo
 ```
 
+Without `--prebuilt`, both scripts build the harness first and then
+`cargo build --release --locked -p paneflow-app -p paneflow-host`, the
+command `release.yml` ships from, and point the harness at that host and
+fixture through `PANEFLOW_BENCH_HOST` and `PANEFLOW_BENCH_FIXTURE`. The order
+matters: `cargo test -p paneflow-host` rebuilds `target/release/paneflow-host`
+with the host's own features, and without the `paneflow-app` unification
+(`serde_json` `preserve_order` and `raw_value`, `tracing` `log`, among others)
+that host is not the shipped binary. The last build leaves the shipped binaries
+in `target/release/`, so `scripts/candidate-manifest.sh` run after the
+benchmarks names the host they measured.
+
 `--prebuilt` takes a directory holding `candidate.json` from
 `scripts/candidate-manifest.sh`, `bin/persistent_baseline`,
 `bin/paneflow-session-fixture`, and the desktop and host either in `bin/` or

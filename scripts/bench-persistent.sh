@@ -97,12 +97,17 @@ if [ -f bench/persistent-baseline.json ]; then
 fi
 
 if [ -z "$prebuilt" ]; then
-  cargo build --release --locked -p paneflow-host
+  harness=$(cargo test --release --locked -p paneflow-host --test persistent_baseline --no-run --message-format=json \
+    | grep -o '"executable":"[^"]*persistent_baseline-[^"]*"' | tail -n 1 | sed 's/^"executable":"//; s/"$//')
+  cargo build --release --locked -p paneflow-app -p paneflow-host
+  if [ ! -x "$harness" ]; then
+    echo "the persistent_baseline harness was not built: $harness" >&2
+    exit 2
+  fi
+  export PANEFLOW_BENCH_HOST="$root/target/release/paneflow-host"
+  export PANEFLOW_BENCH_FIXTURE="$root/target/release/paneflow-session-fixture"
 fi
 if [ "$worker" = "true" ]; then
-  if [ -z "$prebuilt" ]; then
-    cargo build --release --locked -p paneflow-app
-  fi
   export PANEFLOW_BENCH_CONTROLLER="$controller"
 else
   unset PANEFLOW_BENCH_CONTROLLER
@@ -142,9 +147,7 @@ set +e
 if [ -n "$prebuilt" ]; then
   "$harness" "$test" --ignored --exact --nocapture --test-threads=1
 else
-  cargo test --release --locked -p paneflow-host --test persistent_baseline \
-    "$test" \
-    -- --ignored --exact --nocapture --test-threads=1
+  (cd crates/paneflow-host && "$harness" "$test" --ignored --exact --nocapture --test-threads=1)
 fi
 status=$?
 set -e
