@@ -77,13 +77,14 @@ pub struct AgentEvent {
     pub payload: Value,
 }
 
-fn clamp_text(raw: &str) -> String {
-    let mut text: String = raw
-        .chars()
-        .filter(|character| *character != '\0')
-        .take(MAX_AGENT_TEXT_BYTES)
-        .collect();
-    text.truncate(MAX_AGENT_TEXT_BYTES);
+pub fn clamp_text(raw: &str) -> String {
+    let mut text = String::with_capacity(raw.len().min(MAX_AGENT_TEXT_BYTES));
+    for character in raw.chars().filter(|character| *character != '\0') {
+        if text.len() + character.len_utf8() > MAX_AGENT_TEXT_BYTES {
+            break;
+        }
+        text.push(character);
+    }
     text
 }
 
@@ -458,5 +459,50 @@ mod tests {
         );
         bus.unsubscribe(subscription.id);
         assert_eq!(bus.subscriber_count(), 0);
+    }
+
+    #[test]
+    fn clamp_text_cuts_multibyte_input_on_a_character_boundary() {
+        let raw = "€".repeat(MAX_AGENT_TEXT_BYTES);
+        let clamped = clamp_text(&raw);
+        assert_eq!(clamped.len(), MAX_AGENT_TEXT_BYTES / 3 * 3);
+        assert!(clamped.chars().all(|character| character == '€'));
+    }
+
+    #[test]
+    fn clamp_text_drops_a_character_straddling_the_budget() {
+        let raw = format!("{}\u{1F600}tail", "a".repeat(MAX_AGENT_TEXT_BYTES - 2));
+        let clamped = clamp_text(&raw);
+        assert_eq!(clamped.len(), MAX_AGENT_TEXT_BYTES - 2);
+        assert!(clamped.bytes().all(|byte| byte == b'a'));
+    }
+
+    #[test]
+    fn clamp_text_removes_nul_before_applying_the_budget() {
+        let raw = format!("{}{}", "\0".repeat(16), "b".repeat(MAX_AGENT_TEXT_BYTES));
+        assert_eq!(clamp_text(&raw), "b".repeat(MAX_AGENT_TEXT_BYTES));
+        assert_eq!(clamp_text("a\0b\0c"), "abc");
+    }
+
+    #[test]
+    fn clamp_text_keeps_short_ascii_input_unchanged() {
+        let raw = "x".repeat(MAX_AGENT_TEXT_BYTES);
+        assert_eq!(clamp_text(&raw), raw);
+        assert_eq!(clamp_text("hello"), "hello");
+        assert_eq!(clamp_text(""), "");
+    }
+
+    #[test]
+    fn an_event_with_long_multibyte_text_is_clamped_without_panicking() {
+        let params = json!({
+            "session": SessionId::new().to_string(),
+            "kind": "ai.notification",
+            "tool": "claude",
+            "message": "é".repeat(MAX_AGENT_TEXT_BYTES),
+        });
+        let parsed = AgentEvent::from_params(&params).expect("event parses");
+        let message = parsed.message.expect("message kept");
+        assert!(message.len() <= MAX_AGENT_TEXT_BYTES);
+        assert!(message.chars().all(|character| character == 'é'));
     }
 }
