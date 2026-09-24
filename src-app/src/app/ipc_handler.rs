@@ -801,7 +801,9 @@ fn surface_read_value(
 }
 
 pub(crate) fn parse_rename_name(params: &serde_json::Value) -> Option<String> {
-    let raw = params.get("new_name").and_then(|v| v.as_str())?;
+    let raw = ["name", "new_name"]
+        .into_iter()
+        .find_map(|key| params.get(key).and_then(|v| v.as_str()))?;
     sanitize_pane_name(raw)
 }
 
@@ -4699,6 +4701,32 @@ mod tests {
         assert_eq!(super::parse_rename_name(&p).as_deref(), Some("buildcodex"));
         let long = "x".repeat(200);
         let p = serde_json::json!({ "new_name": long });
+        assert_eq!(super::parse_rename_name(&p).map(|s| s.len()), Some(64));
+    }
+
+    #[test]
+    fn parse_rename_name_reads_the_documented_name_key() {
+        let p = serde_json::json!({"surface_id": 3, "name": "build"});
+        assert_eq!(super::parse_rename_name(&p).as_deref(), Some("build"));
+        let p = serde_json::json!({"surface_id": 3, "new_name": "build"});
+        assert_eq!(super::parse_rename_name(&p).as_deref(), Some("build"));
+        let p = serde_json::json!({"name": "docs", "new_name": "legacy"});
+        assert_eq!(super::parse_rename_name(&p).as_deref(), Some("docs"));
+        let p = serde_json::json!({"name": "  ", "new_name": "legacy"});
+        assert_eq!(super::parse_rename_name(&p), None);
+        assert_eq!(
+            super::parse_rename_name(&serde_json::json!({"name": ""})),
+            None
+        );
+    }
+
+    #[test]
+    fn parse_rename_name_sanitizes_the_name_key() {
+        let p = serde_json::json!({"name": "ab\ncd\u{7}ef"});
+        assert_eq!(super::parse_rename_name(&p).as_deref(), Some("abcdef"));
+        let p = serde_json::json!({"name": "build\u{202E}codex\u{200D}"});
+        assert_eq!(super::parse_rename_name(&p).as_deref(), Some("buildcodex"));
+        let p = serde_json::json!({ "name": "x".repeat(200) });
         assert_eq!(super::parse_rename_name(&p).map(|s| s.len()), Some(64));
     }
 
