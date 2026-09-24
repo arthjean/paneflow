@@ -797,6 +797,9 @@ fn new_terminal(spec: &SpawnSpec) -> Result<ghostty::DisplayTerminal, String> {
     if let Err(error) = terminal.set_terminfo_name(TERMINFO_NAME) {
         log::warn!("paneflow-host: terminfo name could not be configured: {error}");
     }
+    if let Err(error) = terminal.set_glyph_protocol(false) {
+        log::warn!("paneflow-host: the glyph protocol could not be disabled: {error}");
+    }
     let scrollback_bytes = spec
         .scrollback_lines
         .saturating_mul(SCROLLBACK_BYTES_PER_LINE)
@@ -1988,6 +1991,20 @@ mod tests {
         let identity = runtime.process();
         assert!(stop_is_confirmed(&runtime.stop().unwrap()));
         assert!(!identity.is_provably_live());
+    }
+
+    #[test]
+    fn a_new_terminal_never_answers_a_glyph_protocol_query() {
+        let mut terminal = new_terminal(&echo_shell_spec(80, 24)).expect("terminal");
+        terminal
+            .feed(b"\x1b_25a1;s\x1b\\")
+            .expect("glyph query parses");
+        assert!(
+            !terminal
+                .drain_events()
+                .into_iter()
+                .any(|event| matches!(event, ghostty::BackendEvent::WritePty(_)))
+        );
     }
 
     #[test]

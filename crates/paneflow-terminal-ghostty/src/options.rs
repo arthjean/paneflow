@@ -454,6 +454,20 @@ mod tests {
     }
 
     #[test]
+    fn the_glyph_protocol_answers_by_default_and_is_silent_once_disabled() {
+        let support_query = b"\x1b_25a1;s\x1b\\";
+        let mut terminal = terminal(20, 4);
+        terminal.feed(support_query).expect("glyph support query");
+        assert!(contains(&replies(&mut terminal), b"\x1b_25a1;s;"));
+
+        terminal
+            .set_glyph_protocol(false)
+            .expect("glyph protocol must disable");
+        terminal.feed(support_query).expect("glyph support query");
+        assert!(replies(&mut terminal).is_empty());
+    }
+
+    #[test]
     fn appearance_and_scheme_still_answer_after_the_options_are_pushed() {
         let mut terminal = terminal(20, 4);
         terminal

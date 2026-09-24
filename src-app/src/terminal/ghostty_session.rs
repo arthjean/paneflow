@@ -335,6 +335,7 @@ struct SessionInner {
     promoted: AtomicBool,
     shutdown_sent: AtomicBool,
     exit_published: AtomicBool,
+    option_as_alt: AtomicBool,
     #[cfg(test)]
     processed_output_bytes: AtomicUsize,
     #[cfg(test)]
@@ -362,6 +363,7 @@ enum RuntimeMessage {
     PasteInput {
         text: String,
         allow_unsafe: bool,
+        location: ghostty::ClipboardLocation,
     },
     WriteOutput {
         bytes: Vec<u8>,
@@ -387,6 +389,7 @@ enum RuntimeMessage {
         shape: ghostty::CursorShape,
         blink: bool,
     },
+    SetOptionAsAlt(bool),
     SearchChunk {
         start_row: usize,
         max_cells: usize,
@@ -1136,6 +1139,7 @@ impl GhosttySession {
                 promoted: AtomicBool::new(false),
                 shutdown_sent: AtomicBool::new(false),
                 exit_published: AtomicBool::new(false),
+                option_as_alt: AtomicBool::new(false),
                 #[cfg(test)]
                 processed_output_bytes: AtomicUsize::new(0),
                 #[cfg(test)]
@@ -1345,11 +1349,20 @@ impl GhosttySession {
         self.enqueue_input(RuntimeMessage::FocusInput(event))
     }
 
-    pub(super) fn write_paste(&self, text: String, allow_unsafe: bool) -> GhosttyInputSendResult {
+    pub(super) fn write_paste(
+        &self,
+        text: String,
+        allow_unsafe: bool,
+        location: ghostty::ClipboardLocation,
+    ) -> GhosttyInputSendResult {
         if text.is_empty() {
             return GhosttyInputSendResult::Sent;
         }
-        self.enqueue_input(RuntimeMessage::PasteInput { text, allow_unsafe })
+        self.enqueue_input(RuntimeMessage::PasteInput {
+            text,
+            allow_unsafe,
+            location,
+        })
     }
 
     fn enqueue_input(&self, message: RuntimeMessage) -> GhosttyInputSendResult {
@@ -1693,6 +1706,14 @@ impl GhosttySession {
         self.inner
             .mailbox
             .try_send_control(RuntimeMessage::SetDefaultCursor { shape, blink })
+            .is_ok()
+    }
+
+    pub(super) fn set_option_as_alt(&self, enabled: bool) -> bool {
+        self.inner.option_as_alt.store(enabled, Ordering::Release);
+        self.inner
+            .mailbox
+            .try_send_control(RuntimeMessage::SetOptionAsAlt(enabled))
             .is_ok()
     }
 
@@ -2083,7 +2104,11 @@ fn run_runtime(
             return;
         }
     };
-    configure_embedder_options(&mut terminal, max_scrollback);
+    configure_embedder_options(
+        &mut terminal,
+        max_scrollback,
+        inner.option_as_alt.load(Ordering::Acquire),
+    );
     let mut publish_gate = PublishGate::new();
     if let Err(error) = publish_gate.publish_now(&inner, &mut terminal) {
         let _ = startup_tx.send(StartupReport::InitializationFailed(anyhow::anyhow!(error)));
@@ -2411,18 +2436,18 @@ fn run_runtime(
                 }
                 notify_command_capacity(&inner);
             }
-            Ok(Some(RuntimeMessage::PasteInput { text, allow_unsafe })) => {
+            Ok(Some(RuntimeMessage::PasteInput {
+                text,
+                allow_unsafe,
+                location,
+            })) => {
                 release_queued_input_bytes(&inner, text.len());
                 paste_trace.note_paste(text.len());
                 let representation = [ghostty::PasteRepresentation {
                     mime: PASTE_TEXT_MIME,
                     data: text.as_bytes(),
                 }];
-                match terminal.paste(
-                    &representation,
-                    ghostty::ClipboardLocation::Standard,
-                    allow_unsafe,
-                ) {
+                match terminal.paste(&representation, location, allow_unsafe) {
                     Ok(_) => {
                         if let Err(error) = handle_engine_events(&inner, &mut terminal, &mut writer)
                         {
@@ -2888,6 +2913,9 @@ fn handle_terminal_command(
                 );
             }
         }
+        RuntimeMessage::SetOptionAsAlt(enabled) => {
+            terminal.set_option_as_alt(option_as_alt(enabled));
+        }
         RuntimeMessage::UpdateAppearance(appearance) => {
             if let Err(error) = terminal.set_palette(&current_ghostty_palette()) {
                 log::warn!(
@@ -3047,7 +3075,11 @@ fn run_display_runtime(
             return;
         }
     };
-    configure_embedder_options(&mut terminal, max_scrollback);
+    configure_embedder_options(
+        &mut terminal,
+        max_scrollback,
+        inner.option_as_alt.load(Ordering::Acquire),
+    );
     let mut publish_gate = PublishGate::new();
     if let Err(error) = publish_gate.publish_now(&inner, &mut terminal) {
         let _ = startup_tx.send(Err(error));
@@ -3748,7 +3780,19 @@ const SCROLLBACK_BYTES_PER_LINE: usize = 1024;
 
 const MAX_SCROLLBACK_BYTES: usize = 128 * 1024 * 1024;
 
-fn configure_embedder_options(terminal: &mut ghostty::DisplayTerminal, max_scrollback: usize) {
+fn option_as_alt(enabled: bool) -> ghostty::OptionAsAlt {
+    if enabled {
+        ghostty::OptionAsAlt::Always
+    } else {
+        ghostty::OptionAsAlt::Never
+    }
+}
+
+fn configure_embedder_options(
+    terminal: &mut ghostty::DisplayTerminal,
+    max_scrollback: usize,
+    option_as_meta: bool,
+) {
     let apply = |what: &str, result: ghostty::Result<()>| {
         if let Err(error) = result {
             log::warn!(
@@ -3763,6 +3807,8 @@ fn configure_embedder_options(terminal: &mut ghostty::DisplayTerminal, max_scrol
         terminal.set_palette(&current_ghostty_palette()),
     );
     apply("terminfo name", terminal.set_terminfo_name(TERMINFO_NAME));
+    apply("glyph protocol", terminal.set_glyph_protocol(false));
+    terminal.set_option_as_alt(option_as_alt(option_as_meta));
     apply(
         "scrollback byte budget",
         terminal.set_scrollback_max_bytes(Some(
@@ -4667,6 +4713,7 @@ fn restore_terminal_from_checkpoint(
     snapshot: &[u8],
     size: TerminalWindowSize,
     max_scrollback: usize,
+    option_as_alt: bool,
 ) -> Result<ghostty::DisplayTerminal, String> {
     let mut decoder = ghostty::SnapshotDecoder::from_bytes(snapshot)
         .map_err(|error| format!("checkpoint could not be opened: {error}"))?;
@@ -4687,7 +4734,7 @@ fn restore_terminal_from_checkpoint(
     let mut terminal = decoder
         .into_terminal()
         .ok_or_else(|| "checkpoint decoder produced no terminal".to_string())?;
-    configure_embedder_options(&mut terminal, max_scrollback);
+    configure_embedder_options(&mut terminal, max_scrollback, option_as_alt);
     Ok(terminal)
 }
 
@@ -4843,8 +4890,12 @@ fn run_attached_runtime(
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .requested;
-    let restored =
-        restore_terminal_from_checkpoint(snapshot.as_slice(), initial_size, max_scrollback);
+    let restored = restore_terminal_from_checkpoint(
+        snapshot.as_slice(),
+        initial_size,
+        max_scrollback,
+        inner.option_as_alt.load(Ordering::Acquire),
+    );
     drop(snapshot);
     let mut terminal = match restored {
         Ok(terminal) => terminal,
@@ -4994,8 +5045,12 @@ fn run_attached_runtime(
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner)
                     .requested;
-                let restored =
-                    restore_terminal_from_checkpoint(snapshot.as_slice(), size, max_scrollback);
+                let restored = restore_terminal_from_checkpoint(
+                    snapshot.as_slice(),
+                    size,
+                    max_scrollback,
+                    inner.option_as_alt.load(Ordering::Acquire),
+                );
                 drop(snapshot);
                 match restored {
                     Ok(restored) => {
@@ -5062,18 +5117,18 @@ fn run_attached_runtime(
                 }
                 notify_command_capacity(&inner);
             }
-            Ok(Some(RuntimeMessage::PasteInput { text, allow_unsafe })) => {
+            Ok(Some(RuntimeMessage::PasteInput {
+                text,
+                allow_unsafe,
+                location,
+            })) => {
                 release_queued_input_bytes(&inner, text.len());
                 paste_trace.note_paste(text.len());
                 let representation = [ghostty::PasteRepresentation {
                     mime: PASTE_TEXT_MIME,
                     data: text.as_bytes(),
                 }];
-                match terminal.paste(
-                    &representation,
-                    ghostty::ClipboardLocation::Standard,
-                    allow_unsafe,
-                ) {
+                match terminal.paste(&representation, location, allow_unsafe) {
                     Ok(_) => {
                         let mut pasted = Vec::new();
                         let drained =
@@ -7737,6 +7792,91 @@ mod tests {
             group_error,
             Some(libc::ESRCH),
             "the whole process group must be gone after the SIGKILL escalation"
+        );
+    }
+
+    fn option_a_key() -> ghostty::KeyInput {
+        let text = if cfg!(target_os = "macos") {
+            "\u{e5}"
+        } else {
+            "a"
+        };
+        ghostty::KeyInput {
+            key: ghostty::Key::Character('a'),
+            action: ghostty::KeyAction::Press,
+            modifiers: ghostty::Modifiers::ALT,
+            consumed_modifiers: ghostty::Modifiers::empty(),
+            text: text.to_string(),
+            composing: false,
+            unshifted_codepoint: Some('a'),
+        }
+    }
+
+    fn embedder_terminal(option_as_meta: bool) -> ghostty::DisplayTerminal {
+        let size = window_size(TerminalWindowSize::new(20, 4, 8, 16)).expect("window size");
+        let mut terminal =
+            ghostty::DisplayTerminal::new(size, 100, ghostty::TerminalAppearance::default())
+                .expect("terminal");
+        configure_embedder_options(&mut terminal, 100, option_as_meta);
+        terminal
+    }
+
+    #[test]
+    fn the_embedder_options_keep_glyph_protocol_queries_unanswered() {
+        let mut terminal = embedder_terminal(false);
+        terminal
+            .feed(b"\x1b_25a1;s\x1b\\")
+            .expect("glyph query parses");
+        assert!(
+            !terminal
+                .drain_events()
+                .into_iter()
+                .any(|event| matches!(event, ghostty::BackendEvent::WritePty(_)))
+        );
+    }
+
+    #[test]
+    fn option_as_meta_reaches_the_key_encoder() {
+        let composed: &[u8] = if cfg!(target_os = "macos") {
+            "\u{e5}".as_bytes()
+        } else {
+            b"\x1ba"
+        };
+        let mut terminal = embedder_terminal(true);
+        assert_eq!(
+            terminal.encode_key(&option_a_key()).expect("encode"),
+            b"\x1ba"
+        );
+        let mut terminal = embedder_terminal(false);
+        assert_eq!(
+            terminal.encode_key(&option_a_key()).expect("encode"),
+            composed
+        );
+
+        let (session, _pending, _events) =
+            GhosttySession::pending(TerminalWindowSize::new(20, 4, 8, 16));
+        assert!(session.set_option_as_alt(true));
+        assert!(session.inner.option_as_alt.load(Ordering::Acquire));
+        let mut gate = PublishGate::new();
+        let outcome = handle_terminal_command(
+            &session.inner,
+            &mut terminal,
+            &mut gate,
+            RuntimeMessage::SetOptionAsAlt(true),
+        );
+        assert!(matches!(outcome, CommandOutcome::Handled));
+        assert_eq!(
+            terminal.encode_key(&option_a_key()).expect("encode"),
+            b"\x1ba"
+        );
+
+        let snapshot = terminal.encode_snapshot().expect("checkpoint");
+        let size = TerminalWindowSize::new(20, 4, 8, 16);
+        let mut restored = restore_terminal_from_checkpoint(&snapshot, size, 100, true)
+            .expect("checkpoint restores");
+        assert_eq!(
+            restored.encode_key(&option_a_key()).expect("encode"),
+            b"\x1ba"
         );
     }
 }
