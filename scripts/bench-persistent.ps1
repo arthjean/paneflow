@@ -44,15 +44,24 @@ if (Test-Path "bench/persistent-baseline.json") {
     Remove-Item Env:PANEFLOW_BENCH_BASELINE -ErrorAction SilentlyContinue
 }
 
-cargo build --release --locked -p paneflow-host
+$harness = cargo test --release --locked -p paneflow-host --test persistent_baseline --no-run --message-format=json |
+    ForEach-Object { $_ | ConvertFrom-Json } |
+    Where-Object { $_.reason -eq "compiler-artifact" -and $_.target.name -eq "persistent_baseline" -and $_.executable } |
+    Select-Object -Last 1 -ExpandProperty executable
 if ($LASTEXITCODE -ne 0) {
     exit $LASTEXITCODE
 }
+cargo build --release --locked -p paneflow-app -p paneflow-host
+if ($LASTEXITCODE -ne 0) {
+    exit $LASTEXITCODE
+}
+if (-not $harness -or -not (Test-Path $harness)) {
+    Write-Error "the persistent_baseline harness was not built: $harness"
+    exit 2
+}
+$env:PANEFLOW_BENCH_HOST = Join-Path $root "target/release/paneflow-host.exe"
+$env:PANEFLOW_BENCH_FIXTURE = Join-Path $root "target/release/paneflow-session-fixture.exe"
 if ($WithWorker -or $WithDesktop -or $WorkerReplacement) {
-    cargo build --release --locked -p paneflow-app
-    if ($LASTEXITCODE -ne 0) {
-        exit $LASTEXITCODE
-    }
     $env:PANEFLOW_BENCH_CONTROLLER = Join-Path $root "target/release/paneflow.exe"
 } else {
     Remove-Item Env:PANEFLOW_BENCH_CONTROLLER -ErrorAction SilentlyContinue
@@ -88,10 +97,10 @@ if ($WorkerReplacement) {
     Remove-Item Env:PANEFLOW_BENCH_CONTROLLER_REPLACEMENT -ErrorAction SilentlyContinue
 }
 
-cargo test --release --locked -p paneflow-host --test persistent_baseline `
-    $test `
-    -- --ignored --exact --nocapture --test-threads=1
+Push-Location (Join-Path $root "crates/paneflow-host")
+& $harness $test --ignored --exact --nocapture --test-threads=1
 $status = $LASTEXITCODE
+Pop-Location
 
 if (-not (Test-Path $out)) {
     Write-Error "benchmark produced no result file: $out"
