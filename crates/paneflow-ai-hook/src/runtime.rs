@@ -227,6 +227,17 @@ fn write_last_hook_event(
     }) {
         seed.insert("tool_name".into(), Value::String(tool_name.to_string()));
     }
+    if let Some(notification_type) = frame
+        .params
+        .hook_payload
+        .get("notification_type")
+        .and_then(Value::as_str)
+    {
+        seed.insert(
+            "notification_type".into(),
+            Value::String(notification_type.to_string()),
+        );
+    }
     if let Some(generation) = frame.params.runtime_generation {
         seed.insert("runtime_generation".into(), Value::from(generation));
     }
