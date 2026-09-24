@@ -11,7 +11,7 @@ use paneflow_host::{ProcessIdentity, ProcessVerdict};
 use paneflow_ipc_client::agent::{AgentState, next_waiting_since};
 use serde_json::{Value, json};
 
-use crate::activity::{AgentDecision, AgentSummary, apply_event};
+use crate::activity::{AgentDecision, AgentSummary, apply_event, reconcile_adopted};
 use crate::hook_assets;
 use crate::hook_state::{ActivityEngine, HookEventInput, HookState, Notice, Outcome, at_unix_ms};
 use crate::notifications::{ActivityLog, Notification, notification_for};
@@ -349,11 +349,21 @@ impl WorkerState {
         for frame in accepted_events {
             self.apply_core_event(&frame);
         }
+        self.reconcile_adopted_activity();
         let now = SystemTime::now();
         for session in live {
             self.derive(&session, now, &|_| None);
         }
         self.sessions.len()
+    }
+
+    fn reconcile_adopted_activity(&mut self) {
+        let now = now_ms();
+        for entry in self.sessions.values_mut() {
+            if let Some(activity) = entry.activity.as_mut().filter(|activity| !activity.stale) {
+                reconcile_adopted(activity, &entry.lifecycle, now);
+            }
+        }
     }
 
     pub fn refresh_health(&mut self) {
@@ -402,6 +412,7 @@ impl WorkerState {
         }
         self.sessions.retain(|session, _| seen.contains(session));
         self.engine.retain_sessions(&seen);
+        self.reconcile_adopted_activity();
         let now = SystemTime::now();
         seen.into_iter()
             .filter_map(|session| {
@@ -1962,6 +1973,94 @@ mod tests {
         assert_eq!(entry.health, Health::Live);
         assert_eq!(entry.status(), "busy");
         assert_eq!(entry.activity_source, ActivitySource::Hooks);
+    }
+
+    fn adopted_row(session: &SessionId, lifecycle: SessionLifecycle, stale: bool) -> Value {
+        let mut agent = AgentSummary::declared("claude", 1);
+        agent.state = AgentState::Thinking.wire_str().to_string();
+        agent.stale = stale;
+        json!({
+            "session": session,
+            "generation": SessionGeneration::FIRST,
+            "live": lifecycle.is_running(),
+            "lifecycle": lifecycle,
+            "agent": agent,
+        })
+    }
+
+    fn adopted_activity(row: Value, session: &SessionId) -> (AgentSummary, &'static str) {
+        let home = tempfile::tempdir().unwrap();
+        let mut state = WorkerState::new(home.path());
+        state.apply_core_snapshot(&[row]);
+        let entry = state.get(session).expect("the adopted session is kept");
+        (
+            entry
+                .activity
+                .clone()
+                .expect("the adopted activity is kept"),
+            entry.status(),
+        )
+    }
+
+    #[test]
+    fn a_snapshot_marks_busy_activity_of_an_ended_session_stale() {
+        let session = SessionId::new();
+        let (ended, ended_status) = adopted_activity(
+            adopted_row(&session, SessionLifecycle::Lost, false),
+            &session,
+        );
+        assert!(ended.stale);
+        assert_ne!(ended_status, "busy");
+
+        let (live, _) = adopted_activity(
+            adopted_row(&session, SessionLifecycle::Running, false),
+            &session,
+        );
+        assert!(!live.stale);
+    }
+
+    #[test]
+    fn a_stale_flag_reported_by_an_older_host_is_left_unchanged() {
+        let session = SessionId::new();
+        for lifecycle in [SessionLifecycle::Running, SessionLifecycle::Lost] {
+            let (reported, _) = adopted_activity(adopted_row(&session, lifecycle, true), &session);
+            assert!(reported.stale);
+        }
+    }
+
+    #[test]
+    fn a_rebuild_keeps_a_live_busy_turn_busy_and_never_reports_an_ended_one_busy() {
+        let home = tempfile::tempdir().unwrap();
+        let ended = SessionId::new();
+        let live = SessionId::new();
+        for (session, lifecycle) in [
+            (&ended, SessionLifecycle::Lost),
+            (&live, SessionLifecycle::Running),
+        ] {
+            let mut last_hook = hook("UserPromptSubmit", SessionGeneration::FIRST);
+            last_hook.activity_event = Some(frame(
+                session,
+                "ai.prompt_submit",
+                "UserPromptSubmit",
+                json!({}),
+            ));
+            let mut adopted = manifest(session.clone(), Some(last_hook));
+            adopted.lifecycle = lifecycle;
+            write_manifest(home.path(), &adopted).unwrap();
+        }
+
+        let mut state = WorkerState::new(home.path());
+        state.rebuild_from_home(home.path());
+        let stale = |session: &SessionId| {
+            state
+                .get(session)
+                .and_then(|entry| entry.activity.as_ref())
+                .expect("the replayed activity is kept")
+                .stale
+        };
+        assert_ne!(state.get(&ended).unwrap().status(), "busy");
+        assert_eq!(state.get(&live).unwrap().status(), "busy");
+        assert!(!stale(&live));
     }
 
     #[test]
