@@ -462,6 +462,7 @@ fn connect() -> Result<CliTransport, String> {
     match resolve_control_target(
         paneflow_home::isolated_ipc_endpoint_for_current_home(),
         paneflow_host::endpoint::host_endpoint_path_for_current_home(),
+        paneflow_home::reserved_host_endpoint(),
     ) {
         Some(ControlTarget::Controller(socket)) => {
             Ok(CliTransport::Controller(IpcClient::new(socket)))

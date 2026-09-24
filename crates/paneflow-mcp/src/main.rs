@@ -29,6 +29,7 @@ fn main() -> ExitCode {
     let Some(target) = resolve_control_target(
         paneflow_home::isolated_ipc_endpoint_for_current_home(),
         paneflow_home::host_endpoint_path_for_current_home(),
+        paneflow_home::reserved_host_endpoint(),
     ) else {
         eprintln!(
             "paneflow-mcp: cannot locate a Paneflow controller socket or local host endpoint. \

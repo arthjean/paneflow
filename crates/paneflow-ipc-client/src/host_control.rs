@@ -75,18 +75,26 @@ pub fn choose_control_target(
 }
 
 pub fn resolve_control_target(
-    controller_fallback: Option<PathBuf>,
-    host_endpoint_fallback: Option<PathBuf>,
+    isolated_controller: Option<PathBuf>,
+    home_host_endpoint: Option<PathBuf>,
+    reserved_host_endpoint: Option<PathBuf>,
 ) -> Option<ControlTarget> {
-    let controller = crate::resolve_socket_path_or(controller_fallback);
+    let owned_host_endpoint = isolated_controller
+        .is_some()
+        .then(|| home_host_endpoint.clone())
+        .flatten();
+    let host_endpoint = crate::honored_socket_override(
+        host_endpoint_from_env(),
+        owned_host_endpoint.as_deref(),
+        reserved_host_endpoint.as_deref(),
+        crate::socket_override_allowed(),
+    )
+    .or(home_host_endpoint);
+    let controller = crate::resolve_socket_path_or(isolated_controller);
     let listening = controller
         .as_deref()
         .is_some_and(crate::socket_is_listening);
-    choose_control_target(
-        controller,
-        listening,
-        host_endpoint_from_env().or(host_endpoint_fallback),
-    )
+    choose_control_target(controller, listening, host_endpoint)
 }
 
 #[derive(Debug)]
