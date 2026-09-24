@@ -12,7 +12,7 @@
       "status": "IN_REVIEW",
       "priority": "P0",
       "stories_total": 8,
-      "stories_done": 3
+      "stories_done": 6
     },
     {
       "id": "EP-002",
@@ -84,13 +84,13 @@
       "id": "US-003",
       "title": "Carry `notification_type` in the hook seed so replay restores attention",
       "epic": "EP-001",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P1",
       "size": "S",
       "blocked_by": [],
       "started_at": "2026-09-24T19:12:57+02:00",
-      "completed_at": null,
-      "reviewed_at": "2026-09-24T19:43:23+02:00"
+      "completed_at": "2026-09-24T20:20:35+02:00",
+      "reviewed_at": "2026-09-24T20:20:35+02:00"
     },
     {
       "id": "US-004",
@@ -120,25 +120,25 @@
       "id": "US-006",
       "title": "Make the headless `surface.*` fallback address sessions instead of per-connection aliases",
       "epic": "EP-001",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P1",
       "size": "M",
       "blocked_by": [],
       "started_at": "2026-09-24T19:20:44+02:00",
-      "completed_at": null,
-      "reviewed_at": "2026-09-24T19:43:23+02:00"
+      "completed_at": "2026-09-24T20:20:35+02:00",
+      "reviewed_at": "2026-09-24T20:20:35+02:00"
     },
     {
       "id": "US-007",
       "title": "Resolve the controller endpoint with one rule in the desktop, CLI, and MCP",
       "epic": "EP-001",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P1",
       "size": "M",
       "blocked_by": [],
       "started_at": "2026-09-24T19:23:48+02:00",
-      "completed_at": null,
-      "reviewed_at": "2026-09-24T19:43:23+02:00"
+      "completed_at": "2026-09-24T20:20:35+02:00",
+      "reviewed_at": "2026-09-24T20:20:35+02:00"
     },
     {
       "id": "US-008",
