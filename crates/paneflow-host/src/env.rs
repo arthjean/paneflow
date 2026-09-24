@@ -28,6 +28,19 @@ pub const INHERITED_HOST_TERMINAL_ENV: &[&str] = &[
     "ALACRITTY_SOCKET",
 ];
 
+pub const PANE_CONTEXT_ENV: &[&str] = &[
+    "PANEFLOW_SURFACE_ID",
+    "PANEFLOW_WORKSPACE_ID",
+    "PANEFLOW_WORKSPACE_UUID",
+    "PANEFLOW_SESSION_ID",
+    "PANEFLOW_SESSION_DIR",
+    "PANEFLOW_HOST_ENDPOINT",
+    "PANEFLOW_RUNTIME_GENERATION",
+    "PANEFLOW_BIN_DIR",
+    "PANEFLOW_AI_TOOL",
+    "PANEFLOW_AI_PID",
+];
+
 const CONEMU_ENV_PREFIX: &str = "conemu";
 
 pub fn is_loader_influencing_env_key(key: &str) -> bool {

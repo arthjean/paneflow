@@ -26,8 +26,10 @@ use paneflow_ipc_client::IpcTransport;
 const CLIENT_NAME: &str = "paneflow-mcp";
 
 fn main() -> ExitCode {
-    let Some(target) = resolve_control_target(paneflow_home::host_endpoint_path_for_current_home())
-    else {
+    let Some(target) = resolve_control_target(
+        paneflow_home::isolated_ipc_endpoint_for_current_home(),
+        paneflow_home::host_endpoint_path_for_current_home(),
+    ) else {
         eprintln!(
             "paneflow-mcp: cannot locate a Paneflow controller socket or local host endpoint. \
              Set PANEFLOW_SOCKET_PATH or PANEFLOW_HOST_ENDPOINT (normally inherited from the \

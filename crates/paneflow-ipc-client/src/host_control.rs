@@ -71,8 +71,11 @@ pub fn choose_control_target(
     }
 }
 
-pub fn resolve_control_target(host_endpoint_fallback: Option<PathBuf>) -> Option<ControlTarget> {
-    let controller = crate::resolve_socket_path();
+pub fn resolve_control_target(
+    controller_fallback: Option<PathBuf>,
+    host_endpoint_fallback: Option<PathBuf>,
+) -> Option<ControlTarget> {
+    let controller = crate::resolve_socket_path_or(controller_fallback);
     let listening = controller
         .as_deref()
         .is_some_and(crate::socket_is_listening);

@@ -1853,6 +1853,8 @@ fn main() {
         std::process::exit(2);
     }
 
+    unsafe { runtime_paths::shed_inherited_instance_env() };
+
     warn_if_legacy_run_install();
     #[cfg(target_os = "macos")]
     warn_if_rosetta_translated();

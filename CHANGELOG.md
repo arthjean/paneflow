@@ -5,6 +5,16 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
 
 ## [Unreleased]
 
+### Changed
+
+- A custom `PANEFLOW_HOME` now owns its own IPC endpoint,
+  `<runtime dir>/paneflow-ipc-<fingerprint>.sock` or
+  `\\.\pipe\paneflow-ipc-<fingerprint>`, instead of sharing the default socket,
+  so an instance on an isolated home runs beside the normal one. The CLI and
+  the MCP bridge find it from `PANEFLOW_HOME`. Such an instance ignores a
+  `PANEFLOW_SOCKET_PATH` that points elsewhere unless
+  `PANEFLOW_ALLOW_SOCKET_OVERRIDE=1` is also set.
+
 ### Removed
 
 - The Launch Pad modal, its `open_launch_pad` action and the
@@ -18,6 +28,13 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
 
 ### Fixed
 
+- A Paneflow build started from inside a Paneflow pane no longer takes over
+  the running instance's identity from the variables the pane exports. A
+  development build refused to start with "another Paneflow instance is
+  already running", and once forced it read the installed app's state and
+  replaced its worker; it now keeps its own home and socket. A desktop started
+  from a pane also stops passing that pane's session and surface markers down
+  to its own terminals.
 - macOS: IPC replies larger than 8 KiB, such as `surface.list` with many
   panes or a long `surface.read`, were cut short. A socket accepted by the
   desktop inherited the listener's nonblocking mode, so the write stopped once

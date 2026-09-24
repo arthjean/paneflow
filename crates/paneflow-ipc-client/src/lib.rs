@@ -562,11 +562,26 @@ pub fn subscribe_stream_timed(
     }
 }
 
-pub fn resolve_socket_path() -> Option<PathBuf> {
-    if let Some(p) = socket_path_from_env(std::env::var("PANEFLOW_SOCKET_PATH").ok().as_deref()) {
-        return Some(p);
-    }
-    default_socket_path()
+pub fn resolve_socket_path_or(home_endpoint: Option<PathBuf>) -> Option<PathBuf> {
+    socket_path_from_env(std::env::var("PANEFLOW_SOCKET_PATH").ok().as_deref())
+        .filter(|path| !is_reserved_release_endpoint(path))
+        .or(home_endpoint)
+        .or_else(default_socket_path)
+}
+
+fn is_reserved_release_endpoint(path: &std::path::Path) -> bool {
+    cfg!(debug_assertions)
+        && flavor_socket_path(false).is_some_and(|release| {
+            if cfg!(windows) {
+                release.as_os_str().eq_ignore_ascii_case(path.as_os_str())
+            } else {
+                release == path
+            }
+        })
+}
+
+fn default_socket_path() -> Option<PathBuf> {
+    flavor_socket_path(cfg!(debug_assertions))
 }
 
 pub(crate) fn socket_path_from_env(raw: Option<&str>) -> Option<PathBuf> {
@@ -575,7 +590,7 @@ pub(crate) fn socket_path_from_env(raw: Option<&str>) -> Option<PathBuf> {
 }
 
 #[cfg(unix)]
-fn default_socket_path() -> Option<PathBuf> {
+fn flavor_socket_path(dev: bool) -> Option<PathBuf> {
     let runtime = std::env::var_os("XDG_RUNTIME_DIR")
         .map(PathBuf::from)
         .filter(|p| !p.as_os_str().is_empty())
@@ -585,12 +600,8 @@ fn default_socket_path() -> Option<PathBuf> {
                 .filter(|p| !p.as_os_str().is_empty())
         })
         .or_else(cache_run_dir)?;
-    let subdir = if cfg!(debug_assertions) {
-        "paneflow-dev"
-    } else {
-        "paneflow"
-    };
-    let socket_file = if cfg!(debug_assertions) {
+    let subdir = if dev { "paneflow-dev" } else { "paneflow" };
+    let socket_file = if dev {
         "paneflow-dev.sock"
     } else {
         "paneflow.sock"
@@ -616,8 +627,8 @@ fn cache_run_dir() -> Option<PathBuf> {
 }
 
 #[cfg(windows)]
-fn default_socket_path() -> Option<PathBuf> {
-    Some(PathBuf::from(if cfg!(debug_assertions) {
+fn flavor_socket_path(dev: bool) -> Option<PathBuf> {
+    Some(PathBuf::from(if dev {
         r"\\.\pipe\paneflow-dev"
     } else {
         r"\\.\pipe\paneflow"
@@ -704,6 +715,21 @@ mod tests {
             .expect("read")
             .expect("line");
         assert_eq!(line, "{\"type\":\"ai.stop\"}");
+    }
+
+    #[test]
+    fn a_debug_client_never_addresses_the_release_socket() {
+        let Some(release) = flavor_socket_path(false) else {
+            return;
+        };
+        assert_eq!(
+            is_reserved_release_endpoint(&release),
+            cfg!(debug_assertions),
+            "a dev CLI or test inside an installed pane must not drive the installed app"
+        );
+        let dev =
+            flavor_socket_path(true).expect("the dev endpoint resolves beside the release one");
+        assert!(!is_reserved_release_endpoint(&dev));
     }
 
     #[test]

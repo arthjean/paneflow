@@ -349,7 +349,9 @@ gated scripting path.
 ## IPC and the MCP bridge
 
 A JSON-RPC 2.0 endpoint (Unix socket at `$XDG_RUNTIME_DIR/paneflow/`, named
-pipe on Windows) exposes `workspace.*`, `surface.*`, `fleet.*`, `events.*`,
+pipe on Windows; an isolated `PANEFLOW_HOME` owns `paneflow-ipc-<fp>` beside
+its host endpoint instead, and a debug build never binds or dials the release
+one) exposes `workspace.*`, `surface.*`, `fleet.*`, `events.*`,
 and `ai.*` namespaces - enough to script workspace creation, read panes, send
 text behind the scripting gate, and subscribe to agent events. The `paneflow`
 CLI (`paneflow up`, `paneflow flow`, `paneflow watch`, `paneflow wait`) is

@@ -4231,6 +4231,25 @@ mod tests {
     }
 
     #[test]
+    fn every_pane_marker_the_host_exports_is_shed_by_a_nested_desktop() {
+        let env = launch_env(
+            &SessionId::new(),
+            SessionGeneration::FIRST,
+            Some(&WorkspaceId::new()),
+            Path::new("/home/x/.paneflow"),
+            Path::new("/run/paneflow-host.sock"),
+            Some(&std::env::temp_dir().join("paneflow-helpers")),
+            &BTreeMap::new(),
+        );
+        for key in env.keys().filter(|key| key.starts_with("PANEFLOW_")) {
+            assert!(
+                key == "PANEFLOW_HOME" || crate::env::PANE_CONTEXT_ENV.contains(&key.as_str()),
+                "{key} is exported to panes but a desktop launched from one would inherit it"
+            );
+        }
+    }
+
+    #[test]
     fn launch_env_identifies_the_durable_session_and_drops_forbidden_keys() {
         let session = SessionId::new();
         let workspace = WorkspaceId::new();

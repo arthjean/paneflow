@@ -8,6 +8,14 @@ pub const HOME_DIR_NAME: &str = if cfg!(debug_assertions) {
 
 pub const HOME_ENV: &str = "PANEFLOW_HOME";
 
+const RELEASE_HOME_DIR_NAME: &str = ".paneflow";
+
+const RESERVED_HOME_DIR_NAME: Option<&str> = if cfg!(debug_assertions) {
+    Some(RELEASE_HOME_DIR_NAME)
+} else {
+    None
+};
+
 const LEGACY_SUBDIR: &str = if cfg!(debug_assertions) {
     "paneflow-dev"
 } else {
@@ -15,13 +23,36 @@ const LEGACY_SUBDIR: &str = if cfg!(debug_assertions) {
 };
 
 pub fn paneflow_home() -> Option<PathBuf> {
-    if let Some(raw) = std::env::var_os(HOME_ENV) {
-        let path = PathBuf::from(raw);
-        if path.is_absolute() {
-            return Some(path);
-        }
-    }
-    dirs::home_dir().map(|home| home.join(HOME_DIR_NAME))
+    resolve_home(
+        std::env::var_os(HOME_ENV),
+        dirs::home_dir(),
+        RESERVED_HOME_DIR_NAME,
+    )
+}
+
+fn resolve_home(
+    requested: Option<std::ffi::OsString>,
+    user_home: Option<PathBuf>,
+    reserved_dir_name: Option<&str>,
+) -> Option<PathBuf> {
+    let reserved = reserved_dir_name.and_then(|name| Some(user_home.as_ref()?.join(name)));
+    let requested = requested
+        .map(PathBuf::from)
+        .filter(|path| path.is_absolute())
+        .filter(|path| {
+            !reserved
+                .as_deref()
+                .is_some_and(|reserved| same_home(path, reserved))
+        });
+    requested.or_else(|| user_home.map(|home| home.join(HOME_DIR_NAME)))
+}
+
+pub fn is_default_home(home: &Path) -> bool {
+    dirs::home_dir().is_some_and(|user| same_home(home, &user.join(HOME_DIR_NAME)))
+}
+
+fn same_home(left: &Path, right: &Path) -> bool {
+    normalized_home(left) == normalized_home(right)
 }
 
 pub fn config_path() -> Option<PathBuf> {
@@ -88,9 +119,7 @@ pub fn host_sessions_dir() -> Option<PathBuf> {
     paneflow_home().map(|home| host_sessions_dir_in(&home))
 }
 
-pub fn home_fingerprint(home: &Path) -> String {
-    const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
-    const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
+fn normalized_home(home: &Path) -> String {
     let normalized: String = home
         .to_string_lossy()
         .chars()
@@ -101,7 +130,13 @@ pub fn home_fingerprint(home: &Path) -> String {
     } else {
         normalized
     };
-    let normalized = normalized.trim_end_matches('/');
+    normalized.trim_end_matches('/').to_string()
+}
+
+pub fn home_fingerprint(home: &Path) -> String {
+    const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
+    const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
+    let normalized = normalized_home(home);
     let mut hash = FNV_OFFSET;
     for byte in normalized.as_bytes() {
         hash ^= u64::from(*byte);
@@ -195,6 +230,30 @@ pub fn serve_endpoint_path(home: &Path) -> PathBuf {
 
 pub fn serve_endpoint_path_for_current_home() -> Option<PathBuf> {
     paneflow_home().map(|home| serve_endpoint_path(&home))
+}
+
+const IPC_ENDPOINT_PREFIX: &str = "paneflow-ipc-";
+
+#[cfg(windows)]
+pub fn ipc_endpoint_path(home: &Path) -> PathBuf {
+    PathBuf::from(format!(
+        r"\\.\pipe\{IPC_ENDPOINT_PREFIX}{}",
+        home_fingerprint(home)
+    ))
+}
+
+#[cfg(unix)]
+pub fn ipc_endpoint_path(home: &Path) -> PathBuf {
+    host_runtime_dir().join(format!(
+        "{IPC_ENDPOINT_PREFIX}{}.sock",
+        home_fingerprint(home)
+    ))
+}
+
+pub fn isolated_ipc_endpoint_for_current_home() -> Option<PathBuf> {
+    paneflow_home()
+        .filter(|home| !is_default_home(home))
+        .map(|home| ipc_endpoint_path(&home))
 }
 
 pub fn legacy_config_path() -> Option<PathBuf> {
@@ -342,6 +401,83 @@ mod tests {
                 .join("session-data")
                 .join("550e8400-e29b-41d4-a716-446655440000")
         );
+    }
+
+    #[test]
+    fn a_dev_build_never_adopts_the_release_home_it_inherits() {
+        let user = PathBuf::from(if cfg!(windows) {
+            r"C:\Users\arthur"
+        } else {
+            "/home/arthur"
+        });
+        let own = user.join(HOME_DIR_NAME);
+        let release = user.join(RELEASE_HOME_DIR_NAME);
+        let isolated = user.join(".paneflow-dev-review");
+
+        assert_eq!(
+            resolve_home(
+                Some(release.clone().into_os_string()),
+                Some(user.clone()),
+                Some(RELEASE_HOME_DIR_NAME)
+            ),
+            Some(own.clone()),
+            "a pane of the installed app exports its home; a dev build falls back to its own"
+        );
+        let mut release_with_separator = release.clone().into_os_string();
+        release_with_separator.push(std::path::MAIN_SEPARATOR_STR);
+        assert_eq!(
+            resolve_home(
+                Some(release_with_separator),
+                Some(user.clone()),
+                Some(RELEASE_HOME_DIR_NAME)
+            ),
+            Some(own.clone())
+        );
+        assert_eq!(
+            resolve_home(
+                Some(isolated.clone().into_os_string()),
+                Some(user.clone()),
+                Some(RELEASE_HOME_DIR_NAME)
+            ),
+            Some(isolated),
+            "an explicit isolated home is honored"
+        );
+        assert_eq!(
+            resolve_home(
+                Some(release.clone().into_os_string()),
+                Some(user.clone()),
+                None
+            ),
+            Some(release),
+            "a release build keeps honoring its own home"
+        );
+        assert_eq!(
+            resolve_home(
+                Some("relative/home".into()),
+                Some(user.clone()),
+                Some(RELEASE_HOME_DIR_NAME)
+            ),
+            Some(own)
+        );
+        assert_eq!(resolve_home(None, None, Some(RELEASE_HOME_DIR_NAME)), None);
+    }
+
+    #[test]
+    fn an_isolated_home_owns_an_ipc_endpoint_the_default_one_does_not_share() {
+        let first = Path::new("/tmp/paneflow-dev-alpha");
+        let second = Path::new("/tmp/paneflow-dev-beta");
+        assert_ne!(ipc_endpoint_path(first), ipc_endpoint_path(second));
+        assert_ne!(ipc_endpoint_path(first), host_endpoint_path(first));
+        assert_ne!(ipc_endpoint_path(first), serve_endpoint_path(first));
+        assert!(
+            ipc_endpoint_path(first)
+                .to_string_lossy()
+                .contains(&home_fingerprint(first))
+        );
+        assert!(!is_default_home(first));
+        if let Some(user) = dirs::home_dir() {
+            assert!(is_default_home(&user.join(HOME_DIR_NAME)));
+        }
     }
 
     #[test]

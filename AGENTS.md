@@ -134,6 +134,21 @@ cargo test -p paneflow-config            # single crate
 cargo test -p paneflow-app --test flex_nchild -- --nocapture   # layout integration
 ```
 
+Paneflow can be developed from inside a Paneflow pane. A debug build never
+resolves the installed app's home (`~/.paneflow`) or IPC socket, even though
+every pane exports them, so `scripts/dev.sh`, `cargo run` and `cargo test` stay
+on the dev state. A desktop launched from a pane also sheds the pane's markers
+(`PANEFLOW_SURFACE_ID`, `PANEFLOW_SESSION_ID`, and the rest of
+`paneflow_host::env::PANE_CONTEXT_ENV`) before starting its host and worker.
+When several agents need their own running instance, `scripts/dev.sh --tag
+<name>` (`dev.ps1 -Tag <name>`) sets `PANEFLOW_HOME=~/.paneflow-dev-<name>`:
+an isolated home owns its IPC endpoint (`paneflow-ipc-<fingerprint>`), host
+and worker, and ignores a `PANEFLOW_SOCKET_PATH` it does not own unless
+`PANEFLOW_ALLOW_SOCKET_OVERRIDE=1`, which a harness that pins both needs. A
+tag's host and worker outlive the window: stop them with
+`PANEFLOW_HOME=~/.paneflow-dev-<name> target/debug/paneflow serve stop` and
+`... host stop` before trashing the home.
+
 Put unit tests beside the module when the logic is self-contained; keep broader
 UI and layout checks in `src-app/tests/`. Name tests descriptively, for example
 `test_three_children_flex_basis`. CI is not a substitute for a manual pass on UI
