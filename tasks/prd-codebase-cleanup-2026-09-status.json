@@ -1,0 +1,719 @@
+{
+  "prd": {
+    "file": "tasks/prd-codebase-cleanup-2026-09.md",
+    "title": "Codebase Cleanup from the 2026-09-24 Audit",
+    "created_at": "2026-09-24",
+    "status": "READY"
+  },
+  "epics": [
+    {
+      "id": "EP-001",
+      "title": "Latent Defects Surfaced by the Audit",
+      "status": "IN_REVIEW",
+      "priority": "P0",
+      "stories_total": 8,
+      "stories_done": 3
+    },
+    {
+      "id": "EP-002",
+      "title": "Dependency, Build, and Tracked-File Hygiene",
+      "status": "TODO",
+      "priority": "P1",
+      "stories_total": 8,
+      "stories_done": 0
+    },
+    {
+      "id": "EP-003",
+      "title": "Dead Code Removal by Crate",
+      "status": "TODO",
+      "priority": "P1",
+      "stories_total": 8,
+      "stories_done": 0
+    },
+    {
+      "id": "EP-004",
+      "title": "Test-Only Gating, libghostty Wrapper Pruning, and Target-Scoped Lint Attributes",
+      "status": "TODO",
+      "priority": "P1",
+      "stories_total": 8,
+      "stories_done": 0
+    },
+    {
+      "id": "EP-005",
+      "title": "Duplicate Consolidation",
+      "status": "TODO",
+      "priority": "P2",
+      "stories_total": 7,
+      "stories_done": 0
+    },
+    {
+      "id": "EP-006",
+      "title": "God-File Splits",
+      "status": "TODO",
+      "priority": "P2",
+      "stories_total": 8,
+      "stories_done": 0
+    }
+  ],
+  "stories": [
+    {
+      "id": "US-001",
+      "title": "Make agent text clamping UTF-8 safe and keep one implementation",
+      "epic": "EP-001",
+      "status": "DONE",
+      "priority": "P0",
+      "size": "S",
+      "blocked_by": [],
+      "started_at": "2026-09-24T19:11:20+02:00",
+      "completed_at": "2026-09-24T19:43:23+02:00",
+      "reviewed_at": "2026-09-24T19:43:23+02:00"
+    },
+    {
+      "id": "US-002",
+      "title": "Accept the documented `name` parameter in `surface.rename`",
+      "epic": "EP-001",
+      "status": "DONE",
+      "priority": "P1",
+      "size": "XS",
+      "blocked_by": [],
+      "started_at": "2026-09-24T19:12:21+02:00",
+      "completed_at": "2026-09-24T19:43:23+02:00",
+      "reviewed_at": "2026-09-24T19:43:23+02:00"
+    },
+    {
+      "id": "US-003",
+      "title": "Carry `notification_type` in the hook seed so replay restores attention",
+      "epic": "EP-001",
+      "status": "IN_REVIEW",
+      "priority": "P1",
+      "size": "S",
+      "blocked_by": [],
+      "started_at": "2026-09-24T19:12:57+02:00",
+      "completed_at": null,
+      "reviewed_at": "2026-09-24T19:43:23+02:00"
+    },
+    {
+      "id": "US-004",
+      "title": "Apply the libghostty terminal options Paneflow exposes but never sets",
+      "epic": "EP-001",
+      "status": "IN_REVIEW",
+      "priority": "P1",
+      "size": "L",
+      "blocked_by": [],
+      "started_at": "2026-09-24T19:14:01+02:00",
+      "completed_at": null,
+      "reviewed_at": "2026-09-24T19:43:23+02:00"
+    },
+    {
+      "id": "US-005",
+      "title": "Honor the `external_editor` setting when opening files",
+      "epic": "EP-001",
+      "status": "IN_REVIEW",
+      "priority": "P1",
+      "size": "M",
+      "blocked_by": [],
+      "started_at": "2026-09-24T19:19:30+02:00",
+      "completed_at": null,
+      "reviewed_at": "2026-09-24T19:43:23+02:00"
+    },
+    {
+      "id": "US-006",
+      "title": "Make the headless `surface.*` fallback address sessions instead of per-connection aliases",
+      "epic": "EP-001",
+      "status": "IN_REVIEW",
+      "priority": "P1",
+      "size": "M",
+      "blocked_by": [],
+      "started_at": "2026-09-24T19:20:44+02:00",
+      "completed_at": null,
+      "reviewed_at": "2026-09-24T19:43:23+02:00"
+    },
+    {
+      "id": "US-007",
+      "title": "Resolve the controller endpoint with one rule in the desktop, CLI, and MCP",
+      "epic": "EP-001",
+      "status": "IN_REVIEW",
+      "priority": "P1",
+      "size": "M",
+      "blocked_by": [],
+      "started_at": "2026-09-24T19:23:48+02:00",
+      "completed_at": null,
+      "reviewed_at": "2026-09-24T19:43:23+02:00"
+    },
+    {
+      "id": "US-008",
+      "title": "Reconcile adopted agent activity after a worker restart",
+      "epic": "EP-001",
+      "status": "DONE",
+      "priority": "P1",
+      "size": "S",
+      "blocked_by": [
+        "US-001"
+      ],
+      "started_at": "2026-09-24T19:26:25+02:00",
+      "completed_at": "2026-09-24T19:43:23+02:00",
+      "reviewed_at": "2026-09-24T19:43:23+02:00"
+    },
+    {
+      "id": "US-009",
+      "title": "Remove the unused `paneflow-app` dependencies left by the ACP chat removal",
+      "epic": "EP-002",
+      "status": "TODO",
+      "priority": "P1",
+      "size": "S",
+      "blocked_by": [],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-010",
+      "title": "Prune unused crate dependencies and test-only `windows-sys` features",
+      "epic": "EP-002",
+      "status": "TODO",
+      "priority": "P1",
+      "size": "M",
+      "blocked_by": [],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-011",
+      "title": "Remove build-script, lint-config, and deny leftovers",
+      "epic": "EP-002",
+      "status": "TODO",
+      "priority": "P1",
+      "size": "S",
+      "blocked_by": [],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-012",
+      "title": "Delete unreferenced tracked assets and packaging leftovers",
+      "epic": "EP-002",
+      "status": "TODO",
+      "priority": "P1",
+      "size": "M",
+      "blocked_by": [],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-013",
+      "title": "Remove dead and duplicated CI workflow steps",
+      "epic": "EP-002",
+      "status": "TODO",
+      "priority": "P1",
+      "size": "S",
+      "blocked_by": [],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-014",
+      "title": "Fix documentation and repository-config drift",
+      "epic": "EP-002",
+      "status": "TODO",
+      "priority": "P1",
+      "size": "S",
+      "blocked_by": [],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-015",
+      "title": "Apply one retention rule to `bench/results` (conditional on OQ-2)",
+      "epic": "EP-002",
+      "status": "TODO",
+      "priority": "P2",
+      "size": "XS",
+      "blocked_by": [],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-016",
+      "title": "Resolve the items held by `feat/agents-browser` and the active qualification",
+      "epic": "EP-002",
+      "status": "TODO",
+      "priority": "P2",
+      "size": "M",
+      "blocked_by": [
+        "US-012",
+        "US-024"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-017",
+      "title": "Remove dead code from `paneflow-agent-config` and `paneflow-mcp-install`",
+      "epic": "EP-003",
+      "status": "TODO",
+      "priority": "P1",
+      "size": "M",
+      "blocked_by": [],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-018",
+      "title": "Remove dead code from `paneflow-config`",
+      "epic": "EP-003",
+      "status": "TODO",
+      "priority": "P1",
+      "size": "M",
+      "blocked_by": [
+        "US-005"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-019",
+      "title": "Remove dead code from `paneflow-host`, `paneflow-ipc-client`, and `paneflow-ai-hook`",
+      "epic": "EP-003",
+      "status": "TODO",
+      "priority": "P1",
+      "size": "L",
+      "blocked_by": [
+        "US-001",
+        "US-003",
+        "US-007"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-020",
+      "title": "Remove dead code from `paneflow-serve`",
+      "epic": "EP-003",
+      "status": "TODO",
+      "priority": "P1",
+      "size": "M",
+      "blocked_by": [
+        "US-001",
+        "US-008"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-021",
+      "title": "Remove dead code from `paneflow-terminal-ghostty`, `paneflow-ghostty-smoke`, and `paneflow-telemetry`",
+      "epic": "EP-003",
+      "status": "TODO",
+      "priority": "P1",
+      "size": "M",
+      "blocked_by": [
+        "US-004"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-022",
+      "title": "Remove dead code from the `src-app` shell, agents, IPC, and CLI",
+      "epic": "EP-003",
+      "status": "TODO",
+      "priority": "P1",
+      "size": "L",
+      "blocked_by": [
+        "US-002",
+        "US-005"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-023",
+      "title": "Remove dead code from the `src-app` terminal, markdown, widgets, theme, and diff areas",
+      "epic": "EP-003",
+      "status": "TODO",
+      "priority": "P1",
+      "size": "L",
+      "blocked_by": [
+        "US-004"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-024",
+      "title": "Remove dead platform-gated code in the Linux backdrop, updater, system info, and workspace modules",
+      "epic": "EP-003",
+      "status": "TODO",
+      "priority": "P1",
+      "size": "L",
+      "blocked_by": [
+        "US-009",
+        "US-010"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-025",
+      "title": "Remove libghostty wrapper modules with no production caller (default of OQ-3)",
+      "epic": "EP-004",
+      "status": "TODO",
+      "priority": "P1",
+      "size": "M",
+      "blocked_by": [
+        "US-021"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-026",
+      "title": "Prune test-only methods from the remaining libghostty wrappers",
+      "epic": "EP-004",
+      "status": "TODO",
+      "priority": "P1",
+      "size": "L",
+      "blocked_by": [
+        "US-025",
+        "US-004"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-027",
+      "title": "Gate or remove test-only items in `paneflow-host`",
+      "epic": "EP-004",
+      "status": "TODO",
+      "priority": "P1",
+      "size": "M",
+      "blocked_by": [
+        "US-019"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-028",
+      "title": "Gate or remove test-only items in `paneflow-ipc-client` and `paneflow-serve`",
+      "epic": "EP-004",
+      "status": "TODO",
+      "priority": "P1",
+      "size": "M",
+      "blocked_by": [
+        "US-006",
+        "US-019",
+        "US-020"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-029",
+      "title": "Gate or remove test-only items in `paneflow-config`, `paneflow-home`, `paneflow-textdiff`, and `paneflow-agent-config`",
+      "epic": "EP-004",
+      "status": "TODO",
+      "priority": "P2",
+      "size": "S",
+      "blocked_by": [
+        "US-017",
+        "US-018"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-030",
+      "title": "Gate or remove test-only items in `src-app`",
+      "epic": "EP-004",
+      "status": "TODO",
+      "priority": "P1",
+      "size": "M",
+      "blocked_by": [
+        "US-022",
+        "US-023"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-031",
+      "title": "Compile the in-process PTY runtime for tests only (option A)",
+      "epic": "EP-004",
+      "status": "TODO",
+      "priority": "P1",
+      "size": "L",
+      "blocked_by": [
+        "US-010",
+        "US-023",
+        "US-030"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-032",
+      "title": "Replace broad lint allowances with target-scoped attributes",
+      "epic": "EP-004",
+      "status": "TODO",
+      "priority": "P2",
+      "size": "S",
+      "blocked_by": [
+        "US-022",
+        "US-024"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-033",
+      "title": "Share host primitives with `paneflow-serve`",
+      "epic": "EP-005",
+      "status": "TODO",
+      "priority": "P2",
+      "size": "L",
+      "blocked_by": [
+        "US-027",
+        "US-028"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-034",
+      "title": "Consolidate process-identity helpers in `paneflow-host`",
+      "epic": "EP-005",
+      "status": "TODO",
+      "priority": "P2",
+      "size": "M",
+      "blocked_by": [
+        "US-022",
+        "US-024"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-035",
+      "title": "Consolidate `src-app` runtime helpers",
+      "epic": "EP-005",
+      "status": "TODO",
+      "priority": "P2",
+      "size": "M",
+      "blocked_by": [
+        "US-007",
+        "US-024"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-036",
+      "title": "Consolidate diff and editor rendering helpers",
+      "epic": "EP-005",
+      "status": "TODO",
+      "priority": "P2",
+      "size": "M",
+      "blocked_by": [
+        "US-030"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-037",
+      "title": "Consolidate settings and modal UI primitives",
+      "epic": "EP-005",
+      "status": "TODO",
+      "priority": "P2",
+      "size": "M",
+      "blocked_by": [
+        "US-022"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-038",
+      "title": "Deduplicate a config alias and the MCP-install presence check",
+      "epic": "EP-005",
+      "status": "TODO",
+      "priority": "P2",
+      "size": "S",
+      "blocked_by": [
+        "US-017",
+        "US-018"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-039",
+      "title": "Make `paneflow hooks` delegate to the integrations installer (default of OQ-5)",
+      "epic": "EP-005",
+      "status": "TODO",
+      "priority": "P2",
+      "size": "L",
+      "blocked_by": [
+        "US-017",
+        "US-029"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-040",
+      "title": "Split `crates/paneflow-host/src/host.rs`",
+      "epic": "EP-006",
+      "status": "TODO",
+      "priority": "P2",
+      "size": "L",
+      "blocked_by": [
+        "US-027",
+        "US-033"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-041",
+      "title": "Split `persistent_baseline.rs` and land the qualification-coupled cleanups",
+      "epic": "EP-006",
+      "status": "TODO",
+      "priority": "P2",
+      "size": "M",
+      "blocked_by": [
+        "US-019"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-042",
+      "title": "Split `src-app/src/terminal/ghostty_session.rs`",
+      "epic": "EP-006",
+      "status": "TODO",
+      "priority": "P2",
+      "size": "L",
+      "blocked_by": [
+        "US-004",
+        "US-023",
+        "US-031"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-043",
+      "title": "Split `src-app/src/terminal/pty_session.rs` and `src-app/src/terminal/view.rs`",
+      "epic": "EP-006",
+      "status": "TODO",
+      "priority": "P2",
+      "size": "L",
+      "blocked_by": [
+        "US-023",
+        "US-031"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-044",
+      "title": "Split `src-app/src/app/ipc_handler.rs`",
+      "epic": "EP-006",
+      "status": "TODO",
+      "priority": "P2",
+      "size": "L",
+      "blocked_by": [
+        "US-002",
+        "US-022",
+        "US-035"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-045",
+      "title": "Split `src-app/src/main.rs`, `src-app/src/app/bootstrap.rs`, and `src-app/src/app/event_handlers.rs`",
+      "epic": "EP-006",
+      "status": "TODO",
+      "priority": "P2",
+      "size": "L",
+      "blocked_by": [
+        "US-022",
+        "US-024",
+        "US-034"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-046",
+      "title": "Split `src-app/src/app/sidebar/mod.rs` and `src-app/src/settings/tabs/workspaces.rs`",
+      "epic": "EP-006",
+      "status": "TODO",
+      "priority": "P2",
+      "size": "L",
+      "blocked_by": [
+        "US-012",
+        "US-022",
+        "US-037"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-047",
+      "title": "Split `src-app/src/app/diff_dock/code/view.rs`",
+      "epic": "EP-006",
+      "status": "TODO",
+      "priority": "P2",
+      "size": "L",
+      "blocked_by": [
+        "US-022",
+        "US-030",
+        "US-036"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    }
+  ]
+}
