@@ -1594,6 +1594,59 @@ mod tests {
     }
 
     #[test]
+    fn a_replayed_notification_seed_restores_the_attention_the_live_event_produced() {
+        let replayed_status = |seed_body: Value| {
+            let home = tempfile::tempdir().unwrap();
+            let session = SessionId::new();
+            write_manifest(
+                home.path(),
+                &manifest(
+                    session.clone(),
+                    Some(hook("Notification", SessionGeneration::FIRST)),
+                ),
+            )
+            .unwrap();
+            let dir = paneflow_home::host_session_data_dir_in(home.path(), session.as_str());
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(
+                dir.join(hook_assets::SEED_FILE),
+                serde_json::to_vec(&seed_body).unwrap(),
+            )
+            .unwrap();
+            let mut state = WorkerState::new(home.path());
+            state.rebuild_from_home(home.path());
+            assert_eq!(state.get(&session).unwrap().hook_revision, 0);
+            state.get(&session).unwrap().status()
+        };
+        let live_status = |payload: Value| {
+            let home = tempfile::tempdir().unwrap();
+            let session = SessionId::new();
+            let mut state = running_state(home.path(), &session);
+            state.apply_core_event(&frame(&session, "ai.notification", "Notification", payload));
+            state.get(&session).unwrap().status()
+        };
+
+        let live = live_status(json!({"notification_type": "permission_prompt"}));
+        assert_eq!(live, "attention");
+        assert_eq!(
+            replayed_status(json!({
+                "hook_event_name": "Notification",
+                "notification_type": "permission_prompt",
+                "runtime_generation": 1,
+            })),
+            live
+        );
+
+        assert_eq!(
+            replayed_status(json!({
+                "hook_event_name": "Notification",
+                "runtime_generation": 1,
+            })),
+            live_status(json!({}))
+        );
+    }
+
+    #[test]
     fn a_seed_holding_a_stop_never_reopens_the_turn() {
         let home = tempfile::tempdir().unwrap();
         let session = SessionId::new();

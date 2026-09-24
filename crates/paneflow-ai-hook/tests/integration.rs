@@ -374,6 +374,39 @@ fn unreachable_host_is_bounded_and_writes_the_generation_seed() {
     );
 }
 
+#[test]
+fn unreachable_host_seed_keeps_the_notification_type() {
+    let (endpoint, _keepalive) = unique_ipc_path();
+    let directory = tempfile::tempdir().expect("session directory");
+    let (status, _, stdout) = run_reporter(
+        Path::new(HOOK_BIN),
+        "Notification",
+        &HookEnv {
+            endpoint: Some(&endpoint),
+            session: Some(SESSION_ID),
+            session_dir: Some(directory.path()),
+            tool: "claude",
+            generation: Some(4),
+            hook_log: None,
+        },
+        br#"{"notification_type":"permission_prompt","message":"Approve edit?"}"#,
+    );
+    assert!(status.success());
+    assert!(stdout.is_empty());
+    let seed: Value = serde_json::from_slice(
+        &std::fs::read(directory.path().join("last-hook-event.json")).expect("seed"),
+    )
+    .expect("seed JSON");
+    assert_eq!(
+        seed,
+        json!({
+            "hook_event_name": "Notification",
+            "notification_type": "permission_prompt",
+            "runtime_generation": 4
+        })
+    );
+}
+
 #[cfg(unix)]
 #[test]
 fn unix_reporter_script_passes_the_same_event_contract() {
