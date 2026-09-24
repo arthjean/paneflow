@@ -180,6 +180,11 @@ pub fn host_endpoint_path_for_current_home() -> Option<PathBuf> {
     paneflow_home().map(|home| host_endpoint_path(&home))
 }
 
+pub fn reserved_host_endpoint() -> Option<PathBuf> {
+    let reserved = RESERVED_HOME_DIR_NAME?;
+    Some(host_endpoint_path(&dirs::home_dir()?.join(reserved)))
+}
+
 pub const SERVE_DIR_NAME: &str = "serve";
 
 pub const SERVE_OWNER_LOCK_FILE_NAME: &str = "owner.lock";
@@ -503,6 +508,24 @@ mod tests {
                 home_fingerprint(Path::new(r"C:\Users\Arthur\.paneflow")),
                 home_fingerprint(Path::new("c:/users/arthur/.paneflow")),
             );
+        }
+    }
+
+    #[test]
+    fn only_a_dev_build_reserves_the_release_host_endpoint() {
+        let reserved = reserved_host_endpoint();
+        if cfg!(debug_assertions) {
+            let user = dirs::home_dir().expect("user home");
+            assert_eq!(
+                reserved,
+                Some(host_endpoint_path(&user.join(RELEASE_HOME_DIR_NAME)))
+            );
+            assert_ne!(
+                reserved,
+                Some(host_endpoint_path(&user.join(HOME_DIR_NAME)))
+            );
+        } else {
+            assert_eq!(reserved, None);
         }
     }
 }

@@ -562,29 +562,66 @@ pub fn subscribe_stream_timed(
     }
 }
 
-pub fn resolve_socket_path_or(home_endpoint: Option<PathBuf>) -> Option<PathBuf> {
-    socket_path_from_env(std::env::var("PANEFLOW_SOCKET_PATH").ok().as_deref())
-        .filter(|path| !is_reserved_release_endpoint(path))
-        .or(home_endpoint)
-        .or_else(default_socket_path)
+pub const SOCKET_PATH_ENV: &str = "PANEFLOW_SOCKET_PATH";
+
+const ALLOW_SOCKET_OVERRIDE_ENV: &str = "PANEFLOW_ALLOW_SOCKET_OVERRIDE";
+
+fn same_endpoint(left: &Path, right: &Path) -> bool {
+    if cfg!(windows) {
+        left.as_os_str().eq_ignore_ascii_case(right.as_os_str())
+    } else {
+        left == right
+    }
 }
 
-fn is_reserved_release_endpoint(path: &std::path::Path) -> bool {
-    cfg!(debug_assertions)
-        && flavor_socket_path(false).is_some_and(|release| {
-            if cfg!(windows) {
-                release.as_os_str().eq_ignore_ascii_case(path.as_os_str())
-            } else {
-                release == path
-            }
-        })
+pub(crate) fn honored_socket_override(
+    requested: Option<PathBuf>,
+    isolated_endpoint: Option<&Path>,
+    reserved: Option<&Path>,
+    allow_override: bool,
+) -> Option<PathBuf> {
+    let requested = requested?;
+    if reserved.is_some_and(|reserved| same_endpoint(reserved, &requested)) {
+        return None;
+    }
+    match isolated_endpoint {
+        Some(owned) if !allow_override && !same_endpoint(owned, &requested) => None,
+        _ => Some(requested),
+    }
+}
+
+pub(crate) fn socket_override_allowed() -> bool {
+    std::env::var_os(ALLOW_SOCKET_OVERRIDE_ENV).is_some_and(|value| value == "1")
+}
+
+fn reserved_release_endpoint() -> Option<PathBuf> {
+    if cfg!(debug_assertions) {
+        flavor_socket_path(false)
+    } else {
+        None
+    }
+}
+
+pub fn chosen_endpoint(isolated_endpoint: Option<PathBuf>) -> Option<PathBuf> {
+    let reserved = reserved_release_endpoint();
+    honored_socket_override(
+        socket_path_from_env(std::env::var_os(SOCKET_PATH_ENV).as_deref()),
+        isolated_endpoint.as_deref(),
+        reserved.as_deref(),
+        socket_override_allowed(),
+    )
+    .or(isolated_endpoint)
+}
+
+pub fn resolve_socket_path_or(home_endpoint: Option<PathBuf>) -> Option<PathBuf> {
+    chosen_endpoint(home_endpoint).or_else(default_socket_path)
 }
 
 fn default_socket_path() -> Option<PathBuf> {
     flavor_socket_path(cfg!(debug_assertions))
 }
 
-pub(crate) fn socket_path_from_env(raw: Option<&str>) -> Option<PathBuf> {
+pub(crate) fn socket_path_from_env(raw: Option<&std::ffi::OsStr>) -> Option<PathBuf> {
     let path = PathBuf::from(raw?);
     path.is_absolute().then_some(path)
 }
@@ -722,14 +759,17 @@ mod tests {
         let Some(release) = flavor_socket_path(false) else {
             return;
         };
+        let reserved = |path: &Path| {
+            reserved_release_endpoint().is_some_and(|reserved| same_endpoint(&reserved, path))
+        };
         assert_eq!(
-            is_reserved_release_endpoint(&release),
+            reserved(&release),
             cfg!(debug_assertions),
             "a dev CLI or test inside an installed pane must not drive the installed app"
         );
         let dev =
             flavor_socket_path(true).expect("the dev endpoint resolves beside the release one");
-        assert!(!is_reserved_release_endpoint(&dev));
+        assert!(!reserved(&dev));
     }
 
     #[test]
@@ -738,13 +778,209 @@ mod tests {
         let absolute = "/run/user/1000/paneflow/paneflow.sock";
         #[cfg(windows)]
         let absolute = r"\\.\pipe\paneflow";
+        let raw = |value: &'static str| Some(std::ffi::OsStr::new(value));
         assert_eq!(
-            socket_path_from_env(Some(absolute)),
+            socket_path_from_env(raw(absolute)),
             Some(PathBuf::from(absolute))
         );
-        assert_eq!(socket_path_from_env(Some("relative/path.sock")), None);
-        assert_eq!(socket_path_from_env(Some("")), None);
+        assert_eq!(socket_path_from_env(raw("relative/path.sock")), None);
+        assert_eq!(socket_path_from_env(raw("")), None);
         assert_eq!(socket_path_from_env(None), None);
+    }
+
+    fn endpoint(name: &str) -> PathBuf {
+        if cfg!(windows) {
+            PathBuf::from(format!(r"\\.\pipe\{name}"))
+        } else {
+            PathBuf::from(format!("/run/user/1000/{name}.sock"))
+        }
+    }
+
+    static ENDPOINT_ENV: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn with_endpoint_env<R>(
+        vars: &[(&str, Option<&std::ffi::OsStr>)],
+        body: impl FnOnce() -> R,
+    ) -> R {
+        let _guard = ENDPOINT_ENV
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let saved: Vec<_> = vars
+            .iter()
+            .map(|(key, _)| (*key, std::env::var_os(key)))
+            .collect();
+        for (key, value) in vars {
+            match value {
+                Some(value) => std::env::set_var(key, value),
+                None => std::env::remove_var(key),
+            }
+        }
+        let result = body();
+        for (key, value) in saved {
+            match value {
+                Some(value) => std::env::set_var(key, value),
+                None => std::env::remove_var(key),
+            }
+        }
+        result
+    }
+
+    #[test]
+    fn an_isolated_home_resolves_its_own_socket_over_an_inherited_one() {
+        let owned = endpoint("paneflow-ipc-0123456789abcdef");
+        let inherited = endpoint("paneflow-ipc-fedcba9876543210");
+        let resolved = |allow: Option<&str>| {
+            with_endpoint_env(
+                &[
+                    ("PANEFLOW_SOCKET_PATH", Some(inherited.as_os_str())),
+                    (
+                        "PANEFLOW_ALLOW_SOCKET_OVERRIDE",
+                        allow.map(std::ffi::OsStr::new),
+                    ),
+                ],
+                || resolve_socket_path_or(Some(owned.clone())),
+            )
+        };
+        assert_eq!(resolved(None), Some(owned.clone()));
+        assert_eq!(resolved(Some("0")), Some(owned.clone()));
+        assert_eq!(resolved(Some("1")), Some(inherited.clone()));
+    }
+
+    #[test]
+    fn an_isolated_home_resolves_its_own_host_endpoint_over_an_inherited_one() {
+        let owned_socket = endpoint("paneflow-ipc-0123456789abcdef");
+        let owned_host = endpoint("paneflow-host-0123456789abcdef");
+        let inherited_host = endpoint("paneflow-host-fedcba9876543210");
+        let resolved = |isolated: bool, allow: Option<&str>| {
+            with_endpoint_env(
+                &[
+                    ("PANEFLOW_SOCKET_PATH", None),
+                    ("PANEFLOW_HOST_ENDPOINT", Some(inherited_host.as_os_str())),
+                    (
+                        "PANEFLOW_ALLOW_SOCKET_OVERRIDE",
+                        allow.map(std::ffi::OsStr::new),
+                    ),
+                ],
+                || {
+                    host_control::resolve_control_target(
+                        isolated.then(|| owned_socket.clone()),
+                        Some(owned_host.clone()),
+                        None,
+                    )
+                },
+            )
+        };
+        assert_eq!(
+            resolved(true, None),
+            Some(host_control::ControlTarget::Host(owned_host.clone()))
+        );
+        assert_eq!(
+            resolved(true, Some("1")),
+            Some(host_control::ControlTarget::Host(inherited_host.clone()))
+        );
+        if let Some(host_control::ControlTarget::Host(endpoint)) = resolved(false, None) {
+            assert_eq!(
+                endpoint, inherited_host,
+                "the default home keeps the inherited host"
+            );
+        }
+    }
+
+    #[test]
+    fn a_build_that_is_not_the_release_never_drives_the_release_host() {
+        let owned_socket = endpoint("paneflow-ipc-0123456789abcdef");
+        let owned_host = endpoint("paneflow-host-0123456789abcdef");
+        let release_host = endpoint("paneflow-host-fedcba9876543210");
+        let resolved = |isolated: bool, reserved: bool| {
+            with_endpoint_env(
+                &[
+                    ("PANEFLOW_SOCKET_PATH", None),
+                    ("PANEFLOW_HOST_ENDPOINT", Some(release_host.as_os_str())),
+                    (
+                        "PANEFLOW_ALLOW_SOCKET_OVERRIDE",
+                        Some(std::ffi::OsStr::new("1")),
+                    ),
+                ],
+                || {
+                    host_control::resolve_control_target(
+                        isolated.then(|| owned_socket.clone()),
+                        Some(owned_host.clone()),
+                        reserved.then(|| release_host.clone()),
+                    )
+                },
+            )
+        };
+        assert_eq!(
+            resolved(true, true),
+            Some(host_control::ControlTarget::Host(owned_host.clone())),
+            "the reservation holds even when overrides are allowed"
+        );
+        assert_eq!(
+            resolved(true, false),
+            Some(host_control::ControlTarget::Host(release_host.clone()))
+        );
+        if let Some(host_control::ControlTarget::Host(endpoint)) = resolved(false, true) {
+            assert_eq!(
+                endpoint, owned_host,
+                "a pane of the installed app exports its host; a dev build must not drive it"
+            );
+        }
+    }
+
+    #[test]
+    fn a_build_that_is_not_the_release_never_binds_the_release_socket() {
+        let release = endpoint("paneflow");
+        assert_eq!(
+            honored_socket_override(Some(release.clone()), None, Some(&release), false),
+            None,
+            "a pane of the installed app exports its socket; a dev build must not claim it"
+        );
+        assert_eq!(
+            honored_socket_override(Some(release.clone()), None, Some(&release), true),
+            None,
+            "the reservation holds even when overrides are allowed"
+        );
+        assert_eq!(
+            honored_socket_override(Some(release.clone()), None, None, false),
+            Some(release),
+            "the release build keeps honoring its own socket"
+        );
+    }
+
+    #[test]
+    fn an_isolated_home_ignores_a_socket_it_does_not_own() {
+        let owned = endpoint("paneflow-ipc-0123456789abcdef");
+        let parent = endpoint("paneflow-ipc-fedcba9876543210");
+        assert_eq!(
+            honored_socket_override(Some(parent.clone()), Some(&owned), None, false),
+            None
+        );
+        assert_eq!(
+            honored_socket_override(Some(owned.clone()), Some(&owned), None, false),
+            Some(owned.clone())
+        );
+        assert_eq!(
+            honored_socket_override(Some(parent.clone()), Some(&owned), None, true),
+            Some(parent.clone()),
+            "PANEFLOW_ALLOW_SOCKET_OVERRIDE=1 is the explicit escape hatch"
+        );
+        assert_eq!(
+            honored_socket_override(Some(parent.clone()), None, None, false),
+            Some(parent),
+            "the default home keeps honoring an explicit socket"
+        );
+        assert_eq!(
+            honored_socket_override(None, Some(&owned), None, false),
+            None
+        );
+    }
+
+    #[test]
+    fn named_pipe_endpoints_compare_without_case() {
+        let upper = PathBuf::from(r"\\.\pipe\Paneflow-IPC-ABC");
+        let lower = PathBuf::from(r"\\.\pipe\paneflow-ipc-abc");
+        assert_eq!(same_endpoint(&upper, &lower), cfg!(windows));
+        assert!(same_endpoint(&lower, &lower));
     }
 
     #[cfg(windows)]
