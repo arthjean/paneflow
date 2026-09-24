@@ -11,6 +11,7 @@ enum EditorKind {
     VimFamily,
     Helix,
     Emacs,
+    VisualStudio,
     Unknown,
 }
 
@@ -28,6 +29,7 @@ impl EditorKind {
             "nvim" | "vim" | "vi" | "nvim-qt" | "gvim" | "mvim" => Self::VimFamily,
             "hx" | "helix" => Self::Helix,
             "emacs" | "emacsclient" => Self::Emacs,
+            "devenv" => Self::VisualStudio,
             _ => Self::Unknown,
         }
     }
@@ -63,6 +65,7 @@ impl EditorKind {
                 args.push(path_str);
                 args
             }
+            Self::VisualStudio => vec!["/Edit".to_string(), path_str],
             Self::Unknown => vec![path_str],
         }
     }
@@ -154,7 +157,76 @@ const FALLBACK_PROBES: &[&str] = &[
     "emacs",
 ];
 
-pub fn open_at_location(path: &Path, line: Option<u32>, col: Option<u32>) -> bool {
+#[derive(Debug, PartialEq, Eq)]
+enum PreferredEditor {
+    Unset,
+    System,
+    Command { binary: PathBuf, kind: EditorKind },
+    Missing { binary: &'static str },
+    Unrecognized,
+}
+
+fn preset_binary(preset: &str) -> Option<&'static str> {
+    match preset {
+        "zed" => Some("zed"),
+        "cursor" => Some("cursor"),
+        "windsurf" => Some("windsurf"),
+        "code" => Some("code"),
+        "visual_studio" => Some("devenv"),
+        _ => None,
+    }
+}
+
+fn preferred_editor(
+    preference: Option<&str>,
+    resolve: impl Fn(&str) -> Option<PathBuf>,
+) -> PreferredEditor {
+    let Some(preset) = preference.map(str::trim).filter(|value| !value.is_empty()) else {
+        return PreferredEditor::Unset;
+    };
+    match preset {
+        "auto" => PreferredEditor::Unset,
+        "system" => PreferredEditor::System,
+        preset => match preset_binary(preset) {
+            Some(binary) => match resolve(binary) {
+                Some(resolved) => PreferredEditor::Command {
+                    binary: resolved,
+                    kind: EditorKind::from_binary_name(binary),
+                },
+                None => PreferredEditor::Missing { binary },
+            },
+            None => PreferredEditor::Unrecognized,
+        },
+    }
+}
+
+fn resolve_on_path(binary: &str) -> Option<PathBuf> {
+    let resolved = resolve_editor_command(binary);
+    (resolved != Path::new(binary)).then_some(resolved)
+}
+
+pub fn open_at_location(
+    path: &Path,
+    line: Option<u32>,
+    col: Option<u32>,
+    preference: Option<&str>,
+) -> bool {
+    match preferred_editor(preference, resolve_on_path) {
+        PreferredEditor::Unset => {}
+        PreferredEditor::System => return open::that(path).is_ok(),
+        PreferredEditor::Command { binary, kind } => {
+            if try_spawn(&binary.to_string_lossy(), &kind.argv_for(path, line, col)) {
+                return true;
+            }
+        }
+        PreferredEditor::Missing { binary } => log::warn!(
+            "editor: external_editor needs {binary:?}, which is not on PATH - using $VISUAL, $EDITOR, then the known editors"
+        ),
+        PreferredEditor::Unrecognized => log::warn!(
+            "editor: external_editor {preference:?} is not a known editor - using $VISUAL, $EDITOR, then the known editors"
+        ),
+    }
+
     for var in &["VISUAL", "EDITOR"] {
         if let Ok(value) = std::env::var(var)
             && let Some((bin, extra_args)) = parse_env_editor(&value)
@@ -322,6 +394,99 @@ mod tests {
         let (bin, args) = parse_env_editor("nvim").unwrap();
         assert_eq!(bin, "nvim");
         assert!(args.is_empty());
+    }
+
+    fn resolve_all(binary: &str) -> Option<PathBuf> {
+        Some(PathBuf::from(format!("/opt/editors/{binary}")))
+    }
+
+    #[test]
+    fn preferred_editor_unset_or_auto_keeps_the_env_lookup() {
+        assert_eq!(preferred_editor(None, resolve_all), PreferredEditor::Unset);
+        assert_eq!(
+            preferred_editor(Some("auto"), resolve_all),
+            PreferredEditor::Unset
+        );
+        assert_eq!(
+            preferred_editor(Some("  "), resolve_all),
+            PreferredEditor::Unset
+        );
+    }
+
+    #[test]
+    fn preferred_editor_resolves_a_preset_to_its_binary() {
+        assert_eq!(
+            preferred_editor(Some("zed"), resolve_all),
+            PreferredEditor::Command {
+                binary: PathBuf::from("/opt/editors/zed"),
+                kind: EditorKind::Zed,
+            }
+        );
+        assert_eq!(
+            preferred_editor(Some("cursor"), resolve_all),
+            PreferredEditor::Command {
+                binary: PathBuf::from("/opt/editors/cursor"),
+                kind: EditorKind::VsCodeLike,
+            }
+        );
+        assert_eq!(
+            preferred_editor(Some("visual_studio"), resolve_all),
+            PreferredEditor::Command {
+                binary: PathBuf::from("/opt/editors/devenv"),
+                kind: EditorKind::VisualStudio,
+            }
+        );
+        assert_eq!(
+            preferred_editor(Some("system"), resolve_all),
+            PreferredEditor::System
+        );
+    }
+
+    #[test]
+    fn preferred_editor_reports_a_missing_binary() {
+        assert_eq!(
+            preferred_editor(Some("windsurf"), |_| None),
+            PreferredEditor::Missing { binary: "windsurf" }
+        );
+        assert_eq!(
+            preferred_editor(Some("notepad++"), resolve_all),
+            PreferredEditor::Unrecognized
+        );
+    }
+
+    #[test]
+    fn every_settings_preset_is_understood_and_accepted_by_the_schema() {
+        let schema_path =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../schemas/paneflow.schema.json");
+        let schema: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(schema_path).expect("schema"))
+                .expect("schema JSON");
+        let mut schema_values: Vec<&str> = schema["properties"]["external_editor"]["enum"]
+            .as_array()
+            .expect("external_editor enum")
+            .iter()
+            .filter_map(serde_json::Value::as_str)
+            .collect();
+        let mut preset_values: Vec<&str> = crate::settings::tabs::general::EDITOR_PRESETS
+            .iter()
+            .map(|(_, value)| *value)
+            .collect();
+        schema_values.sort_unstable();
+        preset_values.sort_unstable();
+        assert_eq!(schema_values, preset_values);
+        for value in preset_values {
+            assert_ne!(
+                preferred_editor(Some(value), resolve_all),
+                PreferredEditor::Unrecognized,
+                "{value}"
+            );
+        }
+    }
+
+    #[test]
+    fn argv_visual_studio_opens_the_file_for_editing() {
+        let args = EditorKind::VisualStudio.argv_for(p("C:/x.rs"), Some(4), Some(2));
+        assert_eq!(args, vec!["/Edit".to_string(), "C:/x.rs".to_string()]);
     }
 
     #[test]

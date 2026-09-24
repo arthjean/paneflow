@@ -227,8 +227,8 @@
     },
     "external_editor": {
       "type": ["string", "null"],
-      "description": "Editor used to open file links. 'auto' probes zed, cursor, windsurf, then code; 'system' always uses the OS opener.",
-      "enum": ["auto", "system", "zed", "cursor", "windsurf", "code", null],
+      "description": "Editor used to open file links. 'auto' uses $VISUAL, then $EDITOR, then the first known editor on PATH; 'system' always uses the OS opener. A named editor that is not on PATH falls back to 'auto'.",
+      "enum": ["auto", "system", "zed", "cursor", "windsurf", "code", "visual_studio", null],
       "default": "auto"
     },
     "shortcuts": {
