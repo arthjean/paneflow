@@ -9,10 +9,10 @@
     {
       "id": "EP-001",
       "title": "Latent Defects Surfaced by the Audit",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P0",
       "stories_total": 8,
-      "stories_done": 6
+      "stories_done": 8
     },
     {
       "id": "EP-002",
@@ -96,25 +96,25 @@
       "id": "US-004",
       "title": "Apply the libghostty terminal options Paneflow exposes but never sets",
       "epic": "EP-001",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P1",
       "size": "L",
       "blocked_by": [],
       "started_at": "2026-09-24T19:14:01+02:00",
-      "completed_at": null,
-      "reviewed_at": "2026-09-24T19:43:23+02:00"
+      "completed_at": "2026-09-24T21:36:22+02:00",
+      "reviewed_at": "2026-09-24T21:36:22+02:00"
     },
     {
       "id": "US-005",
       "title": "Honor the `external_editor` setting when opening files",
       "epic": "EP-001",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P1",
       "size": "M",
       "blocked_by": [],
       "started_at": "2026-09-24T19:19:30+02:00",
-      "completed_at": null,
-      "reviewed_at": "2026-09-24T19:43:23+02:00"
+      "completed_at": "2026-09-24T21:36:22+02:00",
+      "reviewed_at": "2026-09-24T21:36:22+02:00"
     },
     {
       "id": "US-006",
