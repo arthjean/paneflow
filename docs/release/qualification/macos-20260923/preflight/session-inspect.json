@@ -1,0 +1,33 @@
+{
+  "created_at_ms": 1790190976404,
+  "cwd": "/Users/runner/work/_temp/rehearsal/root/homes/preflight-host-20260923T191613Z",
+  "generation": 1,
+  "generation_started_at_ms": 1790190976404,
+  "host_build_id": "0.16.0+0c2a290d3a3e",
+  "host_instance": "921ed4cf-4be6-45ca-b3e2-8e135cd6501b",
+  "host_protocol_version": 1,
+  "launch": {
+    "args": [
+      "idle"
+    ],
+    "cols": 80,
+    "rows": 24,
+    "shell": "/Users/runner/work/_temp/rehearsal/paneflow-macos-qualification-afd3e18a32ae/candidate/bin/paneflow-session-fixture"
+  },
+  "lifecycle": {
+    "state": "running"
+  },
+  "live": true,
+  "owned": true,
+  "process": {
+    "pid": 62353,
+    "started_at": 1790190976410712
+  },
+  "reconnection": {
+    "state": "live"
+  },
+  "schema": 1,
+  "screen_changed_at_ms": 1790190976688,
+  "session": "7848cc80-3399-4c48-907a-ffa3db8d0931",
+  "updated_at_ms": 1790190976688
+}

@@ -1,0 +1,4 @@
+ProductName:		macOS
+ProductVersion:		14.8.9
+BuildVersion:		23J631
+Darwin iad20-eo1214-a9dff159-ea71-40a9-847d-23c8fa9affb7-EE02CCB8620A.local 23.6.0 Darwin Kernel Version 23.6.0: Tue Jul 21 21:56:54 PDT 2026; root:xnu-10063.141.1.713.39~1/RELEASE_ARM64_VMAPPLE arm64

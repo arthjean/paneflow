@@ -49,7 +49,7 @@
     {
       "id": "EP-006",
       "title": "macOS Qualification on the Hosted Apple Silicon Runner",
-      "status": "IN_PROGRESS",
+      "status": "IN_REVIEW",
       "priority": "P0",
       "stories_total": 2,
       "stories_done": 0
@@ -352,13 +352,13 @@
       "id": "US-020",
       "title": "Execute and report macOS qualification",
       "epic": "EP-006",
-      "status": "TODO",
+      "status": "IN_REVIEW",
       "priority": "P0",
       "size": "XL",
       "blocked_by": [
         "US-019"
       ],
-      "started_at": null,
+      "started_at": "2026-09-23",
       "completed_at": null,
       "reviewed_at": null
     }

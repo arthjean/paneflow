@@ -1,0 +1,14 @@
+./PACKAGE.txt: OK
+./candidate/PaneFlow.app/Contents/Info.plist: OK
+./candidate/PaneFlow.app/Contents/MacOS/paneflow: OK
+./candidate/PaneFlow.app/Contents/MacOS/paneflow-host: OK
+./candidate/PaneFlow.app/Contents/Resources/PaneFlow.icns: OK
+./candidate/bin/paneflow-session-fixture: OK
+./candidate/bin/paneflow-worker-replacement: OK
+./candidate/bin/persistent_baseline: OK
+./candidate/candidate.json: OK
+./profiling/baseline/paneflow-host: OK
+./profiling/candidate/paneflow-host: OK
+./scripts/bench-persistent.sh: OK
+./scripts/profile-host-macos.sh: OK
+./scripts/qualify-macos-preflight.sh: OK

@@ -1,0 +1,12 @@
+candidate	empty	rss_kib=4896	phys_footprint=2129K	threads=5	fds=9
+candidate	idle50	rss_kib=15472	phys_footprint=11.9M	threads=205	fds=159
+candidate	after_output	rss_kib=41024	phys_footprint=15.6M	threads=208	fds=159
+candidate	after_churn	rss_kib=41920	phys_footprint=13.7M	threads=205	fds=159
+candidate	after_stop	rss_kib=36336	phys_footprint=8114K	threads=5	fds=9
+candidate	survivors	none
+baseline	empty	rss_kib=4816	phys_footprint=2193K	threads=3	fds=9
+baseline	idle50	rss_kib=14544	phys_footprint=11.2M	threads=153	fds=159
+baseline	after_output	rss_kib=93056	phys_footprint=87.9M	threads=163	fds=159
+baseline	after_churn	rss_kib=95056	phys_footprint=89.8M	threads=163	fds=159
+baseline	after_stop	rss_kib=93472	phys_footprint=88.3M	threads=63	fds=9
+baseline	survivors	none

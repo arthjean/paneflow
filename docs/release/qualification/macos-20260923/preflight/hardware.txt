@@ -1,0 +1,5 @@
+hw.model: VirtualMac2,1
+machdep.cpu.brand_string: Apple M1 (Virtual)
+hw.memsize: 7516192768
+hw.ncpu: 3
+hw.perflevel0.physicalcpu: 3
