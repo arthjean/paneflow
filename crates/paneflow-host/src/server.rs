@@ -2742,4 +2742,63 @@ mod tests {
     fn a_control_connection_idle_for_thirty_minutes_still_delivers_the_first_key_once() {
         idle_control_connection_delivers_the_first_key_exactly_once(Duration::from_secs(1800));
     }
+
+    #[test]
+    fn a_headless_transport_reads_the_listed_surface_across_its_per_call_connections() {
+        use paneflow_ipc_client::IpcTransport;
+        use paneflow_ipc_client::host_control::HostTransport;
+
+        let (_home, host, server) = start();
+        let mut sessions = Vec::new();
+        for marker in ["HEADLESS_FIRST", "HEADLESS_SECOND"] {
+            let created = host
+                .create(serde_json::from_value(shell_create_params()).unwrap())
+                .unwrap();
+            let (session, generation) = (created.manifest.session, created.manifest.generation);
+            let command = format!("echo {marker}");
+            host.input(&session, Some(generation), shell_line(&command, &command))
+                .unwrap();
+            sessions.push((session, generation, marker));
+        }
+        for (session, _, marker) in &sessions {
+            assert!(
+                wait_until(Duration::from_secs(20), || host
+                    .text(session)
+                    .is_ok_and(|text| visible_text(&text.text).contains(marker))),
+                "{marker} reaches its own session"
+            );
+        }
+
+        let transport = HostTransport::connect(server.endpoint(), "headless-test").unwrap();
+        let listed = transport.call("surface.list", json!({})).unwrap();
+        let (second, second_generation, _) = &sessions[1];
+        let alias = listed["surfaces"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|surface| surface["session"] == json!(second))
+            .and_then(|surface| surface["surface_id"].as_u64())
+            .expect("the second session is listed");
+
+        let read = transport
+            .call(
+                "surface.read",
+                json!({"surface_id": alias, "fenced": false}),
+            )
+            .expect("a listed surface reads on the next per-call connection");
+        assert_eq!(read["session"], json!(second));
+        let text = visible_text(read["text"].as_str().unwrap());
+        assert!(text.contains("HEADLESS_SECOND"), "{text}");
+        assert!(!text.contains("HEADLESS_FIRST"), "{text}");
+
+        host.stop(second, Some(*second_generation)).unwrap();
+        host.remove(second).unwrap();
+        let vanished = transport
+            .call("surface.read", json!({"surface_id": alias}))
+            .expect_err("a session gone since surface.list is not read");
+        assert!(vanished.contains("Surface not found"), "{vanished}");
+
+        host.stop(&sessions[0].0, None).unwrap();
+        server.stop().unwrap();
+    }
 }

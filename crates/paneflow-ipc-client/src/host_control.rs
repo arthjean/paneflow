@@ -1,6 +1,7 @@
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Mutex;
 use std::time::Duration;
 
 use serde_json::{json, Value};
@@ -29,6 +30,8 @@ pub const METHOD_AGENT_SNAPSHOT: &str = "agent.snapshot";
 pub const METHOD_AGENT_FOLLOW: &str = "agent.follow";
 
 pub const ERR_NO_CONTROLLER: i64 = -32030;
+
+pub const ERR_SESSION_NOT_FOUND: i64 = -32020;
 
 pub fn host_endpoint_from(raw: Option<&std::ffi::OsStr>) -> Option<PathBuf> {
     raw.filter(|value| !value.is_empty()).map(PathBuf::from)
@@ -226,6 +229,7 @@ pub struct HostTransport {
     endpoint: PathBuf,
     client: String,
     calls: AtomicU64,
+    listed_sessions: Mutex<Vec<(u64, String)>>,
 }
 
 impl HostTransport {
@@ -235,7 +239,39 @@ impl HostTransport {
             endpoint: endpoint.to_path_buf(),
             client: client.to_owned(),
             calls: AtomicU64::new(0),
+            listed_sessions: Mutex::new(Vec::new()),
         })
+    }
+
+    fn request(&self, method: &str, params: Value) -> Result<Value, String> {
+        self.calls.fetch_add(1, Ordering::Relaxed);
+        let result = HostControl::connect(&self.endpoint, &self.client)?.request(method, params)?;
+        if method == SURFACE_LIST {
+            *self.lock_listed_sessions() = listed_sessions(&result);
+        }
+        Ok(result)
+    }
+
+    fn lock_listed_sessions(&self) -> std::sync::MutexGuard<'_, Vec<(u64, String)>> {
+        self.listed_sessions
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    fn listed_session(&self, surface_id: u64) -> Option<String> {
+        self.lock_listed_sessions()
+            .iter()
+            .find(|(listed, _)| *listed == surface_id)
+            .map(|(_, session)| session.clone())
+    }
+
+    fn session_for(&self, surface_id: u64) -> Result<String, String> {
+        if let Some(session) = self.listed_session(surface_id) {
+            return Ok(session);
+        }
+        self.request(SURFACE_LIST, json!({}))?;
+        self.listed_session(surface_id)
+            .ok_or_else(|| format!("Surface not found: no pane {surface_id} on this host"))
     }
 
     pub fn endpoint(&self) -> &Path {
@@ -247,16 +283,87 @@ impl HostTransport {
     }
 }
 
+const SURFACE_LIST: &str = "surface.list";
+
+fn listed_sessions(result: &Value) -> Vec<(u64, String)> {
+    result
+        .get("surfaces")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|surface| {
+            Some((
+                surface.get("surface_id")?.as_u64()?,
+                surface.get("session")?.as_str()?.to_owned(),
+            ))
+        })
+        .collect()
+}
+
+fn addressed_surface(method: &str, params: &Value) -> Option<u64> {
+    if !method.starts_with("surface.") || method == SURFACE_LIST || params.get("session").is_some()
+    {
+        return None;
+    }
+    params.get("surface_id")?.as_u64()
+}
+
 impl IpcTransport for HostTransport {
-    fn call(&self, method: &str, params: Value) -> Result<Value, String> {
-        self.calls.fetch_add(1, Ordering::Relaxed);
-        HostControl::connect(&self.endpoint, &self.client)?.request(method, params)
+    fn call(&self, method: &str, mut params: Value) -> Result<Value, String> {
+        let Some(surface_id) = addressed_surface(method, &params) else {
+            return self.request(method, params);
+        };
+        let session = self.session_for(surface_id)?;
+        if let Some(object) = params.as_object_mut() {
+            object.insert("session".into(), Value::String(session.clone()));
+        }
+        self.request(method, params).map_err(|message| {
+            if message.starts_with(&format!("paneflow error {ERR_SESSION_NOT_FOUND}:")) {
+                format!(
+                    "Surface not found: pane {surface_id} (session {session}) has left this host"
+                )
+            } else {
+                message
+            }
+        })
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_surface_calls_by_alias_are_readdressed_to_their_session() {
+        assert_eq!(
+            addressed_surface("surface.read", &json!({"surface_id": 2})),
+            Some(2)
+        );
+        assert_eq!(
+            addressed_surface("surface.read", &json!({"surface_id": 2, "session": "s"})),
+            None
+        );
+        assert_eq!(
+            addressed_surface("surface.list", &json!({"surface_id": 2})),
+            None
+        );
+        assert_eq!(
+            addressed_surface("fleet.list", &json!({"surface_id": 2})),
+            None
+        );
+        assert_eq!(addressed_surface("surface.read", &json!({})), None);
+    }
+
+    #[test]
+    fn a_surface_list_maps_each_alias_to_its_session() {
+        let listed = listed_sessions(&json!({"surfaces": [
+            {"surface_id": 1, "session": "a"},
+            {"surface_id": 2, "session": "b"},
+            {"surface_id": 3},
+        ]}));
+        assert_eq!(listed, vec![(1, "a".to_string()), (2, "b".to_string())]);
+        assert!(listed_sessions(&json!({})).is_empty());
+    }
 
     #[test]
     fn a_control_hello_declares_no_terminal_engine() {
