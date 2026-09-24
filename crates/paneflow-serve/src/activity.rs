@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use paneflow_host::agent::{AgentEvent, AgentEventKind, MAX_AGENT_TEXT_BYTES};
+use paneflow_host::agent::{AgentEvent, AgentEventKind, clamp_text};
 use paneflow_host::manifest::SessionLifecycle;
 use paneflow_ipc_client::agent::{
     AgentState, SOURCE_TAKEOVER_SILENCE, accepts_event, state_for_exit,
@@ -55,16 +55,6 @@ impl AgentSummary {
             updated_at_ms: now_ms,
         }
     }
-}
-
-fn clamp_text(raw: &str) -> String {
-    let mut text: String = raw
-        .chars()
-        .filter(|character| *character != '\0')
-        .take(MAX_AGENT_TEXT_BYTES)
-        .collect();
-    text.truncate(MAX_AGENT_TEXT_BYTES);
-    text
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
