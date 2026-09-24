@@ -864,6 +864,7 @@ impl DesktopProcess {
         let child = Command::new(executable)
             .env("PANEFLOW_HOME", home)
             .env("PANEFLOW_SOCKET_PATH", &endpoint)
+            .env("PANEFLOW_ALLOW_SOCKET_OVERRIDE", "1")
             .env(
                 "PANEFLOW_UPDATE_FEED_URL",
                 "http://127.0.0.1:9/fixture.json",

@@ -649,7 +649,8 @@ jobs:
           set -euo pipefail
           export PANEFLOW_HOME="$RUNNER_TEMP/paneflow-render-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
           export PANEFLOW_SOCKET_PATH="/tmp/paneflow-render-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.sock"
-          printf 'PANEFLOW_HOME=%s\nPANEFLOW_SOCKET_PATH=%s\n' "$PANEFLOW_HOME" "$PANEFLOW_SOCKET_PATH" >> "$GITHUB_ENV"
+          export PANEFLOW_ALLOW_SOCKET_OVERRIDE=1
+          printf 'PANEFLOW_HOME=%s\nPANEFLOW_SOCKET_PATH=%s\nPANEFLOW_ALLOW_SOCKET_OVERRIDE=1\n' "$PANEFLOW_HOME" "$PANEFLOW_SOCKET_PATH" >> "$GITHUB_ENV"
           mkdir -p "$PANEFLOW_HOME"
           printf '%s' '{"telemetry":{"enabled":false},"terminal":{"cursor_blink":"off"}}' > "$PANEFLOW_HOME/paneflow.json"
           printf '%s' '{"version":3,"active_workspace":0,"workspaces":[]}' > "$PANEFLOW_HOME/session.json"
@@ -1046,7 +1047,9 @@ jobs:
           $env:PANEFLOW_HOME = Join-Path $env:RUNNER_TEMP "paneflow-render-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT"
           $env:PANEFLOW_SOCKET_PATH = "\\.\pipe\paneflow-render-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT"
           "PANEFLOW_HOME=$env:PANEFLOW_HOME" | Add-Content $env:GITHUB_ENV
+          $env:PANEFLOW_ALLOW_SOCKET_OVERRIDE = '1'
           "PANEFLOW_SOCKET_PATH=$env:PANEFLOW_SOCKET_PATH" | Add-Content $env:GITHUB_ENV
+          'PANEFLOW_ALLOW_SOCKET_OVERRIDE=1' | Add-Content $env:GITHUB_ENV
           $home_dir = $env:PANEFLOW_HOME
           New-Item -ItemType Directory -Force -Path $home_dir | Out-Null
           $cwd = $env:GITHUB_WORKSPACE
