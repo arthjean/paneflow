@@ -1,0 +1,10 @@
+Executable=/Users/runner/work/_temp/rehearsal/paneflow-macos-qualification-c58733dd561e/candidate/PaneFlow.app/Contents/MacOS/paneflow
+Identifier=paneflow-73314f3984da1116
+Format=app bundle with Mach-O thin (arm64)
+CodeDirectory v=20400 size=509080 flags=0x20002(adhoc,linker-signed) hashes=15905+0 location=embedded
+Signature=adhoc
+Info.plist=not bound
+TeamIdentifier=not set
+Sealed Resources=none
+Internal requirements=none
+/Users/runner/work/_temp/rehearsal/paneflow-macos-qualification-c58733dd561e/candidate/PaneFlow.app: code has no resources but signature indicates they must be present

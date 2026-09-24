@@ -1,0 +1,51 @@
+Hardware:
+
+    Hardware Overview:
+
+      Model Name: Apple Virtual Machine 1
+      Model Identifier: VirtualMac2,1
+      Model Number: VM0001LL/A
+      Chip: Apple M1 (Virtual)
+      Total Number of Cores: 3
+      Memory: 7 GB
+      System Firmware Version: mBoot-18000.161.9
+      OS Loader Version: 10151.140.19.702.3
+      Serial Number (system): ZVPJ993VL7
+      Hardware UUID: CC823D3A-9E6A-5290-A6DA-4909943BD79E
+      Provisioning UDID: 0000FE00-7CCC9802DA488B9F
+      Activation Lock Status: Disabled
+
+Storage:
+
+    Data:
+
+      Free: 35.95 GB (35,954,683,904 bytes)
+      Capacity: 343.07 GB (343,073,095,680 bytes)
+      Mount Point: /System/Volumes/Data
+      File System: APFS
+      Writable: Yes
+      Ignore Ownership: No
+      BSD Name: disk3s5
+      Volume UUID: DFAA8CD5-C3B0-4005-B7D3-1F0CCE51C9D5
+      Physical Drive:
+          Media Name: AppleAPFSMedia
+          Medium Type: SSD
+          Internal: Yes
+          Partition Map Type: Unknown
+
+    Macintosh HD:
+
+      Free: 35.95 GB (35,954,683,904 bytes)
+      Capacity: 343.07 GB (343,073,095,680 bytes)
+      Mount Point: /
+      File System: APFS
+      Writable: No
+      Ignore Ownership: No
+      BSD Name: disk3s1s1
+      Volume UUID: CE4F2C4F-D051-428B-BF8F-D7D7C83F8EAA
+      Physical Drive:
+          Media Name: AppleAPFSMedia
+          Medium Type: SSD
+          Internal: Yes
+          Partition Map Type: Unknown
+

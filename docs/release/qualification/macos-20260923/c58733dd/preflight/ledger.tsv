@@ -1,0 +1,15 @@
+check	result	detail
+M01-arch	pass	VirtualMac2,1 Apple M1 (Virtual), 7 GiB, 3 CPUs
+M02-os	info	macOS 14.8.9 build 23J631
+M03-gui-session	pass	console user runner owns the graphical session
+M04-metal	fail	system_profiler reports no Metal support
+M05-disk	pass	33 GiB free under /Users/runner/work/_temp/rehearsal/root (minimum 5)
+M06-filevault	pass	FileVault is Off.
+M07-package-integrity	pass	14 files match SHA256SUMS
+M08-quarantine	pass	no quarantine attribute on the package
+M09-signature	info	adhoc; bundle signature does not verify (linker ad-hoc signatures only); Gatekeeper: /Users/runner/work/_temp/rehearsal/paneflow-macos-qualification-c58733dd561e/candidate/PaneFlow.app: code has no resources but signature indicates they must be present; distribution signing is not certified by this cell
+M10-no-competing-paneflow	pass	no paneflow, paneflow-host, or fixture process is running
+M11-socket-path	pass	TMPDIR is 49 bytes, leaving room under the 104-byte sun_path limit
+M12-host	pass	packaged host served /Users/runner/work/_temp/rehearsal/root/homes/preflight-host-20260924T091655Z and ran one idle fixture session
+M13-desktop	pass	packaged desktop reached its first font configuration under Metal and stayed up; screenshot desktop.png; its worker and host stopped
+M14-evidence-export	pass	/Users/runner/work/_temp/rehearsal/root/evidence/preflight-20260924T091655Z.tar.gz
