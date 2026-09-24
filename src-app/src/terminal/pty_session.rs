@@ -314,6 +314,10 @@ impl TerminalSessionBackend {
         self.ghostty.set_default_cursor(shape, blink)
     }
 
+    pub(crate) fn set_option_as_alt(&self, enabled: bool) -> bool {
+        self.ghostty.set_option_as_alt(enabled)
+    }
+
     pub(crate) fn kitty_placements(
         &self,
     ) -> std::sync::Arc<[crate::terminal::kitty::KittyPlacement]> {
@@ -463,6 +467,7 @@ enum PendingTerminalInput {
     Paste {
         text: String,
         allow_unsafe: bool,
+        location: paneflow_terminal_ghostty::ClipboardLocation,
     },
 }
 
@@ -510,7 +515,11 @@ impl PendingTerminalInput {
             Self::Key(input) => ghostty.write_key(input.clone()),
             Self::Mouse { input, repeat } => ghostty.write_mouse(*input, *repeat),
             Self::Focus(event) => ghostty.write_focus(*event),
-            Self::Paste { text, allow_unsafe } => ghostty.write_paste(text.clone(), *allow_unsafe),
+            Self::Paste {
+                text,
+                allow_unsafe,
+                location,
+            } => ghostty.write_paste(text.clone(), *allow_unsafe, *location),
         }
     }
 }
@@ -1354,11 +1363,16 @@ impl TerminalState {
         self.dispatch_ghostty_input(PendingTerminalInput::Focus(event), false)
     }
 
-    pub(super) fn write_ghostty_paste(&self, text: String) -> BackendInputResult {
+    pub(super) fn write_ghostty_paste(
+        &self,
+        text: String,
+        location: paneflow_terminal_ghostty::ClipboardLocation,
+    ) -> BackendInputResult {
         self.dispatch_ghostty_input(
             PendingTerminalInput::Paste {
                 text,
                 allow_unsafe: true,
+                location,
             },
             true,
         )
@@ -1856,7 +1870,10 @@ mod tests {
             BackendInputResult::Accepted
         );
         assert_eq!(
-            state.write_ghostty_paste("paste".to_string()),
+            state.write_ghostty_paste(
+                "paste".to_string(),
+                paneflow_terminal_ghostty::ClipboardLocation::Primary,
+            ),
             BackendInputResult::Accepted
         );
 
@@ -1865,7 +1882,13 @@ mod tests {
         assert!(matches!(queued[0], PendingTerminalInput::Key(_)));
         assert!(matches!(queued[1], PendingTerminalInput::Mouse { .. }));
         assert!(matches!(queued[2], PendingTerminalInput::Focus(_)));
-        assert!(matches!(queued[3], PendingTerminalInput::Paste { .. }));
+        assert!(matches!(
+            queued[3],
+            PendingTerminalInput::Paste {
+                location: paneflow_terminal_ghostty::ClipboardLocation::Primary,
+                ..
+            }
+        ));
     }
 
     #[test]

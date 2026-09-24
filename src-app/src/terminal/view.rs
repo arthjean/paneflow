@@ -326,6 +326,15 @@ impl TerminalView {
         }
     }
 
+    pub(crate) fn set_option_as_meta(&mut self, option_as_meta: bool) {
+        if self.option_as_meta != option_as_meta {
+            self.option_as_meta = option_as_meta;
+            self.terminal
+                .session_backend()
+                .set_option_as_alt(option_as_meta);
+        }
+    }
+
     pub(crate) fn set_minimum_contrast(&mut self, minimum_contrast: f32, cx: &mut Context<Self>) {
         if self.minimum_contrast != minimum_contrast {
             self.minimum_contrast = minimum_contrast;
@@ -832,6 +841,10 @@ impl TerminalView {
                 paneflow_config::schema::CursorBlinkConfig::On
             ),
         );
+        let option_as_meta = config
+            .option_as_meta
+            .unwrap_or_else(crate::keys::default_option_as_meta);
+        terminal.session_backend().set_option_as_alt(option_as_meta);
         let integrated_glyphs_enabled = terminal_config.resolved_integrated_glyphs();
         let color_emoji_enabled = terminal_config.resolved_color_emoji();
         let minimum_contrast = terminal_config.resolved_minimum_contrast();
@@ -875,9 +888,7 @@ impl TerminalView {
             search_native_navigation_generation: 0,
             search_native_navigation_queue: std::collections::VecDeque::new(),
             appearance_theme_generation: crate::theme::theme_generation(),
-            option_as_meta: config
-                .option_as_meta
-                .unwrap_or_else(crate::keys::default_option_as_meta),
+            option_as_meta,
             cursor_blink_mode,
             default_cursor_shape,
             cursor_color_override,
@@ -2285,6 +2296,22 @@ mod tests {
             probe.hits() > 0,
             "font-only config changes must invalidate the cached terminal entity"
         );
+    }
+
+    #[gpui::test]
+    fn a_config_reload_pushes_option_as_meta_to_the_terminal(cx: &mut gpui::TestAppContext) {
+        let (terminal, _host, cx) = hosted_terminal(cx);
+        let pane = cx.new(|cx| crate::pane::Pane::new(terminal.clone(), 1, cx));
+        for option_as_meta in [true, false, true] {
+            let config = paneflow_config::schema::PaneFlowConfig {
+                option_as_meta: Some(option_as_meta),
+                ..Default::default()
+            };
+            pane.update(cx, |pane, cx| pane.apply_config(&config, cx));
+            terminal.read_with(cx, |view, _| {
+                assert_eq!(view.option_as_meta, option_as_meta);
+            });
+        }
     }
 
     #[gpui::test]

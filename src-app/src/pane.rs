@@ -584,7 +584,11 @@ impl Pane {
             .as_ref()
             .and_then(|terminal| terminal.cursor_color.as_deref())
             .and_then(crate::terminal::view::hsla_from_hex_color);
+        let option_as_meta = config
+            .option_as_meta
+            .unwrap_or_else(crate::keys::default_option_as_meta);
         terminal.update(cx, |terminal, cx| {
+            terminal.set_option_as_meta(option_as_meta);
             terminal.set_integrated_glyphs_enabled(integrated_glyphs_enabled, cx);
             terminal.set_color_emoji_enabled(color_emoji_enabled, cx);
             terminal.set_minimum_contrast(minimum_contrast, cx);

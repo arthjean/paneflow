@@ -938,7 +938,7 @@ impl TerminalView {
                 if let Some(item) = cx.read_from_primary()
                     && let Some(text) = item.text()
                 {
-                    self.write_paste_text(&text);
+                    self.write_paste_text_from(&text, ghostty::ClipboardLocation::Primary);
                 }
             }
             return;
@@ -1041,8 +1041,12 @@ impl TerminalView {
     }
 
     pub(super) fn write_paste_text(&self, text: &str) {
+        self.write_paste_text_from(text, ghostty::ClipboardLocation::Standard);
+    }
+
+    fn write_paste_text_from(&self, text: &str, location: ghostty::ClipboardLocation) {
         self.terminal
-            .write_ghostty_paste(normalize_paste_text(text));
+            .write_ghostty_paste(normalize_paste_text(text), location);
     }
 
     pub fn inject_text(&self, text: &str) {

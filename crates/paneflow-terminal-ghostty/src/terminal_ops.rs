@@ -61,7 +61,6 @@ pub enum PasteSource {
 pub enum ClipboardLocation {
     Standard,
     Primary,
-    Selection,
 }
 
 impl ClipboardLocation {
@@ -70,7 +69,6 @@ impl ClipboardLocation {
         match self {
             Self::Standard => s::GhosttyClipboardLocation_GHOSTTY_CLIPBOARD_LOCATION_STANDARD,
             Self::Primary => s::GhosttyClipboardLocation_GHOSTTY_CLIPBOARD_LOCATION_PRIMARY,
-            Self::Selection => s::GhosttyClipboardLocation_GHOSTTY_CLIPBOARD_LOCATION_SELECTION,
         }
     }
 }
