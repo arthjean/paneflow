@@ -1916,6 +1916,22 @@ impl PaneFlowApp {
         cx: &mut Context<Self>,
     ) -> serde_json::Value {
         match method {
+            m if m.starts_with("workspace.") => self.handle_workspace_method(method, params, cx),
+            m if m.starts_with("surface.") || m == "fleet.list" => {
+                self.handle_surface_method(method, params, caller_pid, cx)
+            }
+            m if m.starts_with("ai.") => self.handle_agent_frame(method, params, cx),
+            _ => JsonRpcError::method_not_found(format!("Method not found: {method}")).into_value(),
+        }
+    }
+
+    fn handle_workspace_method(
+        &mut self,
+        method: &str,
+        params: &serde_json::Value,
+        cx: &mut Context<Self>,
+    ) -> serde_json::Value {
+        match method {
             "workspace.list" => {
                 let list: Vec<_> = self
                     .workspaces
@@ -2042,6 +2058,36 @@ impl PaneFlowApp {
                     }
                 }
             }
+            "workspace.restore_layout" => {
+                let Some(layout_value) = params.get("layout") else {
+                    return serde_json::json!({"error": "Missing 'layout' parameter"});
+                };
+                let mut layout: LayoutNode = match serde_json::from_value(layout_value.clone()) {
+                    Ok(l) => l,
+                    Err(e) => {
+                        return serde_json::json!({"error": format!("Invalid layout JSON: {e}")});
+                    }
+                };
+                match self.apply_layout_from_json(&mut layout, cx) {
+                    Ok(()) => {
+                        let panes = self.active_workspace().map_or(0, |ws| ws.pane_count());
+                        serde_json::json!({"restored": true, "panes": panes})
+                    }
+                    Err(e) => serde_json::json!({"error": e}),
+                }
+            }
+            _ => JsonRpcError::method_not_found(format!("Method not found: {method}")).into_value(),
+        }
+    }
+
+    fn handle_surface_method(
+        &mut self,
+        method: &str,
+        params: &serde_json::Value,
+        caller_pid: Option<i64>,
+        cx: &mut Context<Self>,
+    ) -> serde_json::Value {
+        match method {
             "surface.list" => {
                 let requested_workspace_id = match requested_workspace_id(params) {
                     Ok(workspace_id) => workspace_id,
@@ -2510,24 +2556,17 @@ impl PaneFlowApp {
                     "surface_id": surface_id
                 })
             }
-            "workspace.restore_layout" => {
-                let Some(layout_value) = params.get("layout") else {
-                    return serde_json::json!({"error": "Missing 'layout' parameter"});
-                };
-                let mut layout: LayoutNode = match serde_json::from_value(layout_value.clone()) {
-                    Ok(l) => l,
-                    Err(e) => {
-                        return serde_json::json!({"error": format!("Invalid layout JSON: {e}")});
-                    }
-                };
-                match self.apply_layout_from_json(&mut layout, cx) {
-                    Ok(()) => {
-                        let panes = self.active_workspace().map_or(0, |ws| ws.pane_count());
-                        serde_json::json!({"restored": true, "panes": panes})
-                    }
-                    Err(e) => serde_json::json!({"error": e}),
-                }
-            }
+            _ => JsonRpcError::method_not_found(format!("Method not found: {method}")).into_value(),
+        }
+    }
+
+    fn handle_agent_frame(
+        &mut self,
+        method: &str,
+        params: &serde_json::Value,
+        cx: &mut Context<Self>,
+    ) -> serde_json::Value {
+        match method {
             METHOD_SESSION_START => {
                 let Some(workspace_id) = params.get("workspace_id").and_then(|v| v.as_u64()) else {
                     return serde_json::json!({"error": "Missing workspace_id"});
