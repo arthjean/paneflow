@@ -232,7 +232,7 @@ pub(crate) unsafe extern "C" fn clipboard_read(
     read: *const sys::GhosttyClipboardRead,
 ) {
     unsafe {
-        with_state(userdata, |state| {
+        with_state(userdata, |_| {
             let Some(request) = read.as_ref() else {
                 return;
             };
@@ -242,30 +242,10 @@ pub(crate) unsafe extern "C" fn clipboard_read(
             let Some(answer) = request.reply else {
                 return;
             };
-            let Some(text) = state.readable_clipboard() else {
-                answer(read, &denied_read());
-                return;
-            };
-            let content = sys::GhosttyClipboardContent {
-                mime: string_of(TEXT_MIME),
-                data: string_of(text.as_bytes()),
-            };
-            let available = string_of(TEXT_MIME);
-            let reply = sys::GhosttyClipboardReadReply {
-                size: size_of::<sys::GhosttyClipboardReadReply>(),
-                result: sys::GhosttyClipboardReadResult_GHOSTTY_CLIPBOARD_READ_RESULT_SUCCESS,
-                contents: &content,
-                contents_len: 1,
-                available: &available,
-                available_len: 1,
-                remember: false,
-            };
-            answer(read, &reply);
+            answer(read, &denied_read());
         });
     }
 }
-
-const TEXT_MIME: &[u8] = b"text/plain;charset=utf-8";
 
 fn denied_read() -> sys::GhosttyClipboardReadReply {
     sys::GhosttyClipboardReadReply {
@@ -276,13 +256,6 @@ fn denied_read() -> sys::GhosttyClipboardReadReply {
         available: std::ptr::null(),
         available_len: 0,
         remember: false,
-    }
-}
-
-fn string_of(bytes: &[u8]) -> sys::GhosttyString {
-    sys::GhosttyString {
-        ptr: bytes.as_ptr(),
-        len: bytes.len(),
     }
 }
 

@@ -145,7 +145,7 @@ impl KittyImages {
 
         let mut placements = Vec::new();
         let mut live = Vec::new();
-        let mut cursor = graphics.placements(ghostty::PlacementLayer::All)?;
+        let mut cursor = graphics.placements()?;
         while cursor.advance() {
             let image_id = cursor.image_id()?;
             let Some(image) = graphics.image(image_id) else {

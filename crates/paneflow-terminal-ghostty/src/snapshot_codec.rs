@@ -13,37 +13,12 @@ use crate::{GhosttyError, Result, TerminalAppearance, WindowSize};
 
 const MAX_SNAPSHOT_BYTES: usize = 128 * 1024 * 1024;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum TerminalScreen {
-    Primary,
-    Alternate,
-}
-
-impl TerminalScreen {
-    fn from_raw(raw: sys::GhosttyTerminalScreen) -> Result<Self> {
-        match raw {
-            sys::GhosttyTerminalScreen_GHOSTTY_TERMINAL_SCREEN_PRIMARY => Ok(Self::Primary),
-            sys::GhosttyTerminalScreen_GHOSTTY_TERMINAL_SCREEN_ALTERNATE => Ok(Self::Alternate),
-            other => Err(GhosttyError::AbiMismatch(format!(
-                "unknown terminal screen {other}"
-            ))),
-        }
-    }
-}
-
 #[derive(Clone, Copy, Debug)]
 pub struct SnapshotRestore {
     pub cell_width: u32,
     pub cell_height: u32,
     pub max_scrollback: usize,
     pub appearance: TerminalAppearance,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct HistoryProgress {
-    pub screen: TerminalScreen,
-    pub rows: usize,
-    pub remaining: u32,
 }
 
 impl DisplayTerminal {
@@ -90,40 +65,11 @@ impl DisplayTerminal {
         }
         Ok(needed)
     }
-
-    pub fn encode_snapshot_into(&self, buffer: &mut [u8]) -> Result<usize> {
-        let mut written = 0usize;
-        let result = unsafe {
-            sys::ghostty_snapshot_encode_buf(
-                self.terminal.raw(),
-                buffer.as_mut_ptr(),
-                buffer.len(),
-                &mut written,
-            )
-        };
-        check("snapshot_encode_buf", result)?;
-        if written > buffer.len() {
-            return Err(GhosttyError::AbiMismatch(format!(
-                "snapshot_encode_buf reported {written} bytes for a {}-byte buffer",
-                buffer.len()
-            )));
-        }
-        Ok(written)
-    }
-
-    pub fn encode_snapshot_to<F: FnMut(&[u8]) -> bool>(&self, mut sink: F) -> Result<()> {
-        let writer = crate::io::writer(&mut sink);
-        let result = unsafe { sys::ghostty_snapshot_encode(self.terminal.raw(), writer) };
-        check("snapshot_encode", result)
-    }
 }
-
-type BoxedSource<'src> = Box<dyn FnMut(&mut [u8]) -> Option<usize> + 'src>;
 
 pub struct SnapshotDecoder<'src> {
     raw: sys::GhosttySnapshotDecoder,
     terminal: Option<DisplayTerminal>,
-    _source: Option<Box<BoxedSource<'src>>>,
     _borrowed: PhantomData<&'src [u8]>,
 }
 
@@ -146,21 +92,10 @@ impl<'src> SnapshotDecoder<'src> {
             )
         };
         check("snapshot_decoder_new_buf", result)?;
-        Self::wrap(raw, None)
+        Self::wrap(raw)
     }
 
-    pub fn from_reader<F: FnMut(&mut [u8]) -> Option<usize> + 'src>(read: F) -> Result<Self> {
-        crate::abi::validate()?;
-        let mut source: Box<BoxedSource<'src>> = Box::new(Box::new(read));
-        let reader = crate::io::reader(&mut *source);
-        let mut raw: sys::GhosttySnapshotDecoder = std::ptr::null_mut();
-        let result =
-            unsafe { sys::ghostty_snapshot_decoder_new(std::ptr::null(), &mut raw, reader) };
-        check("snapshot_decoder_new", result)?;
-        Self::wrap(raw, Some(source))
-    }
-
-    fn wrap(raw: sys::GhosttySnapshotDecoder, source: Option<Box<BoxedSource<'src>>>) -> Result<Self> {
+    fn wrap(raw: sys::GhosttySnapshotDecoder) -> Result<Self> {
         if raw.is_null() {
             return Err(GhosttyError::AbiMismatch(
                 "snapshot decoder constructor returned a null handle".into(),
@@ -169,7 +104,6 @@ impl<'src> SnapshotDecoder<'src> {
         Ok(Self {
             raw,
             terminal: None,
-            _source: source,
             _borrowed: PhantomData,
         })
     }
@@ -196,27 +130,12 @@ impl<'src> SnapshotDecoder<'src> {
         check("snapshot_decoder_set_retain_continuation", result)
     }
 
-    pub fn ready(&mut self, restore: SnapshotRestore) -> Result<&mut DisplayTerminal> {
-        self.produce(restore, sys::ghostty_snapshot_decoder_ready, "snapshot_decoder_ready")
-    }
-
     pub fn decode(&mut self, restore: SnapshotRestore) -> Result<&mut DisplayTerminal> {
-        self.produce(restore, sys::ghostty_snapshot_decoder_decode, "snapshot_decoder_decode")
-    }
-
-    fn produce(
-        &mut self,
-        restore: SnapshotRestore,
-        call: unsafe extern "C" fn(
-            sys::GhosttySnapshotDecoder,
-            *mut sys::GhosttyTerminal,
-        ) -> sys::GhosttyResult,
-        operation: &'static str,
-    ) -> Result<&mut DisplayTerminal> {
         if self.terminal.is_some() {
-            return Err(GhosttyError::AbiMismatch(format!(
-                "{operation} called on a decoder that already produced a terminal"
-            )));
+            return Err(GhosttyError::AbiMismatch(
+                "snapshot_decoder_decode called on a decoder that already produced a terminal"
+                    .into(),
+            ));
         }
         if restore.max_scrollback > MAX_SCROLLBACK_ROWS {
             return Err(GhosttyError::LimitExceeded {
@@ -225,116 +144,15 @@ impl<'src> SnapshotDecoder<'src> {
             });
         }
         let mut raw_terminal: sys::GhosttyTerminal = std::ptr::null_mut();
-        let result = unsafe { call(self.raw, &mut raw_terminal) };
-        check(operation, result)?;
+        let result = unsafe { sys::ghostty_snapshot_decoder_decode(self.raw, &mut raw_terminal) };
+        check("snapshot_decoder_decode", result)?;
         let terminal = unsafe { adopt(raw_terminal, restore) }?;
         Ok(self.terminal.insert(terminal))
-    }
-
-    pub fn next_page(&mut self) -> Result<Option<HistoryProgress>> {
-        if self.terminal.is_none() {
-            return Err(GhosttyError::AbiMismatch(
-                "snapshot_decoder_next called before ready".into(),
-            ));
-        }
-        let result = unsafe { sys::ghostty_snapshot_decoder_next(self.raw) };
-        if result == sys::GhosttyResult_GHOSTTY_NO_VALUE {
-            return Ok(None);
-        }
-        check("snapshot_decoder_next", result)?;
-        let mut screen: sys::GhosttyTerminalScreen =
-            sys::GhosttyTerminalScreen_GHOSTTY_TERMINAL_SCREEN_PRIMARY;
-        let mut rows = 0usize;
-        let mut remaining = 0u32;
-        use sys as s;
-        unsafe {
-            get_multi(
-                "snapshot_decoder_get_multi",
-                self.raw,
-                sys::ghostty_snapshot_decoder_get_multi,
-                [
-                    Slot::new(
-                        s::GhosttySnapshotDecoderData_GHOSTTY_SNAPSHOT_DECODER_DATA_PROGRESS_SCREEN,
-                        &mut screen,
-                    ),
-                    Slot::new(
-                        s::GhosttySnapshotDecoderData_GHOSTTY_SNAPSHOT_DECODER_DATA_PROGRESS_ROWS,
-                        &mut rows,
-                    ),
-                    Slot::new(
-                        s::GhosttySnapshotDecoderData_GHOSTTY_SNAPSHOT_DECODER_DATA_PROGRESS_REMAINING,
-                        &mut remaining,
-                    ),
-                ],
-            )?;
-        }
-        Ok(Some(HistoryProgress {
-            screen: TerminalScreen::from_raw(screen)?,
-            rows,
-            remaining,
-        }))
-    }
-
-    pub fn terminal(&mut self) -> Option<&mut DisplayTerminal> {
-        self.terminal.as_mut()
     }
 
     #[must_use]
     pub fn into_terminal(mut self) -> Option<DisplayTerminal> {
         self.terminal.take()
-    }
-
-    pub fn source_offset(&self) -> Result<usize> {
-        self.get("snapshot_decoder_source_offset",
-            sys::GhosttySnapshotDecoderData_GHOSTTY_SNAPSHOT_DECODER_DATA_SOURCE_OFFSET,
-            0usize)
-    }
-
-    pub fn max_continuation_bytes(&self) -> Result<usize> {
-        self.get("snapshot_decoder_max_continuation_bytes",
-            sys::GhosttySnapshotDecoderData_GHOSTTY_SNAPSHOT_DECODER_DATA_MAX_CONTINUATION_BYTES,
-            0usize)
-    }
-
-    pub fn retains_continuation(&self) -> Result<bool> {
-        self.get("snapshot_decoder_retain_continuation",
-            sys::GhosttySnapshotDecoderData_GHOSTTY_SNAPSHOT_DECODER_DATA_RETAIN_CONTINUATION,
-            false)
-    }
-
-    pub fn history_rows(&self, screen: TerminalScreen) -> Result<Option<u64>> {
-        let (operation, key) = match screen {
-            TerminalScreen::Primary => (
-                "snapshot_decoder_history_rows_primary",
-                sys::GhosttySnapshotDecoderData_GHOSTTY_SNAPSHOT_DECODER_DATA_HISTORY_ROWS_PRIMARY,
-            ),
-            TerminalScreen::Alternate => (
-                "snapshot_decoder_history_rows_alternate",
-                sys::GhosttySnapshotDecoderData_GHOSTTY_SNAPSHOT_DECODER_DATA_HISTORY_ROWS_ALTERNATE,
-            ),
-        };
-        let mut value = 0u64;
-        let result = unsafe {
-            sys::ghostty_snapshot_decoder_get(self.raw, key, (&raw mut value).cast::<c_void>())
-        };
-        if result == sys::GhosttyResult_GHOSTTY_NO_VALUE {
-            return Ok(None);
-        }
-        check(operation, result)?;
-        Ok(Some(value))
-    }
-
-    fn get<T>(
-        &self,
-        operation: &'static str,
-        key: sys::GhosttySnapshotDecoderData,
-        mut value: T,
-    ) -> Result<T> {
-        let result = unsafe {
-            sys::ghostty_snapshot_decoder_get(self.raw, key, (&raw mut value).cast::<c_void>())
-        };
-        check(operation, result)?;
-        Ok(value)
     }
 }
 
@@ -457,7 +275,7 @@ mod tests {
     }
 
     #[test]
-    fn the_three_encoders_agree_byte_for_byte() {
+    fn the_size_query_matches_the_encoded_length() {
         let mut source = terminal(20, 4);
         source.feed(b"agree").expect("fixture output must parse");
 
@@ -467,134 +285,6 @@ mod tests {
             allocated.len()
         );
 
-        let mut buffer = vec![0u8; allocated.len()];
-        let written = source
-            .encode_snapshot_into(&mut buffer)
-            .expect("buffered path");
-        assert_eq!(&buffer[..written], allocated.as_slice());
-
-        let mut streamed = Vec::new();
-        source
-            .encode_snapshot_to(|bytes| {
-                streamed.extend_from_slice(bytes);
-                true
-            })
-            .expect("streaming path");
-        assert_eq!(streamed, allocated);
-    }
-
-    #[test]
-    fn an_aborted_sink_reports_an_io_error() {
-        let mut source = terminal(10, 2);
-        source.feed(b"abort").expect("fixture output must parse");
-        let result = source.encode_snapshot_to(|_| false);
-        assert!(matches!(result, Err(GhosttyError::Ffi { .. })));
-    }
-
-    #[test]
-    fn ready_renders_before_history_is_restored() {
-        let size = WindowSize::new(80, 24, 8, 16).expect("valid terminal size");
-        let mut source = DisplayTerminal::new(size, 50_000, TerminalAppearance::default())
-            .expect("terminal must initialize");
-        let mut fixture = Vec::new();
-        for line in 0..40_000 {
-            fixture.extend_from_slice(format!("line-{line:06}-padding-text\r\n").as_bytes());
-        }
-        source.feed(&fixture).expect("fixture output must parse");
-        let expected_history = source.snapshot().expect("snapshot").history_size;
-        let encoded = source.encode_snapshot().expect("terminal must encode");
-
-        let restore = SnapshotRestore {
-            max_scrollback: 50_000,
-            ..restore()
-        };
-        let mut decoder = SnapshotDecoder::from_bytes(&encoded).expect("decoder must open");
-        let restored = decoder.ready(restore).expect("prefix must decode");
-        let at_ready = restored.snapshot().expect("ready snapshot").history_size;
-        assert!(
-            at_ready < expected_history,
-            "history must still be pending: {at_ready} of {expected_history}"
-        );
-        assert_eq!(
-            decoder
-                .history_rows(TerminalScreen::Primary)
-                .expect("advisory history rows"),
-            Some(expected_history as u64)
-        );
-
-        let mut pages = 0;
-        let mut prepended = 0usize;
-        while let Some(progress) = decoder.next_page().expect("history page") {
-            assert_eq!(progress.screen, TerminalScreen::Primary);
-            prepended += progress.rows;
-            pages += 1;
-        }
-        assert!(pages > 0, "the fixture must carry at least one page");
-        assert_eq!(prepended + at_ready, expected_history);
-
-        let mut restored = decoder.into_terminal().expect("ready produces a terminal");
-        assert_eq!(
-            restored.snapshot().expect("final snapshot").history_size,
-            expected_history
-        );
-    }
-
-    #[test]
-    fn a_streaming_source_decodes_the_same_terminal() {
-        let mut source = terminal(10, 2);
-        source.feed(b"stream").expect("fixture output must parse");
-        let encoded = source.encode_snapshot().expect("terminal must encode");
-        let expected = visible(&mut source);
-
-        let mut offset = 0usize;
-        let mut decoder = SnapshotDecoder::from_reader(|buffer| {
-            let take = buffer.len().min(7).min(encoded.len() - offset);
-            buffer[..take].copy_from_slice(&encoded[offset..offset + take]);
-            offset += take;
-            Some(take)
-        })
-        .expect("decoder must open");
-        decoder.decode(restore()).expect("snapshot must decode");
-        let mut restored = decoder.into_terminal().expect("decode produces a terminal");
-
-        assert_eq!(visible(&mut restored), expected);
-    }
-
-    #[test]
-    fn a_failing_source_reports_an_io_error_instead_of_truncating() {
-        let mut source = terminal(10, 2);
-        source.feed(b"broken").expect("fixture output must parse");
-        let encoded = source.encode_snapshot().expect("terminal must encode");
-
-        let mut served = 0usize;
-        let mut decoder = SnapshotDecoder::from_reader(|buffer| {
-            if served >= 16 {
-                return None;
-            }
-            let take = buffer.len().min(16 - served).min(encoded.len() - served);
-            buffer[..take].copy_from_slice(&encoded[served..served + take]);
-            served += take;
-            Some(take)
-        })
-        .expect("decoder must open");
-        assert!(decoder.decode(restore()).is_err());
-        assert!(decoder.into_terminal().is_none());
-    }
-
-    #[test]
-    fn trailing_bytes_are_left_for_the_caller() {
-        let mut source = terminal(10, 2);
-        source.feed(b"tail").expect("fixture output must parse");
-        let mut stream = source.encode_snapshot().expect("terminal must encode");
-        let snapshot_len = stream.len();
-        stream.extend_from_slice(b"not-snapshot-bytes");
-
-        let mut decoder = SnapshotDecoder::from_bytes(&stream).expect("decoder must open");
-        decoder.decode(restore()).expect("snapshot must decode");
-        assert_eq!(
-            decoder.source_offset().expect("consumed offset"),
-            snapshot_len
-        );
     }
 
     #[test]
@@ -620,13 +310,6 @@ mod tests {
         decoder
             .set_retain_continuation(true)
             .expect("retention must apply");
-        assert!(decoder.retains_continuation().expect("retention readback"));
-        assert_eq!(
-            decoder
-                .max_continuation_bytes()
-                .expect("budget readback"),
-            4096
-        );
         decoder.decode(restore()).expect("snapshot must decode");
         let mut restored = decoder.into_terminal().expect("decode produces a terminal");
 
@@ -645,9 +328,9 @@ mod tests {
         let encoded = source.encode_snapshot().expect("terminal must encode");
 
         let mut decoder = SnapshotDecoder::from_bytes(&encoded).expect("decoder must open");
-        decoder.ready(restore()).expect("prefix must decode");
+        decoder.decode(restore()).expect("snapshot must decode");
         assert!(decoder.set_retain_continuation(true).is_err());
-        assert!(decoder.ready(restore()).is_err());
+        assert!(decoder.decode(restore()).is_err());
     }
 
     #[test]

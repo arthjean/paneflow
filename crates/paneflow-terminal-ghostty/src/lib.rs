@@ -37,7 +37,6 @@ native_modules!(
     grid,
     handles,
     input_options,
-    io,
     kitty,
     navigation,
     native_search,
@@ -56,11 +55,7 @@ native_modules!(
 );
 
 #[cfg(ghostty_native)]
-pub use color::{
-    PALETTE_LEN, PaletteMask, contrast, default_palette, encode_color_scheme_report,
-    generate_palette, luminance, parse as parse_color, parse_palette_entry, parse_x11,
-    perceived_luminance, x11_names,
-};
+pub use color::{PALETTE_LEN, PaletteMask, default_palette, generate_palette};
 pub use error::{GhosttyError, Result};
 #[cfg(ghostty_native)]
 pub use formatter::{FormatterFormat, FormatterOptions, ScreenExtra, TerminalExtra};
@@ -68,11 +63,11 @@ pub use input::{
     FocusEvent, Key, KeyAction, KeyInput, Modifiers, MouseAction, MouseButton, MouseInput,
 };
 #[cfg(ghostty_native)]
-pub use input_options::{KeyEventState, MouseEventState, OptionAsAlt};
+pub use input_options::OptionAsAlt;
 #[cfg(ghostty_native)]
 pub use kitty::{
     ImageCompression, ImageFormat, ImageInfo, KittyGraphics, KittyImage, Placement,
-    PlacementCursor, PlacementLayer, PlacementRenderInfo, SourceRect,
+    PlacementCursor, PlacementRenderInfo, SourceRect,
 };
 pub use model::{
     BackendEvent, Cell, CellFlags, Color, ColorScheme, Content, Cursor, CursorShape, Hyperlink,
@@ -84,24 +79,16 @@ pub use search::{
     SearchEngine, SearchLine,
 };
 #[cfg(ghostty_native)]
-pub use selection::{SelectionAdjust, SelectionOrder};
-#[cfg(ghostty_native)]
 pub use selection_gesture::{
     DragOptions, GestureAutoscroll, GestureBehavior, GestureBehaviors, GestureGeometry,
     GestureState, PressOptions,
 };
 #[cfg(ghostty_native)]
-pub use snapshot_codec::{HistoryProgress, SnapshotDecoder, SnapshotRestore, TerminalScreen};
+pub use snapshot_codec::{SnapshotDecoder, SnapshotRestore};
 #[cfg(ghostty_native)]
-pub use sys::{
-    DecodedImage, LogLevel, LogSink, PngDecoder, SecureRandom, alloc, free, set_log_sink,
-    set_log_to_stderr, set_png_decoder, set_secure_random,
-};
+pub use sys::{DecodedImage, PngDecoder, set_png_decoder};
 #[cfg(ghostty_native)]
-pub use terminal_ops::{
-    ClipboardLocation, CompressionMode, CompressionOutcome, GroundWrite, PasteRepresentation,
-    PasteSource, SizeReportStyle,
-};
+pub use terminal_ops::{ClipboardLocation, PasteRepresentation};
 
 #[cfg(ghostty_native)]
 pub const GHOSTTY_APP_VERSION: &str = paneflow_libghostty_sys::GHOSTTY_APP_VERSION;

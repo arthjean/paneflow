@@ -34,7 +34,10 @@ fn terminal(cols: usize, rows: usize, history: usize) -> DisplayTerminal {
 )]
 fn complete(terminal: &mut DisplayTerminal) -> NativeSearchSnapshot {
     for _ in 0..10_000 {
-        let snapshot = terminal.search_step().unwrap().unwrap();
+        let snapshot = terminal
+            .search_step_with_rail_refresh(true)
+            .unwrap()
+            .unwrap();
         if snapshot.complete {
             return snapshot;
         }
@@ -65,17 +68,6 @@ fn deferred_rail_preserves_live_results_and_refreshes_without_more_output() {
     assert!(!after.rail_pending);
     assert_ne!(after.rail_offsets, before.rail_offsets);
     assert_eq!(after.total_matches, before.total_matches);
-}
-
-#[test]
-fn ground_writes_refresh_completed_search() {
-    let mut terminal = terminal(80, 8, 100);
-    terminal.feed(b"marker\x1b[2").unwrap();
-    terminal.set_search_query("marker").unwrap();
-    assert_eq!(complete(&mut terminal).total_matches, 1);
-    let write = terminal.feed_until_ground(b"J").unwrap();
-    assert_eq!(write.consumed, 1);
-    assert_eq!(complete(&mut terminal).total_matches, 0);
 }
 
 #[test]
@@ -175,23 +167,23 @@ fn clearing_and_replacing_queries_releases_search_state() {
     terminal.set_search_query("Éclair").unwrap();
     assert_eq!(complete(&mut terminal).total_matches, 1);
     terminal.clear_search();
-    assert!(terminal.search_step().unwrap().is_none());
+    assert!(
+        terminal
+            .search_step_with_rail_refresh(true)
+            .unwrap()
+            .is_none()
+    );
     terminal.set_search_query("Hello").unwrap();
     assert_eq!(complete(&mut terminal).total_matches, 1);
     terminal.set_search_query("").unwrap();
-    assert!(terminal.search_step().unwrap().is_none());
+    assert!(
+        terminal
+            .search_step_with_rail_refresh(true)
+            .unwrap()
+            .is_none()
+    );
     terminal.set_search_query("Hello").unwrap();
     complete(&mut terminal);
-}
-
-#[test]
-fn one_shot_search_uses_native_wrapping_and_preserves_order() {
-    let mut terminal = terminal(10, 4, 100);
-    terminal.feed(b"prefix-long-needle\r\nlong-needle").unwrap();
-    let matches = terminal.search("long-needle", false).unwrap().matches;
-    assert_eq!(matches.len(), 2);
-    assert!(matches[0].start.line < matches[1].start.line);
-    assert!(terminal.search_step().unwrap().is_none());
 }
 
 #[test]
@@ -211,11 +203,12 @@ fn native_search_total_stays_constant_across_viewport_scroll() {
     for scroll in [
         paneflow_terminal_ghostty::Scroll::Bottom,
         paneflow_terminal_ghostty::Scroll::Delta(150),
-        paneflow_terminal_ghostty::Scroll::Top,
     ] {
         terminal.scroll(scroll);
         assert_eq!(complete(&mut terminal).total_matches, 3);
     }
+    terminal.scroll_to_viewport_row(0).unwrap();
+    assert_eq!(complete(&mut terminal).total_matches, 3);
 }
 
 #[test]
@@ -229,10 +222,6 @@ fn native_search_total_tracks_alternate_screen_redraws() {
             terminal.feed(b"smoke\r\n").unwrap();
         }
         assert_eq!(complete(&mut terminal).total_matches, count);
-        assert_eq!(
-            terminal.search("smoke", false).unwrap().matches.len(),
-            count
-        );
         assert_eq!(terminal.snapshot().unwrap().history_size, 0);
     }
 }

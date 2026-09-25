@@ -189,38 +189,6 @@ impl crate::engine::DisplayTerminal {
             cols: geometry.cols,
         })
     }
-
-    pub fn search(&self, query: &str, regex_mode: bool) -> Result<SearchResult> {
-        if !regex_mode {
-            return self.native_search_once(query);
-        }
-        let mut search = SearchEngine::new(query, regex_mode)?;
-        if search.is_done() {
-            return Ok(search.finish(false));
-        }
-        let mut next_row = 0;
-        let mut scanned_cells = 0usize;
-        loop {
-            let remaining = MAX_SEARCH_CELLS.saturating_sub(scanned_cells);
-            if remaining == 0 {
-                return Ok(search.finish(true));
-            }
-            let chunk = self.search_chunk(next_row, remaining.min(SEARCH_CHUNK_CELLS))?;
-            if chunk.next_row == next_row && chunk.next_row < chunk.total_rows {
-                return Ok(search.finish(true));
-            }
-            scanned_cells = scanned_cells.saturating_add(chunk.lines.len() * chunk.cols);
-            for line in chunk.lines {
-                if !search.push_line(line.line, &line.text, &line.char_to_column) {
-                    return Ok(search.finish(false));
-                }
-            }
-            if chunk.next_row >= chunk.total_rows {
-                return Ok(search.finish(false));
-            }
-            next_row = chunk.next_row;
-        }
-    }
 }
 
 #[cfg(test)]

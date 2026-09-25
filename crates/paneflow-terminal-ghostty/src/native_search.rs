@@ -6,7 +6,7 @@ use paneflow_libghostty_sys as sys;
 
 use crate::engine::DisplayTerminal;
 use crate::handles::{OwnedHandle, check};
-use crate::{GhosttyError, MAX_QUERY_LEN, NativeSearchSnapshot, Result, SearchMatch, SearchResult};
+use crate::{GhosttyError, MAX_QUERY_LEN, NativeSearchSnapshot, Result, SearchMatch};
 
 pub(crate) struct NativeSearch {
     handle: OwnedHandle<sys::GhosttySearch>,
@@ -159,14 +159,6 @@ impl NativeSearch {
         Ok(selections)
     }
 
-    fn all_matches(&self, terminal: &DisplayTerminal) -> Result<Vec<SearchMatch>> {
-        self.selections(sys::GhosttySearchData_GHOSTTY_SEARCH_DATA_MATCHES)?
-            .iter()
-            .rev()
-            .map(|selection| match_from_selection(terminal, selection))
-            .collect()
-    }
-
     fn snapshot(&mut self, terminal: &DisplayTerminal, refresh_rail: bool) -> Result<NativeSearchSnapshot> {
         let mut count = 0usize;
         check("search_total_matches", unsafe {
@@ -316,10 +308,6 @@ impl DisplayTerminal {
         self.search = None;
     }
 
-    pub fn search_step(&mut self) -> Result<Option<NativeSearchSnapshot>> {
-        self.search_step_with_rail_refresh(true)
-    }
-
     pub fn search_step_with_rail_refresh(&mut self, refresh_rail: bool) -> Result<Option<NativeSearchSnapshot>> {
         let viewport = self.scrollbar_position()?;
         let Some(mut search) = self.search.take() else {
@@ -335,21 +323,6 @@ impl DisplayTerminal {
             search.select(top_down_selection_option(previous))?;
         }
         Ok(())
-    }
-
-    pub(crate) fn native_search_once(&self, query: &str) -> Result<SearchResult> {
-        if query.is_empty() {
-            return Ok(SearchResult::default());
-        }
-        let search = NativeSearch::new(self.terminal.raw(), query)?;
-        check("search_run", unsafe {
-            sys::ghostty_search_run(search.handle.raw())
-        })?;
-        Ok(SearchResult {
-            matches: search.all_matches(self)?,
-            regex_error: None,
-            truncated: false,
-        })
     }
 }
 

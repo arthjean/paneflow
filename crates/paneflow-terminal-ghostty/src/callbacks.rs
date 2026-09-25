@@ -36,7 +36,6 @@ pub(crate) struct CallbackState {
     pending_bell_events: Cell<usize>,
     pending_notification_events: Cell<usize>,
     pending_unknown_sequence_events: Cell<usize>,
-    readable_clipboard: RefCell<Option<String>>,
     size: Cell<WindowSize>,
     color_scheme: Cell<ColorScheme>,
     last_working_directory: RefCell<Option<String>>,
@@ -53,21 +52,12 @@ impl CallbackState {
             pending_bell_events: Cell::new(0),
             pending_notification_events: Cell::new(0),
             pending_unknown_sequence_events: Cell::new(0),
-            readable_clipboard: RefCell::new(None),
             size: Cell::new(size),
             color_scheme: Cell::new(color_scheme),
             last_working_directory: RefCell::new(None),
             #[cfg(test)]
             panic_next: Cell::new(false),
         }
-    }
-
-    pub(crate) fn set_readable_clipboard(&self, text: Option<String>) {
-        *self.readable_clipboard.borrow_mut() = text;
-    }
-
-    pub(crate) fn readable_clipboard(&self) -> Option<String> {
-        self.readable_clipboard.borrow().clone()
     }
 
     pub(crate) fn set_size(&self, size: WindowSize) {

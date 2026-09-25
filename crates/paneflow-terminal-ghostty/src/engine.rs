@@ -119,10 +119,6 @@ impl DisplayTerminal {
 
     pub fn scroll(&mut self, scroll: Scroll) {
         let (tag, delta) = match scroll {
-            Scroll::Top => (
-                sys::GhosttyTerminalScrollViewportTag_GHOSTTY_SCROLL_VIEWPORT_TOP,
-                0,
-            ),
             Scroll::Bottom => (
                 sys::GhosttyTerminalScrollViewportTag_GHOSTTY_SCROLL_VIEWPORT_BOTTOM,
                 0,

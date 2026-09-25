@@ -37,18 +37,6 @@ impl DisplayTerminal {
         result
     }
 
-    pub fn reset_palette(&mut self) -> Result<()> {
-        let result = unsafe {
-            self.set_terminal_option(
-                "terminal_reset_color_palette",
-                sys::GhosttyTerminalOption_GHOSTTY_TERMINAL_OPT_COLOR_PALETTE,
-                std::ptr::null(),
-            )
-        };
-        self.snapshot_cache.invalidate();
-        result
-    }
-
     pub fn set_default_cursor(&mut self, shape: CursorShape, blink: bool) -> Result<()> {
         let style = cursor_style(shape);
         unsafe {
@@ -119,20 +107,6 @@ impl DisplayTerminal {
         }
     }
 
-    pub fn set_clipboard_readable(&mut self, text: Option<String>) {
-        self.callbacks.set_readable_clipboard(text);
-    }
-
-    pub fn set_title_reports(&mut self, enabled: bool) -> Result<()> {
-        unsafe {
-            self.set_terminal_option(
-                "terminal_set_title_report",
-                sys::GhosttyTerminalOption_GHOSTTY_TERMINAL_OPT_TITLE_REPORT,
-                (&raw const enabled).cast::<c_void>(),
-            )
-        }
-    }
-
     pub fn set_glyph_protocol(&mut self, enabled: bool) -> Result<()> {
         unsafe {
             self.set_terminal_option(
@@ -196,10 +170,6 @@ mod tests {
 
         terminal.feed(b"\x1b]4;1;?\x1b\\").expect("OSC 4 query");
         assert!(contains(&replies(&mut terminal), b"4;1;rgb:abab/cdcd/efef"));
-
-        terminal.reset_palette().expect("palette must reset");
-        terminal.feed(b"\x1b]4;1;?\x1b\\").expect("OSC 4 query");
-        assert!(!contains(&replies(&mut terminal), b"abab/cdcd/efef"));
     }
 
     #[test]
@@ -277,31 +247,17 @@ mod tests {
     }
 
     #[test]
-    fn title_reports_stay_off_until_the_host_opts_in() {
+    fn title_reports_stay_off() {
         let mut terminal = terminal(20, 4);
         terminal
             .feed(b"\x1b]0;injected\x07\x1b[21t")
             .expect("title set and query");
         assert!(!contains(&replies(&mut terminal), b"injected"));
-
-        terminal
-            .set_title_reports(true)
-            .expect("title reports must enable");
-        terminal.feed(b"\x1b[21t").expect("title query");
-        assert!(contains(&replies(&mut terminal), b"injected"));
     }
 
     #[test]
-    fn clipboard_reads_are_denied_until_the_host_hands_over_a_snapshot() {
+    fn clipboard_reads_are_always_denied() {
         let mut terminal = terminal(20, 4);
-        terminal.feed(b"\x1b]52;c;?\x07").expect("OSC 52 read");
-        assert_eq!(replies(&mut terminal), b"\x1b]52;c;\x07");
-
-        terminal.set_clipboard_readable(Some("secret".into()));
-        terminal.feed(b"\x1b]52;c;?\x07").expect("OSC 52 read");
-        assert_eq!(replies(&mut terminal), b"\x1b]52;c;c2VjcmV0\x07");
-
-        terminal.set_clipboard_readable(None);
         terminal.feed(b"\x1b]52;c;?\x07").expect("OSC 52 read");
         assert_eq!(replies(&mut terminal), b"\x1b]52;c;\x07");
     }

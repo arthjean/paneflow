@@ -705,7 +705,9 @@ mod tests {
         terminal
             .feed(b"a\r\nb\r\nc\r\nd\r\ne\r\nf\r\ng\r\nh\r\ni\r\nj")
             .expect("output must parse");
-        terminal.scroll(crate::Scroll::Top);
+        terminal
+            .scroll_to_viewport_row(0)
+            .expect("scroll to the top of history");
 
         let geometry = GestureGeometry {
             columns: 20,

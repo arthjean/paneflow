@@ -3,59 +3,11 @@ use std::ffi::c_void;
 use paneflow_libghostty_sys as sys;
 
 use crate::batch::{Slot, get_multi};
-use crate::encode::encode_with_buffer;
 use crate::engine::DisplayTerminal;
 use crate::handles::check;
-use crate::{GhosttyError, Result, WindowSize};
-
-const MAX_SIZE_REPORT_BYTES: usize = 64;
+use crate::{GhosttyError, Result};
 
 const MAX_CONTINUATION_BYTES: usize = 64 * 1024;
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum CompressionMode {
-    Incremental,
-    Full,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum CompressionOutcome {
-    Complete,
-    Pending,
-    Unsupported,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum SizeReportStyle {
-    Mode2048,
-    Csi14T,
-    Csi16T,
-    Csi18T,
-}
-
-impl SizeReportStyle {
-    fn raw(self) -> sys::GhosttySizeReportStyle {
-        use sys as s;
-        match self {
-            Self::Mode2048 => s::GhosttySizeReportStyle_GHOSTTY_SIZE_REPORT_MODE_2048,
-            Self::Csi14T => s::GhosttySizeReportStyle_GHOSTTY_SIZE_REPORT_CSI_14_T,
-            Self::Csi16T => s::GhosttySizeReportStyle_GHOSTTY_SIZE_REPORT_CSI_16_T,
-            Self::Csi18T => s::GhosttySizeReportStyle_GHOSTTY_SIZE_REPORT_CSI_18_T,
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct GroundWrite {
-    pub consumed: usize,
-    pub at_ground: bool,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum PasteSource {
-    Clipboard,
-    Text,
-}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ClipboardLocation {
@@ -79,90 +31,6 @@ pub struct PasteRepresentation<'data> {
 }
 
 impl DisplayTerminal {
-    pub fn encode_size_report(&self, style: SizeReportStyle, size: WindowSize) -> Result<Vec<u8>> {
-        let size = sys::GhosttySizeReportSize {
-            rows: size.rows,
-            columns: size.cols,
-            cell_width: size.cell_width,
-            cell_height: size.cell_height,
-        };
-        encode_with_buffer(
-            "size_report_encode",
-            MAX_SIZE_REPORT_BYTES,
-            |buffer, len, written| unsafe {
-                sys::ghostty_size_report_encode(style.raw(), size, buffer, len, written)
-            },
-        )
-    }
-
-    pub fn compression_activity(&self) -> Result<u64> {
-        let mut activity = 0u64;
-        let result =
-            unsafe { sys::ghostty_terminal_compression_activity(self.terminal.raw(), &mut activity) };
-        check("terminal_compression_activity", result)?;
-        Ok(activity)
-    }
-
-    pub fn compress(&mut self, mode: CompressionMode) -> Result<CompressionOutcome> {
-        let mode = match mode {
-            CompressionMode::Incremental => {
-                sys::GhosttyTerminalCompressionMode_GHOSTTY_TERMINAL_COMPRESSION_MODE_INCREMENTAL
-            }
-            CompressionMode::Full => {
-                sys::GhosttyTerminalCompressionMode_GHOSTTY_TERMINAL_COMPRESSION_MODE_FULL
-            }
-        };
-        let mut outcome =
-            sys::GhosttyTerminalCompressionResult_GHOSTTY_TERMINAL_COMPRESSION_RESULT_COMPLETE;
-        let result =
-            unsafe { sys::ghostty_terminal_compress(self.terminal.raw(), mode, &mut outcome) };
-        check("terminal_compress", result)?;
-        match outcome {
-            sys::GhosttyTerminalCompressionResult_GHOSTTY_TERMINAL_COMPRESSION_RESULT_COMPLETE => {
-                Ok(CompressionOutcome::Complete)
-            }
-            sys::GhosttyTerminalCompressionResult_GHOSTTY_TERMINAL_COMPRESSION_RESULT_PENDING => {
-                Ok(CompressionOutcome::Pending)
-            }
-            sys::GhosttyTerminalCompressionResult_GHOSTTY_TERMINAL_COMPRESSION_RESULT_UNSUPPORTED => {
-                Ok(CompressionOutcome::Unsupported)
-            }
-            other => Err(GhosttyError::AbiMismatch(format!(
-                "unknown Ghostty compression result {other}"
-            ))),
-        }
-    }
-
-    pub fn feed_until_ground(&mut self, bytes: &[u8]) -> Result<GroundWrite> {
-        let mut consumed = 0usize;
-        let result = unsafe {
-            sys::ghostty_terminal_vt_write_until_ground(
-                self.terminal.raw(),
-                bytes.as_ptr(),
-                bytes.len(),
-                &mut consumed,
-            )
-        };
-        let at_ground = result != sys::GhosttyResult_GHOSTTY_NO_VALUE;
-        if at_ground {
-            check("terminal_vt_write_until_ground", result)?;
-        }
-        if consumed > bytes.len() {
-            return Err(GhosttyError::AbiMismatch(format!(
-                "vt_write_until_ground consumed {consumed} of {} bytes",
-                bytes.len()
-            )));
-        }
-        if consumed > 0 {
-            self.snapshot_cache.invalidate();
-            self.invalidate_search_rail();
-        }
-        Ok(GroundWrite {
-            consumed,
-            at_ground,
-        })
-    }
-
     pub fn set_continuation_max_bytes(&mut self, bytes: usize) -> Result<()> {
         let result = unsafe {
             sys::ghostty_terminal_set(
@@ -204,43 +72,6 @@ impl DisplayTerminal {
             });
         }
         Ok(Some(copied))
-    }
-
-    pub fn continuation_into(&self, buffer: &mut [u8]) -> Result<Option<usize>> {
-        let mut written = 0usize;
-        let result = unsafe {
-            sys::ghostty_terminal_continuation_buf(
-                self.terminal.raw(),
-                buffer.as_mut_ptr(),
-                buffer.len(),
-                &mut written,
-            )
-        };
-        if result == sys::GhosttyResult_GHOSTTY_NO_VALUE
-            || result == sys::GhosttyResult_GHOSTTY_INVALID_VALUE
-        {
-            return Ok(None);
-        }
-        check("terminal_continuation_buf", result)?;
-        if written > buffer.len() {
-            return Err(GhosttyError::AbiMismatch(format!(
-                "continuation_buf reported {written} bytes for a {}-byte buffer",
-                buffer.len()
-            )));
-        }
-        Ok(Some(written))
-    }
-
-    pub fn continuation_to<F: FnMut(&[u8]) -> bool>(&self, mut sink: F) -> Result<bool> {
-        let writer = crate::io::writer(&mut sink);
-        let result = unsafe { sys::ghostty_terminal_continuation_write(self.terminal.raw(), writer) };
-        if result == sys::GhosttyResult_GHOSTTY_NO_VALUE
-            || result == sys::GhosttyResult_GHOSTTY_INVALID_VALUE
-        {
-            return Ok(false);
-        }
-        check("terminal_continuation_write", result)?;
-        Ok(true)
     }
 
     pub fn paste(
@@ -357,108 +188,6 @@ mod tests {
     }
 
     #[test]
-    fn size_reports_encode_each_style() {
-        let terminal = terminal(80, 24);
-        let size = WindowSize::new(80, 24, 8, 16).expect("valid size");
-
-        assert_eq!(
-            terminal
-                .encode_size_report(SizeReportStyle::Mode2048, size)
-                .expect("mode 2048"),
-            b"\x1b[48;24;80;384;640t"
-        );
-        assert_eq!(
-            terminal
-                .encode_size_report(SizeReportStyle::Csi18T, size)
-                .expect("csi 18 t"),
-            b"\x1b[8;24;80t"
-        );
-        assert_eq!(
-            terminal
-                .encode_size_report(SizeReportStyle::Csi14T, size)
-                .expect("csi 14 t"),
-            b"\x1b[4;384;640t"
-        );
-        assert_eq!(
-            terminal
-                .encode_size_report(SizeReportStyle::Csi16T, size)
-                .expect("csi 16 t"),
-            b"\x1b[6;16;8t"
-        );
-    }
-
-    #[test]
-    fn writing_until_ground_consumes_only_what_closes_the_sequence() {
-        let mut terminal = terminal(20, 3);
-        assert_eq!(
-            terminal
-                .feed_until_ground(b"abc")
-                .expect("write must succeed"),
-            GroundWrite {
-                consumed: 0,
-                at_ground: true
-            }
-        );
-
-        terminal.feed(b"\x1b[1").expect("partial sequence");
-        assert_eq!(
-            terminal
-                .feed_until_ground(b"mtail")
-                .expect("write must succeed"),
-            GroundWrite {
-                consumed: 1,
-                at_ground: true
-            }
-        );
-
-        terminal.feed(b"\x1b[").expect("partial sequence");
-        assert_eq!(
-            terminal
-                .feed_until_ground(b"12;3")
-                .expect("write must succeed"),
-            GroundWrite {
-                consumed: 4,
-                at_ground: false
-            }
-        );
-    }
-
-    #[test]
-    fn compression_reports_progress_and_tracks_activity() {
-        let mut terminal = terminal(20, 4);
-        let idle = terminal.compression_activity().expect("activity");
-        for index in 0..200 {
-            terminal
-                .feed(format!("line {index}\r\n").as_bytes())
-                .expect("output must parse");
-        }
-        assert!(
-            terminal.compression_activity().expect("activity") > idle,
-            "scrollback churn must register as activity"
-        );
-
-        let outcome = terminal
-            .compress(CompressionMode::Incremental)
-            .expect("incremental pass");
-        assert!(matches!(
-            outcome,
-            CompressionOutcome::Complete
-                | CompressionOutcome::Pending
-                | CompressionOutcome::Unsupported
-        ));
-
-        if outcome != CompressionOutcome::Unsupported {
-            let mut passes = 0;
-            let mut outcome = outcome;
-            while outcome == CompressionOutcome::Pending && passes < 1000 {
-                outcome = terminal.compress(CompressionMode::Full).expect("full pass");
-                passes += 1;
-            }
-            assert_eq!(outcome, CompressionOutcome::Complete);
-        }
-    }
-
-    #[test]
     fn the_batched_geometry_read_matches_the_individual_ones() {
         let mut terminal = terminal(40, 8);
         terminal
@@ -549,13 +278,5 @@ mod tests {
         let mut terminal = terminal(20, 3);
         terminal.feed(b"\x1b[1").expect("partial sequence");
         assert!(terminal.continuation().expect("alloc path").is_none());
-        let mut buffer = [0u8; 32];
-        assert!(
-            terminal
-                .continuation_into(&mut buffer)
-                .expect("buffered path")
-                .is_none()
-        );
-        assert!(!terminal.continuation_to(|_| true).expect("stream path"));
     }
 }

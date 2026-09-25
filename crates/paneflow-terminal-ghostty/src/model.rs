@@ -254,7 +254,6 @@ pub struct Hyperlink {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Scroll {
-    Top,
     Bottom,
     Delta(i32),
 }

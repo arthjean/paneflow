@@ -16,14 +16,6 @@ pub enum Key {
     PageDown,
     Insert,
     Function(u8),
-    NumpadDigit(u8),
-    NumpadAdd,
-    NumpadSubtract,
-    NumpadMultiply,
-    NumpadDivide,
-    NumpadDecimal,
-    NumpadEnter,
-    NumpadEqual,
     Unidentified,
 }
 
@@ -49,10 +41,6 @@ impl Modifiers {
 
     pub const fn bits(self) -> u16 {
         self.0
-    }
-
-    pub const fn from_bits(bits: u16) -> Self {
-        Self(bits)
     }
 
     pub const fn contains(self, other: Self) -> bool {
@@ -97,12 +85,6 @@ pub enum MouseButton {
     Middle,
     Four,
     Five,
-    Six,
-    Seven,
-    Eight,
-    Nine,
-    Ten,
-    Eleven,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]

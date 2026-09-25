@@ -42,39 +42,6 @@ impl DisplayTerminal {
         self.install_selection(&selection)
     }
 
-    pub fn select_word(&mut self, point: Point) -> Result<bool> {
-        let reference = self.grid_ref(point)?;
-        let options = sys::GhosttyTerminalSelectWordOptions {
-            size: std::mem::size_of::<sys::GhosttyTerminalSelectWordOptions>(),
-            ref_: reference,
-            boundary_codepoints: std::ptr::null(),
-            boundary_codepoints_len: 0,
-        };
-        let mut selection: sys::GhosttySelection = unsafe { std::mem::zeroed() };
-        selection.size = std::mem::size_of::<sys::GhosttySelection>();
-        let result = unsafe {
-            sys::ghostty_terminal_select_word(self.terminal.raw(), &options, &mut selection)
-        };
-        self.install_optional_selection(result, &selection)
-    }
-
-    pub fn select_line(&mut self, point: Point) -> Result<bool> {
-        let reference = self.grid_ref(point)?;
-        let options = sys::GhosttyTerminalSelectLineOptions {
-            size: std::mem::size_of::<sys::GhosttyTerminalSelectLineOptions>(),
-            ref_: reference,
-            whitespace: std::ptr::null(),
-            whitespace_len: 0,
-            semantic_prompt_boundary: true,
-        };
-        let mut selection: sys::GhosttySelection = unsafe { std::mem::zeroed() };
-        selection.size = std::mem::size_of::<sys::GhosttySelection>();
-        let result = unsafe {
-            sys::ghostty_terminal_select_line(self.terminal.raw(), &options, &mut selection)
-        };
-        self.install_optional_selection(result, &selection)
-    }
-
     pub fn selection_text(&self) -> Result<Option<String>> {
         let options = sys::GhosttyTerminalSelectionFormatOptions {
             size: std::mem::size_of::<sys::GhosttyTerminalSelectionFormatOptions>(),

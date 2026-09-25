@@ -6,34 +6,7 @@ use paneflow_libghostty_sys as sys;
 use crate::batch::{Slot, get_multi};
 use crate::engine::DisplayTerminal;
 use crate::handles::{OwnedHandle, check, create};
-use crate::selection::empty_selection;
-use crate::{GhosttyError, Result, SelectionRange};
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum PlacementLayer {
-    #[default]
-    All,
-    BelowBackground,
-    BelowText,
-    AboveText,
-}
-
-impl PlacementLayer {
-    fn raw(self) -> sys::GhosttyKittyPlacementLayer {
-        match self {
-            Self::All => sys::GhosttyKittyPlacementLayer_GHOSTTY_KITTY_PLACEMENT_LAYER_ALL,
-            Self::BelowBackground => {
-                sys::GhosttyKittyPlacementLayer_GHOSTTY_KITTY_PLACEMENT_LAYER_BELOW_BG
-            }
-            Self::BelowText => {
-                sys::GhosttyKittyPlacementLayer_GHOSTTY_KITTY_PLACEMENT_LAYER_BELOW_TEXT
-            }
-            Self::AboveText => {
-                sys::GhosttyKittyPlacementLayer_GHOSTTY_KITTY_PLACEMENT_LAYER_ABOVE_TEXT
-            }
-        }
-    }
-}
+use crate::{GhosttyError, Result};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ImageFormat {
@@ -154,10 +127,6 @@ impl DisplayTerminal {
         }
     }
 
-    pub fn disable_kitty_graphics(&mut self) -> Result<()> {
-        self.enable_kitty_graphics(0, 0)
-    }
-
     unsafe fn set_option(
         &mut self,
         operation: &'static str,
@@ -216,7 +185,7 @@ impl<'terminal> KittyGraphics<'terminal> {
         })
     }
 
-    pub fn placements(&self, layer: PlacementLayer) -> Result<PlacementCursor<'terminal>> {
+    pub fn placements(&self) -> Result<PlacementCursor<'terminal>> {
         let iterator = unsafe {
             create(
                 "kitty_placement_iterator_new",
@@ -234,15 +203,6 @@ impl<'terminal> KittyGraphics<'terminal> {
             )
         };
         check("kitty_graphics_get_placement_iterator", result)?;
-        let layer = layer.raw();
-        let result = unsafe {
-            sys::ghostty_kitty_graphics_placement_iterator_set(
-                iterator.raw(),
-                sys::GhosttyKittyGraphicsPlacementIteratorOption_GHOSTTY_KITTY_GRAPHICS_PLACEMENT_ITERATOR_OPTION_LAYER,
-                (&raw const layer).cast::<c_void>(),
-            )
-        };
-        check("kitty_placement_iterator_set_layer", result)?;
         Ok(PlacementCursor {
             iterator,
             terminal: self.terminal,
@@ -443,98 +403,6 @@ impl PlacementCursor<'_> {
         })
     }
 
-    pub fn rect(&self, image: &KittyImage<'_>) -> Result<Option<SelectionRange>> {
-        let mut selection = empty_selection();
-        let result = unsafe {
-            sys::ghostty_kitty_graphics_placement_rect(
-                self.iterator.raw(),
-                image.raw,
-                self.terminal.terminal.raw(),
-                &mut selection,
-            )
-        };
-        if result == sys::GhosttyResult_GHOSTTY_NO_VALUE {
-            return Ok(None);
-        }
-        check("kitty_placement_rect", result)?;
-        Ok(Some(self.terminal.selection_range_of(&selection)?))
-    }
-
-    pub fn pixel_size(&self, image: &KittyImage<'_>) -> Result<(u32, u32)> {
-        let mut width = 0u32;
-        let mut height = 0u32;
-        let result = unsafe {
-            sys::ghostty_kitty_graphics_placement_pixel_size(
-                self.iterator.raw(),
-                image.raw,
-                self.terminal.terminal.raw(),
-                &mut width,
-                &mut height,
-            )
-        };
-        check("kitty_placement_pixel_size", result)?;
-        Ok((width, height))
-    }
-
-    pub fn grid_size(&self, image: &KittyImage<'_>) -> Result<(u32, u32)> {
-        let mut cols = 0u32;
-        let mut rows = 0u32;
-        let result = unsafe {
-            sys::ghostty_kitty_graphics_placement_grid_size(
-                self.iterator.raw(),
-                image.raw,
-                self.terminal.terminal.raw(),
-                &mut cols,
-                &mut rows,
-            )
-        };
-        check("kitty_placement_grid_size", result)?;
-        Ok((cols, rows))
-    }
-
-    pub fn viewport_position(&self, image: &KittyImage<'_>) -> Result<Option<(i32, i32)>> {
-        let mut col = 0i32;
-        let mut row = 0i32;
-        let result = unsafe {
-            sys::ghostty_kitty_graphics_placement_viewport_pos(
-                self.iterator.raw(),
-                image.raw,
-                self.terminal.terminal.raw(),
-                &mut col,
-                &mut row,
-            )
-        };
-        if result == sys::GhosttyResult_GHOSTTY_NO_VALUE {
-            return Ok(None);
-        }
-        check("kitty_placement_viewport_pos", result)?;
-        Ok(Some((col, row)))
-    }
-
-    pub fn source_rect(&self, image: &KittyImage<'_>) -> Result<SourceRect> {
-        let mut x = 0u32;
-        let mut y = 0u32;
-        let mut width = 0u32;
-        let mut height = 0u32;
-        let result = unsafe {
-            sys::ghostty_kitty_graphics_placement_source_rect(
-                self.iterator.raw(),
-                image.raw,
-                &mut x,
-                &mut y,
-                &mut width,
-                &mut height,
-            )
-        };
-        check("kitty_placement_source_rect", result)?;
-        Ok(SourceRect {
-            x,
-            y,
-            width,
-            height,
-        })
-    }
-
     pub fn render_info(&self, image: &KittyImage<'_>) -> Result<PlacementRenderInfo> {
         let mut info = sys::GhosttyKittyGraphicsPlacementRenderInfo {
             size: std::mem::size_of::<sys::GhosttyKittyGraphicsPlacementRenderInfo>(),
@@ -580,7 +448,7 @@ impl PlacementCursor<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Point, Scroll, TerminalAppearance, WindowSize};
+    use crate::{TerminalAppearance, WindowSize};
 
     fn image_command(width: u32, height: u32, pixel: &str, extra: &str) -> Vec<u8> {
         let payload = pixel.repeat((width * height) as usize);
@@ -608,7 +476,7 @@ mod tests {
         graphics: &KittyGraphics<'a>,
     ) -> (PlacementCursor<'a>, Placement, ImageInfo, u32) {
         let mut cursor = graphics
-            .placements(PlacementLayer::All)
+            .placements()
             .expect("iterator must populate");
         assert!(cursor.advance(), "the fixture must store one placement");
         let placement = cursor.read().expect("placement fields");
@@ -633,7 +501,7 @@ mod tests {
             .expect("the storage object exists even when disabled");
         assert!(
             !storage
-                .placements(PlacementLayer::All)
+                .placements()
                 .expect("iterator must populate")
                 .advance(),
             "the constructor must leave the protocol disabled"
@@ -676,7 +544,7 @@ mod tests {
     }
 
     #[test]
-    fn geometry_helpers_agree_with_the_batched_render_info() {
+    fn the_render_info_reports_the_placement_geometry() {
         let mut terminal = terminal(20, 5);
         terminal.feed(&red_image()).expect("image command must parse");
         let graphics = terminal
@@ -686,23 +554,13 @@ mod tests {
         let (cursor, placement, _info, _) = only_placement(&graphics);
         let image = graphics.image(placement.image_id).expect("image handle");
 
-        let pixel_size = cursor.pixel_size(&image).expect("pixel size");
-        let grid_size = cursor.grid_size(&image).expect("grid size");
-        let viewport = cursor.viewport_position(&image).expect("viewport position");
-        let source = cursor.source_rect(&image).expect("source rect");
         let info = cursor.render_info(&image).expect("render info");
-
-        assert_eq!(pixel_size, (info.pixel_width, info.pixel_height));
-        assert_eq!(grid_size, (info.grid_cols, info.grid_rows));
-        assert_eq!(viewport, info.viewport);
-        assert_eq!(source, info.source);
-
-        assert_eq!(pixel_size, (16, 32));
-        assert_eq!(grid_size, (2, 2));
-        assert_eq!(viewport, Some((0, 0)));
+        assert_eq!((info.pixel_width, info.pixel_height), (16, 32));
+        assert_eq!((info.grid_cols, info.grid_rows), (2, 2));
+        assert_eq!(info.viewport, Some((0, 0)));
         assert_eq!((placement.source_width, placement.source_height), (0, 0));
         assert_eq!(
-            source,
+            info.source,
             SourceRect {
                 x: 0,
                 y: 0,
@@ -710,17 +568,10 @@ mod tests {
                 height: 32,
             }
         );
-
-        let rect = cursor
-            .rect(&image)
-            .expect("bounding rect")
-            .expect("a non-virtual placement has a rect");
-        assert!(rect.rectangle);
-        assert_eq!(rect.start, Point::new(0, 0));
     }
 
     #[test]
-    fn the_layer_filter_selects_by_z_index() {
+    fn the_placement_iterator_returns_every_layer() {
         let mut terminal = terminal(20, 5);
         terminal
             .feed(&image_command(16, 32, RED, ",i=7,p=1,z=5"))
@@ -733,21 +584,13 @@ mod tests {
             .expect("storage query")
             .expect("storage must exist");
 
-        let count = |layer| {
-            let mut cursor = graphics.placements(layer).expect("iterator must populate");
-            let mut seen = Vec::new();
-            while cursor.advance() {
-                seen.push(cursor.read().expect("placement fields").z);
-            }
-            seen
-        };
-
-        let mut all = count(PlacementLayer::All);
-        all.sort_unstable();
-        assert_eq!(all, [-5, 5]);
-        assert_eq!(count(PlacementLayer::AboveText), [5]);
-        assert_eq!(count(PlacementLayer::BelowText), [-5]);
-        assert!(count(PlacementLayer::BelowBackground).is_empty());
+        let mut cursor = graphics.placements().expect("iterator must populate");
+        let mut seen = Vec::new();
+        while cursor.advance() {
+            seen.push(cursor.read().expect("placement fields").z);
+        }
+        seen.sort_unstable();
+        assert_eq!(seen, [-5, 5]);
     }
 
     #[test]
@@ -762,7 +605,9 @@ mod tests {
             .expect("generation");
 
         terminal.feed(b"\r\n\r\n\r\n\r\n\r\n\r\n").expect("newlines");
-        terminal.scroll(Scroll::Top);
+        terminal
+            .scroll_to_viewport_row(0)
+            .expect("scroll to the top of history");
         let after_scroll = terminal
             .kitty_graphics()
             .expect("storage query")
@@ -798,38 +643,9 @@ mod tests {
         let (cursor, placement, _info, _) = only_placement(&graphics);
         let image = graphics.image(placement.image_id).expect("image handle");
 
-        assert_eq!(cursor.viewport_position(&image).expect("viewport"), None);
         assert_eq!(
             cursor.render_info(&image).expect("render info").viewport,
             None
         );
-        assert!(cursor.rect(&image).expect("rect").is_some());
-    }
-
-    #[test]
-    fn disabling_the_protocol_drops_the_storage() {
-        let mut terminal = terminal(20, 5);
-        terminal.feed(&red_image()).expect("image command must parse");
-        assert!(terminal.kitty_graphics().expect("storage query").is_some());
-
-        terminal
-            .disable_kitty_graphics()
-            .expect("protocol must disable");
-        terminal.feed(&red_image()).expect("image command must parse");
-        let graphics = terminal.kitty_graphics().expect("storage query");
-        let placements = match graphics {
-            None => 0,
-            Some(graphics) => {
-                let mut cursor = graphics
-                    .placements(PlacementLayer::All)
-                    .expect("iterator must populate");
-                let mut seen = 0;
-                while cursor.advance() {
-                    seen += 1;
-                }
-                seen
-            }
-        };
-        assert_eq!(placements, 0);
     }
 }

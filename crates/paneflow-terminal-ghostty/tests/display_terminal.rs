@@ -8,9 +8,31 @@
 
 use paneflow_terminal_ghostty::{
     BackendEvent, ClipboardLocation, Color, DisplayTerminal, FocusEvent, Key, KeyAction, KeyInput,
-    Modifiers, MouseAction, MouseButton, MouseInput, PasteRepresentation, Point, Rgb, Scroll,
-    SelectionRange, TerminalAppearance, WideCell, WindowSize,
+    Modifiers, MouseAction, MouseButton, MouseInput, PasteRepresentation, Point, Rgb,
+    SEARCH_CHUNK_CELLS, Scroll, SearchEngine, SearchResult, SelectionRange, TerminalAppearance,
+    WideCell, WindowSize,
 };
+
+#[allow(
+    clippy::unwrap_used,
+    reason = "test fixture search must fail immediately"
+)]
+fn search(terminal: &DisplayTerminal, query: &str) -> SearchResult {
+    let mut engine = SearchEngine::new(query, false).unwrap();
+    let mut next_row = 0;
+    loop {
+        let chunk = terminal.search_chunk(next_row, SEARCH_CHUNK_CELLS).unwrap();
+        for line in chunk.lines {
+            if !engine.push_line(line.line, &line.text, &line.char_to_column) {
+                return engine.finish(false);
+            }
+        }
+        if chunk.next_row >= chunk.total_rows {
+            return engine.finish(false);
+        }
+        next_row = chunk.next_row;
+    }
+}
 
 #[allow(
     clippy::unwrap_used,
@@ -222,7 +244,7 @@ fn a_bracketed_paste_as_large_as_the_app_input_queue_streams_intact() {
 }
 
 #[test]
-fn keyboard_matrix_covers_modifiers_repeat_text_and_numpad() {
+fn keyboard_matrix_covers_modifiers_repeat_and_text() {
     let mut terminal = terminal(80, 24);
     let ctrl_a = terminal
         .encode_key(&KeyInput {
@@ -301,21 +323,6 @@ fn keyboard_matrix_covers_modifiers_repeat_text_and_numpad() {
     assert_ne!(repeat, press);
     assert_ne!(release, press);
     assert_ne!(repeat, release);
-
-    terminal.feed(b"\x1b[?66h").unwrap();
-    assert!(terminal.modes().unwrap().application_keypad);
-    let numpad = terminal
-        .encode_key(&KeyInput {
-            key: Key::NumpadDigit(1),
-            action: KeyAction::Press,
-            modifiers: Modifiers::empty(),
-            consumed_modifiers: Modifiers::empty(),
-            text: String::new(),
-            unshifted_codepoint: Some('1'),
-            composing: false,
-        })
-        .unwrap();
-    assert!(!numpad.is_empty());
 }
 
 #[test]
@@ -326,9 +333,9 @@ fn search_selection_links_and_scrollback_use_fresh_owned_data() {
         .feed(b"\x1b]8;;https://example.com\x1b\\link\x1b]8;;\x1b\\")
         .unwrap();
 
-    let search = terminal.search("SECOND", false).unwrap();
-    assert_eq!(search.matches.len(), 1);
-    assert_eq!(search.matches[0].start, Point::new(1, 0));
+    let found = search(&terminal, "SECOND");
+    assert_eq!(found.matches.len(), 1);
+    assert_eq!(found.matches[0].start, Point::new(1, 0));
 
     terminal
         .set_selection(SelectionRange {
@@ -365,12 +372,8 @@ fn batched_line_texts_read_matches_from_real_history() {
         .feed("EP003-HISTORY-é\r\nviewport-one\r\nviewport-two\r\nviewport-three".as_bytes())
         .unwrap();
 
-    let search = terminal.search("EP003-HISTORY-é", false).unwrap();
-    let rows: Vec<i32> = search
-        .matches
-        .iter()
-        .map(|found| found.start.line)
-        .collect();
+    let found = search(&terminal, "EP003-HISTORY-é");
+    let rows: Vec<i32> = found.matches.iter().map(|found| found.start.line).collect();
     assert_eq!(rows.len(), 1);
     assert!(rows[0] < 0, "fixture marker must be in real history");
 
@@ -548,8 +551,8 @@ fn restore_neutralizes_live_control_sequences() {
             .iter()
             .any(|event| matches!(event, BackendEvent::Title(_)))
     );
-    assert!(terminal.search("spoof", false).unwrap().matches.len() == 1);
-    assert!(terminal.search("plain", false).unwrap().matches.len() == 1);
+    assert!(search(&terminal, "spoof").matches.len() == 1);
+    assert!(search(&terminal, "plain").matches.len() == 1);
 }
 
 #[test]

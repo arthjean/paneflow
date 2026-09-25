@@ -30,19 +30,7 @@ pub(crate) fn key_code(key: Key) -> sys::GhosttyKey {
         Key::Function(number @ 1..=25) => {
             sys::GhosttyKey_GHOSTTY_KEY_F1 + sys::GhosttyKey::from(number - 1)
         }
-        Key::NumpadDigit(number @ 0..=9) => {
-            sys::GhosttyKey_GHOSTTY_KEY_NUMPAD_0 + sys::GhosttyKey::from(number)
-        }
-        Key::NumpadAdd => sys::GhosttyKey_GHOSTTY_KEY_NUMPAD_ADD,
-        Key::NumpadSubtract => sys::GhosttyKey_GHOSTTY_KEY_NUMPAD_SUBTRACT,
-        Key::NumpadMultiply => sys::GhosttyKey_GHOSTTY_KEY_NUMPAD_MULTIPLY,
-        Key::NumpadDivide => sys::GhosttyKey_GHOSTTY_KEY_NUMPAD_DIVIDE,
-        Key::NumpadDecimal => sys::GhosttyKey_GHOSTTY_KEY_NUMPAD_DECIMAL,
-        Key::NumpadEnter => sys::GhosttyKey_GHOSTTY_KEY_NUMPAD_ENTER,
-        Key::NumpadEqual => sys::GhosttyKey_GHOSTTY_KEY_NUMPAD_EQUAL,
-        Key::Function(_) | Key::NumpadDigit(_) | Key::Unidentified => {
-            sys::GhosttyKey_GHOSTTY_KEY_UNIDENTIFIED
-        }
+        Key::Function(_) | Key::Unidentified => sys::GhosttyKey_GHOSTTY_KEY_UNIDENTIFIED,
     }
 }
 
@@ -83,71 +71,4 @@ pub(crate) fn mouse_action(action: MouseAction) -> sys::GhosttyMouseAction {
 
 pub(crate) fn mouse_button(button: MouseButton) -> sys::GhosttyMouseButton {
     sys::GhosttyMouseButton_GHOSTTY_MOUSE_BUTTON_LEFT + sys::GhosttyMouseButton::from(button as u8)
-}
-
-pub(crate) fn key_from_code(code: sys::GhosttyKey) -> Key {
-    const NAMED: &[Key] = &[
-        Key::Enter,
-        Key::Tab,
-        Key::Backspace,
-        Key::Delete,
-        Key::Escape,
-        Key::Up,
-        Key::Down,
-        Key::Left,
-        Key::Right,
-        Key::Home,
-        Key::End,
-        Key::PageUp,
-        Key::PageDown,
-        Key::Insert,
-        Key::NumpadAdd,
-        Key::NumpadSubtract,
-        Key::NumpadMultiply,
-        Key::NumpadDivide,
-        Key::NumpadDecimal,
-        Key::NumpadEnter,
-        Key::NumpadEqual,
-    ];
-    if code == sys::GhosttyKey_GHOSTTY_KEY_UNIDENTIFIED {
-        return Key::Unidentified;
-    }
-    if let Some(key) = NAMED.iter().copied().find(|key| key_code(*key) == code) {
-        return key;
-    }
-    for number in 1..=25u8 {
-        if key_code(Key::Function(number)) == code {
-            return Key::Function(number);
-        }
-    }
-    for number in 0..=9u8 {
-        if key_code(Key::NumpadDigit(number)) == code {
-            return Key::NumpadDigit(number);
-        }
-    }
-    const CHARACTERS: &str = "abcdefghijklmnopqrstuvwxyz0123456789 -=[]\\;',./`";
-    CHARACTERS
-        .chars()
-        .find(|character| key_code(Key::Character(*character)) == code)
-        .map_or(Key::Unidentified, Key::Character)
-}
-
-pub(crate) fn mouse_button_from_code(code: sys::GhosttyMouseButton) -> Option<MouseButton> {
-    const BUTTONS: &[MouseButton] = &[
-        MouseButton::Left,
-        MouseButton::Right,
-        MouseButton::Middle,
-        MouseButton::Four,
-        MouseButton::Five,
-        MouseButton::Six,
-        MouseButton::Seven,
-        MouseButton::Eight,
-        MouseButton::Nine,
-        MouseButton::Ten,
-        MouseButton::Eleven,
-    ];
-    BUTTONS
-        .iter()
-        .copied()
-        .find(|button| mouse_button(*button) == code)
 }
