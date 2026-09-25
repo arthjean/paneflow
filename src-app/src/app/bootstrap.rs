@@ -41,62 +41,11 @@ impl PaneFlowApp {
         let blink_phase = cx.new(|_| BlinkPhase::default());
         cx.set_global(BlinkPhaseGlobal(blink_phase.clone()));
         crate::theme::install_theme_signal(cx);
-        cx.spawn(
-            async |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
-                loop {
-                    smol::Timer::after(CURSOR_BLINK_INTERVAL).await;
-                    let result = cx.update(|cx| {
-                        this.update(cx, |_app: &mut Self, cx: &mut Context<Self>| {
-                            let phase = cx.global::<BlinkPhaseGlobal>().0.clone();
-                            phase.update(cx, |p, cx| {
-                                p.visible = !p.visible;
-                                cx.notify();
-                            });
-                        })
-                    });
-                    if result.is_err() {
-                        break;
-                    }
-                }
-            },
-        )
-        .detach();
+        Self::spawn_cursor_blink(cx);
 
-        let pending_config = std::sync::Arc::new(std::sync::Mutex::new(
-            None::<paneflow_config::schema::PaneFlowConfig>,
-        ));
-        let pending_config_writer = std::sync::Arc::clone(&pending_config);
-        let running_config_watcher = paneflow_config::watcher::ConfigWatcher::new(
-            std::sync::Arc::new(move |cfg: paneflow_config::schema::PaneFlowConfig| {
-                *pending_config_writer
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner()) = Some(cfg);
-            }),
-        )
-        .and_then(|config_watcher| match config_watcher.start() {
-            Ok(running) => Some(running),
-            Err(error) => {
-                log::warn!("config watcher failed to start: {error}; config hot-reload disabled");
-                None
-            }
-        });
+        let (pending_config, running_config_watcher) = Self::start_config_watcher();
 
-        let theme_changed = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let theme_changed_writer = std::sync::Arc::clone(&theme_changed);
-        match crate::theme::ThemeWatcher::new(std::sync::Arc::new(move || {
-            theme_changed_writer.store(true, std::sync::atomic::Ordering::Release);
-        })) {
-            Some(watcher) => {
-                if let Err(e) = watcher.start() {
-                    log::warn!(
-                        "theme watcher failed to start: {e}; falling back to 500 ms polling"
-                    );
-                }
-            }
-            None => {
-                log::warn!("theme watcher: no config dir resolved; falling back to 500 ms polling");
-            }
-        }
+        let theme_changed = Self::start_theme_watcher();
 
         let cached_config = paneflow_config::loader::load_config();
         crate::terminal::element::apply_font_config(&cached_config);
@@ -131,257 +80,13 @@ impl PaneFlowApp {
         };
         crate::startup_trace::mark("workspaces_restored");
 
-        let (git_event_tx, git_event_rx) = std::sync::mpsc::channel();
-        let mut git_watcher = match notify::recommended_watcher(git_event_tx) {
-            Ok(w) => Some(w),
-            Err(e) => {
-                log::warn!("git file watcher unavailable: {e}. Falling back to polling.");
-                None
-            }
-        };
-        let mut git_watch_counts = std::collections::HashMap::new();
-        if let Some(ref mut watcher) = git_watcher {
-            for ws in &workspaces {
-                if let Some(ref git_dir) = ws.git_dir {
-                    if let Err(e) = watcher.watch(git_dir, notify::RecursiveMode::NonRecursive) {
-                        log::warn!("git watcher: failed to watch {}: {e}", git_dir.display());
-                    } else {
-                        *git_watch_counts.entry(git_dir.clone()).or_insert(0) += 1;
-                    }
-                }
-            }
-        }
+        let (git_watcher, git_event_rx, git_watch_counts) = Self::start_git_watcher(&workspaces);
 
-        cx.spawn(
-            async |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
-                let debounce = std::time::Duration::from_millis(300);
-                let mut last_event = std::time::Instant::now() - debounce;
-                let mut pending = false;
-                let mut pending_git_dirs = std::collections::HashSet::<std::path::PathBuf>::new();
-
-                loop {
-                    smol::Timer::after(std::time::Duration::from_millis(200)).await;
-
-                    let new_dirs = cx.update(|cx| {
-                        this.update(cx, |app: &mut Self, _cx: &mut Context<Self>| {
-                            let mut dirs = Vec::new();
-                            while let Ok(event) = app.git_event_rx.try_recv() {
-                                if let Ok(ref ev) = event {
-                                    for p in &ev.paths {
-                                        if matches!(
-                                            p.file_name().and_then(|n| n.to_str()),
-                                            Some("HEAD" | "index")
-                                        ) && let Some(parent) = p.parent()
-                                        {
-                                            dirs.push(parent.to_path_buf());
-                                        }
-                                    }
-                                }
-                            }
-                            dirs
-                        })
-                    });
-
-                    match new_dirs {
-                        Ok(dirs) if !dirs.is_empty() => {
-                            pending_git_dirs.extend(dirs);
-                            last_event = std::time::Instant::now();
-                            pending = true;
-                        }
-                        Ok(_) => {}
-                        Err(_) => break,
-                    }
-
-                    if pending && last_event.elapsed() >= debounce {
-                        pending = false;
-                        let affected_dirs = std::mem::take(&mut pending_git_dirs);
-                        log::debug!(
-                            "git watcher: debounced event fired for {} dir(s)",
-                            affected_dirs.len()
-                        );
-
-                        let cwds = cx.update(|cx| {
-                            this.update(cx, |app: &mut Self, _cx: &mut Context<Self>| {
-                                app.workspaces
-                                    .iter()
-                                    .filter(|ws| {
-                                        ws.git_dir
-                                            .as_ref()
-                                            .is_some_and(|gd| affected_dirs.contains(gd))
-                                    })
-                                    .flat_map(|ws| {
-                                        std::iter::once(ws.cwd.clone())
-                                            .chain(ws.bound_tab_worktrees())
-                                    })
-                                    .filter(|cwd| !cwd.is_empty())
-                                    .collect::<std::collections::BTreeSet<String>>()
-                                    .into_iter()
-                                    .collect::<Vec<String>>()
-                            })
-                        });
-
-                        let cwds = match cwds {
-                            Ok(c) => c,
-                            Err(_) => break,
-                        };
-
-                        if cwds.is_empty() {
-                            continue;
-                        }
-
-                        let results = smol::unblock(move || {
-                            cwds.into_iter()
-                                .map(|cwd| {
-                                    let (branch, is_repo) = crate::workspace::detect_branch(&cwd);
-                                    let stats = crate::workspace::GitDiffStats::from_cwd(&cwd);
-                                    (cwd, branch, is_repo, stats)
-                                })
-                                .collect::<Vec<_>>()
-                        })
-                        .await;
-
-                        let apply = cx.update(|cx| {
-                            this.update(cx, |app: &mut Self, cx: &mut Context<Self>| {
-                                let mut changed = false;
-                                let mut refreshed_diff = false;
-                                for (cwd, branch, is_repo, stats) in &results {
-                                    if app.apply_git_state_for_cwd(
-                                        cwd,
-                                        branch.clone(),
-                                        *is_repo,
-                                        stats.clone(),
-                                    ) {
-                                        changed = true;
-                                        refreshed_diff |=
-                                            app.refresh_diff_dock_if_open_for_cwd(cwd, cx);
-                                    }
-                                }
-                                if changed && !refreshed_diff {
-                                    cx.notify();
-                                }
-                            })
-                        });
-                        if apply.is_err() {
-                            break;
-                        }
-                    }
-                }
-            },
-        )
-        .detach();
-
-        cx.spawn(
-            async move |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
-                let _config_watcher = running_config_watcher;
-                loop {
-                    smol::Timer::after(std::time::Duration::from_millis(50)).await;
-                    let result = cx.update(|cx| {
-                        this.update(cx, |app: &mut Self, cx: &mut Context<Self>| {
-                            app.process_automation_tick(cx);
-                        })
-                    });
-                    if result.is_err() {
-                        break;
-                    }
-                }
-            },
-        )
-        .detach();
-
-        cx.spawn(
-            async |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
-                loop {
-                    smol::Timer::after(std::time::Duration::from_secs(30)).await;
-
-                    let cwds = cx.update(|cx| {
-                        this.update(cx, |app: &mut Self, _cx: &mut Context<Self>| {
-                            app.git_probe_cwds()
-                        })
-                    });
-                    let cwds = match cwds {
-                        Ok(c) => c,
-                        Err(_) => break,
-                    };
-
-                    let results = smol::unblock(move || {
-                        cwds.into_iter()
-                            .map(|cwd| {
-                                let (branch, is_repo) = crate::workspace::detect_branch(&cwd);
-                                let stats = crate::workspace::GitDiffStats::from_cwd(&cwd);
-                                (cwd, branch, is_repo, stats)
-                            })
-                            .collect::<Vec<_>>()
-                    })
-                    .await;
-
-                    let apply = cx.update(|cx| {
-                        this.update(cx, |app: &mut Self, cx: &mut Context<Self>| {
-                            let mut changed = false;
-                            let mut refreshed_diff = false;
-                            for (cwd, branch, is_repo, stats) in &results {
-                                if app.apply_git_state_for_cwd(
-                                    cwd,
-                                    branch.clone(),
-                                    *is_repo,
-                                    stats.clone(),
-                                ) {
-                                    changed = true;
-                                    refreshed_diff |=
-                                        app.refresh_diff_dock_if_open_for_cwd(cwd, cx);
-                                }
-                            }
-                            if changed && !refreshed_diff {
-                                cx.notify();
-                            }
-                            app.refresh_pull_requests(cx);
-                            app.enforce_worktree_limit(cx);
-                        })
-                    });
-                    if apply.is_err() {
-                        break;
-                    }
-                }
-            },
-        )
-        .detach();
-
-        cx.spawn(
-            async |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
-                loop {
-                    smol::Timer::after(std::time::Duration::from_secs(30)).await;
-                    if cx
-                        .update(|cx| {
-                            this.update(cx, |app: &mut Self, cx: &mut Context<Self>| {
-                                app.sweep_stale_pids(cx);
-                            })
-                        })
-                        .is_err()
-                    {
-                        break;
-                    }
-                }
-            },
-        )
-        .detach();
-
-        cx.spawn(
-            async |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
-                loop {
-                    smol::Timer::after(std::time::Duration::from_secs(5)).await;
-                    if cx
-                        .update(|cx| {
-                            this.update(cx, |app: &mut Self, cx: &mut Context<Self>| {
-                                app.schedule_active_port_rescans(cx);
-                            })
-                        })
-                        .is_err()
-                    {
-                        break;
-                    }
-                }
-            },
-        )
-        .detach();
+        Self::spawn_git_event_refresh(cx);
+        Self::spawn_automation_tick(running_config_watcher, cx);
+        Self::spawn_git_poll(cx);
+        Self::spawn_stale_pid_sweep(cx);
+        Self::spawn_port_rescans(cx);
 
         let install_method = update::install_method::detect();
         #[cfg(target_os = "linux")]
@@ -413,63 +118,9 @@ impl PaneFlowApp {
         Self::spawn_telemetry_flusher(std::sync::Arc::clone(&telemetry), cx);
 
         #[cfg(target_os = "linux")]
-        if let Some(report) = update::migrations::detect_coexistent_install(&install_method) {
-            log::info!(
-                "paneflow: coexistent install detected - running from {} (this install); other install at {} (installed via {})",
-                report.running_path.display(),
-                report.other_path.display(),
-                report.other_method_label,
-            );
-            if let Some(home) = std::env::var_os("HOME").map(std::path::PathBuf::from) {
-                let marker_path = update::migrations::coexistence_marker_path(&home);
-                if update::migrations::coexistence_toast_due(&marker_path) {
-                    let message = format!(
-                        "Two PaneFlow installs detected. Running from {} (this install); other install at {} (installed via {}). Remove the unused install to avoid version drift.",
-                        report.running_path.display(),
-                        report.other_path.display(),
-                        report.other_method_label,
-                    );
-                    let actions = vec![crate::ToastAction::OpenReleasesPage(
-                        "https://paneflow.dev/download#multiple-installs".to_string(),
-                    )];
-                    let hold_ms = crate::TOAST_HOLD_MS * 4;
-                    cx.spawn(
-                        async move |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
-                            smol::Timer::after(std::time::Duration::from_millis(1)).await;
-                            let pushed = cx
-                                .update(|cx| {
-                                    this.update(cx, |app: &mut Self, cx: &mut Context<Self>| {
-                                        app.push_toast(message, actions, hold_ms, cx);
-                                    })
-                                })
-                                .is_ok();
-                            if pushed {
-                                update::migrations::write_coexistence_marker(&marker_path);
-                            }
-                        },
-                    )
-                    .detach();
-                }
-            }
-        }
+        Self::schedule_coexistence_toast(&install_method, cx);
 
-        if let Some(version) = update::release_notes::upgraded_version() {
-            log::info!("paneflow: first launch on {version} - raising the release toast");
-            cx.spawn(
-                async move |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
-                    smol::Timer::after(std::time::Duration::from_millis(
-                        crate::app::constants::RELEASE_TOAST_DELAY_MS,
-                    ))
-                    .await;
-                    let _ = cx.update(|cx| {
-                        this.update(cx, |app: &mut Self, cx: &mut Context<Self>| {
-                            app.show_release_notes_toast(&version, cx);
-                        })
-                    });
-                },
-            )
-            .detach();
-        }
+        Self::schedule_release_toast(cx);
 
         let agents_filter_input =
             cx.new(|cx| crate::widgets::text_input::TextInput::new("", "Search threads", cx));
@@ -794,6 +445,394 @@ impl PaneFlowApp {
         );
 
         app
+    }
+
+    fn spawn_cursor_blink(cx: &mut Context<Self>) {
+        cx.spawn(
+            async |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
+                loop {
+                    smol::Timer::after(CURSOR_BLINK_INTERVAL).await;
+                    let result = cx.update(|cx| {
+                        this.update(cx, |_app: &mut Self, cx: &mut Context<Self>| {
+                            let phase = cx.global::<BlinkPhaseGlobal>().0.clone();
+                            phase.update(cx, |p, cx| {
+                                p.visible = !p.visible;
+                                cx.notify();
+                            });
+                        })
+                    });
+                    if result.is_err() {
+                        break;
+                    }
+                }
+            },
+        )
+        .detach();
+    }
+
+    fn start_config_watcher() -> (
+        std::sync::Arc<std::sync::Mutex<Option<paneflow_config::schema::PaneFlowConfig>>>,
+        Option<paneflow_config::watcher::RunningConfigWatcher>,
+    ) {
+        let pending_config = std::sync::Arc::new(std::sync::Mutex::new(
+            None::<paneflow_config::schema::PaneFlowConfig>,
+        ));
+        let pending_config_writer = std::sync::Arc::clone(&pending_config);
+        let running_config_watcher = paneflow_config::watcher::ConfigWatcher::new(
+            std::sync::Arc::new(move |cfg: paneflow_config::schema::PaneFlowConfig| {
+                *pending_config_writer
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner()) = Some(cfg);
+            }),
+        )
+        .and_then(|config_watcher| match config_watcher.start() {
+            Ok(running) => Some(running),
+            Err(error) => {
+                log::warn!("config watcher failed to start: {error}; config hot-reload disabled");
+                None
+            }
+        });
+        (pending_config, running_config_watcher)
+    }
+
+    fn start_theme_watcher() -> std::sync::Arc<std::sync::atomic::AtomicBool> {
+        let theme_changed = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let theme_changed_writer = std::sync::Arc::clone(&theme_changed);
+        match crate::theme::ThemeWatcher::new(std::sync::Arc::new(move || {
+            theme_changed_writer.store(true, std::sync::atomic::Ordering::Release);
+        })) {
+            Some(watcher) => {
+                if let Err(e) = watcher.start() {
+                    log::warn!(
+                        "theme watcher failed to start: {e}; falling back to 500 ms polling"
+                    );
+                }
+            }
+            None => {
+                log::warn!("theme watcher: no config dir resolved; falling back to 500 ms polling");
+            }
+        }
+        theme_changed
+    }
+
+    fn start_git_watcher(
+        workspaces: &[crate::workspace::Workspace],
+    ) -> (
+        Option<notify::RecommendedWatcher>,
+        std::sync::mpsc::Receiver<notify::Result<notify::Event>>,
+        std::collections::HashMap<std::path::PathBuf, usize>,
+    ) {
+        let (git_event_tx, git_event_rx) = std::sync::mpsc::channel();
+        let mut git_watcher = match notify::recommended_watcher(git_event_tx) {
+            Ok(w) => Some(w),
+            Err(e) => {
+                log::warn!("git file watcher unavailable: {e}. Falling back to polling.");
+                None
+            }
+        };
+        let mut git_watch_counts = std::collections::HashMap::new();
+        if let Some(ref mut watcher) = git_watcher {
+            for ws in workspaces {
+                if let Some(ref git_dir) = ws.git_dir {
+                    if let Err(e) = watcher.watch(git_dir, notify::RecursiveMode::NonRecursive) {
+                        log::warn!("git watcher: failed to watch {}: {e}", git_dir.display());
+                    } else {
+                        *git_watch_counts.entry(git_dir.clone()).or_insert(0) += 1;
+                    }
+                }
+            }
+        }
+        (git_watcher, git_event_rx, git_watch_counts)
+    }
+
+    fn spawn_git_event_refresh(cx: &mut Context<Self>) {
+        cx.spawn(
+            async |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
+                let debounce = std::time::Duration::from_millis(300);
+                let mut last_event = std::time::Instant::now() - debounce;
+                let mut pending = false;
+                let mut pending_git_dirs = std::collections::HashSet::<std::path::PathBuf>::new();
+
+                loop {
+                    smol::Timer::after(std::time::Duration::from_millis(200)).await;
+
+                    let new_dirs = cx.update(|cx| {
+                        this.update(cx, |app: &mut Self, _cx: &mut Context<Self>| {
+                            let mut dirs = Vec::new();
+                            while let Ok(event) = app.git_event_rx.try_recv() {
+                                if let Ok(ref ev) = event {
+                                    for p in &ev.paths {
+                                        if matches!(
+                                            p.file_name().and_then(|n| n.to_str()),
+                                            Some("HEAD" | "index")
+                                        ) && let Some(parent) = p.parent()
+                                        {
+                                            dirs.push(parent.to_path_buf());
+                                        }
+                                    }
+                                }
+                            }
+                            dirs
+                        })
+                    });
+
+                    match new_dirs {
+                        Ok(dirs) if !dirs.is_empty() => {
+                            pending_git_dirs.extend(dirs);
+                            last_event = std::time::Instant::now();
+                            pending = true;
+                        }
+                        Ok(_) => {}
+                        Err(_) => break,
+                    }
+
+                    if pending && last_event.elapsed() >= debounce {
+                        pending = false;
+                        let affected_dirs = std::mem::take(&mut pending_git_dirs);
+                        log::debug!(
+                            "git watcher: debounced event fired for {} dir(s)",
+                            affected_dirs.len()
+                        );
+
+                        let cwds = cx.update(|cx| {
+                            this.update(cx, |app: &mut Self, _cx: &mut Context<Self>| {
+                                app.workspaces
+                                    .iter()
+                                    .filter(|ws| {
+                                        ws.git_dir
+                                            .as_ref()
+                                            .is_some_and(|gd| affected_dirs.contains(gd))
+                                    })
+                                    .flat_map(|ws| {
+                                        std::iter::once(ws.cwd.clone())
+                                            .chain(ws.bound_tab_worktrees())
+                                    })
+                                    .filter(|cwd| !cwd.is_empty())
+                                    .collect::<std::collections::BTreeSet<String>>()
+                                    .into_iter()
+                                    .collect::<Vec<String>>()
+                            })
+                        });
+
+                        let cwds = match cwds {
+                            Ok(c) => c,
+                            Err(_) => break,
+                        };
+
+                        if cwds.is_empty() {
+                            continue;
+                        }
+
+                        let results = smol::unblock(move || Self::probe_git_state(cwds)).await;
+
+                        let apply = cx.update(|cx| {
+                            this.update(cx, |app: &mut Self, cx: &mut Context<Self>| {
+                                app.apply_git_probe(&results, cx);
+                            })
+                        });
+                        if apply.is_err() {
+                            break;
+                        }
+                    }
+                }
+            },
+        )
+        .detach();
+    }
+
+    fn spawn_automation_tick(
+        running_config_watcher: Option<paneflow_config::watcher::RunningConfigWatcher>,
+        cx: &mut Context<Self>,
+    ) {
+        cx.spawn(
+            async move |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
+                let _config_watcher = running_config_watcher;
+                loop {
+                    smol::Timer::after(std::time::Duration::from_millis(50)).await;
+                    let result = cx.update(|cx| {
+                        this.update(cx, |app: &mut Self, cx: &mut Context<Self>| {
+                            app.process_automation_tick(cx);
+                        })
+                    });
+                    if result.is_err() {
+                        break;
+                    }
+                }
+            },
+        )
+        .detach();
+    }
+
+    fn spawn_git_poll(cx: &mut Context<Self>) {
+        cx.spawn(
+            async |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
+                loop {
+                    smol::Timer::after(std::time::Duration::from_secs(30)).await;
+
+                    let cwds = cx.update(|cx| {
+                        this.update(cx, |app: &mut Self, _cx: &mut Context<Self>| {
+                            app.git_probe_cwds()
+                        })
+                    });
+                    let cwds = match cwds {
+                        Ok(c) => c,
+                        Err(_) => break,
+                    };
+
+                    let results = smol::unblock(move || Self::probe_git_state(cwds)).await;
+
+                    let apply = cx.update(|cx| {
+                        this.update(cx, |app: &mut Self, cx: &mut Context<Self>| {
+                            app.apply_git_probe(&results, cx);
+                            app.refresh_pull_requests(cx);
+                            app.enforce_worktree_limit(cx);
+                        })
+                    });
+                    if apply.is_err() {
+                        break;
+                    }
+                }
+            },
+        )
+        .detach();
+    }
+
+    fn probe_git_state(
+        cwds: Vec<String>,
+    ) -> Vec<(String, String, bool, crate::workspace::GitDiffStats)> {
+        cwds.into_iter()
+            .map(|cwd| {
+                let (branch, is_repo) = crate::workspace::detect_branch(&cwd);
+                let stats = crate::workspace::GitDiffStats::from_cwd(&cwd);
+                (cwd, branch, is_repo, stats)
+            })
+            .collect()
+    }
+
+    fn apply_git_probe(
+        &mut self,
+        results: &[(String, String, bool, crate::workspace::GitDiffStats)],
+        cx: &mut Context<Self>,
+    ) {
+        let mut changed = false;
+        let mut refreshed_diff = false;
+        for (cwd, branch, is_repo, stats) in results {
+            if self.apply_git_state_for_cwd(cwd, branch.clone(), *is_repo, stats.clone()) {
+                changed = true;
+                refreshed_diff |= self.refresh_diff_dock_if_open_for_cwd(cwd, cx);
+            }
+        }
+        if changed && !refreshed_diff {
+            cx.notify();
+        }
+    }
+
+    fn spawn_stale_pid_sweep(cx: &mut Context<Self>) {
+        cx.spawn(
+            async |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
+                loop {
+                    smol::Timer::after(std::time::Duration::from_secs(30)).await;
+                    if cx
+                        .update(|cx| {
+                            this.update(cx, |app: &mut Self, cx: &mut Context<Self>| {
+                                app.sweep_stale_pids(cx);
+                            })
+                        })
+                        .is_err()
+                    {
+                        break;
+                    }
+                }
+            },
+        )
+        .detach();
+    }
+
+    fn spawn_port_rescans(cx: &mut Context<Self>) {
+        cx.spawn(
+            async |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
+                loop {
+                    smol::Timer::after(std::time::Duration::from_secs(5)).await;
+                    if cx
+                        .update(|cx| {
+                            this.update(cx, |app: &mut Self, cx: &mut Context<Self>| {
+                                app.schedule_active_port_rescans(cx);
+                            })
+                        })
+                        .is_err()
+                    {
+                        break;
+                    }
+                }
+            },
+        )
+        .detach();
+    }
+
+    #[cfg(target_os = "linux")]
+    fn schedule_coexistence_toast(
+        install_method: &update::install_method::InstallMethod,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(report) = update::migrations::detect_coexistent_install(install_method) {
+            log::info!(
+                "paneflow: coexistent install detected - running from {} (this install); other install at {} (installed via {})",
+                report.running_path.display(),
+                report.other_path.display(),
+                report.other_method_label,
+            );
+            if let Some(home) = std::env::var_os("HOME").map(std::path::PathBuf::from) {
+                let marker_path = update::migrations::coexistence_marker_path(&home);
+                if update::migrations::coexistence_toast_due(&marker_path) {
+                    let message = format!(
+                        "Two PaneFlow installs detected. Running from {} (this install); other install at {} (installed via {}). Remove the unused install to avoid version drift.",
+                        report.running_path.display(),
+                        report.other_path.display(),
+                        report.other_method_label,
+                    );
+                    let actions = vec![crate::ToastAction::OpenReleasesPage(
+                        "https://paneflow.dev/download#multiple-installs".to_string(),
+                    )];
+                    let hold_ms = crate::TOAST_HOLD_MS * 4;
+                    cx.spawn(
+                        async move |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
+                            smol::Timer::after(std::time::Duration::from_millis(1)).await;
+                            let pushed = cx
+                                .update(|cx| {
+                                    this.update(cx, |app: &mut Self, cx: &mut Context<Self>| {
+                                        app.push_toast(message, actions, hold_ms, cx);
+                                    })
+                                })
+                                .is_ok();
+                            if pushed {
+                                update::migrations::write_coexistence_marker(&marker_path);
+                            }
+                        },
+                    )
+                    .detach();
+                }
+            }
+        }
+    }
+
+    fn schedule_release_toast(cx: &mut Context<Self>) {
+        if let Some(version) = update::release_notes::upgraded_version() {
+            log::info!("paneflow: first launch on {version} - raising the release toast");
+            cx.spawn(
+                async move |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
+                    smol::Timer::after(std::time::Duration::from_millis(
+                        crate::app::constants::RELEASE_TOAST_DELAY_MS,
+                    ))
+                    .await;
+                    let _ = cx.update(|cx| {
+                        this.update(cx, |app: &mut Self, cx: &mut Context<Self>| {
+                            app.show_release_notes_toast(&version, cx);
+                        })
+                    });
+                },
+            )
+            .detach();
+        }
     }
 }
 
