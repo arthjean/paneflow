@@ -41,10 +41,10 @@
     {
       "id": "EP-005",
       "title": "Duplicate Consolidation",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P2",
       "stories_total": 7,
-      "stories_done": 5
+      "stories_done": 7
     },
     {
       "id": "EP-006",
@@ -537,29 +537,29 @@
       "id": "US-036",
       "title": "Consolidate diff and editor rendering helpers",
       "epic": "EP-005",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P2",
       "size": "M",
       "blocked_by": [
         "US-030"
       ],
       "started_at": "2026-09-25",
-      "completed_at": null,
-      "reviewed_at": "2026-09-25T21:10:02+02:00"
+      "completed_at": "2026-09-25T22:29:58+02:00",
+      "reviewed_at": "2026-09-25T22:29:58+02:00"
     },
     {
       "id": "US-037",
       "title": "Consolidate settings and modal UI primitives",
       "epic": "EP-005",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P2",
       "size": "M",
       "blocked_by": [
         "US-022"
       ],
       "started_at": "2026-09-25",
-      "completed_at": null,
-      "reviewed_at": "2026-09-25T21:10:02+02:00"
+      "completed_at": "2026-09-25T22:29:58+02:00",
+      "reviewed_at": "2026-09-25T22:29:58+02:00"
     },
     {
       "id": "US-038",
