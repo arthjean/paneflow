@@ -121,14 +121,6 @@ allow = [
     "GPL-3.0-or-later",
 ]
 
-# Boost Software License 1.0 is required only by xxhash-rust, pulled through
-# Zed's fs -> notify 9 path. Scoped to the crate and its 0.8 line so a new
-# BSL-1.0 dependency is still rejected, but a patch bump inside 0.8 does not
-# turn the license check red on its own.
-exceptions = [
-    { crate = "xxhash-rust@0.8", allow = ["BSL-1.0"] },
-]
-
 [sources]
 # Block unknown crate registries or git sources. Require immutable revisions:
 # every git source must be a full 40-char sha, enforced a second time by the
