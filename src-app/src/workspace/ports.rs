@@ -106,20 +106,6 @@ fn classify_frontend_argv<'a>(args: impl Iterator<Item = &'a str>) -> Option<&'s
     None
 }
 
-#[cfg(any(windows, test))]
-fn normalize_process_basename(name: &str) -> &str {
-    let base = name.rsplit(['/', '\\']).next().unwrap_or(name);
-    for suffix in [".exe", ".cmd", ".bat", ".ps1"] {
-        if base
-            .get(base.len().saturating_sub(suffix.len())..)
-            .is_some_and(|s| s.eq_ignore_ascii_case(suffix))
-        {
-            return &base[..base.len() - suffix.len()];
-        }
-    }
-    base
-}
-
 #[cfg(target_os = "linux")]
 fn bfs_descendants_linux(root_pid: u32, visited: &mut std::collections::HashSet<u32>) -> Vec<u32> {
     let root_children = format!("/proc/{root_pid}/task/{root_pid}/children");
@@ -464,68 +450,6 @@ fn listen_ports_of(pid: u32, ports: &mut Vec<u16>) {
 }
 
 #[cfg(target_os = "macos")]
-fn argv_of_macos(pid: u32) -> Vec<String> {
-    let mut mib = [libc::CTL_KERN, libc::KERN_PROCARGS2, pid as libc::c_int];
-
-    let mut size: libc::size_t = 0;
-    let rc = unsafe {
-        libc::sysctl(
-            mib.as_mut_ptr(),
-            3,
-            std::ptr::null_mut(),
-            &mut size,
-            std::ptr::null_mut(),
-            0,
-        )
-    };
-    if rc != 0 || size == 0 {
-        return Vec::new();
-    }
-
-    let mut buf = vec![0u8; size];
-    let rc = unsafe {
-        libc::sysctl(
-            mib.as_mut_ptr(),
-            3,
-            buf.as_mut_ptr() as *mut libc::c_void,
-            &mut size,
-            std::ptr::null_mut(),
-            0,
-        )
-    };
-    if rc != 0 {
-        return Vec::new();
-    }
-    buf.truncate(size);
-    parse_procargs2(&buf)
-}
-
-#[cfg(any(target_os = "macos", test))]
-fn parse_procargs2(buf: &[u8]) -> Vec<String> {
-    let Some(argc_bytes) = buf.get(..4) else {
-        return Vec::new();
-    };
-    let argc = i32::from_ne_bytes([argc_bytes[0], argc_bytes[1], argc_bytes[2], argc_bytes[3]])
-        .max(0) as usize;
-    if argc == 0 {
-        return Vec::new();
-    }
-    let rest = &buf[4..];
-    let path_end = rest.iter().position(|&b| b == 0).unwrap_or(rest.len());
-    let args_start = rest[path_end..]
-        .iter()
-        .position(|&b| b != 0)
-        .map(|off| path_end + off)
-        .unwrap_or(rest.len());
-    rest[args_start..]
-        .split(|&b| b == 0)
-        .filter(|s| !s.is_empty())
-        .take(argc)
-        .map(|s| String::from_utf8_lossy(s).into_owned())
-        .collect()
-}
-
-#[cfg(target_os = "macos")]
 fn macos_representative_command(pids: &[u32]) -> Option<String> {
     use libproc::libproc::proc_pid::name;
 
@@ -572,7 +496,7 @@ pub fn scan_panes(
             if pid_ports.is_empty() {
                 continue;
             }
-            let args = argv_of_macos(pid);
+            let args = paneflow_host::process::process_argv(pid).unwrap_or_default();
             let frontend = classify_frontend_argv(args.iter().map(String::as_str));
             ports.extend(
                 pid_ports
@@ -597,56 +521,9 @@ pub fn scan_panes(
 }
 
 #[cfg(windows)]
-#[derive(Clone, Debug)]
-struct WindowsProcessEntry {
-    pid: u32,
-    parent_pid: u32,
-    exe: String,
-}
-
-#[cfg(windows)]
-fn windows_process_entries() -> Vec<WindowsProcessEntry> {
-    use std::mem;
-    use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
-    use windows_sys::Win32::System::Diagnostics::ToolHelp::{
-        CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW,
-        TH32CS_SNAPPROCESS,
-    };
-
-    let snap = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) };
-    if snap == INVALID_HANDLE_VALUE {
-        return Vec::new();
-    }
-
-    let mut entries = Vec::with_capacity(256);
-    let mut entry: PROCESSENTRY32W = unsafe { mem::zeroed() };
-    entry.dwSize = mem::size_of::<PROCESSENTRY32W>() as u32;
-    if unsafe { Process32FirstW(snap, &mut entry) } != 0 {
-        loop {
-            let len = entry
-                .szExeFile
-                .iter()
-                .position(|&c| c == 0)
-                .unwrap_or(entry.szExeFile.len());
-            let exe = String::from_utf16_lossy(&entry.szExeFile[..len]);
-            entries.push(WindowsProcessEntry {
-                pid: entry.th32ProcessID,
-                parent_pid: entry.th32ParentProcessID,
-                exe,
-            });
-            if unsafe { Process32NextW(snap, &mut entry) } == 0 {
-                break;
-            }
-        }
-    }
-    unsafe { CloseHandle(snap) };
-    entries
-}
-
-#[cfg(windows)]
 fn bfs_descendants_windows(
     root_pid: u32,
-    entries: &[WindowsProcessEntry],
+    entries: &[paneflow_host::process::WindowsProcessEntry],
     visited: &mut std::collections::HashSet<u32>,
 ) -> Vec<u32> {
     let mut children_of: std::collections::HashMap<u32, Vec<u32>> =
@@ -683,7 +560,7 @@ fn bfs_descendants_windows(
 #[cfg(windows)]
 fn windows_representative_command(
     root_pid: u32,
-    entries: &[WindowsProcessEntry],
+    entries: &[paneflow_host::process::WindowsProcessEntry],
     exe_by_pid: &std::collections::HashMap<u32, String>,
 ) -> Option<String> {
     let mut current = root_pid;
@@ -700,7 +577,7 @@ fn windows_representative_command(
     }
     exe_by_pid
         .get(&current)
-        .map(|exe| normalize_process_basename(exe).to_string())
+        .map(|exe| crate::agent_launcher::executable_stem(exe).to_string())
         .filter(|name| !name.is_empty())
 }
 
@@ -806,145 +683,6 @@ fn windows_listen_ports_by_pid() -> std::collections::HashMap<u32, Vec<u16>> {
 }
 
 #[cfg(windows)]
-fn argv_of_windows(pid: u32) -> Vec<String> {
-    windows_command_line(pid)
-        .map(|line| windows_command_line_to_argv(&line))
-        .unwrap_or_default()
-}
-
-#[cfg(windows)]
-fn windows_command_line(pid: u32) -> Option<String> {
-    use std::mem;
-    use windows_sys::Wdk::System::Threading::{NtQueryInformationProcess, ProcessBasicInformation};
-    use windows_sys::Win32::Foundation::{CloseHandle, UNICODE_STRING};
-    use windows_sys::Win32::System::Diagnostics::Debug::ReadProcessMemory;
-    use windows_sys::Win32::System::Threading::{
-        OpenProcess, PEB, PROCESS_BASIC_INFORMATION, PROCESS_QUERY_LIMITED_INFORMATION,
-        PROCESS_VM_READ, RTL_USER_PROCESS_PARAMETERS,
-    };
-
-    const MAX_COMMAND_LINE_BYTES: usize = 64 * 1024;
-
-    if pid == 0 {
-        return None;
-    }
-
-    unsafe fn read_remote<T: Copy>(
-        handle: windows_sys::Win32::Foundation::HANDLE,
-        ptr: *const T,
-    ) -> Option<T> {
-        let mut value: T = unsafe { mem::zeroed() };
-        let mut read = 0usize;
-        let ok = unsafe {
-            ReadProcessMemory(
-                handle,
-                ptr.cast(),
-                (&mut value as *mut T).cast(),
-                mem::size_of::<T>(),
-                &mut read,
-            )
-        };
-        (ok != 0 && read == mem::size_of::<T>()).then_some(value)
-    }
-
-    unsafe fn read_unicode_string(
-        handle: windows_sys::Win32::Foundation::HANDLE,
-        value: UNICODE_STRING,
-    ) -> Option<String> {
-        let len = value.Length as usize;
-        if len == 0
-            || len > MAX_COMMAND_LINE_BYTES
-            || !len.is_multiple_of(2)
-            || value.Buffer.is_null()
-        {
-            return None;
-        }
-        let mut bytes = vec![0u16; len / 2];
-        let mut read = 0usize;
-        let ok = unsafe {
-            ReadProcessMemory(
-                handle,
-                value.Buffer.cast(),
-                bytes.as_mut_ptr().cast(),
-                len,
-                &mut read,
-            )
-        };
-        (ok != 0 && read == len).then(|| String::from_utf16_lossy(&bytes))
-    }
-
-    let handle =
-        unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_VM_READ, 0, pid) };
-    if handle.is_null() {
-        return None;
-    }
-
-    let result = (|| {
-        let mut info: PROCESS_BASIC_INFORMATION = unsafe { mem::zeroed() };
-        let status = unsafe {
-            NtQueryInformationProcess(
-                handle,
-                ProcessBasicInformation,
-                (&mut info as *mut PROCESS_BASIC_INFORMATION).cast(),
-                mem::size_of::<PROCESS_BASIC_INFORMATION>() as u32,
-                std::ptr::null_mut(),
-            )
-        };
-        if status < 0 || info.PebBaseAddress.is_null() {
-            return None;
-        }
-        let peb: PEB = unsafe { read_remote(handle, info.PebBaseAddress.cast())? };
-        if peb.ProcessParameters.is_null() {
-            return None;
-        }
-        let params: RTL_USER_PROCESS_PARAMETERS =
-            unsafe { read_remote(handle, peb.ProcessParameters.cast())? };
-        unsafe { read_unicode_string(handle, params.CommandLine) }
-    })();
-
-    unsafe { CloseHandle(handle) };
-    result
-}
-
-#[cfg(windows)]
-fn windows_command_line_to_argv(command_line: &str) -> Vec<String> {
-    use windows_sys::Win32::Foundation::LocalFree;
-    use windows_sys::Win32::UI::Shell::CommandLineToArgvW;
-
-    let mut wide: Vec<u16> = command_line
-        .encode_utf16()
-        .chain(std::iter::once(0))
-        .collect();
-    let mut argc = 0i32;
-    let argv = unsafe { CommandLineToArgvW(wide.as_mut_ptr(), &mut argc) };
-    if argv.is_null() || argc <= 0 {
-        return command_line
-            .split_whitespace()
-            .map(str::to_string)
-            .collect();
-    }
-
-    let mut args = Vec::with_capacity(argc as usize);
-    let slice = unsafe { std::slice::from_raw_parts(argv, argc as usize) };
-    for &ptr in slice {
-        if ptr.is_null() {
-            continue;
-        }
-        let mut len = 0usize;
-        unsafe {
-            while *ptr.add(len) != 0 {
-                len += 1;
-            }
-            args.push(String::from_utf16_lossy(std::slice::from_raw_parts(
-                ptr, len,
-            )));
-        }
-    }
-    unsafe { LocalFree(argv.cast()) };
-    args
-}
-
-#[cfg(windows)]
 pub fn scan_panes(
     roots: &[(u64, u32)],
     agent_binaries: &[&str],
@@ -954,10 +692,10 @@ pub fn scan_panes(
         return results;
     }
 
-    let entries = windows_process_entries();
+    let entries = paneflow_host::process::windows_process_entries_named().unwrap_or_default();
     let exe_by_pid: std::collections::HashMap<u32, String> = entries
         .iter()
-        .map(|entry| (entry.pid, entry.exe.clone()))
+        .map(|entry| (entry.pid, entry.name.clone()))
         .collect();
     let listen_ports = windows_listen_ports_by_pid();
 
@@ -972,7 +710,7 @@ pub fn scan_panes(
         } else {
             pids.iter()
                 .filter_map(|pid| exe_by_pid.get(pid))
-                .map(|exe| normalize_process_basename(exe).to_string())
+                .map(|exe| crate::agent_launcher::executable_stem(exe).to_string())
                 .collect()
         };
         let agents = agents_in_bfs_order(comms.iter().map(String::as_str), agent_binaries);
@@ -982,10 +720,12 @@ pub fn scan_panes(
             let Some(pid_ports) = listen_ports.get(&pid) else {
                 continue;
             };
-            let argv = argv_of_windows(pid);
+            let argv = paneflow_host::process::process_argv(pid).unwrap_or_default();
             let frontend = classify_frontend_argv(argv.iter().map(String::as_str)).or_else(|| {
                 exe_by_pid.get(&pid).and_then(|exe| {
-                    classify_frontend_argv([normalize_process_basename(exe)].into_iter())
+                    classify_frontend_argv(
+                        [crate::agent_launcher::executable_stem(exe)].into_iter(),
+                    )
                 })
             });
             ports.extend(
@@ -1088,30 +828,10 @@ mod tests {
         assert_eq!(classify_frontend_argv(std::iter::empty()), None);
     }
 
-    #[test]
-    fn normalize_process_basename_strips_common_windows_wrappers() {
-        assert_eq!(normalize_process_basename(r"C:\tools\codex.exe"), "codex");
-        assert_eq!(normalize_process_basename("vite.CMD"), "vite");
-        assert_eq!(normalize_process_basename("vite.cmd"), "vite");
-        assert_eq!(normalize_process_basename("script.ps1"), "script");
-    }
-
     #[cfg(windows)]
     #[test]
     fn windows_port_from_network_order_decodes_low_word() {
         assert_eq!(windows_port_from_network_order(0x901F), 8080);
-    }
-
-    #[cfg(windows)]
-    #[test]
-    fn windows_command_line_argv_classifies_node_frontend() {
-        let args = windows_command_line_to_argv(
-            r#""C:\Program Files\nodejs\node.exe" "C:\repo\node_modules\.bin\vite" --host"#,
-        );
-        assert_eq!(
-            classify_frontend_argv(args.iter().map(String::as_str)),
-            Some("Vite")
-        );
     }
 
     #[test]
@@ -1138,25 +858,6 @@ mod tests {
             scan.is_empty(),
             "pid 0 is a display-only sentinel and must not scan the system tree"
         );
-    }
-
-    #[test]
-    fn parse_procargs2_extracts_argv_after_exec_path() {
-        let mut buf = Vec::new();
-        buf.extend_from_slice(&2i32.to_ne_bytes());
-        buf.extend_from_slice(b"/usr/local/bin/node\0\0\0\0");
-        buf.extend_from_slice(b"node\0/repo/node_modules/.bin/vite\0");
-        buf.extend_from_slice(b"PATH=/usr/bin\0");
-        assert_eq!(
-            parse_procargs2(&buf),
-            vec![
-                "node".to_string(),
-                "/repo/node_modules/.bin/vite".to_string()
-            ]
-        );
-        assert!(parse_procargs2(&[]).is_empty());
-        assert!(parse_procargs2(&[1, 0, 0]).is_empty());
-        assert!(parse_procargs2(&0i32.to_ne_bytes()).is_empty());
     }
 
     #[cfg(target_os = "macos")]

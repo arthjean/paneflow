@@ -383,22 +383,9 @@ fn first_command_token(command: &str) -> Option<&str> {
     command.split_whitespace().next()
 }
 
-fn command_executable_stem(token: &str) -> &str {
-    let file_name = token.rsplit(['/', '\\']).next().unwrap_or(token);
-    for suffix in [".exe", ".cmd", ".bat"] {
-        if file_name
-            .get(file_name.len().saturating_sub(suffix.len())..)
-            .is_some_and(|tail| tail.eq_ignore_ascii_case(suffix))
-        {
-            return &file_name[..file_name.len() - suffix.len()];
-        }
-    }
-    file_name
-}
-
 fn agent_from_command(command: &str) -> Option<TerminalAgent> {
     let token = first_command_token(command)?;
-    let stem = command_executable_stem(token);
+    let stem = crate::agent_launcher::executable_stem(token);
     TerminalAgent::from_binary(stem)
 }
 
@@ -3101,7 +3088,7 @@ pub(crate) fn upsert_session_state(
     let now = std::time::Instant::now();
     let probe_start = |k: u32| {
         if k <= i32::MAX as u32 {
-            super::event_handlers::pid_start_time(k)
+            paneflow_host::process::process_start_time(k)
         } else {
             None
         }

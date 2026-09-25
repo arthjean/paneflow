@@ -157,7 +157,11 @@ pub fn process_start_time(pid: u32) -> Option<u64> {
 
 #[cfg(target_os = "linux")]
 pub fn process_start_time(pid: u32) -> Option<u64> {
-    let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+    parse_proc_stat_starttime(&std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?)
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn parse_proc_stat_starttime(stat: &str) -> Option<u64> {
     let after_comm = stat.rsplit_once(')')?.1;
     after_comm.split_whitespace().nth(19)?.parse().ok()
 }
@@ -566,14 +570,14 @@ pub struct WindowsProcessTreeTerminationResult {
 
 #[cfg(windows)]
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct WindowsProcessEntry {
+pub struct WindowsProcessEntry {
     pub pid: u32,
     pub parent_pid: u32,
     pub name: String,
 }
 
 #[cfg(windows)]
-pub(crate) fn windows_process_entries_named() -> io::Result<Vec<WindowsProcessEntry>> {
+pub fn windows_process_entries_named() -> io::Result<Vec<WindowsProcessEntry>> {
     use std::mem;
     use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
     use windows_sys::Win32::System::Diagnostics::ToolHelp::{
@@ -945,6 +949,221 @@ pub fn terminate_windows_process_tree(
     WindowsProcessTreeOwner::new(ProcessIdentity::capture(root_pid)).terminate(deadline)
 }
 
+#[cfg(target_os = "linux")]
+pub fn process_argv(pid: u32) -> Option<Vec<String>> {
+    let bytes = std::fs::read(format!("/proc/{pid}/cmdline")).ok()?;
+    let argv = bytes
+        .split(|byte| *byte == 0)
+        .filter(|part| !part.is_empty())
+        .map(|part| String::from_utf8_lossy(part).into_owned())
+        .collect::<Vec<_>>();
+    (!argv.is_empty()).then_some(argv)
+}
+
+#[cfg(target_os = "macos")]
+pub fn process_argv(pid: u32) -> Option<Vec<String>> {
+    parse_procargs2(&kernel_process_arguments(pid)?)
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn parse_procargs2(buffer: &[u8]) -> Option<Vec<String>> {
+    if buffer.len() < 4 {
+        return None;
+    }
+    let argc = i32::from_ne_bytes(buffer[..4].try_into().ok()?);
+    if argc < 1 {
+        return None;
+    }
+    let rest = &buffer[4..];
+    let executable_end = rest.iter().position(|byte| *byte == 0)?;
+    let mut cursor = executable_end;
+    while cursor < rest.len() && rest[cursor] == 0 {
+        cursor += 1;
+    }
+    let mut argv = Vec::with_capacity((argc as usize).min(rest.len()));
+    for _ in 0..argc {
+        let suffix = rest.get(cursor..)?;
+        let end = suffix.iter().position(|byte| *byte == 0)?;
+        if end == 0 {
+            return None;
+        }
+        argv.push(String::from_utf8_lossy(&suffix[..end]).into_owned());
+        cursor = cursor.checked_add(end + 1)?;
+    }
+    Some(argv)
+}
+
+#[cfg(target_os = "macos")]
+fn kernel_process_arguments(pid: u32) -> Option<Vec<u8>> {
+    let mut mib = [libc::CTL_KERN, libc::KERN_PROCARGS2, pid as libc::c_int];
+    let mut size: libc::size_t = 0;
+    if unsafe {
+        libc::sysctl(
+            mib.as_mut_ptr(),
+            3,
+            std::ptr::null_mut(),
+            &mut size,
+            std::ptr::null_mut(),
+            0,
+        )
+    } != 0
+        || size == 0
+    {
+        return None;
+    }
+    let mut buffer = vec![0u8; size];
+    if unsafe {
+        libc::sysctl(
+            mib.as_mut_ptr(),
+            3,
+            buffer.as_mut_ptr().cast::<libc::c_void>(),
+            &mut size,
+            std::ptr::null_mut(),
+            0,
+        )
+    } != 0
+    {
+        return None;
+    }
+    buffer.truncate(size);
+    Some(buffer)
+}
+
+#[cfg(windows)]
+pub fn process_argv(pid: u32) -> Option<Vec<String>> {
+    let command_line = command_line(pid)?;
+    let argv = command_line_to_argv(&command_line);
+    (!argv.is_empty()).then_some(argv)
+}
+
+#[cfg(windows)]
+fn command_line(pid: u32) -> Option<String> {
+    use std::mem;
+    use windows_sys::Wdk::System::Threading::{NtQueryInformationProcess, ProcessBasicInformation};
+    use windows_sys::Win32::Foundation::{CloseHandle, HANDLE, UNICODE_STRING};
+    use windows_sys::Win32::System::Diagnostics::Debug::ReadProcessMemory;
+    use windows_sys::Win32::System::Threading::{
+        OpenProcess, PEB, PROCESS_BASIC_INFORMATION, PROCESS_QUERY_LIMITED_INFORMATION,
+        PROCESS_VM_READ, RTL_USER_PROCESS_PARAMETERS,
+    };
+
+    const MAX_COMMAND_LINE_BYTES: usize = 64 * 1024;
+
+    if pid == 0 {
+        return None;
+    }
+
+    unsafe fn read_remote<T: Copy>(handle: HANDLE, ptr: *const T) -> Option<T> {
+        let mut value: T = unsafe { mem::zeroed() };
+        let mut read = 0usize;
+        let ok = unsafe {
+            ReadProcessMemory(
+                handle,
+                ptr.cast(),
+                (&mut value as *mut T).cast(),
+                mem::size_of::<T>(),
+                &mut read,
+            )
+        };
+        (ok != 0 && read == mem::size_of::<T>()).then_some(value)
+    }
+
+    unsafe fn read_unicode_string(handle: HANDLE, value: UNICODE_STRING) -> Option<String> {
+        let len = value.Length as usize;
+        if len == 0
+            || len > MAX_COMMAND_LINE_BYTES
+            || !len.is_multiple_of(2)
+            || value.Buffer.is_null()
+        {
+            return None;
+        }
+        let mut bytes = vec![0u16; len / 2];
+        let mut read = 0usize;
+        let ok = unsafe {
+            ReadProcessMemory(
+                handle,
+                value.Buffer.cast(),
+                bytes.as_mut_ptr().cast(),
+                len,
+                &mut read,
+            )
+        };
+        (ok != 0 && read == len).then(|| String::from_utf16_lossy(&bytes))
+    }
+
+    let handle =
+        unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_VM_READ, 0, pid) };
+    if handle.is_null() {
+        return None;
+    }
+    let result = (|| {
+        let mut info: PROCESS_BASIC_INFORMATION = unsafe { mem::zeroed() };
+        let status = unsafe {
+            NtQueryInformationProcess(
+                handle,
+                ProcessBasicInformation,
+                (&mut info as *mut PROCESS_BASIC_INFORMATION).cast(),
+                mem::size_of::<PROCESS_BASIC_INFORMATION>() as u32,
+                std::ptr::null_mut(),
+            )
+        };
+        if status < 0 || info.PebBaseAddress.is_null() {
+            return None;
+        }
+        let peb: PEB = unsafe { read_remote(handle, info.PebBaseAddress.cast())? };
+        if peb.ProcessParameters.is_null() {
+            return None;
+        }
+        let parameters: RTL_USER_PROCESS_PARAMETERS =
+            unsafe { read_remote(handle, peb.ProcessParameters.cast())? };
+        unsafe { read_unicode_string(handle, parameters.CommandLine) }
+    })();
+    unsafe { CloseHandle(handle) };
+    result
+}
+
+#[cfg(windows)]
+fn command_line_to_argv(command_line: &str) -> Vec<String> {
+    use windows_sys::Win32::Foundation::LocalFree;
+    use windows_sys::Win32::UI::Shell::CommandLineToArgvW;
+
+    let mut wide: Vec<u16> = command_line
+        .encode_utf16()
+        .chain(std::iter::once(0))
+        .collect();
+    let mut argc = 0i32;
+    let argv = unsafe { CommandLineToArgvW(wide.as_mut_ptr(), &mut argc) };
+    if argv.is_null() || argc <= 0 {
+        return command_line
+            .split_whitespace()
+            .map(str::to_string)
+            .collect();
+    }
+    let mut args = Vec::with_capacity(argc as usize);
+    let slice = unsafe { std::slice::from_raw_parts(argv, argc as usize) };
+    for &ptr in slice {
+        if ptr.is_null() {
+            continue;
+        }
+        let mut len = 0usize;
+        unsafe {
+            while *ptr.add(len) != 0 {
+                len += 1;
+            }
+            args.push(String::from_utf16_lossy(std::slice::from_raw_parts(
+                ptr, len,
+            )));
+        }
+    }
+    unsafe { LocalFree(argv.cast()) };
+    args
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
+pub fn process_argv(_pid: u32) -> Option<Vec<String>> {
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1156,6 +1375,77 @@ mod tests {
             started_at: identity.started_at.map(|t| t.wrapping_add(1)),
         };
         assert!(!stale.is_provably_live());
+    }
+
+    #[test]
+    fn proc_stat_starttime_survives_hostile_comm_names() {
+        let plain = "1234 (zsh) S 1 1234 1234 0 -1 4194304 0 0 0 0 5 3 0 0 20 0 11 0 9876543 123 456 18446744073709551615";
+        assert_eq!(parse_proc_stat_starttime(plain), Some(9876543));
+        let hostile = "1234 (next-server (v15)) S 1 1234 1234 0 -1 4194304 0 0 0 0 5 3 0 0 20 0 11 0 424242 123 456";
+        assert_eq!(parse_proc_stat_starttime(hostile), Some(424242));
+        let split_comm =
+            "4321 (evil) (x) S 1 4321 4321 0 -1 4194304 0 0 0 0 5 3 0 0 20 0 11 0 777777 123 456";
+        assert_eq!(parse_proc_stat_starttime(split_comm), Some(777777));
+        assert_eq!(parse_proc_stat_starttime("1234 (zsh) S 1 1234"), None);
+        assert_eq!(parse_proc_stat_starttime(""), None);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn the_linux_start_time_matches_field_22_of_proc_stat() {
+        let pid = std::process::id();
+        let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).unwrap();
+        let field_22 = stat
+            .rsplit_once(')')
+            .unwrap()
+            .1
+            .split_whitespace()
+            .nth(19)
+            .unwrap();
+        assert_eq!(process_start_time(pid), Some(field_22.parse().unwrap()));
+    }
+
+    #[test]
+    fn parse_procargs2_extracts_argv_after_exec_path() {
+        let mut buf = Vec::new();
+        buf.extend_from_slice(&2i32.to_ne_bytes());
+        buf.extend_from_slice(b"/usr/local/bin/node\0\0\0\0");
+        buf.extend_from_slice(b"node\0/repo/node_modules/.bin/vite\0");
+        buf.extend_from_slice(b"PATH=/usr/bin\0");
+        assert_eq!(
+            parse_procargs2(&buf),
+            Some(vec![
+                "node".to_string(),
+                "/repo/node_modules/.bin/vite".to_string()
+            ])
+        );
+        assert_eq!(parse_procargs2(&[]), None);
+        assert_eq!(parse_procargs2(&[1, 0, 0]), None);
+        assert_eq!(parse_procargs2(&0i32.to_ne_bytes()), None);
+    }
+
+    #[test]
+    fn the_current_process_exposes_its_argv() {
+        let argv = process_argv(std::process::id());
+        if cfg!(any(target_os = "linux", target_os = "macos", windows)) {
+            assert!(argv.is_some_and(|argv| !argv.is_empty()));
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_command_line_argv_splits_quoted_node_frontend() {
+        let args = command_line_to_argv(
+            r#""C:\Program Files\nodejs\node.exe" "C:\repo\node_modules\.bin\vite" --host"#,
+        );
+        assert_eq!(
+            args,
+            vec![
+                r"C:\Program Files\nodejs\node.exe".to_string(),
+                r"C:\repo\node_modules\.bin\vite".to_string(),
+                "--host".to_string(),
+            ]
+        );
     }
 
     #[cfg(windows)]

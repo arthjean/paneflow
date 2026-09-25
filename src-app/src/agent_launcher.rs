@@ -106,8 +106,7 @@ impl TerminalAgent {
             let token = segment
                 .split_whitespace()
                 .find(|token| !is_env_assignment(token))?;
-            let base = token.rsplit(['/', '\\']).next().unwrap_or(token);
-            TerminalAgent::from_binary(strip_windows_exec_suffix(base))
+            TerminalAgent::from_binary(executable_stem(token))
         })
     }
 
@@ -373,7 +372,8 @@ fn is_env_assignment(token: &str) -> bool {
     }
 }
 
-fn strip_windows_exec_suffix(base: &str) -> &str {
+pub(crate) fn executable_stem(token: &str) -> &str {
+    let base = token.rsplit(['/', '\\']).next().unwrap_or(token);
     for suffix in [".exe", ".cmd", ".bat", ".ps1"] {
         if base
             .get(base.len().saturating_sub(suffix.len())..)
@@ -596,6 +596,15 @@ mod tests {
                 agent.display_name()
             );
         }
+    }
+
+    #[test]
+    fn executable_stem_strips_paths_and_windows_wrappers() {
+        assert_eq!(executable_stem(r"C:\tools\codex.exe"), "codex");
+        assert_eq!(executable_stem("vite.CMD"), "vite");
+        assert_eq!(executable_stem("vite.cmd"), "vite");
+        assert_eq!(executable_stem("script.ps1"), "script");
+        assert_eq!(executable_stem("/usr/local/bin/claude"), "claude");
     }
 
     #[test]

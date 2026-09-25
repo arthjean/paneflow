@@ -376,7 +376,7 @@ mod platform {
             if started_at.is_none() {
                 continue;
             }
-            let argv = process_argv(pid);
+            let argv = crate::process::process_argv(pid);
             if crate::process::process_start_time(pid) != started_at {
                 continue;
             }
@@ -459,16 +459,6 @@ mod platform {
         })
     }
 
-    fn process_argv(pid: u32) -> Option<Vec<String>> {
-        let bytes = std::fs::read(format!("/proc/{pid}/cmdline")).ok()?;
-        let argv = bytes
-            .split(|byte| *byte == 0)
-            .filter(|part| !part.is_empty())
-            .map(|part| String::from_utf8_lossy(part).into_owned())
-            .collect::<Vec<_>>();
-        (!argv.is_empty()).then_some(argv)
-    }
-
     #[cfg(test)]
     mod tests {
         use super::*;
@@ -515,7 +505,7 @@ mod platform {
             let Some(name) = process_name(&info) else {
                 continue;
             };
-            let argv = process_argv(pid);
+            let argv = crate::process::process_argv(pid);
             if crate::process::process_start_time(pid) != started_at {
                 continue;
             }
@@ -593,69 +583,6 @@ mod platform {
             String::from_utf8_lossy(&bytes).into_owned()
         })
     }
-
-    fn process_argv(pid: u32) -> Option<Vec<String>> {
-        let buffer = kernel_process_arguments(pid)?;
-        if buffer.len() < 4 {
-            return None;
-        }
-        let argc = i32::from_ne_bytes(buffer[..4].try_into().ok()?);
-        if argc < 1 {
-            return None;
-        }
-        let rest = &buffer[4..];
-        let executable_end = rest.iter().position(|byte| *byte == 0)?;
-        let mut cursor = executable_end;
-        while cursor < rest.len() && rest[cursor] == 0 {
-            cursor += 1;
-        }
-        let mut argv = Vec::with_capacity(argc as usize);
-        for _ in 0..argc {
-            let suffix = rest.get(cursor..)?;
-            let end = suffix.iter().position(|byte| *byte == 0)?;
-            if end == 0 {
-                return None;
-            }
-            argv.push(String::from_utf8_lossy(&suffix[..end]).into_owned());
-            cursor = cursor.checked_add(end + 1)?;
-        }
-        Some(argv)
-    }
-
-    fn kernel_process_arguments(pid: u32) -> Option<Vec<u8>> {
-        let mut mib = [libc::CTL_KERN, libc::KERN_PROCARGS2, pid as libc::c_int];
-        let mut size: libc::size_t = 0;
-        if unsafe {
-            libc::sysctl(
-                mib.as_mut_ptr(),
-                3,
-                std::ptr::null_mut(),
-                &mut size,
-                std::ptr::null_mut(),
-                0,
-            )
-        } != 0
-            || size == 0
-        {
-            return None;
-        }
-        let mut buffer = vec![0u8; size];
-        if unsafe {
-            libc::sysctl(
-                mib.as_mut_ptr(),
-                3,
-                buffer.as_mut_ptr().cast::<libc::c_void>(),
-                &mut size,
-                std::ptr::null_mut(),
-                0,
-            )
-        } != 0
-        {
-            return None;
-        }
-        buffer.truncate(size);
-        Some(buffer)
-    }
 }
 
 #[cfg(windows)]
@@ -677,7 +604,7 @@ mod platform {
             if started_at.is_none() {
                 continue;
             }
-            let argv = process_argv(entry.pid);
+            let argv = crate::process::process_argv(entry.pid);
             if crate::process::process_start_time(entry.pid) != started_at {
                 continue;
             }
@@ -718,135 +645,6 @@ mod platform {
             }
         }
         collected
-    }
-
-    fn process_argv(pid: u32) -> Option<Vec<String>> {
-        let command_line = command_line(pid)?;
-        let argv = command_line_to_argv(&command_line);
-        (!argv.is_empty()).then_some(argv)
-    }
-
-    fn command_line(pid: u32) -> Option<String> {
-        use std::mem;
-        use windows_sys::Wdk::System::Threading::{
-            NtQueryInformationProcess, ProcessBasicInformation,
-        };
-        use windows_sys::Win32::Foundation::{CloseHandle, HANDLE, UNICODE_STRING};
-        use windows_sys::Win32::System::Diagnostics::Debug::ReadProcessMemory;
-        use windows_sys::Win32::System::Threading::{
-            OpenProcess, PEB, PROCESS_BASIC_INFORMATION, PROCESS_QUERY_LIMITED_INFORMATION,
-            PROCESS_VM_READ, RTL_USER_PROCESS_PARAMETERS,
-        };
-
-        const MAX_COMMAND_LINE_BYTES: usize = 64 * 1024;
-
-        if pid == 0 {
-            return None;
-        }
-
-        unsafe fn read_remote<T: Copy>(handle: HANDLE, ptr: *const T) -> Option<T> {
-            let mut value: T = unsafe { mem::zeroed() };
-            let mut read = 0usize;
-            let ok = unsafe {
-                ReadProcessMemory(
-                    handle,
-                    ptr.cast(),
-                    (&mut value as *mut T).cast(),
-                    mem::size_of::<T>(),
-                    &mut read,
-                )
-            };
-            (ok != 0 && read == mem::size_of::<T>()).then_some(value)
-        }
-
-        unsafe fn read_unicode_string(handle: HANDLE, value: UNICODE_STRING) -> Option<String> {
-            let len = value.Length as usize;
-            if len == 0
-                || len > MAX_COMMAND_LINE_BYTES
-                || !len.is_multiple_of(2)
-                || value.Buffer.is_null()
-            {
-                return None;
-            }
-            let mut bytes = vec![0u16; len / 2];
-            let mut read = 0usize;
-            let ok = unsafe {
-                ReadProcessMemory(
-                    handle,
-                    value.Buffer.cast(),
-                    bytes.as_mut_ptr().cast(),
-                    len,
-                    &mut read,
-                )
-            };
-            (ok != 0 && read == len).then(|| String::from_utf16_lossy(&bytes))
-        }
-
-        let handle =
-            unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_VM_READ, 0, pid) };
-        if handle.is_null() {
-            return None;
-        }
-        let result = (|| {
-            let mut info: PROCESS_BASIC_INFORMATION = unsafe { mem::zeroed() };
-            let status = unsafe {
-                NtQueryInformationProcess(
-                    handle,
-                    ProcessBasicInformation,
-                    (&mut info as *mut PROCESS_BASIC_INFORMATION).cast(),
-                    mem::size_of::<PROCESS_BASIC_INFORMATION>() as u32,
-                    std::ptr::null_mut(),
-                )
-            };
-            if status < 0 || info.PebBaseAddress.is_null() {
-                return None;
-            }
-            let peb: PEB = unsafe { read_remote(handle, info.PebBaseAddress.cast())? };
-            if peb.ProcessParameters.is_null() {
-                return None;
-            }
-            let parameters: RTL_USER_PROCESS_PARAMETERS =
-                unsafe { read_remote(handle, peb.ProcessParameters.cast())? };
-            unsafe { read_unicode_string(handle, parameters.CommandLine) }
-        })();
-        unsafe { CloseHandle(handle) };
-        result
-    }
-
-    fn command_line_to_argv(command_line: &str) -> Vec<String> {
-        use windows_sys::Win32::Foundation::LocalFree;
-        use windows_sys::Win32::UI::Shell::CommandLineToArgvW;
-
-        let mut wide: Vec<u16> = command_line
-            .encode_utf16()
-            .chain(std::iter::once(0))
-            .collect();
-        let mut argc = 0i32;
-        let argv = unsafe { CommandLineToArgvW(wide.as_mut_ptr(), &mut argc) };
-        if argv.is_null() || argc <= 0 {
-            return command_line
-                .split_whitespace()
-                .map(str::to_string)
-                .collect();
-        }
-        let mut args = Vec::with_capacity(argc as usize);
-        let slice = unsafe { std::slice::from_raw_parts(argv, argc as usize) };
-        for &ptr in slice {
-            if ptr.is_null() {
-                continue;
-            }
-            let mut len = 0usize;
-            unsafe {
-                while *ptr.add(len) != 0 {
-                    len += 1;
-                }
-                args.push(String::from_utf16_lossy(std::slice::from_raw_parts(
-                    ptr, len,
-                )));
-            }
-        }
-        unsafe { LocalFree(argv.cast()) };
-        args
     }
 }
 

@@ -59,61 +59,14 @@ pub(crate) fn split_pane_at_edge(
     true
 }
 
-#[cfg(any(target_os = "linux", test))]
-fn parse_proc_stat_starttime(stat: &str) -> Option<u64> {
-    let after = stat.rsplit_once(')')?.1;
-    after.split_whitespace().nth(19)?.parse::<u64>().ok()
-}
-
-#[cfg(target_os = "linux")]
-pub(crate) fn pid_start_time(pid: u32) -> Option<u64> {
-    let content = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
-    parse_proc_stat_starttime(&content)
-}
-
-#[cfg(target_os = "macos")]
-pub(crate) fn pid_start_time(pid: u32) -> Option<u64> {
-    use libproc::libproc::bsd_info::BSDInfo;
-    use libproc::libproc::proc_pid::pidinfo;
-    let info = pidinfo::<BSDInfo>(pid as i32, 0).ok()?;
-    Some(
-        info.pbi_start_tvsec
-            .wrapping_mul(1_000_000)
-            .wrapping_add(info.pbi_start_tvusec),
-    )
-}
-
-#[cfg(windows)]
-pub(crate) fn pid_start_time(pid: u32) -> Option<u64> {
-    use windows_sys::Win32::Foundation::{CloseHandle, FILETIME};
-    use windows_sys::Win32::System::Threading::{GetProcessTimes, OpenProcess};
-    const PROCESS_QUERY_LIMITED_INFORMATION: u32 = 0x1000;
-    if pid == 0 {
-        return None;
-    }
-    unsafe {
-        let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
-        if handle.is_null() {
-            return None;
-        }
-        let mut creation: FILETIME = std::mem::zeroed();
-        let mut exit: FILETIME = std::mem::zeroed();
-        let mut kernel: FILETIME = std::mem::zeroed();
-        let mut user: FILETIME = std::mem::zeroed();
-        let ok = GetProcessTimes(handle, &mut creation, &mut exit, &mut kernel, &mut user);
-        let _ = CloseHandle(handle);
-        if ok == 0 {
-            return None;
-        }
-        Some(((creation.dwHighDateTime as u64) << 32) | creation.dwLowDateTime as u64)
-    }
-}
-
 fn pid_matches(pid: u32, pinned_start: Option<u64>) -> bool {
     if !pid_is_alive(pid) {
         return false;
     }
-    match (pinned_start, pid_start_time(pid)) {
+    match (
+        pinned_start,
+        paneflow_host::process::process_start_time(pid),
+    ) {
         (Some(pinned), Some(current)) => pinned == current,
         _ => true,
     }
@@ -1541,7 +1494,7 @@ mod tests {
     use super::{
         announced_port_conflicts, declaration_survives_scan, keep_session_after_surface_purge,
         keep_session_at_shell_prompt, keep_session_without_agent_in_pane,
-        merge_scan_workspace_state, merge_service_label, parse_proc_stat_starttime, port_ownership,
+        merge_scan_workspace_state, merge_service_label, port_ownership,
         stale_sweep_keeps_without_pid_probe,
     };
     use crate::agent_launcher::TerminalAgent;
@@ -1549,16 +1502,6 @@ mod tests {
     use crate::terminal::ServiceInfo;
     use crate::workspace::{PaneScan, PortEntry};
     use std::collections::{HashMap, HashSet};
-
-    #[test]
-    fn proc_stat_starttime_survives_hostile_comm_names() {
-        let plain = "1234 (zsh) S 1 1234 1234 0 -1 4194304 0 0 0 0 5 3 0 0 20 0 11 0 9876543 123 456 18446744073709551615";
-        assert_eq!(parse_proc_stat_starttime(plain), Some(9876543));
-        let hostile = "1234 (next-server (v15)) S 1 1234 1234 0 -1 4194304 0 0 0 0 5 3 0 0 20 0 11 0 424242 123 456";
-        assert_eq!(parse_proc_stat_starttime(hostile), Some(424242));
-        assert_eq!(parse_proc_stat_starttime("1234 (zsh) S 1 1234"), None);
-        assert_eq!(parse_proc_stat_starttime(""), None);
-    }
 
     #[test]
     fn surface_purge_drops_sessions_bound_to_dying_surface() {
@@ -1586,7 +1529,7 @@ mod tests {
         let mut backgrounded = AgentSession::new(TerminalAgent::Codex, AgentState::Thinking);
         backgrounded.surface_id = Some(7);
         let own_pid = std::process::id();
-        backgrounded.proc_start = super::pid_start_time(own_pid);
+        backgrounded.proc_start = paneflow_host::process::process_start_time(own_pid);
         assert!(keep_session_at_shell_prompt(
             7,
             SHELL,
@@ -1623,7 +1566,7 @@ mod tests {
         let mut backgrounded = AgentSession::new(TerminalAgent::Codex, AgentState::Thinking);
         backgrounded.surface_id = Some(7);
         let own_pid = std::process::id();
-        backgrounded.proc_start = super::pid_start_time(own_pid);
+        backgrounded.proc_start = paneflow_host::process::process_start_time(own_pid);
         assert!(keep_session_without_agent_in_pane(
             7,
             SHELL,
