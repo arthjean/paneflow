@@ -17,6 +17,8 @@ mod perf_bench;
 pub(crate) mod save;
 pub(crate) mod view;
 
+use super::render;
+
 pub(crate) fn spawn_blocking_then<V, T, W, A>(cx: &mut gpui::Context<V>, work: W, apply: A)
 where
     V: 'static,
