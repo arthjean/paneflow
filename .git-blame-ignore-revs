@@ -2,3 +2,5 @@
 6614de7b57a0073538eccf9c7eb5f1ce3f4e0714
 # refactor(host): US-041 - split persistent_baseline.rs
 bb12ad87df96a4210167a5971356b0da93d0e497
+# refactor(terminal): US-042 - split ghostty_session.rs
+03f5381a955226296c4622fee90d3f54a9097ca5
