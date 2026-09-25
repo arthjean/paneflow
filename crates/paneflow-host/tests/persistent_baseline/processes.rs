@@ -56,7 +56,7 @@ impl Drop for WorkerProcess {
             "persistent-bench",
             Duration::from_secs(2),
         ) {
-            let _ = control.request("worker.shutdown", json!({"drain_ms": 1000}));
+            let _ = control.request("worker.shutdown", json!({}));
         }
         let deadline = Instant::now() + Duration::from_secs(5);
         while matches!(self.child.try_wait(), Ok(None)) && Instant::now() < deadline {
