@@ -6,6 +6,7 @@
 | Version | Date | Author | Summary |
 |---------|------|--------|---------|
 | 1.0 | 2026-09-24 | Arthur Jean | Initial draft from the read-only audit of main at e15277a0 |
+| 1.1 | 2026-09-25 | Arthur Jean | Move US-016 from EP-002 to EP-006, which already waits on `feat/agents-browser` |
 
 ## Problem Statement
 
@@ -373,7 +374,6 @@ Remove the dependencies, build directives, tracked files, and CI steps that noth
 **Definition of Done:**
 - US-009 to US-014 are DONE.
 - US-015 is DONE or CANCELLED according to OQ-2.
-- US-016 is DONE, or CANCELLED with a follow-up once the `feat/agents-browser` outcome is known.
 - Cargo.lock lists 837 packages or fewer.
 
 #### US-009: Remove the unused `paneflow-app` dependencies left by the ACP chat removal
@@ -512,32 +512,6 @@ Remove the dependencies, build directives, tracked files, and CI steps that noth
   - the two runs of row R19.
 - [ ] Given a run whose file name appears anywhere under `docs/` or `bench/` (`git grep`), when the pruning runs, then that run is kept.
 - [ ] `bench/README.md:5-7` states the retention rule and `:448` is corrected in the same commit.
-
-#### US-016: Resolve the items held by `feat/agents-browser` and the active qualification
-**Description:** As the maintainer, I want the branch-blocked findings resolved once the branch outcome is known so that nothing the branch uses is deleted and nothing orphaned survives.
-
-**Priority:** P2
-**Size:** M (3 pts)
-**Dependencies:** Blocked by US-012, US-024
-
-**External blocker:** `feat/agents-browser` merged into main or abandoned (OQ-12). For `native/libghostty/manifest.toml`, the next libghostty pin bump or the end of the active qualification.
-
-**Acceptance Criteria:**
-- [ ] If the branch merged:
-  - `src-app/Cargo.toml:190-193` (uuid) and `:279-281` (wayland-client, wayland-protocols) describe the browser use;
-  - `icons/moon.svg` stays;
-  - `mcps/` is removed, including the 15 `browser_*.json` manifests;
-  - the drift test `static_manifests_match_runtime_specs` (`crates/paneflow-mcp/src/tools.rs`) is removed, keeping `schemas_use_safe_integer_targets_and_explicit_maxima`.
-- [ ] If the branch was abandoned:
-  - uuid (`:194`), wayland-client and wayland-protocols (`:283-284`), and `icons/moon.svg` are removed;
-  - `mcps/` and the drift test are removed;
-  - Cargo.lock is regenerated.
-- [ ] `packaging/paneflow-release.asc` follows option A of audit row R57:
-  - the cargo-deb asset and the `libghostty-linux.yml:72` filter point at `keys/`;
-  - the copy is deleted;
-  - `keys/README.md:24-35` and `docs/release/linux-signing.md:71-75` are purged.
-- [ ] `native/libghostty/manifest.toml:27` (`emit_mode`) and `:2` (`source_repository`) are removed in the same commit as the next pin bump, never during an active qualification run.
-- [ ] Given an asset still referenced by string on main after the merge, when this story runs, then it is kept, because rust-embed does not report a missing asset at build time.
 
 ---
 
@@ -1036,6 +1010,7 @@ Split the largest mixed-responsibility files into submodules by pure moves. Each
 
 **Definition of Done:**
 - US-040 to US-047 are DONE.
+- US-016 is DONE, or CANCELLED with a follow-up once the `feat/agents-browser` outcome is known.
 - Each split landed as a pure-move commit listed in `.git-blame-ignore-revs`.
 - No production file produced by a split exceeds 2,000 lines, except `host.rs` at 2,700 or fewer.
 
@@ -1199,6 +1174,32 @@ Every story in this epic also satisfies these shared criteria, restated here onc
 - [ ] `scripts/bench-editor.sh` reports within 5% of `bench/editor-baseline.json`.
 - [ ] Manual GUI pass on Linux: editing, selection, scrolling, IME composition, save, and change markers behave as before the split.
 - [ ] Given a caller outside `code/` that `pub(super)` does not reach, when the split is compiled, then that method becomes `pub(crate)` and the PR names the caller; no method becomes `pub`.
+
+#### US-016: Resolve the items held by `feat/agents-browser` and the active qualification
+**Description:** As the maintainer, I want the branch-blocked findings resolved once the branch outcome is known so that nothing the branch uses is deleted and nothing orphaned survives.
+
+**Priority:** P2
+**Size:** M (3 pts)
+**Dependencies:** Blocked by US-012, US-024
+
+**External blocker:** `feat/agents-browser` merged into main or abandoned (OQ-12). For `native/libghostty/manifest.toml`, the next libghostty pin bump or the end of the active qualification.
+
+**Acceptance Criteria:**
+- [ ] If the branch merged:
+  - `src-app/Cargo.toml:190-193` (uuid) and `:279-281` (wayland-client, wayland-protocols) describe the browser use;
+  - `icons/moon.svg` and `icons/file_tree.svg` stay;
+  - `mcps/` is removed, including the 15 `browser_*.json` manifests;
+  - the drift test `static_manifests_match_runtime_specs` (`crates/paneflow-mcp/src/tools.rs`) is removed, keeping `schemas_use_safe_integer_targets_and_explicit_maxima`.
+- [ ] If the branch was abandoned:
+  - uuid (`:194`), wayland-client and wayland-protocols (`:283-284`), `icons/moon.svg`, and `icons/file_tree.svg` are removed;
+  - `mcps/` and the drift test are removed;
+  - Cargo.lock is regenerated.
+- [ ] `packaging/paneflow-release.asc` follows option A of audit row R57:
+  - the cargo-deb asset and the `libghostty-linux.yml:72` filter point at `keys/`;
+  - the copy is deleted;
+  - `keys/README.md:24-35` and `docs/release/linux-signing.md:71-75` are purged.
+- [ ] `native/libghostty/manifest.toml:27` (`emit_mode`) and `:2` (`source_repository`) are removed in the same commit as the next pin bump, never during an active qualification run.
+- [ ] Given an asset still referenced by string on main after the merge, when this story runs, then it is kept, because rust-embed does not report a missing asset at build time.
 
 ## Functional Requirements
 

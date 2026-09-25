@@ -17,9 +17,9 @@
     {
       "id": "EP-002",
       "title": "Dependency, Build, and Tracked-File Hygiene",
-      "status": "BLOCKED",
+      "status": "IN_REVIEW",
       "priority": "P1",
-      "stories_total": 8,
+      "stories_total": 7,
       "stories_done": 5
     },
     {
@@ -51,7 +51,7 @@
       "title": "God-File Splits",
       "status": "TODO",
       "priority": "P2",
-      "stories_total": 8,
+      "stories_total": 9,
       "stories_done": 0
     }
   ],
@@ -241,7 +241,7 @@
     {
       "id": "US-016",
       "title": "Resolve the items held by `feat/agents-browser` and the active qualification",
-      "epic": "EP-002",
+      "epic": "EP-006",
       "status": "BLOCKED",
       "priority": "P2",
       "size": "M",
