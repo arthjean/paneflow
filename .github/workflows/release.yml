@@ -7,12 +7,14 @@ on:
   # matrix (including sign + notarize + dmg + msi + smoke tests) but
   # skip every downstream public side-effect:
   #   - no GitHub Release (`release:` job is gated on RELEASE_MODE)
-  #   - no Homebrew Cask / Winget update (their triggers are
-  #     `release: published`, which never fires when the release job
-  #     is skipped)
+  #   - no Homebrew Cask update (update_cask.yml chains on this
+  #     workflow through `workflow_run` and requires a successful
+  #     `push` run, so a dispatched run is filtered out)
   #   - no APT/RPM repo publish (repo_publish.yml gates on
   #     `workflow_run.event == 'push'`; a workflow_dispatch run
   #     surfaces as `workflow_dispatch` and is filtered out)
+  # Windows ships only as the .msi attached to the GitHub Release, so
+  # skipping the release job also skips Windows distribution.
   # Use case: validate the signing + packaging chain on a branch
   # before cutting a tag. Artifacts land as workflow artifacts with
   # 7-day retention (see the build job's Upload step), and the
@@ -1384,8 +1386,8 @@ jobs:
           # CWD (repo root in the checkout).
           # --nocapture surfaces candle/light output (otherwise cargo-wix
           # swallows LGHT/CNDL errors). The .wxs references License.rtf and
-          # paneflow.ico, which light resolves from the CWD (repo root), so
-          # they carry the packaging/wix/ prefix in main.wxs.
+          # PaneFlow.ico, which light resolves from the CWD (repo root), so
+          # main.wxs names them by their repository paths.
           cargo wix `
             --nocapture `
             --no-build `
@@ -1743,8 +1745,7 @@ jobs:
     # US-003: skip the entire publish chain in dry-run mode. The
     # the downstream `update_cask.yml` workflow is triggered by workflow_run
     # and now requires a successful release workflow, so skipping/failing this
-    # job transitively skips it. Winget manifests are manual templates until
-    # a dedicated winget-pkgs PR workflow is restored. `repo_publish.yml` is
+    # job transitively skips it. `repo_publish.yml` is
     # triggered by `workflow_run` of this workflow but already filters on
     # `workflow_run.event == 'push'` (line ~94 of repo_publish.yml),
     # so a workflow_dispatch run never touches pkg.paneflow.dev.
@@ -3083,8 +3084,8 @@ jobs:
       # Fetch the most recent published stable release as OLD. Selecting
       # the latest non-prerelease ensures the harness exercises the
       # update path users would actually traverse - never a `-rc.N`
-      # build, which `release.published` already excludes from cask /
-      # winget anyway. If no stable release exists yet (first release
+      # build, which update_cask.yml already keeps out of Homebrew.
+      # If no stable release exists yet (first release
       # ever, or first after a long pre-release train) the script's
       # self-bootstrap guard at scripts/test-update-e2e.sh:168 takes
       # over and exits 0 with a "harness no-op" message.

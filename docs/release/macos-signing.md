@@ -39,15 +39,13 @@ as a Gatekeeper smoke test.
 
 ## 2. Entitlements files
 
-Three entitlements plists live under `packaging/macos/`. Each is a
-distinct file so future variant-specific tweaks can land in isolation.
-**The release and nightly variants ship to users; the dev variant is
-local-only and must never be sent to notarytool.**
+Two entitlements plists live under `packaging/macos/`. Only the release
+variant ships to users. **The dev variant is local-only and must never be
+sent to notarytool.**
 
 | File | When to use | Notable keys |
 |---|---|---|
 | `paneflow.entitlements` | Tagged `v*` releases (default for `sign-macos.sh`). | `app-sandbox=false`, `automation.apple-events`, `cs.allow-jit`, `cs.allow-unsigned-executable-memory`. |
-| `paneflow.nightly.entitlements` | Nightly builds shipped under `io.github.arthurdev44.paneflow.nightly`. | Same strict key set as release; forked file so nightly-only entitlements can be added without touching the production file. |
 | `paneflow.dev.entitlements` | **Local only.** Use when you need to attach `lldb` to a signed build on your own machine. | Adds `com.apple.security.get-task-allow=true`. **Notarization rejects any bundle carrying this entitlement** - never use for distribution. |
 
 The `cs.*` block is required for any GPUI / wgpu app under the hardened
@@ -178,6 +176,6 @@ Once signed with the dev entitlements you can `lldb -- dist/PaneFlow.app/Content
 - `.github/workflows/release.yml` - `Detect macOS signing secrets` /
   `Sign macOS .app bundle` / `Notarize + staple macOS .app bundle` /
   `Record unsigned macOS build in job summary` steps.
-- `packaging/macos/paneflow.entitlements`, `paneflow.dev.entitlements`,
-  `paneflow.nightly.entitlements` - the three entitlements variants.
+- `packaging/macos/paneflow.entitlements` (shipped) and
+  `paneflow.dev.entitlements` (local only) - the two entitlements variants.
 - `assets/Info.plist` - release bundle ID `io.github.arthurdev44.paneflow`.

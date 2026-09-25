@@ -2,8 +2,8 @@
 
 Source PNGs for `scripts/build-icons.sh`. Drop your masters here, run the script,
 commit the regenerated outputs under `assets/icons/`, `assets/PaneFlow.icns`,
-`assets/PaneFlow.ico`, `packaging/wix/paneflow.ico`, and
-`src-app/assets/icons/paneflow.png`.
+`assets/PaneFlow.ico`, and `src-app/assets/icons/paneflow.png`. The MSI reads
+`assets/PaneFlow.ico` directly.
 
 | File | Required | Used for |
 |---|---|---|
@@ -21,7 +21,7 @@ cannot be selected accidentally.
 
 ```bash
 bash scripts/build-icons.sh
-git add assets/ packaging/wix/paneflow.ico src-app/assets/icons/paneflow.png
+git add assets/ src-app/assets/icons/paneflow.png
 git commit -m "chore(brand): regenerate icons from master"
 ```
 
@@ -62,9 +62,9 @@ glyph is white and blends in luminosity mode, its contrast against the light
 end of the tile collapsed to 2.1:1. Scaling the inner glyph up to ChatGPT's 79%
 was tried and rejected as well: it reads as crowded.
 
-This geometry is Linux-only. `assets/PaneFlow.ico`, `assets/PaneFlow.icns`,
-`packaging/wix/paneflow.ico` and the rust-embed runtime icon
-`src-app/assets/icons/paneflow.png` all stay on the portable master.
+This geometry is Linux-only. `assets/PaneFlow.ico`, `assets/PaneFlow.icns` and
+the rust-embed runtime icon `src-app/assets/icons/paneflow.png` all stay on the
+portable master.
 
 The repository `README.md` header points at that runtime icon for the same
 reason. Do not repoint it at `assets/icons/paneflow-128.png`: those files are

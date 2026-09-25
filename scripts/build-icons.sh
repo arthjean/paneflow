@@ -15,7 +15,6 @@ MASTER_DIR="$REPO_ROOT/assets/icons/master"
 OUT_ICONS_DIR="$REPO_ROOT/assets/icons"
 OUT_ICNS="$REPO_ROOT/assets/PaneFlow.icns"
 OUT_ICO="$REPO_ROOT/assets/PaneFlow.ico"
-OUT_WIX_ICO="$REPO_ROOT/packaging/wix/paneflow.ico"
 OUT_RUNTIME_ICON="$REPO_ROOT/src-app/assets/icons/paneflow.png"
 
 log()  { printf '%s\n' "$*" >&2; }
@@ -123,7 +122,7 @@ src_for_size() {
 }
 
 mkdir -p "$OUT_ICONS_DIR"
-for size in 16 24 32 48 64 128 256 512; do
+for size in 16 32 48 128 256 512; do
     dst="$OUT_ICONS_DIR/paneflow-${size}.png"
     if [ -n "$MASTER_LINUX" ]; then
         log "  $dst  <- $(basename "$MASTER_LINUX")  (full-bleed, keyline applied)"
@@ -173,10 +172,6 @@ for size in 16 24 32 48 64 128 256; do
 done
 
 run_magick "$IM_BIN" "$TMP_ICO"/{16,24,32,48,64,128,256}.png "$OUT_ICO"
-
-mkdir -p "$(dirname "$OUT_WIX_ICO")"
-cp "$OUT_ICO" "$OUT_WIX_ICO"
-log "  $OUT_WIX_ICO  (mirror of $OUT_ICO for cargo-wix)"
 
 if [ -f "$MASTER_TEMPLATE" ]; then
     log "  $OUT_ICONS_DIR/paneflowTemplate.png + @2x"
