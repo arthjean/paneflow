@@ -63,8 +63,8 @@ boundaries it touched and invalidates the evidence that depends on them:
 | IPC protocol or framing | `crates/paneflow-host/src/{protocol,server,client,control}.rs`, `crates/paneflow-ipc-client/` | W02, W03, W04, W06, W08 on every OS |
 | Terminal engine pin or PTY adapter | `native/libghostty/`, `native/conpty/`, `crates/paneflow-host/src/pty/` | Every cell on the affected OS; W02, W03 on every OS |
 | Worker projection | `crates/paneflow-serve/` | W04 worker cells, W07, W08 on every OS |
-| Desktop entry points | `src-app/src/terminal/host_link.rs`, `src-app/src/app/{hosted_sessions,quit_dialog,close_policy,event_handlers,bootstrap}.rs` | W07 and the D-cells on every OS |
-| Packaging or update relay | `packaging/`, `src-app/src/app/bootstrap.rs`, `src-app/src/app/ipc_handler.rs` | Package preparation and upgrade cells on the affected OS |
+| Desktop entry points | `src-app/src/terminal/host_link.rs`, `src-app/src/app/{hosted_sessions,quit_dialog,close_policy,bootstrap}.rs`, `src-app/src/app/event_handlers/` | W07 and the D-cells on every OS |
+| Packaging or update relay | `packaging/`, `src-app/src/app/bootstrap.rs`, `src-app/src/app/self_update_flow.rs`, `src-app/src/app/ipc_handler/` | Package preparation and upgrade cells on the affected OS |
 | Scripts, fixtures, harness only | `scripts/`, `crates/paneflow-host/src/bin/`, `crates/paneflow-host/tests/` | Nothing, once the new harness passes the seeded-failure test |
 
 A change confined to `#[cfg(test)]` code in a file of this table invalidates

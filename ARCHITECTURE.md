@@ -191,7 +191,7 @@ Two gates decide how much of that pipeline actually runs, and both exist
 because the natural rate of each stage is far above the rate a display can
 show.
 
-**`PublishGate` (`terminal/ghostty_session.rs`), on the runtime thread.**
+**`PublishGate` (`terminal/ghostty_session/publish.rs`), on the runtime thread.**
 Snapshotting the grid and converting it into the neutral `Content` is the
 expensive half of an output batch, and `OUTPUT_BATCH_MAX_TIME` closes a batch
 every millisecond. The gate holds a publication back for two reasons: DEC mode
@@ -538,7 +538,7 @@ child process handle, the canonical `libghostty` terminal, an 8 MiB output
 tail with monotonic byte offsets and the session manifests. Nothing in it
 links GPUI. The desktop no longer spawns a PTY of its own: every terminal view
 resolves a hosted session and attaches to it (see "Attachment and the client
-mirror" below). The in-process runtime in `ghostty_session.rs` is compiled
+mirror" below). The in-process runtime in `ghostty_session/pty_runtime.rs` is compiled
 only under `cfg(test)`, for the perf bench, the Ghostty stress gates and unit
 tests, so `portable-pty` is a dev-dependency of the app and the release binary
 carries none of it.

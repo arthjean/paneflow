@@ -101,9 +101,10 @@ the two you did.
   after checking the manifest hash, and every CI job that runs cargo does the
   same through `.github/actions/fetch-libghostty`.
   The engine still sits behind `TerminalSessionBackend`
-  (`src-app/src/terminal/pty_session.rs`) and `src-app/src/terminal/types.rs`
-  holds the neutral mirrors: keep engine types out of the rest of the app so
-  the renderer keeps a single, stable grid vocabulary. A guard test
+  (`src-app/src/terminal/pty_session/session_backend.rs`) and
+  `src-app/src/terminal/types.rs` holds the neutral mirrors: keep engine types
+  out of the rest of the app so the renderer keeps a single, stable grid
+  vocabulary. A guard test
   (`terminal/types.rs::alacritty_is_absent_from_the_app_crate`) fails if a
   second engine reappears.
 - **The render thread never blocks.** No synchronous file I/O, git subprocess,
