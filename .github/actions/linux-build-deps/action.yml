@@ -22,8 +22,9 @@ runs:
       run: |
         set -euo pipefail
         # Azure's apt mirrors return the odd 5xx or truncated Release file, and
-        # a bare `apt-get update` has no retry of its own. Five jobs share this
-        # step, so one retry loop here covers all of them.
+        # a bare `apt-get update` has no retry of its own. Every Linux cargo job
+        # in run_tests.yml, release.yml, and the libghostty workflows shares
+        # this step, so one retry loop here covers all of them.
         for attempt in 1 2 3; do
           sudo apt-get update && break
           echo "::warning::apt-get update failed (attempt $attempt/3)"

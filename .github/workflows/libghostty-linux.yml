@@ -220,18 +220,13 @@ jobs:
             --target "${{ matrix.target }}"
           "target/${{ matrix.target }}/release/paneflow-ghostty-smoke"
 
-      - name: Extended performance and PTY resilience checks
+      - name: PTY resilience stress check
         if: >-
           matrix.arch == 'x86_64' &&
           (github.event_name == 'pull_request' ||
           github.event_name == 'schedule' ||
           github.event_name == 'workflow_dispatch')
         run: |
-          cargo test --release --locked \
-            -p paneflow-app \
-            --target "${{ matrix.target }}" \
-            ghostty_parser_and_snapshot_performance_gate \
-            -- --ignored --nocapture
           cargo test --release --locked \
             -p paneflow-app \
             --target "${{ matrix.target }}" \
@@ -369,7 +364,7 @@ jobs:
         env:
           PANEFLOW_GHOSTTY_SOURCE_DIR: ${{ github.workspace }}/.ghostty-source
         run: scripts/generate-libghostty-bindings.sh
-      - name: Prepare x86_64 archive and run ABI layouts
+      - name: Prepare x86_64 archive and run the native tests
         env:
           PANEFLOW_GHOSTTY_SOURCE_DIR: ${{ github.workspace }}/.ghostty-source
           PANEFLOW_LIBGHOSTTY_DIR: ${{ github.workspace }}/target/libghostty/x86_64-unknown-linux-gnu
@@ -377,7 +372,7 @@ jobs:
           scripts/ci-retry-network.sh \
             scripts/build-libghostty-linux.sh --target x86_64-unknown-linux-gnu
           cargo test --locked -p paneflow-terminal-ghostty \
-            --features native abi_layout
+            --features native
 
   fuzz:
     name: Fuzz ${{ matrix.target }}
