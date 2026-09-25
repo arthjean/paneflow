@@ -1051,6 +1051,7 @@ mod tests {
         };
         let mut state = WorkerState::new(home.path());
         state.apply_core_snapshot(&snapshot());
+        let agents = host.subscribe_agents();
         let accepted = |kind: &str, name: &str, timestamp: u64| {
             let mut raw = frame(&session, kind, name, json!({}));
             raw["runtime_generation"] = json!(1);
@@ -1058,51 +1059,41 @@ mod tests {
             host.ingest_agent_event(&AgentEvent::from_params(&raw).unwrap())
                 .unwrap()
         };
-        let first = accepted("ai.prompt_submit", "UserPromptSubmit", 10);
-        state
-            .apply_core_event(first.frame.as_ref().unwrap())
-            .unwrap();
+        accepted("ai.prompt_submit", "UserPromptSubmit", 10);
+        let first = agents.frames.try_recv().unwrap();
+        state.apply_core_event(&first).unwrap();
         assert_eq!(state.get(&session).unwrap().status(), "busy");
         let blocked_seed = paneflow_home::host_session_data_dir_in(home.path(), session.as_str())
             .join(hook_assets::SEED_FILE);
         std::fs::remove_file(&blocked_seed).unwrap();
         std::fs::create_dir(&blocked_seed).unwrap();
-        let second = accepted("ai.notification", "PermissionRequest", 11);
-        assert_eq!(second.ack["durable"], false);
-        assert!(second.ack["persistence_error"].as_str().is_some());
+        let second_ack = accepted("ai.notification", "PermissionRequest", 11);
+        assert_eq!(second_ack["durable"], false);
+        assert!(second_ack["persistence_error"].as_str().is_some());
+        let second = agents.frames.try_recv().unwrap();
         let projections = state.apply_core_snapshot(&snapshot());
         assert_eq!(state.get(&session).unwrap().status(), "attention");
         assert_eq!(state.get(&session).unwrap().hook_revision, 2);
         assert!(!projections.is_empty());
-        assert!(
-            state
-                .apply_core_event(first.frame.as_ref().unwrap())
-                .is_none()
-        );
-        assert!(
-            state
-                .apply_core_event(second.frame.as_ref().unwrap())
-                .is_none()
-        );
+        assert!(state.apply_core_event(&first).is_none());
+        assert!(state.apply_core_event(&second).is_none());
         assert_eq!(state.get(&session).unwrap().status(), "attention");
         assert!(state.apply_core_snapshot(&snapshot()).is_empty());
         let mut replacement = WorkerState::new(home.path());
         replacement.rebuild_from_home(home.path());
         assert_eq!(replacement.get(&session).unwrap().hook_revision, 2);
         assert_eq!(replacement.get(&session).unwrap().status(), "attention");
-        let mut stale = AgentEvent::from_params(first.frame.as_ref().unwrap()).unwrap();
+        let mut stale = AgentEvent::from_params(&first).unwrap();
         stale.kind = paneflow_host::agent::AgentEventKind::SessionEnd;
-        assert_eq!(
-            host.ingest_agent_event(&stale).unwrap().ack["accepted"],
-            false
-        );
+        assert_eq!(host.ingest_agent_event(&stale).unwrap()["accepted"], false);
         assert_eq!(host.inspect(&session).unwrap().manifest.hook_revision, 2);
         std::fs::remove_dir(&blocked_seed).unwrap();
         let retry = accepted("ai.notification", "PermissionRequest", 11);
-        assert_eq!(retry.ack["durable"], true);
-        assert_eq!(retry.ack["duplicate"], true);
-        assert!(retry.frame.is_none());
+        assert_eq!(retry["durable"], true);
+        assert_eq!(retry["duplicate"], true);
+        assert!(agents.frames.try_recv().is_err());
         accepted("ai.tool_use", "PreToolUse", 12);
+        agents.frames.try_recv().unwrap();
         let mut replacement = WorkerState::new(home.path());
         replacement.rebuild_from_home(home.path());
         assert_eq!(replacement.get(&session).unwrap().hook_revision, 3);
@@ -1115,12 +1106,10 @@ mod tests {
         );
         background["runtime_generation"] = json!(1);
         background["emitted_at_ms"] = json!(13);
-        let pending = host
-            .ingest_agent_event(&AgentEvent::from_params(&background).unwrap())
+        host.ingest_agent_event(&AgentEvent::from_params(&background).unwrap())
             .unwrap();
-        replacement
-            .apply_core_event(pending.frame.as_ref().unwrap())
-            .unwrap();
+        let pending = agents.frames.try_recv().unwrap();
+        replacement.apply_core_event(&pending).unwrap();
         assert_eq!(replacement.get(&session).unwrap().status(), "busy");
         let mut restored = WorkerState::new(home.path());
         restored.rebuild_from_home(home.path());

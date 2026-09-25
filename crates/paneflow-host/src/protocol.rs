@@ -45,34 +45,6 @@ pub const ERR_OWNERSHIP_UNRESOLVED: i64 = -32033;
 pub const ERR_SHUTTING_DOWN: i64 = -32034;
 pub const ERR_DURABILITY: i64 = -32035;
 
-pub const METHODS: &[&str] = &[
-    "host.hello",
-    "host.status",
-    "host.shutdown",
-    "session.list",
-    "session.create",
-    "session.inspect",
-    "session.stop",
-    "session.restart",
-    "session.remove",
-    "session.attach",
-    "session.output",
-    "session.input",
-    "session.runtime.bind",
-    "session.resize",
-    "session.text",
-    METHOD_AGENT_SNAPSHOT,
-    METHOD_AGENT_EVENT,
-    METHOD_AGENT_FOLLOW,
-    "surface.list",
-    "surface.read",
-    "surface.search",
-    "surface.status",
-    "surface.send_text",
-    "fleet.list",
-    "system.capabilities",
-];
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EngineIdentity {
     pub engine: String,

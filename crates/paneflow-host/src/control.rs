@@ -103,10 +103,6 @@ impl ConnectionAliases {
             .find(|(_, held)| held == session)
             .map(|(alias, _)| *alias)
     }
-
-    pub fn is_empty(&self) -> bool {
-        self.aliases.is_empty()
-    }
 }
 
 pub fn surface_name(summary: &SessionSummary) -> String {
@@ -481,7 +477,6 @@ mod tests {
         let first = SessionId::new();
         let second = SessionId::new();
         let mut aliases = ConnectionAliases::default();
-        assert!(aliases.is_empty());
         assert_eq!(
             resolve_session(&aliases, &json!({"surface_id": 1}))
                 .unwrap_err(),

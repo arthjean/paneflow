@@ -3,7 +3,6 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, SyncSender, TrySendError, sync_channel};
 
 use paneflow_config::schema::{SessionGeneration, SessionId};
-use paneflow_ipc_client::agent::AgentLifecycleEvent;
 use paneflow_ipc_client::ai_hook::{
     LifecycleEventSource, METHOD_EXIT, METHOD_NOTIFICATION, METHOD_PROMPT_SUBMIT,
     METHOD_SESSION_END, METHOD_SESSION_START, METHOD_STOP, METHOD_TOOL_USE,
@@ -169,29 +168,6 @@ impl AgentEvent {
         self.event_source == Some(LifecycleEventSource::Interrupt)
     }
 
-    pub fn lifecycle(&self) -> Option<AgentLifecycleEvent> {
-        match self.kind {
-            AgentEventKind::SessionStart | AgentEventKind::SessionEnd => None,
-            AgentEventKind::PromptSubmit => Some(AgentLifecycleEvent::PromptSubmit),
-            AgentEventKind::ToolUse => Some(AgentLifecycleEvent::ToolUse {
-                tool_name: self.tool_name.clone(),
-            }),
-            AgentEventKind::Notification => Some(AgentLifecycleEvent::Notification {
-                message: self.message.clone(),
-            }),
-            AgentEventKind::Stop => Some(AgentLifecycleEvent::Stop {
-                summary: if self.is_interrupt() {
-                    None
-                } else {
-                    self.summary.clone()
-                },
-            }),
-            AgentEventKind::Exit => Some(AgentLifecycleEvent::Exit {
-                exit_code: self.exit_code.unwrap_or(0),
-            }),
-        }
-    }
-
     pub fn to_frame(&self, generation: SessionGeneration) -> Value {
         json!({
             "type": "event",
@@ -273,6 +249,7 @@ impl AgentBus {
         self.lock().retain(|(held, _)| *held != id);
     }
 
+    #[cfg(test)]
     pub fn subscriber_count(&self) -> usize {
         self.lock().len()
     }
@@ -381,11 +358,6 @@ mod tests {
         }))
         .expect("valid stop");
         assert!(interrupted.is_interrupt());
-        assert_eq!(
-            interrupted.lifecycle(),
-            Some(AgentLifecycleEvent::Stop { summary: None }),
-            "a Ctrl+C never records a completion summary"
-        );
         let frame = interrupted.to_frame(SessionGeneration::FIRST);
         assert_eq!(
             frame["event_source"], "interrupt",
@@ -400,12 +372,6 @@ mod tests {
         }))
         .expect("valid stop");
         assert!(!natural.is_interrupt());
-        assert_eq!(
-            natural.lifecycle(),
-            Some(AgentLifecycleEvent::Stop {
-                summary: Some("done".to_string())
-            })
-        );
         assert!(natural.to_frame(SessionGeneration::FIRST)["event_source"].is_null());
     }
 

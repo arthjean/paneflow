@@ -419,6 +419,7 @@ impl SessionRuntime {
         })
     }
 
+    #[cfg(test)]
     pub fn spawn(
         spec: SpawnSpec,
         generation: SessionGeneration,
@@ -563,6 +564,7 @@ impl SessionRuntime {
         self.ask(Command::BracketedPaste)
     }
 
+    #[cfg(test)]
     pub fn output(&self, from: u64, max: usize) -> Result<OutputSlice, RuntimeError> {
         self.shared
             .stream

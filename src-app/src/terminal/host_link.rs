@@ -1294,7 +1294,7 @@ mod tests {
                     SessionGeneration::FIRST
                 );
                 assert_eq!(host.list(None).len(), records.len());
-                assert_eq!(host.live_session_count(), 0);
+                assert_eq!(host.live_sessions().len(), 0);
             }
         }
         server.stop().unwrap();

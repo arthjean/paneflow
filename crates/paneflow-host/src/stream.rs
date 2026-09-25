@@ -72,10 +72,7 @@ impl OutputStream {
         StreamStatus {
             end_offset: state.end_offset,
             live: state.live,
-            retained_bytes: state
-                .tail
-                .as_ref()
-                .map_or(0, |tail| (tail.end_offset() - tail.start_offset()) as usize),
+            retained_bytes: state.tail.as_ref().map_or(0, OutputTail::retained_bytes),
             allocated_bytes: state.tail.as_ref().map_or(0, OutputTail::allocated_bytes),
         }
     }

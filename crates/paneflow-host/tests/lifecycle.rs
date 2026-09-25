@@ -314,7 +314,7 @@ fn a_gpu_free_client_drives_agents_and_surfaces_while_no_window_is_open() {
         )
         .unwrap();
     assert_eq!(accepted["accepted"], true);
-    assert_eq!(accepted["last_hook"]["tool"], "claude");
+    assert_eq!(accepted["revision"], 1);
     assert!(
         accepted["agent"].is_null(),
         "the core answers with the raw record, never with a reduced state"
@@ -428,7 +428,7 @@ fn a_gpu_free_client_drives_agents_and_surfaces_while_no_window_is_open() {
         let status = transport
             .call("host.status", json!({}))
             .expect("each call opens its own short-lived connection");
-        assert_eq!(status["live_sessions"], 1);
+        assert_eq!(status["resources"]["live_runtimes"], 1);
     }
     assert_eq!(transport.calls(), 2);
 

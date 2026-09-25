@@ -18,8 +18,6 @@ pub const CRITICAL_DEADLINE: Duration = Duration::from_secs(5);
 
 pub const RETRY_INTERVAL: Duration = Duration::from_secs(5);
 
-pub const METADATA_FLUSH_BOUND: Duration = Duration::from_millis(250);
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WriteClass {
     Metadata,
@@ -649,6 +647,8 @@ mod tests {
     use super::*;
     use crate::manifest::{MANIFEST_SCHEMA_VERSION, SessionLaunch, SessionLifecycle};
     use paneflow_config::schema::HostInstanceToken;
+
+    const METADATA_FLUSH_BOUND: Duration = Duration::from_millis(250);
 
     fn sample(session: &SessionId, title: &str) -> SessionManifest {
         SessionManifest {

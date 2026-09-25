@@ -646,11 +646,6 @@ fn without_launch_environment(mut summary: SessionSummary) -> SessionSummary {
     summary
 }
 
-pub struct IngestOutcome {
-    pub ack: Value,
-    pub frame: Option<Value>,
-}
-
 fn receipt_key(event: &AgentEvent) -> u64 {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     event.generation.hash(&mut hasher);
@@ -958,13 +953,6 @@ impl SessionHost {
         self.shutting_down.load(Ordering::Acquire)
     }
 
-    pub fn pending_launches(&self) -> usize {
-        self.lock_sessions()
-            .values()
-            .filter(|record| record.launch.is_some())
-            .count()
-    }
-
     fn write_instance_record(&self) -> Result<(), HostError> {
         let path = paneflow_home::host_instance_record_path_in(&self.home);
         let json = serde_json::to_vec_pretty(&self.identity)
@@ -1221,7 +1209,7 @@ impl SessionHost {
         )
     }
 
-    pub fn ingest_agent_event(&self, event: &AgentEvent) -> Result<IngestOutcome, HostError> {
+    pub fn ingest_agent_event(&self, event: &AgentEvent) -> Result<Value, HostError> {
         let (manifest, seed, durability) = {
             let sessions = self.lock_sessions();
             let record = sessions
@@ -1265,65 +1253,43 @@ impl SessionHost {
                     event.generation,
                     generation
                 );
-                return Ok(IngestOutcome {
-                    ack: json!({
+                return Ok(json!({
                         "accepted": false,
                         "reason": reason,
-                        "session": event.session,
-                        "generation": generation,
                         "revision": guard.hook_revision,
-                    }),
-                    frame: None,
-                });
+                }));
             }
             if guard.host_instance != self.identity.host_instance {
-                return Ok(IngestOutcome {
-                    ack: json!({
+                return Ok(json!({
                         "accepted": false,
                         "reason": "the event belongs to a previous host instance",
-                        "session": event.session,
-                        "generation": generation,
                         "revision": guard.hook_revision,
-                    }),
-                    frame: None,
-                });
+                }));
             }
             if let Some((_, revision)) = ledger.receipts.iter().find(|(held, _)| *held == key) {
                 let revision = *revision;
-                let snapshot = guard.clone();
                 drop(guard);
                 let persistence_error = self
                     .persist(&manifest, &durability, WriteClass::Critical)
                     .err()
                     .map(|error| error.to_string());
-                return Ok(IngestOutcome {
-                    ack: json!({
+                return Ok(json!({
                         "accepted": true,
                         "duplicate": true,
                         "durable": persistence_error.is_none(),
                         "persistence_error": persistence_error,
-                        "session": event.session,
-                        "generation": generation,
                         "revision": revision,
-                        "last_hook": snapshot.last_hook,
-                    }),
-                    frame: None,
-                });
+                }));
             }
             if !paneflow_ipc_client::agent::accepts_event(
                 guard.last_hook.as_ref().and_then(|hook| hook.emitted_at_ms),
                 event.emitted_at_ms,
             ) {
-                return Ok(IngestOutcome {
-                    ack: json!({
+                return Ok(json!({
                         "accepted": false,
                         "reason": "an out-of-order event never replaces newer accepted state",
-                        "session": event.session,
-                        "generation": generation,
                         "revision": guard.hook_revision,
-                    }),
-                    frame: None,
-                });
+                }));
             }
             let received_at_ms = event.received_at_ms.unwrap_or_else(now_ms);
             let revision = guard.hook_revision.saturating_add(1);
@@ -1367,7 +1333,6 @@ impl SessionHost {
             (snapshot, record)
         };
         let revision = snapshot.hook_revision;
-        let generation = snapshot.generation;
         let persistence_error = self
             .persist(&manifest, &durability, WriteClass::Critical)
             .err()
@@ -1376,24 +1341,16 @@ impl SessionHost {
             ledger.receipts.pop_front();
         }
         ledger.receipts.push_back((key, revision));
-        let frame = record.event.clone();
-        if let Some(frame) = frame.as_ref() {
+        if let Some(frame) = record.event.as_ref() {
             self.publish_agent_frame(frame);
         }
         drop(ledger);
-        Ok(IngestOutcome {
-            ack: json!({
+        Ok(json!({
                 "accepted": true,
                 "durable": persistence_error.is_none(),
                 "persistence_error": persistence_error,
-                "session": event.session,
-                "generation": generation,
                 "revision": revision,
-                "received_at_ms": event.received_at_ms,
-                "last_hook": record,
-            }),
-            frame,
-        })
+        }))
     }
 
     pub fn create(&self, request: CreateSession) -> Result<SessionSummary, HostError> {
@@ -2334,6 +2291,7 @@ impl SessionHost {
         self.with_live_runtime(session, None, SessionRuntime::bracketed_paste_enabled)
     }
 
+    #[cfg(test)]
     pub fn output(
         &self,
         session: &SessionId,
@@ -2495,10 +2453,6 @@ impl SessionHost {
             .into_iter()
             .filter(|s| s.owned && s.owns_process())
             .collect()
-    }
-
-    pub fn live_session_count(&self) -> usize {
-        self.live_sessions().len()
     }
 
     pub fn request_shutdown(&self, force: bool) -> Result<ShutdownReport, HostError> {
@@ -3966,17 +3920,21 @@ mod tests {
             }
         }))
         .unwrap();
+        let subscription = host.subscribe_agents();
         let response = host.ingest_agent_event(&accepted).unwrap();
-        assert_eq!(response.ack["accepted"], true);
-        assert_eq!(response.ack["durable"], true);
-        assert_eq!(response.ack["revision"], 1);
-        assert!(response.frame.is_some(), "a fresh event is broadcast");
+        assert_eq!(response["accepted"], true);
+        assert_eq!(response["durable"], true);
+        assert_eq!(response["revision"], 1);
+        assert!(
+            subscription.frames.try_recv().is_ok(),
+            "a fresh event is broadcast"
+        );
         let mut unfenced = accepted.clone();
         unfenced.generation = None;
         let rejected = host.ingest_agent_event(&unfenced).unwrap();
-        assert_eq!(rejected.ack["accepted"], false);
-        assert_eq!(rejected.ack["revision"], 1);
-        assert!(rejected.frame.is_none());
+        assert_eq!(rejected["accepted"], false);
+        assert_eq!(rejected["revision"], 1);
+        assert!(subscription.frames.try_recv().is_err());
         let seed_path = paneflow_home::host_session_data_dir_in(home.path(), session.as_str())
             .join("last-hook-event.json");
         let seed: Value = serde_json::from_slice(&std::fs::read(seed_path).unwrap()).unwrap();
@@ -3992,11 +3950,15 @@ mod tests {
 
         host.stop(&session, None).unwrap();
         host.restart(&session, None).unwrap();
+        while subscription.frames.try_recv().is_ok() {}
         let rejected = host.ingest_agent_event(&accepted).unwrap();
-        assert_eq!(rejected.ack["accepted"], false);
-        assert_eq!(rejected.ack["generation"], 2);
+        assert_eq!(rejected["accepted"], false);
+        assert_eq!(
+            rejected["reason"],
+            "the event names a generation this session has left"
+        );
         assert!(
-            rejected.frame.is_none(),
+            subscription.frames.try_recv().is_err(),
             "a rejected event is never broadcast"
         );
         host.stop(&session, None).unwrap();
@@ -4080,9 +4042,9 @@ mod tests {
         }))
         .unwrap();
         let rejected = host.ingest_agent_event(&event).unwrap();
-        assert_eq!(rejected.ack["accepted"], false);
+        assert_eq!(rejected["accepted"], false);
         assert_eq!(
-            rejected.ack["reason"],
+            rejected["reason"],
             "the event belongs to a previous host instance"
         );
         assert_eq!(host.inspect(&session).unwrap().manifest.hook_revision, 0);
@@ -4715,7 +4677,10 @@ mod tests {
                 sessions.insert(session, record);
             }
         }
-        assert_eq!(host.pending_launches(), MAX_PENDING_LAUNCHES);
+        assert_eq!(
+            host.resource_report().pending_launches,
+            MAX_PENDING_LAUNCHES
+        );
         assert!(matches!(
             host.create(shell_request(80, 24)),
             Err(HostError::Busy(_))
@@ -4919,18 +4884,20 @@ mod tests {
             "kind": "ai.stop", "tool": "claude", "emitted_at_ms": 42,
         }))
         .unwrap();
+        let subscription = host.subscribe_agents();
         let first = host.ingest_agent_event(&event).unwrap();
-        assert_eq!(first.ack["durable"], false);
+        assert_eq!(first["durable"], false);
+        assert!(subscription.frames.try_recv().is_ok());
         let retry = host.ingest_agent_event(&event).unwrap();
-        assert_eq!(retry.ack["durable"], false);
-        assert!(retry.frame.is_none());
+        assert_eq!(retry["durable"], false);
+        assert!(subscription.frames.try_recv().is_err());
         std::fs::remove_dir(&path).unwrap();
         let recovered = host.ingest_agent_event(&event).unwrap();
-        assert_eq!(recovered.ack["durable"], true);
-        assert_eq!(recovered.ack["revision"], first.ack["revision"]);
-        assert!(recovered.frame.is_none());
+        assert_eq!(recovered["durable"], true);
+        assert_eq!(recovered["revision"], first["revision"]);
+        assert!(subscription.frames.try_recv().is_err());
         let seed: Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
-        assert_eq!(seed["revision"], first.ack["revision"]);
+        assert_eq!(seed["revision"], first["revision"]);
         assert!(host.inspect(&session).unwrap().durability_error.is_none());
         host.stop(&session, None).unwrap();
     }
@@ -4949,15 +4916,19 @@ mod tests {
             "hook_payload": {"hook_event_name": "Stop"}
         }))
         .unwrap();
+        let subscription = host.subscribe_agents();
         let first = host.ingest_agent_event(&event).unwrap();
-        assert_eq!(first.ack["revision"], 1);
-        assert!(first.frame.is_some());
+        assert_eq!(first["revision"], 1);
+        assert!(subscription.frames.try_recv().is_ok());
         let retried = host.ingest_agent_event(&event).unwrap();
-        assert_eq!(retried.ack["accepted"], true);
-        assert_eq!(retried.ack["duplicate"], true);
-        assert_eq!(retried.ack["revision"], 1);
-        assert_eq!(retried.ack["durable"], true);
-        assert!(retried.frame.is_none(), "a retry never notifies twice");
+        assert_eq!(retried["accepted"], true);
+        assert_eq!(retried["duplicate"], true);
+        assert_eq!(retried["revision"], 1);
+        assert_eq!(retried["durable"], true);
+        assert!(
+            subscription.frames.try_recv().is_err(),
+            "a retry never notifies twice"
+        );
         assert_eq!(host.inspect(&session).unwrap().manifest.hook_revision, 1);
         let next = crate::agent::AgentEvent::from_params(&json!({
             "session": session,
@@ -4969,8 +4940,8 @@ mod tests {
         }))
         .unwrap();
         let advanced = host.ingest_agent_event(&next).unwrap();
-        assert_eq!(advanced.ack["revision"], 2);
-        assert!(advanced.frame.is_some());
+        assert_eq!(advanced["revision"], 2);
+        assert_eq!(subscription.frames.try_recv().unwrap()["revision"], 2);
         host.stop(&session, None).unwrap();
     }
 
@@ -5009,7 +4980,7 @@ mod tests {
         assert_eq!(first["revision"], 1);
         assert_eq!(second["revision"], 2);
         for thread in threads {
-            assert_eq!(thread.join().unwrap().ack["accepted"], true);
+            assert_eq!(thread.join().unwrap()["accepted"], true);
         }
         assert_eq!(
             host.agent_snapshot()[0]
@@ -5034,7 +5005,7 @@ mod tests {
             "hook_payload": {"hook_event_name": "UserPromptSubmit", "padding": "x".repeat(28 * 1024)},
         })).unwrap();
         let accepted = host.ingest_agent_event(&event).unwrap();
-        assert_eq!(accepted.ack["durable"], true);
+        assert_eq!(accepted["durable"], true);
         let path = crate::manifest::manifest_path(home.path(), &session);
         let size = std::fs::metadata(&path).unwrap().len();
         assert!(size > 48 * 1024 && size <= crate::manifest::MAX_MANIFEST_BYTES);
@@ -5088,13 +5059,11 @@ mod tests {
             .is_none(),
             "a marker for a removed session is dropped at the barrier"
         );
-        let late_seed = crate::manifest::write_last_hook_event(
+        let late_seed = crate::manifest::write_hook_seed(
             home.path(),
             &session,
-            "Stop",
-            None,
-            SessionGeneration::FIRST,
-            1,
+            &crate::manifest::encode_hook_seed("Stop", None, SessionGeneration::FIRST, 1),
+            false,
         );
         assert!(
             late_seed.is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound),

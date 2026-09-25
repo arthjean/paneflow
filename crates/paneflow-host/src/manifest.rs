@@ -329,18 +329,6 @@ pub fn write_hook_seed(
     Ok(path)
 }
 
-pub fn write_last_hook_event(
-    home: &Path,
-    session: &SessionId,
-    hook_event_name: &str,
-    tool_name: Option<&str>,
-    runtime_generation: SessionGeneration,
-    revision: u64,
-) -> io::Result<PathBuf> {
-    let bytes = encode_hook_seed(hook_event_name, tool_name, runtime_generation, revision);
-    write_hook_seed(home, session, &bytes, false)
-}
-
 pub fn remove_session_data(home: &Path, session: &SessionId) {
     let path = paneflow_home::host_session_data_dir_in(home, session.as_str());
     match std::fs::remove_dir_all(&path) {

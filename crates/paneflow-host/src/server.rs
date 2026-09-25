@@ -490,7 +490,7 @@ fn handle_connection(mut wire: Wire, host: Arc<SessionHost>, shutdown: Arc<Atomi
                         host.ingest_agent_event(&event).map_err(DispatchError::Host)
                     });
                 let envelope = match ingested {
-                    Ok(outcome) => result_envelope(&id, outcome.ack),
+                    Ok(ack) => result_envelope(&id, ack),
                     Err(error) => error_to_envelope(&id, error),
                 };
                 let written = wire.write_json(&envelope);
@@ -715,14 +715,8 @@ fn dispatch(host: &SessionHost, method: &str, params: &Value) -> Result<Value, D
     match method {
         "host.hello" => Ok(to_value(host.identity())),
         "host.status" => {
-            let sessions = host.list(None);
-            let live = sessions.iter().filter(|s| s.live).count();
             let resources = host.resource_report();
             Ok(json!({
-                "identity": host.identity(),
-                "sessions": sessions.len(),
-                "live_sessions": live,
-                "methods": protocol::METHODS,
                 "helpers": {
                     "ai_hook_dir": host.helper_dir().map(|dir| dir.display().to_string()),
                 },
@@ -1392,14 +1386,7 @@ mod tests {
         assert_eq!(client.identity().protocol, HOST_PROTOCOL_VERSION);
 
         let status = client.call("host.status", json!({})).unwrap();
-        assert_eq!(status["live_sessions"], 0);
-        assert!(
-            status["methods"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .any(|m| m == "session.attach")
-        );
+        assert_eq!(status["resources"]["live_runtimes"], 0);
 
         let created = client
             .call("session.create", shell_create_params())
@@ -1640,7 +1627,7 @@ mod tests {
         };
         assert_eq!(data["live_sessions"].as_array().unwrap().len(), 1);
         assert_eq!(data["live_sessions"][0]["session"], json!(session));
-        assert!(host.live_session_count() == 1, "nothing was stopped");
+        assert!(host.live_sessions().len() == 1, "nothing was stopped");
 
         let restarted = client.call("session.restart", json!({"session": session}));
         assert_eq!(
@@ -1678,14 +1665,14 @@ mod tests {
         client
             .call("session.create", shell_create_params())
             .unwrap();
-        assert_eq!(host.live_session_count(), 1);
+        assert_eq!(host.live_sessions().len(), 1);
 
         let stopping = client
             .call("host.shutdown", json!({"force": true}))
             .unwrap();
         assert_eq!(stopping["stopping"], true);
         assert_eq!(stopping["ended_sessions"], json!(1));
-        assert_eq!(host.live_session_count(), 0);
+        assert_eq!(host.live_sessions().len(), 0);
 
         let endpoint = server.endpoint().to_path_buf();
         server.stop().unwrap();
@@ -1749,7 +1736,7 @@ mod tests {
             .unwrap_err();
         assert_eq!(refused.code(), Some(ERR_SESSION_LIVE));
         assert!(manifest.is_file(), "a refusal never deletes the record");
-        assert_eq!(host.live_session_count(), 1);
+        assert_eq!(host.live_sessions().len(), 1);
 
         client
             .call("session.stop", json!({"session": session}))
