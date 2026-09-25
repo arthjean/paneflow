@@ -24,11 +24,14 @@ pub mod fleet_search;
 pub(crate) mod host_agents;
 pub(crate) mod hosted_sessions;
 pub mod ipc_handler;
+#[cfg(target_os = "macos")]
+pub mod macos_menu;
 pub mod notifications;
 pub mod pane_palette;
 pub mod pull_request;
 pub mod quit_dialog;
 pub mod recents;
+pub mod render;
 pub mod self_update_flow;
 pub mod session;
 pub mod sessions_sidebar;
@@ -42,6 +45,7 @@ pub mod theme_selection;
 pub mod title_bar_menus;
 pub mod welcome;
 pub mod win_timer;
+pub mod window;
 pub mod workspace_ops;
 pub mod worktree_remove;
 

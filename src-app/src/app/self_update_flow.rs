@@ -1,10 +1,7 @@
 use gpui::{ClipboardItem, Context, Window};
 
 use crate::window_chrome::title_bar::UpdateCheckPill;
-use crate::{
-    DismissUpdate, PaneFlowApp, StartSelfUpdate, TOAST_HOLD_MS, ToastAction,
-    system_package_update_command, update,
-};
+use crate::{DismissUpdate, PaneFlowApp, StartSelfUpdate, TOAST_HOLD_MS, ToastAction, update};
 use update::checker::UpdateStatus;
 
 const DOWNLOAD_WATCHDOG: std::time::Duration = std::time::Duration::from_secs(15 * 60);
@@ -649,6 +646,95 @@ impl PaneFlowApp {
         self.self_update.update_attempt_count = 0;
         cx.notify();
         self.try_auto_kickoff_install(cx);
+    }
+
+    #[cfg(target_os = "linux")]
+    pub(in crate::app) fn schedule_coexistence_toast(
+        install_method: &update::install_method::InstallMethod,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(report) = update::migrations::detect_coexistent_install(install_method) {
+            log::info!(
+                "paneflow: coexistent install detected - running from {} (this install); other install at {} (installed via {})",
+                report.running_path.display(),
+                report.other_path.display(),
+                report.other_method_label,
+            );
+            if let Some(home) = std::env::var_os("HOME").map(std::path::PathBuf::from) {
+                let marker_path = update::migrations::coexistence_marker_path(&home);
+                if update::migrations::coexistence_toast_due(&marker_path) {
+                    let message = format!(
+                        "Two PaneFlow installs detected. Running from {} (this install); other install at {} (installed via {}). Remove the unused install to avoid version drift.",
+                        report.running_path.display(),
+                        report.other_path.display(),
+                        report.other_method_label,
+                    );
+                    let actions = vec![crate::ToastAction::OpenReleasesPage(
+                        "https://paneflow.dev/download#multiple-installs".to_string(),
+                    )];
+                    let hold_ms = crate::TOAST_HOLD_MS * 4;
+                    cx.spawn(
+                        async move |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
+                            smol::Timer::after(std::time::Duration::from_millis(1)).await;
+                            let pushed = cx
+                                .update(|cx| {
+                                    this.update(cx, |app: &mut Self, cx: &mut Context<Self>| {
+                                        app.push_toast(message, actions, hold_ms, cx);
+                                    })
+                                })
+                                .is_ok();
+                            if pushed {
+                                update::migrations::write_coexistence_marker(&marker_path);
+                            }
+                        },
+                    )
+                    .detach();
+                }
+            }
+        }
+    }
+
+    pub(in crate::app) fn schedule_release_toast(cx: &mut Context<Self>) {
+        if let Some(version) = update::release_notes::upgraded_version() {
+            log::info!("paneflow: first launch on {version} - raising the release toast");
+            cx.spawn(
+                async move |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
+                    smol::Timer::after(std::time::Duration::from_millis(
+                        crate::app::constants::RELEASE_TOAST_DELAY_MS,
+                    ))
+                    .await;
+                    let _ = cx.update(|cx| {
+                        this.update(cx, |app: &mut Self, cx: &mut Context<Self>| {
+                            app.show_release_notes_toast(&version, cx);
+                        })
+                    });
+                },
+            )
+            .detach();
+        }
+    }
+}
+
+pub(crate) fn system_package_update_command(
+    manager: Option<&update::install_method::PackageManager>,
+    version: &str,
+) -> String {
+    match manager {
+        Some(update::install_method::PackageManager::Apt) => {
+            format!("sudo apt update && sudo apt install paneflow={version}-1")
+        }
+        Some(update::install_method::PackageManager::Dnf) => {
+            format!("sudo dnf --refresh install paneflow-{version}")
+        }
+        Some(update::install_method::PackageManager::Zypper) => {
+            format!(
+                "sudo zypper --non-interactive --gpg-auto-import-keys refresh && sudo zypper --non-interactive install --no-recommends --force paneflow={version}"
+            )
+        }
+        Some(update::install_method::PackageManager::RpmOstree) => "rpm-ostree upgrade".to_string(),
+        Some(update::install_method::PackageManager::Other) | None => {
+            "Update PaneFlow via your system's package manager".to_string()
+        }
     }
 }
 

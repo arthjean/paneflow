@@ -1,4 +1,5 @@
 mod focus;
+mod git_watch;
 mod layout;
 mod swap;
 mod tab;
