@@ -3,7 +3,6 @@ id = "dev.mariozechner.pi"
 slug = "pi"
 label = "Pi"
 platforms = ["linux", "macos"]
-capabilities = []
 
 [display]
 order = 3
@@ -26,17 +25,11 @@ fallback = "none"
 escape_cancels_turn = false
 attention_clears_on_output = true
 anchor_start_event_to_output = true
-terminal_title_signal = false
 
 [integration]
 summary = "Pi reports turn activity through the Paneflow status extension; its stream is not a lifecycle authority."
 hook_adapter = "pi"
 
-[install]
-command = "npm install -g @mariozechner/pi-coding-agent"
-
 [[suggested_presets]]
 id = "pi"
-label = "Pi"
 command = "pi"
-quick_launch = true

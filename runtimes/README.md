@@ -15,7 +15,6 @@ Required top-level fields:
 - `slug`: identical to the package directory name
 - `label`: user-facing name
 - `platforms`: any of `linux`, `macos`, and `windows`
-- `capabilities`: any of `lifecycle_hooks`, `screen_activity`, `terminal_title_signal`, and `integration_install`
 
 `[display]` defines the unique `order`, `tint` as optional `#RRGGBB`, `icon_asset_path`, `icon_multicolor`, and the existing `visibility_config_key`.
 
@@ -23,15 +22,13 @@ Required top-level fields:
 
 `[environment]` defines `strip_inherited`, the provider environment variables that must not leak into a nested launch.
 
-`[lifecycle]` defines `source`, `authority`, `fallback`, `escape_cancels_turn`, `attention_clears_on_output`, `anchor_start_event_to_output`, and `terminal_title_signal`. `fallback = "screen"` requires `[screen]`. `authority = "none"` requires `fallback = "none"`. A runtime may still declare a hook adapter with `authority = "none"` when its hook stream is partial enough that the reducer must not trust it as the sole source.
+`[lifecycle]` defines `source`, `authority`, `fallback`, `escape_cancels_turn`, `attention_clears_on_output`, and `anchor_start_event_to_output`. `fallback = "screen"` requires `[screen]`. `authority = "none"` requires `fallback = "none"`. A runtime may still declare a hook adapter with `authority = "none"` when its hook stream is partial enough that the reducer must not trust it as the sole source.
 
 Optional `[screen]` rules contain non-empty `working` and `idle_prompt` pattern arrays. Matching is case-insensitive against the rendered viewport.
 
 `[integration]` defines a user-facing `summary`, optional `post_install_step`, and the existing hook adapter. A new detection-only runtime uses `hook_adapter = "none"`; adding a new provider-specific hook adapter is an explicit core change.
 
-`[install]` contains the provider install `command`. It may be empty when Paneflow does not publish an install recipe.
-
-Each `[[suggested_presets]]` entry defines `id`, `label`, `command`, and `quick_launch`. The first preset is the built-in launch command and its id remains the persisted Paneflow agent tag. A descriptor remains available for labels, colors, icons, and detection on every target, while launch presets are offered only on declared platforms.
+Each `[[suggested_presets]]` entry defines `id` and `command`. The first preset is the built-in launch command and its id remains the persisted Paneflow agent tag. A descriptor remains available for labels, colors, icons, and detection on every target, while launch presets are offered only on declared platforms.
 
 ## Validation
 

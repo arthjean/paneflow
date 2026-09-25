@@ -3,7 +3,6 @@ id = "com.google.gemini-cli"
 slug = "gemini"
 label = "Gemini"
 platforms = ["linux", "macos", "windows"]
-capabilities = ["lifecycle_hooks", "screen_activity", "integration_install"]
 
 [display]
 order = 8
@@ -26,7 +25,6 @@ fallback = "screen"
 escape_cancels_turn = true
 attention_clears_on_output = true
 anchor_start_event_to_output = true
-terminal_title_signal = false
 
 [screen]
 working = ["esc to cancel"]
@@ -36,11 +34,6 @@ idle_prompt = ["Type your message", "> Type your message"]
 summary = "Installs Paneflow lifecycle hooks in Gemini CLI's global settings."
 hook_adapter = "gemini"
 
-[install]
-command = "npm install -g @google/gemini-cli"
-
 [[suggested_presets]]
 id = "gemini"
-label = "Gemini"
 command = "gemini"
-quick_launch = false

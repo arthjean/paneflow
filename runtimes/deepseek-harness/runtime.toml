@@ -3,7 +3,6 @@ id = "ai.deepseek.harness"
 slug = "deepseek-harness"
 label = "DeepSeek Harness"
 platforms = ["linux", "macos"]
-capabilities = []
 
 [display]
 order = 16
@@ -27,17 +26,11 @@ fallback = "none"
 escape_cancels_turn = false
 attention_clears_on_output = true
 anchor_start_event_to_output = true
-terminal_title_signal = false
 
 [integration]
 summary = "DeepSeek Harness reports turn activity through the Claude Code hooks bridge; its stream is not a lifecycle authority."
 hook_adapter = "dsh"
 
-[install]
-command = ""
-
 [[suggested_presets]]
 id = "deepseek_harness"
-label = "DeepSeek Harness"
 command = "dsh --profile tui"
-quick_launch = false

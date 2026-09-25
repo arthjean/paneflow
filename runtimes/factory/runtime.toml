@@ -3,7 +3,6 @@ id = "com.factory.droid"
 slug = "factory"
 label = "Factory"
 platforms = ["linux", "macos"]
-capabilities = []
 
 [display]
 order = 13
@@ -26,17 +25,11 @@ fallback = "none"
 escape_cancels_turn = false
 attention_clears_on_output = true
 anchor_start_event_to_output = true
-terminal_title_signal = false
 
 [integration]
 summary = "Factory Droid has no Paneflow lifecycle hook integration."
 hook_adapter = "none"
 
-[install]
-command = ""
-
 [[suggested_presets]]
 id = "factory"
-label = "Factory"
 command = "droid"
-quick_launch = false

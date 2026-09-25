@@ -3,7 +3,6 @@ id = "ai.opencode.cli"
 slug = "opencode"
 label = "OpenCode"
 platforms = ["linux", "macos"]
-capabilities = ["lifecycle_hooks", "integration_install"]
 
 [display]
 order = 2
@@ -26,17 +25,11 @@ fallback = "none"
 escape_cancels_turn = false
 attention_clears_on_output = true
 anchor_start_event_to_output = true
-terminal_title_signal = false
 
 [integration]
 summary = "Installs the Paneflow lifecycle plugin in OpenCode's global configuration."
 hook_adapter = "opencode"
 
-[install]
-command = "npm install -g opencode-ai"
-
 [[suggested_presets]]
 id = "opencode"
-label = "OpenCode"
 command = "opencode"
-quick_launch = true

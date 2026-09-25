@@ -3,7 +3,6 @@ id = "com.tencent.codebuddy"
 slug = "codebuddy"
 label = "CodeBuddy"
 platforms = ["linux", "macos"]
-capabilities = ["lifecycle_hooks", "integration_install"]
 
 [display]
 order = 12
@@ -26,17 +25,11 @@ fallback = "none"
 escape_cancels_turn = false
 attention_clears_on_output = true
 anchor_start_event_to_output = true
-terminal_title_signal = false
 
 [integration]
 summary = "Installs Paneflow lifecycle hooks in CodeBuddy's project settings."
 hook_adapter = "codebuddy"
 
-[install]
-command = ""
-
 [[suggested_presets]]
 id = "codebuddy"
-label = "CodeBuddy"
 command = "codebuddy"
-quick_launch = false

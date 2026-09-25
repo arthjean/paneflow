@@ -3,7 +3,6 @@ id = "com.cursor.agent"
 slug = "cursor-agent"
 label = "Cursor"
 platforms = ["linux", "macos"]
-capabilities = ["lifecycle_hooks", "integration_install"]
 
 [display]
 order = 7
@@ -26,17 +25,11 @@ fallback = "none"
 escape_cancels_turn = false
 attention_clears_on_output = true
 anchor_start_event_to_output = true
-terminal_title_signal = false
 
 [integration]
 summary = "Installs Paneflow lifecycle hooks in Cursor Agent's global configuration."
 hook_adapter = "cursor"
 
-[install]
-command = ""
-
 [[suggested_presets]]
 id = "cursor"
-label = "Cursor"
 command = "cursor-agent"
-quick_launch = false

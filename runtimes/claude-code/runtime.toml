@@ -3,7 +3,6 @@ id = "com.anthropic.claude-code"
 slug = "claude-code"
 label = "Claude Code"
 platforms = ["linux", "macos", "windows"]
-capabilities = ["lifecycle_hooks", "screen_activity", "terminal_title_signal", "integration_install"]
 
 [display]
 order = 0
@@ -27,7 +26,6 @@ fallback = "screen"
 escape_cancels_turn = true
 attention_clears_on_output = true
 anchor_start_event_to_output = true
-terminal_title_signal = true
 
 [screen]
 working = ["… (", "esc to interrupt"]
@@ -37,11 +35,6 @@ idle_prompt = ["❯"]
 summary = "Installs Paneflow lifecycle hooks in Claude Code's global settings."
 hook_adapter = "claude"
 
-[install]
-command = "curl -fsSL https://claude.ai/install.sh | bash"
-
 [[suggested_presets]]
 id = "claude_code"
-label = "Claude Code"
 command = "claude"
-quick_launch = true

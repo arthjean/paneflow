@@ -40,10 +40,6 @@ pub fn render_hook_command(path: &Path, event: &str) -> String {
     }
 }
 
-pub fn render_bare_hook_command(event: &str) -> String {
-    render_hook_command(Path::new(HOOK_PROGRAM), event)
-}
-
 #[cfg(windows)]
 fn powershell_single_quoted(value: &str) -> String {
     format!("'{}'", value.replace('\'', "''"))

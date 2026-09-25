@@ -8,13 +8,12 @@ description = "Dependency-light shared primitives for safely editing coding-agen
 
 [features]
 default = ["config-io"]
-config-io = ["dep:dirs", "dep:paneflow-home", "dep:tempfile"]
+config-io = ["dep:dirs", "dep:paneflow-home"]
 
 [dependencies]
 dirs = { workspace = true, optional = true }
 paneflow-home = { workspace = true, optional = true }
 serde_json.workspace = true
-tempfile = { workspace = true, optional = true }
 
 [build-dependencies]
 serde = { workspace = true, features = ["derive"] }
@@ -22,6 +21,7 @@ toml = "0.8"
 
 [dev-dependencies]
 serde = { workspace = true, features = ["derive"] }
+tempfile.workspace = true
 toml = "0.8"
 
 [lints]

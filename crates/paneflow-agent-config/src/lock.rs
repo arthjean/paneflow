@@ -52,11 +52,6 @@ fn acquire_lock(lock_path: &Path, target: &Path, timeout: Duration) -> Result<Co
     }
 }
 
-pub fn with_config_lock<T>(path: &Path, operation: impl FnOnce() -> Result<T>) -> Result<T> {
-    let _lock = lock_config(path)?;
-    operation()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

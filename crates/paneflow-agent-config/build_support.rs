@@ -13,14 +13,12 @@ pub struct Descriptor {
     pub slug: String,
     pub label: String,
     pub platforms: Vec<Platform>,
-    pub capabilities: Vec<String>,
     pub display: Display,
     pub detection: Detection,
     pub environment: Environment,
     pub lifecycle: Lifecycle,
     pub screen: Option<Screen>,
     pub integration: Integration,
-    pub install: Install,
     pub suggested_presets: Vec<SuggestedPreset>,
 }
 
@@ -65,7 +63,6 @@ pub struct Lifecycle {
     pub escape_cancels_turn: bool,
     pub attention_clears_on_output: bool,
     pub anchor_start_event_to_output: bool,
-    pub terminal_title_signal: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
@@ -80,7 +77,6 @@ pub enum LifecycleSource {
 #[serde(rename_all = "snake_case")]
 pub enum LifecycleAuthority {
     Complete,
-    Partial,
     None,
 }
 
@@ -126,17 +122,9 @@ pub enum HookAdapter {
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct Install {
-    pub command: String,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct SuggestedPreset {
     pub id: String,
-    pub label: String,
     pub command: String,
-    pub quick_launch: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -332,23 +320,9 @@ fn validate(descriptors: &[LocatedDescriptor]) -> Result<(), String> {
             ));
         }
         for preset in &runtime.suggested_presets {
-            if preset.id.is_empty() || preset.label.is_empty() || preset.command.is_empty() {
+            if preset.id.is_empty() || preset.command.is_empty() {
                 errors.push(format!(
                     "{}: suggested_presets fields must not be empty",
-                    path.display()
-                ));
-            }
-        }
-        for capability in &runtime.capabilities {
-            if !matches!(
-                capability.as_str(),
-                "lifecycle_hooks"
-                    | "screen_activity"
-                    | "terminal_title_signal"
-                    | "integration_install"
-            ) {
-                errors.push(format!(
-                    "{}: capabilities contains unknown value '{capability}'",
                     path.display()
                 ));
             }
@@ -414,11 +388,7 @@ pub fn generate_catalog(descriptors: &[LocatedDescriptor]) -> Result<String, Str
             "id: {:?}, slug: {:?}, label: {:?},\n",
             runtime.id, runtime.slug, runtime.label
         ));
-        output.push_str(&format!(
-            "platforms: &{}, capabilities: &{},\n",
-            platforms(&runtime.platforms),
-            strings(&runtime.capabilities)
-        ));
+        output.push_str(&format!("platforms: &{},\n", platforms(&runtime.platforms)));
         output.push_str(&format!(
             "display: RuntimeDisplay {{ order: {}, tint: {tint}, icon_asset_path: {:?}, icon_multicolor: {}, visibility_config_key: {:?} }},\n",
             runtime.display.order,
@@ -437,14 +407,13 @@ pub fn generate_catalog(descriptors: &[LocatedDescriptor]) -> Result<String, Str
             strings(&runtime.environment.strip_inherited)
         ));
         output.push_str(&format!(
-            "lifecycle: RuntimeLifecycle {{ source: RuntimeLifecycleSource::{}, authority: RuntimeLifecycleAuthority::{}, fallback: RuntimeLifecycleFallback::{}, escape_cancels_turn: {}, attention_clears_on_output: {}, anchor_start_event_to_output: {}, terminal_title_signal: {} }},\n",
+            "lifecycle: RuntimeLifecycle {{ source: RuntimeLifecycleSource::{}, authority: RuntimeLifecycleAuthority::{}, fallback: RuntimeLifecycleFallback::{}, escape_cancels_turn: {}, attention_clears_on_output: {}, anchor_start_event_to_output: {} }},\n",
             source(runtime.lifecycle.source),
             authority(runtime.lifecycle.authority),
             fallback(runtime.lifecycle.fallback),
             runtime.lifecycle.escape_cancels_turn,
             runtime.lifecycle.attention_clears_on_output,
-            runtime.lifecycle.anchor_start_event_to_output,
-            runtime.lifecycle.terminal_title_signal
+            runtime.lifecycle.anchor_start_event_to_output
         ));
         match &runtime.screen {
             Some(screen) => output.push_str(&format!(
@@ -460,15 +429,11 @@ pub fn generate_catalog(descriptors: &[LocatedDescriptor]) -> Result<String, Str
             option_string(runtime.integration.post_install_step.as_deref()),
             hook_adapter(runtime.integration.hook_adapter)
         ));
-        output.push_str(&format!(
-            "install: RuntimeInstall {{ command: {:?} }},\n",
-            runtime.install.command
-        ));
         output.push_str("suggested_presets: &[\n");
         for preset in &runtime.suggested_presets {
             output.push_str(&format!(
-                "RuntimeSuggestedPreset {{ id: {:?}, label: {:?}, command: {:?}, quick_launch: {} }},\n",
-                preset.id, preset.label, preset.command, preset.quick_launch
+                "RuntimeSuggestedPreset {{ id: {:?}, command: {:?} }},\n",
+                preset.id, preset.command
             ));
         }
         output.push_str("] },\n");
@@ -600,7 +565,6 @@ fn source(value: LifecycleSource) -> &'static str {
 fn authority(value: LifecycleAuthority) -> &'static str {
     match value {
         LifecycleAuthority::Complete => "Complete",
-        LifecycleAuthority::Partial => "Partial",
         LifecycleAuthority::None => "None",
     }
 }
@@ -641,7 +605,6 @@ id = "{id}"
 slug = "{slug}"
 label = "Alpha"
 platforms = ["linux"]
-capabilities = []
 
 [display]
 order = 0
@@ -665,20 +628,14 @@ fallback = "none"
 escape_cancels_turn = false
 attention_clears_on_output = true
 anchor_start_event_to_output = true
-terminal_title_signal = false
 
 [integration]
 summary = "None"
 hook_adapter = "none"
 
-[install]
-command = ""
-
 [[suggested_presets]]
 id = "{slug}"
-label = "Alpha"
 command = "{alias}"
-quick_launch = false
 "##
         )
     }
@@ -697,6 +654,56 @@ quick_launch = false
         let error = discover_and_validate(temp.path()).unwrap_err();
         assert!(error.contains("runtime.toml"));
         assert!(error.contains("unknown field"));
+    }
+
+    #[test]
+    fn rejects_every_retired_descriptor_key_by_name() {
+        let base = descriptor("alpha", "com.example.alpha", "alpha");
+        let cases = [
+            (
+                "capabilities",
+                base.replace(
+                    "platforms = [\"linux\"]\n",
+                    "platforms = [\"linux\"]\ncapabilities = []\n",
+                ),
+            ),
+            (
+                "terminal_title_signal",
+                base.replace(
+                    "anchor_start_event_to_output = true\n",
+                    "anchor_start_event_to_output = true\nterminal_title_signal = false\n",
+                ),
+            ),
+            (
+                "install",
+                base.replace(
+                    "[[suggested_presets]]",
+                    "[install]\ncommand = \"\"\n\n[[suggested_presets]]",
+                ),
+            ),
+            (
+                "label",
+                base.replace("id = \"alpha\"\n", "id = \"alpha\"\nlabel = \"Alpha\"\n"),
+            ),
+            (
+                "quick_launch",
+                base.replace(
+                    "command = \"alpha\"\n",
+                    "command = \"alpha\"\nquick_launch = false\n",
+                ),
+            ),
+        ];
+        for (key, text) in cases {
+            assert_ne!(text, base, "{key} fixture did not change");
+            let temp = tempfile::TempDir::new().unwrap();
+            write_runtime(temp.path(), "alpha", &text);
+            let error = discover_and_validate(temp.path()).unwrap_err();
+            assert!(error.contains("runtime.toml"), "{key}: {error}");
+            assert!(
+                error.contains(&format!("unknown field `{key}`")),
+                "{key}: {error}"
+            );
+        }
     }
 
     #[test]

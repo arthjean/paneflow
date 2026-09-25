@@ -3,7 +3,6 @@ id = "ai.hermes.agent"
 slug = "hermes"
 label = "Hermes Agent"
 platforms = ["linux", "macos"]
-capabilities = ["lifecycle_hooks", "integration_install"]
 
 [display]
 order = 4
@@ -26,17 +25,11 @@ fallback = "none"
 escape_cancels_turn = false
 attention_clears_on_output = true
 anchor_start_event_to_output = true
-terminal_title_signal = false
 
 [integration]
 summary = "Installs Paneflow lifecycle hooks in Hermes Agent's global configuration."
 hook_adapter = "hermes"
 
-[install]
-command = ""
-
 [[suggested_presets]]
 id = "hermes"
-label = "Hermes Agent"
 command = "hermes"
-quick_launch = false

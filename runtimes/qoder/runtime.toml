@@ -3,7 +3,6 @@ id = "com.alibaba.qoder-cli"
 slug = "qoder"
 label = "Qoder"
 platforms = ["linux", "macos"]
-capabilities = ["lifecycle_hooks", "integration_install"]
 
 [display]
 order = 14
@@ -27,17 +26,11 @@ fallback = "none"
 escape_cancels_turn = false
 attention_clears_on_output = true
 anchor_start_event_to_output = true
-terminal_title_signal = false
 
 [integration]
 summary = "Installs Paneflow lifecycle hooks in Qoder's project settings."
 hook_adapter = "qoder"
 
-[install]
-command = ""
-
 [[suggested_presets]]
 id = "qoder"
-label = "Qoder"
 command = "qodercli"
-quick_launch = false

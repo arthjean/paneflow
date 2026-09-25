@@ -46,7 +46,6 @@ pub struct AgentResult<K> {
 
 pub type InstallReport = AgentResult<InstallKind>;
 pub type StatusReport = AgentResult<StatusKind>;
-pub type UninstallReport = AgentResult<UninstallKind>;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum OverallState {
@@ -166,10 +165,6 @@ pub fn overall_state(statuses: &[AgentResult<StatusKind>]) -> OverallState {
         return OverallState::NeedsInstall;
     }
     OverallState::AllInstalled
-}
-
-pub fn uninstall_all() -> Vec<AgentResult<UninstallKind>> {
-    uninstall_with(&agents::default_writers())
 }
 
 pub(crate) fn uninstall_with(

@@ -5,7 +5,7 @@ use serde_json::{json, Value};
 
 pub use crate::hook_command::{
     command_program_token, display_hook_program, is_paneflow_hook_command,
-    paneflow_hook_program_token, render_bare_hook_command, render_hook_command, shell_program_path,
+    paneflow_hook_program_token, render_hook_command, shell_program_path,
 };
 
 pub const CLAUDE_HOOK_EVENTS: &[&str] = &[
@@ -158,25 +158,6 @@ pub fn reconcile_hooks(
     root: &mut Value,
     command_for_event: impl Fn(&str) -> String,
 ) -> Result<ReconcileResult, HookConfigError> {
-    validate_shape(root)?;
-    reconcile_valid_matcher_hooks(root, CLAUDE_HOOK_EVENTS, |event| {
-        managed_group_for_command(command_for_event(event))
-    })
-}
-
-pub fn reconcile_hooks_replacing_invalid_container(
-    root: &mut Value,
-    command_for_event: impl Fn(&str) -> String,
-) -> Result<ReconcileResult, HookConfigError> {
-    if !root.is_object() {
-        *root = json!({});
-    }
-    let object = root
-        .as_object_mut()
-        .ok_or_else(|| HookConfigError::invalid("config root must be a JSON object"))?;
-    if object.get("hooks").is_some_and(|hooks| !hooks.is_object()) {
-        object.insert("hooks".into(), json!({}));
-    }
     validate_shape(root)?;
     reconcile_valid_matcher_hooks(root, CLAUDE_HOOK_EVENTS, |event| {
         managed_group_for_command(command_for_event(event))

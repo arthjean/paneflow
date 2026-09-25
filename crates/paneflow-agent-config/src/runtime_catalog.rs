@@ -15,7 +15,6 @@ pub enum RuntimeLifecycleSource {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RuntimeLifecycleAuthority {
     Complete,
-    Partial,
     None,
 }
 
@@ -71,7 +70,6 @@ pub struct RuntimeLifecycle {
     pub escape_cancels_turn: bool,
     pub attention_clears_on_output: bool,
     pub anchor_start_event_to_output: bool,
-    pub terminal_title_signal: bool,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -88,16 +86,9 @@ pub struct RuntimeIntegration {
 }
 
 #[derive(Debug, Clone, Copy)]
-pub struct RuntimeInstall {
-    pub command: &'static str,
-}
-
-#[derive(Debug, Clone, Copy)]
 pub struct RuntimeSuggestedPreset {
     pub id: &'static str,
-    pub label: &'static str,
     pub command: &'static str,
-    pub quick_launch: bool,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -106,14 +97,12 @@ pub struct Runtime {
     pub slug: &'static str,
     pub label: &'static str,
     pub platforms: &'static [RuntimePlatform],
-    pub capabilities: &'static [&'static str],
     pub display: RuntimeDisplay,
     pub detection: RuntimeDetection,
     pub environment: RuntimeEnvironment,
     pub lifecycle: RuntimeLifecycle,
     pub screen: Option<RuntimeScreen>,
     pub integration: RuntimeIntegration,
-    pub install: RuntimeInstall,
     pub suggested_presets: &'static [RuntimeSuggestedPreset],
 }
 
@@ -177,23 +166,6 @@ pub fn runtime_for_tool(tool: &str) -> Option<&'static Runtime> {
         .or_else(|| runtime_by_slug(tool))
         .or_else(|| runtime_by_process_alias(tool))
         .or_else(|| runtime_by_id(tool))
-}
-
-pub fn runtime_for_integration_install(slug: &str) -> Result<&'static Runtime, String> {
-    let runtime = runtime_by_slug(slug).ok_or_else(|| format!("unknown runtime '{slug}'"))?;
-    if !runtime.capabilities.contains(&"integration_install") {
-        return Err(format!(
-            "{} has no lifecycle integration capability",
-            runtime.label
-        ));
-    }
-    if !runtime.supports_current_platform() {
-        return Err(format!(
-            "{} integration is not supported on this platform",
-            runtime.label
-        ));
-    }
-    Ok(runtime)
 }
 
 #[cfg(test)]
@@ -292,7 +264,6 @@ mod tests {
                 "CLAUDE_PID",
             ]
         );
-        assert!(claude.lifecycle.terminal_title_signal);
         assert_eq!(claude.lifecycle.fallback, RuntimeLifecycleFallback::Screen);
 
         let codex = runtime_by_slug("codex").expect("codex");
@@ -306,7 +277,6 @@ mod tests {
                 "CODEX_TUI_SESSION_LOG_PATH",
             ]
         );
-        assert!(codex.lifecycle.terminal_title_signal);
         assert_eq!(codex.lifecycle.fallback, RuntimeLifecycleFallback::Screen);
 
         let gemini = runtime_by_slug("gemini").expect("gemini");
@@ -321,9 +291,6 @@ mod tests {
             let runtime = runtime_by_slug(slug).expect("runtime");
             assert_eq!(runtime.lifecycle.authority, RuntimeLifecycleAuthority::None);
             assert_eq!(runtime.lifecycle.fallback, RuntimeLifecycleFallback::None);
-            let error = runtime_for_integration_install(slug).expect_err("missing capability");
-            assert!(error.contains(runtime.label));
-            assert!(error.contains("no lifecycle integration capability"));
         }
     }
 

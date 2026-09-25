@@ -3,7 +3,6 @@ id = "com.muse.code"
 slug = "muse-code"
 label = "Muse Code"
 platforms = ["linux", "macos"]
-capabilities = ["lifecycle_hooks", "integration_install"]
 
 [display]
 order = 17
@@ -27,17 +26,11 @@ fallback = "none"
 escape_cancels_turn = true
 attention_clears_on_output = true
 anchor_start_event_to_output = true
-terminal_title_signal = false
 
 [integration]
 summary = "Installs Paneflow lifecycle hooks in Muse Code's global settings."
 hook_adapter = "muse"
 
-[install]
-command = ""
-
 [[suggested_presets]]
 id = "muse"
-label = "Muse Code"
 command = "muse"
-quick_launch = false
