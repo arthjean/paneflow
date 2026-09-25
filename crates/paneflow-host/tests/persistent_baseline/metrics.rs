@@ -6,9 +6,22 @@ pub(super) struct ThreadCpu {
     cpu_ns: u64,
 }
 
-#[allow(dead_code)]
 pub(super) enum Attribution {
+    #[cfg_attr(
+        target_os = "linux",
+        expect(
+            dead_code,
+            reason = "procfs truncates thread names on Linux, so it reports Prefix15"
+        )
+    )]
     Exact(Vec<ThreadCpu>),
+    #[cfg_attr(
+        not(target_os = "linux"),
+        expect(
+            dead_code,
+            reason = "only Linux procfs truncates thread names to 15 bytes"
+        )
+    )]
     Prefix15(Vec<ThreadCpu>),
     Pending(String),
 }
