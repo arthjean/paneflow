@@ -71,13 +71,16 @@ fn installed_host_is_replaceable(restart_path: &Path) -> Result<()> {
         .parent()
         .context("installed application has no directory")?;
     let host = directory.join(paneflow_host::bootstrap::HOST_EXECUTABLE_FILE_NAME);
-    std::fs::OpenOptions::new()
+    match std::fs::OpenOptions::new()
         .read(true)
         .write(true)
         .share_mode(windows_sys::Win32::Storage::FileSystem::FILE_SHARE_READ)
         .open(&host)
-        .with_context(|| format!("{} is in use or cannot be replaced; keep the current version and retry after its sessions stop", host.display()))?;
-    Ok(())
+    {
+        Ok(_) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error).with_context(|| format!("{} is in use or cannot be replaced; keep the current version and retry after its sessions stop", host.display())),
+    }
 }
 
 #[cfg(target_os = "windows")]
@@ -1063,6 +1066,14 @@ mod tests {
         assert!(busy);
         assert!(still_live);
         assert_eq!(std::fs::read(&host).unwrap(), bytes);
+        assert!(installed_host_is_replaceable(&restart).is_ok());
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn installation_preflight_accepts_a_missing_host_binary() {
+        let directory = tempfile::tempdir().unwrap();
+        let restart = directory.path().join("paneflow.exe");
         assert!(installed_host_is_replaceable(&restart).is_ok());
     }
     use super::*;
