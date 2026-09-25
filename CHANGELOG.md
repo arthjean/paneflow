@@ -14,9 +14,15 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
   the MCP bridge find it from `PANEFLOW_HOME`. Such an instance ignores a
   `PANEFLOW_SOCKET_PATH` that points elsewhere unless
   `PANEFLOW_ALLOW_SOCKET_OVERRIDE=1` is also set.
+- A tab title saved with the retired `auto` source in `session.json` now
+  restores as a title the user set.
 
 ### Removed
 
+- The `agent_panel.max_content_width`, `agent_panel.thinking_display`,
+  `agent_panel.profiles`, `agent_panel.default_profile`, and
+  `tool_permissions` keys of `paneflow.json`, which no build read. A config
+  that still sets them loads as if they were absent.
 - The Launch Pad modal, its `open_launch_pad` action and the
   `Cmd/Ctrl+Shift+L` default binding. Creating a branch, its worktree and an
   agent pane in one step lives in the "New pane" palette's **New branch…**

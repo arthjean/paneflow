@@ -69,7 +69,6 @@ impl PaneFlowApp {
                         .collect(),
                     active_tab: ws.active_tab_idx(),
                     legacy_layout: None,
-                    legacy_empty: false,
                     custom_buttons: ws.custom_buttons.clone(),
                     expanded_paths: persisted_expanded_paths(&ws.cwd, &ws.files_expanded),
                     managed_worktrees: ws

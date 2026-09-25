@@ -438,40 +438,15 @@
     },
     "agent_panel": {
       "type": ["object", "null"],
-      "description": "Agents-view display, profile, and notification settings.",
+      "description": "Agents-view notification settings.",
       "additionalProperties": false,
       "properties": {
-        "max_content_width": {
-          "type": ["integer", "null"],
-          "minimum": 320,
-          "maximum": 4000,
-          "default": 760
-        },
-        "thinking_display": {
-          "type": ["string", "null"],
-          "enum": ["Auto", "Preview", "AlwaysExpanded", "AlwaysCollapsed", null],
-          "default": "Auto"
-        },
-        "profiles": {
-          "type": "object",
-          "additionalProperties": { "$ref": "#/definitions/profileConfig" },
-          "default": {}
-        },
-        "default_profile": {
-          "type": ["string", "null"]
-        },
         "notify_when_agent_waiting": {
           "type": ["string", "null"],
           "enum": ["PrimaryScreen", "AllScreens", "Never", null],
           "default": "Never"
         }
       }
-    },
-    "tool_permissions": {
-      "type": "object",
-      "description": "Per-tool always-allow and always-deny input patterns.",
-      "additionalProperties": { "$ref": "#/definitions/toolPermissionsEntry" },
-      "default": {}
     },
     "agent_profiles": {
       "type": "array",
@@ -518,37 +493,6 @@
           "type": "array",
           "items": { "type": "string", "pattern": "^[A-Za-z0-9._=-]+$" },
           "description": "Extra arguments appended after the base agent's own flags. Each token must be a plain shell word: letters, digits, '-', '_', '.', '='.",
-          "default": []
-        }
-      }
-    },
-    "profileConfig": {
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "agent": { "type": ["string", "null"] },
-        "model": { "type": ["string", "null"] },
-        "mode": { "type": ["string", "null"] },
-        "effort": { "type": ["string", "null"] },
-        "tools": {
-          "type": "array",
-          "items": { "type": "string" },
-          "default": []
-        }
-      }
-    },
-    "toolPermissionsEntry": {
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "always_allow": {
-          "type": "array",
-          "items": { "type": "string" },
-          "default": []
-        },
-        "always_deny": {
-          "type": "array",
-          "items": { "type": "string" },
           "default": []
         }
       }

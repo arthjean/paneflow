@@ -83,8 +83,7 @@ JetBrains IDEs, Helix, and other JSON Schema-aware editors:
 | `menu_attention_detection` | boolean/null | `true` | Next viewport scan | Raises the attention badge when an agent draws a numbered select menu, which fires no lifecycle hook. Set to `false` to leave such a session on its hook- or screen-derived state. |
 | `on_quit` | `ask`, `keep`, `stop`, null | `ask` | At quit | What quitting does while hosted sessions run: `ask` opens the quit dialog, `keep` leaves every session running, `stop` stops them all and shuts the host down. With no live session the app exits and shuts the idle host down. |
 | `sidebar_ended_sessions` | `0`, `3`, `5`, `10`, null | `5` | Next sidebar render | How many ended sessions a workspace previews in the sidebar before the rest collapse under one "N more ended sessions" row. Nothing is pruned; the cap only controls the preview. |
-| `agent_panel` | object/null | defaults below | Agents UI | Agents-view display, profiles, and notification preferences. |
-| `tool_permissions` | object | `{}` | Permission checks | Per-tool always-allow and always-deny input patterns. |
+| `agent_panel` | object/null | defaults below | Agents UI | Agents-view notification preferences. |
 | `telemetry` | object/null | `{ "enabled": null }` | Startup/consent | Desktop telemetry consent. `PANEFLOW_NO_TELEMETRY=1` overrides it. |
 
 ## Agent launcher buttons
@@ -133,21 +132,7 @@ CLI binary. `false` hides the button. `true` forces it visible.
 
 | Key | Type | Default | Notes |
 | --- | --- | --- | --- |
-| `agent_panel.max_content_width` | integer/null | `760` | Chat content width in pixels. Range `320` to `4000`. |
-| `agent_panel.thinking_display` | string/null | `Auto` | `Auto`, `Preview`, `AlwaysExpanded`, or `AlwaysCollapsed`. |
-| `agent_panel.profiles` | object | `{}` | Named profile map. Keys are profile names. |
-| `agent_panel.default_profile` | string/null | none | Profile selected by default when present. |
 | `agent_panel.notify_when_agent_waiting` | string/null | `PrimaryScreen` | `PrimaryScreen`, `AllScreens`, or `Never`. |
-
-Profile entries under `agent_panel.profiles` use this shape:
-
-| Key | Type | Default | Notes |
-| --- | --- | --- | --- |
-| `agent_panel.profiles.*.agent` | string/null | none | Preferred agent tag. |
-| `agent_panel.profiles.*.model` | string/null | none | Preferred model label. |
-| `agent_panel.profiles.*.mode` | string/null | none | Preferred mode label. |
-| `agent_panel.profiles.*.effort` | string/null | none | Preferred reasoning-effort label. |
-| `agent_panel.profiles.*.tools` | string array | `[]` | Preferred tool-kind keys shown by the profile. |
 
 ## `worktrees`
 
@@ -223,16 +208,6 @@ with a warning; the other profiles still load.
   ]
 }
 ```
-
-## `tool_permissions`
-
-`tool_permissions` is keyed by tool kind, for example `read`, `edit`,
-or `execute`.
-
-| Key | Type | Default | Notes |
-| --- | --- | --- | --- |
-| `tool_permissions.*.always_allow` | string array | `[]` | Substring patterns that auto-allow matching tool inputs. |
-| `tool_permissions.*.always_deny` | string array | `[]` | Substring patterns that auto-deny matching tool inputs. |
 
 ## `commands`
 
@@ -310,7 +285,6 @@ Surface keys inside a pane:
     "cursor_shape": "block"
   },
   "agent_panel": {
-    "thinking_display": "Auto",
     "notify_when_agent_waiting": "PrimaryScreen"
   },
   "commands": [

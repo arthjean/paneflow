@@ -5,12 +5,6 @@ use std::path::{Path, PathBuf};
 use thiserror::Error;
 use tracing::warn;
 
-pub const APP_SUBDIR: &str = if cfg!(debug_assertions) {
-    "paneflow-dev"
-} else {
-    "paneflow"
-};
-
 const MAX_CONFIG_SIZE_BYTES: u64 = 1 << 20;
 
 #[derive(Debug, Error)]

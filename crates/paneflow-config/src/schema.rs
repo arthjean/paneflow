@@ -47,26 +47,6 @@ mod tests {
 
     #[test]
     fn public_json_schema_covers_every_config_field() {
-        let mut permissions = HashMap::new();
-        permissions.insert(
-            "read".to_string(),
-            ToolPermissionsEntry {
-                always_allow: vec!["src/".to_string()],
-                always_deny: vec!["secrets/".to_string()],
-            },
-        );
-        let mut profiles = HashMap::new();
-        profiles.insert(
-            "Write".to_string(),
-            ProfileConfig {
-                agent: Some("codex".to_string()),
-                model: Some("default".to_string()),
-                mode: Some("default".to_string()),
-                effort: Some("medium".to_string()),
-                tools: vec!["read".to_string()],
-            },
-        );
-
         let config = PaneFlowConfig {
             shortcuts: HashMap::new(),
             default_shell: Some("sh".to_string()),
@@ -150,13 +130,8 @@ mod tests {
                 scrollbar: Some(true),
             }),
             agent_panel: Some(AgentPanelConfig {
-                max_content_width: Some(760),
-                thinking_display: Some(ThinkingDisplayMode::Auto),
-                profiles,
-                default_profile: Some("Write".to_string()),
                 notify_when_agent_waiting: Some(NotifyWhenAgentWaiting::PrimaryScreen),
             }),
-            tool_permissions: permissions,
             agent_profiles: vec![AgentProfileConfig {
                 name: "Claude perso".to_string(),
                 agent: "claude_code".to_string(),
@@ -216,16 +191,6 @@ mod tests {
             object_keys(&serialized["agent_panel"]),
             object_keys(&schema["properties"]["agent_panel"]["properties"]),
             "AgentPanelConfig and public JSON Schema drifted"
-        );
-        assert_eq!(
-            object_keys(&serialized["agent_panel"]["profiles"]["Write"]),
-            object_keys(&schema["definitions"]["profileConfig"]["properties"]),
-            "ProfileConfig and public JSON Schema drifted"
-        );
-        assert_eq!(
-            object_keys(&serialized["tool_permissions"]["read"]),
-            object_keys(&schema["definitions"]["toolPermissionsEntry"]["properties"]),
-            "ToolPermissionsEntry and public JSON Schema drifted"
         );
         assert_eq!(
             object_keys(&serialized["agent_profiles"][0]),
@@ -333,16 +298,6 @@ mod tests {
             &doc,
             &schema["properties"]["agent_panel"]["properties"],
             "agent_panel",
-        );
-        assert_doc_mentions_property_keys(
-            &doc,
-            &schema["definitions"]["profileConfig"]["properties"],
-            "profileConfig",
-        );
-        assert_doc_mentions_property_keys(
-            &doc,
-            &schema["definitions"]["toolPermissionsEntry"]["properties"],
-            "toolPermissionsEntry",
         );
         assert_doc_mentions_property_keys(
             &doc,
@@ -631,46 +586,6 @@ mod tests {
     }
 
     #[test]
-    fn agent_panel_thinking_display_pascal_case_roundtrip() {
-        let raw = r#"{"thinking_display": "Preview"}"#;
-        let cfg: AgentPanelConfig = serde_json::from_str(raw).unwrap();
-        assert_eq!(cfg.thinking_display, Some(ThinkingDisplayMode::Preview));
-
-        let raw = r#"{"thinking_display": "AlwaysExpanded"}"#;
-        let cfg: AgentPanelConfig = serde_json::from_str(raw).unwrap();
-        assert_eq!(
-            cfg.thinking_display,
-            Some(ThinkingDisplayMode::AlwaysExpanded)
-        );
-
-        let raw = r#"{"thinking_display": "AlwaysCollapsed"}"#;
-        let cfg: AgentPanelConfig = serde_json::from_str(raw).unwrap();
-        assert_eq!(
-            cfg.thinking_display,
-            Some(ThinkingDisplayMode::AlwaysCollapsed)
-        );
-
-        let raw = r#"{"thinking_display": "Auto"}"#;
-        let cfg: AgentPanelConfig = serde_json::from_str(raw).unwrap();
-        assert_eq!(cfg.thinking_display, Some(ThinkingDisplayMode::Auto));
-    }
-
-    #[test]
-    fn agent_panel_thinking_display_unknown_falls_back_to_auto() {
-        let raw = r#"{"thinking_display": "Bogus"}"#;
-        let cfg: AgentPanelConfig = serde_json::from_str(raw).unwrap();
-        assert_eq!(cfg.thinking_display, Some(ThinkingDisplayMode::Auto));
-    }
-
-    #[test]
-    fn agent_panel_thinking_display_missing_resolves_to_auto() {
-        let raw = r#"{}"#;
-        let cfg: AgentPanelConfig = serde_json::from_str(raw).unwrap();
-        assert!(cfg.thinking_display.is_none());
-        assert_eq!(cfg.resolved_thinking_display(), ThinkingDisplayMode::Auto);
-    }
-
-    #[test]
     fn cursor_shape_and_blink_config_serde() {
         assert_eq!(CursorShapeConfig::default(), CursorShapeConfig::Block);
         assert_eq!(
@@ -716,7 +631,7 @@ mod tests {
                 "theme": "One Dark",
                 "default_shell": "/bin/zsh",
                 "shortcuts": {"split_right": "cmd-d"},
-                "agent_panel": {"default_profile": "Write"},
+                "agent_panel": {"notify_when_agent_waiting": "AllScreens"},
                 "terminal": {"cursor_shape": "squiggle", "scrollback_lines": 4321}
             }"#,
         )
@@ -733,9 +648,8 @@ mod tests {
         assert_eq!(
             typo.agent_panel
                 .expect("agent_panel block")
-                .default_profile
-                .as_deref(),
-            Some("Write")
+                .notify_when_agent_waiting,
+            Some(NotifyWhenAgentWaiting::AllScreens)
         );
     }
 

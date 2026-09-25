@@ -8,7 +8,6 @@ fn make_workspace(title: &str, cwd: &str, tabs: Vec<TabSession>) -> WorkspaceSes
         tabs,
         active_tab: 0,
         legacy_layout: None,
-        legacy_empty: false,
         custom_buttons: vec![],
         expanded_paths: vec![],
         managed_worktrees: vec![],
@@ -511,7 +510,6 @@ fn test_migrate_v1_preserves_surface_count() {
     assert_eq!(kept.as_deref(), Some("cargo-run"), "the focused one stays");
     assert_eq!(ws.expanded_paths, vec!["src".to_string()]);
     assert!(ws.legacy_layout.is_none());
-    assert!(!ws.legacy_empty);
     assert_eq!(ws.active_tab, 0);
 }
 
@@ -563,17 +561,21 @@ fn test_migrate_v1_null_layout_becomes_default_pane() {
 }
 
 #[test]
-fn test_migrate_v1_empty_marker_becomes_paneless_tab() {
-    let json = r#"{ "version": 1, "active_workspace": 0, "workspaces": [
-        { "title": "main", "cwd": "/tmp", "layout": null, "empty": true }
+fn test_the_retired_empty_workspace_key_is_ignored_on_load() {
+    let without = r#"{ "version": 3, "active_workspace": 0, "workspaces": [
+        { "title": "main", "cwd": "/tmp", "tabs": [
+            { "title": "Terminal 1", "layout": { "type": "pane", "surfaces": [
+                { "surface_type": "terminal", "name": "zsh" }
+            ] } }
+        ] }
     ] }"#;
-    let mut state: SessionState = serde_json::from_str(json).unwrap();
-    migrate_session_v1(&mut state);
-
-    let ws = &state.workspaces[0];
-    assert_eq!(ws.tabs.len(), 1, "FR-01: a workspace always keeps one tab");
-    assert!(ws.tabs[0].layout.is_none(), "and it holds no pane");
-    assert!(!ws.legacy_empty, "the marker is drained");
+    let with = without.replace(r#""cwd": "/tmp","#, r#""cwd": "/tmp", "empty": true,"#);
+    assert_ne!(with, without, "the fixture carries the retired key");
+    let without: SessionState = serde_json::from_str(without).unwrap();
+    let with: SessionState = serde_json::from_str(&with).unwrap();
+    assert_eq!(with, without);
+    let value = serde_json::to_value(&with).unwrap();
+    assert!(value["workspaces"][0].get("empty").is_none());
 }
 
 #[test]
@@ -615,10 +617,10 @@ fn test_tab_title_source_reads_an_explicit_value() {
 }
 
 #[test]
-fn test_the_retired_auto_value_reads_as_preset() {
+fn test_the_retired_auto_value_reads_as_user() {
     let tab: TabSession =
         serde_json::from_str(r#"{"title": "Claude Code", "title_source": "auto"}"#).unwrap();
-    assert_eq!(tab.title_source, Some(TabTitleSource::Preset));
+    assert_eq!(tab.title_source, Some(TabTitleSource::User));
 }
 
 #[test]

@@ -140,7 +140,7 @@ impl<'de> Deserialize<'de> for TabTitleSource {
                 E: serde::de::Error,
             {
                 Ok(match value {
-                    "preset" | "auto" => TabTitleSource::Preset,
+                    "preset" => TabTitleSource::Preset,
                     "prompt" => TabTitleSource::Prompt,
                     "generated" => TabTitleSource::Generated,
                     "process" => TabTitleSource::Process,
@@ -206,8 +206,6 @@ pub struct WorkspaceSession {
     pub active_tab: usize,
     #[serde(rename = "layout", default, skip_serializing_if = "Option::is_none")]
     pub legacy_layout: Option<LayoutNode>,
-    #[serde(rename = "empty", default, skip_serializing_if = "is_false")]
-    pub legacy_empty: bool,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub custom_buttons: Vec<ButtonCommand>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -301,17 +299,12 @@ fn assign_surface_sessions(
 }
 
 fn migrate_workspace_v1(ws: &mut WorkspaceSession) {
-    let legacy_empty = std::mem::take(&mut ws.legacy_empty);
     let legacy_layout = ws.legacy_layout.take();
     if !ws.tabs.is_empty() {
         return;
     }
     let Some(mut root) = legacy_layout else {
-        ws.tabs.push(if legacy_empty {
-            TabSession::empty()
-        } else {
-            TabSession::with_layout(default_layout_pane())
-        });
+        ws.tabs.push(TabSession::with_layout(default_layout_pane()));
         return;
     };
     let mut promoted = Vec::new();

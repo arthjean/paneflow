@@ -116,12 +116,6 @@ pub struct PaneFlowConfig {
     pub agent_panel: Option<AgentPanelConfig>,
     #[serde(
         default,
-        skip_serializing_if = "HashMap::is_empty",
-        deserialize_with = "lenient_value_or_default"
-    )]
-    pub tool_permissions: HashMap<String, ToolPermissionsEntry>,
-    #[serde(
-        default,
         skip_serializing_if = "Vec::is_empty",
         deserialize_with = "lenient_value_or_default"
     )]
@@ -507,15 +501,6 @@ pub struct AgentProfileConfig {
     pub env: BTreeMap<String, String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub args: Vec<String>,
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
-#[serde(default)]
-pub struct ToolPermissionsEntry {
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub always_allow: Vec<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub always_deny: Vec<String>,
 }
 
 #[cfg(test)]

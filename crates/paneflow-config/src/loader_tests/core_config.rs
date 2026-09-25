@@ -198,3 +198,33 @@ fn test_command_with_shell_command() {
     assert_eq!(config.commands[0].shell_command(), Some("htop"));
     assert!(config.commands[0].workspace().is_none());
 }
+
+#[test]
+fn test_retired_agent_panel_and_tool_permission_keys_load_as_if_absent() {
+    let without = r#"{
+        "theme": "One Dark",
+        "agent_panel": {"notify_when_agent_waiting": "AllScreens"}
+    }"#;
+    let with = r#"{
+        "theme": "One Dark",
+        "agent_panel": {
+            "notify_when_agent_waiting": "AllScreens",
+            "max_content_width": 900,
+            "thinking_display": "Preview",
+            "profiles": {"Write": {"agent": "codex", "tools": ["read"]}},
+            "default_profile": "Write"
+        },
+        "tool_permissions": {"read": {"always_allow": ["src/"], "always_deny": ["secrets/"]}}
+    }"#;
+    let dir = tempfile::tempdir().unwrap();
+    let with_path = dir.path().join("with.json");
+    let without_path = dir.path().join("without.json");
+    std::fs::write(&with_path, with).unwrap();
+    std::fs::write(&without_path, without).unwrap();
+
+    let expected = try_parse_and_validate(without).unwrap();
+    assert_eq!(try_parse_and_validate(with).unwrap(), expected);
+    assert_eq!(load_config_from_path(&with_path), expected);
+    assert_eq!(load_config_from_path(&without_path), expected);
+    assert_ne!(expected, PaneFlowConfig::default());
+}

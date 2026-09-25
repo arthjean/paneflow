@@ -69,7 +69,6 @@ fn test_serialization_roundtrip() {
         terminal: None,
         agent_panel: None,
         external_editor: None,
-        tool_permissions: HashMap::new(),
         agent_profiles: Vec::new(),
     };
 
