@@ -18,10 +18,7 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
-  GHOSTTY_SHA: 0c2a290d3a3e2a599be3a43435d778a5896667ee
-  ZIG_VERSION: 0.16.0
   TARGET: x86_64-pc-windows-msvc
-  NATIVE_PROFILE: ReleaseFast-simd-fixedbase-seed0-j1
 
 jobs:
   # Gating lives here, at job level, not in a `paths:` filter on the trigger.
@@ -106,7 +103,7 @@ jobs:
       - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
         with:
           prefix-key: v1-libghostty-windows-consumer
-          key: ${{ env.TARGET }}-${{ env.GHOSTTY_SHA }}-${{ env.ZIG_VERSION }}-${{ env.NATIVE_PROFILE }}-${{ hashFiles('Cargo.lock', 'native/libghostty/manifest.toml') }}
+          key: ${{ env.TARGET }}-${{ hashFiles('Cargo.lock', 'native/libghostty/manifest.toml') }}
 
       # fmt, clippy --all-targets and `cargo test` used to run here. They are
       # what `run_tests.yml::windows_check` runs on every commit against the

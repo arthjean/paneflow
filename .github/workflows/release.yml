@@ -96,21 +96,7 @@ jobs:
           ref: ${{ env.RELEASE_REF }}
       - uses: ./.github/actions/fetch-libghostty
 
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libvulkan-dev \
-            libwayland-dev \
-            libxkbcommon-dev \
-            libx11-dev \
-            libxcb1-dev \
-            libxcb-render0-dev \
-            libxcb-shape0-dev \
-            libxcb-xfixes0-dev \
-            libxkbcommon-x11-dev \
-            libfontconfig1-dev \
-            libfreetype6-dev
+      - uses: ./.github/actions/linux-build-deps
 
       - uses: dtolnay/rust-toolchain@master
         with:
@@ -228,38 +214,27 @@ jobs:
 
       - name: Install system dependencies
         if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libvulkan-dev \
-            libwayland-dev \
-            libxkbcommon-dev \
-            libx11-dev \
-            libxcb1-dev \
-            libxcb-render0-dev \
-            libxcb-shape0-dev \
-            libxcb-xfixes0-dev \
-            libxkbcommon-x11-dev \
-            libfontconfig1-dev \
-            libfreetype6-dev \
-            binutils \
-            elfutils \
-            jq \
-            patchelf \
-            lintian \
-            dpkg-sig \
-            rpm \
-            gnupg \
-            appstream \
-            imagemagick \
+        uses: ./.github/actions/linux-build-deps
+        with:
+          extra-packages: >-
+            binutils
+            elfutils
+            jq
+            patchelf
+            lintian
+            dpkg-sig
+            rpm
+            gnupg
+            appstream
+            imagemagick
             icnsutils
 
       # ImageMagick is preinstalled on windows-2022 and the macos-14 GHA images
       # ship sips (Apple's built-in resizer) + iconutil out of the box, but
       # neither ships ImageMagick. scripts/build-icons.sh prefers `magick` for
       # multi-resolution .ico assembly, so install it here on the macOS leg only
-      # - the Linux leg picks up `imagemagick` via the apt-get block above and
-      # the Windows leg uses the preinstalled copy.
+      # - the Linux leg picks up `imagemagick` through the linux-build-deps
+      # extra packages above and the Windows leg uses the preinstalled copy.
       - name: Install ImageMagick (macOS)
         if: runner.os == 'macOS'
         run: brew install --quiet imagemagick
