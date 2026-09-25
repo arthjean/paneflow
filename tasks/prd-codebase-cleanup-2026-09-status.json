@@ -33,10 +33,10 @@
     {
       "id": "EP-004",
       "title": "Test-Only Gating, libghostty Wrapper Pruning, and Target-Scoped Lint Attributes",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P1",
       "stories_total": 8,
-      "stories_done": 0
+      "stories_done": 8
     },
     {
       "id": "EP-005",
@@ -372,50 +372,50 @@
       "id": "US-025",
       "title": "Remove libghostty wrapper modules with no production caller (default of OQ-3)",
       "epic": "EP-004",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P1",
       "size": "M",
       "blocked_by": [
         "US-021"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-09-25",
+      "completed_at": "2026-09-25T17:53:19+02:00",
+      "reviewed_at": "2026-09-25T17:53:19+02:00"
     },
     {
       "id": "US-026",
       "title": "Prune test-only methods from the remaining libghostty wrappers",
       "epic": "EP-004",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P1",
       "size": "L",
       "blocked_by": [
         "US-025",
         "US-004"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-09-25",
+      "completed_at": "2026-09-25T19:22:10+02:00",
+      "reviewed_at": "2026-09-25T19:22:10+02:00"
     },
     {
       "id": "US-027",
       "title": "Gate or remove test-only items in `paneflow-host`",
       "epic": "EP-004",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P1",
       "size": "M",
       "blocked_by": [
         "US-019"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-09-25",
+      "completed_at": "2026-09-25T17:53:19+02:00",
+      "reviewed_at": "2026-09-25T17:53:19+02:00"
     },
     {
       "id": "US-028",
       "title": "Gate or remove test-only items in `paneflow-ipc-client` and `paneflow-serve`",
       "epic": "EP-004",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P1",
       "size": "M",
       "blocked_by": [
@@ -423,45 +423,45 @@
         "US-019",
         "US-020"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-09-25",
+      "completed_at": "2026-09-25T17:53:19+02:00",
+      "reviewed_at": "2026-09-25T17:53:19+02:00"
     },
     {
       "id": "US-029",
       "title": "Gate or remove test-only items in `paneflow-config`, `paneflow-home`, `paneflow-textdiff`, and `paneflow-agent-config`",
       "epic": "EP-004",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P2",
       "size": "S",
       "blocked_by": [
         "US-017",
         "US-018"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-09-25",
+      "completed_at": "2026-09-25T17:53:19+02:00",
+      "reviewed_at": "2026-09-25T17:53:19+02:00"
     },
     {
       "id": "US-030",
       "title": "Gate or remove test-only items in `src-app`",
       "epic": "EP-004",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P1",
       "size": "M",
       "blocked_by": [
         "US-022",
         "US-023"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-09-25",
+      "completed_at": "2026-09-25T18:38:44+02:00",
+      "reviewed_at": "2026-09-25T18:38:44+02:00"
     },
     {
       "id": "US-031",
       "title": "Compile the in-process PTY runtime for tests only (option A)",
       "epic": "EP-004",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P1",
       "size": "L",
       "blocked_by": [
@@ -469,24 +469,24 @@
         "US-023",
         "US-030"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-09-25",
+      "completed_at": "2026-09-25T18:38:44+02:00",
+      "reviewed_at": "2026-09-25T18:38:44+02:00"
     },
     {
       "id": "US-032",
       "title": "Replace broad lint allowances with target-scoped attributes",
       "epic": "EP-004",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P2",
       "size": "S",
       "blocked_by": [
         "US-022",
         "US-024"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-09-25",
+      "completed_at": "2026-09-25T18:38:44+02:00",
+      "reviewed_at": "2026-09-25T18:38:44+02:00"
     },
     {
       "id": "US-033",
