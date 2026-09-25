@@ -1,2 +1,4 @@
 # refactor(host): US-040 - split host.rs
 6614de7b57a0073538eccf9c7eb5f1ce3f4e0714
+# refactor(host): US-041 - split persistent_baseline.rs
+bb12ad87df96a4210167a5971356b0da93d0e497
