@@ -11,7 +11,6 @@ pub struct AgentPanelConfig {
 #[serde(rename_all = "PascalCase")]
 pub enum NotifyWhenAgentWaiting {
     PrimaryScreen,
-    AllScreens,
     #[default]
     Never,
 }
@@ -23,8 +22,7 @@ impl<'de> Deserialize<'de> for NotifyWhenAgentWaiting {
     {
         let raw = String::deserialize(d)?;
         match raw.as_str() {
-            "PrimaryScreen" => Ok(Self::PrimaryScreen),
-            "AllScreens" => Ok(Self::AllScreens),
+            "PrimaryScreen" | "AllScreens" => Ok(Self::PrimaryScreen),
             "Never" => Ok(Self::Never),
             other => {
                 tracing::warn!(

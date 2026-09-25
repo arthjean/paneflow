@@ -307,6 +307,17 @@ pub(crate) fn classify_entry(
     StatusOutcome::Installed { path: found }
 }
 
+pub(crate) fn config_presence(cli: &str, config: Option<&Path>) -> crate::detect::Presence {
+    let mut paths: Vec<PathBuf> = Vec::new();
+    if let Some(config) = config {
+        paths.push(config.to_path_buf());
+        if let Some(parent) = config.parent() {
+            paths.push(parent.to_path_buf());
+        }
+    }
+    crate::detect::detect(Some(cli), &paths)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

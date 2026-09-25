@@ -649,7 +649,8 @@ mod tests {
             typo.agent_panel
                 .expect("agent_panel block")
                 .notify_when_agent_waiting,
-            Some(NotifyWhenAgentWaiting::AllScreens)
+            Some(NotifyWhenAgentWaiting::PrimaryScreen),
+            "the retired AllScreens value loads as PrimaryScreen"
         );
     }
 

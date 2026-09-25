@@ -4,7 +4,7 @@ use anyhow::{anyhow, Result};
 use serde_json::json;
 
 use crate::agents::{support, AgentConfigWriter, InstallOutcome, StatusOutcome, UninstallOutcome};
-use crate::detect::{self, Presence};
+use crate::detect::Presence;
 
 const CLI: &str = "gemini";
 const CONTAINER: &str = "mcpServers";
@@ -60,14 +60,7 @@ impl AgentConfigWriter for Gemini {
     }
 
     fn presence(&self) -> Presence {
-        let mut paths: Vec<PathBuf> = Vec::new();
-        if let Some(cfg) = &self.config_path {
-            paths.push(cfg.clone());
-            if let Some(parent) = cfg.parent() {
-                paths.push(parent.to_path_buf());
-            }
-        }
-        detect::detect(Some(CLI), &paths)
+        support::config_presence(CLI, self.config_path.as_deref())
     }
 
     fn install(&self, bridge: &Path) -> Result<InstallOutcome> {

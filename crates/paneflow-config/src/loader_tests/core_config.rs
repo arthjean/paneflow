@@ -228,3 +228,22 @@ fn test_retired_agent_panel_and_tool_permission_keys_load_as_if_absent() {
     assert_eq!(load_config_from_path(&without_path), expected);
     assert_ne!(expected, PaneFlowConfig::default());
 }
+
+#[test]
+fn test_retired_all_screens_value_loads_as_primary_screen() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("paneflow.json");
+    std::fs::write(
+        &path,
+        r#"{"agent_panel": {"notify_when_agent_waiting": "AllScreens"}}"#,
+    )
+    .unwrap();
+    let config = load_config_from_path(&path);
+    assert_eq!(
+        config
+            .agent_panel
+            .expect("agent_panel block")
+            .resolved_notify_when_agent_waiting(),
+        crate::schema::NotifyWhenAgentWaiting::PrimaryScreen
+    );
+}

@@ -196,7 +196,7 @@ fn report_delivery_failure(session_key: Option<u64>, error: &str) {
 pub(crate) fn should_fire_desktop_notification(gate: NotifyWhenAgentWaiting, seen: bool) -> bool {
     match gate {
         NotifyWhenAgentWaiting::Never => false,
-        NotifyWhenAgentWaiting::PrimaryScreen | NotifyWhenAgentWaiting::AllScreens => !seen,
+        NotifyWhenAgentWaiting::PrimaryScreen => !seen,
     }
 }
 
@@ -346,10 +346,6 @@ mod tests {
             should_fire_desktop_notification(NotifyWhenAgentWaiting::PrimaryScreen, false),
             "a pane in another workspace, tab or an inactive window notifies"
         );
-        assert!(should_fire_desktop_notification(
-            NotifyWhenAgentWaiting::AllScreens,
-            false
-        ));
     }
 
     #[test]
