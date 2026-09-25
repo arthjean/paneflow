@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::{anyhow, bail, Context, Result};
+use paneflow_agent_config::claude_hooks::MANAGED_MARKER;
 use paneflow_agent_config::{
     runtime_by_command_alias, runtime_by_slug, Runtime, RuntimeHookAdapter,
     RuntimeLifecycleAuthority, RUNTIMES,
@@ -33,7 +34,7 @@ const CODEX_EVENTS: &[&str] = &[
 ];
 const CLAUDE_RETIRED_EVENTS: &[&str] = &["PostToolUse"];
 const CODEX_RETIRED_EVENTS: &[&str] = &["PostToolUse"];
-const MANAGED_MARKER: &str = "_paneflow_managed";
+const UNMARKED_HOOKS_ADOPTION: &str = "Paneflow hook entries without an integration marker";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum IntegrationState {
@@ -136,22 +137,7 @@ fn status_for(runtime: &'static Runtime, paths: Option<&ConfigPaths>) -> Integra
 }
 
 fn installed_evidence(paths: &ConfigPaths, runtime: &Runtime) -> bool {
-    let hooks_path = match runtime.integration.hook_adapter {
-        RuntimeHookAdapter::Claude => &paths.claude_settings,
-        RuntimeHookAdapter::Codex => &paths.codex_hooks,
-        _ => return false,
-    };
-    let hooks_present = merge::read_json_or_default(hooks_path)
-        .ok()
-        .and_then(|root| root.get("hooks").and_then(Value::as_object).cloned())
-        .is_some_and(|hooks| {
-            hooks.values().any(|entries| {
-                entries
-                    .as_array()
-                    .is_some_and(|entries| entries.iter().any(is_owned_group))
-            })
-        });
-    if !hooks_present {
+    if !owned_hooks_present(paths, runtime) {
         return false;
     }
     match runtime.integration.hook_adapter {
@@ -324,7 +310,7 @@ pub fn run_integrations_cli(args: &[String], binaries: Option<IntegrationBinarie
     }
 }
 
-fn state_label(state: IntegrationState) -> &'static str {
+pub(crate) fn state_label(state: IntegrationState) -> &'static str {
     match state {
         IntegrationState::Installed => "installed",
         IntegrationState::NotInstalled => "not installed",
@@ -373,8 +359,8 @@ pub fn adopt_and_refresh_installed(
     let mut results = Vec::new();
     for runtime in RUNTIMES.iter().filter(|runtime| has_installer(runtime)) {
         let marker = paths.marker(runtime.slug);
-        let adoption = (!marker.exists() && legacy_evidence(&paths, runtime))
-            .then_some("pre-0.17 per-launch hook entry");
+        let adoption = (!marker.exists() && owned_hooks_present(&paths, runtime))
+            .then_some(UNMARKED_HOOKS_ADOPTION);
         if marker.exists() || adoption.is_some() {
             let result = install_integration_at(&paths, runtime.slug, binaries, adoption)
                 .map(|_| ())
@@ -385,7 +371,37 @@ pub fn adopt_and_refresh_installed(
     results
 }
 
-fn legacy_evidence(paths: &ConfigPaths, runtime: &Runtime) -> bool {
+pub(crate) fn has_owned_hooks(slug: &str) -> bool {
+    let Ok(paths) = ConfigPaths::resolve() else {
+        return false;
+    };
+    integration_runtime(slug).is_ok_and(|runtime| owned_hooks_present(&paths, runtime))
+}
+
+pub(crate) fn runtime_detected(slug: &str) -> bool {
+    let Ok(runtime) = integration_runtime(slug) else {
+        return false;
+    };
+    if runtime
+        .detection
+        .command_aliases
+        .iter()
+        .any(|alias| which::which(alias).is_ok())
+    {
+        return true;
+    }
+    let Ok(paths) = ConfigPaths::resolve() else {
+        return false;
+    };
+    let config_dir = match runtime.integration.hook_adapter {
+        RuntimeHookAdapter::Claude => paths.claude_settings.parent(),
+        RuntimeHookAdapter::Codex => paths.codex_hooks.parent(),
+        _ => None,
+    };
+    config_dir.is_some_and(Path::exists)
+}
+
+fn owned_hooks_present(paths: &ConfigPaths, runtime: &Runtime) -> bool {
     let path = match runtime.integration.hook_adapter {
         RuntimeHookAdapter::Claude => &paths.claude_settings,
         RuntimeHookAdapter::Codex => &paths.codex_hooks,
@@ -580,7 +596,7 @@ fn reconcile_claude_hooks(root: &mut Value, reporter: &Path) -> Result<()> {
     }
     for event in CLAUDE_EVENTS {
         let entries = hook_entries(hooks, event)?;
-        entries.retain(|entry| !is_owned_group(entry));
+        strip_owned_handlers(entries);
         let mut group = json!({
             MANAGED_MARKER: true,
             "hooks": [{
@@ -606,10 +622,11 @@ fn sweep_owned_hooks(hooks: &mut serde_json::Map<String, Value>, event: &str) ->
     let Some(entries) = hooks.get_mut(event) else {
         return Ok(());
     };
-    entries
-        .as_array_mut()
-        .with_context(|| format!("hook event `{event}` is not an array"))?
-        .retain(|entry| !is_owned_group(entry));
+    strip_owned_handlers(
+        entries
+            .as_array_mut()
+            .with_context(|| format!("hook event `{event}` is not an array"))?,
+    );
     Ok(())
 }
 
@@ -624,7 +641,7 @@ fn reconcile_codex_hooks(
     }
     for event in CODEX_EVENTS {
         let entries = hook_entries(hooks, event)?;
-        entries.retain(|entry| !is_owned_group(entry));
+        strip_owned_handlers(entries);
         let timeout = if matches!(*event, "Interrupt" | "SessionEnd") {
             1
         } else {
@@ -686,7 +703,7 @@ fn remove_owned_hooks(root: &mut Value, events: &[&str]) -> Result<()> {
         let entries = entries
             .as_array_mut()
             .with_context(|| format!("hook event `{event}` is not an array"))?;
-        entries.retain(|entry| !is_owned_group(entry));
+        strip_owned_handlers(entries);
     }
     hooks.retain(|_, entries| !entries.as_array().is_some_and(Vec::is_empty));
     if hooks.is_empty() {
@@ -700,14 +717,32 @@ fn is_owned_group(group: &Value) -> bool {
         || group
             .get("hooks")
             .and_then(Value::as_array)
-            .is_some_and(|hooks| {
-                hooks.iter().any(|hook| {
-                    ["command", "command_windows", "commandWindows"]
-                        .iter()
-                        .filter_map(|key| hook.get(*key).and_then(Value::as_str))
-                        .any(is_paneflow_reporter_command)
-                })
-            })
+            .is_some_and(|hooks| hooks.iter().any(is_owned_hook))
+}
+
+fn is_owned_hook(hook: &Value) -> bool {
+    ["command", "command_windows", "commandWindows"]
+        .iter()
+        .filter_map(|key| hook.get(*key).and_then(Value::as_str))
+        .any(is_paneflow_reporter_command)
+}
+
+fn strip_owned_handlers(entries: &mut Vec<Value>) {
+    entries.retain_mut(|entry| {
+        let Some(group) = entry.as_object_mut() else {
+            return true;
+        };
+        let marked = group.get(MANAGED_MARKER).and_then(Value::as_bool) == Some(true);
+        if marked {
+            group.remove(MANAGED_MARKER);
+        }
+        let Some(hooks) = group.get_mut("hooks").and_then(Value::as_array_mut) else {
+            return !marked;
+        };
+        let before = hooks.len();
+        hooks.retain(|hook| !is_owned_hook(hook));
+        !(hooks.is_empty() && (marked || hooks.len() < before))
+    });
 }
 
 fn is_paneflow_reporter_command(command: &str) -> bool {
@@ -818,7 +853,7 @@ mod tests {
             &paths,
             "claude-code",
             &binaries,
-            Some("pre-0.17 per-launch hook entry"),
+            Some(UNMARKED_HOOKS_ADOPTION),
         )
         .expect("adopt");
         let root: Value =
@@ -887,17 +922,12 @@ mod tests {
             br#"{"hooks":{"PostToolUse":[{"_paneflow_managed":true,"hooks":[{"type":"command","command":"/old/bin/paneflow-ai-hook PostToolUse"}]},{"hooks":[{"type":"command","command":"keep-me"}]}]}}"#,
         )
         .expect("legacy config");
-        assert!(legacy_evidence(
+        assert!(owned_hooks_present(
             &paths,
             runtime_by_slug("codex").expect("runtime")
         ));
-        install_integration_at(
-            &paths,
-            "codex",
-            &binaries,
-            Some("pre-0.17 per-launch hook entry"),
-        )
-        .expect("adopt");
+        install_integration_at(&paths, "codex", &binaries, Some(UNMARKED_HOOKS_ADOPTION))
+            .expect("adopt");
         let root: Value =
             serde_json::from_slice(&std::fs::read(&paths.codex_hooks).expect("hooks"))
                 .expect("hooks JSON");
@@ -947,21 +977,16 @@ mod tests {
             br#"{"hooks":{"Stop":[{"_paneflow_managed":true,"hooks":[{"command":"paneflow-ai-hook Stop"}]}]}}"#,
         )
         .expect("legacy config");
-        assert!(legacy_evidence(
+        assert!(owned_hooks_present(
             &paths,
             runtime_by_slug("claude-code").expect("runtime")
         ));
-        install_integration_at(
-            &paths,
-            "claude",
-            &binaries,
-            Some("pre-0.17 per-launch hook entry"),
-        )
-        .expect("adopt");
+        install_integration_at(&paths, "claude", &binaries, Some(UNMARKED_HOOKS_ADOPTION))
+            .expect("adopt");
         let marker: Value =
             serde_json::from_slice(&std::fs::read(paths.marker("claude-code")).expect("marker"))
                 .expect("marker JSON");
-        assert_eq!(marker["adopted_from"], "pre-0.17 per-launch hook entry");
+        assert_eq!(marker["adopted_from"], UNMARKED_HOOKS_ADOPTION);
     }
 
     #[test]
@@ -1038,5 +1063,145 @@ mod tests {
             .join("paneflow-ai-hook.sh")
             .exists());
         assert!(!paths.marker("claude-code").exists());
+    }
+
+    fn user_stop_hook() -> Value {
+        json!({"theme": "dark", "hooks": {"Stop": [{"hooks": [{"type": "command", "command": "my-hook"}]}]}})
+    }
+
+    fn write_settings(paths: &ConfigPaths, root: &Value) {
+        std::fs::create_dir_all(paths.claude_settings.parent().expect("parent"))
+            .expect("config directory");
+        std::fs::write(
+            &paths.claude_settings,
+            merge::json_to_bytes(root).expect("bytes"),
+        )
+        .expect("settings");
+    }
+
+    fn read_settings(paths: &ConfigPaths) -> Value {
+        serde_json::from_slice(&std::fs::read(&paths.claude_settings).expect("settings"))
+            .expect("settings JSON")
+    }
+
+    fn settings_from_the_old_hooks_command(binaries: &IntegrationBinaries) -> Value {
+        let mut root = user_stop_hook();
+        let reconciled = paneflow_agent_config::claude_hooks::reconcile_hooks(&mut root, |event| {
+            paneflow_agent_config::claude_hooks::render_hook_command(&binaries.hook_binary, event)
+        })
+        .expect("old hooks reconcile");
+        assert!(reconciled.changed);
+        assert_eq!(
+            root["hooks"].as_object().expect("hooks").len(),
+            paneflow_agent_config::claude_hooks::CLAUDE_HOOK_EVENTS.len()
+        );
+        root
+    }
+
+    fn settings_from_the_integrations_command(binaries: &IntegrationBinaries) -> Value {
+        let (_directory, paths, _) = fixture();
+        write_settings(&paths, &user_stop_hook());
+        install_integration_at(&paths, "claude-code", binaries, None).expect("install");
+        let root = read_settings(&paths);
+        assert_eq!(
+            root["hooks"]
+                .as_object()
+                .expect("hooks")
+                .values()
+                .filter(|entries| entries
+                    .as_array()
+                    .is_some_and(|entries| entries.iter().any(is_owned_group)))
+                .count(),
+            CLAUDE_EVENTS.len()
+        );
+        root
+    }
+
+    #[test]
+    fn hooks_from_either_command_converge_to_one_managed_set_and_keep_user_hooks() {
+        let (_directory, paths, binaries) = fixture();
+        let mut converged = Vec::new();
+        for starting in [
+            settings_from_the_old_hooks_command(&binaries),
+            settings_from_the_integrations_command(&binaries),
+        ] {
+            write_settings(&paths, &starting);
+            std::fs::remove_file(paths.marker("claude-code")).ok();
+            install_integration_at(&paths, "claude-code", &binaries, None).expect("install");
+            let root = read_settings(&paths);
+            assert_eq!(root["theme"], "dark");
+            assert!(root["hooks"]["Stop"]
+                .as_array()
+                .is_some_and(|entries| entries
+                    .iter()
+                    .any(|entry| entry["hooks"][0]["command"] == "my-hook")));
+            assert!(root["hooks"].get("PostToolUse").is_none());
+            converged.push(root);
+        }
+        assert_eq!(converged[0], converged[1]);
+    }
+
+    #[test]
+    fn user_handlers_sharing_a_group_with_paneflow_survive_install_and_removal() {
+        let (_directory, paths, binaries) = fixture();
+        let mut marked = json!({
+            MANAGED_MARKER: true,
+            "matcher": "Write",
+            "hooks": [
+                {"type": "command", "command": "/old/bin/paneflow-ai-hook.sh", "args": ["Stop"]},
+                {"type": "command", "command": "my-hook"},
+            ],
+        });
+        let unmarked = json!({
+            "hooks": [
+                {"type": "command", "command": "/old/bin/paneflow-ai-hook Notification"},
+                {"type": "command", "command": "their-hook"},
+            ],
+        });
+        write_settings(
+            &paths,
+            &json!({"hooks": {"Stop": [marked.clone()], "Notification": [unmarked]}}),
+        );
+
+        install_integration_at(&paths, "claude-code", &binaries, None).expect("install");
+        let installed = read_settings(&paths);
+        install_integration_at(&paths, "claude-code", &binaries, None).expect("reinstall");
+        assert_eq!(read_settings(&paths), installed);
+        let stop = installed["hooks"]["Stop"].as_array().expect("Stop");
+        assert_eq!(stop.len(), 2);
+        assert_eq!(stop[0]["matcher"], "Write");
+        assert_eq!(
+            stop[0]["hooks"],
+            json!([{"type": "command", "command": "my-hook"}])
+        );
+        assert!(stop[0].get(MANAGED_MARKER).is_none());
+        assert_eq!(stop[1][MANAGED_MARKER], true);
+
+        remove_integration_at(&paths, "claude-code").expect("remove");
+        marked
+            .as_object_mut()
+            .expect("group")
+            .remove(MANAGED_MARKER);
+        marked["hooks"].as_array_mut().expect("hooks").remove(0);
+        assert_eq!(
+            read_settings(&paths),
+            json!({"hooks": {
+                "Stop": [marked],
+                "Notification": [{"hooks": [{"type": "command", "command": "their-hook"}]}],
+            }})
+        );
+    }
+
+    #[test]
+    fn removal_from_either_starting_state_leaves_only_user_hooks() {
+        let (_directory, paths, binaries) = fixture();
+        for starting in [
+            settings_from_the_old_hooks_command(&binaries),
+            settings_from_the_integrations_command(&binaries),
+        ] {
+            write_settings(&paths, &starting);
+            remove_integration_at(&paths, "claude-code").expect("remove");
+            assert_eq!(read_settings(&paths), user_stop_hook());
+        }
     }
 }

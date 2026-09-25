@@ -289,6 +289,29 @@ fn native_material_suppressed_by_fullscreen(is_fullscreen: bool) -> bool {
     cfg!(target_os = "macos") && is_fullscreen
 }
 
+fn extract_integration_binaries(
+    command: &str,
+) -> Option<paneflow_mcp_install::IntegrationBinaries> {
+    match (
+        ai_hooks::extract::ensure_ai_hook_extracted(),
+        ai_hooks::extract::ensure_bridge_extracted(),
+    ) {
+        (Ok(hook_binary), Ok(bridge_binary)) => Some(paneflow_mcp_install::IntegrationBinaries {
+            hook_binary,
+            bridge_binary,
+        }),
+        (hook, bridge) => {
+            if let Err(error) = hook {
+                eprintln!("{command}: hook extraction failed: {error:#}");
+            }
+            if let Err(error) = bridge {
+                eprintln!("{command}: bridge extraction failed: {error:#}");
+            }
+            None
+        }
+    }
+}
+
 #[cfg(test)]
 mod native_material_tests {
     use super::{
@@ -1781,38 +1804,17 @@ fn main() {
     }
 
     if is_hooks_subcommand {
-        let hook_path = match ai_hooks::extract::ensure_ai_hook_extracted() {
-            Ok(p) => Some(p),
-            Err(e) => {
-                log::warn!("paneflow hooks: ai-hook extraction failed ({e:#})");
-                runtime_paths::ai_hook_binary_path()
-            }
+        let binaries = if args.get(2).map(String::as_str) == Some("setup") {
+            extract_integration_binaries("paneflow hooks")
+        } else {
+            None
         };
-        std::process::exit(paneflow_mcp_install::run_hooks_cli(&args[2..], hook_path));
+        std::process::exit(paneflow_mcp_install::run_hooks_cli(&args[2..], binaries));
     }
 
     if is_integrations_subcommand {
         let binaries = if args.get(2).map(String::as_str) == Some("install") {
-            match (
-                ai_hooks::extract::ensure_ai_hook_extracted(),
-                ai_hooks::extract::ensure_bridge_extracted(),
-            ) {
-                (Ok(hook_binary), Ok(bridge_binary)) => {
-                    Some(paneflow_mcp_install::IntegrationBinaries {
-                        hook_binary,
-                        bridge_binary,
-                    })
-                }
-                (hook, bridge) => {
-                    if let Err(error) = hook {
-                        eprintln!("paneflow integrations: hook extraction failed: {error:#}");
-                    }
-                    if let Err(error) = bridge {
-                        eprintln!("paneflow integrations: bridge extraction failed: {error:#}");
-                    }
-                    None
-                }
-            }
+            extract_integration_binaries("paneflow integrations")
         } else {
             None
         };
