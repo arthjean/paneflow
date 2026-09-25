@@ -435,4 +435,15 @@ mod tests {
             assert!(WATCHER_ACTIVE.load(Ordering::Acquire));
         }
     }
+
+    #[test]
+    fn the_retired_paneflow_light_alias_resolves_through_the_case_insensitive_name() {
+        assert!(
+            resolve_theme_name(Some("PaneFlow Light"))
+                == apply_surface_overrides(crate::theme::paneflow_light())
+        );
+        assert!(
+            resolve_theme_name(Some("No Such Theme")) == apply_surface_overrides(paneflow_dark())
+        );
+    }
 }

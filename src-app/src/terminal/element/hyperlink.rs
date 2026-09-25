@@ -27,7 +27,6 @@ pub fn detect_urls_on_line_mapped(
             let is_openable = is_url_scheme_openable(&uri);
             Some(HyperlinkZone {
                 uri,
-                id: String::new(),
                 start: crate::terminal::types::Point::new(line.0, *col_start),
                 end: crate::terminal::types::Point::new(line.0, *col_end),
                 is_openable,
@@ -281,7 +280,6 @@ fn zone_for_candidate(
     let col_end = char_to_col.get(char_end)?;
     Some(HyperlinkZone {
         uri: resolved.to_string_lossy().into_owned(),
-        id: String::new(),
         start: crate::terminal::types::Point::new(line.0, *col_start),
         end: crate::terminal::types::Point::new(line.0, *col_end),
         is_openable: true,

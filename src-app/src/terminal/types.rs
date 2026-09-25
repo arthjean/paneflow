@@ -325,7 +325,6 @@ pub struct SearchHighlight {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[allow(dead_code)]
 pub enum HyperlinkSource {
     Osc8,
     Regex,
@@ -334,10 +333,8 @@ pub enum HyperlinkSource {
 }
 
 #[derive(Clone, Debug)]
-#[allow(dead_code)]
 pub struct HyperlinkZone {
     pub uri: String,
-    pub id: String,
     pub start: Point,
     pub end: Point,
     pub is_openable: bool,

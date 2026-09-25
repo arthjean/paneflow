@@ -789,28 +789,6 @@ fn read_no_follow(path: &std::path::Path) -> ReadOutcome {
             Err(e) => ReadOutcome::Other(e),
         }
     }
-    #[cfg(all(not(unix), not(windows)))]
-    {
-        match std::fs::symlink_metadata(path) {
-            Ok(meta) if meta.file_type().is_symlink() => return ReadOutcome::Symlink,
-            Ok(_) => {}
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return ReadOutcome::NotFound,
-            Err(e) => return ReadOutcome::Other(e),
-        }
-        let mut file = match std::fs::File::open(path) {
-            Ok(file) => file,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return ReadOutcome::NotFound,
-            Err(e) => return ReadOutcome::Other(e),
-        };
-        let mut bytes = Vec::with_capacity(MAX_INPUT_BYTES.min(64 * 1024));
-        let mut limited = std::io::Read::take(&mut file, (MAX_INPUT_BYTES + 1) as u64);
-        match std::io::Read::read_to_end(&mut limited, &mut bytes) {
-            Ok(_) if bytes.len() > MAX_INPUT_BYTES => ReadOutcome::TooLarge(bytes.len()),
-            Ok(_) => ReadOutcome::Bytes(bytes),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => ReadOutcome::NotFound,
-            Err(e) => ReadOutcome::Other(e),
-        }
-    }
 }
 
 fn load_from_disk(path: &std::path::Path) -> (Option<Vec<MdNode>>, Option<SharedString>) {

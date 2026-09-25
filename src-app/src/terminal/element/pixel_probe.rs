@@ -4,9 +4,6 @@ use gpui::{Pixels, Point};
 
 const ROW_SAMPLE_LIMIT: usize = 16;
 
-#[cfg(test)]
-const ALIGNMENT_EPSILON: f32 = 1e-6;
-
 pub fn enabled() -> bool {
     static ENABLED: OnceLock<bool> = OnceLock::new();
     *ENABLED.get_or_init(|| std::env::var("PANEFLOW_PIXEL_PROBE").as_deref() == Ok("1"))
@@ -108,35 +105,8 @@ pub fn record_block_quad(
 }
 
 #[cfg(test)]
-pub fn assert_pixel_aligned(value: f32, label: &str) {
-    let frac = value.fract().abs();
-    assert!(
-        frac < ALIGNMENT_EPSILON,
-        "{label} not pixel-aligned: value={value} fract={frac} (threshold={ALIGNMENT_EPSILON})",
-    );
-}
-
-#[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn assert_pixel_aligned_accepts_integers() {
-        assert_pixel_aligned(0.0, "zero");
-        assert_pixel_aligned(8.0, "eight");
-        assert_pixel_aligned(-12.0, "negative");
-    }
-
-    #[test]
-    fn assert_pixel_aligned_accepts_subepsilon_drift() {
-        assert_pixel_aligned(8.0 + ALIGNMENT_EPSILON / 2.0, "drift");
-    }
-
-    #[test]
-    #[should_panic(expected = "not pixel-aligned")]
-    fn assert_pixel_aligned_rejects_fractional() {
-        assert_pixel_aligned(8.4, "fractional");
-    }
 
     #[test]
     fn fmt_pix_renders_value_and_fraction() {

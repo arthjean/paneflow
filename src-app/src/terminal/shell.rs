@@ -19,15 +19,9 @@ __paneflow_path_prepend() {
 autoload -Uz add-zsh-hook
 if [[ -o interactive ]]; then
     __paneflow_osc133_precmd() {
-        local ret=$?
-        if [[ -n "${__paneflow_cmd_ran-}" ]]; then
-            printf '\e]133;D;%s\a' "${ret}"
-            unset __paneflow_cmd_ran
-        fi
         printf '\e]133;A\a'
     }
     __paneflow_osc133_preexec() {
-        __paneflow_cmd_ran=1
         printf '\e]133;C\a'
     }
     add-zsh-hook precmd __paneflow_osc133_precmd
@@ -51,11 +45,6 @@ __paneflow_path_prepend() {
     export PATH
 }
 __paneflow_osc133_precmd() {
-    local ret=$?
-    if [[ "${HISTCMD-0}" != "${__paneflow_histcmd-}" ]]; then
-        [[ -n "${__paneflow_histcmd-}" ]] && printf '\e]133;D;%s\a' "${ret}"
-        __paneflow_histcmd="${HISTCMD-0}"
-    fi
     printf '\e]133;A\a'
 }
 PS0=$'\e]133;C\a'"${PS0-}"
@@ -77,9 +66,6 @@ if status is-interactive
     end
     function __paneflow_osc133_preexec --on-event fish_preexec
         printf '\e]133;C\a'
-    end
-    function __paneflow_osc133_postexec --on-event fish_postexec
-        printf '\e]133;D;%s\a' $status
     end
 end
 "#;
@@ -170,19 +156,12 @@ if (-not $global:__paneflow_readline_wrapped -and (Test-Path function:PSConsoleH
 if (-not $global:__paneflow_prompt_wrapped) {
     $global:__paneflow_prev_prompt = $function:prompt
     function global:prompt {
-        $__paneflow_ok = $?
         $__paneflow_last_exit = $global:LASTEXITCODE
-        $__paneflow_history = (Get-History -Count 1).Id
         # Call the wrapped prompt FIRST, while $?/$LASTEXITCODE still reflect
         # the user's last command -- Starship / oh-my-posh read them to render
         # the exit-status segment. Our OSC 7 + PATH bookkeeping runs after.
         $global:LASTEXITCODE = $__paneflow_last_exit
         $__paneflow_out = if ($global:__paneflow_prev_prompt) { & $global:__paneflow_prev_prompt } else { "PS $($executionContext.SessionState.Path.CurrentLocation)> " }
-        if ($null -ne $global:__paneflow_previous_history -and $__paneflow_history -ne $global:__paneflow_previous_history) {
-            $__paneflow_code = if ($__paneflow_ok) { 0 } elseif ($null -ne $__paneflow_last_exit) { $__paneflow_last_exit } else { 1 }
-            [Console]::Write("$([char]27)]133;D;$__paneflow_code$([char]7)")
-        }
-        $global:__paneflow_previous_history = $__paneflow_history
         [Console]::Write("$([char]27)]133;A$([char]7)")
         # OSC 7 with BEL terminator (matches zsh/bash/fish emitters). Use
         # [char]27 instead of `e: Windows PowerShell 5.1 treats `e as a
@@ -819,11 +798,19 @@ mod tests {
         assert!(super::ZSH_OSC7.contains("add-zsh-hook preexec __paneflow_osc133_preexec"));
         assert!(super::BASH_OSC7.contains("PROMPT_COMMAND=\"__paneflow_osc133_precmd;"));
         assert!(super::BASH_OSC7.contains("PS0=$'\\e]133;C\\a'"));
-        assert!(super::FISH_OSC7.contains("--on-event fish_postexec"));
+        assert!(super::FISH_OSC7.contains("--on-event fish_prompt"));
         assert!(super::PWSH_OSC7.contains("function global:PSConsoleHostReadLine"));
         assert!(super::PWSH_OSC7.contains(")]133;C"));
-        assert!(super::PWSH_OSC7.contains(")]133;D;"));
         assert!(super::PWSH_OSC7.contains(")]133;A"));
+        assert!(super::PWSH_OSC7.contains("$global:LASTEXITCODE = $__paneflow_last_exit"));
+        for script in [
+            super::ZSH_OSC7,
+            super::BASH_OSC7,
+            super::FISH_OSC7,
+            super::PWSH_OSC7,
+        ] {
+            assert!(!script.contains("133;D"), "no snippet emits OSC 133 D");
+        }
     }
 
     #[test]

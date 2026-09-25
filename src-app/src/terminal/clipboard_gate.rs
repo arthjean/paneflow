@@ -8,7 +8,6 @@ pub(super) struct ClipboardGate {
 impl ClipboardGate {
     const FOCUSED: u8 = 1 << 0;
     const STORE_ALLOWED: u8 = 1 << 1;
-    const LOAD_ALLOWED: u8 = 1 << 2;
 
     pub(super) fn set_focused(&self, focused: bool) {
         if focused {
@@ -18,13 +17,10 @@ impl ClipboardGate {
         }
     }
 
-    pub(super) fn set_policy(&self, store_allowed: bool, load_allowed: bool) {
+    pub(super) fn set_policy(&self, store_allowed: bool) {
         let mut policy = 0;
         if store_allowed {
             policy |= Self::STORE_ALLOWED;
-        }
-        if load_allowed {
-            policy |= Self::LOAD_ALLOWED;
         }
         let _ = self
             .state
@@ -48,16 +44,16 @@ mod tests {
         let gate = ClipboardGate::default();
         assert!(!gate.allows_store());
 
-        gate.set_policy(true, false);
+        gate.set_policy(true);
         assert!(!gate.allows_store());
 
         gate.set_focused(true);
         assert!(gate.allows_store());
 
-        gate.set_policy(false, false);
+        gate.set_policy(false);
         assert!(!gate.allows_store());
 
-        gate.set_policy(true, false);
+        gate.set_policy(true);
         gate.set_focused(false);
         assert!(!gate.allows_store());
     }

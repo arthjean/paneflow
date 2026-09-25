@@ -59,7 +59,6 @@ pub static PRESETS: &[ThemePreset] = &[
 
 static LEGACY_THEME_ALIASES: &[(&str, &str)] = &[
     ("One Dark", "Paneflow Dark"),
-    ("PaneFlow Light", "Paneflow Light"),
     ("Vercel", "Vercel Dark"),
     ("Claude", "Claude Dark"),
     ("Cursor", "Cursor Dark"),

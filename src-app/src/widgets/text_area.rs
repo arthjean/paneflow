@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use std::cell::RefCell;
 use std::ops::Range;
 use std::rc::Rc;
@@ -97,17 +95,9 @@ pub fn register_keybindings(cx: &mut App) {
 
 type SubmitFn = Rc<RefCell<dyn FnMut(String, &mut Window, &mut App)>>;
 
-type ChangeFn = Rc<RefCell<dyn FnMut(&str, usize, &mut Context<TextArea>)>>;
-
 type EscapeFn = Rc<RefCell<dyn FnMut(&mut Window, &mut App)>>;
 
 type SubmitImmediateFn = Rc<RefCell<dyn FnMut(String, &mut Window, &mut App)>>;
-
-#[derive(Debug, Clone)]
-pub struct Decoration {
-    pub byte_range: Range<usize>,
-    pub label: SharedString,
-}
 
 pub struct TextArea {
     pub focus_handle: FocusHandle,
@@ -119,12 +109,9 @@ pub struct TextArea {
     last_click: Option<(Instant, usize, u8)>,
     placeholder: SharedString,
     on_submit: Option<SubmitFn>,
-    on_change: Option<ChangeFn>,
     on_escape: Option<EscapeFn>,
     on_submit_immediate: Option<SubmitImmediateFn>,
     last_bounds: Option<Bounds<Pixels>>,
-    submit_on_empty: bool,
-    decorations: Vec<Decoration>,
 }
 
 impl TextArea {
@@ -139,42 +126,10 @@ impl TextArea {
             last_click: None,
             placeholder: placeholder.into(),
             on_submit: None,
-            on_change: None,
             on_escape: None,
             on_submit_immediate: None,
             last_bounds: None,
-            submit_on_empty: false,
-            decorations: Vec::new(),
         }
-    }
-
-    pub fn set_submit_on_empty(&mut self, value: bool) {
-        self.submit_on_empty = value;
-    }
-
-    pub fn insert_decoration(&mut self, byte_range: Range<usize>, label: impl Into<SharedString>) {
-        if byte_range.start >= byte_range.end || byte_range.end > self.content.len() {
-            return;
-        }
-        if self
-            .decorations
-            .iter()
-            .any(|d| ranges_overlap(&d.byte_range, &byte_range))
-        {
-            return;
-        }
-        self.decorations.push(Decoration {
-            byte_range,
-            label: label.into(),
-        });
-    }
-
-    pub fn decorations(&self) -> Vec<Decoration> {
-        self.decorations.clone()
-    }
-
-    pub fn clear_decorations(&mut self) {
-        self.decorations.clear();
     }
 
     pub(crate) fn place_cursor_at(&mut self, offset: usize, cx: &mut Context<Self>) {
@@ -184,7 +139,6 @@ impl TextArea {
         self.marked_range = None;
         self.drag_anchor = Some(clamped);
         cx.notify();
-        self.fire_change(cx);
     }
 
     pub(crate) fn extend_selection_to(&mut self, offset: usize, cx: &mut Context<Self>) {
@@ -206,7 +160,6 @@ impl TextArea {
         }
         self.marked_range = None;
         cx.notify();
-        self.fire_change(cx);
     }
 
     pub(crate) fn select_word_at(&mut self, offset: usize, cx: &mut Context<Self>) {
@@ -216,7 +169,6 @@ impl TextArea {
         self.marked_range = None;
         self.drag_anchor = Some(start);
         cx.notify();
-        self.fire_change(cx);
     }
 
     pub(crate) fn select_line_at(&mut self, offset: usize, cx: &mut Context<Self>) {
@@ -227,7 +179,6 @@ impl TextArea {
         self.marked_range = None;
         self.drag_anchor = Some(start);
         cx.notify();
-        self.fire_change(cx);
     }
 
     pub(crate) fn end_drag(&mut self) {
@@ -257,13 +208,6 @@ impl TextArea {
         self.on_submit = Some(Rc::new(RefCell::new(f)));
     }
 
-    pub fn on_change<F>(&mut self, f: F)
-    where
-        F: FnMut(&str, usize, &mut Context<TextArea>) + 'static,
-    {
-        self.on_change = Some(Rc::new(RefCell::new(f)));
-    }
-
     pub fn on_escape<F>(&mut self, f: F)
     where
         F: FnMut(&mut Window, &mut App) + 'static,
@@ -276,60 +220,6 @@ impl TextArea {
         F: FnMut(String, &mut Window, &mut App) + 'static,
     {
         self.on_submit_immediate = Some(Rc::new(RefCell::new(f)));
-    }
-
-    pub fn cursor_offset(&self) -> usize {
-        self.cursor()
-    }
-
-    pub fn replace_range(
-        &mut self,
-        range: Range<usize>,
-        replacement: &str,
-        cx: &mut Context<Self>,
-    ) {
-        let start = clamp_to_grapheme(&self.content, range.start);
-        let end = clamp_to_grapheme(&self.content, range.end.max(start));
-        self.selected_range = start..end;
-        self.selection_reversed = false;
-        self.marked_range = None;
-        self.replace_selection(replacement, cx);
-    }
-
-    pub fn value(&self) -> String {
-        self.content.clone()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.content.is_empty()
-    }
-
-    pub fn clear(&mut self, cx: &mut Context<Self>) {
-        self.content.clear();
-        self.selected_range = 0..0;
-        self.selection_reversed = false;
-        self.marked_range = None;
-        self.decorations.clear();
-        cx.notify();
-        self.fire_change(cx);
-    }
-
-    pub fn set_value(&mut self, text: impl Into<String>, cx: &mut Context<Self>) {
-        self.content = text.into();
-        let end = self.content.len();
-        self.selected_range = end..end;
-        self.selection_reversed = false;
-        self.marked_range = None;
-        self.decorations.clear();
-        cx.notify();
-        self.fire_change(cx);
-    }
-
-    pub fn select_all_text(&mut self, cx: &mut Context<Self>) {
-        self.selected_range = 0..self.content.len();
-        self.selection_reversed = false;
-        self.marked_range = None;
-        cx.notify();
     }
 
     fn cursor(&self) -> usize {
@@ -409,7 +299,6 @@ impl TextArea {
         let start = clamp_to_grapheme(&self.content, range.start);
         let end = clamp_to_grapheme(&self.content, range.end.max(start));
         let range = start..end;
-        self.invalidate_decorations_after_edit(&range, replacement.len());
         self.content.replace_range(range.clone(), replacement);
         let inserted = range.start..range.start + replacement.len();
         self.marked_range = (mark_inserted && !replacement.is_empty()).then_some(inserted.clone());
@@ -419,7 +308,6 @@ impl TextArea {
         self.selected_range = selected_start..selected_end;
         self.selection_reversed = false;
         cx.notify();
-        self.fire_change(cx);
     }
 
     fn move_to(&mut self, offset: usize, cx: &mut Context<Self>) {
@@ -428,7 +316,6 @@ impl TextArea {
         self.selection_reversed = false;
         self.marked_range = None;
         cx.notify();
-        self.fire_change(cx);
     }
 
     fn select_to(&mut self, offset: usize, cx: &mut Context<Self>) {
@@ -445,57 +332,20 @@ impl TextArea {
         }
         self.marked_range = None;
         cx.notify();
-        self.fire_change(cx);
     }
 
     fn replace_selection(&mut self, replacement: &str, cx: &mut Context<Self>) {
         let range = self.selected_range.clone();
-        self.invalidate_decorations_after_edit(&range, replacement.len());
         self.content.replace_range(range.clone(), replacement);
         let new_cursor = range.start + replacement.len();
         self.selected_range = new_cursor..new_cursor;
         self.selection_reversed = false;
         self.marked_range = None;
         cx.notify();
-        self.fire_change(cx);
-    }
-
-    fn invalidate_decorations_after_edit(&mut self, range: &Range<usize>, inserted_len: usize) {
-        if self.decorations.is_empty() {
-            return;
-        }
-        let removed_len = range.end - range.start;
-        let delta: isize = inserted_len as isize - removed_len as isize;
-        self.decorations.retain_mut(|d| {
-            if d.byte_range.end <= range.start {
-                true
-            } else if d.byte_range.start >= range.end {
-                let new_start = (d.byte_range.start as isize + delta).max(0) as usize;
-                let new_end = (d.byte_range.end as isize + delta).max(0) as usize;
-                d.byte_range = new_start..new_end;
-                true
-            } else {
-                false
-            }
-        });
-    }
-
-    fn fire_change(&mut self, cx: &mut Context<Self>) {
-        let Some(cb) = self.on_change.clone() else {
-            return;
-        };
-        if let Ok(mut callback) = cb.try_borrow_mut() {
-            callback(&self.content.clone(), self.cursor(), cx);
-        }
     }
 
     fn backspace(&mut self, _: &TaBackspace, _w: &mut Window, cx: &mut Context<Self>) {
         if self.selected_range.is_empty() {
-            if let Some(range) = self.decoration_ending_at(self.cursor()) {
-                self.selected_range = range;
-                cx.notify();
-                return;
-            }
             let prev = prev_grapheme(&self.content, self.cursor());
             if prev == self.cursor() {
                 return;
@@ -507,11 +357,6 @@ impl TextArea {
 
     fn delete(&mut self, _: &TaDelete, _w: &mut Window, cx: &mut Context<Self>) {
         if self.selected_range.is_empty() {
-            if let Some(range) = self.decoration_starting_at(self.cursor()) {
-                self.selected_range = range;
-                cx.notify();
-                return;
-            }
             let next = next_grapheme(&self.content, self.cursor());
             if next == self.cursor() {
                 return;
@@ -524,11 +369,7 @@ impl TextArea {
     fn left(&mut self, _: &TaLeft, _w: &mut Window, cx: &mut Context<Self>) {
         if self.selected_range.is_empty() {
             let prev = prev_grapheme(&self.content, self.cursor());
-            let target = self
-                .decoration_containing(prev)
-                .map(|r| r.start)
-                .unwrap_or(prev);
-            self.move_to(target, cx);
+            self.move_to(prev, cx);
         } else {
             self.move_to(self.selected_range.start, cx);
         }
@@ -536,11 +377,6 @@ impl TextArea {
 
     fn right(&mut self, _: &TaRight, _w: &mut Window, cx: &mut Context<Self>) {
         if self.selected_range.is_empty() {
-            let here = self.cursor();
-            if let Some(range) = self.decoration_containing(here) {
-                self.move_to(range.end, cx);
-                return;
-            }
             let next = next_grapheme(&self.content, self.cursor());
             self.move_to(next, cx);
         } else {
@@ -548,39 +384,14 @@ impl TextArea {
         }
     }
 
-    fn decoration_containing(&self, offset: usize) -> Option<Range<usize>> {
-        find_decoration_containing(&self.decorations, offset)
-    }
-
-    fn decoration_ending_at(&self, offset: usize) -> Option<Range<usize>> {
-        find_decoration_ending_at(&self.decorations, offset)
-    }
-
-    fn decoration_starting_at(&self, offset: usize) -> Option<Range<usize>> {
-        find_decoration_starting_at(&self.decorations, offset)
-    }
-
-    fn snap_out_of_chip(&self, offset: usize, toward_start: bool) -> usize {
-        match self.decoration_containing(offset) {
-            Some(range) if offset > range.start => {
-                if toward_start {
-                    range.start
-                } else {
-                    range.end
-                }
-            }
-            _ => offset,
-        }
-    }
-
     fn up(&mut self, _: &TaUp, _w: &mut Window, cx: &mut Context<Self>) {
         let target = offset_one_line_up(&self.content, self.cursor());
-        self.move_to(self.snap_out_of_chip(target, true), cx);
+        self.move_to(target, cx);
     }
 
     fn down(&mut self, _: &TaDown, _w: &mut Window, cx: &mut Context<Self>) {
         let target = offset_one_line_down(&self.content, self.cursor());
-        self.move_to(self.snap_out_of_chip(target, false), cx);
+        self.move_to(target, cx);
     }
 
     fn select_left(&mut self, _: &TaSelectLeft, _w: &mut Window, cx: &mut Context<Self>) {
@@ -609,12 +420,12 @@ impl TextArea {
 
     fn home(&mut self, _: &TaHome, _w: &mut Window, cx: &mut Context<Self>) {
         let target = line_start(&self.content, self.cursor());
-        self.move_to(self.snap_out_of_chip(target, true), cx);
+        self.move_to(target, cx);
     }
 
     fn end(&mut self, _: &TaEnd, _w: &mut Window, cx: &mut Context<Self>) {
         let target = line_end(&self.content, self.cursor());
-        self.move_to(self.snap_out_of_chip(target, false), cx);
+        self.move_to(target, cx);
     }
 
     fn copy(&mut self, _: &TaCopy, _w: &mut Window, cx: &mut Context<Self>) {
@@ -654,7 +465,7 @@ impl TextArea {
     }
 
     fn submit(&mut self, _: &TaSubmit, w: &mut Window, cx: &mut Context<Self>) {
-        if !self.submit_on_empty && self.content.trim().is_empty() {
+        if self.content.trim().is_empty() {
             return;
         }
         let Some(cb) = self.on_submit.clone() else {
@@ -677,17 +488,6 @@ impl TextArea {
         if let Ok(mut callback) = cb.try_borrow_mut() {
             callback(content, w, cx);
         }
-    }
-
-    pub fn insert_char(&mut self, text: &str, cx: &mut Context<Self>) {
-        if text.is_empty() {
-            return;
-        }
-        self.replace_selection(text, cx);
-    }
-
-    pub fn focus_handle_ref(&self) -> &FocusHandle {
-        &self.focus_handle
     }
 }
 
@@ -835,11 +635,6 @@ impl Render for TextArea {
             muted_color: ui.muted,
             selection_color: ui.accent.alpha(0.3),
             cursor_color: ui.accent,
-            decorations: self.decorations.clone(),
-            chip_bg: ui.subtle,
-            chip_border: ui.border,
-            chip_accent_bg: ui.accent.alpha(0.18),
-            chip_accent_border: ui.accent,
         };
 
         div()
@@ -887,11 +682,6 @@ struct TextAreaContent {
     muted_color: Hsla,
     selection_color: Hsla,
     cursor_color: Hsla,
-    decorations: Vec<Decoration>,
-    chip_bg: Hsla,
-    chip_border: Hsla,
-    chip_accent_bg: Hsla,
-    chip_accent_border: Hsla,
 }
 
 impl IntoElement for TextAreaContent {
@@ -1190,79 +980,6 @@ impl Element for TextAreaContent {
             }
         }
 
-        if !self.content.is_empty() {
-            for deco in &self.decorations {
-                let Some(line) = prepaint.lines.iter().find(|l| {
-                    deco.byte_range.start >= l.byte_start && deco.byte_range.end <= l.byte_end
-                }) else {
-                    continue;
-                };
-                let local_start = deco.byte_range.start.saturating_sub(line.byte_start);
-                let local_end = deco.byte_range.end.saturating_sub(line.byte_start);
-                let Some(start_pos) = line
-                    .wrapped
-                    .position_for_index(local_start, self.line_height)
-                else {
-                    continue;
-                };
-                let Some(end_pos) = line.wrapped.position_for_index(local_end, self.line_height)
-                else {
-                    continue;
-                };
-                if start_pos.y != end_pos.y {
-                    continue;
-                }
-                let chip_x = bounds.origin.x + start_pos.x - px(2.);
-                let chip_h = self.line_height - px(1.);
-                let chip_y = line.y_top + start_pos.y + px(0.5);
-                let chip_w = (end_pos.x - start_pos.x) + px(4.);
-                let chip_bounds = Bounds::new(point(chip_x, chip_y), size(chip_w, chip_h));
-                let is_selected = deco.byte_range.end == self.cursor;
-                let (fill, border) = if is_selected {
-                    (self.chip_accent_bg, self.chip_accent_border)
-                } else {
-                    (self.chip_bg, self.chip_border)
-                };
-                window.paint_quad(gpui::quad(
-                    chip_bounds,
-                    px(4.0),
-                    fill,
-                    px(1.0),
-                    border,
-                    gpui::BorderStyle::Solid,
-                ));
-                let label_run = TextRun {
-                    len: deco.label.len(),
-                    font: window.text_style().font(),
-                    color: self.text_color,
-                    background_color: None,
-                    underline: None,
-                    strikethrough: None,
-                };
-                let runs = [label_run];
-                let mut shaped = window
-                    .text_system()
-                    .shape_text(
-                        deco.label.clone(),
-                        self.font_size,
-                        &runs,
-                        Some(chip_w),
-                        None,
-                    )
-                    .unwrap_or_default();
-                if let Some(label_line) = shaped.drain(..).next() {
-                    let _ = label_line.paint(
-                        point(chip_x + px(2.), chip_y),
-                        self.line_height,
-                        TextAlign::Left,
-                        Some(chip_bounds),
-                        window,
-                        cx,
-                    );
-                }
-            }
-        }
-
         if self.focused {
             let (caret_x, caret_y) = if content_empty {
                 (bounds.origin.x, bounds.origin.y)
@@ -1456,31 +1173,6 @@ fn sel_overlap_local(
     Some((a - line_start, b - line_start))
 }
 
-fn ranges_overlap(a: &Range<usize>, b: &Range<usize>) -> bool {
-    a.start < b.end && b.start < a.end
-}
-
-fn find_decoration_containing(decorations: &[Decoration], offset: usize) -> Option<Range<usize>> {
-    decorations
-        .iter()
-        .find(|d| d.byte_range.start <= offset && offset < d.byte_range.end)
-        .map(|d| d.byte_range.clone())
-}
-
-fn find_decoration_ending_at(decorations: &[Decoration], offset: usize) -> Option<Range<usize>> {
-    decorations
-        .iter()
-        .find(|d| d.byte_range.end == offset)
-        .map(|d| d.byte_range.clone())
-}
-
-fn find_decoration_starting_at(decorations: &[Decoration], offset: usize) -> Option<Range<usize>> {
-    decorations
-        .iter()
-        .find(|d| d.byte_range.start == offset)
-        .map(|d| d.byte_range.clone())
-}
-
 fn word_bounds(content: &str, offset: usize) -> (usize, usize) {
     let offset = clamp_to_grapheme(content, offset);
     let is_word_char = |c: char| c.is_alphanumeric() || c == '_';
@@ -1597,44 +1289,6 @@ fn offset_one_line_down(s: &str, offset: usize) -> usize {
     }
 }
 
-fn split_keeping_newlines(s: &str) -> impl Iterator<Item = LineSlice<'_>> {
-    let mut out = Vec::new();
-    let bytes = s.as_bytes();
-    let mut start = 0;
-    let mut i = 0;
-    while i < bytes.len() {
-        if bytes[i] == b'\n' {
-            out.push(LineSlice {
-                text: &s[start..i],
-                has_trailing_newline: true,
-            });
-            start = i + 1;
-        }
-        i += 1;
-    }
-    if start < bytes.len() {
-        out.push(LineSlice {
-            text: &s[start..],
-            has_trailing_newline: false,
-        });
-    }
-    out.into_iter()
-}
-
-struct LineSlice<'a> {
-    text: &'a str,
-    has_trailing_newline: bool,
-}
-
-impl<'a> LineSlice<'a> {
-    fn bytes_without_trailing_newline(&self) -> usize {
-        self.text.len()
-    }
-    fn full_len(&self) -> usize {
-        self.text.len() + if self.has_trailing_newline { 1 } else { 0 }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1708,18 +1362,6 @@ mod tests {
     }
 
     #[test]
-    fn split_keeping_newlines_handles_empty_lines() {
-        let s = "a\n\nb";
-        let lines: Vec<_> = split_keeping_newlines(s)
-            .map(|l| (l.text.to_string(), l.has_trailing_newline))
-            .collect();
-        assert_eq!(lines.len(), 3);
-        assert_eq!(lines[0], ("a".to_string(), true));
-        assert_eq!(lines[1], ("".to_string(), true));
-        assert_eq!(lines[2], ("b".to_string(), false));
-    }
-
-    #[test]
     fn sel_overlap_returns_none_for_empty_selection() {
         let sel = 0..0;
         assert_eq!(sel_overlap_local(&sel, 0, 10), None);
@@ -1730,71 +1372,5 @@ mod tests {
         let sel = 2..8;
         assert_eq!(sel_overlap_local(&sel, 0, 5), Some((2, 5)));
         assert_eq!(sel_overlap_local(&sel, 6, 10), Some((0, 2)));
-    }
-
-    #[test]
-    fn ranges_overlap_basic() {
-        assert!(ranges_overlap(&(0..5), &(3..7)));
-        assert!(ranges_overlap(&(3..7), &(0..5)));
-        assert!(!ranges_overlap(&(0..5), &(5..10)));
-        assert!(!ranges_overlap(&(0..5), &(10..15)));
-        assert!(ranges_overlap(&(0..10), &(3..6)));
-    }
-
-    fn make_decoration(byte_range: Range<usize>, label: &str) -> Decoration {
-        Decoration {
-            byte_range,
-            label: label.to_string().into(),
-        }
-    }
-
-    #[test]
-    fn decoration_containing_inclusive_start_exclusive_end() {
-        let decos = vec![make_decoration(6..14, "file.rs")];
-        assert!(find_decoration_containing(&decos, 6).is_some());
-        assert!(find_decoration_containing(&decos, 10).is_some());
-        assert!(find_decoration_containing(&decos, 13).is_some());
-        assert!(find_decoration_containing(&decos, 14).is_none());
-        assert!(find_decoration_containing(&decos, 5).is_none());
-    }
-
-    #[test]
-    fn decoration_ending_at_matches_right_edge_only() {
-        let decos = vec![make_decoration(6..14, "file.rs")];
-        assert!(find_decoration_ending_at(&decos, 14).is_some());
-        assert!(find_decoration_ending_at(&decos, 13).is_none());
-        assert!(find_decoration_ending_at(&decos, 15).is_none());
-    }
-
-    #[test]
-    fn decoration_starting_at_matches_left_edge_only() {
-        let decos = vec![make_decoration(6..14, "file.rs")];
-        assert!(find_decoration_starting_at(&decos, 6).is_some());
-        assert!(find_decoration_starting_at(&decos, 5).is_none());
-        assert!(find_decoration_starting_at(&decos, 7).is_none());
-    }
-
-    #[test]
-    fn decoration_helpers_handle_multiple_chips() {
-        let decos = vec![make_decoration(0..2, "a"), make_decoration(12..14, "b")];
-        assert!(find_decoration_containing(&decos, 0).is_some());
-        assert!(find_decoration_containing(&decos, 13).is_some());
-        assert!(find_decoration_containing(&decos, 5).is_none());
-        assert_eq!(
-            find_decoration_ending_at(&decos, 2).map(|r| r.start),
-            Some(0)
-        );
-        assert_eq!(
-            find_decoration_ending_at(&decos, 14).map(|r| r.start),
-            Some(12)
-        );
-        assert_eq!(
-            find_decoration_starting_at(&decos, 0).map(|r| r.end),
-            Some(2)
-        );
-        assert_eq!(
-            find_decoration_starting_at(&decos, 12).map(|r| r.end),
-            Some(14)
-        );
     }
 }

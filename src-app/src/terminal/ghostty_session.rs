@@ -18,7 +18,7 @@ use paneflow_host::{HostClient, HostClientError};
 use super::clipboard_gate::ClipboardGate;
 use super::host_link::{CheckpointPayload, HostAttachment, HostLinkEnd, HostLinkState};
 use super::marks::{CommandMark, Osc133Scanner, RawMark, SharedMarkRing};
-use super::pty_session::{ForegroundSignalMask, SpawnParams};
+use super::pty_session::SpawnParams;
 use super::service_detector::ServiceOutputTail;
 use super::types::{
     Cell, CellFlags, Color, Content, CursorShape, GridLineText, GridMetrics, HyperlinkSource,
@@ -1161,7 +1161,6 @@ impl GhosttySession {
         &self,
         pending: GhosttyRuntimePending,
         params: SpawnParams,
-        signal_mask: Option<ForegroundSignalMask>,
         max_scrollback: usize,
     ) -> Result<SpawnedGhostty, GhosttyStartError> {
         let (startup_tx, startup_rx) = sync_channel(1);
@@ -1179,7 +1178,6 @@ impl GhosttySession {
                         inner,
                         runtime_mailbox,
                         params,
-                        signal_mask,
                         max_scrollback,
                         startup_tx,
                         runtime_startup_state,
@@ -2073,7 +2071,6 @@ fn run_runtime(
     inner: Arc<SessionInner>,
     mailbox: Arc<RuntimeMailbox>,
     params: SpawnParams,
-    signal_mask: Option<ForegroundSignalMask>,
     max_scrollback: usize,
     startup_tx: SyncSender<StartupReport>,
     startup_state: Arc<StartupState>,
@@ -2152,19 +2149,7 @@ fn run_runtime(
     command.env("TERM_PROGRAM", "ghostty");
     command.env("TERM_PROGRAM_VERSION", ghostty::GHOSTTY_APP_VERSION);
 
-    #[cfg(unix)]
-    let child = {
-        let restore_mask = super::pty_session::apply_thread_signal_mask(signal_mask);
-        let child = pair.slave.spawn_command(command);
-        super::pty_session::restore_thread_signal_mask(restore_mask);
-        child
-    };
-    #[cfg(not(unix))]
-    let child = {
-        let _ = signal_mask;
-        pair.slave.spawn_command(command)
-    };
-    let child = match child {
+    let child = match pair.slave.spawn_command(command) {
         Ok(child) => child,
         Err(error) => {
             let _ = startup_tx.send(StartupReport::SpawnFailed(
@@ -2997,7 +2982,6 @@ fn handle_terminal_command(
                     point,
                     link: link.map(|link| HyperlinkZone {
                         uri: link.uri.clone(),
-                        id: String::new(),
                         start: point,
                         end: point,
                         is_openable: super::element::is_url_scheme_openable(&link.uri),
@@ -3277,7 +3261,6 @@ fn record_command_marks(inner: &SessionInner, raw_marks: &[RawMark]) {
         .map_or(1_i64, |line| i64::from(line.max(0)) + 1);
     drop(state);
 
-    let at = Instant::now();
     let mut marks = inner
         .marks
         .lock()
@@ -3285,9 +3268,7 @@ fn record_command_marks(inner: &SessionInner, raw_marks: &[RawMark]) {
     for raw in raw_marks {
         marks.push(CommandMark {
             kind: raw.kind,
-            exit_code: raw.exit_code,
             abs_line,
-            at,
         });
     }
     marks.retain_at_or_below(history_size.saturating_add(screen_lines.saturating_sub(1)));
@@ -6350,7 +6331,7 @@ mod tests {
         queue_clipboard(&session.inner, "unfocused".into());
         assert!(events_rx.try_recv().is_err());
 
-        gate.set_policy(true, false);
+        gate.set_policy(true);
         gate.set_focused(true);
         queue_clipboard(&session.inner, "focused".into());
         let event_state = match events_rx.try_recv() {
@@ -6599,7 +6580,7 @@ mod tests {
 
         assert!(!scan_chunk_for_marks(
             &mut scanner,
-            b"before\x1b]133;D;7",
+            b"before\x1b]133;A",
             &mut marks
         ));
         assert!(scan_chunk_for_marks(&mut scanner, b"\x07after", &mut marks));
@@ -6611,8 +6592,7 @@ mod tests {
         assert_eq!(
             marks,
             vec![RawMark {
-                kind: super::super::marks::MarkKind::CommandFinished,
-                exit_code: Some(7),
+                kind: super::super::marks::MarkKind::Prompt,
             }]
         );
     }
@@ -7244,7 +7224,7 @@ mod tests {
         let (session, pending, mut events_rx) =
             GhosttySession::pending(TerminalWindowSize::new(100, 30, 8, 16));
         let spawned = session
-            .start(pending, params, None, 1_000)
+            .start(pending, params, 1_000)
             .unwrap_or_else(|error| panic!("{name} must spawn through ConPTY: {error}"));
         assert!(spawned.child_pid > 0, "{name} child PID");
         session.promote();
@@ -7402,7 +7382,7 @@ mod tests {
         let (session, pending, mut events_rx) =
             GhosttySession::pending(TerminalWindowSize::new(80, 24, 8, 16));
         let spawned = session
-            .start(pending, params, None, 1_000)
+            .start(pending, params, 1_000)
             .expect("Ghostty runtime must spawn a portable PTY shell");
         assert!(spawned.child_pid > 0);
         #[cfg(unix)]

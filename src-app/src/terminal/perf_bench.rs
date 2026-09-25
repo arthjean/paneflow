@@ -363,7 +363,7 @@ fn idle_scenarios(metrics: &mut Vec<Metric>) {
         std::thread::sleep(Duration::from_millis(200));
     }
     let cwd = std::env::current_dir().ok();
-    match TerminalState::new(cwd, 1, 1, Some((80, 24)), None, None) {
+    match TerminalState::new(cwd, 1, 1, Some((80, 24)), None) {
         Ok(shell) => {
             let silent_for = Duration::from_millis(1_500);
             let give_up = Instant::now() + Duration::from_secs(15);

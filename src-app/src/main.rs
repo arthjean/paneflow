@@ -1648,10 +1648,6 @@ fn main() {
         eprintln!("paneflow: moved user state to {}", migrated.display());
     }
     startup_trace::mark("home_migrated");
-    #[cfg(unix)]
-    if args.get(1).map(String::as_str) == Some(agents::parent_guard::PTY_GUARD_SUBCOMMAND) {
-        std::process::exit(agents::parent_guard::run_pty_guard_from_args(&args));
-    }
     #[cfg(target_os = "windows")]
     if external_open::is_open_url_helper_invocation(&args) {
         std::process::exit(external_open::run_open_url_helper_from_args(&args));
@@ -1750,7 +1746,7 @@ fn main() {
         Ok(agents::parent_guard::ParentGuardStatus::Installed) => {}
         Ok(agents::parent_guard::ParentGuardStatus::Unsupported) => {
             log::debug!(
-                "parent_guard: process-wide job guard unsupported on Unix; PTY shells use per-PTY guards and shim-wrapped agents use shim guards"
+                "parent_guard: process-wide job guard unsupported on Unix; shim-wrapped agents use shim guards"
             );
         }
         Err(err) => {

@@ -17,59 +17,31 @@ impl DiffSyntax {
 
     pub fn color_for_capture(&self, name: &str) -> Option<Hsla> {
         let p = &self.palette;
-        let c = if cap_has(name, "comment.doc") || cap_has(name, "comment.documentation") {
+        let c = if cap_has(name, "comment.doc") {
             p.comment_doc
         } else if cap_has(name, "comment") {
             p.comment
         } else if cap_has(name, "string.escape") || cap_has(name, "escape") {
             p.string_escape
-        } else if cap_has(name, "string.special")
-            || cap_has(name, "string.regex")
-            || cap_has(name, "string.regexp")
-        {
+        } else if cap_has(name, "string.special") || cap_has(name, "string.regex") {
             p.string_special
-        } else if cap_has(name, "string") || cap_has(name, "character") {
+        } else if cap_has(name, "string") {
             p.string
-        } else if cap_has(name, "text.literal")
-            || cap_has(name, "markup.raw")
-            || cap_has(name, "markup.code")
-        {
+        } else if cap_has(name, "text.literal") {
             p.text_literal
-        } else if cap_has(name, "text.title")
-            || cap_has(name, "markup.heading")
-            || cap_has(name, "title")
-        {
+        } else if cap_has(name, "text.title") || cap_has(name, "title") {
             p.title
-        } else if cap_has(name, "link_uri")
-            || cap_has(name, "text.uri")
-            || cap_has(name, "markup.link.url")
-            || cap_has(name, "markup.link.uri")
-            || cap_has(name, "link.uri")
-            || cap_has(name, "uri")
-        {
+        } else if cap_has(name, "link_uri") || cap_has(name, "text.uri") {
             p.link_uri
-        } else if cap_has(name, "link_text")
-            || cap_has(name, "text.reference")
-            || cap_has(name, "markup.link.label")
-            || cap_has(name, "markup.link")
-            || cap_has(name, "link")
-        {
+        } else if cap_has(name, "link_text") || cap_has(name, "text.reference") {
             p.link_text
-        } else if cap_has(name, "text.strong")
-            || cap_has(name, "markup.strong")
-            || cap_has(name, "markup.bold")
-            || cap_has(name, "emphasis.strong")
-        {
+        } else if cap_has(name, "emphasis.strong") {
             p.emphasis_strong
-        } else if cap_has(name, "text.emphasis")
-            || cap_has(name, "markup.italic")
-            || cap_has(name, "markup.emphasis")
-            || cap_has(name, "emphasis")
-        {
+        } else if cap_has(name, "emphasis") {
             p.emphasis
         } else if cap_has(name, "boolean") {
             p.boolean
-        } else if cap_has(name, "number") || cap_has(name, "float") {
+        } else if cap_has(name, "number") {
             p.number
         } else if cap_has(name, "constant.builtin") {
             p.constant_builtin
@@ -78,33 +50,19 @@ impl DiffSyntax {
             || cap_has(name, "selector.id")
         {
             p.constant
-        } else if cap_has(name, "keyword")
-            || cap_has(name, "storage")
-            || cap_has(name, "conditional")
-            || cap_has(name, "repeat")
-            || cap_has(name, "include")
-            || cap_has(name, "preproc")
-            || cap_has(name, "define")
-        {
+        } else if cap_has(name, "keyword") || cap_has(name, "preproc") {
             p.keyword
         } else if cap_has(name, "constructor") {
             p.constructor
-        } else if cap_has(name, "enum") {
-            p.r#enum
         } else if cap_has(name, "type") {
             p.r#type
-        } else if cap_has(name, "function") || cap_has(name, "method") {
+        } else if cap_has(name, "function") {
             p.function
-        } else if cap_has(name, "attribute")
-            || cap_has(name, "annotation")
-            || cap_has(name, "decorator")
-            || cap_has(name, "selector.pseudo")
-        {
+        } else if cap_has(name, "attribute") || cap_has(name, "selector.pseudo") {
             p.attribute
         } else if cap_has(name, "tag") {
             p.tag
         } else if cap_has(name, "property")
-            || cap_has(name, "field")
             || cap_has(name, "variable.member")
             || cap_has(name, "variable.parameter")
         {
@@ -119,10 +77,7 @@ impl DiffSyntax {
             p.variable
         } else if cap_has(name, "operator") {
             p.operator
-        } else if cap_has(name, "punctuation.special")
-            || cap_has(name, "punctuation.list_marker")
-            || cap_has(name, "markup.list")
-        {
+        } else if cap_has(name, "punctuation.special") || cap_has(name, "punctuation.list_marker") {
             p.punctuation_special
         } else if cap_has(name, "punctuation") {
             p.punctuation
@@ -223,7 +178,6 @@ mod tests {
         palette.keyword = gpui::hsla(2.0 / 32.0, 0.5, 0.5, 1.0);
         palette.function = gpui::hsla(3.0 / 32.0, 0.5, 0.5, 1.0);
         palette.r#type = gpui::hsla(4.0 / 32.0, 0.5, 0.5, 1.0);
-        palette.r#enum = gpui::hsla(5.0 / 32.0, 0.5, 0.5, 1.0);
         palette.constructor = gpui::hsla(6.0 / 32.0, 0.5, 0.5, 1.0);
         palette.string = gpui::hsla(7.0 / 32.0, 0.5, 0.5, 1.0);
         palette.string_escape = gpui::hsla(8.0 / 32.0, 0.5, 0.5, 1.0);

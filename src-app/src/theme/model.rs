@@ -44,7 +44,6 @@ pub struct SyntaxPalette {
     pub keyword: Hsla,
     pub function: Hsla,
     pub r#type: Hsla,
-    pub r#enum: Hsla,
     pub constructor: Hsla,
     pub string: Hsla,
     pub string_escape: Hsla,
@@ -79,7 +78,6 @@ impl SyntaxPalette {
             keyword: h(0xb070ff),
             function: h(0xa868e8),
             r#type: h(0xf89850),
-            r#enum: h(0xf0a060),
             constructor: h(0xa868e8),
             string: h(0x40c878),
             string_escape: h(0x70c8f0),
@@ -114,7 +112,6 @@ impl SyntaxPalette {
             keyword: h(0x8839ef),
             function: h(0x1e66f5),
             r#type: h(0x179299),
-            r#enum: h(0x179299),
             constructor: h(0x1e66f5),
             string: h(0x40a02b),
             string_escape: h(0x04a5e5),
@@ -149,7 +146,6 @@ impl SyntaxPalette {
             keyword: h(0xffffff),
             function: h(0x7dd3fc),
             r#type: h(0x60a5fa),
-            r#enum: h(0x93c5fd),
             constructor: h(0x7dd3fc),
             string: h(0x86efac),
             string_escape: h(0x67e8f9),
@@ -184,7 +180,6 @@ impl SyntaxPalette {
             keyword: h(0xd97757),
             function: h(0xddd5c8),
             r#type: h(0xb9b9ae),
-            r#enum: h(0xb8a1c8),
             constructor: h(0xddd5c8),
             string: h(0x9ab38a),
             string_escape: h(0x95b8b2),
@@ -219,7 +214,6 @@ impl SyntaxPalette {
             keyword: h(0xa0d0f0),
             function: h(0xe8e8e8),
             r#type: h(0x7dd3fc),
-            r#enum: h(0x8fb7ff),
             constructor: h(0xe8e8e8),
             string: h(0x57d992),
             string_escape: h(0x8bdcff),
@@ -254,7 +248,6 @@ impl SyntaxPalette {
             keyword: h(0x000000),
             function: h(0x0068d6),
             r#type: h(0x067f6f),
-            r#enum: h(0x0a6e64),
             constructor: h(0x0068d6),
             string: h(0x0f7b0f),
             string_escape: h(0x0e7490),
@@ -289,7 +282,6 @@ impl SyntaxPalette {
             keyword: h(0xc2552f),
             function: h(0x4a6fa5),
             r#type: h(0x2f7d72),
-            r#enum: h(0x7a5ea8),
             constructor: h(0x4a6fa5),
             string: h(0x4f7a3f),
             string_escape: h(0x2b7f8f),
@@ -324,7 +316,6 @@ impl SyntaxPalette {
             keyword: h(0x0000ff),
             function: h(0x795e26),
             r#type: h(0x267f99),
-            r#enum: h(0x2b91af),
             constructor: h(0x795e26),
             string: h(0xa31515),
             string_escape: h(0xd16969),
@@ -353,14 +344,13 @@ impl SyntaxPalette {
     }
 
     #[cfg(test)]
-    pub(crate) fn all_slots(&self) -> [Hsla; 30] {
+    pub(crate) fn all_slots(&self) -> [Hsla; 29] {
         [
             self.comment,
             self.comment_doc,
             self.keyword,
             self.function,
             self.r#type,
-            self.r#enum,
             self.constructor,
             self.string,
             self.string_escape,
@@ -895,7 +885,7 @@ mod tests {
             for (i, slot) in theme.syntax.all_slots().iter().enumerate() {
                 assert_ne!(*slot, default, "{label}: syntax slot #{i} left at default");
                 let text = ui_colors_with(&theme).text;
-                if matches!(i, 15 | 18 | 23) {
+                if matches!(i, 14 | 17 | 22) {
                     assert_eq!(*slot, text, "{label}: neutral syntax slot #{i} is colored");
                 } else {
                     assert_ne!(*slot, text, "{label}: syntax slot #{i} equals editor text");

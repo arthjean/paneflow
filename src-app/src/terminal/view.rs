@@ -1138,52 +1138,6 @@ impl TerminalView {
         });
         zones
     }
-
-    #[allow(dead_code)]
-    pub fn detect_url_at_hover(&self) -> Vec<HyperlinkZone> {
-        let Some((line, line_text, char_to_col)) = self.hovered_line_text() else {
-            return Vec::new();
-        };
-        let trimmed = line_text.trim_end();
-        let trimmed_chars = trimmed.chars().count();
-        crate::terminal::element::detect_urls_on_line_mapped(
-            trimmed,
-            line,
-            &char_to_col[..trimmed_chars],
-        )
-    }
-
-    #[allow(dead_code)]
-    pub(super) fn detect_file_path_at_hover(&self) -> Vec<HyperlinkZone> {
-        let Some((line, line_text, char_to_col)) = self.hovered_line_text() else {
-            return Vec::new();
-        };
-        let trimmed = line_text.trim_end();
-        let trimmed_chars = trimmed.chars().count();
-        let map = &char_to_col[..trimmed_chars];
-        let cwd = self
-            .terminal
-            .current_cwd
-            .as_deref()
-            .map(std::path::Path::new);
-        crate::terminal::element::detect_file_paths_on_line_mapped(trimmed, line, map, cwd)
-    }
-
-    #[allow(dead_code)]
-    pub(super) fn detect_code_path_at_hover(&self) -> Vec<HyperlinkZone> {
-        let Some((line, line_text, char_to_col)) = self.hovered_line_text() else {
-            return Vec::new();
-        };
-        let trimmed = line_text.trim_end();
-        let trimmed_chars = trimmed.chars().count();
-        let map = &char_to_col[..trimmed_chars];
-        let cwd = self
-            .terminal
-            .current_cwd
-            .as_deref()
-            .map(std::path::Path::new);
-        crate::terminal::element::detect_code_paths_on_line_mapped(trimmed, line, map, cwd)
-    }
 }
 
 pub enum TerminalEvent {

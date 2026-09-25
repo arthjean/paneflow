@@ -136,7 +136,7 @@ impl StressPane {
         let (session, pending, events) =
             GhosttySession::pending(TerminalWindowSize::new(80, 24, 8, 16));
         let spawned = session
-            .start(pending, params, None, 10_000)
+            .start(pending, params, 10_000)
             .unwrap_or_else(|_| panic!("scenario=spawn surface={surface_id} phase=start"));
         assert!(
             spawned.child_pid > 0,

@@ -1,29 +1,22 @@
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
-use std::time::Instant;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MarkKind {
-    PromptStart,
-    CommandStart,
-    OutputStart,
-    CommandFinished,
+    Prompt,
+    Command,
+    Output,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RawMark {
     pub kind: MarkKind,
-    pub exit_code: Option<i32>,
 }
 
 #[derive(Debug, Clone, Copy)]
 pub struct CommandMark {
     pub kind: MarkKind,
-    #[allow(dead_code)]
-    pub exit_code: Option<i32>,
     pub abs_line: i64,
-    #[allow(dead_code)]
-    pub at: Instant,
 }
 
 pub const MAX_MARKS: usize = 1_000;
@@ -37,7 +30,7 @@ pub struct MarkRing {
 
 impl MarkRing {
     pub fn push(&mut self, mark: CommandMark) {
-        if mark.kind == MarkKind::PromptStart {
+        if mark.kind == MarkKind::Prompt {
             self.prompt_starts = self.prompt_starts.wrapping_add(1);
         }
         if self.marks.len() == MAX_MARKS {
@@ -54,16 +47,11 @@ impl MarkRing {
         self.marks.retain(|mark| mark.abs_line <= max_abs_line);
     }
 
-    #[allow(dead_code)]
-    pub fn iter(&self) -> impl Iterator<Item = &CommandMark> {
-        self.marks.iter()
-    }
-
     pub fn prompt_before(&self, abs_line: i64) -> Option<i64> {
         self.marks
             .iter()
             .rev()
-            .filter(|mark| mark.kind == MarkKind::PromptStart)
+            .filter(|mark| mark.kind == MarkKind::Prompt)
             .map(|mark| mark.abs_line)
             .find(|line| *line < abs_line)
     }
@@ -71,7 +59,7 @@ impl MarkRing {
     pub fn prompt_after(&self, abs_line: i64) -> Option<i64> {
         self.marks
             .iter()
-            .filter(|mark| mark.kind == MarkKind::PromptStart)
+            .filter(|mark| mark.kind == MarkKind::Prompt)
             .map(|mark| mark.abs_line)
             .find(|line| *line > abs_line)
     }
@@ -222,23 +210,13 @@ fn find_escape(bytes: &[u8]) -> Option<usize> {
 }
 
 fn parse_payload(payload: &[u8]) -> Option<RawMark> {
-    let (kind, rest) = payload.split_first()?;
-    let kind = match kind {
-        b'A' => MarkKind::PromptStart,
-        b'B' => MarkKind::CommandStart,
-        b'C' => MarkKind::OutputStart,
-        b'D' => MarkKind::CommandFinished,
+    let kind = match payload.first()? {
+        b'A' => MarkKind::Prompt,
+        b'B' => MarkKind::Command,
+        b'C' => MarkKind::Output,
         _ => return None,
     };
-    let exit_code = if kind == MarkKind::CommandFinished {
-        rest.strip_prefix(b";").and_then(|code| {
-            let code = code.split(|byte| *byte == b';').next().unwrap_or(code);
-            std::str::from_utf8(code).ok()?.parse::<i32>().ok()
-        })
-    } else {
-        None
-    };
-    Some(RawMark { kind, exit_code })
+    Some(RawMark { kind })
 }
 
 #[cfg(test)]
@@ -255,26 +233,19 @@ mod tests {
     }
 
     #[test]
-    fn recognizes_all_kinds_and_terminators() {
+    fn recognizes_the_read_kinds_and_both_terminators() {
         let marks = scan(&[b"\x1b]133;A\x07\x1b]133;B\x1b\\\x1b]133;C\x07\x1b]133;D;7\x07"]);
         assert_eq!(
             marks,
             vec![
                 RawMark {
-                    kind: MarkKind::PromptStart,
-                    exit_code: None
+                    kind: MarkKind::Prompt
                 },
                 RawMark {
-                    kind: MarkKind::CommandStart,
-                    exit_code: None
+                    kind: MarkKind::Command
                 },
                 RawMark {
-                    kind: MarkKind::OutputStart,
-                    exit_code: None
-                },
-                RawMark {
-                    kind: MarkKind::CommandFinished,
-                    exit_code: Some(7)
+                    kind: MarkKind::Output
                 },
             ]
         );
@@ -282,13 +253,12 @@ mod tests {
 
     #[test]
     fn accepts_every_chunk_boundary() {
-        let sequence = b"\x1b]133;D;127\x1b\\";
+        let sequence = b"\x1b]133;A;cl=m\x1b\\";
         for split in 1..sequence.len() {
             assert_eq!(
                 scan(&[&sequence[..split], &sequence[split..]]),
                 vec![RawMark {
-                    kind: MarkKind::CommandFinished,
-                    exit_code: Some(127)
+                    kind: MarkKind::Prompt
                 }],
                 "split at {split}"
             );
@@ -302,8 +272,7 @@ mod tests {
         assert_eq!(
             marks,
             vec![RawMark {
-                kind: MarkKind::PromptStart,
-                exit_code: None
+                kind: MarkKind::Prompt
             }]
         );
     }
@@ -313,13 +282,11 @@ mod tests {
         let mut ring = MarkRing::default();
         for line in 0..MAX_MARKS + 10 {
             ring.push(CommandMark {
-                kind: MarkKind::PromptStart,
-                exit_code: None,
+                kind: MarkKind::Prompt,
                 abs_line: line as i64,
-                at: Instant::now(),
             });
         }
-        assert_eq!(ring.iter().count(), MAX_MARKS);
+        assert_eq!(ring.prompt_before(10), None);
         assert_eq!(ring.prompt_before(20), Some(19));
         assert_eq!(ring.prompt_after(20), Some(21));
     }

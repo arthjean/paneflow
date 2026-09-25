@@ -216,7 +216,7 @@ inside `theme/builtin.rs`.
 | `subtle` | Pills, inputs, toasts, resting control fill | `#2a2a2a` | `#eeeeee` |
 | `muted` | Secondary text, icons at rest, eyebrows | `#a0a0a0` | `#636363` |
 | `text` | Primary text, icons on hover | `#dddddd` | `#262626` |
-| `accent` | Links, selected metadata, the one primary action, info callouts | `#57d5c4` | `#4c6fff` |
+| `accent` | Links, selected metadata, the one primary action | `#57d5c4` | `#4c6fff` |
 | `tool_card_header_bg` | Reserved; no surface consumes it today | `#2e2e2e` | `#f1f1f1` |
 | `vc_added`, `vc_modified`, `vc_deleted`, `vc_conflict` | Diffstat, status letters, change bars, attention border | `#57d992`, `#ffd166`, `#ff6f6a`, `#ffa657` | `#29681c`, `#df8e1d`, `#a00b2b`, `#fe640b` |
 | `vc_*_background` | Row washes in the diff | added, deleted, modified at 0.12 | `#40a02b`, `#d20f39`, `#df8e1d` at 0.16 |
@@ -279,7 +279,7 @@ to the surfaces named:
 | `#fbbf24`, light `#92400e` | Sidebar bell when an agent needs input | Amber request signal, identical in every preset of a variant; the light value keeps the 10 px word at 4.5:1 |
 | `#83c3ff`, light `#0369a1` | Sidebar dot when an agent finished | Light blue completion signal, identical in every preset of a variant; the light value keeps the 10 px word at 4.5:1 |
 | `#3a83f7` | Title bar pill when a manual check finds a release | Solid update blue with a white glyph, label, and `×`, identical in every preset |
-| `hsl(40 85% 55%)`, `hsl(0 62% 56%)` | Callout warning and error | Severity hues independent of preset |
+| `hsl(40 85% 55%)` | Callout warning | Severity hue independent of preset |
 | `#232323` / `#ffffff` | Settings card fill | Card sits one step above `base` in either lightness |
 
 ### 4.4 Geometry
@@ -853,8 +853,7 @@ It lands 1500 ms after boot, once the window is painted, and it is the one
 toast that never auto-closes: only the close button, the surface click, or
 another toast in the queue removes it. Callouts (`widgets/callout.rs`) are 16
 px icon, 14
-Semibold title, 13 muted description, with `accent` for info and the fixed
-warning and error hues. Empty states (`panel_empty_state`) center an 18 px
+Semibold title, 13 muted description, with the fixed warning hue. Empty states (`panel_empty_state`) center an 18 px
 muted glyph, an optional 14 Semibold title, and a 12 px muted message; the
 glyph spins while scanning.
 

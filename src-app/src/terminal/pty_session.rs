@@ -340,7 +340,6 @@ impl TerminalSessionBackend {
 pub enum Osc52Mode {
     Disabled,
     CopyOnly,
-    CopyPaste,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -562,8 +561,6 @@ pub struct TerminalState {
     pub(super) pending_clipboard_ops: Vec<String>,
     pub(super) pending_notifications: Vec<ProgramNotification>,
     pub cached_foreground_command: Option<String>,
-    #[cfg(all(unix, not(test)))]
-    pty_guard: Option<crate::agents::parent_guard::PtyGuardHandle>,
     pub cursor_blinking: bool,
     pub dirty: bool,
     pub output_generation: u64,
@@ -590,47 +587,6 @@ pub(super) struct SpawnParams {
     pub(super) cols: usize,
     pub(super) rows: usize,
     pub(super) profile: TerminalSurfaceProfile,
-}
-
-#[cfg(unix)]
-pub type ForegroundSignalMask = libc::sigset_t;
-#[cfg(not(unix))]
-pub type ForegroundSignalMask = ();
-
-#[cfg(all(test, unix))]
-pub(super) fn capture_foreground_signal_mask() -> Option<ForegroundSignalMask> {
-    unsafe {
-        let mut oldset: libc::sigset_t = std::mem::zeroed();
-        if libc::pthread_sigmask(libc::SIG_SETMASK, std::ptr::null(), &mut oldset) == 0 {
-            Some(oldset)
-        } else {
-            None
-        }
-    }
-}
-
-#[cfg(unix)]
-pub(super) fn apply_thread_signal_mask(
-    mask: Option<ForegroundSignalMask>,
-) -> Option<libc::sigset_t> {
-    let fg = mask?;
-    unsafe {
-        let mut saved: libc::sigset_t = std::mem::zeroed();
-        if libc::pthread_sigmask(libc::SIG_SETMASK, &fg, &mut saved) == 0 {
-            Some(saved)
-        } else {
-            None
-        }
-    }
-}
-
-#[cfg(unix)]
-pub(super) fn restore_thread_signal_mask(saved: Option<libc::sigset_t>) {
-    if let Some(saved) = saved {
-        unsafe {
-            libc::pthread_sigmask(libc::SIG_SETMASK, &saved, std::ptr::null_mut());
-        }
-    }
 }
 
 impl TerminalState {
@@ -669,10 +625,6 @@ impl TerminalState {
         self.ghostty.promote();
         self.child_pid = spawned.child_pid;
         self.current_cwd = Some(spawned.cwd.to_string_lossy().into_owned());
-        #[cfg(all(unix, not(test)))]
-        {
-            self.pty_guard = crate::agents::parent_guard::spawn_pty_guard(spawned.child_pid);
-        }
         self.host_link = HostLinkState::Attached;
         self.set_osc52_mode(Osc52Mode::CopyOnly);
         self.cursor_blinking = true;
@@ -798,7 +750,6 @@ impl TerminalState {
         surface_id: u64,
         initial_size: Option<(usize, usize)>,
         user_env: Option<std::collections::HashMap<String, String>>,
-        signal_mask: Option<ForegroundSignalMask>,
     ) -> anyhow::Result<Self> {
         Self::new_with_profile(
             working_directory,
@@ -807,7 +758,6 @@ impl TerminalState {
             initial_size,
             user_env,
             TerminalSurfaceProfile::Normal,
-            signal_mask,
         )
     }
 
@@ -819,7 +769,6 @@ impl TerminalState {
         initial_size: Option<(usize, usize)>,
         user_env: Option<std::collections::HashMap<String, String>>,
         profile: TerminalSurfaceProfile,
-        signal_mask: Option<ForegroundSignalMask>,
     ) -> anyhow::Result<Self> {
         let params = Self::resolve_spawn_params_with_profile(
             working_directory,
@@ -838,7 +787,7 @@ impl TerminalState {
         );
         let spawned = state
             .ghostty_session()
-            .start(pending.ghostty, params, signal_mask, max_scrollback)
+            .start(pending.ghostty, params, max_scrollback)
             .map_err(|error| anyhow::anyhow!("{error}"))?;
         state.promote_ghostty(spawned);
         Ok(state)
@@ -1013,8 +962,6 @@ impl TerminalState {
             pending_clipboard_ops: Vec::new(),
             pending_notifications: Vec::new(),
             cached_foreground_command: None,
-            #[cfg(all(unix, not(test)))]
-            pty_guard: None,
             cursor_blinking: false,
             title: String::from("Terminal"),
             dirty: true,
@@ -1141,10 +1088,6 @@ impl TerminalState {
                 self.progress = None;
                 self.cached_foreground_command = None;
                 self.reported_ports.clear();
-                #[cfg(all(unix, not(test)))]
-                {
-                    self.pty_guard = None;
-                }
             }
             GhosttyUiEvent::HyperlinkResolved { point, link } => {
                 self.resolved_hover_link = Some((point, link));
@@ -1290,8 +1233,7 @@ impl TerminalState {
 
     fn set_osc52_mode(&mut self, mode: Osc52Mode) {
         self.osc52_mode = mode;
-        self.clipboard_gate
-            .set_policy(mode != Osc52Mode::Disabled, mode == Osc52Mode::CopyPaste);
+        self.clipboard_gate.set_policy(mode != Osc52Mode::Disabled);
     }
 
     fn dispatch_ghostty_input(
@@ -1897,12 +1839,6 @@ mod tests {
         assert_eq!((p.cols, p.rows), (100, 30));
         let d = TerminalState::resolve_spawn_params(None, 1, 1, None, None);
         assert_eq!((d.cols, d.rows), (120, 40));
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn capture_foreground_signal_mask_succeeds_on_unix() {
-        assert!(capture_foreground_signal_mask().is_some());
     }
 
     #[test]
@@ -2534,7 +2470,7 @@ mod tests {
 
     #[test]
     fn output_generation_advances_on_pty_output() {
-        let mut state = TerminalState::new(None, 1, 1, Some((80, 24)), None, None)
+        let mut state = TerminalState::new(None, 1, 1, Some((80, 24)), None)
             .expect("spawn a PTY-backed terminal");
         assert_eq!(
             state.output_generation, 0,
