@@ -1,15 +1,13 @@
 use gpui::{
-    AnyElement, AppContext, FontWeight, InteractiveElement, IntoElement, ParentElement,
-    SharedString, StatefulInteractiveElement, Styled, div, prelude::FluentBuilder, px, rgb, svg,
+    Animation, AnimationExt, AnyElement, AppContext, FontWeight, InteractiveElement, IntoElement,
+    ParentElement, SharedString, StatefulInteractiveElement, Styled, div, prelude::FluentBuilder,
+    px, rgb, svg,
 };
 
 use crate::app::pull_request::{PrState, PullRequest};
 use crate::ui_primitives::TooltipDelayExt;
 
-use super::{
-    SIDEBAR_ACTION_BUTTON_SIZE, SidebarAgentState, SidebarAgentSummary, SidebarTooltip,
-    render_comet_trail_loader,
-};
+use super::{SIDEBAR_ACTION_BUTTON_SIZE, SidebarAgentState, SidebarAgentSummary, SidebarTooltip};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Lane {
@@ -175,5 +173,138 @@ pub(super) fn render_lane_slot(
             .flex_none()
             .w(px(SIDEBAR_ACTION_BUTTON_SIZE))
             .into_any_element(),
+    }
+}
+
+const COMET_TRAIL_DOT_SIZE: f32 = 3.0;
+const COMET_TRAIL_DOT_GAP: f32 = 1.0;
+
+pub(in crate::app) fn render_comet_trail_loader(row_key: &str, color: gpui::Hsla) -> AnyElement {
+    static SYNC_EPOCH: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+
+    const CYCLE_MS: u64 = 720;
+    const PERIMETER: usize = 8;
+
+    let loader = div()
+        .size(px(11.))
+        .flex_none()
+        .flex()
+        .flex_col()
+        .items_center()
+        .justify_center()
+        .gap(px(COMET_TRAIL_DOT_GAP));
+    if crate::ui_primitives::reduce_motion() {
+        return comet_trail_matrix(loader, 0, color).into_any_element();
+    }
+    loader
+        .with_animation(
+            SharedString::from(format!("comet-trail-{row_key}")),
+            Animation::new(std::time::Duration::from_millis(CYCLE_MS)).repeat(),
+            move |loader, _delta| {
+                let cycle_elapsed = SYNC_EPOCH
+                    .get_or_init(std::time::Instant::now)
+                    .elapsed()
+                    .as_millis()
+                    % u128::from(CYCLE_MS);
+                let head = (cycle_elapsed * PERIMETER as u128 / u128::from(CYCLE_MS)) as usize;
+                comet_trail_matrix(loader, head, color)
+            },
+        )
+        .into_any_element()
+}
+
+fn comet_trail_matrix(loader: gpui::Div, head: usize, color: gpui::Hsla) -> gpui::Div {
+    const MATRIX_SIZE: usize = 3;
+    const PERIMETER: usize = 8;
+    const BASE_OPACITY: f32 = 0.06;
+    const TAIL_OPACITIES: [f32; 3] = [0.8144, 0.4864, 0.2568];
+
+    loader.children((0..MATRIX_SIZE).map(|row| {
+        div()
+            .h(px(COMET_TRAIL_DOT_SIZE))
+            .flex_none()
+            .flex()
+            .flex_row()
+            .gap(px(COMET_TRAIL_DOT_GAP))
+            .children((0..MATRIX_SIZE).map(move |col| {
+                let order = match (row, col) {
+                    (0, 0) => Some(0),
+                    (0, 1) => Some(1),
+                    (0, 2) => Some(2),
+                    (1, 2) => Some(3),
+                    (2, 2) => Some(4),
+                    (2, 1) => Some(5),
+                    (2, 0) => Some(6),
+                    (1, 0) => Some(7),
+                    _ => None,
+                };
+                let opacity = order.map_or_else(
+                    || if head.is_multiple_of(2) { 0.1 } else { 0.18 },
+                    |order| {
+                        let trail = (head + PERIMETER - order) % PERIMETER;
+                        TAIL_OPACITIES.get(trail).copied().unwrap_or(BASE_OPACITY)
+                    },
+                );
+
+                div()
+                    .size(px(COMET_TRAIL_DOT_SIZE))
+                    .flex_none()
+                    .rounded_full()
+                    .bg(color.opacity(opacity))
+            }))
+    }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use crate::app::pull_request::{PrState, PullRequest};
+
+    fn pr(state: PrState) -> PullRequest {
+        PullRequest { number: 46, state }
+    }
+
+    #[test]
+    fn an_agent_state_outranks_the_pull_request() {
+        let working = SidebarAgentSummary {
+            state: SidebarAgentState::Thinking,
+            count: 1,
+            tint: None,
+        };
+        assert_eq!(
+            infer_lane(Some(working), Some(pr(PrState::Open))),
+            Some(Lane::Agent(working))
+        );
+        assert_eq!(
+            infer_lane(None, Some(pr(PrState::Open))),
+            Some(Lane::PullRequest(pr(PrState::Open)))
+        );
+    }
+
+    #[test]
+    fn a_closed_pull_request_draws_no_lane() {
+        assert_eq!(infer_lane(None, Some(pr(PrState::Closed))), None);
+        assert_eq!(infer_lane(None, None), None);
+    }
+
+    #[test]
+    fn every_lane_answers_with_a_word_and_only_agents_count() {
+        let summary = |state, count| {
+            Lane::Agent(SidebarAgentSummary {
+                state,
+                count,
+                tint: None,
+            })
+        };
+        assert_eq!(summary(SidebarAgentState::NeedsInput, 1).label(), "Input");
+        assert_eq!(summary(SidebarAgentState::NeedsInput, 2).label(), "Input 2");
+        assert_eq!(summary(SidebarAgentState::Errored, 1).label(), "Error");
+        assert_eq!(summary(SidebarAgentState::Thinking, 1).label(), "");
+        assert_eq!(summary(SidebarAgentState::Thinking, 2).label(), "2");
+        assert_eq!(summary(SidebarAgentState::Finished, 3).label(), "Done 3");
+        assert_eq!(Lane::PullRequest(pr(PrState::Open)).label(), "Review");
+        assert_eq!(Lane::PullRequest(pr(PrState::Draft)).label(), "Draft");
+        assert_eq!(Lane::PullRequest(pr(PrState::Merged)).label(), "Merged");
     }
 }
