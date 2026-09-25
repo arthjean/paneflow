@@ -299,25 +299,10 @@ mod tests {
         for runtime in RUNTIMES {
             for alias in runtime.detection.command_aliases {
                 assert_eq!(command_alias_literal(alias), Some(*alias), "{alias}");
-                assert_eq!(
-                    hook_adapter_for_command_alias(alias),
-                    Some(runtime.integration.hook_adapter),
-                    "{alias}"
-                );
-                assert_eq!(
-                    command_alias_supports_current_platform(alias),
-                    runtime.supports_current_platform(),
-                    "{alias}"
-                );
             }
         }
         for unknown in ["node", "sh", "python", "fx", "claude-code"] {
             assert_eq!(command_alias_literal(unknown), None, "{unknown}");
-            assert_eq!(hook_adapter_for_command_alias(unknown), None, "{unknown}");
-            assert!(
-                !command_alias_supports_current_platform(unknown),
-                "{unknown}"
-            );
         }
     }
 

@@ -11,8 +11,9 @@ is `imara-diff`, used as the longest common subsequence engine with
 - `compare_lines(lines1, lines2, policy) -> Vec<Range>`: line pass, never fails.
 - `compare_lines_inner(text1, text2, policy, highlight) -> Vec<LineFragment>`:
   line pass plus word highlighting inside each changed block, squashed.
-- `compare_words` and `compare_chars`: fine passes on a single block, returning
-  `Err(DiffTooBig)` when one side exceeds 20 000 chunks.
+- `compare_lines_inner_report(text1, text2, policy, highlight) -> LineDiffReport`:
+  the same pass, also counting in `too_big_blocks` the blocks that fell back to
+  a whole-block change because they were too big to diff by word.
 - `split_lines`: the `\n` line splitter that every offset in the crate assumes.
 - `BlockTracker`: the incremental block model behind the editor's git markers,
   ported from `DocumentTracker` in the IntelliJ Platform. `range_changed`
@@ -21,6 +22,12 @@ is `imara-diff`, used as the longest common subsequence engine with
   block marked `too_big` past `TOO_BIG_BLOCK_LINES`.
 
 Offsets are byte offsets into the input `&str`, always on char boundaries.
+
+`compare_words` and `compare_chars`, the fine passes on a single block that
+return `Err(DiffTooBig)` when one side exceeds 20 000 chunks, are compiled only
+under `cfg(test)`. They are the entry points of the word and character oracle
+fixtures; production reaches the same word pipeline through
+`compare_lines_inner`.
 
 ## Whitespace policy
 

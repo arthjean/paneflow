@@ -1,7 +1,13 @@
-use crate::iterable::{lcs, lcs_bounded, ChangeBuilder, Changes, DiffTooBig, Range};
-use crate::text::{expand_whitespaces_forward, is_punctuation_byte, is_whitespace};
+use crate::iterable::{lcs, ChangeBuilder, Changes};
+#[cfg(test)]
+use crate::iterable::{lcs_bounded, DiffTooBig, Range};
+use crate::text::is_punctuation_byte;
+#[cfg(test)]
+use crate::text::{expand_whitespaces_forward, is_whitespace};
+#[cfg(test)]
 use crate::ComparisonPolicy;
 
+#[cfg(test)]
 pub(crate) fn compare(text1: &str, text2: &str) -> Changes {
     let code_points1: Vec<char> = text1.chars().collect();
     let code_points2: Vec<char> = text2.chars().collect();
@@ -23,10 +29,12 @@ pub(crate) fn compare(text1: &str, text2: &str) -> Changes {
     builder.finish()
 }
 
+#[cfg(test)]
 fn byte_len(code_points: &[char]) -> usize {
     code_points.iter().map(|c| c.len_utf8()).sum()
 }
 
+#[cfg(test)]
 pub(crate) fn compare_two_step(text1: &str, text2: &str) -> Result<Changes, DiffTooBig> {
     let code_points1 = non_space_code_points(text1);
     let code_points2 = non_space_code_points(text2);
@@ -43,6 +51,7 @@ pub(crate) fn compare_two_step(text1: &str, text2: &str) -> Result<Changes, Diff
     ))
 }
 
+#[cfg(test)]
 pub(crate) fn compare_trim_whitespaces(text1: &str, text2: &str) -> Result<Changes, DiffTooBig> {
     let iterable = compare_two_step(text1, text2)?;
     Ok(crate::by_word::trim_spaces_correction(
@@ -50,6 +59,7 @@ pub(crate) fn compare_trim_whitespaces(text1: &str, text2: &str) -> Result<Chang
     ))
 }
 
+#[cfg(test)]
 pub(crate) fn compare_ignore_whitespaces(text1: &str, text2: &str) -> Result<Changes, DiffTooBig> {
     let code_points1 = non_space_code_points(text1);
     let code_points2 = non_space_code_points(text2);
@@ -85,6 +95,7 @@ pub(crate) fn compare_punctuation(text1: &str, text2: &str) -> Changes {
     builder.finish()
 }
 
+#[cfg(test)]
 fn match_adjustment_spaces(
     code_points1: &CodePointsOffsets,
     code_points2: &CodePointsOffsets,
@@ -120,6 +131,7 @@ fn match_adjustment_spaces(
     builder.finish()
 }
 
+#[cfg(test)]
 fn match_char_gap(
     builder: &mut ChangeBuilder,
     text1: &str,
@@ -139,6 +151,7 @@ fn match_char_gap(
     }
 }
 
+#[cfg(test)]
 fn match_adjustment_spaces_iw(
     code_points1: &CodePointsOffsets,
     code_points2: &CodePointsOffsets,
@@ -171,6 +184,7 @@ fn match_adjustment_spaces_iw(
     Changes::new(ranges, text1.len(), text2.len())
 }
 
+#[cfg(test)]
 fn expand_forward_w(
     code_points1: &CodePointsOffsets,
     code_points2: &CodePointsOffsets,
@@ -199,15 +213,18 @@ struct CodePointsOffsets {
 }
 
 impl CodePointsOffsets {
+    #[cfg(test)]
     fn char_offset(&self, index: usize) -> usize {
         self.offsets[index]
     }
 
+    #[cfg(test)]
     fn char_offset_after(&self, index: usize) -> usize {
         self.offsets[index] + self.code_points[index].len_utf8()
     }
 }
 
+#[cfg(test)]
 fn non_space_code_points(text: &str) -> CodePointsOffsets {
     let mut code_points = Vec::with_capacity(text.len());
     let mut offsets = Vec::with_capacity(text.len());
@@ -238,6 +255,7 @@ fn punctuation_chars(text: &str) -> CodePointsOffsets {
     }
 }
 
+#[cfg(test)]
 pub(crate) fn compare_chars(
     text1: &str,
     text2: &str,

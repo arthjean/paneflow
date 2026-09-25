@@ -80,6 +80,7 @@ impl Changes {
         complement(&self.changed, self.len1, self.len2)
     }
 
+    #[cfg(test)]
     pub(crate) fn iterate_all(&self) -> Vec<(Range, bool)> {
         let mut all = Vec::with_capacity(self.changed.len() * 2 + 1);
         let mut last1 = 0;

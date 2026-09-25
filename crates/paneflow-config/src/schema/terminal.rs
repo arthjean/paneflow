@@ -5,8 +5,6 @@ use super::config::{
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-pub const APPLE_SYSTEM_BLUE_HEX: &str = "#007AFF";
-
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum MinimumContrast {
     Automatic,

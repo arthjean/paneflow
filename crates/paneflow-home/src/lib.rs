@@ -111,14 +111,6 @@ pub fn host_instance_record_path_in(home: &Path) -> PathBuf {
     host_dir_in(home).join(HOST_INSTANCE_FILE_NAME)
 }
 
-pub fn host_dir() -> Option<PathBuf> {
-    paneflow_home().map(|home| host_dir_in(&home))
-}
-
-pub fn host_sessions_dir() -> Option<PathBuf> {
-    paneflow_home().map(|home| host_sessions_dir_in(&home))
-}
-
 fn normalized_home(home: &Path) -> String {
     let normalized: String = home
         .to_string_lossy()
@@ -380,9 +372,9 @@ mod tests {
         assert_eq!(session_path().expect("session"), home.join("session.json"));
         assert_eq!(cache_dir().expect("cache"), home.join("cache"));
         assert_eq!(worktrees_dir().expect("worktrees"), home.join("worktrees"));
-        assert_eq!(host_dir().expect("host"), home.join("host"));
+        assert_eq!(host_dir_in(&home), home.join("host"));
         assert_eq!(
-            host_sessions_dir().expect("host sessions"),
+            host_sessions_dir_in(&home),
             home.join("host").join("sessions")
         );
     }

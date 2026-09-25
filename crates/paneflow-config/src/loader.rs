@@ -101,7 +101,8 @@ pub fn load_config_from_path(path: &std::path::Path) -> PaneFlowConfig {
     }
 }
 
-pub fn parse_and_validate(json: &str) -> PaneFlowConfig {
+#[cfg(test)]
+fn parse_and_validate(json: &str) -> PaneFlowConfig {
     parse_and_validate_with_path(json, Path::new("<config>"))
 }
 

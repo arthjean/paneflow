@@ -78,6 +78,7 @@ pub fn compare_lines_inner(
     compare_lines_inner_report(text1, text2, policy, highlight).fragments
 }
 
+#[cfg(test)]
 pub fn compare_words(
     text1: &str,
     text2: &str,
@@ -86,6 +87,7 @@ pub fn compare_words(
     by_word::compare(text1, text2, policy)
 }
 
+#[cfg(test)]
 pub fn compare_chars(
     text1: &str,
     text2: &str,

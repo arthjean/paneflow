@@ -56,10 +56,6 @@ pub enum HookStatus {
     },
 }
 
-pub fn managed_group(path: &Path, event: &str) -> Value {
-    managed_group_for_command(render_hook_command(path, event))
-}
-
 fn managed_group_for_command(command: String) -> Value {
     json!({
         MANAGED_MARKER: true,
@@ -162,24 +158,6 @@ pub fn reconcile_hooks(
     reconcile_valid_matcher_hooks(root, CLAUDE_HOOK_EVENTS, |event| {
         managed_group_for_command(command_for_event(event))
     })
-}
-
-pub fn reconcile_matcher_hooks_replacing_invalid_container(
-    root: &mut Value,
-    events: &[&str],
-    group_for_event: impl Fn(&str) -> Value,
-) -> Result<ReconcileResult, HookConfigError> {
-    if !root.is_object() {
-        *root = json!({});
-    }
-    let object = root
-        .as_object_mut()
-        .ok_or_else(|| HookConfigError::invalid("config root must be a JSON object"))?;
-    if object.get("hooks").is_some_and(|hooks| !hooks.is_object()) {
-        object.insert("hooks".into(), json!({}));
-    }
-    validate_matcher_shape(root, events)?;
-    reconcile_valid_matcher_hooks(root, events, group_for_event)
 }
 
 fn reconcile_valid_matcher_hooks(
@@ -396,7 +374,7 @@ mod tests {
     #[test]
     fn reconcile_and_remove_preserve_handlers_in_mixed_groups() {
         let path = Path::new("/bin/paneflow-ai-hook");
-        let mut mixed = managed_group(path, "Stop");
+        let mut mixed = managed_group_for_command(render_hook_command(path, "Stop"));
         mixed["matcher"] = json!("Write");
         mixed["hooks"]
             .as_array_mut()
@@ -412,37 +390,6 @@ mod tests {
 
         assert!(remove_hooks(&mut root).unwrap());
         let groups = root["hooks"]["Stop"].as_array().unwrap();
-        assert_eq!(groups.len(), 1);
-        assert_eq!(groups[0]["hooks"][0]["command"], json!("my-hook"));
-    }
-
-    #[test]
-    fn custom_matcher_events_preserve_handlers_in_mixed_groups() {
-        const EVENTS: &[&str] = &["BeforeAgent", "AfterAgent"];
-        let path = Path::new("/bin/paneflow-ai-hook");
-        let mut mixed = managed_group(path, "BeforeAgent");
-        mixed.as_object_mut().unwrap().remove(MANAGED_MARKER);
-        mixed["matcher"] = json!("*");
-        mixed["hooks"]
-            .as_array_mut()
-            .unwrap()
-            .push(json!({ "type": "command", "command": "my-hook" }));
-        let mut root = json!({ "hooks": { "BeforeAgent": [mixed] } });
-
-        reconcile_matcher_hooks_replacing_invalid_container(&mut root, EVENTS, |event| {
-            json!({
-                "matcher": "*",
-                "hooks": [command_handler(render_hook_command(path, event))],
-            })
-        })
-        .unwrap();
-
-        let groups = root["hooks"]["BeforeAgent"].as_array().unwrap();
-        assert_eq!(groups.len(), 2);
-        assert_eq!(groups[0]["hooks"][0]["command"], json!("my-hook"));
-
-        assert!(remove_matcher_hooks_lenient(&mut root, EVENTS));
-        let groups = root["hooks"]["BeforeAgent"].as_array().unwrap();
         assert_eq!(groups.len(), 1);
         assert_eq!(groups[0]["hooks"][0]["command"], json!("my-hook"));
     }
@@ -475,7 +422,10 @@ mod tests {
         ));
 
         reconcile_hooks(&mut root, command_for(path)).unwrap();
-        root["hooks"]["Stop"][0] = managed_group(Path::new("/old/paneflow-ai-hook"), "Stop");
+        root["hooks"]["Stop"][0] = managed_group_for_command(render_hook_command(
+            Path::new("/old/paneflow-ai-hook"),
+            "Stop",
+        ));
         assert!(matches!(
             inspect_hooks(&root, Some(path)),
             HookStatus::NeedsRepair { .. }
@@ -495,7 +445,7 @@ mod tests {
         let mut root = json!({
             "hooks": {
                 "Stop": "broken",
-                "Notification": [managed_group(path, "Notification")]
+                "Notification": [managed_group_for_command(render_hook_command(path, "Notification"))]
             }
         });
         assert!(remove_hooks_lenient(&mut root));

@@ -120,6 +120,7 @@ fn diff_chunks(
     )
 }
 
+#[cfg(test)]
 pub(crate) fn compare(
     text1: &str,
     text2: &str,

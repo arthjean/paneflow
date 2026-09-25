@@ -4,9 +4,7 @@ use gpui::{
 };
 use serde_json::{Value, json};
 
-use paneflow_config::schema::{
-    CursorShapeConfig, MinimumContrast, TerminalConfig, normalize_hex_color,
-};
+use paneflow_config::schema::{CursorShapeConfig, MinimumContrast, TerminalConfig};
 
 use crate::settings::components::{
     SETTINGS_CONTROL_CORNER_RADIUS, deferred_select_menu, hairline, menu_row, section_header,
@@ -104,10 +102,7 @@ impl PaneFlowApp {
         let integrated_glyphs = terminal.resolved_integrated_glyphs();
         let color_emoji = terminal.resolved_color_emoji();
         let scrollbar = terminal.resolved_scrollbar_visible();
-        let configured_cursor_color = terminal
-            .cursor_color
-            .as_deref()
-            .and_then(normalize_hex_color);
+        let configured_cursor_color = terminal.normalized_cursor_color();
         let theme_cursor_hex = hex_string_from_hsla(crate::theme::active_theme().cursor);
         let cursor_color_hex = configured_cursor_color
             .clone()

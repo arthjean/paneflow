@@ -120,7 +120,7 @@ mod tests {
                 ligatures: Some(false),
                 integrated_glyphs: Some(true),
                 color_emoji: Some(true),
-                cursor_color: Some(APPLE_SYSTEM_BLUE_HEX.to_string()),
+                cursor_color: Some("#007AFF".to_string()),
                 scrollback_lines: Some(10_000),
                 cursor_shape: Some(CursorShapeConfig::Block),
                 cursor_blink: Some(CursorBlinkConfig::TerminalControlled),

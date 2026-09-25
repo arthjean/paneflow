@@ -481,30 +481,6 @@ pub fn generate_catalog(descriptors: &[LocatedDescriptor]) -> Result<String, Str
         }
     }
     output.push_str("_ => None,\n}\n}\n");
-    output.push_str(
-        "pub fn hook_adapter_for_command_alias(alias: &str) -> Option<RuntimeHookAdapter> {\nmatch alias {\n",
-    );
-    for located in descriptors {
-        let runtime = &located.descriptor;
-        output.push_str(&format!(
-            "{} => Some(RuntimeHookAdapter::{}),\n",
-            alias_pattern(&runtime.detection.command_aliases),
-            hook_adapter(runtime.integration.hook_adapter)
-        ));
-    }
-    output.push_str("_ => None,\n}\n}\n");
-    output.push_str(
-        "pub fn command_alias_supports_current_platform(alias: &str) -> bool {\nmatch alias {\n",
-    );
-    for located in descriptors {
-        let runtime = &located.descriptor;
-        output.push_str(&format!(
-            "{} => {},\n",
-            alias_pattern(&runtime.detection.command_aliases),
-            platform_guard(&runtime.platforms)
-        ));
-    }
-    output.push_str("_ => false,\n}\n}\n");
     Ok(output)
 }
 
@@ -515,26 +491,6 @@ fn strings(values: &[String]) -> String {
         .collect::<Vec<_>>()
         .join(", ");
     format!("[{values}]")
-}
-
-fn alias_pattern(aliases: &[String]) -> String {
-    aliases
-        .iter()
-        .map(|alias| format!("{alias:?}"))
-        .collect::<Vec<_>>()
-        .join(" | ")
-}
-
-fn platform_guard(values: &[Platform]) -> String {
-    values
-        .iter()
-        .map(|value| match value {
-            Platform::Linux => "cfg!(target_os = \"linux\")",
-            Platform::Macos => "cfg!(target_os = \"macos\")",
-            Platform::Windows => "cfg!(target_os = \"windows\")",
-        })
-        .collect::<Vec<_>>()
-        .join(" || ")
 }
 
 fn platforms(values: &[Platform]) -> String {
