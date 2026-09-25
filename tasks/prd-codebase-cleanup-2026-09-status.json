@@ -20,7 +20,7 @@
       "status": "BLOCKED",
       "priority": "P1",
       "stories_total": 8,
-      "stories_done": 4
+      "stories_done": 5
     },
     {
       "id": "EP-003",
@@ -194,13 +194,13 @@
       "id": "US-012",
       "title": "Delete unreferenced tracked assets and packaging leftovers",
       "epic": "EP-002",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P1",
       "size": "M",
       "blocked_by": [],
       "started_at": "2026-09-24T21:51:11+02:00",
-      "completed_at": null,
-      "reviewed_at": "2026-09-25T12:28:05+02:00"
+      "completed_at": "2026-09-25T13:15:11+02:00",
+      "reviewed_at": "2026-09-25T13:15:11+02:00"
     },
     {
       "id": "US-013",
