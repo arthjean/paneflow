@@ -10,3 +10,7 @@ baf8c5279a1e1405fd5b7725e7da08ff87376dc4
 0e5724708a7b30ee8a9966e2b247e99c78cc2a86
 # refactor(app): US-045 - split main.rs, bootstrap.rs and event_handlers.rs
 df848b77a299b09d331b62e74225046b6d7d2550
+# refactor(sidebar): US-046 - split sidebar/mod.rs by row concern
+8a9155ab0f7c3d9fa57bcd7b5d691d56349ecd38
+# refactor(settings): US-046 - split the workspace templates tab
+e8c8aabf5fb64a215be3256c837d473174af4144
