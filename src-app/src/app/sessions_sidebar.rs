@@ -112,11 +112,7 @@ impl PaneFlowApp {
         .detach();
     }
 
-    pub(crate) fn render_sessions_sidebar(
-        &self,
-        window: &Window,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
+    pub(crate) fn render_sessions_sidebar(&self, cx: &mut Context<Self>) -> AnyElement {
         let ui = crate::theme::ui_colors();
         let theme = crate::theme::active_theme();
         div()
@@ -130,7 +126,6 @@ impl PaneFlowApp {
             .on_key_down(cx.listener(Self::handle_sessions_sidebar_key_down))
             .bg(crate::app::constants::cockpit_chrome_background(
                 theme.title_bar_background,
-                window.is_window_active(),
                 self.cached_config.cockpit_chrome_material_enabled(),
             ))
             .child(self.sessions_sidebar_header(ui, cx))
@@ -974,13 +969,7 @@ fn resume_command_spec(
             spec.push_arg(session_id);
             spec
         }
-        SessionAgent::Hermes => resume_flag_spec("hermes", session_id),
         SessionAgent::Grok => resume_flag_spec("grok", session_id),
-        SessionAgent::Cursor => {
-            let mut spec = AgentCommandSpec::new("cursor-agent");
-            spec.push_arg(format!("--resume={session_id}"));
-            spec
-        }
         SessionAgent::Gemini => resume_flag_spec("gemini", session_id),
         SessionAgent::Kiro => {
             let mut spec = AgentCommandSpec::new("kiro-cli");
@@ -1041,9 +1030,7 @@ mod tests {
             (SessionAgent::Codex, format!("codex resume {id}")),
             (SessionAgent::OpenCode, format!("opencode --session {id}")),
             (SessionAgent::Pi, format!("pi --session {id}")),
-            (SessionAgent::Hermes, format!("hermes --resume {id}")),
             (SessionAgent::Grok, format!("grok --resume {id}")),
-            (SessionAgent::Cursor, format!("cursor-agent --resume={id}")),
             (SessionAgent::Gemini, format!("gemini --resume {id}")),
             (
                 SessionAgent::Kiro,

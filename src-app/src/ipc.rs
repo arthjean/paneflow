@@ -19,7 +19,6 @@ use serde_json::{Value, json};
 pub struct IpcRequest {
     pub method: String,
     pub params: Value,
-    pub _id: Value,
     pub response_tx: mpsc::Sender<Value>,
     pub cancelled: Arc<AtomicBool>,
     pub started: Arc<AtomicBool>,
@@ -96,7 +95,7 @@ pub fn start_server() -> (
     }
     if orchestration_enabled {
         tracing::warn!(
-            "ipc.orchestration_enabled is ON; any same-UID process can create panes with commands, prompts, context, or env"
+            "ipc.orchestration_enabled is ON; any same-UID process can create panes with commands, prompts, or env"
         );
     }
 
@@ -1103,7 +1102,6 @@ fn dispatch_to_gpui(
     let ipc_req = IpcRequest {
         method: method.clone(),
         params,
-        _id: id.clone(),
         response_tx: resp_tx,
         cancelled: Arc::clone(&cancelled),
         started: Arc::clone(&started),
@@ -1441,7 +1439,6 @@ mod dispatch_tests {
         IpcRequest {
             method: "surface.read".to_string(),
             params: json!({}),
-            _id: json!(1),
             response_tx,
             cancelled: Arc::new(AtomicBool::new(false)),
             started: Arc::new(AtomicBool::new(false)),

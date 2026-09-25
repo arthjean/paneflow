@@ -10,6 +10,7 @@ use serde_json::{Value, json};
 
 use super::flow_spec::{self, FlowPlan, OnFailure, Unit, UnitAction};
 use super::up_cmd::{self, WorktreePlan};
+use super::wait_cmd::is_surface_gone_error;
 use super::{CliError, EXIT_OK, EXIT_RUNTIME, EXIT_TIMEOUT};
 
 const TICK: Duration = Duration::from_millis(500);
@@ -749,22 +750,14 @@ impl<T: IpcTransport> Engine<'_, T> {
             "surface.read",
             json!({ "surface_id": sid, "lines": lines, "fenced": false }),
         ) {
-            Ok(result) => {
-                if let Some(message) = legacy_error_message(&result) {
-                    if is_surface_gone_error(&message) {
-                        return Ok(Read::Gone);
-                    }
-                    return Err(format!("surface.read failed: {message}"));
-                }
-                Ok(Read::Snapshot(ReadSnapshot {
-                    text: result
-                        .get("text")
-                        .and_then(Value::as_str)
-                        .unwrap_or_default()
-                        .to_string(),
-                    output_generation: result.get("output_generation").and_then(Value::as_u64),
-                }))
-            }
+            Ok(result) => Ok(Read::Snapshot(ReadSnapshot {
+                text: result
+                    .get("text")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string(),
+                output_generation: result.get("output_generation").and_then(Value::as_u64),
+            })),
             Err(e) if is_surface_gone_error(&e) => Ok(Read::Gone),
             Err(e) => Err(format!("instance unreachable: {e}")),
         }
@@ -878,25 +871,6 @@ impl<T: IpcTransport> Engine<'_, T> {
             EXIT_RUNTIME
         })
     }
-}
-
-fn legacy_error_message(value: &Value) -> Option<String> {
-    let error = value.get("error")?;
-    error
-        .as_str()
-        .map(str::to_string)
-        .or_else(|| {
-            error
-                .get("message")
-                .and_then(Value::as_str)
-                .map(str::to_string)
-        })
-        .or_else(|| Some(error.to_string()))
-}
-
-fn is_surface_gone_error(message: &str) -> bool {
-    let lower = message.to_ascii_lowercase();
-    lower.contains("not found") || lower.contains("-32602")
 }
 
 fn text_after_baseline(baseline: &ReadSnapshot, current: &ReadSnapshot) -> Option<String> {

@@ -623,7 +623,6 @@ impl PaneFlowApp {
             .h_full()
             .bg(crate::app::constants::cockpit_chrome_background(
                 theme.title_bar_background,
-                window.is_window_active(),
                 self.cached_config.cockpit_chrome_material_enabled(),
             ))
             .flex()
@@ -743,12 +742,7 @@ impl PaneFlowApp {
         ui: crate::theme::UiColors,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
-        let (message, retryable) = crate::worker_bootstrap::banner(
-            &crate::worker_bootstrap::state(),
-            self.worker_is_reconnecting(),
-            self.host_agents_are_stale(),
-            self.host_agents_disconnect_reason(),
-        )?;
+        let message = crate::worker_bootstrap::banner(&crate::worker_bootstrap::state())?;
         let label = SharedString::from(message.clone());
         let mut banner = div()
             .flex_none()
@@ -764,34 +758,32 @@ impl PaneFlowApp {
             .child(
                 div()
                     .text_size(px(11.))
-                    .text_color(if retryable { ui.agent_error } else { ui.muted })
+                    .text_color(ui.agent_error)
                     .child(label),
             );
-        if retryable {
-            let hover_bg = crate::app::constants::sidebar_tab_hover_background();
-            banner = banner.child(
-                squircle_skin(
-                    div()
-                        .id("worker-retry")
-                        .self_start()
-                        .px(px(6.))
-                        .py(px(2.))
-                        .flex()
-                        .items_center()
-                        .justify_center(),
-                    "worker-retry-group",
-                    px(6.),
-                    None,
-                    Some(hover_bg),
-                )
-                .cursor_pointer()
-                .on_click(cx.listener(|_this, _: &ClickEvent, _window, cx| {
-                    crate::worker_bootstrap::retry();
-                    cx.notify();
-                }))
-                .child(div().text_size(px(11.)).text_color(ui.muted).child("Retry")),
-            );
-        }
+        let hover_bg = crate::app::constants::sidebar_tab_hover_background();
+        banner = banner.child(
+            squircle_skin(
+                div()
+                    .id("worker-retry")
+                    .self_start()
+                    .px(px(6.))
+                    .py(px(2.))
+                    .flex()
+                    .items_center()
+                    .justify_center(),
+                "worker-retry-group",
+                px(6.),
+                None,
+                Some(hover_bg),
+            )
+            .cursor_pointer()
+            .on_click(cx.listener(|_this, _: &ClickEvent, _window, cx| {
+                crate::worker_bootstrap::retry();
+                cx.notify();
+            }))
+            .child(div().text_size(px(11.)).text_color(ui.muted).child("Retry")),
+        );
         Some(banner.into_any_element())
     }
 

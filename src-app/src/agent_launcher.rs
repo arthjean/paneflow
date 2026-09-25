@@ -181,9 +181,7 @@ impl TerminalAgent {
             TerminalAgent::Codex => Some(SessionAgent::Codex),
             TerminalAgent::OpenCode => Some(SessionAgent::OpenCode),
             TerminalAgent::Pi => Some(SessionAgent::Pi),
-            TerminalAgent::Hermes => Some(SessionAgent::Hermes),
             TerminalAgent::Grok => Some(SessionAgent::Grok),
-            TerminalAgent::Cursor => Some(SessionAgent::Cursor),
             TerminalAgent::Gemini => Some(SessionAgent::Gemini),
             TerminalAgent::Kiro => Some(SessionAgent::Kiro),
             _ => None,
@@ -782,18 +780,12 @@ mod tests {
             Some(SessionAgent::OpenCode)
         );
         assert_eq!(TerminalAgent::Pi.session_agent(), Some(SessionAgent::Pi));
-        assert_eq!(
-            TerminalAgent::Hermes.session_agent(),
-            Some(SessionAgent::Hermes)
-        );
+        assert_eq!(TerminalAgent::Hermes.session_agent(), None);
         assert_eq!(
             TerminalAgent::Grok.session_agent(),
             Some(SessionAgent::Grok)
         );
-        assert_eq!(
-            TerminalAgent::Cursor.session_agent(),
-            Some(SessionAgent::Cursor)
-        );
+        assert_eq!(TerminalAgent::Cursor.session_agent(), None);
         assert_eq!(
             TerminalAgent::Gemini.session_agent(),
             Some(SessionAgent::Gemini)

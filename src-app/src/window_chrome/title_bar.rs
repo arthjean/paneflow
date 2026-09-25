@@ -217,7 +217,6 @@ impl Render for TitleBar {
         };
         let chrome_bg = crate::app::constants::cockpit_chrome_background(
             bg_color,
-            is_window_active,
             self.cockpit_material_active,
         );
 

@@ -41,12 +41,6 @@ fn pid_is_alive(pid: u32) -> bool {
             true
         }
     }
-
-    #[cfg(not(any(unix, windows)))]
-    {
-        let _ = pid;
-        true
-    }
 }
 
 pub(crate) fn split_pane_at_edge(
@@ -113,11 +107,6 @@ pub(crate) fn pid_start_time(pid: u32) -> Option<u64> {
         }
         Some(((creation.dwHighDateTime as u64) << 32) | creation.dwLowDateTime as u64)
     }
-}
-
-#[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
-pub(crate) fn pid_start_time(_pid: u32) -> Option<u64> {
-    None
 }
 
 fn pid_matches(pid: u32, pinned_start: Option<u64>) -> bool {
@@ -956,9 +945,6 @@ impl PaneFlowApp {
                         crate::editor::open_at_location(&path, line, col, preference.as_deref());
                     })
                     .detach();
-            }
-            terminal::TerminalEvent::AgentProgressChanged { busy } => {
-                let _ = busy;
             }
             terminal::TerminalEvent::ProgramNotification { title, body } => {
                 let surface_id = terminal.entity_id().as_u64();

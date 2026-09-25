@@ -16,13 +16,23 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
   `PANEFLOW_ALLOW_SOCKET_OVERRIDE=1` is also set.
 - A tab title saved with the retired `auto` source in `session.json` now
   restores as a title the user set.
+- The repair that moves a workspace rooted at a bare terminal now runs only
+  when a version 1 `session.json` is migrated; a workspace saved by a current
+  build is restored where the user opened it.
 
 ### Removed
 
+- The `context` field of `surface.split` and of `workspace.create` pane specs,
+  which staged a context file for the pane. Pass values through `env`
+  instead; a request that still sends `context` has it ignored.
 - The `agent_panel.max_content_width`, `agent_panel.thinking_display`,
   `agent_panel.profiles`, `agent_panel.default_profile`, and
   `tool_permissions` keys of `paneflow.json`, which no build read. A config
   that still sets them loads as if they were absent.
+- The Hermes and Cursor readers of the recent sessions sidebar. Neither
+  `hermes sessions list` nor `cursor-agent ls` without a terminal yields a
+  resumable session ID for the current directory, so they never listed a
+  session, and the sidebar scan no longer runs them.
 - The Launch Pad modal, its `open_launch_pad` action and the
   `Cmd/Ctrl+Shift+L` default binding. Creating a branch, its worktree and an
   agent pane in one step lives in the "New pane" palette's **New branch…**

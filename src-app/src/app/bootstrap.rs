@@ -941,35 +941,6 @@ pub(crate) fn install_macos_menu_action_fallbacks(cx: &mut gpui::App) {
     });
 }
 
-#[cfg(target_os = "macos")]
-pub(crate) fn warn_if_rosetta_translated() {
-    use std::ffi::CString;
-    use std::mem::size_of;
-
-    let name = match CString::new("sysctl.proc_translated") {
-        Ok(n) => n,
-        Err(_) => return,
-    };
-    let mut translated: i32 = 0;
-    let mut size = size_of::<i32>();
-    let rc = unsafe {
-        libc::sysctlbyname(
-            name.as_ptr(),
-            &mut translated as *mut _ as *mut libc::c_void,
-            &mut size,
-            std::ptr::null_mut(),
-            0,
-        )
-    };
-    if rc == 0 && translated == 1 {
-        log::warn!(
-            "running under Rosetta 2 translation - GPU rendering will be \
-             degraded. For best performance, download the matching \
-             architecture from https://github.com/arthjean/paneflow/releases"
-        );
-    }
-}
-
 pub(crate) fn warn_if_legacy_run_install() {
     let Some(home) = std::env::var_os("HOME").map(std::path::PathBuf::from) else {
         return;

@@ -401,26 +401,6 @@ impl PaneFlowApp {
         .detach();
     }
 
-    #[allow(dead_code)]
-    pub(crate) fn create_workspace(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
-        if self.workspaces.len() >= MAX_WORKSPACES {
-            return;
-        }
-        let n = self.workspaces.len() + 1;
-        let ws_id = next_workspace_id();
-        let ws = Workspace::empty_with_cwd_and_id(
-            ws_id,
-            format!("Terminal {n}"),
-            crate::launch_cwd::implicit_launch_cwd(),
-        );
-        Self::spawn_initial_git_stats(ws_id, ws.cwd.clone(), cx);
-        self.watch_git_dir(&ws);
-        self.workspaces.push(ws);
-        self.active_idx = self.workspaces.len() - 1;
-        self.save_session(cx);
-        cx.notify();
-    }
-
     pub(crate) fn open_workspace_folders(
         &mut self,
         paths: &[std::path::PathBuf],
@@ -1077,34 +1057,30 @@ impl PaneFlowApp {
     }
 }
 
-#[allow(clippy::needless_return)]
 pub(crate) async fn reveal_in_file_manager(path: &std::path::Path) -> Result<(), String> {
     #[cfg(target_os = "linux")]
     {
-        let result = open_workspace_folder("xdg-open", path).await;
-        return result.map_err(|err| {
-            if err.kind() == std::io::ErrorKind::NotFound {
-                "xdg-open not found - install xdg-utils to use this feature".to_string()
-            } else {
-                format!("Could not open file manager: {err}")
-            }
-        });
+        open_workspace_folder("xdg-open", path)
+            .await
+            .map_err(|err| {
+                if err.kind() == std::io::ErrorKind::NotFound {
+                    "xdg-open not found - install xdg-utils to use this feature".to_string()
+                } else {
+                    format!("Could not open file manager: {err}")
+                }
+            })
     }
     #[cfg(target_os = "macos")]
     {
-        let result = open_workspace_folder("open", path).await;
-        return result.map_err(|err| format!("Could not open Finder: {err}"));
+        open_workspace_folder("open", path)
+            .await
+            .map_err(|err| format!("Could not open Finder: {err}"))
     }
     #[cfg(target_os = "windows")]
     {
-        let result = open_workspace_folder("explorer.exe", path).await;
-        return result.map_err(|err| format!("Could not open Explorer: {err}"));
-    }
-    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
-    {
-        open_workspace_folder("xdg-open", path)
+        open_workspace_folder("explorer.exe", path)
             .await
-            .map_err(|err| format!("Could not open file manager: {err}"))
+            .map_err(|err| format!("Could not open Explorer: {err}"))
     }
 }
 

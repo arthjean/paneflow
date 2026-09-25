@@ -812,8 +812,8 @@ impl CodeView {
         }
         self.theme_generation = generation;
         let syntax = DiffSyntax::from_theme(&crate::theme::active_theme());
-        if let Some((doc, hl)) = self.state.editable() {
-            hl.set_syntax(doc, syntax);
+        if let Some((_, hl)) = self.state.editable() {
+            hl.set_syntax(syntax);
         }
     }
 

@@ -12,7 +12,7 @@ use serde_json::{Value, json};
 use crate::agent_launcher::TerminalAgent;
 use crate::app::ipc_handler::{
     build_up_layout, canonicalize_workspace_cwd, dedupe_planned_pane_labels,
-    parse_workspace_pane_plan, stage_planned_pane_env,
+    parse_workspace_pane_plan,
 };
 use crate::layout::MAX_PANES;
 use crate::settings::components::{
@@ -1347,7 +1347,7 @@ impl PaneFlowApp {
         let mut launches = Vec::with_capacity(planned.len());
         let mut panes = Vec::with_capacity(planned.len());
         for plan in planned {
-            let env = stage_planned_pane_env(&plan, cx);
+            let env = plan.env.clone();
             let terminal = cx.new(|cx| {
                 TerminalView::with_cwd_env_and_profile(
                     ws_id,

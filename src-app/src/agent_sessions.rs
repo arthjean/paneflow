@@ -4,22 +4,18 @@ pub enum SessionAgent {
     Codex,
     OpenCode,
     Pi,
-    Hermes,
     Grok,
-    Cursor,
     Gemini,
     Kiro,
 }
 
 impl SessionAgent {
-    pub const ALL: [SessionAgent; 9] = [
+    pub const ALL: [SessionAgent; 7] = [
         SessionAgent::Claude,
         SessionAgent::Codex,
         SessionAgent::OpenCode,
         SessionAgent::Pi,
-        SessionAgent::Hermes,
         SessionAgent::Grok,
-        SessionAgent::Cursor,
         SessionAgent::Gemini,
         SessionAgent::Kiro,
     ];
@@ -30,11 +26,9 @@ impl SessionAgent {
             SessionAgent::Codex => 1,
             SessionAgent::OpenCode => 2,
             SessionAgent::Pi => 3,
-            SessionAgent::Hermes => 4,
-            SessionAgent::Grok => 5,
-            SessionAgent::Cursor => 6,
-            SessionAgent::Gemini => 7,
-            SessionAgent::Kiro => 8,
+            SessionAgent::Grok => 4,
+            SessionAgent::Gemini => 5,
+            SessionAgent::Kiro => 6,
         }
     }
 
@@ -45,9 +39,7 @@ impl SessionAgent {
             SessionAgent::Codex => TerminalAgent::Codex,
             SessionAgent::OpenCode => TerminalAgent::OpenCode,
             SessionAgent::Pi => TerminalAgent::Pi,
-            SessionAgent::Hermes => TerminalAgent::Hermes,
             SessionAgent::Grok => TerminalAgent::Grok,
-            SessionAgent::Cursor => TerminalAgent::Cursor,
             SessionAgent::Gemini => TerminalAgent::Gemini,
             SessionAgent::Kiro => TerminalAgent::Kiro,
         }
@@ -371,11 +363,9 @@ pub(crate) fn read_sessions_for_cwd_with_omitted(
         SessionAgent::Codex => crate::codex_sessions::read_sessions_for_cwd_with_omitted(cwd),
         SessionAgent::OpenCode => crate::opencode_sessions::read_sessions_for_cwd_with_omitted(cwd),
         SessionAgent::Pi => crate::pi_sessions::read_sessions_for_cwd_with_omitted(cwd),
-        SessionAgent::Cursor => crate::command_sessions::read_cursor_sessions_for_cwd(cwd),
         SessionAgent::Gemini => crate::command_sessions::read_gemini_sessions_for_cwd(cwd),
         SessionAgent::Kiro => crate::command_sessions::read_kiro_sessions_for_cwd(cwd),
         SessionAgent::Grok => crate::command_sessions::read_grok_sessions_for_cwd(cwd),
-        SessionAgent::Hermes => crate::command_sessions::read_hermes_sessions_for_cwd(cwd),
     }
 }
 

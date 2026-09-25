@@ -107,9 +107,7 @@ ways to get the complete result:
    rm -rf "$report_dir"     # clean up - never leak temp files
    ```
 
-   Always remove the temp dir when you are done with it (the `rm -rf` above), the
-   same way Paneflow age-sweeps the >64 KiB context files it stages for `up` /
-   `split`.
+   Always remove the temp dir when you are done with it (the `rm -rf` above).
 
 A **non**-full-screen agent (Codex renders inline) needs none of this: its output
 stays in the scrollback, so a plain `paneflow read <pane>` is enough. Reach for

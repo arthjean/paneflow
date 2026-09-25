@@ -1207,9 +1207,6 @@ pub enum TerminalEvent {
         query: String,
         regex: bool,
     },
-    AgentProgressChanged {
-        busy: bool,
-    },
     ProgramNotification {
         title: String,
         body: String,
@@ -1548,7 +1545,6 @@ fn spawn_event_pump_task(
                             }
                             let old_title = view.terminal.title.clone();
                             let old_cwd = view.terminal.current_cwd.clone();
-                            let was_busy = view.terminal.progress.is_some();
                             view.terminal.sync_channels();
                             if had_wakeup {
                                 view.terminal.process_backend_wakeup();
@@ -1575,11 +1571,6 @@ fn spawn_event_pump_task(
                                     title: notification.title,
                                     body: notification.body,
                                 });
-                            }
-
-                            let is_busy = view.terminal.progress.is_some();
-                            if is_busy != was_busy && view.terminal.exited.is_none() {
-                                cx.emit(TerminalEvent::AgentProgressChanged { busy: is_busy });
                             }
 
                             if view.terminal.retains_final_view() && !view.exit_announced {

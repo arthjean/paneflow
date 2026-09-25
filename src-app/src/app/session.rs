@@ -352,6 +352,7 @@ impl PaneFlowApp {
                     paneflow_config::schema::SESSION_SCHEMA_VERSION,
                     path.display()
                 );
+                repair_v1_root_terminal_workspaces(&mut state);
                 paneflow_config::schema::migrate_session_v1(&mut state);
                 (Some(state), None)
             }
@@ -454,16 +455,8 @@ impl PaneFlowApp {
             );
         }
         for ws_session in session.workspaces.iter().take(MAX_WORKSPACES) {
-            let mut cwd = restored_workspace_cwd(&ws_session.cwd);
-            let mut title = ws_session.title.clone();
-            if should_repair_restored_root_terminal(&title, &cwd) {
-                let repaired_cwd = launch_cwd::implicit_launch_cwd();
-                log::info!(
-                    "session restore: repairing legacy default workspace at filesystem root"
-                );
-                title = launch_cwd::title_for_cwd_or(&repaired_cwd, title);
-                cwd = repaired_cwd;
-            }
+            let cwd = restored_workspace_cwd(&ws_session.cwd);
+            let title = ws_session.title.clone();
             let ws_id = next_workspace_id();
 
             if ws_session.tabs.len() > MAX_TABS_PER_WORKSPACE {
@@ -809,6 +802,17 @@ fn is_app_written_tab_title(title: &str) -> bool {
 }
 
 const SHELL_PRESET_LABEL: &str = "Terminal";
+
+fn repair_v1_root_terminal_workspaces(state: &mut paneflow_config::schema::SessionState) {
+    for ws in &mut state.workspaces {
+        if should_repair_restored_root_terminal(&ws.title, Path::new(&ws.cwd)) {
+            let repaired_cwd = launch_cwd::implicit_launch_cwd();
+            log::info!("session load: repairing a v1 default workspace at the filesystem root");
+            ws.title = launch_cwd::title_for_cwd_or(&repaired_cwd, ws.title.clone());
+            ws.cwd = repaired_cwd.to_string_lossy().into_owned();
+        }
+    }
+}
 
 fn should_repair_restored_root_terminal(title: &str, cwd: &Path) -> bool {
     is_numbered_terminal_title(title) && launch_cwd::is_filesystem_root(cwd)
@@ -1210,6 +1214,56 @@ mod tests {
         assert!(should_repair_restored_root_terminal("Terminal 12", &root));
         assert!(!should_repair_restored_root_terminal("Terminal", &root));
         assert!(!should_repair_restored_root_terminal("Root shell", &root));
+    }
+
+    fn root_terminal_session(version: u32) -> String {
+        let root = platform_root().to_string_lossy().into_owned();
+        serde_json::json!({
+            "version": version,
+            "active_workspace": 0,
+            "workspaces": [
+                {"title": "Terminal 1", "cwd": root, "tabs": [{"title": "Terminal 1"}]}
+            ]
+        })
+        .to_string()
+    }
+
+    #[test]
+    fn a_v1_root_terminal_workspace_is_repaired_on_load() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let session_path = tmp.path().join("session.json");
+        std::fs::write(&session_path, root_terminal_session(1)).expect("seed v1 session");
+
+        let (state, info) = PaneFlowApp::load_session_at(&session_path);
+
+        assert!(info.is_none());
+        let state = state.expect("a v1 session loads");
+        let ws = &state.workspaces[0];
+        let repaired = launch_cwd::implicit_launch_cwd();
+        assert_eq!(ws.cwd, repaired.to_string_lossy());
+        assert_eq!(
+            ws.title,
+            launch_cwd::title_for_cwd_or(&repaired, "Terminal 1")
+        );
+    }
+
+    #[test]
+    fn a_v3_root_terminal_workspace_is_kept_where_the_user_opened_it() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let session_path = tmp.path().join("session.json");
+        std::fs::write(
+            &session_path,
+            root_terminal_session(paneflow_config::schema::SESSION_SCHEMA_VERSION),
+        )
+        .expect("seed v3 session");
+
+        let (state, info) = PaneFlowApp::load_session_at(&session_path);
+
+        assert!(info.is_none());
+        let state = state.expect("a v3 session loads");
+        let ws = &state.workspaces[0];
+        assert_eq!(ws.title, "Terminal 1");
+        assert_eq!(ws.cwd, platform_root().to_string_lossy());
     }
 
     #[test]

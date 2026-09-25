@@ -282,14 +282,10 @@ impl Render for DetachedPaneWindow {
         } else {
             theme.title_bar_inactive_background
         };
-        let shell_background = crate::app::constants::cockpit_backdrop_background(
-            shell_color,
-            window.is_window_active(),
-            material_active,
-        );
+        let shell_background =
+            crate::app::constants::cockpit_backdrop_background(shell_color, material_active);
         let backdrop_background = crate::app::constants::cockpit_backdrop_background(
             shell_color,
-            window.is_window_active(),
             material_active
                 || (self.terminal_material_enabled
                     && matches!(

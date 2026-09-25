@@ -9,18 +9,11 @@ const COMMAND_DEADLINE: Duration = Duration::from_secs(15);
 const COMMAND_STDOUT_CAP: u64 = 4 * 1024 * 1024;
 const STDERR_LOG_CAP: usize = 200;
 
-#[derive(Clone, Copy)]
-enum CommandScope {
-    CurrentDirectory,
-    LineMustMentionCwd,
-}
-
 struct CommandSessionConfig {
     agent: SessionAgent,
     program: &'static str,
     args: &'static [&'static str],
     allow_numeric_ids: bool,
-    scope: CommandScope,
 }
 
 pub(crate) fn read_gemini_sessions_for_cwd(cwd: &str) -> (Vec<SessionMeta>, usize) {
@@ -30,20 +23,6 @@ pub(crate) fn read_gemini_sessions_for_cwd(cwd: &str) -> (Vec<SessionMeta>, usiz
             program: "gemini",
             args: &["--list-sessions"],
             allow_numeric_ids: true,
-            scope: CommandScope::CurrentDirectory,
-        },
-        cwd,
-    )
-}
-
-pub(crate) fn read_cursor_sessions_for_cwd(cwd: &str) -> (Vec<SessionMeta>, usize) {
-    read_command_sessions(
-        CommandSessionConfig {
-            agent: SessionAgent::Cursor,
-            program: "cursor-agent",
-            args: &["ls"],
-            allow_numeric_ids: false,
-            scope: CommandScope::CurrentDirectory,
         },
         cwd,
     )
@@ -56,7 +35,6 @@ pub(crate) fn read_kiro_sessions_for_cwd(cwd: &str) -> (Vec<SessionMeta>, usize)
             program: "kiro-cli",
             args: &["chat", "--list-sessions"],
             allow_numeric_ids: false,
-            scope: CommandScope::CurrentDirectory,
         },
         cwd,
     )
@@ -69,20 +47,6 @@ pub(crate) fn read_grok_sessions_for_cwd(cwd: &str) -> (Vec<SessionMeta>, usize)
             program: "grok",
             args: &["sessions", "list", "--limit", "100"],
             allow_numeric_ids: false,
-            scope: CommandScope::CurrentDirectory,
-        },
-        cwd,
-    )
-}
-
-pub(crate) fn read_hermes_sessions_for_cwd(cwd: &str) -> (Vec<SessionMeta>, usize) {
-    read_command_sessions(
-        CommandSessionConfig {
-            agent: SessionAgent::Hermes,
-            program: "hermes",
-            args: &["sessions", "list", "--source", "cli", "--limit", "100"],
-            allow_numeric_ids: false,
-            scope: CommandScope::LineMustMentionCwd,
         },
         cwd,
     )
@@ -95,21 +59,13 @@ fn read_command_sessions(config: CommandSessionConfig, cwd: &str) -> (Vec<Sessio
     let Some(stdout) = run_list_command(&config, cwd) else {
         return (Vec::new(), 0);
     };
-    parse_command_sessions(
-        &stdout,
-        config.agent,
-        cwd,
-        config.allow_numeric_ids,
-        config.scope,
-    )
+    parse_command_sessions(&stdout, config.agent, cwd, config.allow_numeric_ids)
 }
 
 fn run_list_command(config: &CommandSessionConfig, cwd: &str) -> Option<Vec<u8>> {
     let mut cmd = Command::new(config.program);
     cmd.args(config.args);
-    if matches!(config.scope, CommandScope::CurrentDirectory) {
-        cmd.current_dir(cwd);
-    }
+    cmd.current_dir(cwd);
 
     let output = match paneflow_process::run_with_timeout(cmd, COMMAND_DEADLINE, COMMAND_STDOUT_CAP)
     {
@@ -159,12 +115,11 @@ fn parse_command_sessions(
     agent: SessionAgent,
     cwd: &str,
     allow_numeric_ids: bool,
-    scope: CommandScope,
 ) -> (Vec<SessionMeta>, usize) {
     let text = String::from_utf8_lossy(stdout);
     let sessions = text
         .lines()
-        .filter_map(|line| parse_session_line(line, agent, cwd, allow_numeric_ids, scope));
+        .filter_map(|line| parse_session_line(line, agent, cwd, allow_numeric_ids));
     crate::agent_sessions::collect_recent_sessions(
         sessions,
         crate::agent_sessions::SIDEBAR_SESSION_RETAINED_PER_SOURCE,
@@ -176,13 +131,9 @@ fn parse_session_line(
     agent: SessionAgent,
     cwd: &str,
     allow_numeric_ids: bool,
-    scope: CommandScope,
 ) -> Option<SessionMeta> {
     let line = line.trim();
     if line.is_empty() || is_header_or_separator(line) {
-        return None;
-    }
-    if matches!(scope, CommandScope::LineMustMentionCwd) && !line_mentions_cwd(line, cwd) {
         return None;
     }
 
@@ -386,19 +337,6 @@ fn trim_leading_table_metadata(mut summary: &str) -> &str {
     }
 }
 
-fn line_mentions_cwd(line: &str, cwd: &str) -> bool {
-    #[cfg(windows)]
-    {
-        line.replace('/', "\\")
-            .to_ascii_lowercase()
-            .contains(&cwd.replace('/', "\\").to_ascii_lowercase())
-    }
-    #[cfg(not(windows))]
-    {
-        line.contains(cwd)
-    }
-}
-
 fn sanitized_stderr(stderr: &[u8]) -> String {
     String::from_utf8_lossy(stderr)
         .chars()
@@ -412,34 +350,22 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parse_command_sessions_extracts_uuid_from_cursorish_line() {
+    fn parse_command_sessions_extracts_uuid_from_a_listed_line() {
         let out = b"550e8400-e29b-41d4-a716-446655440000 2026-06-29T09:10:11Z Refactor auth flow\n";
-        let (sessions, omitted) = parse_command_sessions(
-            out,
-            SessionAgent::Cursor,
-            "/repo",
-            false,
-            CommandScope::CurrentDirectory,
-        );
+        let (sessions, omitted) = parse_command_sessions(out, SessionAgent::Grok, "/repo", false);
         assert_eq!(omitted, 0);
         assert_eq!(sessions.len(), 1);
         assert_eq!(
             sessions[0].session_id,
             "550e8400-e29b-41d4-a716-446655440000"
         );
-        assert_eq!(sessions[0].agent, SessionAgent::Cursor);
+        assert_eq!(sessions[0].agent, SessionAgent::Grok);
     }
 
     #[test]
     fn parse_command_sessions_accepts_gemini_numeric_index() {
         let out = b"[2] 2026-06-29T09:10:11Z latest working thread\n";
-        let (sessions, _) = parse_command_sessions(
-            out,
-            SessionAgent::Gemini,
-            "/repo",
-            true,
-            CommandScope::CurrentDirectory,
-        );
+        let (sessions, _) = parse_command_sessions(out, SessionAgent::Gemini, "/repo", true);
         assert_eq!(sessions.len(), 1);
         assert_eq!(sessions[0].session_id, "2");
     }
@@ -447,13 +373,7 @@ mod tests {
     #[test]
     fn parse_command_sessions_accepts_short_explicit_session_id() {
         let out = b"Session ID: abc123\n";
-        let (sessions, _) = parse_command_sessions(
-            out,
-            SessionAgent::Kiro,
-            "/repo",
-            false,
-            CommandScope::CurrentDirectory,
-        );
+        let (sessions, _) = parse_command_sessions(out, SessionAgent::Kiro, "/repo", false);
         assert_eq!(sessions.len(), 1);
         assert_eq!(sessions[0].session_id, "abc123");
         assert_eq!(sessions[0].summary, None);
@@ -463,13 +383,7 @@ mod tests {
     fn parse_command_sessions_does_not_pick_long_summary_word_as_id() {
         let out =
             b"550e8400-e29b-41d4-a716-446655440000 2026-06-29T09:10:11Z Refactor authentication\n";
-        let (sessions, omitted) = parse_command_sessions(
-            out,
-            SessionAgent::Cursor,
-            "/repo",
-            false,
-            CommandScope::CurrentDirectory,
-        );
+        let (sessions, omitted) = parse_command_sessions(out, SessionAgent::Grok, "/repo", false);
         assert_eq!(omitted, 0);
         assert_eq!(sessions.len(), 1);
         assert_eq!(
@@ -485,13 +399,7 @@ mod tests {
     #[test]
     fn parse_command_sessions_accepts_labeled_token_id() {
         let out = b"id=abc123 label from command\n";
-        let (sessions, _) = parse_command_sessions(
-            out,
-            SessionAgent::Kiro,
-            "/repo",
-            false,
-            CommandScope::CurrentDirectory,
-        );
+        let (sessions, _) = parse_command_sessions(out, SessionAgent::Kiro, "/repo", false);
         assert_eq!(sessions.len(), 1);
         assert_eq!(sessions[0].session_id, "abc123");
         assert_eq!(sessions[0].summary.as_deref(), Some("label from command"));
@@ -507,20 +415,6 @@ mod tests {
     }
 
     #[test]
-    fn line_must_mention_cwd_filters_unrelated_global_rows() {
-        let out = b"550e8400-e29b-41d4-a716-446655440000 /elsewhere old\nses_current_123456 /repo current\n";
-        let (sessions, _) = parse_command_sessions(
-            out,
-            SessionAgent::Grok,
-            "/repo",
-            false,
-            CommandScope::LineMustMentionCwd,
-        );
-        assert_eq!(sessions.len(), 1);
-        assert_eq!(sessions[0].session_id, "ses_current_123456");
-    }
-
-    #[test]
     fn parse_grok_sessions_table_output() {
         let out = br#"
 (no label)
@@ -528,13 +422,7 @@ SESSION ID                            CREATED     UPDATED     STATUS      SUMMAR
 019f1501-50e7-76d0-bb9e-4a72ede6b35d  2026-06-29  2026-06-29  local  List Sessions Command in Software Codebase
 019f1501-69f1-7800-bc1e-cb269e1d985b  2026-06-29  2026-06-29  local  (no summary)
 "#;
-        let (sessions, omitted) = parse_command_sessions(
-            out,
-            SessionAgent::Grok,
-            "/repo",
-            false,
-            CommandScope::CurrentDirectory,
-        );
+        let (sessions, omitted) = parse_command_sessions(out, SessionAgent::Grok, "/repo", false);
         assert_eq!(omitted, 0);
         assert_eq!(sessions.len(), 2);
         assert_eq!(

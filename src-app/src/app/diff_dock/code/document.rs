@@ -17,14 +17,6 @@ impl LineEnding {
             _ => Self::Lf,
         }
     }
-
-    #[allow(dead_code)]
-    pub(crate) const fn as_str(self) -> &'static str {
-        match self {
-            Self::Lf => "\n",
-            Self::Crlf => "\r\n",
-        }
-    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]

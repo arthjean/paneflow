@@ -79,9 +79,7 @@ use crate::workspace::Workspace;
 
 pub use app::actions::*;
 #[cfg(target_os = "macos")]
-pub(crate) use app::bootstrap::{
-    install_macos_menu_action_fallbacks, install_macos_menu_bar, warn_if_rosetta_translated,
-};
+pub(crate) use app::bootstrap::{install_macos_menu_action_fallbacks, install_macos_menu_bar};
 pub(crate) use app::bootstrap::{system_package_update_command, warn_if_legacy_run_install};
 pub(crate) use app::constants::{
     MAX_CLOSED_PANE_SCROLLBACK_BYTES, MAX_CLOSED_PANES, RESIZE_BORDER, SIDEBAR_WIDTH, TOAST_HOLD_MS,
@@ -862,21 +860,15 @@ impl Render for PaneFlowApp {
             a: 1.,
             ..shell_color
         };
-        let app_backdrop_bg = crate::app::constants::cockpit_backdrop_background(
-            shell_color,
-            is_window_active,
-            native_material_active,
-        );
+        let app_backdrop_bg =
+            crate::app::constants::cockpit_backdrop_background(shell_color, native_material_active);
         let panel_bg = if settings_open {
             ui.base
         } else {
             gpui::transparent_black()
         };
-        let panel_corner_mask_bg = crate::app::constants::cockpit_backdrop_background(
-            shell_color,
-            is_window_active,
-            chrome_material_active,
-        );
+        let panel_corner_mask_bg =
+            crate::app::constants::cockpit_backdrop_background(shell_color, chrome_material_active);
         let panel_top = title_bar_h;
         let primary_sidebar_width = self.rendered_primary_sidebar_width(window);
         let title_bar_rail_width = self.primary_sidebar_expanded_width();
@@ -1321,7 +1313,7 @@ impl Render for PaneFlowApp {
                                 .overflow_hidden()
                                 .opacity(sessions_sidebar_opacity)
                                 .pt(title_bar_h)
-                                .child(self.render_sessions_sidebar(window, cx))
+                                .child(self.render_sessions_sidebar(cx))
                                 .into_any_element(),
                         )
                     }),
@@ -1856,8 +1848,6 @@ fn main() {
     unsafe { runtime_paths::shed_inherited_instance_env() };
 
     warn_if_legacy_run_install();
-    #[cfg(target_os = "macos")]
-    warn_if_rosetta_translated();
 
     match ai_hooks::extract::ensure_bridge_extracted() {
         Ok(path) => log::info!("paneflow: MCP bridge ready at {}", path.display()),

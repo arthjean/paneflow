@@ -3,12 +3,7 @@ use std::sync::Mutex;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WorkerBoot {
     Pending,
-    Ready {
-        pid: u32,
-        protocol: u32,
-        capabilities: Vec<String>,
-        replaced: Option<String>,
-    },
+    Ready,
     Failed(String),
 }
 
@@ -61,12 +56,7 @@ pub fn start_in_background() {
                         adoption.identity.pid,
                         adoption.identity.protocol
                     );
-                    record(WorkerBoot::Ready {
-                        pid: adoption.identity.pid,
-                        protocol: adoption.identity.protocol,
-                        capabilities: adoption.identity.capabilities.clone(),
-                        replaced: adoption.replaced.clone(),
-                    });
+                    record(WorkerBoot::Ready);
                 }
                 Err(error) => {
                     log::warn!("paneflow: worker bootstrap failed: {error}");
@@ -85,16 +75,11 @@ pub fn retry() {
     start_in_background();
 }
 
-pub fn banner(
-    boot: &WorkerBoot,
-    _reconnecting: bool,
-    _stale: bool,
-    _reason: Option<&str>,
-) -> Option<(String, bool)> {
-    if let WorkerBoot::Failed(error) = boot {
-        return Some((error.clone(), true));
+pub fn banner(boot: &WorkerBoot) -> Option<String> {
+    match boot {
+        WorkerBoot::Failed(error) => Some(error.clone()),
+        WorkerBoot::Pending | WorkerBoot::Ready => None,
     }
-    None
 }
 
 #[cfg(test)]
@@ -102,44 +87,22 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_banner_names_the_exact_failure_and_offers_retry_only_then() {
+    fn the_banner_names_the_exact_failure_and_only_a_failure() {
         let failed = WorkerBoot::Failed("the endpoint is already in use".to_string());
-        let (message, retryable) = banner(&failed, false, false, None).expect("a failure shows");
-        assert_eq!(message, "the endpoint is already in use");
-        assert!(retryable, "a failed bootstrap offers Retry");
-
-        let ready = WorkerBoot::Ready {
-            pid: 7,
-            protocol: paneflow_serve::WORKER_PROTOCOL_VERSION,
-            capabilities: Vec::new(),
-            replaced: None,
-        };
-        assert_eq!(banner(&ready, false, false, None), None);
-
         assert_eq!(
-            banner(&ready, true, true, Some("stream closed")),
-            None,
-            "an automatic reconnection stays out of the workspace list"
+            banner(&failed).as_deref(),
+            Some("the endpoint is already in use")
         );
-
-        assert_eq!(
-            banner(&ready, true, false, Some("stream closed")),
-            None,
-            "a connection that never bootstrapped is not a reconnection"
-        );
+        assert_eq!(banner(&WorkerBoot::Ready), None);
+        assert_eq!(banner(&WorkerBoot::Pending), None);
     }
 
     #[test]
     fn a_failed_bootstrap_is_reported_verbatim_so_no_pane_opens_dead() {
         record(WorkerBoot::Failed("endpoint in use".to_string()));
         assert_eq!(state(), WorkerBoot::Failed("endpoint in use".to_string()));
-        record(WorkerBoot::Ready {
-            pid: 7,
-            protocol: paneflow_serve::WORKER_PROTOCOL_VERSION,
-            capabilities: vec!["agent.snapshot".to_string()],
-            replaced: Some("0.15.0".to_string()),
-        });
-        assert!(matches!(state(), WorkerBoot::Ready { pid: 7, .. }));
+        record(WorkerBoot::Ready);
+        assert_eq!(state(), WorkerBoot::Ready);
         record(WorkerBoot::Pending);
     }
 }

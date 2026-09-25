@@ -146,12 +146,6 @@ fn read_snapshot(client: &impl IpcTransport, id: u64) -> Result<Option<ReadSnaps
         json!({ "surface_id": id, "lines": READ_WINDOW_LINES, "fenced": false }),
     ) {
         Ok(result) => {
-            if let Some(message) = legacy_error_message(&result) {
-                if is_surface_gone_error(&message) {
-                    return Ok(None);
-                }
-                return Err(CliError::runtime(message));
-            }
             let text = result.get("text").and_then(Value::as_str).unwrap_or("");
             let output_generation = result.get("output_generation").and_then(Value::as_u64);
             Ok(Some(ReadSnapshot {
@@ -165,21 +159,7 @@ fn read_snapshot(client: &impl IpcTransport, id: u64) -> Result<Option<ReadSnaps
     }
 }
 
-fn legacy_error_message(value: &Value) -> Option<String> {
-    let error = value.get("error")?;
-    error
-        .as_str()
-        .map(str::to_string)
-        .or_else(|| {
-            error
-                .get("message")
-                .and_then(Value::as_str)
-                .map(str::to_string)
-        })
-        .or_else(|| Some(error.to_string()))
-}
-
-fn is_surface_gone_error(message: &str) -> bool {
+pub(super) fn is_surface_gone_error(message: &str) -> bool {
     let lower = message.to_ascii_lowercase();
     lower.contains("not found") || lower.contains("-32602")
 }

@@ -296,7 +296,7 @@ impl CodeHighlighter {
         out
     }
 
-    pub(crate) fn set_syntax(&mut self, _doc: &CodeDocument, syntax: DiffSyntax) {
+    pub(crate) fn set_syntax(&mut self, syntax: DiffSyntax) {
         self.syntax = syntax;
         for pass in &mut self.passes {
             pass.colors = capture_colors(pass.grammar, &self.syntax);
@@ -1523,7 +1523,7 @@ mod tests {
             .find(|(name, _)| *name != crate::theme::DEFAULT_THEME)
             .map(|(_, build)| build())
             .expect("a second bundled theme");
-        h.set_syntax(&d, DiffSyntax::from_theme(&other));
+        h.set_syntax(DiffSyntax::from_theme(&other));
 
         assert_eq!(h.root_child_ids(), before, "the trees were rebuilt");
         let colors_after: Vec<_> = h.runs(0).iter().map(|(_, c)| *c).collect();

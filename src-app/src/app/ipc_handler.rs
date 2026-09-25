@@ -46,7 +46,6 @@ pub(crate) struct PlannedPane {
     pub(crate) profile: TerminalSurfaceProfile,
     pub(crate) focus: bool,
     pub(crate) label: Option<String>,
-    pub(crate) context: Option<String>,
 }
 
 fn parse_env_object(value: Option<&serde_json::Value>) -> Option<HashMap<String, String>> {
@@ -92,10 +91,6 @@ pub(crate) fn parse_workspace_pane_plan(
             .or_else(|| spec.get("name"))
             .and_then(|v| v.as_str())
             .and_then(sanitize_pane_name),
-        context: spec
-            .get("context")
-            .and_then(|c| c.as_str())
-            .map(str::to_string),
     })
 }
 
@@ -303,115 +298,6 @@ fn extract_last_result_capped(path: &std::path::Path, cap: u64) -> Option<String
     None
 }
 
-static CONTEXT_FILE_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-
-fn context_dir() -> std::path::PathBuf {
-    std::env::temp_dir().join("paneflow-context")
-}
-
-fn next_context_file_path() -> std::path::PathBuf {
-    let seq = CONTEXT_FILE_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    context_dir().join(format!("ctx-{}-{seq}.txt", std::process::id()))
-}
-
-fn write_context_file(path: &std::path::Path, content: &str) {
-    let Some(dir) = path.parent() else { return };
-    if let Err(e) = create_private_dir(dir) {
-        log::warn!("context file: cannot create {}: {e}", dir.display());
-        return;
-    }
-    let tmp = path.with_extension("tmp");
-    let _ = std::fs::remove_file(&tmp);
-    if write_private_file(&tmp, content)
-        .and_then(|()| std::fs::rename(&tmp, path))
-        .is_err()
-    {
-        log::warn!("context file: failed to stage {}", path.display());
-        let _ = std::fs::remove_file(&tmp);
-    }
-}
-
-fn create_private_dir(dir: &std::path::Path) -> std::io::Result<()> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::{DirBuilderExt as _, PermissionsExt as _};
-        std::fs::DirBuilder::new()
-            .recursive(true)
-            .mode(0o700)
-            .create(dir)?;
-        let _ = std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700));
-        Ok(())
-    }
-    #[cfg(not(unix))]
-    {
-        std::fs::create_dir_all(dir)
-    }
-}
-
-fn write_private_file(path: &std::path::Path, content: &str) -> std::io::Result<()> {
-    use std::io::Write as _;
-    let mut opts = std::fs::OpenOptions::new();
-    opts.write(true).create_new(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt as _;
-        opts.mode(0o600);
-    }
-    opts.open(path)?.write_all(content.as_bytes())
-}
-
-fn sweep_orphaned_context_files() {
-    let Ok(entries) = std::fs::read_dir(context_dir()) else {
-        return;
-    };
-    let now = std::time::SystemTime::now();
-    for entry in entries.flatten() {
-        let stale = entry
-            .metadata()
-            .and_then(|m| m.modified())
-            .ok()
-            .and_then(|m| now.duration_since(m).ok())
-            .is_some_and(|age| age > std::time::Duration::from_secs(6 * 3600));
-        if stale {
-            let _ = std::fs::remove_file(entry.path());
-        }
-    }
-}
-
-fn stage_context_file(
-    context: Option<&str>,
-    env: Option<HashMap<String, String>>,
-    cx: &mut gpui::Context<crate::PaneFlowApp>,
-) -> Option<HashMap<String, String>> {
-    let mut env = env;
-    if let Some(content) = context.filter(|c| !c.is_empty()) {
-        static CONTEXT_SWEEP_ONCE: std::sync::Once = std::sync::Once::new();
-        CONTEXT_SWEEP_ONCE.call_once(|| {
-            cx.background_spawn(async {
-                smol::unblock(sweep_orphaned_context_files).await;
-            })
-            .detach();
-        });
-        let path = next_context_file_path();
-        let path_str = path.to_string_lossy().into_owned();
-        let content = content.to_string();
-        cx.background_spawn(async move {
-            smol::unblock(move || write_context_file(&path, &content)).await;
-        })
-        .detach();
-        env.get_or_insert_with(HashMap::new)
-            .insert("PANEFLOW_CONTEXT_FILE".to_string(), path_str);
-    }
-    env
-}
-
-pub(crate) fn stage_planned_pane_env(
-    pane: &PlannedPane,
-    cx: &mut gpui::Context<crate::PaneFlowApp>,
-) -> Option<HashMap<String, String>> {
-    stage_context_file(pane.context.as_deref(), pane.env.clone(), cx)
-}
-
 pub(crate) fn fire_agent_exit_notification(
     agent: TerminalAgent,
     workspace_title: &str,
@@ -466,14 +352,13 @@ fn string_param_is_nonempty(value: Option<&serde_json::Value>) -> bool {
 fn pane_spec_requires_orchestration(spec: &serde_json::Value) -> bool {
     string_param_is_nonempty(spec.get("command"))
         || string_param_is_nonempty(spec.get("prompt"))
-        || string_param_is_nonempty(spec.get("context"))
         || env_param_has_strings(spec.get("env"))
 }
 
 fn orchestration_disabled_error(method: &str) -> JsonRpcError {
     JsonRpcError::method_not_enabled(format!(
         "{method} orchestration disabled; set PANEFLOW_IPC_ORCHESTRATION=1 \
-         or PANEFLOW_IPC_SCRIPTING=1 to enable command, prompt, context, or env"
+         or PANEFLOW_IPC_SCRIPTING=1 to enable command, prompt, or env"
     ))
 }
 
@@ -1406,7 +1291,7 @@ impl PaneFlowApp {
         let mut launches: Vec<(Entity<TerminalView>, Option<String>, Option<String>)> =
             Vec::with_capacity(planned.len());
         for pp in &planned {
-            let env = stage_planned_pane_env(pp, cx);
+            let env = pp.env.clone();
             let terminal = cx.new(|cx| {
                 TerminalView::with_cwd_env_and_profile(
                     ws_id,
@@ -2541,11 +2426,7 @@ impl PaneFlowApp {
                     },
                     None => None,
                 };
-                let spawn_env = stage_context_file(
-                    params.get("context").and_then(|c| c.as_str()),
-                    parse_env_object(params.get("env")),
-                    cx,
-                );
+                let spawn_env = parse_env_object(params.get("env"));
                 let spawn_command = params
                     .get("command")
                     .and_then(|c| c.as_str())
@@ -3479,7 +3360,6 @@ mod tests {
         crate::ipc::IpcRequest {
             method: method.to_string(),
             params: serde_json::json!({}),
-            _id: serde_json::json!(null),
             response_tx,
             cancelled: Arc::new(AtomicBool::new(cancelled)),
             started: Arc::new(AtomicBool::new(false)),
@@ -3850,7 +3730,7 @@ mod tests {
         assert!(super::pane_spec_requires_orchestration(
             &serde_json::json!({"prompt": "inspect this"})
         ));
-        assert!(super::pane_spec_requires_orchestration(
+        assert!(!super::pane_spec_requires_orchestration(
             &serde_json::json!({"context": "notes"})
         ));
         assert!(super::pane_spec_requires_orchestration(
@@ -4629,49 +4509,6 @@ mod tests {
         s.last_result = Some("compiled clean".into());
         let v = super::surface_status_value(7, Some(&s), 1, std::time::Instant::now());
         assert_eq!(v["last_result"], "compiled clean");
-    }
-
-    #[test]
-    fn context_file_round_trips_without_truncation_and_paths_unique() {
-        let p1 = super::next_context_file_path();
-        let p2 = super::next_context_file_path();
-        assert_ne!(p1, p2, "each context file gets a distinct path");
-        let big = "x".repeat(128 * 1024);
-        super::write_context_file(&p1, &big);
-        let read = std::fs::read_to_string(&p1).expect("context file staged");
-        assert_eq!(
-            read.len(),
-            big.len(),
-            "no truncation past the 64 KiB inline cap"
-        );
-        let _ = std::fs::remove_file(&p1);
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn context_file_and_dir_are_owner_only() {
-        use std::os::unix::fs::PermissionsExt as _;
-        let path = super::next_context_file_path();
-        super::write_context_file(&path, "secret inter-agent context");
-        let file_mode = std::fs::metadata(&path)
-            .expect("file staged")
-            .permissions()
-            .mode()
-            & 0o777;
-        assert_eq!(
-            file_mode, 0o600,
-            "context file must be 0600, got {file_mode:o}"
-        );
-        let dir_mode = std::fs::metadata(super::context_dir())
-            .expect("dir exists")
-            .permissions()
-            .mode()
-            & 0o777;
-        assert_eq!(
-            dir_mode, 0o700,
-            "context dir must be 0700, got {dir_mode:o}"
-        );
-        let _ = std::fs::remove_file(&path);
     }
 
     #[test]

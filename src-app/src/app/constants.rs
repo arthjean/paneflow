@@ -106,12 +106,6 @@ fn window_background_appearance_for_preference(
         let _ = preference;
         WindowBackgroundAppearance::Opaque
     }
-
-    #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
-    {
-        let _ = preference;
-        WindowBackgroundAppearance::Opaque
-    }
 }
 
 #[cfg(target_os = "windows")]
@@ -159,14 +153,9 @@ fn windows_supports_system_backdrop() -> bool {
     unsafe { RtlGetVersion(&mut version) >= 0 && version.build >= 22_621 }
 }
 
-pub(crate) fn cockpit_chrome_background(
-    background: Hsla,
-    is_window_active: bool,
-    material_active: bool,
-) -> Hsla {
+pub(crate) fn cockpit_chrome_background(background: Hsla, material_active: bool) -> Hsla {
     #[cfg(target_os = "windows")]
     {
-        let _ = is_window_active;
         if material_active {
             gpui::transparent_black()
         } else {
@@ -179,19 +168,15 @@ pub(crate) fn cockpit_chrome_background(
 
     #[cfg(not(target_os = "windows"))]
     {
-        let _ = (background, is_window_active, material_active);
+        let _ = (background, material_active);
         gpui::transparent_black()
     }
 }
 
-pub(crate) fn cockpit_backdrop_background(
-    background: Hsla,
-    is_window_active: bool,
-    material_active: bool,
-) -> Hsla {
+pub(crate) fn cockpit_backdrop_background(background: Hsla, material_active: bool) -> Hsla {
     #[cfg(target_os = "linux")]
     {
-        let _ = (is_window_active, material_active);
+        let _ = material_active;
         Hsla {
             a: 1.0,
             ..background
@@ -200,10 +185,7 @@ pub(crate) fn cockpit_backdrop_background(
 
     #[cfg(not(target_os = "linux"))]
     {
-        let _ = is_window_active;
-        if !material_active {
-            background
-        } else if cfg!(any(target_os = "windows", target_os = "macos")) {
+        if material_active {
             gpui::transparent_black()
         } else {
             background
@@ -346,13 +328,10 @@ mod material_tests {
         let background = Hsla::from(gpui::rgb(0x141414));
 
         assert_eq!(
-            cockpit_chrome_background(background, true, false),
+            cockpit_chrome_background(background, false),
             gpui::transparent_black()
         );
-        assert_eq!(
-            cockpit_backdrop_background(background, true, false),
-            background
-        );
+        assert_eq!(cockpit_backdrop_background(background, false), background);
     }
 
     #[cfg(target_os = "windows")]
@@ -361,20 +340,17 @@ mod material_tests {
         let background = Hsla::from(gpui::rgb(0x141414));
 
         assert_eq!(
-            cockpit_chrome_background(background, true, false),
+            cockpit_chrome_background(background, false),
             Hsla {
                 a: 1.0,
                 ..background
             }
         );
         assert_eq!(
-            cockpit_chrome_background(background, true, true),
+            cockpit_chrome_background(background, true),
             gpui::transparent_black()
         );
-        assert_eq!(
-            cockpit_backdrop_background(background, true, false),
-            background
-        );
+        assert_eq!(cockpit_backdrop_background(background, false), background);
     }
 
     #[cfg(target_os = "linux")]
@@ -384,11 +360,11 @@ mod material_tests {
         let light = gpui::hsla(0.09, 0.54, 0.78, 0.58);
 
         assert_eq!(
-            cockpit_backdrop_background(dark, true, true),
+            cockpit_backdrop_background(dark, true),
             Hsla { a: 1.0, ..dark }
         );
         assert_eq!(
-            cockpit_backdrop_background(light, true, true),
+            cockpit_backdrop_background(light, true),
             Hsla { a: 1.0, ..light }
         );
     }

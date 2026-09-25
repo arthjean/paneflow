@@ -504,14 +504,6 @@ impl IndentUnit {
         }
     }
 
-    #[allow(dead_code)]
-    pub(crate) fn width(self) -> usize {
-        match self {
-            Self::Tab => 1,
-            Self::Spaces(n) => n.max(1),
-        }
-    }
-
     pub(crate) fn detect(doc: &CodeDocument) -> Self {
         let rows = doc.line_count().min(INDENT_SCAN_LINES);
         let mut tabs = 0usize;

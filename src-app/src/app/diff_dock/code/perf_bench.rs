@@ -521,7 +521,7 @@ fn theme_scenario(metrics: &mut Vec<Metric>, corpora: &Corpora) {
         || {
             index += 1;
             let syntax = if index.is_multiple_of(2) { dark() } else { light() };
-            highlighter.set_syntax(&doc, syntax);
+            highlighter.set_syntax(syntax);
         },
     ));
 }
