@@ -8,3 +8,5 @@ bb12ad87df96a4210167a5971356b0da93d0e497
 baf8c5279a1e1405fd5b7725e7da08ff87376dc4
 # refactor(ipc): US-044 - split ipc_handler.rs
 0e5724708a7b30ee8a9966e2b247e99c78cc2a86
+# refactor(app): US-045 - split main.rs, bootstrap.rs and event_handlers.rs
+df848b77a299b09d331b62e74225046b6d7d2550
