@@ -4585,7 +4585,6 @@ name = "paneflow-serve"
 version = "0.16.0"
 dependencies = [
  "interprocess",
- "libc",
  "log",
  "paneflow-agent-config",
  "paneflow-config",
@@ -4619,7 +4618,6 @@ version = "0.16.0"
 dependencies = [
  "log",
  "semver",
- "serde",
  "serde_json",
  "tempfile",
  "ureq",
