@@ -14,3 +14,5 @@ df848b77a299b09d331b62e74225046b6d7d2550
 8a9155ab0f7c3d9fa57bcd7b5d691d56349ecd38
 # refactor(settings): US-046 - split the workspace templates tab
 e8c8aabf5fb64a215be3256c837d473174af4144
+# refactor(code): US-047 - split diff_dock/code/view.rs by concern
+3d649b7d33b2bb90ec8278c1b03d03d24c546331
