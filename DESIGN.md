@@ -375,11 +375,10 @@ live in `src-app/assets/agents/` and in the icons folder for Claude, Codex,
 OpenCode, and Pi; a mark ships monochrome when the brand allows it and as a
 multicolor image otherwise (`render_logo` decides per logo).
 
-Workspace folder rows use Unpeel's filled open and closed folder SVGs,
-with an opacity gradient and translucent outline, tinted with `muted` at
-the existing 14 px size. The sidebar footer settings button uses Unpeel's
-matching filled gear from the same family. These assets are dedicated to the
-workspace sidebar.
+Workspace folder rows use the shared Hugeicons `folder.svg` and
+`folder-open.svg` stroke glyphs, tinted with `muted` at 15 px. The welcome
+screen, the diff dock, and the workspace settings use the same two files. The
+sidebar footer settings button uses the matching `settings.svg` gear.
 
 | Size | Use |
 | --- | --- |

@@ -10,7 +10,7 @@
     - Start Menu shortcut under "PaneFlow", using the target exe icon so
       taskbar pins keep a stable icon path across major upgrades.
     - ARP (Add or Remove Programs) entry with publisher "Strivex" and
-      the multi-resolution icon at `packaging/wix/paneflow.ico`.
+      the multi-resolution icon at `assets/PaneFlow.ico`.
     - GPL license and libghostty provenance/compliance files beside the
       executable, with no runtime Ghostty DLL.
     - User state at %USERPROFILE%\.paneflow\ is preserved on uninstall
@@ -238,8 +238,8 @@
         <!-- AC-2c - ARP icon + publisher. ARPPRODUCTICON is referenced
              from "Apps & features" and the legacy "Programs and Features"
              control panel. Multi-resolution (16/32/48/128/256) built
-             from packaging/wix/paneflow.ico. -->
-        <Icon Id='PaneflowICO' SourceFile='packaging/wix/paneflow.ico'/>
+             from assets/PaneFlow.ico. -->
+        <Icon Id='PaneflowICO' SourceFile='assets/PaneFlow.ico'/>
         <Property Id='ARPPRODUCTICON' Value='PaneflowICO'/>
 
         <Property Id='ARPHELPLINK' Value='https://github.com/arthjean/paneflow'/>

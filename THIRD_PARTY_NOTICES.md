@@ -96,6 +96,7 @@ the GPUI asset loader expects.
 - `file-text.svg`
 - `filter-2.svg`
 - `filter-circle-outline.svg`
+- `folder-open.svg`
 - `folder-plus.svg`
 - `folder.svg`
 - `folders.svg`
@@ -116,7 +117,6 @@ the GPUI asset loader expects.
 - `split_vertical.svg`
 - `square-slash.svg`
 - `tool_search.svg`
-- `workspace-folder.svg`
 
 ```
 MIT License

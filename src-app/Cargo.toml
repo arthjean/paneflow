@@ -440,8 +440,9 @@ unwrap_in_result = "allow"
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(feature, values("cargo-clippy"))'] }
 
 # Windows MSI packaging (US-013 - prd-windows-port.md). Source WXS +
-# License.rtf + paneflow.ico live under `packaging/wix/` (kept alongside
-# `packaging/{apt,rpm,homebrew,debian}/` per project convention).
+# License.rtf live under `packaging/wix/` (kept alongside
+# `packaging/{apt,rpm,homebrew,debian}/` per project convention); the ARP icon
+# is the canonical `assets/PaneFlow.ico`.
 # Build: cargo wix --package paneflow-app --target x86_64-pc-windows-msvc --include packaging/wix/main.wxs
 #
 # GUIDs below were generated once by `cargo wix init` and MUST remain

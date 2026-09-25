@@ -1236,9 +1236,9 @@ impl PaneFlowApp {
             .child(self.sidebar_filter_label(title, cx));
 
         let folder_path = if is_expanded {
-            "icons/workspace-folder-open.svg"
+            "icons/folder-open.svg"
         } else {
-            "icons/workspace-folder.svg"
+            "icons/folder.svg"
         };
         let disclosure = div()
             .flex_none()
