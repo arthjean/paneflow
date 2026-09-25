@@ -235,10 +235,6 @@ impl ServerHandle {
         })
     }
 
-    pub fn endpoint(&self) -> &Path {
-        &self.endpoint
-    }
-
     pub fn stop(mut self) -> io::Result<()> {
         self.shutdown.store(true, Ordering::Release);
         if let Ok(name) = self.endpoint.as_path().to_fs_name::<GenericFilePath>() {

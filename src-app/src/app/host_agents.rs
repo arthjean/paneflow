@@ -6,7 +6,6 @@ use gpui::Context;
 use paneflow_config::schema::SessionId;
 use paneflow_ipc_client::agent::AgentState;
 use paneflow_ipc_client::host_control::{HostControl, METHOD_AGENT_FOLLOW};
-use paneflow_serve::protocol::METHOD_WORKER_HELLO;
 use serde_json::{Value, json};
 
 use crate::PaneFlowApp;
@@ -262,8 +261,7 @@ fn projected_session(
 
 fn follow_once(endpoint: &std::path::Path, tx: &SyncSender<HostAgentFrame>) -> Result<(), String> {
     let mut control = HostControl::connect(endpoint, CLIENT_NAME)?;
-    let identity = control.request(METHOD_WORKER_HELLO, json!({"client": CLIENT_NAME}))?;
-    let capabilities: Vec<String> = identity["capabilities"]
+    let capabilities: Vec<String> = control.identity()["capabilities"]
         .as_array()
         .map(|entries| {
             entries

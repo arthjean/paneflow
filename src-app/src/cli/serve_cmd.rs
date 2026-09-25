@@ -16,12 +16,12 @@ pub enum ServeCommand {
         about = "Print the worker pid, protocol version, home, session count and advertised capabilities"
     )]
     Status,
-    #[command(about = "Stop the worker after draining its Controllers; terminals are untouched")]
+    #[command(about = "Stop the worker; terminals are untouched")]
     Stop {
         #[arg(
             long,
             default_value_t = 5_000,
-            help = "Milliseconds to wait for Controllers to drain before giving up"
+            help = "Milliseconds to wait for the worker to exit before giving up"
         )]
         drain_ms: u64,
     },
@@ -133,12 +133,6 @@ fn status(home: &Path) -> Result<i32, CliError> {
 fn worker_status(endpoint: &Path) -> Option<Value> {
     use paneflow_ipc_client::host_control::HostControl;
     let mut control = HostControl::connect(endpoint, "paneflow-cli").ok()?;
-    control
-        .request(
-            paneflow_serve::protocol::METHOD_WORKER_HELLO,
-            json!({"client": "paneflow-cli"}),
-        )
-        .ok()?;
     control
         .request(paneflow_serve::protocol::METHOD_WORKER_STATUS, json!({}))
         .ok()

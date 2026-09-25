@@ -8,7 +8,7 @@ use paneflow_ipc_client::host_control::HostControl;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
-use crate::protocol::{METHOD_WORKER_HELLO, METHOD_WORKER_SHUTDOWN, WorkerIdentity};
+use crate::protocol::{METHOD_WORKER_SHUTDOWN, WorkerIdentity};
 
 pub const STARTUP_WAIT: Duration = Duration::from_secs(10);
 pub const DRAIN_WAIT: Duration = Duration::from_secs(5);
@@ -71,15 +71,11 @@ pub enum Probe {
 }
 
 pub fn probe(home: &Path, endpoint: &Path) -> Probe {
-    let mut control = match HostControl::connect(endpoint, CLIENT_NAME) {
+    let control = match HostControl::connect(endpoint, CLIENT_NAME) {
         Ok(control) => control,
         Err(error) => return Probe::Unreachable(error),
     };
-    let answered = match control.request(METHOD_WORKER_HELLO, json!({"client": CLIENT_NAME})) {
-        Ok(value) => value,
-        Err(error) => return Probe::Faulted(error),
-    };
-    let identity: WorkerIdentity = match serde_json::from_value(answered) {
+    let identity: WorkerIdentity = match serde_json::from_value(control.identity().clone()) {
         Ok(identity) => identity,
         Err(error) => {
             return Probe::Faulted(format!(
@@ -336,11 +332,7 @@ pub fn ensure_worker_running(
 pub fn stop_worker(home: &Path, drain: Duration) -> bool {
     let endpoint = paneflow_home::serve_endpoint_path(home);
     if let Ok(mut control) = HostControl::connect(&endpoint, CLIENT_NAME) {
-        let _ = control.request(METHOD_WORKER_HELLO, json!({"client": CLIENT_NAME}));
-        let _ = control.request(
-            METHOD_WORKER_SHUTDOWN,
-            json!({"drain_ms": drain.as_millis() as u64}),
-        );
+        let _ = control.request(METHOD_WORKER_SHUTDOWN, json!({}));
     }
     let deadline = Instant::now() + drain;
     loop {

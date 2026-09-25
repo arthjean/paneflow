@@ -868,7 +868,6 @@ fn merge_core_row(session: SessionId, raw: &Value, held: Option<SessionEntry>) -
         process,
         core_protocol: raw["host_protocol_version"]
             .as_u64()
-            .or_else(|| raw["core_protocol"].as_u64())
             .and_then(|value| u32::try_from(value).ok())
             .or_else(|| held.as_ref().map(|entry| entry.core_protocol))
             .unwrap_or(0),
@@ -907,7 +906,7 @@ fn merge_core_row(session: SessionId, raw: &Value, held: Option<SessionEntry>) -
             .then(|| held.as_ref().map(|entry| entry.unread))
             .flatten()
             .unwrap_or(false),
-        updated_at_ms: raw["updated_at_ms"].as_u64().unwrap_or_else(now_ms),
+        updated_at_ms: now_ms(),
     }
 }
 

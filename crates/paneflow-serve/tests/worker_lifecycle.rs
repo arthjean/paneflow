@@ -7,7 +7,7 @@ use std::time::{Duration, Instant, SystemTime};
 use paneflow_host::protocol::{ClientHello, METHOD_AGENT_EVENT};
 use paneflow_host::{HostClient, SessionSummary};
 use paneflow_ipc_client::host_control::{HostControl, METHOD_AGENT_FOLLOW};
-use paneflow_serve::protocol::{METHOD_WORKER_HELLO, METHOD_WORKER_STATUS};
+use paneflow_serve::protocol::METHOD_WORKER_STATUS;
 use serde_json::{Value, json};
 
 fn core_endpoint(home: &std::path::Path) -> PathBuf {
@@ -36,14 +36,12 @@ fn delayed_marker_command(marker: &str) -> String {
 }
 
 fn controller(endpoint: &std::path::Path) -> HostControl {
-    let mut control =
+    let control =
         HostControl::connect(endpoint, "worker-lifecycle-test").expect("a Controller connects");
-    control
-        .request(
-            METHOD_WORKER_HELLO,
-            json!({"client": "worker-lifecycle-test"}),
-        )
-        .expect("the worker answers its identity");
+    assert!(
+        control.identity()["pid"].as_u64().is_some(),
+        "the worker answers its identity"
+    );
     control
 }
 

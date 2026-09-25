@@ -260,8 +260,10 @@ fn apply(worker: &Arc<Worker>, frame: CoreFrame) {
                 broadcast_projection(worker, &projection, &json!({}));
             }
             write_instance_record(worker);
-            let snapshot = worker.snapshot_frame();
-            worker.bus.broadcast(&with_type(snapshot, "snapshot"));
+            let sessions = worker.lock_state().snapshot();
+            worker
+                .bus
+                .broadcast(&json!({"type": "snapshot", "sessions": sessions}));
         }
         CoreFrame::Event(value) => {
             worker.core_connected.store(true, Ordering::Release);
@@ -287,9 +289,6 @@ fn apply(worker: &Arc<Worker>, frame: CoreFrame) {
         CoreFrame::Disconnected(reason) => {
             worker.core_connected.store(false, Ordering::Release);
             log::warn!("paneflow-serve: the core link dropped: {reason}");
-            worker
-                .bus
-                .broadcast(&json!({"type": "core_disconnected", "reason": reason}));
         }
     }
 }
@@ -300,13 +299,6 @@ fn broadcast_projection(
     source: &Value,
 ) {
     worker.publish(projection, source);
-}
-
-fn with_type(mut frame: Value, kind: &str) -> Value {
-    if let Some(map) = frame.as_object_mut() {
-        map.insert("type".to_string(), Value::from(kind));
-    }
-    frame
 }
 
 #[cfg(test)]

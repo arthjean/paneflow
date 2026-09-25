@@ -139,10 +139,6 @@ impl Controller {
         })
     }
 
-    pub fn identity(&self) -> &WorkerIdentity {
-        &self.identity
-    }
-
     pub fn advertises(&self, capability: &str) -> bool {
         self.identity
             .capabilities
@@ -234,14 +230,6 @@ impl FollowSession {
         let frame = session.record_bootstrap(bootstrap);
         session.pending = Some(frame);
         Ok(session)
-    }
-
-    pub fn endpoint(&self) -> &Path {
-        &self.endpoint
-    }
-
-    pub fn identity(&self) -> Option<&WorkerIdentity> {
-        self.controller.as_ref().map(Controller::identity)
     }
 
     fn record_bootstrap(&mut self, mut bootstrap: Bootstrap) -> FollowFrame {

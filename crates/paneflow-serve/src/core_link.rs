@@ -1,4 +1,4 @@
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::mpsc::{Receiver, SyncSender, TrySendError, sync_channel};
 use std::time::Duration;
 
@@ -19,7 +19,6 @@ pub enum CoreFrame {
 }
 
 pub struct CoreLink {
-    endpoint: PathBuf,
     frames: Receiver<CoreFrame>,
 }
 
@@ -42,11 +41,7 @@ impl CoreLink {
                     std::thread::sleep(RECONNECT_DELAY);
                 }
             })?;
-        Ok(Self { endpoint, frames })
-    }
-
-    pub fn endpoint(&self) -> &Path {
-        &self.endpoint
+        Ok(Self { frames })
     }
 
     pub fn drain(&self, max: usize) -> Vec<CoreFrame> {
