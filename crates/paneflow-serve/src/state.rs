@@ -88,10 +88,6 @@ impl Health {
             Self::NonResumable => "non_resumable",
         }
     }
-
-    pub fn may_be_signaled(self) -> bool {
-        matches!(self, Self::Live)
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -278,6 +274,7 @@ impl WorkerState {
         self.menu_attention_detection = enabled;
     }
 
+    #[cfg(test)]
     pub fn menu_attention_detection(&self) -> bool {
         self.menu_attention_detection
     }
@@ -296,10 +293,6 @@ impl WorkerState {
 
     pub fn contains(&self, session: &SessionId) -> bool {
         self.sessions.contains_key(session)
-    }
-
-    pub fn entries(&self) -> impl Iterator<Item = &SessionEntry> {
-        self.sessions.values()
     }
 
     pub fn activity_log(&self) -> &ActivityLog {
@@ -1873,7 +1866,6 @@ mod tests {
     fn an_unverifiable_pid_stays_non_resumable_and_is_never_signaled() {
         let mut entry = SessionEntry::from_manifest(manifest(SessionId::new(), None));
         assert_eq!(entry.health, Health::NonResumable);
-        assert!(!entry.health.may_be_signaled());
 
         entry.process = Some(ProcessIdentity {
             pid: std::process::id(),
@@ -1885,7 +1877,6 @@ mod tests {
         entry.process = Some(ProcessIdentity::capture(std::process::id()));
         entry.refresh_health();
         assert_eq!(entry.health, Health::Live);
-        assert!(entry.health.may_be_signaled());
 
         entry.process = Some(ProcessIdentity {
             pid: std::process::id(),

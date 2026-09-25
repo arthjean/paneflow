@@ -21,16 +21,6 @@
       "summary": "A session carries restart_recommended when the core's host_protocol_version is below the version this worker requires."
     },
     {
-      "name": "control.proxy",
-      "since": 1,
-      "summary": "surface.* and session.* control methods are forwarded verbatim to the PTY core on the caller's behalf."
-    },
-    {
-      "name": "fleet.projection",
-      "since": 1,
-      "summary": "fleet.list and surface.status are answered from the worker's reduced activity, not from core state."
-    },
-    {
       "name": "integrations.refresh",
       "since": 1,
       "summary": "The worker re-runs the installers of installed integrations at start and adopts legacy per-launch installs once."

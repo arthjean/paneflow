@@ -525,9 +525,10 @@ stale code.
   only when its recorded child pid with a matching kernel start time is
   absent. An unknown or recycled pid stays `non_resumable` and is never
   signaled.
-- **One front door.** `fleet.list` and `surface.status` are answered from the
-  worker's reduced state; every other `session.*`, `surface.*`, `host.*` and
-  `system.*` method is forwarded verbatim to the core.
+- **No front door.** The worker answers only `worker.*`, `host.hello` and the
+  `agent.*` methods, and forwards nothing to the core. The CLI and MCP reach
+  `session.*` and `surface.*` on the host endpoint directly when no desktop is
+  running.
 
 ## Local host and durable session identity
 

@@ -364,7 +364,7 @@ mod tests {
 
     fn sent_frame(outcome: BuildOutcome) -> Value {
         match outcome {
-            BuildOutcome::Send(frame) => frame.to_value(),
+            BuildOutcome::Send(frame) => frame.to_agent_event_params("test"),
             BuildOutcome::Drop(reason) => panic!("unexpected drop: {reason}"),
         }
     }
@@ -404,7 +404,7 @@ mod tests {
         for (event, payload, expected_method) in cases {
             let frame =
                 sent_frame(build_frame(event, test_context(), payload).expect("valid frame"));
-            assert_eq!(frame["method"], expected_method, "event={}", event.name());
+            assert_eq!(frame["kind"], expected_method, "event={}", event.name());
         }
     }
 
@@ -424,15 +424,13 @@ mod tests {
             )
             .expect("valid frame"),
         );
-        assert_eq!(frame["params"]["hook_payload"]["background_tasks"], 2);
+        assert_eq!(frame["hook_payload"]["background_tasks"], 2);
         assert_eq!(
-            frame["params"]["hook_payload"]["last_assistant_message"],
+            frame["hook_payload"]["last_assistant_message"],
             "The change is ready."
         );
         assert!(
-            !frame["params"]["hook_payload"]
-                .to_string()
-                .contains("secret"),
+            !frame["hook_payload"].to_string().contains("secret"),
             "only the count crosses the wire, never the task payloads"
         );
 
@@ -444,7 +442,7 @@ mod tests {
             )
             .expect("valid frame"),
         );
-        assert_eq!(empty["params"]["hook_payload"]["background_tasks"], 0);
+        assert_eq!(empty["hook_payload"]["background_tasks"], 0);
 
         let failed = sent_frame(
             build_frame(
@@ -455,12 +453,12 @@ mod tests {
             .expect("valid frame"),
         );
         assert_eq!(
-            failed["params"]["hook_payload"]["reason"],
+            failed["hook_payload"]["reason"],
             "matcher rejected the answer"
         );
 
         let bare = sent_frame(build_frame(HookEvent::Stop, test_context(), json!({})).expect("ok"));
-        assert!(bare["params"]["hook_payload"]["background_tasks"].is_null());
+        assert!(bare["hook_payload"]["background_tasks"].is_null());
     }
 
     #[test]
@@ -475,7 +473,7 @@ mod tests {
             BuildOutcome::Drop(reason) => {
                 assert_eq!(reason, DropReason::LlmCallContinuesWithToolCalls(2));
             }
-            BuildOutcome::Send(frame) => panic!("unexpected frame: {:?}", frame.to_value()),
+            BuildOutcome::Send(frame) => panic!("unexpected frame: {frame:?}"),
         }
     }
 
@@ -485,17 +483,14 @@ mod tests {
             build_frame(HookEvent::SessionStart, test_context(), json!({}))
                 .expect("hand typed runtime"),
         );
-        assert!(untagged["params"].get("pid").is_none());
+        assert!(untagged.get("pid").is_none());
         let frame = sent_frame(
             build_frame(HookEvent::SessionStart, test_context(), json!({"pid": 42}))
                 .expect("payload pid is valid"),
         );
-        assert_eq!(frame["params"]["pid"], 42);
-        assert_eq!(frame["params"]["runtime_generation"], 3);
-        assert_eq!(
-            frame["params"]["hook_payload"]["hook_event_name"],
-            "HookSeen"
-        );
+        assert_eq!(frame["pid"], 42);
+        assert_eq!(frame["runtime_generation"], 3);
+        assert_eq!(frame["hook_payload"]["hook_event_name"], "HookSeen");
     }
 
     #[test]
@@ -508,12 +503,9 @@ mod tests {
             )
             .expect("valid AskUserQuestion hook"),
         );
-        assert_eq!(frame["method"], "ai.session_start");
-        assert_eq!(frame["params"]["tool_name"], "AskUserQuestion");
-        assert_eq!(
-            frame["params"]["hook_payload"]["hook_event_name"],
-            "HookSeen"
-        );
+        assert_eq!(frame["kind"], "ai.session_start");
+        assert_eq!(frame["tool_name"], "AskUserQuestion");
+        assert_eq!(frame["hook_payload"]["hook_event_name"], "HookSeen");
     }
 
     #[test]
@@ -523,8 +515,8 @@ mod tests {
         let frame = sent_frame(
             build_frame(HookEvent::Stop, context, json!({"pid": 7777})).expect("valid stop"),
         );
-        assert_eq!(frame["params"]["pid"], 4242);
-        assert_eq!(frame["params"]["hook_payload"]["pid"], 7777);
+        assert_eq!(frame["pid"], 4242);
+        assert_eq!(frame["hook_payload"]["pid"], 7777);
     }
 
     #[test]
@@ -554,8 +546,8 @@ mod tests {
             )
             .expect("valid permission request"),
         );
-        assert!(frame["params"].get("notification_type").is_none());
-        assert_eq!(frame["params"]["hook_payload"]["message"], "Allow?");
+        assert!(frame.get("notification_type").is_none());
+        assert_eq!(frame["hook_payload"]["message"], "Allow?");
     }
 
     #[test]
@@ -577,7 +569,7 @@ mod tests {
             )
             .expect("Windows NTSTATUS fits i32"),
         );
-        assert_eq!(frame["params"]["exit_code"], -1_073_741_510_i64);
+        assert_eq!(frame["exit_code"], -1_073_741_510_i64);
     }
 
     #[test]
@@ -586,14 +578,14 @@ mod tests {
         context.event_source = Some(LifecycleEventSource::Interrupt);
         let stop =
             sent_frame(build_frame(HookEvent::Stop, context, json!({})).expect("valid stop frame"));
-        assert_eq!(stop["params"]["event_source"], "interrupt");
+        assert_eq!(stop["event_source"], "interrupt");
 
         let mut context = test_context();
         context.event_source = Some(LifecycleEventSource::Interrupt);
         let prompt = sent_frame(
             build_frame(HookEvent::UserPromptSubmit, context, json!({})).expect("valid prompt"),
         );
-        assert!(prompt["params"].get("event_source").is_none());
+        assert!(prompt.get("event_source").is_none());
     }
 
     #[test]

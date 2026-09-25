@@ -28,7 +28,6 @@ pub enum OwnerLockError {
 
 pub struct OwnerLock {
     _file: File,
-    path: PathBuf,
 }
 
 impl OwnerLock {
@@ -48,7 +47,7 @@ impl OwnerLock {
         let deadline = Instant::now() + OWNER_LOCK_WAIT;
         loop {
             match file.try_lock() {
-                Ok(()) => return Ok(Self { _file: file, path }),
+                Ok(()) => return Ok(Self { _file: file }),
                 Err(TryLockError::WouldBlock) if Instant::now() < deadline => {
                     std::thread::sleep(LOCK_RETRY);
                 }
@@ -56,10 +55,6 @@ impl OwnerLock {
                 Err(TryLockError::Error(error)) => return Err(OwnerLockError::Io(error)),
             }
         }
-    }
-
-    pub fn path(&self) -> &Path {
-        &self.path
     }
 }
 
@@ -354,9 +349,10 @@ mod tests {
     fn a_second_owner_lock_on_the_same_home_is_refused_while_the_first_lives() {
         let home = tempfile::tempdir().unwrap();
         let first = OwnerLock::acquire(home.path()).unwrap();
-        assert!(first.path().ends_with("owner.lock"));
+        let expected = paneflow_home::serve_owner_lock_path_in(home.path());
+        assert!(expected.ends_with("owner.lock"));
         assert!(
-            matches!(OwnerLock::acquire(home.path()), Err(OwnerLockError::Held(path)) if path == first.path())
+            matches!(OwnerLock::acquire(home.path()), Err(OwnerLockError::Held(path)) if path == expected)
         );
         drop(first);
         OwnerLock::acquire(home.path()).unwrap();

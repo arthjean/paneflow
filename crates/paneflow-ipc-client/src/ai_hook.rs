@@ -236,34 +236,6 @@ impl AiHookParams {
             hook_payload,
         }
     }
-
-    pub fn to_value(&self) -> Value {
-        let mut value = Map::new();
-        value.insert("tool".into(), Value::String(self.tool.as_str().to_owned()));
-        if let Some(pid) = self.pid {
-            value.insert("pid".into(), Value::from(pid.get()));
-        }
-        if let Some(tool_name) = &self.tool_name {
-            value.insert("tool_name".into(), Value::String(tool_name.clone()));
-        }
-        if let Some(exit_code) = self.exit_code {
-            value.insert("exit_code".into(), Value::from(exit_code));
-        }
-        if let Some(event_source) = self.event_source {
-            value.insert(
-                "event_source".into(),
-                Value::String(event_source.as_str().to_owned()),
-            );
-        }
-        if let Some(emitted_at_ms) = self.emitted_at_ms {
-            value.insert("emitted_at_ms".into(), Value::from(emitted_at_ms));
-        }
-        if let Some(runtime_generation) = self.runtime_generation {
-            value.insert("runtime_generation".into(), Value::from(runtime_generation));
-        }
-        value.insert("hook_payload".into(), self.hook_payload.clone());
-        Value::Object(value)
-    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -275,14 +247,6 @@ pub struct AiHookFrame {
 impl AiHookFrame {
     pub fn new(method: AiHookMethod, params: AiHookParams) -> Self {
         Self { method, params }
-    }
-
-    pub fn to_value(&self) -> Value {
-        serde_json::json!({
-            "jsonrpc": "2.0",
-            "method": self.method.as_str(),
-            "params": self.params.to_value(),
-        })
     }
 
     pub fn to_agent_event_params(&self, session: &str) -> Value {
@@ -376,20 +340,5 @@ mod tests {
             "a transient surface id never reaches host-owned state"
         );
         assert!(event.get("workspace_id").is_none());
-    }
-
-    #[test]
-    fn frame_serializes_only_canonical_top_level_fields() {
-        let mut params = AiHookParams::new(
-            AiToolName::parse("codex").expect("valid test tool"),
-            json!({"message": "Approve?"}),
-        );
-        params.pid = SessionPid::new(42);
-        let frame = AiHookFrame::new(AiHookMethod::Notification, params).to_value();
-
-        assert_eq!(frame["method"], METHOD_NOTIFICATION);
-        assert_eq!(frame["params"]["pid"], 42);
-        assert!(frame["params"].get("notification_type").is_none());
-        assert_eq!(frame["params"]["hook_payload"]["message"], "Approve?");
     }
 }

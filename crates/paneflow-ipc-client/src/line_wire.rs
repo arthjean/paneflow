@@ -182,10 +182,6 @@ impl Wire {
         }
     }
 
-    pub fn write_line(&mut self, line: &[u8]) -> io::Result<()> {
-        self.write_line_with_timeout(line, WRITE_DEADLINE)
-    }
-
     pub fn write_line_with_timeout(&mut self, line: &[u8], timeout: Duration) -> io::Result<()> {
         if line.len() > self.max_frame {
             return Err(io::Error::new(
@@ -197,10 +193,6 @@ impl Wire {
         payload.extend_from_slice(line);
         payload.push(b'\n');
         self.write_raw_with_timeout(&payload, timeout)
-    }
-
-    pub fn write_raw(&mut self, payload: &[u8]) -> io::Result<()> {
-        self.write_raw_with_timeout(payload, WRITE_DEADLINE)
     }
 
     pub fn write_raw_with_timeout(&mut self, payload: &[u8], timeout: Duration) -> io::Result<()> {

@@ -6,7 +6,7 @@ use std::time::{Duration, Instant, SystemTime};
 
 use paneflow_host::protocol::{ClientHello, METHOD_AGENT_EVENT};
 use paneflow_host::{HostClient, SessionSummary};
-use paneflow_ipc_client::host_control::{HostControl, METHOD_AGENT_FOLLOW};
+use paneflow_ipc_client::host_control::{HostControl, METHOD_AGENT_FOLLOW, METHOD_AGENT_SNAPSHOT};
 use paneflow_serve::protocol::METHOD_WORKER_STATUS;
 use serde_json::{Value, json};
 
@@ -167,18 +167,6 @@ fn the_worker_owns_the_home_reduces_for_controllers_and_rebuilds_after_a_restart
         .collect();
     assert_eq!(advertised, paneflow_serve::advertised_capabilities());
     assert!(advertised.contains(&"agent.follow".to_string()));
-
-    let proxied = control
-        .request("session.list", json!({}))
-        .expect("the worker proxies session.list to the core");
-    assert!(
-        proxied["sessions"]
-            .as_array()
-            .expect("sessions")
-            .iter()
-            .any(|row| row["session"] == session.to_string()),
-        "a Controller sees the core session through the worker: {proxied}"
-    );
 
     let mut follower = controller(&worker_endpoint);
     let header = follower
@@ -347,17 +335,21 @@ fn the_worker_owns_the_home_reduces_for_controllers_and_rebuilds_after_a_restart
         .expect("the delayed command reaches the core-owned PTY");
     std::thread::sleep(Duration::from_millis(100));
 
-    let fleet = control
-        .request("fleet.list", json!({}))
-        .expect("fleet.list is answered from the reduced state");
-    let agent = fleet["agents"]
+    let snapshot = control
+        .request(METHOD_AGENT_SNAPSHOT, json!({}))
+        .expect("agent.snapshot is answered from the reduced state");
+    let reduced = snapshot["sessions"]
         .as_array()
-        .expect("agents")
+        .expect("sessions")
         .iter()
-        .find(|agent| agent["session"] == session.to_string())
+        .find(|row| row["session"] == session.to_string())
         .expect("the reduced session is listed");
-    assert_eq!(agent["state"], "thinking");
-    assert_eq!(agent["reduced_by"], "paneflow-serve");
+    assert_eq!(reduced["activity"]["state"], "thinking");
+    assert_eq!(reduced["status"], "busy");
+    assert!(
+        control.request("session.list", json!({})).is_err(),
+        "the worker answers only its own projection and never forwards to the core"
+    );
 
     drop(control);
     drop(follower);

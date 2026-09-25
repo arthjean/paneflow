@@ -25,6 +25,7 @@ pub const EVENT_SESSION_END: &str = "SessionEnd";
 
 pub const NOTIFICATION_PERMISSION_PROMPT: &str = "permission_prompt";
 pub const NOTIFICATION_ELICITATION_DIALOG: &str = "elicitation_dialog";
+#[cfg(test)]
 pub const NOTIFICATION_IDLE_PROMPT: &str = "idle_prompt";
 
 pub const ASK_USER_QUESTION: &str = "AskUserQuestion";
@@ -460,6 +461,7 @@ impl ActivityEngine {
         })
     }
 
+    #[cfg(test)]
     pub fn runtime_launch_generation(&self, session: &SessionId) -> Option<u64> {
         self.entries
             .get(session)

@@ -1088,6 +1088,7 @@ mod tests {
     use crate::host::SessionSummary;
     use crate::protocol::ERR_OUTPUT_EVICTED;
     use crate::protocol::{ERR_HANDSHAKE_REQUIRED, ERR_SESSION_LIVE, MAX_CONTROL_FRAME_BYTES};
+    use paneflow_ipc_client::line_wire::WRITE_DEADLINE;
 
     use std::sync::atomic::AtomicU64;
     use std::time::Instant;
@@ -1802,7 +1803,8 @@ mod tests {
         );
         let mut wire = Wire::connect(server.endpoint(), protocol::MAX_CONTROL_FRAME_BYTES).unwrap();
         assert!(
-            wire.write_line(huge.as_bytes()).is_err(),
+            wire.write_line_with_timeout(huge.as_bytes(), WRITE_DEADLINE)
+                .is_err(),
             "the client side refuses to emit a frame above the limit"
         );
         drop(wire);
@@ -1810,7 +1812,8 @@ mod tests {
         let mut raw = Wire::connect(server.endpoint(), protocol::MAX_CONTROL_FRAME_BYTES).unwrap();
         let mut payload = huge.into_bytes();
         payload.push(b'\n');
-        raw.write_raw(&payload).unwrap();
+        raw.write_raw_with_timeout(&payload, WRITE_DEADLINE)
+            .unwrap();
         let LineRead::Line(line) = raw.read_line(Duration::from_secs(5)).unwrap() else {
             panic!("expected a refusal line");
         };

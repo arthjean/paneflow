@@ -4214,7 +4214,7 @@ mod tests {
                 &mut sessions,
                 Some(4242),
                 TerminalAgent::ClaudeCode,
-                reduce_lifecycle_event(AgentLifecycleEvent::Working),
+                reduce_lifecycle_event(AgentLifecycleEvent::PromptSubmit),
                 None,
                 AgentStateSource::Terminal,
             ),
@@ -4250,7 +4250,7 @@ mod tests {
             &mut sessions,
             Some(4242),
             TerminalAgent::ClaudeCode,
-            reduce_lifecycle_event(AgentLifecycleEvent::Working),
+            reduce_lifecycle_event(AgentLifecycleEvent::PromptSubmit),
             None,
             AgentStateSource::SessionRegistry,
         )
@@ -4275,7 +4275,7 @@ mod tests {
             &mut sessions,
             Some(4242),
             TerminalAgent::ClaudeCode,
-            reduce_lifecycle_event(AgentLifecycleEvent::Working),
+            reduce_lifecycle_event(AgentLifecycleEvent::PromptSubmit),
             None,
             AgentStateSource::SessionRegistry,
         )

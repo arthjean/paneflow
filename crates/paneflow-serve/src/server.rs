@@ -12,7 +12,7 @@ use serde_json::{Value, json};
 
 use crate::protocol::{
     DEFAULT_ACTIVITY_LOG_LIMIT, ERR_BUSY, ERR_FRAME_TOO_LARGE, ERR_HANDSHAKE_REQUIRED,
-    ERR_INTERNAL, ERR_INVALID_REQUEST, ERR_METHOD_NOT_FOUND, ERR_PARSE, MAX_CONTROL_FRAME_BYTES,
+    ERR_INVALID_REQUEST, ERR_METHOD_NOT_FOUND, ERR_PARSE, MAX_CONTROL_FRAME_BYTES,
     METHOD_AGENT_ACKNOWLEDGE, METHOD_AGENT_ACTIVITY_LOG, METHOD_AGENT_FOLLOW,
     METHOD_AGENT_SNAPSHOT, METHOD_HOST_HELLO, METHOD_WORKER_HELLO, METHOD_WORKER_SHUTDOWN,
     METHOD_WORKER_STATUS, WorkerIdentity, error_envelope, result_envelope,
@@ -27,29 +27,6 @@ const SUBSCRIBER_QUEUE_SLOTS: usize = 256;
 
 #[cfg(windows)]
 const WINDOWS_PIPE_SDDL: &str = "D:P(A;;GA;;;OW)";
-
-pub const PROXIED_PREFIXES: &[&str] = &["session.", "surface.", "host.", "system."];
-
-pub const WORKER_ANSWERED: &[&str] = &[
-    METHOD_WORKER_HELLO,
-    METHOD_WORKER_STATUS,
-    METHOD_WORKER_SHUTDOWN,
-    METHOD_AGENT_SNAPSHOT,
-    METHOD_AGENT_FOLLOW,
-    METHOD_AGENT_ACTIVITY_LOG,
-    METHOD_AGENT_ACKNOWLEDGE,
-    "fleet.list",
-    "surface.status",
-];
-
-pub fn is_proxied(method: &str) -> bool {
-    if WORKER_ANSWERED.contains(&method) {
-        return false;
-    }
-    PROXIED_PREFIXES
-        .iter()
-        .any(|prefix| method.starts_with(prefix))
-}
 
 pub struct Subscription {
     pub id: u64,
@@ -177,40 +154,6 @@ impl Worker {
             self.publish(projection, &json!({}));
         }
         json!({"acknowledged": acknowledged})
-    }
-
-    fn fleet_list(&self) -> Value {
-        let now = crate::state::now_ms();
-        let agents: Vec<Value> = self
-            .lock_state()
-            .entries()
-            .enumerate()
-            .filter_map(|(index, entry)| {
-                let activity = entry.activity.as_ref()?;
-                Some(json!({
-                    "pid": activity.pid,
-                    "tool": activity.tool,
-                    "state": activity.state,
-                    "hooked": true,
-                    "stale": activity.stale,
-                    "reason": Value::Null,
-                    "surface_id": index as u64 + 1,
-                    "surface_name": entry.title.clone().unwrap_or_else(|| entry.session.to_string()),
-                    "session": entry.session,
-                    "workspace": entry.workspace,
-                    "active_tool_name": activity.active_tool_name,
-                    "message": activity.message,
-                    "last_result": activity.last_result,
-                    "waiting_ms": activity
-                        .waiting_since_ms
-                        .map(|since| now.saturating_sub(since)),
-                    "idle_ms": now.saturating_sub(activity.updated_at_ms),
-                    "activity_source": entry.activity_source.wire_str(),
-                    "reduced_by": "paneflow-serve",
-                }))
-            })
-            .collect();
-        json!({"agents": agents})
     }
 }
 
@@ -476,9 +419,6 @@ fn handle_connection(mut wire: Wire, worker: Arc<Worker>, shutdown: Arc<AtomicBo
                         format!("method not handled by the worker: {method}"),
                         None,
                     ),
-                    Err(DispatchError::Core(message)) => {
-                        error_envelope(&id, ERR_INTERNAL, message, None)
-                    }
                 };
                 match wire.write_json(&envelope) {
                     Ok(()) => Flow::Continue,
@@ -494,7 +434,6 @@ fn handle_connection(mut wire: Wire, worker: Arc<Worker>, shutdown: Arc<AtomicBo
 
 enum DispatchError {
     MethodNotFound,
-    Core(String),
 }
 
 fn dispatch(worker: &Worker, method: &str, params: &Value) -> Result<Value, DispatchError> {
@@ -513,72 +452,8 @@ fn dispatch(worker: &Worker, method: &str, params: &Value) -> Result<Value, Disp
             Ok(json!({"entries": worker.lock_state().activity_log().to_values(limit)}))
         }
         METHOD_AGENT_ACKNOWLEDGE => Ok(worker.acknowledge(params)),
-        "fleet.list" => Ok(worker.fleet_list()),
-        "surface.status" => {
-            let proxied = crate::core_link::call_core(&worker.core_endpoint, method, params)
-                .map_err(DispatchError::Core)?;
-            Ok(enrich_status(worker, proxied, params))
-        }
-        other if is_proxied(other) => {
-            crate::core_link::call_core(&worker.core_endpoint, other, params)
-                .map_err(DispatchError::Core)
-        }
         _ => Err(DispatchError::MethodNotFound),
     }
-}
-
-fn enrich_status(worker: &Worker, mut proxied: Value, params: &Value) -> Value {
-    let session = params["session"]
-        .as_str()
-        .and_then(|raw| paneflow_config::schema::SessionId::parse(raw).ok())
-        .or_else(|| {
-            proxied["session"]
-                .as_str()
-                .and_then(|raw| paneflow_config::schema::SessionId::parse(raw).ok())
-        });
-    let state = worker.lock_state();
-    let entry = session.as_ref().and_then(|session| state.get(session));
-    let Some(entry) = entry else {
-        return proxied;
-    };
-    let Some(map) = proxied.as_object_mut() else {
-        return proxied;
-    };
-    map.insert(
-        "activity_source".to_string(),
-        Value::from(entry.activity_source.wire_str()),
-    );
-    map.insert("reduced_by".to_string(), Value::from("paneflow-serve"));
-    if let Some(activity) = entry.activity.as_ref() {
-        let now = crate::state::now_ms();
-        map.insert("state".to_string(), Value::from(activity.state.clone()));
-        map.insert("stale".to_string(), Value::from(activity.stale));
-        map.insert("tool".to_string(), Value::from(activity.tool.clone()));
-        map.insert(
-            "message".to_string(),
-            activity.message.clone().map_or(Value::Null, Value::from),
-        );
-        map.insert(
-            "last_result".to_string(),
-            activity
-                .last_result
-                .clone()
-                .map_or(Value::Null, Value::from),
-        );
-        map.insert(
-            "waiting_ms".to_string(),
-            activity
-                .waiting_since_ms
-                .map_or(Value::Null, |since| Value::from(now.saturating_sub(since))),
-        );
-        map.insert(
-            "idle_ms".to_string(),
-            Value::from(now.saturating_sub(activity.updated_at_ms)),
-        );
-    } else {
-        map.insert("state".to_string(), Value::from("idle"));
-    }
-    proxied
 }
 
 fn stream_follow(wire: &mut Wire, worker: &Worker, shutdown: &AtomicBool, id: &Value) -> Flow {
@@ -622,25 +497,5 @@ fn stream_follow(wire: &mut Wire, worker: &Worker, shutdown: &AtomicBool, id: &V
                 return Flow::Close;
             }
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn the_worker_answers_its_own_projection_and_proxies_everything_else() {
-        assert!(!is_proxied("fleet.list"));
-        assert!(!is_proxied("surface.status"));
-        assert!(!is_proxied(METHOD_AGENT_SNAPSHOT));
-        assert!(!is_proxied(METHOD_AGENT_ACTIVITY_LOG));
-        assert!(!is_proxied(METHOD_AGENT_FOLLOW));
-        assert!(!is_proxied(METHOD_WORKER_STATUS));
-        assert!(is_proxied("session.list"));
-        assert!(is_proxied("session.create"));
-        assert!(is_proxied("surface.read"));
-        assert!(is_proxied("host.status"));
-        assert!(!is_proxied("workspace.list"));
     }
 }

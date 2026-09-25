@@ -100,8 +100,6 @@ pub enum AgentLifecycleEvent {
     Notification { message: Option<String> },
     Stop { summary: Option<String> },
     Exit { exit_code: i32 },
-    Working,
-    Idle,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -140,18 +138,6 @@ pub fn reduce_lifecycle_event(event: AgentLifecycleEvent) -> SessionTransition {
         },
         AgentLifecycleEvent::Exit { exit_code } => SessionTransition {
             state: state_for_exit(exit_code),
-            active_tool_name: None,
-            message: FieldUpdate::Set(None),
-            last_result: FieldUpdate::Keep,
-        },
-        AgentLifecycleEvent::Working => SessionTransition {
-            state: AgentState::Thinking,
-            active_tool_name: None,
-            message: FieldUpdate::Set(None),
-            last_result: FieldUpdate::Keep,
-        },
-        AgentLifecycleEvent::Idle => SessionTransition {
-            state: AgentState::Finished,
             active_tool_name: None,
             message: FieldUpdate::Set(None),
             last_result: FieldUpdate::Keep,
@@ -223,20 +209,6 @@ mod tests {
             )),
             AgentStateSource::Terminal
         ));
-    }
-
-    #[test]
-    fn sourceless_observations_move_state_without_inventing_detail() {
-        let working = reduce_lifecycle_event(AgentLifecycleEvent::Working);
-        assert_eq!(working.state, AgentState::Thinking);
-        assert_eq!(working.active_tool_name, None);
-        assert_eq!(working.message, FieldUpdate::Set(None));
-        assert_eq!(working.last_result, FieldUpdate::Keep);
-
-        let idle = reduce_lifecycle_event(AgentLifecycleEvent::Idle);
-        assert_eq!(idle.state, AgentState::Finished);
-        assert_eq!(idle.message, FieldUpdate::Set(None));
-        assert_eq!(idle.last_result, FieldUpdate::Keep);
     }
 
     #[test]
