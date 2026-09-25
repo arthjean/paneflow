@@ -1,7 +1,7 @@
 use gpui::{
-    AnyElement, ClickEvent, CursorStyle, Div, ElementId, Hsla, InteractiveElement, IntoElement,
-    ParentElement, Pixels, SharedString, Stateful, StatefulInteractiveElement, Styled, deferred,
-    div, img, prelude::*, px, svg,
+    AnyElement, ClickEvent, CursorStyle, Div, ElementId, FontWeight, Hsla, InteractiveElement,
+    IntoElement, ParentElement, Pixels, SharedString, Stateful, StatefulInteractiveElement, Styled,
+    deferred, div, img, prelude::*, px, rgb, svg,
 };
 
 use crate::ui_primitives::{
@@ -688,6 +688,186 @@ pub fn deferred_select_menu(menu: SelectMenu) -> AnyElement {
     ))
     .with_priority(1)
     .into_any_element()
+}
+
+pub(crate) fn settings_label(
+    ui: crate::theme::UiColors,
+    title: &'static str,
+    description: &'static str,
+) -> impl IntoElement {
+    div()
+        .flex_1()
+        .min_w_0()
+        .flex()
+        .flex_col()
+        .gap(px(2.))
+        .child(
+            div()
+                .text_size(crate::ui_primitives::BODY_EMPHASIS)
+                .font_weight(FontWeight::MEDIUM)
+                .text_color(ui.text)
+                .child(title),
+        )
+        .child(
+            div()
+                .text_size(px(12.))
+                .text_color(ui.muted)
+                .child(description),
+        )
+}
+
+pub(crate) fn switch_blue() -> Hsla {
+    Hsla::from(rgb(0x339cff))
+}
+
+pub(crate) fn apple_red() -> Hsla {
+    Hsla::from(rgb(0xff453a))
+}
+
+pub(crate) fn quiet_card() -> gpui::Div {
+    let bg = card_color();
+    div()
+        .flex()
+        .flex_col()
+        .bg(bg)
+        .rounded(px(8.))
+        .overflow_hidden()
+}
+
+pub(crate) fn icon_button(
+    id: impl Into<ElementId>,
+    label: impl Into<SharedString>,
+    icon: &'static str,
+    ui: crate::theme::UiColors,
+    primary: bool,
+    enabled: bool,
+) -> AnimatedHover {
+    let bg = if primary { switch_blue() } else { ui.subtle };
+    let fg = if primary { gpui::white() } else { ui.text };
+    let disabled_bg = ui.subtle;
+    let disabled_fg = ui.muted;
+    let resting_background = if enabled { bg } else { disabled_bg };
+    let hover_background = if !enabled {
+        resting_background
+    } else if primary {
+        with_alpha(bg, 0.86)
+    } else {
+        with_alpha(ui.text, 0.06)
+    };
+    div()
+        .id(id)
+        .flex()
+        .flex_row()
+        .items_center()
+        .gap(px(6.))
+        .px(px(10.))
+        .py(px(5.))
+        .rounded(SETTINGS_CONTROL_CORNER_RADIUS)
+        .bg(resting_background)
+        .text_size(px(12.))
+        .font_weight(FontWeight::MEDIUM)
+        .text_color(if enabled { fg } else { disabled_fg })
+        .animated_hover_bg(resting_background, hover_background)
+        .child(
+            svg()
+                .size(px(13.))
+                .flex_none()
+                .path(icon)
+                .text_color(if enabled { fg } else { disabled_fg }),
+        )
+        .child(label.into())
+}
+
+pub(crate) fn destructive_icon_button(
+    id: impl Into<ElementId>,
+    label: impl Into<SharedString>,
+    icon: &'static str,
+    ui: crate::theme::UiColors,
+    enabled: bool,
+) -> AnimatedHover {
+    let bg = apple_red();
+    let enabled_hover_background = Hsla {
+        l: (bg.l - 0.05).max(0.0),
+        ..bg
+    };
+    let fg = gpui::white();
+    let resting_background = if enabled { bg } else { ui.subtle };
+    let hover_background = if enabled {
+        enabled_hover_background
+    } else {
+        resting_background
+    };
+    div()
+        .id(id)
+        .flex()
+        .flex_row()
+        .items_center()
+        .gap(px(6.))
+        .px(px(10.))
+        .py(px(5.))
+        .rounded(SETTINGS_CONTROL_CORNER_RADIUS)
+        .bg(resting_background)
+        .text_size(px(12.))
+        .font_weight(FontWeight::MEDIUM)
+        .text_color(if enabled { fg } else { ui.muted })
+        .animated_hover_bg(resting_background, hover_background)
+        .child(
+            svg()
+                .size(px(13.))
+                .flex_none()
+                .path(icon)
+                .text_color(if enabled { fg } else { ui.muted }),
+        )
+        .child(label.into())
+}
+
+pub(crate) fn save_icon_button(
+    id: impl Into<ElementId>,
+    label: impl Into<SharedString>,
+    icon: &'static str,
+    ui: crate::theme::UiColors,
+    enabled: bool,
+) -> AnimatedHover {
+    let light_theme = ui.surface.l > 0.5;
+    let bg: Hsla = if light_theme {
+        rgb(0x000000).into()
+    } else {
+        gpui::white()
+    };
+    let fg: Hsla = if light_theme {
+        gpui::white()
+    } else {
+        rgb(0x000000).into()
+    };
+    let resting_background = if enabled { bg } else { ui.subtle };
+    let hover_background = if enabled {
+        Hsla { a: 0.86, ..bg }
+    } else {
+        resting_background
+    };
+
+    div()
+        .id(id)
+        .flex()
+        .flex_row()
+        .items_center()
+        .gap(px(6.))
+        .px(px(10.))
+        .py(px(5.))
+        .rounded(SETTINGS_CONTROL_CORNER_RADIUS)
+        .bg(resting_background)
+        .text_size(px(12.))
+        .font_weight(FontWeight::MEDIUM)
+        .text_color(if enabled { fg } else { ui.muted })
+        .animated_hover_bg(resting_background, hover_background)
+        .child(
+            svg()
+                .size(px(13.))
+                .flex_none()
+                .path(icon)
+                .text_color(if enabled { fg } else { ui.muted }),
+        )
+        .child(label.into())
 }
 
 #[cfg(test)]

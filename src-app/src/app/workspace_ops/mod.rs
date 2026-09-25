@@ -3,6 +3,8 @@ mod git_watch;
 mod layout;
 mod swap;
 mod tab;
+mod template_launch;
+pub(crate) mod templates;
 
 use gpui::{App, AppContext, ClipboardItem, Context, Entity, Focusable, PathPromptOptions, Window};
 use paneflow_config::schema::{LayoutNode, TabTitleSource, TerminalSurfaceProfile};
