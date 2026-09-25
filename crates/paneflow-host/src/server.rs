@@ -2681,18 +2681,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "five minute idle soak; run explicitly"]
-    fn a_control_connection_idle_for_five_minutes_still_delivers_the_first_key_once() {
-        idle_control_connection_delivers_the_first_key_exactly_once(Duration::from_secs(300));
-    }
-
-    #[test]
-    #[ignore = "thirty minute idle soak; run explicitly"]
-    fn a_control_connection_idle_for_thirty_minutes_still_delivers_the_first_key_once() {
-        idle_control_connection_delivers_the_first_key_exactly_once(Duration::from_secs(1800));
-    }
-
-    #[test]
     fn a_headless_transport_reads_the_listed_surface_across_its_per_call_connections() {
         use paneflow_ipc_client::IpcTransport;
         use paneflow_ipc_client::host_control::HostTransport;

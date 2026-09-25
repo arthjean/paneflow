@@ -361,6 +361,21 @@ Automated cases are named by their test function. Platform evidence names the
 matrix cell or the D-cell. Missing coverage is a release blocker, not an
 inferred pass.
 
+The idle-control test idles for 61 s by default and runs in every
+`cargo test`. Its 300 s and 1,800 s soaks are the same test with
+`PANEFLOW_TEST_IDLE_SECS` set:
+
+```bash
+PANEFLOW_TEST_IDLE_SECS=300 cargo test -p paneflow-host --locked --lib -- --exact server::tests::a_control_connection_idle_for_over_a_minute_still_delivers_the_first_key_once
+PANEFLOW_TEST_IDLE_SECS=1800 cargo test -p paneflow-host --locked --lib -- --exact server::tests::a_control_connection_idle_for_over_a_minute_still_delivers_the_first_key_once
+```
+
+```powershell
+$env:PANEFLOW_TEST_IDLE_SECS = "300"; cargo test -p paneflow-host --locked --lib -- --exact server::tests::a_control_connection_idle_for_over_a_minute_still_delivers_the_first_key_once
+$env:PANEFLOW_TEST_IDLE_SECS = "1800"; cargo test -p paneflow-host --locked --lib -- --exact server::tests::a_control_connection_idle_for_over_a_minute_still_delivers_the_first_key_once
+Remove-Item Env:PANEFLOW_TEST_IDLE_SECS
+```
+
 ### Audit findings
 
 | Finding | Automated cases | Platform evidence |
@@ -369,7 +384,7 @@ inferred pass.
 | A02 | `a_pane_restored_into_an_ended_session_resumes_without_an_attachment`, W02 `NFR-06.checkpoint_release` | D-01 |
 | A03 | `a_natural_exit_keeps_a_cold_record_releases_the_runtime_and_removal_drops_the_text`, `records_past_their_retention_release_their_cold_text_under_an_injected_clock`, W05 `NFR-04.runtime_release` | none required |
 | A04 | `a_follower_resumes_after_the_checkpoint_survives_idle_keepalives_and_sees_the_exit`, W01 wait-reason attribution | W01 short window |
-| A05 | the three `a_control_connection_idle_for_*` tests, `a_connection_lost_before_the_input_ack_reports_unknown_delivery_without_a_resend` | W08 30 min idle control |
+| A05 | `a_control_connection_idle_for_over_a_minute_still_delivers_the_first_key_once` at 61 s, 300 s, and 1,800 s, `a_connection_lost_before_the_input_ack_reports_unknown_delivery_without_a_resend` | W08 30 min idle control |
 | A06 | `metadata_revisions_coalesce_to_the_latest_and_a_critical_barrier_completes`, `an_older_revision_queued_behind_a_newer_one_never_regresses_the_file`, `a_metadata_write_starts_within_the_flush_bound`, `metadata_admission_respects_the_byte_budget_and_reservations` | none required |
 | A07 | `a_stop_of_generation_one_never_writes_exited_into_generation_two`, `a_stop_racing_a_natural_exit_settles_on_a_single_confirmed_exit` | none required |
 | A08 | `a_restart_whose_persist_fails_restores_the_prior_record_without_a_stranded_start`, `concurrent_restarts_of_one_generation_commit_at_most_one_new_generation` | D-10 |
@@ -394,7 +409,7 @@ inferred pass.
 | FR-04 | `a_stop_of_generation_one_never_writes_exited_into_generation_two`, `a_marker_captured_under_generation_one_is_dropped_once_generation_two_runs` | none required |
 | FR-05 | `a_child_wait_failure_stays_unverified_without_a_fabricated_exit`, `a_new_host_instance_marks_inherited_running_records_lost_and_never_signals_them`, `a_record_owned_by_a_previous_host_reconnects_as_host_replaced` | D-01 |
 | FR-06 | `a_forced_shutdown_with_unresolved_ownership_keeps_the_host_serving`, `a_stop_all_outcome_separates_unresolved_ownership_from_durability_failures` | D-09 |
-| FR-07 | the three `a_control_connection_idle_for_*` tests, `a_connection_lost_before_the_input_ack_reports_unknown_delivery_without_a_resend` | W08 idle control |
+| FR-07 | `a_control_connection_idle_for_over_a_minute_still_delivers_the_first_key_once` at 61 s, 300 s, and 1,800 s, `a_connection_lost_before_the_input_ack_reports_unknown_delivery_without_a_resend` | W08 idle control |
 | FR-08 | `a_metadata_write_starts_within_the_flush_bound`, `a_stalled_exclusive_job_times_out_the_waiter_without_losing_the_queue`, `parallel_hook_commits_publish_in_revision_order_before_returning_acknowledgements` | none required |
 | FR-09 | `a_natural_exit_keeps_a_cold_record_releases_the_runtime_and_removal_drops_the_text`, `final_text_keeps_its_tail_on_a_char_boundary`, `eviction_drops_the_oldest_final_output_first_and_keeps_identities` | D-06, D-07 |
 | FR-10 | `the_allocation_never_exceeds_the_physical_budget_while_filling`, `a_child_that_stops_reading_its_input_never_starves_the_control_path`, `checkpoint_staging_admits_two_captures_and_the_third_waits_for_a_release`, `streaming_followers_leave_reserved_slots_for_control_requests`, `an_output_flood_reaches_every_follower_and_a_paused_follower_never_stalls_control`, `metadata_admission_respects_the_byte_budget_and_reservations` | W03, W05 |
@@ -420,7 +435,7 @@ inferred pass.
 | NFR-08 | `NFR-08.*` | full protocol per OS |
 | NFR-09 | `NFR-09.*` | full protocol per OS |
 | NFR-10 | `shutdown_deadline_is_shared_by_stalled_stops_and_keeps_inspection_responsive`, `a_startup_deadline_then_cancellation_retains_the_late_child`, `a_held_open_descendant_bounds_the_final_drain_and_marks_the_output_incomplete` | D-09 |
-| NFR-11 | `NFR-11.worker_cycles`, `concurrent_restarts_of_one_generation_commit_at_most_one_new_generation`, the three idle-control tests | W08 rehearsal cycles per OS; 100 desktop and 100 worker cycles only in the optional 8-hour run |
+| NFR-11 | `NFR-11.worker_cycles`, `concurrent_restarts_of_one_generation_commit_at_most_one_new_generation`, `a_control_connection_idle_for_over_a_minute_still_delivers_the_first_key_once` at 61 s, 300 s, and 1,800 s | W08 rehearsal cycles per OS; 100 desktop and 100 worker cycles only in the optional 8-hour run |
 | NFR-12 | `NFR-12.host_shutdown`, `NFR-12.fixture_orphans` | W08 endurance rehearsal per OS |
 | NFR-13 | `an_oversized_control_frame_is_rejected_without_buffering_it`, `the_named_pipe_acl_has_no_world_or_authenticated_user_grant`, `the_unix_socket_is_owner_read_write_only`, `a_served_endpoint_is_never_taken_over_while_a_stale_one_is_reclaimed`, `an_unverifiable_pid_stays_non_resumable_and_is_never_signaled` | process-safety cells, Linux L02, L05 |
 | NFR-14 | this ledger | one row per required cell in each report |
@@ -436,7 +451,7 @@ inferred pass.
 | 4 Replacement unavailable | `replacement_preflight_and_wrong_home_never_stop_live_sessions`, `an_update_preflight_defers_a_missing_replacement_and_counts_the_host_sessions` | upgrade cells |
 | 5 Restart persistence failure | `a_restart_whose_persist_fails_restores_the_prior_record_without_a_stranded_start` | D-10 |
 | 6 Ambiguous input delivery | `a_connection_lost_before_the_input_ack_reports_unknown_delivery_without_a_resend` | none required |
-| 7 Idle control | the three `a_control_connection_idle_for_*` tests | W08 |
+| 7 Idle control | `a_control_connection_idle_for_over_a_minute_still_delivers_the_first_key_once` at 61 s, 300 s, and 1,800 s | W08 |
 | 8 Slow output client | `an_output_flood_reaches_every_follower_and_a_paused_follower_never_stalls_control`, `paused_follower_probe` | none required |
 | 9 Output eviction | `output_before_the_tail_is_reported_as_evicted_not_fabricated` | none required |
 | 10 Stop cannot be confirmed | `a_child_wait_failure_stays_unverified_without_a_fabricated_exit`, `a_forced_shutdown_with_unresolved_ownership_keeps_the_host_serving` | D-09 |
