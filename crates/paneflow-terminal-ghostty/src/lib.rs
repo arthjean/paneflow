@@ -35,21 +35,16 @@ native_modules!(
     engine,
     formatter,
     grid,
-    grid_ref,
     handles,
     input_options,
     io,
     kitty,
-    modes,
     navigation,
     native_search,
     options,
-    osc,
     persistence,
-    render,
     selection,
     selection_gesture,
-    sgr,
     snapshot,
     snapshot_cell,
     snapshot_codec,
@@ -58,8 +53,6 @@ native_modules!(
     style,
     sys,
     terminal_ops,
-    tracked,
-    unicode,
 );
 
 #[cfg(ghostty_native)]
@@ -71,8 +64,6 @@ pub use color::{
 pub use error::{GhosttyError, Result};
 #[cfg(ghostty_native)]
 pub use formatter::{FormatterFormat, FormatterOptions, ScreenExtra, TerminalExtra};
-#[cfg(ghostty_native)]
-pub use grid_ref::{CellContent, CellInfo, RowInfo, SemanticContent, SemanticPrompt};
 pub use input::{
     FocusEvent, Key, KeyAction, KeyInput, Modifiers, MouseAction, MouseButton, MouseInput,
 };
@@ -88,10 +79,6 @@ pub use model::{
     Modes, Point, ProgressReport, ProgressState, Rgb, Scroll, SearchMatch, SearchResult,
     SelectionRange, TerminalAppearance, UnderlineStyle, WideCell, WindowSize,
 };
-#[cfg(ghostty_native)]
-pub use modes::{Mode, ModeReportState, encode_mode_report};
-#[cfg(ghostty_native)]
-pub use osc::{OSC_TERMINATOR_BEL, OSC_TERMINATOR_ST, OscCommand, OscCommandType, OscParser};
 pub use search::{
     MAX_QUERY_LEN, MAX_SEARCH_CELLS, NativeSearchSnapshot, SEARCH_CHUNK_CELLS, SearchChunk,
     SearchEngine, SearchLine,
@@ -104,11 +91,7 @@ pub use selection_gesture::{
     GestureState, PressOptions,
 };
 #[cfg(ghostty_native)]
-pub use sgr::{SgrAttribute, SgrParser, SgrSeparator};
-#[cfg(ghostty_native)]
 pub use snapshot_codec::{HistoryProgress, SnapshotDecoder, SnapshotRestore, TerminalScreen};
-#[cfg(ghostty_native)]
-pub use style::Style;
 #[cfg(ghostty_native)]
 pub use sys::{
     DecodedImage, LogLevel, LogSink, PngDecoder, SecureRandom, alloc, free, set_log_sink,
@@ -119,10 +102,6 @@ pub use terminal_ops::{
     ClipboardLocation, CompressionMode, CompressionOutcome, GroundWrite, PasteRepresentation,
     PasteSource, SizeReportStyle,
 };
-#[cfg(ghostty_native)]
-pub use tracked::TrackedRef;
-#[cfg(ghostty_native)]
-pub use unicode::{GraphemeCluster, codepoint_width, grapheme_width, text_width};
 
 #[cfg(ghostty_native)]
 pub const GHOSTTY_APP_VERSION: &str = paneflow_libghostty_sys::GHOSTTY_APP_VERSION;

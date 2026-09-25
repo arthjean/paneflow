@@ -13,7 +13,6 @@ pub enum FormatterFormat {
     #[default]
     Plain,
     Vt,
-    Html,
 }
 
 impl FormatterFormat {
@@ -21,7 +20,6 @@ impl FormatterFormat {
         match self {
             Self::Plain => sys::GhosttyFormatterFormat_GHOSTTY_FORMATTER_FORMAT_PLAIN,
             Self::Vt => sys::GhosttyFormatterFormat_GHOSTTY_FORMATTER_FORMAT_VT,
-            Self::Html => sys::GhosttyFormatterFormat_GHOSTTY_FORMATTER_FORMAT_HTML,
         }
     }
 }
@@ -215,38 +213,6 @@ impl DisplayTerminal {
         Ok(copied)
     }
 
-    pub fn format_into(&self, options: FormatterOptions, buffer: &mut [u8]) -> Result<usize> {
-        let formatter = self.formatter(options)?;
-        let mut written = 0usize;
-        let result = unsafe {
-            sys::ghostty_formatter_format_buf(
-                formatter.raw,
-                buffer.as_mut_ptr(),
-                buffer.len(),
-                &mut written,
-            )
-        };
-        check("formatter_format_buf", result)?;
-        if written > buffer.len() {
-            return Err(GhosttyError::AbiMismatch(format!(
-                "formatter_format_buf reported {written} bytes for a {}-byte buffer",
-                buffer.len()
-            )));
-        }
-        Ok(written)
-    }
-
-    pub fn format_selection(&self, options: FormatterOptions) -> Result<Option<String>> {
-        let Some(selection) = self.current_selection()? else {
-            return Ok(None);
-        };
-        let formatter = self.formatter_over(options, Some(&selection))?;
-        let bytes = formatter.into_bytes()?;
-        String::from_utf8(bytes)
-            .map(Some)
-            .map_err(|_| GhosttyError::InvalidUtf8("formatted selection"))
-    }
-
     pub fn capture_replay(&self) -> Result<Vec<u8>> {
         let Some(selection) = self.replay_selection()? else {
             return Ok(Vec::new());
@@ -279,17 +245,6 @@ impl DisplayTerminal {
         selection.end = self.grid_ref(end)?;
         selection.rectangle = false;
         Ok(Some(selection))
-    }
-
-    pub fn format_to<F: FnMut(&[u8]) -> bool>(
-        &self,
-        options: FormatterOptions,
-        mut sink: F,
-    ) -> Result<()> {
-        let formatter = self.formatter(options)?;
-        let writer = crate::io::writer(&mut sink);
-        let result = unsafe { sys::ghostty_formatter_format(formatter.raw, writer) };
-        check("formatter_format", result)
     }
 }
 
@@ -345,34 +300,6 @@ mod tests {
         assert!(restored_history.contains("scrolled-away"), "got {restored_history:?}");
     }
 
-    #[test]
-    fn formatting_a_selection_returns_only_what_is_selected() {
-        let mut terminal = terminal(20, 3);
-        terminal
-            .feed(b"first line\r\nsecond line")
-            .expect("fixture must parse");
-
-        assert_eq!(
-            terminal
-                .format_selection(FormatterOptions::plain_text())
-                .expect("no selection"),
-            None
-        );
-
-        terminal
-            .set_selection(crate::SelectionRange {
-                start: crate::Point::new(0, 0),
-                end: crate::Point::new(0, 4),
-                rectangle: false,
-            })
-            .expect("selection must install");
-        let selected = terminal
-            .format_selection(FormatterOptions::plain_text())
-            .expect("selection formats")
-            .expect("a selection is installed");
-        assert_eq!(selected.trim_end(), "first");
-    }
-
     use super::*;
     use crate::{TerminalAppearance, WindowSize};
 
@@ -404,7 +331,7 @@ mod tests {
     }
 
     #[test]
-    fn vt_and_html_carry_styling_that_plain_text_drops() {
+    fn vt_carries_styling_that_plain_text_drops() {
         let mut terminal = terminal(10, 2);
         terminal
             .feed(b"\x1b[1;31mred\x1b[0m")
@@ -425,61 +352,5 @@ mod tests {
             })
             .expect("vt must format");
         assert!(vt.contains('\x1b'), "vt output must carry escapes");
-
-        let html = terminal
-            .format(FormatterOptions {
-                emit: FormatterFormat::Html,
-                unwrap: false,
-                trim: true,
-                extra: TerminalExtra::default(),
-            })
-            .expect("html must format");
-        assert!(html.contains('<'), "html output must carry markup");
-    }
-
-    #[test]
-    fn streaming_and_buffered_paths_agree_with_the_allocating_one() {
-        let mut terminal = terminal(10, 2);
-        terminal.feed(b"hello").expect("output must parse");
-        let options = FormatterOptions::plain_text();
-
-        let allocated = terminal.format_bytes(options).expect("alloc path");
-
-        let mut buffer = vec![0u8; allocated.len() + 64];
-        let written = terminal
-            .format_into(options, &mut buffer)
-            .expect("buffered path");
-        assert_eq!(&buffer[..written], allocated.as_slice());
-
-        let mut streamed = Vec::new();
-        terminal
-            .format_to(options, |bytes| {
-                streamed.extend_from_slice(bytes);
-                true
-            })
-            .expect("streaming path");
-        assert_eq!(streamed, allocated);
-    }
-
-    #[test]
-    fn a_sink_that_refuses_output_fails_the_format() {
-        let mut terminal = terminal(10, 2);
-        terminal.feed(b"hello").expect("output must parse");
-        let error = terminal
-            .format_to(FormatterOptions::plain_text(), |_| false)
-            .expect_err("a refusing sink must fail the format");
-        assert!(matches!(error, GhosttyError::Ffi { .. }));
-    }
-
-    #[test]
-    fn an_undersized_buffer_is_reported_rather_than_truncated() {
-        let mut terminal = terminal(10, 2);
-        terminal.feed(b"hello").expect("output must parse");
-        let mut buffer = [0u8; 2];
-        assert!(
-            terminal
-                .format_into(FormatterOptions::plain_text(), &mut buffer)
-                .is_err()
-        );
     }
 }

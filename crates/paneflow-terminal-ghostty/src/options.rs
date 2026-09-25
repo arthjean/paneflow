@@ -4,7 +4,6 @@ use paneflow_libghostty_sys as sys;
 
 use crate::engine::DisplayTerminal;
 use crate::handles::check;
-use crate::modes::Mode;
 use crate::{CursorShape, GhosttyError, PALETTE_LEN, Result, Rgb};
 
 const MAX_TERMINFO_NAME_BYTES: usize = 128;
@@ -142,42 +141,6 @@ impl DisplayTerminal {
                 (&raw const enabled).cast::<c_void>(),
             )
         }
-    }
-
-    pub fn set_mode(&mut self, mode: Mode, value: bool) -> Result<()> {
-        self.write_mode(
-            "terminal_set_mode",
-            sys::GhosttyTerminalOption_GHOSTTY_TERMINAL_OPT_MODE,
-            mode,
-            value,
-        )
-    }
-
-    pub fn set_mode_default(&mut self, mode: Mode, value: bool) -> Result<()> {
-        self.write_mode(
-            "terminal_set_mode_default",
-            sys::GhosttyTerminalOption_GHOSTTY_TERMINAL_OPT_MODE_DEFAULT,
-            mode,
-            value,
-        )
-    }
-
-    fn write_mode(
-        &mut self,
-        operation: &'static str,
-        option: sys::GhosttyTerminalOption,
-        mode: Mode,
-        value: bool,
-    ) -> Result<()> {
-        let config = sys::GhosttyTerminalModeConfig {
-            mode: mode.raw(),
-            value,
-        };
-        let result = unsafe {
-            self.set_terminal_option(operation, option, (&raw const config).cast::<c_void>())
-        };
-        self.snapshot_cache.invalidate();
-        result
     }
 
     unsafe fn set_terminal_option(
@@ -374,26 +337,6 @@ mod tests {
         assert!(!captured.0.contains('\x07'), "got {:?}", captured.0);
         assert!(captured.0.contains("\\x07"));
         assert!(!captured.1);
-    }
-
-    #[test]
-    fn a_mode_default_survives_the_reset_a_program_performs() {
-        let mut terminal = terminal(20, 4);
-        assert!(!terminal.modes().expect("modes").bracketed_paste);
-
-        terminal
-            .set_mode(Mode::BRACKETED_PASTE, true)
-            .expect("mode must apply");
-        assert!(terminal.modes().expect("modes").bracketed_paste);
-        terminal.feed(b"\x1bc").expect("RIS");
-        assert!(!terminal.modes().expect("modes").bracketed_paste);
-
-        terminal
-            .set_mode_default(Mode::BRACKETED_PASTE, true)
-            .expect("mode default must apply");
-        assert!(terminal.modes().expect("modes").bracketed_paste);
-        terminal.feed(b"\x1bc").expect("RIS");
-        assert!(terminal.modes().expect("modes").bracketed_paste);
     }
 
     #[test]

@@ -298,3 +298,41 @@ impl DisplayTerminal {
         Ok((history_size, display_offset))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::{DisplayTerminal, TerminalAppearance, WindowSize};
+
+    fn terminal(cols: usize, rows: usize) -> DisplayTerminal {
+        let size = WindowSize::new(cols, rows, 8, 16).expect("valid terminal size");
+        DisplayTerminal::new(size, 100, TerminalAppearance::default())
+            .expect("terminal must initialize")
+    }
+
+    #[test]
+    fn only_the_rows_that_changed_are_reported_dirty() {
+        let mut terminal = terminal(20, 4);
+        terminal.snapshot().expect("first frame");
+
+        terminal
+            .feed(b"\x1b[3;1Hthird row")
+            .expect("output must parse");
+        let frame = terminal.snapshot().expect("second frame");
+
+        assert!(frame.dirty_rows[2], "got {:?}", frame.dirty_rows);
+        assert!(!frame.dirty_rows[3], "got {:?}", frame.dirty_rows);
+    }
+
+    #[test]
+    fn a_snapshot_consumes_every_dirty_row() {
+        let mut terminal = terminal(20, 4);
+        terminal
+            .feed(b"one\r\ntwo\r\nthree")
+            .expect("output must parse");
+        let first = terminal.snapshot().expect("first frame");
+        assert!(first.dirty_rows.iter().any(|dirty| *dirty));
+
+        let second = terminal.snapshot().expect("second frame");
+        assert!(second.dirty_rows.iter().all(|dirty| !dirty));
+    }
+}
