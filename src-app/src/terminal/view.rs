@@ -25,47 +25,13 @@ use super::types::{
 
 use super::ghostty_session::GhosttyStartError;
 
-struct GhosttyStartFailure {
-    child_pid: Option<u32>,
-    diagnostics: TerminalBackendFailureDiagnostics,
-}
-
-fn classify_ghostty_start_error(error: GhosttyStartError) -> GhosttyStartFailure {
-    let (phase, reason_code, source) = match error {
-        GhosttyStartError::Initialization(error) => (
-            TerminalBackendFailurePhase::Initialization,
-            TerminalBackendFailureDiagnostics::GHOSTTY_INITIALIZATION_FAILED,
-            error,
-        ),
-        GhosttyStartError::OpenPty(error) => (
-            TerminalBackendFailurePhase::OpenPty,
-            TerminalBackendFailureDiagnostics::GHOSTTY_OPEN_PTY_FAILED,
-            error,
-        ),
-        GhosttyStartError::Spawn(error) => (
-            TerminalBackendFailurePhase::Spawn,
-            TerminalBackendFailureDiagnostics::GHOSTTY_SPAWN_FAILED,
-            error,
-        ),
-        GhosttyStartError::PostSpawn { child_pid, error } => {
-            return GhosttyStartFailure {
-                child_pid: Some(child_pid),
-                diagnostics: TerminalBackendFailureDiagnostics::new(
-                    TerminalBackendFailurePhase::PostSpawn,
-                    TerminalBackendFailureDiagnostics::GHOSTTY_POST_SPAWN_FAILED,
-                    raw_os_error_from_anyhow(&error),
-                ),
-            };
-        }
-    };
-    GhosttyStartFailure {
-        child_pid: None,
-        diagnostics: TerminalBackendFailureDiagnostics::new(
-            phase,
-            reason_code,
-            raw_os_error_from_anyhow(&source),
-        ),
-    }
+fn classify_ghostty_start_error(error: GhosttyStartError) -> TerminalBackendFailureDiagnostics {
+    let GhosttyStartError::Initialization(error) = error;
+    TerminalBackendFailureDiagnostics::new(
+        TerminalBackendFailurePhase::Initialization,
+        TerminalBackendFailureDiagnostics::GHOSTTY_INITIALIZATION_FAILED,
+        raw_os_error_from_anyhow(&error),
+    )
 }
 
 const RENDER_WAKEUP_IMMEDIATELY: bool = true;
@@ -474,10 +440,9 @@ impl TerminalView {
     ) -> Self {
         let surface_id = cx.entity_id().as_u64();
         let params = launch.spawn_params(surface_id);
-        let (mut terminal, pending) = TerminalState::new_pending_with_profile_and_shell_quoting(
+        let (mut terminal, pending) = TerminalState::new_pending_with_shell_quoting(
             params.cols,
             params.rows,
-            params.profile,
             params.shell_quoting,
         );
         if let Some(session) = session {
@@ -579,17 +544,15 @@ impl TerminalView {
                             log::log!(
                                 target: "paneflow::terminal::backend",
                                 backend_failure_level(&BACKEND_START_FAILED_LOGGED),
-                                "hosted terminal mirror failed: failure_phase={} reason_code={} os_error={:?} child_pid={:?}",
-                                failure.diagnostics.phase.as_str(),
-                                failure.diagnostics.reason_code,
-                                failure.diagnostics.os_error,
-                                failure.child_pid,
+                                "hosted terminal mirror failed: failure_phase={} reason_code={} os_error={:?}",
+                                failure.phase.as_str(),
+                                failure.reason_code,
+                                failure.os_error,
                             );
                             view.needs_initial_clear
                                 .store(false, std::sync::atomic::Ordering::Relaxed);
-                            let message = spawn_error_message(&failure.diagnostics);
-                            view.terminal
-                                .report_spawn_failure(failure.diagnostics, &message);
+                            let message = spawn_error_message(&failure);
+                            view.terminal.report_spawn_failure(failure, &message);
                             view.saved_scrollback = None;
                             if view.terminal.has_backend_events() {
                                 view.pump_epoch = view.pump_epoch.wrapping_add(1);
@@ -631,10 +594,9 @@ impl TerminalView {
         self.session_intent = intent;
         let surface_id = cx.entity_id().as_u64();
         let params = self.launch.spawn_params(surface_id);
-        let (mut fresh, pending) = TerminalState::new_pending_with_profile_and_shell_quoting(
+        let (mut fresh, pending) = TerminalState::new_pending_with_shell_quoting(
             params.cols,
             params.rows,
-            params.profile,
             params.shell_quoting,
         );
         fresh.session_id = if fresh_identity {
@@ -1894,45 +1856,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn ghostty_start_errors_carry_their_phase_and_reason_code() {
-        for (error, phase, reason_code) in [
-            (
-                GhosttyStartError::Initialization(anyhow::anyhow!("engine")),
-                TerminalBackendFailurePhase::Initialization,
-                TerminalBackendFailureDiagnostics::GHOSTTY_INITIALIZATION_FAILED,
-            ),
-            (
-                GhosttyStartError::OpenPty(anyhow::anyhow!("pty")),
-                TerminalBackendFailurePhase::OpenPty,
-                TerminalBackendFailureDiagnostics::GHOSTTY_OPEN_PTY_FAILED,
-            ),
-            (
-                GhosttyStartError::Spawn(anyhow::anyhow!("spawn")),
-                TerminalBackendFailurePhase::Spawn,
-                TerminalBackendFailureDiagnostics::GHOSTTY_SPAWN_FAILED,
-            ),
-        ] {
-            let failure = classify_ghostty_start_error(error);
-            assert_eq!(failure.child_pid, None);
-            assert_eq!(failure.diagnostics.phase, phase);
-            assert_eq!(failure.diagnostics.reason_code, reason_code);
-        }
-
+    fn a_ghostty_start_error_reports_the_initialization_phase_and_os_error() {
         let os_error = anyhow::Error::new(std::io::Error::from_raw_os_error(5));
-        let failure = classify_ghostty_start_error(GhosttyStartError::PostSpawn {
-            child_pid: 4321,
-            error: os_error,
-        });
-        assert_eq!(failure.child_pid, Some(4321));
+        let failure = classify_ghostty_start_error(GhosttyStartError::Initialization(os_error));
+        assert_eq!(failure.phase, TerminalBackendFailurePhase::Initialization);
         assert_eq!(
-            failure.diagnostics.phase,
-            TerminalBackendFailurePhase::PostSpawn
+            failure.reason_code,
+            TerminalBackendFailureDiagnostics::GHOSTTY_INITIALIZATION_FAILED
         );
-        assert_eq!(
-            failure.diagnostics.reason_code,
-            TerminalBackendFailureDiagnostics::GHOSTTY_POST_SPAWN_FAILED
-        );
-        assert_eq!(failure.diagnostics.os_error, Some(5));
+        assert_eq!(failure.os_error, Some(5));
     }
 
     #[test]

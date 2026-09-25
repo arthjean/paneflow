@@ -188,9 +188,7 @@ workspace or user data.
 | Failure | Required diagnostic | Recovery |
 |---|---|---|
 | Ghostty initialization | phase `initialization`, target, version, OS code if present | Report the diagnostic; a broken archive blocks the release |
-| ConPTY unavailable | phase `open_pty`, Windows build and OS code | Verify the Windows build is supported |
-| Child spawn denied by antivirus/policy | phase `spawn`, OS code | Review the policy blocking the shell |
-| Failure after child creation | phase `post_spawn`, child cleanup result | No second child; close the pane |
+| ConPTY unavailable, or child spawn denied by antivirus/policy | `paneflow-host` launch error shown in the pane as host unavailable, Windows build and OS code | Verify the Windows build is supported; review the policy blocking the shell |
 | GPU/driver or RDP failure | GPUI phase and Windows build | Update driver or use a supported local session |
 
 Qualification is complete only when automated artifacts are green, both

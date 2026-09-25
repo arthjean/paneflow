@@ -1,8 +1,11 @@
+#![cfg(target_os = "linux")]
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
 use std::io::{Read, Write};
 use std::sync::mpsc::{self, Receiver};
 use std::time::{Duration, Instant};
 
-use portable_pty::{CommandBuilder, PtySize, native_pty_system};
+use portable_pty::{CommandBuilder, PtySize};
 
 const TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -15,32 +18,30 @@ struct Probe {
 
 impl Probe {
     fn spawn(script: &str, cwd: &std::path::Path) -> Self {
-        let pair = native_pty_system()
-            .openpty(PtySize {
-                rows: 24,
-                cols: 80,
-                pixel_width: 0,
-                pixel_height: 0,
-            })
-            .expect("portable-pty must open the native Linux PTY");
+        let pair = paneflow_host::pty::open(PtySize {
+            rows: 24,
+            cols: 80,
+            pixel_width: 0,
+            pixel_height: 0,
+        })
+        .expect("the host must open the native Linux PTY");
         let mut command = CommandBuilder::new("/bin/sh");
         command.args(["-c", script]);
         command.cwd(cwd);
-        command.env("PANEFLOW_PTY_PROBE", "environment-ok");
         let child = pair
             .slave
             .spawn_command(command)
-            .expect("portable-pty must spawn /bin/sh");
+            .expect("the host PTY must spawn /bin/sh");
         drop(pair.slave);
 
         let mut reader = pair
             .master
             .try_clone_reader()
-            .expect("portable-pty must clone its PTY reader");
+            .expect("the host PTY must clone its reader");
         let writer = pair
             .master
             .take_writer()
-            .expect("portable-pty must expose one PTY writer");
+            .expect("the host PTY must expose one writer");
         let (tx, output) = mpsc::channel();
         std::thread::spawn(move || {
             let mut buffer = [0u8; 4096];
@@ -71,16 +72,15 @@ impl Probe {
         self.writer.flush().expect("PTY flush must succeed");
     }
 
-    fn read_until(&self, expected: &str) -> String {
+    fn read_until(&self, expected: &str) {
         let deadline = Instant::now() + TIMEOUT;
         let mut output = Vec::new();
         while Instant::now() < deadline {
             let remaining = deadline.saturating_duration_since(Instant::now());
             if let Ok(chunk) = self.output.recv_timeout(remaining) {
                 output.extend_from_slice(&chunk);
-                let text = String::from_utf8_lossy(&output);
-                if text.contains(expected) {
-                    return text.into_owned();
+                if String::from_utf8_lossy(&output).contains(expected) {
+                    return;
                 }
             }
         }
@@ -125,62 +125,7 @@ fn wait_for_process_group_exit(pgid: i32) {
 }
 
 #[test]
-fn portable_pty_covers_spawn_io_resize_pid_exit_and_reap() {
-    let cwd = tempfile::tempdir().expect("temporary cwd");
-    let script = r#"
-printf 'READY:%s:%s\n' "$PWD" "$PANEFLOW_PTY_PROBE"
-while IFS= read -r line; do
-  case "$line" in
-    echo:*) printf 'ECHO:%s\n' "${line#echo:}" ;;
-    size) stty size ;;
-    exit:*) exit "${line#exit:}" ;;
-  esac
-done
-"#;
-    let mut probe = Probe::spawn(script, cwd.path());
-    let pid = probe.child.process_id().expect("Linux child PID");
-    let ready = probe.read_until("environment-ok");
-    assert!(ready.contains(&cwd.path().to_string_lossy().to_string()));
-
-    probe.write(b"echo:round-trip\r");
-    assert!(
-        probe
-            .read_until("ECHO:round-trip")
-            .contains("ECHO:round-trip")
-    );
-
-    probe
-        .master
-        .resize(PtySize {
-            rows: 41,
-            cols: 101,
-            pixel_width: 808,
-            pixel_height: 656,
-        })
-        .expect("PTY resize must succeed");
-    assert_eq!(
-        probe.master.get_size().expect("PTY size"),
-        PtySize {
-            rows: 41,
-            cols: 101,
-            pixel_width: 808,
-            pixel_height: 656,
-        }
-    );
-    probe.write(b"size\r");
-    assert!(probe.read_until("41 101").contains("41 101"));
-
-    probe.write(b"exit:7\r");
-    let status = probe.wait_for_exit();
-    assert_eq!(status.exit_code(), 7);
-    assert!(probe.child.try_wait().expect("post-wait status").is_some());
-    let process_is_gone = unsafe { libc::kill(pid as i32, 0) } == -1
-        && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH);
-    assert!(process_is_gone, "waited child must not remain as a zombie");
-}
-
-#[test]
-fn portable_pty_delivers_ctrl_c_and_supports_group_shutdown() {
+fn the_host_pty_delivers_ctrl_c_and_supports_group_shutdown() {
     let cwd = tempfile::tempdir().expect("temporary cwd");
     let mut interrupt = Probe::spawn(
         "trap 'printf INTERRUPTED\\n; exit 130' INT; printf READY\\n; while :; do read _; done",
@@ -198,7 +143,7 @@ fn portable_pty_delivers_ctrl_c_and_supports_group_shutdown() {
     let pgid = grouped
         .master
         .process_group_leader()
-        .expect("portable-pty must expose the foreground process group");
+        .expect("the host PTY must expose the foreground process group");
     assert!(pgid > 0);
     let signal_result = unsafe { libc::kill(-pgid, libc::SIGHUP) };
     assert_eq!(signal_result, 0, "process-group SIGHUP must be delivered");

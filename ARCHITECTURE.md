@@ -160,10 +160,10 @@ the snapshot on a background executor. The rail keeps Paneflow's 300 px width,
 ## Keystroke → pixel
 
 Windows PTYs are opened through `paneflow_host::pty::open`, shared by the host
-and the app's local session path. It loads a pinned, embedded Microsoft ConPTY
-runtime before `portable-pty` opens the PTY. Modern OpenConsole preserves the
-ordering of synchronized-output markers and cursor updates; the older system
-ConPTY renderer can emit the end marker before the final cursor position.
+and the app's test-only in-process runtime. It loads a pinned, embedded
+Microsoft ConPTY runtime before `portable-pty` opens the PTY. Modern OpenConsole
+preserves the ordering of synchronized-output markers and cursor updates; the
+older system ConPTY renderer can emit the end marker before the final cursor position.
 The runtime is extracted and loaded on session worker threads, with no added
 publication delay. See [native/conpty/README.md](native/conpty/README.md) for the
 pin, build setup and real-PTY regression test. Unix PTYs keep their native path.
@@ -538,8 +538,10 @@ child process handle, the canonical `libghostty` terminal, an 8 MiB output
 tail with monotonic byte offsets and the session manifests. Nothing in it
 links GPUI. The desktop no longer spawns a PTY of its own: every terminal view
 resolves a hosted session and attaches to it (see "Attachment and the client
-mirror" below). The in-process runtime in `ghostty_session.rs` remains only
-for the perf bench and unit tests.
+mirror" below). The in-process runtime in `ghostty_session.rs` is compiled
+only under `cfg(test)`, for the perf bench, the Ghostty stress gates and unit
+tests, so `portable-pty` is a dev-dependency of the app and the release binary
+carries none of it.
 
 ### Host lifetime
 

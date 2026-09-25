@@ -28,10 +28,6 @@ const CLEANUP_TIMEOUT: Duration = Duration::from_secs(30);
 #[cfg(not(target_os = "windows"))]
 const CLEANUP_TIMEOUT: Duration = Duration::from_secs(8);
 const POLL_INTERVAL: Duration = Duration::from_millis(5);
-#[cfg(target_os = "windows")]
-const JOB_HELPER_ENV: &str = "PANEFLOW_GHOSTTY_JOB_ABORT_HELPER";
-#[cfg(target_os = "windows")]
-const JOB_MARKER_ENV: &str = "PANEFLOW_GHOSTTY_JOB_ABORT_MARKER";
 
 #[derive(Clone)]
 struct SpawnSpec {
@@ -324,30 +320,6 @@ fn burst_spec() -> SpawnSpec {
     }
 }
 
-#[cfg(target_os = "windows")]
-fn immediate_exit_spec() -> SpawnSpec {
-    SpawnSpec {
-        shell: "cmd.exe",
-        quoting: ShellQuoting::Cmd,
-        args: vec!["/D".into(), "/Q".into(), "/C".into(), "exit /b 7".into()],
-    }
-}
-
-#[cfg(target_os = "windows")]
-fn descendant_spec() -> SpawnSpec {
-    SpawnSpec {
-        shell: "powershell.exe",
-        quoting: ShellQuoting::PowerShell,
-        args: vec![
-            "-NoLogo".into(),
-            "-NoProfile".into(),
-            "-NonInteractive".into(),
-            "-Command".into(),
-            "$p = Start-Process -FilePath 'cmd.exe' -ArgumentList '/D','/Q','/K' -WindowStyle Hidden -PassThru; Wait-Process -Id $p.Id".into(),
-        ],
-    }
-}
-
 fn run_cycle(surface_id: u64) -> (Duration, usize) {
     let mut pane = StressPane::spawn(surface_id, cycle_spec());
     let descendants = descendant_pids(pane.pid);
@@ -487,18 +459,6 @@ fn descendant_pids(root_pid: u32) -> Vec<u32> {
 
 #[cfg(unix)]
 fn descendant_pids(_root_pid: u32) -> Vec<u32> {
-    Vec::new()
-}
-
-#[cfg(target_os = "windows")]
-fn wait_for_descendants(root_pid: u32, deadline: Instant) -> Vec<u32> {
-    while Instant::now() < deadline {
-        let descendants = descendant_pids(root_pid);
-        if !descendants.is_empty() {
-            return descendants;
-        }
-        std::thread::sleep(POLL_INTERVAL);
-    }
     Vec::new()
 }
 
@@ -930,125 +890,4 @@ fn windows_ghostty_32_pane_resize_and_close_orders_are_bounded() {
         limits.rss,
     );
     assert_resource_recovery("panes32", baseline, recovered);
-}
-
-#[cfg(target_os = "windows")]
-#[test]
-#[ignore = "EP-004 promotion gate: Windows lifecycle scenario matrix"]
-fn windows_ghostty_lifecycle_scenario_matrix_is_bounded() {
-    let mut immediate = StressPane::spawn(20_001, immediate_exit_spec());
-    let immediate_exit = immediate
-        .wait_for_exit(CYCLE_TIMEOUT, false)
-        .unwrap_or_else(|failure| panic!("scenario=immediate failure={failure}"));
-    assert_eq!(
-        immediate_exit.code, 7,
-        "scenario=immediate pid={} phase=exit_code",
-        immediate.pid
-    );
-
-    let mut blocked = StressPane::spawn(20_002, blocked_spec());
-    blocked.session.shutdown();
-    blocked
-        .wait_for_exit(CYCLE_TIMEOUT, false)
-        .unwrap_or_else(|failure| panic!("scenario=blocked failure={failure}"));
-
-    let mut descendant = StressPane::spawn(20_003, descendant_spec());
-    let descendant_pids = wait_for_descendants(descendant.pid, Instant::now() + CYCLE_TIMEOUT);
-    assert!(
-        !descendant_pids.is_empty(),
-        "scenario=descendant pid={} phase=spawn",
-        descendant.pid
-    );
-    descendant.session.shutdown();
-    descendant
-        .wait_for_exit(CYCLE_TIMEOUT, false)
-        .unwrap_or_else(|failure| panic!("scenario=descendant failure={failure}"));
-    for pid in descendant_pids {
-        assert!(
-            wait_process_inactive(pid, Instant::now() + CLEANUP_TIMEOUT),
-            "scenario=descendant descendant={pid} phase=cleanup"
-        );
-    }
-
-    let mut worker_failure = StressPane::spawn(20_005, blocked_spec());
-    assert!(
-        worker_failure.session.simulate_worker_crash_for_test(),
-        "scenario=worker_failure pid={} phase=inject",
-        worker_failure.pid
-    );
-    worker_failure
-        .wait_for_exit(CYCLE_TIMEOUT, true)
-        .unwrap_or_else(|failure| panic!("scenario=worker_failure failure={failure}"));
-
-    let mut timeout = StressPane::spawn(20_006, blocked_spec());
-    let failure = timeout
-        .wait_for_exit(Duration::from_millis(25), false)
-        .expect_err("blocked pane must exercise timeout cleanup");
-    assert_eq!(failure.kind, WaitFailureKind::Timeout);
-    assert!(
-        !process_active(timeout.pid),
-        "scenario=timeout pid={} phase=cleanup",
-        timeout.pid
-    );
-}
-
-#[cfg(target_os = "windows")]
-#[test]
-#[ignore = "helper subprocess for abrupt Job Object cleanup"]
-fn ghostty_job_object_abort_helper() {
-    if std::env::var_os(JOB_HELPER_ENV).is_none() {
-        return;
-    }
-    if crate::agents::parent_guard::install_process_job().is_err() {
-        std::process::exit(77);
-    }
-    let marker = std::env::var_os(JOB_MARKER_ENV).unwrap_or_else(|| std::process::exit(78));
-    let pane = StressPane::spawn(30_001, blocked_spec());
-    if std::fs::write(marker, pane.pid.to_string()).is_err() {
-        std::process::exit(78);
-    }
-    std::process::abort();
-}
-
-#[cfg(target_os = "windows")]
-#[test]
-#[ignore = "EP-004 promotion gate: abrupt app close cleans ConPTY Job Object"]
-fn windows_ghostty_job_object_abrupt_cleanup() {
-    use std::process::{Command, Stdio};
-
-    let temp = tempfile::tempdir().expect("scenario=job_object phase=tempdir");
-    let marker = temp.path().join("child.pid");
-    let status =
-        Command::new(std::env::current_exe().expect("scenario=job_object phase=current_exe"))
-            .arg("--ignored")
-            .arg("ghostty_job_object_abort_helper")
-            .arg("--test-threads=1")
-            .env(JOB_HELPER_ENV, "1")
-            .env(JOB_MARKER_ENV, &marker)
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .expect("scenario=job_object phase=helper_spawn");
-    if status.code() == Some(77) {
-        eprintln!("scenario=job_object status=skipped reason=nested_job_denied");
-        return;
-    }
-    assert!(
-        !status.success(),
-        "scenario=job_object phase=helper_abort status={:?}",
-        status.code()
-    );
-    let pid = std::fs::read_to_string(&marker)
-        .ok()
-        .and_then(|value| value.trim().parse::<u32>().ok())
-        .unwrap_or_else(|| {
-            panic!(
-                "scenario=job_object phase=marker status={:?}",
-                status.code()
-            )
-        });
-    assert!(
-        wait_process_inactive(pid, Instant::now() + CLEANUP_TIMEOUT),
-        "scenario=job_object pid={pid} phase=cleanup"
-    );
 }

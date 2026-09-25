@@ -1,6 +1,8 @@
 use std::collections::VecDeque;
-use std::io::{ErrorKind, Read, Write};
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
+use std::io::Write;
+#[cfg(test)]
+use std::io::{ErrorKind, Read};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc::{SyncSender, TrySendError, sync_channel};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
@@ -10,6 +12,7 @@ use paneflow_terminal_ghostty as ghostty;
 
 use crate::theme::ghostty_rgb;
 use parking_lot::RwLock;
+#[cfg(test)]
 use portable_pty::{CommandBuilder, PtySize};
 
 use paneflow_host::protocol::ERR_OUTPUT_EVICTED;
@@ -18,6 +21,7 @@ use paneflow_host::{HostClient, HostClientError};
 use super::clipboard_gate::ClipboardGate;
 use super::host_link::{CheckpointPayload, HostAttachment, HostLinkEnd, HostLinkState};
 use super::marks::{CommandMark, Osc133Scanner, RawMark, SharedMarkRing};
+#[cfg(test)]
 use super::pty_session::SpawnParams;
 use super::service_detector::ServiceOutputTail;
 use super::types::{
@@ -100,10 +104,11 @@ fn next_content_generation() -> u64 {
         .wrapping_add(1)
 }
 const SELECTION_AUTOSCROLL_INTERVAL: Duration = Duration::from_millis(30);
+#[cfg(test)]
 const FINAL_DRAIN_TIMEOUT: Duration = Duration::from_secs(2);
-#[cfg(unix)]
+#[cfg(all(test, unix))]
 const SHUTDOWN_GRACE: Duration = Duration::from_millis(100);
-#[cfg(target_os = "windows")]
+#[cfg(all(test, target_os = "windows"))]
 const WINDOWS_CHILD_POLL_INTERVAL: Duration = Duration::from_millis(10);
 const MAX_CLIPBOARD_EVENTS: usize = 8;
 const MAX_NOTIFICATION_EVENTS: usize = 8;
@@ -253,6 +258,7 @@ pub(super) struct GhosttyRuntimePending {
     mailbox: Arc<RuntimeMailbox>,
 }
 
+#[cfg(test)]
 pub(super) struct SpawnedGhostty {
     pub(super) child_pid: u32,
     pub(super) cwd: std::path::PathBuf,
@@ -261,23 +267,12 @@ pub(super) struct SpawnedGhostty {
 #[derive(Debug)]
 pub(super) enum GhosttyStartError {
     Initialization(anyhow::Error),
-    OpenPty(anyhow::Error),
-    Spawn(anyhow::Error),
-    PostSpawn {
-        child_pid: u32,
-        error: anyhow::Error,
-    },
 }
 
 impl std::fmt::Display for GhosttyStartError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Initialization(_) => formatter.write_str("Ghostty initialization failed"),
-            Self::OpenPty(_) => formatter.write_str("Ghostty PTY open failed"),
-            Self::Spawn(_) => formatter.write_str("Ghostty child spawn failed"),
-            Self::PostSpawn { .. } => {
-                formatter.write_str("Ghostty startup failed after child creation")
-            }
         }
     }
 }
@@ -663,6 +658,7 @@ impl RuntimeMailbox {
         Some(bytes)
     }
 
+    #[cfg(test)]
     fn pending_output_count(&self) -> usize {
         self.state
             .lock()
@@ -692,7 +688,7 @@ impl RuntimeMailbox {
         discarded_input_bytes
     }
 
-    #[cfg(any(target_os = "windows", test))]
+    #[cfg(test)]
     fn stop_accepting_output(&self) {
         let mut state = self
             .state
@@ -749,36 +745,20 @@ impl Drop for MailboxCloseGuard {
     }
 }
 
+#[cfg(test)]
 enum StartupReport {
     Started(SpawnedGhostty),
-    InitializationFailed(anyhow::Error),
-    OpenPtyFailed(anyhow::Error),
-    SpawnFailed(anyhow::Error),
-    PostSpawnFailed {
-        child_pid: u32,
-        error: anyhow::Error,
-    },
+    Failed(anyhow::Error),
 }
 
+#[cfg(test)]
 #[derive(Default)]
 struct StartupState {
-    child_spawned: AtomicBool,
-    child_pid: AtomicU32,
     runtime_started: AtomicBool,
 }
 
+#[cfg(test)]
 impl StartupState {
-    fn mark_child_spawned(&self, child_pid: u32) {
-        self.child_pid.store(child_pid, Ordering::Relaxed);
-        self.child_spawned.store(true, Ordering::Release);
-    }
-
-    fn child_pid_if_spawned(&self) -> Option<u32> {
-        self.child_spawned
-            .load(Ordering::Acquire)
-            .then(|| self.child_pid.load(Ordering::Relaxed))
-    }
-
     fn mark_runtime_started(&self) {
         self.runtime_started.store(true, Ordering::Release);
     }
@@ -792,11 +772,13 @@ impl StartupState {
     }
 }
 
+#[cfg(test)]
 struct StartupChildGuard {
     child: Option<Box<dyn portable_pty::Child + Send + Sync>>,
     termination_target: ChildTerminationTarget,
 }
 
+#[cfg(test)]
 impl StartupChildGuard {
     fn new(
         child: Box<dyn portable_pty::Child + Send + Sync>,
@@ -819,18 +801,21 @@ impl StartupChildGuard {
     }
 }
 
+#[cfg(test)]
 impl Drop for StartupChildGuard {
     fn drop(&mut self) {
         self.terminate();
     }
 }
 
+#[cfg(test)]
 struct RuntimeChildCleanupGuard {
     child: Box<dyn portable_pty::Child + Send + Sync>,
     termination_target: ChildTerminationTarget,
     armed: bool,
 }
 
+#[cfg(test)]
 impl RuntimeChildCleanupGuard {
     fn new(
         child: Box<dyn portable_pty::Child + Send + Sync>,
@@ -852,6 +837,7 @@ impl RuntimeChildCleanupGuard {
     }
 }
 
+#[cfg(test)]
 impl Drop for RuntimeChildCleanupGuard {
     fn drop(&mut self) {
         if self.armed {
@@ -862,14 +848,14 @@ impl Drop for RuntimeChildCleanupGuard {
     }
 }
 
-#[cfg(any(test, target_os = "windows"))]
+#[cfg(test)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct ChildExitReport {
     code: i32,
     signal: Option<String>,
 }
 
-#[cfg(any(test, target_os = "windows"))]
+#[cfg(test)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum RuntimeLifecyclePhase {
     Running,
@@ -877,7 +863,7 @@ enum RuntimeLifecyclePhase {
     Published,
 }
 
-#[cfg(any(test, target_os = "windows"))]
+#[cfg(test)]
 struct RuntimeLifecycle {
     phase: RuntimeLifecyclePhase,
     eof: bool,
@@ -886,7 +872,7 @@ struct RuntimeLifecycle {
     drain_deadline: Option<Instant>,
 }
 
-#[cfg(any(test, target_os = "windows"))]
+#[cfg(test)]
 impl RuntimeLifecycle {
     fn new() -> Self {
         Self {
@@ -950,13 +936,13 @@ impl RuntimeLifecycle {
     }
 }
 
-#[cfg(any(test, target_os = "windows"))]
+#[cfg(test)]
 struct PtyCloser<M: Send + 'static> {
     sender: Option<std::sync::mpsc::Sender<M>>,
     worker: Option<std::thread::JoinHandle<()>>,
 }
 
-#[cfg(any(test, target_os = "windows"))]
+#[cfg(test)]
 impl<M: Send + 'static> PtyCloser<M> {
     fn new(thread_name: &str) -> std::io::Result<Self> {
         let (sender, receiver) = std::sync::mpsc::channel();
@@ -1000,7 +986,7 @@ impl<M: Send + 'static> PtyCloser<M> {
     }
 }
 
-#[cfg(any(test, target_os = "windows"))]
+#[cfg(test)]
 impl<M: Send + 'static> Drop for PtyCloser<M> {
     fn drop(&mut self) {
         drop(self.sender.take());
@@ -1014,13 +1000,13 @@ impl<M: Send + 'static> Drop for PtyCloser<M> {
     }
 }
 
-#[cfg(any(test, target_os = "windows"))]
+#[cfg(test)]
 struct DrainablePtyMaster<M: Send + 'static> {
     master: Option<M>,
     closer: PtyCloser<M>,
 }
 
-#[cfg(any(test, target_os = "windows"))]
+#[cfg(test)]
 impl<M: Send + 'static> DrainablePtyMaster<M> {
     fn new(master: M, closer: PtyCloser<M>) -> Self {
         Self {
@@ -1052,14 +1038,14 @@ impl<M: Send + 'static> DrainablePtyMaster<M> {
     }
 }
 
-#[cfg(any(test, target_os = "windows"))]
+#[cfg(test)]
 impl<M: Send + 'static> Drop for DrainablePtyMaster<M> {
     fn drop(&mut self) {
         let _ = self.close_async();
     }
 }
 
-#[cfg(any(test, target_os = "windows"))]
+#[cfg(test)]
 fn close_pty_for_final_drain<W, M: Send + 'static>(
     writer: &mut Option<W>,
     master: &mut DrainablePtyMaster<M>,
@@ -1157,6 +1143,7 @@ impl GhosttySession {
         (session, GhosttyRuntimePending { mailbox }, events_rx)
     }
 
+    #[cfg(test)]
     pub(super) fn start(
         &self,
         pending: GhosttyRuntimePending,
@@ -1203,23 +1190,10 @@ impl GhosttySession {
 
         match startup_rx.recv() {
             Ok(StartupReport::Started(spawned)) => Ok(spawned),
-            Ok(StartupReport::InitializationFailed(error)) => {
-                Err(GhosttyStartError::Initialization(error))
-            }
-            Ok(StartupReport::OpenPtyFailed(error)) => Err(GhosttyStartError::OpenPty(error)),
-            Ok(StartupReport::SpawnFailed(error)) => Err(GhosttyStartError::Spawn(error)),
-            Ok(StartupReport::PostSpawnFailed { child_pid, error }) => {
-                Err(GhosttyStartError::PostSpawn { child_pid, error })
-            }
-            Err(error) => {
-                let error =
-                    anyhow::anyhow!("Ghostty runtime exited before startup completed: {error}");
-                if let Some(child_pid) = startup_state.child_pid_if_spawned() {
-                    Err(GhosttyStartError::PostSpawn { child_pid, error })
-                } else {
-                    Err(GhosttyStartError::Initialization(error))
-                }
-            }
+            Ok(StartupReport::Failed(error)) => Err(GhosttyStartError::Initialization(error)),
+            Err(error) => Err(GhosttyStartError::Initialization(anyhow::anyhow!(
+                "Ghostty runtime exited before startup completed: {error}"
+            ))),
         }
     }
 
@@ -2029,6 +2003,7 @@ fn reject_input(inner: &SessionInner, input_kind: &'static str, error: impl std:
         )));
 }
 
+#[cfg(test)]
 fn write_input_bytes<W: Write>(
     inner: &SessionInner,
     writer: &mut Option<W>,
@@ -2067,6 +2042,7 @@ fn write_input_bytes<W: Write>(
     }
 }
 
+#[cfg(test)]
 fn run_runtime(
     inner: Arc<SessionInner>,
     mailbox: Arc<RuntimeMailbox>,
@@ -2084,9 +2060,7 @@ fn run_runtime(
     let ghostty_size = match window_size(initial_size) {
         Ok(size) => size,
         Err(error) => {
-            let _ = startup_tx.send(StartupReport::InitializationFailed(anyhow::anyhow!(
-                error.to_string()
-            )));
+            let _ = startup_tx.send(StartupReport::Failed(anyhow::anyhow!(error.to_string())));
             return;
         }
     };
@@ -2095,9 +2069,7 @@ fn run_runtime(
     {
         Ok(terminal) => terminal,
         Err(error) => {
-            let _ = startup_tx.send(StartupReport::InitializationFailed(anyhow::anyhow!(
-                error.to_string()
-            )));
+            let _ = startup_tx.send(StartupReport::Failed(anyhow::anyhow!(error.to_string())));
             return;
         }
     };
@@ -2108,14 +2080,14 @@ fn run_runtime(
     );
     let mut publish_gate = PublishGate::new();
     if let Err(error) = publish_gate.publish_now(&inner, &mut terminal) {
-        let _ = startup_tx.send(StartupReport::InitializationFailed(anyhow::anyhow!(error)));
+        let _ = startup_tx.send(StartupReport::Failed(anyhow::anyhow!(error)));
         return;
     }
 
     let pair = match paneflow_host::pty::open(pty_size(initial_size)) {
         Ok(pair) => pair,
         Err(error) => {
-            let _ = startup_tx.send(StartupReport::OpenPtyFailed(
+            let _ = startup_tx.send(StartupReport::Failed(
                 anyhow::anyhow!(error).context("failed to open native PTY"),
             ));
             return;
@@ -2129,7 +2101,7 @@ fn run_runtime(
     ) {
         Ok(closer) => closer,
         Err(error) => {
-            let _ = startup_tx.send(StartupReport::OpenPtyFailed(
+            let _ = startup_tx.send(StartupReport::Failed(
                 anyhow::Error::new(error).context("failed to start ConPTY close worker"),
             ));
             return;
@@ -2152,14 +2124,13 @@ fn run_runtime(
     let child = match pair.slave.spawn_command(command) {
         Ok(child) => child,
         Err(error) => {
-            let _ = startup_tx.send(StartupReport::SpawnFailed(
+            let _ = startup_tx.send(StartupReport::Failed(
                 error.context("failed to spawn shell in PTY"),
             ));
             return;
         }
     };
     let child_pid = child.process_id().unwrap_or(0);
-    startup_state.mark_child_spawned(child_pid);
     let termination_target = child_termination_target(child_pid);
     let mut startup_child = StartupChildGuard::new(child, termination_target);
     #[cfg(unix)]
@@ -2173,10 +2144,9 @@ fn run_runtime(
         Ok(reader) => reader,
         Err(error) => {
             startup_child.terminate();
-            let _ = startup_tx.send(StartupReport::PostSpawnFailed {
-                child_pid,
-                error: error.context("failed to clone PTY reader"),
-            });
+            let _ = startup_tx.send(StartupReport::Failed(
+                error.context("failed to clone PTY reader"),
+            ));
             return;
         }
     };
@@ -2191,10 +2161,9 @@ fn run_runtime(
         Ok(writer) => writer,
         Err(error) => {
             startup_child.terminate();
-            let _ = startup_tx.send(StartupReport::PostSpawnFailed {
-                child_pid,
-                error: error.context("failed to take PTY writer"),
-            });
+            let _ = startup_tx.send(StartupReport::Failed(
+                error.context("failed to take PTY writer"),
+            ));
             return;
         }
     };
@@ -2206,10 +2175,9 @@ fn run_runtime(
         Ok(worker) => worker,
         Err(error) => {
             startup_child.terminate();
-            let _ = startup_tx.send(StartupReport::PostSpawnFailed {
-                child_pid,
-                error: anyhow::Error::new(error).context("failed to start PTY reader"),
-            });
+            let _ = startup_tx.send(StartupReport::Failed(
+                anyhow::Error::new(error).context("failed to start PTY reader"),
+            ));
             return;
         }
     };
@@ -3299,6 +3267,7 @@ fn complete_resize(inner: &SessionInner, command: ResizeCommand, succeeded: bool
     notify_command_capacity(inner);
 }
 
+#[cfg(test)]
 fn complete_resize_during_drain(inner: &SessionInner) {
     let mut resize = inner
         .resize
@@ -3402,6 +3371,7 @@ fn queue_clipboard(inner: &SessionInner, text: String) {
     }
 }
 
+#[cfg(test)]
 fn read_pty(mut reader: Box<dyn Read + Send>, mailbox: Arc<RuntimeMailbox>) {
     loop {
         let Some(mut buffer) = mailbox.take_output_buffer() else {
@@ -3824,26 +3794,26 @@ fn current_ghostty_appearance() -> ghostty::TerminalAppearance {
     )
 }
 
-#[cfg(unix)]
+#[cfg(all(test, unix))]
 type ChildTerminationTarget = Option<i32>;
 
-#[cfg(target_os = "windows")]
+#[cfg(all(test, target_os = "windows"))]
 type ChildTerminationTarget = u32;
 
-#[cfg(unix)]
+#[cfg(all(test, unix))]
 fn child_termination_target(child_pid: u32) -> ChildTerminationTarget {
     verified_process_group(child_pid)
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(all(test, target_os = "windows"))]
 fn child_termination_target(child_pid: u32) -> ChildTerminationTarget {
     child_pid
 }
 
-#[cfg(unix)]
+#[cfg(all(test, unix))]
 use paneflow_host::process::verified_process_group;
 
-#[cfg(unix)]
+#[cfg(all(test, unix))]
 fn observe_child_exit(
     _child: &mut dyn portable_pty::Child,
     child_pid: u32,
@@ -3892,7 +3862,7 @@ fn observe_child_exit(
     Ok(Some(exit))
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(all(test, target_os = "windows"))]
 fn child_exit_report(status: &portable_pty::ExitStatus) -> ChildExitReport {
     ChildExitReport {
         code: i32::try_from(status.exit_code()).unwrap_or(-1),
@@ -3900,7 +3870,7 @@ fn child_exit_report(status: &portable_pty::ExitStatus) -> ChildExitReport {
     }
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(all(test, target_os = "windows"))]
 fn observe_windows_child_exit(
     child: &mut dyn portable_pty::Child,
 ) -> std::io::Result<Option<ChildExitReport>> {
@@ -3922,7 +3892,7 @@ fn observe_windows_child_exit(
     Ok(Some(exit))
 }
 
-#[cfg(unix)]
+#[cfg(all(test, unix))]
 fn terminate_child(child: &mut dyn portable_pty::Child, process_group_id: ChildTerminationTarget) {
     if let Some(pid) = process_group_id {
         unsafe {
@@ -3955,13 +3925,13 @@ fn terminate_child(child: &mut dyn portable_pty::Child, process_group_id: ChildT
     let _ = child.wait();
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(all(test, target_os = "windows"))]
 struct WindowsChildTerminationOutcome {
     exit: ChildExitReport,
     reaped: bool,
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(all(test, target_os = "windows"))]
 fn terminate_windows_child_until(
     child: &mut dyn portable_pty::Child,
     child_pid: u32,
@@ -4026,7 +3996,7 @@ fn terminate_windows_child_until(
     }
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(all(test, target_os = "windows"))]
 fn begin_windows_shutdown(
     inner: &SessionInner,
     writer: &mut Option<Box<dyn Write + Send>>,
@@ -4057,7 +4027,7 @@ fn begin_windows_shutdown(
     lifecycle.start_draining(outcome.exit, Instant::now());
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(all(test, target_os = "windows"))]
 fn terminate_child(child: &mut dyn portable_pty::Child, child_pid: ChildTerminationTarget) {
     let started = Instant::now();
     let deadline = started
@@ -4066,6 +4036,7 @@ fn terminate_child(child: &mut dyn portable_pty::Child, child_pid: ChildTerminat
     let _ = terminate_windows_child_until(child, child_pid, deadline);
 }
 
+#[cfg(test)]
 fn pty_size(size: TerminalWindowSize) -> PtySize {
     PtySize {
         rows: size.rows.clamp(1, u16::MAX as usize) as u16,

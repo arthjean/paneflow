@@ -51,12 +51,6 @@ gpui_platform = { git = "https://github.com/zed-industries/zed", rev = "fecc3273
 # so declaring it directly adds no new transitive dependency.
 image = { version = "0.25", default-features = false, features = ["png"] }
 
-# Terminal emulation. Ghostty is the only backend: the pinned libghostty-vt
-# archive parses every byte and owns the grid, and `portable-pty` opens the
-# PTY the Ghostty session runtime drives. There is no second engine and no
-# fallback, so both dependencies are unconditional.
-portable-pty = "0.9.0"
-
 # Font tables GPUI does not expose: line gap, `post` underline metrics, and
 # per-glyph ink bounds. The terminal renderer reads them from the embedded
 # faces to size the cell grid (Ghostty's `Metrics.calc`) and to constrain
@@ -404,6 +398,11 @@ gpui = { git = "https://github.com/zed-industries/zed", rev = "fecc3273ed32643c2
 # exercises a real verify round-trip (happy path + tampered/wrong-key/no-key
 # negatives) without baking a private key into the repo.
 minisign = "0.9.1"
+# The in-process PTY runtime in `terminal/ghostty_session.rs` is compiled for
+# tests only: the Ghostty stress gates and the terminal perf bench drive it.
+# Every shipped pane attaches to a `paneflow-host` session instead, so the
+# release binary opens no PTY of its own and does not link this crate.
+portable-pty = "0.9.0"
 tracing-test = "0.2"
 
 # Clippy lint policy (US-007). Mirrors `[workspace.lints.clippy]` in the

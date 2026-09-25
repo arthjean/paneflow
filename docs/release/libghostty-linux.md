@@ -106,7 +106,9 @@ text.
 
 ## When the engine fails to start
 
-There is no rollback: Ghostty is the only engine. A startup failure is reported
-in the pane with its `failure_phase`, `reason_code`, and OS error, and a failure
-after PTY spawn never starts a second child. Report the diagnostic line rather
-than switching backends.
+There is no rollback: Ghostty is the only engine. A failure to start the pane's
+mirror is reported in the pane with `failure_phase=initialization`, its
+`reason_code`, and OS error. The PTY and the shell belong to `paneflow-host`,
+so a PTY or spawn failure is reported by the host launch, and a failed launch
+never starts a second child. Report the diagnostic line rather than switching
+backends.

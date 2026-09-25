@@ -6,9 +6,11 @@ use std::sync::Arc;
 use futures::channel::mpsc::UnboundedReceiver;
 
 use super::clipboard_gate::ClipboardGate;
+#[cfg(test)]
+use super::ghostty_session::SpawnedGhostty;
 use super::ghostty_session::{
     GhosttyInputSendResult, GhosttyRuntimePending, GhosttySession, GhosttyUiEvent,
-    ProgramNotification, SpawnedGhostty,
+    ProgramNotification,
 };
 use super::host_link::{HostLinkState, HostedAttachment, HostedSession};
 use super::marks::SharedMarkRing;
@@ -19,24 +21,27 @@ use super::types::{
     SelectionKind, SelectionRange, ShellQuoting, TerminalWindowSize,
 };
 use crate::limits::MAX_OSC52_BYTES;
-use paneflow_config::schema::{
-    SessionGeneration, SessionId, TerminalConfig, TerminalSurfaceProfile,
-};
+#[cfg(test)]
+use paneflow_config::schema::TerminalConfig;
+use paneflow_config::schema::{SessionGeneration, SessionId, TerminalSurfaceProfile};
 pub(crate) use paneflow_host::env::INHERITED_AGENT_SESSION_ENV;
+#[cfg(test)]
 pub(super) use paneflow_host::env::inherited_env_keys_to_strip;
 use paneflow_host::env::{
     is_forbidden_child_env_key, is_inherited_agent_session_env_key, is_valid_env_name,
 };
-#[cfg(windows)]
+#[cfg(all(test, windows))]
 pub(super) use paneflow_host::process::{
     WINDOWS_PROCESS_TREE_TERMINATION_BUDGET, terminate_windows_process_tree,
 };
 use paneflow_terminal_ghostty::Scroll as GhosttyScroll;
 
+#[cfg(test)]
 const DEFAULT_SCROLLBACK_LINES: usize = TerminalConfig::DEFAULT_SCROLLBACK_LINES;
 const MAX_PENDING_CLIPBOARD_OPS: usize = 8;
 const MAX_PENDING_NOTIFICATIONS: usize = 8;
 
+#[cfg(test)]
 fn resolved_scrollback_lines(profile: TerminalSurfaceProfile) -> usize {
     paneflow_config::loader::load_config()
         .terminal
@@ -353,24 +358,14 @@ pub struct GhosttyBuildDiagnostics {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[allow(
-    dead_code,
-    reason = "native backend failure phases are cfg-dependent across the target matrix"
-)]
 pub enum TerminalBackendFailurePhase {
     Initialization,
-    OpenPty,
-    Spawn,
-    PostSpawn,
 }
 
 impl TerminalBackendFailurePhase {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Initialization => "initialization",
-            Self::OpenPty => "open_pty",
-            Self::Spawn => "spawn",
-            Self::PostSpawn => "post_spawn",
         }
     }
 }
@@ -382,15 +377,8 @@ pub struct TerminalBackendFailureDiagnostics {
     pub os_error: Option<i32>,
 }
 
-#[allow(
-    dead_code,
-    reason = "native backend reason codes are cfg-dependent across the target matrix"
-)]
 impl TerminalBackendFailureDiagnostics {
     pub(super) const GHOSTTY_INITIALIZATION_FAILED: &'static str = "ghostty_initialization_failed";
-    pub(super) const GHOSTTY_OPEN_PTY_FAILED: &'static str = "ghostty_open_pty_failed";
-    pub(super) const GHOSTTY_SPAWN_FAILED: &'static str = "ghostty_spawn_failed";
-    pub(super) const GHOSTTY_POST_SPAWN_FAILED: &'static str = "ghostty_post_spawn_failed";
 
     pub(super) fn new(
         phase: TerminalBackendFailurePhase,
@@ -621,6 +609,7 @@ impl TerminalState {
         self.ghostty.resize(size);
     }
 
+    #[cfg(test)]
     pub(super) fn promote_ghostty(&mut self, spawned: SpawnedGhostty) {
         self.ghostty.promote();
         self.child_pid = spawned.child_pid;
@@ -743,7 +732,7 @@ impl TerminalState {
         }
     }
 
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub fn new(
         working_directory: Option<std::path::PathBuf>,
         workspace_id: u64,
@@ -761,7 +750,7 @@ impl TerminalState {
         )
     }
 
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub fn new_with_profile(
         working_directory: Option<std::path::PathBuf>,
         workspace_id: u64,
@@ -779,12 +768,8 @@ impl TerminalState {
             profile,
         );
         let max_scrollback = resolved_scrollback_lines(params.profile);
-        let (mut state, pending) = Self::new_pending_with_profile_and_shell_quoting(
-            params.cols,
-            params.rows,
-            params.profile,
-            params.shell_quoting,
-        );
+        let (mut state, pending) =
+            Self::new_pending_with_shell_quoting(params.cols, params.rows, params.shell_quoting);
         let spawned = state
             .ghostty_session()
             .start(pending.ghostty, params, max_scrollback)
@@ -793,7 +778,7 @@ impl TerminalState {
         Ok(state)
     }
 
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub(super) fn resolve_spawn_params(
         working_directory: Option<std::path::PathBuf>,
         workspace_id: u64,
@@ -868,39 +853,25 @@ impl TerminalState {
         }
     }
 
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub(super) fn new_pending(cols: usize, rows: usize) -> (Self, PendingTerminalBackend) {
-        Self::new_pending_with_profile(cols, rows, TerminalSurfaceProfile::Normal)
+        Self::new_pending_with_shell_quoting(cols, rows, ShellQuoting::default_for_platform())
     }
 
-    pub(super) fn new_pending_with_profile(
+    pub(super) fn new_pending_with_shell_quoting(
         cols: usize,
         rows: usize,
-        profile: TerminalSurfaceProfile,
-    ) -> (Self, PendingTerminalBackend) {
-        Self::new_pending_with_profile_and_shell_quoting(
-            cols,
-            rows,
-            profile,
-            ShellQuoting::default_for_platform(),
-        )
-    }
-
-    pub(super) fn new_pending_with_profile_and_shell_quoting(
-        cols: usize,
-        rows: usize,
-        _profile: TerminalSurfaceProfile,
         shell_quoting: ShellQuoting,
     ) -> (Self, PendingTerminalBackend) {
         Self::build_display_only(cols, rows, shell_quoting)
     }
 
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub fn new_display_only(rows: usize, cols: usize) -> Self {
         Self::new_display_only_with_profile(rows, cols, TerminalSurfaceProfile::Normal)
     }
 
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub fn new_display_only_with_profile(
         rows: usize,
         cols: usize,
@@ -994,7 +965,7 @@ impl TerminalState {
         self.ghostty.write_output(&converted);
     }
 
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub fn sync(&mut self) {
         self.sync_channels();
         if let Some(mut rx) = self.ghostty_events_rx.take() {
@@ -1645,8 +1616,8 @@ mod tests {
         assert_eq!(os_error, Some(5));
 
         let failure = TerminalBackendFailureDiagnostics::new(
-            TerminalBackendFailurePhase::OpenPty,
-            TerminalBackendFailureDiagnostics::GHOSTTY_OPEN_PTY_FAILED,
+            TerminalBackendFailurePhase::Initialization,
+            TerminalBackendFailureDiagnostics::GHOSTTY_INITIALIZATION_FAILED,
             os_error,
         );
         let mut state = TerminalState::new_display_only(24, 80);
@@ -1656,8 +1627,8 @@ mod tests {
         assert_eq!(diagnostics.failure, Some(failure));
         let formatted = diagnostics.to_string();
         assert_eq!(formatted.matches("reason_code=").count(), 1);
-        assert!(formatted.contains("failure_phase=open_pty"));
-        assert!(formatted.contains("reason_code=ghostty_open_pty_failed"));
+        assert!(formatted.contains("failure_phase=initialization"));
+        assert!(formatted.contains("reason_code=ghostty_initialization_failed"));
         assert!(formatted.contains("os_error=5"));
         assert!(!formatted.contains(CANARY));
         assert!(!formatted.contains("private"));
@@ -1670,15 +1641,9 @@ mod tests {
             TerminalBackendFailurePhase::Initialization.as_str(),
             "initialization"
         );
-        assert_eq!(TerminalBackendFailurePhase::OpenPty.as_str(), "open_pty");
-        assert_eq!(TerminalBackendFailurePhase::Spawn.as_str(), "spawn");
         assert_eq!(
-            TerminalBackendFailurePhase::PostSpawn.as_str(),
-            "post_spawn"
-        );
-        assert_eq!(
-            TerminalBackendFailureDiagnostics::GHOSTTY_POST_SPAWN_FAILED,
-            "ghostty_post_spawn_failed"
+            TerminalBackendFailureDiagnostics::GHOSTTY_INITIALIZATION_FAILED,
+            "ghostty_initialization_failed"
         );
     }
 
