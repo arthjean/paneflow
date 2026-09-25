@@ -142,9 +142,6 @@ pub fn augment_path_for_gui_launch() {
 
     #[cfg(target_os = "windows")]
     {
-        if let Some(home) = dirs::home_dir() {
-            candidates.push(home.join(".bun").join("bin"));
-        }
         if let Some(program_files) = std::env::var_os("ProgramFiles") {
             candidates.push(PathBuf::from(&program_files).join("Git").join("cmd"));
         }

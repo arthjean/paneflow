@@ -75,7 +75,7 @@ impl PaneFlowApp {
             update::SelfUpdateStatus::ReadyToRestart => {
                 title_bar::SelfUpdatePillState::ReadyToRestart
             }
-            update::SelfUpdateStatus::Errored(_) => title_bar::SelfUpdatePillState::Errored,
+            update::SelfUpdateStatus::Errored => title_bar::SelfUpdatePillState::Errored,
         };
         match &self.self_update.update_status {
             Some(update::checker::UpdateStatus::Available { version, .. }) => {

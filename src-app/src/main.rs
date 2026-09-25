@@ -793,7 +793,7 @@ impl PaneFlowApp {
         log::error!("self-update/{context}: {err:#}");
         let tag = update::UpdateError::classify(err);
         self.emit_update_failure(&tag);
-        self.self_update.self_update_status = update::SelfUpdateStatus::Errored(tag.clone());
+        self.self_update.self_update_status = update::SelfUpdateStatus::Errored;
         self.self_update.update_attempt_count =
             self.self_update.update_attempt_count.saturating_add(1);
         self.show_update_error_toast(&tag, cx);
@@ -895,17 +895,7 @@ impl Render for PaneFlowApp {
             - main_panel_left_inset
             - crate::app::constants::PANEL_INSET;
         #[cfg(target_os = "linux")]
-        {
-            crate::window_chrome::linux_backdrop::set_chrome_geometry(
-                crate::window_chrome::linux_backdrop::ChromeGeometry {
-                    left_sidebar_width: primary_sidebar_width,
-                    right_sidebar_width: right_rail_width,
-                    title_bar_height: f32::from(title_bar_h),
-                    title_bar_spans_window: true,
-                },
-            );
-            crate::window_chrome::linux_backdrop::refresh_blur_region(window);
-        }
+        crate::window_chrome::linux_backdrop::refresh_blur_region(window);
 
         if let Some(pane) = self.pending_pane_focus.take()
             && !Self::focus_pane_window(pane.clone(), cx)

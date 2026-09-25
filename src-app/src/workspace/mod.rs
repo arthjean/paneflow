@@ -96,8 +96,6 @@ pub struct Workspace {
     pub is_git_repo: bool,
     pub git_dir: Option<std::path::PathBuf>,
     pub repo_root: Option<std::path::PathBuf>,
-    #[allow(dead_code)]
-    pub is_worktree: bool,
     pub worktree_root: std::path::PathBuf,
     pub active_ports: Vec<u16>,
     pub port_scan_generation: u64,
@@ -168,7 +166,6 @@ impl Workspace {
             is_git_repo,
             git_dir,
             repo_root,
-            is_worktree,
             worktree_root,
             active_ports: vec![],
             port_scan_generation: 0,

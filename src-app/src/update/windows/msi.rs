@@ -1,25 +1,28 @@
 #[cfg(target_os = "windows")]
 use std::io::Write;
 use std::path::{Path, PathBuf};
+#[cfg(target_os = "windows")]
 use std::process::Command;
 #[cfg(target_os = "windows")]
 use std::process::Stdio;
 use std::time::Duration;
 
-use anyhow::{Context, Result, bail};
-
-use super::super::error::UpdateError;
+#[cfg(target_os = "windows")]
+use anyhow::Context;
+use anyhow::{Result, bail};
 
 const UPDATE_HTTP_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[cfg(target_os = "windows")]
 const PARENT_EXIT_TIMEOUT: Duration = Duration::from_secs(2 * 60);
 
+#[cfg(target_os = "windows")]
 const MSIEXEC_TIMEOUT: Duration = Duration::from_secs(15 * 60);
 
 #[cfg(target_os = "windows")]
 const WINDOWS_WAIT_SLICE_MS: u32 = 500;
 
+#[cfg(target_os = "windows")]
 const NATIVE_STDOUT_CAP: u64 = 64 * 1024;
 
 #[cfg(target_os = "windows")]
@@ -27,10 +30,8 @@ const WINDOWS_PUBLISHER_ORGANIZATION: &str = "StriveX";
 
 const MAX_MSI_BYTES: u64 = 500 * 1024 * 1024;
 
-#[allow(dead_code)]
+#[cfg(target_os = "windows")]
 const MSIEXEC_EXIT_USER_CANCEL: i32 = 1602;
-#[allow(dead_code)]
-const MSIEXEC_EXIT_FATAL: i32 = 1603;
 
 #[cfg(target_os = "windows")]
 const MSI_RELAY_ARG: &str = "--msi-relay";
@@ -48,6 +49,7 @@ const RELAY_LOG_ARG: &str = "--relay-log";
 #[derive(Clone, Debug)]
 pub struct StagedMsiUpdate {
     msi_path: PathBuf,
+    #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
     log_path: PathBuf,
     restart_path: PathBuf,
 }
@@ -128,15 +130,6 @@ fn host_still_serving(relay_log_path: &Path) -> Option<String> {
     }
 }
 
-#[allow(dead_code)]
-pub fn install(asset_url: &str) -> Result<PathBuf> {
-    let restart_path = super::super::installed_binary_path()?;
-    let staged = stage_with_restart_path(asset_url, restart_path)?;
-    install_with(&staged.msi_path, &staged.log_path, &MsiexecProcessRunner)?;
-    let _ = std::fs::remove_file(&staged.msi_path);
-    Ok(staged.restart_path)
-}
-
 pub fn stage(asset_url: &str, install_path: &Path) -> Result<StagedMsiUpdate> {
     stage_with_restart_path(asset_url, binary_path_in_install_dir(install_path))
 }
@@ -164,22 +157,6 @@ fn stage_with_restart_path(asset_url: &str, restart_path: PathBuf) -> Result<Sta
         log_path,
         restart_path,
     })
-}
-
-#[allow(dead_code)]
-fn install_with(msi_path: &Path, log_path: &Path, runner: &dyn Msiexec) -> Result<()> {
-    match runner.run_installer(msi_path, log_path) {
-        Ok(()) => Ok(()),
-        Err(MsiexecError::NotFound) => Err(anyhow::Error::new(UpdateError::EnvironmentBroken {
-            message:
-                "msiexec.exe not found in System32 or on PATH - Windows system install appears broken. Reinstall PaneFlow manually from the releases page."
-                    .to_string(),
-        })),
-        Err(MsiexecError::RunFailed(e)) => Err(e).context("run msiexec.exe"),
-        Err(MsiexecError::Timeout) => Err(anyhow::Error::new(UpdateError::Timeout)
-            .context(format!("msiexec exceeded {}s deadline", MSIEXEC_TIMEOUT.as_secs()))),
-        Err(MsiexecError::NonZeroExit { code }) => Err(map_exit_code(code, log_path)),
-    }
 }
 
 pub fn spawn_relay(staged: StagedMsiUpdate) -> Result<()> {
@@ -397,10 +374,8 @@ fn run_native_relay(invocation: RelayInvocation) -> Result<i32> {
         &format!("msiexec exited with {}", result.exit_code),
     );
 
-    if relay_should_relaunch_after_msiexec(result.exit_code) {
-        relaunch_paneflow(&invocation.restart_path, &invocation.relay_log_path)
-            .with_context(|| format!("relaunch after msiexec exit {}", result.exit_code))?;
-    }
+    relaunch_paneflow(&invocation.restart_path, &invocation.relay_log_path)
+        .with_context(|| format!("relaunch after msiexec exit {}", result.exit_code))?;
 
     schedule_relay_cleanup(&invocation.relay_log_path);
     Ok(result.exit_code)
@@ -409,11 +384,6 @@ fn run_native_relay(invocation: RelayInvocation) -> Result<i32> {
 #[cfg(target_os = "windows")]
 struct RelayInstallResult {
     exit_code: i32,
-}
-
-#[cfg(target_os = "windows")]
-fn relay_should_relaunch_after_msiexec(_exit_code: i32) -> bool {
-    true
 }
 
 #[cfg(target_os = "windows")]
@@ -437,7 +407,7 @@ fn run_msiexec_for_relay(
         return run_elevated_msiexec_for_relay(msi_path, log_path, relay_log_path);
     }
 
-    match MsiexecProcessRunner.run_installer(msi_path, log_path) {
+    match run_msiexec(msi_path, log_path) {
         Ok(()) => RelayInstallResult { exit_code: 0 },
         Err(MsiexecError::NotFound) => {
             append_relay_log(relay_log_path, "msiexec.exe not found");
@@ -961,24 +931,7 @@ fn download_with_verification(asset_url: &str, dest: &Path) -> Result<()> {
     )
 }
 
-#[allow(dead_code)]
-fn map_exit_code(code: i32, log_path: &Path) -> anyhow::Error {
-    match code {
-        MSIEXEC_EXIT_USER_CANCEL => anyhow::Error::new(UpdateError::InstallDeclined {
-            message: "Update cancelled - administrator permission required.".to_string(),
-        }),
-        MSIEXEC_EXIT_FATAL => anyhow::Error::new(UpdateError::InstallFailed {
-            log_path: log_path.to_path_buf(),
-        }),
-        other => anyhow::anyhow!(
-            "msiexec exited with code {other}. See log at {} for details.",
-            log_path.display()
-        ),
-    }
-}
-
-#[derive(Debug)]
-#[allow(dead_code)]
+#[cfg(target_os = "windows")]
 enum MsiexecError {
     NotFound,
     RunFailed(anyhow::Error),
@@ -986,43 +939,35 @@ enum MsiexecError {
     NonZeroExit { code: i32 },
 }
 
-#[allow(dead_code)]
-trait Msiexec {
-    fn run_installer(&self, msi: &Path, log: &Path) -> std::result::Result<(), MsiexecError>;
-}
+#[cfg(target_os = "windows")]
+fn run_msiexec(msi: &Path, log: &Path) -> std::result::Result<(), MsiexecError> {
+    let msiexec = msiexec_exe().ok_or(MsiexecError::NotFound)?;
 
-#[allow(dead_code)]
-struct MsiexecProcessRunner;
+    let mut cmd = Command::new(&msiexec);
+    cmd.arg("/i")
+        .arg(msi)
+        .arg("/qb")
+        .arg("/norestart")
+        .arg("MSIRESTARTMANAGERCONTROL=Disable")
+        .arg("/l*v")
+        .arg(log);
+    let out = paneflow_process::run_with_timeout(cmd, MSIEXEC_TIMEOUT, NATIVE_STDOUT_CAP).map_err(
+        |e| match e {
+            paneflow_process::ProcError::Timeout => MsiexecError::Timeout,
+            other => MsiexecError::RunFailed(anyhow::Error::new(other)),
+        },
+    )?;
 
-impl Msiexec for MsiexecProcessRunner {
-    fn run_installer(&self, msi: &Path, log: &Path) -> std::result::Result<(), MsiexecError> {
-        let msiexec = msiexec_exe().ok_or(MsiexecError::NotFound)?;
-
-        let mut cmd = Command::new(&msiexec);
-        cmd.arg("/i")
-            .arg(msi)
-            .arg("/qb")
-            .arg("/norestart")
-            .arg("MSIRESTARTMANAGERCONTROL=Disable")
-            .arg("/l*v")
-            .arg(log);
-        let out = paneflow_process::run_with_timeout(cmd, MSIEXEC_TIMEOUT, NATIVE_STDOUT_CAP)
-            .map_err(|e| match e {
-                paneflow_process::ProcError::Timeout => MsiexecError::Timeout,
-                other => MsiexecError::RunFailed(anyhow::Error::new(other)),
-            })?;
-
-        if out.status.success() {
-            return Ok(());
-        }
-        Err(MsiexecError::NonZeroExit {
-            code: out.status.code().unwrap_or(-1),
-        })
+    if out.status.success() {
+        return Ok(());
     }
+    Err(MsiexecError::NonZeroExit {
+        code: out.status.code().unwrap_or(-1),
+    })
 }
 
+#[cfg(target_os = "windows")]
 fn msiexec_exe() -> Option<PathBuf> {
-    #[cfg(target_os = "windows")]
     if let Some(system_root) = std::env::var_os("SystemRoot") {
         let candidate = PathBuf::from(system_root)
             .join("System32")
@@ -1035,9 +980,8 @@ fn msiexec_exe() -> Option<PathBuf> {
     which::which("msiexec").ok()
 }
 
-#[cfg(test)]
+#[cfg(all(test, target_os = "windows"))]
 mod tests {
-    #[cfg(target_os = "windows")]
     #[test]
     fn installation_preflight_detects_an_in_use_host_without_an_endpoint() {
         use std::os::windows::process::CommandExt;
@@ -1069,7 +1013,6 @@ mod tests {
         assert!(installed_host_is_replaceable(&restart).is_ok());
     }
 
-    #[cfg(target_os = "windows")]
     #[test]
     fn installation_preflight_accepts_a_missing_host_binary() {
         let directory = tempfile::tempdir().unwrap();
@@ -1077,9 +1020,7 @@ mod tests {
         assert!(installed_host_is_replaceable(&restart).is_ok());
     }
     use super::*;
-    use std::cell::Cell;
 
-    #[cfg(target_os = "windows")]
     #[test]
     fn relay_invocation_parses_paths_with_spaces() {
         let args = vec![
@@ -1110,7 +1051,6 @@ mod tests {
         );
     }
 
-    #[cfg(target_os = "windows")]
     #[test]
     fn relay_invocation_parses_when_flag_is_not_argv1() {
         let args = vec![
@@ -1139,7 +1079,6 @@ mod tests {
         );
     }
 
-    #[cfg(target_os = "windows")]
     #[test]
     fn relay_parse_error_writes_relay_log_when_log_arg_is_present() {
         let log_path = std::env::temp_dir().join(format!(
@@ -1163,7 +1102,6 @@ mod tests {
         assert!(contents.contains("missing relay parent PID"));
     }
 
-    #[cfg(target_os = "windows")]
     #[test]
     fn shell_execute_parameters_quote_windows_paths() {
         use std::ffi::OsString;
@@ -1180,7 +1118,6 @@ mod tests {
         );
     }
 
-    #[cfg(target_os = "windows")]
     #[test]
     fn msiexec_parameters_quote_windows_paths() {
         assert_eq!(
@@ -1192,17 +1129,6 @@ mod tests {
         );
     }
 
-    #[cfg(target_os = "windows")]
-    #[test]
-    fn relay_relaunches_after_success_cancel_and_failure() {
-        assert!(relay_should_relaunch_after_msiexec(0));
-        assert!(relay_should_relaunch_after_msiexec(
-            MSIEXEC_EXIT_USER_CANCEL
-        ));
-        assert!(relay_should_relaunch_after_msiexec(MSIEXEC_EXIT_FATAL));
-    }
-
-    #[cfg(target_os = "windows")]
     #[test]
     fn program_files_restart_requires_elevation() {
         if let Some(program_files) = std::env::var_os("ProgramFiles") {
@@ -1215,103 +1141,5 @@ mod tests {
         assert!(!restart_path_requires_elevation(Path::new(
             "C:\\Users\\Example\\AppData\\Local\\Programs\\PaneFlow\\paneflow.exe"
         )));
-    }
-
-    #[test]
-    fn map_exit_code_1602_is_install_declined() {
-        let log = PathBuf::from("C:\\Temp\\test.log");
-        let err = map_exit_code(MSIEXEC_EXIT_USER_CANCEL, &log);
-        match UpdateError::classify(&err) {
-            UpdateError::InstallDeclined { message } => {
-                assert!(
-                    message.contains("administrator permission required"),
-                    "got: {message}"
-                );
-                assert!(message.contains("cancelled"), "got: {message}");
-            }
-            other => panic!("expected InstallDeclined, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn map_exit_code_1603_is_install_failed_with_log_path() {
-        let log = PathBuf::from("C:\\Temp\\paneflow-msi-999.log");
-        let err = map_exit_code(MSIEXEC_EXIT_FATAL, &log);
-        match UpdateError::classify(&err) {
-            UpdateError::InstallFailed { log_path } => {
-                assert_eq!(log_path, log);
-            }
-            other => panic!("expected InstallFailed, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn map_exit_code_unknown_falls_through_to_other_with_log_hint() {
-        let log = PathBuf::from("C:\\Temp\\test.log");
-        let err = map_exit_code(42, &log);
-        let tag = UpdateError::classify(&err);
-        match tag {
-            UpdateError::Other(msg) => {
-                assert!(msg.contains("42"), "got: {msg}");
-                assert!(msg.contains("test.log"), "got: {msg}");
-            }
-            other => panic!("expected Other for exit 42, got {other:?}"),
-        }
-    }
-
-    struct StubMsiexec {
-        outcome: Cell<Option<std::result::Result<(), MsiexecError>>>,
-        spawn_count: Cell<usize>,
-    }
-
-    impl Msiexec for StubMsiexec {
-        fn run_installer(&self, _msi: &Path, _log: &Path) -> std::result::Result<(), MsiexecError> {
-            self.spawn_count.set(self.spawn_count.get() + 1);
-            self.outcome
-                .take()
-                .expect("StubMsiexec outcome polled twice")
-        }
-    }
-
-    #[test]
-    fn msiexec_not_found_maps_to_environment_broken() {
-        let err = anyhow::Error::new(UpdateError::EnvironmentBroken {
-            message: "msiexec.exe not found in System32 or on PATH - Windows system install appears broken. Reinstall PaneFlow manually from the releases page.".to_string(),
-        });
-        match UpdateError::classify(&err) {
-            UpdateError::EnvironmentBroken { message } => {
-                assert!(message.contains("msiexec.exe"), "got: {message}");
-                assert!(message.contains("PATH"), "got: {message}");
-            }
-            other => panic!("expected EnvironmentBroken, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn stub_msiexec_records_invocations() {
-        let stub = StubMsiexec {
-            outcome: Cell::new(Some(Ok(()))),
-            spawn_count: Cell::new(0),
-        };
-        assert_eq!(stub.spawn_count.get(), 0);
-        let r = stub.run_installer(Path::new("C:\\tmp\\x.msi"), Path::new("C:\\tmp\\x.log"));
-        assert!(r.is_ok());
-        assert_eq!(stub.spawn_count.get(), 1);
-    }
-
-    #[test]
-    fn stub_msiexec_nonzero_exit_surfaces_to_caller() {
-        let stub = StubMsiexec {
-            outcome: Cell::new(Some(Err(MsiexecError::NonZeroExit {
-                code: MSIEXEC_EXIT_FATAL,
-            }))),
-            spawn_count: Cell::new(0),
-        };
-        let r = stub.run_installer(Path::new("C:\\x.msi"), Path::new("C:\\x.log"));
-        match r {
-            Err(MsiexecError::NonZeroExit { code }) => assert_eq!(code, MSIEXEC_EXIT_FATAL),
-            other => panic!("expected NonZeroExit, got {other:?}"),
-        }
-        assert_eq!(stub.spawn_count.get(), 1);
     }
 }

@@ -397,8 +397,6 @@ impl PaneFlowApp {
 
     fn finish_quit(&mut self, cx: &mut Context<Self>) {
         self.emit_app_exited_and_flush();
-        #[cfg(target_os = "linux")]
-        crate::window_chrome::linux_backdrop::clear_subtle_chrome_material();
         cx.quit();
     }
 

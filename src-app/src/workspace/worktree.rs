@@ -323,15 +323,6 @@ pub fn worktree_dir_hashed(repo_root: &Path, branch: &str) -> PathBuf {
     worktrees_parent(repo_root).join(format!("{slug}-{}", branch_hash_suffix(branch)))
 }
 
-pub fn legacy_worktree_dir(repo_root: &Path, branch: &str) -> PathBuf {
-    legacy_worktrees_parent(repo_root).join(branch_slug_or_default(branch))
-}
-
-pub fn legacy_worktree_dir_hashed(repo_root: &Path, branch: &str) -> PathBuf {
-    let slug = branch_slug_or_default(branch);
-    legacy_worktrees_parent(repo_root).join(format!("{slug}-{}", branch_hash_suffix(branch)))
-}
-
 fn repo_git_dir(repo_root: &Path) -> Option<PathBuf> {
     let dot_git = repo_root.join(".git");
     if dot_git.is_dir() {
@@ -381,16 +372,12 @@ pub fn has_paneflow_worktree_shape(repo_root: &Path, branch: &str, path: &Path) 
 }
 
 pub fn is_paneflow_worktree_dir(repo_root: &Path, branch: &str, path: &Path) -> bool {
-    path == worktree_dir(repo_root, branch)
-        || path == worktree_dir_hashed(repo_root, branch)
-        || path == legacy_worktree_dir(repo_root, branch)
-        || path == legacy_worktree_dir_hashed(repo_root, branch)
+    path == worktree_dir(repo_root, branch) || path == worktree_dir_hashed(repo_root, branch)
 }
 
 pub fn created_at(worktree_path: &Path) -> Option<SystemTime> {
     owner_marker_path(worktree_path)
         .and_then(|marker| std::fs::metadata(marker).ok())
-        .or_else(|| std::fs::metadata(legacy_owner_marker_path(worktree_path)).ok())
         .and_then(|meta| meta.modified().ok())
 }
 
@@ -1311,10 +1298,6 @@ mod tests {
         let dir = worktree_dir(repo, "..");
         assert_eq!(dir.file_name().and_then(|n| n.to_str()), Some("branch"));
         assert!(dir.starts_with(worktrees_parent(repo)));
-        assert_eq!(
-            legacy_worktree_dir(repo, ".."),
-            PathBuf::from("/home/a/dev/paneflow.worktrees/branch")
-        );
     }
 
     #[test]
@@ -1341,11 +1324,6 @@ mod tests {
             "two clones with the same name never share a directory"
         );
         assert!(is_paneflow_worktree_dir(repo, "feat/x", &dir));
-        assert!(is_paneflow_worktree_dir(
-            repo,
-            "feat/x",
-            &legacy_worktree_dir(repo, "feat/x")
-        ));
     }
 
     #[test]
@@ -1417,13 +1395,6 @@ mod tests {
     }
 
     #[test]
-    fn legacy_worktree_dir_is_a_sibling_of_the_repo() {
-        let dir = legacy_worktree_dir(Path::new("/home/a/dev/paneflow"), "feat/x");
-        assert_eq!(dir, PathBuf::from("/home/a/dev/paneflow.worktrees/feat-x"));
-        assert!(!dir.starts_with("/home/a/dev/paneflow/"));
-    }
-
-    #[test]
     fn hashed_worktree_dir_disambiguates_slug_collisions() {
         let _root = test_support::scoped_root(PathBuf::from("/home/a/paneflow-worktrees"));
         let repo = Path::new("/home/a/dev/paneflow");
@@ -1438,11 +1409,6 @@ mod tests {
         assert!(is_paneflow_worktree_dir(repo, a, &hashed_a));
         assert!(is_paneflow_worktree_dir(repo, b, &hashed_b));
         assert!(!hashed_a.starts_with("/home/a/dev/paneflow/"));
-        assert!(is_paneflow_worktree_dir(
-            repo,
-            a,
-            &legacy_worktree_dir_hashed(repo, a)
-        ));
     }
 
     #[test]

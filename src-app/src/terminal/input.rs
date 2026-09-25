@@ -933,7 +933,7 @@ impl TerminalView {
         }
 
         if event.button == MouseButton::Middle {
-            #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+            #[cfg(target_os = "linux")]
             {
                 if let Some(item) = cx.read_from_primary()
                     && let Some(text) = item.text()
@@ -965,7 +965,7 @@ impl TerminalView {
         }
 
         if let Some(text) = copied {
-            #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+            #[cfg(target_os = "linux")]
             cx.write_to_primary(ClipboardItem::new_string(text.clone()));
             cx.write_to_clipboard(ClipboardItem::new_string(text));
             cx.emit(TerminalEvent::SelectionCopied);
@@ -987,7 +987,7 @@ impl TerminalView {
                 let text = smol::unblock(move || backend.select_all_text()).await;
                 let _ = this.update(cx, |view, cx| {
                     if let Some(text) = text.filter(|text| !text.is_empty()) {
-                        #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+                        #[cfg(target_os = "linux")]
                         cx.write_to_primary(ClipboardItem::new_string(text.clone()));
                         cx.write_to_clipboard(ClipboardItem::new_string(text));
                         cx.emit(TerminalEvent::SelectionCopied);

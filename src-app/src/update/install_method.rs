@@ -87,17 +87,15 @@ pub fn detect() -> InstallMethod {
         crate::runtime_paths::strip_verbatim_prefix(std::fs::canonicalize(&exe).unwrap_or(exe));
 
     #[cfg(target_os = "windows")]
-    let (program_files, local_app_data): (Option<OsString>, Option<OsString>) =
-        (std::env::var_os("ProgramFiles"), None);
+    let program_files: Option<OsString> = std::env::var_os("ProgramFiles");
     #[cfg(not(target_os = "windows"))]
-    let (program_files, local_app_data): (Option<OsString>, Option<OsString>) = (None, None);
+    let program_files: Option<OsString> = None;
 
     let result = classify(
         &canonical,
         std::env::var_os("HOME"),
         std::env::var_os("APPIMAGE"),
         program_files,
-        local_app_data,
     );
 
     #[cfg(target_os = "macos")]
@@ -163,17 +161,12 @@ fn classify(
     home: Option<OsString>,
     appimage: Option<OsString>,
     program_files: Option<OsString>,
-    local_app_data: Option<OsString>,
 ) -> InstallMethod {
     if let Some(bundle_path) = app_bundle_path(canonical) {
         return InstallMethod::AppBundle { bundle_path };
     }
 
-    if let Some(install_path) = windows_msi_install_path(
-        canonical,
-        program_files.as_deref(),
-        local_app_data.as_deref(),
-    ) {
+    if let Some(install_path) = windows_msi_install_path(canonical, program_files.as_deref()) {
         return InstallMethod::WindowsMsi { install_path };
     }
 
@@ -211,7 +204,6 @@ fn classify(
 fn windows_msi_install_path(
     canonical: &Path,
     program_files: Option<&std::ffi::OsStr>,
-    _local_app_data: Option<&std::ffi::OsStr>,
 ) -> Option<PathBuf> {
     program_files
         .map(|p| PathBuf::from(p).join("PaneFlow"))
@@ -312,13 +304,13 @@ mod tests {
 
     #[test]
     fn system_package_usr_bin() {
-        let r = classify(Path::new("/usr/bin/paneflow"), None, None, None, None);
+        let r = classify(Path::new("/usr/bin/paneflow"), None, None, None);
         assert!(matches!(r, InstallMethod::SystemPackage { .. }));
     }
 
     #[test]
     fn system_package_usr_local_bin() {
-        let r = classify(Path::new("/usr/local/bin/paneflow"), None, None, None, None);
+        let r = classify(Path::new("/usr/local/bin/paneflow"), None, None, None);
         assert!(matches!(r, InstallMethod::SystemPackage { .. }));
     }
 
@@ -328,7 +320,6 @@ mod tests {
             Path::new("/tmp/.mount_abc123/usr/bin/paneflow"),
             None,
             Some(OsString::from("/home/u/Downloads/paneflow.AppImage")),
-            None,
             None,
         );
         match r {
@@ -353,7 +344,6 @@ mod tests {
             None,
             None,
             None,
-            None,
         );
         match r {
             InstallMethod::AppImage {
@@ -374,7 +364,6 @@ mod tests {
             Some(OsString::from("/home/u")),
             None,
             None,
-            None,
         );
         match r {
             InstallMethod::TarGz { app_dir } => {
@@ -391,7 +380,6 @@ mod tests {
             Some(OsString::from("/home/u")),
             None,
             None,
-            None,
         );
         assert_eq!(r, InstallMethod::Unknown);
     }
@@ -403,7 +391,6 @@ mod tests {
             Some(OsString::from("/home/u")),
             None,
             None,
-            None,
         );
         assert_eq!(r, InstallMethod::Unknown);
     }
@@ -413,7 +400,6 @@ mod tests {
         let r = classify(
             Path::new("/Applications/PaneFlow.app/Contents/MacOS/paneflow"),
             Some(OsString::from("/Users/alice")),
-            None,
             None,
             None,
         );
@@ -430,7 +416,6 @@ mod tests {
         let r = classify(
             Path::new("/Users/alice/Applications/PaneFlow.app/Contents/MacOS/paneflow"),
             Some(OsString::from("/Users/alice")),
-            None,
             None,
             None,
         );
@@ -452,7 +437,6 @@ mod tests {
             None,
             None,
             None,
-            None,
         );
         assert!(matches!(r, InstallMethod::AppBundle { .. }));
     }
@@ -462,7 +446,6 @@ mod tests {
         let r = classify(
             Path::new("/Users/alice/bin/paneflow"),
             Some(OsString::from("/Users/alice")),
-            None,
             None,
             None,
         );
@@ -516,13 +499,7 @@ mod tests {
         std::os::unix::fs::symlink(&real_bin, &sym).unwrap();
 
         let canonical = std::fs::canonicalize(&sym).unwrap();
-        let r = classify(
-            &canonical,
-            Some(OsString::from(tmp.path())),
-            None,
-            None,
-            None,
-        );
+        let r = classify(&canonical, Some(OsString::from(tmp.path())), None, None);
         match r {
             InstallMethod::TarGz { app_dir } => {
                 assert_eq!(app_dir, tmp.path().join(".local/paneflow.app"));
@@ -538,7 +515,6 @@ mod tests {
             None,
             None,
             Some(OsString::from("C:/Program Files")),
-            Some(OsString::from("C:/Users/alice/AppData/Local")),
         );
         match r {
             InstallMethod::WindowsMsi { install_path } => {
@@ -549,27 +525,21 @@ mod tests {
     }
 
     #[test]
-    fn windows_local_app_data_is_unknown_until_per_user_msi_ships() {
-        let r = classify(
-            Path::new("C:/Users/alice/AppData/Local/Programs/PaneFlow/paneflow.exe"),
-            None,
-            None,
-            Some(OsString::from("C:/Program Files")),
-            Some(OsString::from("C:/Users/alice/AppData/Local")),
-        );
-        assert_eq!(r, InstallMethod::Unknown);
-    }
-
-    #[test]
     fn windows_binary_outside_standard_paths_is_unknown() {
         let r = classify(
             Path::new("C:/dev/paneflow/target/release/paneflow.exe"),
             None,
             None,
             Some(OsString::from("C:/Program Files")),
-            Some(OsString::from("C:/Users/alice/AppData/Local")),
         );
         assert_eq!(r, InstallMethod::Unknown);
+        let per_user = classify(
+            Path::new("C:/Users/alice/AppData/Local/Programs/PaneFlow/paneflow.exe"),
+            None,
+            None,
+            Some(OsString::from("C:/Program Files")),
+        );
+        assert_eq!(per_user, InstallMethod::Unknown);
     }
 
     #[test]
@@ -582,7 +552,6 @@ mod tests {
             None,
             None,
             Some(OsString::from("C:/Program Files")),
-            Some(OsString::from("C:/Users/alice/AppData/Local")),
         );
         assert!(matches!(r, InstallMethod::WindowsMsi { .. }), "got {r:?}");
     }
@@ -591,7 +560,6 @@ mod tests {
     fn windows_msi_detection_ignored_when_env_vars_missing() {
         let r = classify(
             Path::new("C:/Program Files/PaneFlow/paneflow.exe"),
-            None,
             None,
             None,
             None,

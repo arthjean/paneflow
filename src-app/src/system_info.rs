@@ -140,7 +140,7 @@ fn metal_device_names() -> Option<String> {
     (!names.is_empty()).then(|| names.join(", "))
 }
 
-#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+#[cfg(target_os = "linux")]
 fn os_description() -> String {
     for path in [
         "/etc/os-release",
@@ -156,7 +156,7 @@ fn os_description() -> String {
     UNKNOWN.to_string()
 }
 
-#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+#[cfg(target_os = "linux")]
 fn parse_os_release(content: &str) -> Option<String> {
     fn field<'a>(content: &'a str, key: &str) -> Option<&'a str> {
         content.lines().find_map(|line| {
@@ -266,17 +266,7 @@ fn os_description() -> String {
     out
 }
 
-#[cfg(not(any(
-    target_os = "linux",
-    target_os = "freebsd",
-    target_os = "macos",
-    target_os = "windows"
-)))]
-fn os_description() -> String {
-    std::env::consts::OS.to_string()
-}
-
-#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+#[cfg(target_os = "linux")]
 fn display_server_description() -> Option<String> {
     let compositor = gpui::guess_compositor();
     Some(match std::env::var("XDG_CURRENT_DESKTOP") {
@@ -287,12 +277,12 @@ fn display_server_description() -> Option<String> {
     })
 }
 
-#[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
+#[cfg(not(target_os = "linux"))]
 fn display_server_description() -> Option<String> {
     None
 }
 
-#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+#[cfg(target_os = "linux")]
 fn cpu_description() -> String {
     if let Ok(content) = std::fs::read_to_string("/proc/cpuinfo")
         && let Some(model) = parse_cpuinfo_model(&content)
@@ -308,7 +298,7 @@ fn cpu_description() -> String {
     UNKNOWN.to_string()
 }
 
-#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+#[cfg(target_os = "linux")]
 fn parse_cpuinfo_model(content: &str) -> Option<String> {
     let field = |wanted: &str, case_sensitive: bool| -> Option<String> {
         content.lines().find_map(|line| {
@@ -346,16 +336,6 @@ fn cpu_description() -> String {
         .ok()
         .filter(|name| !name.is_empty())
         .unwrap_or_else(|| UNKNOWN.to_string())
-}
-
-#[cfg(not(any(
-    target_os = "linux",
-    target_os = "freebsd",
-    target_os = "macos",
-    target_os = "windows"
-)))]
-fn cpu_description() -> String {
-    UNKNOWN.to_string()
 }
 
 fn terminal_engine_description() -> String {
@@ -495,11 +475,7 @@ mod tests {
         .to_string();
         println!("{report}");
 
-        let expected_lines = if cfg!(any(target_os = "linux", target_os = "freebsd")) {
-            7
-        } else {
-            6
-        };
+        let expected_lines = if cfg!(target_os = "linux") { 7 } else { 6 };
         assert_eq!(report.lines().count(), expected_lines, "{report}");
 
         for line in report.lines() {
@@ -512,7 +488,7 @@ mod tests {
         }
     }
 
-    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    #[cfg(target_os = "linux")]
     #[test]
     fn os_release_prefers_the_pretty_name() {
         let content = "NAME=\"Fedora Linux\"\n\
@@ -524,7 +500,7 @@ mod tests {
         );
     }
 
-    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    #[cfg(target_os = "linux")]
     #[test]
     fn os_release_falls_back_to_name_and_version_id() {
         let content = "ID=alpine\nNAME=\"Alpine Linux\"\nVERSION_ID=3.21.0\n";
@@ -534,7 +510,7 @@ mod tests {
         );
     }
 
-    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    #[cfg(target_os = "linux")]
     #[test]
     fn os_release_without_a_version_still_yields_the_name() {
         assert_eq!(
@@ -543,20 +519,20 @@ mod tests {
         );
     }
 
-    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    #[cfg(target_os = "linux")]
     #[test]
     fn os_release_does_not_match_a_key_by_suffix() {
         let content = "VERSION_ID=44\nIMAGE_VERSION=1.2\n";
         assert_eq!(parse_os_release(content), None);
     }
 
-    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    #[cfg(target_os = "linux")]
     #[test]
     fn os_release_that_names_nothing_yields_none() {
         assert_eq!(parse_os_release("ID=weird\nPRETTY_NAME=\"\"\n"), None);
     }
 
-    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    #[cfg(target_os = "linux")]
     #[test]
     fn cpuinfo_returns_the_first_model_name() {
         let content = "processor\t: 0\n\
@@ -570,7 +546,7 @@ mod tests {
         );
     }
 
-    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    #[cfg(target_os = "linux")]
     #[test]
     fn cpuinfo_ignores_the_numeric_x86_model_field() {
         let content = "processor\t: 0\n\
@@ -584,7 +560,7 @@ mod tests {
         );
     }
 
-    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    #[cfg(target_os = "linux")]
     #[test]
     fn cpuinfo_accepts_the_arm_model_key() {
         let content = "processor\t: 0\n\
@@ -596,7 +572,7 @@ mod tests {
         );
     }
 
-    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    #[cfg(target_os = "linux")]
     #[test]
     fn cpuinfo_without_a_model_yields_none() {
         let content = "processor\t: 0\n\

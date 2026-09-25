@@ -81,11 +81,6 @@ fn parent_of(pid: u32) -> Option<u32> {
     parent.filter(|p| *p > 0)
 }
 
-#[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
-fn parent_of(_pid: u32) -> Option<u32> {
-    None
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

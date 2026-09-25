@@ -74,7 +74,7 @@ history names them:
 | --- | --- | --- |
 | Codex app (OpenAI) | The material language of the shell: one slightly brighter translucent highlight for hover and selection, no drop shadows, inline Settings that replace the main panel, the select, toggle, and card primitives, the sectioned sidebar rail | `refactor(ui): unify chrome on the Codex material language`, `feat(settings): shared Codex-style select, toggle, and card primitives`, `feat(settings): embed Codex-style inline settings`, `feat(theme): restore PaneFlow Light with a Codex-style light shell`, changelog 0.5.4 |
 | Cursor | The diff dock chrome: file tabs as chips, the toolbar rail skin, the changes sidebar hierarchy, the compact graphite sidebar and pale blue accent of the Cursor preset | `feat(diff-dock): Cursor-style chrome and retire the Agents environment card`, `refactor(diff-dock): give the toolbar chips the sidebar rail skin`, `docs/user/themes.md` |
-| Native window systems | Mica on Windows 11, the AppKit sidebar material on macOS, compositor blur on Linux, client-side decorations with platform caption glyphs | `feat(chrome): native compositor blur backdrop on Linux and macOS`, `feat(window-chrome): native Win11 caption glyphs in light and dark`, `feat(macos): add sidebar material setting` |
+| Native window systems | Mica on Windows 11, the AppKit sidebar material on macOS, client-side decorations with platform caption glyphs | `feat(chrome): native compositor blur backdrop on Linux and macOS`, `feat(window-chrome): native Win11 caption glyphs in light and dark`, `feat(macos): add sidebar material setting` |
 
 Paneflow borrows the reasoning of these products, not their pixels. The
 bundled Vercel, Claude, and Cursor presets are identity swaps on top of one
@@ -946,7 +946,7 @@ while the window is unfocused.
 | Windows 11 build 22621 and later | Mica by default (`window_backdrop: auto`), transparent by choice; `blurred` and `acrylic` in `paneflow.json` resolve to `auto`, so blur needs `PANEFLOW_WINDOW_BACKDROP=blurred` for one launch | Reveals the backdrop when `windows_chrome_material` is on | Transparent default background when `windows_terminal_material` is on, masked to the panel; the panel inset gutters are repainted opaque only while `windows_chrome_material` is off | Native caption glyphs in light and dark |
 | Windows 10 and older 11 | Opaque | Opaque card | Opaque | Same glyphs |
 | macOS | Transparent window surface, material dropped in fullscreen | AppKit Sidebar material when `macos_chrome_material` is on | Opaque | Traffic lights with 80 px brand padding |
-| Linux | Opaque shell; a blur region is requested from the compositor on Wayland through the ext background-effect or KDE protocols, and on X11 under KDE | Opaque, tinted from the title bar color | Opaque | Client-side decorations with GPUI's generic glyphs, or server-side when `window_decorations: server` |
+| Linux | Opaque shell, with no compositor blur | Opaque, tinted from the title bar color | Opaque | Client-side decorations with GPUI's generic glyphs, or server-side when `window_decorations: server` |
 
 Rules that follow:
 

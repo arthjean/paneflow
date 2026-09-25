@@ -14,10 +14,8 @@ pub struct PaneScan {
     pub foreground_command: Option<String>,
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos", windows))]
 const MAX_PIDS_PER_ROOT: usize = 512;
 
-#[cfg(any(target_os = "linux", target_os = "macos", windows, test))]
 fn agents_in_bfs_order<'a>(
     comms_in_bfs_order: impl Iterator<Item = &'a str>,
     agent_binaries: &[&str],
@@ -72,7 +70,6 @@ fn parse_listen_line(line: &str) -> Option<(u16, u64)> {
     Some((port, inode))
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos", windows, test))]
 const FRONTEND_ARGV: &[(&str, &str)] = &[
     ("vite", "Vite"),
     ("next", "Next.js"),
@@ -85,7 +82,6 @@ const FRONTEND_ARGV: &[(&str, &str)] = &[
     ("react-scripts", "React"),
 ];
 
-#[cfg(any(target_os = "linux", target_os = "macos", windows, test))]
 fn classify_frontend_argv<'a>(args: impl Iterator<Item = &'a str>) -> Option<&'static str> {
     for arg in args.take(8) {
         if arg
@@ -1014,14 +1010,6 @@ pub fn scan_panes(
     results
 }
 
-#[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
-pub fn scan_panes(
-    _roots: &[(u64, u32)],
-    _agent_binaries: &[&str],
-) -> std::collections::HashMap<u64, PaneScan> {
-    std::collections::HashMap::new()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1126,7 +1114,6 @@ mod tests {
         );
     }
 
-    #[cfg(any(target_os = "linux", target_os = "macos", windows))]
     #[test]
     fn scan_panes_detects_current_process_listener() {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
@@ -1144,7 +1131,6 @@ mod tests {
         );
     }
 
-    #[cfg(any(target_os = "linux", target_os = "macos", windows))]
     #[test]
     fn scan_panes_ignores_pid_zero_roots() {
         let scan = scan_panes(&[(1, 0)], &[]);
