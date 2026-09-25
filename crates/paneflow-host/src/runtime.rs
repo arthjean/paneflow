@@ -21,7 +21,6 @@ const DRAIN_SLICE_BYTES: usize = 64 * 1024;
 const CONTROL_QUEUE_SLOTS: usize = 64;
 const INPUT_QUEUE_SLOTS: usize = 64;
 pub const MAX_INPUT_QUEUE_BYTES: usize = 2 * 1024 * 1024;
-pub const PTY_INBOX_CHUNK_SLOTS: usize = 64;
 const QUEUE_RETRY: Duration = Duration::from_millis(5);
 const PROCESS_SCAN_INTERVAL: Duration = Duration::from_millis(500);
 const DESCENDANT_RECONCILE_MIN: Duration = Duration::from_millis(100);
@@ -384,10 +383,6 @@ impl LaunchHandle {
 
     pub fn canceller(&self) -> LaunchCancel {
         LaunchCancel(Arc::clone(&self.shared))
-    }
-
-    pub fn generation(&self) -> SessionGeneration {
-        self.generation
     }
 }
 

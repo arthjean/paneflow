@@ -64,15 +64,6 @@ impl AgentStateSource {
             AgentStateSource::Hook => "hook",
         }
     }
-
-    pub fn parse(raw: &str) -> Option<Self> {
-        match raw {
-            "terminal" => Some(AgentStateSource::Terminal),
-            "session_registry" => Some(AgentStateSource::SessionRegistry),
-            "hook" => Some(AgentStateSource::Hook),
-            _ => None,
-        }
-    }
 }
 
 pub const SOURCE_TAKEOVER_SILENCE: Duration = Duration::from_secs(20);
@@ -361,14 +352,6 @@ mod tests {
             assert_eq!(AgentState::parse(state.wire_str()), Some(state));
         }
         assert_eq!(AgentState::parse("idle"), None);
-        for source in [
-            AgentStateSource::Terminal,
-            AgentStateSource::SessionRegistry,
-            AgentStateSource::Hook,
-        ] {
-            assert_eq!(AgentStateSource::parse(source.wire_str()), Some(source));
-        }
-        assert_eq!(AgentStateSource::parse("shim"), None);
     }
 
     #[test]

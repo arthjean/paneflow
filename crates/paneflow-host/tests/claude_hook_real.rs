@@ -188,8 +188,7 @@ fn real_claude_hooks_report_a_hand_typed_prompt_and_survive_controller_loss() {
     let mut started = BTreeSet::new();
     while started != expected {
         let frame = wait_for_event(&mut follower, Duration::from_secs(90), &mut seen, |frame| {
-            frame["source"] == "hook"
-                && frame["kind"] == "ai.session_start"
+            frame["kind"] == "ai.session_start"
                 && frame["hook_payload"]["hook_event_name"] == "HookSeen"
         });
         started.insert(frame["session"].as_str().expect("session id").to_string());
@@ -209,9 +208,8 @@ fn real_claude_hooks_report_a_hand_typed_prompt_and_survive_controller_loss() {
     wait_for_event(&mut follower, Duration::from_secs(30), &mut seen, |frame| {
         frame["session"].as_str() == Some(sessions[0].0.as_str())
             && frame["kind"] == "ai.prompt_submit"
-            && frame["source"] == "hook"
     });
-    let question = wait_for_event(
+    wait_for_event(
         &mut follower,
         Duration::from_secs(120),
         &mut seen,
@@ -221,10 +219,6 @@ fn real_claude_hooks_report_a_hand_typed_prompt_and_survive_controller_loss() {
                 && frame["kind"] == "ai.session_start"
                 && frame["hook_payload"]["hook_event_name"] == "HookSeen"
         },
-    );
-    assert!(
-        question["source"] == "hook",
-        "AskUserQuestion must arrive through a latch-only hook: {question}"
     );
 
     drop(sender);
@@ -311,7 +305,7 @@ fn a_hard_kill_of_paneflow_never_rewrites_the_claude_integration() {
     let mut started = BTreeSet::new();
     while started != expected {
         let frame = wait_for_event(&mut follower, Duration::from_secs(90), &mut seen, |frame| {
-            frame["source"] == "hook" && frame["kind"] == "ai.session_start"
+            frame["kind"] == "ai.session_start"
         });
         started.insert(frame["session"].as_str().expect("session id").to_string());
     }

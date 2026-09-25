@@ -5,7 +5,7 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
 use paneflow_agent_config::{canonical_command_for_alias, canonical_command_for_script_path};
-use paneflow_ipc_client::ai_hook::{AiToolName, LifecycleEventSource, SessionPid, SurfaceId};
+use paneflow_ipc_client::ai_hook::{AiToolName, LifecycleEventSource, SessionPid};
 use paneflow_ipc_client::host_control::{host_endpoint_from, session_id_from};
 use serde_json::Value;
 
@@ -15,7 +15,6 @@ use crate::MAX_STDIN_BYTES;
 
 const TOOL_ENV: &str = "PANEFLOW_AI_TOOL";
 const PID_ENV: &str = "PANEFLOW_AI_PID";
-const SURFACE_ID_ENV: &str = "PANEFLOW_SURFACE_ID";
 const EXIT_CODE_ENV: &str = "PANEFLOW_AI_EXIT_CODE";
 const EVENT_SOURCE_ENV: &str = "PANEFLOW_AI_EVENT_SOURCE";
 const HOOK_LOG_ENV: &str = "PANEFLOW_HOOK_LOG";
@@ -67,10 +66,8 @@ pub(crate) fn dispatch() {
     };
     let session_dir = env::var_os(SESSION_DIR_ENV);
     let context = FrameContext {
-        workspace_id: 0,
         tool,
         pid: read_ai_pid_from(env::var(PID_ENV).ok().as_deref()),
-        surface_id: read_surface_id_from(env::var(SURFACE_ID_ENV).ok().as_deref()),
         event_source: read_event_source_from(env::var(EVENT_SOURCE_ENV).ok().as_deref()),
         runtime_generation: read_runtime_generation_from(
             env::var(RUNTIME_GENERATION_ENV).ok().as_deref(),
@@ -151,10 +148,6 @@ fn catalog_tool_name(candidate: &str) -> Option<&'static str> {
 
 fn read_ai_pid_from(raw: Option<&str>) -> Option<SessionPid> {
     raw?.parse::<u32>().ok().and_then(SessionPid::new)
-}
-
-fn read_surface_id_from(raw: Option<&str>) -> Option<SurfaceId> {
-    raw?.parse::<u64>().ok().and_then(SurfaceId::new)
 }
 
 fn read_exit_code_from(raw: Option<&str>) -> Option<i32> {
@@ -340,8 +333,6 @@ mod tests {
 
     #[test]
     fn optional_identifiers_and_event_source_are_validated() {
-        assert_eq!(read_surface_id_from(Some("7")).map(SurfaceId::get), Some(7));
-        assert!(read_surface_id_from(Some("0")).is_none());
         assert_eq!(
             read_event_source_from(Some("interrupt")),
             Some(LifecycleEventSource::Interrupt)

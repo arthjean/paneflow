@@ -35,23 +35,15 @@ pub mod stream;
 pub mod tail;
 pub mod viewport_scan;
 
-pub use paneflow_config::schema::{HostInstanceToken, SessionGeneration, SessionId, WorkspaceId};
+pub use paneflow_config::schema::{HostInstanceToken, SessionGeneration, SessionId};
 
-pub use agent::{AgentEvent, AgentEventKind, AgentSnapshotEntry};
-pub use bootstrap::{
-    BootstrapError, HostAdoption, Probe, ensure_host_running, probe, stop_incompatible_host,
-};
-pub use client::{Attachment, HostClient, HostClientError, OutputEnd, SessionTextReply};
+pub use bootstrap::{BootstrapError, Probe, ensure_host_running, probe};
+pub use client::{Attachment, HostClient, HostClientError};
 pub use host::{
-    CreateSession, HostError, INACTIVE_ROWS_PER_WORKSPACE, MAX_PENDING_LAUNCHES, SessionHost,
-    SessionReconnection, SessionRow, SessionSummary, SessionText, ShutdownReport,
-    UnresolvedSession,
+    CreateSession, HostError, SessionHost, SessionReconnection, SessionRow, SessionSummary,
 };
-pub use manifest::{
-    FinalOutput, HookRecord, HostedSessionRuntime, SessionLaunch, SessionLifecycle, SessionManifest,
-};
+pub use manifest::{SessionLifecycle, SessionManifest};
 pub use process::{ProcessIdentity, ProcessVerdict};
-pub use protocol::{ClientHello, EngineIdentity, HOST_PROTOCOL_VERSION, HostIdentity};
-pub use runtime::{Checkpoint, ViewportScan};
-pub use runtime_observer::RuntimeObservation;
+pub use protocol::{ClientHello, HOST_PROTOCOL_VERSION};
+pub use runtime::Checkpoint;
 pub use server::{ServerHandle, serve};

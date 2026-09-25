@@ -1,5 +1,5 @@
 use std::collections::{BTreeMap, VecDeque};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{RecvTimeoutError, SyncSender, sync_channel};
 use std::sync::{Arc, Condvar, Mutex};
@@ -72,10 +72,6 @@ impl SessionPersistence {
 
     pub fn next_revision(&self) -> u64 {
         self.revision.fetch_add(1, Ordering::AcqRel) + 1
-    }
-
-    pub fn revision(&self) -> u64 {
-        self.revision.load(Ordering::Acquire)
     }
 
     pub fn written_revision(&self) -> u64 {
@@ -193,7 +189,6 @@ struct Shared {
 }
 
 pub struct Persistence {
-    home: PathBuf,
     shared: Arc<Shared>,
 }
 
@@ -208,14 +203,7 @@ impl Persistence {
         std::thread::Builder::new()
             .name("paneflow-host-persist".into())
             .spawn(move || writer_loop(&worker_home, &worker))?;
-        Ok(Self {
-            home: home.to_path_buf(),
-            shared,
-        })
-    }
-
-    pub fn home(&self) -> &Path {
-        &self.home
+        Ok(Self { shared })
     }
 
     pub fn report(&self) -> QueueReport {

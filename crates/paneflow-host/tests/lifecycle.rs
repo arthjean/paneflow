@@ -286,7 +286,8 @@ fn a_gpu_free_client_drives_agents_and_surfaces_while_no_window_is_open() {
     )
     .unwrap();
     assert_eq!(header["id"].as_u64(), Some(follow_id));
-    assert!(header["result"]["following"].as_bool().unwrap_or_default());
+    assert!(header["result"].get("following").is_none());
+    assert!(header["result"].get("host_instance").is_none());
     let known = header["result"]["sessions"]
         .as_array()
         .expect("sessions")
@@ -322,7 +323,7 @@ fn a_gpu_free_client_drives_agents_and_surfaces_while_no_window_is_open() {
     let frame = next_agent_event(&mut follower);
     assert_eq!(frame["session"], session.as_str());
     assert_eq!(frame["kind"], "ai.prompt_submit");
-    assert_eq!(frame["source"], "hook");
+    assert!(frame.get("source").is_none());
     assert!(
         frame["agent"].is_null(),
         "a core frame carries the event, never a controller state"
@@ -337,15 +338,22 @@ fn a_gpu_free_client_drives_agents_and_surfaces_while_no_window_is_open() {
                 "runtime_generation": generation,
                 "tool": "claude",
                 "event_source": "hook",
+                "source": "retired-source-from-an-older-hook",
+                "result": "a retired summary alias",
                 "emitted_at_ms": 2_000,
-                "hook_payload": {"message": "Needs your approval"},
+                "hook_payload": {"message": "Needs your approval", "result": "a retired summary alias"},
             }),
         )
         .unwrap();
-    assert_eq!(waiting["accepted"], true);
+    assert_eq!(
+        waiting["accepted"], true,
+        "a retired source key or result alias is ignored, never a reason to refuse"
+    );
     let frame = next_agent_event(&mut follower);
     assert_eq!(frame["kind"], "ai.notification");
     assert_eq!(frame["hook_payload"]["message"], "Needs your approval");
+    assert!(frame.get("source").is_none());
+    assert!(frame["summary"].is_null());
 
     let stale = hook
         .request(

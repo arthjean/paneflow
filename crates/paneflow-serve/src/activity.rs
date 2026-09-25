@@ -178,7 +178,6 @@ pub fn reconcile_adopted(summary: &mut AgentSummary, lifecycle: &SessionLifecycl
 mod tests {
     use super::*;
     use paneflow_config::schema::SessionId;
-    use paneflow_ipc_client::agent::AgentStateSource;
     use serde_json::json;
 
     fn event(kind: AgentEventKind, emitted_at_ms: Option<u64>, pid: Option<u32>) -> AgentEvent {
@@ -194,7 +193,6 @@ mod tests {
             exit_code: (kind == AgentEventKind::Exit).then_some(0),
             emitted_at_ms,
             received_at_ms: None,
-            source: AgentStateSource::Hook,
             event_source: None,
             payload: json!({}),
         }

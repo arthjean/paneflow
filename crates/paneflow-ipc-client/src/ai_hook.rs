@@ -3,8 +3,6 @@ use std::path::{Path, PathBuf};
 
 use serde_json::{Map, Value};
 
-pub use crate::MAX_FRAME_BYTES;
-
 pub const METHOD_SESSION_START: &str = "ai.session_start";
 pub const METHOD_SESSION_END: &str = "ai.session_end";
 pub const METHOD_PROMPT_SUBMIT: &str = "ai.prompt_submit";
@@ -215,10 +213,8 @@ impl LifecycleEventSource {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct AiHookParams {
-    pub workspace_id: u64,
     pub tool: AiToolName,
     pub pid: Option<SessionPid>,
-    pub surface_id: Option<SurfaceId>,
     pub tool_name: Option<String>,
     pub exit_code: Option<i32>,
     pub event_source: Option<LifecycleEventSource>,
@@ -228,12 +224,10 @@ pub struct AiHookParams {
 }
 
 impl AiHookParams {
-    pub fn new(workspace_id: u64, tool: AiToolName, hook_payload: Value) -> Self {
+    pub fn new(tool: AiToolName, hook_payload: Value) -> Self {
         Self {
-            workspace_id,
             tool,
             pid: None,
-            surface_id: None,
             tool_name: None,
             exit_code: None,
             event_source: None,
@@ -245,13 +239,9 @@ impl AiHookParams {
 
     pub fn to_value(&self) -> Value {
         let mut value = Map::new();
-        value.insert("workspace_id".into(), Value::from(self.workspace_id));
         value.insert("tool".into(), Value::String(self.tool.as_str().to_owned()));
         if let Some(pid) = self.pid {
             value.insert("pid".into(), Value::from(pid.get()));
-        }
-        if let Some(surface_id) = self.surface_id {
-            value.insert("surface_id".into(), Value::from(surface_id.get()));
         }
         if let Some(tool_name) = &self.tool_name {
             value.insert("tool_name".into(), Value::String(tool_name.clone()));
@@ -367,12 +357,10 @@ mod tests {
     #[test]
     fn a_host_event_addresses_the_durable_session_not_a_surface() {
         let mut params = AiHookParams::new(
-            7,
             AiToolName::parse("claude").expect("valid test tool"),
             json!({"summary": "done"}),
         );
         params.pid = SessionPid::new(42);
-        params.surface_id = SurfaceId::new(9);
         params.emitted_at_ms = Some(1_234);
         let frame = AiHookFrame::new(AiHookMethod::Stop, params);
         let event = frame.to_agent_event_params("11112222-3333-4444-5555-666677778888");
@@ -393,7 +381,6 @@ mod tests {
     #[test]
     fn frame_serializes_only_canonical_top_level_fields() {
         let mut params = AiHookParams::new(
-            7,
             AiToolName::parse("codex").expect("valid test tool"),
             json!({"message": "Approve?"}),
         );

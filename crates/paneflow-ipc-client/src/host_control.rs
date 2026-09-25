@@ -17,10 +17,6 @@ pub const REQUEST_DEADLINE: Duration = Duration::from_secs(10);
 
 pub const ENV_HOST_ENDPOINT: &str = "PANEFLOW_HOST_ENDPOINT";
 
-pub const ENV_SESSION_ID: &str = "PANEFLOW_SESSION_ID";
-
-pub const ENV_WORKSPACE_UUID: &str = "PANEFLOW_WORKSPACE_UUID";
-
 pub const METHOD_HOST_HELLO: &str = "host.hello";
 
 pub const METHOD_AGENT_EVENT: &str = "agent.event";
@@ -45,10 +41,6 @@ pub fn session_id_from(raw: Option<&str>) -> Option<String> {
     raw.map(str::trim)
         .filter(|value| !value.is_empty())
         .map(str::to_owned)
-}
-
-pub fn session_id_from_env() -> Option<String> {
-    session_id_from(std::env::var(ENV_SESSION_ID).ok().as_deref())
 }
 
 pub fn control_hello(client: &str) -> Value {
@@ -280,10 +272,6 @@ impl HostTransport {
         self.request(SURFACE_LIST, json!({}))?;
         self.listed_session(surface_id)
             .ok_or_else(|| format!("Surface not found: no pane {surface_id} on this host"))
-    }
-
-    pub fn endpoint(&self) -> &Path {
-        &self.endpoint
     }
 
     pub fn calls(&self) -> u64 {

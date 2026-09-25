@@ -866,7 +866,8 @@ operation), `session.output` (contiguous bytes from an offset, optionally
 followed), `session.input`, `session.resize`, `agent.snapshot` and
 `host.shutdown` (refused with the live session list while any session runs)
 follow. Control frames
-are capped at 64 KiB, data chunks at 1 MiB, a checkpoint at 64 MiB; an
+are capped at 64 KiB, and output travels in 32 KiB data chunks inside those
+64 KiB frames; a checkpoint is capped at 64 MiB; an
 oversized frame or checkpoint is refused without unbounded allocation and
 without stopping the session. The host is the only responder to terminal
 queries; clipboard, bell and notification effects are not replayed from

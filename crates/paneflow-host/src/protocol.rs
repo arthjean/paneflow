@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use base64::Engine as _;
-use paneflow_config::schema::{HostInstanceToken, SessionGeneration, SessionId};
+use paneflow_config::schema::HostInstanceToken;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
@@ -12,20 +12,15 @@ pub use paneflow_ipc_client::host_control::{
 
 pub const LOCAL_BUILD_VERSION: &str = env!("CARGO_PKG_VERSION");
 
-pub const MAX_DATA_CHUNK_BYTES: usize = 1024 * 1024;
-
 pub const MAX_CHECKPOINT_BYTES: usize = 64 * 1024 * 1024;
 
 pub const MAX_OUTPUT_TAIL_BYTES: usize = 8 * 1024 * 1024;
-
-pub const MAX_CLIENT_QUEUE_BYTES: usize = 8 * 1024 * 1024;
 
 pub const REQUEST_DEADLINE: Duration = Duration::from_secs(10);
 
 pub const DATA_CHUNK_RAW_BYTES: usize = 32 * 1024;
 
 const _: () = assert!(DATA_CHUNK_RAW_BYTES * 4 / 3 + 1024 <= MAX_CONTROL_FRAME_BYTES);
-const _: () = assert!(DATA_CHUNK_RAW_BYTES <= MAX_DATA_CHUNK_BYTES);
 
 pub const ERR_PARSE: i64 = -32700;
 pub const ERR_INVALID_REQUEST: i64 = -32600;
@@ -150,8 +145,7 @@ impl ClientHello {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, thiserror::Error)]
-#[serde(tag = "kind", rename_all = "snake_case")]
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum Incompatibility {
     #[error("host protocol {offered} does not match the expected protocol {expected}")]
     Protocol { expected: u32, offered: u32 },
@@ -214,12 +208,6 @@ pub fn build_drift(expected: &str, offered: Option<&str>) -> Option<Incompatibil
         expected: expected.to_string(),
         offered: offered.to_string(),
     })
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SessionRef {
-    pub session: SessionId,
-    pub generation: SessionGeneration,
 }
 
 pub fn encode_data(bytes: &[u8]) -> String {
@@ -306,8 +294,6 @@ mod tests {
         assert!(
             matches!(error, Incompatibility::Engine { ref field, .. } if field == "source_sha")
         );
-        let text = serde_json::to_string(&error).unwrap();
-        assert!(text.contains("\"kind\":\"engine\""));
     }
 
     #[test]

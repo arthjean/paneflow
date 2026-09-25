@@ -402,13 +402,8 @@ fn handle_connection(mut wire: Wire, host: Arc<SessionHost>, shutdown: Arc<Atomi
                         return;
                     }
                 }
-                Err(envelope) => {
-                    let _ = wire.write_json(&error_envelope(
-                        &id,
-                        ERR_INCOMPATIBLE,
-                        envelope.0,
-                        Some(envelope.1),
-                    ));
+                Err(message) => {
+                    let _ = wire.write_json(&error_envelope(&id, ERR_INCOMPATIBLE, message, None));
                     return;
                 }
             }
@@ -555,13 +550,9 @@ fn wake_accept_loop(endpoint: &Path) {
     }
 }
 
-fn handshake(host: &SessionHost, params: &Value) -> Result<(Value, bool), (String, Value)> {
-    let hello: ClientHello = serde_json::from_value(params.clone()).map_err(|error| {
-        (
-            format!("host.hello params are invalid: {error}"),
-            json!({"kind": "invalid_hello"}),
-        )
-    })?;
+fn handshake(host: &SessionHost, params: &Value) -> Result<(Value, bool), String> {
+    let hello: ClientHello = serde_json::from_value(params.clone())
+        .map_err(|error| format!("host.hello params are invalid: {error}"))?;
     let identity = host.identity();
     protocol::check_compatibility(
         HOST_PROTOCOL_VERSION,
@@ -570,12 +561,9 @@ fn handshake(host: &SessionHost, params: &Value) -> Result<(Value, bool), (Strin
         hello.engine.as_ref(),
     )
     .map_err(|incompatibility| {
-        (
-            format!(
-                "client {} is incompatible with this host: {incompatibility}",
-                hello.client
-            ),
-            serde_json::to_value(&incompatibility).unwrap_or(Value::Null),
+        format!(
+            "client {} is incompatible with this host: {incompatibility}",
+            hello.client
         )
     })?;
     if let Some(drift) = protocol::build_drift(&identity.version, hello.build.as_deref()) {
@@ -587,18 +575,13 @@ fn handshake(host: &SessionHost, params: &Value) -> Result<(Value, bool), (Strin
     let offers_engine = hello.attaches();
     serde_json::to_value(identity)
         .map(|identity| (identity, offers_engine))
-        .map_err(|error| (error.to_string(), Value::Null))
+        .map_err(|error| error.to_string())
 }
 
 fn control_error_to_envelope(id: &Value, error: ControlError) -> Value {
     match error {
         ControlError::Params(message) => error_envelope(id, ERR_INVALID_PARAMS, message, None),
-        ControlError::NoController(message) => error_envelope(
-            id,
-            ERR_NO_CONTROLLER,
-            message,
-            Some(json!({"controller": false})),
-        ),
+        ControlError::NoController(message) => error_envelope(id, ERR_NO_CONTROLLER, message, None),
         ControlError::Host(error) => error_to_envelope(id, DispatchError::Host(error)),
     }
 }
@@ -626,50 +609,33 @@ fn error_to_envelope(id: &Value, error: DispatchError) -> Value {
             None,
         ),
         DispatchError::Host(error) => {
-            let (code, data) = match &error {
-                HostError::SessionNotFound(_) => (ERR_SESSION_NOT_FOUND, None),
+            let code = match &error {
+                HostError::SessionNotFound(_) => ERR_SESSION_NOT_FOUND,
                 HostError::SessionExists { .. } | HostError::InvalidRequest(_) => {
-                    (ERR_INVALID_PARAMS, None)
+                    ERR_INVALID_PARAMS
                 }
-                HostError::GenerationMismatch { current, .. } => (
-                    ERR_GENERATION_MISMATCH,
-                    Some(json!({"current_generation": current})),
-                ),
-                HostError::SessionNotLive(_) => (ERR_SESSION_NOT_LIVE, None),
-                HostError::SessionLive(_) | HostError::SessionsLive { .. } => {
-                    (ERR_SESSION_LIVE, None)
+                HostError::GenerationMismatch { .. } => ERR_GENERATION_MISMATCH,
+                HostError::SessionNotLive(_) => ERR_SESSION_NOT_LIVE,
+                HostError::SessionLive(_) | HostError::SessionsLive { .. } => ERR_SESSION_LIVE,
+                HostError::SessionsUnresolved { .. } | HostError::OwnershipUnresolved { .. } => {
+                    ERR_OWNERSHIP_UNRESOLVED
                 }
-                HostError::SessionsUnresolved { sessions } => (
-                    ERR_OWNERSHIP_UNRESOLVED,
-                    Some(json!({"unresolved": sessions})),
-                ),
-                HostError::LaunchPending(_) => (ERR_LAUNCH_PENDING, None),
-                HostError::OwnershipUnresolved { reason, .. } => {
-                    (ERR_OWNERSHIP_UNRESOLVED, Some(json!({"reason": reason})))
+                HostError::LaunchPending(_) => ERR_LAUNCH_PENDING,
+                HostError::Busy(_) => ERR_BUSY,
+                HostError::ShuttingDown => ERR_SHUTTING_DOWN,
+                HostError::OwnerBusy(_) => ERR_INTERNAL,
+                HostError::ProcessUnverified(_) => ERR_PROCESS_UNVERIFIED,
+                HostError::SpawnFailed { .. } => ERR_SPAWN_FAILED,
+                HostError::Runtime(RuntimeError::NotLive) => ERR_SESSION_NOT_LIVE,
+                HostError::Runtime(RuntimeError::CheckpointTooLarge { .. }) => {
+                    ERR_CHECKPOINT_TOO_LARGE
                 }
-                HostError::Busy(_) => (ERR_BUSY, None),
-                HostError::ShuttingDown => (ERR_SHUTTING_DOWN, None),
-                HostError::OwnerBusy(_) => (ERR_INTERNAL, None),
-                HostError::ProcessUnverified(_) => (ERR_PROCESS_UNVERIFIED, None),
-                HostError::SpawnFailed { .. } => (ERR_SPAWN_FAILED, None),
-                HostError::Runtime(RuntimeError::NotLive) => (ERR_SESSION_NOT_LIVE, None),
-                HostError::Runtime(RuntimeError::CheckpointTooLarge { bytes, limit }) => (
-                    ERR_CHECKPOINT_TOO_LARGE,
-                    Some(json!({"bytes": bytes, "limit": limit})),
-                ),
-                HostError::Runtime(RuntimeError::OutputEvicted {
-                    tail_start,
-                    tail_end,
-                    ..
-                }) => (
-                    ERR_OUTPUT_EVICTED,
-                    Some(json!({"tail_start": tail_start, "tail_end": tail_end})),
-                ),
-                HostError::Runtime(RuntimeError::Deadline(_)) => (ERR_DEADLINE, None),
-                HostError::Durability(_) => (protocol::ERR_DURABILITY, None),
-                HostError::Runtime(_) | HostError::Storage(_) => (ERR_INTERNAL, None),
+                HostError::Runtime(RuntimeError::OutputEvicted { .. }) => ERR_OUTPUT_EVICTED,
+                HostError::Runtime(RuntimeError::Deadline(_)) => ERR_DEADLINE,
+                HostError::Durability(_) => protocol::ERR_DURABILITY,
+                HostError::Runtime(_) | HostError::Storage(_) => ERR_INTERNAL,
             };
-            error_envelope(id, code, error.to_string(), data)
+            error_envelope(id, code, error.to_string(), None)
         }
     }
 }
@@ -862,10 +828,7 @@ fn dispatch(host: &SessionHost, method: &str, params: &Value) -> Result<Value, D
                 "next_offset": next_offset,
             }))
         }
-        METHOD_AGENT_SNAPSHOT => Ok(json!({
-            "host_instance": host.instance(),
-            "sessions": host.agent_snapshot(),
-        })),
+        METHOD_AGENT_SNAPSHOT => Ok(json!({"sessions": host.agent_snapshot()})),
         _ => Err(DispatchError::MethodNotFound(method.to_string())),
     }
 }
@@ -877,14 +840,7 @@ fn stream_agent_follow(
     id: &Value,
 ) -> Flow {
     let subscription = host.subscribe_agents();
-    let header = result_envelope(
-        id,
-        json!({
-            "host_instance": host.instance(),
-            "sessions": host.agent_snapshot(),
-            "following": true,
-        }),
-    );
+    let header = result_envelope(id, json!({"sessions": host.agent_snapshot()}));
     if wire.write_json(&header).is_err() {
         host.unsubscribe_agents(subscription.id);
         return Flow::Close;

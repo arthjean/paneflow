@@ -253,3 +253,46 @@ fn every_listed_conformance_case_passes_against_a_real_core() {
         "every case in protocol/host-conformance-v1.json runs against the real core"
     );
 }
+
+#[test]
+fn an_incompatible_hello_is_refused_with_the_unchanged_message() {
+    let home = tempfile::tempdir().unwrap();
+    let endpoint = endpoint_for("incompatible-hello");
+    let host = paneflow_host::SessionHost::open(home.path(), &endpoint).expect("a core opens");
+    let server = paneflow_host::ServerHandle::spawn(Arc::clone(&host), endpoint.clone())
+        .expect("the core serves its endpoint");
+
+    let mut newer = ClientHello::local("future-client");
+    newer.protocol = HOST_PROTOCOL_VERSION + 1;
+    let refused = HostClient::connect(&endpoint, &newer)
+        .err()
+        .expect("a newer protocol is refused");
+    assert_eq!(
+        refused.to_string(),
+        format!(
+            "local host incompatible: client future-client is incompatible with this host: host protocol {} does not match the expected protocol {HOST_PROTOCOL_VERSION}",
+            HOST_PROTOCOL_VERSION + 1
+        )
+    );
+
+    let mut foreign = ClientHello::local("foreign-engine");
+    let mut engine = foreign
+        .engine
+        .clone()
+        .expect("a local hello offers its engine");
+    let expected_sha = engine.source_sha.clone();
+    engine.source_sha = "0".repeat(40);
+    foreign.engine = Some(engine);
+    let refused = HostClient::connect(&endpoint, &foreign)
+        .err()
+        .expect("a foreign engine is refused");
+    assert_eq!(
+        refused.to_string(),
+        format!(
+            "local host incompatible: client foreign-engine is incompatible with this host: terminal engine source_sha mismatch: expected {expected_sha}, host offers {}",
+            "0".repeat(40)
+        )
+    );
+
+    drop(server);
+}

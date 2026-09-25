@@ -42,18 +42,6 @@ pub fn read(home: &Path, session: &SessionId) -> Option<String> {
     String::from_utf8(bytes).ok()
 }
 
-pub fn remove(home: &Path, session: &SessionId) {
-    let path = path(home, session);
-    match std::fs::remove_file(&path) {
-        Ok(()) => {}
-        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-        Err(error) => log::warn!(
-            "paneflow-host: cannot delete the final output {}: {error}",
-            path.display()
-        ),
-    }
-}
-
 struct ColdFile {
     path: PathBuf,
     bytes: u64,

@@ -50,16 +50,6 @@ pub enum ProcessVerdict {
     Unverifiable,
 }
 
-impl ProcessVerdict {
-    pub fn wire_str(self) -> &'static str {
-        match self {
-            Self::Live => "live",
-            Self::Gone => "gone",
-            Self::Unverifiable => "unverifiable",
-        }
-    }
-}
-
 #[cfg(windows)]
 fn process_is_absent(pid: u32) -> bool {
     use windows_sys::Win32::Foundation::{CloseHandle, ERROR_INVALID_PARAMETER};

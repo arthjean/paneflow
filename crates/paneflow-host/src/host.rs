@@ -835,10 +835,6 @@ impl SessionHost {
         }
     }
 
-    pub fn persistence_report(&self) -> QueueReport {
-        self.persistence.report()
-    }
-
     pub(crate) fn streaming_connections(&self) -> &AtomicUsize {
         &self.streaming_connections
     }
@@ -932,10 +928,6 @@ impl SessionHost {
 
     pub fn instance(&self) -> &HostInstanceToken {
         &self.identity.host_instance
-    }
-
-    pub fn home(&self) -> &Path {
-        &self.home
     }
 
     pub fn helper_dir(&self) -> Option<&Path> {
@@ -1191,14 +1183,12 @@ impl SessionHost {
                 session: summary.manifest.session,
                 generation: summary.manifest.generation,
                 launch_shell: summary.manifest.launch.shell.clone(),
-                live: summary.live,
                 lifecycle: summary.manifest.lifecycle,
                 process: summary.manifest.process,
                 workspace: summary.manifest.workspace,
                 title: summary.manifest.title,
                 cwd: Some(summary.manifest.current_cwd.unwrap_or(summary.manifest.cwd)),
                 last_hook: summary.manifest.last_hook,
-                hook_revision: summary.manifest.hook_revision,
                 generation_started_at_ms: summary.manifest.generation_started_at_ms,
                 screen_changed_at_ms: summary.manifest.screen_changed_at_ms,
                 screen_activity: summary.manifest.screen_activity,

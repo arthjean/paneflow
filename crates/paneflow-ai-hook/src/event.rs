@@ -3,7 +3,6 @@ use std::str::FromStr;
 
 use paneflow_ipc_client::ai_hook::{
     AiHookFrame, AiHookMethod, AiHookParams, AiToolName, LifecycleEventSource, SessionPid,
-    SurfaceId,
 };
 use serde_json::Value;
 
@@ -92,10 +91,8 @@ pub(crate) enum InputSource {
 }
 
 pub(crate) struct FrameContext {
-    pub(crate) workspace_id: u64,
     pub(crate) tool: AiToolName,
     pub(crate) pid: Option<SessionPid>,
-    pub(crate) surface_id: Option<SurfaceId>,
     pub(crate) event_source: Option<LifecycleEventSource>,
     pub(crate) runtime_generation: Option<u64>,
 }
@@ -189,10 +186,9 @@ pub(crate) fn build_frame(
     };
 
     let compact_payload = compact_hook_payload(event, &hook_payload);
-    let mut params = AiHookParams::new(context.workspace_id, context.tool, compact_payload);
+    let mut params = AiHookParams::new(context.tool, compact_payload);
     params.pid = session_pid;
     params.emitted_at_ms = paneflow_ipc_client::ai_hook::epoch_millis();
-    params.surface_id = context.surface_id;
     params.runtime_generation = context.runtime_generation;
 
     if matches!(event, HookEvent::PreToolUse | HookEvent::PostToolUse) {
@@ -359,10 +355,8 @@ mod tests {
 
     fn test_context() -> FrameContext {
         FrameContext {
-            workspace_id: 7,
             tool: AiToolName::parse("claude").expect("valid test tool"),
             pid: None,
-            surface_id: None,
             event_source: None,
             runtime_generation: Some(3),
         }

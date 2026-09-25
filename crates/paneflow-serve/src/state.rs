@@ -1097,7 +1097,7 @@ mod tests {
             host.ingest_agent_event(&stale).unwrap().ack["accepted"],
             false
         );
-        assert_eq!(host.agent_snapshot()[0].hook_revision, 2);
+        assert_eq!(host.inspect(&session).unwrap().manifest.hook_revision, 2);
         std::fs::remove_dir(&blocked_seed).unwrap();
         let retry = accepted("ai.notification", "PermissionRequest", 11);
         assert_eq!(retry.ack["durable"], true);

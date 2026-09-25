@@ -3,7 +3,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, SyncSender, TrySendError, sync_channel};
 
 use paneflow_config::schema::{SessionGeneration, SessionId};
-use paneflow_ipc_client::agent::{AgentLifecycleEvent, AgentStateSource};
+use paneflow_ipc_client::agent::AgentLifecycleEvent;
 use paneflow_ipc_client::ai_hook::{
     LifecycleEventSource, METHOD_EXIT, METHOD_NOTIFICATION, METHOD_PROMPT_SUBMIT,
     METHOD_SESSION_END, METHOD_SESSION_START, METHOD_STOP, METHOD_TOOL_USE,
@@ -72,7 +72,6 @@ pub struct AgentEvent {
     pub exit_code: Option<i32>,
     pub emitted_at_ms: Option<u64>,
     pub received_at_ms: Option<u64>,
-    pub source: AgentStateSource,
     pub event_source: Option<LifecycleEventSource>,
     pub payload: Value,
 }
@@ -129,11 +128,6 @@ impl AgentEvent {
             .map(clamp_text)
             .filter(|tool| !tool.is_empty())
             .ok_or_else(|| "missing tool".to_string())?;
-        let source = params
-            .get("source")
-            .and_then(Value::as_str)
-            .map_or(Some(AgentStateSource::Hook), AgentStateSource::parse)
-            .ok_or_else(|| "unsupported agent state source".to_string())?;
         let pid = params
             .get("pid")
             .and_then(Value::as_u64)
@@ -158,12 +152,11 @@ impl AgentEvent {
             message: optional_text(params, &["message"]),
             summary: optional_text(
                 params,
-                &["last_assistant_message", "last_result", "summary", "result"],
+                &["last_assistant_message", "last_result", "summary"],
             ),
             exit_code,
             emitted_at_ms: params.get("emitted_at_ms").and_then(Value::as_u64),
             received_at_ms: None,
-            source,
             event_source: LifecycleEventSource::from_wire_params(params),
             payload: params
                 .get("hook_payload")
@@ -213,7 +206,6 @@ impl AgentEvent {
             "exit_code": self.exit_code,
             "emitted_at_ms": self.emitted_at_ms,
             "received_at_ms": self.received_at_ms,
-            "source": self.source.wire_str(),
             "event_source": self.event_source.map(LifecycleEventSource::as_str),
             "hook_payload": self.payload,
         })
@@ -225,7 +217,6 @@ pub struct AgentSnapshotEntry {
     pub session: SessionId,
     pub generation: SessionGeneration,
     pub launch_shell: String,
-    pub live: bool,
     pub lifecycle: SessionLifecycle,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub process: Option<crate::process::ProcessIdentity>,
@@ -237,8 +228,6 @@ pub struct AgentSnapshotEntry {
     pub cwd: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_hook: Option<HookRecord>,
-    #[serde(default)]
-    pub hook_revision: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub output_changed_at_ms: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -324,7 +313,6 @@ mod tests {
             exit_code: (kind == AgentEventKind::Exit).then_some(0),
             emitted_at_ms,
             received_at_ms: None,
-            source: AgentStateSource::Hook,
             event_source: None,
             payload: json!({}),
         }
@@ -346,7 +334,6 @@ mod tests {
         assert_eq!(event.session, session);
         assert_eq!(event.kind, AgentEventKind::ToolUse);
         assert_eq!(event.tool_name.as_deref(), Some("Edit"));
-        assert_eq!(event.source, AgentStateSource::Hook);
 
         let stopped = AgentEvent::from_params(&json!({
             "session": session.to_string(),
