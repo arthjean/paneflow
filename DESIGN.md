@@ -42,9 +42,9 @@ diverge. `MAY` is optional.
 
 ### 1.4 Reference captures
 
-`assets/images/demo-0.9.png` is the reference capture: two agents in pane
-cards, the diff dock open on a file, and the former standalone Files rail.
-The file surface now follows the integrated layout described in 5.4. A pull request
+`assets/images/demo-0.12.png` is the reference capture: Claude Code and fx
+in parallel panes, the dock open on a Rust file beside the file tree, and the
+Workspaces rail listing one tab per session. A pull request
 that changes a surface ships a capture of that surface in the same theme
 family, as `AGENTS.md` already requires.
 
@@ -944,7 +944,7 @@ while the window is unfocused.
 
 | Platform | Backdrop | Sidebar | Terminal | Chrome |
 | --- | --- | --- | --- | --- |
-| Windows 11 build 22621 and later | Mica by default (`window_backdrop: auto`), blur or transparent by choice | Reveals the backdrop when `windows_chrome_material` is on | Transparent default background when `windows_terminal_material` is on, masked to the panel; the panel inset gutters are repainted opaque only while `windows_chrome_material` is off | Native caption glyphs in light and dark |
+| Windows 11 build 22621 and later | Mica by default (`window_backdrop: auto`), transparent by choice; `blurred` and `acrylic` in `paneflow.json` resolve to `auto`, so blur needs `PANEFLOW_WINDOW_BACKDROP=blurred` for one launch | Reveals the backdrop when `windows_chrome_material` is on | Transparent default background when `windows_terminal_material` is on, masked to the panel; the panel inset gutters are repainted opaque only while `windows_chrome_material` is off | Native caption glyphs in light and dark |
 | Windows 10 and older 11 | Opaque | Opaque card | Opaque | Same glyphs |
 | macOS | Transparent window surface, material dropped in fullscreen | AppKit Sidebar material when `macos_chrome_material` is on | Opaque | Traffic lights with 80 px brand padding |
 | Linux | Opaque shell; a blur region is requested from the compositor on Wayland through the ext background-effect or KDE protocols, and on X11 under KDE | Opaque, tinted from the title bar color | Opaque | Client-side decorations with GPUI's generic glyphs, or server-side when `window_decorations: server` |

@@ -190,7 +190,7 @@
     },
     "window_backdrop": {
       "type": ["string", "null"],
-      "description": "Native window backdrop. 'auto' uses Mica on supported Windows 11 builds and opaque elsewhere; 'mica' forces Mica when supported; 'blurred'/'acrylic' opts into blur; 'transparent' keeps a transparent surface; 'opaque'/'off' disables native transparency. Read once at startup; PANEFLOW_WINDOW_BACKDROP overrides it for one launch.",
+      "description": "Native window backdrop. 'auto' uses Mica on supported Windows 11 builds and opaque elsewhere; 'mica' forces Mica when supported; 'blurred'/'acrylic' opts into blur, except on Windows, where a config value resolves to 'auto' and only PANEFLOW_WINDOW_BACKDROP=blurred applies blur; 'transparent' keeps a transparent surface; 'opaque'/'off' disables native transparency. Read once at startup; PANEFLOW_WINDOW_BACKDROP overrides it for one launch.",
       "enum": ["auto", "mica", "blurred", "acrylic", "transparent", "opaque", "off", null],
       "default": "auto"
     },
