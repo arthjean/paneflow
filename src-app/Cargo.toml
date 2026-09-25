@@ -97,7 +97,7 @@ notify = "7"
 # contention. Used for the theme cache that's hit several times per
 # render frame; std::sync::Mutex was the dominant lock in the agents
 # UI hot path under streaming output. Already a transitive dep via
-# gpui/tokio; making it explicit lets us reference it directly.
+# gpui; making it explicit lets us reference it directly.
 parking_lot = "0.12"
 
 # TOML reader/writer for the Codex CLI's `~/.codex/config.toml`. Used by the
@@ -114,9 +114,6 @@ anyhow.workspace = true
 # manual and run before clap so it never eats their flags.
 clap = { version = "4.5", features = ["derive"] }
 futures = "0.3"
-# Async utilities used by app subsystems that need tokio-compatible futures
-# without blocking GPUI's smol event loop.
-tokio = { version = "1", features = ["rt", "macros", "io-util", "sync", "time"] }
 tracing = "0.1"
 log.workspace = true
 env_logger = "0.11"
@@ -129,22 +126,10 @@ libc = "0.2"
 regex = "1"
 ctrlc.workspace = true
 open = "5"
-# Native file picker (markdown "open file" button in the pane tab strip).
-# Default features = ["xdg-portal", "wayland"] on Linux: uses the FreeDesktop
-# file-chooser portal (no GTK3 runtime dep) and adds Wayland integration so
-# the dialog parents to our window. macOS uses NSOpenPanel, Windows uses the
-# native COM file-open dialog. `pollster` is pulled in by xdg-portal as the
-# tiny block-on executor - keeps the picker runtime-agnostic so we can drive
-# `AsyncFileDialog` from `cx.spawn` without a tokio/async-std dep.
-rfd = "0.17"
 # Markdown viewer pane (US-020 - prd-cmux-port-2026-q2.md). CommonMark + tables
 # + strikethrough + footnotes via the event API (we walk events directly into
 # a GPUI element tree rather than rendering HTML).
 pulldown-cmark = { version = "0.10", default-features = false }
-# Syntax highlighting for fenced code blocks in rendered markdown.
-# `default-fancy` ships the bundled syntax + theme sets plus the
-# FancyRegex engine (~3 MB binary cost).
-syntect = { version = "5", default-features = false, features = ["default-fancy"] }
 ureq.workspace = true
 # Multi-worktree diff engine (prd-multi-worktree-diff-2026-Q3.md, EP-002).
 # Histogram line-diff lifted from Zed's `buffer_diff::compute_hunks`, on the
@@ -161,7 +146,6 @@ paneflow-textdiff.workspace = true
 # all bridge through `tree-sitter-language` 0.1 (LANGUAGE: LanguageFn, ABI 15,
 # accepted by the 0.26 runtime). Each grammar compiles bundled C via `cc`.
 tree-sitter = "0.26"
-tree-sitter-language = "0.1"
 tree-sitter-rust = "0.24"
 tree-sitter-json = "0.24"
 tree-sitter-bash = "0.25"
@@ -230,13 +214,7 @@ unicode-segmentation = "1"
 # `@`-mention file completion popup (recursive, gitignore-respecting,
 # debounced 200ms). Pulled in directly so the composer does not have
 # to reimplement .gitignore / .ignore / hidden-file filtering by hand.
-#
-# `base64` encodes image attachments into the ACP `ImageContent.data` field
-# (base64 string with a `mime_type` companion). Already a transitive dep
-# (rusqlite, ureq, ...), so the explicit declaration only adds the public
-# surface, not a new compile unit.
 ignore = "0.4"
-base64 = "0.22"
 
 # Cross-platform desktop notifications fired by the agents runtime when a
 # turn ends, needs input, or exits unexpectedly while the user is not
