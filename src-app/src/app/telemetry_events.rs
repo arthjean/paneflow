@@ -11,6 +11,13 @@ use crate::update::{self, UpdateError};
 
 const SHUTDOWN_FLUSH_TIMEOUT: Duration = Duration::from_secs(2);
 
+pub(crate) fn posthog_endpoint() -> (&'static str, &'static str) {
+    (
+        option_env!("POSTHOG_API_KEY").unwrap_or(""),
+        option_env!("POSTHOG_HOST").unwrap_or("https://eu.i.posthog.com"),
+    )
+}
+
 impl PaneFlowApp {
     pub(crate) fn emit_session_corrupted(&self, info: &SessionCorruptionInfo) {
         let Some(error) = SessionErrorCategory::from_tag(info.error_category) else {

@@ -16,12 +16,12 @@ const GIT_DIFF_STAT_FILE_BYTES_CAP: u64 = 512 * 1024;
 
 impl GitDiffStats {
     pub fn from_cwd(cwd: &str) -> Self {
-        let base = git_stdout(cwd, &["rev-parse", "--verify", "HEAD"])
+        let base = diff_stat_git_stdout(cwd, &["rev-parse", "--verify", "HEAD"])
             .map(|out| String::from_utf8_lossy(&out).trim().to_string())
             .filter(|base| !base.is_empty())
             .unwrap_or_else(|| EMPTY_TREE_SHA.to_string());
 
-        let mut stats = git_stdout(cwd, &["diff", "--shortstat", &base, "--"])
+        let mut stats = diff_stat_git_stdout(cwd, &["diff", "--shortstat", &base, "--"])
             .map(|out| {
                 let text = String::from_utf8_lossy(&out);
                 Self::parse_shortstat(&text)
@@ -65,7 +65,8 @@ impl GitDiffStats {
     }
 
     fn add_untracked(&mut self, cwd: &str) {
-        let Some(out) = git_stdout(cwd, &["ls-files", "--others", "--exclude-standard", "-z"])
+        let Some(out) =
+            diff_stat_git_stdout(cwd, &["ls-files", "--others", "--exclude-standard", "-z"])
         else {
             return;
         };
@@ -87,15 +88,22 @@ impl GitDiffStats {
     }
 }
 
-fn git_stdout(cwd: &str, args: &[&str]) -> Option<Vec<u8>> {
+pub(crate) fn git_stdout(
+    cwd: impl AsRef<std::path::Path>,
+    args: &[&str],
+    deadline: std::time::Duration,
+    stdout_cap: u64,
+) -> Option<Vec<u8>> {
     let mut cmd = std::process::Command::new("git");
     cmd.args(args)
         .current_dir(cwd)
         .env("GIT_TERMINAL_PROMPT", "0");
-    let output =
-        paneflow_process::run_with_timeout(cmd, GIT_DIFF_STAT_DEADLINE, GIT_DIFF_STAT_STDOUT_CAP)
-            .ok()?;
+    let output = paneflow_process::run_with_timeout(cmd, deadline, stdout_cap).ok()?;
     output.status.success().then_some(output.stdout)
+}
+
+fn diff_stat_git_stdout(cwd: &str, args: &[&str]) -> Option<Vec<u8>> {
+    git_stdout(cwd, args, GIT_DIFF_STAT_DEADLINE, GIT_DIFF_STAT_STDOUT_CAP)
 }
 
 fn untracked_insertions(cwd: &str, rel_path: &str) -> usize {

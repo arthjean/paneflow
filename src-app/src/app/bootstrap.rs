@@ -387,8 +387,7 @@ impl PaneFlowApp {
         #[cfg(target_os = "linux")]
         update::migrations::run_startup_migrations(&install_method);
 
-        let posthog_api_key = option_env!("POSTHOG_API_KEY").unwrap_or("");
-        let posthog_host = option_env!("POSTHOG_HOST").unwrap_or("https://eu.i.posthog.com");
+        let (posthog_api_key, posthog_host) = super::telemetry_events::posthog_endpoint();
         let telemetry_config_snapshot = paneflow_config::loader::load_config();
         let telemetry_enabled_last = telemetry_config_snapshot
             .telemetry

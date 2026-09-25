@@ -333,10 +333,6 @@ fn orchestration_enabled_from(orchestration: Option<&str>, scripting: Option<&st
     matches!(orchestration, Some("1")) || scripting_enabled_from(scripting)
 }
 
-fn normalized_shell_value(shell: Option<&str>) -> &str {
-    shell.map(str::trim).filter(|s| !s.is_empty()).unwrap_or("")
-}
-
 fn env_param_has_strings(value: Option<&serde_json::Value>) -> bool {
     value
         .and_then(|v| v.as_object())
@@ -962,8 +958,9 @@ impl PaneFlowApp {
         if let Some(config) = new_config {
             crate::terminal::element::apply_font_config(&config);
             let default_shell_changed =
-                normalized_shell_value(self.cached_config.default_shell.as_deref())
-                    != normalized_shell_value(config.default_shell.as_deref());
+                super::settings::normalized_shell_setting(
+                    self.cached_config.default_shell.as_deref(),
+                ) != super::settings::normalized_shell_setting(config.default_shell.as_deref());
             let theme_mode = crate::ThemeMode::from_config(
                 config.theme_mode.as_deref(),
                 config.theme.as_deref(),
@@ -1008,8 +1005,7 @@ impl PaneFlowApp {
         }
 
         let consent = crate::telemetry::client::TelemetryConsent::from_config(new_enabled);
-        let api_key = option_env!("POSTHOG_API_KEY").unwrap_or("");
-        let host = option_env!("POSTHOG_HOST").unwrap_or("https://eu.i.posthog.com");
+        let (api_key, host) = super::telemetry_events::posthog_endpoint();
         let deactivating_telemetry = std::sync::Arc::clone(&self.telemetry);
         deactivating_telemetry.disable();
         cx.background_spawn(async move {

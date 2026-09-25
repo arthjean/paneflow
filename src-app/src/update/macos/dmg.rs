@@ -4,6 +4,8 @@ use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
 
+use crate::update::swap::{recover_and_clean_staging, staging_dirs};
+
 use super::super::error::UpdateError;
 
 const UPDATE_HTTP_TIMEOUT: Duration = Duration::from_secs(30);
@@ -168,7 +170,7 @@ fn copy_and_swap(mounted_volume: &Path, install_dir: &Path) -> Result<()> {
 
     let (old_dir, new_dir) = staging_dirs(install_dir)?;
 
-    recover_and_clean_staging(install_dir, &old_dir)?;
+    recover_and_clean_staging(install_dir, &old_dir, "dmg")?;
 
     if new_dir.exists()
         && let Err(e) = std::fs::remove_dir_all(&new_dir)
@@ -261,33 +263,6 @@ fn copy_bundle_to_staging(source_bundle: &Path, new_dir: &Path) -> Result<()> {
     Ok(())
 }
 
-fn recover_and_clean_staging(install_dir: &Path, old_dir: &Path) -> Result<()> {
-    if !old_dir.exists() {
-        return Ok(());
-    }
-    if !install_dir.exists() {
-        std::fs::rename(old_dir, install_dir).with_context(|| {
-            format!(
-                "recover live bundle {} from {}",
-                install_dir.display(),
-                old_dir.display()
-            )
-        })?;
-        log::warn!(
-            "self-update/dmg: recovered live bundle from a crashed prior update ({})",
-            install_dir.display()
-        );
-        return Ok(());
-    }
-    if let Err(e) = std::fs::remove_dir_all(old_dir) {
-        log::warn!(
-            "self-update/dmg: could not remove stale {}: {e}",
-            old_dir.display()
-        );
-    }
-    Ok(())
-}
-
 #[cfg(all(test, not(target_os = "macos")))]
 fn copy_bundle_to_staging(source_bundle: &Path, new_dir: &Path) -> Result<()> {
     copy_tree_for_test(source_bundle, new_dir)
@@ -308,20 +283,6 @@ fn copy_tree_for_test(src: &Path, dst: &Path) -> Result<()> {
         }
     }
     Ok(())
-}
-
-fn staging_dirs(install_dir: &Path) -> Result<(PathBuf, PathBuf)> {
-    let parent = install_dir
-        .parent()
-        .context("install_dir has no parent - refusing to swap at filesystem root")?;
-    let name = install_dir
-        .file_name()
-        .context("install_dir has no file name - refusing to swap")?;
-    let name = name.to_string_lossy();
-    Ok((
-        parent.join(format!("{name}.old")),
-        parent.join(format!("{name}.new")),
-    ))
 }
 
 fn bundle_file_name(install_dir: &Path) -> Result<&std::ffi::OsStr> {
@@ -676,7 +637,7 @@ mod tests {
         std::fs::create_dir_all(old_dir.join("Contents/MacOS")).unwrap();
         std::fs::write(old_dir.join("Contents/MacOS/paneflow"), b"prev").unwrap();
 
-        recover_and_clean_staging(&install_dir, &old_dir).unwrap();
+        recover_and_clean_staging(&install_dir, &old_dir, "dmg").unwrap();
 
         assert!(install_dir.join("Contents/MacOS/paneflow").exists());
         assert!(!old_dir.exists(), ".old must be consumed by recovery");
@@ -692,7 +653,7 @@ mod tests {
         let old_dir = install_parent.join("PaneFlow.app.old");
         std::fs::create_dir_all(&old_dir).unwrap();
 
-        recover_and_clean_staging(&install_dir, &old_dir).unwrap();
+        recover_and_clean_staging(&install_dir, &old_dir, "dmg").unwrap();
 
         assert!(install_dir.exists(), "live bundle must remain untouched");
         assert!(!old_dir.exists(), "stale .old must be removed");

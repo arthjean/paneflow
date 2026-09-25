@@ -1,4 +1,4 @@
-mod git;
+pub(crate) mod git;
 pub mod pid_resolve;
 mod ports;
 pub mod surface_naming;

@@ -3,6 +3,8 @@ use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
 
+use crate::update::swap::{recover_and_clean_staging, staging_dirs};
+
 const MAX_TARBALL_BYTES: u64 = 500 * 1024 * 1024;
 
 const UPDATE_HTTP_TIMEOUT: Duration = Duration::from_secs(30);
@@ -28,7 +30,7 @@ fn run_update_in(asset_url: &str, app_dir: &Path, cache_dir: &Path) -> Result<()
 
     let _update_lock = acquire_update_lock(parent)?;
 
-    recover_and_clean_staging(app_dir, &old_dir)?;
+    recover_and_clean_staging(app_dir, &old_dir, "targz")?;
 
     if new_dir.exists()
         && let Err(e) = std::fs::remove_dir_all(&new_dir)
@@ -52,20 +54,6 @@ fn run_update_in(asset_url: &str, app_dir: &Path, cache_dir: &Path) -> Result<()
     let extract_result = extract_and_swap(&tarball, app_dir, &new_dir, &old_dir);
     let _ = std::fs::remove_file(&tarball);
     extract_result
-}
-
-fn staging_dirs(app_dir: &Path) -> Result<(PathBuf, PathBuf)> {
-    let parent = app_dir
-        .parent()
-        .context("app_dir has no parent directory - refusing to swap at filesystem root")?;
-    let name = app_dir
-        .file_name()
-        .context("app_dir has no file name - refusing to swap")?;
-    let name = name.to_string_lossy();
-    Ok((
-        parent.join(format!("{name}.old")),
-        parent.join(format!("{name}.new")),
-    ))
 }
 
 fn acquire_update_lock(parent: &Path) -> Result<Option<std::fs::File>> {
@@ -96,33 +84,6 @@ fn acquire_update_lock(parent: &Path) -> Result<Option<std::fs::File>> {
         let _ = parent;
         Ok(None)
     }
-}
-
-fn recover_and_clean_staging(app_dir: &Path, old_dir: &Path) -> Result<()> {
-    if !old_dir.exists() {
-        return Ok(());
-    }
-    if !app_dir.exists() {
-        std::fs::rename(old_dir, app_dir).with_context(|| {
-            format!(
-                "recover live install {} ← {}",
-                app_dir.display(),
-                old_dir.display()
-            )
-        })?;
-        log::warn!(
-            "self-update/targz: recovered live install from a crashed prior update ({})",
-            app_dir.display()
-        );
-        return Ok(());
-    }
-    if let Err(e) = std::fs::remove_dir_all(old_dir) {
-        log::warn!(
-            "self-update/targz: could not remove stale {}: {e}",
-            old_dir.display()
-        );
-    }
-    Ok(())
 }
 
 fn download_with_verification(asset_url: &str, dest: &Path) -> Result<()> {
@@ -384,7 +345,7 @@ mod tests {
         std::fs::create_dir_all(old_dir.join("bin")).unwrap();
         std::fs::write(old_dir.join("bin/paneflow"), b"prev-version").unwrap();
 
-        recover_and_clean_staging(&app_dir, &old_dir).unwrap();
+        recover_and_clean_staging(&app_dir, &old_dir, "targz").unwrap();
 
         assert!(app_dir.exists(), "live install must be restored from .old");
         assert_eq!(
@@ -404,7 +365,7 @@ mod tests {
         std::fs::create_dir_all(&old_dir).unwrap();
         std::fs::write(old_dir.join("junk"), b"x").unwrap();
 
-        recover_and_clean_staging(&app_dir, &old_dir).unwrap();
+        recover_and_clean_staging(&app_dir, &old_dir, "targz").unwrap();
 
         assert!(!old_dir.exists(), "stale .old must be removed");
         assert_eq!(
@@ -420,7 +381,7 @@ mod tests {
         let app_dir = tmp.path().join(".local/paneflow.app");
         std::fs::create_dir_all(&app_dir).unwrap();
         let (old_dir, _new) = staging_dirs(&app_dir).unwrap();
-        recover_and_clean_staging(&app_dir, &old_dir).unwrap();
+        recover_and_clean_staging(&app_dir, &old_dir, "targz").unwrap();
         assert!(app_dir.exists());
     }
 

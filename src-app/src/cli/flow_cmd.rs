@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
@@ -9,12 +9,13 @@ use regex::Regex;
 use serde_json::{Value, json};
 
 use super::flow_spec::{self, FlowPlan, OnFailure, Unit, UnitAction};
+use super::surface_read::{
+    READ_WINDOW_LINES, ReadSnapshot, is_surface_gone_error, text_after_baseline,
+};
 use super::up_cmd::{self, WorktreePlan};
-use super::wait_cmd::is_surface_gone_error;
 use super::{CliError, EXIT_OK, EXIT_RUNTIME, EXIT_TIMEOUT};
 
 const TICK: Duration = Duration::from_millis(500);
-const READ_WINDOW_LINES: u64 = 500;
 const SETTLE_FLOOR: Duration = Duration::from_millis(1800);
 const SETTLE_MAX: Duration = Duration::from_millis(8000);
 const SETTLE_WINDOW_LINES: u64 = 50;
@@ -260,12 +261,6 @@ impl UnitRun {
             error: None,
         }
     }
-}
-
-#[derive(Clone, Debug)]
-struct ReadSnapshot {
-    text: String,
-    output_generation: Option<u64>,
 }
 
 enum Read {
@@ -871,31 +866,6 @@ impl<T: IpcTransport> Engine<'_, T> {
             EXIT_RUNTIME
         })
     }
-}
-
-fn text_after_baseline(baseline: &ReadSnapshot, current: &ReadSnapshot) -> Option<String> {
-    if matches!(
-        (current.output_generation, baseline.output_generation),
-        (Some(current), Some(previous)) if current <= previous
-    ) {
-        return None;
-    }
-    Some(new_text_since_baseline(&baseline.text, &current.text))
-}
-
-fn new_text_since_baseline(baseline: &str, current: &str) -> String {
-    if current == baseline {
-        return String::new();
-    }
-    if let Some(rest) = current.strip_prefix(baseline) {
-        return rest.to_string();
-    }
-    let old_lines: HashSet<&str> = baseline.lines().collect();
-    current
-        .lines()
-        .filter(|line| !old_lines.contains(line))
-        .collect::<Vec<_>>()
-        .join("\n")
 }
 
 fn substitute_vars(text: &str, vars: &HashMap<String, String>) -> Result<String, String> {

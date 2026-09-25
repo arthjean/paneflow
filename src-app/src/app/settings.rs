@@ -370,7 +370,7 @@ impl PaneFlowApp {
     }
 }
 
-fn normalized_shell_setting(shell: Option<&str>) -> &str {
+pub(crate) fn normalized_shell_setting(shell: Option<&str>) -> &str {
     shell.map(str::trim).filter(|s| !s.is_empty()).unwrap_or("")
 }
 

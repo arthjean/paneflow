@@ -1841,19 +1841,8 @@ fn main() {
             "paneflow: MCP bridge extraction failed ({e:#}); `paneflow mcp install` will be unavailable until resolved"
         ),
     }
-    match (
-        ai_hooks::extract::ensure_ai_hook_extracted(),
-        ai_hooks::extract::ensure_bridge_extracted(),
-    ) {
-        (Ok(_), Ok(_)) => {}
-        (hook, bridge) => {
-            if let Err(error) = hook {
-                log::warn!("paneflow: AI hook extraction failed ({error:#})");
-            }
-            if let Err(error) = bridge {
-                log::warn!("paneflow: MCP bridge extraction failed ({error:#})");
-            }
-        }
+    if let Err(error) = ai_hooks::extract::ensure_ai_hook_extracted() {
+        log::warn!("paneflow: AI hook extraction failed ({error:#})");
     }
     startup_trace::mark("bridge_extracted");
 

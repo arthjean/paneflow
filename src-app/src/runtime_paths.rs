@@ -12,8 +12,6 @@ pub const APP_SUBDIR: &str = if cfg!(debug_assertions) {
 };
 
 #[cfg(unix)]
-const PANEFLOW_SUBDIR: &str = APP_SUBDIR;
-#[cfg(unix)]
 const SOCKET_FILE: &str = if cfg!(debug_assertions) {
     "paneflow-dev.sock"
 } else {
@@ -68,7 +66,7 @@ pub(crate) fn socket_path_spec() -> Option<IpcSocketPath> {
             owned_parent: false,
         },
         None => IpcSocketPath {
-            path: runtime_dir()?.join(PANEFLOW_SUBDIR).join(SOCKET_FILE),
+            path: runtime_dir()?.join(APP_SUBDIR).join(SOCKET_FILE),
             owned_parent: true,
         },
     };

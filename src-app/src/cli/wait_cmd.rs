@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::io;
 use std::thread::sleep;
 use std::time::{Duration, Instant};
@@ -8,13 +8,15 @@ use regex::Regex;
 use serde_json::{Value, json};
 
 use super::selector::{resolve_all, resolve_target};
+use super::surface_read::{
+    READ_WINDOW_LINES, ReadSnapshot, is_surface_gone_error, text_after_baseline,
+};
 use super::{CliError, EXIT_OK, EXIT_TIMEOUT};
 
 const POLL_INTERVAL_MS: u64 = 500;
 const DEFAULT_TIMEOUT_SECS: u64 = 300;
 const DEFAULT_IDLE_FOR_MS: u64 = 1000;
 const IDLE_SLICE_CAP_MS: u64 = 100;
-const READ_WINDOW_LINES: u64 = 500;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum MatchMode {
@@ -27,12 +29,6 @@ enum PaneState {
     Matched(Vec<String>),
     NoMatch,
     Gone,
-}
-
-#[derive(Clone, Debug)]
-struct ReadSnapshot {
-    text: String,
-    output_generation: Option<u64>,
 }
 
 pub fn wait(
@@ -159,11 +155,6 @@ fn read_snapshot(client: &impl IpcTransport, id: u64) -> Result<Option<ReadSnaps
     }
 }
 
-pub(super) fn is_surface_gone_error(message: &str) -> bool {
-    let lower = message.to_ascii_lowercase();
-    lower.contains("not found") || lower.contains("-32602")
-}
-
 fn read_matches_since(
     client: &impl IpcTransport,
     id: u64,
@@ -174,15 +165,10 @@ fn read_matches_since(
         return Ok(PaneState::Gone);
     };
     let text = match baseline {
-        Some(base)
-            if matches!(
-                (current.output_generation, base.output_generation),
-                (Some(current), Some(previous)) if current <= previous
-            ) =>
-        {
-            return Ok(PaneState::NoMatch);
-        }
-        Some(base) => new_text_since_baseline(&base.text, &current.text),
+        Some(base) => match text_after_baseline(base, &current) {
+            Some(text) => text,
+            None => return Ok(PaneState::NoMatch),
+        },
         None => current.text,
     };
     Ok(if re.is_match(&text) {
@@ -195,21 +181,6 @@ fn read_matches_since(
     } else {
         PaneState::NoMatch
     })
-}
-
-fn new_text_since_baseline(baseline: &str, current: &str) -> String {
-    if current == baseline {
-        return String::new();
-    }
-    if let Some(rest) = current.strip_prefix(baseline) {
-        return rest.to_string();
-    }
-    let old_lines: HashSet<&str> = baseline.lines().collect();
-    current
-        .lines()
-        .filter(|line| !old_lines.contains(line))
-        .collect::<Vec<_>>()
-        .join("\n")
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -584,19 +555,6 @@ mod tests {
         );
         let err = read_snapshot(&ReadError("server error -32000: overloaded"), 1).unwrap_err();
         assert!(err.message.contains("overloaded"), "got: {}", err.message);
-    }
-
-    #[test]
-    fn baseline_diff_ignores_prompt_echo_sentinel() {
-        let base = "please print RENDER_AUDIT_DONE when complete\n";
-        let current = "please print RENDER_AUDIT_DONE when complete\nactual work\n";
-        assert_eq!(new_text_since_baseline(base, current), "actual work\n");
-
-        let shifted = "actual work\nplease print RENDER_AUDIT_DONE when complete\nnew DONE\n";
-        assert_eq!(
-            new_text_since_baseline(base, shifted),
-            "actual work\nnew DONE"
-        );
     }
 
     const FW: Duration = Duration::from_millis(1000);

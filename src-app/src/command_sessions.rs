@@ -56,49 +56,46 @@ fn read_command_sessions(config: CommandSessionConfig, cwd: &str) -> (Vec<Sessio
     if !Path::new(cwd).is_dir() {
         return (Vec::new(), 0);
     }
-    let Some(stdout) = run_list_command(&config, cwd) else {
+    let Some(stdout) = run_list_command(
+        config.program,
+        config.args,
+        Some(cwd),
+        COMMAND_STDOUT_CAP,
+        &format!("{:?}", config.agent),
+    ) else {
         return (Vec::new(), 0);
     };
     parse_command_sessions(&stdout, config.agent, cwd, config.parse_line)
 }
 
-fn run_list_command(config: &CommandSessionConfig, cwd: &str) -> Option<Vec<u8>> {
-    let Some(mut cmd) = list_command(config.program) else {
-        log::info!(
-            "{} binary not found on PATH; {:?} sessions will be empty",
-            config.program,
-            config.agent
-        );
+pub(crate) fn run_list_command(
+    program: &str,
+    args: &[&str],
+    cwd: Option<&str>,
+    stdout_cap: u64,
+    agent: &str,
+) -> Option<Vec<u8>> {
+    let Some(mut cmd) = list_command(program) else {
+        log::info!("{program} binary not found on PATH; {agent} sessions will be empty");
         return None;
     };
-    cmd.args(config.args);
-    cmd.current_dir(cwd);
+    cmd.args(args);
+    if let Some(cwd) = cwd {
+        cmd.current_dir(cwd);
+    }
 
-    let output = match paneflow_process::run_with_timeout(cmd, COMMAND_DEADLINE, COMMAND_STDOUT_CAP)
-    {
+    let output = match paneflow_process::run_with_timeout(cmd, COMMAND_DEADLINE, stdout_cap) {
         Ok(out) => out,
         Err(paneflow_process::ProcError::Spawn(err)) if err.kind() == io::ErrorKind::NotFound => {
-            log::info!(
-                "{} binary not found on PATH; {:?} sessions will be empty",
-                config.program,
-                config.agent
-            );
+            log::info!("{program} binary not found on PATH; {agent} sessions will be empty");
             return None;
         }
         Err(paneflow_process::ProcError::Timeout) => {
-            log::warn!(
-                "{} session list timed out; {:?} sessions will be empty",
-                config.program,
-                config.agent
-            );
+            log::warn!("{program} session list timed out; {agent} sessions will be empty");
             return None;
         }
         Err(err) => {
-            log::warn!(
-                "failed to spawn {} for {:?} sessions: {err}",
-                config.program,
-                config.agent
-            );
+            log::warn!("failed to spawn {program} for {agent} sessions: {err}");
             return None;
         }
     };
@@ -106,10 +103,8 @@ fn run_list_command(config: &CommandSessionConfig, cwd: &str) -> Option<Vec<u8>>
     if !output.status.success() {
         let stderr = sanitized_stderr(&output.stderr);
         log::warn!(
-            "{} session list exited with {}: {}",
-            config.program,
-            output.status,
-            stderr
+            "{program} session list exited with {}: {stderr}",
+            output.status
         );
         return None;
     }

@@ -1,13 +1,6 @@
-use std::io;
-use std::process::Command;
-
 use serde_json::Value;
 
 use crate::agent_sessions::{SessionAgent, SessionMeta, clean_session_label};
-
-const STDERR_LOG_CAP: usize = 200;
-
-const OPENCODE_DEADLINE: std::time::Duration = std::time::Duration::from_secs(15);
 
 const OPENCODE_STDOUT_CAP: u64 = 8 * 1024 * 1024;
 
@@ -16,51 +9,16 @@ pub fn read_sessions_for_cwd_with_omitted(cwd: &str) -> (Vec<SessionMeta>, usize
 }
 
 fn read_sessions_with_program(program: &str, cwd: &str) -> (Vec<SessionMeta>, usize) {
-    let Some(stdout) = run_opencode_list(program) else {
+    let Some(stdout) = crate::command_sessions::run_list_command(
+        program,
+        &["session", "list", "--format", "json"],
+        None,
+        OPENCODE_STDOUT_CAP,
+        "OpenCode",
+    ) else {
         return (Vec::new(), 0);
     };
     parse_sessions(&stdout, cwd)
-}
-
-fn run_opencode_list(program: &str) -> Option<Vec<u8>> {
-    let mut cmd = Command::new(program);
-    cmd.args(["session", "list", "--format", "json"]);
-
-    let output =
-        match paneflow_process::run_with_timeout(cmd, OPENCODE_DEADLINE, OPENCODE_STDOUT_CAP) {
-            Ok(out) => out,
-            Err(paneflow_process::ProcError::Spawn(err))
-                if err.kind() == io::ErrorKind::NotFound =>
-            {
-                log::info!("opencode binary not found on PATH; OpenCode tab will be empty");
-                return None;
-            }
-            Err(paneflow_process::ProcError::Timeout) => {
-                log::warn!("opencode session list timed out; OpenCode tab will be empty");
-                return None;
-            }
-            Err(err) => {
-                log::warn!("failed to spawn opencode: {err}");
-                return None;
-            }
-        };
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let snippet: String = stderr
-            .chars()
-            .take(STDERR_LOG_CAP)
-            .map(|c| if c.is_control() && c != '\n' { '?' } else { c })
-            .collect();
-        log::warn!(
-            "opencode session list exited with {}: {}",
-            output.status,
-            snippet
-        );
-        return None;
-    }
-
-    Some(output.stdout)
 }
 
 fn parse_sessions(stdout: &[u8], cwd: &str) -> (Vec<SessionMeta>, usize) {

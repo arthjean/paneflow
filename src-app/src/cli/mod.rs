@@ -12,6 +12,7 @@ mod selector;
 mod send_cmd;
 mod serve_cmd;
 mod sessions_cmd;
+mod surface_read;
 mod up_cmd;
 mod wait_cmd;
 mod watch_cmd;

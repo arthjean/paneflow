@@ -5,6 +5,7 @@ use std::time::Duration;
 use gpui::Hsla;
 
 use crate::theme::UiColors;
+use crate::workspace::git::git_stdout;
 
 const GIT_STATUS_DEADLINE: Duration = Duration::from_secs(10);
 const GIT_STATUS_STDOUT_CAP: u64 = 4 * 1024 * 1024;
@@ -129,7 +130,12 @@ impl GitStatuses {
 }
 
 pub(crate) fn read(root: &Path) -> GitStatuses {
-    let Some(prefix) = git_stdout(root, &["rev-parse", "--show-prefix"]) else {
+    let Some(prefix) = git_stdout(
+        root,
+        &["rev-parse", "--show-prefix"],
+        GIT_STATUS_DEADLINE,
+        GIT_STATUS_STDOUT_CAP,
+    ) else {
         return GitStatuses::default();
     };
     let prefix = String::from_utf8_lossy(&prefix).trim().to_string();
@@ -144,20 +150,12 @@ pub(crate) fn read(root: &Path) -> GitStatuses {
             "--",
             ".",
         ],
+        GIT_STATUS_DEADLINE,
+        GIT_STATUS_STDOUT_CAP,
     ) else {
         return GitStatuses::default();
     };
     GitStatuses::parse(root, &prefix, &stdout)
-}
-
-fn git_stdout(root: &Path, args: &[&str]) -> Option<Vec<u8>> {
-    let mut cmd = std::process::Command::new("git");
-    cmd.args(args)
-        .current_dir(root)
-        .env("GIT_TERMINAL_PROMPT", "0");
-    let output =
-        paneflow_process::run_with_timeout(cmd, GIT_STATUS_DEADLINE, GIT_STATUS_STDOUT_CAP).ok()?;
-    output.status.success().then_some(output.stdout)
 }
 
 pub(crate) fn label_color(summary: GitSummary, ui: UiColors) -> Option<Hsla> {
