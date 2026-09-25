@@ -249,7 +249,7 @@ impl PaneFlowApp {
             .flex_1()
             .min_w_0();
         if let Some(icon) = current_icon {
-            value = value.child(render_logo(icon, ui));
+            value = value.child(render_logo(icon.0, icon.1, px(14.), ui.text));
         }
         value = value.child(
             div()
@@ -294,7 +294,7 @@ impl PaneFlowApp {
                         this.persist_setting(false, config_key, value_for_click.clone(), cx);
                     }));
                 if let Some(icon) = icon {
-                    item = item.child(render_logo(icon, ui));
+                    item = item.child(render_logo(icon.0, icon.1, px(14.), ui.text));
                 }
                 item = item.child(
                     div()

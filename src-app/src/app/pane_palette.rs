@@ -1257,19 +1257,12 @@ impl PaneFlowApp {
     ) -> AnyElement {
         let launchable = preset.ensure_launchable().is_ok();
         let icon_path = preset.icon_path();
-        let icon = if preset.icon_multicolor() {
-            gpui::img(icon_path)
-                .size(px(14.))
-                .flex_none()
-                .into_any_element()
-        } else {
-            svg()
-                .size(px(14.))
-                .flex_none()
-                .path(icon_path)
-                .text_color(preset.accent().map_or(ui.text, |c| gpui::rgb(c).into()))
-                .into_any_element()
-        };
+        let icon = crate::settings::components::render_logo(
+            icon_path,
+            preset.icon_multicolor(),
+            px(14.),
+            preset.accent().map_or(ui.text, |c| gpui::rgb(c).into()),
+        );
 
         let mut button = select_item(
             SharedString::from(format!("pane-palette-row-{idx}")),

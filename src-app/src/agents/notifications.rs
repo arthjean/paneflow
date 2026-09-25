@@ -258,19 +258,9 @@ fn show_desktop_notification(notification: DesktopNotification) -> Result<(), St
 
 #[cfg(any(all(unix, not(target_os = "macos")), target_os = "windows"))]
 fn notification_urgency_for_platform(urgency: DesktopNotificationUrgency) -> notify_rust::Urgency {
-    #[cfg(target_os = "windows")]
-    {
-        match urgency {
-            DesktopNotificationUrgency::Normal => notify_rust::Urgency::Normal,
-            DesktopNotificationUrgency::Critical => notify_rust::Urgency::Critical,
-        }
-    }
-    #[cfg(all(unix, not(target_os = "macos")))]
-    {
-        match urgency {
-            DesktopNotificationUrgency::Normal => notify_rust::Urgency::Normal,
-            DesktopNotificationUrgency::Critical => notify_rust::Urgency::Critical,
-        }
+    match urgency {
+        DesktopNotificationUrgency::Normal => notify_rust::Urgency::Normal,
+        DesktopNotificationUrgency::Critical => notify_rust::Urgency::Critical,
     }
 }
 

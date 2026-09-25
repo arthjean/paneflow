@@ -2,8 +2,8 @@ use std::collections::BTreeMap;
 
 use gpui::{
     AnyElement, ClickEvent, Context, CursorStyle, Entity, Hsla, InteractiveElement, IntoElement,
-    MouseButton, ParentElement, SharedString, StatefulInteractiveElement, Styled, div, img,
-    prelude::*, px, rgb, svg,
+    MouseButton, ParentElement, SharedString, StatefulInteractiveElement, Styled, div, prelude::*,
+    px, rgb, svg,
 };
 use paneflow_config::schema::AgentProfileConfig;
 use paneflow_mcp_install::IntegrationState;
@@ -1354,18 +1354,12 @@ fn agent_icon_el(agent: TerminalAgent, ui: crate::theme::UiColors) -> AnyElement
 }
 
 fn agent_icon_sized(agent: TerminalAgent, size: f32, ui: crate::theme::UiColors) -> AnyElement {
-    let path = SharedString::from(agent.icon_path());
-    if agent.icon_multicolor() {
-        img(path).size(px(size)).flex_none().into_any_element()
-    } else {
-        let tint: Hsla = agent.accent().map(|c| rgb(c).into()).unwrap_or(ui.text);
-        svg()
-            .size(px(size))
-            .flex_none()
-            .path(path)
-            .text_color(tint)
-            .into_any_element()
-    }
+    crate::settings::components::render_logo(
+        agent.icon_path(),
+        agent.icon_multicolor(),
+        px(size),
+        agent.accent().map(|c| rgb(c).into()).unwrap_or(ui.text),
+    )
 }
 
 #[cfg(test)]

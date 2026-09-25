@@ -1,6 +1,6 @@
 use gpui::{
-    AnyElement, ClickEvent, Context, InteractiveElement, IntoElement, MouseButton, ObjectFit,
-    ParentElement, Styled, deferred, div, hsla, img, prelude::*, px, rgb, svg,
+    AnyElement, ClickEvent, Context, InteractiveElement, MouseButton, ObjectFit, ParentElement,
+    Styled, div, img, prelude::*, px, rgb, svg,
 };
 
 use crate::{
@@ -173,27 +173,13 @@ impl PaneFlowApp {
             .child(body)
             .child(footer);
 
-        deferred(
-            div()
-                .id("about-dialog-backdrop")
-                .absolute()
-                .top_0()
-                .left_0()
-                .size_full()
-                .flex()
-                .items_center()
-                .justify_center()
-                .bg(hsla(0., 0., 0., 0.55))
-                .on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(|this, _, _, cx| {
-                        this.show_about_dialog = false;
-                        cx.notify();
-                    }),
-                )
-                .child(dialog),
+        crate::settings::components::modal_backdrop(
+            "about-dialog-backdrop",
+            dialog,
+            cx.listener(|this, _, _, cx| {
+                this.show_about_dialog = false;
+                cx.notify();
+            }),
         )
-        .with_priority(10)
-        .into_any_element()
     }
 }

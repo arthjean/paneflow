@@ -289,18 +289,195 @@ pub fn destructive_button(id: &'static str, label: &'static str) -> gpui::Statef
 
 pub type Logo = (&'static str, bool);
 
-pub fn render_logo(logo: Logo, ui: crate::theme::UiColors) -> AnyElement {
-    let (path, multicolor) = logo;
+pub fn render_logo(
+    path: impl Into<SharedString>,
+    multicolor: bool,
+    size: Pixels,
+    tint: Hsla,
+) -> AnyElement {
+    let path = path.into();
     if multicolor {
-        img(path).size(px(14.)).flex_none().into_any_element()
+        img(path).size(size).flex_none().into_any_element()
     } else {
         svg()
-            .size(px(14.))
+            .size(size)
             .flex_none()
             .path(path)
-            .text_color(ui.text)
+            .text_color(tint)
             .into_any_element()
     }
+}
+
+pub(crate) const MODAL_PADDING: Pixels = px(20.);
+
+pub(crate) enum ModalKey {
+    Dismiss,
+    Confirm,
+}
+
+pub(crate) fn modal_key(event: &gpui::KeyDownEvent) -> Option<ModalKey> {
+    match event.keystroke.key.as_str() {
+        "escape" => Some(ModalKey::Dismiss),
+        "enter" => Some(ModalKey::Confirm),
+        _ => None,
+    }
+}
+
+pub(crate) fn modal_backdrop(
+    id: impl Into<ElementId>,
+    child: impl IntoElement,
+    on_dismiss: impl Fn(&gpui::MouseDownEvent, &mut gpui::Window, &mut gpui::App) + 'static,
+) -> AnyElement {
+    deferred(
+        div()
+            .id(id)
+            .absolute()
+            .top_0()
+            .left_0()
+            .size_full()
+            .flex()
+            .items_center()
+            .justify_center()
+            .bg(gpui::hsla(0., 0., 0., 0.55))
+            .on_mouse_down(gpui::MouseButton::Left, on_dismiss)
+            .child(child),
+    )
+    .with_priority(10)
+    .into_any_element()
+}
+
+pub(crate) fn modal_card(
+    id: impl Into<ElementId>,
+    width: Pixels,
+    radius: Pixels,
+    ui: crate::theme::UiColors,
+    content: Div,
+) -> Stateful<Div> {
+    div()
+        .id(id)
+        .occlude()
+        .relative()
+        .w(width)
+        .rounded(radius)
+        .shadow_lg()
+        .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
+        .on_mouse_down(gpui::MouseButton::Right, |_, _, cx| cx.stop_propagation())
+        .child(squircle::squircle_fill(radius, card_color()))
+        .child(content.relative().flex().flex_col())
+        .child(squircle::squircle_border(
+            radius,
+            px(1.),
+            with_alpha(ui.border, 0.6),
+        ))
+}
+
+pub(crate) fn modal_header(
+    ui: crate::theme::UiColors,
+    title: impl Into<SharedString>,
+    summary: impl Into<SharedString>,
+) -> Div {
+    div()
+        .flex()
+        .flex_col()
+        .gap(px(4.))
+        .px(MODAL_PADDING)
+        .pt(px(16.))
+        .pb(px(12.))
+        .child(
+            div()
+                .text_size(crate::ui_primitives::TITLE)
+                .font_weight(gpui::FontWeight::SEMIBOLD)
+                .text_color(ui.text)
+                .child(title.into()),
+        )
+        .child(
+            div()
+                .text_size(crate::ui_primitives::LABEL_SM)
+                .text_color(ui.muted)
+                .child(summary.into()),
+        )
+}
+
+pub(crate) fn confirmation_list(
+    ui: crate::theme::UiColors,
+    rows: impl IntoIterator<Item = (SharedString, SharedString)>,
+    max_listed: usize,
+) -> Div {
+    let mut list = div()
+        .flex()
+        .flex_col()
+        .gap(px(4.))
+        .mx(MODAL_PADDING)
+        .px(px(12.))
+        .py(px(10.))
+        .rounded(px(8.))
+        .bg(with_alpha(ui.subtle, 0.5));
+    let mut hidden = 0usize;
+    for (index, (title, detail)) in rows.into_iter().enumerate() {
+        if index >= max_listed {
+            hidden += 1;
+            continue;
+        }
+        list = list.child(
+            div()
+                .flex()
+                .flex_row()
+                .items_center()
+                .justify_between()
+                .gap(px(12.))
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .truncate()
+                        .text_size(crate::ui_primitives::BODY)
+                        .text_color(ui.text)
+                        .child(title),
+                )
+                .child(
+                    div()
+                        .flex_none()
+                        .text_size(crate::ui_primitives::LABEL_SM)
+                        .text_color(ui.muted)
+                        .child(detail),
+                ),
+        );
+    }
+    if hidden > 0 {
+        list = list.child(
+            div()
+                .text_size(crate::ui_primitives::LABEL_SM)
+                .text_color(ui.muted)
+                .child(format!("and {hidden} more")),
+        );
+    }
+    list
+}
+
+pub(crate) fn confirmation_warning(
+    ui: crate::theme::UiColors,
+    text: impl Into<SharedString>,
+) -> Div {
+    div()
+        .px(MODAL_PADDING)
+        .pt(px(12.))
+        .pb(px(2.))
+        .text_size(crate::ui_primitives::BODY)
+        .line_height(px(18.))
+        .text_color(ui.muted)
+        .child(text.into())
+}
+
+pub(crate) fn modal_footer() -> Div {
+    div()
+        .flex()
+        .flex_row()
+        .items_center()
+        .justify_end()
+        .gap(px(8.))
+        .px(MODAL_PADDING)
+        .pt(px(18.))
+        .pb(px(16.))
 }
 
 pub fn select_chevron(ui: crate::theme::UiColors) -> impl IntoElement {

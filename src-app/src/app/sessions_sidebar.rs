@@ -1,8 +1,8 @@
 use crate::ui_primitives::TooltipDelayExt;
 use gpui::{
     AnyElement, ClickEvent, Context, FontWeight, Hsla, InteractiveElement, IntoElement,
-    KeyDownEvent, ParentElement, Pixels, SharedString, Styled, Window, div, img, prelude::*, px,
-    rgb, svg,
+    KeyDownEvent, ParentElement, Pixels, SharedString, Styled, Window, div, prelude::*, px, rgb,
+    svg,
 };
 
 use crate::PaneFlowApp;
@@ -904,19 +904,12 @@ fn agent_brand_color(agent: SessionAgent, ui: crate::theme::UiColors) -> Hsla {
 }
 
 fn agent_icon_element(agent: SessionAgent, size: Pixels, ui: crate::theme::UiColors) -> AnyElement {
-    if agent.terminal_agent().icon_multicolor() {
-        img(agent_icon_path(agent))
-            .size(size)
-            .flex_none()
-            .into_any_element()
-    } else {
-        svg()
-            .size(size)
-            .flex_none()
-            .path(agent_icon_path(agent))
-            .text_color(agent_brand_color(agent, ui))
-            .into_any_element()
-    }
+    crate::settings::components::render_logo(
+        agent_icon_path(agent),
+        agent.terminal_agent().icon_multicolor(),
+        size,
+        agent_brand_color(agent, ui),
+    )
 }
 
 fn claude_bypass_enabled(config: &paneflow_config::schema::PaneFlowConfig) -> bool {

@@ -1,7 +1,7 @@
 use crate::ui_primitives::TooltipDelayExt;
 use gpui::{
     AnyElement, ClickEvent, Context, CursorStyle, ElementId, FontWeight, Hsla, InteractiveElement,
-    IntoElement, MouseButton, ParentElement, PathPromptOptions, SharedString, Styled, div, img,
+    IntoElement, MouseButton, ParentElement, PathPromptOptions, SharedString, Styled, div,
     prelude::*, px, rgb, svg,
 };
 use paneflow_config::schema::{
@@ -2004,18 +2004,12 @@ fn pane_kind_chip(
 }
 
 fn agent_icon(agent: TerminalAgent, ui: crate::theme::UiColors) -> AnyElement {
-    let path = SharedString::from(agent.icon_path());
-    if agent.icon_multicolor() {
-        img(path).size(px(16.)).flex_none().into_any_element()
-    } else {
-        let tint: Hsla = agent.accent().map(|c| rgb(c).into()).unwrap_or(ui.text);
-        svg()
-            .size(px(16.))
-            .flex_none()
-            .path(path)
-            .text_color(tint)
-            .into_any_element()
-    }
+    crate::settings::components::render_logo(
+        agent.icon_path(),
+        agent.icon_multicolor(),
+        px(16.),
+        agent.accent().map(|c| rgb(c).into()).unwrap_or(ui.text),
+    )
 }
 
 fn layout_preview(preset: &str, count: usize, ui: crate::theme::UiColors) -> AnyElement {

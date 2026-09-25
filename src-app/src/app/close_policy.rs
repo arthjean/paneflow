@@ -1,7 +1,6 @@
 use gpui::{
-    AnyElement, ClickEvent, Context, Entity, FontWeight, InteractiveElement, IntoElement,
-    KeyDownEvent, MouseButton, ParentElement, Pixels, Styled, Window, deferred, div, hsla,
-    prelude::*, px,
+    AnyElement, ClickEvent, Context, Entity, InteractiveElement, IntoElement, KeyDownEvent,
+    ParentElement, Pixels, SharedString, Window, div, prelude::*, px,
 };
 use paneflow_config::schema::SessionId;
 
@@ -9,15 +8,15 @@ use crate::PaneFlowApp;
 use crate::ai_types::AgentState;
 use crate::app::hosted_sessions::{pane_terminals, tab_terminals};
 use crate::pane::Pane;
-use crate::settings::components::{card_color, destructive_button, secondary_button, with_alpha};
+use crate::settings::components::{
+    ModalKey, confirmation_list, confirmation_warning, destructive_button, modal_backdrop,
+    modal_card, modal_footer, modal_header, modal_key, secondary_button,
+};
 use crate::terminal::TerminalView;
 use crate::terminal::host_link::HostLinkState;
-use crate::ui_primitives::squircle::{squircle_border, squircle_fill};
-use crate::ui_primitives::{BODY, LABEL_SM, TITLE};
 
 const DIALOG_WIDTH: Pixels = px(460.);
 const CARD_RADIUS: Pixels = crate::app::constants::PANE_CARD_RADIUS;
-const CARD_PADDING: Pixels = px(20.);
 const MAX_LISTED_SESSIONS: usize = 6;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -308,17 +307,12 @@ impl PaneFlowApp {
         if self.close_dialog.is_none() {
             return;
         }
-        match event.keystroke.key.as_str() {
-            "escape" => {
-                self.close_close_dialog(window, cx);
-                cx.stop_propagation();
-            }
-            "enter" => {
-                self.resolve_close_dialog(CloseIntent::Detach, window, cx);
-                cx.stop_propagation();
-            }
-            _ => {}
+        match modal_key(event) {
+            Some(ModalKey::Dismiss) => self.close_close_dialog(window, cx),
+            Some(ModalKey::Confirm) => self.resolve_close_dialog(CloseIntent::Detach, window, cx),
+            None => return,
         }
+        cx.stop_propagation();
     }
 
     pub(crate) fn render_close_dialog(
@@ -337,97 +331,32 @@ impl PaneFlowApp {
             return div().into_any_element();
         };
         let ui = crate::theme::ui_colors();
-        let question = dialog.target.question();
         let unknown = dialog.rows.iter().filter(|row| row.state.is_none()).count();
-        let summary = close_summary(dialog.rows.len() - unknown, unknown);
-        let hidden = dialog.rows.len().saturating_sub(MAX_LISTED_SESSIONS);
 
-        let header = div()
-            .flex()
-            .flex_col()
-            .gap(px(4.))
-            .px(CARD_PADDING)
-            .pt(px(16.))
-            .pb(px(12.))
-            .child(
-                div()
-                    .text_size(TITLE)
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .text_color(ui.text)
-                    .child(question),
-            )
-            .child(
-                div()
-                    .text_size(LABEL_SM)
-                    .text_color(ui.muted)
-                    .child(summary),
-            );
+        let header = modal_header(
+            ui,
+            dialog.target.question(),
+            close_summary(dialog.rows.len() - unknown, unknown),
+        );
 
-        let mut list = div()
-            .flex()
-            .flex_col()
-            .gap(px(4.))
-            .mx(CARD_PADDING)
-            .px(px(12.))
-            .py(px(10.))
-            .rounded(px(8.))
-            .bg(with_alpha(ui.subtle, 0.5));
-        for row in dialog.rows.iter().take(MAX_LISTED_SESSIONS) {
-            list = list.child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .justify_between()
-                    .gap(px(12.))
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .truncate()
-                            .text_size(BODY)
-                            .text_color(ui.text)
-                            .child(row.title.clone()),
-                    )
-                    .child(
-                        div()
-                            .flex_none()
-                            .text_size(LABEL_SM)
-                            .text_color(ui.muted)
-                            .child(row.state_word()),
-                    ),
-            );
-        }
-        if hidden > 0 {
-            list = list.child(
-                div()
-                    .text_size(LABEL_SM)
-                    .text_color(ui.muted)
-                    .child(format!("and {hidden} more")),
-            );
-        }
+        let list = confirmation_list(
+            ui,
+            dialog.rows.iter().map(|row| {
+                (
+                    SharedString::from(row.title.clone()),
+                    SharedString::from(row.state_word()),
+                )
+            }),
+            MAX_LISTED_SESSIONS,
+        );
 
-        let explanation = div()
-            .px(CARD_PADDING)
-            .pt(px(12.))
-            .pb(px(2.))
-            .text_size(BODY)
-            .line_height(px(18.))
-            .text_color(ui.muted)
-            .child(
-                "Keep them running and they stay in the session list, ready to reopen. \
-                 Stop ends every session this action contains and the processes it started.",
-            );
+        let explanation = confirmation_warning(
+            ui,
+            "Keep them running and they stay in the session list, ready to reopen. \
+             Stop ends every session this action contains and the processes it started.",
+        );
 
-        let footer = div()
-            .flex()
-            .flex_row()
-            .items_center()
-            .justify_end()
-            .gap(px(8.))
-            .px(CARD_PADDING)
-            .pt(px(18.))
-            .pb(px(16.))
+        let footer = modal_footer()
             .child(secondary_button(
                 "close-dialog-cancel",
                 "Cancel",
@@ -455,55 +384,27 @@ impl PaneFlowApp {
                 }),
             ));
 
-        let card = div()
-            .id("close-dialog")
-            .occlude()
-            .track_focus(&self.close_dialog_focus)
-            .on_key_down(cx.listener(Self::handle_close_dialog_key_down))
-            .relative()
-            .w(DIALOG_WIDTH)
-            .rounded(CARD_RADIUS)
-            .shadow_lg()
-            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .on_mouse_down(MouseButton::Right, |_, _, cx| cx.stop_propagation())
-            .child(squircle_fill(CARD_RADIUS, card_color()))
-            .child(
-                div()
-                    .relative()
-                    .flex()
-                    .flex_col()
-                    .child(header)
-                    .child(list)
-                    .child(explanation)
-                    .child(footer),
-            )
-            .child(squircle_border(
-                CARD_RADIUS,
-                px(1.),
-                with_alpha(ui.border, 0.6),
-            ));
-
-        deferred(
+        let card = modal_card(
+            "close-dialog",
+            DIALOG_WIDTH,
+            CARD_RADIUS,
+            ui,
             div()
-                .id("close-dialog-backdrop")
-                .absolute()
-                .top_0()
-                .left_0()
-                .size_full()
-                .flex()
-                .items_center()
-                .justify_center()
-                .bg(hsla(0., 0., 0., 0.55))
-                .on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(|this, _, window, cx| {
-                        this.close_close_dialog(window, cx);
-                    }),
-                )
-                .child(card),
+                .child(header)
+                .child(list)
+                .child(explanation)
+                .child(footer),
         )
-        .with_priority(10)
-        .into_any_element()
+        .track_focus(&self.close_dialog_focus)
+        .on_key_down(cx.listener(Self::handle_close_dialog_key_down));
+
+        modal_backdrop(
+            "close-dialog-backdrop",
+            card,
+            cx.listener(|this, _, window, cx| {
+                this.close_close_dialog(window, cx);
+            }),
+        )
     }
 }
 

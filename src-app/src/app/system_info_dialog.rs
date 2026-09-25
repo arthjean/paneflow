@@ -1,19 +1,19 @@
 use gpui::{
     AnyElement, AppContext as _, AsyncApp, ClickEvent, ClipboardItem, Context, CursorStyle,
-    FontWeight, InteractiveElement, IntoElement, MouseButton, ParentElement, Pixels, Styled,
-    WeakEntity, Window, deferred, div, hsla, prelude::*, px, svg,
+    FontWeight, InteractiveElement, IntoElement, ParentElement, Pixels, Styled, WeakEntity, Window,
+    div, prelude::*, px, svg,
 };
 
 use crate::PaneFlowApp;
-use crate::settings::components::{card_color, secondary_button, with_alpha};
+use crate::settings::components::{
+    MODAL_PADDING, modal_backdrop, modal_card, modal_footer, secondary_button,
+};
 use crate::system_info::{SystemInfo, SystemInfoProbe};
-use crate::ui_primitives::squircle::{squircle_border, squircle_fill};
 use crate::ui_primitives::{BODY, LABEL_SM, TITLE, squircle_skin};
 
 const DIALOG_WIDTH: Pixels = px(560.);
 const LABEL_WIDTH: Pixels = px(116.);
 const CARD_RADIUS: Pixels = crate::app::constants::SETTINGS_CARD_RADIUS;
-const CARD_PADDING: Pixels = px(20.);
 const ROW_LINE_HEIGHT: Pixels = px(18.);
 const COLLECTING_MIN_HEIGHT: Pixels = px(148.);
 
@@ -95,7 +95,7 @@ impl PaneFlowApp {
             .items_start()
             .justify_between()
             .gap(px(12.))
-            .px(CARD_PADDING)
+            .px(MODAL_PADDING)
             .pt(px(16.))
             .pb(px(16.))
             .child(
@@ -123,7 +123,7 @@ impl PaneFlowApp {
 
         let body = match dialog {
             SystemInfoDialog::Collecting => div()
-                .px(CARD_PADDING)
+                .px(MODAL_PADDING)
                 .pb(px(4.))
                 .min_h(COLLECTING_MIN_HEIGHT)
                 .text_size(BODY)
@@ -135,7 +135,7 @@ impl PaneFlowApp {
                     .flex()
                     .flex_col()
                     .gap(px(8.))
-                    .px(CARD_PADDING)
+                    .px(MODAL_PADDING)
                     .pb(px(4.));
                 for (label, value) in report.rows() {
                     rows = rows.child(
@@ -170,15 +170,7 @@ impl PaneFlowApp {
         };
 
         let is_ready = matches!(dialog, SystemInfoDialog::Ready(_));
-        let footer = div()
-            .flex()
-            .flex_row()
-            .items_center()
-            .justify_end()
-            .gap(px(8.))
-            .px(CARD_PADDING)
-            .pt(px(18.))
-            .pb(px(16.))
+        let footer = modal_footer()
             .child(secondary_button(
                 "system-info-close-button",
                 "Close",
@@ -200,51 +192,20 @@ impl PaneFlowApp {
                 ))
             });
 
-        let card = div()
-            .id("system-info-dialog")
-            .occlude()
-            .relative()
-            .w(DIALOG_WIDTH)
-            .rounded(CARD_RADIUS)
-            .shadow_lg()
-            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .on_mouse_down(MouseButton::Right, |_, _, cx| cx.stop_propagation())
-            .child(squircle_fill(CARD_RADIUS, card_color()))
-            .child(
-                div()
-                    .relative()
-                    .flex()
-                    .flex_col()
-                    .child(header)
-                    .child(body)
-                    .child(footer),
-            )
-            .child(squircle_border(
-                CARD_RADIUS,
-                px(1.),
-                with_alpha(ui.border, 0.6),
-            ));
+        let card = modal_card(
+            "system-info-dialog",
+            DIALOG_WIDTH,
+            CARD_RADIUS,
+            ui,
+            div().child(header).child(body).child(footer),
+        );
 
-        deferred(
-            div()
-                .id("system-info-backdrop")
-                .absolute()
-                .top_0()
-                .left_0()
-                .size_full()
-                .flex()
-                .items_center()
-                .justify_center()
-                .bg(hsla(0., 0., 0., 0.55))
-                .on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(|this, _, _, cx| {
-                        this.close_system_info_dialog(cx);
-                    }),
-                )
-                .child(card),
+        modal_backdrop(
+            "system-info-backdrop",
+            card,
+            cx.listener(|this, _, _, cx| {
+                this.close_system_info_dialog(cx);
+            }),
         )
-        .with_priority(10)
-        .into_any_element()
     }
 }

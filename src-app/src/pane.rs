@@ -758,25 +758,12 @@ impl Pane {
         let ui = pane_colors();
         self.action_button_shell(
             SharedString::from(id),
-            Self::command_icon(SharedString::from(icon_path), ui.muted, false),
+            crate::settings::components::render_logo(icon_path, false, px(14.), ui.muted),
             ui.muted,
             Some(ui.text),
             handler,
             cx,
         )
-    }
-
-    fn command_icon(icon_path: SharedString, tint: Hsla, multicolor: bool) -> AnyElement {
-        if multicolor {
-            img(icon_path).size(px(14.)).flex_none().into_any_element()
-        } else {
-            svg()
-                .size(px(14.))
-                .flex_none()
-                .path(icon_path)
-                .text_color(tint)
-                .into_any_element()
-        }
     }
 
     fn hover_motion_snapshot(&self, id: &SharedString) -> (Rc<Cell<f32>>, f32, f32, u64) {
@@ -1199,20 +1186,14 @@ impl Pane {
     ) -> AnyElement {
         let launchable = preset.ensure_launchable().is_ok();
         let icon_path = preset.icon_path();
-        let icon = if preset.icon_multicolor() {
-            img(icon_path).size(px(15.)).flex_none().into_any_element()
-        } else {
-            svg()
-                .size(px(15.))
-                .flex_none()
-                .path(icon_path)
-                .text_color(
-                    preset
-                        .accent()
-                        .map_or(ui.muted, |accent| rgb(accent).into()),
-                )
-                .into_any_element()
-        };
+        let icon = crate::settings::components::render_logo(
+            icon_path,
+            preset.icon_multicolor(),
+            px(15.),
+            preset
+                .accent()
+                .map_or(ui.muted, |accent| rgb(accent).into()),
+        );
         let chosen = preset.clone();
         crate::settings::components::menu_row(
             SharedString::from(format!("pane-{pane_id}-new-tab-{index}")),

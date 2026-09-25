@@ -1,9 +1,8 @@
 use std::collections::HashSet;
 
 use gpui::{
-    AnyElement, AsyncApp, ClickEvent, Context, CursorStyle, FontWeight, InteractiveElement,
-    IntoElement, KeyDownEvent, MouseButton, ParentElement, Pixels, Styled, Window, deferred, div,
-    hsla, prelude::*, px,
+    AnyElement, AsyncApp, ClickEvent, Context, CursorStyle, InteractiveElement, IntoElement,
+    KeyDownEvent, ParentElement, Pixels, Styled, Window, div, prelude::*, px,
 };
 use paneflow_config::schema::OnQuit;
 use serde_json::Value;
@@ -11,16 +10,15 @@ use serde_json::Value;
 use crate::PaneFlowApp;
 use crate::ai_types::AgentState;
 use crate::settings::components::{
-    card_color, destructive_button, secondary_button, setting_text, toggle_pill, with_alpha,
+    MODAL_PADDING, ModalKey, destructive_button, modal_backdrop, modal_card, modal_footer,
+    modal_header, modal_key, secondary_button, setting_text, toggle_pill, with_alpha,
 };
 use crate::terminal::host_link::{self, HostLinkState, StopAllOutcome};
-use crate::ui_primitives::squircle::{squircle_border, squircle_fill};
-use crate::ui_primitives::{BODY, LABEL_SM, TITLE};
+use crate::ui_primitives::BODY;
 use crate::update;
 
 const DIALOG_WIDTH: Pixels = px(460.);
 const CARD_RADIUS: Pixels = crate::app::constants::PANE_CARD_RADIUS;
-const CARD_PADDING: Pixels = px(20.);
 
 pub(crate) use crate::app::hosted_sessions::StopTarget;
 
@@ -404,18 +402,14 @@ impl PaneFlowApp {
         ) {
             return;
         }
-        match event.keystroke.key.as_str() {
-            "escape" => {
-                self.close_quit_dialog(window, cx);
-                cx.stop_propagation();
+        match modal_key(event) {
+            Some(ModalKey::Dismiss) => self.close_quit_dialog(window, cx),
+            Some(ModalKey::Confirm) if matches!(self.quit_dialog.as_ref(), Some(dialog) if dialog.kind == ExitKind::Quit) => {
+                self.quit_keeping_sessions(cx)
             }
-            "enter" if matches!(self.quit_dialog.as_ref(), Some(dialog) if dialog.kind == ExitKind::Quit) =>
-            {
-                self.quit_keeping_sessions(cx);
-                cx.stop_propagation();
-            }
-            _ => {}
+            _ => return,
         }
+        cx.stop_propagation();
     }
 
     pub(crate) fn render_quit_dialog(
@@ -490,29 +484,10 @@ impl PaneFlowApp {
             quit_summary(dialog.sessions, dialog.working, dialog.waiting)
         };
 
-        let header = div()
-            .flex()
-            .flex_col()
-            .gap(px(4.))
-            .px(CARD_PADDING)
-            .pt(px(16.))
-            .pb(px(12.))
-            .child(
-                div()
-                    .text_size(TITLE)
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .text_color(ui.text)
-                    .child(question),
-            )
-            .child(
-                div()
-                    .text_size(LABEL_SM)
-                    .text_color(ui.muted)
-                    .child(summary),
-            );
+        let header = modal_header(ui, question, summary);
 
         let explanation = div()
-            .px(CARD_PADDING)
+            .px(MODAL_PADDING)
             .pb(px(14.))
             .text_size(BODY)
             .line_height(px(18.))
@@ -526,7 +501,7 @@ impl PaneFlowApp {
             .flex_row()
             .items_center()
             .gap(px(12.))
-            .mx(CARD_PADDING)
+            .mx(MODAL_PADDING)
             .px(px(12.))
             .py(px(10.))
             .rounded(px(8.))
@@ -546,16 +521,8 @@ impl PaneFlowApp {
             ))
             .child(toggle_pill(remember, ui));
 
-        let footer = div()
-            .flex()
-            .flex_row()
-            .items_center()
-            .justify_end()
-            .gap(px(8.))
-            .px(CARD_PADDING)
-            .pt(px(18.))
-            .pb(px(16.))
-            .when(!stopping, |footer| {
+        let footer =
+            modal_footer().when(!stopping, |footer| {
                 footer
                     .child(secondary_button(
                         "quit-dialog-cancel",
@@ -603,58 +570,30 @@ impl PaneFlowApp {
                     )
             });
 
-        let card = div()
-            .id("quit-dialog")
-            .occlude()
-            .track_focus(&self.quit_dialog_focus)
-            .on_key_down(cx.listener(Self::handle_quit_dialog_key_down))
-            .relative()
-            .w(DIALOG_WIDTH)
-            .rounded(CARD_RADIUS)
-            .shadow_lg()
-            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .on_mouse_down(MouseButton::Right, |_, _, cx| cx.stop_propagation())
-            .child(squircle_fill(CARD_RADIUS, card_color()))
-            .child(
-                div()
-                    .relative()
-                    .flex()
-                    .flex_col()
-                    .child(header)
-                    .child(explanation)
-                    .when(
-                        !stopping && kind == ExitKind::Quit && failure.is_none(),
-                        |body| body.child(remember_row),
-                    )
-                    .child(footer),
-            )
-            .child(squircle_border(
-                CARD_RADIUS,
-                px(1.),
-                with_alpha(ui.border, 0.6),
-            ));
-
-        deferred(
+        let card = modal_card(
+            "quit-dialog",
+            DIALOG_WIDTH,
+            CARD_RADIUS,
+            ui,
             div()
-                .id("quit-dialog-backdrop")
-                .absolute()
-                .top_0()
-                .left_0()
-                .size_full()
-                .flex()
-                .items_center()
-                .justify_center()
-                .bg(hsla(0., 0., 0., 0.55))
-                .on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(|this, _, window, cx| {
-                        this.close_quit_dialog(window, cx);
-                    }),
+                .child(header)
+                .child(explanation)
+                .when(
+                    !stopping && kind == ExitKind::Quit && failure.is_none(),
+                    |body| body.child(remember_row),
                 )
-                .child(card),
+                .child(footer),
         )
-        .with_priority(10)
-        .into_any_element()
+        .track_focus(&self.quit_dialog_focus)
+        .on_key_down(cx.listener(Self::handle_quit_dialog_key_down));
+
+        modal_backdrop(
+            "quit-dialog-backdrop",
+            card,
+            cx.listener(|this, _, window, cx| {
+                this.close_quit_dialog(window, cx);
+            }),
+        )
     }
 }
 
