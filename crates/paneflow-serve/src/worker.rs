@@ -5,9 +5,9 @@ use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
+use paneflow_host::bootstrap::{OwnerLock, OwnerLockError};
 use serde_json::{Value, json};
 
-use crate::bootstrap::{OwnerLock, OwnerLockError};
 use crate::core_link::{CoreFrame, CoreLink};
 use crate::protocol::{
     METHOD_AGENT_SNAPSHOT, REQUIRED_CORE_PROTOCOL, WORKER_PROTOCOL_VERSION, WorkerIdentity,
@@ -84,10 +84,15 @@ impl RunningWorker {
 fn open_with_build_id(home: &Path, build_id: String) -> Result<RunningWorker, WorkerError> {
     std::fs::create_dir_all(paneflow_home::serve_dir_in(home))
         .map_err(|error| WorkerError::Storage(error.to_string()))?;
-    let owner = OwnerLock::acquire(home).map_err(|error| match error {
-        OwnerLockError::Held(path) => WorkerError::AlreadyRunning(path.display().to_string()),
-        OwnerLockError::Io(io) => WorkerError::Storage(io.to_string()),
-    })?;
+    let owner =
+        OwnerLock::acquire_at(&paneflow_home::serve_owner_lock_path_in(home)).map_err(|error| {
+            match error {
+                OwnerLockError::Held(path) => {
+                    WorkerError::AlreadyRunning(path.display().to_string())
+                }
+                OwnerLockError::Io(io) => WorkerError::Storage(io.to_string()),
+            }
+        })?;
     let endpoint = paneflow_home::serve_endpoint_path(home);
     let identity = WorkerIdentity {
         name: "paneflow-serve".to_string(),
@@ -320,5 +325,18 @@ mod tests {
         let running = open_with_config(home.path(), r#"{"menu_attention_detection": false}"#);
         assert!(!running.worker().lock_state().menu_attention_detection());
         running.stop();
+    }
+
+    #[test]
+    fn a_second_worker_on_the_same_home_is_refused_while_the_first_holds_the_owner_lock() {
+        let home = tempfile::tempdir().expect("a temporary home");
+        let first = open_with_config(home.path(), "{}");
+        let expected = paneflow_home::serve_owner_lock_path_in(home.path());
+        assert!(expected.ends_with("owner.lock"));
+        assert!(matches!(
+            open_with_build_id(home.path(), "test-build".to_string()),
+            Err(WorkerError::AlreadyRunning(path)) if path == expected.display().to_string()
+        ));
+        first.stop();
     }
 }

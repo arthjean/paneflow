@@ -14,6 +14,7 @@ use interprocess::local_socket::{GenericFilePath, Listener, ListenerOptions, Str
 use interprocess::os::windows::{
     local_socket::ListenerOptionsExt, security_descriptor::SecurityDescriptor,
 };
+use paneflow_host::server::ConnectionGuard;
 use serde_json::{Value, json};
 
 pub struct IpcRequest {
@@ -169,13 +170,6 @@ pub fn start_server() -> (
             let active_connections = Arc::new(AtomicUsize::new(0));
             let active_subscriptions = Arc::new(AtomicUsize::new(0));
 
-            struct ActiveGuard(Arc<AtomicUsize>);
-            impl Drop for ActiveGuard {
-                fn drop(&mut self) {
-                    self.0.fetch_sub(1, Ordering::AcqRel);
-                }
-            }
-
             loop {
                 match listener.accept() {
                     Ok(stream) => {
@@ -188,13 +182,13 @@ pub fn start_server() -> (
                                 continue;
                             }
                         };
-                        if active_connections.load(Ordering::Acquire) >= MAX_CONCURRENT_CONNECTIONS
-                        {
+                        let Some(guard) = ConnectionGuard::try_acquire(
+                            Arc::clone(&active_connections),
+                            MAX_CONCURRENT_CONNECTIONS,
+                        ) else {
                             reject_overloaded(stream);
                             continue;
-                        }
-                        active_connections.fetch_add(1, Ordering::AcqRel);
-                        let guard = ActiveGuard(Arc::clone(&active_connections));
+                        };
                         let tx = tx.clone();
                         let bus = Arc::clone(&thread_event_bus);
                         let subscriptions = Arc::clone(&active_subscriptions);
@@ -547,33 +541,6 @@ fn read_request_line(stream: &mut Stream, line: &mut String) -> std::io::Result<
     }
 }
 
-struct ActiveCountGuard {
-    counter: Arc<AtomicUsize>,
-}
-
-impl ActiveCountGuard {
-    fn try_acquire(counter: Arc<AtomicUsize>, limit: usize) -> Option<Self> {
-        loop {
-            let current = counter.load(Ordering::Acquire);
-            if current >= limit {
-                return None;
-            }
-            if counter
-                .compare_exchange(current, current + 1, Ordering::AcqRel, Ordering::Acquire)
-                .is_ok()
-            {
-                return Some(Self { counter });
-            }
-        }
-    }
-}
-
-impl Drop for ActiveCountGuard {
-    fn drop(&mut self) {
-        self.counter.fetch_sub(1, Ordering::AcqRel);
-    }
-}
-
 fn write_overloaded_error(writer: &mut Stream, message: &str) {
     let envelope = json!({
         "jsonrpc": "2.0",
@@ -690,7 +657,7 @@ fn handle_connection(
                         let params = req.get("params").cloned().unwrap_or(json!({}));
 
                         if method == "events.subscribe" {
-                            let Some(_subscription_guard) = ActiveCountGuard::try_acquire(
+                            let Some(_subscription_guard) = ConnectionGuard::try_acquire(
                                 Arc::clone(&active_subscriptions),
                                 MAX_SUBSCRIPTION_CONNECTIONS,
                             ) else {
@@ -1257,7 +1224,7 @@ mod auth {
 
 #[cfg(test)]
 mod connection_limit_tests {
-    use super::{ActiveCountGuard, MAX_SUBSCRIPTION_CONNECTIONS};
+    use super::{ConnectionGuard, MAX_SUBSCRIPTION_CONNECTIONS};
     use std::sync::{
         Arc,
         atomic::{AtomicUsize, Ordering},
@@ -1269,12 +1236,12 @@ mod connection_limit_tests {
         let mut guards = Vec::new();
         for _ in 0..MAX_SUBSCRIPTION_CONNECTIONS {
             guards.push(
-                ActiveCountGuard::try_acquire(Arc::clone(&counter), MAX_SUBSCRIPTION_CONNECTIONS)
+                ConnectionGuard::try_acquire(Arc::clone(&counter), MAX_SUBSCRIPTION_CONNECTIONS)
                     .expect("slot"),
             );
         }
         assert!(
-            ActiveCountGuard::try_acquire(Arc::clone(&counter), MAX_SUBSCRIPTION_CONNECTIONS)
+            ConnectionGuard::try_acquire(Arc::clone(&counter), MAX_SUBSCRIPTION_CONNECTIONS)
                 .is_none()
         );
         drop(guards.pop());
@@ -1283,7 +1250,7 @@ mod connection_limit_tests {
             MAX_SUBSCRIPTION_CONNECTIONS - 1
         );
         assert!(
-            ActiveCountGuard::try_acquire(Arc::clone(&counter), MAX_SUBSCRIPTION_CONNECTIONS)
+            ConnectionGuard::try_acquire(Arc::clone(&counter), MAX_SUBSCRIPTION_CONNECTIONS)
                 .is_some()
         );
     }

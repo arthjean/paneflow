@@ -24,7 +24,7 @@ const BOOTSTRAP_LOCK_WAIT: Duration = Duration::from_secs(15);
 const LOCK_RETRY: Duration = Duration::from_millis(25);
 const OWNER_LOCK_WAIT: Duration = Duration::from_millis(500);
 const STARTUP_POLL: Duration = Duration::from_millis(50);
-const MAX_INSTANCE_RECORD_BYTES: u64 = 64 * 1024;
+pub const MAX_INSTANCE_RECORD_BYTES: u64 = 64 * 1024;
 
 #[cfg(windows)]
 const ERROR_ACCESS_DENIED: i32 = 5;
@@ -43,7 +43,11 @@ pub struct OwnerLock {
 
 impl OwnerLock {
     pub fn acquire(home: &Path) -> Result<Self, OwnerLockError> {
-        let path = paneflow_home::host_dir_in(home).join(OWNER_LOCK_FILE_NAME);
+        Self::acquire_at(&paneflow_home::host_dir_in(home).join(OWNER_LOCK_FILE_NAME))
+    }
+
+    pub fn acquire_at(path: &Path) -> Result<Self, OwnerLockError> {
+        let path = path.to_path_buf();
         let file = open_lock_file(&path)?;
         let deadline = Instant::now() + OWNER_LOCK_WAIT;
         loop {
@@ -135,16 +139,20 @@ pub fn probe(home: &Path, endpoint: &Path, hello: &ClientHello) -> Probe {
 }
 
 pub fn read_instance_record(home: &Path) -> Option<HostIdentity> {
+    read_json_record(
+        &paneflow_home::host_instance_record_path_in(home),
+        MAX_INSTANCE_RECORD_BYTES,
+    )
+}
+
+pub fn read_json_record<T: serde::de::DeserializeOwned>(path: &Path, cap: u64) -> Option<T> {
     use std::io::Read;
-    let path = paneflow_home::host_instance_record_path_in(home);
     let file = File::open(path).ok()?;
-    if file.metadata().ok()?.len() > MAX_INSTANCE_RECORD_BYTES {
+    if file.metadata().ok()?.len() > cap {
         return None;
     }
     let mut bytes = Vec::new();
-    file.take(MAX_INSTANCE_RECORD_BYTES)
-        .read_to_end(&mut bytes)
-        .ok()?;
+    file.take(cap).read_to_end(&mut bytes).ok()?;
     serde_json::from_slice(&bytes).ok()
 }
 

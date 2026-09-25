@@ -3,10 +3,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, SyncSender, TrySendError, sync_channel};
 
 use paneflow_config::schema::{SessionGeneration, SessionId};
-use paneflow_ipc_client::ai_hook::{
-    LifecycleEventSource, METHOD_EXIT, METHOD_NOTIFICATION, METHOD_PROMPT_SUBMIT,
-    METHOD_SESSION_END, METHOD_SESSION_START, METHOD_STOP, METHOD_TOOL_USE,
-};
+use paneflow_ipc_client::ai_hook::LifecycleEventSource;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
@@ -16,47 +13,7 @@ pub const MAX_AGENT_TEXT_BYTES: usize = 4 * 1024;
 
 pub const SUBSCRIBER_QUEUE_SLOTS: usize = 256;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AgentEventKind {
-    SessionStart,
-    PromptSubmit,
-    ToolUse,
-    Notification,
-    Stop,
-    Exit,
-    SessionEnd,
-}
-
-impl AgentEventKind {
-    pub fn wire_str(self) -> &'static str {
-        match self {
-            Self::SessionStart => METHOD_SESSION_START,
-            Self::PromptSubmit => METHOD_PROMPT_SUBMIT,
-            Self::ToolUse => METHOD_TOOL_USE,
-            Self::Notification => METHOD_NOTIFICATION,
-            Self::Stop => METHOD_STOP,
-            Self::Exit => METHOD_EXIT,
-            Self::SessionEnd => METHOD_SESSION_END,
-        }
-    }
-
-    pub fn parse(raw: &str) -> Option<Self> {
-        match raw {
-            METHOD_SESSION_START => Some(Self::SessionStart),
-            METHOD_PROMPT_SUBMIT => Some(Self::PromptSubmit),
-            METHOD_TOOL_USE => Some(Self::ToolUse),
-            METHOD_NOTIFICATION => Some(Self::Notification),
-            METHOD_STOP => Some(Self::Stop),
-            METHOD_EXIT => Some(Self::Exit),
-            METHOD_SESSION_END => Some(Self::SessionEnd),
-            _ => None,
-        }
-    }
-
-    pub fn ends_run(self) -> bool {
-        matches!(self, Self::Stop | Self::Exit | Self::SessionEnd)
-    }
-}
+pub use paneflow_ipc_client::ai_hook::AiHookMethod as AgentEventKind;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AgentEvent {
@@ -173,7 +130,7 @@ impl AgentEvent {
             "type": "event",
             "session": self.session,
             "generation": generation,
-            "kind": self.kind.wire_str(),
+            "kind": self.kind.as_str(),
             "tool": self.tool,
             "pid": self.pid,
             "tool_name": self.tool_name,

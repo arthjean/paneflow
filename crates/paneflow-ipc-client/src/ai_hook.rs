@@ -50,6 +50,23 @@ impl AiHookMethod {
             Self::Exit => METHOD_EXIT,
         }
     }
+
+    pub fn parse(raw: &str) -> Option<Self> {
+        match raw {
+            METHOD_SESSION_START => Some(Self::SessionStart),
+            METHOD_PROMPT_SUBMIT => Some(Self::PromptSubmit),
+            METHOD_TOOL_USE => Some(Self::ToolUse),
+            METHOD_NOTIFICATION => Some(Self::Notification),
+            METHOD_STOP => Some(Self::Stop),
+            METHOD_EXIT => Some(Self::Exit),
+            METHOD_SESSION_END => Some(Self::SessionEnd),
+            _ => None,
+        }
+    }
+
+    pub fn ends_run(self) -> bool {
+        matches!(self, Self::Stop | Self::Exit | Self::SessionEnd)
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

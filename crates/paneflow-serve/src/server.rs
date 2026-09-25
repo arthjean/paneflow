@@ -1,12 +1,13 @@
 use std::io;
-use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
-use std::sync::mpsc::{Receiver, SyncSender, TrySendError, sync_channel};
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
-use interprocess::local_socket::{GenericFilePath, Listener, ListenerOptions, Stream, prelude::*};
+use interprocess::local_socket::{GenericFilePath, Listener, Stream, prelude::*};
+use paneflow_host::agent::AgentBus;
+use paneflow_host::server::{ConnectionGuard, bind_owner_only};
 use paneflow_ipc_client::line_wire::{LineRead, Wire};
 use serde_json::{Value, json};
 
@@ -23,59 +24,13 @@ const MAX_CONNECTIONS: usize = 128;
 const IDLE_TIMEOUT: Duration = Duration::from_secs(60);
 const FOLLOW_POLL: Duration = Duration::from_millis(15);
 const FOLLOW_KEEPALIVE: Duration = Duration::from_secs(2);
-const SUBSCRIBER_QUEUE_SLOTS: usize = 256;
-
-#[cfg(windows)]
-const WINDOWS_PIPE_SDDL: &str = "D:P(A;;GA;;;OW)";
-
-pub struct Subscription {
-    pub id: u64,
-    pub frames: Receiver<Value>,
-}
-
-#[derive(Default)]
-pub struct Bus {
-    next_id: AtomicU64,
-    subscribers: Mutex<Vec<(u64, SyncSender<Value>)>>,
-}
-
-impl Bus {
-    pub fn subscribe(&self) -> Subscription {
-        let id = self.next_id.fetch_add(1, Ordering::Relaxed) + 1;
-        let (tx, frames) = sync_channel(SUBSCRIBER_QUEUE_SLOTS);
-        self.lock().push((id, tx));
-        Subscription { id, frames }
-    }
-
-    pub fn unsubscribe(&self, id: u64) {
-        self.lock().retain(|(held, _)| *held != id);
-    }
-
-    pub fn broadcast(&self, frame: &Value) {
-        let mut subscribers = self.lock();
-        subscribers.retain(|(id, tx)| match tx.try_send(frame.clone()) {
-            Ok(()) => true,
-            Err(TrySendError::Full(_)) => {
-                log::warn!("paneflow-serve: subscriber {id} fell behind and was dropped");
-                false
-            }
-            Err(TrySendError::Disconnected(_)) => false,
-        });
-    }
-
-    fn lock(&self) -> std::sync::MutexGuard<'_, Vec<(u64, SyncSender<Value>)>> {
-        self.subscribers
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-    }
-}
 
 pub struct Worker {
     pub identity: WorkerIdentity,
     pub home: PathBuf,
     pub core_endpoint: PathBuf,
     pub state: Mutex<WorkerState>,
-    pub bus: Bus,
+    pub bus: AgentBus,
     pub shutdown: Arc<AtomicBool>,
     pub core_connected: AtomicBool,
 }
@@ -165,7 +120,7 @@ pub struct ServerHandle {
 
 impl ServerHandle {
     pub fn spawn(worker: Arc<Worker>, endpoint: PathBuf) -> io::Result<Self> {
-        let listener = bind(&endpoint)?;
+        let listener = bind_owner_only(&endpoint, "paneflow-serve")?;
         let shutdown = Arc::clone(&worker.shutdown);
         let flag = Arc::clone(&shutdown);
         let thread = std::thread::Builder::new()
@@ -208,77 +163,6 @@ impl Drop for ServerHandle {
     }
 }
 
-fn bind(endpoint: &Path) -> io::Result<Listener> {
-    #[cfg(unix)]
-    {
-        if let Some(parent) = endpoint.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        match std::fs::symlink_metadata(endpoint) {
-            Ok(metadata) => {
-                use std::os::unix::fs::FileTypeExt;
-                if !metadata.file_type().is_socket() {
-                    return Err(io::Error::new(
-                        io::ErrorKind::AlreadyExists,
-                        format!("{} exists and is not a socket", endpoint.display()),
-                    ));
-                }
-                std::fs::remove_file(endpoint)?;
-            }
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-            Err(error) => return Err(error),
-        }
-    }
-    let name = endpoint.to_fs_name::<GenericFilePath>()?;
-    #[cfg(windows)]
-    let listener = {
-        use interprocess::os::windows::{
-            local_socket::ListenerOptionsExt, security_descriptor::SecurityDescriptor,
-        };
-        let sddl = widestring::U16CString::from_str(WINDOWS_PIPE_SDDL)
-            .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
-        let descriptor = SecurityDescriptor::deserialize(sddl.as_ucstr())?;
-        ListenerOptions::new()
-            .name(name)
-            .security_descriptor(descriptor)
-            .create_sync()?
-    };
-    #[cfg(not(windows))]
-    let listener = ListenerOptions::new().name(name).create_sync()?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(endpoint, std::fs::Permissions::from_mode(0o600))?;
-    }
-    log::info!("paneflow-serve: listening on {}", endpoint.display());
-    Ok(listener)
-}
-
-struct ConnectionGuard(Arc<AtomicUsize>);
-
-impl ConnectionGuard {
-    fn acquire(counter: Arc<AtomicUsize>) -> Option<Self> {
-        loop {
-            let current = counter.load(Ordering::Acquire);
-            if current >= MAX_CONNECTIONS {
-                return None;
-            }
-            if counter
-                .compare_exchange(current, current + 1, Ordering::AcqRel, Ordering::Acquire)
-                .is_ok()
-            {
-                return Some(Self(counter));
-            }
-        }
-    }
-}
-
-impl Drop for ConnectionGuard {
-    fn drop(&mut self) {
-        self.0.fetch_sub(1, Ordering::AcqRel);
-    }
-}
-
 fn accept_loop(
     listener: Listener,
     worker: Arc<Worker>,
@@ -296,7 +180,7 @@ fn accept_loop(
                 continue;
             }
         };
-        let Some(guard) = ConnectionGuard::acquire(Arc::clone(&active)) else {
+        let Some(guard) = ConnectionGuard::try_acquire(Arc::clone(&active), MAX_CONNECTIONS) else {
             if let Ok(mut wire) = Wire::new(stream, MAX_CONTROL_FRAME_BYTES) {
                 let _ = wire.write_json(&error_envelope(
                     &Value::Null,

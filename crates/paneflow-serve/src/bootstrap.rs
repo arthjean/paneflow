@@ -1,9 +1,10 @@
-use std::fs::{File, OpenOptions, TryLockError};
 use std::io;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use paneflow_host::bootstrap::{BootstrapError, release_child, spawn_detached};
+use paneflow_host::bootstrap::{
+    BootstrapError, MAX_INSTANCE_RECORD_BYTES, read_json_record, release_child, spawn_detached,
+};
 use paneflow_ipc_client::host_control::HostControl;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -13,50 +14,7 @@ use crate::protocol::{METHOD_WORKER_SHUTDOWN, WorkerIdentity};
 pub const STARTUP_WAIT: Duration = Duration::from_secs(10);
 pub const DRAIN_WAIT: Duration = Duration::from_secs(5);
 const STARTUP_POLL: Duration = Duration::from_millis(50);
-const OWNER_LOCK_WAIT: Duration = Duration::from_millis(500);
-const LOCK_RETRY: Duration = Duration::from_millis(25);
-const MAX_INSTANCE_RECORD_BYTES: u64 = 64 * 1024;
 const CLIENT_NAME: &str = "paneflow-serve-bootstrap";
-
-#[derive(Debug, thiserror::Error)]
-pub enum OwnerLockError {
-    #[error("another paneflow worker already owns this state home (lock {0})")]
-    Held(PathBuf),
-    #[error("cannot take the worker owner lock: {0}")]
-    Io(#[from] io::Error),
-}
-
-pub struct OwnerLock {
-    _file: File,
-}
-
-impl OwnerLock {
-    pub fn acquire(home: &Path) -> Result<Self, OwnerLockError> {
-        let path = paneflow_home::serve_owner_lock_path_in(home);
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        let mut options = OpenOptions::new();
-        options.read(true).write(true).create(true).truncate(false);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            options.mode(0o600);
-        }
-        let file = options.open(&path)?;
-        let deadline = Instant::now() + OWNER_LOCK_WAIT;
-        loop {
-            match file.try_lock() {
-                Ok(()) => return Ok(Self { _file: file }),
-                Err(TryLockError::WouldBlock) if Instant::now() < deadline => {
-                    std::thread::sleep(LOCK_RETRY);
-                }
-                Err(TryLockError::WouldBlock) => return Err(OwnerLockError::Held(path)),
-                Err(TryLockError::Error(error)) => return Err(OwnerLockError::Io(error)),
-            }
-        }
-    }
-}
 
 #[derive(Debug)]
 pub enum Probe {
@@ -93,16 +51,10 @@ pub fn probe(home: &Path, endpoint: &Path) -> Probe {
 }
 
 pub fn read_instance_record(home: &Path) -> Option<WorkerIdentity> {
-    use std::io::Read;
-    let file = File::open(paneflow_home::serve_instance_record_path_in(home)).ok()?;
-    if file.metadata().ok()?.len() > MAX_INSTANCE_RECORD_BYTES {
-        return None;
-    }
-    let mut bytes = Vec::new();
-    file.take(MAX_INSTANCE_RECORD_BYTES)
-        .read_to_end(&mut bytes)
-        .ok()?;
-    serde_json::from_slice(&bytes).ok()
+    read_json_record(
+        &paneflow_home::serve_instance_record_path_in(home),
+        MAX_INSTANCE_RECORD_BYTES,
+    )
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -344,19 +296,6 @@ pub fn stop_worker(home: &Path, drain: Duration) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn a_second_owner_lock_on_the_same_home_is_refused_while_the_first_lives() {
-        let home = tempfile::tempdir().unwrap();
-        let first = OwnerLock::acquire(home.path()).unwrap();
-        let expected = paneflow_home::serve_owner_lock_path_in(home.path());
-        assert!(expected.ends_with("owner.lock"));
-        assert!(
-            matches!(OwnerLock::acquire(home.path()), Err(OwnerLockError::Held(path)) if path == expected)
-        );
-        drop(first);
-        OwnerLock::acquire(home.path()).unwrap();
-    }
 
     #[test]
     fn only_a_different_build_or_protocol_replaces_the_worker_that_already_serves_the_home() {

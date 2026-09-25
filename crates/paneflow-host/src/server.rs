@@ -58,7 +58,7 @@ pub struct ServerHandle {
 
 impl ServerHandle {
     pub fn spawn(host: Arc<SessionHost>, endpoint: PathBuf) -> io::Result<Self> {
-        let listener = bind(&endpoint)?;
+        let listener = bind_owner_only(&endpoint, "paneflow-host")?;
         let shutdown = Arc::new(AtomicBool::new(false));
         let active = Arc::new(AtomicUsize::new(0));
         let flag = Arc::clone(&shutdown);
@@ -109,7 +109,7 @@ impl Drop for ServerHandle {
 }
 
 pub fn serve(host: Arc<SessionHost>, endpoint: &Path, shutdown: Arc<AtomicBool>) -> io::Result<()> {
-    let listener = bind(endpoint)?;
+    let listener = bind_owner_only(endpoint, "paneflow-host")?;
     let served = accept_loop(listener, host, shutdown, Arc::new(AtomicUsize::new(0)));
     #[cfg(unix)]
     {
@@ -118,7 +118,7 @@ pub fn serve(host: Arc<SessionHost>, endpoint: &Path, shutdown: Arc<AtomicBool>)
     served
 }
 
-fn bind(endpoint: &Path) -> io::Result<Listener> {
+pub fn bind_owner_only(endpoint: &Path, label: &str) -> io::Result<Listener> {
     #[cfg(unix)]
     {
         if let Some(parent) = endpoint.parent() {
@@ -161,7 +161,7 @@ fn bind(endpoint: &Path) -> io::Result<Listener> {
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(endpoint, std::fs::Permissions::from_mode(0o600))?;
     }
-    log::info!("paneflow-host: listening on {}", endpoint.display());
+    log::info!("{label}: listening on {}", endpoint.display());
     Ok(listener)
 }
 
@@ -210,7 +210,7 @@ fn accept_loop(
                 continue;
             }
         };
-        let Some(guard) = ConnectionGuard::acquire(Arc::clone(&active)) else {
+        let Some(guard) = ConnectionGuard::try_acquire(Arc::clone(&active), MAX_CONNECTIONS) else {
             reject_busy(stream);
             continue;
         };
@@ -232,13 +232,13 @@ fn accept_loop(
     Ok(())
 }
 
-struct ConnectionGuard(Arc<AtomicUsize>);
+pub struct ConnectionGuard(Arc<AtomicUsize>);
 
 impl ConnectionGuard {
-    fn acquire(counter: Arc<AtomicUsize>) -> Option<Self> {
+    pub fn try_acquire(counter: Arc<AtomicUsize>, limit: usize) -> Option<Self> {
         loop {
             let current = counter.load(Ordering::Acquire);
-            if current >= MAX_CONNECTIONS {
+            if current >= limit {
                 return None;
             }
             if counter
@@ -1295,7 +1295,7 @@ mod tests {
 
         let home = tempfile::tempdir().unwrap();
         let endpoint = test_endpoint(home.path());
-        let listener = bind(&endpoint).unwrap();
+        let listener = bind_owner_only(&endpoint, "paneflow-host").unwrap();
         assert_eq!(
             std::fs::metadata(&endpoint).unwrap().permissions().mode() & 0o777,
             0o600
@@ -1307,7 +1307,8 @@ mod tests {
     #[test]
     fn a_served_endpoint_is_never_taken_over_while_a_stale_one_is_reclaimed() {
         let (_home, _host, server) = start();
-        let refused = bind(server.endpoint()).expect_err("a served endpoint is refused");
+        let refused = bind_owner_only(server.endpoint(), "paneflow-host")
+            .expect_err("a served endpoint is refused");
         assert_eq!(refused.kind(), io::ErrorKind::AddrInUse, "{refused}");
         let hello = ClientHello::local("paneflow-host-test");
         assert!(
@@ -1322,7 +1323,9 @@ mod tests {
             stale.exists(),
             "a listener that exits leaves its socket file"
         );
-        drop(bind(&stale).expect("a socket nobody serves is reclaimed"));
+        drop(
+            bind_owner_only(&stale, "paneflow-host").expect("a socket nobody serves is reclaimed"),
+        );
     }
 
     #[test]
@@ -1688,7 +1691,7 @@ mod tests {
     fn a_second_shutdown_wakeup_is_bounded_when_an_accepted_pipe_outlives_its_listener() {
         let home = tempfile::tempdir().unwrap();
         let endpoint = test_endpoint(home.path());
-        let listener = bind(&endpoint).unwrap();
+        let listener = bind_owner_only(&endpoint, "paneflow-host").unwrap();
         let connected =
             Stream::connect(endpoint.as_path().to_fs_name::<GenericFilePath>().unwrap()).unwrap();
         let accepted = listener.accept().unwrap();

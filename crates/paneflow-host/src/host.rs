@@ -652,7 +652,7 @@ fn receipt_key(event: &AgentEvent) -> u64 {
     event.message.hash(&mut hasher);
     event.summary.hash(&mut hasher);
     event.exit_code.hash(&mut hasher);
-    event.kind.wire_str().hash(&mut hasher);
+    event.kind.as_str().hash(&mut hasher);
     event.tool.hash(&mut hasher);
     event.tool_name.hash(&mut hasher);
     event.pid.hash(&mut hasher);
@@ -1232,7 +1232,7 @@ impl SessionHost {
             .payload
             .get("hook_event_name")
             .and_then(Value::as_str)
-            .unwrap_or_else(|| event.kind.wire_str())
+            .unwrap_or_else(|| event.kind.as_str())
             .to_string();
         let (snapshot, record) = {
             let mut guard = manifest

@@ -510,7 +510,7 @@ impl WorkerState {
         let foreground_identity = entry.foreground_identity();
         let hook_event_name = frame["hook_payload"]["hook_event_name"]
             .as_str()
-            .unwrap_or_else(|| event.kind.wire_str())
+            .unwrap_or_else(|| event.kind.as_str())
             .to_string();
         let notification_type = frame["hook_payload"]["notification_type"]
             .as_str()
