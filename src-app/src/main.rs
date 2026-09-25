@@ -1655,6 +1655,10 @@ fn mount_paneflow_app(window: &mut Window, cx: &mut App) -> Entity<PaneFlowApp> 
 }
 
 fn main() {
+    run();
+}
+
+fn run() {
     startup_trace::begin();
     let args: Vec<String> = std::env::args().collect();
     for migrated in paneflow_home::migrate_legacy_home() {
