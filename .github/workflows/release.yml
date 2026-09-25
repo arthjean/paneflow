@@ -600,7 +600,7 @@ jobs:
         # naming convention macOS and Windows already follow. Until v0.3.0
         # the Linux assets were `paneflow-v<semver>-<arch>.tar.gz`, a
         # historical inconsistency that's safe to drop because the in-app
-        # update matcher (`update_checker.rs::pick_asset`) is suffix-only
+        # update matcher (`update/checker.rs::pick_asset`) is suffix-only
         # (`ends_with("-<arch>.tar.gz")`) and version-agnostic.
         run: bash scripts/bundle-tarball.sh "${TAG#v}"
 
@@ -1112,7 +1112,7 @@ jobs:
       # produces no release asset.
       #
       # The output filename `paneflow-<tag>-<arch>-apple-darwin.dmg` is
-      # chosen to match US-008's `update_checker.rs::pick_asset`; any
+      # chosen to match US-008's `update/checker.rs::pick_asset`; any
       # other shape would silently break the in-app update prompt for
       # macOS users.
       - name: Produce .dmg
@@ -1541,7 +1541,7 @@ jobs:
       # ─── US-016 AC-3: Stage the signed MSI + SHA-256 sidecar ─────────────
       # Rename from cargo-wix's default (paneflow-<ver>-x86_64.msi) to the
       # canonical release asset name paneflow-<ver>-x86_64-pc-windows-msvc.msi
-      # that `update_checker::pick_asset` (US-011) matches against. The
+      # that `update::checker::pick_asset` (US-011) matches against. The
       # `-pc-windows-msvc` suffix is the Rust triple, kept in the filename
       # so the in-app updater's asset picker can key on the triple without
       # an explicit per-OS branch.
@@ -1602,7 +1602,7 @@ jobs:
         # aligning with the macOS DMG and Windows MSI naming conventions
         # already in this workflow. The invariant we MUST preserve is the
         # filename suffix `-<arch>.<ext>`. That's what
-        # `update_checker.rs::pick_asset` matches on
+        # `update/checker.rs::pick_asset` matches on
         # (`a.name.to_ascii_lowercase().ends_with("-x86_64.deb")` etc.),
         # so dropping the `v` from the prefix is safe for v0.2.x clients
         # auto-updating to v0.3.0+.
@@ -1625,7 +1625,7 @@ jobs:
           # cargo-generate-rpm names the file from crate version + release +
           # rpm arch tag (e.g. paneflow-0.3.0-1.x86_64.rpm,
           # paneflow-0.3.0-1.aarch64.rpm). Rename to the canonical
-          # paneflow-<version>-<arch>.rpm form so `update_checker::pick_asset`
+          # paneflow-<version>-<arch>.rpm form so `update::checker::pick_asset`
           # can match it (US-009's asset picker matches on `-${arch}.rpm`).
           cp target/"${TARGET}"/generate-rpm/paneflow-*.rpm \
              "release-assets/paneflow-${VERSION}-${ARCH}.rpm"

@@ -517,7 +517,7 @@ jobs:
 
       # clippy is scoped to the aarch64-apple-darwin target so it
       # type-checks platform-gated modules (runtime_paths.rs macOS arm,
-      # install_method::AppBundle, update_checker::AssetFormat::Dmg,
+      # install_method::AppBundle, update::checker::AssetFormat::Dmg,
       # etc.) that the ubuntu `check` job would otherwise miss.
       #
       # Ghostty is the only terminal engine and is linked unconditionally, so
@@ -528,7 +528,7 @@ jobs:
           --target aarch64-apple-darwin -- -D warnings
 
       # cargo test on the config crate (39 tests) + app crate (testable
-      # modules like keybindings / update_checker with 150+ tests).
+      # modules like keybindings / update::checker with 150+ tests).
       # `--target` pins compilation to aarch64-apple-darwin so test
       # binaries are native Mach-O and the test run exercises the real
       # macOS codepath, not a Linux-host proxy.

@@ -536,7 +536,7 @@ assets = [
 [package.metadata.generate-rpm]
 # Override the RPM NAME to `paneflow` (dropping the `-app` suffix of the
 # crate itself). Keeps the artifact filename in sync with both cargo-deb
-# (which also renames to `paneflow`) and the `update_checker` asset
+# (which also renames to `paneflow`) and the `update::checker` asset
 # picker, which matches on the literal `paneflow-<version>-<arch>.rpm`.
 name = "paneflow"
 release = "1"

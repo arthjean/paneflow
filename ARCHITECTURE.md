@@ -860,7 +860,7 @@ on Windows, `<runtime dir>/paneflow-host-<fp>.sock` on Unix), so an isolated
 one. The protocol is JSON-RPC 2.0 lines on that endpoint: `host.hello` must
 open every connection and verifies the protocol version and the terminal
 engine identity (libghostty source sha and API version) before any effect;
-`session.list/create/ensure/inspect/stop/restart`, `session.attach` (native
+`session.list/create/inspect/stop/restart`, `session.attach` (native
 snapshot checkpoint plus its output offset, captured in one runtime
 operation), `session.output` (contiguous bytes from an offset, optionally
 followed), `session.input`, `session.resize`, `agent.snapshot` and

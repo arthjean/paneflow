@@ -217,10 +217,12 @@ the key was never imported correctly - discard and re-download.
 > # Expected: paneflow-vX.Y.Z-x86_64.tar.gz: OK
 > ```
 >
-> The `.sha256` sidecar is also what the in-app updater
-> (`update_checker.rs`, US-011) checks against the downloaded binary
-> before swapping `~/.local/paneflow.app/`. Producing the detached
-> `.tar.gz.sig` closes the residual gap (an attacker with R2-bucket
+> The in-app updater does not read the `.sha256` sidecar: it verifies
+> the detached minisign signature (`<asset>.minisig`) against the key
+> embedded at build time (`src-app/src/update/signature.rs`, called from
+> `update/verified_download.rs`) before swapping `~/.local/paneflow.app/`.
+> Producing the detached `.tar.gz.sig` closes the residual gap for
+> manual downloads (an attacker with R2-bucket
 > write access can regenerate the SHA-256 sidecar to match a
 > tampered `.tar.gz` - the GPG signature is what defeats that
 > scenario) and is tracked as the next hardening story after US-025.

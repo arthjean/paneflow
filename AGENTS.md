@@ -129,6 +129,10 @@ cargo run                                # debug build, needs Vulkan
 scripts/dev.sh                           # (or .ps1) builds paneflow + paneflow-host and runs the desktop directly, so the detached host outlives Cargo's job
 RUST_LOG=info cargo run                  # structured logging
 PANEFLOW_LATENCY_PROBE=1 cargo run       # keystroke to pixel latency, debug only
+PANEFLOW_PIXEL_PROBE=1 RUST_LOG=debug cargo run   # log terminal cell, glyph and quad pixel positions, debug only
+PANEFLOW_PIXEL_PROBE_OVERLAY=1 cargo run # paint the pixel-probe overlay over the terminal grid, debug only
+PANEFLOW_DEV_INSTALL_METHOD=apt cargo run # pretend a system-package install (dnf, apt, zypper, rpm-ostree), debug only
+PANEFLOW_DEV_FORCE_UPDATE=9.9.9 cargo run # fake an available update to exercise the update UI, debug only
 cargo build --release                    # thin LTO, strip, codegen-units=1
 cargo test -p paneflow-config            # single crate
 cargo test -p paneflow-app --test flex_nchild -- --nocapture   # layout integration

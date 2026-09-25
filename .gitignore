@@ -46,9 +46,6 @@ LOG_*.text
 /CMUX_PULL_REPORT.md
 /zed-terminal-architecture.md
 
-# Local-only PRDs, spikes, and task-tracking notes (kept out of the public repo)
-/paneflow-site/tasks/
-
 # PRDs and their story-status files are tracked; everything else under tasks/
 # is local evidence and review scratch space (see AGENTS.md).
 /tasks/*

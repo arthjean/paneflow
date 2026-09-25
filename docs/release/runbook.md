@@ -209,3 +209,17 @@ There is no hosted `paneflow.repo` descriptor: the RPM's own `%post`
 (`packaging/rpm/postinst.sh`) writes `/etc/yum.repos.d/paneflow.repo` after
 a first install from a GitHub Release, which is why the Fedora block writes
 it by hand. Both commands must exit 0 and print `paneflow X.Y.Z`.
+
+## Downstream packagers
+
+A distribution package that must not self-update sets
+`PANEFLOW_UPDATE_EXPLANATION` at build time. The in-app updater then treats
+the install as externally managed: the title bar shows the update as
+system-managed, and the update action copies this text to the clipboard and
+shows it in a toast instead of downloading anything. The same variable set at
+runtime overrides the built-in text for one launch.
+
+```bash
+PANEFLOW_UPDATE_EXPLANATION="Update Paneflow with your package manager: sudo pacman -Syu paneflow" \
+  cargo build --release --locked -p paneflow-app
+```
