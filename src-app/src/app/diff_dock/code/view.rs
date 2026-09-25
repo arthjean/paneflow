@@ -31,7 +31,7 @@ use super::edit::{self, EditGroup, IndentUnit, TrackerWindow};
 use super::element::{
     CODE_FONT_SIZE, CODE_ROW_HEIGHT, CodeCaret, CodeColors, CodeElement, CodeGeometry, CodeHitMap,
     CodeScroll, GutterMemo, autoscroll_step, code_font, reveal_h_offset, reveal_rows,
-    syntax_text_runs, visible_rows_at,
+    visible_rows_at,
 };
 use super::highlight::{
     CodeHighlighter, DeferredParse, HIGHLIGHT_FRAME_BUDGET, HighlightOutcome, SYNC_PARSE_BUDGET,
@@ -1333,28 +1333,21 @@ impl CodeView {
             return;
         };
         let load_generation = self.slot.current();
-        cx.spawn(async move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
-            #[cfg(not(test))]
-            let longest = smol::unblock(move || CodeDocument::measure_longest_line(&text)).await;
-            #[cfg(test)]
-            let longest = cx
-                .background_spawn(async move { CodeDocument::measure_longest_line(&text) })
-                .await;
-            cx.update(|cx| {
-                let _ = this.update(cx, |view: &mut Self, cx: &mut Context<Self>| {
-                    if !view.slot.accept(load_generation) {
-                        return;
-                    }
-                    let Some(doc) = view.state.document_mut() else {
-                        return;
-                    };
-                    if doc.apply_longest_line_measurement(revision, longest) {
-                        cx.notify();
-                    }
-                });
-            });
-        })
-        .detach();
+        super::spawn_blocking_then(
+            cx,
+            move || CodeDocument::measure_longest_line(&text),
+            move |view: &mut Self, longest, cx| {
+                if !view.slot.accept(load_generation) {
+                    return;
+                }
+                let Some(doc) = view.state.document_mut() else {
+                    return;
+                };
+                if doc.apply_longest_line_measurement(revision, longest) {
+                    cx.notify();
+                }
+            },
+        );
     }
 
     fn flash_read_only(&mut self, cx: &mut Context<Self>) {
@@ -2101,19 +2094,14 @@ pub(crate) fn doc_line_range(doc: &CodeDocument, lines: &Range<u32>) -> Range<us
     byte_at(start)..byte_at(end)
 }
 
-fn plural(count: usize, word: &str) -> String {
-    if count == 1 {
-        format!("{count} {word}")
-    } else {
-        format!("{count} {word}s")
-    }
-}
-
 pub(crate) fn popup_title(block: &Block) -> String {
     match block.kind() {
-        BlockKind::Added => format!("Added {}", plural(block.lines.len(), "line")),
+        BlockKind::Added => format!(
+            "Added {}",
+            crate::app::plural(block.lines.len(), "line", "lines")
+        ),
         BlockKind::Deleted => {
-            let lines = plural(block.base_lines.len(), "line");
+            let lines = crate::app::plural(block.base_lines.len(), "line", "lines");
             if block.lines.start == 0 {
                 format!("Deleted {lines} at the top")
             } else {
@@ -2258,36 +2246,30 @@ impl CodeView {
         let tracker = self.tracker.clone();
         let load_generation = self.slot.current();
         self.tracker_generation = self.tracker_generation.wrapping_add(1);
-        cx.spawn(async move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
-            let compute = move || {
+        super::spawn_blocking_then(
+            cx,
+            move || {
                 let mut tracker = tracker;
                 let text = rope.to_string();
                 let doc_lines = split_lines(&text);
                 let base_lines = split_lines(&base);
                 tracker.refresh_dirty(&doc_lines, &base_lines, TRACKER_POLICY);
                 tracker
-            };
-            #[cfg(not(test))]
-            let tracker = smol::unblock(compute).await;
-            #[cfg(test)]
-            let tracker = cx.background_spawn(async move { compute() }).await;
-            cx.update(|cx| {
-                let _ = this.update(cx, |view: &mut Self, cx: &mut Context<Self>| {
-                    if !view.slot.accept(load_generation) || !view.tracker.is_active() {
-                        return;
-                    }
-                    let current = view.state.document().map(CodeDocument::revision);
-                    let same_base = view.base.head_sha() == base_sha.as_deref();
-                    if same_base && current == Some(revision) {
-                        view.tracker = tracker;
-                        cx.notify();
-                    } else {
-                        view.schedule_tracker_refresh(cx);
-                    }
-                });
-            });
-        })
-        .detach();
+            },
+            move |view: &mut Self, tracker, cx| {
+                if !view.slot.accept(load_generation) || !view.tracker.is_active() {
+                    return;
+                }
+                let current = view.state.document().map(CodeDocument::revision);
+                let same_base = view.base.head_sha() == base_sha.as_deref();
+                if same_base && current == Some(revision) {
+                    view.tracker = tracker;
+                    cx.notify();
+                } else {
+                    view.schedule_tracker_refresh(cx);
+                }
+            },
+        );
     }
 
     pub(crate) fn marker_blocks(&self) -> &[Block] {
@@ -2474,7 +2456,7 @@ impl CodeView {
             );
         if kind != BlockKind::Added {
             let lines = popup.shown.iter().map(|(text, syntax)| {
-                let runs = syntax_text_runs(text, syntax, &font, ui.text);
+                let runs = crate::diff::text_runs(text, syntax, &font, ui.text);
                 div()
                     .flex_none()
                     .h(px(CODE_ROW_HEIGHT))

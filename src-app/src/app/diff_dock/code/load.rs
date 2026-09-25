@@ -2,9 +2,7 @@ use std::fs::File;
 use std::io::{ErrorKind, Read};
 use std::path::{Path, PathBuf};
 
-#[cfg(test)]
-use gpui::AppContext;
-use gpui::{AsyncApp, Context, WeakEntity};
+use gpui::Context;
 
 use super::document::{CodeDocument, ReadOnlyReason};
 use super::edit::IndentUnit;
@@ -188,20 +186,11 @@ pub(crate) fn spawn_code_load<V, F>(
     V: 'static,
     F: FnOnce(&mut V, u64, CodeOpen, &mut Context<V>) + 'static,
 {
-    cx.spawn(async move |this: WeakEntity<V>, cx: &mut AsyncApp| {
-        #[cfg(not(test))]
-        let outcome = smol::unblock(move || open_blocking(&path, syntax)).await;
-        #[cfg(test)]
-        let outcome = cx
-            .background_spawn(async move { open_blocking(&path, syntax) })
-            .await;
-        cx.update(|cx| {
-            let _ = this.update(cx, |view: &mut V, cx: &mut Context<V>| {
-                apply(view, generation, outcome, cx);
-            });
-        });
-    })
-    .detach();
+    super::spawn_blocking_then(
+        cx,
+        move || open_blocking(&path, syntax),
+        move |view, outcome, cx| apply(view, generation, outcome, cx),
+    );
 }
 
 pub(crate) enum CodeLoadState {

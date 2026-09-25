@@ -5,9 +5,10 @@ use gpui::{
     point, px,
 };
 
-use super::element::{CodeScroll, code_font, syntax_text_runs};
+use super::element::{CodeScroll, code_font};
 use super::navigation::{MINIMAP_FONT_SIZE, MINIMAP_LINE_HEIGHT, Track, minimap_top};
 use super::view::CodeView;
+use crate::diff::text_runs;
 
 pub(crate) fn visible_rows(line_count: usize, scroll: &CodeScroll) -> Range<usize> {
     let first = minimap_top(line_count, scroll).floor() as usize;
@@ -50,7 +51,7 @@ impl MinimapPaint {
             if let Some(highlighter) = view.highlighter() {
                 highlighter.runs_into(row, &mut syntax);
             }
-            let runs = syntax_text_runs(&text, &syntax, &font, foreground);
+            let runs = text_runs(&text, &syntax, &font, foreground);
             let line =
                 window
                     .text_system()

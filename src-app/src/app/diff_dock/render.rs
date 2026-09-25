@@ -154,7 +154,7 @@ fn render_diff_tab(
                 .map(|name| name.to_string_lossy().into_owned())
                 .unwrap_or_else(|| "Untitled".to_string());
             Some((
-                file_tab_icon(&name),
+                crate::file_icons::language_icon_path(&name),
                 truncate_tab_label(&name),
                 view.is_dirty(),
             ))
@@ -281,33 +281,6 @@ fn render_diff_tab(
     );
 
     chip.into_any_element()
-}
-
-pub(super) fn file_tab_icon(name: &str) -> &'static str {
-    let lower = name.to_ascii_lowercase();
-    match lower.as_str() {
-        "dockerfile" => return "icons/languages/docker.svg",
-        "makefile" => return "icons/languages/makefile.svg",
-        _ => {}
-    }
-    let ext = lower.rsplit_once('.').map(|(_, ext)| ext).unwrap_or("");
-    match ext {
-        "rs" => "icons/languages/rust-small.svg",
-        "ts" | "tsx" | "mts" | "cts" => "icons/languages/typescript.svg",
-        "js" | "jsx" | "mjs" | "cjs" => "icons/languages/react.svg",
-        "json" | "jsonc" => "icons/languages/json.svg",
-        "toml" => "icons/languages/toml.svg",
-        "md" | "markdown" | "mdx" => "icons/languages/markdown.svg",
-        "py" | "pyi" => "icons/languages/python.svg",
-        "go" => "icons/languages/go.svg",
-        "rb" => "icons/languages/ruby.svg",
-        "swift" => "icons/languages/swift.svg",
-        "css" | "scss" | "sass" | "less" => "icons/languages/css.svg",
-        "log" => "icons/languages/log.svg",
-        "png" | "jpg" | "jpeg" | "gif" | "svg" | "webp" | "ico" => "icons/languages/image.svg",
-        "txt" | "text" => "icons/languages/text.svg",
-        _ => "icons/file-text.svg",
-    }
 }
 
 fn icon_is_colored(icon: &str) -> bool {
@@ -546,21 +519,6 @@ mod tests {
     use std::path::Path;
 
     #[test]
-    fn the_tab_icon_follows_the_extension_and_falls_back() {
-        assert_eq!(file_tab_icon("main.rs"), "icons/languages/rust-small.svg");
-        assert_eq!(file_tab_icon("view.TSX"), "icons/languages/typescript.svg");
-        assert_eq!(file_tab_icon("Cargo.toml"), "icons/languages/toml.svg");
-        assert_eq!(file_tab_icon("Dockerfile"), "icons/languages/docker.svg");
-        assert_eq!(
-            file_tab_icon("paneflow.schema.json"),
-            "icons/languages/json.svg"
-        );
-        assert_eq!(file_tab_icon("LICENSE"), "icons/file-text.svg");
-        assert_eq!(file_tab_icon("notes.xyz"), "icons/file-text.svg");
-        assert_eq!(file_tab_icon(""), "icons/file-text.svg");
-    }
-
-    #[test]
     fn colored_language_icons_are_not_painted_as_masks() {
         for name in [
             "main.rs",
@@ -570,14 +528,14 @@ mod tests {
             "Makefile",
             "app.py",
             "logo.png",
+            "LICENSE",
         ] {
-            let icon = file_tab_icon(name);
+            let icon = crate::file_icons::language_icon_path(name);
             assert!(
                 icon_is_colored(icon),
                 "{name} resolves to {icon}, which would be tinted flat"
             );
         }
-        assert!(!icon_is_colored(file_tab_icon("LICENSE")));
         assert!(!icon_is_colored("icons/close.svg"));
     }
 

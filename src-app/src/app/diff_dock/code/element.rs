@@ -26,7 +26,7 @@ use super::navigation::{
     scrollbar_track,
 };
 use super::view::CodeView;
-use crate::diff::{ROW_HEIGHT, RowPalette};
+use crate::diff::{ROW_HEIGHT, RowPalette, fill_text_runs, shape_plain};
 use crate::widgets::scrollbar::ScrollableHandle;
 
 pub(crate) const CODE_ROW_HEIGHT: f32 = ROW_HEIGHT;
@@ -95,44 +95,6 @@ pub(crate) fn code_font() -> Font {
         weight: FontWeight::NORMAL,
         style: FontStyle::Normal,
     }
-}
-
-pub(crate) fn syntax_text_runs(
-    text: &str,
-    syntax: &[(Range<usize>, Hsla)],
-    font: &Font,
-    default: Hsla,
-) -> Vec<TextRun> {
-    let run = |len: usize, color: Hsla| TextRun {
-        len,
-        font: font.clone(),
-        color,
-        background_color: None,
-        underline: None,
-        strikethrough: None,
-    };
-    if syntax.is_empty() {
-        return vec![run(text.len(), default)];
-    }
-    let len = text.len();
-    let mut runs = Vec::new();
-    let mut ix = 0usize;
-    for (r, color) in syntax {
-        let start = r.start.min(len);
-        let end = r.end.min(len);
-        if start < ix || start >= end {
-            continue;
-        }
-        if start > ix {
-            runs.push(run(start - ix, default));
-        }
-        runs.push(run(end - start, *color));
-        ix = end;
-    }
-    if ix < len {
-        runs.push(run(len - ix, default));
-    }
-    runs
 }
 
 pub(crate) fn text_viewport_width(element_w: f32, gutter_w: f32) -> f32 {
@@ -512,44 +474,6 @@ impl CodeElement {
         }
     }
 
-    fn fill_text_runs(
-        font: &Font,
-        out: &mut Vec<TextRun>,
-        len: usize,
-        syntax: &[(Range<usize>, Hsla)],
-        default: Hsla,
-    ) {
-        out.clear();
-        let run = |len: usize, color: Hsla| TextRun {
-            len,
-            font: font.clone(),
-            color,
-            background_color: None,
-            underline: None,
-            strikethrough: None,
-        };
-        if syntax.is_empty() {
-            out.push(run(len, default));
-            return;
-        }
-        let mut ix = 0usize;
-        for (r, color) in syntax {
-            let start = r.start.min(len);
-            let end = r.end.min(len);
-            if start < ix || start >= end {
-                continue;
-            }
-            if start > ix {
-                out.push(run(start - ix, default));
-            }
-            out.push(run(end - start, *color));
-            ix = end;
-        }
-        if ix < len {
-            out.push(run(len - ix, default));
-        }
-    }
-
     fn restyle_in_place(
         runs: &mut Vec<TextRun>,
         scratch: &mut Vec<TextRun>,
@@ -583,28 +507,20 @@ impl CodeElement {
         std::mem::swap(runs, scratch);
     }
 
-    fn shape_plain(&self, window: &mut Window, text: SharedString, color: Hsla) -> ShapedLine {
-        let runs = [TextRun {
-            len: text.len(),
-            font: self.font.clone(),
-            color,
-            background_color: None,
-            underline: None,
-            strikethrough: None,
-        }];
-        window
-            .text_system()
-            .shape_line(text, self.font_size, &runs, None)
-    }
-
     fn resolve_gutter(&self, window: &mut Window, digits: usize) -> GutterMemo {
         let memo = self.gutter_memo.get();
         if memo.digits == digits && memo.digit_w > 0.0 {
             return memo;
         }
         let digit_w = f32::from(
-            self.shape_plain(window, "0".into(), self.palette.muted)
-                .width(),
+            shape_plain(
+                window,
+                &self.font,
+                self.font_size,
+                "0".into(),
+                self.palette.muted,
+            )
+            .width(),
         );
         let fresh = GutterMemo {
             digits,
@@ -915,7 +831,7 @@ impl Element for CodeElement {
                     if let Some(hl) = hl {
                         hl.runs_into(row, &mut self.syntax);
                     }
-                    Self::fill_text_runs(
+                    fill_text_runs(
                         &self.font,
                         &mut self.runs,
                         len,

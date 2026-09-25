@@ -84,33 +84,25 @@ pub(crate) fn update_restart_plan(
     }
 }
 
-fn count(n: usize, singular: &str, plural: &str) -> String {
-    if n == 1 {
-        format!("1 {singular}")
-    } else {
-        format!("{n} {plural}")
-    }
-}
-
 pub(crate) fn quit_summary(sessions: usize, working: usize, waiting: usize) -> String {
     let mut text = format!(
         "{} still running.",
-        count(sessions, "session is", "sessions are")
+        super::plural(sessions, "session is", "sessions are")
     );
     match (working, waiting) {
         (0, 0) => {}
         (w, 0) => text.push_str(&format!(
             " {} still working.",
-            count(w, "agent is", "agents are")
+            super::plural(w, "agent is", "agents are")
         )),
         (0, i) => text.push_str(&format!(
             " {} waiting for your input.",
-            count(i, "agent is", "agents are")
+            super::plural(i, "agent is", "agents are")
         )),
         (w, i) => text.push_str(&format!(
             " {} working and {} waiting for your input.",
-            count(w, "agent is", "agents are"),
-            count(i, "is", "are")
+            super::plural(w, "agent is", "agents are"),
+            super::plural(i, "is", "are")
         )),
     }
     text
@@ -492,7 +484,7 @@ impl PaneFlowApp {
         let summary = if stopping {
             format!(
                 "Stopping {}...",
-                count(dialog.sessions, "session", "sessions")
+                super::plural(dialog.sessions, "session", "sessions")
             )
         } else {
             quit_summary(dialog.sessions, dialog.working, dialog.waiting)

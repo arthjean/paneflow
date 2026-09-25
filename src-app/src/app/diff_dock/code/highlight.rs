@@ -3,9 +3,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
-#[cfg(test)]
-use gpui::AppContext;
-use gpui::{AsyncApp, Context, Hsla, WeakEntity};
+use gpui::{Context, Hsla};
 use ropey::Rope;
 use streaming_iterator::StreamingIterator;
 use tree_sitter::{
@@ -907,18 +905,7 @@ where
     V: 'static,
     F: FnOnce(&mut V, ParsedTrees, &mut Context<V>) + 'static,
 {
-    cx.spawn(async move |this: WeakEntity<V>, cx: &mut AsyncApp| {
-        #[cfg(not(test))]
-        let parsed = smol::unblock(move || deferred.run()).await;
-        #[cfg(test)]
-        let parsed = cx.background_spawn(async move { deferred.run() }).await;
-        cx.update(|cx| {
-            let _ = this.update(cx, |view: &mut V, cx: &mut Context<V>| {
-                apply(view, parsed, cx);
-            });
-        });
-    })
-    .detach();
+    super::spawn_blocking_then(cx, move || deferred.run(), apply);
 }
 
 #[cfg(test)]

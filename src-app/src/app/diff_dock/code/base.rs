@@ -1,9 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-#[cfg(test)]
-use gpui::AppContext;
-use gpui::{AsyncApp, Context, WeakEntity};
+use gpui::Context;
 
 use crate::diff::{
     HeadFile, MAX_DIFF_FILE_BYTES, classify_git_bytes, head_sha, show_head_file,
@@ -126,20 +124,11 @@ where
     V: 'static,
     F: FnOnce(&mut V, u64, Base, &mut Context<V>) + 'static,
 {
-    cx.spawn(async move |this: WeakEntity<V>, cx: &mut AsyncApp| {
-        #[cfg(not(test))]
-        let base = smol::unblock(move || load_base_blocking(&path)).await;
-        #[cfg(test)]
-        let base = cx
-            .background_spawn(async move { load_base_blocking(&path) })
-            .await;
-        cx.update(|cx| {
-            let _ = this.update(cx, |view: &mut V, cx: &mut Context<V>| {
-                apply(view, generation, base, cx);
-            });
-        });
-    })
-    .detach();
+    super::spawn_blocking_then(
+        cx,
+        move || load_base_blocking(&path),
+        move |view, base, cx| apply(view, generation, base, cx),
+    );
 }
 
 #[cfg(test)]

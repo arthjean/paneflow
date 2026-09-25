@@ -30,11 +30,11 @@ pub(crate) fn language_icon_path(basename: &str) -> &'static str {
     };
 
     match ext {
-        "css" => "icons/languages/css.svg",
+        "css" | "less" | "sass" | "scss" => "icons/languages/css.svg",
         "go" => "icons/languages/go.svg",
         "apng" | "avif" | "bmp" | "gif" | "heic" | "heif" | "ico" | "jpe" | "jpeg" | "jpg"
         | "png" | "svg" | "tif" | "tiff" | "webp" => "icons/languages/image.svg",
-        "json" => "icons/languages/json.svg",
+        "json" | "jsonc" => "icons/languages/json.svg",
         "jsx" | "tsx" => "icons/languages/react.svg",
         "log" => "icons/languages/log.svg",
         "markdown" | "md" | "mdx" => "icons/languages/markdown.svg",
@@ -42,7 +42,7 @@ pub(crate) fn language_icon_path(basename: &str) -> &'static str {
         "rb" | "rake" => "icons/languages/ruby.svg",
         "rs" => "icons/languages/rust-small.svg",
         "swift" => "icons/languages/swift.svg",
-        "txt" => "icons/languages/text.svg",
+        "text" | "txt" => "icons/languages/text.svg",
         "toml" => "icons/languages/toml.svg",
         "cts" | "mts" | "ts" => "icons/languages/typescript.svg",
         _ => "icons/languages/file.svg",
@@ -89,5 +89,19 @@ mod tests {
             language_icon_path("main.rs"),
             "icons/languages/rust-small.svg"
         );
+    }
+
+    #[test]
+    fn stylesheet_config_and_text_variants_share_their_family_icon() {
+        assert_eq!(language_icon_path("theme.scss"), "icons/languages/css.svg");
+        assert_eq!(language_icon_path("theme.sass"), "icons/languages/css.svg");
+        assert_eq!(language_icon_path("theme.less"), "icons/languages/css.svg");
+        assert_eq!(
+            language_icon_path("tsconfig.jsonc"),
+            "icons/languages/json.svg"
+        );
+        assert_eq!(language_icon_path("notes.text"), "icons/languages/text.svg");
+        assert_eq!(language_icon_path("server.mjs"), "icons/languages/file.svg");
+        assert_eq!(language_icon_path("config.cjs"), "icons/languages/file.svg");
     }
 }

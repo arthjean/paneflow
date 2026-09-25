@@ -9,6 +9,8 @@ use gpui::{
 };
 use unicode_segmentation::UnicodeSegmentation;
 
+use super::utf16::{byte_offset_from_utf16, byte_range_from_utf16, utf16_offset_from_byte};
+
 actions!(
     text_input,
     [
@@ -281,29 +283,11 @@ impl TextInput {
     }
 
     fn offset_from_utf16(&self, offset: usize) -> usize {
-        let mut utf8_offset = 0;
-        let mut utf16_count = 0;
-        for ch in self.content.chars() {
-            if utf16_count >= offset {
-                break;
-            }
-            utf16_count += ch.len_utf16();
-            utf8_offset += ch.len_utf8();
-        }
-        utf8_offset
+        byte_offset_from_utf16(&self.content, offset)
     }
 
     fn offset_to_utf16(&self, offset: usize) -> usize {
-        let mut utf16_offset = 0;
-        let mut utf8_count = 0;
-        for ch in self.content.chars() {
-            if utf8_count >= offset {
-                break;
-            }
-            utf8_count += ch.len_utf8();
-            utf16_offset += ch.len_utf16();
-        }
-        utf16_offset
+        utf16_offset_from_byte(&self.content, offset)
     }
 
     fn range_to_utf16(&self, range: &Range<usize>) -> Range<usize> {
@@ -314,29 +298,11 @@ impl TextInput {
         self.offset_from_utf16(range_utf16.start)..self.offset_from_utf16(range_utf16.end)
     }
 
-    fn byte_offset_from_utf16_in_text(text: &str, offset: usize) -> usize {
-        let mut utf8_offset = 0;
-        let mut utf16_count = 0;
-        for ch in text.chars() {
-            if utf16_count >= offset {
-                break;
-            }
-            utf16_count += ch.len_utf16();
-            utf8_offset += ch.len_utf8();
-        }
-        utf8_offset
-    }
-
-    fn byte_range_from_utf16_in_text(text: &str, range_utf16: &Range<usize>) -> Range<usize> {
-        Self::byte_offset_from_utf16_in_text(text, range_utf16.start)
-            ..Self::byte_offset_from_utf16_in_text(text, range_utf16.end)
-    }
-
     fn replacement_range_from_utf16(&self, range_utf16: Option<&Range<usize>>) -> Range<usize> {
         match (self.marked_range.as_ref(), range_utf16) {
             (Some(marked_range), Some(range_utf16)) => {
                 let marked_text = &self.content[marked_range.clone()];
-                let relative = Self::byte_range_from_utf16_in_text(marked_text, range_utf16);
+                let relative = byte_range_from_utf16(marked_text, range_utf16);
                 marked_range.start + relative.start..marked_range.start + relative.end
             }
             (_, Some(range_utf16)) => self.range_from_utf16(range_utf16),
@@ -438,7 +404,7 @@ impl EntityInputHandler for TextInput {
         }
         self.selected_range = new_selected_range_utf16
             .as_ref()
-            .map(|range_utf16| Self::byte_range_from_utf16_in_text(new_text, range_utf16))
+            .map(|range_utf16| byte_range_from_utf16(new_text, range_utf16))
             .map(|new_range| range.start + new_range.start..range.start + new_range.end)
             .unwrap_or_else(|| range.start + new_text.len()..range.start + new_text.len());
         self.selection_reversed = false;
@@ -710,30 +676,5 @@ impl Render for TextInput {
 impl Focusable for TextInput {
     fn focus_handle(&self, _: &App) -> FocusHandle {
         self.focus_handle.clone()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::TextInput;
-
-    #[test]
-    fn utf16_range_conversion_handles_surrogate_pairs() {
-        let text = "a😀b";
-
-        assert_eq!(
-            TextInput::byte_range_from_utf16_in_text(text, &(1..3)),
-            1..5
-        );
-    }
-
-    #[test]
-    fn utf16_range_conversion_clamps_to_text_end() {
-        let text = "é";
-
-        assert_eq!(
-            TextInput::byte_range_from_utf16_in_text(text, &(0..99)),
-            0..2
-        );
     }
 }

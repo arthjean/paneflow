@@ -44,3 +44,11 @@ pub mod welcome;
 pub mod win_timer;
 pub mod workspace_ops;
 pub mod worktree_remove;
+
+pub(crate) fn plural(count: usize, one: &str, many: &str) -> String {
+    if count == 1 {
+        format!("{count} {one}")
+    } else {
+        format!("{count} {many}")
+    }
+}

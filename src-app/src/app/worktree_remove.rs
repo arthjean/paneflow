@@ -131,13 +131,17 @@ fn blocker_summary(blockers: &[WorktreeBlocker]) -> String {
         .count();
     let mut parts = Vec::new();
     if workspaces > 0 {
-        parts.push(plural(workspaces, "workspace", "workspaces"));
+        parts.push(super::plural(workspaces, "workspace", "workspaces"));
     }
     if tabs > 0 {
-        parts.push(plural(tabs, "tab", "tabs"));
+        parts.push(super::plural(tabs, "tab", "tabs"));
     }
     if sessions > 0 {
-        parts.push(plural(sessions, "running session", "running sessions"));
+        parts.push(super::plural(
+            sessions,
+            "running session",
+            "running sessions",
+        ));
     }
     let verb = if workspaces + tabs + sessions == 1 {
         "is"
@@ -152,14 +156,6 @@ fn blocker_summary(blockers: &[WorktreeBlocker]) -> String {
             "{}, {} and {} {verb} using it",
             parts[0], parts[1], parts[2]
         ),
-    }
-}
-
-fn plural(count: usize, one: &str, many: &str) -> String {
-    if count == 1 {
-        format!("{count} {one}")
-    } else {
-        format!("{count} {many}")
     }
 }
 

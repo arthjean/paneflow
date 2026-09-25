@@ -241,7 +241,13 @@ impl DiffElement {
             color: self.palette.chip_bg,
             corners: Corners::all(bounds.size.height / 2.0),
         });
-        let label = self.shape_plain(window, REVERT_CHIP_LABEL.into(), self.palette.chip_fg);
+        let label = shape_plain(
+            window,
+            &self.font,
+            self.font_size,
+            REVERT_CHIP_LABEL.into(),
+            self.palette.chip_fg,
+        );
         let x = bounds.origin.x + ((bounds.size.width - label.width()) / 2.0).max(px(0.));
         let y = bounds.origin.y + (bounds.size.height - self.line_height) / 2.0;
         chip_glyphs.push(Glyphs {
@@ -249,44 +255,6 @@ impl DiffElement {
             line: label,
             clip: None,
         });
-    }
-
-    fn text_runs(
-        &self,
-        text: &str,
-        syntax: &[(Range<usize>, Hsla)],
-        default: Hsla,
-    ) -> Vec<TextRun> {
-        let run = |len: usize, color: Hsla| TextRun {
-            len,
-            font: self.font.clone(),
-            color,
-            background_color: None,
-            underline: None,
-            strikethrough: None,
-        };
-        if syntax.is_empty() {
-            return vec![run(text.len(), default)];
-        }
-        let len = text.len();
-        let mut runs = Vec::new();
-        let mut ix = 0usize;
-        for (r, color) in syntax {
-            let start = r.start.min(len);
-            let end = r.end.min(len);
-            if start < ix || start >= end {
-                continue;
-            }
-            if start > ix {
-                runs.push(run(start - ix, default));
-            }
-            runs.push(run(end - start, *color));
-            ix = end;
-        }
-        if ix < len {
-            runs.push(run(len - ix, default));
-        }
-        runs
     }
 
     fn shape(
@@ -310,7 +278,7 @@ impl DiffElement {
                 .shape_line(text.clone(), self.font_size, &runs, None);
         }
 
-        let runs = self.text_runs(text, syntax, default);
+        let runs = text_runs(text, syntax, &self.font, default);
         window
             .text_system()
             .shape_line(text.clone(), self.font_size, &runs, None)
@@ -393,7 +361,7 @@ impl DiffElement {
         let icon_line = if is_rust {
             self.shape_weighted(window, fallback.into(), color, FontWeight::SEMIBOLD)
         } else {
-            self.shape_plain(window, fallback.into(), color)
+            shape_plain(window, &self.font, self.font_size, fallback.into(), color)
         };
         let icon_x = origin.x
             + px(FILE_HEADER_ICON_X)
@@ -465,7 +433,13 @@ impl DiffElement {
         let avail = (region_right - path_x).max(px(0.));
         let base_line =
             self.shape_weighted(window, parts.basename.clone(), p.text, FontWeight::SEMIBOLD);
-        let dir_line = self.shape_plain(window, parts.dir_prefix.clone(), p.muted);
+        let dir_line = shape_plain(
+            window,
+            &self.font,
+            self.font_size,
+            parts.dir_prefix.clone(),
+            p.muted,
+        );
         let bw = base_line.width().min(avail);
         let dir_avail = (avail - bw).max(px(0.));
         let dw = dir_line.width();
@@ -497,20 +471,6 @@ impl DiffElement {
                 clip: Some(Bounds::new(point(base_x, origin.y), size(bw, row_h))),
             });
         }
-    }
-
-    fn shape_plain(&self, window: &mut Window, text: SharedString, color: Hsla) -> ShapedLine {
-        let runs = [TextRun {
-            len: text.len(),
-            font: self.font.clone(),
-            color,
-            background_color: None,
-            underline: None,
-            strikethrough: None,
-        }];
-        window
-            .text_system()
-            .shape_line(text, self.font_size, &runs, None)
     }
 
     fn change_colors(&self, added: bool, tone: ChangeTone) -> (Hsla, Hsla, Option<Hsla>) {
@@ -807,7 +767,13 @@ impl DiffElement {
                     label_x + px(FOLD_LABEL_PAD_X),
                     origin.y + (row_h - self.line_height) / 2.0,
                 ),
-                line: self.shape_plain(window, label.clone(), text_color),
+                line: shape_plain(
+                    window,
+                    &self.font,
+                    self.font_size,
+                    label.clone(),
+                    text_color,
+                ),
                 clip: Some(label_bounds),
             });
         }
@@ -847,7 +813,13 @@ impl DiffElement {
                     });
                     glyphs.push(Glyphs {
                         origin: point(origin.x + px(PAD), origin.y + (row_h - lh) / 2.0),
-                        line: self.shape_plain(window, row.text.clone(), p.text),
+                        line: shape_plain(
+                            window,
+                            &self.font,
+                            self.font_size,
+                            row.text.clone(),
+                            p.text,
+                        ),
                         clip: Some(row_bounds),
                     });
                 }
@@ -855,7 +827,13 @@ impl DiffElement {
             RowKind::Binary | RowKind::Truncated => {
                 glyphs.push(Glyphs {
                     origin: point(origin.x + px(PAD), origin.y),
-                    line: self.shape_plain(window, row.text.clone(), p.muted),
+                    line: shape_plain(
+                        window,
+                        &self.font,
+                        self.font_size,
+                        row.text.clone(),
+                        p.muted,
+                    ),
                     clip: Some(row_bounds),
                 });
             }
@@ -973,7 +951,7 @@ impl DiffElement {
             SplitRow::Note(text) => {
                 glyphs.push(Glyphs {
                     origin: point(origin.x + px(PAD), origin.y),
-                    line: self.shape_plain(window, text.clone(), p.muted),
+                    line: shape_plain(window, &self.font, self.font_size, text.clone(), p.muted),
                     clip: Some(row_bounds),
                 });
             }
@@ -1142,7 +1120,13 @@ impl DiffElement {
         glyphs: &mut Vec<Glyphs>,
     ) {
         let Some(n) = n else { return };
-        let line = self.shape_plain(window, n.to_string().into(), color);
+        let line = shape_plain(
+            window,
+            &self.font,
+            self.font_size,
+            n.to_string().into(),
+            color,
+        );
         let right_x = (x + self.gutter_w - px(NUM_GAP) - line.width()).max(x);
         glyphs.push(Glyphs {
             origin: point(right_x, y),
@@ -1215,8 +1199,14 @@ impl Element for DiffElement {
             count.max(2)
         };
         let digit_w = f32::from(
-            self.shape_plain(window, "0".into(), self.palette.muted)
-                .width(),
+            shape_plain(
+                window,
+                &self.font,
+                self.font_size,
+                "0".into(),
+                self.palette.muted,
+            )
+            .width(),
         );
         self.gutter_w = px((GUTTER_PAD_L + digits as f32 * digit_w + NUM_GAP).max(GUTTER_W));
 
@@ -1565,6 +1555,75 @@ impl IntoElement for DiffElement {
     fn into_element(self) -> Self::Element {
         self
     }
+}
+
+pub(crate) fn fill_text_runs(
+    font: &Font,
+    out: &mut Vec<TextRun>,
+    len: usize,
+    syntax: &[(Range<usize>, Hsla)],
+    default: Hsla,
+) {
+    out.clear();
+    let run = |len: usize, color: Hsla| TextRun {
+        len,
+        font: font.clone(),
+        color,
+        background_color: None,
+        underline: None,
+        strikethrough: None,
+    };
+    if syntax.is_empty() {
+        out.push(run(len, default));
+        return;
+    }
+    let mut ix = 0usize;
+    for (r, color) in syntax {
+        let start = r.start.min(len);
+        let end = r.end.min(len);
+        if start < ix || start >= end {
+            continue;
+        }
+        if start > ix {
+            out.push(run(start - ix, default));
+        }
+        out.push(run(end - start, *color));
+        ix = end;
+    }
+    if ix < len {
+        out.push(run(len - ix, default));
+    }
+}
+
+pub(crate) fn text_runs(
+    text: &str,
+    syntax: &[(Range<usize>, Hsla)],
+    font: &Font,
+    default: Hsla,
+) -> Vec<TextRun> {
+    let mut runs = Vec::new();
+    fill_text_runs(font, &mut runs, text.len(), syntax, default);
+    runs
+}
+
+pub(crate) fn shape_plain(
+    window: &mut Window,
+    font: &Font,
+    font_size: Pixels,
+    text: SharedString,
+    color: Hsla,
+) -> ShapedLine {
+    let runs = [TextRun {
+        len: text.len(),
+        font: font.clone(),
+        color,
+        background_color: None,
+        underline: None,
+        strikethrough: None,
+    }];
+    window
+        .text_system()
+        .shape_line(text, font_size, &runs, None)
 }
 
 #[cfg(test)]

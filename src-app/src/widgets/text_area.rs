@@ -14,6 +14,8 @@ use gpui::{
 };
 use unicode_segmentation::UnicodeSegmentation;
 
+use super::utf16::{byte_offset_from_utf16, byte_range_from_utf16, utf16_offset_from_byte};
+
 const MULTI_CLICK_INTERVAL: Duration = Duration::from_millis(400);
 const MULTI_CLICK_RADIUS: usize = 2;
 
@@ -231,20 +233,11 @@ impl TextArea {
     }
 
     fn offset_from_utf16(&self, offset: usize) -> usize {
-        Self::byte_offset_from_utf16_in_text(&self.content, offset)
+        byte_offset_from_utf16(&self.content, offset)
     }
 
     fn offset_to_utf16(&self, offset: usize) -> usize {
-        let mut utf16_offset = 0;
-        let mut utf8_count = 0;
-        for ch in self.content.chars() {
-            if utf8_count >= offset {
-                break;
-            }
-            utf8_count += ch.len_utf8();
-            utf16_offset += ch.len_utf16();
-        }
-        utf16_offset
+        utf16_offset_from_byte(&self.content, offset)
     }
 
     fn range_to_utf16(&self, range: &Range<usize>) -> Range<usize> {
@@ -257,29 +250,11 @@ impl TextArea {
         start.min(end)..end.max(start)
     }
 
-    fn byte_offset_from_utf16_in_text(text: &str, offset: usize) -> usize {
-        let mut utf8_offset = 0;
-        let mut utf16_count = 0;
-        for ch in text.chars() {
-            if utf16_count >= offset {
-                break;
-            }
-            utf16_count += ch.len_utf16();
-            utf8_offset += ch.len_utf8();
-        }
-        utf8_offset
-    }
-
-    fn byte_range_from_utf16_in_text(text: &str, range_utf16: &Range<usize>) -> Range<usize> {
-        Self::byte_offset_from_utf16_in_text(text, range_utf16.start)
-            ..Self::byte_offset_from_utf16_in_text(text, range_utf16.end)
-    }
-
     fn replacement_range_from_utf16(&self, range_utf16: Option<&Range<usize>>) -> Range<usize> {
         match (self.marked_range.as_ref(), range_utf16) {
             (Some(marked_range), Some(range_utf16)) => {
                 let marked_text = &self.content[marked_range.clone()];
-                let relative = Self::byte_range_from_utf16_in_text(marked_text, range_utf16);
+                let relative = byte_range_from_utf16(marked_text, range_utf16);
                 marked_range.start + relative.start..marked_range.start + relative.end
             }
             (_, Some(range_utf16)) => self.range_from_utf16(range_utf16),
@@ -552,7 +527,7 @@ impl EntityInputHandler for TextArea {
     ) {
         let range = self.replacement_range_from_utf16(range_utf16.as_ref());
         let selected_range = new_selected_range_utf16.as_ref().map(|range_utf16| {
-            let relative = Self::byte_range_from_utf16_in_text(new_text, range_utf16);
+            let relative = byte_range_from_utf16(new_text, range_utf16);
             range.start + relative.start..range.start + relative.end
         });
         self.replace_range_inner(range, new_text, true, selected_range, cx);
