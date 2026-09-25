@@ -20,7 +20,7 @@
       "status": "BLOCKED",
       "priority": "P1",
       "stories_total": 8,
-      "stories_done": 0
+      "stories_done": 4
     },
     {
       "id": "EP-003",
@@ -158,37 +158,37 @@
       "id": "US-009",
       "title": "Remove the unused `paneflow-app` dependencies left by the ACP chat removal",
       "epic": "EP-002",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P1",
       "size": "S",
       "blocked_by": [],
       "started_at": "2026-09-24T21:47:01+02:00",
-      "completed_at": null,
-      "reviewed_at": "2026-09-25T08:18:13+02:00"
+      "completed_at": "2026-09-25T12:28:05+02:00",
+      "reviewed_at": "2026-09-25T12:28:05+02:00"
     },
     {
       "id": "US-010",
       "title": "Prune unused crate dependencies and test-only `windows-sys` features",
       "epic": "EP-002",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P1",
       "size": "M",
       "blocked_by": [],
       "started_at": "2026-09-24T21:47:35+02:00",
-      "completed_at": null,
-      "reviewed_at": "2026-09-25T08:18:13+02:00"
+      "completed_at": "2026-09-25T12:28:05+02:00",
+      "reviewed_at": "2026-09-25T12:28:05+02:00"
     },
     {
       "id": "US-011",
       "title": "Remove build-script, lint-config, and deny leftovers",
       "epic": "EP-002",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P1",
       "size": "S",
       "blocked_by": [],
       "started_at": "2026-09-24T21:49:42+02:00",
-      "completed_at": null,
-      "reviewed_at": "2026-09-25T08:18:13+02:00"
+      "completed_at": "2026-09-25T12:28:05+02:00",
+      "reviewed_at": "2026-09-25T12:28:05+02:00"
     },
     {
       "id": "US-012",
@@ -200,7 +200,7 @@
       "blocked_by": [],
       "started_at": "2026-09-24T21:51:11+02:00",
       "completed_at": null,
-      "reviewed_at": "2026-09-25T08:18:13+02:00"
+      "reviewed_at": "2026-09-25T12:28:05+02:00"
     },
     {
       "id": "US-013",
@@ -212,19 +212,19 @@
       "blocked_by": [],
       "started_at": "2026-09-24T21:55:00+02:00",
       "completed_at": null,
-      "reviewed_at": "2026-09-25T08:18:13+02:00"
+      "reviewed_at": "2026-09-25T12:28:05+02:00"
     },
     {
       "id": "US-014",
       "title": "Fix documentation and repository-config drift",
       "epic": "EP-002",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P1",
       "size": "S",
       "blocked_by": [],
       "started_at": "2026-09-24T21:55:46+02:00",
-      "completed_at": null,
-      "reviewed_at": "2026-09-25T08:18:13+02:00"
+      "completed_at": "2026-09-25T12:28:05+02:00",
+      "reviewed_at": "2026-09-25T12:28:05+02:00"
     },
     {
       "id": "US-015",
