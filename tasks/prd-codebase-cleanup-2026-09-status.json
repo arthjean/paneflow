@@ -41,10 +41,10 @@
     {
       "id": "EP-005",
       "title": "Duplicate Consolidation",
-      "status": "TODO",
+      "status": "IN_REVIEW",
       "priority": "P2",
       "stories_total": 7,
-      "stories_done": 0
+      "stories_done": 2
     },
     {
       "id": "EP-006",
@@ -492,104 +492,104 @@
       "id": "US-033",
       "title": "Share host primitives with `paneflow-serve`",
       "epic": "EP-005",
-      "status": "TODO",
+      "status": "IN_REVIEW",
       "priority": "P2",
       "size": "L",
       "blocked_by": [
         "US-027",
         "US-028"
       ],
-      "started_at": null,
+      "started_at": "2026-09-25",
       "completed_at": null,
-      "reviewed_at": null
+      "reviewed_at": "2026-09-25T21:10:02+02:00"
     },
     {
       "id": "US-034",
       "title": "Consolidate process-identity helpers in `paneflow-host`",
       "epic": "EP-005",
-      "status": "TODO",
+      "status": "IN_REVIEW",
       "priority": "P2",
       "size": "M",
       "blocked_by": [
         "US-022",
         "US-024"
       ],
-      "started_at": null,
+      "started_at": "2026-09-25",
       "completed_at": null,
-      "reviewed_at": null
+      "reviewed_at": "2026-09-25T21:10:02+02:00"
     },
     {
       "id": "US-035",
       "title": "Consolidate `src-app` runtime helpers",
       "epic": "EP-005",
-      "status": "TODO",
+      "status": "IN_REVIEW",
       "priority": "P2",
       "size": "M",
       "blocked_by": [
         "US-007",
         "US-024"
       ],
-      "started_at": null,
+      "started_at": "2026-09-25",
       "completed_at": null,
-      "reviewed_at": null
+      "reviewed_at": "2026-09-25T21:10:02+02:00"
     },
     {
       "id": "US-036",
       "title": "Consolidate diff and editor rendering helpers",
       "epic": "EP-005",
-      "status": "TODO",
+      "status": "IN_REVIEW",
       "priority": "P2",
       "size": "M",
       "blocked_by": [
         "US-030"
       ],
-      "started_at": null,
+      "started_at": "2026-09-25",
       "completed_at": null,
-      "reviewed_at": null
+      "reviewed_at": "2026-09-25T21:10:02+02:00"
     },
     {
       "id": "US-037",
       "title": "Consolidate settings and modal UI primitives",
       "epic": "EP-005",
-      "status": "TODO",
+      "status": "IN_REVIEW",
       "priority": "P2",
       "size": "M",
       "blocked_by": [
         "US-022"
       ],
-      "started_at": null,
+      "started_at": "2026-09-25",
       "completed_at": null,
-      "reviewed_at": null
+      "reviewed_at": "2026-09-25T21:10:02+02:00"
     },
     {
       "id": "US-038",
       "title": "Deduplicate a config alias and the MCP-install presence check",
       "epic": "EP-005",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P2",
       "size": "S",
       "blocked_by": [
         "US-017",
         "US-018"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-09-25",
+      "completed_at": "2026-09-25T21:10:02+02:00",
+      "reviewed_at": "2026-09-25T21:10:02+02:00"
     },
     {
       "id": "US-039",
       "title": "Make `paneflow hooks` delegate to the integrations installer (default of OQ-5)",
       "epic": "EP-005",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P2",
       "size": "L",
       "blocked_by": [
         "US-017",
         "US-029"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-09-25",
+      "completed_at": "2026-09-25T21:10:02+02:00",
+      "reviewed_at": "2026-09-25T21:10:02+02:00"
     },
     {
       "id": "US-040",
