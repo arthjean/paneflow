@@ -13,7 +13,6 @@ pub type BuildResult<T> = Result<T, Box<dyn Error>>;
 
 pub fn run() -> BuildResult<()> {
     println!("cargo:rerun-if-env-changed=PANEFLOW_LIBGHOSTTY_DIR");
-    emit_ghostty_native_cfg();
 
     let crate_dir = PathBuf::from(required_env("CARGO_MANIFEST_DIR")?);
     let workspace = crate_dir
@@ -81,25 +80,6 @@ pub fn run() -> BuildResult<()> {
         println!("cargo:rustc-link-lib=dylib={library}");
     }
     Ok(())
-}
-
-fn emit_ghostty_native_cfg() {
-    println!("cargo::rustc-check-cfg=cfg(ghostty_native)");
-    if std::env::var_os("CARGO_FEATURE_LINK").is_some() && ghostty_native_target() {
-        println!("cargo::rustc-cfg=ghostty_native");
-    }
-}
-
-fn ghostty_native_target() -> bool {
-    let cfg = |key: &str| std::env::var(key).unwrap_or_default();
-    match cfg("CARGO_CFG_TARGET_OS").as_str() {
-        "linux" => true,
-        "macos" => cfg("CARGO_CFG_TARGET_ARCH") == "aarch64",
-        "windows" => {
-            cfg("CARGO_CFG_TARGET_ARCH") == "x86_64" && cfg("CARGO_CFG_TARGET_ENV") == "msvc"
-        }
-        _ => false,
-    }
 }
 
 fn verify_workspace_text(

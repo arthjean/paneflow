@@ -7,8 +7,6 @@ use std::process::Command;
 
 const EMBED_SIZE_LIMIT_BYTES: u64 = 1_835_008;
 fn main() {
-    println!("cargo:rerun-if-env-changed=POSTHOG_API_KEY");
-    println!("cargo:rerun-if-env-changed=POSTHOG_HOST");
     println!("cargo:rerun-if-env-changed=PANEFLOW_SKIP_EMBED_BUILD");
 
     assert_ghostty_target_is_supported();

@@ -456,7 +456,6 @@ unexpected_cfgs = { level = "warn", check-cfg = ['cfg(feature, values("cargo-cli
 # Both values are also mirrored in packaging/wix/main.wxs - edit in pairs
 # if they ever must change (only with a v2.0 product-line cut).
 [package.metadata.wix]
-wxs = "../packaging/wix/main.wxs"
 upgrade-guid = "177D8F43-1642-4212-9CB0-FD14B299058D"
 path-guid = "49700ADE-7E1B-466E-A25E-A138A2FC96F3"
 # MSI filename root: `paneflow-<version>-<arch>.msi`. Matches the
