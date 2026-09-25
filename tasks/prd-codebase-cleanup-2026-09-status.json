@@ -44,7 +44,7 @@
       "status": "IN_REVIEW",
       "priority": "P2",
       "stories_total": 7,
-      "stories_done": 2
+      "stories_done": 5
     },
     {
       "id": "EP-006",
@@ -492,7 +492,7 @@
       "id": "US-033",
       "title": "Share host primitives with `paneflow-serve`",
       "epic": "EP-005",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P2",
       "size": "L",
       "blocked_by": [
@@ -500,14 +500,14 @@
         "US-028"
       ],
       "started_at": "2026-09-25",
-      "completed_at": null,
-      "reviewed_at": "2026-09-25T21:10:02+02:00"
+      "completed_at": "2026-09-25T22:28:16+02:00",
+      "reviewed_at": "2026-09-25T22:28:16+02:00"
     },
     {
       "id": "US-034",
       "title": "Consolidate process-identity helpers in `paneflow-host`",
       "epic": "EP-005",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P2",
       "size": "M",
       "blocked_by": [
@@ -515,14 +515,14 @@
         "US-024"
       ],
       "started_at": "2026-09-25",
-      "completed_at": null,
-      "reviewed_at": "2026-09-25T21:10:02+02:00"
+      "completed_at": "2026-09-25T22:28:16+02:00",
+      "reviewed_at": "2026-09-25T22:28:16+02:00"
     },
     {
       "id": "US-035",
       "title": "Consolidate `src-app` runtime helpers",
       "epic": "EP-005",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P2",
       "size": "M",
       "blocked_by": [
@@ -530,8 +530,8 @@
         "US-024"
       ],
       "started_at": "2026-09-25",
-      "completed_at": null,
-      "reviewed_at": "2026-09-25T21:10:02+02:00"
+      "completed_at": "2026-09-25T22:28:16+02:00",
+      "reviewed_at": "2026-09-25T22:28:16+02:00"
     },
     {
       "id": "US-036",
