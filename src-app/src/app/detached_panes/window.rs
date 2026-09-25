@@ -74,7 +74,7 @@ impl PaneFlowApp {
                         WindowDecorations::Client
                     },
                 ),
-                #[allow(clippy::needless_update)]
+                #[cfg_attr(target_os = "macos", allow(clippy::needless_update))]
                 titlebar: Some(gpui::TitlebarOptions {
                     title: None,
                     appears_transparent: true,

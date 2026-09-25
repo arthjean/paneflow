@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum UpdateError {
-    Network(#[allow(dead_code)] String),
+    Network(String),
     IntegrityMismatch {
         expected: String,
         got: String,

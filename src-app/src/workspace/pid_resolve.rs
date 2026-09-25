@@ -30,7 +30,7 @@ fn parent_of(pid: u32) -> Option<u32> {
     parse_stat_ppid(&stat)
 }
 
-#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+#[cfg(any(target_os = "linux", test))]
 fn parse_stat_ppid(stat: &str) -> Option<u32> {
     let after_comm = &stat[stat.rfind(')')? + 1..];
     after_comm.split_whitespace().nth(1)?.parse().ok()

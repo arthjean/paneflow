@@ -96,7 +96,6 @@ impl CodeDocument {
         }
     }
 
-    #[allow(dead_code)]
     pub(crate) fn path(&self) -> &Path {
         &self.path
     }

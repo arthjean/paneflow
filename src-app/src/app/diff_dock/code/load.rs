@@ -169,7 +169,6 @@ impl CodeLoadSlot {
         self.generation
     }
 
-    #[allow(dead_code)]
     pub(crate) fn current(&self) -> u64 {
         self.generation
     }

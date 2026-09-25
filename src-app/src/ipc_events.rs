@@ -1,5 +1,3 @@
-#![cfg_attr(not(unix), allow(dead_code))]
-
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, SyncSender, TrySendError, sync_channel};

@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use std::ffi::OsString;
 use std::path::{Component, Path, PathBuf};
 
