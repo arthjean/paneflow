@@ -17,10 +17,10 @@
     {
       "id": "EP-002",
       "title": "Dependency, Build, and Tracked-File Hygiene",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P1",
       "stories_total": 7,
-      "stories_done": 5
+      "stories_done": 6
     },
     {
       "id": "EP-003",
@@ -206,13 +206,13 @@
       "id": "US-013",
       "title": "Remove dead and duplicated CI workflow steps",
       "epic": "EP-002",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P1",
       "size": "S",
       "blocked_by": [],
       "started_at": "2026-09-24T21:55:00+02:00",
-      "completed_at": null,
-      "reviewed_at": "2026-09-25T12:28:05+02:00"
+      "completed_at": "2026-09-25T14:35:55+02:00",
+      "reviewed_at": "2026-09-25T14:35:55+02:00"
     },
     {
       "id": "US-014",
