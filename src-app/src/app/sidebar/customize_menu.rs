@@ -1,7 +1,7 @@
 use gpui::{
-    AnyElement, AppContext, ClickEvent, Context, InteractiveElement, IntoElement, MouseButton,
-    MouseUpEvent, ParentElement, Role, StatefulInteractiveElement, Styled, deferred, div,
-    prelude::FluentBuilder, px, svg,
+    AnyElement, ClickEvent, Context, InteractiveElement, IntoElement, MouseButton, MouseUpEvent,
+    ParentElement, Role, StatefulInteractiveElement, Styled, deferred, div, prelude::FluentBuilder,
+    px, svg,
 };
 
 use crate::PaneFlowApp;
@@ -9,7 +9,6 @@ use crate::settings::components::{menu_panel, menu_row};
 use crate::ui_primitives::TooltipDelayExt;
 use crate::ui_primitives::squircle_skin;
 
-use super::SidebarTooltip;
 use paneflow_config::schema::SidebarShow;
 
 #[derive(Clone, Copy)]
@@ -96,12 +95,7 @@ pub(super) fn render_customize_sidebar_button(
     )
     .role(Role::Button)
     .aria_label("Customize sidebar")
-    .delayed_tooltip(|_w, cx| {
-        cx.new(|_| SidebarTooltip {
-            label: "Customize sidebar".into(),
-        })
-        .into()
-    })
+    .delayed_tooltip(crate::ui_primitives::text_tooltip("Customize sidebar"))
     .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
     .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
         this.sidebar_customize_menu_open = !open;

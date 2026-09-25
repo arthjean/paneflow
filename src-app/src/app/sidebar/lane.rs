@@ -1,5 +1,5 @@
 use gpui::{
-    Animation, AnimationExt, AnyElement, AppContext, FontWeight, InteractiveElement, IntoElement,
+    Animation, AnimationExt, AnyElement, FontWeight, InteractiveElement, IntoElement,
     ParentElement, SharedString, StatefulInteractiveElement, Styled, div, prelude::FluentBuilder,
     px, rgb, svg,
 };
@@ -7,7 +7,7 @@ use gpui::{
 use crate::app::pull_request::{PrState, PullRequest};
 use crate::ui_primitives::TooltipDelayExt;
 
-use super::{SIDEBAR_ACTION_BUTTON_SIZE, SidebarAgentState, SidebarAgentSummary, SidebarTooltip};
+use super::{SIDEBAR_ACTION_BUTTON_SIZE, SidebarAgentState, SidebarAgentSummary};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Lane {
@@ -139,12 +139,7 @@ pub(super) fn render_lane(
         .whitespace_nowrap()
         .text_color(color)
         .aria_label(tooltip.clone())
-        .delayed_tooltip(move |_w, cx| {
-            cx.new(|_| SidebarTooltip {
-                label: tooltip.clone(),
-            })
-            .into()
-        })
+        .delayed_tooltip(crate::ui_primitives::text_tooltip(tooltip))
         .child(glyph)
         .when(!lane.label().is_empty(), |slot| slot.child(lane.label()))
         .into_any_element()

@@ -330,11 +330,7 @@ impl Render for TitleBar {
                             delta,
                         ));
                     })
-                    .delayed_tooltip(move |_window, cx| {
-                        let label = sidebar_tooltip.clone();
-                        cx.new(|_| crate::app::sidebar::SidebarTooltip { label })
-                            .into()
-                    })
+                    .delayed_tooltip(crate::ui_primitives::text_tooltip(sidebar_tooltip))
                     .on_mouse_down(MouseButton::Left, move |_, _, cx| {
                         cx.stop_propagation();
                         if let Some(entity) = toggle_sidebar_handle.upgrade() {

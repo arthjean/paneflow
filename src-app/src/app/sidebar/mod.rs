@@ -13,8 +13,8 @@ mod workspace_row;
 use crate::ui_primitives::TooltipDelayExt;
 use gpui::{
     AnyElement, AppContext, ClickEvent, Context, FontWeight, InteractiveElement, IntoElement,
-    KeyDownEvent, MouseButton, ParentElement, Render, Role, SharedString, Styled, Window, div,
-    prelude::*, px, svg,
+    KeyDownEvent, MouseButton, ParentElement, Role, SharedString, Styled, Window, div, prelude::*,
+    px, svg,
 };
 
 use crate::ui_primitives::squircle_skin;
@@ -293,12 +293,9 @@ impl PaneFlowApp {
                             )
                             .role(Role::Button)
                             .aria_label("New workspace")
-                            .delayed_tooltip(move |_w, cx| {
-                                cx.new(|_| SidebarTooltip {
-                                    label: new_workspace_tooltip.clone().into(),
-                                })
-                                .into()
-                            })
+                            .delayed_tooltip(crate::ui_primitives::text_tooltip(
+                                new_workspace_tooltip,
+                            ))
                             .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
                                 this.create_workspace_with_picker(window, cx);
                             }))
@@ -696,16 +693,6 @@ impl PaneFlowApp {
             )
             .child(list)
             .child(Self::render_sidebar_drop_placeholder(cx))
-    }
-}
-
-pub(crate) struct SidebarTooltip {
-    pub(crate) label: SharedString,
-}
-
-impl Render for SidebarTooltip {
-    fn render(&mut self, _w: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        crate::ui_primitives::tooltip_shell().child(self.label.clone())
     }
 }
 
