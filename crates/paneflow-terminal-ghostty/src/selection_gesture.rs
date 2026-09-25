@@ -411,14 +411,6 @@ impl DisplayTerminal {
         self.dispatch(&event)
     }
 
-    pub fn gesture_deep_press(&mut self, word_boundaries: &[char]) -> Result<Option<SelectionRange>> {
-        let mut event = GestureEvent::new(
-            sys::GhosttySelectionGestureEventType_GHOSTTY_SELECTION_GESTURE_EVENT_TYPE_DEEP_PRESS,
-        )?;
-        event.set_word_boundaries(word_boundaries)?;
-        self.dispatch(&event)
-    }
-
     pub fn gesture_reset(&mut self) -> Result<()> {
         let gesture = self.gesture()?;
         unsafe { sys::ghostty_selection_gesture_reset(gesture, self.terminal.raw()) };

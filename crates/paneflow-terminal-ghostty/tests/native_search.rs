@@ -238,32 +238,6 @@ fn native_search_total_tracks_alternate_screen_redraws() {
 }
 
 #[test]
-#[ignore = "reports native search navigation latency on a fixed history"]
-fn native_search_navigation_benchmark() {
-    let mut terminal = terminal(100, 40, 30_000);
-    terminal
-        .feed("marker payload\r\n".repeat(20_000).as_bytes())
-        .unwrap();
-    terminal.set_search_query("marker").unwrap();
-    complete(&mut terminal);
-    let mut samples = Vec::new();
-    for iteration in 0..130 {
-        let started = std::time::Instant::now();
-        terminal.search_select(true).unwrap();
-        std::hint::black_box(complete(&mut terminal));
-        std::hint::black_box(terminal.snapshot().unwrap());
-        if iteration >= 10 {
-            samples.push(started.elapsed().as_secs_f64() * 1_000.0);
-        }
-    }
-    samples.sort_by(f64::total_cmp);
-    println!(
-        "native search navigation, 20000 matches, 100x40, 120 samples: p50={:.3}ms p95={:.3}ms p99={:.3}ms",
-        samples[59], samples[113], samples[118]
-    );
-}
-
-#[test]
 fn navigation_reuses_rail_and_cells_within_the_same_viewport() {
     let mut terminal = terminal(80, 12, 3_000);
     terminal

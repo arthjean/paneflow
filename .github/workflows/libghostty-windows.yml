@@ -47,7 +47,6 @@ jobs:
               - '.github/workflows/run_tests.yml'
               - 'Cargo.lock'
               - 'Cargo.toml'
-              - 'crates/paneflow-ghostty-smoke/**'
               - 'crates/paneflow-libghostty-sys/**'
               - 'crates/paneflow-terminal-ghostty/**'
               - 'native/libghostty/**'

@@ -62,9 +62,6 @@ native_modules!(
     unicode,
 );
 
-#[cfg(not(ghostty_native))]
-mod stub;
-
 #[cfg(ghostty_native)]
 pub use color::{
     PALETTE_LEN, PaletteMask, contrast, default_palette, encode_color_scheme_report,
@@ -162,8 +159,6 @@ pub fn build_identity() -> BuildIdentity {
 
 #[cfg(ghostty_native)]
 pub use engine::DisplayTerminal;
-#[cfg(not(ghostty_native))]
-pub use stub::DisplayTerminal;
 
 #[cfg(all(test, ghostty_native))]
 mod identity_tests {

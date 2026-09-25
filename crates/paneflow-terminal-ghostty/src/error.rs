@@ -1,9 +1,5 @@
 #[derive(Debug, thiserror::Error)]
 pub enum GhosttyError {
-    #[error(
-        "libghostty is available only on Linux, macOS Apple Silicon, or Windows x64 MSVC with the `native` feature"
-    )]
-    UnsupportedPlatform,
     #[error("terminal dimensions must be within 1..={max}: got {cols}x{rows}")]
     InvalidDimensions { cols: usize, rows: usize, max: u16 },
     #[error("libghostty ABI mismatch: {0}")]

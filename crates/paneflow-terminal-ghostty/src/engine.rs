@@ -90,13 +90,6 @@ impl DisplayTerminal {
         Ok(())
     }
 
-    pub fn reset(&mut self) {
-        unsafe { sys::ghostty_terminal_reset(self.terminal.raw()) };
-        self.invalidate_search_rail();
-        self.callbacks.reset_working_directory();
-        self.snapshot_cache.invalidate();
-    }
-
     pub fn clear_screen_and_scrollback(&mut self) -> Result<()> {
         self.feed(CLEAR_SCREEN_AND_SCROLLBACK)?;
         self.snapshot_cache.invalidate();

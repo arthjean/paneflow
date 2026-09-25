@@ -96,10 +96,6 @@ impl CallbackState {
         self.push(BackendEvent::WorkingDirectory(cwd));
     }
 
-    pub(crate) fn reset_working_directory(&self) {
-        *self.last_working_directory.borrow_mut() = None;
-    }
-
     pub(crate) fn push(&self, event: BackendEvent) {
         let mut events = self.events.borrow_mut();
         match event {
