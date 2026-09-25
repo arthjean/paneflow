@@ -155,11 +155,6 @@ fn cpu_model() -> Option<String> {
     Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
-#[cfg(not(any(target_os = "linux", windows, target_os = "macos")))]
-fn cpu_model() -> Option<String> {
-    None
-}
-
 #[cfg(target_os = "linux")]
 fn total_ram_bytes() -> Option<u64> {
     std::fs::read_to_string("/proc/meminfo")
@@ -186,9 +181,4 @@ fn total_ram_bytes() -> Option<u64> {
         .output()
         .ok()?;
     String::from_utf8_lossy(&output.stdout).trim().parse().ok()
-}
-
-#[cfg(not(any(target_os = "linux", windows, target_os = "macos")))]
-fn total_ram_bytes() -> Option<u64> {
-    None
 }

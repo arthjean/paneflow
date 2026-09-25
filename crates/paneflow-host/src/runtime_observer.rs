@@ -648,18 +648,6 @@ mod platform {
     }
 }
 
-#[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
-mod platform {
-    use super::ForegroundJob;
-
-    pub(super) fn foreground_job(
-        _session_leader_pid: u32,
-        _foreground_process_group: Option<i32>,
-    ) -> Option<ForegroundJob> {
-        None
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -858,8 +846,6 @@ mod tests {
             let group = unsafe { libc::getpgrp() };
             platform::foreground_job(session as u32, Some(group))
         };
-        #[cfg(not(any(windows, unix)))]
-        let job: Option<ForegroundJob> = platform::foreground_job(std::process::id(), None);
 
         #[cfg(any(windows, unix))]
         {
@@ -877,8 +863,6 @@ mod tests {
                 "every enumerated process carries a kernel start time"
             );
         }
-        #[cfg(not(any(windows, unix)))]
-        assert!(job.is_none());
     }
 
     #[test]

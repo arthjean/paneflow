@@ -242,14 +242,6 @@ pub(super) fn thread_cpu(pid: u32) -> Attribution {
     }
 }
 
-#[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
-pub(super) fn thread_cpu(_pid: u32) -> Attribution {
-    Attribution::Pending(
-        "per-thread CPU attribution on this platform needs proc_pidinfo(PROC_PIDTHREADINFO); not implemented"
-            .to_string(),
-    )
-}
-
 #[cfg(windows)]
 pub(super) fn resident_bytes(pid: u32) -> Option<u64> {
     use windows_sys::Win32::Foundation::CloseHandle;
@@ -284,11 +276,6 @@ pub(super) fn resident_bytes(pid: u32) -> Option<u64> {
 #[cfg(target_os = "macos")]
 pub(super) fn resident_bytes(pid: u32) -> Option<u64> {
     task_info(pid).map(|info| info.pti_resident_size)
-}
-
-#[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
-pub(super) fn resident_bytes(_pid: u32) -> Option<u64> {
-    None
 }
 
 #[cfg(windows)]
@@ -366,11 +353,6 @@ pub(super) fn process_counters(pid: u32) -> (Option<u64>, Option<u64>) {
         .and_then(|pid| proc_list(pid, libc::PROC_PIDLISTFDS, empty))
         .map(|entries| entries.len() as u64);
     (threads, fds)
-}
-
-#[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
-pub(super) fn process_counters(_pid: u32) -> (Option<u64>, Option<u64>) {
-    (None, None)
 }
 
 fn counters_json(pid: u32) -> Value {

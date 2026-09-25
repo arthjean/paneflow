@@ -75,11 +75,6 @@ fn process_is_absent(pid: u32) -> bool {
         && io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH)
 }
 
-#[cfg(not(any(windows, unix)))]
-fn process_is_absent(_pid: u32) -> bool {
-    false
-}
-
 #[cfg(windows)]
 fn process_is_running(pid: u32) -> Option<bool> {
     use windows_sys::Win32::Foundation::{CloseHandle, STILL_ACTIVE};
@@ -124,11 +119,6 @@ fn process_is_running(pid: u32) -> Option<bool> {
         )
     };
     (written == size).then_some(info.pbi_status != libc::SZOMB)
-}
-
-#[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
-fn process_is_running(_pid: u32) -> Option<bool> {
-    None
 }
 
 #[cfg(windows)]
@@ -213,11 +203,6 @@ fn unreaped_start_time(pid: i32) -> Option<u64> {
     let seconds = u64::try_from(i64::from_ne_bytes(buffer[0..8].try_into().ok()?)).ok()?;
     let micros = u64::try_from(i32::from_ne_bytes(buffer[8..12].try_into().ok()?)).ok()?;
     Some(seconds.saturating_mul(1_000_000) + micros)
-}
-
-#[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
-pub fn process_start_time(_pid: u32) -> Option<u64> {
-    None
 }
 
 #[cfg(unix)]
@@ -1157,11 +1142,6 @@ fn command_line_to_argv(command_line: &str) -> Vec<String> {
     }
     unsafe { LocalFree(argv.cast()) };
     args
-}
-
-#[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
-pub fn process_argv(_pid: u32) -> Option<Vec<String>> {
-    None
 }
 
 #[cfg(test)]
