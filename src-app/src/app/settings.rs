@@ -1,4 +1,4 @@
-use gpui::{Context, KeyDownEvent, ScrollHandle, Window};
+use gpui::{AppContext, Context, KeyDownEvent, ScrollHandle, Window};
 
 use crate::{PaneFlowApp, SettingsSection, config_writer, keybindings};
 
@@ -368,6 +368,89 @@ impl PaneFlowApp {
         self.reload_shortcuts(cx);
         cx.notify();
     }
+
+    pub(crate) fn process_config_changes(&mut self, cx: &mut Context<Self>) {
+        let new_config = self
+            .pending_config
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take();
+        if let Some(config) = new_config {
+            crate::terminal::element::apply_font_config(&config);
+            let default_shell_changed =
+                super::settings::normalized_shell_setting(
+                    self.cached_config.default_shell.as_deref(),
+                ) != super::settings::normalized_shell_setting(config.default_shell.as_deref());
+            let theme_mode = crate::ThemeMode::from_config(
+                config.theme_mode.as_deref(),
+                config.theme.as_deref(),
+            );
+            keybindings::apply_keybindings(cx, &config.shortcuts);
+            self.effective_shortcuts = keybindings::effective_shortcuts(&config.shortcuts);
+            crate::theme::set_active_theme(config.theme.as_deref());
+            self.reconcile_telemetry_consent(&config, cx);
+            crate::workspace::worktree::set_worktrees_root(config.worktrees.dir_path());
+            self.cached_config = config;
+            self.theme_mode = theme_mode;
+            crate::ui_primitives::set_reduce_motion(self.cached_config.reduce_motion_enabled());
+            self.apply_editor_display(cx);
+            if default_shell_changed {
+                self.handle_default_shell_changed(cx);
+            }
+            for ws in &self.workspaces {
+                ws.propagate_config(&self.cached_config, cx);
+            }
+            cx.notify();
+        }
+
+        if self
+            .theme_changed
+            .swap(false, std::sync::atomic::Ordering::AcqRel)
+        {
+            cx.notify();
+        }
+
+        crate::theme::publish_theme_generation(cx);
+    }
+
+    fn reconcile_telemetry_consent(
+        &mut self,
+        config: &paneflow_config::schema::PaneFlowConfig,
+        cx: &mut Context<Self>,
+    ) {
+        let new_enabled = config.telemetry.as_ref().and_then(|t| t.enabled);
+        let decision = reconcile_telemetry(self.telemetry_enabled_last, new_enabled);
+        if !decision.rebuild {
+            return;
+        }
+
+        let consent = crate::telemetry::client::TelemetryConsent::from_config(new_enabled);
+        let (api_key, host) = super::telemetry_events::posthog_endpoint();
+        let deactivating_telemetry = std::sync::Arc::clone(&self.telemetry);
+        deactivating_telemetry.disable();
+        cx.background_spawn(async move {
+            smol::unblock(move || deactivating_telemetry.deactivate()).await;
+        })
+        .detach();
+        let (telemetry_client, _) =
+            crate::telemetry::client::TelemetryClient::from_consent(consent, api_key, host, || {
+                (crate::telemetry::id::telemetry_id(), false)
+            });
+        let telemetry = std::sync::Arc::new(telemetry_client);
+        self.telemetry = std::sync::Arc::clone(&telemetry);
+        Self::spawn_telemetry_flusher(telemetry, cx);
+
+        if decision.reenabled {
+            self.telemetry
+                .capture(crate::telemetry::event::TelemetryEvent::telemetry_reenabled());
+        }
+
+        self.telemetry_enabled_last = new_enabled;
+
+        if let Some(msg) = decision.toast_msg {
+            self.show_toast(msg, cx);
+        }
+    }
 }
 
 pub(crate) fn normalized_shell_setting(shell: Option<&str>) -> &str {
@@ -379,6 +462,33 @@ fn terminal_key_repaints_open_terminals(key: &str) -> bool {
         key,
         "integrated_glyphs" | "color_emoji" | "cursor_color" | "minimum_contrast"
     )
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct TelemetryReconciliation {
+    pub rebuild: bool,
+    pub reenabled: bool,
+    pub toast_msg: Option<&'static str>,
+}
+
+pub(crate) fn reconcile_telemetry(old: Option<bool>, new: Option<bool>) -> TelemetryReconciliation {
+    if old == new {
+        return TelemetryReconciliation {
+            rebuild: false,
+            reenabled: false,
+            toast_msg: None,
+        };
+    }
+    let toast_msg = Some(match new {
+        Some(true) => "Télémétrie activée",
+        Some(false) => "Télémétrie désactivée",
+        None => "Télémétrie : la demande réapparaîtra au prochain lancement",
+    });
+    TelemetryReconciliation {
+        rebuild: true,
+        reenabled: old == Some(false) && new == Some(true),
+        toast_msg,
+    }
 }
 
 #[cfg(test)]
@@ -423,6 +533,76 @@ mod tests {
                 .unwrap_or_default()
                 .resolved_minimum_contrast(),
             paneflow_config::schema::TerminalConfig::DEFAULT_MINIMUM_CONTRAST
+        );
+    }
+
+    #[test]
+    fn identical_state_is_a_noop() {
+        for state in [None, Some(false), Some(true)] {
+            let r = reconcile_telemetry(state, state);
+            assert!(!r.rebuild, "no rebuild for identical {state:?}");
+            assert!(!r.reenabled);
+            assert!(r.toast_msg.is_none());
+        }
+    }
+
+    #[test]
+    fn none_to_some_true_rebuilds_but_does_not_flag_reenabled() {
+        let r = reconcile_telemetry(None, Some(true));
+        assert!(r.rebuild);
+        assert!(
+            !r.reenabled,
+            "first-ever consent (None → true) is not a re-enable"
+        );
+        assert_eq!(r.toast_msg, Some("Télémétrie activée"));
+    }
+
+    #[test]
+    fn none_to_some_false_rebuilds() {
+        let r = reconcile_telemetry(None, Some(false));
+        assert!(r.rebuild);
+        assert!(!r.reenabled);
+        assert_eq!(r.toast_msg, Some("Télémétrie désactivée"));
+    }
+
+    #[test]
+    fn some_false_to_some_true_flags_reenabled() {
+        let r = reconcile_telemetry(Some(false), Some(true));
+        assert!(r.rebuild);
+        assert!(
+            r.reenabled,
+            "opted-out → opted-in is the only transition that emits telemetry_reenabled"
+        );
+        assert_eq!(r.toast_msg, Some("Télémétrie activée"));
+    }
+
+    #[test]
+    fn some_true_to_some_false_rebuilds_no_reenabled() {
+        let r = reconcile_telemetry(Some(true), Some(false));
+        assert!(r.rebuild);
+        assert!(!r.reenabled);
+        assert_eq!(r.toast_msg, Some("Télémétrie désactivée"));
+    }
+
+    #[test]
+    fn some_true_to_none_rebuilds() {
+        let r = reconcile_telemetry(Some(true), None);
+        assert!(r.rebuild);
+        assert!(!r.reenabled);
+        assert_eq!(
+            r.toast_msg,
+            Some("Télémétrie : la demande réapparaîtra au prochain lancement")
+        );
+    }
+
+    #[test]
+    fn some_false_to_none_rebuilds_no_reenabled() {
+        let r = reconcile_telemetry(Some(false), None);
+        assert!(r.rebuild);
+        assert!(!r.reenabled);
+        assert_eq!(
+            r.toast_msg,
+            Some("Télémétrie : la demande réapparaîtra au prochain lancement")
         );
     }
 }

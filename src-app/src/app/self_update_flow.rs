@@ -618,6 +618,38 @@ impl PaneFlowApp {
         );
         self.kickoff_self_update_install(cx);
     }
+
+    pub(crate) fn process_update_check(&mut self, cx: &mut Context<Self>) {
+        let Some(incoming) = self
+            .self_update
+            .pending_update
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take()
+        else {
+            return;
+        };
+        self.report_manual_update_check(&incoming, cx);
+        let installer_holds_artifact = matches!(
+            self.self_update.self_update_status,
+            update::SelfUpdateStatus::Downloading
+                | update::SelfUpdateStatus::Installing
+                | update::SelfUpdateStatus::ReadyToRestart
+        );
+        if !update::checker::should_replace_status(
+            self.self_update.update_status.as_ref(),
+            &incoming,
+            self.self_update.dismissed_version.as_deref(),
+            installer_holds_artifact,
+        ) {
+            return;
+        }
+        self.self_update.update_status = Some(incoming);
+        self.self_update.self_update_status = update::SelfUpdateStatus::Idle;
+        self.self_update.update_attempt_count = 0;
+        cx.notify();
+        self.try_auto_kickoff_install(cx);
+    }
 }
 
 #[cfg(test)]

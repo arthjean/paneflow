@@ -4,6 +4,8 @@ use gpui::{
     prelude::*, px, svg,
 };
 
+use crate::agent_launcher::TerminalAgent;
+use crate::agents::notifications::{self as desktop_notifications, DesktopNotification};
 use crate::app::constants::{TOAST_ENTER_MS, TOAST_EXIT_MS, TOAST_HOLD_MS};
 use crate::settings::components::with_alpha;
 use crate::theme::UiColors;
@@ -479,4 +481,88 @@ fn toast_message_reads_like_error(message: &str) -> bool {
     ]
     .iter()
     .any(|needle| message.contains(needle))
+}
+
+pub(crate) fn fire_turn_end_notification(
+    agent: TerminalAgent,
+    workspace_title: &str,
+    session_summary: Option<&str>,
+    config: &paneflow_config::schema::PaneFlowConfig,
+    seen: bool,
+    executor: gpui::BackgroundExecutor,
+) {
+    desktop_notifications::fire_desktop_notification(
+        DesktopNotification::turn_finished(agent, workspace_title, session_summary),
+        config,
+        seen,
+        executor,
+    );
+}
+
+pub(crate) fn fire_attention_notification(
+    agent: TerminalAgent,
+    workspace_title: &str,
+    message: Option<&str>,
+    config: &paneflow_config::schema::PaneFlowConfig,
+    seen: bool,
+    executor: gpui::BackgroundExecutor,
+) {
+    fire_worker_notification(
+        DesktopNotification::needs_input_for(agent.display_name(), workspace_title, message),
+        config,
+        seen,
+        None,
+        executor,
+    );
+}
+
+pub(crate) fn fire_worker_notification(
+    notification: DesktopNotification,
+    config: &paneflow_config::schema::PaneFlowConfig,
+    seen: bool,
+    session_key: Option<u64>,
+    executor: gpui::BackgroundExecutor,
+) {
+    desktop_notifications::fire_desktop_notification_for_session(
+        notification,
+        config,
+        seen,
+        session_key,
+        executor,
+    );
+}
+
+pub(super) fn sanitize_notification_message(raw: &str) -> String {
+    desktop_notifications::sanitize_notification_message(raw)
+}
+
+pub(crate) fn fire_agent_exit_notification(
+    agent: TerminalAgent,
+    workspace_title: &str,
+    exit_code: i32,
+    config: &paneflow_config::schema::PaneFlowConfig,
+    seen: bool,
+    executor: gpui::BackgroundExecutor,
+) {
+    desktop_notifications::fire_desktop_notification(
+        DesktopNotification::agent_exited(agent, workspace_title, exit_code),
+        config,
+        seen,
+        executor,
+    );
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn agent_exit_body_carries_workspace_and_code() {
+        assert_eq!(
+            crate::agents::notifications::agent_exit_notification_body("api", 1),
+            "api: exited with code 1"
+        );
+        assert_eq!(
+            crate::agents::notifications::agent_exit_notification_body("ws", -1073741510),
+            "ws: exited with code -1073741510"
+        );
+    }
 }
