@@ -217,12 +217,10 @@ inside `theme/builtin.rs`.
 | `muted` | Secondary text, icons at rest, eyebrows | `#a0a0a0` | `#636363` |
 | `text` | Primary text, icons on hover | `#dddddd` | `#262626` |
 | `accent` | Links, selected metadata, the one primary action | `#57d5c4` | `#4c6fff` |
-| `tool_card_header_bg` | Reserved; no surface consumes it today | `#2e2e2e` | `#f1f1f1` |
 | `vc_added`, `vc_modified`, `vc_deleted`, `vc_conflict` | Diffstat, status letters, change bars, attention border | `#57d992`, `#ffd166`, `#ff6f6a`, `#ffa657` | `#29681c`, `#df8e1d`, `#a00b2b`, `#fe640b` |
-| `vc_*_background` | Row washes in the diff | added, deleted, modified at 0.12 | `#40a02b`, `#d20f39`, `#df8e1d` at 0.16 |
+| `vc_added_background`, `vc_deleted_background` | Row washes in the diff | added, deleted at 0.12 | `#40a02b`, `#d20f39` at 0.16 |
 | `vc_word_added`, `vc_word_deleted` | Word washes inside a changed diff row | `vc_added`, `vc_deleted` at 0.40 | `#40a02b`, `#d20f39` at 0.40 |
 | `group_1` to `group_8` | Broadcast group stripe and picker | blue, green, yellow, red, violet, teal, orange, periwinkle | Catppuccin Latte hues |
-| `agent_claude`, `agent_codex` | Identity dots and status glyphs | `#ffa657`, `#7eb6ff` | `#e89271`, `#5b6cff` |
 | `agent_error` | Failed agent state | `#ff6f6a` | `#a00b2b` |
 
 The dark work surface is `#181818` and the dark chrome is `#141414`: the
@@ -1032,4 +1030,3 @@ already need the same behavior.
   `#343434`) with a border and a shadow instead of `UiColors`. It is
   **Migration**; the next touch moves it onto the squircle card and the
   semantic roles, as System Info already is.
-- `tool_card_header_bg` is defined by every preset but consumed by nothing.

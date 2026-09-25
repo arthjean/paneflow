@@ -44,7 +44,7 @@ pub use hyperlink::{
 use sprites::{Sprite, is_private_use, sprite_for};
 
 use crate::terminal::scrollbar_reveal::ScrollbarPresence;
-#[allow(unused_imports)]
+#[cfg(test)]
 pub(crate) use color::apca_contrast;
 pub(crate) use color::ensure_minimum_contrast;
 pub(crate) use paint::scrollbar::ScrollbarMetrics;

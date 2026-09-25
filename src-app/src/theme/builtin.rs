@@ -218,14 +218,12 @@ fn vercel_dark_ui() -> UiColors {
         muted: h(0x9a9a9a),
         text: h(0xededed),
         accent: h(0xffffff),
-        tool_card_header_bg: h(0x161616),
         vc_added: h(0x00d084),
         vc_modified: h(0xf5a623),
         vc_deleted: h(0xff5a5f),
         vc_conflict: h(0xff7a18),
         vc_added_background: ha(0x00d084, 0.16),
         vc_deleted_background: ha(0xff5a5f, 0.16),
-        vc_modified_background: ha(0xf5a623, 0.16),
         vc_word_added: ha(0x00d084, 0.42),
         vc_word_deleted: ha(0xff5a5f, 0.42),
         group_1: h(0xffffff),
@@ -237,8 +235,6 @@ fn vercel_dark_ui() -> UiColors {
         group_7: h(0xff5a5f),
         group_8: h(0x999999),
         agent_error: h(0xff5a5f),
-        agent_claude: h(0xff7a18),
-        agent_codex: h(0x4699ff),
     }
 }
 
@@ -291,14 +287,12 @@ fn vercel_light_ui() -> UiColors {
         muted: h(0x666666),
         text: h(0x171717),
         accent: h(0x000000),
-        tool_card_header_bg: h(0xf0f0f0),
         vc_added: h(0x0b660b),
         vc_modified: h(0xa35200),
         vc_deleted: h(0xa32227),
         vc_conflict: h(0xbd4b00),
         vc_added_background: ha(0x0f7b0f, 0.16),
         vc_deleted_background: ha(0xcd2b31, 0.16),
-        vc_modified_background: ha(0xa35200, 0.16),
         vc_word_added: ha(0x0f7b0f, 0.42),
         vc_word_deleted: ha(0xcd2b31, 0.42),
         group_1: h(0x000000),
@@ -310,8 +304,6 @@ fn vercel_light_ui() -> UiColors {
         group_7: h(0xcd2b31),
         group_8: h(0x666666),
         agent_error: h(0xa32227),
-        agent_claude: h(0xbd4b00),
-        agent_codex: h(0x0068d6),
     }
 }
 
@@ -364,14 +356,12 @@ fn claude_dark_ui() -> UiColors {
         muted: h(0xa1a199),
         text: h(0xe3dacc),
         accent: h(0xe78363),
-        tool_card_header_bg: h(0x313131),
         vc_added: h(0x57d992),
         vc_modified: h(0xffd166),
         vc_deleted: h(0xff6f6a),
         vc_conflict: h(0xffa657),
         vc_added_background: ha(0x57d992, 0.12),
         vc_deleted_background: ha(0xff6f6a, 0.12),
-        vc_modified_background: ha(0xffd166, 0.12),
         vc_word_added: ha(0x57d992, 0.40),
         vc_word_deleted: ha(0xff6f6a, 0.40),
         group_1: h(0xd97757),
@@ -383,8 +373,6 @@ fn claude_dark_ui() -> UiColors {
         group_7: h(0xe68a6d),
         group_8: h(0xc3c2b7),
         agent_error: h(0xe78363),
-        agent_claude: h(0xe78363),
-        agent_codex: h(0x8fa4b8),
     }
 }
 
@@ -437,14 +425,12 @@ fn claude_light_ui() -> UiColors {
         muted: h(0x66655f),
         text: h(0x3d3929),
         accent: h(0xd97757),
-        tool_card_header_bg: h(0xf3f0e7),
         vc_added: h(0x29681c),
         vc_modified: h(0xdf8e1d),
         vc_deleted: h(0xa00b2b),
         vc_conflict: h(0xfe640b),
         vc_added_background: ha(0x40a02b, 0.16),
         vc_deleted_background: ha(0xd20f39, 0.16),
-        vc_modified_background: ha(0xdf8e1d, 0.16),
         vc_word_added: ha(0x40a02b, 0.40),
         vc_word_deleted: ha(0xd20f39, 0.40),
         group_1: h(0xd97757),
@@ -456,8 +442,6 @@ fn claude_light_ui() -> UiColors {
         group_7: h(0xc2552f),
         group_8: h(0x83827d),
         agent_error: h(0xa00b2b),
-        agent_claude: h(0xd97757),
-        agent_codex: h(0x4a6fa5),
     }
 }
 
@@ -510,14 +494,12 @@ fn cursor_dark_ui() -> UiColors {
         muted: h(0x9d9d9d),
         text: h(0xf0f0f0),
         accent: h(0xa0d0f0),
-        tool_card_header_bg: h(0x242424),
         vc_added: h(0x57d992),
         vc_modified: h(0xffd166),
         vc_deleted: h(0xff6f6a),
         vc_conflict: h(0xffa657),
         vc_added_background: ha(0x57d992, 0.12),
         vc_deleted_background: ha(0xff6f6a, 0.12),
-        vc_modified_background: ha(0xffd166, 0.12),
         vc_word_added: ha(0x57d992, 0.40),
         vc_word_deleted: ha(0xff6f6a, 0.40),
         group_1: h(0xa0d0f0),
@@ -529,8 +511,6 @@ fn cursor_dark_ui() -> UiColors {
         group_7: h(0xff6f6a),
         group_8: h(0xf0f0f0),
         agent_error: h(0xff6f6a),
-        agent_claude: h(0xffa657),
-        agent_codex: h(0xa0d0f0),
     }
 }
 
@@ -583,14 +563,12 @@ fn cursor_light_ui() -> UiColors {
         muted: h(0x666666),
         text: h(0x1e1e1e),
         accent: h(0x0f6fc5),
-        tool_card_header_bg: h(0xeaeaea),
         vc_added: h(0x29681c),
         vc_modified: h(0xda8913),
         vc_deleted: h(0xa00b2b),
         vc_conflict: h(0xfe640b),
         vc_added_background: ha(0x40a02b, 0.16),
         vc_deleted_background: ha(0xd20f39, 0.16),
-        vc_modified_background: ha(0xdf8e1d, 0.16),
         vc_word_added: ha(0x40a02b, 0.40),
         vc_word_deleted: ha(0xd20f39, 0.40),
         group_1: h(0x0f6fc5),
@@ -602,8 +580,6 @@ fn cursor_light_ui() -> UiColors {
         group_7: h(0xd20f39),
         group_8: h(0x555555),
         agent_error: h(0xa00b2b),
-        agent_claude: h(0xfe640b),
-        agent_codex: h(0x0f6fc5),
     }
 }
 
@@ -665,14 +641,12 @@ fn tailwind_dark_ui() -> UiColors {
         muted: h(0xa1a1aa),
         text: h(0xfafafa),
         accent: h(0x60a5fa),
-        tool_card_header_bg: h(0x232426),
         vc_added: h(0x22c55e),
         vc_modified: h(0xeab308),
         vc_deleted: h(0xf87171),
         vc_conflict: h(0xf97316),
         vc_added_background: ha(0x22c55e, 0.16),
         vc_deleted_background: ha(0xef4444, 0.16),
-        vc_modified_background: ha(0xeab308, 0.16),
         vc_word_added: ha(0x22c55e, 0.40),
         vc_word_deleted: ha(0xef4444, 0.40),
         group_1: h(0x60a5fa),
@@ -684,8 +658,6 @@ fn tailwind_dark_ui() -> UiColors {
         group_7: h(0xfb923c),
         group_8: h(0xa1a1aa),
         agent_error: h(0xf87171),
-        agent_claude: h(0xfb923c),
-        agent_codex: h(0x60a5fa),
     }
 }
 
@@ -738,14 +710,12 @@ fn tailwind_light_ui() -> UiColors {
         muted: h(0x52525b),
         text: h(0x09090b),
         accent: h(0x2563eb),
-        tool_card_header_bg: h(0xf4f4f5),
         vc_added: h(0x166534),
         vc_modified: h(0xca8a04),
         vc_deleted: h(0x991b1b),
         vc_conflict: h(0xea580c),
         vc_added_background: ha(0x16a34a, 0.16),
         vc_deleted_background: ha(0xdc2626, 0.16),
-        vc_modified_background: ha(0xca8a04, 0.16),
         vc_word_added: ha(0x16a34a, 0.40),
         vc_word_deleted: ha(0xdc2626, 0.40),
         group_1: h(0x2563eb),
@@ -757,8 +727,6 @@ fn tailwind_light_ui() -> UiColors {
         group_7: h(0xea580c),
         group_8: h(0x71717a),
         agent_error: h(0x991b1b),
-        agent_claude: h(0xc2410c),
-        agent_codex: h(0x2563eb),
     }
 }
 

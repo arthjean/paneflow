@@ -661,12 +661,12 @@ impl CodeView {
         self.state.highlighter()
     }
 
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub(crate) fn cursor(&self) -> usize {
         self.selection.cursor()
     }
 
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub(crate) fn cursor_row(&self) -> usize {
         self.document()
             .map(|doc| doc.byte_to_line(self.selection.cursor()))
@@ -727,12 +727,12 @@ impl CodeView {
             .into_any_element()
     }
 
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub(crate) fn selection(&self) -> Range<usize> {
         self.selection.range()
     }
 
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub(crate) fn set_cursor_row(&mut self, row: usize, cx: &mut Context<Self>) {
         let Some(doc) = self.state.document() else {
             return;
@@ -1243,7 +1243,7 @@ impl CodeView {
         self.history.mark() != self.saved_mark
     }
 
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub(crate) fn has_conflict(&self) -> bool {
         self.disk == DiskState::Conflict
     }

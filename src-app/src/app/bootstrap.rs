@@ -423,7 +423,7 @@ impl PaneFlowApp {
             );
             if let Some(home) = std::env::var_os("HOME").map(std::path::PathBuf::from) {
                 let marker_path = update::migrations::coexistence_marker_path(&home);
-                if !marker_path.exists() {
+                if update::migrations::coexistence_toast_due(&marker_path) {
                     let message = format!(
                         "Two PaneFlow installs detected. Running from {} (this install); other install at {} (installed via {}). Remove the unused install to avoid version drift.",
                         report.running_path.display(),

@@ -13,7 +13,7 @@ struct CommandSessionConfig {
     agent: SessionAgent,
     program: &'static str,
     args: &'static [&'static str],
-    allow_numeric_ids: bool,
+    parse_line: fn(&str, SessionAgent, &str) -> Option<SessionMeta>,
 }
 
 pub(crate) fn read_gemini_sessions_for_cwd(cwd: &str) -> (Vec<SessionMeta>, usize) {
@@ -22,7 +22,7 @@ pub(crate) fn read_gemini_sessions_for_cwd(cwd: &str) -> (Vec<SessionMeta>, usiz
             agent: SessionAgent::Gemini,
             program: "gemini",
             args: &["--list-sessions"],
-            allow_numeric_ids: true,
+            parse_line: parse_gemini_line,
         },
         cwd,
     )
@@ -34,7 +34,7 @@ pub(crate) fn read_kiro_sessions_for_cwd(cwd: &str) -> (Vec<SessionMeta>, usize)
             agent: SessionAgent::Kiro,
             program: "kiro-cli",
             args: &["chat", "--list-sessions"],
-            allow_numeric_ids: false,
+            parse_line: parse_session_line,
         },
         cwd,
     )
@@ -46,7 +46,7 @@ pub(crate) fn read_grok_sessions_for_cwd(cwd: &str) -> (Vec<SessionMeta>, usize)
             agent: SessionAgent::Grok,
             program: "grok",
             args: &["sessions", "list", "--limit", "100"],
-            allow_numeric_ids: false,
+            parse_line: parse_session_line,
         },
         cwd,
     )
@@ -59,11 +59,18 @@ fn read_command_sessions(config: CommandSessionConfig, cwd: &str) -> (Vec<Sessio
     let Some(stdout) = run_list_command(&config, cwd) else {
         return (Vec::new(), 0);
     };
-    parse_command_sessions(&stdout, config.agent, cwd, config.allow_numeric_ids)
+    parse_command_sessions(&stdout, config.agent, cwd, config.parse_line)
 }
 
 fn run_list_command(config: &CommandSessionConfig, cwd: &str) -> Option<Vec<u8>> {
-    let mut cmd = Command::new(config.program);
+    let Some(mut cmd) = list_command(config.program) else {
+        log::info!(
+            "{} binary not found on PATH; {:?} sessions will be empty",
+            config.program,
+            config.agent
+        );
+        return None;
+    };
     cmd.args(config.args);
     cmd.current_dir(cwd);
 
@@ -110,34 +117,63 @@ fn run_list_command(config: &CommandSessionConfig, cwd: &str) -> Option<Vec<u8>>
     Some(output.stdout)
 }
 
+#[cfg(windows)]
+fn list_command(program: &str) -> Option<Command> {
+    which::which(program).ok().map(Command::new)
+}
+
+#[cfg(not(windows))]
+fn list_command(program: &str) -> Option<Command> {
+    Some(Command::new(program))
+}
+
 fn parse_command_sessions(
     stdout: &[u8],
     agent: SessionAgent,
     cwd: &str,
-    allow_numeric_ids: bool,
+    parse_line: fn(&str, SessionAgent, &str) -> Option<SessionMeta>,
 ) -> (Vec<SessionMeta>, usize) {
     let text = String::from_utf8_lossy(stdout);
-    let sessions = text
-        .lines()
-        .filter_map(|line| parse_session_line(line, agent, cwd, allow_numeric_ids));
+    let sessions = text.lines().filter_map(|line| parse_line(line, agent, cwd));
     crate::agent_sessions::collect_recent_sessions(
         sessions,
         crate::agent_sessions::SIDEBAR_SESSION_RETAINED_PER_SOURCE,
     )
 }
 
-fn parse_session_line(
-    line: &str,
-    agent: SessionAgent,
-    cwd: &str,
-    allow_numeric_ids: bool,
-) -> Option<SessionMeta> {
+fn parse_gemini_line(line: &str, agent: SessionAgent, cwd: &str) -> Option<SessionMeta> {
+    let line = line.trim();
+    let bracketed = line.strip_suffix(']')?;
+    let open = bracketed.rfind('[')?;
+    let session_id = &bracketed[open + 1..];
+    if !crate::agent_sessions::is_valid_session_id(session_id) {
+        return None;
+    }
+    let listing = bracketed[..open].trim_end();
+    let title = listing
+        .rfind(" (")
+        .filter(|_| listing.ends_with(')'))
+        .map_or(listing, |age| &listing[..age]);
+    let title = title
+        .split_once(". ")
+        .filter(|(index, _)| !index.is_empty() && index.chars().all(|c| c.is_ascii_digit()))
+        .map_or(title, |(_, rest)| rest);
+    Some(SessionMeta {
+        agent,
+        session_id: session_id.to_string(),
+        timestamp: String::new(),
+        cwd: cwd.to_string(),
+        summary: clean_session_label(title.trim(), 120),
+    })
+}
+
+fn parse_session_line(line: &str, agent: SessionAgent, cwd: &str) -> Option<SessionMeta> {
     let line = line.trim();
     if line.is_empty() || is_header_or_separator(line) {
         return None;
     }
 
-    let session_id = extract_session_id(line, allow_numeric_ids)?;
+    let session_id = extract_session_id(line)?;
     let timestamp = extract_iso8601(line).unwrap_or_default();
     let summary = line_summary(line, &session_id);
 
@@ -155,24 +191,24 @@ fn is_header_or_separator(line: &str) -> bool {
     let headerish = lower.contains("session")
         && lower.contains("id")
         && (lower.contains("title") || lower.contains("summary"))
-        && extract_session_id(line, false).is_none();
+        && extract_session_id(line).is_none();
     headerish
         || line
             .chars()
             .all(|c| matches!(c, '-' | '=' | '+' | '|' | ' '))
 }
 
-fn extract_session_id(line: &str, allow_numeric_ids: bool) -> Option<String> {
+fn extract_session_id(line: &str) -> Option<String> {
     let tokens: Vec<String> = line
         .split_whitespace()
         .map(clean_token)
         .filter(|token| !token.is_empty())
         .collect();
 
-    extract_labeled_session_id(&tokens, allow_numeric_ids).or_else(|| {
+    extract_labeled_session_id(&tokens).or_else(|| {
         tokens
             .iter()
-            .find(|token| is_candidate_session_id(token, allow_numeric_ids, false))
+            .find(|token| is_candidate_session_id(token, false))
             .cloned()
     })
 }
@@ -188,11 +224,11 @@ fn clean_token(token: &str) -> String {
         .to_string()
 }
 
-fn extract_labeled_session_id(tokens: &[String], allow_numeric_ids: bool) -> Option<String> {
+fn extract_labeled_session_id(tokens: &[String]) -> Option<String> {
     for (idx, token) in tokens.iter().enumerate() {
         if let Some((label, value)) = split_labeled_token(token) {
             let label = label.to_ascii_lowercase();
-            if is_id_label(&label) && is_candidate_session_id(value, allow_numeric_ids, true) {
+            if is_id_label(&label) && is_candidate_session_id(value, true) {
                 return Some(value.to_string());
             }
         }
@@ -210,7 +246,7 @@ fn extract_labeled_session_id(tokens: &[String], allow_numeric_ids: bool) -> Opt
         };
         if let Some(candidate_index) = candidate_index
             && let Some(candidate) = tokens.get(candidate_index)
-            && is_candidate_session_id(candidate, allow_numeric_ids, true)
+            && is_candidate_session_id(candidate, true)
         {
             return Some(candidate.clone());
         }
@@ -229,12 +265,12 @@ fn is_id_label(label: &str) -> bool {
     matches!(label, "id" | "session_id" | "sessionid")
 }
 
-fn is_candidate_session_id(token: &str, allow_numeric_ids: bool, explicit_id_label: bool) -> bool {
+fn is_candidate_session_id(token: &str, explicit_id_label: bool) -> bool {
     if token.is_empty() || !crate::agent_sessions::is_valid_session_id(token) {
         return false;
     }
     if token.chars().all(|c| c.is_ascii_digit()) {
-        return allow_numeric_ids;
+        return false;
     }
     if looks_like_iso_date(token) {
         return false;
@@ -352,7 +388,8 @@ mod tests {
     #[test]
     fn parse_command_sessions_extracts_uuid_from_a_listed_line() {
         let out = b"550e8400-e29b-41d4-a716-446655440000 2026-06-29T09:10:11Z Refactor auth flow\n";
-        let (sessions, omitted) = parse_command_sessions(out, SessionAgent::Grok, "/repo", false);
+        let (sessions, omitted) =
+            parse_command_sessions(out, SessionAgent::Grok, "/repo", parse_session_line);
         assert_eq!(omitted, 0);
         assert_eq!(sessions.len(), 1);
         assert_eq!(
@@ -363,17 +400,46 @@ mod tests {
     }
 
     #[test]
-    fn parse_command_sessions_accepts_gemini_numeric_index() {
-        let out = b"[2] 2026-06-29T09:10:11Z latest working thread\n";
-        let (sessions, _) = parse_command_sessions(out, SessionAgent::Gemini, "/repo", true);
-        assert_eq!(sessions.len(), 1);
-        assert_eq!(sessions[0].session_id, "2");
+    fn parse_gemini_sessions_returns_only_the_trailing_bracketed_ids() {
+        let out = b"\nAvailable sessions for this project (3):\n  1. Fix the flaky auth test (2 days ago) [5f0c2a7e-1b3d-4e8a-9c21-7d4b6e0f9a13]\n  2. [draft] Refactor the parser (3 hours ago) [a8e1d9b2-6c4f-4f1a-8b7e-2d9c0e5f4a61]\n  3. Update docs (Just now, current) [0d7e3f4a-9b2c-4a6e-b1d8-5f3c2e1a7b90]\n";
+        let (sessions, omitted) =
+            parse_command_sessions(out, SessionAgent::Gemini, "/repo", parse_gemini_line);
+        assert_eq!(omitted, 0);
+        let ids: Vec<&str> = sessions
+            .iter()
+            .map(|session| session.session_id.as_str())
+            .collect();
+        assert_eq!(
+            ids,
+            [
+                "5f0c2a7e-1b3d-4e8a-9c21-7d4b6e0f9a13",
+                "a8e1d9b2-6c4f-4f1a-8b7e-2d9c0e5f4a61",
+                "0d7e3f4a-9b2c-4a6e-b1d8-5f3c2e1a7b90",
+            ]
+        );
+        assert_eq!(
+            sessions[0].summary.as_deref(),
+            Some("Fix the flaky auth test")
+        );
+        assert_eq!(
+            sessions[1].summary.as_deref(),
+            Some("[draft] Refactor the parser")
+        );
+    }
+
+    #[test]
+    fn parse_gemini_sessions_skips_lines_without_a_bracketed_id() {
+        let out = b"No previous sessions found for this project.\n  1. Untitled (2 days ago)\n  2. Bad id (1 day ago) [--resume]\n";
+        let (sessions, _) =
+            parse_command_sessions(out, SessionAgent::Gemini, "/repo", parse_gemini_line);
+        assert!(sessions.is_empty(), "got {sessions:?}");
     }
 
     #[test]
     fn parse_command_sessions_accepts_short_explicit_session_id() {
         let out = b"Session ID: abc123\n";
-        let (sessions, _) = parse_command_sessions(out, SessionAgent::Kiro, "/repo", false);
+        let (sessions, _) =
+            parse_command_sessions(out, SessionAgent::Kiro, "/repo", parse_session_line);
         assert_eq!(sessions.len(), 1);
         assert_eq!(sessions[0].session_id, "abc123");
         assert_eq!(sessions[0].summary, None);
@@ -383,7 +449,8 @@ mod tests {
     fn parse_command_sessions_does_not_pick_long_summary_word_as_id() {
         let out =
             b"550e8400-e29b-41d4-a716-446655440000 2026-06-29T09:10:11Z Refactor authentication\n";
-        let (sessions, omitted) = parse_command_sessions(out, SessionAgent::Grok, "/repo", false);
+        let (sessions, omitted) =
+            parse_command_sessions(out, SessionAgent::Grok, "/repo", parse_session_line);
         assert_eq!(omitted, 0);
         assert_eq!(sessions.len(), 1);
         assert_eq!(
@@ -399,7 +466,8 @@ mod tests {
     #[test]
     fn parse_command_sessions_accepts_labeled_token_id() {
         let out = b"id=abc123 label from command\n";
-        let (sessions, _) = parse_command_sessions(out, SessionAgent::Kiro, "/repo", false);
+        let (sessions, _) =
+            parse_command_sessions(out, SessionAgent::Kiro, "/repo", parse_session_line);
         assert_eq!(sessions.len(), 1);
         assert_eq!(sessions[0].session_id, "abc123");
         assert_eq!(sessions[0].summary.as_deref(), Some("label from command"));
@@ -422,7 +490,8 @@ SESSION ID                            CREATED     UPDATED     STATUS      SUMMAR
 019f1501-50e7-76d0-bb9e-4a72ede6b35d  2026-06-29  2026-06-29  local  List Sessions Command in Software Codebase
 019f1501-69f1-7800-bc1e-cb269e1d985b  2026-06-29  2026-06-29  local  (no summary)
 "#;
-        let (sessions, omitted) = parse_command_sessions(out, SessionAgent::Grok, "/repo", false);
+        let (sessions, omitted) =
+            parse_command_sessions(out, SessionAgent::Grok, "/repo", parse_session_line);
         assert_eq!(omitted, 0);
         assert_eq!(sessions.len(), 2);
         assert_eq!(

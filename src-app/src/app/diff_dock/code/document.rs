@@ -105,7 +105,7 @@ impl CodeDocument {
         &self.ext
     }
 
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub(crate) fn line_ending(&self) -> LineEnding {
         self.line_ending
     }

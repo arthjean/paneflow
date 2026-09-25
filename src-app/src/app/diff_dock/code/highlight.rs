@@ -100,7 +100,7 @@ impl ParsedTrees {
 }
 
 impl DeferredParse {
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub(crate) fn generation(&self) -> u64 {
         self.generation
     }
@@ -260,12 +260,12 @@ impl CodeHighlighter {
         self.last_parse_cost = cost;
     }
 
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub(crate) fn is_enabled(&self) -> bool {
         self.enabled
     }
 
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub(crate) fn generation(&self) -> u64 {
         self.generation
     }

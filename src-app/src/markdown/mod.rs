@@ -1,6 +1,4 @@
 mod parser;
-#[allow(dead_code)]
-pub(crate) mod security;
 mod state;
 mod theme;
 mod view;

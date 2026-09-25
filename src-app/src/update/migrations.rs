@@ -295,20 +295,8 @@ pub fn write_coexistence_marker(marker_path: &Path) {
     }
 }
 
-#[cfg(test)]
-pub(crate) fn coexistence_should_warn_with_paths<F: FnOnce(&Path) -> bool>(
-    current: &InstallMethod,
-    home: Option<PathBuf>,
-    system_bin_exists: bool,
-    tar_gz_bin_probe: F,
-    marker_path: &Path,
-) -> Option<CoexistenceReport> {
-    let report =
-        detect_coexistent_install_with_probes(current, home, system_bin_exists, tar_gz_bin_probe)?;
-    if marker_path.exists() {
-        return None;
-    }
-    Some(report)
+pub fn coexistence_toast_due(marker_path: &Path) -> bool {
+    !marker_path.exists()
 }
 
 #[cfg(test)]
@@ -638,31 +626,29 @@ mod tests {
     fn coexistence_toast_marker_short_circuits_push_on_second_call() {
         let tmp = tempfile::TempDir::new().expect("tempdir");
         let marker = tmp.path().join(COEXISTENCE_MARKER_FILENAME);
+        let current = InstallMethod::SystemPackage {
+            manager: PackageManager::Dnf,
+        };
 
-        let first = coexistence_should_warn_with_paths(
-            &InstallMethod::SystemPackage {
-                manager: PackageManager::Dnf,
-            },
+        let report = detect_coexistent_install_with_probes(
+            &current,
             Some(PathBuf::from("/home/alice")),
             true,
             |_p| true,
-            &marker,
         );
-        assert!(first.is_some(), "first call must surface the toast");
-
-        std::fs::write(&marker, b"prior run").expect("write marker");
-
-        let second = coexistence_should_warn_with_paths(
-            &InstallMethod::SystemPackage {
-                manager: PackageManager::Dnf,
-            },
-            Some(PathBuf::from("/home/alice")),
-            true,
-            |_p| true,
-            &marker,
+        assert!(
+            report.is_some(),
+            "the fixture must detect a coexistent install"
         );
-        assert_eq!(
-            second, None,
+        assert!(
+            coexistence_toast_due(&marker),
+            "first call must surface the toast"
+        );
+
+        write_coexistence_marker(&marker);
+
+        assert!(
+            !coexistence_toast_due(&marker),
             "marker must short-circuit the toast on second call"
         );
     }

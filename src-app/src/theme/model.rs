@@ -449,14 +449,12 @@ pub struct UiColors {
     pub muted: Hsla,
     pub text: Hsla,
     pub accent: Hsla,
-    pub tool_card_header_bg: Hsla,
     pub vc_added: Hsla,
     pub vc_modified: Hsla,
     pub vc_deleted: Hsla,
     pub vc_conflict: Hsla,
     pub vc_added_background: Hsla,
     pub vc_deleted_background: Hsla,
-    pub vc_modified_background: Hsla,
     pub vc_word_added: Hsla,
     pub vc_word_deleted: Hsla,
     pub group_1: Hsla,
@@ -468,8 +466,6 @@ pub struct UiColors {
     pub group_7: Hsla,
     pub group_8: Hsla,
     pub agent_error: Hsla,
-    pub agent_claude: Hsla,
-    pub agent_codex: Hsla,
 }
 
 #[derive(Clone, Copy)]
@@ -540,14 +536,12 @@ pub fn ui_colors_with(theme: &TerminalTheme) -> UiColors {
             muted: h(0x636363),
             text: h(0x262626),
             accent: h(0x4c6fff),
-            tool_card_header_bg: h(0xf1f1f1),
             vc_added: h(0x29681c),
             vc_modified: h(0xdf8e1d),
             vc_deleted: h(0xa00b2b),
             vc_conflict: h(0xfe640b),
             vc_added_background: ha(0x40a02b, 0.16),
             vc_deleted_background: ha(0xd20f39, 0.16),
-            vc_modified_background: ha(0xdf8e1d, 0.16),
             vc_word_added: ha(0x40a02b, 0.40),
             vc_word_deleted: ha(0xd20f39, 0.40),
             group_1: h(0x1e66f5),
@@ -559,8 +553,6 @@ pub fn ui_colors_with(theme: &TerminalTheme) -> UiColors {
             group_7: h(0xfe640b),
             group_8: h(0x7287fd),
             agent_error: h(0xa00b2b),
-            agent_claude: h(0xde8968),
-            agent_codex: h(0x5b6cff),
         }
     } else {
         UiColors {
@@ -573,14 +565,12 @@ pub fn ui_colors_with(theme: &TerminalTheme) -> UiColors {
             muted: h(0xa0a0a0),
             text: h(0xdddddd),
             accent: h(0x57d5c4),
-            tool_card_header_bg: h(0x2e2e2e),
             vc_added: h(0x57d992),
             vc_modified: h(0xffd166),
             vc_deleted: h(0xff6f6a),
             vc_conflict: h(0xffa657),
             vc_added_background: ha(0x57d992, 0.12),
             vc_deleted_background: ha(0xff6f6a, 0.12),
-            vc_modified_background: ha(0xffd166, 0.12),
             vc_word_added: ha(0x57d992, 0.40),
             vc_word_deleted: ha(0xff6f6a, 0.40),
             group_1: h(0x7eb6ff),
@@ -592,8 +582,6 @@ pub fn ui_colors_with(theme: &TerminalTheme) -> UiColors {
             group_7: h(0xffa657),
             group_8: h(0x9ea7ff),
             agent_error: h(0xff6f6a),
-            agent_claude: h(0xffa657),
-            agent_codex: h(0x7eb6ff),
         }
     }
 }
@@ -766,11 +754,7 @@ mod tests {
         assert_ne!(dark.vc_added, dark.vc_deleted);
         assert_ne!(dark.vc_added, dark.vc_modified);
         assert_ne!(dark.vc_deleted, dark.vc_modified);
-        for bg in [
-            dark.vc_added_background,
-            dark.vc_deleted_background,
-            dark.vc_modified_background,
-        ] {
+        for bg in [dark.vc_added_background, dark.vc_deleted_background] {
             assert!(
                 (bg.a - 0.12).abs() < 1e-6,
                 "dark diff background alpha must be 0.12, got {}",
@@ -779,11 +763,7 @@ mod tests {
         }
         let light = ui_colors_with(&paneflow_light());
         assert_ne!(light.vc_added, dark.vc_added);
-        for bg in [
-            light.vc_added_background,
-            light.vc_deleted_background,
-            light.vc_modified_background,
-        ] {
+        for bg in [light.vc_added_background, light.vc_deleted_background] {
             assert!(
                 (bg.a - 0.16).abs() < 1e-6,
                 "light diff background alpha must be 0.16, got {}",
@@ -976,13 +956,6 @@ mod tests {
             role_row("text", "base", ui.text, ui.base, UI_TEXT_TIER),
             role_row("text", "surface", ui.text, ui.surface, UI_TEXT_TIER),
             role_row("text", "overlay", ui.text, ui.overlay, UI_TEXT_TIER),
-            role_row(
-                "text",
-                "tool_card_header_bg",
-                ui.text,
-                ui.tool_card_header_bg,
-                UI_TEXT_TIER,
-            ),
             role_row("muted", "base", ui.muted, ui.base, UI_SUPPORT_TIER),
             role_row("muted", "surface", ui.muted, ui.surface, UI_SUPPORT_TIER),
             role_row("muted", "overlay", ui.muted, ui.overlay, UI_SUPPORT_TIER),
@@ -1020,20 +993,6 @@ mod tests {
                 "agent_error",
                 "surface",
                 ui.agent_error,
-                ui.surface,
-                UI_SUPPORT_TIER,
-            ),
-            role_row(
-                "agent_claude",
-                "surface",
-                ui.agent_claude,
-                ui.surface,
-                UI_SUPPORT_TIER,
-            ),
-            role_row(
-                "agent_codex",
-                "surface",
-                ui.agent_codex,
                 ui.surface,
                 UI_SUPPORT_TIER,
             ),
@@ -1212,7 +1171,7 @@ mod tests {
             crate::theme::PRESETS.len()
         );
         for (_, theme) in &variants {
-            assert_eq!(ui_role_rows(theme).len(), 27);
+            assert_eq!(ui_role_rows(theme).len(), 24);
             assert_eq!(ansi_slots(theme).len(), 16);
             assert_eq!(
                 ansi_role_rows(theme).len() + ansi_background_endpoint_slots(theme).len(),

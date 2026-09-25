@@ -685,14 +685,14 @@ mod tests {
     #[test]
     fn session_cache_round_trips_and_invalidates_on_mtime_change() {
         use crate::agent_sessions::cache;
+        use std::time::{Duration, SystemTime};
         cache::clear();
 
-        let dir = tempfile::tempdir().expect("tempdir");
         let cwd = "/some/cwd";
-        let project_dir = dir.path();
+        let stored = SystemTime::UNIX_EPOCH + Duration::from_secs(10);
 
         assert!(
-            cache::lookup(SessionAgent::Claude, cwd, project_dir).is_none(),
+            cache::lookup_with_mtime(SessionAgent::Claude, cwd, stored).is_none(),
             "freshly-cleared cache must miss"
         );
 
@@ -703,19 +703,17 @@ mod tests {
             cwd: cwd.into(),
             summary: None,
         }];
-        cache::store_result(SessionAgent::Claude, cwd, project_dir, &fixture, 7);
+        cache::store_result_with_mtime(SessionAgent::Claude, cwd, stored, &fixture, 7);
 
-        let (hit, omitted) = cache::lookup(SessionAgent::Claude, cwd, project_dir)
+        let (hit, omitted) = cache::lookup_with_mtime(SessionAgent::Claude, cwd, stored)
             .expect("post-store lookup must hit");
         assert_eq!(hit.len(), 1);
         assert_eq!(hit[0].session_id, "abc");
         assert_eq!(omitted, 7);
 
-        std::thread::sleep(std::time::Duration::from_millis(2500));
-        std::fs::write(project_dir.join("touch.tmp"), b"x").expect("touch");
-
         assert!(
-            cache::lookup(SessionAgent::Claude, cwd, project_dir).is_none(),
+            cache::lookup_with_mtime(SessionAgent::Claude, cwd, stored + Duration::from_secs(2))
+                .is_none(),
             "mtime bump must invalidate the cached entry"
         );
     }

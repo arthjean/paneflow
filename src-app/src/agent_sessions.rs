@@ -59,7 +59,6 @@ pub(crate) const MAX_SESSION_ID_CHARS: usize = 128;
 
 pub mod cache {
     use std::collections::HashMap;
-    use std::path::Path;
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::{Mutex, OnceLock};
     use std::time::{Duration, SystemTime};
@@ -87,26 +86,11 @@ pub mod cache {
         CACHE.get_or_init(|| Mutex::new(HashMap::new()))
     }
 
-    #[allow(dead_code)]
-    fn dir_mtime(dir: &Path) -> Option<SystemTime> {
-        std::fs::metadata(dir).ok().and_then(|m| m.modified().ok())
-    }
-
     fn within_fuzz(cached: SystemTime, observed: SystemTime) -> bool {
         match observed.duration_since(cached) {
             Ok(delta) => delta < MTIME_FUZZ,
             Err(_) => false,
         }
-    }
-
-    #[allow(dead_code)]
-    pub fn lookup(
-        agent: SessionAgent,
-        cwd: &str,
-        project_dir: &Path,
-    ) -> Option<(Vec<SessionMeta>, usize)> {
-        let observed = dir_mtime(project_dir)?;
-        lookup_with_mtime(agent, cwd, observed)
     }
 
     pub fn lookup_with_mtime(
@@ -132,20 +116,6 @@ pub mod cache {
         } else {
             None
         }
-    }
-
-    #[allow(dead_code)]
-    pub fn store_result(
-        agent: SessionAgent,
-        cwd: &str,
-        project_dir: &Path,
-        sessions: &[SessionMeta],
-        omitted: usize,
-    ) {
-        let Some(mtime) = dir_mtime(project_dir) else {
-            return;
-        };
-        store_result_with_mtime(agent, cwd, mtime, sessions, omitted);
     }
 
     pub fn store_result_with_mtime(
@@ -254,7 +224,6 @@ pub mod cache {
             use super::Entry;
             let _serial = serial();
             super::clear();
-            let dir = tempfile::tempdir().expect("tempdir");
             {
                 let mut guard = super::store().lock().expect("lock");
                 for i in 0..super::MAX_CACHE_ENTRIES {
@@ -272,7 +241,13 @@ pub mod cache {
                 assert_eq!(guard.len(), super::MAX_CACHE_ENTRIES);
                 assert!(guard.contains_key(&(SessionAgent::Claude, "/proj-0".to_string())));
             }
-            super::store_result(SessionAgent::Claude, "/proj-N", dir.path(), &[], 0);
+            super::store_result_with_mtime(
+                SessionAgent::Claude,
+                "/proj-N",
+                SystemTime::UNIX_EPOCH,
+                &[],
+                0,
+            );
             {
                 let guard = super::store().lock().expect("lock");
                 assert_eq!(
@@ -305,8 +280,13 @@ pub mod cache {
             })
             .join();
 
-            let dir = tempfile::tempdir().expect("tempdir");
-            super::store_result(SessionAgent::Claude, "/poisoned", dir.path(), &[], 0);
+            super::store_result_with_mtime(
+                SessionAgent::Claude,
+                "/poisoned",
+                SystemTime::UNIX_EPOCH,
+                &[],
+                0,
+            );
 
             assert!(
                 logs_contain("session cache mutex poisoned on store_result"),

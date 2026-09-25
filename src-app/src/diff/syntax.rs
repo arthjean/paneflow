@@ -29,11 +29,11 @@ impl DiffSyntax {
             p.string
         } else if cap_has(name, "text.literal") {
             p.text_literal
-        } else if cap_has(name, "text.title") || cap_has(name, "title") {
+        } else if cap_has(name, "title") {
             p.title
-        } else if cap_has(name, "link_uri") || cap_has(name, "text.uri") {
+        } else if cap_has(name, "link_uri") {
             p.link_uri
-        } else if cap_has(name, "link_text") || cap_has(name, "text.reference") {
+        } else if cap_has(name, "link_text") {
             p.link_text
         } else if cap_has(name, "emphasis.strong") {
             p.emphasis_strong
@@ -62,10 +62,7 @@ impl DiffSyntax {
             p.attribute
         } else if cap_has(name, "tag") {
             p.tag
-        } else if cap_has(name, "property")
-            || cap_has(name, "variable.member")
-            || cap_has(name, "variable.parameter")
-        {
+        } else if cap_has(name, "property") || cap_has(name, "variable.parameter") {
             p.property
         } else if cap_has(name, "label") {
             p.label
@@ -136,29 +133,11 @@ mod tests {
     }
 
     #[test]
-    fn variable_member_resolves_to_property_not_variable() {
+    fn property_and_variable_resolve_to_distinct_colors() {
         let syn = DiffSyntax::from_theme(&paneflow_dark());
         let property = syn.color_for_capture("property").unwrap();
         let variable = syn.color_for_capture("variable").unwrap();
-        assert_eq!(syn.color_for_capture("variable.member"), Some(property));
         assert_ne!(property, variable);
-    }
-
-    #[test]
-    fn legacy_markdown_captures_map_to_palette_slots() {
-        let syn = DiffSyntax::from_theme(&paneflow_dark());
-        for name in [
-            "text.title",
-            "text.literal",
-            "text.uri",
-            "text.reference",
-            "punctuation.special",
-        ] {
-            assert!(
-                syn.color_for_capture(name).is_some(),
-                "expected markdown capture `{name}` to map to a palette slot"
-            );
-        }
     }
 
     #[test]

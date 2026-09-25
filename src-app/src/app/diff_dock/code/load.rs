@@ -248,7 +248,7 @@ impl CodeLoadState {
         }
     }
 
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub(crate) fn is_loading(&self) -> bool {
         matches!(self, Self::Loading)
     }

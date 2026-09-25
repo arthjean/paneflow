@@ -120,14 +120,6 @@ fn font_weight_from_key(key: &str) -> FontWeight {
 }
 
 static FONT_CONFIG_CACHE: std::sync::Mutex<Option<FontSettings>> = std::sync::Mutex::new(None);
-#[cfg(test)]
-fn select_default_font_family<I, S>(_available_families: I) -> &'static str
-where
-    I: IntoIterator<Item = S>,
-    S: AsRef<str>,
-{
-    EMBEDDED_MONO_FAMILY
-}
 
 pub(crate) fn default_font_family() -> &'static str {
     EMBEDDED_MONO_FAMILY
@@ -912,22 +904,6 @@ mod tests {
         assert_eq!(resolve_font_family(Some("Lilex")), "Lilex");
         assert_eq!(resolve_font_family(Some("Geist")), "Geist");
         assert_eq!(resolve_font_family(Some("IBM Plex Sans")), "IBM Plex Sans");
-    }
-
-    #[test]
-    fn select_default_font_family_uses_bundled_jetbrains_mono_nfm() {
-        assert_eq!(
-            select_default_font_family(["Menlo", "JetBrainsMono NFM", EMBEDDED_MONO_FAMILY]),
-            EMBEDDED_MONO_FAMILY
-        );
-    }
-
-    #[test]
-    fn select_default_font_family_does_not_depend_on_installed_fonts() {
-        assert_eq!(
-            select_default_font_family(["Menlo", "Cascadia Mono", LEGACY_EMBEDDED_MONO_FAMILY]),
-            EMBEDDED_MONO_FAMILY
-        );
     }
 
     #[test]
