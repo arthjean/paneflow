@@ -117,6 +117,17 @@ impl PaneFlowApp {
         )
     }
 
+    fn hand_sidebar_filter_focus_to_workspace(
+        &self,
+        window: &mut gpui::Window,
+        cx: &mut Context<Self>,
+    ) {
+        window.blur();
+        if let Some(ws) = self.workspaces.get(self.active_idx) {
+            ws.focus_first(window, cx);
+        }
+    }
+
     pub(crate) fn render_sidebar_settings_footer(
         &self,
         window: &mut gpui::Window,
@@ -159,14 +170,17 @@ impl PaneFlowApp {
             window.focus(&focus, cx);
             cx.stop_propagation();
         })
+        .on_mouse_down_out(cx.listener(|this, _: &gpui::MouseDownEvent, window, cx| {
+            let focus = this.sidebar_filter_input.read(cx).focus_handle.clone();
+            if focus.is_focused(window) {
+                this.hand_sidebar_filter_focus_to_workspace(window, cx);
+            }
+        }))
         .on_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, window, cx| {
             if event.keystroke.key == "escape" {
                 this.sidebar_filter_input
                     .update(cx, |input, cx| input.clear(cx));
-                window.blur();
-                if let Some(ws) = this.workspaces.get(this.active_idx) {
-                    ws.focus_first(window, cx);
-                }
+                this.hand_sidebar_filter_focus_to_workspace(window, cx);
                 cx.stop_propagation();
             }
         }));
