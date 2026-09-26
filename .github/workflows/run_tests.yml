@@ -119,6 +119,7 @@ jobs:
               # GPUI Element + paint pipeline (where c3e2331 lived)
               - 'src-app/src/terminal/element/**'
               - 'src-app/src/terminal/view.rs'
+              - 'src-app/src/terminal/view/**'
               # Font resolution + embedded fallback wiring
               - 'src-app/src/fonts.rs'
               - 'src-app/src/terminal/element/font.rs'
