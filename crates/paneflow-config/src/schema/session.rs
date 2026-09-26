@@ -249,6 +249,17 @@ impl DurableIdentityAssignment {
 }
 
 pub fn assign_durable_identities(state: &mut SessionState) -> DurableIdentityAssignment {
+    durable_identities(state, true)
+}
+
+pub fn repair_durable_identities(state: &mut SessionState) -> DurableIdentityAssignment {
+    durable_identities(state, false)
+}
+
+fn durable_identities(
+    state: &mut SessionState,
+    assign_missing_sessions: bool,
+) -> DurableIdentityAssignment {
     let mut assigned = DurableIdentityAssignment::default();
     let mut seen_sessions = std::collections::HashSet::new();
     for ws in &mut state.workspaces {
@@ -262,7 +273,12 @@ pub fn assign_durable_identities(state: &mut SessionState) -> DurableIdentityAss
             .filter_map(|tab| tab.layout.as_mut())
             .chain(ws.legacy_layout.as_mut())
         {
-            assign_surface_sessions(layout, &mut seen_sessions, &mut assigned);
+            assign_surface_sessions(
+                layout,
+                assign_missing_sessions,
+                &mut seen_sessions,
+                &mut assigned,
+            );
         }
     }
     assigned
@@ -270,6 +286,7 @@ pub fn assign_durable_identities(state: &mut SessionState) -> DurableIdentityAss
 
 fn assign_surface_sessions(
     node: &mut LayoutNode,
+    assign_missing: bool,
     seen: &mut std::collections::HashSet<SessionId>,
     assigned: &mut DurableIdentityAssignment,
 ) {
@@ -280,8 +297,10 @@ fn assign_surface_sessions(
                     surface.session = None;
                     continue;
                 }
-                let fresh =
-                    !matches!(&surface.session, Some(existing) if seen.insert(existing.clone()));
+                let fresh = match &surface.session {
+                    Some(existing) => !seen.insert(existing.clone()),
+                    None => assign_missing,
+                };
                 if fresh {
                     let id = SessionId::new();
                     seen.insert(id.clone());
@@ -292,7 +311,7 @@ fn assign_surface_sessions(
         }
         LayoutNode::Split { children, .. } => {
             for child in children.iter_mut() {
-                assign_surface_sessions(child, seen, assigned);
+                assign_surface_sessions(child, assign_missing, seen, assigned);
             }
         }
     }

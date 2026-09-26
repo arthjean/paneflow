@@ -129,6 +129,23 @@ impl PaneFlowApp {
         cx: &mut Context<Self>,
         on_saved: impl FnOnce(&mut Self, &mut Context<Self>) + 'static,
     ) {
+        self.save_session_before_exit_as(|_| {}, cx, on_saved);
+    }
+
+    pub(crate) fn save_stopped_session_before_exit(
+        &mut self,
+        cx: &mut Context<Self>,
+        on_saved: impl FnOnce(&mut Self, &mut Context<Self>) + 'static,
+    ) {
+        self.save_session_before_exit_as(forget_terminal_sessions, cx, on_saved);
+    }
+
+    fn save_session_before_exit_as(
+        &mut self,
+        prepare: fn(&mut paneflow_config::schema::SessionState),
+        cx: &mut Context<Self>,
+        on_saved: impl FnOnce(&mut Self, &mut Context<Self>) + 'static,
+    ) {
         if self.session_exit_pending {
             return;
         }
@@ -140,10 +157,11 @@ impl PaneFlowApp {
         cx.spawn(async move |this, cx| {
             let mut on_saved = Some(on_saved);
             loop {
-                let Ok((state, restore_failed, save_seq, seq)) = this.update(cx, |app, cx| {
+                let Ok((mut state, restore_failed, save_seq, seq)) = this.update(cx, |app, cx| {
                     let seq = app.save_seq.fetch_add(1, Ordering::SeqCst) + 1;
                     (app.build_session_state(cx), app.session_restore_failed, app.save_seq.clone(), seq)
                 }) else { return };
+                prepare(&mut state);
                 let result = smol::unblock(move || {
                     let path = paneflow_config::loader::session_path()
                         .ok_or_else(|| anyhow::anyhow!("Could not locate the session directory"))?;
@@ -320,10 +338,10 @@ impl PaneFlowApp {
 
         match serde_json::from_str::<paneflow_config::schema::SessionState>(&data) {
             Ok(mut state) if state.version == paneflow_config::schema::SESSION_SCHEMA_VERSION => {
-                let assigned = paneflow_config::schema::assign_durable_identities(&mut state);
+                let assigned = paneflow_config::schema::repair_durable_identities(&mut state);
                 if !assigned.is_empty() {
                     log::info!(
-                        "session load: assigned {} workspace and {} session identities missing from {}",
+                        "session load: repaired {} workspace and {} session identities in {}",
                         assigned.workspaces,
                         assigned.sessions,
                         path.display()
@@ -767,6 +785,35 @@ fn without_persisted_scrollback(mut layout: LayoutNode) -> LayoutNode {
 
     clear(&mut layout);
     layout
+}
+
+fn forget_terminal_sessions(state: &mut paneflow_config::schema::SessionState) {
+    fn forget(node: &mut LayoutNode) {
+        match node {
+            LayoutNode::Pane { surfaces } => {
+                for surface in surfaces.iter_mut().filter(|surface| surface.is_terminal()) {
+                    surface.session = None;
+                    surface.agent = None;
+                }
+            }
+            LayoutNode::Split { children, .. } => {
+                for child in children {
+                    forget(child);
+                }
+            }
+        }
+    }
+
+    for workspace in &mut state.workspaces {
+        let layouts = workspace
+            .tabs
+            .iter_mut()
+            .filter_map(|tab| tab.layout.as_mut())
+            .chain(workspace.legacy_layout.as_mut());
+        for layout in layouts {
+            forget(layout);
+        }
+    }
 }
 
 fn canonicalize_persisted_layout(mut layout: LayoutNode) -> LayoutNode {
@@ -1344,6 +1391,100 @@ mod tests {
                 LayoutNode::Split { children, .. } => pending.extend(children),
             }
         }
+    }
+
+    #[test]
+    fn a_stopped_session_restores_fresh_terminals_in_the_same_layout() {
+        use paneflow_config::schema::{SessionId, SurfaceDefinition};
+        let hosted = |cwd: &str| SurfaceDefinition {
+            cwd: Some(cwd.to_string()),
+            custom_name: Some(format!("{cwd} name")),
+            agent: Some("claude_code".to_string()),
+            font_size: Some(15.0),
+            session: Some(SessionId::new()),
+            ..Default::default()
+        };
+        let markdown = SurfaceDefinition {
+            surface_type: Some("markdown".to_string()),
+            path: Some("/repo/README.md".to_string()),
+            ..Default::default()
+        };
+        let layout = LayoutNode::Split {
+            direction: "horizontal".to_string(),
+            ratio: None,
+            ratios: None,
+            children: vec![
+                LayoutNode::Pane {
+                    surfaces: vec![hosted("/repo"), markdown.clone()],
+                },
+                LayoutNode::Split {
+                    direction: "vertical".to_string(),
+                    ratio: None,
+                    ratios: None,
+                    children: vec![LayoutNode::Pane {
+                        surfaces: vec![hosted("/repo/nested")],
+                    }],
+                },
+            ],
+        };
+        let mut state = paneflow_config::schema::SessionState {
+            version: paneflow_config::schema::SESSION_SCHEMA_VERSION,
+            active_workspace: 0,
+            workspaces: vec![paneflow_config::schema::WorkspaceSession {
+                id: None,
+                title: "repo".to_string(),
+                cwd: "/repo".to_string(),
+                tabs: vec![paneflow_config::schema::TabSession {
+                    layout: Some(layout.clone()),
+                    ..Default::default()
+                }],
+                active_tab: 0,
+                legacy_layout: Some(layout),
+                custom_buttons: Vec::new(),
+                expanded_paths: Vec::new(),
+                managed_worktrees: Vec::new(),
+                sidebar_collapsed: false,
+                muted: false,
+            }],
+            detached_panes: Vec::new(),
+        };
+
+        forget_terminal_sessions(&mut state);
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let path = tmp.path().join("session.json");
+        std::fs::write(&path, serde_json::to_vec(&state).unwrap()).unwrap();
+        let (Some(state), None) = PaneFlowApp::load_session_at(&path) else {
+            panic!("the stopped session reloads");
+        };
+
+        let workspace = &state.workspaces[0];
+        let mut pending: Vec<&LayoutNode> = workspace
+            .tabs
+            .iter()
+            .filter_map(|tab| tab.layout.as_ref())
+            .chain(workspace.legacy_layout.as_ref())
+            .collect();
+        let mut terminals = 0;
+        while let Some(node) = pending.pop() {
+            match node {
+                LayoutNode::Pane { surfaces } => {
+                    for surface in surfaces {
+                        if !surface.is_terminal() {
+                            assert_eq!(surface, &markdown);
+                            continue;
+                        }
+                        terminals += 1;
+                        assert_eq!(surface.session, None);
+                        assert_eq!(surface.agent, None);
+                        let cwd = surface.cwd.as_deref().unwrap();
+                        assert_eq!(surface.custom_name, Some(format!("{cwd} name")));
+                        assert_eq!(surface.font_size, Some(15.0));
+                    }
+                }
+                LayoutNode::Split { children, .. } => pending.extend(children),
+            }
+        }
+        assert_eq!(terminals, 4);
     }
 
     #[test]

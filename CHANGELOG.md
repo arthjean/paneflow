@@ -11,6 +11,10 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
   with a green prompt for a shell, and the running agent's logo on its brand
   color once Paneflow detects Claude Code, Codex, Gemini, or another agent in
   the pane.
+- After Stop everything and quit (or restart), the next launch reopens the
+  layout with a new shell in every terminal pane, in its last directory,
+  instead of ended panes that each needed Restart. Agents and previous
+  sessions are not relaunched, and the stopped session records are removed.
 
 ## [0.17.0] - 2026-09-26
 

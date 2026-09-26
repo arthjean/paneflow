@@ -371,10 +371,14 @@ impl PaneFlowApp {
                         app.report_stop_failure(kind, outcome, cx);
                         return;
                     }
-                    match kind {
-                        ExitKind::Quit => app.finish_quit(cx),
-                        ExitKind::UpdateRestart => app.finish_update_restart(cx),
-                    }
+                    app.session_exit_pending = false;
+                    app.save_stopped_session_before_exit(cx, move |app, cx| {
+                        app.session_exit_pending = true;
+                        match kind {
+                            ExitKind::Quit => app.finish_quit(cx),
+                            ExitKind::UpdateRestart => app.finish_update_restart(cx),
+                        }
+                    });
                 });
             })
             .detach();

@@ -771,15 +771,16 @@ fn stop_sessions_until(
             .name("paneflow-stop-session".into())
             .spawn(move || {
                 let result = stop_session(&endpoint, &session, generation);
-                let _ = sender.send((session, result));
+                let _ = sender.send((endpoint, session, result));
             });
         if spawned.is_ok() {
             pending += 1;
         }
     }
     drop(sender);
+    let mut stopped = Vec::new();
     while pending > 0 {
-        let Ok((session, result)) =
+        let Ok((endpoint, session, result)) =
             receiver.recv_timeout(deadline.saturating_duration_since(std::time::Instant::now()))
         else {
             break;
@@ -805,8 +806,9 @@ fn stop_sessions_until(
                     summary.manifest.lifecycle.label()
                 );
                 outcome.stopped += 1;
-                if let Some(reason) = summary.durability_error {
-                    outcome.unsaved.push((session, reason));
+                match summary.durability_error {
+                    Some(reason) => outcome.unsaved.push((session, reason)),
+                    None => stopped.push((endpoint, session)),
                 }
             }
             Err(error)
@@ -824,6 +826,9 @@ fn stop_sessions_until(
             }
         }
         let _ = progress.send((false, outcome.clone()));
+    }
+    if outcome.unresolved.is_empty() && outcome.unsaved.is_empty() {
+        remove_stopped_sessions(&stopped, deadline);
     }
     if let Some(endpoint) = host
         && outcome.unresolved.is_empty()
@@ -845,6 +850,17 @@ fn stop_sessions_until(
         });
     }
     outcome
+}
+
+fn remove_stopped_sessions(stopped: &[(PathBuf, SessionId)], deadline: std::time::Instant) {
+    for (endpoint, session) in stopped {
+        if std::time::Instant::now() >= deadline {
+            break;
+        }
+        if let Err(error) = remove_session(endpoint, session) {
+            log::warn!("paneflow: stopped session {session} kept its host record at quit: {error}");
+        }
+    }
 }
 
 pub(crate) fn host_is_serving() -> Option<usize> {
@@ -1298,5 +1314,34 @@ mod tests {
             }
         }
         server.stop().unwrap();
+    }
+
+    #[test]
+    fn a_confirmed_stop_everything_removes_the_records_it_stopped() {
+        let home = tempfile::tempdir().unwrap();
+        let endpoint = paneflow_host::endpoint::host_endpoint_path(home.path());
+        let host = paneflow_host::SessionHost::open(home.path(), &endpoint).unwrap();
+        assert!(
+            host.create(CreateSession {
+                session: Some(SessionId::new()),
+                shell: Some(home.path().join("absent").display().to_string()),
+                ..CreateSession::default()
+            })
+            .is_err()
+        );
+        assert_eq!(host.list(None).len(), 1);
+        let server =
+            paneflow_host::ServerHandle::spawn(std::sync::Arc::clone(&host), endpoint.clone())
+                .unwrap();
+
+        let outcome = stop_sessions_and_shutdown(Vec::new(), Some(endpoint.clone()));
+
+        assert!(outcome.confirmed(), "{}", outcome.user_message());
+        assert_eq!(outcome.stopped, 1);
+        assert!(host.list(None).is_empty());
+        server.stop().unwrap();
+        drop(host);
+        let reopened = paneflow_host::SessionHost::open(home.path(), &endpoint).unwrap();
+        assert!(reopened.list(None).is_empty(), "no record survives on disk");
     }
 }

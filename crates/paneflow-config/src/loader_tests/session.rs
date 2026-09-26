@@ -429,6 +429,52 @@ fn test_durable_identities_are_stable_across_repeated_assignment() {
 }
 
 #[test]
+fn test_repair_keeps_a_terminal_without_session_as_a_new_terminal() {
+    let shared = SessionId::new();
+    let mut state: SessionState = serde_json::from_str(V2_FIXTURE).unwrap();
+    for tab in &mut state.workspaces[0].tabs {
+        if let Some(LayoutNode::Pane { surfaces }) = &mut tab.layout {
+            surfaces[0].session = Some(shared.clone());
+        }
+    }
+    let LayoutNode::Split { children, .. } = state.workspaces[0].tabs[0].layout.as_mut().unwrap()
+    else {
+        panic!("expected a split");
+    };
+    let LayoutNode::Pane { surfaces } = &mut children[0] else {
+        panic!("expected a pane");
+    };
+    surfaces[0].session = Some(shared.clone());
+
+    let repaired = repair_durable_identities(&mut state);
+
+    assert_eq!(repaired.workspaces, 2);
+    assert_eq!(
+        repaired.sessions, 1,
+        "only the duplicated reference is reassigned"
+    );
+    let sessions: Vec<Option<SessionId>> = state.workspaces[0]
+        .tabs
+        .iter()
+        .filter_map(|tab| tab.layout.as_ref())
+        .flat_map(terminal_sessions)
+        .collect();
+    assert_eq!(sessions.len(), 3);
+    assert_eq!(
+        sessions
+            .iter()
+            .filter(|id| **id == Some(shared.clone()))
+            .count(),
+        1
+    );
+    assert_eq!(
+        sessions.iter().filter(|id| id.is_none()).count(),
+        1,
+        "a terminal saved without a session reopens as a new terminal"
+    );
+}
+
+#[test]
 fn test_a_duplicated_session_reference_is_reassigned_not_shared() {
     let shared = SessionId::new();
     let mut state: SessionState = serde_json::from_str(V2_FIXTURE).unwrap();

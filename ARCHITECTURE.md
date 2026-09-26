@@ -587,7 +587,7 @@ why `scripts/dev.ps1` and `scripts/dev.sh` build both binaries and run
 | Event | Host | Sessions | Records |
 |---|---|---|---|
 | Quit keeping sessions (the default of the quit dialog), crash or `taskkill /F` | keeps running | keep running | unchanged |
-| Quit with no live session, or "Stop everything and quit" | `host.shutdown` once the stops are done | stopped one by one | `lifecycle: exited` |
+| Quit with no live session, or "Stop everything and quit" | `host.shutdown` once the stops are done | stopped one by one | removed once every stop is confirmed and saved; `session.json` then drops each terminal's `session` and `agent`, so the layout reopens with a new shell per pane |
 | Controller pipe or CLI connection closes | keeps running | keep running | unchanged |
 | Explicit `session.stop` | keeps running | that session's owned process tree is terminated within a 5 s budget, exit recorded | `lifecycle: exited` |
 | `paneflow host stop` with live sessions | refused, lists them | untouched | unchanged |

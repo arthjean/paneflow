@@ -23,8 +23,11 @@ existing sessions continue. Restarting into a staged update follows the
 session stop and host shutdown confirmation path. Cancel to keep working and
 update later.
 
-**Stop everything and quit** and **Stop everything and restart** share a
-five-second response budget. If an operation cannot be confirmed, the window
+**Stop everything and quit** and **Stop everything and restart** end every
+session for good: once every stop is confirmed, their records are removed and
+the next launch reopens the same layout with a new shell in each terminal pane,
+in its last directory. Agents and previous sessions are not relaunched. Both
+actions share a five-second response budget. If an operation cannot be confirmed, the window
 stays open with the affected session identities and **Retry**, **Keep running
 and quit**, and **Cancel** choices. Stops that already completed remain
 completed. A timeout does not mean that an owned process was discarded; its
