@@ -74,6 +74,7 @@ pub struct HostIdentity {
     pub name: String,
     pub version: String,
     pub protocol: u32,
+    #[serde(default)]
     pub build_id: String,
     pub host_instance: HostInstanceToken,
     pub engine: EngineIdentity,
@@ -307,5 +308,24 @@ mod tests {
             Some(LOCAL_BUILD_VERSION)
         );
         assert_eq!(ClientHello::control("test").build, None);
+    }
+
+    #[test]
+    fn an_identity_from_a_host_without_a_build_id_still_parses_so_it_can_be_stopped() {
+        let engine = local_engine_identity();
+        let identity: HostIdentity = serde_json::from_value(json!({
+            "name": "paneflow-host",
+            "version": "0.16.0",
+            "protocol": HOST_PROTOCOL_VERSION,
+            "host_instance": HostInstanceToken::new(),
+            "engine": engine,
+            "pid": 42,
+            "home": "/home/user/.paneflow",
+            "endpoint": "/run/user/1000/paneflow-host.sock",
+            "started_at_ms": 1
+        }))
+        .expect("a 0.16.0 host identity");
+        assert_eq!(identity.version, "0.16.0");
+        assert!(identity.build_id.is_empty());
     }
 }
