@@ -35,6 +35,8 @@ const CODEX_EVENTS: &[&str] = &[
 const CLAUDE_RETIRED_EVENTS: &[&str] = &["PostToolUse"];
 const CODEX_RETIRED_EVENTS: &[&str] = &["PostToolUse"];
 const UNMARKED_HOOKS_ADOPTION: &str = "Paneflow hook entries without an integration marker";
+const LAUNCH_TIME_HOOKS_ADOPTION: &str = "pre-0.17 launch-time hook install";
+const LAUNCH_TIME_HOOKS_EVIDENCE: &str = "agent-config-leases";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum IntegrationState {
@@ -94,6 +96,16 @@ impl ConfigPaths {
         self.marker_home
             .join("integrations")
             .join(format!("{slug}.json"))
+    }
+
+    fn launch_time_hooks_evidence(&self) -> PathBuf {
+        self.marker_home.join(LAUNCH_TIME_HOOKS_EVIDENCE)
+    }
+
+    fn launch_time_adoption_record(&self) -> PathBuf {
+        self.marker_home
+            .join("integrations")
+            .join("launch-time-adoption.json")
     }
 }
 
@@ -356,19 +368,57 @@ pub fn adopt_and_refresh_installed(
     let Ok(paths) = ConfigPaths::resolve() else {
         return Vec::new();
     };
+    adopt_and_refresh_installed_at(&paths, binaries)
+}
+
+fn adopt_and_refresh_installed_at(
+    paths: &ConfigPaths,
+    binaries: &IntegrationBinaries,
+) -> Vec<(String, Result<(), String>)> {
+    let launch_time_install = paths.launch_time_hooks_evidence().is_dir()
+        && !paths.launch_time_adoption_record().exists();
     let mut results = Vec::new();
     for runtime in RUNTIMES.iter().filter(|runtime| has_installer(runtime)) {
         let marker = paths.marker(runtime.slug);
-        let adoption = (!marker.exists() && owned_hooks_present(&paths, runtime))
-            .then_some(UNMARKED_HOOKS_ADOPTION);
+        let adoption = if marker.exists() {
+            None
+        } else if owned_hooks_present(paths, runtime) {
+            Some(UNMARKED_HOOKS_ADOPTION)
+        } else if launch_time_install
+            && runtime.supports_current_platform()
+            && runtime_detected_in(paths, runtime)
+        {
+            Some(LAUNCH_TIME_HOOKS_ADOPTION)
+        } else {
+            None
+        };
         if marker.exists() || adoption.is_some() {
-            let result = install_integration_at(&paths, runtime.slug, binaries, adoption)
+            let result = install_integration_at(paths, runtime.slug, binaries, adoption)
                 .map(|_| ())
                 .map_err(|error| format!("{error:#}"));
             results.push((runtime.slug.to_string(), result));
         }
     }
+    if launch_time_install && results.iter().all(|(_, result)| result.is_ok()) {
+        if let Err(error) = write_launch_time_adoption_record(paths) {
+            results.push((
+                LAUNCH_TIME_HOOKS_EVIDENCE.to_string(),
+                Err(format!("{error:#}")),
+            ));
+        }
+    }
     results
+}
+
+fn write_launch_time_adoption_record(paths: &ConfigPaths) -> Result<()> {
+    let record = paths.launch_time_adoption_record();
+    refuse_symlink(&record)?;
+    let value = json!({
+        "schema": 1,
+        "adopted_at_ms": epoch_millis(),
+    });
+    io::write_if_changed(&record, &merge::json_to_bytes(&value)?)?;
+    Ok(())
 }
 
 pub(crate) fn has_owned_hooks(slug: &str) -> bool {
@@ -379,9 +429,13 @@ pub(crate) fn has_owned_hooks(slug: &str) -> bool {
 }
 
 pub(crate) fn runtime_detected(slug: &str) -> bool {
-    let Ok(runtime) = integration_runtime(slug) else {
+    let (Ok(runtime), Ok(paths)) = (integration_runtime(slug), ConfigPaths::resolve()) else {
         return false;
     };
+    runtime_detected_in(&paths, runtime)
+}
+
+fn runtime_detected_in(paths: &ConfigPaths, runtime: &Runtime) -> bool {
     if runtime
         .detection
         .command_aliases
@@ -390,9 +444,6 @@ pub(crate) fn runtime_detected(slug: &str) -> bool {
     {
         return true;
     }
-    let Ok(paths) = ConfigPaths::resolve() else {
-        return false;
-    };
     let config_dir = match runtime.integration.hook_adapter {
         RuntimeHookAdapter::Claude => paths.claude_settings.parent(),
         RuntimeHookAdapter::Codex => paths.codex_hooks.parent(),
@@ -837,6 +888,58 @@ mod tests {
             .expect("AskUserQuestion group");
         assert_eq!(question["matcher"], "AskUserQuestion");
         assert_eq!(question["hooks"][0]["args"], json!(["PreToolUse"]));
+    }
+
+    fn with_launch_time_install_evidence(paths: &ConfigPaths) {
+        std::fs::create_dir_all(paths.launch_time_hooks_evidence()).expect("lease directory");
+        std::fs::create_dir_all(paths.claude_settings.parent().expect("parent"))
+            .expect("claude config directory");
+    }
+
+    #[test]
+    fn an_upgrade_from_launch_time_hooks_adopts_the_detected_runtime_without_user_action() {
+        let (_directory, paths, binaries) = fixture();
+        with_launch_time_install_evidence(&paths);
+
+        let results = adopt_and_refresh_installed_at(&paths, &binaries);
+
+        assert!(
+            results
+                .iter()
+                .any(|(slug, result)| slug == "claude-code" && result.is_ok()),
+            "{results:?}"
+        );
+        let marker: Value =
+            serde_json::from_slice(&std::fs::read(paths.marker("claude-code")).expect("marker"))
+                .expect("marker JSON");
+        assert_eq!(marker["adopted_from"], LAUNCH_TIME_HOOKS_ADOPTION);
+        let settings = std::fs::read_to_string(&paths.claude_settings).expect("settings");
+        assert!(settings.contains("paneflow-ai-hook"), "{settings}");
+        assert!(paths.launch_time_adoption_record().is_file());
+    }
+
+    #[test]
+    fn a_removed_integration_stays_removed_after_the_launch_time_adoption() {
+        let (_directory, paths, binaries) = fixture();
+        with_launch_time_install_evidence(&paths);
+        adopt_and_refresh_installed_at(&paths, &binaries);
+        remove_integration_at(&paths, "claude-code").expect("remove");
+
+        adopt_and_refresh_installed_at(&paths, &binaries);
+
+        assert!(!paths.marker("claude-code").exists());
+    }
+
+    #[test]
+    fn a_machine_that_never_ran_launch_time_hooks_adopts_nothing() {
+        let (_directory, paths, binaries) = fixture();
+        std::fs::create_dir_all(paths.claude_settings.parent().expect("parent"))
+            .expect("claude config directory");
+
+        let results = adopt_and_refresh_installed_at(&paths, &binaries);
+
+        assert!(results.is_empty(), "{results:?}");
+        assert!(!paths.marker("claude-code").exists());
     }
 
     #[test]
