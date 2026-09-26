@@ -1,5 +1,7 @@
 use super::*;
 
+use crate::ui_primitives::AnimatedHoverExt;
+
 fn tab_diffstat_visible(
     show: paneflow_config::schema::SidebarShow,
     stats: &crate::workspace::GitDiffStats,
@@ -90,8 +92,25 @@ impl PaneFlowApp {
         let row_inset = if indent_guide { title_indent } else { 0. };
         let content_width = SIDEBAR_WORKSPACE_ROW_CONTENT_WIDTH - row_inset;
         let diffstat = self.render_tab_diffstat_chip(ws, tab);
-        let diffstat_reserves_slot = diffstat.is_some();
-        let mut title_row = div()
+        let close_tab = cx.listener(move |this, _: &ClickEvent, window, cx| {
+            if let Some((at_ws, at_tab)) = this
+                .workspaces
+                .iter()
+                .position(|ws| ws.id == ws_id)
+                .and_then(|at_ws| {
+                    this.workspaces[at_ws]
+                        .tabs()
+                        .iter()
+                        .position(|tab| tab.id == tab_id)
+                        .map(|at_tab| (at_ws, at_tab))
+                })
+            {
+                this.commit_rename(cx);
+                this.close_workspace_tab(at_ws, at_tab, window, cx);
+            }
+            cx.stop_propagation();
+        });
+        let title_row = div()
             .flex()
             .flex_row()
             .items_center()
@@ -139,50 +158,7 @@ impl PaneFlowApp {
                         )
                     }),
             )
-            .children(diffstat.map(|chip| {
-                div()
-                    .flex_none()
-                    .group_hover(tab_group.clone(), |style| style.invisible())
-                    .child(chip)
-            }))
-            .when(lane.is_some() || !diffstat_reserves_slot, |row| {
-                row.child(render_lane_slot(
-                    lane,
-                    &format!("tab-{tab_id}"),
-                    |summary| sidebar_agent_status_tooltip(summary, &agent_status),
-                    tab_group.clone(),
-                    ui,
-                ))
-            });
-        title_row = title_row.child(
-            sidebar_hover_actions(tab_group.clone()).child(
-                sidebar_action_button(
-                    SharedString::from(format!("tab-close-{tab_id}")),
-                    "icons/close.svg",
-                    12.,
-                    "Close tab".into(),
-                    ui,
-                )
-                .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
-                    if let Some((at_ws, at_tab)) = this
-                        .workspaces
-                        .iter()
-                        .position(|ws| ws.id == ws_id)
-                        .and_then(|at_ws| {
-                            this.workspaces[at_ws]
-                                .tabs()
-                                .iter()
-                                .position(|tab| tab.id == tab_id)
-                                .map(|at_tab| (at_ws, at_tab))
-                        })
-                    {
-                        this.commit_rename(cx);
-                        this.close_workspace_tab(at_ws, at_tab, window, cx);
-                    }
-                    cx.stop_propagation();
-                })),
-            ),
-        );
+            .children(diffstat.map(|chip| div().flex_none().child(chip)));
 
         let title_tooltip = (!is_renaming
             && title.chars().count() > SIDEBAR_TITLE_TOOLTIP_MIN_CHARS)
@@ -256,24 +232,54 @@ impl PaneFlowApp {
                 }
             }));
 
-        let body = match self.render_tab_checkout_meta(
-            ws,
-            tab,
-            title_indent - row_inset,
-            content_width,
-            cx,
-        ) {
-            Some(meta) => div()
-                .flex()
-                .flex_col()
-                .gap(px(SIDEBAR_ROW_GAP))
-                .child(title_row)
-                .child(meta)
-                .into_any_element(),
-            None => title_row.into_any_element(),
+        let meta =
+            self.render_tab_checkout_meta(ws, tab, title_indent - row_inset, content_width, cx);
+        let lane_slot = lane.is_some().then(|| {
+            render_lane_slot(
+                lane,
+                &format!("tab-{tab_id}"),
+                |summary| sidebar_agent_status_tooltip(summary, &agent_status),
+                LaneSlot::BesideHoverAction,
+                ui,
+            )
+        });
+        let close_trailing_space = if lane_slot.is_some() {
+            SIDEBAR_TITLE_ROW_GAP
+        } else {
+            0.
         };
 
-        let row = sidebar_row(row_shell, tab_group, resting_bg, hovered_bg, body)
+        let row = squircle_skin(row_shell, tab_group, ROW_RADIUS, resting_bg, hovered_bg)
+            .animated_hover_element(move |row, reveal| {
+                let close_button = sidebar_hover_revealed_glyph_button(
+                    SharedString::from(format!("tab-close-{tab_id}")),
+                    "icons/close.svg",
+                    "Close tab".into(),
+                    reveal,
+                    close_trailing_space,
+                    ui,
+                )
+                .on_click(close_tab);
+                let title_row = title_row.child(
+                    div()
+                        .flex_none()
+                        .flex()
+                        .flex_row()
+                        .child(close_button)
+                        .children(lane_slot),
+                );
+                let body = match meta {
+                    Some(meta) => div()
+                        .flex()
+                        .flex_col()
+                        .gap(px(SIDEBAR_ROW_GAP))
+                        .child(title_row)
+                        .child(meta)
+                        .into_any_element(),
+                    None => title_row.into_any_element(),
+                };
+                row.extend([body]);
+            })
             .when(cursor, |row| row.child(sidebar_cursor_ring(ui)));
         let hidden_rows = if tab_idx + 1 == ws.tab_count() {
             self.render_session_rows(

@@ -250,7 +250,7 @@ impl PaneFlowApp {
                     lane,
                     &format!("session-row-{key}"),
                     move |_| lane_tooltip,
-                    group.clone(),
+                    LaneSlot::UnderHoverAction(group.clone()),
                     ui,
                 ));
             let click_session = session.clone();

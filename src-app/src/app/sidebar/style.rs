@@ -11,6 +11,11 @@ pub(super) const SIDEBAR_FOLDER_SLOT_WIDTH: f32 = 20.0;
 pub(super) const ROW_RADIUS: gpui::Pixels = px(9.0);
 pub(super) const SIDEBAR_ACTION_BUTTON_SIZE: f32 = 22.0;
 pub(super) const SIDEBAR_ACTION_BUTTON_GAP: f32 = 1.0;
+pub(super) const SIDEBAR_LANE_GLYPH_SIZE: f32 = 11.0;
+const GEIST_ASCENT_EM: f32 = 1.005;
+const GEIST_DESCENT_EM: f32 = 0.295;
+pub(super) const GEIST_X_HEIGHT_EM: f32 = 0.532;
+pub(super) const GEIST_CAP_HEIGHT_EM: f32 = 0.710;
 pub(super) const SIDEBAR_ROW_SPACING: f32 = 2.0;
 pub(super) const SIDEBAR_GROUP_SPACING: f32 = SIDEBAR_ROW_SPACING + SIDEBAR_TITLE_ROW_GAP;
 pub(super) const SIDEBAR_WORKSPACE_ROW_CONTENT_WIDTH: f32 =
@@ -60,21 +65,6 @@ pub(super) fn sidebar_cursor_ring(ui: crate::theme::UiColors) -> impl IntoElemen
     crate::ui_primitives::squircle::squircle_border(ROW_RADIUS, px(1.), ui.text.opacity(0.35))
 }
 
-pub(super) fn sidebar_hover_actions(group: SharedString) -> gpui::Div {
-    div()
-        .absolute()
-        .top(px(
-            (SIDEBAR_ROW_LINE_HEIGHT - SIDEBAR_ACTION_BUTTON_SIZE) / 2.
-        ))
-        .right(px(0.))
-        .flex()
-        .flex_row()
-        .items_center()
-        .gap(px(SIDEBAR_ACTION_BUTTON_GAP))
-        .invisible()
-        .group_hover(group, |style| style.visible())
-}
-
 pub(super) fn sidebar_action_button(
     id: SharedString,
     icon: &'static str,
@@ -109,6 +99,53 @@ pub(super) fn sidebar_action_button(
             .text_color(ui.muted)
             .group_hover(group, move |style| style.text_color(ui.text)),
     )
+}
+
+pub(super) fn sidebar_text_ink_axis(font_size: f32, ink_height_em: f32) -> f32 {
+    SIDEBAR_ROW_LINE_HEIGHT / 2.
+        + font_size * (GEIST_ASCENT_EM - GEIST_DESCENT_EM - ink_height_em) / 2.
+}
+
+pub(super) fn sidebar_lane_glyph_top() -> f32 {
+    ((SIDEBAR_ROW_LINE_HEIGHT - SIDEBAR_LANE_GLYPH_SIZE) / 2.).ceil()
+}
+
+pub(super) fn sidebar_lane_glyph_center() -> f32 {
+    sidebar_lane_glyph_top() + SIDEBAR_LANE_GLYPH_SIZE / 2.
+}
+
+pub(super) fn sidebar_hover_revealed_glyph_button(
+    id: SharedString,
+    icon: &'static str,
+    label: SharedString,
+    reveal: f32,
+    trailing_space: f32,
+    ui: crate::theme::UiColors,
+) -> gpui::Stateful<gpui::Div> {
+    let group = SharedString::from(format!("{id}-hover"));
+    div()
+        .id(id)
+        .group(group.clone())
+        .flex_none()
+        .w(px((SIDEBAR_LANE_GLYPH_SIZE + trailing_space) * reveal))
+        .h(px(SIDEBAR_ROW_LINE_HEIGHT))
+        .overflow_hidden()
+        .opacity(reveal)
+        .flex()
+        .items_start()
+        .justify_start()
+        .role(Role::Button)
+        .aria_label(label.clone())
+        .delayed_tooltip(crate::ui_primitives::text_tooltip(label))
+        .child(
+            svg()
+                .size(px(SIDEBAR_LANE_GLYPH_SIZE))
+                .mt(px(sidebar_lane_glyph_top()))
+                .flex_none()
+                .path(icon)
+                .text_color(ui.muted)
+                .group_hover(group, move |style| style.text_color(ui.text)),
+        )
 }
 
 pub(super) fn tabular_numerals() -> gpui::FontFeatures {
@@ -197,9 +234,10 @@ mod tests {
                                     .child("paneflow"),
                             )
                             .child(
-                                sidebar_hover_actions("row".into()).visible().child(
+                                div().flex_none().h(px(SIDEBAR_ROW_LINE_HEIGHT)).child(
                                     div()
-                                        .size(px(SIDEBAR_ACTION_BUTTON_SIZE))
+                                        .size(px(SIDEBAR_LANE_GLYPH_SIZE))
+                                        .mt(px(sidebar_lane_glyph_top()))
                                         .debug_selector(|| "action".into()),
                                 ),
                             ),
@@ -209,7 +247,7 @@ mod tests {
         );
 
         let row = cx.debug_bounds("row").expect("row not painted");
-        for selector in ["folder", "title", "action"] {
+        for selector in ["folder", "title"] {
             let glyph = cx.debug_bounds(selector).expect("glyph not painted");
             assert_eq!(
                 glyph.center().y,
@@ -217,6 +255,12 @@ mod tests {
                 "{selector} is off the row's vertical center"
             );
         }
+        let action = cx.debug_bounds("action").expect("action not painted");
+        assert_eq!(
+            action.center().y,
+            row.center().y + px(0.5),
+            "an odd-sized action glyph takes the whole pixel just below the row's center"
+        );
     }
 
     #[gpui::test]
@@ -307,6 +351,64 @@ mod tests {
                 .debug_bounds(selector)
                 .unwrap_or_else(|| panic!("{selector} not painted"));
             assert_eq!(bounds.size.height, px(49.), "{selector}");
+        }
+    }
+
+    #[test]
+    fn a_lane_glyph_sits_on_the_whole_pixel_below_the_line_center() {
+        assert_eq!(sidebar_lane_glyph_top(), 5.);
+        assert!((sidebar_lane_glyph_center() - SIDEBAR_ROW_LINE_HEIGHT / 2.).abs() <= 0.5);
+        let word_axis =
+            sidebar_text_ink_axis(crate::ui_primitives::LABEL_XS.as_f32(), GEIST_X_HEIGHT_EM);
+        assert_eq!((sidebar_lane_glyph_center() - word_axis).round(), 0.);
+    }
+
+    struct RevealHarness {
+        reveal: f32,
+    }
+
+    impl gpui::Render for RevealHarness {
+        fn render(
+            &mut self,
+            _window: &mut gpui::Window,
+            _cx: &mut gpui::Context<Self>,
+        ) -> impl IntoElement {
+            div()
+                .flex()
+                .flex_row()
+                .child(sidebar_hover_revealed_glyph_button(
+                    "reveal-close".into(),
+                    "icons/close.svg",
+                    "Close tab".into(),
+                    self.reveal,
+                    SIDEBAR_TITLE_ROW_GAP,
+                    crate::theme::ui_colors(),
+                ))
+                .child(
+                    div()
+                        .flex_none()
+                        .size(px(SIDEBAR_LANE_GLYPH_SIZE))
+                        .debug_selector(|| "lane".into()),
+                )
+        }
+    }
+
+    #[gpui::test]
+    fn a_revealed_glyph_pushes_the_lane_by_its_reveal_progress(cx: &mut TestAppContext) {
+        for (reveal, lane_left) in [
+            (0., 0.),
+            (0.5, (SIDEBAR_LANE_GLYPH_SIZE + SIDEBAR_TITLE_ROW_GAP) / 2.),
+            (1., SIDEBAR_LANE_GLYPH_SIZE + SIDEBAR_TITLE_ROW_GAP),
+        ] {
+            let (_view, cx) = cx.add_window_view(move |_, _| RevealHarness { reveal });
+            cx.update(|window, cx| {
+                window.draw(cx).clear(cx);
+            });
+            assert_eq!(
+                cx.debug_bounds("lane").expect("lane not painted").left(),
+                px(lane_left),
+                "reveal {reveal}"
+            );
         }
     }
 }

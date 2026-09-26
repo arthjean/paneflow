@@ -1,5 +1,7 @@
 use super::*;
 
+use crate::ui_primitives::AnimatedHoverExt;
+
 impl PaneFlowApp {
     pub(super) fn render_workspace_row(
         &self,
@@ -133,38 +135,48 @@ impl PaneFlowApp {
             .min_w_0()
             .overflow_x_hidden()
             .child(disclosure)
-            .child(title_el)
-            .child(render_lane_slot(
+            .child(title_el);
+        let lane_slot = lane.is_some().then(|| {
+            render_lane_slot(
                 lane,
                 &format!("ws-{ws_id}"),
                 |summary| sidebar_agent_status_tooltip(summary, &agent_status),
-                group_name.clone(),
+                LaneSlot::BesideHoverAction,
                 ui,
-            ));
+            )
+        });
+        let new_tab_trailing_space = if lane_slot.is_some() {
+            SIDEBAR_TITLE_ROW_GAP
+        } else {
+            0.
+        };
+        let open_new_tab = cx.listener(move |this, _: &ClickEvent, window, cx| {
+            this.open_pane_palette(idx, window, cx);
+            cx.stop_propagation();
+        });
 
-        let mut body = div()
-            .flex()
-            .flex_col()
-            .gap(px(SIDEBAR_ROW_GAP))
-            .child(title_row);
-
-        body = body.child(
-            sidebar_hover_actions(group_name.clone()).child(
-                sidebar_action_button(
+        let row = squircle_skin(row_shell, group_name, ROW_RADIUS, None, Some(hover_bg))
+            .animated_hover_element(move |row, reveal| {
+                let new_tab_button = sidebar_hover_revealed_glyph_button(
                     SharedString::from(format!("ws-new-tab-{ws_id}")),
                     "icons/plus.svg",
-                    12.,
                     SharedString::from(format!("New tab in {ws_title}")),
+                    reveal,
+                    new_tab_trailing_space,
                     ui,
                 )
-                .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
-                    this.open_pane_palette(idx, window, cx);
-                    cx.stop_propagation();
-                })),
-            ),
-        );
-
-        let row = sidebar_row(row_shell, group_name.clone(), None, Some(hover_bg), body)
+                .on_click(open_new_tab);
+                row.extend([title_row
+                    .child(
+                        div()
+                            .flex_none()
+                            .flex()
+                            .flex_row()
+                            .child(new_tab_button)
+                            .children(lane_slot),
+                    )
+                    .into_any_element()]);
+            })
             .when(cursor, |row| row.child(sidebar_cursor_ring(ui)));
 
         div()

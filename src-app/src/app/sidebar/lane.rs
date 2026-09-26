@@ -7,7 +7,9 @@ use gpui::{
 use crate::app::pull_request::{PrState, PullRequest};
 use crate::ui_primitives::TooltipDelayExt;
 
-use super::{SIDEBAR_ACTION_BUTTON_SIZE, SidebarAgentState, SidebarAgentSummary};
+use super::{
+    SIDEBAR_ACTION_BUTTON_SIZE, SIDEBAR_LANE_GLYPH_SIZE, SidebarAgentState, SidebarAgentSummary,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Lane {
@@ -70,7 +72,7 @@ pub(super) fn pull_request_tooltip(pr: PullRequest) -> SharedString {
 fn lane_visual(lane: Lane, row_key: &str, ui: crate::theme::UiColors) -> (gpui::Hsla, AnyElement) {
     let icon = |path: &'static str, color: gpui::Hsla| {
         svg()
-            .size(px(11.))
+            .size(px(SIDEBAR_LANE_GLYPH_SIZE))
             .flex_none()
             .path(path)
             .text_color(color)
@@ -94,7 +96,7 @@ fn lane_visual(lane: Lane, row_key: &str, ui: crate::theme::UiColors) -> (gpui::
                 (
                     color,
                     div()
-                        .size(px(11.))
+                        .size(px(SIDEBAR_LANE_GLYPH_SIZE))
                         .flex_none()
                         .flex()
                         .items_center()
@@ -119,6 +121,7 @@ pub(super) fn render_lane(
     lane: Lane,
     row_key: &str,
     tooltip: SharedString,
+    reserve_action_slot: bool,
     ui: crate::theme::UiColors,
 ) -> AnyElement {
     let (color, glyph) = lane_visual(lane, row_key, ui);
@@ -126,10 +129,12 @@ pub(super) fn render_lane(
         .id(SharedString::from(format!("lane-{row_key}")))
         .flex_none()
         .h(px(20.))
-        .min_w(px(SIDEBAR_ACTION_BUTTON_SIZE))
+        .when(reserve_action_slot, |slot| {
+            slot.min_w(px(SIDEBAR_ACTION_BUTTON_SIZE))
+        })
         .flex()
         .flex_row()
-        .items_center()
+        .items_start()
         .justify_end()
         .gap(px(3.))
         .text_size(crate::ui_primitives::LABEL_XS)
@@ -140,30 +145,60 @@ pub(super) fn render_lane(
         .text_color(color)
         .aria_label(tooltip.clone())
         .delayed_tooltip(crate::ui_primitives::text_tooltip(tooltip))
-        .child(glyph)
-        .when(!lane.label().is_empty(), |slot| slot.child(lane.label()))
+        .child(
+            div()
+                .flex_none()
+                .mt(px(super::sidebar_lane_glyph_top()))
+                .child(glyph),
+        )
+        .when(!lane.label().is_empty(), |slot| {
+            let ink_height_em = if lane.word().is_empty() {
+                super::GEIST_CAP_HEIGHT_EM
+            } else {
+                super::GEIST_X_HEIGHT_EM
+            };
+            let label_axis = super::sidebar_text_ink_axis(
+                crate::ui_primitives::LABEL_XS.as_f32(),
+                ink_height_em,
+            );
+            let drop = (super::sidebar_lane_glyph_center() - label_axis).round();
+            slot.child(div().relative().top(px(drop)).child(lane.label()))
+        })
         .into_any_element()
+}
+
+pub(super) enum LaneSlot {
+    UnderHoverAction(SharedString),
+    BesideHoverAction,
 }
 
 pub(super) fn render_lane_slot(
     lane: Option<Lane>,
     row_key: &str,
     tooltip: impl FnOnce(SidebarAgentSummary) -> SharedString,
-    group: SharedString,
+    slot: LaneSlot,
     ui: crate::theme::UiColors,
 ) -> AnyElement {
+    let hidden_by_hover_action = match slot {
+        LaneSlot::UnderHoverAction(group) => Some(group),
+        LaneSlot::BesideHoverAction => None,
+    };
     match lane {
         Some(lane) => {
             let tooltip = match lane {
                 Lane::Agent(summary) => tooltip(summary),
                 Lane::PullRequest(pr) => pull_request_tooltip(pr),
             };
+            let reserve_action_slot = hidden_by_hover_action.is_some();
             div()
                 .flex_none()
-                .group_hover(group, |style| style.invisible())
-                .child(render_lane(lane, row_key, tooltip, ui))
+                .when_some(hidden_by_hover_action, |slot, group| {
+                    slot.group_hover(group, |style| style.invisible())
+                })
+                .child(render_lane(lane, row_key, tooltip, reserve_action_slot, ui))
                 .into_any_element()
         }
+        None if hidden_by_hover_action.is_none() => div().flex_none().into_any_element(),
         None => div()
             .flex_none()
             .w(px(SIDEBAR_ACTION_BUTTON_SIZE))
@@ -181,7 +216,7 @@ pub(in crate::app) fn render_comet_trail_loader(row_key: &str, color: gpui::Hsla
     const PERIMETER: usize = 8;
 
     let loader = div()
-        .size(px(11.))
+        .size(px(SIDEBAR_LANE_GLYPH_SIZE))
         .flex_none()
         .flex()
         .flex_col()

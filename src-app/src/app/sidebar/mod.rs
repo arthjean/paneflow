@@ -19,7 +19,7 @@ use gpui::{
 
 use crate::ui_primitives::squircle_skin;
 use drop::*;
-use lane::{Lane, infer_lane, render_lane_slot};
+use lane::{Lane, LaneSlot, infer_lane, render_lane_slot};
 use meta::*;
 pub(crate) use style::*;
 pub(crate) use tab_row::*;
