@@ -49,10 +49,10 @@
     {
       "id": "EP-006",
       "title": "God-File Splits",
-      "status": "IN_PROGRESS",
+      "status": "DONE",
       "priority": "P2",
       "stories_total": 9,
-      "stories_done": 7
+      "stories_done": 8
     }
   ],
   "stories": [
@@ -640,7 +640,7 @@
       "id": "US-043",
       "title": "Split `src-app/src/terminal/pty_session.rs` and `src-app/src/terminal/view.rs`",
       "epic": "EP-006",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P2",
       "size": "L",
       "blocked_by": [
@@ -648,8 +648,8 @@
         "US-031"
       ],
       "started_at": null,
-      "completed_at": null,
-      "reviewed_at": "2026-09-26T09:11:49+02:00"
+      "completed_at": "2026-09-26T09:41:22+02:00",
+      "reviewed_at": "2026-09-26T09:41:22+02:00"
     },
     {
       "id": "US-044",
