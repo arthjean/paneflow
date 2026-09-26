@@ -50,11 +50,7 @@ pub fn section_header_with_action(
 }
 
 pub fn card_color() -> Hsla {
-    if crate::theme::active_theme().background.l > 0.5 {
-        Hsla::from(gpui::rgb(0xffffff))
-    } else {
-        Hsla::from(gpui::rgb(0x232323))
-    }
+    crate::theme::ui_colors().card
 }
 
 pub fn setting_card(_ui: crate::theme::UiColors) -> Div {

@@ -7,6 +7,10 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
 
 ### Changed
 
+- Tailwind Dark paints Settings and dialog cards in its own zinc neutral
+  instead of the shared gray, and lifts its `surface` and `subtle` colors one
+  step above that card, so select triggers, steppers, secondary buttons, menus
+  opened over a card, and the System Info panels no longer vanish into it.
 - A custom `PANEFLOW_HOME` now owns its own IPC endpoint,
   `<runtime dir>/paneflow-ipc-<fingerprint>.sock` or
   `\\.\pipe\paneflow-ipc-<fingerprint>`, instead of sharing the default socket,

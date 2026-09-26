@@ -211,6 +211,7 @@ inside `theme/builtin.rs`.
 | --- | --- | --- | --- |
 | `base` | Panel and settings background, the work surface | `#181818` | `#ffffff` |
 | `surface` | Cards inside a panel, menu surfaces in dark | `#212121` | `#f7f7f7` |
+| `card` | Settings cards and modal cards, one step above `base`; `subtle` controls and `menu_panel` surfaces on it must stay one step above it | `#232323` | `#ffffff` |
 | `overlay` | Shell chrome in dark, popups in light | `#141414` | `#ffffff` |
 | `border` | Hairlines, card outlines, pane card border | `#252525` | `#e6e6e6` |
 | `subtle` | Pills, inputs, toasts, resting control fill | `#2a2a2a` | `#eeeeee` |
@@ -278,7 +279,6 @@ to the surfaces named:
 | `#83c3ff`, light `#0369a1` | Sidebar dot when an agent finished | Light blue completion signal, identical in every preset of a variant; the light value keeps the 10 px word at 4.5:1 |
 | `#3a83f7` | Title bar pill when a manual check finds a release | Solid update blue with a white glyph, label, and `×`, identical in every preset |
 | `hsl(40 85% 55%)` | Callout warning | Severity hue independent of preset |
-| `#232323` / `#ffffff` | Settings card fill | Card sits one step above `base` in either lightness |
 
 ### 4.4 Geometry
 
@@ -722,7 +722,7 @@ the section, the page stays whole.
 Navigation reuses the sidebar width: `Back to the app`, a search field, and
 three groups labeled Personal, Terminal, Integrations. Pages are a centered
 column with a 26 px heading, eyebrow labels at 11 px muted, and cards
-(squircle 20, `#232323` dark or white light). Rows are `toggle_row` or a
+(squircle 20 on the `card` role). Rows are `toggle_row` or a
 `setting_text` plus control: title 12 Medium, description 11 muted, control
 right-aligned. Toggles are 36 by 22 with an 18 px white knob. Selects open a
 `select_menu` under the trigger. Destructive actions use the fixed red
