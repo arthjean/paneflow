@@ -1,0 +1,1869 @@
+{
+  "acceptance_grade": false,
+  "allocator": "no custom global allocator in the host or the fixture; native memory comes from OS counters",
+  "commit": "7901ec3740bfcb952331b0de7c7dce772da69aae",
+  "commit_short": "7901ec3740bf",
+  "comparison": {
+    "baseline": "C:\\dev\\paneflow\\bench\\persistent-baseline.json",
+    "text": "baseline topology, schema, machine, or profile differs; no performance comparison is valid\nmetric                                            candidate       baseline              threshold   result\nW01 0 sessions host cpu %                             0.000            n/a          informational        -\nW01 0 sessions host rss bytes                   9052160.000            n/a          informational        -\nW01 1 sessions host cpu %                             0.000            n/a          informational        -\nW01 1 sessions host rss bytes                  13381632.000            n/a          informational        -\nW01 10 sessions host cpu %                            0.000            n/a          informational        -\nW01 10 sessions host rss bytes                 15642624.000            n/a          informational        -\nW01 50 sessions host cpu %                            0.000            n/a          informational        -\nW01 50 sessions host rss bytes                 24182784.000            n/a          informational        -\nW02 attach p95 ms                                     8.187            n/a          informational        -\nW02 concurrent total ms                              43.049            n/a          informational        -\nW03 single flood MiB/s                                1.551            n/a                 >= 0.9 unavailable\nW03 idle echo p95 ms                                  0.211            n/a                  <= 30     pass\nW03 loaded echo p95 ms                                0.215            n/a          informational        -\nW05 final host rss bytes                       21475328.000            n/a <= max(16 MiB, 10% of warmed)     pass\n\nthreshold decisions:\n  NFR-09.attach_p95            pass     sequential reattachment p95 ms \n  NFR-09.concurrent_total      pass     ten simultaneous attachments total ms \n  NFR-06.checkpoint_release    pass     staged checkpoint bytes after 120 attachments \n  W02.content_equivalence      pass     identical checkpoint bytes across attachments \n  NFR-08.idle_p95              pass     idle input-to-publication p95 ms \n  NFR-08.idle_p99              pass     idle input-to-publication p99 ms \n  NFR-08.loaded_p95            pass     focused echo p95 ms with ten 1 MiB/s streams \n  NFR-08.throughput_ratio      unavailable single flood MiB/s relative to the matched baseline (no matched baseline throughput on this machine and topology)\n  NFR-04.runtime_release       pass     batches whose runtimes released within the reclaim budget \n  NFR-04.reclaim_max_ms        pass     slowest runtime release after confirmed exit, ms \n  NFR-05.memory_after_churn    pass     host resident bytes after churn and quiescence minus the warmed baseline \n  NFR-05.memory_slope          pass     resident-memory slope over the last five batches, bytes per batch \n  NFR-05.threads               pass     host threads after churn minus warmed baseline \n  NFR-05.handles               pass     host handles or file descriptors after churn minus warmed baseline \n  NFR-12.host_shutdown         pass     host process exited after an acknowledged shutdown \n  NFR-12.fixture_orphans       pass     fixture processes still alive after host shutdown \n"
+  },
+  "controller": null,
+  "diff": {
+    "bytes": 97277,
+    "dirty": true,
+    "fnv1a64": "82c0103adbd49cea",
+    "untracked_paths": [
+      "bench/results/persistent-20260926T122053Z-7901ec3740bf.json"
+    ]
+  },
+  "engine": {
+    "api_version": "0.1.0",
+    "app_version": "1.3.2-dev+0c2a290d3",
+    "engine": "libghostty-vt",
+    "source_sha": "0c2a290d3a3e2a599be3a43435d778a5896667ee"
+  },
+  "executables": {
+    "fixture": {
+      "bytes": 248832,
+      "fnv1a64": "ab9254451fee2f99",
+      "path": "C:\\dev\\paneflow\\target\\release\\paneflow-session-fixture.exe"
+    },
+    "host": {
+      "bytes": 8206848,
+      "fnv1a64": "9a50919b81d7584a",
+      "path": "C:\\dev\\paneflow\\target\\release\\paneflow-host.exe"
+    }
+  },
+  "fixtures": {
+    "cleanup": "only recorded session/process identities are checked; the host owns and stops its fixtures on a private PANEFLOW_HOME",
+    "host_exited": true,
+    "host_shutdown": {
+      "ended_sessions": 0,
+      "host_instance": "4cf9629a-19fa-452d-baac-18369f6858cc",
+      "stopping": true,
+      "unresolved": []
+    },
+    "owned": 563,
+    "survivors_after_shutdown": []
+  },
+  "host": {
+    "build_id": "0.16.0+0c2a290d3a3e",
+    "protocol": 1,
+    "version": "0.16.0"
+  },
+  "invocation": {
+    "args": [
+      "C:\\dev\\paneflow\\target\\release\\deps\\persistent_baseline-ae1e150e37928f34.exe",
+      "persistent_session_baseline",
+      "--ignored",
+      "--exact",
+      "--nocapture",
+      "--test-threads=1"
+    ],
+    "fixture": "C:\\dev\\paneflow\\target\\release\\paneflow-session-fixture.exe",
+    "fixture_mode": "idle",
+    "scenarios": [
+      0,
+      1,
+      10,
+      50
+    ],
+    "settle_s": 4.0,
+    "test": "persistent_session_baseline",
+    "window_s": 10.0
+  },
+  "machine": {
+    "arch": "x86_64",
+    "cpu_model": "AMD64 Family 25 Model 97 Stepping 2, AuthenticAMD",
+    "hostname_hash": "27c35a214898caba",
+    "logical_cpus": 16,
+    "os": "windows",
+    "os_build": "Microsoft Windows [version 10.0.26200.9457]",
+    "total_ram_bytes": 33459585024
+  },
+  "native_environments": {
+    "linux": false,
+    "macos": false,
+    "note": "false means pending, not passed",
+    "windows": true
+  },
+  "prior_failures": [],
+  "protocol": "smoke",
+  "pty": "ConPTY via portable-pty 0.9",
+  "retry_policy": "none: the scripts never retry; a rerun passes PANEFLOW_BENCH_PRIOR_RESULT so the first failure stays in the evidence",
+  "scenarios": [
+    {
+      "attach_ms": [],
+      "attachments": 0,
+      "checkpoint_bytes": [],
+      "create_all_ms": 0.0,
+      "create_per_session_ms": null,
+      "desktop_geometry": null,
+      "desktop_mirrors": {
+        "pending": "PANEFLOW_BENCH_DESKTOP was not supplied; desktop mirrors and GPUI deadlines are unmeasured"
+      },
+      "desktop_panes_prepared": null,
+      "desktop_restore": null,
+      "headless_follower_count": 0,
+      "headless_followers": {
+        "attribution": "exact thread names",
+        "counters": {
+          "handles_or_fds": 74,
+          "note": "Windows handles, or Linux and macOS descriptors, plus thread count",
+          "threads": 5
+        },
+        "cpu": {
+          "by_role_cpu_percent": {
+            "main": 0.0,
+            "other": 0.46658212414241834
+          },
+          "by_thread_cpu_ns": {
+            "main": 0,
+            "persistent_session_baseline": 46875000,
+            "unnamed-16296": 0,
+            "unnamed-22616": 0,
+            "unnamed-23712": 0
+          },
+          "total_cpu_percent": 0.46658212414241834
+        },
+        "pid": 14180,
+        "resident_bytes": 10457088
+      },
+      "host": {
+        "attribution": "exact thread names",
+        "counters": {
+          "handles_or_fds": 123,
+          "note": "Windows handles, or Linux and macOS descriptors, plus thread count",
+          "threads": 9
+        },
+        "cpu": {
+          "by_role_cpu_percent": {
+            "host.cancellation_scan": 0.0,
+            "host.ipc_connection": 0.0,
+            "host.viewport_scan": 0.0,
+            "main": 0.0,
+            "other": 0.0
+          },
+          "by_thread_cpu_ns": {
+            "main": 0,
+            "paneflow-host-cancellation": 0,
+            "paneflow-host-conn": 0,
+            "paneflow-host-maintenance": 0,
+            "paneflow-host-persist": 0,
+            "paneflow-host-viewport": 0,
+            "unnamed-15664": 0,
+            "unnamed-20124": 0,
+            "unnamed-21312": 0
+          },
+          "total_cpu_percent": 0.0
+        },
+        "pid": 19788,
+        "resident_bytes": 9052160
+      },
+      "list_ms": 0.09330000000000001,
+      "observed_dimensions": [],
+      "sessions": 0,
+      "sessions_created": 0,
+      "window_s": 10.0464629,
+      "worker": {
+        "pending": "PANEFLOW_BENCH_CONTROLLER was not supplied; build paneflow and pass its executable"
+      }
+    },
+    {
+      "attach_ms": [],
+      "attachments": 0,
+      "checkpoint_bytes": [],
+      "create_all_ms": 54.5306,
+      "create_per_session_ms": 54.5306,
+      "desktop_geometry": null,
+      "desktop_mirrors": {
+        "pending": "PANEFLOW_BENCH_DESKTOP was not supplied; desktop mirrors and GPUI deadlines are unmeasured"
+      },
+      "desktop_panes_prepared": null,
+      "desktop_restore": null,
+      "headless_follower_count": 0,
+      "headless_followers": {
+        "attribution": "exact thread names",
+        "counters": {
+          "handles_or_fds": 74,
+          "note": "Windows handles, or Linux and macOS descriptors, plus thread count",
+          "threads": 5
+        },
+        "cpu": {
+          "by_role_cpu_percent": {
+            "main": 0.0,
+            "other": 0.46667282990065556
+          },
+          "by_thread_cpu_ns": {
+            "main": 0,
+            "persistent_session_baseline": 46875000,
+            "unnamed-16296": 0,
+            "unnamed-22616": 0,
+            "unnamed-23712": 0
+          },
+          "total_cpu_percent": 0.46667282990065556
+        },
+        "pid": 14180,
+        "resident_bytes": 10481664
+      },
+      "host": {
+        "attribution": "exact thread names",
+        "counters": {
+          "handles_or_fds": 159,
+          "note": "Windows handles, or Linux and macOS descriptors, plus thread count",
+          "threads": 13
+        },
+        "cpu": {
+          "by_role_cpu_percent": {
+            "host.cancellation_scan": 0.0,
+            "host.ipc_connection": 0.0,
+            "host.pty_reader": 0.0,
+            "host.pty_writer": 0.0,
+            "host.session": 0.0,
+            "host.viewport_scan": 0.0,
+            "main": 0.0,
+            "other": 0.0
+          },
+          "by_thread_cpu_ns": {
+            "main": 0,
+            "paneflow-host-cancellation": 0,
+            "paneflow-host-child-waiter": 0,
+            "paneflow-host-conn": 0,
+            "paneflow-host-maintenance": 0,
+            "paneflow-host-persist": 0,
+            "paneflow-host-pty-reader": 0,
+            "paneflow-host-pty-writer": 0,
+            "paneflow-host-session": 0,
+            "paneflow-host-viewport": 0,
+            "unnamed-15664": 0,
+            "unnamed-20124": 0,
+            "unnamed-21312": 0
+          },
+          "total_cpu_percent": 0.0
+        },
+        "pid": 19788,
+        "resident_bytes": 13381632
+      },
+      "list_ms": 0.1004,
+      "observed_dimensions": [
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "07465934-0b57-441b-a334-31b538735930"
+        }
+      ],
+      "sessions": 1,
+      "sessions_created": 1,
+      "window_s": 10.0445102,
+      "worker": {
+        "pending": "PANEFLOW_BENCH_CONTROLLER was not supplied; build paneflow and pass its executable"
+      }
+    },
+    {
+      "attach_ms": [],
+      "attachments": 0,
+      "checkpoint_bytes": [],
+      "create_all_ms": 123.8031,
+      "create_per_session_ms": 13.7559,
+      "desktop_geometry": null,
+      "desktop_mirrors": {
+        "pending": "PANEFLOW_BENCH_DESKTOP was not supplied; desktop mirrors and GPUI deadlines are unmeasured"
+      },
+      "desktop_panes_prepared": null,
+      "desktop_restore": null,
+      "headless_follower_count": 0,
+      "headless_followers": {
+        "attribution": "exact thread names",
+        "counters": {
+          "handles_or_fds": 74,
+          "note": "Windows handles, or Linux and macOS descriptors, plus thread count",
+          "threads": 2
+        },
+        "cpu": {
+          "by_role_cpu_percent": {
+            "main": 0.0,
+            "other": 0.4666083609449349
+          },
+          "by_thread_cpu_ns": {
+            "main": 0,
+            "persistent_session_baseline": 46875000
+          },
+          "total_cpu_percent": 0.4666083609449349
+        },
+        "pid": 14180,
+        "resident_bytes": 10543104
+      },
+      "host": {
+        "attribution": "exact thread names",
+        "counters": {
+          "handles_or_fds": 241,
+          "note": "Windows handles, or Linux and macOS descriptors, plus thread count",
+          "threads": 49
+        },
+        "cpu": {
+          "by_role_cpu_percent": {
+            "host.cancellation_scan": 0.0,
+            "host.ipc_connection": 0.0,
+            "host.pty_reader": 0.0,
+            "host.pty_writer": 0.0,
+            "host.session": 0.0,
+            "host.viewport_scan": 0.0,
+            "main": 0.0,
+            "other": 0.0
+          },
+          "by_thread_cpu_ns": {
+            "main": 0,
+            "paneflow-host-cancellation": 0,
+            "paneflow-host-child-waiter": 0,
+            "paneflow-host-conn": 0,
+            "paneflow-host-maintenance": 0,
+            "paneflow-host-persist": 0,
+            "paneflow-host-pty-reader": 0,
+            "paneflow-host-pty-writer": 0,
+            "paneflow-host-session": 0,
+            "paneflow-host-viewport": 0,
+            "unnamed-20124": 0,
+            "unnamed-22268": 0,
+            "unnamed-2544": 0
+          },
+          "total_cpu_percent": 0.0
+        },
+        "pid": 19788,
+        "resident_bytes": 15642624
+      },
+      "list_ms": 0.25379999999999997,
+      "observed_dimensions": [
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "07465934-0b57-441b-a334-31b538735930"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "aefd6486-09de-4301-81de-23111be13656"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "dd593d76-6937-4126-b33b-c3c17556ddf3"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "bb59c3bb-2637-47b7-9714-b7e259f63374"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "4b5f85e5-511d-473e-80b4-8456ce641347"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "f94b7340-837c-42a3-aa74-864d823a7ebd"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "1ba2b23a-96a2-49a5-91d7-2a6723d98116"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "f41b636f-b924-4b08-9a81-2ba19b6ab225"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "03129c66-48d5-4303-b0ca-97007e9e2a29"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "9fbd9782-b4d2-4c54-b1c3-f9adc27a3371"
+        }
+      ],
+      "sessions": 10,
+      "sessions_created": 9,
+      "window_s": 10.045898,
+      "worker": {
+        "pending": "PANEFLOW_BENCH_CONTROLLER was not supplied; build paneflow and pass its executable"
+      }
+    },
+    {
+      "attach_ms": [],
+      "attachments": 0,
+      "checkpoint_bytes": [],
+      "create_all_ms": 597.1673,
+      "create_per_session_ms": 14.9291825,
+      "desktop_geometry": null,
+      "desktop_mirrors": {
+        "pending": "PANEFLOW_BENCH_DESKTOP was not supplied; desktop mirrors and GPUI deadlines are unmeasured"
+      },
+      "desktop_panes_prepared": null,
+      "desktop_restore": null,
+      "headless_follower_count": 0,
+      "headless_followers": {
+        "attribution": "exact thread names",
+        "counters": {
+          "handles_or_fds": 74,
+          "note": "Windows handles, or Linux and macOS descriptors, plus thread count",
+          "threads": 2
+        },
+        "cpu": {
+          "by_role_cpu_percent": {
+            "main": 0.0,
+            "other": 0.4663518880133069
+          },
+          "by_thread_cpu_ns": {
+            "main": 0,
+            "persistent_session_baseline": 46875000
+          },
+          "total_cpu_percent": 0.4663518880133069
+        },
+        "pid": 14180,
+        "resident_bytes": 10788864
+      },
+      "host": {
+        "attribution": "exact thread names",
+        "counters": {
+          "handles_or_fds": 601,
+          "note": "Windows handles, or Linux and macOS descriptors, plus thread count",
+          "threads": 209
+        },
+        "cpu": {
+          "by_role_cpu_percent": {
+            "host.cancellation_scan": 0.0,
+            "host.ipc_connection": 0.0,
+            "host.pty_reader": 0.0,
+            "host.pty_writer": 0.0,
+            "host.session": 0.0,
+            "host.viewport_scan": 0.0,
+            "main": 0.0,
+            "other": 0.0
+          },
+          "by_thread_cpu_ns": {
+            "main": 0,
+            "paneflow-host-cancellation": 0,
+            "paneflow-host-child-waiter": 0,
+            "paneflow-host-conn": 0,
+            "paneflow-host-maintenance": 0,
+            "paneflow-host-persist": 0,
+            "paneflow-host-pty-reader": 0,
+            "paneflow-host-pty-writer": 0,
+            "paneflow-host-session": 0,
+            "paneflow-host-viewport": 0,
+            "unnamed-20124": 0,
+            "unnamed-22268": 0,
+            "unnamed-2544": 0
+          },
+          "total_cpu_percent": 0.0
+        },
+        "pid": 19788,
+        "resident_bytes": 24182784
+      },
+      "list_ms": 0.8407,
+      "observed_dimensions": [
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "07465934-0b57-441b-a334-31b538735930"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "aefd6486-09de-4301-81de-23111be13656"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "dd593d76-6937-4126-b33b-c3c17556ddf3"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "bb59c3bb-2637-47b7-9714-b7e259f63374"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "4b5f85e5-511d-473e-80b4-8456ce641347"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "f94b7340-837c-42a3-aa74-864d823a7ebd"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "1ba2b23a-96a2-49a5-91d7-2a6723d98116"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "f41b636f-b924-4b08-9a81-2ba19b6ab225"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "03129c66-48d5-4303-b0ca-97007e9e2a29"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "9fbd9782-b4d2-4c54-b1c3-f9adc27a3371"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "44e104c5-ab7f-4edc-801d-db7e1ef89889"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "3d73d9cb-4014-4651-965f-7ea5dc25cf2c"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "aacc6059-5e72-4b81-b349-ce1087b3a67a"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "22828ff8-af94-4013-aa3e-ba786df5796d"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "9a617b0d-fc4d-4825-923b-ba48dac61f78"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "a45f4ec8-9364-41a5-bd46-81cc37963335"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "94f0dd15-b269-483a-a154-519639f8dd86"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "cb857572-475f-498b-a990-b1a32b16da48"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "11f5b116-e9e6-4a44-99f4-37a7e440a583"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "415c372d-ae1e-4cc7-912d-fff1cce89b77"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "7dfb218d-d9f9-44ff-9c65-daed308f02b7"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "0db7b2da-4934-44c8-83ae-97def437a21d"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "7c9d447e-24ac-4d68-b947-98ec16a7853e"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "4d57ba7e-0b98-44e6-8c89-6681c6ac71c7"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "d83b88cd-907b-4f75-a65b-bb89ff82f123"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "b2573ecf-2044-48fb-b89a-49e625050d74"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "490b8914-ca34-4715-bce2-a7830c25140b"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "421a33a6-3dd3-4f61-b643-7cf1e3f1e6da"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "36486623-e72c-4f3e-8738-e325dcfa68f8"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "0119bdbc-6d70-4723-978a-8cd87020fb37"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "120a3e7b-bacc-4d87-a3c6-874c96e529c1"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "9e5d1240-e0e6-4918-9e39-6627c8edf109"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "aefe9f92-a5c5-4ca4-8a09-7beae5716854"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "e02191e4-b2f1-464b-bf54-660e86b9fad9"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "06d50368-ee4e-4f21-b3d3-11dd9d630778"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "797dd6a1-106f-406f-99f4-d9e575f736e3"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "24841487-4332-4e91-8be3-ac6aa755504a"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "61498c73-b411-4a5d-93c8-661b5410d2f7"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "86be7699-b329-4159-b8e2-de855e142f53"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "75466d92-d42b-45fc-8c34-3cc1fdd9dd97"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "6a81a8d0-6795-4eca-a028-d54cd54217f6"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "ee714d49-40cc-4768-a432-786c73781277"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "32150731-01f2-4ced-884c-156693c5aae7"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "2c1a2a59-872e-4d89-8ac9-f55cd806314c"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "3945ed0b-1ff7-4675-b019-03cd4d9dfd1d"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "e02aa8f1-b36d-4224-93c7-c1317668bdd5"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "ce4beb9e-55b5-4217-90c2-a7f85fb0ee32"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "3ccfb231-2e8e-4cb9-878d-709c7976f627"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "eda0a8fa-452c-49e7-8739-e413b82f0d7d"
+        },
+        {
+          "cols": 80,
+          "rows": 24,
+          "session": "5b58381c-d149-464d-99ef-fe7806c31759"
+        }
+      ],
+      "sessions": 50,
+      "sessions_created": 40,
+      "window_s": 10.0514228,
+      "worker": {
+        "pending": "PANEFLOW_BENCH_CONTROLLER was not supplied; build paneflow and pass its executable"
+      }
+    }
+  ],
+  "schema_version": 3,
+  "seed": null,
+  "seed_note": "the fixture is deterministic and the runner draws no random input",
+  "source_unchanged_during_measurement": true,
+  "stamp": "20260926T122953Z",
+  "suite": "paneflow-persistent-bench",
+  "thresholds": [
+    {
+      "id": "NFR-09.attach_p95",
+      "metric": "sequential reattachment p95 ms",
+      "observed": 8.1866,
+      "reason": "",
+      "result": "pass",
+      "threshold": "<= 1000",
+      "workload": "W02"
+    },
+    {
+      "id": "NFR-09.concurrent_total",
+      "metric": "ten simultaneous attachments total ms",
+      "observed": 43.049,
+      "reason": "",
+      "result": "pass",
+      "threshold": "<= 5000",
+      "workload": "W02"
+    },
+    {
+      "id": "NFR-06.checkpoint_release",
+      "metric": "staged checkpoint bytes after 120 attachments",
+      "observed": 0.0,
+      "reason": "",
+      "result": "pass",
+      "threshold": "== 0 with 0 active captures",
+      "workload": "W02"
+    },
+    {
+      "id": "W02.content_equivalence",
+      "metric": "identical checkpoint bytes across attachments",
+      "observed": 1.0,
+      "reason": "",
+      "result": "pass",
+      "threshold": "all 120 snapshot hashes equal",
+      "workload": "W02"
+    },
+    {
+      "id": "NFR-08.idle_p95",
+      "metric": "idle input-to-publication p95 ms",
+      "observed": 0.2115,
+      "reason": "",
+      "result": "pass",
+      "threshold": "<= 30",
+      "workload": "W03"
+    },
+    {
+      "id": "NFR-08.idle_p99",
+      "metric": "idle input-to-publication p99 ms",
+      "observed": 2.8961,
+      "reason": "",
+      "result": "pass",
+      "threshold": "<= 100",
+      "workload": "W03"
+    },
+    {
+      "id": "NFR-08.loaded_p95",
+      "metric": "focused echo p95 ms with ten 1 MiB/s streams",
+      "observed": 0.2153,
+      "reason": "",
+      "result": "pass",
+      "threshold": "<= 50",
+      "workload": "W03"
+    },
+    {
+      "id": "NFR-08.throughput_ratio",
+      "metric": "single flood MiB/s relative to the matched baseline",
+      "observed": null,
+      "reason": "no matched baseline throughput on this machine and topology",
+      "result": "unavailable",
+      "threshold": ">= 0.9",
+      "workload": "W03"
+    },
+    {
+      "id": "NFR-04.runtime_release",
+      "metric": "batches whose runtimes released within the reclaim budget",
+      "observed": 10.0,
+      "reason": "",
+      "result": "pass",
+      "threshold": "all 10 within 5 s",
+      "workload": "W05"
+    },
+    {
+      "id": "NFR-04.reclaim_max_ms",
+      "metric": "slowest runtime release after confirmed exit, ms",
+      "observed": 0.0406,
+      "reason": "",
+      "result": "pass",
+      "threshold": "<= 5000",
+      "workload": "W05"
+    },
+    {
+      "id": "NFR-05.memory_after_churn",
+      "metric": "host resident bytes after churn and quiescence minus the warmed baseline",
+      "observed": -7151616.0,
+      "reason": "",
+      "result": "pass",
+      "threshold": "<= max(16 MiB, 10% of warmed)",
+      "workload": "W05"
+    },
+    {
+      "id": "NFR-05.memory_slope",
+      "metric": "resident-memory slope over the last five batches, bytes per batch",
+      "observed": 215449.6,
+      "reason": "",
+      "result": "pass",
+      "threshold": "<= 1048576",
+      "workload": "W05"
+    },
+    {
+      "id": "NFR-05.threads",
+      "metric": "host threads after churn minus warmed baseline",
+      "observed": -51.0,
+      "reason": "",
+      "result": "pass",
+      "threshold": "<= 2",
+      "workload": "W05"
+    },
+    {
+      "id": "NFR-05.handles",
+      "metric": "host handles or file descriptors after churn minus warmed baseline",
+      "observed": -102.0,
+      "reason": "",
+      "result": "pass",
+      "threshold": "<= 2",
+      "workload": "W05"
+    },
+    {
+      "id": "NFR-12.host_shutdown",
+      "metric": "host process exited after an acknowledged shutdown",
+      "observed": 1.0,
+      "reason": "",
+      "result": "pass",
+      "threshold": "acknowledged and exited within 10 s",
+      "workload": "harness"
+    },
+    {
+      "id": "NFR-12.fixture_orphans",
+      "metric": "fixture processes still alive after host shutdown",
+      "observed": 0.0,
+      "reason": "",
+      "result": "pass",
+      "threshold": "== 0",
+      "workload": "harness"
+    }
+  ],
+  "toolchain": {
+    "profile": "release",
+    "rustc": "rustc 1.98.0 (88d9e12ae 2026-08-18)"
+  },
+  "topology": "host-only",
+  "unmeasured": [
+    "keystroke to pixel latency of a hosted pane (needs the desktop; see scripts/bench-terminal)",
+    "reattach time after a desktop restart with 50 sessions",
+    "host memory after 24 hours of idle sessions"
+  ],
+  "workloads": {
+    "W01": {
+      "note": "short-window CPU and memory samples; this window decides NFR-01",
+      "scenarios": "see scenarios[]",
+      "status": "measured",
+      "topology": "host-only"
+    },
+    "W02": {
+      "attach_detach_cycles_ms": {
+        "count": 100,
+        "insufficient": false,
+        "max": 7.9022,
+        "median": 6.1906,
+        "min": 5.6867,
+        "p95": 6.7871,
+        "p99": 7.1209999999999996,
+        "raw": [
+          6.476100000000001,
+          6.418100000000001,
+          6.248799999999999,
+          6.3169,
+          6.1296,
+          6.3177,
+          6.581499999999999,
+          6.547,
+          7.1209999999999996,
+          6.6385000000000005,
+          6.2206,
+          6.3521,
+          6.3605,
+          6.3264000000000005,
+          6.1244000000000005,
+          6.599,
+          6.3524,
+          6.4133000000000004,
+          6.4643,
+          6.2236,
+          6.1585,
+          6.0713,
+          6.2665999999999995,
+          6.9614,
+          6.840599999999999,
+          6.9643,
+          7.9022,
+          6.0079,
+          6.2197,
+          5.9748,
+          6.0006,
+          6.198300000000001,
+          6.058400000000001,
+          6.4102,
+          6.3186,
+          6.0861,
+          6.3704,
+          5.8328,
+          6.0344999999999995,
+          6.1157,
+          6.1787,
+          6.4838,
+          6.7871,
+          6.2638,
+          6.4923,
+          6.0041,
+          5.7838,
+          6.010800000000001,
+          5.9944999999999995,
+          6.2202,
+          6.0958000000000006,
+          6.2192,
+          6.1986,
+          6.0449,
+          6.1747,
+          6.396599999999999,
+          5.9284,
+          6.0951,
+          5.9304,
+          5.8639,
+          6.2352,
+          6.4213,
+          5.9759,
+          5.8573,
+          5.8113,
+          5.765499999999999,
+          5.8924,
+          5.7904,
+          5.8491,
+          6.0341,
+          5.9936,
+          6.3531,
+          5.894500000000001,
+          5.914499999999999,
+          5.6867,
+          6.1906,
+          5.8445,
+          6.2399,
+          6.2864,
+          6.0729,
+          6.4012,
+          5.9388000000000005,
+          6.0196,
+          5.8175,
+          5.7513,
+          5.7762,
+          5.9207,
+          6.7355,
+          6.2461,
+          6.2381,
+          5.9407000000000005,
+          5.8911,
+          5.9898,
+          6.213299999999999,
+          5.8191,
+          6.2155,
+          6.5597,
+          6.3853,
+          5.8999,
+          5.7768999999999995
+        ],
+        "required_count": 100
+      },
+      "checkpoint_bytes": [
+        1115673,
+        1115673,
+        1115673,
+        1115673,
+        1115673,
+        1115673,
+        1115673,
+        1115673,
+        1115673,
+        1115673
+      ],
+      "checkpoint_staging_after": {
+        "active": 0,
+        "budget_bytes": 268435456,
+        "max_concurrent": 2,
+        "peak_staged_bytes": 2231346,
+        "refused": 0,
+        "staged_bytes": 0
+      },
+      "concurrent_attach_ms": {
+        "count": 10,
+        "insufficient": false,
+        "max": 41.6166,
+        "median": 27.665300000000002,
+        "min": 11.9476,
+        "p95": 41.6166,
+        "p99": 41.6166,
+        "raw": [
+          18.6997,
+          11.9476,
+          27.665300000000002,
+          33.3442,
+          34.5725,
+          13.1959,
+          40.3136,
+          41.6166,
+          20.1912,
+          25.7336
+        ],
+        "required_count": 10
+      },
+      "concurrent_total_ms": 43.049,
+      "content_equivalent": true,
+      "continuation_and_effects": {
+        "covered_by": [
+          "paneflow-host server::tests::a_follower_resumes_after_the_checkpoint_survives_idle_keepalives_and_sees_the_exit",
+          "paneflow-app terminal::ghostty_session::tests::repeated_attach_and_detach_with_filled_scrollback_retains_no_checkpoint_bytes"
+        ],
+        "note": "side-effect suppression on replay is asserted by the desktop test suite, not re-measured here"
+      },
+      "grid": "80x24",
+      "history_lines": 10000,
+      "peak_staged_bytes": 2231346,
+      "sequential_attach_ms": {
+        "count": 10,
+        "insufficient": false,
+        "max": 8.1866,
+        "median": 6.941199999999999,
+        "min": 5.823,
+        "p95": 8.1866,
+        "p99": 8.1866,
+        "raw": [
+          8.1866,
+          5.823,
+          7.1947,
+          6.941199999999999,
+          6.7933,
+          7.0728,
+          6.998200000000001,
+          6.6537999999999995,
+          6.7118,
+          6.7775
+        ],
+        "required_count": 10
+      },
+      "session": "f986c566-233c-4691-9637-db4d4df398ad",
+      "status": "measured"
+    },
+    "W03": {
+      "acceptance_grade": false,
+      "graphics_long_line_corpus": {
+        "reason": "the bounded graphics and long-line corpus is exercised by scripts/bench-terminal, not by this host-path run",
+        "status": "pending"
+      },
+      "idle_echo_ms": {
+        "count": 200,
+        "insufficient": false,
+        "max": 4.606599999999999,
+        "median": 0.17340000000000003,
+        "min": 0.134,
+        "p95": 0.2115,
+        "p99": 2.8961,
+        "raw": [
+          0.2989,
+          0.20129999999999998,
+          0.1593,
+          0.1877,
+          0.1896,
+          0.2069,
+          0.1784,
+          0.2115,
+          0.1757,
+          0.2074,
+          0.1747,
+          0.1761,
+          0.1887,
+          0.1986,
+          0.1903,
+          0.1766,
+          0.1914,
+          0.205,
+          0.20729999999999998,
+          0.1898,
+          0.1716,
+          0.1587,
+          0.16799999999999998,
+          0.1787,
+          0.1819,
+          0.1597,
+          0.16540000000000002,
+          0.1482,
+          0.1669,
+          0.17670000000000002,
+          0.1643,
+          0.1782,
+          0.1736,
+          0.1883,
+          0.1731,
+          0.1512,
+          0.1864,
+          0.1793,
+          0.16190000000000002,
+          0.1655,
+          0.17340000000000003,
+          0.1502,
+          0.15510000000000002,
+          0.18080000000000002,
+          0.5376,
+          0.16540000000000002,
+          0.16210000000000002,
+          0.1804,
+          0.16469999999999999,
+          0.1457,
+          0.1583,
+          0.1664,
+          0.1729,
+          0.1343,
+          0.1675,
+          0.164,
+          0.1754,
+          0.1701,
+          0.1771,
+          0.1571,
+          0.1673,
+          0.17909999999999998,
+          0.1487,
+          0.1444,
+          0.1553,
+          0.1548,
+          0.16970000000000002,
+          0.17450000000000002,
+          0.1628,
+          0.134,
+          0.1631,
+          0.15760000000000002,
+          0.17340000000000003,
+          0.1563,
+          0.16670000000000001,
+          0.2417,
+          0.1708,
+          0.1756,
+          0.1665,
+          0.1799,
+          0.2873,
+          0.15990000000000001,
+          0.1523,
+          0.1664,
+          0.1658,
+          0.1651,
+          0.16540000000000002,
+          0.1803,
+          0.2256,
+          0.16899999999999998,
+          0.1688,
+          0.17450000000000002,
+          0.23049999999999998,
+          4.606599999999999,
+          0.17200000000000001,
+          0.20350000000000001,
+          0.171,
+          0.1691,
+          0.1855,
+          0.1661,
+          0.1573,
+          0.1719,
+          0.1727,
+          0.16699999999999998,
+          0.1642,
+          0.17,
+          0.2023,
+          0.17550000000000002,
+          0.152,
+          0.1563,
+          0.18689999999999998,
+          0.18660000000000002,
+          0.17200000000000001,
+          0.1884,
+          0.2152,
+          0.1887,
+          0.18159999999999998,
+          0.19799999999999998,
+          0.1984,
+          0.1805,
+          0.1707,
+          0.1735,
+          0.1959,
+          0.1604,
+          0.1615,
+          0.17450000000000002,
+          0.20579999999999998,
+          0.1853,
+          0.1998,
+          0.19560000000000002,
+          0.179,
+          0.1817,
+          0.1707,
+          0.199,
+          0.18259999999999998,
+          0.2054,
+          0.18789999999999998,
+          0.1794,
+          0.18100000000000002,
+          0.17450000000000002,
+          0.1795,
+          0.1728,
+          3.5648,
+          0.159,
+          0.1834,
+          0.1529,
+          0.17670000000000002,
+          0.16679999999999998,
+          0.1815,
+          0.15669999999999998,
+          0.1806,
+          0.1772,
+          0.17229999999999998,
+          0.1679,
+          0.1512,
+          0.1562,
+          0.16870000000000002,
+          0.17220000000000002,
+          0.17479999999999998,
+          0.1775,
+          0.1702,
+          0.1802,
+          0.1821,
+          0.18330000000000002,
+          0.1807,
+          0.1581,
+          0.1744,
+          0.1596,
+          0.1674,
+          0.171,
+          0.17980000000000002,
+          0.1655,
+          0.1805,
+          0.145,
+          0.1688,
+          0.15880000000000002,
+          0.15789999999999998,
+          0.17029999999999998,
+          0.14479999999999998,
+          0.171,
+          0.16440000000000002,
+          0.1776,
+          0.1708,
+          0.1464,
+          0.1875,
+          0.2028,
+          0.1861,
+          0.16540000000000002,
+          0.1973,
+          0.1678,
+          0.1678,
+          2.8961,
+          0.1688,
+          0.1806,
+          0.17650000000000002,
+          0.1822,
+          0.15430000000000002,
+          0.1858,
+          0.1706,
+          0.1494
+        ],
+        "required_count": 200
+      },
+      "loaded_echo_ms": {
+        "count": 200,
+        "insufficient": false,
+        "max": 6.2038,
+        "median": 0.1584,
+        "min": 0.1285,
+        "p95": 0.2153,
+        "p99": 5.5494,
+        "raw": [
+          0.1812,
+          0.1472,
+          0.1395,
+          0.15919999999999998,
+          0.15330000000000002,
+          0.14809999999999998,
+          0.18080000000000002,
+          0.14320000000000002,
+          0.15,
+          0.131,
+          0.14880000000000002,
+          0.1484,
+          0.13899999999999998,
+          0.1435,
+          0.2495,
+          0.1975,
+          0.1733,
+          0.23479999999999998,
+          0.1605,
+          0.1738,
+          0.2397,
+          0.1558,
+          0.1403,
+          0.1789,
+          5.8177,
+          0.1285,
+          0.22540000000000002,
+          0.187,
+          0.1595,
+          0.2112,
+          0.1659,
+          0.1414,
+          0.13640000000000002,
+          0.14650000000000002,
+          0.1616,
+          0.15689999999999998,
+          0.1851,
+          0.1405,
+          0.17029999999999998,
+          0.1712,
+          0.16110000000000002,
+          0.1971,
+          0.1444,
+          0.1908,
+          0.2252,
+          0.1519,
+          0.1617,
+          0.212,
+          0.1617,
+          0.1467,
+          0.2026,
+          0.1574,
+          0.14100000000000001,
+          0.2183,
+          0.152,
+          0.1764,
+          0.14730000000000001,
+          0.14889999999999998,
+          0.1686,
+          0.1357,
+          0.13219999999999998,
+          0.156,
+          0.1688,
+          0.13770000000000002,
+          0.1641,
+          0.14679999999999999,
+          0.1369,
+          0.1847,
+          0.15919999999999998,
+          0.1704,
+          0.1546,
+          0.1419,
+          0.1514,
+          4.920100000000001,
+          0.1509,
+          0.15919999999999998,
+          0.161,
+          0.1502,
+          0.1587,
+          0.1519,
+          0.1528,
+          0.1657,
+          0.14559999999999998,
+          0.1536,
+          0.1545,
+          0.15009999999999998,
+          0.1553,
+          0.1415,
+          0.15330000000000002,
+          0.1629,
+          0.1624,
+          0.1772,
+          0.1574,
+          0.15660000000000002,
+          0.16349999999999998,
+          0.1606,
+          0.14980000000000002,
+          0.1522,
+          0.1595,
+          0.154,
+          0.1518,
+          0.1375,
+          0.17650000000000002,
+          0.17550000000000002,
+          0.1583,
+          0.1529,
+          0.1598,
+          0.1562,
+          0.1629,
+          0.158,
+          0.1556,
+          0.1496,
+          0.14300000000000002,
+          0.162,
+          0.2153,
+          0.1598,
+          0.16670000000000001,
+          0.1595,
+          0.1595,
+          0.14679999999999999,
+          0.1629,
+          0.14550000000000002,
+          5.5494,
+          0.1571,
+          0.1574,
+          0.17300000000000001,
+          0.1638,
+          0.1642,
+          0.18689999999999998,
+          0.15339999999999998,
+          0.161,
+          0.15919999999999998,
+          0.1626,
+          0.1549,
+          0.1632,
+          0.1657,
+          0.1838,
+          0.1691,
+          0.1587,
+          0.13999999999999999,
+          0.1701,
+          0.1786,
+          0.1532,
+          0.1521,
+          0.14479999999999998,
+          0.1573,
+          0.1841,
+          0.136,
+          0.17149999999999999,
+          0.157,
+          0.1683,
+          0.1618,
+          0.1587,
+          0.19,
+          0.16440000000000002,
+          0.1584,
+          0.1484,
+          0.14889999999999998,
+          0.1638,
+          0.1493,
+          0.1445,
+          0.1518,
+          0.1548,
+          0.1673,
+          0.1424,
+          0.1783,
+          0.1409,
+          0.161,
+          0.1606,
+          0.1505,
+          0.1583,
+          6.2038,
+          0.1436,
+          0.1985,
+          0.16210000000000002,
+          0.1503,
+          0.1646,
+          0.1496,
+          0.13369999999999999,
+          0.1495,
+          0.1438,
+          0.1474,
+          0.1527,
+          0.1839,
+          0.1629,
+          0.1821,
+          0.1655,
+          0.2145,
+          0.16090000000000002,
+          0.1669,
+          0.1519,
+          0.1766,
+          0.13640000000000002,
+          0.1539,
+          0.1472,
+          0.1427,
+          0.158,
+          0.15660000000000002,
+          0.1536,
+          0.1651
+        ],
+        "required_count": 200
+      },
+      "protocol": "smoke",
+      "single_flood": {
+        "bytes": 33554432,
+        "elapsed_s": 20.6292216,
+        "mib_per_s": 1.5511993109946227,
+        "received_bytes": 33554468
+      },
+      "status": "measured",
+      "streams": {
+        "count": 10,
+        "expected_bytes_each": 5242880.0,
+        "fairness_min_over_max": 0.9996675296652998,
+        "per_stream": [
+          {
+            "follower": null,
+            "received_bytes": 5241971,
+            "session": "a55e9383-1efd-4be5-a727-360b9b34f5fa"
+          },
+          {
+            "follower": null,
+            "received_bytes": 5241863,
+            "session": "5fdf15e6-7840-4fc4-9064-95c72128160f"
+          },
+          {
+            "follower": null,
+            "received_bytes": 5242573,
+            "session": "ecd7f902-e687-404e-8d7f-9dd00987ef92"
+          },
+          {
+            "follower": null,
+            "received_bytes": 5240830,
+            "session": "b0a43320-b6a7-4c8e-9db3-69d0cee81f3f"
+          },
+          {
+            "follower": null,
+            "received_bytes": 5242096,
+            "session": "884375e8-55cb-4973-9e67-9e62d1928758"
+          },
+          {
+            "follower": null,
+            "received_bytes": 5241885,
+            "session": "b02a413a-0507-4419-bb13-eccfe7af7c39"
+          },
+          {
+            "follower": null,
+            "received_bytes": 5241612,
+            "session": "054c4ab7-d048-4782-989c-06b22cde570f"
+          },
+          {
+            "follower": null,
+            "received_bytes": 5242157,
+            "session": "c0d79268-4da6-4593-a1fa-12fc13d4aaa5"
+          },
+          {
+            "follower": null,
+            "received_bytes": 5242173,
+            "session": "9e651faf-e919-40db-8439-82eff7aa7bd5"
+          },
+          {
+            "follower": null,
+            "received_bytes": 5241008,
+            "session": "9cbb84fd-746b-44d2-ab6e-f7778e77fdf5"
+          }
+        ],
+        "rate_bytes_per_s": 1048576,
+        "seconds": 5
+      },
+      "timestamp_boundary": "local monotonic clock from session.input acceptance to follower receipt of the published bytes; no display time"
+    },
+    "W04": {
+      "control_disconnect_mid_paste": {
+        "covered_by": [
+          "paneflow-host server::tests::a_connection_lost_before_the_input_ack_reports_unknown_delivery_without_a_resend",
+          "paneflow-host server::tests::repeated_disconnects_deliver_each_input_once_and_release_every_connection_thread"
+        ],
+        "manual_cells": [],
+        "note": "automated cases run in cargo test on every shipping triple; manual cells are executed per the qualification runbook and are pending until recorded",
+        "status": "automated_tests",
+        "workload": "W04"
+      },
+      "gui_force_quit": {
+        "covered_by": [],
+        "manual_cells": [
+          "desktop forced termination with live sessions: qualification runbook cell D-11"
+        ],
+        "note": "automated cases run in cargo test on every shipping triple; manual cells are executed per the qualification runbook and are pending until recorded",
+        "status": "manual",
+        "workload": "W04"
+      },
+      "output_eviction_and_generation_change": {
+        "covered_by": [
+          "paneflow-host server::tests::a_follower_resumes_after_the_checkpoint_survives_idle_keepalives_and_sees_the_exit",
+          "paneflow-app terminal::ghostty_session::tests::repeated_attach_and_detach_with_filled_scrollback_retains_no_checkpoint_bytes"
+        ],
+        "manual_cells": [],
+        "note": "automated cases run in cargo test on every shipping triple; manual cells are executed per the qualification runbook and are pending until recorded",
+        "status": "automated_tests",
+        "workload": "W04"
+      },
+      "paused_follower": {
+        "independent_inspect_ms": 0.1072,
+        "independent_reattach_ms": 0.1009,
+        "paused_ms": 300.3784,
+        "result": "pass",
+        "scope": "one follower pauses receipt; independent real IPC inspect and attachment complete; no queue-capacity claim",
+        "watchdog_s": 5
+      },
+      "saved_layout_restoration_after_host_loss": {
+        "covered_by": [
+          "paneflow-app terminal::host_link::tests::every_retained_end_state_restores_without_creating_a_process",
+          "paneflow-app app::hosted_sessions::tests::a_pane_restored_into_an_ended_session_resumes_without_an_attachment"
+        ],
+        "manual_cells": [],
+        "note": "automated cases run in cargo test on every shipping triple; manual cells are executed per the qualification runbook and are pending until recorded",
+        "status": "automated_tests",
+        "workload": "W04"
+      },
+      "worker_replacement": {
+        "reason": "PANEFLOW_BENCH_CONTROLLER was not supplied; worker crash, restart, and replacement cycles need the existing worker",
+        "status": "pending"
+      }
+    },
+    "W05": {
+      "acceptance_grade": false,
+      "batches": [
+        {
+          "batch": 0,
+          "elapsed_ms": 932.845,
+          "host_handles": 253,
+          "host_resident_bytes": 28626944,
+          "host_threads": 59,
+          "runtime_reclaimed_ms": 0.0282,
+          "sessions": 50,
+          "unreclaimed": null
+        },
+        {
+          "batch": 1,
+          "elapsed_ms": 935.4746,
+          "host_handles": 259,
+          "host_resident_bytes": 30584832,
+          "host_threads": 62,
+          "runtime_reclaimed_ms": 0.0297,
+          "sessions": 50,
+          "unreclaimed": null
+        },
+        {
+          "batch": 2,
+          "elapsed_ms": 939.4508999999999,
+          "host_handles": 259,
+          "host_resident_bytes": 29974528,
+          "host_threads": 62,
+          "runtime_reclaimed_ms": 0.0317,
+          "sessions": 50,
+          "unreclaimed": null
+        },
+        {
+          "batch": 3,
+          "elapsed_ms": 939.8266,
+          "host_handles": 259,
+          "host_resident_bytes": 30826496,
+          "host_threads": 62,
+          "runtime_reclaimed_ms": 0.0306,
+          "sessions": 50,
+          "unreclaimed": null
+        },
+        {
+          "batch": 4,
+          "elapsed_ms": 967.6197,
+          "host_handles": 255,
+          "host_resident_bytes": 28172288,
+          "host_threads": 60,
+          "runtime_reclaimed_ms": 0.0406,
+          "sessions": 50,
+          "unreclaimed": null
+        },
+        {
+          "batch": 5,
+          "elapsed_ms": 969.5578,
+          "host_handles": 255,
+          "host_resident_bytes": 28528640,
+          "host_threads": 60,
+          "runtime_reclaimed_ms": 0.0337,
+          "sessions": 50,
+          "unreclaimed": null
+        },
+        {
+          "batch": 6,
+          "elapsed_ms": 923.5525,
+          "host_handles": 261,
+          "host_resident_bytes": 31006720,
+          "host_threads": 63,
+          "runtime_reclaimed_ms": 0.0384,
+          "sessions": 50,
+          "unreclaimed": null
+        },
+        {
+          "batch": 7,
+          "elapsed_ms": 929.9299,
+          "host_handles": 259,
+          "host_resident_bytes": 30277632,
+          "host_threads": 62,
+          "runtime_reclaimed_ms": 0.0344,
+          "sessions": 50,
+          "unreclaimed": null
+        },
+        {
+          "batch": 8,
+          "elapsed_ms": 953.8322999999999,
+          "host_handles": 257,
+          "host_resident_bytes": 29204480,
+          "host_threads": 61,
+          "runtime_reclaimed_ms": 0.036000000000000004,
+          "sessions": 50,
+          "unreclaimed": null
+        },
+        {
+          "batch": 9,
+          "elapsed_ms": 941.7689,
+          "host_handles": 259,
+          "host_resident_bytes": 30507008,
+          "host_threads": 62,
+          "runtime_reclaimed_ms": 0.035500000000000004,
+          "sessions": 50,
+          "unreclaimed": null
+        }
+      ],
+      "cold_records_retained": 500,
+      "cold_retention_with_injected_time": {
+        "covered_by": [
+          "paneflow-host server::tests::records_past_their_retention_release_their_cold_text_under_an_injected_clock"
+        ],
+        "note": "retention aging cannot be injected over IPC; the unit suite drives trim_terminated_records_at with a clock",
+        "status": "automated_tests"
+      },
+      "final": {
+        "host_handles": 151,
+        "host_resident_bytes": 21475328,
+        "host_threads": 8
+      },
+      "protocol": "smoke",
+      "quiescence_s": 5.0,
+      "runtime_reclaimed_ms": {
+        "count": 10,
+        "insufficient": false,
+        "max": 0.0406,
+        "median": 0.0344,
+        "min": 0.0282,
+        "p95": 0.0406,
+        "p99": 0.0406,
+        "raw": [
+          0.0282,
+          0.0297,
+          0.0317,
+          0.0306,
+          0.0406,
+          0.0337,
+          0.0384,
+          0.0344,
+          0.036000000000000004,
+          0.035500000000000004
+        ],
+        "required_count": 10
+      },
+      "slope_bytes_per_batch_last_5": 215449.6,
+      "stale_callback_rejection": {
+        "covered_by": [
+          "paneflow-host host::tests::a_scan_waiting_to_persist_cannot_overwrite_a_restarted_generation",
+          "paneflow-host host::tests::a_scan_waiting_to_persist_cannot_recreate_a_removed_record",
+          "paneflow-host persistence::tests::a_revision_queued_before_removal_cannot_resurrect_the_record"
+        ],
+        "status": "automated_tests"
+      },
+      "status": "measured",
+      "warmed_baseline": {
+        "host_handles": 253,
+        "host_resident_bytes": 28626944,
+        "host_threads": 59
+      }
+    },
+    "W06": {
+      "capacity_faults": {
+        "covered_by": [
+          "paneflow-host host::tests::checkpoint_staging_admits_two_captures_and_the_third_waits_for_a_release",
+          "paneflow-host host::tests::oversized_terminal_dimensions_are_refused_before_reaching_the_engine",
+          "paneflow-host server::tests::streaming_followers_leave_reserved_slots_for_control_requests",
+          "paneflow-host runtime::tests::a_child_that_stops_reading_its_input_never_starves_the_control_path"
+        ],
+        "manual_cells": [],
+        "note": "automated cases run in cargo test on every shipping triple; manual cells are executed per the qualification runbook and are pending until recorded",
+        "status": "automated_tests",
+        "workload": "W06"
+      },
+      "lifecycle_faults": {
+        "covered_by": [
+          "paneflow-host host::tests::a_stop_during_the_launch_terminates_the_child_instead_of_publishing_it",
+          "paneflow-host host::tests::a_scan_waiting_to_persist_cannot_overwrite_a_restarted_generation",
+          "paneflow-host host::tests::a_scan_waiting_to_persist_cannot_recreate_a_removed_record",
+          "paneflow-host tests/ownership_probes.rs",
+          "paneflow-host tests/lifecycle.rs"
+        ],
+        "manual_cells": [],
+        "note": "automated cases run in cargo test on every shipping triple; manual cells are executed per the qualification runbook and are pending until recorded",
+        "status": "automated_tests",
+        "workload": "W06"
+      },
+      "stop_all_and_shutdown_rpc_failure": {
+        "covered_by": [
+          "paneflow-app app::quit_dialog tests",
+          "paneflow-host host::tests::shutdown_keeps_unsaved_final_state_owned_until_retry_succeeds"
+        ],
+        "manual_cells": [
+          "failed stop-all through the native quit dialog: qualification runbook cell D-09"
+        ],
+        "note": "automated cases run in cargo test on every shipping triple; manual cells are executed per the qualification runbook and are pending until recorded",
+        "status": "manual",
+        "workload": "W06"
+      },
+      "storage_faults": {
+        "covered_by": [
+          "paneflow-host persistence::tests::a_failed_final_revision_is_retained_and_retried_after_storage_recovers",
+          "paneflow-host persistence::tests::a_stalled_exclusive_job_times_out_the_waiter_without_losing_the_queue",
+          "paneflow-host persistence::tests::metadata_admission_respects_the_byte_budget_and_reservations",
+          "paneflow-host host::tests::a_restart_whose_persist_fails_restores_the_prior_record_without_a_stranded_start",
+          "paneflow-host host::tests::shutdown_keeps_unsaved_final_state_owned_until_retry_succeeds",
+          "paneflow-host host::tests::a_duplicate_hook_retries_failed_seed_persistence_without_another_notification"
+        ],
+        "manual_cells": [],
+        "note": "automated cases run in cargo test on every shipping triple; manual cells are executed per the qualification runbook and are pending until recorded",
+        "status": "automated_tests",
+        "workload": "W06"
+      }
+    },
+    "W07": {
+      "covered_by": [
+        "paneflow-app pane::tests::a_natural_exit_keeps_the_surface_as_a_passive_final_view",
+        "paneflow-app app::hosted_sessions::tests::every_unattached_session_is_listed_exactly_once_across_workspaces_and_the_fallback_group",
+        "paneflow-app app::hosted_sessions::tests::a_fallback_workspace_prefers_the_recorded_cwd_and_falls_back_to_home",
+        "paneflow-app app::sidebar::tests::a_disconnected_host_reads_as_stale_never_as_idle_or_finished"
+      ],
+      "manual_cells": [
+        "native desktop usage after idle, resize, paste, search: runbook cells D-01 to D-10"
+      ],
+      "note": "automated cases run in cargo test on every shipping triple; manual cells are executed per the qualification runbook and are pending until recorded",
+      "status": "manual",
+      "workload": "W07"
+    },
+    "W08": {
+      "reason": "the 8-hour endurance run is executed on the designated qualification machines per the runbook; this run records no endurance evidence",
+      "status": "pending"
+    }
+  }
+}

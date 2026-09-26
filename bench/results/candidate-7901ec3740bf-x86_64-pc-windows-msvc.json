@@ -1,0 +1,89 @@
+{
+  "schema_version": 1,
+  "candidate_sha": "7901ec3740bfcb952331b0de7c7dce772da69aae",
+  "dirty": false,
+  "target": "x86_64-pc-windows-msvc",
+  "profile": "release",
+  "recorded_at": "2026-09-26T12:53:56Z",
+  "preflight": "pass",
+  "failures": [],
+  "artifacts": {
+    "desktop": {
+      "path": "target/release/paneflow.exe",
+      "present": true,
+      "required": true,
+      "bytes": 75851776,
+      "sha256": "56ad90b0129a759135216c25f56120922c4f6e5e4d3ea38b4fa29f05e099b882"
+    },
+    "host": {
+      "path": "target/release/paneflow-host.exe",
+      "present": true,
+      "required": true,
+      "bytes": 8206848,
+      "sha256": "ddbee3f2fdce31803f846301cb8198f538b9fe59add3a4e7d7ec3db63ecc7e82"
+    },
+    "fixture": {
+      "path": "target/release/paneflow-session-fixture.exe",
+      "present": true,
+      "required": false,
+      "bytes": 248832,
+      "sha256": "f49866f396eac0ce1704e1cf0121e07808ad58d86519074d2741ad9b7019b750"
+    },
+    "helper.paneflow-shim": {
+      "path": "target/embed-build/x86_64-pc-windows-msvc/release-min/paneflow-shim.exe",
+      "present": true,
+      "required": true,
+      "bytes": 232448,
+      "sha256": "871845762f6b412a73cfc1100c6be7c58c28fb74c65d59012ff6df099d831c77"
+    },
+    "helper.paneflow-ai-hook": {
+      "path": "target/embed-build/x86_64-pc-windows-msvc/release-min/paneflow-ai-hook.exe",
+      "present": true,
+      "required": true,
+      "bytes": 231424,
+      "sha256": "11342fdad8575a0f1d440f0ee32d8792e72481e9f87841b614213b9e9ccc2f8d"
+    },
+    "helper.paneflow-mcp": {
+      "path": "target/embed-build/x86_64-pc-windows-msvc/release-min/paneflow-mcp.exe",
+      "present": true,
+      "required": true,
+      "bytes": 305152,
+      "sha256": "07578a3a4e628483a48b320f451afbac7b06b277be9e783df781994fe43eb79b"
+    },
+    "engine.manifest": {
+      "path": "native/libghostty/manifest.toml",
+      "present": true,
+      "required": true,
+      "bytes": 6439,
+      "sha256": "2f25bf04bc3929b6b56e5b232be1ed612e4cb1de8bc4529c0158988ba0b4c31f"
+    },
+    "engine.ghostty-vt-static.lib": {
+      "path": "native/libghostty/prebuilt/x86_64-pc-windows-msvc/lib/ghostty-vt-static.lib",
+      "present": true,
+      "required": true,
+      "bytes": 3284864,
+      "sha256": "7439dca76f35bb2ec005cd4bfa90c6926c65146bf027210925770ac9a9b2ed8d"
+    },
+    "conpty.manifest": {
+      "path": "native/conpty/manifest.json",
+      "present": true,
+      "required": true,
+      "bytes": 678,
+      "sha256": "ae67a924131d4f950fffab96ee17a23c64e301c6c13fc23ae33f266ab131edaa"
+    },
+    "conpty.dll": {
+      "path": "native/conpty/prebuilt/x86_64-pc-windows-msvc/conpty.dll",
+      "present": true,
+      "required": true,
+      "bytes": 109920,
+      "sha256": "39fba2713e2495117b1591ae8c32a3b904bea7aa66069cf7815e2844c76d75d8"
+    },
+    "conpty.openconsole": {
+      "path": "native/conpty/prebuilt/x86_64-pc-windows-msvc/OpenConsole.exe",
+      "present": true,
+      "required": true,
+      "bytes": 1066296,
+      "sha256": "b7fd936c2668b87b9ecf7b3366dc6568afc1c6f981874cba3e955a1c35cf8160"
+    }
+  }
+}
