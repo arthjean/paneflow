@@ -7,6 +7,9 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
 
 ### Changed
 
+- Folding or unfolding a workspace folder in the Workspaces sidebar animates
+  its tab rows over 180 ms and crossfades the folder icon instead of snapping,
+  and snaps as before when Settings > Appearance > Reduce motion is on.
 - Tailwind Dark paints Settings and dialog cards in its own zinc neutral
   instead of the shared gray, and lifts its `surface` and `subtle` colors one
   step above that card, so select triggers, steppers, secondary buttons, menus

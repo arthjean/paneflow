@@ -43,13 +43,12 @@ impl PaneFlowApp {
                     })
                 },
             )
-            .on_click(cx.listener(move |this, e: &ClickEvent, window, cx| {
+            .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
                 this.dismiss_transient_surfaces();
                 let was_renaming = this.renaming_tab.is_some();
                 this.commit_rename(cx);
                 this.select_workspace(idx, window, cx);
-                let is_double = matches!(e, ClickEvent::Mouse(m) if m.down.click_count >= 2);
-                if !was_renaming && !is_double {
+                if !was_renaming {
                     this.toggle_workspace_expanded(idx, cx);
                 }
                 cx.notify();
@@ -93,24 +92,36 @@ impl PaneFlowApp {
             .font_weight(FontWeight::MEDIUM)
             .child(self.sidebar_filter_label(title, cx));
 
-        let folder_path = if is_expanded {
-            "icons/folder-open.svg"
-        } else {
-            "icons/folder.svg"
+        let openness = self.sidebar_row_motion.borrow_mut().folder_openness(
+            ws_id,
+            is_expanded,
+            std::time::Instant::now(),
+        );
+        let folder_glyph = |path: &'static str, visibility: f32| {
+            div()
+                .absolute()
+                .inset_0()
+                .flex()
+                .items_center()
+                .justify_center()
+                .child(
+                    svg()
+                        .size(px(SIDEBAR_WORKSPACE_FOLDER_ICON_WIDTH))
+                        .flex_none()
+                        .path(path)
+                        .text_color(ui.muted.opacity(visibility)),
+                )
         };
         let disclosure = div()
+            .relative()
             .flex_none()
             .size(px(SIDEBAR_FOLDER_SLOT_WIDTH))
-            .flex()
-            .items_center()
-            .justify_center()
-            .child(
-                svg()
-                    .size(px(SIDEBAR_WORKSPACE_FOLDER_ICON_WIDTH))
-                    .flex_none()
-                    .path(folder_path)
-                    .text_color(ui.muted),
-            );
+            .when(openness < 1., |slot| {
+                slot.child(folder_glyph("icons/folder.svg", 1. - openness))
+            })
+            .when(openness > 0., |slot| {
+                slot.child(folder_glyph("icons/folder-open.svg", openness))
+            });
 
         let title_row = div()
             .flex()

@@ -402,6 +402,7 @@ to `icons/languages/`.
 | Pane header buttons | 120 ms | ease-out quint | Tint of the action buttons and the close glyph; the close slot itself toggles with the header hover |
 | Unfocused pane dim | 130 ms, scaled by distance | ease-out quint | Overlay of the terminal background |
 | Primary sidebar slide | 280 ms | cubic ease-out | Panel inset and gutter follow the width |
+| Workspaces rows | 180 ms | cubic ease-out | `SidebarRowMotion`: folding or unfolding a workspace folder, or filtering the rail, fades each tab row while its measured height grows or shrinks, the group gap below a folder follows the last row, and the folder glyph crossfades between `folder.svg` and `folder-open.svg`; a new toggle retargets from the current state, and a folder seen for the first time rests |
 | Menu reveal | 140 ms | cubic ease-out | `menu_reveal`: every menu, select popup, context menu, and submenu fades in from 0 while dropping 4 px into place; the pane palette's `New branch` form and the branch row it folds back to use the same reveal. No exit animation |
 | Toast | 180 ms in, 1440 ms hold, 180 ms out | ease-in-out | 8 px lift on entry, 8 px drop on exit |
 | Status spinner | 1 s loop | linear rotate | Title bar pill while a manual check runs, empty states |
@@ -409,10 +410,10 @@ to `icons/languages/`.
 | Startup splash | 2600 ms shimmer, 900 ms minimum on screen | linear | Letters at 0.54 alpha, shimmer to 0.82 |
 | Tooltip | 800 ms delay | none | `delayed_tooltip` |
 
-`reduce_motion` (Settings, Appearance) is honored in four places today:
+`reduce_motion` (Settings, Appearance) is honored in five places today:
 `animated_hover` settles instantly, the primary sidebar toggles without
-the slide, `menu_reveal` mounts menus at rest, and the sidebar thinking
-matrix holds its first frame. The dim fade, toasts, spinners, and the
+the slide, the Workspaces rows fold and filter without motion, `menu_reveal`
+mounts menus at rest, and the sidebar thinking matrix holds its first frame. The dim fade, toasts, spinners, and the
 shimmers keep animating. The config description promises a static frame for
 decorative animations; that promise is **Proposed** until the remaining
 animations read the flag. Feedback is never removed, only its interpolation.
@@ -1024,8 +1025,9 @@ already need the same behavior.
 - `window_decorations` and `window_backdrop` are read once at startup.
 - The Linux sidebar cannot reveal a native material; it blends the tint into
   the title bar color instead.
-- `reduce_motion` stops hover interpolation, the sidebar slide, menu reveals,
-  and the thinking matrix only; the other animations listed in 4.8 ignore it.
+- `reduce_motion` stops hover interpolation, the sidebar slide, the Workspaces
+  row motion, menu reveals, and the thinking matrix only; the other animations
+  listed in 4.8 ignore it.
 - The About dialog paints its own grays (`#202020`, `#232323`, `#252525`,
   `#343434`) with a border and a shadow instead of `UiColors`. It is
   **Migration**; the next touch moves it onto the squircle card and the

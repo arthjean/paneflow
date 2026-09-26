@@ -65,7 +65,7 @@ enum SidebarRow {
 }
 
 #[derive(Default)]
-pub(crate) struct SidebarFilterMotion {
+pub(crate) struct SidebarRowMotion {
     topology: Vec<(u64, Vec<u64>)>,
     query: String,
     initialized: bool,
@@ -74,9 +74,55 @@ pub(crate) struct SidebarFilterMotion {
     target: Vec<SidebarRow>,
     started: Option<std::time::Instant>,
     heights: std::collections::HashMap<SidebarRow, f32>,
+    folds: std::collections::HashMap<u64, FolderFold>,
 }
 
-impl SidebarFilterMotion {
+#[derive(Clone, Copy)]
+struct FolderFold {
+    expanded: bool,
+    from: f32,
+    started: Option<std::time::Instant>,
+}
+
+impl FolderFold {
+    fn openness_at(&self, now: std::time::Instant) -> f32 {
+        let to = if self.expanded { 1. } else { 0. };
+        let Some(started) = self.started else {
+            return to;
+        };
+        let progress = (now.duration_since(started).as_secs_f32() / 0.18).min(1.);
+        let eased = 1. - (1. - progress).powi(3);
+        self.from + (to - self.from) * eased
+    }
+
+    fn is_animating(&self, now: std::time::Instant) -> bool {
+        self.started
+            .is_some_and(|started| now.duration_since(started).as_secs_f32() < 0.18)
+    }
+}
+
+impl SidebarRowMotion {
+    fn folder_openness(&mut self, ws_id: u64, expanded: bool, now: std::time::Instant) -> f32 {
+        let fold = self.folds.entry(ws_id).or_insert(FolderFold {
+            expanded,
+            from: 0.,
+            started: None,
+        });
+        if fold.expanded != expanded {
+            fold.from = fold.openness_at(now);
+            fold.expanded = expanded;
+            fold.started = (!crate::ui_primitives::reduce_motion()).then_some(now);
+        }
+        if !fold.is_animating(now) {
+            fold.started = None;
+        }
+        fold.openness_at(now)
+    }
+
+    fn folds_animating(&self, now: std::time::Instant) -> bool {
+        self.folds.values().any(|fold| fold.is_animating(now))
+    }
+
     fn sample(&mut self, now: std::time::Instant) {
         let Some(started) = self.started else { return };
         let progress = (now.duration_since(started).as_secs_f32() / 0.18).min(1.);
@@ -105,17 +151,14 @@ impl SidebarFilterMotion {
         now: std::time::Instant,
     ) {
         self.sample(now);
-        if !self.initialized
-            || self.topology != topology
-            || crate::ui_primitives::reduce_motion()
-            || (self.query == query && self.target != target)
-        {
+        if !self.initialized || self.topology != topology || crate::ui_primitives::reduce_motion() {
             if self.topology != topology {
                 self.heights.clear();
+                self.folds.clear();
             }
             self.rows = target.iter().map(|row| (*row, 1.)).collect();
             self.started = None;
-        } else if self.query != query {
+        } else if self.query != query || self.target != target {
             self.from = self.rows.clone();
             self.rows = order
                 .iter()
@@ -553,7 +596,7 @@ impl PaneFlowApp {
             })
             .collect();
         let (animated_rows, animating) = {
-            let mut motion = self.sidebar_filter_motion.borrow_mut();
+            let mut motion = self.sidebar_row_motion.borrow_mut();
             motion.update(topology, &query, &rows, &order, std::time::Instant::now());
             (motion.rows.clone(), motion.started.is_some())
         };
@@ -572,14 +615,16 @@ impl PaneFlowApp {
         }
         let slots = sidebar_drop_slots(&rows, self.workspaces.len());
         for (k, (row, amount)) in animated_rows.iter().enumerate() {
-            let opens_group = matches!(row, SidebarRow::Folder(_))
-                && k.checked_sub(1)
-                    .is_some_and(|above| matches!(animated_rows[above].0, SidebarRow::Tab(..)));
-            let spacing = if opens_group {
-                SIDEBAR_GROUP_SPACING
-            } else {
-                SIDEBAR_ROW_SPACING
+            let group_opening = match row {
+                SidebarRow::Folder(_) => k
+                    .checked_sub(1)
+                    .and_then(|above| animated_rows.get(above))
+                    .filter(|(above, _)| matches!(above, SidebarRow::Tab(..)))
+                    .map_or(0., |(_, above_amount)| *above_amount),
+                SidebarRow::Tab(..) => 0.,
             };
+            let spacing =
+                SIDEBAR_ROW_SPACING + (SIDEBAR_GROUP_SPACING - SIDEBAR_ROW_SPACING) * group_opening;
             if query.is_empty() && !animating {
                 list = list.child(self.render_drop_divider(k, slots[k], spacing, ui, cx));
             } else {
@@ -610,7 +655,7 @@ impl PaneFlowApp {
                 gpui::canvas(
                     move |bounds, _, cx| {
                         let _ = app.update(cx, |this, _| {
-                            this.sidebar_filter_motion
+                            this.sidebar_row_motion
                                 .borrow_mut()
                                 .heights
                                 .insert(key, f32::from(bounds.size.height));
@@ -622,7 +667,7 @@ impl PaneFlowApp {
                 .size_full(),
             );
             let height = self
-                .sidebar_filter_motion
+                .sidebar_row_motion
                 .borrow()
                 .heights
                 .get(row)
@@ -657,6 +702,13 @@ impl PaneFlowApp {
                     .when(*amount < 1., |row| row.h(px(height * amount)))
                     .child(natural),
             );
+        }
+        if self
+            .sidebar_row_motion
+            .borrow()
+            .folds_animating(std::time::Instant::now())
+        {
+            window.request_animation_frame();
         }
         if query.is_empty()
             && !animating
@@ -699,10 +751,58 @@ impl PaneFlowApp {
 #[cfg(test)]
 mod tests {
     #[test]
-    fn sidebar_filter_motion_fades_out_and_removes_rows_at_completion() {
+    fn sidebar_row_motion_animates_a_folder_that_folds_and_unfolds() {
+        let now = std::time::Instant::now();
+        let folder = super::SidebarRow::Folder(0);
+        let tab = super::SidebarRow::Tab(0, 0);
+        let topology = vec![(1, vec![10])];
+        let order = [folder, tab];
+        let mut motion = super::SidebarRowMotion::default();
+        motion.update(topology.clone(), "", &[folder, tab], &order, now);
+        assert_eq!(motion.rows, vec![(folder, 1.), (tab, 1.)]);
+
+        let folded = now + std::time::Duration::from_millis(10);
+        motion.update(topology.clone(), "", &[folder], &order, folded);
+        assert!(motion.started.is_some());
+        motion.sample(folded + std::time::Duration::from_millis(90));
+        let (_, fading) = motion.rows[1];
+        assert!(fading > 0. && fading < 1.);
+        motion.sample(folded + std::time::Duration::from_millis(180));
+        assert_eq!(motion.rows, vec![(folder, 1.)]);
+
+        let unfolded = folded + std::time::Duration::from_millis(200);
+        motion.update(topology, "", &[folder, tab], &order, unfolded);
+        assert_eq!(motion.rows, vec![(folder, 1.), (tab, 0.)]);
+        motion.sample(unfolded + std::time::Duration::from_millis(180));
+        assert_eq!(motion.rows, vec![(folder, 1.), (tab, 1.)]);
+    }
+
+    #[test]
+    fn folder_icon_crossfades_on_toggle_and_rests_on_first_sight() {
+        let now = std::time::Instant::now();
+        let mut motion = super::SidebarRowMotion::default();
+        assert_eq!(motion.folder_openness(7, true, now), 1.);
+        assert!(!motion.folds_animating(now));
+
+        let folded = now + std::time::Duration::from_millis(10);
+        assert_eq!(motion.folder_openness(7, false, folded), 1.);
+        assert!(motion.folds_animating(folded));
+        let midway = folded + std::time::Duration::from_millis(90);
+        let fading = motion.folder_openness(7, false, midway);
+        assert!(fading > 0. && fading < 1.);
+
+        let reopened = motion.folder_openness(7, true, midway);
+        assert_eq!(reopened, fading);
+        let settled = midway + std::time::Duration::from_millis(180);
+        assert_eq!(motion.folder_openness(7, true, settled), 1.);
+        assert!(!motion.folds_animating(settled));
+    }
+
+    #[test]
+    fn sidebar_row_motion_fades_out_and_removes_rows_at_completion() {
         let now = std::time::Instant::now();
         let row = super::SidebarRow::Folder(0);
-        let mut motion = super::SidebarFilterMotion {
+        let mut motion = super::SidebarRowMotion {
             rows: vec![(row, 1.)],
             from: vec![(row, 1.)],
             started: Some(now),
@@ -716,10 +816,10 @@ mod tests {
     }
 
     #[test]
-    fn sidebar_filter_motion_reverses_from_current_visibility() {
+    fn sidebar_row_motion_reverses_from_current_visibility() {
         let now = std::time::Instant::now();
         let row = super::SidebarRow::Folder(0);
-        let mut motion = super::SidebarFilterMotion {
+        let mut motion = super::SidebarRowMotion {
             rows: vec![(row, 1.)],
             from: vec![(row, 1.)],
             started: Some(now),
