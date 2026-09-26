@@ -1220,6 +1220,45 @@ fn launch_env_identifies_the_durable_session_and_drops_forbidden_keys() {
     );
 }
 
+#[test]
+fn a_restart_after_an_upgrade_replaces_the_persisted_helper_directory_of_the_old_version() {
+    let home = std::env::temp_dir().join("paneflow-upgrade-home");
+    let stale = home.join("cache").join("bin").join("0.16.0");
+    let older = home.join("cache").join("bin").join("0.15.1");
+    let current = home
+        .join("cache")
+        .join("bin")
+        .join(crate::helpers::HELPER_VERSION);
+    let user_dir = PathBuf::from("/usr/local/bin");
+    let persisted_path =
+        std::env::join_paths([&stale, &stale, &older, &user_dir]).expect("joinable PATH");
+    let persisted = BTreeMap::from([
+        ("PANEFLOW_BIN_DIR".to_string(), stale.display().to_string()),
+        (
+            "PATH".to_string(),
+            persisted_path.to_string_lossy().into_owned(),
+        ),
+    ]);
+
+    let env = launch_env(
+        &SessionId::new(),
+        SessionGeneration::FIRST.next(),
+        None,
+        &home,
+        Path::new("/run/paneflow-host.sock"),
+        Some(&current),
+        &persisted,
+    );
+
+    assert_eq!(
+        env.get("PANEFLOW_BIN_DIR").map(PathBuf::from),
+        Some(current.clone()),
+        "the running host owns the helper directory, a persisted one is never replayed"
+    );
+    let path: Vec<PathBuf> = std::env::split_paths(env.get("PATH").expect("PATH")).collect();
+    assert_eq!(path, vec![current, user_dir]);
+}
+
 fn unverified_record(host: &SessionHost, reason: &str) -> SessionId {
     let session = SessionId::new();
     let manifest = SessionManifest {

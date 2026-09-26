@@ -135,16 +135,23 @@ pub fn launch_env(
         generation.to_string(),
     );
     env.insert("PANEFLOW_HOME".to_string(), home.display().to_string());
-    if let Some(helper_dir) = helper_dir
-        && !env.contains_key("PANEFLOW_BIN_DIR")
-    {
-        env.insert(
-            "PANEFLOW_BIN_DIR".to_string(),
-            helper_dir.display().to_string(),
-        );
+    if let Some(helper_dir) = helper_dir {
+        let retired = env
+            .insert(
+                "PANEFLOW_BIN_DIR".to_string(),
+                helper_dir.display().to_string(),
+            )
+            .map(PathBuf::from);
         let inherited = std::env::var("PATH").ok();
         let existing = env.get("PATH").map(String::as_str).or(inherited.as_deref());
-        if let Some(path) = crate::helpers::prepend_to_path(existing, helper_dir) {
+        let retired: Vec<&Path> = retired
+            .iter()
+            .map(PathBuf::as_path)
+            .chain([helper_dir])
+            .collect();
+        let pruned =
+            existing.and_then(|path| crate::helpers::without_helper_dirs(path, home, &retired));
+        if let Some(path) = crate::helpers::prepend_to_path(pruned.as_deref(), helper_dir) {
             env.insert("PATH".to_string(), path);
         }
     }

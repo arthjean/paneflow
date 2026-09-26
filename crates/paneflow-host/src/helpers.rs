@@ -19,12 +19,15 @@ pub fn file_name(stem: &str) -> String {
 
 pub fn helper_candidates(host_exe: Option<&Path>, home: &Path) -> Vec<PathBuf> {
     let mut candidates = Vec::new();
-    if let Some(dir) = host_exe.and_then(Path::parent) {
+    let exe_dir = host_exe.and_then(Path::parent);
+    if let Some(dir) = exe_dir {
         candidates.push(dir.join("bin"));
+    }
+    candidates.push(versioned_helper_root(home).join(HELPER_VERSION));
+    if let Some(dir) = exe_dir {
         candidates.push(dir.to_path_buf());
     }
     candidates.push(home.join("bin"));
-    candidates.push(home.join("cache").join("bin").join(HELPER_VERSION));
     candidates.dedup();
     candidates
 }
@@ -50,6 +53,23 @@ pub fn resolve_hook_dir(host_exe: Option<&Path>, home: &Path) -> Result<PathBuf,
 
 pub fn current_hook_dir(home: &Path) -> Result<PathBuf, HelperMissing> {
     resolve_hook_dir(std::env::current_exe().ok().as_deref(), home)
+}
+
+fn versioned_helper_root(home: &Path) -> PathBuf {
+    home.join("cache").join("bin")
+}
+
+pub fn without_helper_dirs(path: &str, home: &Path, retired: &[&Path]) -> Option<String> {
+    let versioned_root = versioned_helper_root(home);
+    let kept: Vec<PathBuf> = std::env::split_paths(path)
+        .filter(|component| {
+            component.parent() != Some(versioned_root.as_path())
+                && !retired.iter().any(|dir| component == dir)
+        })
+        .collect();
+    std::env::join_paths(kept)
+        .ok()
+        .map(|joined| joined.to_string_lossy().into_owned())
 }
 
 pub fn prepend_to_path(existing: Option<&str>, dir: &Path) -> Option<String> {
@@ -106,6 +126,38 @@ mod tests {
         assert_eq!(error.wanted, file_name(AI_HOOK_STEM));
         assert_eq!(error.searched.len(), 2);
         assert!(error.to_string().contains("searched"));
+    }
+
+    #[test]
+    fn the_versioned_shim_directory_wins_over_the_hook_only_state_directory() {
+        let root = tempfile::tempdir().unwrap();
+        let exe = root.path().join("usr").join(file_name("paneflow-host"));
+        touch(&exe);
+        let home = root.path().join("home");
+        touch(&home.join("bin").join(file_name(AI_HOOK_STEM)));
+        let versioned = home.join("cache").join("bin").join(HELPER_VERSION);
+        touch(&versioned.join(file_name(AI_HOOK_STEM)));
+
+        assert_eq!(resolve_hook_dir(Some(&exe), &home).unwrap(), versioned);
+    }
+
+    #[test]
+    fn every_versioned_helper_directory_and_each_retired_one_leave_the_path() {
+        let home = Path::new("/home/u/.paneflow");
+        let old = home.join("cache").join("bin").join("0.16.0");
+        let retired = PathBuf::from("/opt/old-paneflow/bin");
+        let path = std::env::join_paths([
+            old.as_path(),
+            Path::new("/usr/bin"),
+            retired.as_path(),
+            home.join("cache").as_path(),
+        ])
+        .unwrap();
+        let pruned = without_helper_dirs(&path.to_string_lossy(), home, &[&retired]).unwrap();
+        assert_eq!(
+            std::env::split_paths(&pruned).collect::<Vec<_>>(),
+            vec![PathBuf::from("/usr/bin"), home.join("cache")]
+        );
     }
 
     #[test]

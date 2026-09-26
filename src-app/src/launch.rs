@@ -341,6 +341,9 @@ pub(crate) fn run() {
     if let Err(error) = ai_hooks::extract::ensure_ai_hook_extracted() {
         log::warn!("paneflow: AI hook extraction failed ({error:#})");
     }
+    if let Err(error) = ai_hooks::extract::ensure_binaries_extracted() {
+        log::warn!("paneflow: agent shim extraction failed ({error:#})");
+    }
     startup_trace::mark("bridge_extracted");
 
     host_bootstrap::start_in_background();
