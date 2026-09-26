@@ -5,16 +5,141 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
 
 ## [Unreleased]
 
+## [0.17.0] - 2026-09-26
+
+Agent status moves into a per-home worker, `paneflow serve`, that reads the
+lifecycle hooks Claude Code and Codex report, rebuilds its state from disk and
+decides which desktop notifications fire. Hooks are installed once per machine
+instead of on every launch. Persistent sessions keep owning every process they
+started until their fate is proven, a finished shell leaves its final output
+on screen, and nothing restarts on its own. The terminal gains automatic text
+contrast and a palette derived from the theme, and the command palette is
+rebuilt.
+
+### Added
+
+- A per-home background worker started by the desktop as `paneflow serve run`.
+  It owns no terminal: it reduces hook events to one state per session,
+  rebuilds that state from the session manifests and hook seeds when it
+  restarts, and decides desktop notifications. The desktop adopts a worker of
+  the same build and replaces any other. New files `serve/owner.lock`,
+  `serve/instance.json`, `serve/serve.log` and, on Windows,
+  `serve/runtime/<sha256>/` under the state home; endpoint
+  `paneflow-serve-<fingerprint>.sock` or
+  `\\.\pipe\paneflow-serve-<fingerprint>`, owner-only. The sidebar shows the
+  error with Retry when the worker cannot start.
+- `paneflow serve start|status|stop [--drain-ms <ms>]` and `paneflow sessions
+  [--json] [--follow]`, `paneflow sessions ack <session-id>...`, which read
+  the worker's projection without a window.
+- One-time hook integrations for Claude Code and Codex: Settings > Agents
+  (Install hooks on the agent row), `paneflow integrations
+  list|install|remove` and `paneflow hooks setup|status|uninstall`. Installing
+  writes the global hook config (`$CLAUDE_CONFIG_DIR/settings.json` or
+  `~/.claude/settings.json`, `$CODEX_HOME/hooks.json` or
+  `~/.codex/hooks.json`), registers the `paneflow` MCP server and writes a
+  marker under `<home>/integrations/`. The hooks are inert outside a
+  Paneflow-hosted pane, Codex asks to trust them once with `/hooks`, and the
+  worker adopts Paneflow entries a previous `paneflow hooks setup` wrote.
+- Esc interrupts in Claude Code, Gemini CLI and Muse Code panes settle the
+  pane to idle as canceled with no finished notification (a lone Esc after 150
+  ms). Claude Code subagents keep the pane busy until the last one ends. A
+  turn whose Stop never arrives settles to idle after 5 minutes without a
+  screen change.
+- Claude Code and Codex numbered approval menus mark the session as needing
+  input in the sidebar; `menu_attention_detection` (default `true`) turns it
+  off and is read when the worker starts.
+- Automatic terminal contrast: `terminal.minimum_contrast` defaults to Auto,
+  APCA Lc 60, and corrects only colors a program chose (truecolor and palette
+  indices 16 to 255), keeping their hue in OKLCH and snapping a drained color
+  to the nearest theme color. Settings > Terminal > Minimum contrast and a
+  Minimum contrast palette command offer Auto, Off, 45, 60, 75 and 90.
+- Palette indices 16 to 255 come from a palette generated from the active
+  theme instead of the fixed xterm cube, on screen and in OSC 4 replies.
+- The command palette is rebuilt from a catalog of 104 commands shown when the
+  focused pane can run them, with nested pickers that preview and save a
+  preference as you arrow through them, in-place toggles, a real text field
+  and match highlighting, and focus restored on close.
+- Closing a tab records it for undo: a toast with an Undo button, and
+  `Cmd/Ctrl+Shift+T` restores the most recently closed tab or pane with its
+  layout, directories and scrollback as new shells.
+- `focus_workspaces_sidebar` (`Ctrl+Alt+S`, `Cmd+Option+S` on macOS) and
+  keyboard navigation of the Workspaces sidebar: arrows, Home, End, Enter,
+  Space, Left, Right, F2, Delete, Alt+Up, Alt+Down and Escape, with a screen
+  reader tree.
+- Ended hosted sessions keep up to 512 KiB of their final screen and
+  scrollback in `<home>/host/session-data/<id>/final-output.txt` (64 MiB per
+  home, oldest evicted), shown read-only when the session is reopened.
+- An Other sessions sidebar group lists sessions no open workspace claims,
+  even with no workspace open, and opening one attaches without starting a
+  shell.
+- `paneflow host status` reports a `resources` object with queues, budgets,
+  connections and per-session usage.
+
 ### Changed
 
+- A shell or command that exits, with any exit code, leaves its pane, detached
+  window or Changes dock tab open as a read-only final view. Typing `exit` no
+  longer closes the pane.
+- Restoring a layout or clicking an ended session never starts a process. The
+  pane bar offers Restart, New terminal, Attach or Retry, and an ended session
+  restarts from the sidebar through Resume session.
+- The host tracks every process of a session and reports it exited only when
+  the shell and its tracked descendants are gone; a background job that
+  outlives the shell keeps it unverified, and Stop terminates tracked
+  descendants (pidfd on Linux, audit-token signals on macOS, retained handles
+  on Windows).
+- A host of another build is no longer retired: one matching the protocol and
+  terminal engine is attached, and an incompatible one is left running with
+  Retry and Stop host and restart on its panes.
+- Stop everything on quit or update also stops owned sessions no pane shows,
+  within 5 s, and keeps the window open with Retry, Keep running and quit and
+  Cancel when a stop cannot be confirmed. The Windows MSI update goes through
+  that dialog, and the relay defers while the host still serves or its binary
+  is locked and passes `MSIRESTARTMANAGERCONTROL=Disable` to msiexec.
+- Session records are written off the terminal path and critical and final
+  states are synced and retried until storage recovers. The host answers
+  explicit errors past 4,194,304 cells per terminal, 2 MiB of queued input, 2
+  concurrent checkpoint captures within 256 MiB, 120 streaming connections and
+  64 KiB control replies.
+- Idle host cost drops: followers wait instead of polling every 15 ms, the
+  runtime blocks on deadlines instead of a 20 ms tick, quiet sessions skip the
+  viewport scan, and on Linux glibc the host caps malloc arenas at 2 unless
+  `MALLOC_ARENA_MAX` is set and trims freed memory when a session retires.
+- Claude Code and Codex report hook status only once their integration is
+  installed; the shim no longer writes hook files at each launch, and the
+  other agents are detection only. Agent state is no longer inferred from
+  terminal progress or notification text.
+- `paneflow hooks setup` installs the integrations, `uninstall` also removes
+  the `paneflow` MCP entry, and `status` lists all 18 runtimes and always
+  exits 0. Installing or removing keeps a user handler that shares a hook
+  group with Paneflow's.
+- Finished notifications fire only for a completed turn, needs input
+  notifications at most once per 10 s, and the body is the agent's last
+  message up to 200 characters.
+- On Windows the pane palette, New pane menu and welcome screen list only
+  Claude Code, Codex, Amp, Gemini and Copilot, the runtimes that declare
+  Windows support.
+- Without a window, `paneflow ps` and `paneflow status` report `unknown` for
+  hooked agents; `paneflow sessions` reads the worker.
+- Codex rows in the Sessions sidebar come from Paneflow-hosted sessions
+  reported by the integration, within the host retention window. Gemini
+  sessions are read and resumed by the trailing session id of each `gemini
+  --list-sessions` line.
+- Light themes darken their added, deleted and error hues and muted text to
+  clear 4.5:1, and 38 preset colors are retuned to clear APCA tiers, notably
+  red, blue, magenta and bright black on the dark presets.
 - Folding or unfolding a workspace folder in the Workspaces sidebar animates
   its tab rows over 180 ms and crossfades the folder icon instead of snapping,
   and snaps as before when Settings > Appearance > Reduce motion is on.
+  Workspace groups are 10 px apart, long titles show in full in a tooltip and
+  menu labels use sentence case.
+- The Changes dock slides closed over 280 ms instead of snapping, except when
+  maximized or under Reduce motion.
 - **Help > System Info** is redesigned: the build line sits under the title
   beside the app icon, the rest of the report is grouped into System and
-  Rendering panels, and `Copy` is the primary action, in the app's solid blue. Escape closes the dialog,
-  Enter copies the report, and focus returns to the pane that had it. The
-  copied block is unchanged.
+  Rendering panels, and `Copy` is the primary action, in the app's solid blue.
+  Escape closes the dialog, Enter copies the report, and focus returns to the
+  pane that had it. The copied block is unchanged.
 - **Help > About Paneflow** is redesigned on the same card as System Info and
   follows the active theme, so it no longer stays dark under a light theme. It
   shows the version, links to the website, the source code, and the release
@@ -23,27 +148,41 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
   instead of the shared gray, and lifts its `surface` and `subtle` colors one
   step above that card, so select triggers, steppers, secondary buttons, menus
   opened over a card, and the System Info panels no longer vanish into it.
-- The command palette is restyled: a filled search field with no border,
-  29 px rows on a rounded selection pill, 14 px labels, and a glyph beside the
+- The command palette is restyled: a filled search field with no border, 29 px
+  rows on a rounded selection pill, 14 px labels, and a glyph beside the
   commands that have one, such as Split, Pane layout, Theme, and Settings.
-- A custom `PANEFLOW_HOME` now owns its own IPC endpoint,
-  `<runtime dir>/paneflow-ipc-<fingerprint>.sock` or
-  `\\.\pipe\paneflow-ipc-<fingerprint>`, instead of sharing the default socket,
-  so an instance on an isolated home runs beside the normal one. The CLI and
-  the MCP bridge find it from `PANEFLOW_HOME`. Such an instance ignores a
-  `PANEFLOW_SOCKET_PATH` that points elsewhere unless
+- Settings > Agents lists the agents found on PATH with their hook state
+  inline and folds the others into a Not installed card; Settings cards use 16
+  px horizontal padding.
+- Terminal file links open in the editor chosen in Settings
+  (`external_editor`), and `visual_studio` is accepted by the schema. Changes
+  dock file tabs use the Files sidebar icons.
+- macOS `option_as_meta: true` makes Option plus a letter send Meta and
+  applies on config reload. Terminals no longer answer Glyph Protocol queries,
+  and a Linux middle-click paste reaches the engine as the primary selection.
+- Shell integration no longer emits OSC 133 D, and the PowerShell prompt no
+  longer calls `Get-History` on every prompt.
+- Secondary, destructive and solid buttons report the Button role and their
+  label to assistive technology.
+- A custom `PANEFLOW_HOME` now owns its own IPC endpoint, `<runtime
+  dir>/paneflow-ipc-<fingerprint>.sock` or
+  `\\.\pipe\paneflow-ipc-<fingerprint>`, instead of sharing the default
+  socket, so an instance on an isolated home runs beside the normal one. The
+  CLI and the MCP bridge find it from `PANEFLOW_HOME`. Such an instance
+  ignores a `PANEFLOW_SOCKET_PATH` that points elsewhere unless
   `PANEFLOW_ALLOW_SOCKET_OVERRIDE=1` is also set.
 - A tab title saved with the retired `auto` source in `session.json` now
   restores as a title the user set.
 - The repair that moves a workspace rooted at a bare terminal now runs only
   when a version 1 `session.json` is migrated; a workspace saved by a current
   build is restored where the user opened it.
+- Host `agent.event` senders must pass `runtime_generation`.
 
 ### Removed
 
 - The `context` field of `surface.split` and of `workspace.create` pane specs,
-  which staged a context file for the pane. Pass values through `env`
-  instead; a request that still sends `context` has it ignored.
+  which staged a context file for the pane. Pass values through `env` instead;
+  a request that still sends `context` has it ignored.
 - The `agent_panel.max_content_width`, `agent_panel.thinking_display`,
   `agent_panel.profiles`, `agent_panel.default_profile`, and
   `tool_permissions` keys of `paneflow.json`, which no build read. A config
@@ -55,11 +194,13 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
 - The Launch Pad modal, its `open_launch_pad` action and the
   `Cmd/Ctrl+Shift+L` default binding. Creating a branch, its worktree and an
   agent pane in one step lives in the "New pane" palette's **New branch…**
-  form and in the tab context menu, which carry the same branch name, base
-  and worktree options; the optional prompt pre-fill the modal carried has no
+  form and in the tab context menu, which carry the same branch name, base and
+  worktree options; the optional prompt pre-fill the modal carried has no
   equivalent there. A `shortcuts` entry that still names `open_launch_pad` is
   skipped with a warning in the log and no longer appears in Settings >
   Keyboard Shortcuts, so it has to be removed from `paneflow.json` by hand.
+- Per-launch hook injection by the shim, and the 400 ms poll of
+  `~/.claude/sessions` that stood in for Claude Code hooks.
 
 ### Fixed
 
@@ -73,13 +214,30 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
   replaced its worker; it now keeps its own home and socket. A desktop started
   from a pane also stops passing that pane's session and surface markers down
   to its own terminals.
-- macOS: IPC replies larger than 8 KiB, such as `surface.list` with many
-  panes or a long `surface.read`, were cut short. A socket accepted by the
-  desktop inherited the listener's nonblocking mode, so the write stopped once
-  the socket buffer filled.
-- macOS: a background process started just before a session's shell exited
-  now stays owned by that session, so stopping the session also stops it.
+- macOS: IPC replies larger than 8 KiB, such as `surface.list` with many panes
+  or a long `surface.read`, were cut short. A socket accepted by the desktop
+  inherited the listener's nonblocking mode, so the write stopped once the
+  socket buffer filled.
+- macOS: a background process started just before a session's shell exited now
+  stays owned by that session, so stopping the session also stops it.
+- The host no longer crashes on hook text over 4 KiB that contains multibyte
+  characters.
+- The first keystroke after a minute of idle in a persistent terminal is no
+  longer lost: host control connections no longer time out after 60 s.
+- Windows: a recycled process id no longer makes an unrelated process count as
+  a session descendant and hold the session unverified.
+- Unix: a host started on a socket another live host serves refuses instead of
+  unlinking it.
+- `surface.rename` accepts the documented `name` parameter.
+- With no window running, CLI and MCP calls that address a pane by
+  `surface_id` reach the listed pane.
+- Windows: the Gemini CLI, Kiro, Grok and OpenCode session lists find `.cmd`
+  shims through `PATHEXT`.
 
+### Security
+
+- Windows: the host pipe is owner-only, dropping the SYSTEM and Administrators
+  grants. The worker endpoint is owner-only on every platform.
 ## [0.16.0] - 2026-09-18
 
 Terminal sessions move out of the window and into `paneflow-host`, a detached

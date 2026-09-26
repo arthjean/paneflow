@@ -63,6 +63,18 @@
   <content_rating type="oars-1.1" />
 
   <releases>
+    <release version="0.17.0" date="2026-09-26">
+      <description>
+        <p>Agent status moves into a per-home worker, paneflow serve, that reads the lifecycle hooks Claude Code and Codex report, rebuilds its state from disk and decides which desktop notifications fire. Hooks are installed once per machine instead of on every launch, persistent sessions keep owning every process they started, a finished shell leaves its final output on screen, and nothing restarts on its own.</p>
+        <ul>
+          <li>One-time hook integrations for Claude Code and Codex from Settings, Agents or paneflow integrations, plus paneflow serve and paneflow sessions to read agent status without a window</li>
+          <li>Ended sessions keep their final output, an Other sessions group lists unclaimed sessions, and quitting or updating stops every owned session under one bounded, reported pass</li>
+          <li>Automatic terminal contrast on by default at APCA Lc 60, and palette indices 16 to 255 derived from the active theme</li>
+          <li>A rebuilt command palette of 104 context-aware commands, reopening a closed tab with Ctrl+Shift+T, and keyboard navigation of the Workspaces sidebar</li>
+          <li>The Launch Pad, per-launch hook injection and five unread config keys are removed; Windows launch surfaces list the five agents that support Windows</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.16.0" date="2026-09-18">
       <description>
         <p>Terminal sessions move into paneflow-host, a detached process that owns the PTYs and the terminal state, so quitting, closing a window or updating no longer ends the shells and agents running inside Paneflow. The desktop reattaches with screen and scrollback, every restored pane resumes at startup, the sidebar lists sessions as first-class objects, and Review mode is gone.</p>
