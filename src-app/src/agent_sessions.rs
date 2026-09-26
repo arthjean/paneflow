@@ -582,6 +582,32 @@ fn parse_iso8601_to_unix_secs(iso: &str) -> Option<i64> {
     days_since_epoch.checked_mul(86_400)?.checked_add(hms)
 }
 
+pub(crate) fn unix_millis_to_iso8601(millis: u64) -> String {
+    let secs = millis / 1_000;
+    let seconds_of_day = secs % 86_400;
+    let days_since_epoch = (secs / 86_400) as i64;
+    let shifted = days_since_epoch + 719_468;
+    let era = shifted.div_euclid(146_097);
+    let doe = shifted.rem_euclid(146_097);
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let month_index = (5 * doy + 2) / 153;
+    let day = doy - (153 * month_index + 2) / 5 + 1;
+    let month = if month_index < 10 {
+        month_index + 3
+    } else {
+        month_index - 9
+    };
+    let year = yoe + era * 400 + i64::from(month <= 2);
+    format!(
+        "{year:04}-{month:02}-{day:02}T{:02}:{:02}:{:02}.{:03}Z",
+        seconds_of_day / 3_600,
+        seconds_of_day % 3_600 / 60,
+        seconds_of_day % 60,
+        millis % 1_000
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -633,6 +659,21 @@ mod tests {
     fn iso8601_parses_z() {
         let secs = parse_iso8601_to_unix_secs("2025-01-15T12:30:45Z").unwrap();
         assert_eq!(secs, 1_736_944_245);
+    }
+
+    #[test]
+    fn unix_millis_format_as_iso8601_the_parser_reads_back() {
+        assert_eq!(unix_millis_to_iso8601(0), "1970-01-01T00:00:00.000Z");
+        assert_eq!(
+            unix_millis_to_iso8601(1_736_944_245_123),
+            "2025-01-15T12:30:45.123Z"
+        );
+        let leap_day = unix_millis_to_iso8601(1_709_251_199_000);
+        assert_eq!(leap_day, "2024-02-29T23:59:59.000Z");
+        assert_eq!(parse_iso8601_to_unix_secs(&leap_day), Some(1_709_251_199));
+        assert!(
+            unix_millis_to_iso8601(1_709_251_199_000) < unix_millis_to_iso8601(1_736_944_245_123)
+        );
     }
 
     #[test]

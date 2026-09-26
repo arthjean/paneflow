@@ -87,7 +87,7 @@ fn session_from_manifest(path: &Path, cwd: &str) -> Option<SessionMeta> {
     Some(SessionMeta {
         agent: SessionAgent::Codex,
         session_id: provider_session_id,
-        timestamp: format!("{:020}", agent.received_at_ms),
+        timestamp: crate::agent_sessions::unix_millis_to_iso8601(agent.received_at_ms),
         cwd: recorded_cwd.to_string(),
         summary,
     })
@@ -144,6 +144,7 @@ mod tests {
             sessions[0].summary.as_deref(),
             Some("Implement the runtime system")
         );
+        assert_eq!(sessions[0].timestamp, "1970-01-01T00:00:00.042Z");
     }
 
     #[test]
