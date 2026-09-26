@@ -650,6 +650,16 @@ pub fn select_item_tinted(
     ui: crate::theme::UiColors,
     selected_bg: Hsla,
 ) -> Stateful<Div> {
+    select_item_shaped(id, selected, ui, selected_bg, ROW_RADIUS)
+}
+
+pub fn select_item_shaped(
+    id: impl Into<ElementId>,
+    selected: bool,
+    ui: crate::theme::UiColors,
+    selected_bg: Hsla,
+    radius: Pixels,
+) -> Stateful<Div> {
     let resting_bg = if selected {
         selected_bg
     } else {
@@ -676,7 +686,7 @@ pub fn select_item_tinted(
             .cursor(CursorStyle::PointingHand)
             .text_size(px(12.)),
         group,
-        ROW_RADIUS,
+        radius,
         (resting_bg.a > f32::EPSILON).then_some(resting_bg),
         (hover_bg.a > f32::EPSILON).then_some(hover_bg),
     )

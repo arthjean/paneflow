@@ -23,6 +23,9 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
   instead of the shared gray, and lifts its `surface` and `subtle` colors one
   step above that card, so select triggers, steppers, secondary buttons, menus
   opened over a card, and the System Info panels no longer vanish into it.
+- The command palette is restyled: a filled search field with no border,
+  29 px rows on a rounded selection pill, 14 px labels, and a glyph beside the
+  commands that have one, such as Split, Pane layout, Theme, and Settings.
 - A custom `PANEFLOW_HOME` now owns its own IPC endpoint,
   `<runtime dir>/paneflow-ipc-<fingerprint>.sock` or
   `\\.\pipe\paneflow-ipc-<fingerprint>`, instead of sharing the default socket,

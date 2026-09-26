@@ -3,6 +3,7 @@ mod matcher;
 
 use std::ops::Range;
 
+use gpui::prelude::FluentBuilder;
 use gpui::{
     AnyElement, App, ClickEvent, Context, FontWeight, HighlightStyle, InteractiveElement,
     IntoElement, KeyDownEvent, MouseButton, ParentElement, SharedString,
@@ -12,10 +13,9 @@ use gpui::{
 use crate::PaneFlowApp;
 use crate::pane::PaneSurface;
 use crate::settings::components::{
-    MENU_MAX_HEIGHT, MENU_PADDING, MENU_ROW_GAP, MENU_ROW_HEIGHT, menu_panel, select_item_tinted,
-    with_alpha,
+    MENU_MAX_HEIGHT, select_item_shaped, select_menu_surface, with_alpha,
 };
-use crate::ui_primitives::squircle::squircle_fill;
+use crate::ui_primitives::squircle::{squircle_border, squircle_fill};
 use crate::ui_primitives::{FilterFieldStyle, filter_field};
 
 pub(crate) use catalog::Scope;
@@ -24,12 +24,21 @@ use catalog::{Apply, COMMANDS, Command, Kind, Needs, ScopeValue};
 const PALETTE_MIN_WIDTH: f32 = 420.;
 const PALETTE_MAX_WIDTH: f32 = 640.;
 const PALETTE_PLACEHOLDER: &str = "Search commands…";
+const PALETTE_RADIUS: gpui::Pixels = px(13.);
+const PALETTE_PADDING: f32 = 6.;
+const FIELD_INSET: f32 = 2.;
 const FIELD_GAP_BELOW: f32 = 6.;
 const CHIP_HEIGHT: f32 = 24.;
 const CHIP_RADIUS: gpui::Pixels = px(6.);
-const ROW_TEXT_INSET: f32 = 8.;
-const LABEL_SIZE: f32 = 12.;
-const SHORTCUT_SIZE: f32 = 11.;
+const ROW_HEIGHT: f32 = 29.;
+const ROW_SPACING: f32 = 2.;
+const ROW_RADIUS: gpui::Pixels = px(8.);
+const ROW_TEXT_INSET: f32 = 11.;
+const ROW_GAP: f32 = 8.;
+const ICON_SIZE: f32 = 14.;
+const ICON_GAP: f32 = 8.;
+const LABEL_SIZE: f32 = 14.;
+const SHORTCUT_SIZE: f32 = 13.;
 const PALETTE_TOP_MARGIN: f32 = 96.;
 
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
@@ -49,6 +58,7 @@ enum Trailing {
 
 struct PaletteRow {
     source: usize,
+    icon: Option<&'static str>,
     label: String,
     highlights: Vec<Range<usize>>,
     value: Option<String>,
@@ -177,6 +187,7 @@ impl PaneFlowApp {
                         matched.rank,
                         PaletteRow {
                             source: idx,
+                            icon: None,
                             label: value.label,
                             highlights: matched.highlights,
                             value: None,
@@ -216,6 +227,7 @@ impl PaneFlowApp {
                         matched.rank,
                         PaletteRow {
                             source: idx,
+                            icon: command.icon,
                             label: command.label.to_string(),
                             highlights: matched.highlights,
                             value,
@@ -441,6 +453,8 @@ impl PaneFlowApp {
         let focus = self.command_palette_input.read(cx).focus_handle.clone();
         let focused = focus.is_focused(window);
         let has_query = !self.palette_query(cx).is_empty();
+        let style = FilterFieldStyle::palette();
+        let chip_inset = (style.height - px(CHIP_HEIGHT)) / 2.;
         let prefix = self.command_palette_scope.map(|scope| {
             div()
                 .relative()
@@ -459,12 +473,13 @@ impl PaneFlowApp {
                 )
                 .into_any_element()
         });
+        let prefix_shown = prefix.is_some();
 
         filter_field(
             "command-palette-field",
             "command-palette-field-clear",
             ui,
-            FilterFieldStyle::palette(),
+            style,
             focused,
             has_query,
             true,
@@ -478,8 +493,9 @@ impl PaneFlowApp {
                 window.focus(&focus, cx);
             }),
         )
-        .w_full()
+        .when(prefix_shown, |field| field.pl(chip_inset))
         .flex_none()
+        .mx(px(FIELD_INSET))
         .mb(px(FIELD_GAP_BELOW))
         .on_mouse_down(MouseButton::Left, move |_, window, cx| {
             window.focus(&focus, cx);
@@ -507,28 +523,50 @@ impl PaneFlowApp {
             ui.muted
         };
 
-        let mut element = select_item_tinted(
+        let mut label = div()
+            .relative()
+            .flex_1()
+            .min_w_0()
+            .flex()
+            .items_center()
+            .gap(px(ICON_GAP));
+        if let Some(icon) = row.icon {
+            label = label.child(
+                svg()
+                    .flex_none()
+                    .size(px(ICON_SIZE))
+                    .path(icon)
+                    .text_color(with_alpha(label_color, 0.8)),
+            );
+        }
+        let label = label.child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .overflow_x_hidden()
+                .whitespace_nowrap()
+                .text_ellipsis()
+                .text_color(label_color)
+                .child(highlighted_label(&row.label, &row.highlights)),
+        );
+
+        let mut element = select_item_shaped(
             SharedString::from(format!("command-palette-row-{idx}")),
             selected,
             ui,
             crate::theme::selection_color(),
+            ROW_RADIUS,
         )
-        .h(MENU_ROW_HEIGHT)
+        .h(px(ROW_HEIGHT))
+        .px(px(ROW_TEXT_INSET))
+        .gap(px(ROW_GAP))
+        .text_size(px(LABEL_SIZE))
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
         .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
             this.command_palette_run(idx, window, cx);
             cx.stop_propagation();
         }))
-        .child(
-            div()
-                .relative()
-                .flex_1()
-                .min_w_0()
-                .overflow_x_hidden()
-                .whitespace_nowrap()
-                .text_color(label_color)
-                .child(highlighted_label(&row.label, &row.highlights)),
-        );
+        .child(label);
 
         if let Some(value) = &row.value {
             element = element.child(
@@ -538,6 +576,7 @@ impl PaneFlowApp {
                     .max_w(px(200.))
                     .overflow_x_hidden()
                     .whitespace_nowrap()
+                    .text_ellipsis()
                     .text_color(muted_color)
                     .child(SharedString::from(value.clone())),
             );
@@ -594,7 +633,7 @@ impl PaneFlowApp {
             .id("command-palette-list")
             .flex()
             .flex_col()
-            .gap(MENU_ROW_GAP)
+            .gap(px(ROW_SPACING))
             .max_h(MENU_MAX_HEIGHT)
             .overflow_y_scroll()
             .track_scroll(&self.command_palette_scroll);
@@ -602,7 +641,7 @@ impl PaneFlowApp {
         if rows.is_empty() {
             list = list.child(
                 div()
-                    .h(MENU_ROW_HEIGHT)
+                    .h(px(ROW_HEIGHT))
                     .px(px(ROW_TEXT_INSET))
                     .flex()
                     .items_center()
@@ -616,7 +655,18 @@ impl PaneFlowApp {
             }
         }
 
-        let panel = menu_panel(div().id("command-palette"), ui)
+        let panel = div()
+            .id("command-palette")
+            .relative()
+            .child(squircle_fill(PALETTE_RADIUS, select_menu_surface(ui)))
+            .child(squircle_border(
+                PALETTE_RADIUS,
+                px(1.),
+                with_alpha(ui.border, 0.6),
+            ))
+            .flex()
+            .flex_col()
+            .p(px(PALETTE_PADDING))
             .w(px(width))
             .occlude()
             .capture_key_down(cx.listener(Self::handle_command_palette_capture_key_down))
@@ -653,18 +703,21 @@ fn palette_width(rows: &[PaletteRow]) -> f32 {
     let mut widest: f32 = 0.;
     for row in rows {
         let mut width = text_width(&row.label, LABEL_SIZE);
+        if row.icon.is_some() {
+            width += ICON_SIZE + ICON_GAP;
+        }
         if let Some(value) = &row.value {
-            width += 8. + text_width(value, LABEL_SIZE).min(200.);
+            width += ROW_GAP + text_width(value, LABEL_SIZE).min(200.);
         }
         if let Some(shortcut) = &row.shortcut {
-            width += 8. + text_width(shortcut, SHORTCUT_SIZE);
+            width += ROW_GAP + text_width(shortcut, SHORTCUT_SIZE);
         }
         if row.trailing != Trailing::None {
-            width += 8. + 13.;
+            width += ROW_GAP + 13.;
         }
         widest = widest.max(width + 2. * ROW_TEXT_INSET);
     }
-    (widest + 2. * f32::from(MENU_PADDING)).clamp(PALETTE_MIN_WIDTH, PALETTE_MAX_WIDTH)
+    (widest + 2. * PALETTE_PADDING).clamp(PALETTE_MIN_WIDTH, PALETTE_MAX_WIDTH)
 }
 
 fn highlighted_label(label: &str, highlights: &[Range<usize>]) -> StyledText {
@@ -691,6 +744,7 @@ mod tests {
     ) -> PaletteRow {
         PaletteRow {
             source: 0,
+            icon: None,
             label: label.to_string(),
             highlights: Vec::new(),
             value: value.map(str::to_string),

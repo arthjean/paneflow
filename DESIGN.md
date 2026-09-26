@@ -804,14 +804,17 @@ a detached checkout at the base. The `Create branch
 here…` prompt that names it is a 420 wide card on the overlay surface, radius
 10: a title, one line of context, the name field, a `Create branch` button
 filled with `accent` at 0.15, and the hint `Enter creates · Esc cancels`. The
-command palette and the `Clone repository` modal share one shell: the menu
-surface of 5.6, 544 wide, docked 96 from the top of the window over a 0.4
-black scrim. The
-command palette is a 13 px query line over a hairline, then 28 px rows, one
-per action that carries no key context, each showing the Settings
-description and its binding at 11 px muted; typing filters on whole words,
-arrows move, Enter dispatches, and the palette never lists itself. The clone
-modal is the same quick pick: a field reading `Provide repository URL or pick
+`Clone repository` modal is the menu surface of 5.6, 544 wide, docked 96 from
+the top of the window over a 0.4 black scrim. The command palette docks at the
+same height on its own panel: the menu surface at squircle 13 with padding 6,
+420 to 640 wide by its widest row, then a 34 px search well (the 0.07 `text`
+tint on squircle 9, no border, a 14 px glyph and 14 px text; a scope shows as
+a 24 px chip inset 5 on every side), then 29 px rows 2 px apart in a
+list capped at 400. A row is a squircle 8 pill in the selection blue
+when selected, an optional 14 px glyph, the label at 14 px, the current value
+or binding at 13 px muted, and a chevron when it opens a scope. Typing filters
+on whole words, arrows move, Enter dispatches, and the palette never lists
+itself. The clone modal is a quick pick: a field reading `Provide repository URL or pick
 a repository source.` over the hairline, then rows on the `select_item` skin
 with a 14 px glyph, the label, and a group name at 11 px muted on the trailing
 edge. With nothing typed the single row is `Clone from GitHub` in the `remote

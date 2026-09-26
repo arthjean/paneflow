@@ -52,6 +52,7 @@ pub(crate) enum Kind {
 
 pub(crate) struct Command {
     pub(crate) label: &'static str,
+    pub(crate) icon: Option<&'static str>,
     pub(crate) keywords: &'static str,
     pub(crate) needs: Needs,
     pub(crate) kind: Kind,
@@ -559,180 +560,210 @@ fn set_all_expanded(app: &mut PaneFlowApp, expanded: bool, cx: &mut Context<Pane
 pub(crate) const COMMANDS: &[Command] = &[
     Command {
         label: "Split vertical",
+        icon: Some("icons/split_vertical.svg"),
         keywords: "pane divide right",
         needs: Needs::Workspace,
         kind: Kind::Action("split_vertically"),
     },
     Command {
         label: "Split horizontal",
+        icon: Some("icons/split_horizontal.svg"),
         keywords: "pane divide down",
         needs: Needs::Workspace,
         kind: Kind::Action("split_horizontally"),
     },
     Command {
         label: "Toggle zoom",
+        icon: Some("icons/maximize.svg"),
         keywords: "pane fullscreen maximize",
         needs: Needs::Workspace,
         kind: Kind::Action("toggle_zoom"),
     },
     Command {
         label: "Swap pane",
+        icon: None,
         keywords: "move exchange",
         needs: Needs::Workspace,
         kind: Kind::Action("swap_pane"),
     },
     Command {
         label: "Equalize panes",
+        icon: None,
         keywords: "balance even sizes",
         needs: Needs::Workspace,
         kind: Kind::Action("split_equalize"),
     },
     Command {
         label: "Pane layout",
+        icon: Some("icons/layout-grid.svg"),
         keywords: "arrange tiled grid",
         needs: Needs::Workspace,
         kind: Kind::Scope(Scope::PaneLayout),
     },
     Command {
         label: "Focus left",
+        icon: None,
         keywords: "pane move",
         needs: Needs::Workspace,
         kind: Kind::Action("focus_left"),
     },
     Command {
         label: "Focus right",
+        icon: None,
         keywords: "pane move",
         needs: Needs::Workspace,
         kind: Kind::Action("focus_right"),
     },
     Command {
         label: "Focus up",
+        icon: None,
         keywords: "pane move",
         needs: Needs::Workspace,
         kind: Kind::Action("focus_up"),
     },
     Command {
         label: "Focus down",
+        icon: None,
         keywords: "pane move",
         needs: Needs::Workspace,
         kind: Kind::Action("focus_down"),
     },
     Command {
         label: "Detach pane into a window",
+        icon: Some("icons/detach-pane.svg"),
         keywords: "float window return",
         needs: Needs::Workspace,
         kind: Kind::Action("toggle_detached_pane"),
     },
     Command {
         label: "Hide pane from the layout",
+        icon: None,
         keywords: "keep session running",
         needs: Needs::Workspace,
         kind: Kind::Action("hide_pane"),
     },
     Command {
         label: "Undo close pane",
+        icon: None,
         keywords: "restore reopen",
         needs: Needs::Workspace,
         kind: Kind::Action("undo_close_pane"),
     },
     Command {
         label: "Stop the session of this pane",
+        icon: None,
         keywords: "kill process end",
         needs: Needs::Workspace,
         kind: Kind::Action("stop_session"),
     },
     Command {
         label: "Close pane",
+        icon: None,
         keywords: "remove stop sessions",
         needs: Needs::Workspace,
         kind: Kind::Action("close_pane"),
     },
     Command {
         label: "New tab",
+        icon: None,
         keywords: "create",
         needs: Needs::Workspace,
         kind: Kind::Action("new_tab"),
     },
     Command {
         label: "Switch tab",
+        icon: None,
         keywords: "go to change",
         needs: Needs::ManyTabs,
         kind: Kind::Scope(Scope::Tab),
     },
     Command {
         label: "Next tab",
+        icon: None,
         keywords: "cycle",
         needs: Needs::ManyTabs,
         kind: Kind::Action("next_tab"),
     },
     Command {
         label: "Previous tab",
+        icon: None,
         keywords: "cycle",
         needs: Needs::ManyTabs,
         kind: Kind::Action("previous_tab"),
     },
     Command {
         label: "Close tab",
+        icon: None,
         keywords: "remove stop sessions",
         needs: Needs::Workspace,
         kind: Kind::Action("close_tab"),
     },
     Command {
         label: "New workspace",
+        icon: None,
         keywords: "project folder open",
         needs: Needs::Always,
         kind: Kind::Action("new_workspace"),
     },
     Command {
         label: "Switch workspace",
+        icon: Some("icons/folders.svg"),
         keywords: "go to change project",
         needs: Needs::ManyWorkspaces,
         kind: Kind::Scope(Scope::Workspace),
     },
     Command {
         label: "Next workspace",
+        icon: None,
         keywords: "cycle",
         needs: Needs::ManyWorkspaces,
         kind: Kind::Action("next_workspace"),
     },
     Command {
         label: "Clone repository…",
+        icon: Some("icons/brand-git.svg"),
         keywords: "git checkout download",
         needs: Needs::Always,
         kind: Kind::Action("clone_repository"),
     },
     Command {
         label: "Open workspace in",
+        icon: Some("icons/folder-open.svg"),
         keywords: "editor zed cursor vscode windsurf file manager reveal",
         needs: Needs::Workspace,
         kind: Kind::Scope(Scope::OpenWorkspaceIn),
     },
     Command {
         label: "Copy workspace path",
+        icon: None,
         keywords: "clipboard folder",
         needs: Needs::Workspace,
         kind: Kind::Action("copy_workspace_path"),
     },
     Command {
         label: "Resume every ended session",
+        icon: Some("icons/player-play.svg"),
         keywords: "restart workspace",
         needs: Needs::Workspace,
         kind: Kind::Action("resume_ended_sessions"),
     },
     Command {
         label: "Remove every ended session",
+        icon: Some("icons/trash.svg"),
         keywords: "clean list workspace",
         needs: Needs::Workspace,
         kind: Kind::Action("remove_ended_sessions"),
     },
     Command {
         label: "Close workspace",
+        icon: None,
         keywords: "stop sessions quit project",
         needs: Needs::Workspace,
         kind: Kind::Action("close_workspace"),
     },
     Command {
         label: "Mute this workspace's notifications",
+        icon: None,
         keywords: "silence agent alerts",
         needs: Needs::Workspace,
         kind: Kind::Toggle {
@@ -748,6 +779,7 @@ pub(crate) const COMMANDS: &[Command] = &[
     },
     Command {
         label: "Mark this workspace as read",
+        icon: None,
         keywords: "notification acknowledge agent",
         needs: Needs::Workspace,
         kind: Kind::Run(|app, _window, cx| {
@@ -757,288 +789,336 @@ pub(crate) const COMMANDS: &[Command] = &[
     },
     Command {
         label: "Expand every workspace in the sidebar",
+        icon: None,
         keywords: "tree unfold show sessions",
         needs: Needs::Always,
         kind: Kind::Run(|app, _window, cx| set_all_expanded(app, true, cx)),
     },
     Command {
         label: "Collapse every workspace in the sidebar",
+        icon: None,
         keywords: "tree fold hide sessions",
         needs: Needs::Always,
         kind: Kind::Run(|app, _window, cx| set_all_expanded(app, false, cx)),
     },
     Command {
         label: "Prompt composer…",
+        icon: Some("icons/edit.svg"),
         keywords: "agent write send",
         needs: Needs::Workspace,
         kind: Kind::Action("open_composer"),
     },
     Command {
         label: "Attention queue…",
+        icon: Some("icons/list-details.svg"),
         keywords: "agent waiting review",
         needs: Needs::Always,
         kind: Kind::Action("open_attention_queue"),
     },
     Command {
         label: "Broadcast groups…",
+        icon: None,
         keywords: "agent fanout send many",
         needs: Needs::Always,
         kind: Kind::Action("open_broadcast_groups"),
     },
     Command {
         label: "Toggle pane in broadcast group",
+        icon: None,
         keywords: "agent fanout member",
         needs: Needs::Workspace,
         kind: Kind::Action("toggle_broadcast_member"),
     },
     Command {
         label: "Jump to the next waiting agent",
+        icon: None,
         keywords: "attention review",
         needs: Needs::Always,
         kind: Kind::Action("jump_next_waiting"),
     },
     Command {
         label: "Focus Workspaces sidebar",
+        icon: Some("icons/sidebar.svg"),
         keywords: "keyboard navigate rail tabs",
         needs: Needs::Always,
         kind: Kind::Action("focus_workspaces_sidebar"),
     },
     Command {
         label: "Toggle Files sidebar",
+        icon: Some("icons/file_tree.svg"),
         keywords: "tree explorer",
         needs: Needs::Workspace,
         kind: Kind::Action("toggle_files_sidebar"),
     },
     Command {
         label: "Maximize or restore the Changes dock",
+        icon: None,
         keywords: "diff git review",
         needs: Needs::Workspace,
         kind: Kind::Action("toggle_diff_dock_maximize"),
     },
     Command {
         label: "Changes dock: open a file tab",
+        icon: None,
         keywords: "diff git editor",
         needs: Needs::GitRepo,
         kind: Kind::Action("diff_new_file_tab"),
     },
     Command {
         label: "Changes dock: open a terminal tab",
+        icon: None,
         keywords: "diff git shell",
         needs: Needs::GitRepo,
         kind: Kind::Action("diff_new_terminal_tab"),
     },
     Command {
         label: "Copy",
+        icon: None,
         keywords: "clipboard terminal selection",
         needs: Needs::Terminal,
         kind: Kind::Action("terminal_copy"),
     },
     Command {
         label: "Paste",
+        icon: None,
         keywords: "clipboard terminal insert",
         needs: Needs::Terminal,
         kind: Kind::Action("terminal_paste"),
     },
     Command {
         label: "Select all",
+        icon: None,
         keywords: "clipboard terminal",
         needs: Needs::Terminal,
         kind: Kind::Action("terminal_select_all"),
     },
     Command {
         label: "Toggle copy mode",
+        icon: None,
         keywords: "terminal keyboard selection vim",
         needs: Needs::Terminal,
         kind: Kind::Action("toggle_copy_mode"),
     },
     Command {
         label: "Find in this pane",
+        icon: None,
         keywords: "search terminal",
         needs: Needs::Terminal,
         kind: Kind::Action("toggle_search"),
     },
     Command {
         label: "Search across all panes",
+        icon: Some("icons/tool_search.svg"),
         keywords: "fleet find everywhere",
         needs: Needs::Terminal,
         kind: Kind::Action("toggle_fleet_search"),
     },
     Command {
         label: "Search next match",
+        icon: None,
         keywords: "find forward",
         needs: Needs::TerminalSearch,
         kind: Kind::Action("search_next"),
     },
     Command {
         label: "Search previous match",
+        icon: None,
         keywords: "find backward",
         needs: Needs::TerminalSearch,
         kind: Kind::Action("search_prev"),
     },
     Command {
         label: "Toggle search regex",
+        icon: None,
         keywords: "find pattern",
         needs: Needs::TerminalSearch,
         kind: Kind::Action("toggle_search_regex"),
     },
     Command {
         label: "Dismiss search",
+        icon: None,
         keywords: "find close",
         needs: Needs::TerminalSearch,
         kind: Kind::Action("dismiss_search"),
     },
     Command {
         label: "Scroll up one page",
+        icon: None,
         keywords: "terminal scrollback",
         needs: Needs::Terminal,
         kind: Kind::Action("scroll_page_up"),
     },
     Command {
         label: "Scroll down one page",
+        icon: None,
         keywords: "terminal scrollback",
         needs: Needs::Terminal,
         kind: Kind::Action("scroll_page_down"),
     },
     Command {
         label: "Jump to the previous prompt",
+        icon: None,
         keywords: "terminal shell integration mark",
         needs: Needs::Terminal,
         kind: Kind::Action("jump_prev_prompt"),
     },
     Command {
         label: "Jump to the next prompt",
+        icon: None,
         keywords: "terminal shell integration mark",
         needs: Needs::Terminal,
         kind: Kind::Action("jump_next_prompt"),
     },
     Command {
         label: "Increase pane font size",
+        icon: None,
         keywords: "terminal zoom bigger",
         needs: Needs::Terminal,
         kind: Kind::Action("font_size_increase"),
     },
     Command {
         label: "Decrease pane font size",
+        icon: None,
         keywords: "terminal zoom smaller",
         needs: Needs::Terminal,
         kind: Kind::Action("font_size_decrease"),
     },
     Command {
         label: "Reset pane font size",
+        icon: None,
         keywords: "terminal zoom default",
         needs: Needs::Terminal,
         kind: Kind::Action("font_size_reset"),
     },
     Command {
         label: "Clear scroll history",
+        icon: None,
         keywords: "terminal scrollback wipe",
         needs: Needs::Terminal,
         kind: Kind::Action("clear_scroll_history"),
     },
     Command {
         label: "Reset terminal",
+        icon: None,
         keywords: "fix garbled escape",
         needs: Needs::Terminal,
         kind: Kind::Action("reset_terminal"),
     },
     Command {
         label: "Markdown: scroll up one page",
+        icon: None,
         keywords: "preview document",
         needs: Needs::Markdown,
         kind: Kind::Action("markdown_scroll_page_up"),
     },
     Command {
         label: "Markdown: scroll down one page",
+        icon: None,
         keywords: "preview document",
         needs: Needs::Markdown,
         kind: Kind::Action("markdown_scroll_page_down"),
     },
     Command {
         label: "Markdown: open the find bar",
+        icon: None,
         keywords: "preview search document",
         needs: Needs::Markdown,
         kind: Kind::Action("markdown_find_open"),
     },
     Command {
         label: "Markdown: copy the selection",
+        icon: None,
         keywords: "preview clipboard",
         needs: Needs::Markdown,
         kind: Kind::Action("markdown_copy"),
     },
     Command {
         label: "Markdown: jump to the next match",
+        icon: None,
         keywords: "preview search forward",
         needs: Needs::MarkdownSearch,
         kind: Kind::Action("markdown_find_next"),
     },
     Command {
         label: "Markdown: jump to the previous match",
+        icon: None,
         keywords: "preview search backward",
         needs: Needs::MarkdownSearch,
         kind: Kind::Action("markdown_find_prev"),
     },
     Command {
         label: "Markdown: close the find bar",
+        icon: None,
         keywords: "preview search dismiss",
         needs: Needs::MarkdownSearch,
         kind: Kind::Action("markdown_find_dismiss"),
     },
     Command {
         label: "Theme",
+        icon: Some("icons/moon.svg"),
         keywords: "color palette appearance dark light",
         needs: Needs::Always,
         kind: Kind::Scope(Scope::Theme),
     },
     Command {
         label: "Theme mode",
+        icon: None,
         keywords: "appearance dark light system",
         needs: Needs::Always,
         kind: Kind::Scope(Scope::ThemeMode),
     },
     Command {
         label: "Terminal font",
+        icon: None,
         keywords: "typeface family appearance",
         needs: Needs::Always,
         kind: Kind::Scope(Scope::TerminalFont),
     },
     Command {
         label: "Terminal font size",
+        icon: None,
         keywords: "typeface appearance points",
         needs: Needs::Always,
         kind: Kind::Scope(Scope::FontSize),
     },
     Command {
         label: "Terminal font weight",
+        icon: None,
         keywords: "typeface appearance bold",
         needs: Needs::Always,
         kind: Kind::Scope(Scope::FontWeight),
     },
     Command {
         label: "Terminal line height",
+        icon: None,
         keywords: "typeface appearance spacing",
         needs: Needs::Always,
         kind: Kind::Scope(Scope::LineHeight),
     },
     Command {
         label: "Terminal cell width",
+        icon: None,
         keywords: "typeface appearance spacing",
         needs: Needs::Always,
         kind: Kind::Scope(Scope::CellWidth),
     },
     Command {
         label: "Cursor shape",
+        icon: None,
         keywords: "appearance caret block beam",
         needs: Needs::Always,
         kind: Kind::Scope(Scope::CursorShape),
     },
     Command {
         label: "Minimum contrast",
+        icon: None,
         keywords: "legibility readability apca light theme accessibility",
         needs: Needs::Always,
         kind: Kind::Scope(Scope::MinimumContrast),
     },
     Command {
         label: "Integrated glyphs",
+        icon: None,
         keywords: "appearance powerline box drawing",
         needs: Needs::Always,
         kind: Kind::Toggle {
@@ -1048,6 +1128,7 @@ pub(crate) const COMMANDS: &[Command] = &[
     },
     Command {
         label: "Color emoji",
+        icon: None,
         keywords: "appearance glyphs",
         needs: Needs::Always,
         kind: Kind::Toggle {
@@ -1057,6 +1138,7 @@ pub(crate) const COMMANDS: &[Command] = &[
     },
     Command {
         label: "Terminal scrollbar",
+        icon: None,
         keywords: "appearance scroll",
         needs: Needs::Always,
         kind: Kind::Toggle {
@@ -1066,6 +1148,7 @@ pub(crate) const COMMANDS: &[Command] = &[
     },
     Command {
         label: "Reduce motion",
+        icon: None,
         keywords: "appearance animation accessibility",
         needs: Needs::Always,
         kind: Kind::Toggle {
@@ -1075,6 +1158,7 @@ pub(crate) const COMMANDS: &[Command] = &[
     },
     Command {
         label: "Show the branch in the sidebar",
+        icon: None,
         keywords: "git appearance",
         needs: Needs::Always,
         kind: Kind::Toggle {
@@ -1084,6 +1168,7 @@ pub(crate) const COMMANDS: &[Command] = &[
     },
     Command {
         label: "Show the diffstat in the sidebar",
+        icon: None,
         keywords: "git appearance changes",
         needs: Needs::Always,
         kind: Kind::Toggle {
@@ -1093,6 +1178,7 @@ pub(crate) const COMMANDS: &[Command] = &[
     },
     Command {
         label: "Show pull requests in the sidebar",
+        icon: None,
         keywords: "git appearance github",
         needs: Needs::Always,
         kind: Kind::Toggle {
@@ -1102,6 +1188,7 @@ pub(crate) const COMMANDS: &[Command] = &[
     },
     Command {
         label: "Show the indent guide in the sidebar",
+        icon: None,
         keywords: "appearance tree",
         needs: Needs::Always,
         kind: Kind::Toggle {
@@ -1111,30 +1198,35 @@ pub(crate) const COMMANDS: &[Command] = &[
     },
     Command {
         label: "Default editor",
+        icon: Some("icons/code.svg"),
         keywords: "external open zed cursor vscode",
         needs: Needs::Always,
         kind: Kind::Scope(Scope::DefaultEditor),
     },
     Command {
         label: "Shell in the integrated terminal",
+        icon: Some("icons/terminal.svg"),
         keywords: "bash zsh fish powershell default",
         needs: Needs::Always,
         kind: Kind::Scope(Scope::DefaultShell),
     },
     Command {
         label: "When quitting with sessions running",
+        icon: None,
         keywords: "exit ask keep stop",
         needs: Needs::Always,
         kind: Kind::Scope(Scope::OnQuit),
     },
     Command {
         label: "Ended sessions listed per workspace",
+        icon: None,
         keywords: "sidebar history limit",
         needs: Needs::Always,
         kind: Kind::Scope(Scope::EndedSessions),
     },
     Command {
         label: "Native OS notifications",
+        icon: Some("icons/bell.svg"),
         keywords: "alert agent waiting",
         needs: Needs::Always,
         kind: Kind::Toggle {
@@ -1152,6 +1244,7 @@ pub(crate) const COMMANDS: &[Command] = &[
     },
     Command {
         label: "Remove old worktrees automatically",
+        icon: None,
         keywords: "git cleanup prune",
         needs: Needs::Always,
         kind: Kind::Toggle {
@@ -1168,6 +1261,7 @@ pub(crate) const COMMANDS: &[Command] = &[
     },
     Command {
         label: "AI free access",
+        icon: None,
         keywords: "agent permissions unrestricted",
         needs: Needs::Always,
         kind: Kind::Toggle {
@@ -1177,6 +1271,7 @@ pub(crate) const COMMANDS: &[Command] = &[
     },
     Command {
         label: "Injection fence",
+        icon: None,
         keywords: "agent security prompt",
         needs: Needs::Always,
         kind: Kind::Toggle {
@@ -1188,6 +1283,7 @@ pub(crate) const COMMANDS: &[Command] = &[
     },
     Command {
         label: "Full access for Claude Code",
+        icon: None,
         keywords: "agent permissions bypass",
         needs: Needs::Always,
         kind: Kind::Toggle {
@@ -1203,18 +1299,21 @@ pub(crate) const COMMANDS: &[Command] = &[
     },
     Command {
         label: "Settings",
+        icon: Some("icons/settings.svg"),
         keywords: "preferences options configure",
         needs: Needs::Always,
         kind: Kind::Scope(Scope::SettingsTab),
     },
     Command {
         label: "Check for updates",
+        icon: Some("icons/download.svg"),
         keywords: "version upgrade release",
         needs: Needs::Always,
         kind: Kind::Action("check_for_updates"),
     },
     Command {
         label: "Paneflow documentation",
+        icon: Some("icons/file-text.svg"),
         keywords: "help docs manual",
         needs: Needs::Always,
         kind: Kind::Run(|app, _window, cx| {
@@ -1223,6 +1322,7 @@ pub(crate) const COMMANDS: &[Command] = &[
     },
     Command {
         label: "What's new",
+        icon: Some("icons/sparkles.svg"),
         keywords: "help releases changelog",
         needs: Needs::Always,
         kind: Kind::Run(|app, _window, cx| {
@@ -1231,6 +1331,7 @@ pub(crate) const COMMANDS: &[Command] = &[
     },
     Command {
         label: "Automations",
+        icon: Some("icons/bolt.svg"),
         keywords: "help scripting cli mcp",
         needs: Needs::Always,
         kind: Kind::Run(|app, _window, cx| {
@@ -1239,6 +1340,7 @@ pub(crate) const COMMANDS: &[Command] = &[
     },
     Command {
         label: "Troubleshooting",
+        icon: Some("icons/bug.svg"),
         keywords: "help support debug",
         needs: Needs::Always,
         kind: Kind::Run(|app, _window, cx| {
@@ -1247,18 +1349,21 @@ pub(crate) const COMMANDS: &[Command] = &[
     },
     Command {
         label: "System info…",
+        icon: Some("icons/server.svg"),
         keywords: "help diagnostics version gpu",
         needs: Needs::Always,
         kind: Kind::Run(|app, window, cx| app.open_system_info_dialog(window, cx)),
     },
     Command {
         label: "About Paneflow",
+        icon: None,
         keywords: "help version license",
         needs: Needs::Always,
         kind: Kind::Run(|app, window, cx| app.open_about_dialog(window, cx)),
     },
     Command {
         label: "Quit Paneflow",
+        icon: None,
         keywords: "exit close application",
         needs: Needs::Always,
         kind: Kind::Action("quit"),
@@ -1323,6 +1428,19 @@ mod tests {
                 "duplicate label {}",
                 command.label
             );
+        }
+    }
+
+    #[test]
+    fn every_command_icon_is_an_embedded_asset() {
+        for command in COMMANDS {
+            if let Some(icon) = command.icon {
+                assert!(
+                    crate::assets::Assets::get(icon).is_some(),
+                    "{} points at the missing icon {icon}",
+                    command.label
+                );
+            }
         }
     }
 

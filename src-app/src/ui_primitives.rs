@@ -534,13 +534,14 @@ pub(crate) enum FilterFieldGlyph {
 #[derive(Clone, Copy, PartialEq)]
 pub(crate) enum FilterFieldShape {
     Capsule,
-    Squircle(Pixels),
+    Well(Pixels),
 }
 
 #[derive(Clone, Copy)]
 pub(crate) struct FilterFieldStyle {
     pub(crate) glyph: FilterFieldGlyph,
     pub(crate) shape: FilterFieldShape,
+    pub(crate) glyph_size: Pixels,
     pub(crate) height: Pixels,
     pub(crate) padding: Pixels,
     pub(crate) text_size: Pixels,
@@ -551,6 +552,7 @@ impl FilterFieldStyle {
         Self {
             glyph,
             shape: FilterFieldShape::Capsule,
+            glyph_size: glyph.size(),
             height: px(36.),
             padding: px(10.),
             text_size: px(15.),
@@ -560,10 +562,11 @@ impl FilterFieldStyle {
     pub(crate) fn palette() -> Self {
         Self {
             glyph: FilterFieldGlyph::Search,
-            shape: FilterFieldShape::Squircle(px(10.)),
-            height: px(38.),
-            padding: px(6.),
-            text_size: px(13.),
+            shape: FilterFieldShape::Well(px(9.)),
+            glyph_size: px(14.),
+            height: px(34.),
+            padding: px(11.),
+            text_size: px(14.),
         }
     }
 }
@@ -616,25 +619,22 @@ pub(crate) fn filter_field(
             .rounded_full()
             .when(filled, |field| field.bg(active_bg))
             .hover(move |hovered| hovered.bg(if filled { active_bg } else { hover_bg })),
-        FilterFieldShape::Squircle(radius) => squircle_skin(
-            base,
-            SharedString::from(format!("{id}-filter-squircle")),
-            radius,
-            filled.then_some(active_bg),
-            Some(if filled { active_bg } else { hover_bg }),
-        ),
+        FilterFieldShape::Well(radius) => base
+            .relative()
+            .child(squircle::squircle_fill(radius, with_alpha(ui.text, 0.07))),
     };
     let glyph = style.glyph;
+    let glyph_lit = focused && !matches!(style.shape, FilterFieldShape::Well(_));
     shaped
         .cursor_text()
         .child(match prefix {
             Some(prefix) => prefix,
             None => svg()
                 .relative()
-                .size(glyph.size())
+                .size(style.glyph_size)
                 .flex_none()
                 .path(glyph.path(focused))
-                .text_color(if focused {
+                .text_color(if glyph_lit {
                     crate::app::constants::sidebar_filter_icon_color()
                 } else {
                     ui.muted
