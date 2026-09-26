@@ -105,6 +105,7 @@ pub struct SessionEntry {
     pub core_protocol: u32,
     pub core_build_id: String,
     pub activity: Option<AgentSummary>,
+    screen_owned_activity: bool,
     pub activity_source: ActivitySource,
     pub status: Status,
     pub outcome: Option<String>,
@@ -138,6 +139,7 @@ impl SessionEntry {
                 .last_hook
                 .as_ref()
                 .map(|hook| AgentSummary::declared(&hook.tool, manifest.updated_at_ms)),
+            screen_owned_activity: false,
             activity_source: ActivitySource::None,
             status: Status::Idle,
             outcome: None,
@@ -154,6 +156,34 @@ impl SessionEntry {
         };
         entry.refresh_health();
         entry
+    }
+
+    fn reconcile_screen_owned_activity(&mut self, source: ActivitySource, now_ms: u64) -> bool {
+        if source == ActivitySource::Screen {
+            if self.activity.is_some() {
+                return false;
+            }
+            let Some(observation) = self.observed_runtime.as_ref() else {
+                return false;
+            };
+            let Some(tool) = observation
+                .runtime()
+                .and_then(|runtime| runtime.detection.command_aliases.first())
+            else {
+                return false;
+            };
+            let mut summary = AgentSummary::declared(tool, now_ms);
+            summary.pid = Some(observation.pid);
+            self.activity = Some(summary);
+            self.screen_owned_activity = true;
+            return true;
+        }
+        if self.screen_owned_activity && self.activity.is_some() {
+            self.activity = None;
+            self.screen_owned_activity = false;
+            return true;
+        }
+        false
     }
 
     pub fn refresh_health(&mut self) {
@@ -474,7 +504,9 @@ impl WorkerState {
         let now_ms = frame["received_at_ms"].as_u64().unwrap_or_else(now_ms);
         let session = event.session.clone();
         let previous_activity = entry.activity.clone();
+        let previous_screen_owned_activity = entry.screen_owned_activity;
         let previous_updated_at_ms = entry.updated_at_ms;
+        entry.screen_owned_activity = false;
         match apply_event(entry.activity.as_ref(), &event, now_ms) {
             AgentDecision::Stale(reason) => {
                 log::debug!("paneflow-serve: refused an event for {session}: {reason}");
@@ -548,6 +580,7 @@ impl WorkerState {
             );
             if let Some(entry) = self.sessions.get_mut(&session) {
                 entry.activity = previous_activity;
+                entry.screen_owned_activity = previous_screen_owned_activity;
                 entry.updated_at_ms = previous_updated_at_ms;
             }
             return None;
@@ -718,9 +751,12 @@ impl WorkerState {
             );
         }
         let entry = self.sessions.get_mut(session)?;
+        let now_ms = crate::hook_state::unix_ms(now);
+        let screen_row_changed = entry.reconcile_screen_owned_activity(source, now_ms);
         let wire_outcome = outcome.as_ref().map(Outcome::wire_string);
         let state = status.agent_state();
-        let settled = entry.status == status
+        let settled = !screen_row_changed
+            && entry.status == status
             && entry.activity_source == source
             && entry.outcome == wire_outcome
             && entry
@@ -730,7 +766,6 @@ impl WorkerState {
         entry.status = status;
         entry.activity_source = source;
         entry.outcome = wire_outcome;
-        let now_ms = crate::hook_state::unix_ms(now);
         if let Some(summary) = entry.activity.as_mut() {
             let previous = AgentState::parse(&summary.state);
             summary.waiting_since_ms = next_waiting_since(
@@ -832,6 +867,10 @@ fn merge_core_row(session: SessionId, raw: &Value, held: Option<SessionEntry>) -
     let held_activity = same_generation
         .then(|| held.as_ref().and_then(|entry| entry.activity.clone()))
         .flatten();
+    let screen_owned_activity = held_activity.is_some()
+        && held
+            .as_ref()
+            .is_some_and(|entry| entry.screen_owned_activity);
     let process = serde_json::from_value(raw["process"].clone())
         .ok()
         .or_else(|| held.as_ref().and_then(|entry| entry.process));
@@ -872,6 +911,7 @@ fn merge_core_row(session: SessionId, raw: &Value, held: Option<SessionEntry>) -
         activity: held_activity
             .or(declared)
             .or_else(|| serde_json::from_value::<AgentSummary>(raw["agent"].clone()).ok()),
+        screen_owned_activity,
         activity_source: same_generation
             .then(|| held.as_ref().map(|entry| entry.activity_source))
             .flatten()
@@ -2089,6 +2129,78 @@ mod tests {
         assert_eq!(entry.status(), "busy");
         assert_eq!(entry.activity_source, ActivitySource::Screen);
         assert_eq!(entry.outcome, None);
+    }
+
+    fn hookless_row(session: &SessionId, screen_activity: Option<&str>) -> Value {
+        let mut raw = json!({
+            "session": session,
+            "generation": SessionGeneration::FIRST,
+            "live": true,
+            "lifecycle": SessionLifecycle::Running,
+            "observed_runtime": observation("com.anthropic.claude-code", 10, 5),
+        });
+        if let Some(screen_activity) = screen_activity {
+            raw["screen_activity"] = json!(screen_activity);
+        }
+        raw
+    }
+
+    #[test]
+    fn a_screen_verdict_without_any_hook_projects_an_activity_the_sidebar_can_render() {
+        let home = tempfile::tempdir().unwrap();
+        let session = SessionId::new();
+        let mut state = WorkerState::new(home.path());
+        state.apply_core_snapshot(&[hookless_row(&session, Some(SCREEN_WORKING))]);
+
+        let value = state.get(&session).unwrap().to_value();
+        assert_eq!(value["activity_source"], "screen");
+        assert_eq!(value["activity"]["tool"], "claude");
+        assert_eq!(value["activity"]["state"], "thinking");
+        assert_eq!(value["activity"]["pid"], 10);
+
+        state.apply_core_snapshot(&[hookless_row(&session, Some(SCREEN_IDLE))]);
+        let value = state.get(&session).unwrap().to_value();
+        assert_eq!(value["activity"]["state"], "finished");
+    }
+
+    #[test]
+    fn a_screen_owned_activity_ends_when_the_screen_stops_recognizing_the_agent() {
+        let home = tempfile::tempdir().unwrap();
+        let session = SessionId::new();
+        let mut state = WorkerState::new(home.path());
+        state.apply_core_snapshot(&[hookless_row(&session, Some(SCREEN_WORKING))]);
+        assert!(state.get(&session).unwrap().activity.is_some());
+
+        let projections = state.apply_core_snapshot(&[hookless_row(&session, None)]);
+
+        assert!(state.get(&session).unwrap().activity.is_none());
+        assert!(
+            projections.iter().any(|projection| projection.changed),
+            "the controller must learn that the row went away"
+        );
+    }
+
+    #[test]
+    fn a_hook_event_takes_over_a_screen_owned_activity() {
+        let home = tempfile::tempdir().unwrap();
+        let session = SessionId::new();
+        let mut state = WorkerState::new(home.path());
+        state.apply_core_snapshot(&[hookless_row(&session, Some(SCREEN_WORKING))]);
+
+        state.apply_core_event(&frame(
+            &session,
+            "ai.prompt_submit",
+            "UserPromptSubmit",
+            json!({}),
+        ));
+        state.apply_core_snapshot(&[hookless_row(&session, None)]);
+
+        let entry = state.get(&session).unwrap();
+        assert_eq!(entry.activity_source, ActivitySource::Hooks);
+        assert!(
+            entry.activity.is_some(),
+            "a hook-owned activity is never cleared by the screen tier"
+        );
     }
 
     #[test]
