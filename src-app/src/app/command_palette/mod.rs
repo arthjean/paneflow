@@ -2,12 +2,14 @@ mod catalog;
 mod matcher;
 
 use std::ops::Range;
+use std::rc::Rc;
 
 use gpui::prelude::FluentBuilder;
 use gpui::{
     AnyElement, App, ClickEvent, Context, FontWeight, HighlightStyle, InteractiveElement,
-    IntoElement, KeyDownEvent, MouseButton, ParentElement, SharedString,
-    StatefulInteractiveElement, Styled, StyledText, Window, deferred, div, px, svg,
+    IntoElement, KeyDownEvent, MouseButton, ParentElement, Pixels, ScrollStrategy, SharedString,
+    StatefulInteractiveElement, Styled, StyledText, UniformListScrollHandle, Window, deferred, div,
+    px, svg, uniform_list,
 };
 
 use crate::PaneFlowApp;
@@ -84,7 +86,7 @@ impl PaneFlowApp {
         self.command_palette_context = context;
         self.command_palette_restore_focus = restore;
         self.command_palette_selected = 0;
-        self.command_palette_scroll = gpui::ScrollHandle::new();
+        self.command_palette_scroll = UniformListScrollHandle::new();
         self.reset_palette_input(None, cx);
         let focus = self.command_palette_input.read(cx).focus_handle.clone();
         window.focus(&focus, cx);
@@ -260,7 +262,8 @@ impl PaneFlowApp {
 
     fn command_palette_select(&mut self, idx: usize, cx: &mut Context<Self>) {
         self.command_palette_selected = idx;
-        self.command_palette_scroll.scroll_to_item(idx);
+        self.command_palette_scroll
+            .scroll_to_item(idx, ScrollStrategy::Nearest);
         cx.notify();
     }
 
@@ -626,34 +629,45 @@ impl PaneFlowApp {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let ui = crate::theme::ui_colors();
-        let rows = self.command_palette_rows(cx);
+        let rows = Rc::new(self.command_palette_rows(cx));
         let width = palette_width(&rows);
 
-        let mut list = div()
-            .id("command-palette-list")
-            .flex()
-            .flex_col()
-            .gap(px(ROW_SPACING))
-            .max_h(MENU_MAX_HEIGHT)
-            .overflow_y_scroll()
-            .track_scroll(&self.command_palette_scroll);
-
-        if rows.is_empty() {
-            list = list.child(
-                div()
-                    .h(px(ROW_HEIGHT))
-                    .px(px(ROW_TEXT_INSET))
-                    .flex()
-                    .items_center()
-                    .text_size(px(LABEL_SIZE))
-                    .text_color(ui.muted)
-                    .child("No matching command"),
-            );
+        let list = if rows.is_empty() {
+            div()
+                .h(px(ROW_HEIGHT))
+                .px(px(ROW_TEXT_INSET))
+                .flex()
+                .items_center()
+                .text_size(px(LABEL_SIZE))
+                .text_color(ui.muted)
+                .child("No matching command")
+                .into_any_element()
         } else {
-            for (idx, row) in rows.iter().enumerate() {
-                list = list.child(self.render_palette_row(idx, row, ui, cx));
-            }
-        }
+            let items = rows.clone();
+            uniform_list(
+                "command-palette-list",
+                rows.len(),
+                cx.processor(move |this, range: Range<usize>, _, cx| {
+                    range
+                        .filter_map(|idx| {
+                            let row = items.get(idx)?;
+                            Some(
+                                div()
+                                    .w_full()
+                                    .flex()
+                                    .flex_col()
+                                    .pb(px(ROW_SPACING))
+                                    .child(this.render_palette_row(idx, row, ui, cx)),
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                }),
+            )
+            .w_full()
+            .h(list_height(rows.len()))
+            .track_scroll(&self.command_palette_scroll)
+            .into_any_element()
+        };
 
         let panel = div()
             .id("command-palette")
@@ -718,6 +732,10 @@ fn palette_width(rows: &[PaletteRow]) -> f32 {
         widest = widest.max(width + 2. * ROW_TEXT_INSET);
     }
     (widest + 2. * PALETTE_PADDING).clamp(PALETTE_MIN_WIDTH, PALETTE_MAX_WIDTH)
+}
+
+fn list_height(rows: usize) -> Pixels {
+    px(rows as f32 * (ROW_HEIGHT + ROW_SPACING)).min(MENU_MAX_HEIGHT)
 }
 
 fn highlighted_label(label: &str, highlights: &[Range<usize>]) -> StyledText {

@@ -292,7 +292,7 @@ struct PaneFlowApp {
     command_palette_input: gpui::Entity<crate::widgets::text_input::TextInput>,
     command_palette_selected: usize,
     command_palette_query_seen: String,
-    command_palette_scroll: gpui::ScrollHandle,
+    command_palette_scroll: gpui::UniformListScrollHandle,
     command_palette_scope: Option<crate::app::command_palette::Scope>,
     command_palette_context: crate::app::command_palette::PaletteContext,
     command_palette_restore_focus: Option<FocusHandle>,

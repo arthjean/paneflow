@@ -188,7 +188,8 @@ impl PaneFlowApp {
                 if this.command_palette_open && value != this.command_palette_query_seen {
                     this.command_palette_query_seen = value;
                     this.command_palette_selected = 0;
-                    this.command_palette_scroll.scroll_to_item(0);
+                    this.command_palette_scroll
+                        .scroll_to_item(0, gpui::ScrollStrategy::Nearest);
                 }
                 cx.notify();
             },
@@ -356,7 +357,7 @@ impl PaneFlowApp {
             command_palette_input,
             command_palette_selected: 0,
             command_palette_query_seen: String::new(),
-            command_palette_scroll: gpui::ScrollHandle::new(),
+            command_palette_scroll: gpui::UniformListScrollHandle::new(),
             command_palette_scope: None,
             command_palette_context: Default::default(),
             command_palette_restore_focus: None,

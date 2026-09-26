@@ -810,7 +810,7 @@ same height on its own panel: the menu surface at squircle 13 with padding 6,
 420 to 640 wide by its widest row, then a 34 px search well (the 0.07 `text`
 tint on squircle 9, no border, a 14 px glyph and 14 px text; a scope shows as
 a 24 px chip inset 5 on every side), then 29 px rows 2 px apart in a
-list capped at 400. A row is a squircle 8 pill in the selection blue
+`uniform_list` capped at 400. A row is a squircle 8 pill in the selection blue
 when selected, an optional 14 px glyph, the label at 14 px, the current value
 or binding at 13 px muted, and a chevron when it opens a scope. Typing filters
 on whole words, arrows move, Enter dispatches, and the palette never lists

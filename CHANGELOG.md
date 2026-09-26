@@ -63,6 +63,9 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
 
 ### Fixed
 
+- Hovering the rows of the command palette no longer lags behind the pointer.
+  The list now lays out only the rows in view instead of all of them on every
+  hover change.
 - A Paneflow build started from inside a Paneflow pane no longer takes over
   the running instance's identity from the variables the pane exports. A
   development build refused to start with "another Paneflow instance is
