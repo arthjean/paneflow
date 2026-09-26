@@ -63,6 +63,16 @@
   <content_rating type="oars-1.1" />
 
   <releases>
+    <release version="0.17.1" date="2026-09-26">
+      <description>
+        <p>A patch for the 0.17.0 upgrade path. Claude Code and Codex hooks that 0.16.0 injected at launch are adopted without a manual install, restored panes run the current helpers, and an agent whose hooks never reported still shows status from its screen.</p>
+        <ul>
+          <li>Stop everything reopens the layout with a fresh shell in every terminal pane instead of ended panes</li>
+          <li>The quit dialog works from the keyboard, with a focus ring on the default action</li>
+          <li>Pane tabs lead with a terminal or agent badge, and sidebar rows reveal their close or new-tab action beside the badge</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.17.0" date="2026-09-26">
       <description>
         <p>Agent status moves into a per-home worker, paneflow serve, that reads the lifecycle hooks Claude Code and Codex report, rebuilds its state from disk and decides which desktop notifications fire. Hooks are installed once per machine instead of on every launch, persistent sessions keep owning every process they started, a finished shell leaves its final output on screen, and nothing restarts on its own.</p>

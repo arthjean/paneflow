@@ -5,16 +5,50 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
 
 ## [Unreleased]
 
+## [0.17.1] - 2026-09-26
+
+A patch for the 0.17.0 upgrade path. Claude Code and Codex hooks that 0.16.0
+injected at launch are adopted without a manual install, restored panes run the
+current helpers, and an agent whose hooks never reported still shows status
+from its screen. Stop everything now reopens fresh terminals, the quit dialog
+works from the keyboard, and pane tabs and sidebar rows gain badges and inline
+actions.
+
 ### Changed
 
 - Pane tabs lead with a squircle badge instead of a flat glyph: a graphite tile
-  with a green prompt for a shell, and the running agent's logo on its brand
-  color once Paneflow detects Claude Code, Codex, Gemini, or another agent in
-  the pane.
+  with a green prompt for a shell, and the running agent's logo once Paneflow
+  detects an agent in the pane, on its brand color for Claude Code, Amp,
+  DeepSeek Harness, Muse Code and Qoder, on graphite for the others.
 - After Stop everything and quit (or restart), the next launch reopens the
   layout with a new shell in every terminal pane, in its last directory,
   instead of ended panes that each needed Restart. Agents and previous
   sessions are not relaunched, and the stopped session records are removed.
+- The quit dialog works from the keyboard: a focus ring starts on the default
+  action (Keep sessions running on quit, Cancel on an update restart, Retry
+  save after a failed final save), Tab and the arrow keys move it, Enter or
+  Space runs it and Escape closes. The retry buttons read Retry stopping,
+  Retry update and Retry save.
+- Hovering a tab or workspace row in the Workspaces sidebar reveals its close
+  or new-tab glyph inline, beside the agent or pull-request badge, which now
+  stays visible, as does the tab's diffstat.
+
+### Fixed
+
+- Upgrading a home where 0.16.0 injected agent hooks at launch installs the
+  Claude Code and Codex integrations once, so those agents report status
+  without a manual install. `<home>/integrations/launch-time-adoption.json`
+  records that the adoption ran.
+- Restored panes run the current version's agent shims and hook reporter after
+  an upgrade: the host always sets `PANEFLOW_BIN_DIR` and drops older
+  `cache/bin/<version>` entries from the pane `PATH`, and the desktop extracts
+  the shims before starting the host.
+- An agent whose hooks never reached Paneflow shows thinking, finished or
+  waiting for input in the sidebar from its screen until a hook takes over.
+- Clicking outside the focused sidebar filter hands focus back to the active
+  pane.
+- The host logs a refused hook event from an older reporter once per session
+  generation instead of once per event.
 
 ## [0.17.0] - 2026-09-26
 
