@@ -1,6 +1,6 @@
 use gpui::{
-    Bounds, Hsla, IntoElement, ParentElement, PathBuilder, Pixels, Styled, canvas, div, point, px,
-    size,
+    Bounds, Hsla, IntoElement, ParentElement, Path, PathBuilder, Pixels, Styled, canvas, div,
+    point, px, size,
 };
 
 const CORNER_EXTENT: f32 = 1.528_665;
@@ -44,6 +44,31 @@ fn trace(builder: &mut PathBuilder, bounds: Bounds<Pixels>, radius: Pixels) {
     builder.close();
 }
 
+pub(crate) fn squircle_path(bounds: Bounds<Pixels>, radius: Pixels) -> Option<Path<Pixels>> {
+    let mut builder = PathBuilder::fill();
+    trace(&mut builder, bounds, radius);
+    builder.build().ok()
+}
+
+pub(crate) fn squircle_stroke_path(
+    bounds: Bounds<Pixels>,
+    radius: Pixels,
+    width: Pixels,
+) -> Option<Path<Pixels>> {
+    let half = width / 2.;
+    let radius = limited_radius(bounds, radius);
+    let inner = Bounds {
+        origin: bounds.origin + point(half, half),
+        size: size(
+            (bounds.size.width - width).max(px(0.)),
+            (bounds.size.height - width).max(px(0.)),
+        ),
+    };
+    let mut builder = PathBuilder::stroke(width);
+    trace(&mut builder, inner, (radius - half).max(px(0.)));
+    builder.build().ok()
+}
+
 pub(crate) fn squircle_fill(radius: Pixels, color: Hsla) -> impl IntoElement {
     div().absolute().inset_0().child(
         canvas(
@@ -52,9 +77,7 @@ pub(crate) fn squircle_fill(radius: Pixels, color: Hsla) -> impl IntoElement {
                 if color.a <= f32::EPSILON {
                     return;
                 }
-                let mut builder = PathBuilder::fill();
-                trace(&mut builder, bounds, radius);
-                if let Ok(path) = builder.build() {
+                if let Some(path) = squircle_path(bounds, radius) {
                     window.paint_path(path, color);
                 }
             },
@@ -71,18 +94,7 @@ pub(crate) fn squircle_border(radius: Pixels, width: Pixels, color: Hsla) -> imp
                 if color.a <= f32::EPSILON {
                     return;
                 }
-                let half = width / 2.;
-                let radius = limited_radius(bounds, radius);
-                let inner = Bounds {
-                    origin: bounds.origin + point(half, half),
-                    size: size(
-                        (bounds.size.width - width).max(px(0.)),
-                        (bounds.size.height - width).max(px(0.)),
-                    ),
-                };
-                let mut builder = PathBuilder::stroke(width);
-                trace(&mut builder, inner, (radius - half).max(px(0.)));
-                if let Ok(path) = builder.build() {
+                if let Some(path) = squircle_stroke_path(bounds, radius, width) {
                     window.paint_path(path, color);
                 }
             },

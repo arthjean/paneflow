@@ -5,6 +5,13 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
 
 ## [Unreleased]
 
+### Changed
+
+- Pane tabs lead with a squircle badge instead of a flat glyph: a graphite tile
+  with a green prompt for a shell, and the running agent's logo on its brand
+  color once Paneflow detects Claude Code, Codex, Gemini, or another agent in
+  the pane.
+
 ## [0.17.0] - 2026-09-26
 
 Agent status moves into a per-home worker, `paneflow serve`, that reads the

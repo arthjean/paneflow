@@ -10,7 +10,9 @@ use gpui::{
     Styled, Window, deferred, div, ease_out_quint, img, prelude::*, px, rgb, svg,
 };
 
-use crate::ui_primitives::squircle::{squircle_border, squircle_fill};
+use crate::ui_primitives::squircle::{
+    squircle_border, squircle_fill, squircle_path, squircle_stroke_path,
+};
 use crate::ui_primitives::{AnimatedHoverExt, lerp_color, squircle_skin};
 
 use crate::markdown::MarkdownView;
@@ -101,6 +103,137 @@ const NEW_TAB_MENU_WIDTH: f32 = 216.0;
 const TAB_CLOSE_SIZE: f32 = 16.0;
 const TAB_CLOSE_GLYPH_SIZE: f32 = 11.0;
 const TAB_FADE_WIDTH: f32 = 28.0;
+const TAB_BADGE_WIDTH: f32 = 22.0;
+const TAB_BADGE_HEIGHT: f32 = 18.0;
+const TAB_BADGE_RADIUS: f32 = 5.5;
+const TAB_BADGE_LOGO_SIZE: f32 = 10.0;
+const TAB_BADGE_GRAPHITE_TOP: u32 = 0x3a3c3e;
+const TAB_BADGE_GRAPHITE_BOTTOM: u32 = 0x1d2021;
+const TAB_BADGE_GRAPHITE_BOTTOM_STOP: f32 = 0.6;
+const TAB_BADGE_GRAPHITE_RING: u32 = 0x080b0c;
+const TAB_BADGE_GRAPHITE_LOGO: u32 = 0xe8eaeb;
+const TAB_BADGE_TINT_SHEEN: f32 = 0.1;
+const TAB_BADGE_TINT_SHADE: f32 = 0.95;
+const TAB_BADGE_RING_SHADE: f32 = 0.2;
+const TAB_BADGE_RIM_ALPHA: f32 = 0.05;
+const TAB_BADGE_HIGHLIGHT_ALPHA: f32 = 0.22;
+const TAB_BADGE_DARK_GLYPH_LUMA: f32 = 0.6;
+
+fn scale_rgb(color: gpui::Rgba, factor: f32) -> gpui::Rgba {
+    gpui::Rgba {
+        r: color.r * factor,
+        g: color.g * factor,
+        b: color.b * factor,
+        a: color.a,
+    }
+}
+
+fn lift_rgb(color: gpui::Rgba, amount: f32) -> gpui::Rgba {
+    gpui::Rgba {
+        r: color.r + (1. - color.r) * amount,
+        g: color.g + (1. - color.g) * amount,
+        b: color.b + (1. - color.b) * amount,
+        a: color.a,
+    }
+}
+
+fn tab_badge(agent: Option<crate::agent_launcher::TerminalAgent>) -> AnyElement {
+    let logo_size = px(TAB_BADGE_LOGO_SIZE);
+    let graphite = gpui::linear_gradient(
+        180.,
+        gpui::linear_color_stop(rgb(TAB_BADGE_GRAPHITE_TOP), 0.),
+        gpui::linear_color_stop(
+            rgb(TAB_BADGE_GRAPHITE_BOTTOM),
+            TAB_BADGE_GRAPHITE_BOTTOM_STOP,
+        ),
+    );
+    let graphite_ring: Hsla = rgb(TAB_BADGE_GRAPHITE_RING).into();
+    let (background, ring, glyph) = match agent {
+        None => (
+            graphite,
+            graphite_ring,
+            img("icons/terminal-tab.svg")
+                .w(px(TAB_BADGE_WIDTH))
+                .h(px(TAB_BADGE_HEIGHT))
+                .flex_none()
+                .into_any_element(),
+        ),
+        Some(agent) => match agent.accent() {
+            Some(tint) if !agent.icon_multicolor() => {
+                let tint = rgb(tint);
+                let luma = 0.2126 * tint.r + 0.7152 * tint.g + 0.0722 * tint.b;
+                let logo_color = if luma > TAB_BADGE_DARK_GLYPH_LUMA {
+                    gpui::black()
+                } else {
+                    gpui::white()
+                };
+                (
+                    gpui::linear_gradient(
+                        180.,
+                        gpui::linear_color_stop(lift_rgb(tint, TAB_BADGE_TINT_SHEEN), 0.),
+                        gpui::linear_color_stop(scale_rgb(tint, TAB_BADGE_TINT_SHADE), 1.),
+                    ),
+                    scale_rgb(tint, TAB_BADGE_RING_SHADE).into(),
+                    crate::settings::components::render_logo(
+                        agent.icon_path(),
+                        false,
+                        logo_size,
+                        logo_color,
+                    ),
+                )
+            }
+            _ => (
+                graphite,
+                graphite_ring,
+                crate::settings::components::render_logo(
+                    agent.icon_path(),
+                    agent.icon_multicolor(),
+                    logo_size,
+                    rgb(TAB_BADGE_GRAPHITE_LOGO).into(),
+                ),
+            ),
+        },
+    };
+    let radius = px(TAB_BADGE_RADIUS);
+    let highlight = gpui::white().opacity(TAB_BADGE_HIGHLIGHT_ALPHA);
+    let rim = gpui::white().opacity(TAB_BADGE_RIM_ALPHA);
+    let tile = gpui::canvas(
+        |_, _, _| {},
+        move |bounds, _, window, _| {
+            let lowered = gpui::Bounds {
+                origin: bounds.origin + gpui::point(px(0.), px(1.)),
+                size: gpui::size(bounds.size.width, bounds.size.height - px(1.)),
+            };
+            let layers = [
+                (
+                    squircle_path(bounds.dilate(px(1.)), radius + px(1.)),
+                    gpui::Background::from(ring),
+                ),
+                (squircle_path(bounds, radius), background),
+                (squircle_path(bounds, radius), highlight.into()),
+                (squircle_path(lowered, radius), background),
+                (squircle_stroke_path(bounds, radius, px(1.)), rim.into()),
+            ];
+            for (path, fill) in layers {
+                if let Some(path) = path {
+                    window.paint_path(path, fill);
+                }
+            }
+        },
+    )
+    .size_full();
+    div()
+        .relative()
+        .w(px(TAB_BADGE_WIDTH))
+        .h(px(TAB_BADGE_HEIGHT))
+        .flex_none()
+        .flex()
+        .items_center()
+        .justify_center()
+        .child(div().absolute().inset_0().child(tile))
+        .child(glyph)
+        .into_any_element()
+}
 
 fn truncate_surface_title(raw: &str) -> String {
     if raw.chars().count() <= MAX_SURFACE_TITLE_LEN {
@@ -1332,21 +1465,19 @@ impl Pane {
                     cx.stop_propagation();
                 }))
                 .delayed_tooltip(crate::ui_primitives::text_tooltip(full_title))
-                .child(if unified && matches!(surface, PaneSurface::Terminal(_)) {
-                    img("icons/terminal-tab.svg")
-                        .w(px(20.))
-                        .h(px(17.))
-                        .flex_none()
-                        .into_any_element()
-                } else {
-                    svg()
-                        .size(px(TAB_ICON_SIZE))
-                        .when(unified, |icon| icon.w(px(20.)).h(px(17.)))
-                        .flex_none()
-                        .path(surface.kind_icon())
-                        .text_color(ui.muted)
-                        .into_any_element()
-                })
+                .child(
+                    if let (true, PaneSurface::Terminal(terminal)) = (unified, surface) {
+                        tab_badge(terminal.read(cx).terminal.detected_agent)
+                    } else {
+                        svg()
+                            .size(px(TAB_ICON_SIZE))
+                            .when(unified, |icon| icon.w(px(20.)).h(px(17.)))
+                            .flex_none()
+                            .path(surface.kind_icon())
+                            .text_color(ui.muted)
+                            .into_any_element()
+                    },
+                )
                 .child(
                     div()
                         .when(unified, |label| label.flex_1().min_w_0().text_ellipsis())
