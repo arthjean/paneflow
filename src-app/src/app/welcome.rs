@@ -11,7 +11,7 @@ use crate::settings::components::select_item;
 use crate::ui_primitives::squircle::squircle_fill;
 
 const WELCOME_COLUMN_WIDTH: f32 = 460.0;
-const WELCOME_TAGLINE: &str = "The cockpit for coding agents";
+pub(crate) const WELCOME_TAGLINE: &str = "The cockpit for coding agents";
 const AGENT_SUMMARY_NAMES: usize = 3;
 
 fn welcome_row(

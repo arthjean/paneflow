@@ -19,6 +19,25 @@ pub(crate) struct SystemInfoProbe {
     install: &'static str,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ReportSection {
+    Build,
+    System,
+    Rendering,
+}
+
+impl ReportSection {
+    pub(crate) fn title(self) -> &'static str {
+        match self {
+            Self::Build => "Build",
+            Self::System => "System",
+            Self::Rendering => "Rendering",
+        }
+    }
+}
+
+pub(crate) type ReportRow = (ReportSection, &'static str, SharedString);
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct SystemInfo {
     version: &'static str,
@@ -59,29 +78,37 @@ impl SystemInfoProbe {
 }
 
 impl SystemInfo {
-    pub(crate) fn rows(&self) -> Vec<(&'static str, SharedString)> {
+    pub(crate) fn rows(&self) -> Vec<ReportRow> {
+        use ReportSection::{Build, Rendering, System};
+
         let mut version = format!("{} ({}", self.version, self.target_triple);
         if let Some(host) = self.emulated_on {
             version.push_str(&format!(", emulated on {host}"));
         }
         version.push_str(&format!(", {})", self.install));
 
-        let mut rows: Vec<(&'static str, SharedString)> =
-            vec![("Paneflow", version.into()), ("OS", self.os.clone().into())];
+        let mut rows: Vec<ReportRow> = vec![
+            (Build, "Paneflow", version.into()),
+            (System, "OS", self.os.clone().into()),
+        ];
         if let Some(display_server) = &self.display_server {
-            rows.push(("Display server", display_server.clone().into()));
+            rows.push((System, "Display server", display_server.clone().into()));
         }
-        rows.push(("CPU", self.cpu.clone().into()));
-        rows.push(("GPU", self.gpu.clone().into()));
-        rows.push(("Renderer", self.renderer.into()));
-        rows.push(("Terminal engine", self.terminal_engine.clone().into()));
+        rows.push((System, "CPU", self.cpu.clone().into()));
+        rows.push((System, "GPU", self.gpu.clone().into()));
+        rows.push((Rendering, "Renderer", self.renderer.into()));
+        rows.push((
+            Rendering,
+            "Terminal engine",
+            self.terminal_engine.clone().into(),
+        ));
         rows
     }
 }
 
 impl Display for SystemInfo {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        for (index, (label, value)) in self.rows().into_iter().enumerate() {
+        for (index, (_, label, value)) in self.rows().into_iter().enumerate() {
             if index > 0 {
                 writeln!(formatter)?;
             }
@@ -386,9 +413,26 @@ mod tests {
         let rendered: Vec<String> = info.to_string().lines().map(str::to_string).collect();
         let rows = info.rows();
         assert_eq!(rendered.len(), rows.len());
-        for (line, (label, value)) in rendered.iter().zip(rows) {
+        for (line, (_, label, value)) in rendered.iter().zip(rows) {
             assert_eq!(line, &format!("- **{label}**: {value}"));
         }
+    }
+
+    #[test]
+    fn sections_run_in_contiguous_blocks_so_the_modal_can_group_them() {
+        let rows = sample().rows();
+        let order: Vec<ReportSection> = rows
+            .chunk_by(|a, b| a.0 == b.0)
+            .filter_map(|block| block.first().map(|row| row.0))
+            .collect();
+        assert_eq!(
+            order,
+            [
+                ReportSection::Build,
+                ReportSection::System,
+                ReportSection::Rendering
+            ]
+        );
     }
 
     #[test]

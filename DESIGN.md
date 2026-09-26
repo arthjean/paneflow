@@ -107,8 +107,8 @@ Nerd Font as the default.
    and from inset cards with masked corners. Drop shadows were removed in
    0.5.4 and MUST NOT return on chrome outside the contextual Zed Editor
    Controls menu in 5.4 and the release toast in 5.8; the other shadows are the
-   client-side window, the drag ghost, and the About dialog, which is
-   Migration.
+   client-side window, the drag ghost, and the dialog card (`modal_card`)
+   over its scrim.
 3. One highlight material. Hovered, active, and selected states are alpha
    tints of one color per theme lightness, never a per-component fill.
 4. Every rounded surface takes its radius from section 4.4. New radii are not
@@ -181,8 +181,8 @@ hides the workspace name while Settings is open.
 | Terminal search | Top right of the pane, 8 px inset | Squircle 14 on `subtle` with a 1 px `border`, 325 by 36, padding 14 left and 4 right, gap 8: the field, a `.*` mark only while regex mode is on, the match count, a 1 px divider, then previous, next and close as 28 px squircle icon buttons with the sidebar hover tint | `src-app/src/terminal/view.rs` |
 | Toast | Bottom right, 18 px inset | Radius 8 on `subtle`, minimum width 220, one header row and an optional action row | `src-app/src/app/notifications.rs` |
 | Worktree removal dialog | Centered | The card of the close dialog: squircle at `PANE_CARD_RADIUS`, 460 wide, padding 20 over a 0.55 black scrim, the blocking workspaces, tabs and sessions on `subtle` at 0.5 on radius 8, one kind word per row at 10 px muted, then `Cancel` and a destructive `Remove` | `src-app/src/app/worktree_remove.rs` |
-| System Info dialog | Centered | Squircle 20, 560 wide, padding 20, label column 116 | `src-app/src/app/system_info_dialog.rs` |
-| About dialog | Centered | 382 wide, radius 10, 1 px border, large shadow, 32 px header band, 225 px body, hardcoded grays; **Migration**, see section 10 | `src-app/src/app/about_dialog.rs` |
+| System Info dialog | Centered | The card of the close dialog at squircle 20, 560 wide, padding 20: a 44 px app icon beside a 16 px Semibold title and the build line at 11 px muted, then one 11 px muted eyebrow and one `menu_panel` per report section (`System`, `Rendering`) whose rows set a 116 px muted label column beside the value in Geist Mono 12, then the privacy line at 11 px muted, `Close`, and a solid `Copy` button in the toggle blue `#339cff` with a white label (`solid_button`). Escape closes, Enter copies, and focus returns to where it was | `src-app/src/app/system_info_dialog.rs` |
+| About dialog | Centered | The System Info card at squircle 20, 400 wide: a centered 64 px app icon, `Paneflow` at 16 px Semibold, the welcome tagline at 12 px muted, and the version on a Geist Mono 11 chip on `subtle` at radius 6; then one `menu_panel` of `menu_row` links (Website, Source code, Release notes of the running version) with a 14 px muted glyph, the label, and the address at 11 px muted on the trailing edge; then `© Arthur Jean · <license>` at 11 px muted and `Close`. Up and down select a link, Enter opens it or closes when none is selected, Escape closes, and focus returns to where it was | `src-app/src/app/about_dialog.rs` |
 
 ## 4. Foundations
 
@@ -271,7 +271,7 @@ to the surfaces named:
 
 | Value | Where | Why |
 | --- | --- | --- |
-| `#339cff` | Toggle track when on | Platform toggle blue |
+| `#339cff` | Toggle track when on, primary button fill under a white label | Platform toggle blue |
 | `#ff453a` | Destructive button | System red, white label |
 | `#007aff` | Pane and sidebar drop target, Paneflow terminal cursor | System blue for drag affordances |
 | `#5aa6ff`, light `#0550ae` | Filter and settings search match text, `filter_match_color` | Match blue, identical in every preset of a variant; each value keeps 14 px semibold text at 4.5:1 on the active row tint |
@@ -287,7 +287,7 @@ to the surfaces named:
 | Window | 10 | round | 1 px `border` on free edges |
 | Main panel | 10 | round, masked | none |
 | Pane card and right diff dock | 24 | squircle | 1 px `border`, or `vc_conflict` at 0.7 with attention; content stays inside the corner curve through its inset, 10 by 6 for a pane and 8 for the dock body, because GPUI clips to rectangles only |
-| Settings card, System Info dialog | 20 | squircle | none |
+| Settings card, System Info and About dialogs | 20 | squircle | none on a settings card, 1 px `border` at 0.6 on a dialog |
 | Pane palette ground | 24 | squircle | none |
 | Menu, select popup | 18 | squircle | 1 px `border` at 0.6 |
 | Primary sidebar workspace and tab rows | 9 | continuous corner approximation | no border |
@@ -297,10 +297,9 @@ to the surfaces named:
 | Primary sidebar inline hover actions | 6 | continuous corner approximation | no border |
 | Tab icon cards, shared row skin, secondary button, menu item, tooltip, terminal search, title bar manual check pill | 14 | squircle | tab icon card, tooltip and terminal search, 1 px `border` |
 | Theme tile | 10 | round | 2 px `text` at 0.12, 0.32 on hover, 0.85 when selected |
-| About dialog | 10 | round | 1 px, plus a shadow; **Migration** |
 | Sidebar update banner, filter field, settings control, select trigger, title bar menu trigger | 8 | round | none |
 | Toast, composer, drop overlay, drop placeholder | 8 | round | drop overlay 2 px blue |
-| Toast action button, About close button, theme mockup inner frame | 7 | round | none |
+| Toast action button, theme mockup inner frame | 7 | round | none |
 | Toolbar pill, sidebar IPC banner, sidebar branch chip, branch prompt field | 6 | round | IPC banner 1 px `border` |
 | Title bar sidebar toggle, branch prompt primary button | 5 | round | none |
 | Icon button, composer chip | 4 | round | none |
@@ -965,9 +964,8 @@ These are the Paneflow-specific bans, in addition to the generic ones a
 design review would raise anywhere.
 
 - Drop shadows on chrome, cards, rows, menus, or toasts outside the contextual
-  Editor Controls menu in 5.4 and the release toast in 5.8. The window and drag
-  ghost retain their shadows; the About dialog's shadow is Migration, not a
-  precedent.
+  Editor Controls menu in 5.4 and the release toast in 5.8. The window, the
+  drag ghost, and the dialog card (`modal_card`) retain their shadows.
 - Separators between tabs, chips, or toolbar buttons. The floating chip
   language replaced full-height bordered tabs in 0.5.5.
 - Identity pills, badges, or logos in the pane header. The sidebar owns
@@ -1028,7 +1026,3 @@ already need the same behavior.
 - `reduce_motion` stops hover interpolation, the sidebar slide, the Workspaces
   row motion, menu reveals, and the thinking matrix only; the other animations
   listed in 4.8 ignore it.
-- The About dialog paints its own grays (`#202020`, `#232323`, `#252525`,
-  `#343434`) with a border and a shadow instead of `UiColors`. It is
-  **Migration**; the next touch moves it onto the squircle card and the
-  semantic roles, as System Info already is.

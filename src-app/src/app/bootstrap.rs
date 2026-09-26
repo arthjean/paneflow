@@ -327,7 +327,7 @@ impl PaneFlowApp {
             worktree_remove_dialog: None,
             worktree_remove_focus: cx.focus_handle(),
             host_agents: Default::default(),
-            show_about_dialog: false,
+            about_dialog: None,
             system_info_dialog: None,
             quit_dialog: None,
             quit_dialog_focus: cx.focus_handle(),

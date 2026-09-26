@@ -68,9 +68,8 @@ pub(crate) fn install_macos_menu_action_fallbacks(cx: &mut gpui::App) {
     });
 
     cx.on_action(|_: &About, cx| {
-        with_active_paneflow_window(cx, |app, _window, cx| {
-            app.show_about_dialog = true;
-            cx.notify();
+        with_active_paneflow_window(cx, |app, window, cx| {
+            app.open_about_dialog(window, cx);
         });
     });
 

@@ -1255,10 +1255,7 @@ pub(crate) const COMMANDS: &[Command] = &[
         label: "About Paneflow",
         keywords: "help version license",
         needs: Needs::Always,
-        kind: Kind::Run(|app, _window, cx| {
-            app.show_about_dialog = true;
-            cx.notify();
-        }),
+        kind: Kind::Run(|app, window, cx| app.open_about_dialog(window, cx)),
     },
     Command {
         label: "Quit Paneflow",

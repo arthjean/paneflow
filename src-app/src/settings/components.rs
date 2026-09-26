@@ -251,6 +251,8 @@ pub fn secondary_button(
         Some(ui.subtle),
         Some(hover_bg),
     )
+    .role(gpui::accesskit::Role::Button)
+    .aria_label(label)
     .child(label)
     .on_click(on_click)
 }
@@ -260,7 +262,14 @@ pub fn destructive_color() -> Hsla {
 }
 
 pub fn destructive_button(id: &'static str, label: &'static str) -> gpui::Stateful<gpui::Div> {
-    let resting = destructive_color();
+    solid_button(id, label, destructive_color())
+}
+
+pub fn solid_button(
+    id: &'static str,
+    label: &'static str,
+    resting: Hsla,
+) -> gpui::Stateful<gpui::Div> {
     let hovered = Hsla {
         l: (resting.l - 0.05).max(0.0),
         ..resting
@@ -280,6 +289,8 @@ pub fn destructive_button(id: &'static str, label: &'static str) -> gpui::Statef
         Some(resting),
         Some(hovered),
     )
+    .role(gpui::accesskit::Role::Button)
+    .aria_label(label)
     .child(label)
 }
 

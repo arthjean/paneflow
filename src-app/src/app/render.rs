@@ -376,9 +376,8 @@ impl Render for PaneFlowApp {
             .on_action(cx.listener(|this: &mut Self, _: &Quit, _window, cx| {
                 this.request_quit(cx);
             }))
-            .on_action(cx.listener(|this: &mut Self, _: &About, _window, cx| {
-                this.show_about_dialog = true;
-                cx.notify();
+            .on_action(cx.listener(|this: &mut Self, _: &About, window, cx| {
+                this.open_about_dialog(window, cx);
             }))
             .on_action(cx.listener(|_this: &mut Self, _: &Copy, _window, cx| {
                 cx.dispatch_action(&TerminalCopy);
@@ -665,7 +664,7 @@ impl Render for PaneFlowApp {
             app_content = app_content.child(self.render_custom_buttons_modal(cx));
         }
 
-        if self.show_about_dialog {
+        if self.about_dialog.is_some() {
             app_content = app_content.child(self.render_about_dialog(cx));
         }
 

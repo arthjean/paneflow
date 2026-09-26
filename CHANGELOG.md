@@ -10,6 +10,15 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
 - Folding or unfolding a workspace folder in the Workspaces sidebar animates
   its tab rows over 180 ms and crossfades the folder icon instead of snapping,
   and snaps as before when Settings > Appearance > Reduce motion is on.
+- **Help > System Info** is redesigned: the build line sits under the title
+  beside the app icon, the rest of the report is grouped into System and
+  Rendering panels, and `Copy` is the primary action, in the app's solid blue. Escape closes the dialog,
+  Enter copies the report, and focus returns to the pane that had it. The
+  copied block is unchanged.
+- **Help > About Paneflow** is redesigned on the same card as System Info and
+  follows the active theme, so it no longer stays dark under a light theme. It
+  shows the version, links to the website, the source code, and the release
+  notes of the running version, and answers Escape, Enter, and the arrow keys.
 - Tailwind Dark paints Settings and dialog cards in its own zinc neutral
   instead of the shared gray, and lifts its `surface` and `subtle` colors one
   step above that card, so select triggers, steppers, secondary buttons, menus

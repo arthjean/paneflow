@@ -19,7 +19,7 @@ impl PaneFlowApp {
         self.open_help_url(DOCUMENTATION_URL, cx);
     }
 
-    pub(crate) fn open_help_url(&mut self, url: &'static str, cx: &mut Context<Self>) {
+    pub(crate) fn open_help_url(&mut self, url: &str, cx: &mut Context<Self>) {
         if let Err(err) = crate::external_open::open_url(url) {
             log::warn!("help menu: open URL failed: {err}");
             self.show_toast(format!("Could not open URL: {err}"), cx);
@@ -176,10 +176,9 @@ impl PaneFlowApp {
         let about = menu_item(
             "title-bar-help-about",
             "About Paneflow",
-            Box::new(cx.listener(|this, _: &ClickEvent, _, cx| {
+            Box::new(cx.listener(|this, _: &ClickEvent, window, cx| {
                 this.title_bar_help_menu_open = None;
-                this.show_about_dialog = true;
-                cx.notify();
+                this.open_about_dialog(window, cx);
                 cx.stop_propagation();
             })),
         );
