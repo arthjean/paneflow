@@ -149,7 +149,7 @@ Nerd Font as the default.
 | Window | Client-side decorations on every platform | Default 1200 by 800, minimum 800 by 500, corner radius 10, border 1, resize border 10, shadow black 0.4 blurred 5 when floating | `src-app/src/window_state.rs`, `src-app/src/app/constants.rs`, `src-app/src/window_chrome/csd.rs` |
 | Title bar | Drag region, sidebar toggle, Files and Help menus, workspace name, caption controls | Height max(1.75 rem, 32 px); control size 20; edge inset 8; control spacing 12; macOS brand padding 80 for the traffic lights | `src-app/src/window_chrome/title_bar.rs` |
 | Primary sidebar | Workspaces rail in Agents, navigation in Settings | Width 300; slides in 280 ms | `src-app/src/app/sidebar/mod.rs`, `src-app/src/app/render.rs` |
-| Main panel | The inset card that holds the pane grid or a Settings page | Inset 4 on right and bottom, and on the left only when the sidebar is hidden; radius 10; four corner masks painted in the shell color, transparent while a chrome material is active, so no surface inside the panel paints its own square background | `src-app/src/main.rs` |
+| Main panel | The inset card that holds the pane grid or a Settings page | Inset 4 on right and bottom, and on the left only when the sidebar is hidden; radius 10; four corner masks painted in the shell color, transparent while a chrome material is active, so no surface inside the panel paints its own square background | `src-app/src/app/render.rs`, `src-app/src/window_chrome/mod.rs` |
 | Pane grid | Binary split tree of pane cards, one per workspace tab | Gutter 8, divider hit area 7, minimum pane 80 | `src-app/src/layout/tree.rs`, `src-app/src/layout/render.rs` |
 | Right rail | Sessions rail | Width 300 | `src-app/src/app/sessions_sidebar.rs` |
 | File tree | Inside the file dock, below its shared toolbar, to the right of the editor | Width 250, shrinking to preserve 200 px for the editor | `src-app/src/app/files_sidebar/mod.rs` |
@@ -428,7 +428,7 @@ toggle (20 px, radius 5, resting tint when the sidebar is hidden), then
 until hovered or open). Center: a 3 px muted dot and the workspace name at 12
 px Medium, hidden in Settings. Right: the caption controls. The title bar
 still carries its own automatic update and IPC pill code, but the cockpit
-shell never renders it (`tb.cockpit = true` in `main.rs`); that code is
+shell never renders it (`tb.cockpit = true` in `app/render.rs`); that code is
 **Migration**, and the sidebar footer owns both banners. The same slot,
 between the center and the caption controls, does render the manual check
 pill raised by `Help > Check for Updates…` and the `PaneFlow` menu on macOS:
