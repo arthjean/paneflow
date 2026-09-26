@@ -33,10 +33,10 @@
     {
       "id": "EP-004",
       "title": "Windows Qualification",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P0",
       "stories_total": 2,
-      "stories_done": 0
+      "stories_done": 2
     },
     {
       "id": "EP-005",
@@ -282,29 +282,29 @@
       "id": "US-015",
       "title": "Qualify Windows lifecycle and installed-app behavior",
       "epic": "EP-004",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P0",
       "size": "XL",
       "blocked_by": [
         "US-014"
       ],
       "started_at": "2026-09-22",
-      "completed_at": null,
-      "reviewed_at": "2026-09-22"
+      "completed_at": "2026-09-26",
+      "reviewed_at": "2026-09-26"
     },
     {
       "id": "US-016",
       "title": "Qualify Windows CPU, memory, and endurance",
       "epic": "EP-004",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P0",
       "size": "L",
       "blocked_by": [
         "US-015"
       ],
       "started_at": "2026-09-22",
-      "completed_at": null,
-      "reviewed_at": "2026-09-22"
+      "completed_at": "2026-09-26",
+      "reviewed_at": "2026-09-26"
     },
     {
       "id": "US-017",
