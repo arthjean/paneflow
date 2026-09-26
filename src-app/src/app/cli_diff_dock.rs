@@ -146,7 +146,7 @@ impl PaneFlowApp {
                 .as_ref()
                 .is_some_and(|data| data.cwd == cwd);
         if showing {
-            self.close_diff_dock_panel(cx);
+            self.dismiss_diff_dock_panel(cx);
         } else {
             self.diff_dock.picker = !self.diff_dock.picked;
             self.open_diff_dock_panel(cwd, cx);
@@ -237,6 +237,9 @@ impl PaneFlowApp {
         let animation = self.diff_dock.reveal_animation?;
         let now = std::time::Instant::now();
         if animation.is_finished(now) {
+            if animation.to_width == 0. {
+                return Some(0.);
+            }
             self.diff_dock.reveal_animation = None;
             return None;
         }
@@ -268,6 +271,15 @@ impl PaneFlowApp {
         self.diff_dock.open && self.settings_section.is_none()
     }
 
+    fn diff_dock_closing(&self) -> bool {
+        !self.diff_dock.open
+            && self.settings_section.is_none()
+            && self
+                .diff_dock
+                .reveal_animation
+                .is_some_and(|animation| animation.to_width == 0.)
+    }
+
     pub(crate) fn wrap_cli_diff_dock(
         &mut self,
         body: AnyElement,
@@ -278,7 +290,7 @@ impl PaneFlowApp {
     ) -> AnyElement {
         self.sync_files_sidebar_session(cx);
         let files_width = self.rendered_files_sidebar_width(window, cx);
-        if !self.diff_dock_visible() {
+        if !self.diff_dock_visible() && !self.diff_dock_closing() {
             return body;
         }
         let ui = crate::theme::ui_colors();

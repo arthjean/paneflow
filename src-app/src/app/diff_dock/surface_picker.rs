@@ -64,7 +64,7 @@ pub(super) fn render_diff_picker_header(
             "diff-dock-picker-close",
             "icons/layout-sidebar-right-collapse.svg",
             cx.listener(|this, _: &ClickEvent, _w, cx| {
-                this.close_diff_dock_panel(cx);
+                this.dismiss_diff_dock_panel(cx);
             }),
             ui.muted,
         ))

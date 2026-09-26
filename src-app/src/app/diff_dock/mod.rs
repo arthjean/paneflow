@@ -53,11 +53,16 @@ impl PaneFlowApp {
                 && data.theme_generation == crate::theme::theme_generation()
         });
         if !self.diff_dock.open {
+            let now = std::time::Instant::now();
+            let from = self
+                .diff_dock
+                .reveal_animation
+                .map_or(0., |animation| animation.width_at(now));
             self.diff_dock.reveal_animation =
-                (!crate::ui_primitives::reduce_motion()).then(|| crate::SidebarWidthAnimation {
-                    from_width: 0.,
+                (!crate::ui_primitives::reduce_motion()).then_some(crate::SidebarWidthAnimation {
+                    from_width: from,
                     to_width: 1.,
-                    started_at: std::time::Instant::now(),
+                    started_at: now,
                 });
         }
         self.diff_dock.open = true;
@@ -66,6 +71,49 @@ impl PaneFlowApp {
         } else {
             self.refresh_diff_dock(cwd, cx);
         }
+    }
+
+    pub(crate) fn dismiss_diff_dock_panel(&mut self, cx: &mut Context<Self>) {
+        if !self.diff_dock_visible()
+            || self.diff_dock_fills_panel()
+            || crate::ui_primitives::reduce_motion()
+        {
+            self.close_diff_dock_panel(cx);
+            return;
+        }
+        let now = std::time::Instant::now();
+        let from = self
+            .diff_dock
+            .reveal_animation
+            .map_or(1., |animation| animation.width_at(now));
+        let animation = crate::SidebarWidthAnimation {
+            from_width: from,
+            to_width: 0.,
+            started_at: now,
+        };
+        self.diff_dock.open = false;
+        self.diff_dock.reveal_animation = Some(animation);
+        self.diff_dock.resize = None;
+        self.diff_dock.h_scroll_drag = None;
+        cx.notify();
+        cx.spawn(
+            async move |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
+                smol::Timer::at(animation.finishes_at()).await;
+                let _ = cx.update(|cx| {
+                    this.update(cx, |app: &mut Self, cx: &mut Context<Self>| {
+                        let still_closing = !app.diff_dock.open
+                            && app
+                                .diff_dock
+                                .reveal_animation
+                                .is_some_and(|current| current.started_at == animation.started_at);
+                        if still_closing {
+                            app.close_diff_dock_panel(cx);
+                        }
+                    })
+                });
+            },
+        )
+        .detach();
     }
 
     pub(crate) fn close_diff_dock_panel(&mut self, cx: &mut Context<Self>) {

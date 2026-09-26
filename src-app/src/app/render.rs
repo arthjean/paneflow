@@ -20,6 +20,10 @@ impl SidebarWidthAnimation {
         self.from_width + (self.to_width - self.from_width) * eased
     }
 
+    pub(crate) fn finishes_at(self) -> std::time::Instant {
+        self.started_at + std::time::Duration::from_millis(PRIMARY_SIDEBAR_ANIMATION_MS)
+    }
+
     pub(crate) fn is_finished(self, now: std::time::Instant) -> bool {
         now.duration_since(self.started_at)
             >= std::time::Duration::from_millis(PRIMARY_SIDEBAR_ANIMATION_MS)
