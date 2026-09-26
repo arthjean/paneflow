@@ -56,6 +56,7 @@ type Durability = Arc<SessionPersistence>;
 struct SeedLedger {
     removed: bool,
     receipts: VecDeque<(u64, u64)>,
+    refusal_reported_for: Option<SessionGeneration>,
 }
 
 struct PendingLaunch {
@@ -861,7 +862,14 @@ impl SessionHost {
                     }
                     Some(_) => "the event names a generation this session has not reached",
                 };
-                log::warn!(
+                let level = if ledger.refusal_reported_for == Some(generation) {
+                    log::Level::Debug
+                } else {
+                    ledger.refusal_reported_for = Some(generation);
+                    log::Level::Warn
+                };
+                log::log!(
+                    level,
                     "agent event rejected for session {}: runtime generation {:?} does not match current generation {}: {reason}",
                     event.session,
                     event.generation,
