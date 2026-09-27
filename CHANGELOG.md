@@ -5,6 +5,27 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
 
 ## [Unreleased]
 
+## [0.17.2] - 2026-09-27
+
+A patch for the Windows update path. Updating from 0.16 no longer stops on an
+installer dialog about `paneflow-host`, the in-app update installs again under
+Program Files, and an update no longer leaves a 75 MB copy of Paneflow in the
+temporary folder. The title bar update pill now shows every release Paneflow
+finds and follows the update through to the restart.
+
+### Changed
+
+- The title bar update pill appears for any release Paneflow knows about,
+  whether the startup check, the four-hourly recheck, or `Help > Check for
+  Updates…` found it. Before, only a manual check raised it, and it vanished
+  once the download started. It now stays through the whole update:
+  `v<x.y.z> available`, `Downloading update…`, `Installing update…`,
+  `Restart Paneflow`, and `Update failed`, which retries on click. Installs
+  managed by rpm-ostree or another package manager show `Update via rpm-ostree`
+  or `Update via package manager`, which copy the command. The `×` on the
+  available, failed, and package-manager states hides that release until a
+  newer one ships.
+
 ### Fixed
 
 - An agent row built from the screen no longer stays in the sidebar after the

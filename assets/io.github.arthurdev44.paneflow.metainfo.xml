@@ -63,6 +63,15 @@
   <content_rating type="oars-1.1" />
 
   <releases>
+    <release version="0.17.2" date="2026-09-27">
+      <description>
+        <p>A patch for the Windows update path. Updating from 0.16 no longer stops on an installer dialog, the in-app update installs again under Program Files, and an update no longer leaves a copy of Paneflow in the temporary folder.</p>
+        <ul>
+          <li>The title bar update pill shows every release Paneflow finds and follows the download, install, and restart</li>
+          <li>An agent row built from the screen leaves the sidebar once the agent exits</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.17.1" date="2026-09-26">
       <description>
         <p>A patch for the 0.17.0 upgrade path. Claude Code and Codex hooks that 0.16.0 injected at launch are adopted without a manual install, restored panes run the current helpers, and an agent whose hooks never reported still shows status from its screen.</p>
