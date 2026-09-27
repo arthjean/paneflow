@@ -905,8 +905,8 @@ serves sessions), the desktop stops every hosted session through the single
 `host.shutdown` acknowledgment, and only then spawns the MSI relay. An
 unconfirmed stop keeps the window open with Retry, Keep running and quit, and
 Cancel. A shared five-second action deadline reports unresolved identities while
-the host retains pending ownership. A storage-only failure offers Quit with
-unsaved final state, which exits only the desktop and never installs the update. The relay itself does not rely on the desktop PID
+the host retains pending ownership. A storage-only failure offers Quit
+without updating, which exits only the desktop and never installs the update. The relay itself does not rely on the desktop PID
 alone: after the parent exits it probes the host endpoint for up to thirty
 seconds and, if a host still serves, skips `msiexec`, logs the deferral in its
 relay log and relaunches the current version, because the host binary next to

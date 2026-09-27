@@ -638,39 +638,49 @@ impl StopAllOutcome {
             && !matches!(self.shutdown, Some(ShutdownOutcome::Refused(_)))
     }
 
-    pub(crate) fn user_message(&self) -> String {
+    pub(crate) fn summary(&self) -> String {
         let mut parts = Vec::new();
         if !self.unresolved.is_empty() {
             parts.push(format!(
-                "{} could not be confirmed stopped: {}",
-                count_sessions(self.unresolved.len()),
-                self.unresolved
-                    .iter()
-                    .map(|(session, reason)| format!("{session}: {reason}"))
-                    .collect::<Vec<_>>()
-                    .join("; ")
+                "{} could not be confirmed stopped.",
+                count_sessions(self.unresolved.len())
             ));
         }
         if !self.unsaved.is_empty() {
             parts.push(format!(
-                "{} stopped but its final state could not be saved: {}",
-                count_sessions(self.unsaved.len()),
-                self.unsaved
-                    .iter()
-                    .map(|(session, reason)| format!("{session}: {reason}"))
-                    .collect::<Vec<_>>()
-                    .join("; ")
+                "Paneflow could not record how {} ended.",
+                count_sessions(self.unsaved.len())
             ));
+        } else if matches!(self.shutdown, Some(ShutdownOutcome::Unsaved(_))) {
+            parts.push("Paneflow could not record how your sessions ended.".to_string());
         }
-        if let Some(ShutdownOutcome::Refused(reason)) = &self.shutdown {
-            parts.push(format!("the local host refused to shut down: {reason}"));
+        if matches!(self.shutdown, Some(ShutdownOutcome::Refused(_))) {
+            parts.push("The session host did not shut down.".to_string());
         }
-        if let Some(ShutdownOutcome::Unsaved(reason)) = &self.shutdown {
-            parts.push(format!(
+        parts.join(" ")
+    }
+
+    pub(crate) fn detail_lines(&self) -> Vec<String> {
+        let unresolved = self.unresolved.iter().map(|(session, reason)| {
+            format!("session {session} could not be confirmed stopped: {reason}")
+        });
+        let unsaved = self.unsaved.iter().map(|(session, reason)| {
+            format!("session {session} stopped but its final state could not be saved: {reason}")
+        });
+        let host = match &self.shutdown {
+            Some(ShutdownOutcome::Refused(reason)) => {
+                Some(format!("the local host refused to shut down: {reason}"))
+            }
+            Some(ShutdownOutcome::Unsaved(reason)) => Some(format!(
                 "the local host still owns unsaved final state: {reason}"
-            ));
-        }
-        parts.join(". ")
+            )),
+            _ => None,
+        };
+        unresolved.chain(unsaved).chain(host).collect()
+    }
+
+    pub(crate) fn detail(&self) -> String {
+        self.detail_lines().join("; ")
     }
 }
 
@@ -1065,11 +1075,7 @@ mod tests {
         };
         assert!(!unsaved.confirmed());
         assert!(unsaved.durability_only());
-        assert!(
-            unsaved
-                .user_message()
-                .contains("final state could not be saved")
-        );
+        assert!(unsaved.detail().contains("final state could not be saved"));
 
         let unresolved = StopAllOutcome {
             unresolved: vec![(SessionId::new(), "wait handle lost".into())],
@@ -1079,9 +1085,57 @@ mod tests {
         };
         assert!(!unresolved.confirmed());
         assert!(!unresolved.durability_only());
-        let message = unresolved.user_message();
+        let message = unresolved.detail();
         assert!(message.contains("could not be confirmed stopped"));
         assert!(message.contains("refused to shut down"));
+    }
+
+    #[test]
+    fn the_stop_all_summary_counts_sessions_and_leaves_raw_errors_to_the_detail() {
+        let session = SessionId::new();
+        let reason = "hook seed: the session data directory C:\\x is gone";
+        let unsaved_twice = StopAllOutcome {
+            stopped: 1,
+            unsaved: vec![(session.clone(), reason.into())],
+            shutdown: Some(ShutdownOutcome::Unsaved(format!(
+                "host error -32035: session {session} generation 4 revision 168 is not durable: {reason}"
+            ))),
+            ..StopAllOutcome::default()
+        };
+        assert_eq!(
+            unsaved_twice.summary(),
+            "Paneflow could not record how 1 session ended."
+        );
+        let lines = unsaved_twice.detail_lines();
+        assert_eq!(lines.len(), 2, "one line per session and one for the host");
+        assert!(lines[0].contains(&session.to_string()));
+        assert!(lines[0].ends_with(reason));
+        assert!(lines[1].contains("-32035"));
+
+        let host_only = StopAllOutcome {
+            shutdown: Some(ShutdownOutcome::Unsaved("revision 3 is not durable".into())),
+            ..StopAllOutcome::default()
+        };
+        assert_eq!(
+            host_only.summary(),
+            "Paneflow could not record how your sessions ended."
+        );
+
+        let everything = StopAllOutcome {
+            unresolved: vec![
+                (SessionId::new(), "wait handle lost".into()),
+                (SessionId::new(), "wait handle lost".into()),
+            ],
+            unsaved: vec![(SessionId::new(), "disk full".into())],
+            shutdown: Some(ShutdownOutcome::Refused("2 unresolved".into())),
+            ..StopAllOutcome::default()
+        };
+        assert_eq!(
+            everything.summary(),
+            "2 sessions could not be confirmed stopped. \
+             Paneflow could not record how 1 session ended. \
+             The session host did not shut down."
+        );
     }
 
     #[test]
@@ -1336,7 +1390,7 @@ mod tests {
 
         let outcome = stop_sessions_and_shutdown(Vec::new(), Some(endpoint.clone()));
 
-        assert!(outcome.confirmed(), "{}", outcome.user_message());
+        assert!(outcome.confirmed(), "{}", outcome.detail());
         assert_eq!(outcome.stopped, 1);
         assert!(host.list(None).is_empty());
         server.stop().unwrap();

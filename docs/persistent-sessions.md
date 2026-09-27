@@ -45,10 +45,11 @@ input, or attachment queues are full refuses the extra work with a visible busy
 error instead of growing without limit, and other sessions keep running.
 
 If all process owners have resolved but final state could not be saved,
-Paneflow reports the storage problem separately. **Quit with unsaved final
-state** exits only the desktop. It does not install an update, force the host
-to exit, or claim that the latest state reached disk. Retry after restoring
-storage access to attempt persistence again.
+Paneflow reports the storage problem separately. **Quit anyway**, or **Quit
+without updating** during an update, exits only the desktop. It does not
+install an update, force the host to exit, or claim that the latest state
+reached disk. Retry after restoring storage access to attempt persistence
+again.
 
 On Windows, the MSI relay checks the host endpoint after the desktop exits. A
 host that still serves defers installation and relaunches the current version.

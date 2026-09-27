@@ -5,6 +5,16 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
 
 ## [Unreleased]
 
+### Changed
+
+- The quit dialog that reports a stop or save problem now says what happened
+  in plain words, with session counts instead of raw host errors, session IDs,
+  and file paths. Those move to a collapsed `Show details` section, one error
+  per line, ready for a bug report. When only saving failed, it reads
+  `Unable to save session state` under `All sessions stopped.`, and its
+  override button is `Quit anyway`, or `Quit without updating` during an
+  update.
+
 ### Fixed
 
 - Quitting no longer stops on "Unable to save the final state" for a terminal

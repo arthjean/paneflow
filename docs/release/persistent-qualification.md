@@ -352,7 +352,7 @@ and the Desktop lifecycle and recovery actions.
 | D-07 | Click an ended row | Bounded final text opens read-only; evicted text is reported as unavailable |
 | D-08 | Close a pane whose agent activity is stale | Confirmation asks; nothing is stopped implicitly |
 | D-09 | Stop everything and quit while one fixture ignores termination (`blocked-stdin` plus a held descendant) | Desktop stays open with the unresolved identity, Retry, Keep running and quit, Cancel |
-| D-10 | Stop everything and quit with the host data directory made read-only | Confirmed exits and unconfirmed durability are reported separately; Quit with unsaved final state exits only the desktop |
+| D-10 | Stop everything and quit with the host data directory made read-only | Confirmed exits and unconfirmed durability are reported separately; Quit anyway exits only the desktop |
 | D-11 | Force-terminate the desktop process while 10 fixtures run, then reopen the saved layout | Fixture PIDs and generations unchanged; every pane reattaches without a create or restart RPC |
 
 ## Coverage ledger

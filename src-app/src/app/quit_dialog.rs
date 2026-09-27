@@ -2,7 +2,7 @@ use std::collections::HashSet;
 
 use gpui::{
     AnyElement, AsyncApp, ClickEvent, Context, CursorStyle, InteractiveElement, IntoElement,
-    KeyDownEvent, ParentElement, Pixels, Styled, Window, div, prelude::*, px,
+    KeyDownEvent, ParentElement, Pixels, Styled, Window, div, prelude::*, px, svg,
 };
 use paneflow_config::schema::OnQuit;
 use serde_json::Value;
@@ -10,11 +10,12 @@ use serde_json::Value;
 use crate::PaneFlowApp;
 use crate::ai_types::AgentState;
 use crate::settings::components::{
-    MODAL_PADDING, destructive_button, modal_backdrop, modal_card, modal_footer, modal_header,
-    secondary_button, setting_text, solid_button, switch_blue, toggle_pill, with_alpha,
+    MODAL_PADDING, destructive_button, menu_panel, modal_backdrop, modal_card, modal_footer,
+    modal_header, secondary_button, setting_text, solid_button, switch_blue, toggle_pill,
+    with_alpha,
 };
 use crate::terminal::host_link::{self, HostLinkState, StopAllOutcome};
-use crate::ui_primitives::BODY;
+use crate::ui_primitives::{BODY, LABEL_SM};
 use crate::update;
 
 const DIALOG_WIDTH: Pixels = px(460.);
@@ -115,6 +116,7 @@ pub(crate) struct QuitDialog {
     stopping: bool,
     focused: bool,
     failure: Option<StopAllOutcome>,
+    details_open: bool,
     selected: Option<QuitAction>,
 }
 
@@ -128,6 +130,7 @@ enum QuitFailure {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum QuitAction {
     ToggleRemember,
+    ToggleDetails,
     Cancel,
     KeepSessions,
     StopEverything,
@@ -169,9 +172,8 @@ impl QuitFooter {
         }
     }
 
-    fn focus_order(&self, remember_shown: bool) -> Vec<QuitAction> {
-        remember_shown
-            .then_some(QuitAction::ToggleRemember)
+    fn focus_order(&self, body_toggle: Option<QuitAction>) -> Vec<QuitAction> {
+        body_toggle
             .into_iter()
             .chain(self.leading)
             .chain(self.trailing)
@@ -182,6 +184,7 @@ impl QuitFooter {
 fn quit_action_label(action: QuitAction, kind: ExitKind, failure: QuitFailure) -> &'static str {
     match (action, kind, failure) {
         (QuitAction::ToggleRemember, _, _) => "Remember my choice",
+        (QuitAction::ToggleDetails, _, _) => "Show details",
         (QuitAction::Cancel, _, _) => "Cancel",
         (QuitAction::KeepSessions, _, QuitFailure::None) => "Keep sessions running",
         (QuitAction::KeepSessions, _, _) => "Keep running and quit",
@@ -194,7 +197,8 @@ fn quit_action_label(action: QuitAction, kind: ExitKind, failure: QuitFailure) -
         (QuitAction::StopEverything, ExitKind::Quit, _) => "Retry stopping",
         (QuitAction::StopEverything, ExitKind::UpdateRestart, _) => "Retry update",
         (QuitAction::RetrySave, _, _) => "Retry save",
-        (QuitAction::QuitUnsaved, _, _) => "Quit with unsaved final state",
+        (QuitAction::QuitUnsaved, ExitKind::Quit, _) => "Quit anyway",
+        (QuitAction::QuitUnsaved, ExitKind::UpdateRestart, _) => "Quit without updating",
     }
 }
 
@@ -269,6 +273,7 @@ impl PaneFlowApp {
             stopping: false,
             focused: false,
             failure: None,
+            details_open: false,
             selected: None,
         });
         cx.notify();
@@ -282,15 +287,14 @@ impl PaneFlowApp {
     ) {
         log::warn!(
             "paneflow: the stop-everything exit could not be confirmed: {}",
-            outcome.user_message()
+            outcome.detail()
         );
         self.session_exit_pending = false;
         let sessions = self.live_session_targets(cx).len();
         let (working, waiting) = self.busy_agent_counts();
-        let remember = self
-            .quit_dialog
-            .as_ref()
-            .is_some_and(|dialog| dialog.remember);
+        let (remember, details_open) = self.quit_dialog.as_ref().map_or((false, false), |dialog| {
+            (dialog.remember, dialog.details_open)
+        });
         self.quit_dialog = Some(QuitDialog {
             kind,
             sessions,
@@ -300,6 +304,7 @@ impl PaneFlowApp {
             stopping: false,
             focused: false,
             failure: Some(outcome),
+            details_open,
             selected: None,
         });
         cx.notify();
@@ -480,7 +485,7 @@ impl PaneFlowApp {
     fn quit_dialog_footer_state(&self) -> Option<(QuitFooter, Vec<QuitAction>, QuitAction)> {
         let dialog = self.quit_dialog.as_ref()?;
         let footer = QuitFooter::for_exit(dialog.kind, quit_failure(dialog.failure.as_ref()));
-        let order = footer.focus_order(quit_remember_shown(dialog));
+        let order = footer.focus_order(quit_body_toggle(dialog));
         let selected = dialog
             .selected
             .filter(|action| order.contains(action))
@@ -548,6 +553,13 @@ impl PaneFlowApp {
                     cx.notify();
                 }
             }
+            QuitAction::ToggleDetails => {
+                if let Some(dialog) = self.quit_dialog.as_mut() {
+                    dialog.details_open = !dialog.details_open;
+                    dialog.selected = Some(QuitAction::ToggleDetails);
+                    cx.notify();
+                }
+            }
             QuitAction::Cancel => self.close_quit_dialog(window, cx),
             QuitAction::KeepSessions => self.quit_keeping_sessions(cx),
             QuitAction::StopEverything | QuitAction::RetrySave => {
@@ -590,22 +602,29 @@ impl PaneFlowApp {
                 "Restart to update?",
                 "Updating ends every session and every process they started.".to_string(),
             ),
-            (_, Some(outcome)) if durability_only => (
-                "Unable to save the final state",
-                format!("Every session stopped. {}.", outcome.user_message()),
+            (ExitKind::Quit, Some(outcome)) if durability_only => (
+                "Unable to save session state",
+                format!("{} Retry, or quit anyway.", outcome.summary()),
+            ),
+            (ExitKind::UpdateRestart, Some(outcome)) if durability_only => (
+                "Unable to save session state",
+                format!(
+                    "{} Nothing was replaced. Retry, or quit without updating.",
+                    outcome.summary()
+                ),
             ),
             (ExitKind::Quit, Some(outcome)) => (
                 "Some sessions may still be running",
                 format!(
-                    "{}. Retry, or quit and leave them running.",
-                    outcome.user_message()
+                    "{} Retry, or quit and leave them running.",
+                    outcome.summary()
                 ),
             ),
             (ExitKind::UpdateRestart, Some(outcome)) => (
                 "Unable to update yet",
                 format!(
-                    "{}. Nothing was replaced. Retry, or update later.",
-                    outcome.user_message()
+                    "{} Nothing was replaced. Retry, or update later.",
+                    outcome.summary()
                 ),
             ),
         };
@@ -614,6 +633,8 @@ impl PaneFlowApp {
                 "Stopping {}...",
                 super::plural(dialog.sessions, "session", "sessions")
             )
+        } else if durability_only {
+            "All sessions stopped.".to_string()
         } else {
             quit_summary(dialog.sessions, dialog.working, dialog.waiting)
         };
@@ -661,6 +682,73 @@ impl PaneFlowApp {
                 row.child(quit_focus_ring(px(QUIT_REMEMBER_RADIUS), ui))
             });
 
+        let details_open = dialog.details_open;
+        let details = failure
+            .as_ref()
+            .filter(|_| quit_details_shown(dialog))
+            .map(|outcome| {
+                let trigger = div()
+                    .id(quit_action_id(QuitAction::ToggleDetails))
+                    .relative()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap(px(4.))
+                    .cursor(CursorStyle::PointingHand)
+                    .text_size(LABEL_SM)
+                    .text_color(ui.muted)
+                    .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+                        this.activate_quit_action(QuitAction::ToggleDetails, window, cx);
+                        cx.stop_propagation();
+                    }))
+                    .child(
+                        svg()
+                            .path(if details_open {
+                                "icons/chevron-down.svg"
+                            } else {
+                                "icons/chevron-right.svg"
+                            })
+                            .size(px(12.))
+                            .flex_none()
+                            .text_color(ui.muted),
+                    )
+                    .child(if details_open {
+                        "Hide details"
+                    } else {
+                        quit_action_label(QuitAction::ToggleDetails, kind, failure_state)
+                    })
+                    .when(selected == QuitAction::ToggleDetails, |row| {
+                        row.child(quit_focus_ring(px(QUIT_DETAILS_TRIGGER_RADIUS), ui))
+                    });
+                div()
+                    .flex()
+                    .flex_col()
+                    .items_start()
+                    .gap(px(8.))
+                    .px(MODAL_PADDING)
+                    .pb(px(14.))
+                    .child(trigger)
+                    .when(details_open, |block| {
+                        block.child(
+                            menu_panel(div().id("quit-dialog-details-text"), ui)
+                                .w_full()
+                                .max_h(QUIT_DETAILS_MAX_HEIGHT)
+                                .overflow_x_hidden()
+                                .overflow_y_scroll()
+                                .children(outcome.detail_lines().into_iter().map(|line| {
+                                    div()
+                                        .min_w_0()
+                                        .px(px(3.))
+                                        .font_family(QUIT_DETAILS_FONT)
+                                        .text_size(LABEL_SM)
+                                        .line_height(QUIT_DETAILS_LINE_HEIGHT)
+                                        .text_color(ui.text)
+                                        .child(line)
+                                })),
+                        )
+                    })
+            });
+
         let mut button = |action: QuitAction| {
             let label = quit_action_label(action, kind, failure_state);
             let id = quit_action_id(action);
@@ -705,6 +793,7 @@ impl PaneFlowApp {
             div()
                 .child(header)
                 .child(explanation)
+                .children(details)
                 .when(remember_shown, |body| body.child(remember_row))
                 .child(footer),
         )
@@ -723,6 +812,10 @@ impl PaneFlowApp {
 
 const QUIT_FOCUS_RING_GAP: f32 = 3.;
 const QUIT_REMEMBER_RADIUS: f32 = 8.;
+const QUIT_DETAILS_TRIGGER_RADIUS: f32 = 4.;
+const QUIT_DETAILS_MAX_HEIGHT: Pixels = px(160.);
+const QUIT_DETAILS_LINE_HEIGHT: Pixels = px(16.);
+const QUIT_DETAILS_FONT: &str = "Geist Mono";
 
 fn quit_failure(failure: Option<&StopAllOutcome>) -> QuitFailure {
     match failure {
@@ -736,9 +829,24 @@ fn quit_remember_shown(dialog: &QuitDialog) -> bool {
     !dialog.stopping && dialog.kind == ExitKind::Quit && dialog.failure.is_none()
 }
 
+fn quit_details_shown(dialog: &QuitDialog) -> bool {
+    !dialog.stopping && dialog.failure.is_some()
+}
+
+fn quit_body_toggle(dialog: &QuitDialog) -> Option<QuitAction> {
+    if quit_remember_shown(dialog) {
+        Some(QuitAction::ToggleRemember)
+    } else if quit_details_shown(dialog) {
+        Some(QuitAction::ToggleDetails)
+    } else {
+        None
+    }
+}
+
 fn quit_action_id(action: QuitAction) -> &'static str {
     match action {
         QuitAction::ToggleRemember => "quit-dialog-remember",
+        QuitAction::ToggleDetails => "quit-dialog-details",
         QuitAction::Cancel => "quit-dialog-cancel",
         QuitAction::KeepSessions => "quit-dialog-keep",
         QuitAction::StopEverything => "quit-dialog-stop",
@@ -852,7 +960,7 @@ mod tests {
         assert_eq!(quit.trailing, [Cancel, KeepSessions]);
         assert_eq!(quit.default, KeepSessions);
         assert_eq!(
-            quit.focus_order(true),
+            quit.focus_order(Some(ToggleRemember)),
             vec![ToggleRemember, StopEverything, Cancel, KeepSessions]
         );
 
@@ -863,11 +971,55 @@ mod tests {
         for kind in [ExitKind::Quit, ExitKind::UpdateRestart] {
             let unsaved = QuitFooter::for_exit(kind, QuitFailure::DurabilityOnly);
             assert_eq!(unsaved.default, RetrySave);
-            assert!(unsaved.focus_order(false).contains(&unsaved.default));
+            assert_eq!(
+                unsaved.focus_order(Some(ToggleDetails)),
+                vec![ToggleDetails, QuitUnsaved, Cancel, RetrySave]
+            );
         }
         assert_eq!(
             QuitFooter::for_exit(ExitKind::UpdateRestart, QuitFailure::Unresolved).default,
             Cancel
+        );
+    }
+
+    #[test]
+    fn a_failure_offers_collapsed_details_while_the_first_question_offers_remember() {
+        let dialog = |kind, stopping, failure: Option<StopAllOutcome>| QuitDialog {
+            kind,
+            sessions: 1,
+            working: 0,
+            waiting: 0,
+            remember: false,
+            stopping,
+            focused: false,
+            failure,
+            details_open: false,
+            selected: None,
+        };
+        let unsaved = StopAllOutcome {
+            unsaved: vec![(
+                paneflow_config::schema::SessionId::new(),
+                "disk full".into(),
+            )],
+            ..StopAllOutcome::default()
+        };
+        assert_eq!(
+            quit_body_toggle(&dialog(ExitKind::Quit, false, None)),
+            Some(QuitAction::ToggleRemember)
+        );
+        assert_eq!(
+            quit_body_toggle(&dialog(ExitKind::UpdateRestart, false, None)),
+            None
+        );
+        for kind in [ExitKind::Quit, ExitKind::UpdateRestart] {
+            let failed = dialog(kind, false, Some(unsaved.clone()));
+            assert_eq!(quit_body_toggle(&failed), Some(QuitAction::ToggleDetails));
+            assert!(!failed.details_open, "details start collapsed");
+        }
+        assert_eq!(
+            quit_body_toggle(&dialog(ExitKind::Quit, true, Some(unsaved))),
+            None,
+            "nothing to toggle while the stop runs"
         );
     }
 }
