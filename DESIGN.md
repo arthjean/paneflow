@@ -278,7 +278,7 @@ to the surfaces named:
 | `#5aa6ff`, light `#0550ae` | Filter and settings search match text, `filter_match_color` | Match blue, identical in every preset of a variant; each value keeps 14 px semibold text at 4.5:1 on the active row tint |
 | `#fbbf24`, light `#92400e` | Sidebar bell when an agent needs input | Amber request signal, identical in every preset of a variant; the light value keeps the 10 px word at 4.5:1 |
 | `#83c3ff`, light `#0369a1` | Sidebar dot when an agent finished | Light blue completion signal, identical in every preset of a variant; the light value keeps the 10 px word at 4.5:1 |
-| `#3a83f7` | Title bar pill when a manual check finds a release | Solid update blue with a white glyph, label, and `×`, identical in every preset |
+| `#3a83f7` | Title bar update pill when a release is known or staged for restart | Solid update blue with a white glyph, label, and `×` (restart has none), identical in every preset |
 | `hsl(40 85% 55%)` | Callout warning | Severity hue independent of preset |
 
 ### 4.4 Geometry
@@ -428,19 +428,26 @@ toggle (20 px, radius 5, resting tint when the sidebar is hidden), then
 `Files` and `Help` triggers (height 20, padding 6, radius 8, 12 px, muted
 until hovered or open). Center: a 3 px muted dot and the workspace name at 12
 px Medium, hidden in Settings. Right: the caption controls. The title bar
-still carries its own automatic update and IPC pill code, but the cockpit
-shell never renders it (`tb.cockpit = true` in `app/render.rs`); that code is
-**Migration**, and the sidebar footer owns both banners. The same slot,
-between the center and the caption controls, does render the manual check
-pill raised by `Help > Check for Updates…` and the `PaneFlow` menu on macOS:
-height 24, padding 8, gap 5, squircle 14 through `squircle_skin`, no border, 11 px Medium.
-`Checking for updates…` shows the 11 px spinning loader on `subtle` at 0.7
-opacity; `Paneflow is up to date` sits in `vc_added` on its 0.12 wash and
-leaves after 3 s; `v<x.y.z> available` is solid `#3a83f7` with a white
-download glyph and label (click installs); `Update check failed` sits in
-`vc_deleted` on its 0.12 wash and leaves after 3 s. The two colored states
-carry no glyph. Only the manual check
-raises this pill; the automatic check keeps to the footer banner. On Windows the caption glyphs are native Windows 11
+still carries its own IPC pill code, but the cockpit shell never renders it
+(`tb.cockpit = true` in `app/render.rs`); that code is **Migration**, and the
+sidebar footer owns the IPC banner. Between the center and the caption
+controls sits the update pill, the single control for every update state
+(`resolve_update_pill` in `app/self_update_flow.rs`): height 24, padding 8,
+gap 5, squircle 14 through `squircle_skin`, no border, 11 px Medium. Any known
+release raises it, whether the startup check, the four-hourly recheck, or
+`Help > Check for Updates…` (the `PaneFlow` menu on macOS) found it.
+`v<x.y.z> available` and `Restart Paneflow` are solid `#3a83f7` with a white
+download or refresh glyph and label; a click installs or restarts.
+`Downloading update…` and `Installing update…` show the 11 px spinning loader
+on `subtle` at 0.7 opacity; `Update via rpm-ostree` and `Update via package
+manager` show the tool glyph on `subtle`; `Update failed` sits in `vc_deleted`
+on its 0.12 wash and retries on click. The available, failed, and package
+manager states end in a 13 px bold `×` that dismisses the release until a newer
+one ships. A manual check lays its transient states over the same slot:
+`Checking for updates…` with the spinner on `subtle` at 0.7 opacity, then
+`Paneflow is up to date` in `vc_added` or `Update check failed` in
+`vc_deleted`, each on its 0.12 wash and gone after 3 s. The colored wash states
+carry no glyph. On Windows the caption glyphs are native Windows 11
 shapes; on macOS the traffic lights get 80 px of brand padding. The title bar
 draws no bottom hairline inside the cockpit shell; the panel inset separates
 it from the content.

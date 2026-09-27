@@ -1,6 +1,6 @@
 use gpui::{ClipboardItem, Context, Window};
 
-use crate::window_chrome::title_bar::UpdateCheckPill;
+use crate::window_chrome::title_bar::{SystemPackageKind, UpdatePill};
 use crate::{DismissUpdate, PaneFlowApp, StartSelfUpdate, TOAST_HOLD_MS, ToastAction, update};
 use update::checker::UpdateStatus;
 
@@ -39,6 +39,49 @@ pub(crate) fn settle_manual_check(status: &UpdateStatus) -> Option<ManualUpdateC
     }
 }
 
+pub(crate) fn resolve_update_pill(
+    manual_check: Option<ManualUpdateCheck>,
+    update_status: Option<&UpdateStatus>,
+    self_update_status: &update::SelfUpdateStatus,
+    install_method: &update::install_method::InstallMethod,
+) -> Option<UpdatePill> {
+    match manual_check {
+        Some(ManualUpdateCheck::Checking) => return Some(UpdatePill::Checking),
+        Some(ManualUpdateCheck::UpToDate) => return Some(UpdatePill::UpToDate),
+        Some(ManualUpdateCheck::Failed) => return Some(UpdatePill::CheckFailed),
+        Some(ManualUpdateCheck::Available) | None => {}
+    }
+    let Some(UpdateStatus::Available { version, .. }) = update_status else {
+        return None;
+    };
+    if let Some(kind) = system_managed_kind(install_method) {
+        return Some(UpdatePill::SystemManaged(kind));
+    }
+    Some(match self_update_status {
+        update::SelfUpdateStatus::Idle => UpdatePill::Available(version.clone()),
+        update::SelfUpdateStatus::Downloading => UpdatePill::Downloading,
+        update::SelfUpdateStatus::Installing => UpdatePill::Installing,
+        update::SelfUpdateStatus::ReadyToRestart => UpdatePill::ReadyToRestart,
+        update::SelfUpdateStatus::Errored => UpdatePill::InstallFailed,
+    })
+}
+
+fn system_managed_kind(
+    install_method: &update::install_method::InstallMethod,
+) -> Option<SystemPackageKind> {
+    use update::install_method::{InstallMethod, PackageManager};
+    match install_method {
+        InstallMethod::SystemPackage {
+            manager: PackageManager::RpmOstree,
+        } => Some(SystemPackageKind::RpmOstree),
+        InstallMethod::SystemPackage {
+            manager: PackageManager::Other,
+        }
+        | InstallMethod::ExternallyManaged { .. } => Some(SystemPackageKind::Other),
+        _ => None,
+    }
+}
+
 pub(crate) fn is_strict_semver(raw: &str) -> bool {
     let rest = raw.strip_prefix('v').unwrap_or(raw);
     let mut completed_parts: usize = 0;
@@ -63,67 +106,13 @@ pub(crate) fn is_strict_semver(raw: &str) -> bool {
 }
 
 impl PaneFlowApp {
-    pub(crate) fn update_pill_info(&self) -> Option<crate::window_chrome::title_bar::UpdateInfo> {
-        use crate::window_chrome::title_bar;
-        let in_app_state = match &self.self_update.self_update_status {
-            update::SelfUpdateStatus::Idle => title_bar::SelfUpdatePillState::Idle,
-            update::SelfUpdateStatus::Downloading => title_bar::SelfUpdatePillState::Downloading,
-            update::SelfUpdateStatus::Installing => title_bar::SelfUpdatePillState::Installing,
-            update::SelfUpdateStatus::ReadyToRestart => {
-                title_bar::SelfUpdatePillState::ReadyToRestart
-            }
-            update::SelfUpdateStatus::Errored => title_bar::SelfUpdatePillState::Errored,
-        };
-        match &self.self_update.update_status {
-            Some(update::checker::UpdateStatus::Available { version, .. }) => {
-                let kind = match &self.self_update.install_method {
-                    update::install_method::InstallMethod::SystemPackage { manager } => {
-                        match manager {
-                            update::install_method::PackageManager::Dnf
-                            | update::install_method::PackageManager::Apt
-                            | update::install_method::PackageManager::Zypper => {
-                                title_bar::UpdatePillKind::InApp(in_app_state)
-                            }
-                            update::install_method::PackageManager::RpmOstree => {
-                                title_bar::UpdatePillKind::SystemManaged(
-                                    title_bar::SystemPackageKind::RpmOstree,
-                                )
-                            }
-                            update::install_method::PackageManager::Other => {
-                                title_bar::UpdatePillKind::SystemManaged(
-                                    title_bar::SystemPackageKind::Other,
-                                )
-                            }
-                        }
-                    }
-                    update::install_method::InstallMethod::ExternallyManaged { .. } => {
-                        title_bar::UpdatePillKind::SystemManaged(
-                            title_bar::SystemPackageKind::Other,
-                        )
-                    }
-                    _ => title_bar::UpdatePillKind::InApp(in_app_state),
-                };
-                Some(title_bar::UpdateInfo {
-                    version: version.clone(),
-                    kind,
-                })
-            }
-            _ => None,
-        }
-    }
-
-    pub(crate) fn update_check_pill(&self) -> Option<UpdateCheckPill> {
-        match self.self_update.manual_check? {
-            ManualUpdateCheck::Checking => Some(UpdateCheckPill::Checking),
-            ManualUpdateCheck::UpToDate => Some(UpdateCheckPill::UpToDate),
-            ManualUpdateCheck::Failed => Some(UpdateCheckPill::Failed),
-            ManualUpdateCheck::Available => match &self.self_update.update_status {
-                Some(UpdateStatus::Available { version, .. }) => {
-                    Some(UpdateCheckPill::Available(version.clone()))
-                }
-                _ => None,
-            },
-        }
+    pub(crate) fn update_pill(&self) -> Option<UpdatePill> {
+        resolve_update_pill(
+            self.self_update.manual_check,
+            self.self_update.update_status.as_ref(),
+            &self.self_update.self_update_status,
+            &self.self_update.install_method,
+        )
     }
 
     pub(crate) fn request_update_check(&mut self, cx: &mut Context<Self>) {
@@ -768,5 +757,126 @@ mod tests {
             Some(ManualUpdateCheck::Failed)
         );
         assert_eq!(settle_manual_check(&UpdateStatus::Checking), None);
+    }
+
+    fn release(version: &str) -> UpdateStatus {
+        UpdateStatus::Available {
+            version: version.to_string(),
+            url: String::new(),
+            asset_url: None,
+            asset_format: None,
+        }
+    }
+
+    fn msi() -> update::install_method::InstallMethod {
+        update::install_method::InstallMethod::WindowsMsi {
+            install_path: std::path::PathBuf::from("C:/Program Files/PaneFlow"),
+        }
+    }
+
+    #[test]
+    fn a_release_found_by_the_startup_check_raises_the_pill_without_a_manual_check() {
+        let release = release("9.0.0");
+        assert_eq!(
+            resolve_update_pill(
+                None,
+                Some(&release),
+                &update::SelfUpdateStatus::Idle,
+                &msi()
+            ),
+            Some(UpdatePill::Available("9.0.0".to_string()))
+        );
+    }
+
+    #[test]
+    fn the_pill_follows_the_install_once_the_manual_check_is_consumed() {
+        let release = release("9.0.0");
+        let cases = [
+            (
+                update::SelfUpdateStatus::Downloading,
+                UpdatePill::Downloading,
+            ),
+            (update::SelfUpdateStatus::Installing, UpdatePill::Installing),
+            (
+                update::SelfUpdateStatus::ReadyToRestart,
+                UpdatePill::ReadyToRestart,
+            ),
+            (update::SelfUpdateStatus::Errored, UpdatePill::InstallFailed),
+        ];
+        for (install, expected) in cases {
+            assert_eq!(
+                resolve_update_pill(None, Some(&release), &install, &msi()),
+                Some(expected)
+            );
+        }
+    }
+
+    #[test]
+    fn a_manual_check_in_flight_or_settled_empty_overrides_a_known_release() {
+        let release = release("9.0.0");
+        let idle = update::SelfUpdateStatus::Idle;
+        let cases = [
+            (ManualUpdateCheck::Checking, Some(UpdatePill::Checking)),
+            (ManualUpdateCheck::UpToDate, Some(UpdatePill::UpToDate)),
+            (ManualUpdateCheck::Failed, Some(UpdatePill::CheckFailed)),
+            (
+                ManualUpdateCheck::Available,
+                Some(UpdatePill::Available("9.0.0".to_string())),
+            ),
+        ];
+        for (manual, expected) in cases {
+            assert_eq!(
+                resolve_update_pill(Some(manual), Some(&release), &idle, &msi()),
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn no_known_release_raises_no_pill() {
+        let idle = update::SelfUpdateStatus::Idle;
+        for status in [
+            None,
+            Some(UpdateStatus::UpToDate),
+            Some(UpdateStatus::Failed),
+        ] {
+            assert_eq!(
+                resolve_update_pill(None, status.as_ref(), &idle, &msi()),
+                None
+            );
+        }
+    }
+
+    #[test]
+    fn a_system_managed_install_raises_the_package_manager_hint() {
+        use update::install_method::{InstallMethod, PackageManager};
+        let release = release("9.0.0");
+        let idle = update::SelfUpdateStatus::Idle;
+        let cases = [
+            (
+                InstallMethod::SystemPackage {
+                    manager: PackageManager::RpmOstree,
+                },
+                Some(UpdatePill::SystemManaged(SystemPackageKind::RpmOstree)),
+            ),
+            (
+                InstallMethod::SystemPackage {
+                    manager: PackageManager::Other,
+                },
+                Some(UpdatePill::SystemManaged(SystemPackageKind::Other)),
+            ),
+            (
+                InstallMethod::SystemPackage {
+                    manager: PackageManager::Apt,
+                },
+                Some(UpdatePill::Available("9.0.0".to_string())),
+            ),
+        ];
+        for (method, expected) in cases {
+            assert_eq!(
+                resolve_update_pill(None, Some(&release), &idle, &method),
+                expected
+            );
+        }
     }
 }

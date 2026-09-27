@@ -309,15 +309,14 @@ impl Render for PaneFlowApp {
         } else {
             self.active_workspace().map(|ws| ws.title.clone())
         };
-        let update_info = self.update_pill_info();
+        let update_pill = self.update_pill();
         self.title_bar.update(cx, |tb, _| {
             tb.workspace_name = ws_name;
             tb.sidebar_visible = self.primary_sidebar_visible;
             tb.left_rail_width = title_bar_rail_width;
             tb.files_menu_open = self.title_bar_files_menu_open.is_some();
             tb.help_menu_open = self.title_bar_help_menu_open.is_some();
-            tb.update_available = update_info;
-            tb.update_check = self.update_check_pill();
+            tb.update_pill = update_pill;
             tb.ipc_state = self.ipc_status.state();
             tb.cockpit = true;
             tb.cockpit_material_active = chrome_material_active;

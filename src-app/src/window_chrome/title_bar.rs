@@ -23,84 +23,80 @@ pub struct TitleBar {
     pub files_menu_open: bool,
     pub help_menu_open: bool,
     pub ipc_state: crate::ipc::IpcState,
-    pub update_available: Option<UpdateInfo>,
-    pub update_check: Option<UpdateCheckPill>,
+    pub update_pill: Option<UpdatePill>,
     pub cockpit: bool,
     pub cockpit_material_active: bool,
     button_layout_observer: Option<gpui::Subscription>,
 }
 
-#[derive(Clone)]
-pub struct UpdateInfo {
-    pub version: String,
-    pub kind: UpdatePillKind,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum UpdatePillKind {
-    InApp(SelfUpdatePillState),
-    SystemManaged(SystemPackageKind),
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum SelfUpdatePillState {
-    Idle,
-    Downloading,
-    Installing,
-    ReadyToRestart,
-    Errored,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SystemPackageKind {
     RpmOstree,
     Other,
 }
 
-#[derive(Clone, PartialEq, Eq)]
-pub enum UpdateCheckPill {
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum UpdatePill {
     Checking,
     UpToDate,
+    CheckFailed,
     Available(String),
-    Failed,
+    Downloading,
+    Installing,
+    ReadyToRestart,
+    InstallFailed,
+    SystemManaged(SystemPackageKind),
 }
 
 const UPDATE_AVAILABLE_BLUE: u32 = 0x3a83f7;
 
-#[derive(Clone, Copy)]
-enum PillStyle {
-    Clickable,
-    Busy,
-    SystemHint,
-}
-
 impl TitleBar {
-    fn render_update_check_pill(&self, ui: crate::theme::UiColors) -> Option<AnyElement> {
-        let pill = self.update_check.clone()?;
+    fn render_update_pill(&self, ui: crate::theme::UiColors) -> Option<AnyElement> {
+        let pill = self.update_pill.clone()?;
         let white = gpui::white();
         let blue = gpui::Hsla::from(gpui::rgb(UPDATE_AVAILABLE_BLUE));
         let (label, fill, ink): (String, gpui::Hsla, gpui::Hsla) = match &pill {
-            UpdateCheckPill::Checking => ("Checking for updates…".to_string(), ui.subtle, ui.text),
-            UpdateCheckPill::UpToDate => (
+            UpdatePill::Checking => ("Checking for updates…".to_string(), ui.subtle, ui.text),
+            UpdatePill::UpToDate => (
                 "Paneflow is up to date".to_string(),
                 ui.vc_added.opacity(0.12),
                 ui.vc_added,
             ),
-            UpdateCheckPill::Available(version) => (format!("v{version} available"), blue, white),
-            UpdateCheckPill::Failed => (
+            UpdatePill::CheckFailed => (
                 "Update check failed".to_string(),
                 ui.vc_deleted.opacity(0.12),
                 ui.vc_deleted,
             ),
+            UpdatePill::Available(version) => (format!("v{version} available"), blue, white),
+            UpdatePill::Downloading => ("Downloading update…".to_string(), ui.subtle, ui.text),
+            UpdatePill::Installing => ("Installing update…".to_string(), ui.subtle, ui.text),
+            UpdatePill::ReadyToRestart => ("Restart Paneflow".to_string(), blue, white),
+            UpdatePill::InstallFailed => (
+                "Update failed".to_string(),
+                ui.vc_deleted.opacity(0.12),
+                ui.vc_deleted,
+            ),
+            UpdatePill::SystemManaged(SystemPackageKind::RpmOstree) => {
+                ("Update via rpm-ostree".to_string(), ui.subtle, ui.text)
+            }
+            UpdatePill::SystemManaged(SystemPackageKind::Other) => {
+                ("Update via package manager".to_string(), ui.subtle, ui.text)
+            }
         };
 
         let hovered = match &pill {
-            UpdateCheckPill::Available(_) => Some(lerp_color(fill, white, 0.12)),
-            UpdateCheckPill::Failed => Some(ui.vc_deleted.opacity(0.2)),
-            UpdateCheckPill::Checking | UpdateCheckPill::UpToDate => None,
+            UpdatePill::Available(_) | UpdatePill::ReadyToRestart => {
+                Some(lerp_color(fill, white, 0.12))
+            }
+            UpdatePill::CheckFailed | UpdatePill::InstallFailed => Some(ui.vc_deleted.opacity(0.2)),
+            UpdatePill::SystemManaged(_) => Some(ui.surface),
+            UpdatePill::Checking
+            | UpdatePill::UpToDate
+            | UpdatePill::Downloading
+            | UpdatePill::Installing => None,
         };
         let shell = div()
-            .id("update-check-pill")
+            .id("update-pill")
             .ml_auto()
             .mr_2()
             .flex()
@@ -114,58 +110,100 @@ impl TitleBar {
             .text_size(px(11.))
             .font_weight(gpui::FontWeight::MEDIUM)
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation());
-        let mut element = squircle_skin(
-            shell,
-            "update-check-pill-group",
-            ROW_RADIUS,
-            Some(fill),
-            hovered,
-        );
-        match &pill {
-            UpdateCheckPill::Checking => {
-                element = element.child(
-                    svg()
-                        .size(px(11.))
-                        .flex_none()
-                        .path("icons/loader-circle.svg")
-                        .text_color(ui.muted)
-                        .with_animation(
-                            "update-check-pill-spinner",
-                            Animation::new(Duration::from_secs(1)).repeat(),
-                            |svg, delta| {
-                                svg.with_transformation(Transformation::rotate(percentage(delta)))
-                            },
-                        ),
-                );
-            }
-            UpdateCheckPill::Available(_) => {
-                element = element.child(
-                    svg()
-                        .size(px(11.))
-                        .flex_none()
-                        .path("icons/download.svg")
-                        .text_color(white),
-                );
-            }
-            UpdateCheckPill::UpToDate | UpdateCheckPill::Failed => {}
+        #[cfg(test)]
+        let shell = shell.debug_selector(|| "update-pill".into());
+        let mut element =
+            squircle_skin(shell, "update-pill-group", ROW_RADIUS, Some(fill), hovered);
+
+        let glyph = match &pill {
+            UpdatePill::Checking | UpdatePill::Downloading | UpdatePill::Installing => Some(
+                svg()
+                    .size(px(11.))
+                    .flex_none()
+                    .path("icons/loader-circle.svg")
+                    .text_color(ui.muted)
+                    .with_animation(
+                        "update-pill-spinner",
+                        Animation::new(Duration::from_secs(1)).repeat(),
+                        |svg, delta| {
+                            svg.with_transformation(Transformation::rotate(percentage(delta)))
+                        },
+                    )
+                    .into_any_element(),
+            ),
+            UpdatePill::Available(_) => Some(
+                svg()
+                    .size(px(11.))
+                    .flex_none()
+                    .path("icons/download.svg")
+                    .text_color(white)
+                    .into_any_element(),
+            ),
+            UpdatePill::ReadyToRestart => Some(
+                svg()
+                    .size(px(11.))
+                    .flex_none()
+                    .path("icons/refresh.svg")
+                    .text_color(white)
+                    .into_any_element(),
+            ),
+            UpdatePill::SystemManaged(_) => Some(
+                svg()
+                    .size(px(11.))
+                    .flex_none()
+                    .path("icons/tool.svg")
+                    .text_color(ui.muted)
+                    .into_any_element(),
+            ),
+            UpdatePill::UpToDate | UpdatePill::CheckFailed | UpdatePill::InstallFailed => None,
+        };
+        element = element.children(glyph).child(label);
+
+        if matches!(
+            pill,
+            UpdatePill::Available(_) | UpdatePill::InstallFailed | UpdatePill::SystemManaged(_)
+        ) {
+            let resting = ink.opacity(0.7);
+            element = element.child(
+                div()
+                    .id("update-pill-dismiss")
+                    .ml(px(2.))
+                    .px(px(4.))
+                    .text_color(resting)
+                    .text_size(px(13.))
+                    .font_weight(gpui::FontWeight::BOLD)
+                    .animated_hover(move |style, delta| {
+                        style.text_color(lerp_color(resting, ink, delta));
+                    })
+                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                    .on_click(|_, window, cx| {
+                        cx.stop_propagation();
+                        window.dispatch_action(Box::new(crate::DismissUpdate), cx);
+                    })
+                    .child("×"),
+            );
         }
-        element = element.child(label);
 
         let element = match pill {
-            UpdateCheckPill::Available(_) => element
+            UpdatePill::Available(_)
+            | UpdatePill::ReadyToRestart
+            | UpdatePill::InstallFailed
+            | UpdatePill::SystemManaged(_) => element
                 .on_mouse_down(MouseButton::Left, move |_, window, cx| {
                     cx.stop_propagation();
                     window.dispatch_action(Box::new(crate::StartSelfUpdate), cx);
                 })
                 .into_any_element(),
-            UpdateCheckPill::Failed => element
+            UpdatePill::CheckFailed => element
                 .on_mouse_down(MouseButton::Left, move |_, window, cx| {
                     cx.stop_propagation();
                     window.dispatch_action(Box::new(crate::CheckForUpdates), cx);
                 })
                 .into_any_element(),
-            UpdateCheckPill::Checking => element.opacity(0.7).into_any_element(),
-            UpdateCheckPill::UpToDate => element.into_any_element(),
+            UpdatePill::Checking | UpdatePill::Downloading | UpdatePill::Installing => {
+                element.opacity(0.7).into_any_element()
+            }
+            UpdatePill::UpToDate => element.into_any_element(),
         };
         Some(element)
     }
@@ -179,8 +217,7 @@ impl TitleBar {
             files_menu_open: false,
             help_menu_open: false,
             ipc_state: crate::ipc::IpcState::Online,
-            update_available: None,
-            update_check: None,
+            update_pill: None,
             cockpit: false,
             cockpit_material_active: !cfg!(target_os = "windows"),
             button_layout_observer: None,
@@ -450,154 +487,8 @@ impl Render for TitleBar {
             );
         }
 
-        let update_pill_visible = !self.cockpit;
-        let update_pill = update_pill_visible
-            .then(|| self.update_available.clone())
-            .flatten()
-            .map(|info| {
-                let (label, style): (String, PillStyle) = match info.kind {
-                    UpdatePillKind::InApp(state) => match state {
-                        SelfUpdatePillState::Idle => {
-                            (format!("v{} available", info.version), PillStyle::Clickable)
-                        }
-                        SelfUpdatePillState::Downloading => {
-                            ("Downloading update…".to_string(), PillStyle::Busy)
-                        }
-                        SelfUpdatePillState::Installing => {
-                            ("Installing update…".to_string(), PillStyle::Busy)
-                        }
-                        SelfUpdatePillState::ReadyToRestart => {
-                            ("Restart Paneflow".to_string(), PillStyle::Clickable)
-                        }
-                        SelfUpdatePillState::Errored => {
-                            ("Update failed".to_string(), PillStyle::Clickable)
-                        }
-                    },
-                    UpdatePillKind::SystemManaged(kind) => {
-                        let label = match kind {
-                            SystemPackageKind::RpmOstree => "Update via rpm-ostree".to_string(),
-                            SystemPackageKind::Other => "Update via package manager".to_string(),
-                        };
-                        (label, PillStyle::SystemHint)
-                    }
-                };
-
-                let is_ready_to_restart = matches!(
-                    info.kind,
-                    UpdatePillKind::InApp(SelfUpdatePillState::ReadyToRestart)
-                );
-                let leading_icon: AnyElement = match style {
-                    PillStyle::Busy => svg()
-                        .size(px(11.))
-                        .flex_none()
-                        .path("icons/loader-circle.svg")
-                        .text_color(ui.muted)
-                        .with_animation(
-                            "update-pill-spinner",
-                            Animation::new(Duration::from_secs(1)).repeat(),
-                            |svg, delta| {
-                                svg.with_transformation(Transformation::rotate(percentage(delta)))
-                            },
-                        )
-                        .into_any_element(),
-                    PillStyle::Clickable => svg()
-                        .size(px(11.))
-                        .flex_none()
-                        .path(if is_ready_to_restart {
-                            "icons/refresh.svg"
-                        } else {
-                            "icons/download.svg"
-                        })
-                        .text_color(ui.muted)
-                        .into_any_element(),
-                    PillStyle::SystemHint => svg()
-                        .size(px(11.))
-                        .flex_none()
-                        .path("icons/tool.svg")
-                        .text_color(ui.muted)
-                        .into_any_element(),
-                };
-
-                let pill_dismissable = matches!(
-                    info.kind,
-                    UpdatePillKind::InApp(SelfUpdatePillState::Idle | SelfUpdatePillState::Errored)
-                        | UpdatePillKind::SystemManaged(_)
-                );
-
-                let mut pill = div()
-                    .id("update-pill")
-                    .ml_auto()
-                    .mr_2()
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .justify_center()
-                    .gap(px(5.))
-                    .px(px(8.))
-                    .h(px(24.))
-                    .rounded(px(6.))
-                    .border_1()
-                    .border_color(ui.border)
-                    .bg(ui.subtle)
-                    .text_color(ui.text)
-                    .text_size(px(11.))
-                    .font_weight(gpui::FontWeight::MEDIUM)
-                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                    .child(leading_icon)
-                    .child(label);
-
-                if pill_dismissable {
-                    let muted = ui.muted;
-                    let text = ui.text;
-                    pill = pill.child(
-                        div()
-                            .id("update-pill-dismiss")
-                            .ml(px(2.))
-                            .px(px(4.))
-                            .text_color(muted)
-                            .text_size(px(13.))
-                            .font_weight(gpui::FontWeight::BOLD)
-                            .animated_hover(move |style, delta| {
-                                style.text_color(lerp_color(muted, text, delta));
-                            })
-                            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                            .on_click(|_, window, cx| {
-                                cx.stop_propagation();
-                                window.dispatch_action(Box::new(crate::DismissUpdate), cx);
-                            })
-                            .child("×"),
-                    );
-                }
-                match style {
-                    PillStyle::Clickable => pill
-                        .animated_hover(move |style, delta| {
-                            style
-                                .bg(lerp_color(ui.subtle, ui.surface, delta))
-                                .border_color(lerp_color(ui.border, ui.muted, delta));
-                        })
-                        .on_mouse_down(MouseButton::Left, move |_, window, cx| {
-                            cx.stop_propagation();
-                            window.dispatch_action(Box::new(crate::StartSelfUpdate), cx);
-                        })
-                        .into_any_element(),
-                    PillStyle::Busy => pill.opacity(0.7).into_any_element(),
-                    PillStyle::SystemHint => pill
-                        .opacity(0.8)
-                        .animated_hover(move |style, delta| {
-                            style
-                                .bg(lerp_color(ui.subtle, ui.surface, delta))
-                                .border_color(lerp_color(ui.border, ui.muted, delta))
-                                .opacity(0.8 + 0.2 * delta);
-                        })
-                        .on_mouse_down(MouseButton::Left, move |_, window, cx| {
-                            cx.stop_propagation();
-                            window.dispatch_action(Box::new(crate::StartSelfUpdate), cx);
-                        })
-                        .into_any_element(),
-                }
-            });
-        let ipc_pill = (update_pill_visible && self.ipc_state == crate::ipc::IpcState::Disabled)
-            .then(|| {
+        let ipc_pill =
+            (!self.cockpit && self.ipc_state == crate::ipc::IpcState::Disabled).then(|| {
                 div()
                     .id("ipc-offline-pill")
                     .mr_2()
@@ -625,7 +516,7 @@ impl Render for TitleBar {
                     .child("IPC offline")
             });
 
-        let check_pill = self.render_update_check_pill(ui);
+        let update_pill = self.render_update_pill(ui);
 
         let bar = div()
             .id("title-bar")
@@ -675,9 +566,8 @@ impl Render for TitleBar {
         })
         .child(left_rail)
         .child(content)
-        .children(check_pill)
-        .children(ipc_pill)
         .children(update_pill)
+        .children(ipc_pill)
         .children(right_controls)
         .when(!self.cockpit, |this| {
             this.child(
@@ -690,5 +580,31 @@ impl Render for TitleBar {
                     .bg(ui.border),
             )
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::{AvailableSpace, point, size};
+
+    #[gpui::test]
+    fn the_update_pill_paints_in_the_cockpit_shell(cx: &mut gpui::TestAppContext) {
+        let cx = cx.add_empty_window();
+        let bar = cx.new(|cx| {
+            let mut bar = TitleBar::new(cx);
+            bar.cockpit = true;
+            bar.update_pill = Some(UpdatePill::Available("9.0.0".into()));
+            bar
+        });
+        cx.draw(
+            point(px(0.), px(0.)),
+            size(
+                AvailableSpace::Definite(px(1400.)),
+                AvailableSpace::Definite(px(40.)),
+            ),
+            move |_, _| div().size_full().child(bar.clone()),
+        );
+        assert!(cx.debug_bounds("update-pill").is_some());
     }
 }

@@ -881,8 +881,9 @@ history.
 A single background thread polls the GitHub releases feed at launch and then
 every four hours (thirty minutes after a failure), handing each result to the
 GPUI tick through a shared slot; a manual `Check for Updates…` wakes the same
-thread through an mpsc channel and the next result also drives the title bar
-check pill. A result never displaces a download in flight or a staged binary
+thread through an mpsc channel. Every known release drives the title bar update
+pill, whichever check found it; a manual check only adds its transient
+checking, up-to-date, and failed states. A result never displaces a download in flight or a staged binary
 waiting for restart. Each install format has its own update
 path (apt/dnf repos, AppImage swap, tarball swap, macOS app replacement,
 Windows MSI relay), all driven by one in-app updater. Update artifacts are verified with
