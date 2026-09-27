@@ -45,6 +45,8 @@ const RELAY_MSI_LOG_ARG: &str = "--msi-log";
 const RELAY_RESTART_ARG: &str = "--restart";
 #[cfg(target_os = "windows")]
 const RELAY_LOG_ARG: &str = "--relay-log";
+#[cfg(target_os = "windows")]
+const RELAY_COPY_PREFIX: &str = "paneflow-msi-relay-";
 
 #[derive(Clone, Debug)]
 pub struct StagedMsiUpdate {
@@ -152,8 +154,8 @@ pub fn spawn_relay(staged: StagedMsiUpdate) -> Result<()> {
 
         let parent_pid = std::process::id();
         let temp = std::env::temp_dir();
-        let relay_exe = temp.join(format!("paneflow-msi-relay-{parent_pid}.exe"));
-        let relay_log = temp.join(format!("paneflow-msi-relay-{parent_pid}.log"));
+        let relay_exe = temp.join(format!("{RELAY_COPY_PREFIX}{parent_pid}.exe"));
+        let relay_log = temp.join(format!("{RELAY_COPY_PREFIX}{parent_pid}.log"));
         let current_exe = std::env::current_exe().context("resolve current paneflow executable")?;
 
         std::fs::copy(&current_exe, &relay_exe).with_context(|| {
@@ -334,7 +336,6 @@ fn run_native_relay(invocation: RelayInvocation) -> Result<i32> {
         );
         relaunch_paneflow(&invocation.restart_path, &invocation.relay_log_path)
             .context("relaunch after deferring the update")?;
-        schedule_relay_cleanup(&invocation.relay_log_path);
         return Ok(RELAY_EXIT_HOST_STILL_SERVING);
     }
 
@@ -354,7 +355,6 @@ fn run_native_relay(invocation: RelayInvocation) -> Result<i32> {
     relaunch_paneflow(&invocation.restart_path, &invocation.relay_log_path)
         .with_context(|| format!("relaunch after msiexec exit {}", result.exit_code))?;
 
-    schedule_relay_cleanup(&invocation.relay_log_path);
     Ok(result.exit_code)
 }
 
@@ -750,24 +750,40 @@ fn append_relay_log(path: &Path, message: &str) {
 }
 
 #[cfg(target_os = "windows")]
-fn schedule_relay_cleanup(relay_log_path: &Path) {
-    use windows_sys::Win32::Storage::FileSystem::{MOVEFILE_DELAY_UNTIL_REBOOT, MoveFileExW};
+pub fn remove_stale_relay_copies() {
+    remove_relay_copies_in(&std::env::temp_dir());
+}
 
-    let Ok(current_exe) = std::env::current_exe() else {
+#[cfg(target_os = "windows")]
+fn remove_relay_copies_in(directory: &Path) {
+    let Ok(entries) = std::fs::read_dir(directory) else {
         return;
     };
-    let exe = wide_null(current_exe.as_os_str());
-    let ok = unsafe { MoveFileExW(exe.as_ptr(), std::ptr::null(), MOVEFILE_DELAY_UNTIL_REBOOT) };
-    if ok == 0 {
-        append_relay_log(
-            relay_log_path,
-            &format!(
-                "could not schedule relay cleanup for {}: {}",
-                current_exe.display(),
-                std::io::Error::last_os_error()
+    for path in entries.flatten().map(|entry| entry.path()) {
+        if !is_relay_copy(&path) {
+            continue;
+        }
+        match std::fs::remove_file(&path) {
+            Ok(()) => log::info!(
+                "self-update/msi: removed stale relay copy {}",
+                path.display()
             ),
-        );
+            Err(error) => log::debug!(
+                "self-update/msi: kept relay copy {}: {error}",
+                path.display()
+            ),
+        }
     }
+}
+
+#[cfg(target_os = "windows")]
+fn is_relay_copy(path: &Path) -> bool {
+    path.extension()
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("exe"))
+        && path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.starts_with(RELAY_COPY_PREFIX))
 }
 
 #[cfg(target_os = "windows")]
@@ -960,6 +976,51 @@ fn msiexec_exe() -> Option<PathBuf> {
 #[cfg(all(test, target_os = "windows"))]
 mod tests {
     use super::*;
+
+    #[test]
+    fn stale_relay_sweep_removes_idle_copies_and_keeps_running_ones_and_logs() {
+        use std::os::windows::process::CommandExt;
+        let directory = tempfile::tempdir().unwrap();
+        let idle = directory
+            .path()
+            .join(format!("{RELAY_COPY_PREFIX}10340.exe"));
+        let running = directory
+            .path()
+            .join(format!("{RELAY_COPY_PREFIX}3116.exe"));
+        let relay_log = directory
+            .path()
+            .join(format!("{RELAY_COPY_PREFIX}10340.log"));
+        let msi_log = directory.path().join("paneflow-msi-10340.log");
+        let unrelated = directory.path().join("other-tool.exe");
+        let shell = PathBuf::from(std::env::var_os("SystemRoot").unwrap())
+            .join("System32")
+            .join("cmd.exe");
+        std::fs::copy(&shell, &running).unwrap();
+        for path in [&idle, &relay_log, &msi_log, &unrelated] {
+            std::fs::write(path, b"relay").unwrap();
+        }
+        let mut relay = Command::new(&running)
+            .args(["/D", "/Q", "/C", "pause"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .creation_flags(windows_sys::Win32::System::Threading::CREATE_NO_WINDOW)
+            .spawn()
+            .unwrap();
+
+        remove_relay_copies_in(directory.path());
+        let running_kept = running.exists();
+        let still_live = relay.try_wait().unwrap().is_none();
+        relay.kill().unwrap();
+        relay.wait().unwrap();
+
+        assert!(!idle.exists());
+        assert!(running_kept);
+        assert!(still_live);
+        assert!(relay_log.exists());
+        assert!(msi_log.exists());
+        assert!(unrelated.exists());
+    }
 
     #[test]
     fn relay_invocation_parses_paths_with_spaces() {

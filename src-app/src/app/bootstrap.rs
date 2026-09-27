@@ -90,6 +90,11 @@ impl PaneFlowApp {
         let install_method = update::install_method::detect();
         #[cfg(target_os = "linux")]
         update::migrations::run_startup_migrations(&install_method);
+        #[cfg(target_os = "windows")]
+        cx.background_spawn(smol::unblock(
+            update::windows::msi::remove_stale_relay_copies,
+        ))
+        .detach();
 
         let (posthog_api_key, posthog_host) = super::telemetry_events::posthog_endpoint();
         let telemetry_config_snapshot = paneflow_config::loader::load_config();

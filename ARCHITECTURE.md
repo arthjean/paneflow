@@ -906,7 +906,11 @@ alone: after the parent exits it probes the host endpoint for up to thirty
 seconds and, if a host still serves, skips `msiexec`, logs the deferral in its
 relay log and relaunches the current version, because the host binary next to
 `paneflow.exe` may still be in use. It preserves the staged MSI on deferral and
-disables Installer Restart Manager shutdown. The relay never probes the installed
+disables Installer Restart Manager shutdown. The relay runs from a copy of
+`paneflow.exe` in `%TEMP%` that cannot delete its own image, and a
+delete-on-reboot needs administrator rights, so every desktop start removes the
+`paneflow-msi-relay-*.exe` copies no process still runs and keeps the relay and
+`msiexec` logs for diagnosis. The relay never probes the installed
 binary itself: it runs with the desktop's unelevated token, and a file under
 Program Files is never writable by that token, so a write-access probe deferred
 every update. Releasing the binary belongs to the MSI, whichever updater started

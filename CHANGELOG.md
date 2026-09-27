@@ -18,6 +18,9 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
   current version, because the updater tested write access to
   `paneflow-host.exe` without the rights to get it. From those two versions,
   run the new MSI once by hand.
+- On Windows, each in-app update no longer leaves a 75 MB copy of
+  `paneflow.exe` in the temporary folder. Paneflow removes those copies at the
+  next start, including the ones earlier versions left behind.
 
 ## [0.17.1] - 2026-09-26
 
