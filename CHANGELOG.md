@@ -14,6 +14,20 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
   `Unable to save session state` under `All sessions stopped.`, and its
   override button is `Quit anyway`, or `Quit without updating` during an
   update.
+- The update controls say what a click does. The title bar pill reads
+  `Restart to update` instead of `Restart Paneflow`, and its failure states
+  read `Retry update` and `Retry update check` with an alert glyph. It acts on
+  click release rather than on press, so dragging off it cancels. Its blue
+  states take the Quit dialog's button geometry, 12 px Medium with padding 10,
+  on `#1a6ff6`, so the white label reaches 4.5:1 contrast, and hovering darkens
+  it instead of lightening it. After a click on `Restart to update` it stays
+  blue with a spinning comet in place of its icon until the app restarts,
+  instead of giving no feedback, or turning into a grey `Installing update…`
+  pill on Windows; every busy state of the pill uses that comet spinner. The
+  pill no longer has a `×`: it stays until the release is installed. The
+  sidebar `Update check failed` banner gains an explicit `Retry` button instead
+  of retrying on any click, and its close button, the release toast's, and the
+  toast buttons take the squircle shape of the rest of the app.
 
 ### Fixed
 

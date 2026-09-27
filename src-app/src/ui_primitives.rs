@@ -395,6 +395,68 @@ pub(crate) fn squircle_skin(
     element
 }
 
+const COMET_TURN: Duration = Duration::from_millis(700);
+
+pub(crate) fn comet_spinner(id: impl Into<ElementId>, size: Pixels, color: Hsla) -> AnyElement {
+    let glyph = svg()
+        .size(size)
+        .flex_none()
+        .path("icons/comet.svg")
+        .text_color(color);
+    if reduce_motion() {
+        return glyph.into_any_element();
+    }
+    glyph
+        .with_animation(
+            id,
+            gpui::Animation::new(COMET_TURN).repeat(),
+            |glyph, delta| {
+                glyph.with_transformation(gpui::Transformation::rotate(gpui::percentage(delta)))
+            },
+        )
+        .into_any_element()
+}
+
+pub(crate) const DISMISS_BUTTON_SIZE: Pixels = px(24.);
+
+pub(crate) fn dismiss_button(
+    id: impl Into<SharedString>,
+    label: impl Into<SharedString>,
+    radius: Pixels,
+    ink: Hsla,
+    hovered_ink: Hsla,
+    wash: Hsla,
+) -> Stateful<Div> {
+    let id: SharedString = id.into();
+    let label: SharedString = label.into();
+    let group = SharedString::from(format!("{id}-hover"));
+    squircle_skin(
+        div()
+            .id(id)
+            .flex_none()
+            .size(DISMISS_BUTTON_SIZE)
+            .flex()
+            .items_center()
+            .justify_center(),
+        group.clone(),
+        radius,
+        None,
+        Some(wash),
+    )
+    .role(gpui::accesskit::Role::Button)
+    .aria_label(label.clone())
+    .delayed_tooltip(text_tooltip(label))
+    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+    .child(
+        svg()
+            .size(px(10.))
+            .flex_none()
+            .path("icons/close.svg")
+            .text_color(ink)
+            .group_hover(group, move |style| style.text_color(hovered_ink)),
+    )
+}
+
 pub(crate) const TOOLTIP_SHOW_DELAY: Duration = Duration::from_millis(800);
 
 pub(crate) trait TooltipDelayExt: Sized {

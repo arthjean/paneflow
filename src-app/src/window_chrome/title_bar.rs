@@ -1,10 +1,8 @@
 use crate::ui_primitives::TooltipDelayExt;
-use std::time::Duration;
 
 use gpui::{
-    Animation, AnimationExt, AnyElement, Context, Decorations, EventEmitter, IntoElement,
-    MouseButton, Render, Styled, Transformation, Window, WindowControlArea, div, percentage,
-    prelude::*, px, svg,
+    AnyElement, Context, Decorations, EventEmitter, IntoElement, MouseButton, Render, Styled,
+    Window, WindowControlArea, div, prelude::*, px, svg,
 };
 
 use super::csd::default_button_layout;
@@ -12,7 +10,7 @@ use crate::{
     app::constants::{
         SIDEBAR_WIDTH, TITLE_BAR_CONTROL_SIZE, TITLE_BAR_EDGE_INSET, TITLE_BAR_MIN_HEIGHT,
     },
-    ui_primitives::{AnimatedHoverExt, ROW_RADIUS, lerp_color, squircle_skin},
+    ui_primitives::{AnimatedHoverExt, ROW_RADIUS, comet_spinner, lerp_color, squircle_skin},
 };
 
 pub struct TitleBar {
@@ -44,11 +42,12 @@ pub enum UpdatePill {
     Downloading,
     Installing,
     ReadyToRestart,
+    Restarting,
     InstallFailed,
     SystemManaged(SystemPackageKind),
 }
 
-const UPDATE_AVAILABLE_BLUE: u32 = 0x3a83f7;
+const UPDATE_AVAILABLE_BLUE: u32 = 0x1a6ff6;
 
 impl TitleBar {
     fn render_update_pill(&self, ui: crate::theme::UiColors) -> Option<AnyElement> {
@@ -63,16 +62,18 @@ impl TitleBar {
                 ui.vc_added,
             ),
             UpdatePill::CheckFailed => (
-                "Update check failed".to_string(),
+                "Retry update check".to_string(),
                 ui.vc_deleted.opacity(0.12),
                 ui.vc_deleted,
             ),
             UpdatePill::Available(version) => (format!("v{version} available"), blue, white),
             UpdatePill::Downloading => ("Downloading update…".to_string(), ui.subtle, ui.text),
             UpdatePill::Installing => ("Installing update…".to_string(), ui.subtle, ui.text),
-            UpdatePill::ReadyToRestart => ("Restart Paneflow".to_string(), blue, white),
+            UpdatePill::ReadyToRestart | UpdatePill::Restarting => {
+                ("Restart to update".to_string(), blue, white)
+            }
             UpdatePill::InstallFailed => (
-                "Update failed".to_string(),
+                "Retry update".to_string(),
                 ui.vc_deleted.opacity(0.12),
                 ui.vc_deleted,
             ),
@@ -85,15 +86,17 @@ impl TitleBar {
         };
 
         let hovered = match &pill {
-            UpdatePill::Available(_) | UpdatePill::ReadyToRestart => {
-                Some(lerp_color(fill, white, 0.12))
-            }
+            UpdatePill::Available(_) | UpdatePill::ReadyToRestart => Some(gpui::Hsla {
+                l: (fill.l - 0.05).max(0.0),
+                ..fill
+            }),
             UpdatePill::CheckFailed | UpdatePill::InstallFailed => Some(ui.vc_deleted.opacity(0.2)),
             UpdatePill::SystemManaged(_) => Some(ui.surface),
             UpdatePill::Checking
             | UpdatePill::UpToDate
             | UpdatePill::Downloading
-            | UpdatePill::Installing => None,
+            | UpdatePill::Installing
+            | UpdatePill::Restarting => None,
         };
         let shell = div()
             .id("update-pill")
@@ -104,10 +107,10 @@ impl TitleBar {
             .items_center()
             .justify_center()
             .gap(px(5.))
-            .px(px(8.))
+            .px(px(10.))
             .h(px(24.))
             .text_color(ink)
-            .text_size(px(11.))
+            .text_size(px(12.))
             .font_weight(gpui::FontWeight::MEDIUM)
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation());
         #[cfg(test)]
@@ -116,24 +119,13 @@ impl TitleBar {
             squircle_skin(shell, "update-pill-group", ROW_RADIUS, Some(fill), hovered);
 
         let glyph = match &pill {
-            UpdatePill::Checking | UpdatePill::Downloading | UpdatePill::Installing => Some(
-                svg()
-                    .size(px(11.))
-                    .flex_none()
-                    .path("icons/loader-circle.svg")
-                    .text_color(ui.muted)
-                    .with_animation(
-                        "update-pill-spinner",
-                        Animation::new(Duration::from_secs(1)).repeat(),
-                        |svg, delta| {
-                            svg.with_transformation(Transformation::rotate(percentage(delta)))
-                        },
-                    )
-                    .into_any_element(),
-            ),
+            UpdatePill::Checking
+            | UpdatePill::Downloading
+            | UpdatePill::Installing
+            | UpdatePill::Restarting => Some(comet_spinner("update-pill-spinner", px(12.), ink)),
             UpdatePill::Available(_) => Some(
                 svg()
-                    .size(px(11.))
+                    .size(px(12.))
                     .flex_none()
                     .path("icons/download.svg")
                     .text_color(white)
@@ -141,7 +133,7 @@ impl TitleBar {
             ),
             UpdatePill::ReadyToRestart => Some(
                 svg()
-                    .size(px(11.))
+                    .size(px(12.))
                     .flex_none()
                     .path("icons/refresh.svg")
                     .text_color(white)
@@ -149,53 +141,41 @@ impl TitleBar {
             ),
             UpdatePill::SystemManaged(_) => Some(
                 svg()
-                    .size(px(11.))
+                    .size(px(12.))
                     .flex_none()
                     .path("icons/tool.svg")
                     .text_color(ui.muted)
                     .into_any_element(),
             ),
-            UpdatePill::UpToDate | UpdatePill::CheckFailed | UpdatePill::InstallFailed => None,
+            UpdatePill::CheckFailed | UpdatePill::InstallFailed => Some(
+                svg()
+                    .size(px(12.))
+                    .flex_none()
+                    .path("icons/triangle-alert.svg")
+                    .text_color(ink)
+                    .into_any_element(),
+            ),
+            UpdatePill::UpToDate => None,
         };
-        element = element.children(glyph).child(label);
-
-        if matches!(
-            pill,
-            UpdatePill::Available(_) | UpdatePill::InstallFailed | UpdatePill::SystemManaged(_)
-        ) {
-            let resting = ink.opacity(0.7);
-            element = element.child(
-                div()
-                    .id("update-pill-dismiss")
-                    .ml(px(2.))
-                    .px(px(4.))
-                    .text_color(resting)
-                    .text_size(px(13.))
-                    .font_weight(gpui::FontWeight::BOLD)
-                    .animated_hover(move |style, delta| {
-                        style.text_color(lerp_color(resting, ink, delta));
-                    })
-                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                    .on_click(|_, window, cx| {
-                        cx.stop_propagation();
-                        window.dispatch_action(Box::new(crate::DismissUpdate), cx);
-                    })
-                    .child("×"),
-            );
-        }
+        let label = gpui::SharedString::from(label);
+        element = element.children(glyph).child(label.clone());
 
         let element = match pill {
             UpdatePill::Available(_)
             | UpdatePill::ReadyToRestart
             | UpdatePill::InstallFailed
             | UpdatePill::SystemManaged(_) => element
-                .on_mouse_down(MouseButton::Left, move |_, window, cx| {
+                .role(gpui::accesskit::Role::Button)
+                .aria_label(label)
+                .on_click(move |_, window, cx| {
                     cx.stop_propagation();
                     window.dispatch_action(Box::new(crate::StartSelfUpdate), cx);
                 })
                 .into_any_element(),
             UpdatePill::CheckFailed => element
-                .on_mouse_down(MouseButton::Left, move |_, window, cx| {
+                .role(gpui::accesskit::Role::Button)
+                .aria_label(label)
+                .on_click(move |_, window, cx| {
                     cx.stop_propagation();
                     window.dispatch_action(Box::new(crate::CheckForUpdates), cx);
                 })
@@ -203,7 +183,7 @@ impl TitleBar {
             UpdatePill::Checking | UpdatePill::Downloading | UpdatePill::Installing => {
                 element.opacity(0.7).into_any_element()
             }
-            UpdatePill::UpToDate => element.into_any_element(),
+            UpdatePill::UpToDate | UpdatePill::Restarting => element.into_any_element(),
         };
         Some(element)
     }

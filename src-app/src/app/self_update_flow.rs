@@ -107,6 +107,9 @@ pub(crate) fn is_strict_semver(raw: &str) -> bool {
 
 impl PaneFlowApp {
     pub(crate) fn update_pill(&self) -> Option<UpdatePill> {
+        if self.self_update.restart_requested && self.session_exit_pending {
+            return Some(UpdatePill::Restarting);
+        }
         resolve_update_pill(
             self.self_update.manual_check,
             self.self_update.update_status.as_ref(),
@@ -233,6 +236,7 @@ impl PaneFlowApp {
             update::SelfUpdateStatus::ReadyToRestart
         ) {
             log::info!("self-update: ReadyToRestart click - checking live sessions first");
+            self.self_update.restart_requested = true;
             self.request_update_restart(cx);
             return;
         }

@@ -105,6 +105,7 @@ struct SelfUpdateState {
     download_generation: u64,
     dismissed_version: Option<String>,
     staged_msi: Option<update::windows::msi::StagedMsiUpdate>,
+    restart_requested: bool,
 }
 
 struct AgentSessionsState {

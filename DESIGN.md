@@ -181,7 +181,7 @@ hides the workspace name while Settings is open.
 | Terminal search | Top right of the pane, 8 px inset | Squircle 14 on `subtle` with a 1 px `border`, 325 by 36, padding 14 left and 4 right, gap 8: the field, a `.*` mark only while regex mode is on, the match count, a 1 px divider, then previous, next and close as 28 px squircle icon buttons with the sidebar hover tint | `src-app/src/terminal/view.rs` |
 | Toast | Bottom right, 18 px inset | Radius 8 on `subtle`, minimum width 220, one header row and an optional action row | `src-app/src/app/notifications.rs` |
 | Worktree removal dialog | Centered | The card of the close dialog: squircle at `PANE_CARD_RADIUS`, 460 wide, padding 20 over a 0.55 black scrim, the blocking workspaces, tabs and sessions on `subtle` at 0.5 on radius 8, one kind word per row at 10 px muted, then `Cancel` and a destructive `Remove` | `src-app/src/app/worktree_remove.rs` |
-| Quit dialog | Centered | The card of the close dialog at `PANE_CARD_RADIUS`, 460 wide: the question with the session and agent counts, one muted line of consequence, the `Remember my choice` toggle row on `subtle` at 0.5 on radius 8, then a footer whose alternative destructive action (`destructive_button`) sits alone on the leading edge, apart from `Cancel` and the default action on the trailing edge. The default action is the one Enter runs: a solid `switch_blue` button, or `Cancel` when every other choice ends sessions. Tab, Shift-Tab, left and right move a 1 px `text` ring at 0.35, drawn 3 px outside the control with a concentric radius, across the toggle row and the buttons; Enter or Space runs the ringed control and Escape cancels | `src-app/src/app/quit_dialog.rs` |
+| Quit dialog | Centered | The card of the close dialog at `PANE_CARD_RADIUS`, 460 wide: the question with the session and agent counts, one muted line of consequence, the `Remember my choice` toggle row on `subtle` at 0.5 on radius 8 (after a failed stop, a muted 11 px `Show details` trigger with a 12 px chevron instead, collapsed by default, that unfolds a `menu_panel` of the raw host errors, one per line in Geist Mono 11, scrolling past 160 px), then a footer whose alternative destructive action (`destructive_button`) sits alone on the leading edge, apart from `Cancel` and the default action on the trailing edge. The default action is the one Enter runs: a solid `switch_blue` button, or `Cancel` when every other choice ends sessions. Tab, Shift-Tab, left and right move a 1 px `text` ring at 0.35, drawn 3 px outside the control with a concentric radius, across the toggle row or the details trigger and the buttons; Enter or Space runs the ringed control and Escape cancels | `src-app/src/app/quit_dialog.rs` |
 | System Info dialog | Centered | The card of the close dialog at squircle 20, 560 wide, padding 20: a 44 px app icon beside a 16 px Semibold title and the build line at 11 px muted, then one 11 px muted eyebrow and one `menu_panel` per report section (`System`, `Rendering`) whose rows set a 116 px muted label column beside the value in Geist Mono 12, then the privacy line at 11 px muted, `Close`, and a solid `Copy` button in the toggle blue `#339cff` with a white label (`solid_button`). Escape closes, Enter copies, and focus returns to where it was | `src-app/src/app/system_info_dialog.rs` |
 | About dialog | Centered | The System Info card at squircle 20, 400 wide: a centered 64 px app icon, `Paneflow` at 16 px Semibold, the welcome tagline at 12 px muted, and the version on a Geist Mono 11 chip on `subtle` at radius 6; then one `menu_panel` of `menu_row` links (Website, Source code, Release notes of the running version) with a 14 px muted glyph, the label, and the address at 11 px muted on the trailing edge; then `© Arthur Jean · <license>` at 11 px muted and `Close`. Up and down select a link, Enter opens it or closes when none is selected, Escape closes, and focus returns to where it was | `src-app/src/app/about_dialog.rs` |
 
@@ -278,7 +278,7 @@ to the surfaces named:
 | `#5aa6ff`, light `#0550ae` | Filter and settings search match text, `filter_match_color` | Match blue, identical in every preset of a variant; each value keeps 14 px semibold text at 4.5:1 on the active row tint |
 | `#fbbf24`, light `#92400e` | Sidebar bell when an agent needs input | Amber request signal, identical in every preset of a variant; the light value keeps the 10 px word at 4.5:1 |
 | `#83c3ff`, light `#0369a1` | Sidebar dot when an agent finished | Light blue completion signal, identical in every preset of a variant; the light value keeps the 10 px word at 4.5:1 |
-| `#3a83f7` | Title bar update pill when a release is known or staged for restart | Solid update blue with a white glyph, label, and `×` (restart has none), identical in every preset |
+| `#1a6ff6` | Title bar update pill when a release is known or staged for restart | Solid update blue with a white glyph and label, no border, identical in every preset; white text holds 4.52:1 at rest, and hover darkens the lightness by 0.05 like `solid_button` (5.3:1) instead of lightening |
 | `hsl(40 85% 55%)` | Callout warning | Severity hue independent of preset |
 
 ### 4.4 Geometry
@@ -296,11 +296,12 @@ to the surfaces named:
 | Primary sidebar Settings button | 12 | continuous corner approximation | 36 px high, glyph 18 px for optical balance with the 20 px filter glyph |
 | Primary sidebar filter | full | capsule | 36 px high, glyph 20 px |
 | Primary sidebar inline hover actions | 6 | continuous corner approximation | no border |
-| Tab icon cards, shared row skin, secondary button, menu item, tooltip, terminal search, title bar manual check pill | 14 | squircle | tab icon card, tooltip and terminal search, 1 px `border` |
+| Tab icon cards, shared row skin, secondary button, menu item, tooltip, terminal search, title bar update pill, sidebar update banner, toast action button | 14 | squircle | tab icon card, tooltip and terminal search, 1 px `border` |
 | Theme tile | 10 | round | 2 px `text` at 0.12, 0.32 on hover, 0.85 when selected |
-| Sidebar update banner, filter field, settings control, select trigger, title bar menu trigger | 8 | round | none |
+| Filter field, settings control, select trigger, title bar menu trigger | 8 | round | none |
 | Toast, composer, drop overlay, drop placeholder | 8 | round | drop overlay 2 px blue |
-| Toast action button, theme mockup inner frame | 7 | round | none |
+| Theme mockup inner frame | 7 | round | none |
+| Dismiss button (`dismiss_button`), sidebar update banner `Retry` | 24 tall, concentric with the host: 7 in the sidebar banner, 6 in the release toast | squircle | none |
 | Toolbar pill, sidebar IPC banner, sidebar branch chip, branch prompt field | 6 | round | IPC banner 1 px `border` |
 | Title bar sidebar toggle, branch prompt primary button | 5 | round | none |
 | Icon button, composer chip | 4 | round | none |
@@ -323,7 +324,7 @@ small circular controls and the explicitly round surfaces in the table.
 | Sidebar row | margin 8, padding 7 by 6, minimum height 32, content gap 3, icon-to-title gap 8, line height 20, spacing 2 (10 before the workspace that opens a new group), radius 9 |
 | Sidebar tab icon stack | 16 px icons, cap 4, overlap 11, 24 by 24 icon card |
 | Sidebar action button | 22, gap 1; folder glyph 15 in a 20 px slot |
-| Sidebar footer | padding 0 top and 9.5 bottom; filter and gear 36 tall, gap 6, margin 8 shared with workspace rows; filter glyph 20, Settings glyph 18; filter text 15 with line height 20 and horizontal padding 10; banners margin 6 with 2 below, update banner 30 tall with padding 8 |
+| Sidebar footer | padding 0 top and 9.5 bottom; filter and gear 36 tall, gap 6, margin 8 shared with workspace rows; filter glyph 20, Settings glyph 18; filter text 15 with line height 20 and horizontal padding 10; banners margin 6 with 2 below, update banner 30 tall with padding 8 leading and 3 trailing |
 | Sessions row | minimum height 32, terminal glyph on the tab title column; 5 rows per agent group before Show all |
 | Settings row | padding 12 by 10, gap 16; section header bottom padding 8 |
 | Select trigger | padding 10 by 6, width 190 to 260 |
@@ -405,7 +406,8 @@ to `icons/languages/`.
 | Workspaces rows | 180 ms | cubic ease-out | `SidebarRowMotion`: folding or unfolding a workspace folder, or filtering the rail, fades each tab row while its measured height grows or shrinks, the group gap below a folder follows the last row, and the folder glyph crossfades between `folder.svg` and `folder-open.svg`; a new toggle retargets from the current state, and a folder seen for the first time rests |
 | Menu reveal | 140 ms | cubic ease-out | `menu_reveal`: every menu, select popup, context menu, and submenu fades in from 0 while dropping 4 px into place; the pane palette's `New branch` form and the branch row it folds back to use the same reveal. No exit animation |
 | Toast | 180 ms in, 1440 ms hold, 180 ms out | ease-in-out | 8 px lift on entry, 8 px drop on exit |
-| Status spinner | 1 s loop | linear rotate | Title bar pill while a manual check runs, empty states |
+| Status spinner | 1 s loop | linear rotate | Empty states |
+| Comet spinner | 700 ms loop | linear rotate | `comet_spinner` on `icons/comet.svg`: a ring stroked at 0.12 of its size whose opacity ramps linearly from 0 to 1 clockwise from the top, with a round head at the top; every busy state of the title bar update pill. Static under reduced motion |
 | Sidebar thinking matrix | 720 ms cycle | stepped | 3 by 3 dots of 3 px, gap 1, trailing opacities 0.81, 0.49, 0.26 over a 0.06 base |
 | Startup splash | 2600 ms shimmer, 900 ms minimum on screen | linear | Letters at 0.54 alpha, shimmer to 0.82 |
 | Tooltip | 800 ms delay | none | `delayed_tooltip` |
@@ -432,22 +434,27 @@ still carries its own IPC pill code, but the cockpit shell never renders it
 (`tb.cockpit = true` in `app/render.rs`); that code is **Migration**, and the
 sidebar footer owns the IPC banner. Between the center and the caption
 controls sits the update pill, the single control for every update state
-(`resolve_update_pill` in `app/self_update_flow.rs`): height 24, padding 8,
-gap 5, squircle 14 through `squircle_skin`, no border, 11 px Medium. Any known
+(`resolve_update_pill` in `app/self_update_flow.rs`): height 24, padding 10,
+gap 5, squircle 14 through `squircle_skin`, no border, 12 px Medium like
+`solid_button`. Any known
 release raises it, whether the startup check, the four-hourly recheck, or
 `Help > Check for Updates…` (the `PaneFlow` menu on macOS) found it.
-`v<x.y.z> available` and `Restart Paneflow` are solid `#3a83f7` with a white
-download or refresh glyph and label; a click installs or restarts.
-`Downloading update…` and `Installing update…` show the 11 px spinning loader
-on `subtle` at 0.7 opacity; `Update via rpm-ostree` and `Update via package
-manager` show the tool glyph on `subtle`; `Update failed` sits in `vc_deleted`
-on its 0.12 wash and retries on click. The available, failed, and package
-manager states end in a 13 px bold `×` that dismisses the release until a newer
-one ships. A manual check lays its transient states over the same slot:
-`Checking for updates…` with the spinner on `subtle` at 0.7 opacity, then
-`Paneflow is up to date` in `vc_added` or `Update check failed` in
-`vc_deleted`, each on its 0.12 wash and gone after 3 s. The colored wash states
-carry no glyph. On Windows the caption glyphs are native Windows 11
+`v<x.y.z> available` and `Restart to update` are solid `#1a6ff6` with a white
+download or refresh glyph and label; a click installs or restarts. Every
+actionable state fires on click release, never on press, and exposes the
+button role with its label as the accessible name. Once `Restart to update` is
+clicked the button stays blue with its label while the sessions stop and the
+app restarts, the refresh glyph swapped for the white comet spinner, and further
+clicks do nothing.
+`Downloading update…` and `Installing update…` show the 12 px comet spinner in
+`text` on `subtle` at 0.7 opacity; `Update via rpm-ostree` and `Update via package
+manager` show the tool glyph on `subtle`; a failed install reads `Retry update`
+with the 12 px alert glyph in `vc_deleted` on its 0.12 wash and retries on
+click. No state carries a dismiss control: the pill stays until the release is
+installed. A manual check lays its transient states over the same slot: `Checking for
+updates…` with the comet spinner on `subtle` at 0.7 opacity, then `Paneflow is up to
+date` in `vc_added` with no glyph, or `Retry update check` with the alert glyph
+in `vc_deleted`, each on its 0.12 wash and gone after 3 s. On Windows the caption glyphs are native Windows 11
 shapes; on macOS the traffic lights get 80 px of brand padding. The title bar
 draws no bottom hairline inside the cockpit shell; the panel inset separates
 it from the content.
@@ -495,9 +502,11 @@ The footer stacks, top to bottom: the IPC offline banner when the socket is
 disabled (margin 6, padding 8 by 6, radius 6, 1 px `border` on `subtle`, a
 14 px alert glyph and `IPC offline` at 12 px Medium), the manual-check failed
 banner when the last manual check could not reach the feed (margin 6, height
-30, padding 8, radius 8, the active row tint, a 14 px `vc_deleted` alert
-glyph, `Update check failed` at 12 px Medium, a 13 px bold `×` to dismiss;
-0.8 rising to 1.0 on hover, click retries), then a 36 px footer with a flexible
+30, padding 8 leading and 3 trailing, squircle 14 on the active row tint, a
+14 px `vc_deleted` alert glyph, `Update check failed` at 12 px Medium, a 24 px
+`Retry` button at 12 px Medium on `text` at 0.08 to 0.12, and a
+`dismiss_button`, both squircle 7 so they sit concentric in the banner; the
+banner itself is not clickable), then a 36 px footer with a flexible
 fully rounded capsule filter on the left and a 36 px icon-only Settings button on the right. The
 filter shows an outlined circle with three descending horizontal lines at rest
 and on hover. Only while the input is focused, it shows a solid circle with
@@ -849,14 +858,15 @@ Every other target clones with git.
 ### 5.8 Feedback
 
 Toasts stack bottom right on `subtle` with a 15 px icon, 12.5 px text, and
-26 px action buttons on `text` at 0.08 to 0.12. Error messages are detected
+26 px squircle 14 action buttons at 12 px Medium on `text` at 0.08 to 0.12.
+Error messages are detected
 and get the error icon. The release toast is **Contextual** and does not
 follow that shape: it is a Zed notification frame, 448 wide, inset 12,
 padding 12, gap 8, radius 8, a 1 px `text` hairline at 0.10 on the title bar
 color, the same fill as the sidebar, and Zed's four-layer elevation shadow. No
-icon, a 14 px `text` line reading `Updated to PaneFlow x.y.z`, a 20 px close
-button on its right with an 11 px `muted` glyph and a `text` wash at 0.08 on
-hover, and one 26 px squircle button on `text` at 0.08 to 0.12. The button and
+icon, a 14 px `text` line reading `Updated to PaneFlow x.y.z`, a
+`dismiss_button` on its right (24 px, squircle 6, 10 px `muted` glyph rising
+to `text`, a `text` wash at 0.08 on hover), and one 26 px squircle button on `text` at 0.08 to 0.12. The button and
 the whole surface open `paneflow.dev/docs/changelog/<tag>`, then dismiss it.
 It lands 1500 ms after boot, once the window is painted, and it is the one
 toast that never auto-closes: only the close button, the surface click, or

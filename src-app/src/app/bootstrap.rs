@@ -380,6 +380,7 @@ impl PaneFlowApp {
                 download_generation: 0,
                 dismissed_version: None,
                 staged_msi: None,
+                restart_requested: false,
             },
             custom_buttons_modal: None,
             custom_buttons_modal_focus: cx.focus_handle(),

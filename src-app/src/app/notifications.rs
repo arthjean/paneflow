@@ -9,7 +9,7 @@ use crate::agents::notifications::{self as desktop_notifications, DesktopNotific
 use crate::app::constants::{TOAST_ENTER_MS, TOAST_EXIT_MS, TOAST_HOLD_MS};
 use crate::settings::components::with_alpha;
 use crate::theme::UiColors;
-use crate::ui_primitives::{AnimatedHoverExt, ROW_RADIUS, lerp_color, squircle_skin};
+use crate::ui_primitives::{ROW_RADIUS, dismiss_button, squircle_skin};
 use crate::{PaneFlowApp, StartSelfUpdate, update};
 
 #[derive(Clone)]
@@ -211,44 +211,47 @@ impl PaneFlowApp {
                     ToastAction::ReopenTab(_) => ("Undo", format!("toast-undo-{idx}")),
                 };
                 let action_clone = action.clone();
-                let resting_background = with_alpha(ui.text, 0.08);
-                let hover_background = with_alpha(ui.text, 0.12);
-                let btn = div()
-                    .id(SharedString::from(button_id))
-                    .h(px(26.))
-                    .px(px(10.))
-                    .flex()
-                    .items_center()
-                    .rounded(px(7.))
-                    .bg(resting_background)
-                    .text_color(ui.text)
-                    .text_size(px(12.))
-                    .animated_hover(move |style, delta| {
-                        style.bg(lerp_color(resting_background, hover_background, delta));
-                    })
-                    .child(label)
-                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                    .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
-                        match &action_clone {
-                            ToastAction::RetryUpdate => {
-                                window.dispatch_action(Box::new(StartSelfUpdate), cx);
-                            }
-                            ToastAction::OpenReleasesPage(url) => {
-                                if let Err(err) = crate::external_open::open_url(url) {
-                                    log::warn!("toast: open releases URL failed: {err}");
-                                }
-                            }
-                            ToastAction::OpenReleaseNotes(url) => {
-                                if let Err(err) = crate::external_open::open_url(url) {
-                                    log::warn!("toast: open changelog URL failed: {err}");
-                                }
-                            }
-                            ToastAction::ReopenTab(tab_id) => {
-                                this.reopen_closed_tab(*tab_id, window, cx);
-                                this.dismiss_toast(cx);
+                let group = SharedString::from(format!("{button_id}-squircle"));
+                let btn = squircle_skin(
+                    div()
+                        .id(SharedString::from(button_id))
+                        .h(px(26.))
+                        .px(px(10.))
+                        .flex()
+                        .items_center()
+                        .text_color(ui.text)
+                        .text_size(px(12.))
+                        .font_weight(gpui::FontWeight::MEDIUM),
+                    group,
+                    ROW_RADIUS,
+                    Some(with_alpha(ui.text, 0.08)),
+                    Some(with_alpha(ui.text, 0.12)),
+                )
+                .role(gpui::accesskit::Role::Button)
+                .aria_label(label)
+                .child(label)
+                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                .on_click(cx.listener(
+                    move |this, _: &ClickEvent, window, cx| match &action_clone {
+                        ToastAction::RetryUpdate => {
+                            window.dispatch_action(Box::new(StartSelfUpdate), cx);
+                        }
+                        ToastAction::OpenReleasesPage(url) => {
+                            if let Err(err) = crate::external_open::open_url(url) {
+                                log::warn!("toast: open releases URL failed: {err}");
                             }
                         }
-                    }));
+                        ToastAction::OpenReleaseNotes(url) => {
+                            if let Err(err) = crate::external_open::open_url(url) {
+                                log::warn!("toast: open changelog URL failed: {err}");
+                            }
+                        }
+                        ToastAction::ReopenTab(tab_id) => {
+                            this.reopen_closed_tab(*tab_id, window, cx);
+                            this.dismiss_toast(cx);
+                        }
+                    },
+                ));
                 row = row.child(btn);
             }
             Some(row)
@@ -368,6 +371,8 @@ impl PaneFlowApp {
                 Some(resting_background),
                 Some(hover_background),
             )
+            .role(gpui::accesskit::Role::Button)
+            .aria_label("View release notes")
             .child("View release notes")
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .on_click(cx.listener(move |this, _, _, cx| {
@@ -378,28 +383,16 @@ impl PaneFlowApp {
             }))
         });
 
-        let close_hover = with_alpha(ui.text, 0.08);
-        let close = div()
-            .id("toast-release-close")
-            .flex_none()
-            .size(px(20.))
-            .flex()
-            .items_center()
-            .justify_center()
-            .rounded(px(5.))
-            .cursor(CursorStyle::PointingHand)
-            .animated_hover(move |style, delta| {
-                style.bg(lerp_color(with_alpha(close_hover, 0.), close_hover, delta));
-            })
-            .child(
-                svg()
-                    .size(px(11.))
-                    .flex_none()
-                    .path("icons/close.svg")
-                    .text_color(ui.muted),
-            )
-            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .on_click(cx.listener(|this, _, _, cx| this.dismiss_toast(cx)));
+        let close = dismiss_button(
+            "toast-release-close",
+            "Dismiss",
+            px(6.),
+            ui.muted,
+            ui.text,
+            with_alpha(ui.text, 0.08),
+        )
+        .cursor(CursorStyle::PointingHand)
+        .on_click(cx.listener(|this, _, _, cx| this.dismiss_toast(cx)));
 
         let click_url = toast.click_url.clone();
         deferred(

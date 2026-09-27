@@ -8,7 +8,8 @@ use gpui::{
 
 use crate::PaneFlowApp;
 use crate::app::self_update_flow::ManualUpdateCheck;
-use crate::ui_primitives::{AnimatedHoverExt, lerp_color};
+use crate::settings::components::with_alpha;
+use crate::ui_primitives::{DISMISS_BUTTON_SIZE, ROW_RADIUS, dismiss_button};
 
 impl PaneFlowApp {
     pub(crate) fn render_sidebar_update_banner(
@@ -23,57 +24,71 @@ impl PaneFlowApp {
 
     fn render_sidebar_check_failed_banner(&self, cx: &mut Context<Self>) -> AnyElement {
         let ui = crate::theme::ui_colors();
-        let muted = ui.muted;
-        let text = ui.text;
-        div()
-            .id("sidebar-update-check-failed")
-            .mx(px(6.))
-            .mb(px(2.))
-            .h(px(30.))
-            .px(px(8.))
-            .rounded(crate::app::constants::SIDEBAR_TAB_CORNER_RADIUS)
-            .bg(crate::app::constants::sidebar_tab_active_background())
-            .flex()
-            .flex_row()
-            .items_center()
-            .gap(px(6.))
-            .child(
-                svg()
-                    .size(px(14.))
-                    .flex_none()
-                    .path("icons/triangle-alert.svg")
-                    .text_color(ui.vc_deleted),
-            )
-            .child(render_update_plain_label("Update check failed", ui))
-            .child(
-                div()
-                    .id("sidebar-update-check-dismiss")
-                    .px(px(4.))
-                    .text_color(muted)
-                    .text_size(px(13.))
-                    .font_weight(FontWeight::BOLD)
-                    .animated_hover(move |style, delta| {
-                        style.text_color(lerp_color(muted, text, delta));
-                    })
-                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                    .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
-                        cx.stop_propagation();
-                        this.handle_dismiss_update(&crate::DismissUpdate, window, cx);
-                    }))
-                    .child("×"),
-            )
-            .opacity(0.8)
-            .animated_hover(move |style, delta| {
-                style.opacity(lerp(0.8, 1.0, delta));
-            })
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(move |this, _, _, cx| {
-                    cx.stop_propagation();
-                    this.request_update_check(cx);
-                }),
-            )
-            .into_any_element()
+        let control_radius = px(7.);
+        let retry = squircle_skin(
+            div()
+                .id("sidebar-update-check-retry")
+                .flex_none()
+                .h(DISMISS_BUTTON_SIZE)
+                .px(px(8.))
+                .flex()
+                .items_center()
+                .text_size(px(12.))
+                .font_weight(FontWeight::MEDIUM)
+                .text_color(ui.text),
+            "sidebar-update-check-retry-group",
+            control_radius,
+            Some(with_alpha(ui.text, 0.08)),
+            Some(with_alpha(ui.text, 0.12)),
+        )
+        .role(gpui::accesskit::Role::Button)
+        .aria_label("Retry update check")
+        .child("Retry")
+        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+        .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+            cx.stop_propagation();
+            this.request_update_check(cx);
+        }));
+        let dismiss = dismiss_button(
+            "sidebar-update-check-dismiss",
+            "Dismiss",
+            control_radius,
+            ui.muted,
+            ui.text,
+            with_alpha(ui.text, 0.08),
+        )
+        .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+            cx.stop_propagation();
+            this.handle_dismiss_update(&crate::DismissUpdate, window, cx);
+        }));
+        squircle_skin(
+            div()
+                .id("sidebar-update-check-failed")
+                .mx(px(6.))
+                .mb(px(2.))
+                .h(px(30.))
+                .pl(px(8.))
+                .pr(px(3.))
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap(px(6.)),
+            "sidebar-update-check-failed-group",
+            ROW_RADIUS,
+            Some(crate::app::constants::sidebar_tab_active_background()),
+            None,
+        )
+        .child(
+            svg()
+                .size(px(14.))
+                .flex_none()
+                .path("icons/triangle-alert.svg")
+                .text_color(ui.vc_deleted),
+        )
+        .child(render_update_plain_label("Update check failed", ui))
+        .child(retry)
+        .child(dismiss)
+        .into_any_element()
     }
 
     pub(crate) fn render_sidebar_ipc_banner(&self, _cx: &mut Context<Self>) -> Option<AnyElement> {
@@ -239,13 +254,9 @@ fn render_update_plain_label(label: &str, ui: crate::theme::UiColors) -> AnyElem
         .flex_1()
         .min_w_0()
         .text_size(px(12.))
-        .font_weight(FontWeight::BOLD)
+        .font_weight(FontWeight::MEDIUM)
         .text_color(ui.text)
         .truncate()
         .child(label.to_string())
         .into_any_element()
-}
-
-fn lerp(from: f32, to: f32, amount: f32) -> f32 {
-    from + (to - from) * amount
 }
