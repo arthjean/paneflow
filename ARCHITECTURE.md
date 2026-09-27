@@ -839,7 +839,7 @@ every open root, lands once in an `Other sessions` group below the workspace
 rows, which also renders with zero workspaces. Opening a row from that group
 attaches in the active workspace or, with no workspace open, creates one on
 the recorded cwd when it still exists, else on the home directory; when
-neither is accessible or the workspace limit is reached, the row stays and a
+neither is accessible, the row stays and a
 toast says why. Ended rows are
 dimmed, carry no agent lane, and the ones beyond `sidebar_ended_sessions`
 (default 5) collapse under one row. Left-click reopens a live row through

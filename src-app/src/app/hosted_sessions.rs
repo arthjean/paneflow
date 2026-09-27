@@ -10,7 +10,7 @@ use crate::layout::{LayoutTree, SplitDirection};
 use crate::pane::{Pane, PaneSurface};
 use crate::terminal::TerminalView;
 use crate::terminal::host_link::{self, HostLinkState};
-use crate::workspace::{MAX_WORKSPACES, Tab, Workspace, next_workspace_id};
+use crate::workspace::{Tab, Workspace, next_workspace_id};
 use crate::{HidePane, PaneFlowApp, RemoveEndedSessions, ResumeEndedSessions, StopSession};
 
 pub(crate) type StopTarget = (PathBuf, SessionId, SessionGeneration);
@@ -632,13 +632,6 @@ impl PaneFlowApp {
         if self.active_idx < self.workspaces.len() {
             let ws_idx = self.active_idx;
             self.open_session_in_layout_with(ws_idx, listed, restart, window, cx);
-            return;
-        }
-        if self.workspaces.len() >= MAX_WORKSPACES {
-            self.show_toast(
-                format!("Maximum workspace count reached ({MAX_WORKSPACES})"),
-                cx,
-            );
             return;
         }
         let Some(cwd) = fallback_workspace_dir(&listed.cwd, dirs::home_dir()) else {

@@ -13,7 +13,7 @@ use crate::app::close_policy::CloseTarget;
 use crate::layout::{LayoutTree, MAX_PANES, SplitDirection};
 use crate::pane::Pane;
 use crate::terminal::TerminalView;
-use crate::workspace::{MAX_WORKSPACES, Workspace, next_workspace_id};
+use crate::workspace::{Workspace, next_workspace_id};
 use crate::{
     ClosePane, CloseWorkspace, ClosedPaneRecord, ClosedSurfaceRecord, CopyWorkspacePath,
     MAX_CLOSED_PANE_SCROLLBACK_BYTES, MAX_CLOSED_PANES, NewWorkspace, NextWorkspace,
@@ -411,9 +411,6 @@ impl PaneFlowApp {
     ) {
         let mut opened = false;
         for path in paths {
-            if self.workspaces.len() >= MAX_WORKSPACES {
-                break;
-            }
             if !path.is_dir() {
                 continue;
             }
@@ -449,9 +446,6 @@ impl PaneFlowApp {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.workspaces.len() >= MAX_WORKSPACES {
-            return;
-        }
         let receiver = cx.prompt_for_paths(PathPromptOptions {
             files: false,
             directories: true,

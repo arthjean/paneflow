@@ -13,8 +13,6 @@ pub(crate) use ports::PortEntry;
 pub use ports::{PaneScan, scan_panes};
 pub use tab::Tab;
 
-pub(crate) const MAX_WORKSPACES: usize = 20;
-
 pub(crate) const MAX_TABS_PER_WORKSPACE: usize = 32;
 
 use gpui::{App, Entity, Window};

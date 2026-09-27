@@ -5,6 +5,14 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
 
 ## [Unreleased]
 
+### Changed
+
+- The number of open workspaces is no longer capped at 20. Before, a new
+  workspace past the twentieth did nothing, whether from the sidebar button,
+  `Window > New Workspace`, the shortcut, a folder drop or the CLI, and a
+  session with more workspaces restored only the first 20. A version up to
+  0.17.3 still restores only the first 20 of such a session.
+
 ## [0.17.3] - 2026-09-27
 
 A patch for the update and quit controls. The update pill says what a click

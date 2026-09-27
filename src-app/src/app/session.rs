@@ -15,7 +15,7 @@ use crate::layout::{LayoutTree, MAX_PANES};
 use crate::limits::MAX_SESSION_SIZE_BYTES;
 use crate::pane::Pane;
 use crate::terminal::TerminalView;
-use crate::workspace::{MAX_TABS_PER_WORKSPACE, MAX_WORKSPACES, Tab, Workspace, next_workspace_id};
+use crate::workspace::{MAX_TABS_PER_WORKSPACE, Tab, Workspace, next_workspace_id};
 
 const MAX_CORRUPTION_BACKUPS: usize = 5;
 
@@ -466,13 +466,7 @@ impl PaneFlowApp {
     ) -> (Vec<Workspace>, usize) {
         let mut workspaces = Vec::new();
 
-        if session.workspaces.len() > MAX_WORKSPACES {
-            log::warn!(
-                "session restore: {} workspaces exceeds MAX_WORKSPACES ({MAX_WORKSPACES}); restoring the first {MAX_WORKSPACES}",
-                session.workspaces.len()
-            );
-        }
-        for ws_session in session.workspaces.iter().take(MAX_WORKSPACES) {
+        for ws_session in &session.workspaces {
             let cwd = restored_workspace_cwd(&ws_session.cwd);
             let title = ws_session.title.clone();
             let ws_id = next_workspace_id();

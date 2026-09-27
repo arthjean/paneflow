@@ -22,7 +22,7 @@ use crate::layout::LayoutTree;
 use crate::layout::{MAX_PANES, SplitDirection};
 use crate::pane::Pane;
 use crate::terminal::TerminalView;
-use crate::workspace::{MAX_WORKSPACES, Tab, Workspace, next_workspace_id};
+use crate::workspace::{Tab, Workspace, next_workspace_id};
 use crate::{PaneFlowApp, ai_types};
 
 mod agent_frames;

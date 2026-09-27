@@ -191,9 +191,6 @@ impl PaneFlowApp {
         params: &serde_json::Value,
         cx: &mut Context<Self>,
     ) -> serde_json::Value {
-        if self.workspaces.len() >= MAX_WORKSPACES {
-            return JsonRpcError::invalid_params("Workspace limit reached").into_value();
-        }
         let name = params
             .get("name")
             .and_then(|n| n.as_str())
@@ -507,9 +504,6 @@ impl PaneFlowApp {
                 }
             }
             "workspace.create" => {
-                if self.workspaces.len() >= MAX_WORKSPACES {
-                    return serde_json::json!({"error": "Workspace limit reached"});
-                }
                 let mut layout = match parse_layout_param(params) {
                     Ok(l) => l,
                     Err(e) => return e.into_value(),

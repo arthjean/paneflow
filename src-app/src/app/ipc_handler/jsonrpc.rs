@@ -101,10 +101,10 @@ mod tests {
     #[test]
     fn promote_response_promotes_legacy_application_error_strings() {
         let id = serde_json::json!(null);
-        let legacy = serde_json::json!({"error": "Workspace limit reached"});
+        let legacy = serde_json::json!({"error": "Unknown tool"});
         let resp = promote_response(legacy, id);
         assert_eq!(resp["error"]["code"], -32603);
-        assert_eq!(resp["error"]["message"], "Workspace limit reached");
+        assert_eq!(resp["error"]["message"], "Unknown tool");
         assert!(resp.get("result").is_none());
     }
 }
