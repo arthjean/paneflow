@@ -466,7 +466,8 @@ pub fn generate_catalog(descriptors: &[LocatedDescriptor]) -> Result<String, Str
         for signature in &runtime.detection.script_path_signatures {
             let windows = signature.replace('/', "\\");
             output.push_str(&format!(
-                "if path.contains({signature:?}) || path.contains({windows:?}) {{ return Some({:?}); }}\n",
+                "if path.as_bytes().windows({}).any(|window| window == {signature:?}.as_bytes() || window == {windows:?}.as_bytes()) {{ return Some({:?}); }}\n",
+                signature.len(),
                 runtime.detection.command_aliases[0]
             ));
         }

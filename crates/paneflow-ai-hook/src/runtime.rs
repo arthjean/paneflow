@@ -40,12 +40,18 @@ pub(crate) fn dispatch() {
     let Ok(session) = env::var(SESSION_ID_ENV) else {
         return;
     };
-    let Some(event_name) = env::args().nth(1) else {
+    let Some(event_name) = env::args_os().nth(1) else {
         diagnose("missing argv[1] hook event name");
         return;
     };
-    let Ok(event) = event_name.parse::<HookEvent>() else {
-        diagnose(&format!("{event_name}: unhandled hook event"));
+    let Some(event) = event_name
+        .to_str()
+        .and_then(|name| name.parse::<HookEvent>().ok())
+    else {
+        diagnose(&format!(
+            "{}: unhandled hook event",
+            event_name.to_string_lossy()
+        ));
         return;
     };
     let Some((endpoint, session)) =

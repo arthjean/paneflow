@@ -47,6 +47,15 @@ pub fn control_hello(client: &str) -> Value {
     json!({"client": client, "protocol": HOST_PROTOCOL_VERSION})
 }
 
+fn request_frame(id: u64, method: &str, params: Value) -> Value {
+    let mut frame = serde_json::Map::new();
+    frame.insert("jsonrpc".into(), Value::from("2.0"));
+    frame.insert("id".into(), Value::from(id));
+    frame.insert("method".into(), Value::from(method));
+    frame.insert("params".into(), params);
+    Value::Object(frame)
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ControlTarget {
     Controller(PathBuf),
@@ -159,7 +168,7 @@ impl HostControl {
     ) -> Result<Value, String> {
         let id = self.next_id;
         self.next_id += 1;
-        let request = json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params});
+        let request = request_frame(id, method, params);
         self.wire
             .write_json_with_timeout(&request, deadline)
             .map_err(|error| format!("paneflow host request {method} failed: {error}"))?;
@@ -178,7 +187,8 @@ impl HostControl {
                 }
                 Ok(LineRead::Idle) => {
                     return Err(format!(
-                        "paneflow host request {method} timed out after {deadline:?}"
+                        "paneflow host request {method} timed out after {} ms",
+                        deadline.as_millis()
                     ));
                 }
                 Err(error) => {
@@ -219,7 +229,7 @@ impl HostControl {
     pub fn write_request(&mut self, method: &str, params: Value) -> io::Result<u64> {
         let id = self.next_id;
         self.next_id += 1;
-        let request = json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params});
+        let request = request_frame(id, method, params);
         self.wire.write_json(&request)?;
         Ok(id)
     }
