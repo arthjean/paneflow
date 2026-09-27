@@ -2923,6 +2923,258 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
 
+  # ─── Windows MSI smoke: upgrade over a live session host (dry-run) ──
+  # The in-app updater runs msiexec while the detached session host
+  # (`paneflow-host.exe --home <home> serve`) can still run from
+  # %ProgramFiles%\PaneFlow. Restart Manager cannot close that windowless
+  # process, so the v0.16 updater stalled on MSI error 1611 until the
+  # `StopInstalledHost` custom action in packaging/wix/main.wxs started
+  # stopping it before InstallValidate. The relay smoke above restarts
+  # through System32\whoami.exe and never has a live host, so this job
+  # installs the latest published MSI per-machine, starts its host, and
+  # upgrades with the relay's exact msiexec arguments, then repeats the
+  # upgrade without MSIRESTARTMANAGERCONTROL=Disable as the v0.16 updater
+  # ran it. The candidate ProductVersion must exceed the latest release:
+  # dispatch with `msi_upgrade_version` while the source is not bumped yet.
+  smoke-test-windows-msi-live-host:
+    name: Smoke test - Windows MSI upgrade over a live host
+    if: github.event_name == 'workflow_dispatch'
+    needs: build
+    runs-on: windows-2022
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - name: Download signed Windows MSI
+        uses: actions/download-artifact@v4
+        with:
+          name: release-assets-x86_64-Windows
+          path: ./release-assets
+
+      - name: Download latest published MSI
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BASELINE_DIR: ${{ runner.temp }}\paneflow-live-host-baseline
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $tag = gh api "repos/$env:GITHUB_REPOSITORY/releases/latest" --jq .tag_name
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if ($tag -notmatch '^v(\d+\.\d+\.\d+)$') {
+              throw "Latest release tag '$tag' is not a vX.Y.Z tag"
+          }
+          $msiName = "paneflow-$($Matches[1])-x86_64-pc-windows-msvc.msi"
+          New-Item -ItemType Directory -Force -Path $env:BASELINE_DIR | Out-Null
+          gh release download $tag `
+            --repo $env:GITHUB_REPOSITORY `
+            --pattern $msiName `
+            --pattern "$msiName.sha256" `
+            --dir $env:BASELINE_DIR
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Write-Host "Latest published release: $tag"
+
+      - name: Upgrade the latest release while its host runs
+        env:
+          SMOKE_DIR: ${{ runner.temp }}\paneflow-msi-live-host
+          BASELINE_DIR: ${{ runner.temp }}\paneflow-live-host-baseline
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force -Path $env:SMOKE_DIR | Out-Null
+
+          function Get-SingleMsi {
+              param(
+                  [Parameter(Mandatory = $true)][string] $Directory,
+                  [Parameter(Mandatory = $true)][string] $Label
+              )
+
+              $found = @(Get-ChildItem -LiteralPath $Directory -Filter 'paneflow-*-x86_64-pc-windows-msvc.msi' -File)
+              if ($found.Count -ne 1) {
+                  throw "Expected exactly one $Label MSI in $Directory, found $($found.Count)"
+              }
+              return $found[0]
+          }
+
+          $candidate = Get-SingleMsi -Directory 'release-assets' -Label 'candidate'
+          $baseline = Get-SingleMsi -Directory $env:BASELINE_DIR -Label 'latest release'
+          $baselineHash = ((Get-Content -LiteralPath "$($baseline.FullName).sha256" -Raw).Trim() -split '\s+')[0]
+          if ((Get-FileHash -LiteralPath $baseline.FullName -Algorithm SHA256).Hash -ne $baselineHash) {
+              throw "Latest release MSI does not match its SHA-256 sidecar: $($baseline.Name)"
+          }
+
+          $installer = New-Object -ComObject WindowsInstaller.Installer
+
+          function Get-MsiProperty {
+              param(
+                  [Parameter(Mandatory = $true)][string] $Path,
+                  [Parameter(Mandatory = $true)][string] $Name
+              )
+
+              $database = $installer.OpenDatabase($Path, 0)
+              $view = $database.OpenView("SELECT Value FROM Property WHERE Property = '$Name'")
+              [void] $view.Execute()
+              $record = $view.Fetch()
+              [void] $view.Close()
+              [void] [System.Runtime.InteropServices.Marshal]::FinalReleaseComObject($view)
+              [void] [System.Runtime.InteropServices.Marshal]::FinalReleaseComObject($database)
+              if ($null -eq $record) {
+                  throw "$Path has no $Name property"
+              }
+              return $record.StringData(1)
+          }
+
+          function Get-MajorUpgradeVersion {
+              param([Parameter(Mandatory = $true)][string] $ProductVersion)
+
+              $fields = $ProductVersion.Split('.')
+              return [version]::new([int] $fields[0], [int] $fields[1], [int] $fields[2])
+          }
+
+          $upgradeCode = Get-MsiProperty -Path $candidate.FullName -Name 'UpgradeCode'
+          $candidateVersion = Get-MsiProperty -Path $candidate.FullName -Name 'ProductVersion'
+          $baselineVersion = Get-MsiProperty -Path $baseline.FullName -Name 'ProductVersion'
+          if ((Get-MajorUpgradeVersion $candidateVersion) -le (Get-MajorUpgradeVersion $baselineVersion)) {
+              throw "Candidate MSI ProductVersion $candidateVersion does not upgrade the latest release $baselineVersion; dispatch the dry-run with msi_upgrade_version above $baselineVersion"
+          }
+          Write-Host "Upgrading $baselineVersion to $candidateVersion (UpgradeCode $upgradeCode)"
+
+          function Show-LogTail {
+              param([Parameter(Mandatory = $true)][string] $Path)
+
+              if (Test-Path -LiteralPath $Path) {
+                  Write-Host "--- tail of $Path ---"
+                  Get-Content -LiteralPath $Path -Tail 160 | ForEach-Object { Write-Host $_ }
+              }
+          }
+
+          function Invoke-SmokeProcess {
+              param(
+                  [Parameter(Mandatory = $true)][string] $FilePath,
+                  [Parameter(Mandatory = $true)][string[]] $Arguments,
+                  [Parameter(Mandatory = $true)][string] $Label,
+                  [int] $TimeoutSeconds = 300
+              )
+
+              $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
+              $startInfo.FileName = $FilePath
+              $startInfo.UseShellExecute = $false
+              foreach ($argument in $Arguments) {
+                  [void] $startInfo.ArgumentList.Add($argument)
+              }
+
+              $process = [System.Diagnostics.Process]::Start($startInfo)
+              if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
+                  try {
+                      $process.Kill($true)
+                  } catch {
+                      Write-Warning "Could not kill timed-out process $($process.Id): $_"
+                  }
+                  throw "$Label timed out after $TimeoutSeconds seconds"
+              }
+              if ($process.ExitCode -ne 0) {
+                  throw "$Label exited with $($process.ExitCode)"
+              }
+          }
+
+          $msiexec = Join-Path $env:WINDIR 'System32\msiexec.exe'
+          $installDir = Join-Path $env:ProgramFiles 'PaneFlow'
+          $installedExe = Join-Path $installDir 'paneflow.exe'
+          $installedHost = Join-Path $installDir 'paneflow-host.exe'
+          $filesInUseMarkers = @(
+              'Note: 1: 1611',
+              '`Error` = 1603',
+              '`Error` = 1607',
+              '`Error` = 1610',
+              'is being held in use',
+              'held files in use',
+              'ReplacedInUseFiles'
+          )
+
+          function Invoke-Msiexec {
+              param(
+                  [Parameter(Mandatory = $true)][string[]] $Arguments,
+                  [Parameter(Mandatory = $true)][string] $Log,
+                  [Parameter(Mandatory = $true)][string] $Label
+              )
+
+              try {
+                  Invoke-SmokeProcess -FilePath $msiexec -Arguments ($Arguments + @('/l*v', $Log)) -Label $Label
+              } catch {
+                  Show-LogTail -Path $Log
+                  throw
+              }
+          }
+
+          function Assert-InstalledVersion {
+              param(
+                  [Parameter(Mandatory = $true)][string] $Expected,
+                  [Parameter(Mandatory = $true)][string] $Label
+              )
+
+              $installed = @(foreach ($productCode in @($installer.RelatedProducts($upgradeCode))) {
+                  $installer.ProductInfo($productCode, 'VersionString')
+              })
+              if ($installed.Count -ne 1 -or
+                  (Get-MajorUpgradeVersion $installed[0]) -ne (Get-MajorUpgradeVersion $Expected)) {
+                  throw "$Label expected installed ProductVersion $Expected, found '$($installed -join ', ')'"
+              }
+          }
+
+          function Invoke-LiveHostUpgrade {
+              param(
+                  [Parameter(Mandatory = $true)][string] $Name,
+                  [string[]] $Properties = @()
+              )
+
+              Invoke-Msiexec `
+                  -Arguments @('/i', $baseline.FullName, '/qn', '/norestart') `
+                  -Log (Join-Path $env:SMOKE_DIR "$Name-baseline-install.log") `
+                  -Label "$Name install of $baselineVersion"
+              Assert-InstalledVersion -Expected $baselineVersion -Label "$Name install of $baselineVersion"
+
+              Invoke-SmokeProcess -FilePath $installedExe -Arguments @('host', 'start') -Label "$Name host start" -TimeoutSeconds 60
+              $liveHosts = @(Get-Process -Name 'paneflow-host' -ErrorAction SilentlyContinue |
+                  Where-Object Path -eq $installedHost)
+              if ($liveHosts.Count -eq 0) {
+                  throw "$Name host start left no process running $installedHost"
+              }
+              foreach ($liveHost in $liveHosts) {
+                  $null = $liveHost.Handle
+              }
+              Write-Host "$Name live host pid $($liveHosts.Id -join ', ') runs $installedHost"
+
+              $upgradeLog = Join-Path $env:SMOKE_DIR "$Name-upgrade.log"
+              Invoke-Msiexec `
+                  -Arguments (@('/i', $candidate.FullName, '/qb', '/norestart') + $Properties) `
+                  -Log $upgradeLog `
+                  -Label "$Name upgrade to $candidateVersion"
+              $inUse = @(Select-String -LiteralPath $upgradeLog -SimpleMatch -Pattern $filesInUseMarkers)
+              if ($inUse.Count -ne 0) {
+                  $inUse | ForEach-Object { Write-Host $_.Line }
+                  throw "$Name upgrade log reports files in use"
+              }
+              Assert-InstalledVersion -Expected $candidateVersion -Label "$Name upgrade to $candidateVersion"
+              $survivors = @($liveHosts | Where-Object { -not $_.HasExited })
+              if ($survivors.Count -ne 0) {
+                  throw "$Name upgrade left the old host image running as pid $($survivors.Id -join ', ')"
+              }
+
+              Invoke-Msiexec `
+                  -Arguments @('/x', $candidate.FullName, '/qn', '/norestart') `
+                  -Log (Join-Path $env:SMOKE_DIR "$Name-uninstall.log") `
+                  -Label "$Name uninstall of $candidateVersion"
+          }
+
+          Invoke-LiveHostUpgrade -Name 'relay-args' -Properties @('MSIRESTARTMANAGERCONTROL=Disable')
+          Invoke-LiveHostUpgrade -Name 'v0.16-args'
+
+      - name: Upload Windows MSI live-host upgrade logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-msi-live-host-logs-${{ github.run_id }}
+          path: ${{ runner.temp }}\paneflow-msi-live-host
+          if-no-files-found: warn
+          retention-days: 7
+
   # ─── US-003 AC5: dry-run artifact summary ───────────────────────────
   # In dry-run mode the `release:` job is skipped, so there's no
   # GitHub Release page to inspect. This job downloads every
