@@ -50,11 +50,13 @@ state** exits only the desktop. It does not install an update, force the host
 to exit, or claim that the latest state reached disk. Retry after restoring
 storage access to attempt persistence again.
 
-On Windows, the MSI relay checks the host endpoint and access to the installed
-host binary after the desktop exits. A busy or inaccessible binary defers
-installation and relaunches the current version. The staged MSI remains
-available. Installer Restart Manager shutdown is disabled so installation
-does not terminate a retained host to release its executable. See Microsoft's
+On Windows, the MSI relay checks the host endpoint after the desktop exits. A
+host that still serves defers installation and relaunches the current version.
+The staged MSI remains available. Installer Restart Manager shutdown is
+disabled. During an upgrade, the installer itself stops a host that runs from
+the install folder and ends the sessions it still holds, so an update started
+by an older version or a manually launched MSI does not stall on files in use.
+See Microsoft's
 [Restart Manager property documentation](https://learn.microsoft.com/en-us/windows/win32/msi/msirestartmanagercontrol).
 
 These controls preserve uncertainty rather than inferring successful stops

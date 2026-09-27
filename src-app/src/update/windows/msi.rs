@@ -67,25 +67,6 @@ impl StagedMsiUpdate {
 }
 
 #[cfg(target_os = "windows")]
-fn installed_host_is_replaceable(restart_path: &Path) -> Result<()> {
-    use std::os::windows::fs::OpenOptionsExt;
-    let directory = restart_path
-        .parent()
-        .context("installed application has no directory")?;
-    let host = directory.join(paneflow_host::bootstrap::HOST_EXECUTABLE_FILE_NAME);
-    match std::fs::OpenOptions::new()
-        .read(true)
-        .write(true)
-        .share_mode(windows_sys::Win32::Storage::FileSystem::FILE_SHARE_READ)
-        .open(&host)
-    {
-        Ok(_) => Ok(()),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(error) => Err(error).with_context(|| format!("{} is in use or cannot be replaced; keep the current version and retry after its sessions stop", host.display())),
-    }
-}
-
-#[cfg(target_os = "windows")]
 const HOST_RELEASE_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[cfg(target_os = "windows")]
@@ -344,11 +325,7 @@ fn run_native_relay(invocation: RelayInvocation) -> Result<i32> {
     wait_for_parent_exit(invocation.parent_pid, &invocation.relay_log_path);
     std::thread::sleep(Duration::from_millis(350));
 
-    if let Some(reason) = host_still_serving(&invocation.relay_log_path).or_else(|| {
-        installed_host_is_replaceable(&invocation.restart_path)
-            .err()
-            .map(|error| format!("{error:#}"))
-    }) {
+    if let Some(reason) = host_still_serving(&invocation.relay_log_path) {
         append_relay_log(
             &invocation.relay_log_path,
             &format!(
@@ -982,43 +959,6 @@ fn msiexec_exe() -> Option<PathBuf> {
 
 #[cfg(all(test, target_os = "windows"))]
 mod tests {
-    #[test]
-    fn installation_preflight_detects_an_in_use_host_without_an_endpoint() {
-        use std::os::windows::process::CommandExt;
-        let directory = tempfile::tempdir().unwrap();
-        let restart = directory.path().join("paneflow.exe");
-        let host = directory
-            .path()
-            .join(paneflow_host::bootstrap::HOST_EXECUTABLE_FILE_NAME);
-        let shell = PathBuf::from(std::env::var_os("SystemRoot").unwrap())
-            .join("System32")
-            .join("cmd.exe");
-        std::fs::copy(shell, &host).unwrap();
-        let bytes = std::fs::read(&host).unwrap();
-        let mut retained = Command::new(&host)
-            .args(["/D", "/Q", "/C", "pause"])
-            .stdin(std::process::Stdio::piped())
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .creation_flags(windows_sys::Win32::System::Threading::CREATE_NO_WINDOW)
-            .spawn()
-            .unwrap();
-        let busy = installed_host_is_replaceable(&restart).is_err();
-        let still_live = retained.try_wait().unwrap().is_none();
-        retained.kill().unwrap();
-        retained.wait().unwrap();
-        assert!(busy);
-        assert!(still_live);
-        assert_eq!(std::fs::read(&host).unwrap(), bytes);
-        assert!(installed_host_is_replaceable(&restart).is_ok());
-    }
-
-    #[test]
-    fn installation_preflight_accepts_a_missing_host_binary() {
-        let directory = tempfile::tempdir().unwrap();
-        let restart = directory.path().join("paneflow.exe");
-        assert!(installed_host_is_replaceable(&restart).is_ok());
-    }
     use super::*;
 
     #[test]

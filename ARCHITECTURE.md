@@ -905,10 +905,19 @@ unsaved final state, which exits only the desktop and never installs the update.
 alone: after the parent exits it probes the host endpoint for up to thirty
 seconds and, if a host still serves, skips `msiexec`, logs the deferral in its
 relay log and relaunches the current version, because the host binary next to
-`paneflow.exe` may still be in use. The relay also opens the installed host for
-replacement access, so a retained binary with an unavailable endpoint defers
-installation too. It preserves the staged MSI on deferral and disables Installer
-Restart Manager shutdown. User-facing recovery choices are documented in
+`paneflow.exe` may still be in use. It preserves the staged MSI on deferral and
+disables Installer Restart Manager shutdown. The relay never probes the installed
+binary itself: it runs with the desktop's unelevated token, and a file under
+Program Files is never writable by that token, so a write-access probe deferred
+every update. Releasing the binary belongs to the MSI, whichever updater started
+it. During an upgrade the `StopInstalledHost` custom action in
+`packaging/wix/main.wxs` runs before `InstallValidate`, finds a
+`paneflow-host.exe` running from the install folder, asks it to stop through the
+installed `paneflow host stop --force`, and terminates what is left of that exact
+image, never a same-named host elsewhere. The 0.16 updater starts `msiexec` with
+the host still serving and Restart Manager enabled, and Restart Manager cannot
+close a windowless process, so without that action the upgrade stalls on error
+1611. User-facing recovery choices are documented in
 [Persistent sessions and updates](docs/persistent-sessions.md).
 
 ## Telemetry (opt-in, fail-closed)

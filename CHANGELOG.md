@@ -9,6 +9,15 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
 
 - An agent row built from the screen no longer stays in the sidebar after the
   agent is gone when a hook event from another process was refused first.
+- On Windows, updating from 0.16 no longer stops on an installer dialog asking
+  to close `paneflow-host`, followed by a failure to close it. During an upgrade,
+  the installer stops the session host itself and ends the sessions it still
+  holds.
+- On Windows, the in-app update installs again when Paneflow lives under
+  Program Files. 0.17.0 and 0.17.1 deferred every update and relaunched the
+  current version, because the updater tested write access to
+  `paneflow-host.exe` without the rights to get it. From those two versions,
+  run the new MSI once by hand.
 
 ## [0.17.1] - 2026-09-26
 

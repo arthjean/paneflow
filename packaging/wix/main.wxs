@@ -235,6 +235,21 @@
 
         <SetProperty Id='ARPINSTALLLOCATION' Value='[APPLICATIONFOLDER]' After='CostFinalize'/>
 
+        <Property
+            Id='StopInstalledHostScript'
+            Value="$ErrorActionPreference='SilentlyContinue'; $h=Join-Path $PWD.ProviderPath 'paneflow-host.exe'; $p=@(Get-Process -Name paneflow-host | Where-Object Path -eq $h); $s=$null; $null=$p.Count -and ($s=Start-Process -FilePath (Join-Path $PWD.ProviderPath 'paneflow.exe') -ArgumentList 'host','stop','--force' -NoNewWindow -PassThru); $s | Wait-Process -Timeout 15; $r=@($s)+@(Get-Process -Name paneflow-host | Where-Object Path -eq $h); $r | Stop-Process -Force; $r | Wait-Process -Timeout 10"/>
+
+        <CustomAction
+            Id='StopInstalledHost'
+            Directory='APPLICATIONFOLDER'
+            ExeCommand='"[System64Folder]WindowsPowerShell\v1.0\powershell.exe" -NoLogo -NoProfile -NonInteractive -WindowStyle Hidden -Command "[StopInstalledHostScript]"'
+            Execute='immediate'
+            Return='ignore'/>
+
+        <InstallExecuteSequence>
+            <Custom Action='StopInstalledHost' Before='InstallValidate'>WIX_UPGRADE_DETECTED</Custom>
+        </InstallExecuteSequence>
+
         <!-- AC-2c - ARP icon + publisher. ARPPRODUCTICON is referenced
              from "Apps & features" and the legacy "Programs and Features"
              control panel. Multi-resolution (16/32/48/128/256) built
