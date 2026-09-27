@@ -5,13 +5,21 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
 
 ## [Unreleased]
 
+## [0.17.4] - 2026-09-27
+
+A patch that removes the limit of 20 open workspaces. A new workspace past the
+twentieth no longer does nothing, and a session with more than 20 workspaces
+restores all of them.
+
 ### Changed
 
 - The number of open workspaces is no longer capped at 20. Before, a new
   workspace past the twentieth did nothing, whether from the sidebar button,
-  `Window > New Workspace`, the shortcut, a folder drop or the CLI, and a
-  session with more workspaces restored only the first 20. A version up to
-  0.17.3 still restores only the first 20 of such a session.
+  the title bar `Files > New Workspace`, `Window > New Workspace` on macOS,
+  the shortcut, a folder drop, a repository clone or the CLI, and a session
+  with more workspaces restored only the first 20. A version up to 0.17.3
+  still restores only the first 20 of such a session, and its next save drops
+  the rest.
 
 ## [0.17.3] - 2026-09-27
 

@@ -63,6 +63,15 @@
   <content_rating type="oars-1.1" />
 
   <releases>
+    <release version="0.17.4" date="2026-09-27">
+      <description>
+        <p>A patch that removes the limit of 20 open workspaces. A new workspace past the twentieth no longer does nothing, and a session with more than 20 workspaces restores all of them.</p>
+        <ul>
+          <li>New Workspace works past the twentieth workspace from the sidebar, the Window menu, the shortcut, a folder drop, and the CLI</li>
+          <li>A session with more than 20 workspaces is restored in full after a restart</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.17.3" date="2026-09-27">
       <description>
         <p>A patch for the update and quit controls. The update pill says what a click does and spins while Paneflow restarts into the update, and the quit dialog reports stop and save problems in plain words.</p>
