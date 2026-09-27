@@ -2035,6 +2035,77 @@ fn a_delayed_seed_or_marker_write_never_recreates_a_removed_session_directory() 
     );
 }
 
+fn session_end_hook(session: &SessionId, generation: SessionGeneration) -> AgentEvent {
+    AgentEvent::from_params(&json!({
+        "session": session,
+        "runtime_generation": generation.get(),
+        "kind": "ai.session_end",
+        "tool": "codex",
+        "hook_payload": {"hook_event_name": "SessionEnd"}
+    }))
+    .unwrap()
+}
+
+#[test]
+fn a_restart_gives_a_record_without_a_data_directory_its_directory_back() {
+    let home = tempfile::tempdir().unwrap();
+    let endpoint = Path::new("restart-data-directory");
+    let session = {
+        let host = SessionHost::open(home.path(), endpoint).unwrap();
+        let session = host.create(shell_request(80, 24)).unwrap().manifest.session;
+        host.stop(&session, None).unwrap();
+        host.request_shutdown(false).unwrap();
+        session
+    };
+    let directory = paneflow_home::host_session_data_dir_in(home.path(), session.as_str());
+    std::fs::remove_dir_all(&directory).unwrap();
+
+    let host = SessionHost::open(home.path(), endpoint).unwrap();
+    let generation = host.restart(&session, None).unwrap().manifest.generation;
+    assert!(
+        directory.is_dir(),
+        "a record written before session data directories existed gets one on restart"
+    );
+    let ack = host
+        .ingest_agent_event(&session_end_hook(&session, generation))
+        .unwrap();
+    assert_eq!(ack["durable"], true);
+    assert!(
+        directory
+            .join(crate::manifest::LAST_HOOK_EVENT_FILE)
+            .is_file()
+    );
+    host.stop(&session, None).unwrap();
+    assert!(host.request_shutdown(false).is_ok());
+}
+
+#[test]
+fn a_data_directory_lost_mid_session_never_holds_the_final_state_or_the_quit() {
+    let home = tempfile::tempdir().unwrap();
+    let host = SessionHost::open(home.path(), Path::new("lost-data-directory")).unwrap();
+    let session = host.create(shell_request(80, 24)).unwrap().manifest.session;
+    let directory = host.session_data_dir(&session);
+    std::fs::remove_dir_all(&directory).unwrap();
+
+    let ack = host
+        .ingest_agent_event(&session_end_hook(&session, SessionGeneration::FIRST))
+        .unwrap();
+    assert_eq!(
+        ack["durable"], true,
+        "the manifest holds the hook even when its seed has nowhere to go"
+    );
+    host.stop(&session, None).unwrap();
+    assert!(host.request_shutdown(false).is_ok());
+    assert_eq!(host.inspect(&session).unwrap().durability_error, None);
+    let stored = read_manifest(&crate::manifest::manifest_path(home.path(), &session)).unwrap();
+    assert!(matches!(stored.lifecycle, SessionLifecycle::Exited { .. }));
+    assert!(stored.last_hook.is_some());
+    assert!(
+        !directory.exists(),
+        "a skipped seed never recreates the lost directory"
+    );
+}
+
 #[test]
 fn a_marker_captured_under_generation_one_is_dropped_once_generation_two_runs() {
     let home = tempfile::tempdir().unwrap();

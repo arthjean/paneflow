@@ -1182,6 +1182,13 @@ impl SessionHost {
         if ledger.removed {
             return Err(HostError::SessionNotFound(session.clone()));
         }
+        let session_dir = self.session_data_dir(session);
+        std::fs::create_dir_all(&session_dir).map_err(|error| {
+            HostError::Storage(format!(
+                "cannot create session data directory {}: {error}",
+                session_dir.display()
+            ))
+        })?;
         let (manifest, spec, durability) = {
             let mut sessions = self.lock_sessions();
             let record = sessions

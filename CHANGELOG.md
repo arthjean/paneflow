@@ -5,6 +5,14 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
 
 ## [Unreleased]
 
+### Fixed
+
+- Quitting no longer stops on "Unable to save the final state" for a terminal
+  restored from a session created before 0.17 once an agent ran in it. A
+  restart now creates the session's data directory, and a hook seed with no
+  directory left is skipped instead of being retried forever, because the
+  session record already holds the hook.
+
 ## [0.17.2] - 2026-09-27
 
 A patch for the Windows update path. Updating from 0.16 no longer stops on an

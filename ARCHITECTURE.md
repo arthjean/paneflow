@@ -687,6 +687,11 @@ waits at most five seconds for the acknowledgement, then receives a typed
 revision that cannot be written is retained and retried every five seconds
 until storage recovers, and the per-session ledger keeps the failure visible
 through `session.inspect` as `durability_error` until a later revision lands.
+A hook seed only copies the hook the manifest already holds, so a seed whose
+session data directory is gone is skipped with one warning per session instead
+of failing the revision: it never keeps a final state pending or a quit
+waiting. A restart recreates that directory, which a record written before
+0.17 never had.
 Critical and final revisions are fsynced before the atomic rename; the parent
 directory is synced on Unix. Every revision carries a per-session number
 assigned under the manifest lock, and the writer discards a revision older than

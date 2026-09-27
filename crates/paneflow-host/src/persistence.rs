@@ -43,6 +43,7 @@ pub struct SessionPersistence {
     written: AtomicU64,
     removed: AtomicBool,
     reserved: AtomicBool,
+    seed_skipped: AtomicBool,
     error: Mutex<Option<String>>,
 }
 
@@ -632,8 +633,18 @@ fn write_revision(home: &Path, record: &ManifestRevision) -> Result<(), PersistE
         },
     )?;
     if let Some(seed) = &record.seed {
-        manifest::write_hook_seed(home, &record.session, seed, durable)
-            .map_err(|error| PersistError::Storage(format!("hook seed: {error}")))?;
+        match manifest::write_hook_seed(home, &record.session, seed, durable) {
+            Ok(_) => record.state.seed_skipped.store(false, Ordering::Release),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                if !record.state.seed_skipped.swap(true, Ordering::AcqRel) {
+                    log::warn!(
+                        "paneflow-host: the hook seed of session {} is not kept: {error}",
+                        record.session
+                    );
+                }
+            }
+            Err(error) => return Err(PersistError::Storage(format!("hook seed: {error}"))),
+        }
     }
     record
         .state
