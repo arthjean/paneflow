@@ -63,6 +63,15 @@
   <content_rating type="oars-1.1" />
 
   <releases>
+    <release version="0.17.3" date="2026-09-27">
+      <description>
+        <p>A patch for the update and quit controls. The update pill says what a click does and spins while Paneflow restarts into the update, and the quit dialog reports stop and save problems in plain words.</p>
+        <ul>
+          <li>Quitting no longer stops on a save error for a terminal restored from a session created before 0.17</li>
+          <li>The raw errors behind a stop or save problem sit in a collapsed Show details section</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.17.2" date="2026-09-27">
       <description>
         <p>A patch for the Windows update path. Updating from 0.16 no longer stops on an installer dialog, the in-app update installs again under Program Files, and an update no longer leaves a copy of Paneflow in the temporary folder.</p>

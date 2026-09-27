@@ -5,6 +5,14 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
 
 ## [Unreleased]
 
+## [0.17.3] - 2026-09-27
+
+A patch for the update and quit controls. The update pill says what a click
+does and spins while Paneflow restarts into the update, and the quit dialog
+reports stop and save problems in plain words with the raw errors behind
+`Show details`. Quitting no longer stops on a save error for a terminal
+restored from a pre-0.17 session.
+
 ### Changed
 
 - The quit dialog that reports a stop or save problem now says what happened
@@ -17,17 +25,21 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
 - The update controls say what a click does. The title bar pill reads
   `Restart to update` instead of `Restart Paneflow`, and its failure states
   read `Retry update` and `Retry update check` with an alert glyph. It acts on
-  click release rather than on press, so dragging off it cancels. Its blue
-  states take the Quit dialog's button geometry, 12 px Medium with padding 10,
-  on `#1a6ff6`, so the white label reaches 4.5:1 contrast, and hovering darkens
-  it instead of lightening it. After a click on `Restart to update` it stays
-  blue with a spinning comet in place of its icon until the app restarts,
-  instead of giving no feedback, or turning into a grey `Installing update…`
-  pill on Windows; every busy state of the pill uses that comet spinner. The
-  pill no longer has a `×`: it stays until the release is installed. The
-  sidebar `Update check failed` banner gains an explicit `Retry` button instead
-  of retrying on any click, and its close button, the release toast's, and the
-  toast buttons take the squircle shape of the rest of the app.
+  click release rather than on press, so dragging off it cancels. Every state
+  takes the text of the Quit dialog's buttons, 12 px Medium with padding 10,
+  and the blue states sit on `#1a6ff6`, so the white label reaches 4.5:1
+  contrast, and hovering darkens it instead of lightening it. After a click on
+  `Restart to update` it stays blue with a spinning comet in place of its icon
+  while Paneflow stops its sessions and restarts, instead of giving no
+  feedback, or turning into a grey `Installing update…` pill on Windows; every
+  busy state of the pill uses that comet spinner, one turn per 700 ms, which
+  stands still under reduced motion. The pill no longer has a `×`, so a
+  release can no longer be hidden: the pill stays until the release is
+  installed, and the `Update via package manager` and `Update via rpm-ostree`
+  pills stay for the session. The sidebar `Update check failed` banner gains
+  an explicit `Retry` button instead of retrying on any click, and its close
+  button and the release toast's become 24 px squircle `Dismiss` buttons; the
+  toast action buttons take the same squircle shape.
 
 ### Fixed
 
@@ -36,6 +48,9 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
   restart now creates the session's data directory, and a hook seed with no
   directory left is skipped instead of being retried forever, because the
   session record already holds the hook.
+- Stopping a session whose terminal Paneflow failed to attach no longer times
+  out. The session host now releases that terminal as the stop begins, so a
+  shell with unread output can exit; on macOS it could not before.
 
 ## [0.17.2] - 2026-09-27
 
