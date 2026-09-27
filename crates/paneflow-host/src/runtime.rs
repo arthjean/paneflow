@@ -646,6 +646,7 @@ struct Session {
     process_tree: ProcessTreeOwner,
     cols: u16,
     rows: u16,
+    pty_wired: bool,
     reader_eof: bool,
     exit: Option<ExitOutcome>,
     exit_published: bool,
@@ -849,6 +850,7 @@ fn start(
         process_tree: ProcessTreeOwner::new(ProcessIdentity::capture(child_pid)),
         cols: spec.cols,
         rows: spec.rows,
+        pty_wired: false,
         reader_eof: false,
         exit: None,
         exit_published: false,
@@ -896,7 +898,10 @@ fn start(
         session.mark_unverified("the spawned child identity could not be captured".into());
     }
     match wired {
-        Ok(writer) => session.writer = Some(writer),
+        Ok(writer) => {
+            session.writer = Some(writer);
+            session.pty_wired = true;
+        }
         Err(reason) => session.mark_unverified(reason),
     }
     Ok(session)
@@ -1386,6 +1391,9 @@ impl Session {
 
     fn begin_stop(&mut self, reply: Option<SyncSender<StopReport>>, deadline: Instant) {
         self.writer = None;
+        if !self.pty_wired {
+            self.release_master();
+        }
         if let Some(pending) = self.stop.as_mut() {
             pending.replies.extend(reply);
             pending.deadline = pending.deadline.max(deadline);
@@ -1954,21 +1962,38 @@ mod tests {
             };
             assert!(runtime.owns_process());
             let identity = runtime.process();
-            let deadline = Instant::now() + Duration::from_secs(30);
-            let last = loop {
-                let outcome = runtime.stop();
-                let confirmed = outcome.as_ref().is_ok_and(stop_is_confirmed);
-                let retryable = matches!(outcome, Ok(_) | Err(RuntimeError::Deadline(_)));
-                if confirmed || !retryable || Instant::now() >= deadline {
-                    break outcome;
-                }
-            };
+            let report = runtime.stop();
             assert!(
-                last.as_ref().is_ok_and(stop_is_confirmed),
-                "{fault}: the retained owner never confirmed its stop: {last:?}"
+                report.as_ref().is_ok_and(stop_is_confirmed),
+                "{fault}: the retained owner never confirmed its stop: {report:?}"
             );
             assert!(!identity.is_provably_live());
         }
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn a_stop_releases_an_unwired_pty_that_holds_unread_output() {
+        let mut spec = echo_shell_spec(80, 24);
+        spec.args = vec!["-c".into(), "printf unread; exec sleep 30".into()];
+        spec.env
+            .insert("PANEFLOW_TEST_WIRING_FAILURE".into(), "1".into());
+        let launch =
+            SessionRuntime::launch(spec, SessionGeneration::FIRST, Arc::new(|_| {})).unwrap();
+        let LaunchWait::Recovery(runtime) = launch.wait(STARTUP_DEADLINE) else {
+            panic!("wiring fault must retain the native child");
+        };
+        let identity = runtime.process();
+        assert!(wait_until(Duration::from_secs(10), || {
+            crate::process::process_argv(identity.pid)
+                .is_some_and(|argv| argv.first().is_some_and(|program| program == "sleep"))
+        }));
+        let report = runtime.stop();
+        assert!(
+            report.as_ref().is_ok_and(stop_is_confirmed),
+            "the stop left the root blocked on its unread PTY output: {report:?}"
+        );
+        assert!(!identity.is_provably_live());
     }
 
     #[test]
