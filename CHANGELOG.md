@@ -5,6 +5,11 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
 
 ## [Unreleased]
 
+### Fixed
+
+- An agent row built from the screen no longer stays in the sidebar after the
+  agent is gone when a hook event from another process was refused first.
+
 ## [0.17.1] - 2026-09-26
 
 A patch for the 0.17.0 upgrade path. Claude Code and Codex hooks that 0.16.0

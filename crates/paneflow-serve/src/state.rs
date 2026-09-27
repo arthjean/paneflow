@@ -510,6 +510,7 @@ impl WorkerState {
         match apply_event(entry.activity.as_ref(), &event, now_ms) {
             AgentDecision::Stale(reason) => {
                 log::debug!("paneflow-serve: refused an event for {session}: {reason}");
+                entry.screen_owned_activity = previous_screen_owned_activity;
                 return None;
             }
             AgentDecision::Clear => {
@@ -2200,6 +2201,26 @@ mod tests {
         assert!(
             entry.activity.is_some(),
             "a hook-owned activity is never cleared by the screen tier"
+        );
+    }
+
+    #[test]
+    fn a_refused_stop_from_a_foreign_process_leaves_the_activity_screen_owned() {
+        let home = tempfile::tempdir().unwrap();
+        let session = SessionId::new();
+        let mut state = WorkerState::new(home.path());
+        state.apply_core_snapshot(&[hookless_row(&session, Some(SCREEN_WORKING))]);
+
+        let refused = state.apply_core_event(&frame(&session, "ai.stop", "Stop", json!({})));
+        assert!(
+            refused.is_none(),
+            "a stop from another pid cannot end the run"
+        );
+        state.apply_core_snapshot(&[hookless_row(&session, None)]);
+
+        assert!(
+            state.get(&session).unwrap().activity.is_none(),
+            "the screen tier still owns the row after a refused hook event"
         );
     }
 
