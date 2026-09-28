@@ -93,6 +93,7 @@ actions!(
         DiffNewFileTab,
         DiffNewTerminalTab,
         OpenCommandPalette,
-        CloneRepository
+        CloneRepository,
+        InsertPath
     ]
 );

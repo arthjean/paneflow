@@ -500,6 +500,13 @@ pub(super) const ACTIONS: &[ActionMeta] = &[
         group: ShortcutGroup::Search,
     },
     ActionMeta {
+        name: "insert_path",
+        factory: || Box::new(crate::InsertPath),
+        context: "Terminal",
+        description: "Insert a path at the cursor",
+        group: ShortcutGroup::Terminal,
+    },
+    ActionMeta {
         name: "clear_scroll_history",
         factory: || Box::new(ClearScrollHistory),
         context: "Terminal",
@@ -719,6 +726,7 @@ mod tests {
         assert_eq!(context_for_action("terminal_copy"), Some("Terminal"));
         assert_eq!(context_for_action("toggle_copy_mode"), Some("Terminal"));
         assert_eq!(context_for_action("toggle_search"), Some("Terminal"));
+        assert_eq!(context_for_action("insert_path"), Some("Terminal"));
         assert_eq!(context_for_action("split_horizontally"), None);
         assert_eq!(context_for_action("toggle_files_sidebar"), None);
     }

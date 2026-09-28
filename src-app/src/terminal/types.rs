@@ -3,6 +3,7 @@ use std::sync::Arc;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ShellQuoting {
     Posix,
+    Wsl,
     PowerShell,
     Cmd,
 }
@@ -17,6 +18,7 @@ impl ShellQuoting {
         let key = basename.trim_end_matches(".exe");
         match key {
             "cmd" => Self::Cmd,
+            "wsl" => Self::Wsl,
             "pwsh" | "powershell" => Self::PowerShell,
             "sh" | "bash" | "zsh" | "fish" | "dash" | "ksh" | "ash" | "mksh" => Self::Posix,
             _ => Self::default_for_platform(),

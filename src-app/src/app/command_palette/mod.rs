@@ -6,16 +6,19 @@ use std::rc::Rc;
 
 use gpui::prelude::FluentBuilder;
 use gpui::{
-    AnyElement, App, ClickEvent, Context, FontWeight, HighlightStyle, InteractiveElement,
-    IntoElement, KeyDownEvent, MouseButton, ParentElement, Pixels, ScrollStrategy, SharedString,
-    StatefulInteractiveElement, Styled, StyledText, UniformListScrollHandle, Window, deferred, div,
-    px, svg, uniform_list,
+    AnyElement, App, ClickEvent, Context, InteractiveElement, IntoElement, KeyDownEvent,
+    MouseButton, ParentElement, Pixels, ScrollStrategy, SharedString, StatefulInteractiveElement,
+    Styled, UniformListScrollHandle, Window, deferred, div, px, svg, uniform_list,
 };
 
 use crate::PaneFlowApp;
 use crate::pane::PaneSurface;
 use crate::settings::components::{
     MENU_MAX_HEIGHT, select_item_shaped, select_menu_surface, with_alpha,
+};
+use crate::ui_primitives::quick_pick::{
+    FIELD_GAP, FIELD_INSET, ICON_GAP, ICON_SIZE, LABEL_SIZE, PANEL_PADDING, PANEL_RADIUS, ROW_GAP,
+    ROW_HEIGHT, ROW_RADIUS, ROW_SPACING, ROW_TEXT_INSET, highlighted_label,
 };
 use crate::ui_primitives::squircle::{squircle_border, squircle_fill};
 use crate::ui_primitives::{FilterFieldStyle, filter_field};
@@ -26,20 +29,8 @@ use catalog::{Apply, COMMANDS, Command, Kind, Needs, ScopeValue};
 const PALETTE_MIN_WIDTH: f32 = 420.;
 const PALETTE_MAX_WIDTH: f32 = 640.;
 const PALETTE_PLACEHOLDER: &str = "Search commands…";
-const PALETTE_RADIUS: gpui::Pixels = px(13.);
-const PALETTE_PADDING: f32 = 6.;
-const FIELD_INSET: f32 = 2.;
-const FIELD_GAP_BELOW: f32 = 6.;
 const CHIP_HEIGHT: f32 = 24.;
 const CHIP_RADIUS: gpui::Pixels = px(6.);
-const ROW_HEIGHT: f32 = 29.;
-const ROW_SPACING: f32 = 2.;
-const ROW_RADIUS: gpui::Pixels = px(8.);
-const ROW_TEXT_INSET: f32 = 11.;
-const ROW_GAP: f32 = 8.;
-const ICON_SIZE: f32 = 14.;
-const ICON_GAP: f32 = 8.;
-const LABEL_SIZE: f32 = 14.;
 const SHORTCUT_SIZE: f32 = 13.;
 const PALETTE_TOP_MARGIN: f32 = 96.;
 
@@ -499,7 +490,7 @@ impl PaneFlowApp {
         .when(prefix_shown, |field| field.pl(chip_inset))
         .flex_none()
         .mx(px(FIELD_INSET))
-        .mb(px(FIELD_GAP_BELOW))
+        .mb(px(FIELD_GAP))
         .on_mouse_down(MouseButton::Left, move |_, window, cx| {
             window.focus(&focus, cx);
             cx.stop_propagation();
@@ -672,15 +663,15 @@ impl PaneFlowApp {
         let panel = div()
             .id("command-palette")
             .relative()
-            .child(squircle_fill(PALETTE_RADIUS, select_menu_surface(ui)))
+            .child(squircle_fill(PANEL_RADIUS, select_menu_surface(ui)))
             .child(squircle_border(
-                PALETTE_RADIUS,
+                PANEL_RADIUS,
                 px(1.),
                 with_alpha(ui.border, 0.6),
             ))
             .flex()
             .flex_col()
-            .p(px(PALETTE_PADDING))
+            .p(px(PANEL_PADDING))
             .w(px(width))
             .occlude()
             .capture_key_down(cx.listener(Self::handle_command_palette_capture_key_down))
@@ -731,23 +722,11 @@ fn palette_width(rows: &[PaletteRow]) -> f32 {
         }
         widest = widest.max(width + 2. * ROW_TEXT_INSET);
     }
-    (widest + 2. * PALETTE_PADDING).clamp(PALETTE_MIN_WIDTH, PALETTE_MAX_WIDTH)
+    (widest + 2. * PANEL_PADDING).clamp(PALETTE_MIN_WIDTH, PALETTE_MAX_WIDTH)
 }
 
 fn list_height(rows: usize) -> Pixels {
     px(rows as f32 * (ROW_HEIGHT + ROW_SPACING)).min(MENU_MAX_HEIGHT)
-}
-
-fn highlighted_label(label: &str, highlights: &[Range<usize>]) -> StyledText {
-    StyledText::new(label.to_string()).with_highlights(highlights.iter().map(|range| {
-        (
-            range.clone(),
-            HighlightStyle {
-                font_weight: Some(FontWeight::SEMIBOLD),
-                ..Default::default()
-            },
-        )
-    }))
 }
 
 #[cfg(test)]

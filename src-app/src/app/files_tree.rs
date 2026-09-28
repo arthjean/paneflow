@@ -97,7 +97,7 @@ pub(crate) fn read_dir_sorted(root: &Path, dir: &Path) -> Vec<FileNode> {
         .filter_map(|entry| {
             let path = entry.path();
             let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
-            let is_hidden = is_hidden_name(&path) || has_windows_hidden_attribute(&entry);
+            let is_hidden = is_hidden_entry(&entry);
             let is_ignored = gitignore
                 .as_ref()
                 .map(|gi| gi.matched(&path, is_dir).is_ignore())
@@ -121,6 +121,10 @@ pub(crate) fn read_dir_sorted(root: &Path, dir: &Path) -> Vec<FileNode> {
         .collect();
     nodes.sort_by(compare_nodes);
     nodes
+}
+
+pub(crate) fn is_hidden_entry(entry: &std::fs::DirEntry) -> bool {
+    is_hidden_name(&entry.path()) || has_windows_hidden_attribute(entry)
 }
 
 fn is_hidden_name(path: &Path) -> bool {

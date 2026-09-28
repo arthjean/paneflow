@@ -893,6 +893,13 @@ pub(crate) const COMMANDS: &[Command] = &[
         kind: Kind::Action("terminal_select_all"),
     },
     Command {
+        label: "Insert path",
+        icon: Some("icons/folder.svg"),
+        keywords: "file folder directory browse fuzzy find cwd picker",
+        needs: Needs::Terminal,
+        kind: Kind::Action("insert_path"),
+    },
+    Command {
         label: "Toggle copy mode",
         icon: None,
         keywords: "terminal keyboard selection vim",

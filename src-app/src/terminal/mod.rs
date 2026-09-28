@@ -10,6 +10,7 @@ pub(crate) mod host_link;
 mod input;
 pub mod kitty;
 mod marks;
+mod path_picker;
 #[cfg(test)]
 mod perf_bench;
 mod pty_session;

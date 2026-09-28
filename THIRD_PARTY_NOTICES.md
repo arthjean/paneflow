@@ -90,6 +90,7 @@ is unchanged; only the wrapping `<svg>` attributes were normalized to the shape
 the GPUI asset loader expects.
 
 - `arrow_left.svg`
+- `clock.svg`
 - `close.svg`
 - `detach-pane.svg`
 - `dock-pane.svg`

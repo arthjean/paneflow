@@ -207,9 +207,9 @@ fn paths_to_pty_text(paths: &[std::path::PathBuf], shell_quoting: ShellQuoting) 
     }
 }
 
-fn quote_path_for_shell(path: &str, shell_quoting: ShellQuoting) -> String {
+pub(super) fn quote_path_for_shell(path: &str, shell_quoting: ShellQuoting) -> String {
     match shell_quoting {
-        ShellQuoting::Posix => quote_posix_path(path),
+        ShellQuoting::Posix | ShellQuoting::Wsl => quote_posix_path(path),
         ShellQuoting::PowerShell => quote_powershell_path(path),
         ShellQuoting::Cmd => quote_cmd_path(path),
     }
@@ -1291,6 +1291,10 @@ mod tests {
         assert_eq!(
             ShellQuoting::for_shell(r"C:\Program Files\PowerShell\7\pwsh.exe"),
             ShellQuoting::PowerShell
+        );
+        assert_eq!(
+            ShellQuoting::for_shell(r"C:\Windows\System32\wsl.exe"),
+            ShellQuoting::Wsl
         );
     }
 

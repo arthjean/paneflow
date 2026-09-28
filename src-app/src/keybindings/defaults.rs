@@ -201,6 +201,11 @@ pub(super) const DEFAULTS: &[DefaultBinding] = &[
         context: Some("Terminal"),
     },
     DefaultBinding {
+        key: "secondary-shift-i",
+        action_name: "insert_path",
+        context: Some("Terminal"),
+    },
+    DefaultBinding {
         key: "secondary-shift-k",
         action_name: "clear_scroll_history",
         context: Some("Terminal"),
@@ -473,6 +478,7 @@ mod tests {
             "swap_pane",
             "undo_close_pane",
             "toggle_files_sidebar",
+            "insert_path",
         ] {
             assert!(
                 action_names.contains(name),

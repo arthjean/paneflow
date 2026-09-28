@@ -179,6 +179,7 @@ hides the workspace name while Settings is open.
 | Menus and selects | Deferred, anchored under the trigger | Squircle 18, list padding 4, item height 28 | `src-app/src/settings/components.rs` |
 | Tooltip | After 800 ms | Squircle 14 on the title bar color with a 1 px border | `src-app/src/ui_primitives.rs` |
 | Terminal search | Top right of the pane, 8 px inset | Squircle 14 on `subtle` with a 1 px `border`, 325 by 36, padding 14 left and 4 right, gap 8: the field, a `.*` mark only while regex mode is on, the match count, a 1 px divider, then previous, next and close as 28 px squircle icon buttons with the sidebar hover tint | `src-app/src/terminal/view.rs` |
+| Path picker | Anchored to the terminal cursor: under it, or above it with the field last when the space below cannot hold ten rows | The command palette panel of 5.7 at 420 wide, ten rows before the list scrolls | `src-app/src/terminal/path_picker/` |
 | Toast | Bottom right, 18 px inset | Radius 8 on `subtle`, minimum width 220, one header row and an optional action row | `src-app/src/app/notifications.rs` |
 | Worktree removal dialog | Centered | The card of the close dialog: squircle at `PANE_CARD_RADIUS`, 460 wide, padding 20 over a 0.55 black scrim, the blocking workspaces, tabs and sessions on `subtle` at 0.5 on radius 8, one kind word per row at 10 px muted, then `Cancel` and a destructive `Remove` | `src-app/src/app/worktree_remove.rs` |
 | Quit dialog | Centered | The card of the close dialog at `PANE_CARD_RADIUS`, 460 wide: the question with the session and agent counts, one muted line of consequence, the `Remember my choice` toggle row on `subtle` at 0.5 on radius 8 (after a failed stop, a muted 11 px `Show details` trigger with a 12 px chevron instead, collapsed by default, that unfolds a `menu_panel` of the raw host errors, one per line in Geist Mono 11, scrolling past 160 px), then a footer whose alternative destructive action (`destructive_button`) sits alone on the leading edge, apart from `Cancel` and the default action on the trailing edge. The default action is the one Enter runs: a solid `switch_blue` button, or `Cancel` when every other choice ends sessions. Tab, Shift-Tab, left and right move a 1 px `text` ring at 0.35, drawn 3 px outside the control with a concentric radius, across the toggle row or the details trigger and the buttons; Enter or Space runs the ringed control and Escape cancels | `src-app/src/app/quit_dialog.rs` |
@@ -384,7 +385,7 @@ sidebar footer settings button uses the matching `settings.svg` gear.
 | 10 | Filter clear glyph |
 | 11 | Sidebar agent state glyphs (bell, error, pull request) and the thinking matrix |
 | 12 | Small icon button, select chevron, drag ghost |
-| 13 | Medium icon button, filter search, preset logo, menu check mark |
+| 13 | Medium icon button, filter search, preset logo, menu check mark, path picker recent clock |
 | 14 | Title bar sidebar toggle, editor logos, sidebar footer banners and gear |
 | 15 | Toast icon, sidebar folder, sidebar header glyphs |
 | 16 | Sidebar tab icon, callout icon, diff dock tab icon, diff file header file-type icon |
@@ -831,7 +832,20 @@ a 24 px chip inset 5 on every side), then 29 px rows 2 px apart in a
 when selected, an optional 14 px glyph, the label at 14 px, the current value
 or binding at 13 px muted, and a chevron when it opens a scope. Typing filters
 on whole words, arrows move, Enter dispatches, and the palette never lists
-itself. The clone modal is a quick pick: a field reading `Provide repository URL or pick
+itself. The path picker reuses that panel, 420 wide, anchored to the terminal
+cursor instead of docked: it opens under the cursor, or above it when the
+space below cannot hold ten rows, and then puts the field last and the best
+match nearest the field. A row carries a 14 px `folder.svg` or file-type icon,
+the path at 14 px truncated in the middle, and a 13 px muted `clock.svg` on a
+recently inserted path. With nothing typed it lists the recent paths under the
+pane's working directory, then that folder, folders first. A query without a
+separator matches fuzzily, file names before folders, across at most 100,000
+entries of the working directory walked with its ignore files; a query with a
+separator or a leading `~` lists that folder instead, with dotfiles only for a
+fragment that starts with a dot. Tab completes the selected row into the
+field, Enter inserts it at the cursor through the paste path, relative to the
+working directory or absolute outside it and quoted for the pane's shell, and
+Escape closes. The clone modal is a quick pick: a field reading `Provide repository URL or pick
 a repository source.` over the hairline, then rows on the `select_item` skin
 with a 14 px glyph, the label, and a group name at 11 px muted on the trailing
 edge. With nothing typed the single row is `Clone from GitHub` in the `remote
@@ -928,6 +942,7 @@ every modal answers Enter and Escape.
 | Jump to next waiting agent | `secondary-shift-j` |
 | Layout presets | `secondary-alt-1` to `secondary-alt-4` |
 | Command palette | `secondary-shift-p` |
+| Insert a path at the terminal cursor | `secondary-shift-i` |
 | Settings | `secondary-,` |
 
 ### 6.2 Pointer

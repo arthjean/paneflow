@@ -1,3 +1,4 @@
+pub(crate) mod quick_pick;
 pub(crate) mod squircle;
 
 use gpui::{

@@ -67,6 +67,10 @@ pub fn recents_path() -> Option<PathBuf> {
     paneflow_home().map(|home| home.join("recents.json"))
 }
 
+pub fn path_history_path() -> Option<PathBuf> {
+    paneflow_home().map(|home| home.join("path-history.json"))
+}
+
 pub fn window_state_path() -> Option<PathBuf> {
     paneflow_home().map(|home| home.join("window-state.json"))
 }
@@ -370,6 +374,10 @@ mod tests {
         );
         assert_eq!(config_path().expect("config"), home.join("paneflow.json"));
         assert_eq!(session_path().expect("session"), home.join("session.json"));
+        assert_eq!(
+            path_history_path().expect("path history"),
+            home.join("path-history.json")
+        );
         assert_eq!(cache_dir().expect("cache"), home.join("cache"));
         assert_eq!(worktrees_dir().expect("worktrees"), home.join("worktrees"));
         assert_eq!(host_dir_in(&home), home.join("host"));

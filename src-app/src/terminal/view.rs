@@ -2,8 +2,8 @@ use std::sync::{Arc, Mutex};
 
 use futures::StreamExt;
 use gpui::{
-    App, ClipboardItem, Context, EventEmitter, FocusHandle, Hsla, InteractiveElement, IntoElement,
-    KeyContext, MouseButton, Render, Styled, Window, div, prelude::*,
+    App, ClipboardItem, Context, EventEmitter, FocusHandle, Focusable, Hsla, InteractiveElement,
+    IntoElement, KeyContext, MouseButton, Render, Styled, Window, div, prelude::*,
 };
 use paneflow_config::schema::{TerminalConfig, TerminalSurfaceProfile};
 
@@ -24,6 +24,7 @@ use super::types::{
 };
 
 use super::ghostty_session::GhosttyStartError;
+use super::path_picker::{PathPicker, PathPickerEvent};
 
 mod host_attach;
 
@@ -86,6 +87,11 @@ pub(super) struct ScrollbarDrag {
     pub(super) last_target: usize,
 }
 
+struct PathPickerSlot {
+    picker: gpui::Entity<PathPicker>,
+    _events: gpui::Subscription,
+}
+
 #[derive(Clone)]
 pub(super) struct HoverLinkCache {
     line: Line,
@@ -131,6 +137,7 @@ pub struct TerminalView {
     pub(super) search_native_navigation_in_flight: Option<u64>,
     pub(super) search_native_navigation_generation: u64,
     pub(super) search_native_navigation_queue: std::collections::VecDeque<bool>,
+    path_picker: Option<PathPickerSlot>,
     appearance_theme_generation: u64,
     pub(super) option_as_meta: bool,
     pub(super) cursor_blink_mode: paneflow_config::schema::CursorBlinkConfig,
@@ -525,6 +532,7 @@ impl TerminalView {
             search_native_navigation_in_flight: None,
             search_native_navigation_generation: 0,
             search_native_navigation_queue: std::collections::VecDeque::new(),
+            path_picker: None,
             appearance_theme_generation: crate::theme::theme_generation(),
             option_as_meta,
             cursor_blink_mode,
@@ -1023,6 +1031,75 @@ impl TerminalView {
 }
 
 impl TerminalView {
+    fn open_path_picker(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(slot) = &self.path_picker {
+            let focus = slot.picker.read(cx).focus_handle(cx);
+            window.focus(&focus, cx);
+            return;
+        }
+        let cwd = self.terminal.current_cwd.clone();
+        let quoting = self.terminal.shell_quoting;
+        let anchor = self.cursor_cell_bounds();
+        let picker = cx.new(|cx| PathPicker::new(cwd, quoting, anchor, window, cx));
+        let events = cx.subscribe_in(&picker, window, Self::handle_path_picker_event);
+        let focus = picker.read(cx).focus_handle(cx);
+        window.focus(&focus, cx);
+        self.path_picker = Some(PathPickerSlot {
+            picker,
+            _events: events,
+        });
+        cx.notify();
+    }
+
+    fn handle_path_picker_event(
+        &mut self,
+        picker: &gpui::Entity<PathPicker>,
+        event: &PathPickerEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self
+            .path_picker
+            .as_ref()
+            .is_none_or(|slot| slot.picker != *picker)
+        {
+            return;
+        }
+        self.path_picker = None;
+        match event {
+            PathPickerEvent::Picked(text) => {
+                self.write_paste_text(text);
+                self.focus_handle.focus(window, cx);
+            }
+            PathPickerEvent::Dismissed { refocus: true } => self.focus_handle.focus(window, cx),
+            PathPickerEvent::Dismissed { refocus: false } => {}
+        }
+        cx.notify();
+    }
+
+    fn cursor_cell_bounds(&self) -> gpui::Bounds<gpui::Pixels> {
+        let origin = *self
+            .element_origin
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let metrics = self.terminal.session_backend().grid_metrics();
+        let last_row = metrics.screen_lines.saturating_sub(1) as i64;
+        let row =
+            (i64::from(metrics.cursor.line.0) + metrics.display_offset as i64).clamp(0, last_row);
+        let column = metrics
+            .cursor
+            .column
+            .0
+            .min(metrics.columns.saturating_sub(1));
+        gpui::Bounds::new(
+            gpui::point(
+                origin.x + self.cell_width * column as f32,
+                origin.y + self.line_height * row as f32,
+            ),
+            gpui::size(self.cell_width, self.line_height),
+        )
+    }
+
     fn apply_terminal_focus(&mut self, focused: bool) {
         if focused == self.was_focused {
             return;
@@ -1206,6 +1283,7 @@ impl Render for TerminalView {
                 self.hover_link_cache = None;
                 self.mouse_down_link = None;
                 self.ime_marked_text.clear();
+                self.path_picker = None;
                 *self
                     .element_origin
                     .lock()
@@ -1466,6 +1544,9 @@ impl Render for TerminalView {
             .on_action(cx.listener(|this, _: &crate::ResetTerminal, _window, cx| {
                 this.reset_terminal(cx);
             }))
+            .on_action(cx.listener(|this, _: &crate::InsertPath, window, cx| {
+                this.open_path_picker(window, cx);
+            }))
             .size_full()
             .child(terminal_body);
 
@@ -1495,7 +1576,10 @@ impl Render for TerminalView {
             el = el.child(copy_badge);
         }
 
-        el
+        div()
+            .size_full()
+            .child(el)
+            .children(self.path_picker.as_ref().map(|slot| slot.picker.clone()))
     }
 }
 
@@ -2248,6 +2332,57 @@ mod tests {
             0,
             "closed pane: a released terminal view must not notify"
         );
+    }
+
+    fn open_path_picker(terminal: &Entity<TerminalView>, cx: &mut gpui::VisualTestContext) {
+        focus_terminal(terminal, cx);
+        cx.dispatch_action(crate::InsertPath);
+        cx.run_until_parked();
+        let picker = terminal
+            .read_with(cx, |view, _| {
+                view.path_picker.as_ref().map(|slot| slot.picker.clone())
+            })
+            .expect("insert_path must open the picker");
+        cx.update(|window, cx| {
+            assert!(
+                picker.read(cx).focus_handle(cx).is_focused(window),
+                "the picker field takes the focus"
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn escape_closes_the_path_picker_and_refocuses_the_terminal(cx: &mut gpui::TestAppContext) {
+        let (terminal, _host, cx) = hosted_terminal(cx);
+        open_path_picker(&terminal, cx);
+
+        cx.simulate_keystrokes("escape");
+        cx.run_until_parked();
+
+        terminal.read_with(cx, |view, _| assert!(view.path_picker.is_none()));
+        cx.update(|window, cx| {
+            assert!(terminal.read(cx).focus_handle.is_focused(window));
+        });
+    }
+
+    #[gpui::test]
+    fn moving_the_focus_away_closes_the_path_picker(cx: &mut gpui::TestAppContext) {
+        let (terminal, _host, cx) = hosted_terminal(cx);
+        open_path_picker(&terminal, cx);
+
+        cx.update(|window, cx| {
+            let elsewhere = cx.focus_handle();
+            window.focus(&elsewhere, cx);
+        });
+        cx.run_until_parked();
+
+        terminal.read_with(cx, |view, _| assert!(view.path_picker.is_none()));
+        cx.update(|window, cx| {
+            assert!(
+                !terminal.read(cx).focus_handle.is_focused(window),
+                "a blur must not pull the focus back to the terminal"
+            );
+        });
     }
 
     #[test]
