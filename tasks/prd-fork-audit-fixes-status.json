@@ -9,18 +9,18 @@
     {
       "id": "EP-001",
       "title": "Protéger les données de l'utilisateur",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "stories_total": 7,
-      "stories_done": 0
+      "stories_done": 7
     },
     {
       "id": "EP-002",
       "title": "Durcir git, le système de fichiers et les worktrees",
-      "status": "TODO",
+      "status": "IN_REVIEW",
       "priority": "P0",
       "stories_total": 8,
-      "stories_done": 0
+      "stories_done": 3
     },
     {
       "id": "EP-003",
@@ -60,193 +60,193 @@
       "id": "US-001",
       "title": "Protéger la suppression d'un worktree depuis le menu d'onglet",
       "epic": "EP-001",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "size": "M",
       "blocked_by": [],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-09-28T13:10:53+02:00",
+      "completed_at": "2026-09-28T18:14:17+02:00",
+      "reviewed_at": "2026-09-28T18:14:17+02:00"
     },
     {
       "id": "US-002",
       "title": "Garantir le snapshot avant tout démontage de worktree",
       "epic": "EP-001",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "size": "M",
       "blocked_by": [],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-09-28T13:10:53+02:00",
+      "completed_at": "2026-09-28T15:02:50+02:00",
+      "reviewed_at": "2026-09-28T18:14:17+02:00"
     },
     {
       "id": "US-003",
       "title": "Ne jamais fermer ni quitter en jetant un buffer éditeur non sauvegardé",
       "epic": "EP-001",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "size": "L",
       "blocked_by": [],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-09-28T13:13:28+02:00",
+      "completed_at": "2026-09-28T18:14:17+02:00",
+      "reviewed_at": "2026-09-28T18:14:17+02:00"
     },
     {
       "id": "US-004",
       "title": "Rendre l'enregistrement sûr face aux écritures externes",
       "epic": "EP-001",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "size": "M",
       "blocked_by": [],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-09-28T13:15:46+02:00",
+      "completed_at": "2026-09-28T15:02:50+02:00",
+      "reviewed_at": "2026-09-28T18:14:17+02:00"
     },
     {
       "id": "US-005",
       "title": "Fiabiliser le rechargement et le Revert de gouttière de l'éditeur",
       "epic": "EP-001",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P1",
       "size": "M",
       "blocked_by": [
         "US-004"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-09-28T13:26:30+02:00",
+      "completed_at": "2026-09-28T15:02:50+02:00",
+      "reviewed_at": "2026-09-28T18:14:17+02:00"
     },
     {
       "id": "US-006",
       "title": "Rendre le Revert de l'onglet Changes exact et non destructif",
       "epic": "EP-001",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "size": "L",
       "blocked_by": [
         "US-012"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-09-28T13:50:37+02:00",
+      "completed_at": "2026-09-28T18:23:50+02:00",
+      "reviewed_at": "2026-09-28T18:23:50+02:00"
     },
     {
       "id": "US-007",
       "title": "Ordonner les écritures de réglages et protéger les réinitialisations",
       "epic": "EP-001",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P1",
       "size": "M",
       "blocked_by": [],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-09-28T13:34:03+02:00",
+      "completed_at": "2026-09-28T18:14:17+02:00",
+      "reviewed_at": "2026-09-28T18:14:17+02:00"
     },
     {
       "id": "US-008",
       "title": "Introduire un builder git unique avec un profil sonde isolé",
       "epic": "EP-002",
-      "status": "TODO",
+      "status": "IN_REVIEW",
       "priority": "P0",
       "size": "L",
       "blocked_by": [],
-      "started_at": null,
+      "started_at": "2026-09-28T21:17:56+02:00",
       "completed_at": null,
-      "reviewed_at": null
+      "reviewed_at": "2026-09-29T11:03:32+02:00"
     },
     {
       "id": "US-009",
       "title": "Empêcher les sondes git d'arrière-plan de prendre le verrou de l'index",
       "epic": "EP-002",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "size": "M",
       "blocked_by": [
         "US-008"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-09-28T21:17:56+02:00",
+      "completed_at": "2026-09-29T11:03:32+02:00",
+      "reviewed_at": "2026-09-29T11:03:32+02:00"
     },
     {
       "id": "US-010",
       "title": "Rendre les résultats git exacts ou explicitement en erreur",
       "epic": "EP-002",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P2",
       "size": "L",
       "blocked_by": [
         "US-008"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-09-28T21:17:56+02:00",
+      "completed_at": "2026-09-29T11:03:32+02:00",
+      "reviewed_at": "2026-09-29T11:03:32+02:00"
     },
     {
       "id": "US-011",
       "title": "Donner aux commandes utilisateur un budget de capture adapté",
       "epic": "EP-002",
-      "status": "TODO",
+      "status": "IN_REVIEW",
       "priority": "P1",
       "size": "M",
       "blocked_by": [
         "US-008"
       ],
-      "started_at": null,
+      "started_at": "2026-09-28T21:17:56+02:00",
       "completed_at": null,
-      "reviewed_at": null
+      "reviewed_at": "2026-09-29T11:03:32+02:00"
     },
     {
       "id": "US-012",
       "title": "Écrire à travers les symlinks sans jamais les remplacer",
       "epic": "EP-002",
-      "status": "TODO",
+      "status": "IN_REVIEW",
       "priority": "P0",
       "size": "L",
       "blocked_by": [],
-      "started_at": null,
+      "started_at": "2026-09-28T13:50:37+02:00",
       "completed_at": null,
-      "reviewed_at": null
+      "reviewed_at": "2026-09-29T11:03:32+02:00"
     },
     {
       "id": "US-013",
       "title": "Ne jamais bloquer ni suivre un fichier spécial en lisant ou en journalisant",
       "epic": "EP-002",
-      "status": "TODO",
+      "status": "IN_REVIEW",
       "priority": "P1",
       "size": "L",
       "blocked_by": [],
-      "started_at": null,
+      "started_at": "2026-09-28T21:17:56+02:00",
       "completed_at": null,
-      "reviewed_at": null
+      "reviewed_at": "2026-09-29T11:03:32+02:00"
     },
     {
       "id": "US-014",
       "title": "Copier les fichiers d'include d'un worktree sans suivre les symlinks",
       "epic": "EP-002",
-      "status": "TODO",
+      "status": "IN_REVIEW",
       "priority": "P1",
       "size": "S",
       "blocked_by": [],
-      "started_at": null,
+      "started_at": "2026-09-28T21:17:56+02:00",
       "completed_at": null,
-      "reviewed_at": null
+      "reviewed_at": "2026-09-29T11:03:32+02:00"
     },
     {
       "id": "US-015",
       "title": "Garder l'état git d'un onglet frais et rattaché au bon checkout",
       "epic": "EP-002",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P1",
       "size": "L",
       "blocked_by": [
         "US-008"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-09-28T21:17:56+02:00",
+      "completed_at": "2026-09-29T11:03:32+02:00",
+      "reviewed_at": "2026-09-29T11:03:32+02:00"
     },
     {
       "id": "US-016",
