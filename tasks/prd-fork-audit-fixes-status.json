@@ -17,10 +17,10 @@
     {
       "id": "EP-002",
       "title": "Durcir git, le système de fichiers et les worktrees",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P0",
       "stories_total": 8,
-      "stories_done": 7
+      "stories_done": 8
     },
     {
       "id": "EP-003",
@@ -148,13 +148,13 @@
       "id": "US-008",
       "title": "Introduire un builder git unique avec un profil sonde isolé",
       "epic": "EP-002",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P0",
       "size": "L",
       "blocked_by": [],
       "started_at": "2026-09-28T21:17:56+02:00",
-      "completed_at": null,
-      "reviewed_at": "2026-09-29T11:03:32+02:00"
+      "completed_at": "2026-09-29T13:27:28+02:00",
+      "reviewed_at": "2026-09-29T13:27:28+02:00"
     },
     {
       "id": "US-009",
