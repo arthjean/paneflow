@@ -62,7 +62,9 @@ fn write_to_disk(path: &Path, workspaces: &[RecentWorkspace]) {
     }
 }
 
-pub(crate) fn load_pruned() -> Vec<RecentWorkspace> {
+pub(crate) const RECENT_PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
+
+pub(crate) fn load() -> Vec<RecentWorkspace> {
     let Some(path) = recents_path() else {
         return Vec::new();
     };
@@ -71,9 +73,6 @@ pub(crate) fn load_pruned() -> Vec<RecentWorkspace> {
     for entry in stored {
         if kept.len() >= MAX_RECENT_WORKSPACES {
             break;
-        }
-        if !entry.path.is_dir() {
-            continue;
         }
         if kept
             .iter()
@@ -126,6 +125,38 @@ impl PaneFlowApp {
             return;
         }
         self.persist_recent_workspaces(cx);
+    }
+
+    pub(crate) fn spawn_recents_prune(&self, cx: &mut Context<Self>) {
+        let paths: Vec<PathBuf> = self
+            .recent_workspaces
+            .iter()
+            .map(|entry| entry.path.clone())
+            .collect();
+        if paths.is_empty() {
+            return;
+        }
+        cx.spawn(async move |this, cx: &mut gpui::AsyncApp| {
+            let states =
+                crate::fs_probe::probe_dirs(paths, RECENT_PROBE_TIMEOUT, Path::is_dir).await;
+            let gone: Vec<PathBuf> = states
+                .into_iter()
+                .filter(|(_, state)| *state == crate::fs_probe::DirProbe::Missing)
+                .map(|(path, _)| path)
+                .collect();
+            if gone.is_empty() {
+                return;
+            }
+            let _ = this.update(cx, |app, cx| {
+                let before = app.recent_workspaces.len();
+                app.recent_workspaces
+                    .retain(|entry| !gone.contains(&entry.path));
+                if app.recent_workspaces.len() != before {
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
     }
 
     pub(crate) fn forget_recent_workspace(&mut self, path: &Path, cx: &mut Context<Self>) {

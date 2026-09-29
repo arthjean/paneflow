@@ -194,11 +194,25 @@ impl WorkingText {
     }
 }
 
-fn read_with_metadata(path: &Path) -> std::io::Result<(Vec<u8>, std::fs::Metadata)> {
+const WORKING_FILE_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
+type FileRead = std::io::Result<(Vec<u8>, std::fs::Metadata)>;
+
+fn read_with_metadata(path: &Path) -> FileRead {
     let (file, metadata) = paneflow_home::open_regular_for_reading(path)?;
     let mut bytes = Vec::new();
     file.take(MAX_FILE_BYTES + 1).read_to_end(&mut bytes)?;
     Ok((bytes, metadata))
+}
+
+fn read_within(path: &Path, timeout: std::time::Duration, read: fn(&Path) -> FileRead) -> FileRead {
+    let owned = path.to_path_buf();
+    crate::fs_probe::run_bounded(timeout, move || read(&owned)).unwrap_or_else(|| {
+        Err(std::io::Error::new(
+            std::io::ErrorKind::TimedOut,
+            format!("no answer within {} s", timeout.as_secs()),
+        ))
+    })
 }
 
 fn load_working_text(worktree_dir: &Path, rel_path: &str) -> WorkingText {
@@ -210,7 +224,7 @@ fn load_working_text(worktree_dir: &Path, rel_path: &str) -> WorkingText {
                 .unwrap_or_default();
             WorkingText::plain(target, false)
         }
-        Ok(_) => match read_with_metadata(&path) {
+        Ok(_) => match read_within(&path, WORKING_FILE_READ_TIMEOUT, read_with_metadata) {
             Ok((bytes, metadata)) => {
                 let (text, binary) = classify(bytes);
                 WorkingText {
@@ -477,6 +491,26 @@ mod tests {
         assert!(started.elapsed() < std::time::Duration::from_millis(100));
         assert!(working.binary);
         assert!(working.text.is_empty());
+    }
+
+    #[test]
+    fn a_working_file_read_that_hangs_gives_up_at_its_deadline() {
+        let started = std::time::Instant::now();
+        let error = read_within(
+            Path::new("stuck"),
+            std::time::Duration::from_millis(50),
+            |_| {
+                std::thread::sleep(std::time::Duration::from_secs(30));
+                Err(std::io::Error::other("unreachable"))
+            },
+        )
+        .unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
+        assert!(started.elapsed() < std::time::Duration::from_secs(2));
+        assert_eq!(
+            WORKING_FILE_READ_TIMEOUT,
+            std::time::Duration::from_secs(10)
+        );
     }
 
     #[test]

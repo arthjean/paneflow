@@ -20,10 +20,7 @@ impl PaneFlowApp {
     }
 
     pub(crate) fn open_help_url(&mut self, url: &str, cx: &mut Context<Self>) {
-        if let Err(err) = crate::external_open::open_url(url) {
-            log::warn!("help menu: open URL failed: {err}");
-            self.show_toast(format!("Could not open URL: {err}"), cx);
-        }
+        self.open_external_url(url.to_string(), cx);
     }
 
     pub(crate) fn render_title_bar_files_menu(

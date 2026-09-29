@@ -1,5 +1,4 @@
 use gpui::{App, AppContext, Context, Entity};
-use notify::Watcher;
 use paneflow_config::schema::TerminalSurfaceProfile;
 
 use crate::app::close_policy::{CloseIntent, CloseTarget};
@@ -277,6 +276,15 @@ impl PaneFlowApp {
                     return;
                 };
 
+                if edge.is_some()
+                    && self.workspaces[ws_idx]
+                        .tabs()
+                        .get(tab_idx)
+                        .is_some_and(|tab| tab.is_zoomed())
+                {
+                    self.show_toast("Unzoom before splitting panes", cx);
+                    return;
+                }
                 if edge.is_some()
                     && !self.workspaces[ws_idx]
                         .tabs()

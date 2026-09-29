@@ -50,14 +50,7 @@ impl PaneFlowApp {
             "pr": show.pr_enabled(),
             "indent_guide": show.indent_guide_enabled(),
         });
-        if !crate::config_writer::save_config_value_checked("sidebar_show", value) {
-            self.show_toast(
-                "Could not save the sidebar setting. Check that paneflow.json is valid and writable.",
-                cx,
-            );
-            return;
-        }
-        self.cached_config.sidebar_show = show;
+        self.persist_setting(false, "sidebar_show", value, cx);
         self.refresh_pull_requests(cx);
         cx.notify();
     }

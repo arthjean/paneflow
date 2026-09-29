@@ -290,10 +290,27 @@ pub(super) fn handle_terminal_command(
                 log::warn!(target: "paneflow::terminal::ghostty", "Ghostty search navigation publication failed: {error}");
             }
         }
-        RuntimeMessage::LineTexts { lines, reply } => {
+        RuntimeMessage::ReadRows {
+            lines,
+            offset,
+            reply,
+        } => {
             let _ = reply.send(
                 terminal
-                    .line_texts(&lines)
+                    .row_window(lines, offset)
+                    .map_err(|error| error.to_string()),
+            );
+        }
+        RuntimeMessage::SearchRows {
+            query,
+            max_rows,
+            generation,
+            reply,
+        } => {
+            let superseded = || inner.search_generation.load(Ordering::Acquire) != generation;
+            let _ = reply.send(
+                terminal
+                    .search_rows(&query, max_rows, &superseded)
                     .map_err(|error| error.to_string()),
             );
         }
@@ -330,6 +347,7 @@ pub(super) fn handle_terminal_command(
                     }),
                 });
         }
+        #[cfg(test)]
         RuntimeMessage::ExtractScrollback(reply) => {
             let _ = reply.send(
                 terminal
@@ -337,6 +355,7 @@ pub(super) fn handle_terminal_command(
                     .map_err(|error| error.to_string()),
             );
         }
+        #[cfg(test)]
         RuntimeMessage::ScreenText(reply) => {
             let _ = reply.send(
                 terminal
@@ -349,6 +368,8 @@ pub(super) fn handle_terminal_command(
             let _ = gate.publish_now(inner, terminal);
             let _ = reply.send(());
         }
+        #[cfg(test)]
+        RuntimeMessage::StallForTest(duration) => std::thread::sleep(duration),
         other => return CommandOutcome::Unhandled(other),
     }
     CommandOutcome::Handled

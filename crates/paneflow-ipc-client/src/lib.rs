@@ -23,7 +23,8 @@ use std::time::Duration;
 #[cfg(windows)]
 use std::time::Instant;
 
-use interprocess::local_socket::{prelude::*, GenericFilePath, Stream};
+use interprocess::local_socket::{prelude::*, ConnectOptions, GenericFilePath, Stream};
+use interprocess::ConnectWaitMode;
 use serde_json::{json, Value};
 
 pub const MAX_FRAME_BYTES: usize = 256 * 1024;
@@ -32,8 +33,37 @@ const IPC_TIMEOUT: Duration = Duration::from_secs(10);
 
 const MAX_RESPONSE_LEN: u64 = MAX_FRAME_BYTES as u64;
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum IpcCallError {
+    Unreachable(String),
+    TimedOut(String),
+    Busy(String),
+    Failed(String),
+}
+
+impl IpcCallError {
+    pub fn is_transient(&self) -> bool {
+        matches!(self, Self::TimedOut(_) | Self::Busy(_))
+    }
+}
+
+impl std::fmt::Display for IpcCallError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Unreachable(message)
+            | Self::TimedOut(message)
+            | Self::Busy(message)
+            | Self::Failed(message) => f.write_str(message),
+        }
+    }
+}
+
 pub trait IpcTransport {
     fn call(&self, method: &str, params: Value) -> Result<Value, String>;
+
+    fn try_call(&self, method: &str, params: Value) -> Result<Value, IpcCallError> {
+        self.call(method, params).map_err(IpcCallError::Failed)
+    }
 }
 
 pub struct IpcClient {
@@ -52,15 +82,31 @@ impl IpcClient {
 
 impl IpcTransport for IpcClient {
     fn call(&self, method: &str, params: Value) -> Result<Value, String> {
+        self.try_call(method, params)
+            .map_err(|error| error.to_string())
+    }
+
+    fn try_call(&self, method: &str, params: Value) -> Result<Value, IpcCallError> {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let request = build_request(id, method, params);
-        let line = send_and_receive(&self.socket, &request).map_err(|e| {
-            format!(
+        let unreachable = |e: io::Error| {
+            IpcCallError::Unreachable(format!(
                 "paneflow IPC unreachable at {} ({e}); is Paneflow running?",
                 self.socket.display()
-            )
+            ))
+        };
+        let stream = connect_request_stream(&self.socket).map_err(unreachable)?;
+        let line = exchange(stream, &request).map_err(|e| {
+            if e.kind() == io::ErrorKind::TimedOut {
+                IpcCallError::TimedOut(format!(
+                    "paneflow did not respond within {}s",
+                    IPC_TIMEOUT.as_secs()
+                ))
+            } else {
+                unreachable(e)
+            }
         })?;
-        parse_response(&line)
+        parse_call_response(&line)
     }
 }
 
@@ -73,16 +119,32 @@ pub(crate) fn build_request(id: u64, method: &str, params: Value) -> Value {
     })
 }
 
+#[cfg(test)]
 pub(crate) fn parse_response(line: &str) -> Result<Value, String> {
-    let value: Value = serde_json::from_str(line.trim())
-        .map_err(|e| format!("invalid JSON-RPC response from paneflow: {e}"))?;
+    parse_call_response(line).map_err(|error| error.to_string())
+}
+
+const JSONRPC_BUSY: i64 = -32000;
+const JSONRPC_DISPATCH_TIMEOUT: i64 = -32002;
+
+fn parse_call_response(line: &str) -> Result<Value, IpcCallError> {
+    let value: Value = serde_json::from_str(line.trim()).map_err(|e| {
+        IpcCallError::Failed(format!("invalid JSON-RPC response from paneflow: {e}"))
+    })?;
     if let Some(message) = jsonrpc_error_message_from_value(&value) {
-        return Err(message);
+        let code = value
+            .get("error")
+            .and_then(|error| error.get("code"))
+            .and_then(Value::as_i64);
+        return Err(match code {
+            Some(JSONRPC_BUSY) => IpcCallError::Busy(message),
+            Some(JSONRPC_DISPATCH_TIMEOUT) => IpcCallError::TimedOut(message),
+            _ => IpcCallError::Failed(message),
+        });
     }
-    value
-        .get("result")
-        .cloned()
-        .ok_or_else(|| "paneflow response missing both `result` and `error`".to_string())
+    value.get("result").cloned().ok_or_else(|| {
+        IpcCallError::Failed("paneflow response missing both `result` and `error`".to_string())
+    })
 }
 
 pub fn jsonrpc_error_message(line: &str) -> Option<String> {
@@ -108,8 +170,8 @@ fn tolerate_unsupported(r: io::Result<()>) -> io::Result<()> {
     }
 }
 
-fn send_and_receive(socket: &Path, request: &Value) -> io::Result<String> {
-    let mut stream = connect_request_stream(socket)?;
+#[cfg_attr(windows, allow(unused_mut))]
+fn exchange(mut stream: Stream, request: &Value) -> io::Result<String> {
     #[cfg(not(windows))]
     {
         tolerate_unsupported(stream.set_recv_timeout(Some(IPC_TIMEOUT)))?;
@@ -156,8 +218,14 @@ fn send_and_receive(socket: &Path, request: &Value) -> io::Result<String> {
 }
 
 fn connect_request_stream(socket: &Path) -> io::Result<Stream> {
-    let name = socket.to_fs_name::<GenericFilePath>()?;
-    Stream::connect(name)
+    connect_with_timeout(socket, IPC_TIMEOUT)
+}
+
+pub fn connect_with_timeout(socket: &Path, timeout: Duration) -> io::Result<Stream> {
+    ConnectOptions::new()
+        .name(socket.to_fs_name::<GenericFilePath>()?)
+        .wait_mode(ConnectWaitMode::Timeout(timeout))
+        .connect_sync()
 }
 
 pub fn socket_is_listening(socket: &Path) -> bool {
@@ -425,8 +493,7 @@ pub fn subscribe_stream(
     params: Value,
     mut on_line: impl FnMut(&str) -> bool,
 ) -> io::Result<()> {
-    let name = socket.to_fs_name::<GenericFilePath>()?;
-    let mut stream = Stream::connect(name)?;
+    let mut stream = connect_request_stream(socket)?;
     let request = build_request(1, "events.subscribe", params);
     let mut payload =
         serde_json::to_vec(&request).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
@@ -497,8 +564,7 @@ pub fn subscribe_stream_timed(
     slice: Duration,
     mut on_event: impl FnMut(StreamEvent<'_>) -> bool,
 ) -> io::Result<()> {
-    let name = socket.to_fs_name::<GenericFilePath>()?;
-    let mut stream = Stream::connect(name)?;
+    let mut stream = connect_request_stream(socket)?;
     stream.set_recv_timeout(Some(slice)).map_err(|e| {
         if e.kind() == io::ErrorKind::Unsupported {
             io::Error::new(
@@ -723,6 +789,64 @@ mod tests {
         assert!(err.contains("-32602"), "got: {err}");
         assert!(err.contains("bad filter"), "got: {err}");
         assert!(jsonrpc_error_message(r#"{"type":"subscribed"}"#).is_none());
+    }
+
+    #[test]
+    fn busy_and_dispatch_timeouts_are_told_apart_from_other_errors() {
+        let reply = |code: i64| {
+            format!(r#"{{"jsonrpc":"2.0","error":{{"code":{code},"message":"m"}},"id":1}}"#)
+        };
+        assert!(matches!(
+            parse_call_response(&reply(-32000)),
+            Err(IpcCallError::Busy(_))
+        ));
+        assert!(matches!(
+            parse_call_response(&reply(-32002)),
+            Err(IpcCallError::TimedOut(_))
+        ));
+        let other = parse_call_response(&reply(-32602)).unwrap_err();
+        assert!(!other.is_transient());
+        assert_eq!(other.to_string(), "paneflow error -32602: m");
+    }
+
+    #[test]
+    fn a_missing_socket_is_unreachable_not_transient() {
+        let dir = tempfile::tempdir().unwrap();
+        let client = IpcClient::new(dir.path().join("absent.sock"));
+        let error = client
+            .try_call("surface.list", json!({}))
+            .expect_err("nothing listens");
+        assert!(
+            matches!(error, IpcCallError::Unreachable(_)),
+            "got {error:?}"
+        );
+        assert!(error.to_string().contains("IPC unreachable"));
+        assert!(!error.is_transient());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn connect_returns_before_its_deadline_when_the_listener_never_accepts() {
+        use std::os::unix::net::{UnixListener, UnixStream};
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("never-accept.sock");
+        let _listener = UnixListener::bind(&path).unwrap();
+        let mut held = Vec::new();
+        while held.len() < 4096 {
+            match UnixStream::connect(&path) {
+                Ok(stream) => held.push(stream),
+                Err(_) => break,
+            }
+        }
+        let (tx, rx) = std::sync::mpsc::channel();
+        let target = path.clone();
+        std::thread::spawn(move || {
+            let result = connect_with_timeout(&target, Duration::from_millis(150));
+            let _ = tx.send(result.is_ok());
+        });
+        rx.recv_timeout(Duration::from_secs(5))
+            .expect("connect is bounded by its timeout");
     }
 
     #[test]

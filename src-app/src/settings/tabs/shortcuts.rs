@@ -482,11 +482,10 @@ impl PaneFlowApp {
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                 .on_click(cx.listener(move |this, _: &ClickEvent, _window, cx| {
                     cx.stop_propagation();
-                    if !config_writer::reset_shortcut(action_name) {
-                        this.show_toast("Could not save shortcut", cx);
-                    }
-                    this.reload_shortcuts(cx);
-                    cx.notify();
+                    this.persist_shortcut_change(
+                        move || config_writer::reset_shortcut(action_name),
+                        cx,
+                    );
                 }))
                 .child(
                     svg()

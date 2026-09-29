@@ -80,15 +80,31 @@ impl TerminalView {
                     height: size.cell_height,
                 }),
         };
+        let spawn_rule = crate::workspace::SpawnCwd {
+            cwd: None,
+            confine_to: self.launch.confine_to.clone(),
+            fallback: self.launch.fallback_to.clone(),
+        };
+        let max_scrollback = crate::config_snapshot::current(cx)
+            .terminal
+            .clone()
+            .unwrap_or_default()
+            .resolved_scrollback_lines_for_profile(profile);
         let executor = cx.background_executor().clone();
         cx.spawn(
             async move |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
                 let outcome = executor
                     .spawn(async move {
-                        let max_scrollback = paneflow_config::loader::load_config()
-                            .terminal
-                            .unwrap_or_default()
-                            .resolved_scrollback_lines_for_profile(profile);
+                        let mut request = request;
+                        if spawn_rule.needs_resolving() {
+                            let requested = request.params.cwd.clone();
+                            request.params.cwd = crate::workspace::SpawnCwd {
+                                cwd: Some(requested.clone()),
+                                ..spawn_rule
+                            }
+                            .resolve(crate::workspace::CONFINE_TIMEOUT)
+                            .unwrap_or(requested);
+                        }
                         match host_link::resolve(request) {
                             Ok(ResolveOutcome::Attached(hosted, snapshot)) => {
                                 match ghostty.start_attached(
@@ -214,13 +230,16 @@ impl TerminalView {
         reported
             || self
                 .launch
-                .cwd
+                .confine_to
                 .as_deref()
+                .or(self.launch.cwd.as_deref())
                 .is_some_and(|cwd| cwd.starts_with(root))
     }
 
     pub(crate) fn relaunch_in(&mut self, cwd: std::path::PathBuf, cx: &mut Context<Self>) {
         self.launch.cwd = Some(cwd);
+        self.launch.confine_to = None;
+        self.launch.fallback_to = None;
         self.relaunch_pending = true;
         self.relaunch_when_ended(cx);
     }
@@ -240,7 +259,9 @@ impl TerminalView {
     ) {
         self.session_intent = intent;
         let surface_id = cx.entity_id().as_u64();
-        let (params, shell_notice) = self.launch.spawn_params(surface_id);
+        let (params, shell_notice) = self
+            .launch
+            .spawn_params(surface_id, &crate::config_snapshot::current(cx));
         let (mut fresh, pending) = TerminalState::new_pending_with_shell_quoting(
             params.cols,
             params.rows,

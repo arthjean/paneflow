@@ -71,7 +71,7 @@ pub fn search(
     if human {
         if let Some(matches) = result.get("matches").and_then(Value::as_array) {
             for m in matches {
-                let line = m.get("line").and_then(Value::as_u64).unwrap_or(0);
+                let line = m.get("line").and_then(Value::as_i64).unwrap_or(0);
                 let text = m.get("text").and_then(Value::as_str).unwrap_or("");
                 println!("{line}: {text}");
             }

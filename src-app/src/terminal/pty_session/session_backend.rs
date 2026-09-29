@@ -267,6 +267,36 @@ impl TerminalSessionBackend {
         self.ghostty.search_with_cancel(query, regex, cancelled)
     }
 
+    pub(crate) fn read_rows(
+        &self,
+        lines: usize,
+        offset: usize,
+        timeout: std::time::Duration,
+    ) -> Result<crate::terminal::types::ScrollbackWindow, crate::terminal::types::TerminalQueryError>
+    {
+        self.ghostty.read_rows(lines, offset, timeout)
+    }
+
+    pub(crate) fn search_rows(
+        &self,
+        query: &str,
+        max_rows: usize,
+        timeout: std::time::Duration,
+    ) -> Result<crate::terminal::types::ScrollbackMatches, crate::terminal::types::TerminalQueryError>
+    {
+        self.ghostty.search_rows(query, max_rows, timeout)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn write_output_for_test(&self, bytes: &[u8]) {
+        self.ghostty.write_output(bytes);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn stall_runtime_for_test(&self, duration: std::time::Duration) {
+        self.ghostty.stall_runtime_for_test(duration);
+    }
+
     pub(crate) fn set_default_cursor(
         &self,
         shape: paneflow_terminal_ghostty::CursorShape,

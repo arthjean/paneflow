@@ -47,7 +47,15 @@ impl PaneFlowApp {
             .map(std::path::PathBuf::from);
         let cwd = self.new_terminal_cwd(cwd);
 
-        let terminal = cx.new(|cx| TerminalView::with_cwd(ws_id, cwd, None, cx));
+        let terminal = cx.new(|cx| {
+            TerminalView::spawned(
+                ws_id,
+                cwd,
+                None,
+                paneflow_config::schema::TerminalSurfaceProfile::Normal,
+                cx,
+            )
+        });
         cx.subscribe(&terminal, |_, _, event: &TerminalEvent, cx| {
             if matches!(event, TerminalEvent::ChildExited) {
                 cx.notify();

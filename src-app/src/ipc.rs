@@ -1,7 +1,7 @@
 use std::io::{BufRead, BufReader, Read, Write};
 use std::sync::{
     Arc,
-    atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering},
+    atomic::{AtomicU8, AtomicUsize, Ordering},
     mpsc,
 };
 use std::time::{Duration, Instant};
@@ -21,9 +21,39 @@ pub struct IpcRequest {
     pub method: String,
     pub params: Value,
     pub response_tx: mpsc::Sender<Value>,
-    pub cancelled: Arc<AtomicBool>,
-    pub started: Arc<AtomicBool>,
+    pub state: Arc<RequestState>,
     pub caller_pid: Option<i64>,
+}
+
+const REQUEST_QUEUED: u8 = 0;
+const REQUEST_STARTED: u8 = 1;
+const REQUEST_CANCELLED: u8 = 2;
+
+#[derive(Debug, Default)]
+pub struct RequestState(AtomicU8);
+
+impl RequestState {
+    fn transition(&self, to: u8) -> bool {
+        self.0
+            .compare_exchange(REQUEST_QUEUED, to, Ordering::AcqRel, Ordering::Acquire)
+            .is_ok()
+    }
+
+    pub fn try_start(&self) -> bool {
+        self.transition(REQUEST_STARTED)
+    }
+
+    pub fn try_cancel(&self) -> bool {
+        self.transition(REQUEST_CANCELLED)
+    }
+
+    pub fn is_cancelled(&self) -> bool {
+        self.0.load(Ordering::Acquire) == REQUEST_CANCELLED
+    }
+
+    fn is_started(&self) -> bool {
+        self.0.load(Ordering::Acquire) == REQUEST_STARTED
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -52,6 +82,10 @@ pub(crate) const IPC_DRAIN_MAX_DEQUEUES_PER_TICK: usize = IPC_DRAIN_MAX_PER_TICK
 const IPC_IDLE_TIMEOUT: Duration = Duration::from_secs(30);
 
 const IPC_WRITE_TIMEOUT: Duration = Duration::from_secs(5);
+
+const IPC_DISPATCH_TIMEOUT: Duration = Duration::from_secs(5);
+
+const IPC_STARTED_REPLY_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Debug, Clone)]
 pub(crate) struct IpcStatus {
@@ -107,7 +141,7 @@ pub fn start_server() -> (
     let event_bus = crate::ipc_events::EventBus::new();
     let thread_event_bus = Arc::clone(&event_bus);
 
-    if std::env::var_os("PANEFLOW_ALLOW_MULTIPLE").is_none()
+    if !multiple_instances_allowed(std::env::var("PANEFLOW_ALLOW_MULTIPLE").ok().as_deref())
         && let Some(socket_spec) = socket_path_spec()
         && let Some(info) = detect_existing_instance(socket_spec.path())
     {
@@ -254,6 +288,31 @@ pub fn start_server() -> (
     }
 
     (rx, status, event_bus)
+}
+
+fn multiple_instances_allowed(value: Option<&str>) -> bool {
+    value == Some("1")
+}
+
+fn request_params(request: &Value) -> Result<Value, &'static str> {
+    match request.get("params") {
+        None | Some(Value::Null) => Ok(json!({})),
+        Some(params @ Value::Object(_)) => Ok(params.clone()),
+        Some(_) => Err("'params' must be an object"),
+    }
+}
+
+fn subscription_filter(
+    params: &Value,
+    id: &Value,
+) -> Result<crate::ipc_events::EventFilter, Value> {
+    crate::ipc_events::EventFilter::from_params(params).map_err(|message| {
+        json!({
+            "jsonrpc": "2.0",
+            "error": {"code": -32602, "message": message},
+            "id": id,
+        })
+    })
 }
 
 fn bind_socket(socket_path: &std::path::Path) -> Option<Listener> {
@@ -654,7 +713,23 @@ fn handle_connection(
                 match req.get("method").and_then(|m| m.as_str()) {
                     Some(method) => {
                         let method = method.to_string();
-                        let params = req.get("params").cloned().unwrap_or(json!({}));
+                        let params = match request_params(&req) {
+                            Ok(params) => params,
+                            Err(message) => {
+                                let envelope = json!({
+                                    "jsonrpc": "2.0",
+                                    "error": {"code": -32602, "message": message},
+                                    "id": response_id,
+                                });
+                                if !suppress_reply && !write_envelope(&mut writer, &envelope) {
+                                    break;
+                                }
+                                #[cfg(windows)]
+                                break;
+                                #[cfg(not(windows))]
+                                continue;
+                            }
+                        };
 
                         if method == "events.subscribe" {
                             let Some(_subscription_guard) = ConnectionGuard::try_acquire(
@@ -667,7 +742,7 @@ fn handle_connection(
                                 );
                                 return;
                             };
-                            serve_subscription(&mut writer, &params, &event_bus);
+                            serve_subscription(&mut writer, &params, &response_id, &event_bus);
                             return;
                         }
 
@@ -683,41 +758,6 @@ fn handle_connection(
                         match method.as_str() {
                             "system.ping" => {
                                 json!({"jsonrpc": "2.0", "result": {"pong": true}, "id": response_id})
-                            }
-                            "system.capabilities" => {
-                                let mut methods = vec![
-                                    "system.ping",
-                                    "system.capabilities",
-                                    "system.identify",
-                                    "workspace.list",
-                                    "workspace.create",
-                                    "workspace.select",
-                                    "workspace.close",
-                                    "workspace.current",
-                                    "workspace.restore_layout",
-                                    "workspace.up",
-                                    "surface.list",
-                                    "surface.read",
-                                    "surface.search",
-                                    "surface.rename",
-                                    "surface.send_text",
-                                    "surface.send_keystroke",
-                                    "surface.split",
-                                    "surface.focus",
-                                    "surface.status",
-                                    "fleet.list",
-                                    "events.subscribe",
-                                ];
-                                methods.extend_from_slice(paneflow_ipc_client::ai_hook::METHODS);
-                                json!({"jsonrpc": "2.0", "result": {
-                                    "scripting": std::env::var("PANEFLOW_IPC_SCRIPTING")
-                                        .is_ok_and(|v| v == "1"),
-                                    "orchestration": std::env::var("PANEFLOW_IPC_ORCHESTRATION")
-                                        .is_ok_and(|v| v == "1")
-                                        || std::env::var("PANEFLOW_IPC_SCRIPTING")
-                                            .is_ok_and(|v| v == "1"),
-                                    "methods": methods
-                                }, "id": response_id})
                             }
                             "system.identify" => {
                                 json!({"jsonrpc": "2.0", "result": {
@@ -755,20 +795,20 @@ fn handle_connection(
     }
 }
 
-fn serve_subscription(writer: &mut Stream, params: &Value, bus: &Arc<crate::ipc_events::EventBus>) {
+fn serve_subscription(
+    writer: &mut Stream,
+    params: &Value,
+    id: &Value,
+    bus: &Arc<crate::ipc_events::EventBus>,
+) {
     use std::sync::mpsc::RecvTimeoutError;
 
     const HEARTBEAT: Duration = Duration::from_secs(30);
 
-    let filter = match crate::ipc_events::EventFilter::from_params(params) {
-        Ok(f) => f,
-        Err(msg) => {
-            let err = json!({
-                "jsonrpc": "2.0",
-                "error": {"code": -32602, "message": msg},
-                "id": Value::Null,
-            });
-            push_frame(writer, &err);
+    let filter = match subscription_filter(params, id) {
+        Ok(filter) => filter,
+        Err(envelope) => {
+            push_frame(writer, &envelope);
             return;
         }
     };
@@ -1064,14 +1104,12 @@ fn dispatch_to_gpui(
     caller_pid: Option<i64>,
 ) -> Value {
     let (resp_tx, resp_rx) = mpsc::channel();
-    let cancelled = Arc::new(AtomicBool::new(false));
-    let started = Arc::new(AtomicBool::new(false));
+    let state = Arc::new(RequestState::default());
     let ipc_req = IpcRequest {
         method: method.clone(),
         params,
         response_tx: resp_tx,
-        cancelled: Arc::clone(&cancelled),
-        started: Arc::clone(&started),
+        state: Arc::clone(&state),
         caller_pid,
     };
 
@@ -1085,34 +1123,45 @@ fn dispatch_to_gpui(
         }
     }
 
-    await_or_cancel(&resp_rx, &cancelled, &started, Duration::from_secs(5), id)
+    await_or_cancel(
+        &resp_rx,
+        &state,
+        IPC_DISPATCH_TIMEOUT,
+        IPC_STARTED_REPLY_TIMEOUT,
+        id,
+    )
 }
 
 fn await_or_cancel(
     resp_rx: &mpsc::Receiver<Value>,
-    cancelled: &AtomicBool,
-    started: &AtomicBool,
+    state: &RequestState,
     timeout: Duration,
+    started_reply_timeout: Duration,
     id: Value,
 ) -> Value {
     let queued_at = Instant::now();
+    let mut started_at: Option<Instant> = None;
     loop {
-        let wait_for = if started.load(Ordering::Acquire) {
-            Duration::from_millis(50)
-        } else {
-            let Some(remaining) = timeout.checked_sub(queued_at.elapsed()) else {
-                cancelled.store(true, Ordering::SeqCst);
-                return json!({"jsonrpc": "2.0", "error": {"code": -32002, "message": "Request dispatch timeout"}, "id": id});
-            };
-            remaining.min(Duration::from_millis(50))
+        if started_at.is_none() && state.is_started() {
+            started_at = Some(Instant::now());
+        }
+        let deadline = match started_at {
+            Some(started) => started + started_reply_timeout,
+            None => queued_at + timeout,
         };
-
+        let wait_for = deadline
+            .saturating_duration_since(Instant::now())
+            .min(Duration::from_millis(50));
         match resp_rx.recv_timeout(wait_for) {
             Ok(result) => return crate::app::ipc_handler::promote_response(result, id),
-            Err(mpsc::RecvTimeoutError::Timeout) if started.load(Ordering::Acquire) => continue,
             Err(mpsc::RecvTimeoutError::Timeout) => {
-                if queued_at.elapsed() >= timeout {
-                    cancelled.store(true, Ordering::SeqCst);
+                if Instant::now() < deadline {
+                    continue;
+                }
+                if started_at.is_some() {
+                    return json!({"jsonrpc": "2.0", "error": {"code": -32002, "message": "Request started but did not answer in time"}, "id": id});
+                }
+                if state.try_cancel() {
                     return json!({"jsonrpc": "2.0", "error": {"code": -32002, "message": "Request dispatch timeout"}, "id": id});
                 }
             }
@@ -1257,6 +1306,39 @@ mod connection_limit_tests {
 }
 
 #[cfg(test)]
+mod request_contract_tests {
+    use super::{json, multiple_instances_allowed, request_params, subscription_filter};
+
+    #[test]
+    fn only_the_documented_value_allows_multiple_instances() {
+        assert!(multiple_instances_allowed(Some("1")));
+        for value in [None, Some(""), Some("0"), Some("true"), Some("yes")] {
+            assert!(!multiple_instances_allowed(value), "{value:?}");
+        }
+    }
+
+    #[test]
+    fn request_params_must_be_an_object_when_present() {
+        assert_eq!(request_params(&json!({"method": "m"})), Ok(json!({})));
+        assert_eq!(request_params(&json!({"params": null})), Ok(json!({})));
+        assert_eq!(
+            request_params(&json!({"params": {"index": 1}})),
+            Ok(json!({"index": 1}))
+        );
+        assert!(request_params(&json!({"params": [1]})).is_err());
+        assert!(request_params(&json!({"params": "1"})).is_err());
+    }
+
+    #[test]
+    fn a_subscription_param_error_echoes_the_request_id() {
+        let error = subscription_filter(&json!({"types": ["bogus"]}), &json!(42))
+            .expect_err("an unknown event type is refused");
+        assert_eq!(error["id"], 42);
+        assert_eq!(error["error"]["code"], -32602);
+    }
+}
+
+#[cfg(test)]
 mod framing_tests {
     use super::{LineRead, MAX_REQUEST_LEN, read_capped_line};
     use std::io::Cursor;
@@ -1395,11 +1477,12 @@ mod singleton_guard_tests {
 
 #[cfg(test)]
 mod dispatch_tests {
-    use super::{IpcRequest, await_or_cancel, dispatch_to_gpui};
+    use super::{IpcRequest, RequestState, await_or_cancel, dispatch_to_gpui};
     use serde_json::json;
-    use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::{Arc, mpsc};
     use std::time::Duration;
+
+    const STARTED_REPLY: Duration = Duration::from_secs(5);
 
     fn test_ipc_request() -> IpcRequest {
         let (response_tx, _response_rx) = mpsc::channel();
@@ -1407,8 +1490,7 @@ mod dispatch_tests {
             method: "surface.read".to_string(),
             params: json!({}),
             response_tx,
-            cancelled: Arc::new(AtomicBool::new(false)),
-            started: Arc::new(AtomicBool::new(false)),
+            state: Arc::new(RequestState::default()),
             caller_pid: None,
         }
     }
@@ -1450,48 +1532,83 @@ mod dispatch_tests {
     }
 
     #[test]
-    fn await_or_cancel_sets_flag_and_errors_on_timeout() {
+    fn a_timed_out_request_can_never_start_afterwards() {
         let (_tx, rx) = mpsc::channel::<serde_json::Value>();
-        let cancelled = AtomicBool::new(false);
-        let started = AtomicBool::new(false);
+        let state = RequestState::default();
+
         let resp = await_or_cancel(
             &rx,
-            &cancelled,
-            &started,
+            &state,
             Duration::from_millis(20),
+            STARTED_REPLY,
             json!(7),
         );
 
-        assert!(
-            cancelled.load(Ordering::Acquire),
-            "timeout must set the cancel flag so the GPUI side skips the request"
-        );
         assert_eq!(resp["error"]["code"], -32002);
         assert_eq!(resp["id"], 7);
+        assert!(state.is_cancelled());
+        assert!(
+            !state.try_start(),
+            "the GPUI side must not run a request the client was told timed out"
+        );
+    }
+
+    #[test]
+    fn a_request_racing_its_deadline_either_runs_or_times_out_never_both() {
+        for _ in 0..200 {
+            let (tx, rx) = mpsc::channel::<serde_json::Value>();
+            let state = Arc::new(RequestState::default());
+            let gpui_state = Arc::clone(&state);
+            let gpui = std::thread::spawn(move || {
+                std::thread::sleep(Duration::from_millis(1));
+                if gpui_state.try_start() {
+                    tx.send(json!({"mutated": true})).unwrap();
+                    true
+                } else {
+                    false
+                }
+            });
+
+            let resp = await_or_cancel(
+                &rx,
+                &state,
+                Duration::from_millis(1),
+                STARTED_REPLY,
+                json!(1),
+            );
+            let ran = gpui.join().unwrap();
+
+            if ran {
+                assert_eq!(
+                    resp["result"]["mutated"], true,
+                    "a started request is awaited"
+                );
+            } else {
+                assert_eq!(resp["error"]["code"], -32002);
+            }
+        }
     }
 
     #[test]
     fn await_or_cancel_waits_for_started_handler_instead_of_cancelling() {
         let (tx, rx) = mpsc::channel::<serde_json::Value>();
-        let cancelled = Arc::new(AtomicBool::new(false));
-        let started = Arc::new(AtomicBool::new(true));
-        let send_started = Arc::clone(&started);
+        let state = Arc::new(RequestState::default());
+        assert!(state.try_start());
         std::thread::spawn(move || {
-            assert!(send_started.load(Ordering::Acquire));
             std::thread::sleep(Duration::from_millis(40));
             tx.send(json!({"status": "ok"})).unwrap();
         });
 
         let resp = await_or_cancel(
             &rx,
-            &cancelled,
-            &started,
+            &state,
             Duration::from_millis(5),
+            STARTED_REPLY,
             json!(9),
         );
 
         assert!(
-            !cancelled.load(Ordering::Acquire),
+            !state.is_cancelled(),
             "started handlers must not be cancelled behind the client"
         );
         assert_eq!(resp["result"]["status"], "ok");
@@ -1499,15 +1616,33 @@ mod dispatch_tests {
     }
 
     #[test]
+    fn the_wait_after_start_is_bounded() {
+        let (_tx, rx) = mpsc::channel::<serde_json::Value>();
+        let state = RequestState::default();
+        assert!(state.try_start());
+        let began = std::time::Instant::now();
+
+        let resp = await_or_cancel(
+            &rx,
+            &state,
+            Duration::from_millis(5),
+            Duration::from_millis(80),
+            json!(4),
+        );
+
+        assert_eq!(resp["error"]["code"], -32002);
+        assert!(began.elapsed() < Duration::from_secs(2));
+    }
+
+    #[test]
     fn await_or_cancel_passes_through_response_without_cancelling() {
         let (tx, rx) = mpsc::channel::<serde_json::Value>();
         tx.send(json!({"status": "ok"})).unwrap();
-        let cancelled = AtomicBool::new(false);
-        let started = AtomicBool::new(false);
-        let resp = await_or_cancel(&rx, &cancelled, &started, Duration::from_secs(5), json!(3));
+        let state = RequestState::default();
+        let resp = await_or_cancel(&rx, &state, Duration::from_secs(5), STARTED_REPLY, json!(3));
 
         assert!(
-            !cancelled.load(Ordering::Acquire),
+            !state.is_cancelled(),
             "a timely response must not set the cancel flag"
         );
         assert_eq!(resp["result"]["status"], "ok");

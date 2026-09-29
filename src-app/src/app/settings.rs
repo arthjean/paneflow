@@ -73,8 +73,7 @@ impl PaneFlowApp {
         self.clear_settings_search(cx);
         if self.recording_shortcut.is_some() {
             self.cancel_shortcut_recording();
-            let config = paneflow_config::loader::load_config();
-            keybindings::apply_keybindings(cx, &config.shortcuts);
+            keybindings::apply_keybindings(cx, &self.cached_config.shortcuts);
         }
     }
 
@@ -104,20 +103,39 @@ impl PaneFlowApp {
             return;
         }
         self.shortcut_reset_armed_at = None;
-        if !config_writer::reset_shortcuts_checked() {
-            self.show_toast("Could not save shortcut", cx);
-            cx.notify();
-            return;
-        }
-        self.reload_shortcuts(cx);
+        self.persist_shortcut_change(config_writer::reset_shortcuts_checked, cx);
+    }
+
+    pub(crate) fn persist_shortcut_change(
+        &mut self,
+        write: impl FnOnce() -> bool + Send + 'static,
+        cx: &mut Context<Self>,
+    ) {
+        self.cancel_shortcut_recording();
+        cx.spawn(async move |this, cx| {
+            let saved =
+                smol::unblock(move || write().then(paneflow_config::loader::load_config)).await;
+            let _ = this.update(cx, |app, cx| {
+                match saved {
+                    Some(config) => app.apply_saved_shortcuts(config, cx),
+                    None => app.show_toast("Could not save shortcut", cx),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
         cx.notify();
     }
 
-    pub(crate) fn reload_shortcuts(&mut self, cx: &mut Context<Self>) {
-        let config = paneflow_config::loader::load_config();
+    fn apply_saved_shortcuts(
+        &mut self,
+        config: paneflow_config::schema::PaneFlowConfig,
+        cx: &mut Context<Self>,
+    ) {
         keybindings::apply_keybindings(cx, &config.shortcuts);
         self.effective_shortcuts = keybindings::effective_shortcuts(&config.shortcuts);
-        self.cancel_shortcut_recording();
+        self.cached_config.shortcuts = config.shortcuts;
+        crate::config_snapshot::publish(&self.cached_config, cx);
         self.rebuild_shortcut_rows(cx);
     }
 
@@ -190,6 +208,7 @@ impl PaneFlowApp {
             }
         };
         self.cached_config = next;
+        crate::config_snapshot::publish(&self.cached_config, cx);
         if crate::terminal::element::apply_font_config(&self.cached_config) {
             for ws in &self.workspaces {
                 ws.propagate_config(&self.cached_config, cx);
@@ -269,7 +288,10 @@ impl PaneFlowApp {
         cx: &mut Context<Self>,
     ) {
         match config_writer::with_agent_panel_field(&self.cached_config, key, value.clone()) {
-            Ok(next) => self.cached_config = next,
+            Ok(next) => {
+                self.cached_config = next;
+                crate::config_snapshot::publish(&self.cached_config, cx);
+            }
             Err(_) => {
                 self.show_toast(format!("Could not save setting: agent_panel.{key}"), cx);
                 return;
@@ -420,14 +442,7 @@ impl PaneFlowApp {
         let unassigns = matches!(keystroke.key.as_str(), "backspace" | "delete")
             && !keystroke.modifiers.modified();
         if unassigns {
-            if !config_writer::unassign_shortcut(action_name) {
-                self.cancel_shortcut_recording();
-                self.show_toast("Could not save shortcut", cx);
-                cx.notify();
-                return;
-            }
-            self.reload_shortcuts(cx);
-            cx.notify();
+            self.persist_shortcut_change(move || config_writer::unassign_shortcut(action_name), cx);
             return;
         }
 
@@ -458,15 +473,10 @@ impl PaneFlowApp {
             }
         }
 
-        if !config_writer::save_shortcut_checked(&new_key, action_name) {
-            self.cancel_shortcut_recording();
-            self.show_toast("Could not save shortcut", cx);
-            cx.notify();
-            return;
-        }
-
-        self.reload_shortcuts(cx);
-        cx.notify();
+        self.persist_shortcut_change(
+            move || config_writer::save_shortcut_checked(&new_key, action_name),
+            cx,
+        );
     }
 
     pub(crate) fn process_config_changes(&mut self, cx: &mut Context<Self>) {
@@ -495,6 +505,7 @@ impl PaneFlowApp {
             self.reconcile_telemetry_consent(&config, cx);
             crate::workspace::worktree::set_worktrees_root(config.worktrees.dir_path());
             self.cached_config = config;
+            crate::config_snapshot::publish(&self.cached_config, cx);
             self.theme_mode = theme_mode;
             crate::ui_primitives::set_reduce_motion(self.cached_config.reduce_motion_enabled());
             self.apply_editor_display(cx);

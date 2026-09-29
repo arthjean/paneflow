@@ -215,22 +215,70 @@ fn linux_command_for_pid(pid: u32) -> Option<String> {
     (!trimmed.is_empty()).then(|| trimmed.to_string())
 }
 
+#[cfg(any(unix, test))]
+fn foreground_pid(
+    root_pid: u32,
+    pids: &[u32],
+    foreground_pgid: Option<u32>,
+    pgid_of: impl Fn(u32) -> Option<u32>,
+) -> u32 {
+    foreground_pgid
+        .filter(|group| *group > 0 && *group <= i32::MAX as u32)
+        .and_then(|group| {
+            pids.iter()
+                .copied()
+                .find(|pid| pgid_of(*pid) == Some(group))
+        })
+        .unwrap_or(root_pid)
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn stat_process_groups(stat: &str) -> Option<(u32, Option<u32>)> {
+    let fields: Vec<&str> = stat[stat.rfind(')')? + 1..].split_whitespace().collect();
+    let pgrp = fields.get(2)?.parse().ok()?;
+    let tpgid = fields
+        .get(5)?
+        .parse::<i64>()
+        .ok()
+        .and_then(|group| u32::try_from(group).ok());
+    Some((pgrp, tpgid))
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn read_growing_list<T>(
+    initial: Option<usize>,
+    mut read: impl FnMut(usize) -> Option<Vec<T>>,
+) -> Option<Vec<T>> {
+    const FALLBACK_CAPACITY: usize = 1024;
+    const MAX_CAPACITY: usize = 1 << 20;
+    let mut capacity = initial
+        .filter(|count| *count > 0)
+        .unwrap_or(FALLBACK_CAPACITY)
+        .min(MAX_CAPACITY);
+    let mut partial = None;
+    loop {
+        let Some(list) = read(capacity) else {
+            return partial;
+        };
+        if list.len() < capacity || capacity >= MAX_CAPACITY {
+            return Some(list);
+        }
+        partial = Some(list);
+        capacity = capacity.saturating_mul(2).min(MAX_CAPACITY);
+    }
+}
+
 #[cfg(target_os = "linux")]
 fn linux_representative_command(root_pid: u32, pids: &[u32]) -> Option<String> {
-    let children_path = format!("/proc/{root_pid}/task/{root_pid}/children");
-    let target = match read_capped(std::path::Path::new(&children_path), 4096) {
-        Ok(content) => content
-            .split_whitespace()
-            .last()
-            .and_then(|pid| pid.parse::<u32>().ok())
-            .unwrap_or(root_pid),
-        Err(_) => pids
-            .iter()
-            .copied()
-            .filter(|pid| *pid != root_pid)
-            .max()
-            .unwrap_or(root_pid),
+    let groups = |pid: u32| {
+        read_capped(std::path::Path::new(&format!("/proc/{pid}/stat")), 4096)
+            .ok()
+            .and_then(|stat| stat_process_groups(&stat))
     };
+    let foreground = groups(root_pid).and_then(|(_, tpgid)| tpgid);
+    let target = foreground_pid(root_pid, pids, foreground, |pid| {
+        groups(pid).map(|(pgrp, _)| pgrp)
+    });
     linux_command_for_pid(target)
 }
 
@@ -412,13 +460,17 @@ fn bfs_descendants_macos(
 
 #[cfg(target_os = "macos")]
 fn listen_ports_of(pid: u32, ports: &mut Vec<u16>) {
+    use libproc::libproc::bsd_info::BSDInfo;
     use libproc::libproc::file_info::{ListFDs, ProcFDType, pidfdinfo};
     use libproc::libproc::net_info::{SocketFDInfo, SocketInfoKind, TcpSIState};
-    use libproc::libproc::proc_pid::listpidinfo;
+    use libproc::libproc::proc_pid::{listpidinfo, pidinfo};
 
-    const MAX_FDS_PER_PROC: usize = 1024;
-
-    let Ok(fds) = listpidinfo::<ListFDs>(pid as i32, MAX_FDS_PER_PROC) else {
+    let open_files = pidinfo::<BSDInfo>(pid as i32, 0)
+        .ok()
+        .map(|info| info.pbi_nfiles as usize);
+    let Some(fds) = read_growing_list(open_files, |capacity| {
+        listpidinfo::<ListFDs>(pid as i32, capacity).ok()
+    }) else {
         return;
     };
 
@@ -450,10 +502,18 @@ fn listen_ports_of(pid: u32, ports: &mut Vec<u16>) {
 }
 
 #[cfg(target_os = "macos")]
-fn macos_representative_command(pids: &[u32]) -> Option<String> {
-    use libproc::libproc::proc_pid::name;
+fn macos_representative_command(root_pid: u32, pids: &[u32]) -> Option<String> {
+    use libproc::libproc::bsd_info::BSDInfo;
+    use libproc::libproc::proc_pid::{name, pidinfo};
 
-    let pid = pids.last().copied()?;
+    const NO_CONTROLLING_TTY: u32 = u32::MAX;
+    let info = |pid: u32| pidinfo::<BSDInfo>(pid as i32, 0).ok();
+    let foreground = info(root_pid)
+        .filter(|root| root.e_tdev != NO_CONTROLLING_TTY)
+        .map(|root| root.e_tpgid);
+    let pid = foreground_pid(root_pid, pids, foreground, |pid| {
+        info(pid).map(|process| process.pbi_pgid)
+    });
     name(pid as i32)
         .ok()
         .map(|name| name.trim().to_string())
@@ -512,7 +572,7 @@ pub fn scan_panes(
             PaneScan {
                 ports,
                 agents,
-                foreground_command: macos_representative_command(&pids),
+                foreground_command: macos_representative_command(root_pid, &pids),
             },
         );
     }
@@ -771,6 +831,59 @@ mod tests {
     fn agents_in_bfs_order_empty_inputs() {
         assert!(agents_in_bfs_order(std::iter::empty(), &["claude"]).is_empty());
         assert!(agents_in_bfs_order(["claude"].into_iter(), &[]).is_empty());
+    }
+
+    #[test]
+    fn the_representative_is_the_foreground_group_not_the_deepest_helper() {
+        let groups =
+            std::collections::HashMap::from([(10u32, 10u32), (20, 20), (30, 30), (31, 30)]);
+        let pgid_of = |pid: u32| groups.get(&pid).copied();
+        let pids = [10, 20, 30, 31];
+        assert_eq!(foreground_pid(10, &pids, Some(30), pgid_of), 30);
+        assert_eq!(
+            foreground_pid(10, &pids, Some(10), pgid_of),
+            10,
+            "an idle shell is named after itself, not its background helper"
+        );
+        assert_eq!(foreground_pid(10, &pids, None, pgid_of), 10);
+        assert_eq!(foreground_pid(10, &pids, Some(0), pgid_of), 10);
+        assert_eq!(foreground_pid(10, &pids, Some(99), pgid_of), 10);
+    }
+
+    #[test]
+    fn stat_process_groups_reads_the_group_and_the_terminal_foreground_group() {
+        let stat = "4242 (my (odd) prog) S 4000 4242 4000 34816 4300 4194304 0 0";
+        assert_eq!(stat_process_groups(stat), Some((4242, Some(4300))));
+        let detached = "7 (daemon) S 1 7 7 0 -1 4194304";
+        assert_eq!(stat_process_groups(detached), Some((7, None)));
+        assert_eq!(stat_process_groups("garbage"), None);
+    }
+
+    #[test]
+    fn a_descriptor_list_past_1024_entries_is_read_in_full() {
+        let open: Vec<u32> = (0..1100).collect();
+        let reads = std::cell::RefCell::new(Vec::new());
+        let read = |capacity: usize| {
+            reads.borrow_mut().push(capacity);
+            Some(open.iter().copied().take(capacity).collect::<Vec<_>>())
+        };
+        let listed = read_growing_list(None, read).unwrap();
+        assert_eq!(listed.len(), 1100, "the listener past 1024 is reached");
+        assert_eq!(*reads.borrow(), vec![1024, 2048]);
+
+        let mut first = true;
+        let flaky = |capacity: usize| {
+            if std::mem::take(&mut first) {
+                Some(open.iter().copied().take(capacity).collect::<Vec<_>>())
+            } else {
+                None
+            }
+        };
+        assert_eq!(
+            read_growing_list(Some(1024), flaky).map(|list| list.len()),
+            Some(1024),
+            "a failed retry keeps what the first read found"
+        );
     }
 
     #[test]

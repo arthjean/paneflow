@@ -15,18 +15,29 @@ fn git_refresh_due(
 }
 
 impl PaneFlowApp {
-    pub(in crate::app) fn watch_git_dir(&mut self, ws: &Workspace) {
-        if let Some(ref git_dir) = ws.git_dir {
-            let current = self.git_watch_counts.get(git_dir).copied().unwrap_or(0);
+    pub(in crate::app) fn rebind_git_dir(
+        &mut self,
+        ws_idx: usize,
+        git_dir: Option<std::path::PathBuf>,
+    ) {
+        if self.workspaces[ws_idx].git_dir == git_dir {
+            return;
+        }
+        if let Some(old) = self.workspaces[ws_idx].git_dir.take() {
+            self.unwatch_git_dir(&old);
+        }
+        if let Some(dir) = &git_dir {
+            let current = self.git_watch_counts.get(dir).copied().unwrap_or(0);
             if current == 0
                 && let Some(ref mut watcher) = self.git_watcher
-                && let Err(e) = watcher.watch(git_dir, notify::RecursiveMode::NonRecursive)
+                && let Err(e) = watcher.watch(dir, notify::RecursiveMode::NonRecursive)
             {
-                log::warn!("git watcher: failed to watch {}: {e}", git_dir.display());
-                return;
+                log::warn!("git watcher: failed to watch {}: {e}", dir.display());
+            } else {
+                *self.git_watch_counts.entry(dir.clone()).or_insert(0) += 1;
             }
-            *self.git_watch_counts.entry(git_dir.clone()).or_insert(0) += 1;
         }
+        self.workspaces[ws_idx].git_dir = git_dir;
     }
 
     pub(in crate::app) fn unwatch_git_dir(&mut self, git_dir: &std::path::Path) {

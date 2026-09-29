@@ -9,22 +9,8 @@ use crate::pane::Pane;
 
 use super::tree::{LayoutChild, LayoutTree, SplitDirection};
 
-#[derive(Clone, Copy)]
-enum ScrollbackCapture {
-    Inline,
-    Omit,
-}
-
 impl LayoutTree {
-    pub fn serialize(&self, cx: &App) -> LayoutNode {
-        self.serialize_with(cx, ScrollbackCapture::Inline)
-    }
-
     pub fn serialize_without_scrollback(&self, cx: &App) -> LayoutNode {
-        self.serialize_with(cx, ScrollbackCapture::Omit)
-    }
-
-    fn serialize_with(&self, cx: &App, capture: ScrollbackCapture) -> LayoutNode {
         match self {
             LayoutTree::Leaf(pane) => {
                 let pane_ref = pane.read(cx);
@@ -44,10 +30,6 @@ impl LayoutTree {
                             let cwd = tv_ref.terminal.current_cwd.clone().or_else(|| {
                                 tv_ref.terminal.cwd_now().map(|p| p.display().to_string())
                             });
-                            let scrollback = match capture {
-                                ScrollbackCapture::Inline => tv_ref.terminal.extract_scrollback(),
-                                ScrollbackCapture::Omit => None,
-                            };
                             SurfaceDefinition {
                                 surface_type: Some("terminal".to_string()),
                                 name,
@@ -58,7 +40,7 @@ impl LayoutTree {
                                 path: None,
                                 env: None,
                                 focus: Some(index == active),
-                                scrollback,
+                                scrollback: None,
                                 agent: tv_ref.terminal.detected_agent.map(|a| a.tag().to_string()),
                                 font_size: tv_ref.terminal.font_size_override,
                                 session: Some(tv_ref.terminal.session_id.clone()),
@@ -98,7 +80,7 @@ impl LayoutTree {
                 let ratios: Vec<f64> = children.iter().map(|c| c.ratio.get() as f64).collect();
                 let mut child_nodes: Vec<LayoutNode> = Vec::with_capacity(children.len());
                 for c in children.iter() {
-                    child_nodes.push(c.node.serialize_with(cx, capture));
+                    child_nodes.push(c.node.serialize_without_scrollback(cx));
                 }
                 LayoutNode::Split {
                     direction: dir_str.to_string(),
@@ -212,7 +194,10 @@ mod tests {
         let nodes: Vec<LayoutNode> = cx.update(|_, cx| {
             ws.tabs()
                 .iter()
-                .map(|tab| tab.serialize(cx).expect("every tab has a layout"))
+                .map(|tab| {
+                    tab.serialize_without_scrollback(cx)
+                        .expect("every tab has a layout")
+                })
                 .collect()
         });
         assert_eq!(nodes.len(), 2, "one LayoutNode per tab");
@@ -238,7 +223,9 @@ mod tests {
         ws.set_active_tab(1);
         assert!(ws.is_zoomed(), "the zoomed tab is still zoomed");
         assert_eq!(
-            cx.update(|_, cx| ws.serialize_layout(cx).map(|n| pane_leaf_count(&n))),
+            cx.update(|_, cx| ws
+                .serialize_layout_without_scrollback(cx)
+                .map(|n| pane_leaf_count(&n))),
             Some(2)
         );
     }

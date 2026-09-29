@@ -353,6 +353,44 @@ pub struct CopyModeCursorState {
     pub anchor_col: usize,
 }
 
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ScrollbackWindow {
+    pub lines: Vec<String>,
+    pub total_lines: usize,
+    pub eof: bool,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ScrollbackMatches {
+    pub matches: Vec<(i32, String)>,
+    pub truncated: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum TerminalQueryError {
+    Unavailable,
+    Busy,
+    TimedOut(std::time::Duration),
+    Failed(String),
+    Superseded,
+}
+
+impl std::fmt::Display for TerminalQueryError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Unavailable => f.write_str("the terminal runtime is not accepting requests"),
+            Self::Busy => f.write_str("the terminal runtime request queue is full"),
+            Self::TimedOut(timeout) => write!(
+                f,
+                "the terminal runtime did not answer within {} ms",
+                timeout.as_millis()
+            ),
+            Self::Failed(reason) => write!(f, "the terminal runtime failed: {reason}"),
+            Self::Superseded => f.write_str("the search was superseded by a newer search"),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

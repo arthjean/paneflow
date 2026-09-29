@@ -37,6 +37,22 @@ pub(super) fn pane_spec_requires_orchestration(spec: &serde_json::Value) -> bool
         || env_param_has_strings(spec.get("env"))
 }
 
+fn surface_requires_orchestration(surface: &paneflow_config::schema::SurfaceDefinition) -> bool {
+    let non_empty = |value: &Option<String>| value.as_deref().is_some_and(|text| !text.is_empty());
+    surface.env.as_ref().is_some_and(|env| !env.is_empty())
+        || surface.session.is_some()
+        || non_empty(&surface.scrollback)
+        || non_empty(&surface.command)
+        || non_empty(&surface.prompt)
+}
+
+pub(super) fn layout_requires_orchestration(node: &LayoutNode) -> bool {
+    match node {
+        LayoutNode::Pane { surfaces } => surfaces.iter().any(surface_requires_orchestration),
+        LayoutNode::Split { children, .. } => children.iter().any(layout_requires_orchestration),
+    }
+}
+
 pub(super) fn orchestration_disabled_error(method: &str) -> JsonRpcError {
     JsonRpcError::method_not_enabled(format!(
         "{method} orchestration disabled; set PANEFLOW_IPC_ORCHESTRATION=1 \
@@ -46,6 +62,38 @@ pub(super) fn orchestration_disabled_error(method: &str) -> JsonRpcError {
 
 pub(super) fn send_text_gate_open(scripting_enabled: bool, unrestricted: bool) -> bool {
     scripting_enabled || unrestricted
+}
+
+pub(super) fn capabilities_value(scripting: bool, orchestration: bool) -> serde_json::Value {
+    let mut methods = vec![
+        "system.ping",
+        "system.capabilities",
+        "system.identify",
+        "workspace.list",
+        "workspace.create",
+        "workspace.select",
+        "workspace.close",
+        "workspace.current",
+        "workspace.restore_layout",
+        "workspace.up",
+        "surface.list",
+        "surface.read",
+        "surface.search",
+        "surface.rename",
+        "surface.send_text",
+        "surface.send_keystroke",
+        "surface.split",
+        "surface.focus",
+        "surface.status",
+        "fleet.list",
+        "events.subscribe",
+    ];
+    methods.extend_from_slice(paneflow_ipc_client::ai_hook::METHODS);
+    serde_json::json!({
+        "scripting": scripting,
+        "orchestration": orchestration,
+        "methods": methods,
+    })
 }
 
 #[cfg(test)]
@@ -87,6 +135,15 @@ mod tests {
     }
 
     #[test]
+    fn capabilities_report_scripting_opened_by_free_access() {
+        let caps = capabilities_value(send_text_gate_open(false, true), false);
+        assert_eq!(caps["scripting"], true);
+        assert_eq!(caps["orchestration"], false);
+        let closed = capabilities_value(send_text_gate_open(false, false), false);
+        assert_eq!(closed["scripting"], false);
+    }
+
+    #[test]
     fn send_text_gate_opens_for_env_or_free_access() {
         assert!(
             !super::send_text_gate_open(false, false),
@@ -109,6 +166,36 @@ mod tests {
         assert!(!super::orchestration_enabled_from(Some("0"), Some("0")));
         assert!(super::orchestration_enabled_from(Some("1"), None));
         assert!(super::orchestration_enabled_from(None, Some("1")));
+    }
+
+    #[test]
+    fn layout_surfaces_with_spawn_or_attach_fields_require_orchestration() {
+        let layout = |surface: serde_json::Value| -> LayoutNode {
+            serde_json::from_value(serde_json::json!({
+                "type": "split",
+                "direction": "vertical",
+                "children": [
+                    {"type": "pane", "surfaces": [{"cwd": "."}]},
+                    {"type": "pane", "surfaces": [surface]}
+                ]
+            }))
+            .expect("valid layout")
+        };
+        assert!(!super::layout_requires_orchestration(&layout(
+            serde_json::json!({"cwd": "/tmp", "name": "logs"})
+        )));
+        for gated in [
+            serde_json::json!({"env": {"PROMPT_COMMAND": "date"}}),
+            serde_json::json!({"session": "123e4567-e89b-42d3-a456-426614174000"}),
+            serde_json::json!({"scrollback": "forged history"}),
+            serde_json::json!({"command": "make"}),
+            serde_json::json!({"prompt": "do it"}),
+        ] {
+            assert!(
+                super::layout_requires_orchestration(&layout(gated.clone())),
+                "{gated}"
+            );
+        }
     }
 
     #[test]

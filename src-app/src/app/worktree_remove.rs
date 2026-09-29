@@ -428,7 +428,7 @@ impl PaneFlowApp {
             if let WorktreeBlocker::Workspace { id, .. } = blocker
                 && let Some(idx) = self.workspaces.iter().position(|ws| ws.id == *id)
             {
-                self.remove_workspace(idx, window, cx);
+                self.remove_workspace(idx, Some(window), cx);
             }
         }
         let open_workspaces = self

@@ -10,6 +10,50 @@ pub fn next_tab_id() -> u64 {
     NEXT_TAB_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
 }
 
+pub const CONFINE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SpawnCwd {
+    pub cwd: Option<std::path::PathBuf>,
+    pub confine_to: Option<std::path::PathBuf>,
+    pub fallback: Option<std::path::PathBuf>,
+}
+
+impl SpawnCwd {
+    pub fn needs_resolving(&self) -> bool {
+        self.confine_to.is_some() || self.fallback.is_some()
+    }
+
+    pub fn resolve(self, timeout: std::time::Duration) -> Option<std::path::PathBuf> {
+        self.resolve_with(timeout, is_inside_checkout, std::path::Path::is_dir)
+    }
+
+    fn resolve_with(
+        self,
+        timeout: std::time::Duration,
+        inside: fn(&std::path::Path, &std::path::Path) -> bool,
+        is_dir: fn(&std::path::Path) -> bool,
+    ) -> Option<std::path::PathBuf> {
+        match (self.cwd, self.confine_to, self.fallback) {
+            (None, Some(worktree), _) => Some(worktree),
+            (Some(cwd), Some(worktree), _) => {
+                let root = worktree.clone();
+                let kept = crate::fs_probe::run_bounded(timeout, move || {
+                    inside(&cwd, &root).then_some(cwd)
+                });
+                Some(kept.flatten().unwrap_or(worktree))
+            }
+            (Some(cwd), None, Some(fallback)) => {
+                let kept =
+                    crate::fs_probe::run_bounded(timeout, move || is_dir(&cwd).then_some(cwd));
+                Some(kept.flatten().unwrap_or(fallback))
+            }
+            (None, None, fallback) => fallback,
+            (cwd, None, None) => cwd,
+        }
+    }
+}
+
 fn is_inside_checkout(cwd: &std::path::Path, checkout: &std::path::Path) -> bool {
     if cwd
         .components()
@@ -77,13 +121,17 @@ impl Tab {
         true
     }
 
-    pub fn confine_cwd(&self, inherited: Option<std::path::PathBuf>) -> Option<std::path::PathBuf> {
-        let Some(worktree) = self.worktree.as_ref() else {
-            return inherited;
-        };
-        match inherited {
-            Some(cwd) if is_inside_checkout(&cwd, worktree) => Some(cwd),
-            _ => Some(worktree.clone()),
+    pub fn spawn_cwd(&self, inherited: Option<std::path::PathBuf>) -> SpawnCwd {
+        match &self.worktree {
+            None => SpawnCwd {
+                cwd: inherited,
+                ..SpawnCwd::default()
+            },
+            Some(worktree) => SpawnCwd {
+                cwd: Some(inherited.unwrap_or_else(|| worktree.clone())),
+                confine_to: Some(worktree.clone()),
+                fallback: None,
+            },
         }
     }
 
@@ -143,8 +191,23 @@ impl Tab {
         zoomed_pane
     }
 
+    pub fn reveal_pane(&mut self, pane: &Entity<Pane>, cx: &mut App) -> bool {
+        let hidden = self.is_zoomed()
+            && !self
+                .root
+                .as_ref()
+                .is_some_and(|root| root.contains_leaf(pane));
+        if hidden {
+            self.exit_zoom(cx);
+        }
+        hidden
+    }
+
     pub fn pane_count(&self) -> usize {
-        self.root.as_ref().map_or(0, |r| r.leaf_count())
+        self.saved_layout
+            .as_ref()
+            .or(self.root.as_ref())
+            .map_or(0, |r| r.leaf_count())
     }
 
     pub fn can_add_pane(&self) -> bool {
@@ -204,11 +267,6 @@ impl Tab {
         if let Some(root) = &self.root {
             root.focus_first(window, cx);
         }
-    }
-
-    pub fn serialize(&self, cx: &App) -> Option<LayoutNode> {
-        let tree = self.saved_layout.as_ref().or(self.root.as_ref())?;
-        Some(tree.serialize(cx))
     }
 
     pub fn serialize_without_scrollback(&self, cx: &App) -> Option<LayoutNode> {
@@ -409,12 +467,84 @@ mod tests {
         assert!(Tab::restored("sprint 3", TabTitleSource::User, None, None).title_is_user_owned());
     }
 
+    fn resolved(tab: &Tab, cwd: Option<std::path::PathBuf>) -> Option<std::path::PathBuf> {
+        tab.spawn_cwd(cwd).resolve(CONFINE_TIMEOUT)
+    }
+
+    #[test]
+    fn a_confinement_that_cannot_resolve_in_time_falls_back_to_the_worktree() {
+        let spawn = SpawnCwd {
+            cwd: Some(std::path::PathBuf::from("/mnt/dead/wt/src")),
+            confine_to: Some(std::path::PathBuf::from("/mnt/dead/wt")),
+            fallback: None,
+        };
+        let started = std::time::Instant::now();
+        let cwd = spawn.resolve_with(
+            std::time::Duration::from_millis(50),
+            |_, _| {
+                std::thread::sleep(std::time::Duration::from_secs(30));
+                true
+            },
+            std::path::Path::is_dir,
+        );
+        assert_eq!(cwd, Some(std::path::PathBuf::from("/mnt/dead/wt")));
+        assert!(started.elapsed() < std::time::Duration::from_secs(2));
+    }
+
+    #[test]
+    fn a_bound_tab_hands_its_confinement_to_the_spawn_instead_of_resolving_it() {
+        let tab = Tab::restored(
+            "wt",
+            TabTitleSource::Preset,
+            None,
+            Some(std::path::PathBuf::from("/nowhere/wt")),
+        );
+        assert_eq!(
+            tab.spawn_cwd(Some(std::path::PathBuf::from("/elsewhere"))),
+            SpawnCwd {
+                cwd: Some(std::path::PathBuf::from("/elsewhere")),
+                confine_to: Some(std::path::PathBuf::from("/nowhere/wt")),
+                fallback: None,
+            }
+        );
+    }
+
+    #[test]
+    fn a_missing_restored_cwd_falls_back_off_the_render_thread() {
+        let tmp = tempfile::tempdir().unwrap();
+        let fallback = tmp.path().join("workspace");
+        std::fs::create_dir_all(&fallback).unwrap();
+        let spawn = |cwd: std::path::PathBuf| SpawnCwd {
+            cwd: Some(cwd),
+            confine_to: None,
+            fallback: Some(fallback.clone()),
+        };
+        assert_eq!(
+            spawn(tmp.path().join("missing")).resolve(CONFINE_TIMEOUT),
+            Some(fallback.clone()),
+            "a surface cwd that is gone falls back to the workspace folder"
+        );
+        assert_eq!(
+            spawn(tmp.path().to_path_buf()).resolve(CONFINE_TIMEOUT),
+            Some(tmp.path().to_path_buf())
+        );
+        let stuck = spawn(tmp.path().to_path_buf()).resolve_with(
+            std::time::Duration::from_millis(50),
+            |_, _| true,
+            |_| {
+                std::thread::sleep(std::time::Duration::from_secs(30));
+                true
+            },
+        );
+        assert_eq!(stuck, Some(fallback));
+    }
+
     #[test]
     fn an_unbound_tab_inherits_whatever_it_was_given() {
         let tab = Tab::new("free", None);
         let inherited = std::path::PathBuf::from("/anywhere/at/all");
-        assert_eq!(tab.confine_cwd(Some(inherited.clone())), Some(inherited));
-        assert_eq!(tab.confine_cwd(None), None);
+        assert_eq!(resolved(&tab, Some(inherited.clone())), Some(inherited));
+        assert_eq!(resolved(&tab, None), None);
     }
 
     #[test]
@@ -434,26 +564,26 @@ mod tests {
         );
 
         let inside = worktree.join("src").join("auth");
-        assert_eq!(tab.confine_cwd(Some(inside.clone())), Some(inside));
+        assert_eq!(resolved(&tab, Some(inside.clone())), Some(inside));
 
-        assert_eq!(tab.confine_cwd(Some(repo)), Some(worktree.clone()));
+        assert_eq!(resolved(&tab, Some(repo)), Some(worktree.clone()));
         assert_eq!(
-            tab.confine_cwd(Some(sibling)),
+            resolved(&tab, Some(sibling)),
             Some(worktree.clone()),
             "a sibling worktree is outside, however similar its path looks"
         );
         assert_eq!(
-            tab.confine_cwd(Some(worktree.join("..").join("feat-billing"))),
+            resolved(&tab, Some(worktree.join("..").join("feat-billing"))),
             Some(worktree.clone()),
             "a path that climbs out with .. is refused"
         );
         assert_eq!(
-            tab.confine_cwd(Some(worktree.join("src").join("missing"))),
+            resolved(&tab, Some(worktree.join("src").join("missing"))),
             Some(worktree.clone()),
             "a path that cannot be resolved is not trusted"
         );
 
-        assert_eq!(tab.confine_cwd(None), Some(worktree));
+        assert_eq!(resolved(&tab, None), Some(worktree));
     }
 
     #[test]
@@ -473,7 +603,7 @@ mod tests {
         }
         let tab = Tab::restored("wt", TabTitleSource::Preset, None, Some(worktree.clone()));
 
-        assert_eq!(tab.confine_cwd(Some(escape)), Some(worktree));
+        assert_eq!(resolved(&tab, Some(escape)), Some(worktree));
     }
 
     #[test]

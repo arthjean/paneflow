@@ -281,14 +281,20 @@ pub(super) fn parse_service_line(line: &str) -> Option<ServiceInfo> {
 
 #[cfg(test)]
 fn is_loopback_url(url: &str) -> bool {
-    normalize_loopback_url(url, 0).is_some()
+    split_http_url(url).is_some_and(|parts| is_loopback_host(parts.host))
 }
 
-fn normalize_loopback_url(url: &str, port: u16) -> Option<String> {
+struct HttpUrlParts<'a> {
+    scheme: &'a str,
+    host: &'a str,
+    port_tail: &'a str,
+    suffix: &'a str,
+}
+
+fn split_http_url(url: &str) -> Option<HttpUrlParts<'_>> {
     let rest = url
         .strip_prefix("http://")
-        .or_else(|| url.strip_prefix("https://"));
-    let rest = rest?;
+        .or_else(|| url.strip_prefix("https://"))?;
     let scheme = if url.starts_with("https://") {
         "https"
     } else {
@@ -299,37 +305,64 @@ fn normalize_loopback_url(url: &str, port: u16) -> Option<String> {
     if authority.is_empty() || authority.contains('@') {
         return None;
     }
-    let suffix = &rest[authority_end..];
-
-    let (host, host_tail) = if authority.starts_with('[') {
+    let (host, port_tail) = if authority.starts_with('[') {
         let close = authority.find(']')?;
         (&authority[..=close], &authority[close + 1..])
     } else {
         let host_end = authority.find(':').unwrap_or(authority.len());
         (&authority[..host_end], &authority[host_end..])
     };
+    Some(HttpUrlParts {
+        scheme,
+        host,
+        port_tail,
+        suffix: &rest[authority_end..],
+    })
+}
 
-    if !is_loopback_host(host) {
+fn normalize_loopback_url(url: &str, port: u16) -> Option<String> {
+    let HttpUrlParts {
+        scheme,
+        host,
+        port_tail,
+        suffix,
+    } = split_http_url(url)?;
+    if !is_loopback_host(host) || explicit_port(port_tail)? != port {
         return None;
     }
     if host == "0.0.0.0" {
-        let tail = if host_tail.is_empty() {
-            format!(":{port}")
-        } else {
-            host_tail.to_string()
-        };
-        return Some(format!("{scheme}://localhost{tail}{suffix}"));
+        return Some(format!("{scheme}://localhost{port_tail}{suffix}"));
     }
     Some(url.to_string())
+}
+
+fn explicit_port(port_tail: &str) -> Option<u16> {
+    let digits = port_tail.strip_prefix(':')?;
+    if digits.is_empty() || !digits.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    digits.parse().ok()
 }
 
 fn is_loopback_host(host: &str) -> bool {
     host.eq_ignore_ascii_case("localhost")
         || host == "0.0.0.0"
         || host == "[::1]"
-        || host
-            .strip_prefix("127.")
-            .is_some_and(|tail| tail.split('.').all(|seg| seg.parse::<u8>().is_ok()))
+        || is_dotted_loopback(host)
+}
+
+fn is_dotted_loopback(host: &str) -> bool {
+    let mut labels = host.split('.');
+    if labels.next() != Some("127") {
+        return false;
+    }
+    let octets: Vec<&str> = labels.collect();
+    (1..=3).contains(&octets.len())
+        && octets.iter().all(|octet| {
+            !octet.is_empty()
+                && octet.bytes().all(|byte| byte.is_ascii_digit())
+                && octet.parse::<u8>().is_ok()
+        })
 }
 
 fn extract_local_port(line: &str) -> Option<u16> {
@@ -577,6 +610,17 @@ mod tests {
     }
 
     #[test]
+    fn a_chip_opens_the_detected_port_on_a_real_loopback_host() {
+        let other_port = parse_service_line("localhost:3000 http://127.0.0.1:3001/").unwrap();
+        assert_eq!(other_port.port, 3000);
+        assert_eq!(other_port.url.as_deref(), Some("http://localhost:3000"));
+        let lookalike = parse_service_line("localhost:5173 http://127.0.0.1.2/phish").unwrap();
+        assert_eq!(lookalike.url.as_deref(), Some("http://localhost:5173"));
+        let unspecified = parse_service_line("localhost:3000 http://0.0.0.0:3001/app").unwrap();
+        assert_eq!(unspecified.url.as_deref(), Some("http://localhost:3000"));
+    }
+
+    #[test]
     fn is_loopback_url_host_classes() {
         assert!(is_loopback_url("http://localhost:3000"));
         assert!(is_loopback_url("http://LOCALHOST:3000/x"));
@@ -588,6 +632,9 @@ mod tests {
         assert!(!is_loopback_url("http://localhost.evil.example:3000"));
         assert!(!is_loopback_url("http://localhost:3000@evil.example"));
         assert!(!is_loopback_url("http://127.evil.example/"));
+        assert!(!is_loopback_url("http://127/"));
+        assert!(!is_loopback_url("http://127./"));
+        assert!(!is_loopback_url("http://127.0.0.1.2/"));
         assert!(!is_loopback_url("file:///etc/passwd"));
         assert!(!is_loopback_url("http://192.168.1.10:3000"));
     }

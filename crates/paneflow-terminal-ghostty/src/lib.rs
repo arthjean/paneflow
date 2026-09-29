@@ -52,6 +52,7 @@ native_modules!(
     style,
     sys,
     terminal_ops,
+    text_query,
 );
 
 #[cfg(ghostty_native)]
@@ -89,6 +90,8 @@ pub use snapshot_codec::{SnapshotDecoder, SnapshotRestore};
 pub use sys::{DecodedImage, PngDecoder, set_png_decoder};
 #[cfg(ghostty_native)]
 pub use terminal_ops::{ClipboardLocation, PasteRepresentation};
+#[cfg(ghostty_native)]
+pub use text_query::{RowMatches, RowSearch, RowWindow};
 
 #[cfg(ghostty_native)]
 pub const GHOSTTY_APP_VERSION: &str = paneflow_libghostty_sys::GHOSTTY_APP_VERSION;

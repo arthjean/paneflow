@@ -21,21 +21,53 @@ pub fn paginate_scrollback(
     (window.join("\n"), window.len(), total, start == 0)
 }
 
+const MATCH_ENVELOPE_BYTES: usize = r#"{"line":-2147483648,"text":""},"#.len();
+
+fn json_escaped_char_len(character: char) -> usize {
+    match character {
+        '"' | '\\' | '\n' | '\r' | '\t' | '\u{8}' | '\u{c}' => 2,
+        control if u32::from(control) < 0x20 => 6,
+        other => other.len_utf8(),
+    }
+}
+
+pub fn json_escaped_len(text: &str) -> usize {
+    text.chars().map(json_escaped_char_len).sum()
+}
+
 pub fn truncate_ipc_text(text: String) -> (String, bool) {
-    if text.len() <= MAX_IPC_TEXT_BYTES {
+    if json_escaped_len(&text) <= MAX_IPC_TEXT_BYTES {
         return (text, false);
     }
 
-    let keep = MAX_IPC_TEXT_BYTES.saturating_sub(TRUNCATION_MARKER.len());
-    let mut boundary = keep.min(text.len());
-    while boundary > 0 && !text.is_char_boundary(boundary) {
-        boundary -= 1;
+    let budget = MAX_IPC_TEXT_BYTES.saturating_sub(json_escaped_len(TRUNCATION_MARKER));
+    let mut used = 0usize;
+    let mut boundary = 0usize;
+    for (index, character) in text.char_indices() {
+        used += json_escaped_char_len(character);
+        if used > budget {
+            break;
+        }
+        boundary = index + character.len_utf8();
     }
 
     let mut out = text;
     out.truncate(boundary);
     out.push_str(TRUNCATION_MARKER);
     (out, true)
+}
+
+pub fn fit_matches_to_ipc_frame(matches: Vec<(i32, String)>) -> (Vec<(i32, String)>, bool) {
+    let mut used = 0usize;
+    let mut kept = Vec::with_capacity(matches.len());
+    for (line, text) in matches {
+        used += MATCH_ENVELOPE_BYTES + json_escaped_len(&text);
+        if used > MAX_IPC_TEXT_BYTES {
+            return (kept, true);
+        }
+        kept.push((line, text));
+    }
+    (kept, false)
 }
 
 fn fence_id() -> String {
@@ -46,7 +78,7 @@ fn fence_id() -> String {
     format!("{n:016x}")
 }
 
-fn neutralize_sentinel(body: &str) -> String {
+pub fn neutralize_untrusted(body: &str) -> String {
     body.replace(
         "</untrusted_terminal_output",
         "<\u{200b}/untrusted_terminal_output",
@@ -55,7 +87,7 @@ fn neutralize_sentinel(body: &str) -> String {
 
 pub fn wrap_untrusted(header_attrs: &str, body: &str) -> String {
     let id = fence_id();
-    let body = neutralize_sentinel(body);
+    let body = neutralize_untrusted(body);
     format!(
         "<untrusted_terminal_output {header_attrs} id=\"{id}\">\n{body}\n</untrusted_terminal_output id=\"{id}\">"
     )
@@ -114,6 +146,46 @@ mod tests {
         let (kept, truncated) = truncate_ipc_text("short".to_string());
         assert!(!truncated);
         assert_eq!(kept, "short");
+    }
+
+    #[test]
+    fn the_text_budget_counts_json_escapes() {
+        let hostile = "\"\\".repeat(MAX_IPC_TEXT_BYTES / 2);
+        assert_eq!(hostile.len(), MAX_IPC_TEXT_BYTES);
+
+        let (kept, truncated) = truncate_ipc_text(hostile);
+
+        assert!(truncated);
+        let serialized = serde_json::to_string(&kept).expect("serialize");
+        assert!(
+            serialized.len() <= MAX_IPC_TEXT_BYTES + 2,
+            "escaped text is {} bytes",
+            serialized.len()
+        );
+        assert!(kept.ends_with(TRUNCATION_MARKER));
+    }
+
+    #[test]
+    fn matches_are_dropped_once_their_serialized_size_leaves_the_frame() {
+        let row = "\"".repeat(1_000);
+        let matches: Vec<(i32, String)> = (0..400).map(|line| (-line, row.clone())).collect();
+
+        let (kept, truncated) = fit_matches_to_ipc_frame(matches);
+
+        assert!(truncated);
+        assert!(!kept.is_empty());
+        let serialized = serde_json::to_string(
+            &kept
+                .iter()
+                .map(|(line, text)| serde_json::json!({"line": line, "text": text}))
+                .collect::<Vec<_>>(),
+        )
+        .expect("serialize");
+        assert!(serialized.len() <= MAX_IPC_TEXT_BYTES);
+
+        let (all, truncated) = fit_matches_to_ipc_frame(vec![(0, "short".to_owned())]);
+        assert_eq!(all.len(), 1);
+        assert!(!truncated);
     }
 
     #[test]

@@ -130,7 +130,7 @@ impl PendingTerminalInput {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum BackendInputResult {
+pub(crate) enum BackendInputResult {
     Accepted,
     Rejected,
 }
@@ -734,30 +734,48 @@ impl TerminalState {
     }
 
     fn detect_services_in_lines(&mut self, lines: &[String]) -> Vec<ServiceInfo> {
-        let all_text = lines.join(" ");
-        let (global_label, global_is_frontend) = detect_framework(&all_text);
+        let parsed: Vec<Option<ServiceInfo>> =
+            lines.iter().map(|line| parse_service_line(line)).collect();
+        let mut ports = parsed.iter().flatten().map(|info| info.port);
+        let first_port = ports.next();
+        let single_port = ports.all(|port| Some(port) == first_port);
+        let (global_label, global_is_frontend) = if single_port {
+            detect_framework(&lines.join(" "))
+        } else {
+            (None, false)
+        };
 
         let mut results = Vec::new();
-        for line in lines {
-            if let Some(mut info) = parse_service_line(line)
-                && !self.reported_ports.contains(&info.port)
-            {
-                if info.label.is_none() {
-                    info.label = global_label.clone();
-                    info.is_frontend = global_is_frontend;
+        let mut preceding: (Option<String>, bool) = (None, false);
+        for (line, parsed) in lines.iter().zip(parsed) {
+            let Some(mut info) = parsed else {
+                let framework = detect_framework(line);
+                if framework.0.is_some() {
+                    preceding = framework;
                 }
-                self.reported_ports.insert(info.port);
-                results.push(info);
+                continue;
+            };
+            let (borrowed, borrowed_frontend) = std::mem::take(&mut preceding);
+            if self.reported_ports.contains(&info.port) {
+                continue;
             }
+            if info.label.is_none() {
+                (info.label, info.is_frontend) = match borrowed {
+                    Some(label) => (Some(label), borrowed_frontend),
+                    None => (global_label.clone(), global_is_frontend),
+                };
+            }
+            self.reported_ports.insert(info.port);
+            results.push(info);
         }
 
         results
     }
 
-    pub fn write_to_pty(&self, input: impl Into<Cow<'static, [u8]>>) {
+    pub fn write_to_pty(&self, input: impl Into<Cow<'static, [u8]>>) -> BackendInputResult {
         self.keyboard_input_sent
             .store(true, std::sync::atomic::Ordering::Relaxed);
-        self.notify_or_buffer(input.into());
+        self.notify_or_buffer(input.into())
     }
 
     pub(super) fn set_terminal_focused(&mut self, focused: bool) {
@@ -855,11 +873,11 @@ impl TerminalState {
         )
     }
 
-    fn notify_or_buffer(&self, input: Cow<'static, [u8]>) {
+    fn notify_or_buffer(&self, input: Cow<'static, [u8]>) -> BackendInputResult {
         if input.is_empty() {
-            return;
+            return BackendInputResult::Rejected;
         }
-        self.dispatch_ghostty_input(PendingTerminalInput::Raw(input), false);
+        self.dispatch_ghostty_input(PendingTerminalInput::Raw(input), false)
     }
 
     pub fn bind_runtime(&self, runtime_id: Option<&'static str>) {
@@ -870,29 +888,13 @@ impl TerminalState {
         self.exited.is_some()
     }
 
+    #[cfg(test)]
     pub fn extract_scrollback(&self) -> Option<String> {
         self.ghostty.extract_scrollback()
     }
 
-    pub fn screen_text(&self) -> Option<String> {
-        let text = self.ghostty.screen_text()?;
-        let trimmed = text.trim_end_matches(['\n', ' ']);
-        (!trimmed.is_empty()).then(|| trimmed.to_owned())
-    }
-
     pub fn foreground_command(&self) -> Option<String> {
         self.cached_foreground_command.clone()
-    }
-
-    pub fn search_scrollback(
-        &self,
-        pattern: &str,
-        max_matches: usize,
-    ) -> (Vec<(i32, String)>, bool) {
-        if pattern.is_empty() || max_matches == 0 {
-            return (Vec::new(), false);
-        }
-        self.ghostty.search_scrollback(pattern, max_matches)
     }
 
     pub fn retain_reported_ports(&mut self, live: &[u16]) {
@@ -1213,6 +1215,26 @@ mod tests {
     }
 
     #[test]
+    fn a_service_chip_never_borrows_the_label_of_another_port() {
+        let mut state = TerminalState::new_display_only(24, 80);
+
+        let services = state.detect_services_in_lines(&[
+            "▲ Next.js 16.1.6".to_string(),
+            "- Local: http://localhost:3000".to_string(),
+            "api listening on http://localhost:8080".to_string(),
+        ]);
+
+        assert_eq!(services.len(), 2);
+        assert_eq!(services[0].label.as_deref(), Some("Next.js"));
+        assert_eq!(services[1].port, 8080);
+        assert_eq!(
+            services[1].label, None,
+            "8080 is not the Next.js server printed above 3000"
+        );
+        assert!(!services[1].is_frontend);
+    }
+
+    #[test]
     fn scan_output_dedups_until_port_leaves_live_set() {
         let mut state = TerminalState::new_display_only(24, 80);
         let lines = ["Vite ready at http://localhost:5173".to_string()];
@@ -1244,21 +1266,70 @@ mod tests {
         );
     }
 
+    const QUERY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
     #[test]
-    fn search_scrollback_returns_unique_lines_and_preserves_cap() {
+    fn search_rows_returns_unique_lines_and_reports_only_real_overflow() {
         let state = TerminalState::new_display_only(5, 80);
-        state.write_output(b"first needle needle\nsecond needle\nthird needle\nwithout marker");
+        state.write_output(
+            b"first needle needle\r\nsecond needle\r\nthird needle\r\nwithout marker",
+        );
+        let backend = state.session_backend();
 
-        let (limited, hit_cap) = state.search_scrollback("needle", 2);
-        assert_eq!(limited.len(), 2);
-        assert!(hit_cap);
-        assert!(limited[0].1.contains("first needle needle"));
-        assert!(limited[1].1.contains("second needle"));
+        let limited = backend
+            .search_rows("needle", 2, QUERY_TIMEOUT)
+            .expect("search answers");
+        assert_eq!(limited.matches.len(), 2);
+        assert!(limited.truncated);
+        assert_eq!(limited.matches[0].1, "first needle needle");
+        assert_eq!(limited.matches[1].1, "second needle");
 
-        let (all, hit_cap) = state.search_scrollback("needle", 8);
-        assert_eq!(all.len(), 3);
-        assert!(!hit_cap);
-        assert!(all[2].1.contains("third needle"));
+        let exact = backend
+            .search_rows("needle", 3, QUERY_TIMEOUT)
+            .expect("search answers");
+        assert_eq!(exact.matches.len(), 3);
+        assert!(
+            !exact.truncated,
+            "exactly max_matches hits is not a truncated result"
+        );
+        assert_eq!(exact.matches[2].1, "third needle");
+    }
+
+    #[test]
+    fn read_rows_returns_the_requested_window_only() {
+        let state = TerminalState::new_display_only(5, 80);
+        let output: String = (0..40).map(|index| format!("row {index}\r\n")).collect();
+        state.write_output(output.as_bytes());
+
+        let window = state
+            .session_backend()
+            .read_rows(4, 10, QUERY_TIMEOUT)
+            .expect("read answers");
+
+        assert_eq!(window.total_lines, 40);
+        assert_eq!(window.lines, vec!["row 26", "row 27", "row 28", "row 29"]);
+        assert!(!window.eof);
+    }
+
+    #[test]
+    fn runtime_queries_report_a_stalled_runtime_as_a_timeout() {
+        let state = TerminalState::new_display_only(5, 80);
+        let backend = state.session_backend();
+        backend.stall_runtime_for_test(std::time::Duration::from_millis(600));
+        let timeout = std::time::Duration::from_millis(100);
+
+        assert_eq!(
+            backend.read_rows(10, 0, timeout),
+            Err(crate::terminal::types::TerminalQueryError::TimedOut(
+                timeout
+            ))
+        );
+        assert_eq!(
+            backend.search_rows("row", 10, timeout),
+            Err(crate::terminal::types::TerminalQueryError::TimedOut(
+                timeout
+            ))
+        );
     }
 
     #[test]

@@ -144,18 +144,25 @@ fn resolve_editor_command(command: &str) -> PathBuf {
     }
 }
 
-const FALLBACK_PROBES: &[&str] = &[
-    "code",
-    "cursor",
-    "zed",
-    "subl",
-    "code-insiders",
-    "windsurf",
-    "hx",
-    "nvim",
-    "vim",
-    "emacs",
+const FALLBACK_PROBES: &[&str] = &["code", "cursor", "zed", "subl", "code-insiders", "windsurf"];
+
+const TERMINAL_EDITORS: &[&str] = &[
+    "vi", "vim", "nvim", "hx", "helix", "emacs", "nano", "micro", "kak",
 ];
+
+fn is_terminal_editor(binary: &str) -> bool {
+    let name = Path::new(binary)
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .unwrap_or(binary)
+        .to_ascii_lowercase();
+    TERMINAL_EDITORS.contains(&name.as_str())
+}
+
+fn gui_env_editor(value: &str) -> Option<(String, Vec<String>)> {
+    let (bin, args) = parse_env_editor(value)?;
+    (!is_terminal_editor(&bin)).then_some((bin, args))
+}
 
 #[derive(Debug, PartialEq, Eq)]
 enum PreferredEditor {
@@ -213,7 +220,7 @@ pub fn open_at_location(
 ) -> bool {
     match preferred_editor(preference, resolve_on_path) {
         PreferredEditor::Unset => {}
-        PreferredEditor::System => return open::that(path).is_ok(),
+        PreferredEditor::System => return crate::external_open::open_path(path).is_ok(),
         PreferredEditor::Command { binary, kind } => {
             if try_spawn(&binary.to_string_lossy(), &kind.argv_for(path, line, col)) {
                 return true;
@@ -228,9 +235,10 @@ pub fn open_at_location(
     }
 
     for var in &["VISUAL", "EDITOR"] {
-        if let Ok(value) = std::env::var(var)
-            && let Some((bin, extra_args)) = parse_env_editor(&value)
-        {
+        let Ok(value) = std::env::var(var) else {
+            continue;
+        };
+        if let Some((bin, extra_args)) = gui_env_editor(&value) {
             let kind = EditorKind::from_binary_name(&bin);
             let mut args = extra_args;
             args.extend(kind.argv_for(path, line, col));
@@ -239,6 +247,8 @@ pub fn open_at_location(
                 return true;
             }
             log::warn!("editor: ${var}={value:?} failed to spawn - falling through");
+        } else {
+            log::info!("editor: ${var}={value:?} needs a terminal - skipping it");
         }
     }
 
@@ -255,10 +265,10 @@ pub fn open_at_location(
     }
 
     log::warn!(
-        "editor: no $VISUAL/$EDITOR and none of {:?} on PATH - falling back to OS handler",
+        "editor: no graphical $VISUAL/$EDITOR and none of {:?} on PATH - falling back to OS handler",
         FALLBACK_PROBES
     );
-    open::that(path).is_ok()
+    crate::external_open::open_path(path).is_ok()
 }
 
 fn try_spawn(bin: &str, args: &[String]) -> bool {
@@ -277,6 +287,22 @@ fn try_spawn(bin: &str, args: &[String]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_terminal_editor_is_never_launched_without_a_terminal() {
+        for value in ["vim", "/usr/bin/nvim -p", "hx", "emacs -nw", "NVIM.exe"] {
+            assert_eq!(gui_env_editor(value), None, "{value}");
+        }
+        assert!(
+            FALLBACK_PROBES
+                .iter()
+                .all(|probe| !is_terminal_editor(probe))
+        );
+        assert_eq!(
+            gui_env_editor("code --wait"),
+            Some(("code".to_string(), vec!["--wait".to_string()]))
+        );
+    }
 
     fn p(s: &str) -> &Path {
         Path::new(s)

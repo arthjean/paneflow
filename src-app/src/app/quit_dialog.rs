@@ -442,7 +442,7 @@ impl PaneFlowApp {
         targets
     }
 
-    fn remember_quit_choice(&mut self, choice: OnQuit) {
+    fn remember_quit_choice(&mut self, choice: OnQuit, cx: &mut Context<Self>) {
         let Some(dialog) = self.quit_dialog.as_ref() else {
             return;
         };
@@ -456,11 +456,14 @@ impl PaneFlowApp {
             return;
         };
         self.cached_config = next;
-        crate::config_writer::save_config_value_checked("on_quit", value);
+        crate::config_snapshot::publish(&self.cached_config, cx);
+        self.quit_choice_write = Some(cx.background_spawn(smol::unblock(move || {
+            crate::config_writer::save_config_value_checked("on_quit", value)
+        })));
     }
 
     fn quit_keeping_sessions(&mut self, cx: &mut Context<Self>) {
-        self.remember_quit_choice(OnQuit::Keep);
+        self.remember_quit_choice(OnQuit::Keep, cx);
         let held = self.release_undo_window_sessions();
         if held.is_empty() {
             self.quit_now(cx);
@@ -482,7 +485,7 @@ impl PaneFlowApp {
 
     fn exit_stopping_everything(&mut self, kind: ExitKind, cx: &mut Context<Self>) {
         if kind == ExitKind::Quit {
-            self.remember_quit_choice(OnQuit::Stop);
+            self.remember_quit_choice(OnQuit::Stop, cx);
         }
         self.save_session_before_exit(cx, move |app, cx| {
             let mut targets = app.live_session_targets(cx);
@@ -523,6 +526,16 @@ impl PaneFlowApp {
     }
 
     fn finish_quit(&mut self, cx: &mut Context<Self>) {
+        if let Some(write) = self.quit_choice_write.take() {
+            cx.spawn(async move |this, cx| {
+                if !write.await {
+                    log::warn!("quit: the remembered choice could not be saved");
+                }
+                let _ = this.update(cx, |app, cx| app.finish_quit(cx));
+            })
+            .detach();
+            return;
+        }
         self.emit_app_exited_and_flush();
         cx.quit();
     }

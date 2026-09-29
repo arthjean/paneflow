@@ -728,7 +728,6 @@ impl PaneFlowApp {
         let surface_id = terminal.entity_id().as_u64();
         let pane = self.create_pane(terminal, ws_id, cx);
         let ws = Workspace::with_cwd_and_id(ws_id, listed.label(), cwd, pane.clone());
-        self.watch_git_dir(&ws);
         Self::spawn_initial_git_stats(ws_id, ws.cwd.clone(), cx);
         self.workspaces.push(ws);
         self.active_idx = self.workspaces.len() - 1;

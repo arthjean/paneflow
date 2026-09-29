@@ -272,6 +272,7 @@ impl TerminalState {
         profile: TerminalSurfaceProfile,
     ) -> SpawnParams {
         Self::resolve_spawn_launch(
+            &paneflow_config::loader::load_config(),
             working_directory,
             workspace_id,
             surface_id,
@@ -283,6 +284,7 @@ impl TerminalState {
     }
 
     pub(in crate::terminal) fn resolve_spawn_launch(
+        config: &paneflow_config::schema::PaneFlowConfig,
         working_directory: Option<std::path::PathBuf>,
         workspace_id: u64,
         surface_id: u64,
@@ -290,7 +292,6 @@ impl TerminalState {
         user_env: Option<std::collections::HashMap<String, String>>,
         profile: TerminalSurfaceProfile,
     ) -> (SpawnParams, Option<String>) {
-        let config = paneflow_config::loader::load_config();
         let (shell, shell_notice) = {
             let configured = config
                 .default_shell

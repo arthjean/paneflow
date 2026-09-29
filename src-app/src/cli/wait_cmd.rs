@@ -9,7 +9,7 @@ use serde_json::{Value, json};
 
 use super::selector::{resolve_all, resolve_target};
 use super::surface_read::{
-    READ_WINDOW_LINES, ReadSnapshot, is_surface_gone_error, text_after_baseline,
+    READ_WINDOW_LINES, ReadSnapshot, SurfaceRead, read_baseline, read_surface, text_after_baseline,
 };
 use super::{CliError, EXIT_OK, EXIT_TIMEOUT};
 
@@ -28,6 +28,7 @@ pub enum MatchMode {
 enum PaneState {
     Matched(Vec<String>),
     NoMatch,
+    Skipped,
     Gone,
 }
 
@@ -48,10 +49,11 @@ pub fn wait(
 
     let timeout = Duration::from_secs(timeout_secs.unwrap_or(DEFAULT_TIMEOUT_SECS));
     let deadline = Instant::now() + timeout;
-    let baselines: HashMap<u64, Option<ReadSnapshot>> = ids
-        .iter()
-        .map(|&id| (id, read_snapshot(client, id).ok().flatten()))
-        .collect();
+    let mut baselines: HashMap<u64, Option<ReadSnapshot>> = HashMap::with_capacity(ids.len());
+    for &id in &ids {
+        let baseline = read_baseline(client, id, READ_WINDOW_LINES).map_err(CliError::runtime)?;
+        baselines.insert(id, baseline);
+    }
 
     let mut all_matches: HashMap<u64, Vec<String>> = HashMap::new();
 
@@ -71,7 +73,7 @@ pub fn wait(
                         all_matches.insert(id, lines);
                     }
                 }
-                PaneState::NoMatch => alive += 1,
+                PaneState::NoMatch | PaneState::Skipped => alive += 1,
                 PaneState::Gone => {}
             }
         }
@@ -136,23 +138,9 @@ fn is_done(mode: MatchMode, matched: usize, total: usize) -> bool {
     }
 }
 
-fn read_snapshot(client: &impl IpcTransport, id: u64) -> Result<Option<ReadSnapshot>, CliError> {
-    match client.call(
-        "surface.read",
-        json!({ "surface_id": id, "lines": READ_WINDOW_LINES, "fenced": false }),
-    ) {
-        Ok(result) => {
-            let text = result.get("text").and_then(Value::as_str).unwrap_or("");
-            let output_generation = result.get("output_generation").and_then(Value::as_u64);
-            Ok(Some(ReadSnapshot {
-                text: text.to_string(),
-                output_generation,
-            }))
-        }
-        Err(e) if e.contains("unreachable") => Err(CliError::runtime(e)),
-        Err(e) if is_surface_gone_error(&e) => Ok(None),
-        Err(e) => Err(CliError::runtime(e)),
-    }
+fn read_snapshot(client: &impl IpcTransport, id: u64) -> Result<SurfaceRead, CliError> {
+    read_surface(client, id, READ_WINDOW_LINES)
+        .map_err(|error| CliError::runtime(error.to_string()))
 }
 
 fn read_matches_since(
@@ -161,8 +149,10 @@ fn read_matches_since(
     re: &Regex,
     baseline: Option<&ReadSnapshot>,
 ) -> Result<PaneState, CliError> {
-    let Some(current) = read_snapshot(client, id)? else {
-        return Ok(PaneState::Gone);
+    let current = match read_snapshot(client, id)? {
+        SurfaceRead::Snapshot(current) => current,
+        SurfaceRead::Gone => return Ok(PaneState::Gone),
+        SurfaceRead::Skipped => return Ok(PaneState::Skipped),
     };
     let text = match baseline {
         Some(base) => match text_after_baseline(base, &current) {
@@ -269,7 +259,13 @@ pub fn wait_idle(
     let timeout = Duration::from_secs(timeout_secs.unwrap_or(DEFAULT_TIMEOUT_SECS));
     let deadline = Instant::now() + timeout;
 
-    let baseline = read_snapshot(client, id).ok().flatten();
+    let Some(baseline) = read_baseline(client, id, READ_WINDOW_LINES).map_err(CliError::runtime)?
+    else {
+        return Err(CliError::runtime(
+            "target pane closed before idle wait started",
+        ));
+    };
+    let baseline = Some(baseline);
 
     let _ = ctrlc::set_handler(|| std::process::exit(130));
 
@@ -306,12 +302,7 @@ pub fn wait_idle(
 
     match stream_result {
         Ok(()) => match outcome {
-            IdleOutcome::Idle => {
-                super::print_json(
-                    &json!({ "surface_id": id, "idle": !matched, "matched": matched }),
-                )?;
-                Ok(EXIT_OK)
-            }
+            IdleOutcome::Idle => report_idle(client, id, matched),
             IdleOutcome::TimedOut => {
                 eprintln!(
                     "paneflow: timeout after {}s waiting for surface {id} to go idle",
@@ -338,6 +329,14 @@ pub fn wait_idle(
     }
 }
 
+fn report_idle(client: &impl IpcTransport, id: u64, matched: bool) -> Result<i32, CliError> {
+    if !matched && matches!(read_snapshot(client, id)?, SurfaceRead::Gone) {
+        return Err(CliError::runtime("target pane closed before it went idle"));
+    }
+    super::print_json(&json!({ "surface_id": id, "idle": !matched, "matched": matched }))?;
+    Ok(EXIT_OK)
+}
+
 fn wait_idle_poll(
     client: &impl IpcTransport,
     id: u64,
@@ -347,20 +346,25 @@ fn wait_idle_poll(
     baseline: Option<&ReadSnapshot>,
 ) -> Result<i32, CliError> {
     let deadline = Instant::now() + timeout;
-    let mut last_snapshot = match read_snapshot(client, id)? {
-        Some(s) => s,
-        None => {
-            return Err(CliError::runtime(
-                "target pane closed before idle wait started",
-            ));
-        }
-    };
+    let mut last_snapshot =
+        match read_baseline(client, id, READ_WINDOW_LINES).map_err(CliError::runtime)? {
+            Some(s) => s,
+            None => {
+                return Err(CliError::runtime(
+                    "target pane closed before idle wait started",
+                ));
+            }
+        };
     let mut since_change = Instant::now();
     loop {
         sleep(Duration::from_millis(IDLE_SLICE_CAP_MS));
         let past_deadline = Instant::now() >= deadline;
-        let Some(current) = read_snapshot(client, id)? else {
-            return Err(CliError::runtime("target pane closed before it went idle"));
+        let current = match read_snapshot(client, id)? {
+            SurfaceRead::Snapshot(current) => current,
+            SurfaceRead::Gone => {
+                return Err(CliError::runtime("target pane closed before it went idle"));
+            }
+            SurfaceRead::Skipped => continue,
         };
         let changed = match (current.output_generation, last_snapshot.output_generation) {
             (Some(current), Some(previous)) => current > previous,
@@ -393,6 +397,7 @@ fn wait_idle_poll(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use paneflow_ipc_client::IpcCallError;
 
     #[test]
     fn is_done_single_and_any_need_one_match() {
@@ -548,13 +553,144 @@ mod tests {
 
     #[test]
     fn read_snapshot_only_treats_not_found_as_gone() {
+        assert!(matches!(
+            read_snapshot(&ReadError("server error -32602: surface not found"), 1).expect("ok"),
+            SurfaceRead::Gone
+        ));
+        let err =
+            read_snapshot(&ReadError("server error -32003: runtime unavailable"), 1).unwrap_err();
         assert!(
-            read_snapshot(&ReadError("server error -32602: surface not found"), 1)
-                .expect("ok")
-                .is_none()
+            err.message.contains("runtime unavailable"),
+            "got: {}",
+            err.message
         );
-        let err = read_snapshot(&ReadError("server error -32000: overloaded"), 1).unwrap_err();
-        assert!(err.message.contains("overloaded"), "got: {}", err.message);
+    }
+
+    struct Scripted {
+        replies: std::cell::RefCell<Vec<Result<&'static str, IpcCallError>>>,
+        reads: std::cell::Cell<u32>,
+    }
+    impl Scripted {
+        fn new(replies: Vec<Result<&'static str, IpcCallError>>) -> Self {
+            Self {
+                replies: std::cell::RefCell::new(replies),
+                reads: std::cell::Cell::new(0),
+            }
+        }
+    }
+    impl IpcTransport for Scripted {
+        fn call(&self, method: &str, params: Value) -> Result<Value, String> {
+            self.try_call(method, params).map_err(|e| e.to_string())
+        }
+        fn try_call(&self, method: &str, _params: Value) -> Result<Value, IpcCallError> {
+            match method {
+                "surface.list" => Ok(json!({
+                    "surfaces": [{ "surface_id": 1u64, "name": "agent", "cmd": "claude", "cwd": "/tmp" }]
+                })),
+                "surface.read" => {
+                    let call = self.reads.get() + 1;
+                    self.reads.set(call);
+                    let mut replies = self.replies.borrow_mut();
+                    let next = if replies.len() > 1 {
+                        replies.remove(0)
+                    } else {
+                        replies[0].clone()
+                    };
+                    next.map(|text| json!({ "text": text, "output_generation": call }))
+                }
+                other => Err(IpcCallError::Failed(format!("unexpected method {other}"))),
+            }
+        }
+    }
+
+    fn busy() -> Result<&'static str, IpcCallError> {
+        Err(IpcCallError::Busy(
+            "paneflow error -32000: busy".to_string(),
+        ))
+    }
+
+    #[test]
+    fn busy_replies_are_retried_then_count_as_a_skipped_poll() {
+        let fake = Scripted::new(vec![
+            Ok("working\n"),
+            busy(),
+            busy(),
+            busy(),
+            busy(),
+            Ok("working\nDONE\n"),
+        ]);
+        let code = wait(&fake, "1", "DONE", Some(30), MatchMode::Single).expect("ok");
+        assert_eq!(code, EXIT_OK, "a busy stretch does not end the wait");
+        assert_eq!(
+            fake.reads.get(),
+            6,
+            "four busy replies: one call and three retries"
+        );
+    }
+
+    #[test]
+    fn a_failing_baseline_is_retried_three_times_then_fails_the_command() {
+        let fake = Scripted::new(vec![Err(IpcCallError::Failed(
+            "paneflow error -32003: the terminal runtime is unavailable".to_string(),
+        ))]);
+        let err = wait(&fake, "1", "DONE", Some(30), MatchMode::Single).unwrap_err();
+        assert!(err.message.contains("baseline"), "got: {}", err.message);
+        assert_eq!(fake.reads.get(), 4);
+    }
+
+    #[test]
+    fn a_stopped_paneflow_fails_the_wait_at_once() {
+        let dir = tempfile::tempdir().expect("tmp");
+        let client = paneflow_ipc_client::IpcClient::new(dir.path().join("absent.sock"));
+        let started = Instant::now();
+        let err = wait(&client, "1", "DONE", Some(30), MatchMode::Single).unwrap_err();
+        assert!(
+            err.message.contains("IPC unreachable"),
+            "got: {}",
+            err.message
+        );
+        assert!(
+            started.elapsed() < Duration::from_secs(2),
+            "no retry on a dead socket"
+        );
+    }
+
+    #[test]
+    fn an_unreachable_baseline_is_not_retried() {
+        let fake = Scripted::new(vec![Err(IpcCallError::Unreachable(
+            "paneflow IPC unreachable at x".to_string(),
+        ))]);
+        let err = wait(&fake, "1", "DONE", Some(30), MatchMode::Single).unwrap_err();
+        assert!(
+            err.message.contains("IPC unreachable"),
+            "got: {}",
+            err.message
+        );
+        assert_eq!(fake.reads.get(), 1);
+    }
+
+    #[test]
+    fn an_idle_verdict_on_a_gone_pane_is_an_error() {
+        let gone = FakeWait::new(vec![None]);
+        let err = report_idle(&gone, 1, false).unwrap_err();
+        assert!(err.message.contains("closed"), "got: {}", err.message);
+        let live = FakeWait::new(vec![Some("quiet\n")]);
+        assert_eq!(report_idle(&live, 1, false).expect("idle"), EXIT_OK);
+    }
+
+    #[test]
+    fn wait_idle_polling_a_gone_pane_exits_nonzero() {
+        let fake = FakeWait::new(vec![Some("prompt\n"), None]);
+        let err = wait_idle_poll(
+            &fake,
+            1,
+            Duration::from_secs(5),
+            Duration::from_secs(5),
+            None,
+            None,
+        )
+        .unwrap_err();
+        assert!(err.message.contains("closed"), "got: {}", err.message);
     }
 
     const FW: Duration = Duration::from_millis(1000);

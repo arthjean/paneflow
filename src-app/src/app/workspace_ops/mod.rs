@@ -555,7 +555,6 @@ impl PaneFlowApp {
             let ws_id = next_workspace_id();
             let ws = Workspace::empty_with_cwd_and_id(ws_id, title, path.clone());
             Self::spawn_initial_git_stats(ws_id, ws.cwd.clone(), cx);
-            self.watch_git_dir(&ws);
             self.workspaces.push(ws);
             self.active_idx = self.workspaces.len() - 1;
             opened = true;
@@ -596,16 +595,20 @@ impl PaneFlowApp {
     pub(crate) fn new_terminal_cwd(
         &self,
         source_cwd: Option<std::path::PathBuf>,
-    ) -> Option<std::path::PathBuf> {
+    ) -> crate::workspace::SpawnCwd {
         let Some(ws) = self.active_workspace() else {
-            return source_cwd;
+            return crate::workspace::SpawnCwd {
+                cwd: source_cwd,
+                ..Default::default()
+            };
         };
-        let confined = ws.active_tab().confine_cwd(source_cwd);
-        confined.or_else(|| {
-            Some(ws.cwd.as_str())
+        let mut spawn = ws.active_tab().spawn_cwd(source_cwd);
+        if spawn.cwd.is_none() {
+            spawn.cwd = Some(ws.cwd.as_str())
                 .filter(|cwd| !cwd.is_empty())
-                .map(std::path::PathBuf::from)
-        })
+                .map(std::path::PathBuf::from);
+        }
+        spawn
     }
 
     pub(crate) fn split(
@@ -672,9 +675,8 @@ impl PaneFlowApp {
             .active_terminal_opt()
             .and_then(|tv| tv.read(cx).terminal.cwd_now());
         let source_cwd = self.new_terminal_cwd(source_cwd);
-        let new_terminal = cx.new(|cx| {
-            TerminalView::with_cwd_env_and_profile(ws_id, source_cwd, None, launch.env, profile, cx)
-        });
+        let new_terminal =
+            cx.new(|cx| TerminalView::spawned(ws_id, source_cwd, launch.env, profile, cx));
         let new_pane = self.create_pane(new_terminal.clone(), ws_id, cx);
         let inserted = if let Some(ws) = self.active_workspace_mut()
             && let Some(root) = &mut ws.active_tab_mut().root
@@ -778,7 +780,15 @@ impl PaneFlowApp {
         {
             let ws_id = ws.id;
             let cwd = self.new_terminal_cwd(None);
-            let terminal = cx.new(|cx| TerminalView::with_cwd(ws_id, cwd, None, cx));
+            let terminal = cx.new(|cx| {
+                TerminalView::spawned(
+                    ws_id,
+                    cwd,
+                    None,
+                    paneflow_config::schema::TerminalSurfaceProfile::Normal,
+                    cx,
+                )
+            });
             let new_pane = self.create_pane(terminal, ws_id, cx);
             if let Some(ws) = self.active_workspace_mut() {
                 ws.active_tab_mut().root = Some(LayoutTree::Leaf(new_pane));
@@ -932,7 +942,7 @@ impl PaneFlowApp {
     pub(crate) fn remove_workspace(
         &mut self,
         idx: usize,
-        window: &mut Window,
+        window: Option<&mut Window>,
         cx: &mut Context<Self>,
     ) {
         if idx >= self.workspaces.len() {
@@ -953,7 +963,9 @@ impl PaneFlowApp {
             } else if self.active_idx > idx {
                 self.active_idx -= 1;
             }
-            self.workspaces[self.active_idx].focus_first(window, cx);
+            if let Some(window) = window {
+                self.workspaces[self.active_idx].focus_first(window, cx);
+            }
         }
         self.save_session(cx);
         cx.notify();

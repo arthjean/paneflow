@@ -31,6 +31,30 @@ pub fn derive_surface_base_name(cmd: Option<&str>, title: Option<&str>) -> Strin
     FALLBACK.to_string()
 }
 
+pub fn surface_base_name(agent: Option<&str>, cmd: Option<&str>, title: Option<&str>) -> String {
+    agent
+        .and_then(name_from_agent)
+        .unwrap_or_else(|| derive_surface_base_name(cmd, title))
+}
+
+pub fn agent_for_surface_name(
+    agent: Option<&str>,
+    confirmed: bool,
+    declared_until: Option<std::time::Instant>,
+    now: std::time::Instant,
+) -> Option<&str> {
+    if confirmed || declared_until.is_some_and(|until| now < until) {
+        agent
+    } else {
+        None
+    }
+}
+
+fn name_from_agent(agent: &str) -> Option<String> {
+    let slug = slugify(basename(agent));
+    (!slug.is_empty()).then_some(slug)
+}
+
 fn name_from_command(cmd: &str) -> Option<String> {
     let tokens = command_tokens(cmd);
     let mut tokens = tokens.iter().map(String::as_str);
@@ -219,6 +243,29 @@ mod tests {
             "paneflow"
         );
         assert_eq!(derive_surface_base_name(None, Some("claude")), "claude");
+    }
+
+    #[test]
+    fn a_confirmed_agent_names_the_surface_over_a_foreground_helper() {
+        let now = std::time::Instant::now();
+        let named = |confirmed, declared_until| {
+            surface_base_name(
+                agent_for_surface_name(Some("claude"), confirmed, declared_until, now),
+                Some("caffeinate"),
+                None,
+            )
+        };
+        assert_eq!(named(true, None), "claude");
+        assert_eq!(
+            named(false, Some(now + std::time::Duration::from_secs(5))),
+            "claude",
+            "a live launch declaration names the pane before the first scan"
+        );
+        assert_eq!(
+            named(false, None),
+            "caffeinate",
+            "a restored, unconfirmed agent falls back to the foreground process"
+        );
     }
 
     #[test]

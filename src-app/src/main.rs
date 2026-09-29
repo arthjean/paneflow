@@ -22,6 +22,7 @@ mod claude_sessions;
 mod cli;
 mod codex_sessions;
 mod command_sessions;
+mod config_snapshot;
 mod config_writer;
 mod diff;
 mod editor;
@@ -29,6 +30,7 @@ mod env_expand;
 mod external_open;
 mod file_icons;
 mod fonts;
+mod fs_probe;
 mod git_command;
 mod host_bootstrap;
 mod ipc;
@@ -221,6 +223,7 @@ struct PaneFlowApp {
     effective_shortcuts: Vec<keybindings::ShortcutEntry>,
     recording_shortcut: Option<&'static str>,
     pending_settings: std::collections::HashMap<String, crate::app::settings::PendingSetting>,
+    quit_choice_write: Option<gpui::Task<bool>>,
     shortcut_search_input: gpui::Entity<crate::widgets::text_input::TextInput>,
     shortcut_capture_active: bool,
     shortcut_reset_armed_at: Option<std::time::Instant>,

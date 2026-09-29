@@ -358,6 +358,31 @@ impl TerminalView {
                 initial_size,
                 user_env,
                 profile,
+                confine_to: None,
+                fallback_to: None,
+            },
+            SessionIntent::Create,
+            None,
+            cx,
+        )
+    }
+
+    pub(crate) fn spawned(
+        workspace_id: u64,
+        spawn: crate::workspace::SpawnCwd,
+        user_env: Option<std::collections::HashMap<String, String>>,
+        profile: TerminalSurfaceProfile,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        Self::open(
+            HostedLaunch {
+                workspace_id,
+                cwd: spawn.cwd,
+                initial_size: None,
+                user_env,
+                profile,
+                confine_to: spawn.confine_to,
+                fallback_to: spawn.fallback,
             },
             SessionIntent::Create,
             None,
@@ -379,6 +404,8 @@ impl TerminalView {
                 initial_size: None,
                 user_env,
                 profile: TerminalSurfaceProfile::Normal,
+                confine_to: None,
+                fallback_to: None,
             },
             SessionIntent::Reattach,
             Some(session),
@@ -409,6 +436,8 @@ impl TerminalView {
                 initial_size: None,
                 user_env: None,
                 profile: TerminalSurfaceProfile::Normal,
+                confine_to: None,
+                fallback_to: None,
             },
             SessionIntent::Restart { expected },
             Some(session),
@@ -423,7 +452,8 @@ impl TerminalView {
         cx: &mut Context<Self>,
     ) -> Self {
         let surface_id = cx.entity_id().as_u64();
-        let (params, shell_notice) = launch.spawn_params(surface_id);
+        let (params, shell_notice) =
+            launch.spawn_params(surface_id, &crate::config_snapshot::current(cx));
         let (mut terminal, pending) = TerminalState::new_pending_with_shell_quoting(
             params.cols,
             params.rows,
@@ -496,7 +526,7 @@ impl TerminalView {
             );
         }
 
-        let config = paneflow_config::loader::load_config();
+        let config = crate::config_snapshot::current(cx);
         let terminal_config = config.terminal.clone().unwrap_or_default();
         terminal.osc52_policy = terminal_config.osc52_clipboard.unwrap_or_default();
         let scroll_multiplier = terminal_config.resolved_scroll_multiplier();
@@ -604,6 +634,8 @@ impl TerminalView {
                 initial_size: None,
                 user_env: None,
                 profile: TerminalSurfaceProfile::Normal,
+                confine_to: None,
+                fallback_to: None,
             },
             terminal,
             cx,
@@ -618,14 +650,18 @@ struct HostedLaunch {
     initial_size: Option<(usize, usize)>,
     user_env: Option<std::collections::HashMap<String, String>>,
     profile: TerminalSurfaceProfile,
+    confine_to: Option<std::path::PathBuf>,
+    fallback_to: Option<std::path::PathBuf>,
 }
 
 impl HostedLaunch {
     fn spawn_params(
         &self,
         surface_id: u64,
+        config: &paneflow_config::schema::PaneFlowConfig,
     ) -> (crate::terminal::pty_session::SpawnParams, Option<String>) {
         TerminalState::resolve_spawn_launch(
+            config,
             self.cwd.clone(),
             self.workspace_id,
             surface_id,
@@ -695,7 +731,11 @@ impl TerminalView {
     }
 
     pub fn send_text(&self, text: &str) {
-        self.terminal.write_to_pty(text.as_bytes().to_vec());
+        let _ = self.write_text(text);
+    }
+
+    pub(crate) fn write_text(&self, text: &str) -> Result<(), &'static str> {
+        input_outcome(self.terminal.write_to_pty(text.as_bytes().to_vec()))
     }
 
     pub fn bracketed_paste_enabled(&self) -> bool {
@@ -741,7 +781,8 @@ impl TerminalView {
                      surface.send_text with submit=true (`paneflow send --submit`) instead"
                 ));
             }
-            self.terminal.write_to_pty(seq.as_bytes().to_vec());
+            input_outcome(self.terminal.write_to_pty(seq.as_bytes().to_vec()))
+                .map_err(str::to_owned)
         } else if let Some(ref key_char) = keystroke.key_char {
             if sequence_would_submit(key_char) {
                 return Err(format!(
@@ -749,9 +790,11 @@ impl TerminalView {
                      surface.send_text with submit=true (`paneflow send --submit`) instead"
                 ));
             }
-            self.terminal.write_to_pty(key_char.as_bytes().to_vec());
+            input_outcome(self.terminal.write_to_pty(key_char.as_bytes().to_vec()))
+                .map_err(str::to_owned)
+        } else {
+            Err(format!("keystroke '{keystroke_str}' produces no input"))
         }
-        Ok(())
     }
 
     pub fn marked_text_range(&self) -> Option<std::ops::Range<usize>> {
@@ -777,6 +820,18 @@ fn link_under(zones: &[HyperlinkZone], point: Point) -> Option<HyperlinkZone> {
 
 fn sequence_would_submit(seq: &str) -> bool {
     seq.contains('\r') || seq.contains('\n')
+}
+
+pub(crate) const INPUT_REJECTED: &str =
+    "the pane did not accept the input: it has no input, exited, or its input queue is full";
+
+pub(crate) fn input_outcome(
+    result: super::pty_session::BackendInputResult,
+) -> Result<(), &'static str> {
+    match result {
+        super::pty_session::BackendInputResult::Accepted => Ok(()),
+        super::pty_session::BackendInputResult::Rejected => Err(INPUT_REJECTED),
+    }
 }
 
 impl TerminalView {

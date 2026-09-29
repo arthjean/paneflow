@@ -184,11 +184,11 @@ impl PaneFlowApp {
     }
 
     pub(in crate::app) fn schedule_port_scan(&mut self, ws_idx: usize, cx: &mut Context<Self>) {
-        let unscanned = self.has_unscanned_surface(ws_idx, cx);
-        let ws = &mut self.workspaces[ws_idx];
-        if ws.port_scan_pending {
+        if self.workspaces[ws_idx].port_scan_pending {
             return;
         }
+        let unscanned = self.has_unscanned_surface(ws_idx, cx);
+        let ws = &mut self.workspaces[ws_idx];
         ws.port_scan_pending = true;
         ws.port_scan_generation += 1;
         let generation = ws.port_scan_generation;

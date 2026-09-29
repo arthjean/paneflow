@@ -357,6 +357,20 @@ text behind the scripting gate, and subscribe to agent events. The `paneflow`
 CLI (`paneflow up`, `paneflow flow`, `paneflow watch`, `paneflow wait`) is
 built on the same socket.
 
+Handlers run on the GPUI thread, so none of them waits on a terminal runtime.
+`surface.read` and `surface.search` resolve their pane there, then hand a
+windowed read or a bounded search to a blocking worker that sends the reply
+(`IpcReply::Deferred` in `src-app/src/app/ipc_handler/mod.rs`). Errors use
+JSON-RPC `error` envelopes: `-32602` invalid params, `-32601` unknown or
+gated method, `-32001` permission, `-32000` busy or shutting down (including a
+full terminal runtime queue), `-32002` a timeout (the request did not start
+within 5 s, or the pane's terminal runtime did not answer in time), `-32003`
+the pane's terminal runtime is gone or failed (a read never reports any of
+these as empty text), `-32005` a
+close the UI would confirm first (busy agents, unsaved files), and `-32800`
+a search superseded by a newer search on the same pane. Text budgets count the
+JSON-escaped size, so a reply always fits the 256 KiB frame.
+
 The MCP bridge re-exposes a read-only slice of this to agents themselves:
 `paneflow mcp install` registers a stdio MCP server with Claude Code, Codex,
 Gemini CLI and opencode, giving any agent the ability to *read* (never write)

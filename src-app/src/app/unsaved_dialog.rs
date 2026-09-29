@@ -91,18 +91,6 @@ impl PaneFlowApp {
             .collect()
     }
 
-    pub(crate) fn unsaved_file_names_in_workspace(
-        &self,
-        idx: usize,
-        cx: &gpui::App,
-    ) -> Vec<String> {
-        let views = self.unsaved_views_for_close(&CloseTarget::Workspace(idx), cx);
-        file_rows(&views, cx)
-            .into_iter()
-            .map(|(name, _)| name.to_string())
-            .collect()
-    }
-
     pub(crate) fn ask_about_unsaved(
         &mut self,
         files: Vec<Entity<CodeView>>,

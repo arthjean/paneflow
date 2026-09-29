@@ -21,6 +21,10 @@ const MAX_CORRUPTION_BACKUPS: usize = 5;
 
 const SAVE_DEBOUNCE_MS: u64 = 150;
 
+const RESTORE_PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
+
+const RESTORE_REPROBE_INTERVAL: std::time::Duration = std::time::Duration::from_secs(30);
+
 static SESSION_WRITE_LOCK: Mutex<()> = Mutex::new(());
 static SESSION_TMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 static SESSION_CORRUPTION_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -426,38 +430,100 @@ impl PaneFlowApp {
         }
     }
 
-    pub(crate) fn pull_request_seeds(
-        session: &paneflow_config::schema::SessionState,
-        workspaces: &[Workspace],
-    ) -> Vec<(
-        std::path::PathBuf,
-        String,
-        crate::app::pull_request::PullRequest,
-    )> {
-        session
+    pub(crate) fn spawn_restore_probe(&self, cx: &mut Context<Self>) {
+        let mut paths: Vec<PathBuf> = self
             .workspaces
             .iter()
-            .zip(workspaces)
-            .filter_map(|(ws_session, ws)| Some((ws_session, ws.repo_root.clone()?)))
-            .flat_map(|(ws_session, repo_root)| {
-                ws_session
-                    .tabs
-                    .iter()
-                    .filter_map(|tab| tab.pull_request.as_ref())
-                    .filter(|pr| !pr.branch.is_empty())
-                    .filter_map(move |pr| {
-                        let state = crate::app::pull_request::PrState::from_wire(&pr.state)?;
-                        Some((
-                            repo_root.clone(),
-                            pr.branch.clone(),
-                            crate::app::pull_request::PullRequest {
-                                number: pr.number,
-                                state,
-                            },
-                        ))
-                    })
+            .flat_map(|ws| {
+                std::iter::once(PathBuf::from(&ws.cwd))
+                    .chain(ws.tabs().iter().filter_map(|tab| tab.worktree.clone()))
             })
-            .collect()
+            .filter(|path| !path.as_os_str().is_empty())
+            .collect();
+        paths.sort();
+        paths.dedup();
+        if paths.is_empty() {
+            return;
+        }
+        cx.spawn(async move |this, cx: &mut gpui::AsyncApp| {
+            let mut pending = paths;
+            loop {
+                let states = crate::fs_probe::probe_dirs(
+                    pending,
+                    RESTORE_PROBE_TIMEOUT,
+                    std::path::Path::is_dir,
+                )
+                .await;
+                let missing: Vec<PathBuf> = states
+                    .iter()
+                    .filter(|(_, state)| *state == crate::fs_probe::DirProbe::Missing)
+                    .map(|(path, _)| path.clone())
+                    .collect();
+                pending = states
+                    .into_iter()
+                    .filter(|(_, state)| *state == crate::fs_probe::DirProbe::Unresolved)
+                    .map(|(path, _)| path)
+                    .collect();
+                if !missing.is_empty()
+                    && this
+                        .update(cx, |app, cx| app.drop_missing_restored_paths(&missing, cx))
+                        .is_err()
+                {
+                    return;
+                }
+                if pending.is_empty() {
+                    return;
+                }
+                log::warn!(
+                    "session restore: {} saved folder(s) did not answer within {} s; probing again in {} s",
+                    pending.len(),
+                    RESTORE_PROBE_TIMEOUT.as_secs(),
+                    RESTORE_REPROBE_INTERVAL.as_secs()
+                );
+                smol::Timer::after(RESTORE_REPROBE_INTERVAL).await;
+            }
+        })
+        .detach();
+    }
+
+    fn drop_missing_restored_paths(&mut self, missing: &[PathBuf], cx: &mut Context<Self>) {
+        let fallback = launch_cwd::implicit_launch_cwd();
+        let plan = restored_path_fallbacks(&self.workspaces, missing);
+        for &(ws_idx, tab_idx) in &plan.unbound_tabs {
+            log::warn!("session restore: a tab worktree is gone; unbinding the tab");
+            self.set_tab_worktree(ws_idx, tab_idx, None, cx);
+        }
+        let mut moved: Vec<(u64, String)> = Vec::new();
+        for &ws_idx in &plan.moved_workspaces {
+            let ws = &mut self.workspaces[ws_idx];
+            log::warn!(
+                "session restore: workspace cwd {} is not a directory; falling back to {}",
+                ws.cwd,
+                fallback.display()
+            );
+            ws.cwd = fallback.display().to_string();
+            moved.push((ws.id, ws.title.clone()));
+        }
+        if moved.is_empty() {
+            return;
+        }
+        for (ws_id, _) in &moved {
+            Self::spawn_initial_git_stats(*ws_id, fallback.display().to_string(), cx);
+        }
+        let message = match moved.as_slice() {
+            [(_, title)] => format!(
+                "The folder of {title} is gone; it opened in {}",
+                fallback.display()
+            ),
+            many => format!(
+                "{} projects lost their folder and opened in {}",
+                many.len(),
+                fallback.display()
+            ),
+        };
+        self.show_toast(message, cx);
+        self.save_session(cx);
+        cx.notify();
     }
 
     pub(crate) fn restore_workspaces(
@@ -508,6 +574,7 @@ impl PaneFlowApp {
                 workspace.set_durable_id(id.clone());
             }
 
+            workspace.pending_pull_requests = restored_pull_requests(ws_session);
             workspace.custom_buttons = ws_session.custom_buttons.clone();
             workspace.sidebar_expanded = !ws_session.sidebar_collapsed;
             workspace.muted = ws_session.muted;
@@ -587,7 +654,17 @@ impl PaneFlowApp {
                 TerminalView::attach_restored(workspace_id, Some(cwd), surface_env, session, cx)
             }),
             None => cx.new(|cx| {
-                TerminalView::with_cwd_and_env(workspace_id, Some(cwd), None, surface_env, cx)
+                TerminalView::spawned(
+                    workspace_id,
+                    crate::workspace::SpawnCwd {
+                        cwd: Some(cwd),
+                        confine_to: None,
+                        fallback: Some(fallback_cwd.to_path_buf()),
+                    },
+                    surface_env,
+                    paneflow_config::schema::TerminalSurfaceProfile::Normal,
+                    cx,
+                )
             }),
         };
         if let Some(ref scrollback) = surface.scrollback {
@@ -731,34 +808,58 @@ fn session_corruption_info(
     }
 }
 
-fn restored_workspace_cwd(raw: &str) -> PathBuf {
-    let path = PathBuf::from(raw);
-    if path.is_dir() {
-        return path;
+#[derive(Debug, Default, PartialEq, Eq)]
+struct RestoredPathFallbacks {
+    moved_workspaces: Vec<usize>,
+    unbound_tabs: Vec<(usize, usize)>,
+}
+
+fn restored_path_fallbacks(workspaces: &[Workspace], missing: &[PathBuf]) -> RestoredPathFallbacks {
+    let mut plan = RestoredPathFallbacks::default();
+    for (ws_idx, ws) in workspaces.iter().enumerate() {
+        for (tab_idx, tab) in ws.tabs().iter().enumerate() {
+            if tab.worktree.as_ref().is_some_and(|wt| missing.contains(wt)) {
+                plan.unbound_tabs.push((ws_idx, tab_idx));
+            }
+        }
+        if missing.iter().any(|path| Path::new(&ws.cwd) == path) {
+            plan.moved_workspaces.push(ws_idx);
+        }
     }
-    let fallback = launch_cwd::implicit_launch_cwd();
-    log::warn!(
-        "session restore: workspace cwd {} is not a directory; falling back to {}",
-        path.display(),
-        fallback.display()
-    );
-    fallback
+    plan
+}
+
+fn restored_pull_requests(
+    ws_session: &paneflow_config::schema::WorkspaceSession,
+) -> Vec<(String, crate::app::pull_request::PullRequest)> {
+    ws_session
+        .tabs
+        .iter()
+        .filter_map(|tab| tab.pull_request.as_ref())
+        .filter(|pr| !pr.branch.is_empty())
+        .filter_map(|pr| {
+            let state = crate::app::pull_request::PrState::from_wire(&pr.state)?;
+            Some((
+                pr.branch.clone(),
+                crate::app::pull_request::PullRequest {
+                    number: pr.number,
+                    state,
+                },
+            ))
+        })
+        .collect()
+}
+
+fn restored_workspace_cwd(raw: &str) -> PathBuf {
+    if raw.trim().is_empty() {
+        return launch_cwd::implicit_launch_cwd();
+    }
+    PathBuf::from(raw)
 }
 
 fn resolved_surface_cwd(raw: Option<&str>, fallback_cwd: &Path) -> PathBuf {
-    let Some(raw) = raw else {
-        return fallback_cwd.to_path_buf();
-    };
-    let path = PathBuf::from(raw);
-    if path.is_dir() {
-        return path;
-    }
-    log::warn!(
-        "session restore: surface cwd {} is not a directory; falling back to {}",
-        path.display(),
-        fallback_cwd.display()
-    );
-    fallback_cwd.to_path_buf()
+    raw.filter(|raw| !raw.trim().is_empty())
+        .map_or_else(|| fallback_cwd.to_path_buf(), PathBuf::from)
 }
 
 fn without_persisted_scrollback(mut layout: LayoutNode) -> LayoutNode {
@@ -904,7 +1005,7 @@ fn restored_tab_worktree(tab: &paneflow_config::schema::TabSession) -> Option<Pa
         Some(raw) => crate::runtime_paths::path_from_raw(raw)?,
         None => PathBuf::from(tab.worktree.as_deref().filter(|p| !p.is_empty())?),
     };
-    path.is_dir().then_some(path)
+    Some(path)
 }
 
 fn persisted_expanded_paths(cwd: &str, expanded: &[PathBuf]) -> Vec<String> {
@@ -1238,9 +1339,9 @@ mod tests {
             worktree_raw: None,
             ..reloaded
         };
-        assert_eq!(
+        assert_ne!(
             restored_tab_worktree(&lossy_only),
-            None,
+            Some(worktree),
             "without the raw form the binding would be lost"
         );
     }
@@ -1862,37 +1963,58 @@ mod tests {
     }
 
     #[test]
-    fn restored_cwd_helpers_fall_back_for_missing_directories() {
+    fn restore_keeps_saved_folders_and_the_probe_moves_the_missing_ones() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let valid = tmp.path().to_path_buf();
         let missing = tmp.path().join("missing");
+        let gone_worktree = tmp.path().join("gone-wt");
         let valid_str = valid.to_string_lossy().into_owned();
         let missing_str = missing.to_string_lossy().into_owned();
 
+        assert_eq!(restored_workspace_cwd(&valid_str), valid);
         assert_eq!(
-            restored_workspace_cwd(&valid_str),
-            valid,
-            "existing workspace cwd is preserved"
+            restored_workspace_cwd(&missing_str),
+            missing,
+            "restore keeps the saved folder instead of probing it on the render thread"
         );
-
-        let workspace_fallback = restored_workspace_cwd(&missing_str);
-        assert!(
-            workspace_fallback.is_dir(),
-            "missing workspace cwd falls back to a live directory"
-        );
-        assert_ne!(workspace_fallback, missing);
-
         let surface_fallback = tmp.path().join("fallback");
-        std::fs::create_dir_all(&surface_fallback).expect("fallback dir");
-        assert_eq!(
-            resolved_surface_cwd(Some(&missing_str), &surface_fallback),
-            surface_fallback.clone(),
-            "missing surface cwd falls back to workspace cwd"
-        );
         assert_eq!(
             resolved_surface_cwd(None, &surface_fallback),
             surface_fallback,
             "absent surface cwd falls back to workspace cwd"
+        );
+
+        let workspaces = vec![
+            Workspace::restored_with_id(1, "live", valid.clone(), vec![], 0),
+            Workspace::restored_with_id(
+                2,
+                "gone",
+                missing.clone(),
+                vec![crate::workspace::Tab::restored(
+                    "wt",
+                    TabTitleSource::Preset,
+                    None,
+                    Some(gone_worktree.clone()),
+                )],
+                0,
+            ),
+        ];
+        let states = smol::block_on(crate::fs_probe::probe_dirs(
+            vec![valid, missing, gone_worktree],
+            RESTORE_PROBE_TIMEOUT,
+            Path::is_dir,
+        ));
+        let missing_paths: Vec<PathBuf> = states
+            .into_iter()
+            .filter(|(_, state)| *state == crate::fs_probe::DirProbe::Missing)
+            .map(|(path, _)| path)
+            .collect();
+        assert_eq!(
+            restored_path_fallbacks(&workspaces, &missing_paths),
+            RestoredPathFallbacks {
+                moved_workspaces: vec![1],
+                unbound_tabs: vec![(1, 0)],
+            }
         );
     }
 

@@ -2,7 +2,8 @@ use std::path::Path;
 
 use paneflow_config::schema::SessionId;
 use paneflow_ipc_client::scrollback::{
-    paginate_scrollback, search_text, truncate_ipc_text, wrap_untrusted,
+    fit_matches_to_ipc_frame, neutralize_untrusted, paginate_scrollback, search_text,
+    truncate_ipc_text, wrap_untrusted,
 };
 use paneflow_ipc_client::send_text::{
     bracketed_paste_frame, resolve_paste_mode, resolve_send_text_body_mode,
@@ -274,6 +275,11 @@ fn answer(
                 .get("fenced")
                 .and_then(Value::as_bool)
                 .unwrap_or(permissions.fenced_reads);
+            let text = if fenced {
+                neutralize_untrusted(&text)
+            } else {
+                text
+            };
             let (text, truncated) = truncate_ipc_text(text);
             let alias = aliases.alias_of(&session).unwrap_or(0);
             let text = if fenced {
@@ -315,7 +321,9 @@ fn answer(
                 .map(|max| max.clamp(1, MAX_SEARCH_MATCHES))
                 .unwrap_or(DEFAULT_SEARCH_MATCHES);
             let full = host.text(&session)?.text;
-            let (matches, truncated) = search_text(&full, pattern, max_matches);
+            let (matches, capped) = search_text(&full, pattern, max_matches);
+            let (matches, clipped) = fit_matches_to_ipc_frame(matches);
+            let truncated = capped || clipped;
             let matches: Vec<Value> = matches
                 .into_iter()
                 .map(|(line, text)| json!({"line": line, "text": text}))

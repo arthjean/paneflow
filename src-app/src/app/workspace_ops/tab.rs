@@ -330,7 +330,15 @@ impl PaneFlowApp {
             .collect();
         let root = LayoutTree::from_layout_node(&layout, &mut panes, &mut |_| {
             let cwd = self.new_terminal_cwd(None);
-            let terminal = cx.new(|cx| TerminalView::with_cwd(ws_id, cwd, None, cx));
+            let terminal = cx.new(|cx| {
+                TerminalView::spawned(
+                    ws_id,
+                    cwd,
+                    None,
+                    paneflow_config::schema::TerminalSurfaceProfile::Normal,
+                    cx,
+                )
+            });
             self.create_pane(terminal, ws_id, cx)
         });
         let tab = Tab::restored(title, title_source, Some(root), None);

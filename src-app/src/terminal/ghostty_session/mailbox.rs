@@ -51,14 +51,23 @@ pub(super) enum RuntimeMessage {
         previous: bool,
         generation: u64,
     },
-    LineTexts {
-        lines: Vec<i32>,
-        reply: SyncSender<Result<Vec<(i32, String)>, String>>,
+    ReadRows {
+        lines: usize,
+        offset: usize,
+        reply: SyncSender<Result<ghostty::RowWindow, String>>,
+    },
+    SearchRows {
+        query: String,
+        max_rows: usize,
+        generation: u64,
+        reply: SyncSender<Result<ghostty::RowSearch, String>>,
     },
     SelectionText(SyncSender<Result<Option<String>, ghostty::GhosttyError>>),
     SelectAll(SyncSender<Result<Option<String>, String>>),
     HyperlinkHover(ghostty::Point),
+    #[cfg(test)]
     ExtractScrollback(SyncSender<Result<Option<String>, String>>),
+    #[cfg(test)]
     ScreenText(SyncSender<Result<String, String>>),
     RestoreScrollback {
         text: String,
@@ -69,6 +78,8 @@ pub(super) enum RuntimeMessage {
     },
     #[cfg(test)]
     SimulateWorkerCrash,
+    #[cfg(test)]
+    StallForTest(Duration),
     Shutdown,
 }
 

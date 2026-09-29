@@ -938,9 +938,19 @@ impl TerminalView {
                 });
             }
             HyperlinkSource::Osc8 | HyperlinkSource::Regex => {
-                if let Err(err) = crate::external_open::open_url(&link.uri) {
+                let uri = link.uri.clone();
+                cx.spawn(async move |this, cx| {
+                    let Err(err) = crate::external_open::open_url_off_thread(uri).await else {
+                        return;
+                    };
                     log::warn!("terminal: open URL failed: {err}");
-                }
+                    let _ = this.update(cx, |_, cx| {
+                        cx.emit(TerminalEvent::Notice(
+                            crate::external_open::open_url_failure_message(&err),
+                        ));
+                    });
+                })
+                .detach();
             }
         }
     }
@@ -1186,11 +1196,19 @@ impl TerminalView {
     }
 
     pub fn inject_text(&self, text: &str) {
+        let _ = self.write_injected_text(text);
+    }
+
+    pub(crate) fn write_injected_text(&self, text: &str) -> Result<(), &'static str> {
         let mode = self.terminal.session_backend().modes();
         if mode.contains(Modes::BRACKETED_PASTE) {
-            self.write_paste_text(text);
+            super::view::input_outcome(self.terminal.write_ghostty_paste(
+                normalize_paste_text(text),
+                false,
+                ghostty::ClipboardLocation::Standard,
+            ))
         } else {
-            self.send_text(text);
+            self.write_text(text)
         }
     }
 

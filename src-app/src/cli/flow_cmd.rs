@@ -10,7 +10,7 @@ use serde_json::{Value, json};
 
 use super::flow_spec::{self, FlowPlan, OnFailure, Unit, UnitAction};
 use super::surface_read::{
-    READ_WINDOW_LINES, ReadSnapshot, is_surface_gone_error, text_after_baseline,
+    READ_WINDOW_LINES, ReadSnapshot, SurfaceRead, read_baseline, read_surface, text_after_baseline,
 };
 use super::up_cmd::{self, WorktreePlan};
 use super::{CliError, EXIT_OK, EXIT_RUNTIME, EXIT_TIMEOUT};
@@ -263,11 +263,6 @@ impl UnitRun {
     }
 }
 
-enum Read {
-    Snapshot(ReadSnapshot),
-    Gone,
-}
-
 struct Engine<'c, T: IpcTransport> {
     client: &'c T,
     on_failure: OnFailure,
@@ -435,10 +430,21 @@ impl<T: IpcTransport> Engine<'_, T> {
                     let (deadline, re, baseline) = (*deadline, re.clone(), baseline.clone());
                     let sid = self.runs[i].surface_id.expect("polling has a surface");
                     match self.read_window(sid, READ_WINDOW_LINES)? {
-                        Read::Gone => {
+                        SurfaceRead::Gone => {
                             self.fail(i, "pane closed before the pattern appeared", false);
                         }
-                        Read::Snapshot(snapshot) => {
+                        SurfaceRead::Skipped => {
+                            if Instant::now() >= deadline {
+                                let (pattern, timeout) =
+                                    self.runs[i].unit.ready.clone().expect("polling has ready");
+                                self.fail(
+                                    i,
+                                    &format!("timed out after {timeout}s waiting for /{pattern}/"),
+                                    true,
+                                );
+                            }
+                        }
+                        SurfaceRead::Snapshot(snapshot) => {
                             let text = match baseline.as_ref() {
                                 Some(base) => {
                                     text_after_baseline(base, &snapshot).unwrap_or_default()
@@ -474,11 +480,12 @@ impl<T: IpcTransport> Engine<'_, T> {
                     let mut fire = elapsed >= SETTLE_MAX;
                     if !fire {
                         match self.read_window(sid, SETTLE_WINDOW_LINES)? {
-                            Read::Gone => {
+                            SurfaceRead::Gone => {
                                 self.fail(i, "pane closed before the text could be fed", false);
                                 continue;
                             }
-                            Read::Snapshot(snapshot) => {
+                            SurfaceRead::Skipped => continue,
+                            SurfaceRead::Snapshot(snapshot) => {
                                 let output_generation = snapshot.output_generation;
                                 if last_generation == output_generation {
                                     stable += 1;
@@ -524,9 +531,9 @@ impl<T: IpcTransport> Engine<'_, T> {
             }
         };
         let sid = self.runs[i].surface_id.expect("feeding has a surface");
-        let baseline = match self.read_window(sid, READ_WINDOW_LINES)? {
-            Read::Snapshot(snapshot) => Some(snapshot),
-            Read::Gone => {
+        let baseline = match read_baseline(self.client, sid, READ_WINDOW_LINES)? {
+            Some(snapshot) => Some(snapshot),
+            None => {
                 self.fail(i, "pane closed before the text could be fed", false);
                 return Ok(());
             }
@@ -740,22 +747,8 @@ impl<T: IpcTransport> Engine<'_, T> {
         }
     }
 
-    fn read_window(&self, sid: u64, lines: u64) -> Result<Read, String> {
-        match self.client.call(
-            "surface.read",
-            json!({ "surface_id": sid, "lines": lines, "fenced": false }),
-        ) {
-            Ok(result) => Ok(Read::Snapshot(ReadSnapshot {
-                text: result
-                    .get("text")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default()
-                    .to_string(),
-                output_generation: result.get("output_generation").and_then(Value::as_u64),
-            })),
-            Err(e) if is_surface_gone_error(&e) => Ok(Read::Gone),
-            Err(e) => Err(format!("instance unreachable: {e}")),
-        }
+    fn read_window(&self, sid: u64, lines: u64) -> Result<SurfaceRead, String> {
+        read_surface(self.client, sid, lines).map_err(|e| format!("instance unreachable: {e}"))
     }
 
     fn fail(&mut self, i: usize, error: &str, timeout: bool) {

@@ -118,16 +118,31 @@ impl PaneFlowApp {
         let Some(entry) = self.recent_workspaces.get(idx).cloned() else {
             return;
         };
-        if !entry.path.is_dir() {
-            self.forget_recent_workspace(&entry.path, cx);
-            self.show_toast("That folder is gone", cx);
-            return;
-        }
-        self.open_workspace_folders(std::slice::from_ref(&entry.path), cx);
-        let idx = self.active_idx;
-        if idx < self.workspaces.len() {
-            self.select_workspace(idx, window, cx);
-        }
+        cx.spawn_in(window, async move |this: gpui::WeakEntity<Self>, cx| {
+            let state = crate::fs_probe::probe_dirs(
+                vec![entry.path.clone()],
+                crate::app::recents::RECENT_PROBE_TIMEOUT,
+                std::path::Path::is_dir,
+            )
+            .await
+            .pop()
+            .map(|(_, state)| state);
+            let _ = this.update_in(cx, |app, window, cx| match state {
+                Some(crate::fs_probe::DirProbe::Dir) => {
+                    app.open_workspace_folders(std::slice::from_ref(&entry.path), cx);
+                    let idx = app.active_idx;
+                    if idx < app.workspaces.len() {
+                        app.select_workspace(idx, window, cx);
+                    }
+                }
+                Some(crate::fs_probe::DirProbe::Missing) => {
+                    app.forget_recent_workspace(&entry.path, cx);
+                    app.show_toast("That folder is gone", cx);
+                }
+                _ => app.show_toast("That folder did not respond", cx),
+            });
+        })
+        .detach();
     }
 
     fn render_welcome_get_started(&self, cx: &mut Context<Self>) -> AnyElement {

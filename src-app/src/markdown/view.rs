@@ -60,7 +60,6 @@ impl MarkdownView {
 
     pub fn open(path: PathBuf, cx: &mut Context<Self>) -> Self {
         let element_id = make_element_id(&path);
-        let pending_restore_y = state::lookup_offset_for(&path);
         let search_input =
             cx.new(|cx| crate::widgets::text_input::TextInput::new("", "Search", cx));
         cx.observe(&search_input, |this, input, cx| {
@@ -76,7 +75,7 @@ impl MarkdownView {
             element_id,
             _watcher: None,
             scroll_handle: ScrollHandle::new(),
-            pending_restore_y,
+            pending_restore_y: None,
             search_active: false,
             search_query: String::new(),
             search_input,
@@ -96,11 +95,14 @@ impl MarkdownView {
         let path = self.path.clone();
         cx.spawn(
             async move |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
-                let (ast, error) = smol::unblock(move || load_from_disk(&path)).await;
+                let ((ast, error), restore_y) =
+                    smol::unblock(move || (load_from_disk(&path), state::lookup_offset_for(&path)))
+                        .await;
                 cx.update(|cx| {
                     let _ = this.update(cx, |view: &mut Self, cx: &mut Context<Self>| {
                         view.apply_loaded(ast, error);
                         view.start_watcher(cx);
+                        view.pending_restore_y = restore_y;
                         view.maybe_apply_pending_restore(cx);
                         cx.notify();
                     });
@@ -194,10 +196,13 @@ impl MarkdownView {
                 smol::Timer::after(SCROLL_POLL_CADENCE).await;
                 if this.upgrade().is_none() {
                     let current: f32 = f32::from(handle.offset().y);
-                    if (current - last_persisted).abs() >= 1.0
-                        && let Err(e) = state::save_offset_for(&path, -current)
-                    {
-                        log::warn!("markdown_state.json final save failed: {}", e);
+                    if (current - last_persisted).abs() >= 1.0 {
+                        let path = path.clone();
+                        if let Err(e) =
+                            smol::unblock(move || state::save_offset_for(&path, -current)).await
+                        {
+                            log::warn!("markdown_state.json final save failed: {}", e);
+                        }
                     }
                     break;
                 }
@@ -208,7 +213,10 @@ impl MarkdownView {
                 if last_write.elapsed() < SCROLL_PERSIST_THROTTLE {
                     continue;
                 }
-                if let Err(e) = state::save_offset_for(&path, -current) {
+                let save_path = path.clone();
+                if let Err(e) =
+                    smol::unblock(move || state::save_offset_for(&save_path, -current)).await
+                {
                     log::warn!("markdown_state.json save failed: {}", e);
                 }
                 last_persisted = current;

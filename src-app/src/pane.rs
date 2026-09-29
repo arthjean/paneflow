@@ -345,7 +345,7 @@ impl Pane {
         cx: &mut Context<Self>,
     ) -> Self {
         debug_assert!(!surfaces.is_empty(), "a pane needs at least one surface");
-        let cached_config = paneflow_config::loader::load_config();
+        let cached_config = (*crate::config_snapshot::current(cx)).clone();
         for surface in &surfaces {
             if let PaneSurface::Terminal(t) = surface {
                 Self::subscribe_terminal(t, cx);

@@ -10,6 +10,11 @@ impl JsonRpcError {
     pub(crate) const INVALID_PARAMS: i32 = -32602;
     pub(crate) const METHOD_NOT_ENABLED: i32 = -32601;
     pub(crate) const METHOD_NOT_FOUND: i32 = -32601;
+    pub(crate) const BUSY: i32 = -32000;
+    pub(crate) const REQUEST_TIMED_OUT: i32 = -32002;
+    pub(crate) const RUNTIME_UNAVAILABLE: i32 = -32003;
+    pub(crate) const CONFIRMATION_REQUIRED: i32 = -32005;
+    pub(crate) const REQUEST_CANCELLED: i32 = -32800;
 
     pub(crate) fn invalid_params(message: impl Into<String>) -> Self {
         Self {
@@ -29,6 +34,27 @@ impl JsonRpcError {
         Self {
             code: Self::METHOD_NOT_FOUND,
             message: message.into(),
+        }
+    }
+
+    pub(crate) fn confirmation_required(message: impl Into<String>) -> Self {
+        Self {
+            code: Self::CONFIRMATION_REQUIRED,
+            message: message.into(),
+        }
+    }
+
+    pub(crate) fn runtime_query(error: &crate::terminal::types::TerminalQueryError) -> Self {
+        let code = match error {
+            crate::terminal::types::TerminalQueryError::Superseded => Self::REQUEST_CANCELLED,
+            crate::terminal::types::TerminalQueryError::Busy => Self::BUSY,
+            crate::terminal::types::TerminalQueryError::TimedOut(_) => Self::REQUEST_TIMED_OUT,
+            crate::terminal::types::TerminalQueryError::Unavailable
+            | crate::terminal::types::TerminalQueryError::Failed(_) => Self::RUNTIME_UNAVAILABLE,
+        };
+        Self {
+            code,
+            message: error.to_string(),
         }
     }
 
@@ -73,9 +99,31 @@ pub(crate) fn promote_response(
     })
 }
 
+pub(crate) fn app_shutting_down() -> serde_json::Value {
+    serde_json::json!({
+        JSONRPC_ERROR_KEY: {"code": -32000, "message": "App shutting down"}
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn transient_runtime_failures_use_the_codes_clients_retry() {
+        use crate::terminal::types::TerminalQueryError;
+        let code = |error: TerminalQueryError| JsonRpcError::runtime_query(&error).code;
+        assert_eq!(
+            code(TerminalQueryError::TimedOut(
+                std::time::Duration::from_secs(3)
+            )),
+            -32002
+        );
+        assert_eq!(code(TerminalQueryError::Busy), -32000);
+        assert_eq!(code(TerminalQueryError::Unavailable), -32003);
+        assert_eq!(code(TerminalQueryError::Failed("x".into())), -32003);
+        assert_eq!(code(TerminalQueryError::Superseded), -32800);
+    }
 
     #[test]
     fn promote_response_wraps_value_under_result_by_default() {

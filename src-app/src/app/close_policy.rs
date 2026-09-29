@@ -110,6 +110,30 @@ impl CloseDialogRow {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum CloseRefusal {
+    Unsaved(Vec<String>),
+    Busy(Vec<CloseDialogRow>),
+}
+
+impl CloseRefusal {
+    pub(crate) fn message(&self) -> String {
+        match self {
+            Self::Unsaved(names) => format!(
+                "{}; save or discard them in Paneflow first",
+                crate::app::unsaved_dialog::unsaved_close_error(names).unwrap_or_default()
+            ),
+            Self::Busy(rows) => {
+                let unknown = rows.iter().filter(|row| row.state.is_none()).count();
+                format!(
+                    "{} Confirm the close in Paneflow.",
+                    close_summary(rows.len() - unknown, unknown)
+                )
+            }
+        }
+    }
+}
+
 pub(crate) struct CloseDialog {
     target: CloseTarget,
     rows: Vec<CloseDialogRow>,
@@ -235,6 +259,35 @@ impl PaneFlowApp {
             .map(|agent| agent.state)
     }
 
+    pub(crate) fn close_refusal(
+        &self,
+        target: &CloseTarget,
+        cx: &gpui::App,
+    ) -> Option<CloseRefusal> {
+        let unsaved = self.unsaved_views_for_close(target, cx);
+        if !unsaved.is_empty() {
+            let names = crate::app::unsaved_dialog::file_rows(&unsaved, cx)
+                .into_iter()
+                .map(|(name, _)| name.to_string())
+                .collect();
+            return Some(CloseRefusal::Unsaved(names));
+        }
+        let rows = self.close_dialog_rows(target, cx);
+        (!rows.is_empty()).then_some(CloseRefusal::Busy(rows))
+    }
+
+    pub(crate) fn close_without_prompt(
+        &mut self,
+        target: CloseTarget,
+        cx: &mut Context<Self>,
+    ) -> Result<(), CloseRefusal> {
+        if let Some(refusal) = self.close_refusal(&target, cx) {
+            return Err(refusal);
+        }
+        self.perform_close(target, CloseIntent::Hold, None, cx);
+        Ok(())
+    }
+
     pub(crate) fn request_close(
         &mut self,
         target: CloseTarget,
@@ -312,11 +365,7 @@ impl PaneFlowApp {
                     self.remove_workspace_tab(ws_idx, tab_idx, window, cx);
                 }
             }
-            CloseTarget::Workspace(idx) => {
-                if let Some(window) = window {
-                    self.remove_workspace(idx, window, cx);
-                }
-            }
+            CloseTarget::Workspace(idx) => self.remove_workspace(idx, window, cx),
             CloseTarget::DiffTerminal(index) => {
                 self.remove_diff_tab(index, cx);
                 if let Some(window) = window {

@@ -399,9 +399,8 @@ impl PaneFlowApp {
                 ..
             }) => url.clone(),
             Some(update::checker::UpdateStatus::Available { url, .. }) => {
-                if let Err(err) = crate::external_open::open_url(url) {
-                    log::warn!("self-update: open release page failed: {err}");
-                }
+                let url = url.clone();
+                self.open_external_url(url, cx);
                 return;
             }
             _ => return,

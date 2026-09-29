@@ -6,12 +6,13 @@ mod tab;
 pub mod worktree;
 
 pub use git::{
-    GitDiffStats, detect_branch, find_git_dir, resolve_repo_root, resolve_worktree_root,
+    GitDiffStats, GitLocation, detect_branch, find_git_dir, resolve_repo_root,
+    resolve_worktree_root,
 };
 #[cfg(test)]
 pub(crate) use ports::PortEntry;
 pub use ports::{PaneScan, scan_panes};
-pub use tab::Tab;
+pub use tab::{CONFINE_TIMEOUT, SpawnCwd, Tab};
 
 pub(crate) const MAX_TABS_PER_WORKSPACE: usize = 32;
 
@@ -22,8 +23,6 @@ use crate::ai_types::AgentSession;
 use crate::launch_cwd;
 use crate::layout::LayoutTree;
 use crate::pane::Pane;
-
-use self::git::parse_head;
 
 static NEXT_WORKSPACE_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 
@@ -107,6 +106,7 @@ pub struct Workspace {
     pub managed_worktrees: Vec<worktree::ManagedWorktree>,
     pub sidebar_expanded: bool,
     pub muted: bool,
+    pub(crate) pending_pull_requests: Vec<(String, crate::app::pull_request::PullRequest)>,
 }
 
 static DURABLE_WORKSPACE_IDS: std::sync::Mutex<
@@ -139,17 +139,11 @@ impl Workspace {
     }
 
     fn build_with_tab(id: u64, title: String, cwd: String, tab: Tab) -> Self {
-        let git_dir = find_git_dir(&cwd);
-        let (git_branch, is_git_repo) = match &git_dir {
-            Some(dir) => parse_head(dir),
-            None => (String::new(), false),
-        };
-        let (repo_root, is_worktree) = match &git_dir {
-            Some(dir) => resolve_repo_root(dir),
-            None => (None, false),
-        };
-        let worktree_root =
-            git::resolve_worktree_root(&cwd, git_dir.as_deref(), repo_root.as_deref(), is_worktree);
+        let GitLocation {
+            git_dir,
+            repo_root,
+            worktree_root,
+        } = GitLocation::unprobed(&cwd);
         let durable_id = paneflow_config::schema::WorkspaceId::new();
         register_durable_workspace_id(id, &durable_id);
         Self {
@@ -160,8 +154,8 @@ impl Workspace {
             tabs: vec![tab],
             active_tab_idx: 0,
             git_stats: GitDiffStats::default(),
-            git_branch,
-            is_git_repo,
+            git_branch: String::new(),
+            is_git_repo: false,
             git_dir,
             repo_root,
             worktree_root,
@@ -177,6 +171,7 @@ impl Workspace {
             managed_worktrees: Vec::new(),
             sidebar_expanded: true,
             muted: false,
+            pending_pull_requests: Vec::new(),
         }
     }
 
@@ -371,8 +366,8 @@ impl Workspace {
         self.active_tab().focus_first(window, cx);
     }
 
-    pub fn serialize_layout(&self, cx: &App) -> Option<LayoutNode> {
-        self.active_tab().serialize(cx)
+    pub fn serialize_layout_without_scrollback(&self, cx: &App) -> Option<LayoutNode> {
+        self.active_tab().serialize_without_scrollback(cx)
     }
 
     pub fn tab_for_pane(&self, pane: &gpui::Entity<Pane>) -> Option<&Tab> {

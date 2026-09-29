@@ -25,6 +25,7 @@ impl PaneFlowApp {
         self.theme_mode = mode;
         self.cached_config.theme_mode = Some(mode.as_config_str().to_string());
         self.cached_config.theme = Some(name.to_string());
+        crate::config_snapshot::publish(&self.cached_config, cx);
         crate::theme::set_active_theme(Some(name));
         crate::theme::publish_theme_generation(cx);
         cx.notify();
@@ -60,19 +61,28 @@ impl PaneFlowApp {
     }
 
     pub(crate) fn reset_theme_selection(&mut self, cx: &mut Context<Self>) {
-        let ok = config_writer::save_config_values_checked([
-            ("theme_mode", serde_json::Value::Null),
-            ("theme", serde_json::Value::Null),
-        ]);
-        if !ok {
-            self.show_toast("Could not reset theme", cx);
-            return;
-        }
         self.theme_mode = ThemeMode::Dark;
         self.cached_config.theme_mode = None;
         self.cached_config.theme = None;
+        crate::config_snapshot::publish(&self.cached_config, cx);
         crate::theme::set_active_theme(None);
         crate::theme::publish_theme_generation(cx);
         cx.notify();
+        cx.spawn(async move |this, cx| {
+            let ok = smol::unblock(|| {
+                config_writer::save_config_values_checked([
+                    ("theme_mode", serde_json::Value::Null),
+                    ("theme", serde_json::Value::Null),
+                ])
+            })
+            .await;
+            if !ok {
+                log::warn!("theme: failed to persist the reset; it is in-memory only");
+                let _ = this.update(cx, |this, cx| {
+                    this.show_toast("Could not reset theme", cx);
+                });
+            }
+        })
+        .detach();
     }
 }

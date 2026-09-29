@@ -28,18 +28,39 @@ use crate::{PaneFlowApp, ai_types};
 mod agent_frames;
 mod gates;
 mod jsonrpc;
+mod params;
+mod split;
+use split::{PATH_PROBE_TIMEOUT, probe_off_thread, unresolved_path_error};
 mod surface_methods;
 mod transcript;
 mod workspace_methods;
 
 use gates::*;
 pub(crate) use jsonrpc::*;
+use params::*;
 pub(crate) use surface_methods::*;
 use transcript::*;
 pub(crate) use workspace_methods::*;
 
 #[cfg(test)]
 pub(crate) use agent_frames::frame_is_hook_sourced;
+
+pub(crate) type IpcJob = Box<dyn FnOnce() -> serde_json::Value + Send>;
+
+pub(crate) enum IpcReply {
+    Ready(serde_json::Value),
+    Deferred(IpcJob),
+    Async(gpui::Task<serde_json::Value>),
+}
+
+pub(crate) fn answer_off_thread(
+    job: IpcJob,
+    response_tx: std::sync::mpsc::Sender<serde_json::Value>,
+) -> smol::Task<()> {
+    smol::unblock(move || {
+        let _ = response_tx.send(job());
+    })
+}
 
 fn drain_ipc_requests_for_tick(
     rx: &std::sync::mpsc::Receiver<crate::ipc::IpcRequest>,
@@ -55,7 +76,7 @@ fn drain_ipc_requests_for_tick(
         };
         dequeued += 1;
 
-        if req.cancelled.load(std::sync::atomic::Ordering::Acquire) {
+        if req.state.is_cancelled() {
             continue;
         }
 
@@ -76,12 +97,24 @@ impl PaneFlowApp {
 
     pub(crate) fn process_ipc_requests(&mut self, cx: &mut Context<Self>) {
         for req in drain_ipc_requests_for_tick(&self.ipc_rx) {
-            if req.cancelled.load(std::sync::atomic::Ordering::Acquire) {
+            if !req.state.try_start() {
                 continue;
             }
-            req.started
-                .store(true, std::sync::atomic::Ordering::Release);
-            let result = self.handle_ipc(&req.method, &req.params, req.caller_pid, cx);
+            let result = match self.handle_ipc(&req.method, &req.params, req.caller_pid, cx) {
+                IpcReply::Ready(result) => result,
+                IpcReply::Deferred(job) => {
+                    answer_off_thread(job, req.response_tx).detach();
+                    continue;
+                }
+                IpcReply::Async(task) => {
+                    let response_tx = req.response_tx;
+                    cx.spawn(async move |_, _| {
+                        let _ = response_tx.send(task.await);
+                    })
+                    .detach();
+                    continue;
+                }
+            };
             if req.method.starts_with("ai.")
                 && result.get("error").is_none()
                 && result.get("_jsonrpc_error").is_none()
@@ -121,14 +154,32 @@ impl PaneFlowApp {
         params: &serde_json::Value,
         caller_pid: Option<i64>,
         cx: &mut Context<Self>,
-    ) -> serde_json::Value {
+    ) -> IpcReply {
         match method {
-            m if m.starts_with("workspace.") => self.handle_workspace_method(method, params, cx),
-            m if m.starts_with("surface.") || m == "fleet.list" => {
-                self.handle_surface_method(method, params, caller_pid, cx)
+            "system.capabilities" => IpcReply::Ready(capabilities_value(
+                send_text_gate_open(
+                    ipc_scripting_enabled(),
+                    self.cached_config.ai_unrestricted_enabled(),
+                ),
+                ipc_orchestration_enabled(),
+            )),
+            "surface.read" => self.surface_read_reply(params, cx),
+            "surface.search" => self.surface_search_reply(params, cx),
+            "surface.split" => self.surface_split_reply(params, cx),
+            "workspace.create" => self.workspace_create_reply(params, cx),
+            "workspace.up" => self.workspace_up_reply(params, cx),
+            m if m.starts_with("workspace.") => {
+                IpcReply::Ready(self.handle_workspace_method(method, params, cx))
             }
-            m if m.starts_with("ai.") => self.handle_agent_frame(method, params, cx),
-            _ => JsonRpcError::method_not_found(format!("Method not found: {method}")).into_value(),
+            m if m.starts_with("surface.") || m == "fleet.list" => {
+                IpcReply::Ready(self.handle_surface_method(method, params, caller_pid, cx))
+            }
+            m if m.starts_with("ai.") => {
+                IpcReply::Ready(self.handle_agent_frame(method, params, cx))
+            }
+            _ => IpcReply::Ready(
+                JsonRpcError::method_not_found(format!("Method not found: {method}")).into_value(),
+            ),
         }
     }
 }
@@ -136,7 +187,6 @@ impl PaneFlowApp {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::AtomicBool;
     use std::sync::{Arc, mpsc};
 
     fn test_ipc_request(method: &str, cancelled: bool) -> crate::ipc::IpcRequest {
@@ -145,8 +195,13 @@ mod tests {
             method: method.to_string(),
             params: serde_json::json!({}),
             response_tx,
-            cancelled: Arc::new(AtomicBool::new(cancelled)),
-            started: Arc::new(AtomicBool::new(false)),
+            state: {
+                let state = Arc::new(crate::ipc::RequestState::default());
+                if cancelled {
+                    state.try_cancel();
+                }
+                state
+            },
             caller_pid: None,
         }
     }

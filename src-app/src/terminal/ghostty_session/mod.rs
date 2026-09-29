@@ -27,8 +27,9 @@ use super::pty_session::SpawnParams;
 use super::service_detector::ServiceOutputTail;
 use super::types::{
     Cell, CellFlags, Color, Content, CursorShape, GridLineText, GridMetrics, HyperlinkSource,
-    HyperlinkZone, Line, Modes, NamedColor, Point, RenderableCursor, Rgb, SelectionGeometry,
-    SelectionKind, SelectionRange, TerminalWindowSize,
+    HyperlinkZone, Line, Modes, NamedColor, Point, RenderableCursor, Rgb, ScrollbackMatches,
+    ScrollbackWindow, SelectionGeometry, SelectionKind, SelectionRange, TerminalQueryError,
+    TerminalWindowSize,
 };
 
 mod attached_runtime;
@@ -936,10 +937,6 @@ impl GhosttySession {
         })
     }
 
-    pub(super) fn search(&self, query: &str, regex: bool) -> crate::search::SearchResult {
-        self.search_with_cancel(query, regex, &AtomicBool::new(false))
-    }
-
     pub(super) fn set_native_search(&self, query: String) -> bool {
         self.inner
             .mailbox
@@ -1026,48 +1023,66 @@ impl GhosttySession {
         }
     }
 
-    pub(super) fn search_scrollback(
+    pub(super) fn read_rows(
+        &self,
+        lines: usize,
+        offset: usize,
+        timeout: Duration,
+    ) -> Result<ScrollbackWindow, TerminalQueryError> {
+        let window = self.query_within(timeout, |reply| RuntimeMessage::ReadRows {
+            lines,
+            offset,
+            reply,
+        })?;
+        Ok(ScrollbackWindow {
+            lines: window.lines,
+            total_lines: window.total_lines,
+            eof: window.eof,
+        })
+    }
+
+    pub(super) fn search_rows(
         &self,
         query: &str,
-        max_matches: usize,
-    ) -> (Vec<(i32, String)>, bool) {
-        if query.is_empty() || max_matches == 0 {
-            return (Vec::new(), false);
+        max_rows: usize,
+        timeout: Duration,
+    ) -> Result<ScrollbackMatches, TerminalQueryError> {
+        let generation = self
+            .inner
+            .search_generation
+            .fetch_add(1, Ordering::AcqRel)
+            .wrapping_add(1);
+        let outcome = self.query_within(timeout, |reply| RuntimeMessage::SearchRows {
+            query: query.to_owned(),
+            max_rows,
+            generation,
+            reply,
+        });
+        if matches!(outcome, Err(TerminalQueryError::TimedOut(_))) {
+            let _ = self.inner.search_generation.compare_exchange(
+                generation,
+                generation.wrapping_add(1),
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            );
         }
-        let search = self.search(query, false);
-        let mut seen = std::collections::HashSet::new();
-        let mut rows = Vec::new();
-        let mut hit_cap = search.truncated;
-        for found in &search.matches {
-            if seen.insert(found.start.line.0) {
-                rows.push(found.start.line.0);
-                if rows.len() >= max_matches {
-                    hit_cap = true;
-                    break;
-                }
-            }
-        }
-        let lines = self
-            .request(|reply| RuntimeMessage::LineTexts { lines: rows, reply })
-            .and_then(Result::ok);
-        match lines {
-            Some(mut lines) => {
-                for (_, text) in &mut lines {
-                    let trimmed_len = text.trim_end().len();
-                    text.truncate(trimmed_len);
-                }
-                (lines, hit_cap)
-            }
-            None => (Vec::new(), true),
+        match outcome? {
+            ghostty::RowSearch::Complete(found) => Ok(ScrollbackMatches {
+                matches: found.matches,
+                truncated: found.truncated,
+            }),
+            ghostty::RowSearch::Superseded => Err(TerminalQueryError::Superseded),
         }
     }
 
+    #[cfg(test)]
     pub(super) fn extract_scrollback(&self) -> Option<String> {
         self.request(RuntimeMessage::ExtractScrollback)
             .and_then(Result::ok)
             .flatten()
     }
 
+    #[cfg(test)]
     pub(super) fn screen_text(&self) -> Option<String> {
         self.request(RuntimeMessage::ScreenText)
             .and_then(Result::ok)
@@ -1078,6 +1093,14 @@ impl GhosttySession {
             text: text.to_owned(),
             reply,
         });
+    }
+
+    #[cfg(test)]
+    pub(super) fn stall_runtime_for_test(&self, duration: Duration) {
+        let _ = self
+            .inner
+            .mailbox
+            .try_send_control(RuntimeMessage::StallForTest(duration));
     }
 
     #[cfg(test)]
@@ -1113,6 +1136,31 @@ impl GhosttySession {
                 .inner
                 .mailbox
                 .try_send_control(RuntimeMessage::Shutdown);
+        }
+    }
+
+    fn query_within<T>(
+        &self,
+        timeout: Duration,
+        command: impl FnOnce(SyncSender<Result<T, String>>) -> RuntimeMessage,
+    ) -> Result<T, TerminalQueryError> {
+        let (reply_tx, reply_rx) = sync_channel(1);
+        self.inner
+            .mailbox
+            .try_send_control(command(reply_tx))
+            .map_err(|error| match error {
+                TrySendError::Full(_) => TerminalQueryError::Busy,
+                TrySendError::Disconnected(_) => TerminalQueryError::Unavailable,
+            })?;
+        match reply_rx.recv_timeout(timeout) {
+            Ok(Ok(value)) => Ok(value),
+            Ok(Err(reason)) => Err(TerminalQueryError::Failed(reason)),
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                Err(TerminalQueryError::TimedOut(timeout))
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                Err(TerminalQueryError::Unavailable)
+            }
         }
     }
 

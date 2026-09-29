@@ -47,6 +47,7 @@ impl PaneFlowApp {
         let theme_changed = Self::start_theme_watcher();
 
         let cached_config = paneflow_config::loader::load_config();
+        crate::config_snapshot::publish(&cached_config, cx);
         crate::terminal::element::apply_font_config(&cached_config);
         let (saved_session, session_corruption) = Self::load_session();
         let session_restore_failed = session_corruption.is_some();
@@ -57,7 +58,6 @@ impl PaneFlowApp {
             .map(|session| session.detached_panes.clone())
             .unwrap_or_default();
 
-        let mut pull_request_seeds = Vec::new();
         let (workspaces, active_idx, session_restored) = match saved_session {
             Some(session) => {
                 log::info!(
@@ -65,7 +65,6 @@ impl PaneFlowApp {
                     session.workspaces.len()
                 );
                 let (workspaces, active_idx) = Self::restore_workspaces(&session, cx);
-                pull_request_seeds = Self::pull_request_seeds(&session, &workspaces);
                 if workspaces.is_empty() {
                     log::info!(
                         "session restore: no restorable workspace; opening the welcome screen"
@@ -97,7 +96,7 @@ impl PaneFlowApp {
         .detach();
 
         let (posthog_api_key, posthog_host) = super::telemetry_events::posthog_endpoint();
-        let telemetry_config_snapshot = paneflow_config::loader::load_config();
+        let telemetry_config_snapshot = cached_config.clone();
         let telemetry_enabled_last = telemetry_config_snapshot
             .telemetry
             .as_ref()
@@ -275,6 +274,7 @@ impl PaneFlowApp {
             effective_shortcuts,
             recording_shortcut: None,
             pending_settings: std::collections::HashMap::new(),
+            quit_choice_write: None,
             shortcut_search_input,
             shortcut_capture_active: false,
             shortcut_reset_armed_at: None,
@@ -358,7 +358,7 @@ impl PaneFlowApp {
             fleet_search_pending_focus: false,
             branch_prompt: None,
             branch_prompt_focus: cx.focus_handle(),
-            recent_workspaces: crate::app::recents::load_pruned(),
+            recent_workspaces: crate::app::recents::load(),
             welcome_focus: cx.focus_handle(),
             clone_repo: None,
             clone_repo_focus: cx.focus_handle(),
@@ -434,10 +434,8 @@ impl PaneFlowApp {
             app.track_resume_batch(restored_terminals, cx);
         }
 
-        for (repo_root, branch, pr) in pull_request_seeds {
-            app.pr_states
-                .seed(&repo_root.to_string_lossy(), &branch, pr);
-        }
+        app.spawn_restore_probe(cx);
+        app.spawn_recents_prune(cx);
         app.refresh_pull_requests(cx);
         app.refresh_owned_sessions(cx);
         app.start_host_agent_stream();

@@ -340,6 +340,35 @@ pub fn resolve_repo_root(git_dir: &std::path::Path) -> (Option<std::path::PathBu
     (repo_root, is_worktree)
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GitLocation {
+    pub git_dir: Option<std::path::PathBuf>,
+    pub repo_root: Option<std::path::PathBuf>,
+    pub worktree_root: std::path::PathBuf,
+}
+
+impl GitLocation {
+    pub fn unprobed(cwd: &str) -> Self {
+        Self {
+            git_dir: None,
+            repo_root: None,
+            worktree_root: std::path::PathBuf::from(cwd),
+        }
+    }
+
+    pub fn probe(cwd: &str) -> Self {
+        let git_dir = find_git_dir(cwd);
+        let (repo_root, is_worktree) = git_dir.as_deref().map_or((None, false), resolve_repo_root);
+        let worktree_root =
+            resolve_worktree_root(cwd, git_dir.as_deref(), repo_root.as_deref(), is_worktree);
+        Self {
+            git_dir,
+            repo_root,
+            worktree_root,
+        }
+    }
+}
+
 pub fn resolve_worktree_root(
     cwd: &str,
     git_dir: Option<&std::path::Path>,

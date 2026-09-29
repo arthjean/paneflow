@@ -166,23 +166,7 @@ impl PaneFlowApp {
                 if self.workspaces[ws_idx].active_tab_idx() != tab_idx {
                     return;
                 }
-                if self.workspaces[ws_idx].git_dir != git_dir {
-                    if let Some(old) = self.workspaces[ws_idx].git_dir.take() {
-                        self.unwatch_git_dir(&old);
-                    }
-                    self.workspaces[ws_idx].git_dir = git_dir;
-                    let ws = &self.workspaces[ws_idx];
-                    if let Some(dir) = ws.git_dir.clone() {
-                        let count = self.git_watch_counts.entry(dir.clone()).or_insert(0);
-                        *count += 1;
-                        if *count == 1
-                            && let Some(ref mut watcher) = self.git_watcher
-                            && let Err(e) = watcher.watch(&dir, notify::RecursiveMode::NonRecursive)
-                        {
-                            log::warn!("git watcher: failed to watch {}: {e}", dir.display());
-                        }
-                    }
-                }
+                self.rebind_git_dir(ws_idx, git_dir);
                 let changed =
                     self.apply_git_state_for_cwd(ws_cwd, git.branch, git.is_repo, git.stats);
                 let refreshed_diff = changed && self.refresh_diff_dock_if_open_for_cwd(ws_cwd, cx);
@@ -193,19 +177,45 @@ impl PaneFlowApp {
         }
     }
 
+    fn apply_git_location(&mut self, ws_idx: usize, location: crate::workspace::GitLocation) {
+        let crate::workspace::GitLocation {
+            git_dir,
+            repo_root,
+            worktree_root,
+        } = location;
+        self.rebind_git_dir(ws_idx, git_dir);
+        let ws = &mut self.workspaces[ws_idx];
+        ws.repo_root = repo_root;
+        ws.worktree_root = worktree_root;
+        let seeds = std::mem::take(&mut ws.pending_pull_requests);
+        if let Some(root) = ws
+            .repo_root
+            .as_ref()
+            .map(|root| root.to_string_lossy().into_owned())
+        {
+            for (branch, pr) in seeds {
+                self.pr_states.seed(&root, &branch, pr);
+            }
+        }
+    }
+
     pub(crate) fn spawn_initial_git_stats(ws_id: u64, cwd: String, cx: &mut Context<Self>) {
         cx.spawn(
             async move |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
                 let cwd_for_apply = cwd.clone();
-                let (branch, is_repo, stats) = smol::unblock(move || {
+                let (location, branch, is_repo, stats) = smol::unblock(move || {
+                    let location = crate::workspace::GitLocation::probe(&cwd);
                     let (branch, is_repo) = crate::workspace::detect_branch(&cwd);
                     let stats = crate::workspace::GitDiffStats::from_cwd(&cwd);
-                    (branch, is_repo, stats)
+                    (location, branch, is_repo, stats)
                 })
                 .await;
                 let _ = cx.update(|cx| {
                     this.update(cx, |app: &mut Self, cx: &mut Context<Self>| {
-                        if app.workspaces.iter().any(|ws| ws.id == ws_id) {
+                        if let Some(ws_idx) = app.workspaces.iter().position(|ws| ws.id == ws_id) {
+                            if app.workspaces[ws_idx].cwd == cwd_for_apply {
+                                app.apply_git_location(ws_idx, location);
+                            }
                             let changed =
                                 app.apply_git_state_for_cwd(&cwd_for_apply, branch, is_repo, stats);
                             let refreshed_diff = changed

@@ -199,6 +199,7 @@ struct SurfaceEntry {
     title: String,
     cwd: Option<String>,
     cmd: Option<String>,
+    agent: Option<String>,
     workspace_idx: usize,
     tab: Option<(u64, String)>,
 }
@@ -228,7 +229,7 @@ fn surface_entry_for(
     tab: Option<(u64, String)>,
     cx: &App,
 ) -> SurfaceEntry {
-    let (custom_name, title, cwd, cmd) = {
+    let (custom_name, title, cwd, cmd, agent) = {
         let view = entity.read(cx);
         let ts = &view.terminal;
         (
@@ -236,6 +237,13 @@ fn surface_entry_for(
             ts.title.clone(),
             ts.current_cwd.clone(),
             ts.foreground_command(),
+            crate::workspace::surface_naming::agent_for_surface_name(
+                ts.detected_agent.map(|agent| agent.binary()),
+                ts.agent_confirmed,
+                ts.agent_declared_until,
+                std::time::Instant::now(),
+            )
+            .map(str::to_string),
         )
     };
     SurfaceEntry {
@@ -244,6 +252,7 @@ fn surface_entry_for(
         title,
         cwd,
         cmd,
+        agent,
         workspace_idx,
         tab,
     }
@@ -277,8 +286,35 @@ fn surface_matches_workspace(surface: &SurfaceMeta, workspace_id: Option<u64>) -
     workspace_id.is_none_or(|expected| surface.workspace_id == Some(expected))
 }
 
+fn surface_list_scope(
+    workspaces: &[Workspace],
+    active_idx: usize,
+    workspace_id: Option<u64>,
+) -> Result<(usize, usize), JsonRpcError> {
+    let idx = match workspace_id {
+        None => active_idx,
+        Some(id) => workspaces
+            .iter()
+            .position(|ws| ws.id == id)
+            .ok_or_else(|| JsonRpcError::invalid_params(format!("workspace_id {id} not found")))?,
+    };
+    Ok((idx, workspaces.get(idx).map_or(0, Workspace::pane_count)))
+}
+
+pub(crate) fn reveal_surface(
+    workspaces: &mut [Workspace],
+    surface_id: u64,
+    cx: &mut App,
+) -> Option<SurfaceLocation> {
+    let loc = find_pane_by_surface_id(workspaces, surface_id, cx)?;
+    let ws = workspaces.get_mut(loc.workspace_idx)?;
+    ws.set_active_tab(loc.tab_idx);
+    ws.active_tab_mut().reveal_pane(&loc.pane, cx);
+    Some(loc)
+}
+
 pub(crate) use paneflow_ipc_client::scrollback::{
-    paginate_scrollback, truncate_ipc_text, wrap_untrusted,
+    fit_matches_to_ipc_frame, neutralize_untrusted, truncate_ipc_text, wrap_untrusted,
 };
 
 fn surface_read_value(
@@ -296,6 +332,142 @@ fn surface_read_value(
         "eof": eof,
         "output_generation": output_generation,
         "truncated": truncated,
+    })
+}
+
+const RUNTIME_READ_TIMEOUT: Duration = Duration::from_secs(3);
+
+const RUNTIME_SEARCH_TIMEOUT: Duration = Duration::from_secs(5);
+
+const DEFAULT_READ_LINES: usize = 200;
+
+const MAX_READ_LINES: usize = 4000;
+
+const DEFAULT_SEARCH_MATCHES: usize = 50;
+
+const MAX_SEARCH_MATCHES: usize = 1000;
+
+pub(super) struct SurfaceReadRequest {
+    pub(super) surface_id: u64,
+    pub(super) lines: usize,
+    pub(super) offset: usize,
+    pub(super) fenced: bool,
+    pub(super) output_generation: u64,
+}
+
+pub(super) fn answer_surface_read(
+    backend: &crate::terminal::TerminalSessionBackend,
+    request: &SurfaceReadRequest,
+    timeout: Duration,
+) -> serde_json::Value {
+    let window = match backend.read_rows(request.lines, request.offset, timeout) {
+        Ok(window) => window,
+        Err(error) => return JsonRpcError::runtime_query(&error).into_value(),
+    };
+    let total = window.total_lines;
+    if request.offset > total {
+        return JsonRpcError::invalid_params(format!(
+            "offset {} out of range (total_lines={total})",
+            request.offset
+        ))
+        .into_value();
+    }
+    let returned = window.lines.len();
+    let text = window.lines.join("\n");
+    let text = if request.fenced {
+        neutralize_untrusted(&text)
+    } else {
+        text
+    };
+    let (text, truncated) = truncate_ipc_text(text);
+    let text = if request.fenced {
+        wrap_untrusted(
+            &format!(
+                "source=\"surface:{}\" total_lines=\"{total}\" eof=\"{}\"",
+                request.surface_id, window.eof
+            ),
+            &text,
+        )
+    } else {
+        text
+    };
+    surface_read_value(
+        text,
+        returned,
+        total,
+        window.eof,
+        request.output_generation,
+        truncated,
+    )
+}
+
+pub(super) fn answer_surface_search(
+    backend: &crate::terminal::TerminalSessionBackend,
+    pattern: &str,
+    max_matches: usize,
+    timeout: Duration,
+) -> serde_json::Value {
+    let found = match backend.search_rows(pattern, max_matches, timeout) {
+        Ok(found) => found,
+        Err(error) => return JsonRpcError::runtime_query(&error).into_value(),
+    };
+    let (matches, clipped) = fit_matches_to_ipc_frame(found.matches);
+    let matches: Vec<_> = matches
+        .into_iter()
+        .map(|(line, text)| serde_json::json!({"line": line, "text": text}))
+        .collect();
+    serde_json::json!({"matches": matches, "truncated": found.truncated || clipped})
+}
+
+pub(super) fn surface_read_job(
+    terminal: &Entity<TerminalView>,
+    lines: usize,
+    offset: usize,
+    fenced: bool,
+    cx: &App,
+) -> IpcJob {
+    let state = &terminal.read(cx).terminal;
+    let backend = state.session_backend();
+    let request = SurfaceReadRequest {
+        surface_id: terminal.entity_id().as_u64(),
+        lines,
+        offset,
+        fenced,
+        output_generation: state.output_generation,
+    };
+    Box::new(move || answer_surface_read(&backend, &request, RUNTIME_READ_TIMEOUT))
+}
+
+pub(super) fn surface_search_job(
+    terminal: &Entity<TerminalView>,
+    pattern: String,
+    max_matches: usize,
+    cx: &App,
+) -> IpcJob {
+    let backend = terminal.read(cx).terminal.session_backend();
+    Box::new(move || answer_surface_search(&backend, &pattern, max_matches, RUNTIME_SEARCH_TIMEOUT))
+}
+
+fn input_rejected_error(reason: &str) -> JsonRpcError {
+    JsonRpcError {
+        code: JsonRpcError::RUNTIME_UNAVAILABLE,
+        message: reason.to_owned(),
+    }
+}
+
+struct SendTextRequest<'a> {
+    text: &'a str,
+    submit: bool,
+    paste: Option<bool>,
+    surface_id: Option<u64>,
+}
+
+fn send_text_request(params: &serde_json::Value) -> Result<SendTextRequest<'_>, JsonRpcError> {
+    Ok(SendTextRequest {
+        text: opt_str(params, "text")?.unwrap_or(""),
+        submit: opt_bool(params, "submit")?.unwrap_or(false),
+        paste: opt_bool(params, "paste")?,
+        surface_id: opt_u64(params, "surface_id")?,
     })
 }
 
@@ -441,7 +613,8 @@ impl PaneFlowApp {
             .iter()
             .zip(&entries)
             .map(|(m, entry)| {
-                let base = crate::workspace::surface_naming::derive_surface_base_name(
+                let base = crate::workspace::surface_naming::surface_base_name(
+                    entry.agent.as_deref(),
                     m.cmd.as_deref(),
                     Some(m.title.as_str()).filter(|t| !t.is_empty()),
                 );
@@ -499,16 +672,14 @@ impl PaneFlowApp {
         params: &serde_json::Value,
         cx: &App,
     ) -> Result<gpui::Entity<TerminalView>, JsonRpcError> {
-        if let Some(sid) = params.get("surface_id").and_then(|s| s.as_u64()) {
+        let surface_id = opt_u64(params, "surface_id")?;
+        let name = opt_str(params, "name")?;
+        if let Some(sid) = surface_id {
             return self.find_surface_terminal_by_id(sid, cx).ok_or_else(|| {
                 JsonRpcError::invalid_params(format!("surface_id {sid} not found"))
             });
         }
-        if let Some(name) = params
-            .get("name")
-            .and_then(|n| n.as_str())
-            .filter(|n| !n.is_empty())
-        {
+        if let Some(name) = name.filter(|n| !n.is_empty()) {
             let meta = self.collect_surface_meta(cx);
             let matches: Vec<&SurfaceMeta> = meta.iter().filter(|m| m.name == name).collect();
             match matches.as_slice() {
@@ -573,6 +744,61 @@ impl PaneFlowApp {
             })
     }
 
+    pub(super) fn surface_read_reply(&self, params: &serde_json::Value, cx: &App) -> IpcReply {
+        let (lines, offset, fenced) = match (
+            opt_usize(params, "lines"),
+            opt_usize(params, "offset"),
+            opt_bool(params, "fenced"),
+        ) {
+            (Ok(lines), Ok(offset), Ok(fenced)) => (lines, offset, fenced),
+            (Err(error), _, _) | (_, Err(error), _) | (_, _, Err(error)) => {
+                return IpcReply::Ready(error.into_value());
+            }
+        };
+        let terminal = match self.resolve_readable_surface(params, cx) {
+            Ok(terminal) => terminal,
+            Err(error) => return IpcReply::Ready(error.into_value()),
+        };
+        let lines = lines.map_or(DEFAULT_READ_LINES, |n| n.clamp(1, MAX_READ_LINES));
+        let offset = offset.unwrap_or(0);
+        let fenced = fenced.unwrap_or_else(|| self.cached_config.ai_injection_fence_enabled());
+        IpcReply::Deferred(surface_read_job(&terminal, lines, offset, fenced, cx))
+    }
+
+    pub(super) fn surface_search_reply(&self, params: &serde_json::Value, cx: &App) -> IpcReply {
+        let (pattern, max_matches) =
+            match (opt_str(params, "pattern"), opt_usize(params, "max_matches")) {
+                (Ok(pattern), Ok(max_matches)) => (pattern.unwrap_or(""), max_matches),
+                (Err(error), _) | (_, Err(error)) => return IpcReply::Ready(error.into_value()),
+            };
+        if pattern.is_empty() {
+            return IpcReply::Ready(
+                JsonRpcError::invalid_params("missing or empty 'pattern' parameter").into_value(),
+            );
+        }
+        if pattern.len() > crate::search::MAX_QUERY_LEN {
+            return IpcReply::Ready(
+                JsonRpcError::invalid_params(format!(
+                    "pattern exceeds {} bytes",
+                    crate::search::MAX_QUERY_LEN
+                ))
+                .into_value(),
+            );
+        }
+        let terminal = match self.resolve_readable_surface(params, cx) {
+            Ok(terminal) => terminal,
+            Err(error) => return IpcReply::Ready(error.into_value()),
+        };
+        let max_matches =
+            max_matches.map_or(DEFAULT_SEARCH_MATCHES, |n| n.clamp(1, MAX_SEARCH_MATCHES));
+        IpcReply::Deferred(surface_search_job(
+            &terminal,
+            pattern.to_owned(),
+            max_matches,
+            cx,
+        ))
+    }
+
     pub(crate) fn schedule_deferred_submit(
         terminal: &Entity<TerminalView>,
         floor: Duration,
@@ -622,80 +848,25 @@ impl PaneFlowApp {
                     Ok(workspace_id) => workspace_id,
                     Err(error) => return error.into_value(),
                 };
+                let (workspace, count) = match surface_list_scope(
+                    &self.workspaces,
+                    self.active_idx,
+                    requested_workspace_id,
+                ) {
+                    Ok(scope) => scope,
+                    Err(error) => return error.into_value(),
+                };
                 let surfaces: Vec<_> = self
                     .collect_surface_meta(cx)
                     .into_iter()
                     .filter(|surface| surface_matches_workspace(surface, requested_workspace_id))
                     .map(surface_meta_value)
                     .collect();
-                let count = self.active_workspace().map_or(0, |ws| ws.pane_count());
                 serde_json::json!({
                     "pane_count": count,
-                    "workspace": self.active_idx,
+                    "workspace": workspace,
                     "surfaces": surfaces,
                 })
-            }
-            "surface.read" => {
-                let terminal = match self.resolve_readable_surface(params, cx) {
-                    Ok(t) => t,
-                    Err(e) => return e.into_value(),
-                };
-                const DEFAULT_LINES: usize = 200;
-                const MAX_LINES: usize = 4000;
-                let lines = params
-                    .get("lines")
-                    .and_then(|v| v.as_u64())
-                    .map(|n| (n as usize).clamp(1, MAX_LINES))
-                    .unwrap_or(DEFAULT_LINES);
-                let offset = params
-                    .get("offset")
-                    .and_then(|v| v.as_u64())
-                    .map(|n| n as usize)
-                    .unwrap_or(0);
-                let output_generation = terminal.read(cx).terminal.output_generation;
-                let sid = terminal.entity_id().as_u64();
-                let read_started = std::time::Instant::now();
-                let state = terminal.read(cx);
-                let full = match (
-                    state.terminal.extract_scrollback(),
-                    state.terminal.screen_text(),
-                ) {
-                    (Some(history), Some(screen)) => format!("{history}\n{screen}"),
-                    (Some(history), None) => history,
-                    (None, Some(screen)) => screen,
-                    (None, None) => String::new(),
-                };
-                let extract_elapsed = read_started.elapsed();
-                let (text, returned, total, eof) = paginate_scrollback(&full, lines, offset);
-                let total_elapsed = read_started.elapsed();
-                if total_elapsed >= std::time::Duration::from_millis(10) {
-                    log::debug!(
-                        "surface.read sid={sid} lines={lines} offset={offset} total_lines={total} returned={returned} bytes={} extract_ms={} total_ms={}",
-                        full.len(),
-                        extract_elapsed.as_millis(),
-                        total_elapsed.as_millis()
-                    );
-                }
-                if offset > total {
-                    return JsonRpcError::invalid_params(format!(
-                        "offset {offset} out of range (total_lines={total})"
-                    ))
-                    .into_value();
-                }
-                let fenced = params
-                    .get("fenced")
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or_else(|| self.cached_config.ai_injection_fence_enabled());
-                let (text, truncated) = truncate_ipc_text(text);
-                let text = if fenced {
-                    wrap_untrusted(
-                        &format!("source=\"surface:{sid}\" total_lines=\"{total}\" eof=\"{eof}\""),
-                        &text,
-                    )
-                } else {
-                    text
-                };
-                surface_read_value(text, returned, total, eof, output_generation, truncated)
             }
             "fleet.list" => {
                 let name_by_sid: HashMap<u64, String> = self
@@ -730,41 +901,10 @@ impl PaneFlowApp {
                     .find(|s| s.surface_id == Some(sid));
                 surface_status_value(sid, session, output_generation, std::time::Instant::now())
             }
-            "surface.search" => {
-                let pattern = params.get("pattern").and_then(|p| p.as_str()).unwrap_or("");
-                if pattern.is_empty() {
-                    return JsonRpcError::invalid_params("missing or empty 'pattern' parameter")
-                        .into_value();
-                }
-                if pattern.len() > crate::search::MAX_QUERY_LEN {
-                    return JsonRpcError::invalid_params(format!(
-                        "pattern exceeds {} bytes",
-                        crate::search::MAX_QUERY_LEN
-                    ))
-                    .into_value();
-                }
-                let terminal = match self.resolve_readable_surface(params, cx) {
-                    Ok(t) => t,
-                    Err(e) => return e.into_value(),
-                };
-                const DEFAULT_MAX: usize = 50;
-                const HARD_MAX: usize = 1000;
-                let max_matches = params
-                    .get("max_matches")
-                    .and_then(|v| v.as_u64())
-                    .map(|n| (n as usize).clamp(1, HARD_MAX))
-                    .unwrap_or(DEFAULT_MAX);
-                let (matches, truncated) = terminal
-                    .read(cx)
-                    .terminal
-                    .search_scrollback(pattern, max_matches);
-                let arr: Vec<_> = matches
-                    .into_iter()
-                    .map(|(line, text)| serde_json::json!({"line": line, "text": text}))
-                    .collect();
-                serde_json::json!({"matches": arr, "truncated": truncated})
-            }
             "surface.rename" => {
+                if let Err(error) = opt_str(params, "new_name") {
+                    return error.into_value();
+                }
                 let terminal = match self.resolve_surface(params, cx) {
                     Ok(t) => t,
                     Err(e) => return e.into_value(),
@@ -778,18 +918,21 @@ impl PaneFlowApp {
                 serde_json::json!({"renamed": true, "name": new_name})
             }
             "surface.focus" => {
-                let Some(sid) = params.get("surface_id").and_then(|s| s.as_u64()) else {
-                    return serde_json::json!({"error": "Missing 'surface_id' parameter"});
+                let sid = match opt_u64(params, "surface_id") {
+                    Ok(Some(sid)) => sid,
+                    Ok(None) => {
+                        return JsonRpcError::invalid_params("missing 'surface_id' parameter")
+                            .into_value();
+                    }
+                    Err(error) => return error.into_value(),
                 };
-                let Some(loc) = find_pane_by_surface_id(&self.workspaces, sid, cx) else {
-                    return serde_json::json!({"error": "Surface not found"});
+                let Some(loc) = reveal_surface(&mut self.workspaces, sid, cx) else {
+                    return JsonRpcError::invalid_params(format!("surface_id {sid} not found"))
+                        .into_value();
                 };
                 let ws_idx = loc.workspace_idx;
                 let pane = loc.pane;
                 self.activate_workspace_without_window(ws_idx, cx);
-                if let Some(ws) = self.workspaces.get_mut(ws_idx) {
-                    ws.set_active_tab(loc.tab_idx);
-                }
                 pane.update(cx, |_p, cx| cx.notify());
                 cx.defer(move |cx| {
                     if PaneFlowApp::focus_pane_window(pane.clone(), cx) {
@@ -813,6 +956,15 @@ impl PaneFlowApp {
                 })
             }
             "surface.send_text" => {
+                let SendTextRequest {
+                    text,
+                    submit,
+                    paste: paste_param,
+                    surface_id: requested_sid,
+                } = match send_text_request(params) {
+                    Ok(request) => request,
+                    Err(error) => return error.into_value(),
+                };
                 let unrestricted = self.cached_config.ai_unrestricted_enabled();
                 if !send_text_gate_open(ipc_scripting_enabled(), unrestricted) {
                     return JsonRpcError {
@@ -823,12 +975,6 @@ impl PaneFlowApp {
                     }
                     .into_value();
                 }
-                let text = params.get("text").and_then(|t| t.as_str()).unwrap_or("");
-                let submit = params
-                    .get("submit")
-                    .and_then(|s| s.as_bool())
-                    .unwrap_or(false);
-                let paste_param = params.get("paste").and_then(|p| p.as_bool());
                 if text.is_empty() && !submit {
                     return JsonRpcError::invalid_params("Missing 'text' parameter").into_value();
                 }
@@ -836,9 +982,7 @@ impl PaneFlowApp {
                 if text.len() > MAX_TEXT_LEN {
                     return JsonRpcError::invalid_params("Text exceeds 64 KiB limit").into_value();
                 }
-                let target: Option<Entity<TerminalView>> = if let Some(sid) =
-                    params.get("surface_id").and_then(|s| s.as_u64())
-                {
+                let target: Option<Entity<TerminalView>> = if let Some(sid) = requested_sid {
                     match self.find_surface_terminal_by_id(sid, cx) {
                         Some(t) => Some(t),
                         None => {
@@ -872,10 +1016,13 @@ impl PaneFlowApp {
                     Err(message) => return JsonRpcError::invalid_params(message).into_value(),
                 };
                 if !text.is_empty() {
-                    if paste {
-                        terminal.read(cx).inject_text(text);
+                    let written = if paste {
+                        terminal.read(cx).write_injected_text(text)
                     } else {
-                        terminal.read(cx).send_text(text);
+                        terminal.read(cx).write_text(text)
+                    };
+                    if let Err(reason) = written {
+                        return input_rejected_error(reason).into_value();
                     }
                 }
                 if submit {
@@ -884,8 +1031,8 @@ impl PaneFlowApp {
                             self.cached_config.resolved_submit_paste_delay_ms(),
                         );
                         Self::schedule_deferred_submit(&terminal, floor, cx);
-                    } else {
-                        terminal.read(cx).send_text("\r");
+                    } else if let Err(reason) = terminal.read(cx).write_text("\r") {
+                        return input_rejected_error(reason).into_value();
                     }
                 }
                 if unrestricted {
@@ -919,6 +1066,11 @@ impl PaneFlowApp {
                 })
             }
             "surface.send_keystroke" => {
+                let (keystroke, requested_sid) =
+                    match (opt_str(params, "keystroke"), opt_u64(params, "surface_id")) {
+                        (Ok(keystroke), Ok(sid)) => (keystroke.unwrap_or(""), sid),
+                        (Err(error), _) | (_, Err(error)) => return error.into_value(),
+                    };
                 let unrestricted = self.cached_config.ai_unrestricted_enabled();
                 if !send_text_gate_open(ipc_scripting_enabled(), unrestricted) {
                     return JsonRpcError {
@@ -927,10 +1079,6 @@ impl PaneFlowApp {
                     }
                     .into_value();
                 }
-                let keystroke = params
-                    .get("keystroke")
-                    .and_then(|k| k.as_str())
-                    .unwrap_or("");
                 if keystroke.is_empty() {
                     return JsonRpcError::invalid_params("Missing 'keystroke' parameter")
                         .into_value();
@@ -941,8 +1089,7 @@ impl PaneFlowApp {
                     )
                     .into_value();
                 }
-                let terminal = if let Some(sid) = params.get("surface_id").and_then(|s| s.as_u64())
-                {
+                let terminal = if let Some(sid) = requested_sid {
                     self.find_surface_terminal_by_id(sid, cx)
                 } else if let Some(ws) = self.active_workspace()
                     && let Some(root) = &ws.active_tab().root
@@ -954,136 +1101,13 @@ impl PaneFlowApp {
                 match terminal {
                     Some(t) => match t.read(cx).send_keystroke(keystroke) {
                         Ok(()) => serde_json::json!({"sent": true}),
+                        Err(e) if e == crate::terminal::view::INPUT_REJECTED => {
+                            input_rejected_error(crate::terminal::view::INPUT_REJECTED).into_value()
+                        }
                         Err(e) => JsonRpcError::invalid_params(e).into_value(),
                     },
                     None => JsonRpcError::invalid_params("No active terminal").into_value(),
                 }
-            }
-            "surface.split" => {
-                let dir_str = params
-                    .get("direction")
-                    .and_then(|d| d.as_str())
-                    .unwrap_or("");
-                let direction = match dir_str {
-                    "horizontal" => SplitDirection::Horizontal,
-                    "vertical" => SplitDirection::Vertical,
-                    _ => {
-                        return JsonRpcError::invalid_params(
-                            "Missing or invalid 'direction' parameter (use \"horizontal\" or \"vertical\")",
-                        )
-                        .into_value();
-                    }
-                };
-                if pane_spec_requires_orchestration(params) && !ipc_orchestration_enabled() {
-                    return orchestration_disabled_error("surface.split").into_value();
-                }
-                let spawn_cwd = match params.get("cwd").and_then(|c| c.as_str()) {
-                    Some(raw) => match canonicalize_workspace_cwd(raw) {
-                        Ok(canonical) => Some(canonical),
-                        Err(err) => return err.into_value(),
-                    },
-                    None => None,
-                };
-                let spawn_env = parse_env_object(params.get("env"));
-                let spawn_command = params
-                    .get("command")
-                    .and_then(|c| c.as_str())
-                    .filter(|c| !c.is_empty())
-                    .map(str::to_string);
-                let spawn_name = params
-                    .get("label")
-                    .or_else(|| params.get("name"))
-                    .and_then(|n| n.as_str())
-                    .and_then(sanitize_pane_name);
-                let spawn_prompt = params
-                    .get("prompt")
-                    .and_then(|p| p.as_str())
-                    .filter(|p| !p.is_empty())
-                    .map(str::to_string);
-                let spawn_profile = parse_terminal_profile(params.get("profile"));
-
-                let (ws_idx, tab_idx, target_pane) =
-                    if let Some(sid) = params.get("surface_id").and_then(|s| s.as_u64()) {
-                        let Some(loc) = find_pane_by_surface_id(&self.workspaces, sid, cx) else {
-                            return JsonRpcError::invalid_params("Surface not found").into_value();
-                        };
-                        (loc.workspace_idx, loc.tab_idx, Some(loc.pane))
-                    } else {
-                        (
-                            self.active_idx,
-                            self.active_workspace().map_or(0, |ws| ws.active_tab_idx()),
-                            None,
-                        )
-                    };
-                let Some(ws) = self.workspaces.get(ws_idx) else {
-                    return JsonRpcError::invalid_params("No active workspace").into_value();
-                };
-                let ws_id = ws.id;
-                let Some(tab) = ws.tabs().get(tab_idx) else {
-                    return JsonRpcError::invalid_params("Workspace has no root").into_value();
-                };
-                let Some(root) = tab.root.as_ref() else {
-                    return JsonRpcError::invalid_params("Workspace has no root").into_value();
-                };
-                if !tab.can_add_pane() {
-                    return JsonRpcError::invalid_params("Maximum pane count reached").into_value();
-                }
-                if let Some(target) = &target_pane
-                    && !root.contains_leaf(target)
-                {
-                    return JsonRpcError::invalid_params("Surface not found").into_value();
-                }
-                let spawn_cwd = tab.confine_cwd(
-                    spawn_cwd
-                        .clone()
-                        .or_else(|| (!ws.cwd.is_empty()).then(|| PathBuf::from(&ws.cwd))),
-                );
-                let new_terminal = cx.new(|cx| {
-                    TerminalView::with_cwd_env_and_profile(
-                        ws_id,
-                        spawn_cwd.clone(),
-                        None,
-                        spawn_env.clone(),
-                        spawn_profile,
-                        cx,
-                    )
-                });
-                if let Some(name) = spawn_name {
-                    new_terminal.update(cx, |view, _cx| {
-                        view.terminal.custom_name = Some(name);
-                    });
-                }
-                let surface_id = new_terminal.entity_id().as_u64();
-                let new_pane = self.create_pane(new_terminal.clone(), ws_id, cx);
-                let Some(root) = self.workspaces[ws_idx]
-                    .tab_mut(tab_idx)
-                    .and_then(|tab| tab.root.as_mut())
-                else {
-                    return JsonRpcError::invalid_params("Workspace has no root").into_value();
-                };
-                match target_pane {
-                    Some(target) => {
-                        if !root.split_at_pane(&target, direction, new_pane) {
-                            return JsonRpcError::invalid_params("Surface not found").into_value();
-                        }
-                    }
-                    None => root.split_first_leaf(direction, new_pane),
-                }
-                if let Some(mw) = parse_managed_worktree(params.get("managed_worktree")) {
-                    self.workspaces[ws_idx].managed_worktrees.push(mw);
-                }
-                if let Some(cmd) = spawn_command {
-                    Self::schedule_launch_command(&new_terminal, cmd, spawn_prompt, usize::MAX, cx);
-                } else if let Some(prompt) = spawn_prompt {
-                    Self::schedule_prompt_prefill(&new_terminal, prompt, usize::MAX, cx);
-                }
-                let panes = self.workspaces[ws_idx].pane_count();
-                self.save_session(cx);
-                cx.notify();
-                serde_json::json!({
-                    "split": true, "direction": dir_str, "panes": panes,
-                    "surface_id": surface_id
-                })
             }
             _ => JsonRpcError::method_not_found(format!("Method not found: {method}")).into_value(),
         }
@@ -1198,14 +1222,15 @@ mod tests {
     #[test]
     fn paginate_empty_buffer_is_eof() {
         assert_eq!(
-            super::paginate_scrollback("", 200, 0),
+            paneflow_ipc_client::scrollback::paginate_scrollback("", 200, 0),
             (String::new(), 0, 0, true)
         );
     }
 
     #[test]
     fn paginate_default_window_returns_tail() {
-        let (text, returned, total, eof) = super::paginate_scrollback("a\nb\nc\nd\ne", 2, 0);
+        let (text, returned, total, eof) =
+            paneflow_ipc_client::scrollback::paginate_scrollback("a\nb\nc\nd\ne", 2, 0);
         assert_eq!(text, "d\ne");
         assert_eq!(returned, 2);
         assert_eq!(total, 5);
@@ -1214,7 +1239,8 @@ mod tests {
 
     #[test]
     fn paginate_offset_walks_back_up_the_buffer() {
-        let (text, returned, total, eof) = super::paginate_scrollback("a\nb\nc\nd\ne", 2, 2);
+        let (text, returned, total, eof) =
+            paneflow_ipc_client::scrollback::paginate_scrollback("a\nb\nc\nd\ne", 2, 2);
         assert_eq!(text, "b\nc");
         assert_eq!(returned, 2);
         assert_eq!(total, 5);
@@ -1223,7 +1249,8 @@ mod tests {
 
     #[test]
     fn paginate_window_covering_whole_buffer_is_eof() {
-        let (text, returned, total, eof) = super::paginate_scrollback("a\nb\nc", 10, 0);
+        let (text, returned, total, eof) =
+            paneflow_ipc_client::scrollback::paginate_scrollback("a\nb\nc", 10, 0);
         assert_eq!(text, "a\nb\nc");
         assert_eq!(returned, 3);
         assert_eq!(total, 3);
@@ -1232,7 +1259,8 @@ mod tests {
 
     #[test]
     fn paginate_offset_past_top_returns_empty_at_eof() {
-        let (text, returned, total, eof) = super::paginate_scrollback("a\nb\nc", 2, 10);
+        let (text, returned, total, eof) =
+            paneflow_ipc_client::scrollback::paginate_scrollback("a\nb\nc", 2, 10);
         assert!(text.is_empty());
         assert_eq!(returned, 0);
         assert_eq!(total, 3);
@@ -1241,12 +1269,14 @@ mod tests {
 
     #[test]
     fn paginate_total_drives_us025_offset_guard() {
-        let (_, _, total_at_top, eof_at_top) = super::paginate_scrollback("a\nb\nc", 2, 3);
+        let (_, _, total_at_top, eof_at_top) =
+            paneflow_ipc_client::scrollback::paginate_scrollback("a\nb\nc", 2, 3);
         assert_eq!(total_at_top, 3);
         assert!(eof_at_top);
         assert!(3 <= total_at_top, "offset == total is in range (boundary)");
 
-        let (_, _, total_past, _) = super::paginate_scrollback("a\nb\nc", 2, 4);
+        let (_, _, total_past, _) =
+            paneflow_ipc_client::scrollback::paginate_scrollback("a\nb\nc", 2, 4);
         assert_eq!(total_past, 3);
         assert!(
             4 > total_past,
@@ -1630,6 +1660,97 @@ mod tests {
     }
 
     #[gpui::test]
+    fn focusing_a_pane_hidden_by_zoom_leaves_zoom_first(cx: &mut gpui::TestAppContext) {
+        use gpui::AppContext;
+
+        let cx = cx.add_empty_window();
+        let make_pane = |cx: &mut gpui::VisualTestContext| {
+            let terminal = cx.new(|cx| crate::terminal::TerminalView::display_only_for_test(1, cx));
+            let surface_id = terminal.entity_id().as_u64();
+            let pane = cx.new(|cx| Pane::new(terminal, 1, cx));
+            (pane, surface_id)
+        };
+        let (zoomed_pane, zoomed_sid) = make_pane(cx);
+        let (hidden_pane, hidden_sid) = make_pane(cx);
+        let zoomed_tab = || {
+            let mut tab = crate::workspace::Tab::new(
+                "zoomed",
+                Some(crate::layout::LayoutTree::Leaf(zoomed_pane.clone())),
+            );
+            let mut saved = crate::layout::LayoutTree::Leaf(zoomed_pane.clone());
+            saved.split_first_leaf(
+                crate::layout::SplitDirection::Horizontal,
+                hidden_pane.clone(),
+            );
+            tab.saved_layout = Some(saved);
+            tab
+        };
+
+        let mut workspaces = vec![Workspace::restored_with_id(
+            1,
+            "ws",
+            std::path::PathBuf::new(),
+            vec![zoomed_tab()],
+            0,
+        )];
+        cx.update(|_, cx| reveal_surface(&mut workspaces, zoomed_sid, cx))
+            .expect("the zoomed pane is found");
+        assert!(
+            workspaces[0].active_tab().is_zoomed(),
+            "the visible zoomed pane keeps the zoom"
+        );
+
+        let loc = cx
+            .update(|_, cx| reveal_surface(&mut workspaces, hidden_sid, cx))
+            .expect("the hidden pane is found");
+        assert_eq!(loc.pane, hidden_pane);
+        let tab = workspaces[0].active_tab();
+        assert!(!tab.is_zoomed(), "focusing a hidden pane leaves zoom");
+        assert!(
+            tab.root
+                .as_ref()
+                .is_some_and(|root| root.contains_leaf(&hidden_pane)),
+            "the focused pane is back in the rendered tree"
+        );
+    }
+
+    #[gpui::test]
+    fn a_filtered_surface_list_reports_that_workspace(cx: &mut gpui::TestAppContext) {
+        use gpui::AppContext;
+
+        let cx = cx.add_empty_window();
+        let make_pane = |cx: &mut gpui::VisualTestContext| {
+            let terminal = cx.new(|cx| crate::terminal::TerminalView::display_only_for_test(1, cx));
+            cx.new(|cx| Pane::new(terminal, 1, cx))
+        };
+        let single = make_pane(cx);
+        let mut pair = crate::layout::LayoutTree::Leaf(make_pane(cx));
+        pair.split_first_leaf(crate::layout::SplitDirection::Horizontal, make_pane(cx));
+        let workspaces = vec![
+            Workspace::with_layout_and_id(
+                11,
+                "one",
+                std::path::PathBuf::new(),
+                crate::layout::LayoutTree::Leaf(single),
+            ),
+            Workspace::with_layout_and_id(22, "two", std::path::PathBuf::new(), pair),
+        ];
+
+        assert_eq!(surface_list_scope(&workspaces, 0, None).unwrap(), (0, 1));
+        assert_eq!(
+            surface_list_scope(&workspaces, 0, Some(22)).unwrap(),
+            (1, 2),
+            "the filtered workspace, not the active one"
+        );
+        assert_eq!(
+            surface_list_scope(&workspaces, 0, Some(99))
+                .unwrap_err()
+                .code,
+            -32602
+        );
+    }
+
+    #[gpui::test]
     fn tab_for_surface_counts_a_zoomed_tab_by_its_saved_layout(cx: &mut gpui::TestAppContext) {
         use gpui::AppContext;
 
@@ -1786,5 +1907,307 @@ mod tests {
         assert!(ws.tabs()[1].can_add_pane());
         assert_eq!(ws.tabs()[1].pane_count(), 1);
         assert_eq!(ws.pane_count(), MAX_PANES + 1);
+    }
+
+    #[test]
+    fn a_mistyped_send_text_is_refused_before_any_write() {
+        let error = send_text_request(&serde_json::json!({"text": 5, "submit": true}))
+            .err()
+            .expect("a numeric text is refused");
+        assert_eq!(error.code, JsonRpcError::INVALID_PARAMS);
+        for params in [
+            serde_json::json!({"text": "hi", "submit": "true"}),
+            serde_json::json!({"text": "hi", "paste": 1}),
+            serde_json::json!({"text": "hi", "surface_id": "3"}),
+            serde_json::json!({"text": "hi", "surface_id": -3}),
+            serde_json::json!({"text": "hi", "surface_id": 3.5}),
+        ] {
+            assert_eq!(
+                send_text_request(&params).err().map(|error| error.code),
+                Some(JsonRpcError::INVALID_PARAMS),
+                "{params}"
+            );
+        }
+        let params = serde_json::json!({"text": "hi", "submit": true, "surface_id": 3});
+        let request = send_text_request(&params).expect("a typed request is accepted");
+        assert_eq!(
+            (request.text, request.submit, request.surface_id),
+            ("hi", true, Some(3))
+        );
+    }
+
+    #[gpui::test]
+    fn a_refused_pty_write_is_reported_instead_of_sent(cx: &mut gpui::TestAppContext) {
+        let cx = cx.add_empty_window();
+        let terminal = display_terminal(cx);
+        cx.update(|_, cx| {
+            let view = terminal.read(cx);
+            assert_eq!(view.write_text("ok"), Ok(()));
+            assert_eq!(
+                view.write_text(""),
+                Err(crate::terminal::view::INPUT_REJECTED)
+            );
+        });
+        terminal.update(cx, |view, _| {
+            view.terminal.host_link = crate::terminal::host_link::HostLinkState::Reconnecting;
+        });
+        cx.update(|_, cx| {
+            let view = terminal.read(cx);
+            assert_eq!(
+                view.write_text("lost"),
+                Err(crate::terminal::view::INPUT_REJECTED)
+            );
+            assert_eq!(
+                view.write_injected_text("lost\nlines"),
+                Err(crate::terminal::view::INPUT_REJECTED)
+            );
+            assert_eq!(
+                view.send_keystroke("ctrl-c"),
+                Err(crate::terminal::view::INPUT_REJECTED.to_owned())
+            );
+        });
+        let rejected = input_rejected_error(crate::terminal::view::INPUT_REJECTED);
+        assert_eq!(rejected.code, JsonRpcError::RUNTIME_UNAVAILABLE);
+    }
+
+    fn display_terminal(cx: &mut gpui::VisualTestContext) -> Entity<TerminalView> {
+        use gpui::AppContext as _;
+        cx.new(|cx| TerminalView::display_only_for_test(1, cx))
+    }
+
+    fn write_terminal(
+        terminal: &Entity<TerminalView>,
+        bytes: &[u8],
+        cx: &mut gpui::VisualTestContext,
+    ) {
+        cx.update(|_, cx| terminal.read(cx).terminal.write_output(bytes));
+    }
+
+    fn backend_of(
+        terminal: &Entity<TerminalView>,
+        cx: &mut gpui::VisualTestContext,
+    ) -> crate::terminal::TerminalSessionBackend {
+        cx.update(|_, cx| terminal.read(cx).terminal.session_backend())
+    }
+
+    fn read_request(lines: usize) -> SurfaceReadRequest {
+        SurfaceReadRequest {
+            surface_id: 1,
+            lines,
+            offset: 0,
+            fenced: false,
+            output_generation: 0,
+        }
+    }
+
+    #[gpui::test]
+    fn surface_reads_are_prepared_without_waiting_on_a_stalled_runtime(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let cx = cx.add_empty_window();
+        let terminal = display_terminal(cx);
+        write_terminal(&terminal, b"alpha\nbravo needle\ncharlie\n", cx);
+        let stall = Duration::from_millis(800);
+        backend_of(&terminal, cx).stall_runtime_for_test(stall);
+
+        let started = std::time::Instant::now();
+        let (read_job, search_job) = cx.update(|_, cx| {
+            (
+                surface_read_job(&terminal, 10, 0, false, cx),
+                surface_search_job(&terminal, "needle".to_owned(), 10, cx),
+            )
+        });
+        let prepared_in = started.elapsed();
+        assert!(
+            prepared_in < Duration::from_millis(50),
+            "the GPUI-thread part took {prepared_in:?} behind a stalled runtime"
+        );
+
+        let (read_tx, read_rx) = std::sync::mpsc::channel();
+        let (search_tx, search_rx) = std::sync::mpsc::channel();
+        answer_off_thread(read_job, read_tx).detach();
+        answer_off_thread(search_job, search_tx).detach();
+        let read = read_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("the deferred read answers once the runtime resumes");
+        let search = search_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("the deferred search answers once the runtime resumes");
+
+        assert!(started.elapsed() >= stall / 2);
+        assert_eq!(read["text"], "alpha\nbravo needle\ncharlie");
+        assert_eq!(read["total_lines"], 3);
+        assert_eq!(search["matches"][0]["text"], "bravo needle");
+        assert_eq!(search["truncated"], false);
+    }
+
+    #[gpui::test]
+    fn a_runtime_timeout_is_a_jsonrpc_error_not_an_empty_result(cx: &mut gpui::TestAppContext) {
+        let cx = cx.add_empty_window();
+        let terminal = display_terminal(cx);
+        write_terminal(&terminal, b"some output\n", cx);
+        let backend = backend_of(&terminal, cx);
+        backend.stall_runtime_for_test(Duration::from_millis(700));
+        let timeout = Duration::from_millis(100);
+
+        let read = promote_response(
+            answer_surface_read(&backend, &read_request(50), timeout),
+            serde_json::json!(1),
+        );
+        let search = promote_response(
+            answer_surface_search(&backend, "output", 10, timeout),
+            serde_json::json!(2),
+        );
+
+        for response in [read, search] {
+            assert!(response.get("result").is_none(), "{response}");
+            assert_eq!(response["error"]["code"], JsonRpcError::REQUEST_TIMED_OUT);
+            assert!(
+                response["error"]["message"]
+                    .as_str()
+                    .is_some_and(|message| message.contains("did not answer within 100 ms")),
+                "{response}"
+            );
+        }
+    }
+
+    #[gpui::test]
+    fn a_search_on_a_dead_runtime_is_an_error(cx: &mut gpui::TestAppContext) {
+        let backend = {
+            let state = crate::terminal::TerminalState::new_display_only(5, 40);
+            state.write_output(b"needle\n");
+            state.session_backend()
+        };
+        let _ = cx;
+
+        let search = || {
+            promote_response(
+                answer_surface_search(&backend, "needle", 10, Duration::from_millis(300)),
+                serde_json::json!(3),
+            )
+        };
+
+        let racing_the_shutdown = search();
+        assert!(
+            racing_the_shutdown.get("result").is_none(),
+            "{racing_the_shutdown}"
+        );
+        assert!(
+            [
+                JsonRpcError::REQUEST_TIMED_OUT,
+                JsonRpcError::RUNTIME_UNAVAILABLE
+            ]
+            .contains(
+                &racing_the_shutdown["error"]["code"]
+                    .as_i64()
+                    .and_then(|code| i32::try_from(code).ok())
+                    .unwrap_or_default()
+            ),
+            "{racing_the_shutdown}"
+        );
+        let retried = search();
+        assert!(retried.get("result").is_none(), "{retried}");
+        assert_eq!(
+            retried["error"]["code"],
+            JsonRpcError::RUNTIME_UNAVAILABLE,
+            "once the runtime has exited a retry fails for good instead of timing out again"
+        );
+    }
+
+    #[gpui::test]
+    fn a_deferred_answer_to_a_departed_client_ends_without_panicking(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let cx = cx.add_empty_window();
+        let terminal = display_terminal(cx);
+        write_terminal(&terminal, b"output\n", cx);
+        backend_of(&terminal, cx).stall_runtime_for_test(Duration::from_millis(200));
+        let job = cx.update(|_, cx| surface_read_job(&terminal, 10, 0, false, cx));
+        let (response_tx, response_rx) = std::sync::mpsc::channel();
+        drop(response_rx);
+
+        smol::block_on(answer_off_thread(job, response_tx));
+    }
+
+    #[gpui::test]
+    fn a_superseded_search_is_a_cancellation_error(cx: &mut gpui::TestAppContext) {
+        let cx = cx.add_empty_window();
+        let terminal = display_terminal(cx);
+        write_terminal(&terminal, b"first needle\nsecond needle\n", cx);
+        let backend = backend_of(&terminal, cx);
+        backend.stall_runtime_for_test(Duration::from_millis(400));
+
+        let earlier_backend = backend.clone();
+        let earlier = std::thread::spawn(move || {
+            answer_surface_search(&earlier_backend, "needle", 10, Duration::from_secs(5))
+        });
+        std::thread::sleep(Duration::from_millis(100));
+        let later = answer_surface_search(&backend, "needle", 10, Duration::from_secs(5));
+        let earlier =
+            promote_response(earlier.join().expect("search thread"), serde_json::json!(4));
+
+        assert_eq!(earlier["error"]["code"], JsonRpcError::REQUEST_CANCELLED);
+        assert!(earlier.get("result").is_none());
+        assert_eq!(later["matches"].as_array().map(Vec::len), Some(2));
+        assert_eq!(later["truncated"], false);
+    }
+
+    #[gpui::test]
+    fn search_lines_are_the_text_scanned_while_output_streams(cx: &mut gpui::TestAppContext) {
+        let cx = cx.add_empty_window();
+        let terminal = display_terminal(cx);
+        let backend = backend_of(&terminal, cx);
+        let writer_backend = backend.clone();
+        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let writer_stop = std::sync::Arc::clone(&stop);
+        let streaming = std::thread::spawn(move || {
+            let mut index = 0u64;
+            while !writer_stop.load(std::sync::atomic::Ordering::Acquire) {
+                writer_backend.write_output_for_test(
+                    format!("noise {index}\r\nneedle {index}\r\n").as_bytes(),
+                );
+                index += 1;
+            }
+        });
+
+        for _ in 0..40 {
+            let found = answer_surface_search(&backend, "needle", 50, Duration::from_secs(5));
+            for hit in found["matches"].as_array().expect("matches") {
+                assert!(
+                    hit["text"]
+                        .as_str()
+                        .is_some_and(|text| text.starts_with("needle ")),
+                    "a returned line is not the row that matched: {hit}"
+                );
+            }
+        }
+        stop.store(true, std::sync::atomic::Ordering::Release);
+        streaming.join().expect("writer thread");
+    }
+
+    #[gpui::test]
+    fn the_read_budget_covers_the_serialized_envelope(cx: &mut gpui::TestAppContext) {
+        let cx = cx.add_empty_window();
+        let terminal = display_terminal(cx);
+        let row = "\"\\".repeat(40);
+        let rows = (paneflow_ipc_client::scrollback::MAX_IPC_TEXT_BYTES / row.len()) + 8;
+        let output: String = (0..rows).map(|_| format!("{row}\n")).collect();
+        write_terminal(&terminal, output.as_bytes(), cx);
+        let backend = backend_of(&terminal, cx);
+
+        let value = answer_surface_read(
+            &backend,
+            &read_request(MAX_READ_LINES),
+            Duration::from_secs(5),
+        );
+        let envelope = serde_json::to_string(&promote_response(value, serde_json::json!(5)))
+            .expect("serialize");
+
+        assert!(
+            envelope.len() < paneflow_ipc_client::MAX_FRAME_BYTES,
+            "the envelope is {} bytes",
+            envelope.len()
+        );
+        assert!(envelope.contains("\"truncated\":true"));
     }
 }

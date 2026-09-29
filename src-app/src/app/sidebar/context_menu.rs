@@ -149,16 +149,7 @@ impl PaneFlowApp {
     }
 
     pub(crate) fn open_workspace_service_url(&mut self, url: &str, cx: &mut Context<Self>) {
-        if let Err(err) = crate::external_open::open_url(url) {
-            let message = if err.kind() == std::io::ErrorKind::NotFound {
-                "Could not open URL - install xdg-utils (Linux), or check your default browser"
-                    .to_string()
-            } else {
-                format!("Could not open the link in your default browser: {err}")
-            };
-            log::warn!("sidebar: open URL failed: {err}");
-            self.show_toast(message, cx);
-        }
+        self.open_external_url(url.to_string(), cx);
     }
 
     pub(crate) fn render_workspace_context_menu(

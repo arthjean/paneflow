@@ -59,6 +59,32 @@ pub(crate) fn open_url(url: &str) -> std::io::Result<()> {
     open_url_impl(url)
 }
 
+pub(crate) fn open_path(path: &std::path::Path) -> std::io::Result<()> {
+    open_target(path.as_os_str())
+}
+
+#[cfg(target_os = "linux")]
+fn open_target(target: &std::ffi::OsStr) -> std::io::Result<()> {
+    open::that_detached(target)
+}
+
+#[cfg(not(target_os = "linux"))]
+fn open_target(target: &std::ffi::OsStr) -> std::io::Result<()> {
+    open::that(target)
+}
+
+pub(crate) fn open_url_failure_message(err: &std::io::Error) -> String {
+    if err.kind() == std::io::ErrorKind::NotFound {
+        "Could not open URL - install xdg-utils (Linux), or check your default browser".to_string()
+    } else {
+        format!("Could not open the link in your default browser: {err}")
+    }
+}
+
+pub(crate) async fn open_url_off_thread(url: String) -> std::io::Result<()> {
+    smol::unblock(move || open_url(&url)).await
+}
+
 #[cfg(target_os = "windows")]
 fn open_url_impl(url: &str) -> std::io::Result<()> {
     use std::os::windows::process::CommandExt;
@@ -81,7 +107,7 @@ fn open_url_impl(url: &str) -> std::io::Result<()> {
 
 #[cfg(not(target_os = "windows"))]
 fn open_url_impl(url: &str) -> std::io::Result<()> {
-    open::that(url)
+    open_target(std::ffi::OsStr::new(url))
 }
 
 #[cfg(target_os = "windows")]
@@ -102,6 +128,33 @@ pub(crate) fn run_open_url_helper_from_args(args: &[String]) -> i32 {
             eprintln!("paneflow: failed to open URL {url:?}: {err}");
             1
         }
+    }
+}
+
+#[cfg(test)]
+mod open_tests {
+    use super::*;
+
+    #[test]
+    fn a_launcher_that_is_not_installed_is_reported_with_the_install_hint() {
+        let err = std::io::Error::from(std::io::ErrorKind::NotFound);
+        assert!(open_url_failure_message(&err).contains("xdg-utils"));
+    }
+
+    #[test]
+    fn a_launcher_that_exits_nonzero_is_reported_with_its_error() {
+        let err = std::io::Error::other("Launcher \"open\" failed with exit status: 1");
+        assert_eq!(
+            open_url_failure_message(&err),
+            "Could not open the link in your default browser: Launcher \"open\" failed with exit status: 1"
+        );
+    }
+
+    #[test]
+    fn an_unopenable_url_fails_off_the_calling_thread() {
+        let caller = std::thread::current().id();
+        let opened_on = smol::block_on(smol::unblock(move || std::thread::current().id()));
+        assert_ne!(opened_on, caller);
     }
 }
 

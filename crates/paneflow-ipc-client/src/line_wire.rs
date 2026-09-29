@@ -2,9 +2,9 @@ use std::io;
 use std::path::Path;
 use std::time::Duration;
 
-use interprocess::local_socket::Stream;
 #[cfg(not(windows))]
-use interprocess::local_socket::{prelude::*, GenericFilePath};
+use interprocess::local_socket::prelude::*;
+use interprocess::local_socket::Stream;
 #[cfg(windows)]
 use interprocess::os::windows::named_pipe::{local_socket, pipe_mode, DuplexPipeStream};
 
@@ -77,9 +77,7 @@ impl Wire {
         }
         #[cfg(not(windows))]
         {
-            let _ = timeout;
-            let name = endpoint.to_fs_name::<GenericFilePath>()?;
-            Self::new(Stream::connect(name)?, max_frame)
+            Self::new(crate::connect_with_timeout(endpoint, timeout)?, max_frame)
         }
     }
 

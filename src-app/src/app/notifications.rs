@@ -38,6 +38,19 @@ impl ToastAction {
 }
 
 impl PaneFlowApp {
+    pub(crate) fn open_external_url(&mut self, url: String, cx: &mut Context<Self>) {
+        cx.spawn(async move |this, cx| {
+            let Err(err) = crate::external_open::open_url_off_thread(url).await else {
+                return;
+            };
+            log::warn!("open URL failed: {err}");
+            let _ = this.update(cx, |app, cx| {
+                app.show_toast(crate::external_open::open_url_failure_message(&err), cx);
+            });
+        })
+        .detach();
+    }
+
     pub(crate) fn show_toast(&mut self, message: impl Into<String>, cx: &mut Context<Self>) {
         self.push_toast(message.into(), Vec::new(), TOAST_HOLD_MS, cx);
     }
@@ -238,15 +251,8 @@ impl PaneFlowApp {
                         ToastAction::RetryUpdate => {
                             window.dispatch_action(Box::new(StartSelfUpdate), cx);
                         }
-                        ToastAction::OpenReleasesPage(url) => {
-                            if let Err(err) = crate::external_open::open_url(url) {
-                                log::warn!("toast: open releases URL failed: {err}");
-                            }
-                        }
-                        ToastAction::OpenReleaseNotes(url) => {
-                            if let Err(err) = crate::external_open::open_url(url) {
-                                log::warn!("toast: open changelog URL failed: {err}");
-                            }
+                        ToastAction::OpenReleasesPage(url) | ToastAction::OpenReleaseNotes(url) => {
+                            this.open_external_url(url.clone(), cx);
                         }
                         ToastAction::ReopenTab(tab_id) => {
                             this.reopen_closed_tab(*tab_id, window, cx);
@@ -277,11 +283,10 @@ impl PaneFlowApp {
                 .text_color(ui.text)
                 .overflow_hidden()
                 .when_some(click_url, |el, url| {
-                    el.cursor_pointer().on_click(move |_, _, _| {
-                        if let Err(err) = crate::external_open::open_url(&url) {
-                            log::warn!("toast: open changelog URL failed: {err}");
-                        }
-                    })
+                    el.cursor_pointer()
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.open_external_url(url.clone(), cx);
+                        }))
                 })
                 .child(
                     div()
@@ -378,9 +383,7 @@ impl PaneFlowApp {
             .child("View release notes")
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .on_click(cx.listener(move |this, _, _, cx| {
-                if let Err(err) = crate::external_open::open_url(&url) {
-                    log::warn!("toast: open changelog URL failed: {err}");
-                }
+                this.open_external_url(url.clone(), cx);
                 this.dismiss_toast(cx);
             }))
         });
@@ -417,9 +420,7 @@ impl PaneFlowApp {
                 .when_some(click_url, |el, url| {
                     el.cursor_pointer()
                         .on_click(cx.listener(move |this, _, _, cx| {
-                            if let Err(err) = crate::external_open::open_url(&url) {
-                                log::warn!("toast: open changelog URL failed: {err}");
-                            }
+                            this.open_external_url(url.clone(), cx);
                             this.dismiss_toast(cx);
                         }))
                 })

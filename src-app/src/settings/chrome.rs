@@ -591,8 +591,7 @@ impl PaneFlowApp {
         self.workspace_template_detail_open = false;
         if self.recording_shortcut.is_some() {
             self.recording_shortcut = None;
-            let config = paneflow_config::loader::load_config();
-            crate::keybindings::apply_keybindings(cx, &config.shortcuts);
+            crate::keybindings::apply_keybindings(cx, &self.cached_config.shortcuts);
         }
         self.shortcut_reset_armed_at = None;
         self.clear_shortcut_filters(cx);
