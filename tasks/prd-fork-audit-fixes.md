@@ -6,6 +6,8 @@
 | Version | Date | Author | Summary |
 |---------|------|--------|---------|
 | 1.0 | 2026-09-28 | Arthur Jean | PRD initial : correction des défauts confirmés dans Paneflow par l'audit du fork, regroupés par cause racine en 6 epics et 47 stories, livraisons R0 à R4. |
+| 1.1 | 2026-09-29 | Arthur Jean | Le critère d'undo-close d'US-023 devient US-048 : libghostty n'émet pas d'OSC 8 en sortie VT et la replay n'atteignait plus l'écran ; l'undo-close rattache désormais la session gardée 5 s. US-040 dépend d'US-048. 48 stories. |
+| 1.2 | 2026-09-29 | Arthur Jean | Le critère de reproduction manuelle d'US-016 devient une reproduction à l'exécution sur un vrai PTY : le test automatisé a reproduit l'état exited sous Linux avant correctif, et le rendu GPUI du libellé n'ajoute rien à la cause. |
 
 ## Problem Statement
 
@@ -57,7 +59,7 @@ L'état et les preuves de l'audit sont conservés localement dans `tasks/fork-au
 | Sécuriser les sondes automatiques | 100 % des spawns git de production passent par le builder ; 0 exécution de `core.fsmonitor` local dans les tests | 0 régression Git LFS ou hooks signalée |
 | Libérer le thread de rendu | 0 frame > 50 ms due à un handler IPC dans le scénario de US-024 | 100 % des chemins de l'EP-004 hors du thread GPUI |
 | Rétablir l'intégration agents | Bridge MCP fonctionnel sous Codex sur Linux, macOS et Windows | 0 clé utilisateur perdue par une réinstallation MCP |
-| Clore l'audit | R0 et R1 DONE (16 stories) | ≥ 44/47 stories DONE |
+| Clore l'audit | R0 et R1 DONE (16 stories) | ≥ 45/48 stories DONE |
 
 ## Target Users
 
@@ -148,7 +150,7 @@ Pour une story qui revendique un gain de performance : mesure par `scripts/bench
 |-----------|---------|
 | R0 | US-016, US-032, US-034 |
 | R1 | US-001, US-002, US-003, US-004, US-006, US-008, US-009, US-012, US-017, US-018, US-024, US-033, US-035 |
-| R2 | US-005, US-007, US-011, US-013, US-014, US-015, US-019, US-020, US-021, US-022, US-023, US-025, US-026, US-027, US-028, US-029, US-031 |
+| R2 | US-005, US-007, US-011, US-013, US-014, US-015, US-019, US-020, US-021, US-022, US-023, US-048, US-025, US-026, US-027, US-028, US-029, US-031 |
 | R3 | US-036, US-037, US-038, US-039, US-040, US-041, US-042, US-043, US-044, US-045, US-046 |
 | R4 | US-010, US-030, US-047 |
 
@@ -423,7 +425,7 @@ Fait en sorte que la sortie d'un programme ne puisse plus faire croire à la mor
 **Acceptance Criteria:**
 - [ ] Un test automatisé alimente le miroir avec 300 BEL dans un seul chunk et vérifie sur `8c3dd2ca` l'apparition de `RuntimeFailed` puis de `exited = Some(-1)`.
 - [ ] Le même test avec 20 OSC 9, 40 OSC 52 et 40 séquences inconnues consigne le seuil qui déclenche l'état exited.
-- [ ] Une reproduction manuelle sur un build debug (`printf '\a%.0s' {1..300}` dans bash, puis `cat` d'un binaire de 1 MiB) est consignée avec la plateforme.
+- [ ] Une reproduction à l'exécution sur un vrai PTY est consignée avec la plateforme : 100 000 octets contenant 10 000 BEL passent par `cat` dans un shell, et le pane passe à `exited = Some(-1)` avant la vraie sortie du programme.
 - [ ] Échec : si aucun cas ne reproduit l'état exited, la preuve est consignée et US-017 est reclassée avant d'être commencée.
 
 #### US-017: Absorber les rafales d'effets terminal sans tuer le pane
@@ -528,8 +530,8 @@ Fait en sorte que la sortie d'un programme ne puisse plus faire croire à la mor
 - [ ] `default_shell` accepte `~/` ; sous Unix, le test d'exécutabilité utilise `access(X_OK)`.
 - [ ] Échec : given un `default_shell` inexistant, then le pane démarre avec le shell de la plateforme et un toast nomme le chemin refusé.
 
-#### US-023: Durcir le presse-papiers, le collage, les images et l'undo-close
-**Description:** En tant que développeur, je veux qu'un programme ne puisse pas remplir mon presse-papiers ni faire exécuter un collage multi-lignes à mon insu, et que la réouverture d'un pane ne réactive pas des modes morts, afin que mon terminal reste sûr et prévisible. Sources : fork #315 (bc617eea), #885 (1039826e), #237 (96619f4f), #195 (eb775e04) ; `src-app/src/terminal/pty_session.rs:224,239,818`, `src-app/src/terminal/view.rs:75-79`, `src-app/src/terminal/kitty.rs:72-88`, `crates/paneflow-terminal-ghostty/src/formatter.rs:38-67,216-230`, `crates/paneflow-terminal-ghostty/src/terminal_ops.rs:108-110`, `src-app/src/app/workspace_ops/mod.rs:137,193-202`.
+#### US-023: Durcir le presse-papiers, le collage et les images
+**Description:** En tant que développeur, je veux qu'un programme ne puisse pas remplir mon presse-papiers ni faire exécuter un collage multi-lignes à mon insu, afin que mon terminal reste sûr et prévisible. Le critère d'undo-close est passé à US-048 (v1.1). Sources : fork #315 (bc617eea), #885 (1039826e), #237 (96619f4f), #195 (eb775e04) ; `src-app/src/terminal/pty_session.rs:224,239,818`, `src-app/src/terminal/view.rs:75-79`, `src-app/src/terminal/kitty.rs:72-88`, `crates/paneflow-terminal-ghostty/src/formatter.rs:38-67,216-230`, `crates/paneflow-terminal-ghostty/src/terminal_ops.rs:108-110`, `src-app/src/app/workspace_ops/mod.rs:137,193-202`.
 
 **Priority:** P1
 **Size:** M (3 pts)
@@ -539,8 +541,23 @@ Fait en sorte que la sortie d'un programme ne puisse plus faire croire à la mor
 - [ ] Un réglage `terminal.osc52_clipboard` accepte `copy` (par défaut, comportement actuel) et `off` ; avec `off`, toute écriture OSC 52 est refusée. Le schéma `schemas/paneflow.schema.json` documente la clé.
 - [ ] Un collage multi-lignes dans un programme sans bracketed paste demande une confirmation qui affiche le nombre de lignes ; Cancel n'envoie rien, et `allow_unsafe` n'est plus forcé à `true`.
 - [ ] Le décodage PNG kitty impose la limite de 8192x8192 par les limites du décodeur, avant toute allocation ; test : un PNG de 1 Ko qui déclare 60000x60000 est refusé sans allocation de plus de 64 MiB.
-- [ ] L'undo-close rejoue le texte, les styles, les liens OSC 8 et le curseur, mais ni les modes, ni le clavier kitty, ni le pwd, ni la palette ; test : une capture avec le mode souris 1003 ne réactive pas le suivi souris dans le shell restauré.
 - [ ] Échec : given un collage d'une seule ligne, then aucune confirmation n'apparaît.
+
+#### US-048: Rouvrir un pane fermé en rattachant sa session
+**Description:** En tant que développeur, je veux qu'annuler la fermeture d'un pane ou d'un onglet me rende la même session, avec son processus, son texte, ses styles, ses liens et son curseur, afin qu'une fausse manœuvre ne me coûte rien. Remplace le critère d'undo-close d'US-023 : libghostty n'émet pas d'OSC 8 en sortie VT (`src/terminal/formatter.zig:1462` au pin `0c2a290d`), et depuis `73c01bf5` la replay n'atteint plus l'écran, car le runtime attaché ignore `WriteOutput` (`src-app/src/terminal/ghostty_session/attached_runtime.rs:791`). Modèle : l'`undo-timeout` de Ghostty, 5 s par défaut (`src/config/Config.zig:2733`). Sources : `src-app/src/app/close_policy.rs:236-330`, `src-app/src/app/workspace_ops/mod.rs:66-206,622-716`, `src-app/src/app/workspace_ops/tab.rs:239-346`, `src-app/src/app/hosted_sessions.rs:150-330`, `src-app/src/app/quit_dialog.rs:218-510`, `src-app/src/terminal/pty_session.rs:883-920`.
+
+**Priority:** P1
+**Size:** M (3 pts)
+**Dependencies:** None
+
+**Acceptance Criteria:**
+- [ ] Une fermeture sans dialogue, donc sans agent actif, garde la session 5 s au lieu de l'arrêter ; un undo dans ce délai rattache la même session, avec le même processus, le texte, les styles, les liens OSC 8 et le curseur. Test : une session détachée puis rattachée garde son PID, son lien OSC 8, son gras et son curseur.
+- [ ] Après 5 s, ou quand l'entrée sort de la pile des 5 fermetures, la session est arrêtée ; l'undo rouvre alors un shell neuf dans le même cwd.
+- [ ] Stop dans le dialogue de fermeture arrête immédiatement, et l'undo rouvre un shell neuf ; Detach n'a pas de délai, et l'undo rattache la session. Une fermeture qui ne laisse rien à annuler arrête immédiatement.
+- [ ] Une session gardée n'apparaît ni dans la barre latérale ni dans le décompte du dialogue de sortie, et quitter l'app l'arrête, quel que soit `on_quit`.
+- [ ] Le toast de réouverture d'un onglet reste affiché pendant tout le délai de garde.
+- [ ] `capture_replay`, `restore_replay`, `TerminalExtra::replay` et le budget de 2 MiB des fermetures sont supprimés ; fermer un pane n'envoie plus de requête synchrone au runtime.
+- [ ] Échec : given une session détachée déjà rouverte depuis la barre latérale, when on annule sa fermeture, then aucun second rattachement n'a lieu, un shell neuf s'ouvre et un toast l'explique.
 
 ---
 
@@ -854,7 +871,7 @@ Fait porter les actions sur tous les onglets et rend le focus là où il était.
 
 **Priority:** P1
 **Size:** L (5 pts)
-**Dependencies:** None
+**Dependencies:** US-048
 
 **Acceptance Criteria:**
 - [ ] Broadcast, jump-to-waiting, attention queue, fleet search, badges et chips parcourent tous les onglets, y compris les panes masqués par le zoom.
@@ -1152,7 +1169,7 @@ Frame as questions for engineering input, not mandates.
 | Panes marqués terminés par un flot de BEL | À mesurer par US-016 | 0 | Month-1 | Test de US-017 |
 | OS où le bridge MCP fonctionne sous Codex | À mesurer par US-032 | 3/3 | Month-1 | Protocole de US-032 rejoué après US-033 |
 | Spawns git de production hors builder | ≈15 sites | 0 | Month-1 | Test de garde de US-008 |
-| Stories DONE | 0/47 | 16/47 (R0 et R1) ; ≥ 44/47 | Month-1 / Month-6 | Fichier de statut |
+| Stories DONE | 0/48 | 16/48 (R0 et R1) ; ≥ 45/48 | Month-1 / Month-6 | Fichier de statut |
 | Tests de régression ajoutés | 0 | ≥ 47, au moins un par story | Month-6 | Revue des PR |
 
 ## Open Questions

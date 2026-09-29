@@ -25,10 +25,10 @@
     {
       "id": "EP-003",
       "title": "Fiabiliser le terminal et son host",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
-      "stories_total": 8,
-      "stories_done": 0
+      "stories_total": 9,
+      "stories_done": 9
     },
     {
       "id": "EP-004",
@@ -252,99 +252,111 @@
       "id": "US-016",
       "title": "Reproduire le passage d'un pane vivant à « exited » sur un flot de BEL",
       "epic": "EP-003",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "size": "S",
       "blocked_by": [],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-09-29T14:15:36+02:00",
+      "completed_at": "2026-09-29T19:36:59+02:00",
+      "reviewed_at": "2026-09-29T19:36:59+02:00"
     },
     {
       "id": "US-017",
       "title": "Absorber les rafales d'effets terminal sans tuer le pane",
       "epic": "EP-003",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "size": "M",
       "blocked_by": [
         "US-016"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-09-29T14:20:48+02:00",
+      "completed_at": "2026-09-29T18:39:29+02:00",
+      "reviewed_at": "2026-09-29T18:39:29+02:00"
     },
     {
       "id": "US-018",
       "title": "Faire rapporter au host le thème et la géométrie réels",
       "epic": "EP-003",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "size": "L",
       "blocked_by": [],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-09-29T14:20:48+02:00",
+      "completed_at": "2026-09-29T18:39:29+02:00",
+      "reviewed_at": "2026-09-29T18:39:29+02:00"
     },
     {
       "id": "US-019",
       "title": "Faire agir Reset et Clear sur l'émulateur et le host",
       "epic": "EP-003",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P1",
       "size": "M",
       "blocked_by": [],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-09-29T14:39:50+02:00",
+      "completed_at": "2026-09-29T18:39:29+02:00",
+      "reviewed_at": "2026-09-29T18:39:29+02:00"
     },
     {
       "id": "US-020",
       "title": "Corriger la géométrie du pointeur, du survol et de la sélection",
       "epic": "EP-003",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P1",
       "size": "L",
       "blocked_by": [],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-09-29T14:51:07+02:00",
+      "completed_at": "2026-09-29T18:39:29+02:00",
+      "reviewed_at": "2026-09-29T18:39:29+02:00"
     },
     {
       "id": "US-021",
       "title": "Rendre l'IME, la barre de recherche et les champs texte corrects",
       "epic": "EP-003",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P1",
       "size": "M",
       "blocked_by": [],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-09-29T15:09:53+02:00",
+      "completed_at": "2026-09-29T18:39:29+02:00",
+      "reviewed_at": "2026-09-29T18:39:29+02:00"
     },
     {
       "id": "US-022",
       "title": "Fiabiliser l'intégration shell et l'environnement des panes",
       "epic": "EP-003",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P1",
       "size": "M",
       "blocked_by": [],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-09-29T15:18:07+02:00",
+      "completed_at": "2026-09-29T18:39:29+02:00",
+      "reviewed_at": "2026-09-29T18:39:29+02:00"
     },
     {
       "id": "US-023",
-      "title": "Durcir le presse-papiers, le collage, les images et l'undo-close",
+      "title": "Durcir le presse-papiers, le collage et les images",
       "epic": "EP-003",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P1",
       "size": "M",
       "blocked_by": [],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-09-29T15:27:28+02:00",
+      "completed_at": "2026-09-29T18:39:29+02:00",
+      "reviewed_at": "2026-09-29T18:39:29+02:00"
+    },
+    {
+      "id": "US-048",
+      "title": "Rouvrir un pane fermé en rattachant sa session",
+      "epic": "EP-003",
+      "status": "DONE",
+      "priority": "P1",
+      "size": "M",
+      "blocked_by": [],
+      "started_at": "2026-09-29T17:39:26+02:00",
+      "completed_at": "2026-09-29T18:39:29+02:00",
+      "reviewed_at": "2026-09-29T18:39:29+02:00"
     },
     {
       "id": "US-024",
@@ -561,7 +573,9 @@
       "status": "TODO",
       "priority": "P1",
       "size": "L",
-      "blocked_by": [],
+      "blocked_by": [
+        "US-048"
+      ],
       "started_at": null,
       "completed_at": null,
       "reviewed_at": null
