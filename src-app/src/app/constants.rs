@@ -274,7 +274,7 @@ pub(crate) const UPDATE_CHECK_PILL_HOLD_MS: u64 = 3000;
 
 pub(crate) const MAX_CLOSED_PANES: usize = 5;
 
-pub(crate) const MAX_CLOSED_PANE_SCROLLBACK_BYTES: usize = 2 * 1024 * 1024;
+pub(crate) const CLOSED_SESSION_GRACE_MS: u64 = 5_000;
 
 pub(crate) const RESIZE_BORDER: Pixels = px(10.0);
 pub(crate) const WINDOW_CORNER_RADIUS: Pixels = px(10.0);

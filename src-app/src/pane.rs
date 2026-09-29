@@ -746,6 +746,7 @@ impl Pane {
             | TerminalEvent::ServiceDetected(_)
             | TerminalEvent::CancelSwapMode
             | TerminalEvent::SelectionCopied
+            | TerminalEvent::Notice(_)
             | TerminalEvent::OpenMarkdownPath(_)
             | TerminalEvent::OpenCodePath { .. }
             | TerminalEvent::FontZoomChanged

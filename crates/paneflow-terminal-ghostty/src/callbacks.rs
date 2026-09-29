@@ -2,6 +2,7 @@ use std::cell::{Cell, RefCell};
 use std::collections::VecDeque;
 use std::ffi::c_void;
 use std::panic::{AssertUnwindSafe, catch_unwind};
+use std::time::{Duration, Instant};
 
 use paneflow_libghostty_sys as sys;
 
@@ -10,7 +11,7 @@ use crate::{BackendEvent, ColorScheme, Result, WindowSize};
 
 const MAX_PENDING_WRITE_PTY_BYTES: usize = 1024 * 1024;
 const MAX_PENDING_CLIPBOARD_EVENTS: usize = 32;
-const MAX_PENDING_BELL_EVENTS: usize = 256;
+const BELL_INTERVAL: Duration = Duration::from_millis(250);
 const MAX_PENDING_NOTIFICATION_EVENTS: usize = 16;
 const MAX_PENDING_UNKNOWN_SEQUENCE_EVENTS: usize = 32;
 
@@ -33,7 +34,7 @@ pub(crate) struct CallbackState {
     events: RefCell<VecDeque<BackendEvent>>,
     pending_write_pty_bytes: Cell<usize>,
     pending_clipboard_events: Cell<usize>,
-    pending_bell_events: Cell<usize>,
+    last_bell_at: Cell<Option<Instant>>,
     pending_notification_events: Cell<usize>,
     pending_unknown_sequence_events: Cell<usize>,
     size: Cell<WindowSize>,
@@ -49,7 +50,7 @@ impl CallbackState {
             events: RefCell::new(VecDeque::new()),
             pending_write_pty_bytes: Cell::new(0),
             pending_clipboard_events: Cell::new(0),
-            pending_bell_events: Cell::new(0),
+            last_bell_at: Cell::new(None),
             pending_notification_events: Cell::new(0),
             pending_unknown_sequence_events: Cell::new(0),
             size: Cell::new(size),
@@ -128,13 +129,16 @@ impl CallbackState {
                 events.push_back(BackendEvent::Progress(report));
             }
             BackendEvent::Bell => {
-                let pending = self.pending_bell_events.get();
-                if pending >= MAX_PENDING_BELL_EVENTS {
-                    push_overflow(&mut events, 1, 0);
-                } else {
-                    self.pending_bell_events.set(pending + 1);
-                    events.push_back(BackendEvent::Bell);
+                let now = Instant::now();
+                if self
+                    .last_bell_at
+                    .get()
+                    .is_some_and(|last| now.duration_since(last) < BELL_INTERVAL)
+                {
+                    return;
                 }
+                self.last_bell_at.set(Some(now));
+                events.push_back(BackendEvent::Bell);
             }
             BackendEvent::DesktopNotification { title, body } => {
                 let pending = self.pending_notification_events.get();
@@ -182,7 +186,6 @@ impl CallbackState {
     pub(crate) fn drain(&self) -> Vec<BackendEvent> {
         self.pending_write_pty_bytes.set(0);
         self.pending_clipboard_events.set(0);
-        self.pending_bell_events.set(0);
         self.pending_notification_events.set(0);
         self.pending_unknown_sequence_events.set(0);
         self.events.borrow_mut().drain(..).collect()
@@ -372,6 +375,24 @@ mod tests {
         }
 
         assert_eq!(state.drain(), [BackendEvent::WritePty(vec![b'x'; 1_000])]);
+    }
+
+    #[test]
+    fn a_bell_flood_yields_one_bell_per_interval_and_never_overflows() {
+        let state = CallbackState::new(WindowSize::new(80, 24, 8, 16).unwrap(), ColorScheme::Dark);
+        for _ in 0..10_000 {
+            state.push(BackendEvent::Bell);
+        }
+        assert_eq!(state.drain(), [BackendEvent::Bell]);
+
+        for _ in 0..10_000 {
+            state.push(BackendEvent::Bell);
+        }
+        assert!(state.drain().is_empty());
+
+        std::thread::sleep(BELL_INTERVAL);
+        state.push(BackendEvent::Bell);
+        assert_eq!(state.drain(), [BackendEvent::Bell]);
     }
 
     #[test]

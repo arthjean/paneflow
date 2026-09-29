@@ -86,7 +86,7 @@ pub fn paint_ime_preedit<H, F>(
         let ime_run = TextRun {
             len: element.ime_marked_text.len(),
             font: base_font.clone(),
-            color: layout.background_color,
+            color: layout.ime_text_color,
             background_color: None,
             underline: Some(gpui::UnderlineStyle {
                 color: None,
@@ -109,7 +109,7 @@ pub fn paint_ime_preedit<H, F>(
                 height: line_height,
             },
         );
-        window.paint_quad(fill(preedit_bg, layout.background_color));
+        window.paint_quad(fill(preedit_bg, layout.ime_background));
         let _ = shaped.paint(cb.origin, line_height, TextAlign::Left, None, window, cx);
     }
 }

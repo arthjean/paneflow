@@ -7,16 +7,6 @@ use super::super::geometry::CellGeometry;
 use super::super::{CursorInfo, LayoutState};
 use crate::terminal::types::CursorShape;
 
-fn cursor_text_color(cursor: &CursorInfo, layout: &LayoutState) -> gpui::Hsla {
-    if cursor.cell_bg.a > 0.01 {
-        cursor.cell_bg
-    } else if layout.background_color.a > 0.01 {
-        layout.background_color
-    } else {
-        gpui::hsla(0.0, 0.0, 0.08, 1.0)
-    }
-}
-
 fn paint_cursor_info(
     cursor: &CursorInfo,
     layout: &LayoutState,
@@ -58,7 +48,7 @@ fn paint_cursor_info(
                 }
                 let cursor_font = super::display_font_for_intensity(&cursor_font, base_font.weight);
                 let text = SharedString::from(ch.to_string());
-                let text_color = cursor_text_color(cursor, layout);
+                let text_color = cursor.text_color;
                 let shaped = window.text_system().shape_line(
                     text.clone(),
                     font_size,

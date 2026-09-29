@@ -114,7 +114,7 @@ impl DisplayTerminal {
             padding_left: geometry.padding_left,
         };
         let track_last_cell = true;
-        let mouse_modes = crate::engine::MouseModes::from(self.modes()?);
+        let mouse_modes = self.mouse_modes()?;
         if self.mouse_encoder_modes != Some(mouse_modes) {
             unsafe {
                 sys::ghostty_mouse_encoder_setopt_from_terminal(

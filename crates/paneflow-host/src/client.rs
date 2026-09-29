@@ -4,7 +4,7 @@ use std::path::Path;
 use paneflow_config::schema::{HostInstanceToken, SessionGeneration, SessionId, WorkspaceId};
 use serde_json::{Value, json};
 
-use crate::host::{CreateSession, SessionSummary};
+use crate::host::{CellSize, CreateSession, SessionAppearance, SessionSummary};
 use crate::protocol::{
     self, ClientHello, DATA_CHUNK_RAW_BYTES, HostIdentity, Incompatibility, MAX_CHECKPOINT_BYTES,
     MAX_CONTROL_FRAME_BYTES, REQUEST_DEADLINE, decode_data, encode_data, request,
@@ -285,10 +285,54 @@ impl HostClient {
         generation: SessionGeneration,
         cols: u16,
         rows: u16,
+        cell: Option<CellSize>,
     ) -> Result<(), HostClientError> {
         self.call(
             "session.resize",
-            json!({"session": session, "generation": generation, "cols": cols, "rows": rows}),
+            json!({
+                "session": session,
+                "generation": generation,
+                "cols": cols,
+                "rows": rows,
+                "cell": cell,
+            }),
+        )
+        .map(|_| ())
+    }
+
+    pub fn clear_history(
+        &mut self,
+        session: &SessionId,
+        generation: SessionGeneration,
+    ) -> Result<(), HostClientError> {
+        self.call(
+            "session.clear_history",
+            json!({"session": session, "generation": generation}),
+        )
+        .map(|_| ())
+    }
+
+    pub fn reset(
+        &mut self,
+        session: &SessionId,
+        generation: SessionGeneration,
+    ) -> Result<(), HostClientError> {
+        self.call(
+            "session.reset",
+            json!({"session": session, "generation": generation}),
+        )
+        .map(|_| ())
+    }
+
+    pub fn set_appearance(
+        &mut self,
+        session: &SessionId,
+        generation: SessionGeneration,
+        appearance: &SessionAppearance,
+    ) -> Result<(), HostClientError> {
+        self.call(
+            "session.appearance",
+            json!({"session": session, "generation": generation, "appearance": appearance}),
         )
         .map(|_| ())
     }

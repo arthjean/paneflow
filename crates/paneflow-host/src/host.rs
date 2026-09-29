@@ -82,6 +82,8 @@ struct SessionRecord {
     escape_fence: bool,
     seed: Arc<Mutex<SeedLedger>>,
     durability: Durability,
+    appearance: Option<SessionAppearance>,
+    cell: Option<CellSize>,
 }
 
 impl SessionRecord {
@@ -102,6 +104,8 @@ impl SessionRecord {
             escape_fence,
             seed: Arc::new(Mutex::new(SeedLedger::default())),
             durability: Arc::new(SessionPersistence::default()),
+            appearance: None,
+            cell: None,
         }
     }
 
@@ -986,6 +990,12 @@ impl SessionHost {
                 "at most {MAX_LAUNCH_ENV_ENTRIES} environment entries are accepted"
             )));
         }
+        if let Some(appearance) = &request.appearance {
+            appearance.validate()?;
+        }
+        if let Some(cell) = request.cell {
+            cell.validate()?;
+        }
         if self.is_shutting_down() {
             return Err(HostError::ShuttingDown);
         }
@@ -1057,6 +1067,8 @@ impl SessionHost {
             }
             self.admit_launch(&sessions)?;
             let mut record = SessionRecord::fresh(Arc::clone(&manifest));
+            record.appearance = request.appearance.clone();
+            record.cell = request.cell;
             record.launch = Some(PendingLaunch {
                 operation,
                 generation: SessionGeneration::FIRST,
@@ -1104,6 +1116,8 @@ impl SessionHost {
             cols,
             rows,
             scrollback_lines: DEFAULT_SCROLLBACK_LINES,
+            appearance: request.appearance,
+            cell: request.cell,
         };
         let created = self.launch(session, manifest, spec, SessionGeneration::FIRST, operation);
         if created.is_ok() {
@@ -1245,6 +1259,8 @@ impl SessionHost {
                 cols: guard.launch.cols,
                 rows: guard.launch.rows,
                 scrollback_lines: DEFAULT_SCROLLBACK_LINES,
+                appearance: record.appearance.clone(),
+                cell: record.cell,
             };
             drop(guard);
             record.launch = Some(PendingLaunch {
@@ -2034,6 +2050,7 @@ impl SessionHost {
         generation: Option<SessionGeneration>,
         cols: u16,
         rows: u16,
+        cell: Option<CellSize>,
     ) -> Result<(), HostError> {
         let target = {
             let sessions = self.lock_sessions();
@@ -2046,10 +2063,18 @@ impl SessionHost {
             })
         };
         validate_dimensions(cols, rows)?;
+        if let Some(cell) = cell {
+            cell.validate()?;
+        }
         let expected = target.as_ref().map(|(_, _, current)| *current);
         self.with_live_runtime(session, generation.or(expected), |runtime| {
-            runtime.resize(cols, rows)
+            runtime.resize(cols, rows, cell)
         })?;
+        if let Some(cell) = cell
+            && let Some(record) = self.lock_sessions().get_mut(session)
+        {
+            record.cell = Some(cell);
+        }
         if let Some((manifest, durability, current)) = target {
             let changed = {
                 let guard = manifest
@@ -2071,6 +2096,42 @@ impl SessionHost {
             }
         }
         Ok(())
+    }
+
+    pub fn set_appearance(
+        &self,
+        session: &SessionId,
+        generation: Option<SessionGeneration>,
+        appearance: SessionAppearance,
+    ) -> Result<(), HostError> {
+        appearance.validate()?;
+        let expected = self
+            .lock_sessions()
+            .get(session)
+            .map(SessionRecord::generation);
+        self.with_live_runtime(session, generation.or(expected), |runtime| {
+            runtime.set_appearance(appearance.clone())
+        })?;
+        if let Some(record) = self.lock_sessions().get_mut(session) {
+            record.appearance = Some(appearance);
+        }
+        Ok(())
+    }
+
+    pub fn clear_history(
+        &self,
+        session: &SessionId,
+        generation: Option<SessionGeneration>,
+    ) -> Result<(), HostError> {
+        self.with_live_runtime(session, generation, SessionRuntime::clear_history)
+    }
+
+    pub fn reset_terminal(
+        &self,
+        session: &SessionId,
+        generation: Option<SessionGeneration>,
+    ) -> Result<(), HostError> {
+        self.with_live_runtime(session, generation, SessionRuntime::reset)
     }
 
     pub fn live_sessions(&self) -> Vec<SessionSummary> {

@@ -6,6 +6,11 @@ pub enum GhosttyError {
     AbiMismatch(String),
     #[error("libghostty `{operation}` failed with result {code}")]
     Ffi { operation: &'static str, code: i32 },
+    #[error("libghostty `{operation}` batch read failed: {detail}")]
+    BatchRead {
+        operation: &'static str,
+        detail: String,
+    },
     #[error("{resource} exceeds the {limit}-unit safety cap")]
     LimitExceeded {
         resource: &'static str,

@@ -11,11 +11,12 @@ use paneflow_terminal_ghostty as ghostty;
 use crate::keys::TerminalKeySequence;
 use crate::terminal::types::{
     HyperlinkSource, HyperlinkZone, Modes, Point, SelectionGeometry, SelectionKind, ShellQuoting,
+    terminal_metric_to_u16,
 };
 
 #[cfg(debug_assertions)]
 use super::probe_enabled;
-use super::pty_session::BackendInputResult;
+use super::pty_session::{BackendInputResult, SelectionCopy};
 use super::{TerminalEvent, TerminalView};
 
 const SCROLLBAR_HIT_SLOP: gpui::Pixels = gpui::px(2.0);
@@ -30,6 +31,54 @@ fn open_link_modifier_held(modifiers: &gpui::Modifiers) -> bool {
     {
         modifiers.control
     }
+}
+
+struct EnginePointer {
+    x: f32,
+    y: f32,
+    screen_width: u32,
+    screen_height: u32,
+}
+
+fn engine_pointer(
+    offset: (f32, f32),
+    measured_cell: (f32, f32),
+    grid: (usize, usize),
+) -> EnginePointer {
+    let (x, screen_width) = engine_axis(offset.0, measured_cell.0, grid.0);
+    let (y, screen_height) = engine_axis(offset.1, measured_cell.1, grid.1);
+    EnginePointer {
+        x,
+        y,
+        screen_width,
+        screen_height,
+    }
+}
+
+fn engine_axis(offset: f32, measured_cell: f32, cells: usize) -> (f32, u32) {
+    let engine_cell = f32::from(terminal_metric_to_u16(measured_cell).max(1));
+    let scaled = if measured_cell > 0.0 {
+        offset * engine_cell / measured_cell
+    } else {
+        offset
+    };
+    let extent = (cells as f32 * engine_cell).clamp(1.0, u32::MAX as f32) as u32;
+    (scaled, extent)
+}
+
+fn multiline_paste_prompt(lines: usize) -> String {
+    if lines == 1 {
+        "Paste a line that runs immediately?".to_owned()
+    } else {
+        format!("Paste {lines} lines?")
+    }
+}
+
+pub(super) fn selection_too_large_notice(limit: usize) -> String {
+    format!(
+        "Selection not copied: it is larger than the {} KB copy limit.",
+        limit / 1_000
+    )
 }
 
 fn key_escape_sequence(
@@ -322,7 +371,10 @@ impl TerminalView {
             None
         };
 
-        self.cursor_visible = true;
+        if !self.cursor_visible {
+            self.cursor_visible = true;
+            cx.notify();
+        }
 
         let keystroke = &event.keystroke;
 
@@ -498,12 +550,14 @@ impl TerminalView {
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
             let metrics = self.terminal.session_backend().grid_metrics();
-            let screen_width = (metrics.columns as f32 * self.cell_width.as_f32())
-                .max(1.0)
-                .min(u32::MAX as f32) as u32;
-            let screen_height = (metrics.screen_lines as f32 * self.line_height.as_f32())
-                .max(1.0)
-                .min(u32::MAX as f32) as u32;
+            let pointer = engine_pointer(
+                (
+                    (position.x - origin.x).max(gpui::px(0.0)).as_f32(),
+                    (position.y - origin.y).max(gpui::px(0.0)).as_f32(),
+                ),
+                (self.cell_width.as_f32(), self.line_height.as_f32()),
+                (metrics.columns, metrics.screen_lines),
+            );
             let input = ghostty::MouseInput {
                 action: match action {
                     ReportedMouseAction::Press => ghostty::MouseAction::Press,
@@ -518,10 +572,10 @@ impl TerminalView {
                     ReportedMouseButton::WheelDown => ghostty::MouseButton::Five,
                 }),
                 modifiers: ghostty_modifiers(modifiers),
-                x: (position.x - origin.x).max(gpui::px(0.0)).as_f32(),
-                y: (position.y - origin.y).max(gpui::px(0.0)).as_f32(),
-                screen_width,
-                screen_height,
+                x: pointer.x,
+                y: pointer.y,
+                screen_width: pointer.screen_width,
+                screen_height: pointer.screen_height,
                 padding_top: 0,
                 padding_bottom: 0,
                 padding_left: 0,
@@ -682,9 +736,11 @@ impl TerminalView {
             && self.ctrl_hovered_link.is_some()
         {
             self.mouse_down_link = self.ctrl_hovered_link.clone();
+            let cell = self.pixel_to_grid(event.position);
+            self.mouse_down_cell = Some(cell);
             self.terminal.session_backend().press_selection(
                 SelectionKind::Simple,
-                self.pixel_to_grid(event.position),
+                cell,
                 self.pane_relative(event.position),
             );
             self.selecting = true;
@@ -812,8 +868,12 @@ impl TerminalView {
 
         let geometry = self.selection_geometry();
         let position = self.pane_relative(event.position);
+        let cell = geometry.cell_at(position);
+        if self.mouse_down_cell.is_some_and(|down| down != cell) {
+            self.mouse_down_link = None;
+        }
         self.terminal.session_backend().drag_selection(
-            geometry.cell_at(position),
+            cell,
             position,
             geometry,
             event.modifiers.alt,
@@ -826,15 +886,7 @@ impl TerminalView {
         self.terminal
             .session_backend()
             .request_osc8_hyperlink_at(hover_point);
-        let in_zone = |z: &HyperlinkZone| {
-            hover_point.line == z.start.line
-                && hover_point.column >= z.start.column
-                && hover_point.column <= z.end.column
-        };
-        self.ctrl_hovered_link = self
-            .detect_links_at_hover()
-            .into_iter()
-            .find(|z| in_zone(z));
+        self.resolve_links_at_hover(hover_point, cx);
         cx.notify();
     }
 
@@ -896,7 +948,7 @@ impl TerminalView {
     pub(super) fn handle_mouse_up(
         &mut self,
         event: &MouseUpEvent,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         if let Some(drag) = self.scrollbar_drag
@@ -919,6 +971,7 @@ impl TerminalView {
 
         if mode.intersects(Modes::MOUSE_MODE) && !event.modifiers.shift {
             self.mouse_down_link = None;
+            self.mouse_down_cell = None;
             if let Some(reported_button) = ReportedMouseButton::from_gpui(event.button) {
                 self.write_mouse_report(ReportedMouseInput {
                     position: event.position,
@@ -938,9 +991,16 @@ impl TerminalView {
                 if let Some(item) = cx.read_from_primary()
                     && let Some(text) = item.text()
                 {
-                    self.write_paste_text_from(&text, ghostty::ClipboardLocation::Primary);
+                    self.paste_with_confirmation(
+                        &text,
+                        ghostty::ClipboardLocation::Primary,
+                        window,
+                        cx,
+                    );
                 }
             }
+            #[cfg(not(target_os = "linux"))]
+            let _ = window;
             return;
         }
 
@@ -949,32 +1009,54 @@ impl TerminalView {
         }
         self.selecting = false;
         let down_link = self.mouse_down_link.take();
+        self.mouse_down_cell = None;
+        let backend = self.terminal.session_backend();
+        backend.release_selection(self.grid_cell_at(event.position));
 
-        self.terminal
-            .session_backend()
-            .release_selection(self.grid_cell_at(event.position));
-        let (selection_empty, copied) = self.terminal.session_backend().finish_selection();
-
-        if selection_empty
-            && let Some(link) = down_link
+        if let Some(link) = down_link
             && link.is_openable
         {
+            backend.clear_selection();
             self.open_hyperlink(&link, cx);
             cx.notify();
             return;
         }
 
-        if let Some(text) = copied {
-            #[cfg(target_os = "linux")]
-            cx.write_to_primary(ClipboardItem::new_string(text.clone()));
-            cx.write_to_clipboard(ClipboardItem::new_string(text));
-            cx.emit(TerminalEvent::SelectionCopied);
-        }
-
+        cx.spawn(
+            async move |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
+                let copy = cx
+                    .background_executor()
+                    .spawn(async move { backend.take_selection_for_copy() })
+                    .await;
+                let _ = this.update(cx, |_view, cx| {
+                    match copy {
+                        SelectionCopy::Empty => {}
+                        SelectionCopy::Text(text) => {
+                            #[cfg(target_os = "linux")]
+                            cx.write_to_primary(ClipboardItem::new_string(text.clone()));
+                            cx.write_to_clipboard(ClipboardItem::new_string(text));
+                            cx.emit(TerminalEvent::SelectionCopied);
+                        }
+                        SelectionCopy::TooLarge { limit } => {
+                            cx.emit(TerminalEvent::Notice(selection_too_large_notice(limit)));
+                        }
+                    }
+                    cx.notify();
+                });
+            },
+        )
+        .detach();
         cx.notify();
     }
 
-    pub(super) fn handle_copy(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn handle_copy(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.focus_handle(cx).is_focused(window) {
+            if self.search_field_focused(window, cx) {
+                self.search_input
+                    .update(cx, |input, cx| input.copy_selection(cx));
+            }
+            return;
+        }
         if let Some(text) = self.terminal.session_backend().selection_text() {
             cx.write_to_clipboard(ClipboardItem::new_string(text));
         }
@@ -1000,7 +1082,18 @@ impl TerminalView {
         .detach();
     }
 
-    pub(super) fn handle_paste(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+    fn search_field_focused(&self, window: &Window, cx: &gpui::App) -> bool {
+        self.search_active && self.search_input.read(cx).focus_handle.is_focused(window)
+    }
+
+    pub(super) fn handle_paste(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.focus_handle(cx).is_focused(window) {
+            if self.search_field_focused(window, cx) {
+                self.search_input
+                    .update(cx, |input, cx| input.paste_clipboard(window, cx));
+            }
+            return;
+        }
         let Some(clipboard) = cx.read_from_clipboard() else {
             return;
         };
@@ -1016,7 +1109,7 @@ impl TerminalView {
         }
 
         if let Some(text) = clipboard.text() {
-            self.write_paste_text(&text);
+            self.paste_with_confirmation(&text, ghostty::ClipboardLocation::Standard, window, cx);
             return;
         }
 
@@ -1046,7 +1139,50 @@ impl TerminalView {
 
     fn write_paste_text_from(&self, text: &str, location: ghostty::ClipboardLocation) {
         self.terminal
-            .write_ghostty_paste(normalize_paste_text(text), location);
+            .write_ghostty_paste(normalize_paste_text(text), false, location);
+    }
+
+    fn paste_with_confirmation(
+        &mut self,
+        text: &str,
+        location: ghostty::ClipboardLocation,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let text = normalize_paste_text(text);
+        let bracketed = self
+            .terminal
+            .session_backend()
+            .modes()
+            .contains(Modes::BRACKETED_PASTE);
+        if bracketed || !text.contains('\n') {
+            self.terminal.write_ghostty_paste(text, false, location);
+            return;
+        }
+        let lines = text.lines().count();
+        let answer = window.prompt(
+            gpui::PromptLevel::Warning,
+            &multiline_paste_prompt(lines),
+            Some(
+                "This program did not enable bracketed paste, so each line runs as soon as it arrives.",
+            ),
+            &[
+                gpui::PromptButton::Ok("Paste".into()),
+                gpui::PromptButton::Cancel("Cancel".into()),
+            ],
+            cx,
+        );
+        cx.spawn(
+            async move |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
+                if answer.await != Ok(0) {
+                    return;
+                }
+                let _ = this.update(cx, |view, _cx| {
+                    view.terminal.write_ghostty_paste(text, true, location);
+                });
+            },
+        )
+        .detach();
     }
 
     pub fn inject_text(&self, text: &str) {
@@ -1211,9 +1347,49 @@ impl TerminalView {
 
 #[cfg(test)]
 mod tests {
-    use super::{normalize_paste_text, paths_to_pty_text};
+    use super::{engine_pointer, normalize_paste_text, paths_to_pty_text};
     use crate::terminal::types::{Modes, ShellQuoting};
     use std::path::PathBuf;
+
+    #[test]
+    fn a_click_centered_on_column_80_with_fractional_cells_reports_column_80() {
+        use paneflow_terminal_ghostty as ghostty;
+
+        let measured = (8.5_f32, 17.0_f32);
+        let mut terminal = ghostty::DisplayTerminal::new(
+            ghostty::WindowSize::new(
+                80,
+                24,
+                u32::from(crate::terminal::types::terminal_metric_to_u16(measured.0)),
+                u32::from(crate::terminal::types::terminal_metric_to_u16(measured.1)),
+            )
+            .unwrap(),
+            1_000,
+            ghostty::TerminalAppearance::default(),
+        )
+        .unwrap();
+        terminal.feed(b"\x1b[?1000h\x1b[?1006h").unwrap();
+
+        let pointer = engine_pointer((79.5 * measured.0, 0.5 * measured.1), measured, (80, 24));
+        let report = terminal
+            .encode_mouse(ghostty::MouseInput {
+                action: ghostty::MouseAction::Press,
+                button: Some(ghostty::MouseButton::Left),
+                modifiers: ghostty::Modifiers::empty(),
+                x: pointer.x,
+                y: pointer.y,
+                screen_width: pointer.screen_width,
+                screen_height: pointer.screen_height,
+                padding_top: 0,
+                padding_bottom: 0,
+                padding_left: 0,
+                padding_right: 0,
+                any_button_pressed: true,
+            })
+            .unwrap();
+
+        assert_eq!(report, b"\x1b[<0;80;1M");
+    }
 
     #[test]
     fn printable_altgr_commit_preserves_key_metadata_and_consumes_ctrl_alt() {

@@ -40,6 +40,13 @@ impl futures::stream::FusedStream for TerminalBackendEvents {
     }
 }
 
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum SelectionCopy {
+    Empty,
+    Text(String),
+    TooLarge { limit: usize },
+}
+
 pub(crate) struct PendingTerminalBackend {
     pub(in crate::terminal) ghostty: GhosttyRuntimePending,
 }
@@ -107,6 +114,10 @@ impl TerminalSessionBackend {
 
     pub(crate) fn clear_history(&self) {
         self.ghostty.clear_history();
+    }
+
+    pub(crate) fn reset_terminal(&self) {
+        self.ghostty.reset_terminal();
     }
 
     pub(crate) fn scroll_to_bottom(&self) -> bool {
@@ -187,11 +198,8 @@ impl TerminalSessionBackend {
         self.ghostty.select_all_text()
     }
 
-    pub(crate) fn finish_selection(&self) -> (bool, Option<String>) {
-        let copied = self.ghostty.selection_text();
-        let is_empty = copied.as_ref().is_none_or(String::is_empty);
-        self.ghostty.clear_selection();
-        (is_empty, copied)
+    pub(crate) fn take_selection_for_copy(&self) -> SelectionCopy {
+        self.ghostty.take_selection_for_copy()
     }
 
     pub(crate) fn clear_selection(&self) {

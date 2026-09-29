@@ -8,7 +8,9 @@ const MAX_IMAGE_STORAGE_BYTES: u64 = 32 * 1024 * 1024;
 
 const MAX_COMMAND_BYTES: usize = 8 * 1024 * 1024;
 
-const MAX_IMAGE_PIXELS: u64 = 8192 * 8192;
+const MAX_IMAGE_SIDE: u32 = 8192;
+
+const MAX_IMAGE_PIXELS: u64 = MAX_IMAGE_SIDE as u64 * MAX_IMAGE_SIDE as u64;
 
 #[derive(Clone)]
 pub struct KittyPlacement {
@@ -70,16 +72,24 @@ pub(super) fn install_png_decoder() {
 }
 
 fn decode_png(bytes: &[u8]) -> Option<ghostty::DecodedImage> {
-    let decoded = image::load_from_memory_with_format(bytes, image::ImageFormat::Png).ok()?;
+    let mut reader =
+        image::ImageReader::with_format(std::io::Cursor::new(bytes), image::ImageFormat::Png);
+    let mut limits = image::Limits::default();
+    limits.max_image_width = Some(MAX_IMAGE_SIDE);
+    limits.max_image_height = Some(MAX_IMAGE_SIDE);
+    reader.limits(limits);
+    let decoded = match reader.decode() {
+        Ok(decoded) => decoded,
+        Err(error) => {
+            log::debug!(
+                target: "paneflow::terminal::kitty",
+                "refused a Kitty PNG: {error}"
+            );
+            return None;
+        }
+    };
     let width = decoded.width();
     let height = decoded.height();
-    if u64::from(width) * u64::from(height) > MAX_IMAGE_PIXELS {
-        log::debug!(
-            target: "paneflow::terminal::kitty",
-            "refused a {width}x{height} PNG: past the {MAX_IMAGE_PIXELS}-pixel cap"
-        );
-        return None;
-    }
     Some(ghostty::DecodedImage {
         width,
         height,
@@ -250,6 +260,60 @@ mod tests {
         let size = ghostty::WindowSize::new(40, 10, 8, 16).expect("valid size");
         ghostty::DisplayTerminal::new(size, 100, ghostty::TerminalAppearance::default())
             .expect("terminal must initialize")
+    }
+
+    fn crc32(bytes: &[u8]) -> u32 {
+        let mut crc = !0_u32;
+        for &byte in bytes {
+            crc ^= u32::from(byte);
+            for _ in 0..8 {
+                crc = if crc & 1 == 1 {
+                    (crc >> 1) ^ 0xEDB8_8320
+                } else {
+                    crc >> 1
+                };
+            }
+        }
+        !crc
+    }
+
+    fn png_chunk(kind: &[u8; 4], data: &[u8]) -> Vec<u8> {
+        let mut chunk = u32::try_from(data.len()).unwrap().to_be_bytes().to_vec();
+        let mut body = kind.to_vec();
+        body.extend_from_slice(data);
+        chunk.extend_from_slice(&body);
+        chunk.extend_from_slice(&crc32(&body).to_be_bytes());
+        chunk
+    }
+
+    fn png_declaring(width: u32, height: u32) -> Vec<u8> {
+        let mut header = width.to_be_bytes().to_vec();
+        header.extend_from_slice(&height.to_be_bytes());
+        header.extend_from_slice(&[8, 6, 0, 0, 0]);
+        let mut png = b"\x89PNG\r\n\x1a\n".to_vec();
+        png.extend(png_chunk(b"IHDR", &header));
+        png.extend(png_chunk(b"IDAT", &[0_u8; 960]));
+        png.extend(png_chunk(b"IEND", &[]));
+        png
+    }
+
+    #[test]
+    fn a_tiny_png_declaring_huge_dimensions_is_refused_before_allocating() {
+        for (width, height) in [(60_000, 60_000), (11_000, 11_000)] {
+            let png = png_declaring(width, height);
+            assert!(png.len() <= 1_024, "{} bytes", png.len());
+
+            let (before, _) = crate::bench_harness::allocation_counters();
+            let decoded = decode_png(&png);
+            let (after, _) = crate::bench_harness::allocation_counters();
+
+            assert!(decoded.is_none(), "{width}x{height} must be refused");
+            assert!(
+                after - before < 64 * 1024 * 1024,
+                "decoding a {width}x{height} header allocated {} bytes",
+                after - before
+            );
+        }
     }
 
     #[test]

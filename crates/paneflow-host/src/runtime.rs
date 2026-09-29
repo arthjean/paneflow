@@ -11,6 +11,7 @@ use paneflow_config::schema::SessionGeneration;
 use paneflow_terminal_ghostty as ghostty;
 use portable_pty::{CommandBuilder, PtySize};
 
+use crate::host::{CellSize, SessionAppearance};
 use crate::process::ProcessIdentity;
 use crate::protocol::{MAX_CHECKPOINT_BYTES, MAX_OUTPUT_TAIL_BYTES, REQUEST_DEADLINE};
 use crate::stream::OutputStream;
@@ -37,8 +38,10 @@ const TAIL_RELEASE_GRACE: Duration = Duration::from_secs(1);
 pub const FINAL_TEXT_MAX_BYTES: usize = 512 * 1024;
 pub const STARTUP_DEADLINE: Duration = Duration::from_secs(10);
 pub const STOP_BUDGET: Duration = Duration::from_secs(5);
-const CELL_WIDTH_PX: u32 = 8;
-const CELL_HEIGHT_PX: u32 = 16;
+const DEFAULT_CELL: CellSize = CellSize {
+    width: 8,
+    height: 16,
+};
 const TERMINFO_NAME: &str = "xterm-256color";
 const SCROLLBACK_BYTES_PER_LINE: usize = 1024;
 const MAX_SCROLLBACK_BYTES: usize = 128 * 1024 * 1024;
@@ -59,6 +62,8 @@ pub struct SpawnSpec {
     pub cols: u16,
     pub rows: u16,
     pub scrollback_lines: usize,
+    pub appearance: Option<SessionAppearance>,
+    pub cell: Option<CellSize>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -155,8 +160,12 @@ enum Command {
     Resize {
         cols: u16,
         rows: u16,
+        cell: Option<CellSize>,
         reply: SyncSender<Result<(), RuntimeError>>,
     },
+    Appearance(SessionAppearance, SyncSender<Result<(), RuntimeError>>),
+    ClearHistory(SyncSender<Result<(), RuntimeError>>),
+    Reset(SyncSender<Result<(), RuntimeError>>),
     Stop {
         deadline: Instant,
         reply: SyncSender<StopReport>,
@@ -583,8 +592,25 @@ impl SessionRuntime {
         self.ask(|reply| Command::Input(bytes, reply))
     }
 
-    pub fn resize(&self, cols: u16, rows: u16) -> Result<(), RuntimeError> {
-        self.ask(|reply| Command::Resize { cols, rows, reply })
+    pub fn resize(&self, cols: u16, rows: u16, cell: Option<CellSize>) -> Result<(), RuntimeError> {
+        self.ask(|reply| Command::Resize {
+            cols,
+            rows,
+            cell,
+            reply,
+        })
+    }
+
+    pub fn set_appearance(&self, appearance: SessionAppearance) -> Result<(), RuntimeError> {
+        self.ask(|reply| Command::Appearance(appearance, reply))
+    }
+
+    pub fn clear_history(&self) -> Result<(), RuntimeError> {
+        self.ask(Command::ClearHistory)
+    }
+
+    pub fn reset(&self) -> Result<(), RuntimeError> {
+        self.ask(Command::Reset)
     }
 
     pub fn stop(&self) -> Result<StopReport, RuntimeError> {
@@ -646,6 +672,7 @@ struct Session {
     process_tree: ProcessTreeOwner,
     cols: u16,
     rows: u16,
+    cell: CellSize,
     pty_wired: bool,
     reader_eof: bool,
     exit: Option<ExitOutcome>,
@@ -775,20 +802,76 @@ fn stop_is_confirmed(report: &StopReport) -> bool {
     report.exit.is_some() && report.unverified.is_none() && report.descendants_unresolved == 0
 }
 
-fn new_terminal(spec: &SpawnSpec) -> Result<ghostty::DisplayTerminal, String> {
-    let size = ghostty::WindowSize::new(
-        usize::from(spec.cols),
-        usize::from(spec.rows),
-        CELL_WIDTH_PX,
-        CELL_HEIGHT_PX,
+type EnginePalette = [ghostty::Rgb; ghostty::PALETTE_LEN];
+
+fn engine_appearance(
+    appearance: &SessionAppearance,
+) -> Result<(ghostty::TerminalAppearance, EnginePalette), RuntimeError> {
+    let rgb = |[r, g, b]: [u8; 3]| ghostty::Rgb { r, g, b };
+    let palette: EnginePalette = appearance
+        .palette
+        .iter()
+        .copied()
+        .map(rgb)
+        .collect::<Vec<_>>()
+        .try_into()
+        .map_err(|colors: Vec<ghostty::Rgb>| {
+            RuntimeError::Engine(format!(
+                "the appearance palette holds {} colors instead of {}",
+                colors.len(),
+                ghostty::PALETTE_LEN
+            ))
+        })?;
+    let scheme = if appearance.dark {
+        ghostty::ColorScheme::Dark
+    } else {
+        ghostty::ColorScheme::Light
+    };
+    Ok((
+        ghostty::TerminalAppearance::new(
+            rgb(appearance.foreground),
+            rgb(appearance.background),
+            rgb(appearance.cursor),
+            scheme,
+        ),
+        palette,
+    ))
+}
+
+fn apply_appearance(
+    terminal: &mut ghostty::DisplayTerminal,
+    appearance: &SessionAppearance,
+) -> Result<(), RuntimeError> {
+    let (colors, palette) = engine_appearance(appearance)?;
+    terminal
+        .set_palette(&palette)
+        .and_then(|()| terminal.set_appearance(colors))
+        .map_err(|e| RuntimeError::Engine(e.to_string()))
+}
+
+fn window_size(cols: u16, rows: u16, cell: CellSize) -> Result<ghostty::WindowSize, RuntimeError> {
+    ghostty::WindowSize::new(
+        usize::from(cols),
+        usize::from(rows),
+        u32::from(cell.width),
+        u32::from(cell.height),
     )
-    .map_err(|e| format!("invalid terminal size: {e}"))?;
+    .map_err(|e| RuntimeError::Engine(e.to_string()))
+}
+
+fn new_terminal(spec: &SpawnSpec) -> Result<ghostty::DisplayTerminal, String> {
+    let size = window_size(spec.cols, spec.rows, spec.cell.unwrap_or(DEFAULT_CELL))
+        .map_err(|e| format!("invalid terminal size: {e}"))?;
     let mut terminal = ghostty::DisplayTerminal::new(
         size,
         spec.scrollback_lines,
         ghostty::TerminalAppearance::default(),
     )
     .map_err(|e| format!("terminal engine initialization failed: {e}"))?;
+    if let Some(appearance) = &spec.appearance {
+        apply_appearance(&mut terminal, appearance)
+            .map_err(|e| format!("terminal appearance could not be applied: {e}"))?;
+    }
     terminal
         .set_continuation_max_bytes(CONTINUATION_MAX_BYTES)
         .map_err(|e| format!("continuation tracking could not be enabled: {e}"))?;
@@ -817,7 +900,8 @@ fn start(
 ) -> Result<Session, String> {
     let terminal = new_terminal(&spec)?;
 
-    let pair = crate::pty::open(pty_size(spec.cols, spec.rows))
+    let cell = spec.cell.unwrap_or(DEFAULT_CELL);
+    let pair = crate::pty::open(pty_size(spec.cols, spec.rows, cell))
         .map_err(|e| format!("failed to open a native PTY: {e}"))?;
     let mut command = CommandBuilder::new(&spec.shell);
     command.args(&spec.args);
@@ -850,6 +934,7 @@ fn start(
         process_tree: ProcessTreeOwner::new(ProcessIdentity::capture(child_pid)),
         cols: spec.cols,
         rows: spec.rows,
+        cell,
         pty_wired: false,
         reader_eof: false,
         exit: None,
@@ -1060,6 +1145,13 @@ impl Session {
         if let Err(error) = terminal.feed(chunk) {
             log::warn!("paneflow-host: terminal feed failed: {error}");
         }
+        self.drain_engine_events();
+    }
+
+    fn drain_engine_events(&mut self) {
+        let Some(terminal) = self.terminal.as_mut() else {
+            return;
+        };
         for event in terminal.drain_events() {
             match event {
                 ghostty::BackendEvent::WritePty(bytes) => {
@@ -1140,8 +1232,29 @@ impl Session {
                 };
                 let _ = reply.send(result);
             }
-            Command::Resize { cols, rows, reply } => {
-                let _ = reply.send(self.resize(cols, rows));
+            Command::Resize {
+                cols,
+                rows,
+                cell,
+                reply,
+            } => {
+                let _ = reply.send(self.resize(cols, rows, cell));
+            }
+            Command::Appearance(appearance, reply) => {
+                let applied = apply_appearance(terminal, &appearance);
+                self.drain_engine_events();
+                let _ = reply.send(applied);
+            }
+            Command::ClearHistory(reply) => {
+                let cleared = terminal
+                    .clear_history()
+                    .map_err(|e| RuntimeError::Engine(e.to_string()));
+                let _ = reply.send(cleared);
+            }
+            Command::Reset(reply) => {
+                terminal.reset();
+                self.drain_engine_events();
+                let _ = reply.send(Ok(()));
             }
             Command::Stop { .. } => {}
             #[cfg(test)]
@@ -1173,24 +1286,19 @@ impl Session {
         None
     }
 
-    fn resize(&mut self, cols: u16, rows: u16) -> Result<(), RuntimeError> {
+    fn resize(&mut self, cols: u16, rows: u16, cell: Option<CellSize>) -> Result<(), RuntimeError> {
         if cols == 0 || rows == 0 {
             return Err(RuntimeError::Engine(
                 "terminal size must be non-zero".to_string(),
             ));
         }
+        let cell = cell.unwrap_or(self.cell);
+        let size = window_size(cols, rows, cell)?;
         if let Some(master) = self.master.as_ref() {
             master
-                .resize(pty_size(cols, rows))
+                .resize(pty_size(cols, rows, cell))
                 .map_err(|e| RuntimeError::Pty(e.to_string()))?;
         }
-        let size = ghostty::WindowSize::new(
-            usize::from(cols),
-            usize::from(rows),
-            CELL_WIDTH_PX,
-            CELL_HEIGHT_PX,
-        )
-        .map_err(|e| RuntimeError::Engine(e.to_string()))?;
         self.terminal
             .as_mut()
             .ok_or(RuntimeError::NotLive)?
@@ -1198,6 +1306,7 @@ impl Session {
             .map_err(|e| RuntimeError::Engine(e.to_string()))?;
         self.cols = cols;
         self.rows = rows;
+        self.cell = cell;
         Ok(())
     }
 
@@ -1518,6 +1627,9 @@ fn refuse(command: Command, error: RuntimeError) {
         Command::Resize { reply, .. } => {
             let _ = reply.send(Err(error));
         }
+        Command::Appearance(_, reply) | Command::ClearHistory(reply) | Command::Reset(reply) => {
+            let _ = reply.send(Err(error));
+        }
         Command::Stop { .. } => {}
         #[cfg(test)]
         Command::InjectPanic => {}
@@ -1635,12 +1747,12 @@ fn exit_outcome(status: &portable_pty::ExitStatus) -> ExitOutcome {
     }
 }
 
-fn pty_size(cols: u16, rows: u16) -> PtySize {
+fn pty_size(cols: u16, rows: u16, cell: CellSize) -> PtySize {
     PtySize {
         rows,
         cols,
-        pixel_width: u16::try_from(u32::from(cols) * CELL_WIDTH_PX).unwrap_or(u16::MAX),
-        pixel_height: u16::try_from(u32::from(rows) * CELL_HEIGHT_PX).unwrap_or(u16::MAX),
+        pixel_width: cols.saturating_mul(cell.width),
+        pixel_height: rows.saturating_mul(cell.height),
     }
 }
 
@@ -1664,6 +1776,8 @@ mod tests {
             cols,
             rows,
             scrollback_lines: 500,
+            appearance: None,
+            cell: None,
         }
     }
 
@@ -1739,7 +1853,7 @@ mod tests {
             "restored screen must contain the echoed marker; got {text:?}"
         );
 
-        runtime.resize(100, 30).expect("resize");
+        runtime.resize(100, 30, None).expect("resize");
         let after = runtime.checkpoint().expect("checkpoint after resize");
         assert_eq!((after.cols, after.rows), (100, 30));
         assert!(
@@ -2027,6 +2141,43 @@ mod tests {
                 .into_iter()
                 .any(|event| matches!(event, ghostty::BackendEvent::WritePty(_)))
         );
+    }
+
+    #[test]
+    fn a_themed_terminal_answers_color_queries_with_its_theme_and_pixel_cells() {
+        let spec = SpawnSpec {
+            appearance: Some(SessionAppearance {
+                foreground: [0x11, 0x22, 0x33],
+                background: [0xfa, 0xfb, 0xfc],
+                cursor: [0x44, 0x55, 0x66],
+                palette: (0..=255u8).map(|index| [index, 0x10, 0x20]).collect(),
+                dark: false,
+            }),
+            cell: Some(CellSize {
+                width: 9,
+                height: 19,
+            }),
+            ..echo_shell_spec(80, 24)
+        };
+        let mut terminal = new_terminal(&spec).expect("terminal");
+        terminal
+            .feed(b"\x1b]11;?\x1b\\\x1b]4;200;?\x1b\\\x1b[?996n\x1b[14t")
+            .expect("queries parse");
+        let replies = terminal
+            .drain_events()
+            .into_iter()
+            .filter_map(|event| match event {
+                ghostty::BackendEvent::WritePty(bytes) => Some(bytes),
+                _ => None,
+            })
+            .flatten()
+            .collect::<Vec<_>>();
+        let replies = String::from_utf8_lossy(&replies);
+
+        assert!(replies.contains("]11;rgb:fafa/fbfb/fcfc"), "{replies:?}");
+        assert!(replies.contains("]4;200;rgb:c8c8/1010/2020"), "{replies:?}");
+        assert!(replies.contains("\x1b[?997;2n"), "{replies:?}");
+        assert!(replies.contains("\x1b[4;456;720t"), "{replies:?}");
     }
 
     #[test]

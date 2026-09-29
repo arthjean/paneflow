@@ -6,21 +6,25 @@ mod tab;
 mod template_launch;
 pub(crate) mod templates;
 
+use std::collections::HashSet;
+use std::time::Instant;
+
 use gpui::{App, AppContext, ClipboardItem, Context, Entity, Focusable, PathPromptOptions, Window};
-use paneflow_config::schema::{LayoutNode, TabTitleSource, TerminalSurfaceProfile};
+use paneflow_config::schema::{LayoutNode, SessionId, TabTitleSource, TerminalSurfaceProfile};
 
 use crate::app::close_policy::CloseTarget;
+use crate::app::hosted_sessions::StopTarget;
 use crate::layout::{LayoutTree, MAX_PANES, SplitDirection};
 use crate::pane::Pane;
 use crate::terminal::TerminalView;
 use crate::workspace::{Workspace, next_workspace_id};
 use crate::{
     ClosePane, CloseWorkspace, ClosedPaneRecord, ClosedSurfaceRecord, CopyWorkspacePath,
-    MAX_CLOSED_PANE_SCROLLBACK_BYTES, MAX_CLOSED_PANES, NewWorkspace, NextWorkspace,
-    OpenWorkspaceInCursor, OpenWorkspaceInVsCode, OpenWorkspaceInWindsurf, OpenWorkspaceInZed,
-    PaneFlowApp, RevealWorkspaceInFileManager, SelectWorkspace1, SelectWorkspace2,
-    SelectWorkspace3, SelectWorkspace4, SelectWorkspace5, SelectWorkspace6, SelectWorkspace7,
-    SelectWorkspace8, SelectWorkspace9, SplitHorizontally, SplitVertically, UndoClosePane,
+    HeldSession, MAX_CLOSED_PANES, NewWorkspace, NextWorkspace, OpenWorkspaceInCursor,
+    OpenWorkspaceInVsCode, OpenWorkspaceInWindsurf, OpenWorkspaceInZed, PaneFlowApp,
+    RevealWorkspaceInFileManager, SelectWorkspace1, SelectWorkspace2, SelectWorkspace3,
+    SelectWorkspace4, SelectWorkspace5, SelectWorkspace6, SelectWorkspace7, SelectWorkspace8,
+    SelectWorkspace9, SessionHold, SplitHorizontally, SplitVertically, UndoClosePane,
 };
 
 #[derive(Clone)]
@@ -63,21 +67,124 @@ impl ClosedRecord {
     }
 }
 
-fn push_closed_record(records: &mut Vec<ClosedRecord>, mut record: ClosedRecord) {
-    for surface in record.surfaces_mut() {
-        if let ClosedSurfaceRecord::Terminal {
-            replay: Some(replay),
-            ..
-        } = surface
+fn record_sessions_mut(
+    records: &mut [ClosedRecord],
+) -> impl Iterator<Item = &mut Option<HeldSession>> {
+    records
+        .iter_mut()
+        .flat_map(ClosedRecord::surfaces_mut)
+        .filter_map(|surface| match surface {
+            ClosedSurfaceRecord::Terminal { session, .. } => Some(session),
+            ClosedSurfaceRecord::Markdown { .. } => None,
+        })
+}
+
+fn take_held_sessions(
+    records: &mut [ClosedRecord],
+    mut releases: impl FnMut(&HeldSession) -> bool,
+) -> Vec<StopTarget> {
+    let mut released = Vec::new();
+    for slot in record_sessions_mut(records) {
+        if slot.as_ref().is_some_and(&mut releases)
+            && let Some(held) = slot.take()
         {
-            replay.shrink_to_fit();
+            released.push(held.target);
         }
     }
+    released
+}
+
+fn is_undo_window(held: &HeldSession) -> bool {
+    matches!(held.hold, SessionHold::UndoWindow { .. })
+}
+
+pub(crate) fn push_closed_record(
+    records: &mut Vec<ClosedRecord>,
+    record: ClosedRecord,
+) -> Vec<StopTarget> {
+    let superseded: HashSet<SessionId> = record
+        .surfaces()
+        .iter()
+        .filter_map(|surface| match surface {
+            ClosedSurfaceRecord::Terminal {
+                session: Some(held),
+                ..
+            } => Some(held.target.1.clone()),
+            ClosedSurfaceRecord::Terminal { .. } | ClosedSurfaceRecord::Markdown { .. } => None,
+        })
+        .collect();
+    settle_closed_sessions(records, &superseded, None);
+    let mut evicted = Vec::new();
     if records.len() >= MAX_CLOSED_PANES {
-        records.remove(0);
+        let mut oldest = [records.remove(0)];
+        evicted = take_held_sessions(&mut oldest, is_undo_window);
     }
     records.push(record);
-    enforce_closed_pane_scrollback_budget(records, MAX_CLOSED_PANE_SCROLLBACK_BYTES);
+    evicted
+}
+
+pub(crate) fn settle_closed_sessions(
+    records: &mut [ClosedRecord],
+    closed: &HashSet<SessionId>,
+    hold: Option<SessionHold>,
+) -> HashSet<SessionId> {
+    let mut kept = HashSet::new();
+    for slot in record_sessions_mut(records) {
+        let Some(held) = slot.as_mut() else {
+            continue;
+        };
+        if !closed.contains(&held.target.1) {
+            continue;
+        }
+        match hold {
+            Some(hold) => {
+                held.hold = hold;
+                kept.insert(held.target.1.clone());
+            }
+            None => *slot = None,
+        }
+    }
+    kept
+}
+
+pub(crate) fn expire_held_sessions(records: &mut [ClosedRecord], now: Instant) -> Vec<StopTarget> {
+    take_held_sessions(
+        records,
+        |held| matches!(held.hold, SessionHold::UndoWindow { until } if until <= now),
+    )
+}
+
+pub(crate) fn take_undo_window_sessions(records: &mut [ClosedRecord]) -> Vec<StopTarget> {
+    take_held_sessions(records, is_undo_window)
+}
+
+pub(crate) fn undo_window_session_ids(records: &[ClosedRecord]) -> HashSet<SessionId> {
+    records
+        .iter()
+        .flat_map(ClosedRecord::surfaces)
+        .filter_map(|surface| match surface {
+            ClosedSurfaceRecord::Terminal {
+                session: Some(held),
+                ..
+            } if is_undo_window(held) => Some(held.target.1.clone()),
+            ClosedSurfaceRecord::Terminal { .. } | ClosedSurfaceRecord::Markdown { .. } => None,
+        })
+        .collect()
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum SurfaceReopen {
+    Fresh,
+    Reattach(SessionId),
+    AlreadyOpen,
+}
+
+fn surface_reopen(session: Option<&HeldSession>, attached: &HashSet<SessionId>) -> SurfaceReopen {
+    match session {
+        None => SurfaceReopen::Fresh,
+        Some(held) if attached.contains(&held.target.1) => SurfaceReopen::AlreadyOpen,
+        Some(held) => SurfaceReopen::Reattach(held.target.1.clone()),
+    }
 }
 
 fn take_closed_tab_record(records: &mut Vec<ClosedRecord>, tab_id: u64) -> Option<ClosedTabRecord> {
@@ -88,35 +195,6 @@ fn take_closed_tab_record(records: &mut Vec<ClosedRecord>, tab_id: u64) -> Optio
         ClosedRecord::Tab(tab) => Some(tab),
         ClosedRecord::Pane(_) => None,
     }
-}
-
-fn enforce_closed_pane_scrollback_budget(records: &mut [ClosedRecord], budget: usize) {
-    let mut total = closed_pane_scrollback_bytes(records);
-    if total <= budget {
-        return;
-    }
-    for surface in records.iter_mut().flat_map(ClosedRecord::surfaces_mut) {
-        if total <= budget {
-            break;
-        }
-        if let ClosedSurfaceRecord::Terminal { replay, .. } = surface
-            && let Some(replay) = replay.take()
-        {
-            total = total.saturating_sub(replay.len());
-        }
-    }
-}
-
-fn closed_pane_scrollback_bytes(records: &[ClosedRecord]) -> usize {
-    records
-        .iter()
-        .flat_map(ClosedRecord::surfaces)
-        .filter_map(|surface| match surface {
-            ClosedSurfaceRecord::Terminal { replay, .. } => replay.as_ref(),
-            ClosedSurfaceRecord::Markdown { .. } => None,
-        })
-        .map(Vec::len)
-        .sum()
 }
 
 fn capture_closed_surface_record(
@@ -134,7 +212,13 @@ fn capture_closed_surface_record(
                     .as_ref()
                     .map(std::path::PathBuf::from)
                     .or_else(|| tv_ref.terminal.cwd_now()),
-                replay: tv_ref.terminal.capture_replay(),
+                session: tv_ref
+                    .terminal
+                    .hosted_stop_target()
+                    .map(|target| HeldSession {
+                        target,
+                        hold: SessionHold::Detached,
+                    }),
                 custom_name: tv_ref.terminal.custom_name.clone(),
                 font_size: tv_ref.terminal.font_size_override,
             }
@@ -183,32 +267,41 @@ fn capture_closed_tab_record(
 fn restore_closed_surface_record(
     tab: ClosedSurfaceRecord,
     ws_id: u64,
+    attached: &HashSet<SessionId>,
     cx: &mut Context<PaneFlowApp>,
-) -> crate::pane::PaneSurface {
+) -> (crate::pane::PaneSurface, SurfaceReopen) {
     match tab {
         ClosedSurfaceRecord::Terminal {
             cwd,
-            replay,
+            session,
             custom_name,
             font_size,
         } => {
-            let terminal = cx.new(|cx| TerminalView::with_cwd(ws_id, cwd, None, cx));
+            let reopen = surface_reopen(session.as_ref(), attached);
+            let terminal = cx.new(|cx| match &reopen {
+                SurfaceReopen::Reattach(session) => {
+                    TerminalView::attach_existing(ws_id, cwd, session.clone(), cx)
+                }
+                SurfaceReopen::Fresh | SurfaceReopen::AlreadyOpen => {
+                    TerminalView::with_cwd(ws_id, cwd, None, cx)
+                }
+            });
             terminal.update(cx, |view, _| {
                 view.terminal.custom_name = custom_name;
                 view.terminal.font_size_override = font_size;
             });
-            if let Some(replay) = replay {
-                terminal.read(cx).restore_replay(&replay);
-            }
             cx.subscribe(&terminal, PaneFlowApp::handle_terminal_event)
                 .detach();
-            crate::pane::PaneSurface::Terminal(terminal)
+            (crate::pane::PaneSurface::Terminal(terminal), reopen)
         }
         ClosedSurfaceRecord::Markdown { path } => {
             let markdown = cx.new(|cx: &mut Context<crate::markdown::MarkdownView>| {
                 crate::markdown::MarkdownView::open(path, cx)
             });
-            crate::pane::PaneSurface::Markdown(markdown)
+            (
+                crate::pane::PaneSurface::Markdown(markdown),
+                SurfaceReopen::Fresh,
+            )
         }
     }
 }
@@ -220,6 +313,28 @@ pub(crate) struct SurfaceLaunch {
 }
 
 impl PaneFlowApp {
+    fn finish_surface_reopen(
+        &mut self,
+        surface: &crate::pane::PaneSurface,
+        reopen: SurfaceReopen,
+        ws_id: u64,
+        cx: &mut Context<Self>,
+    ) {
+        match reopen {
+            SurfaceReopen::Fresh => {}
+            SurfaceReopen::Reattach(session) => {
+                if let crate::pane::PaneSurface::Terminal(terminal) = surface {
+                    let surface_id = terminal.entity_id().as_u64();
+                    self.seed_surface_from_host(&session, ws_id, surface_id, cx);
+                }
+            }
+            SurfaceReopen::AlreadyOpen => self.show_toast(
+                "That session is already open in another view, so a new shell opened instead",
+                cx,
+            ),
+        }
+    }
+
     pub(crate) fn apply_git_state_for_cwd(
         &mut self,
         cwd: &str,
@@ -627,7 +742,8 @@ impl PaneFlowApp {
     ) {
         let workspace_idx = self.active_idx;
         let record = capture_closed_pane_record(&pane, workspace_idx, cx);
-        push_closed_record(&mut self.closed_panes, ClosedRecord::Pane(record));
+        let evicted = push_closed_record(&mut self.closed_panes, ClosedRecord::Pane(record));
+        self.stop_hosted_sessions(evicted, cx);
         pane.read(cx).focus_handle(cx).focus(window, cx);
 
         if let Some(ws) = self.active_workspace_mut()
@@ -701,7 +817,9 @@ impl PaneFlowApp {
             self.show_toast("No active workspace to restore pane", cx);
             return;
         };
-        let surface = restore_closed_surface_record(record.surface, ws_id, cx);
+        let attached = self.attached_session_ids(cx);
+        let (surface, reopen) = restore_closed_surface_record(record.surface, ws_id, &attached, cx);
+        self.finish_surface_reopen(&surface, reopen, ws_id, cx);
         let new_pane = self.create_pane_with_existing_surface(surface, ws_id, cx);
 
         let inserted = if let Some(ws) = self.active_workspace_mut() {
@@ -1325,23 +1443,48 @@ mod tests {
         assert_eq!(resolved, std::path::PathBuf::from(bare));
     }
 
-    fn terminal_surface_with_replay(len: Option<usize>) -> ClosedSurfaceRecord {
+    fn terminal_surface(session: Option<HeldSession>) -> ClosedSurfaceRecord {
         ClosedSurfaceRecord::Terminal {
             cwd: None,
-            replay: len.map(|len| vec![b'x'; len]),
+            session,
             custom_name: None,
             font_size: None,
         }
     }
 
-    fn closed_pane_record_with_replay(len: usize) -> ClosedRecord {
+    fn closed_pane_record(session: Option<HeldSession>) -> ClosedRecord {
         ClosedRecord::Pane(ClosedPaneRecord {
-            surface: terminal_surface_with_replay(Some(len)),
+            surface: terminal_surface(session),
             workspace_idx: 0,
         })
     }
 
-    fn closed_tab_record(tab_id: u64, replays: &[usize]) -> ClosedRecord {
+    fn held(session: &SessionId, hold: SessionHold) -> HeldSession {
+        HeldSession {
+            target: (
+                std::path::PathBuf::from("host-endpoint"),
+                session.clone(),
+                paneflow_config::schema::SessionGeneration::default(),
+            ),
+            hold,
+        }
+    }
+
+    fn first_session(record: &ClosedRecord) -> Option<&HeldSession> {
+        match &record.surfaces()[0] {
+            ClosedSurfaceRecord::Terminal { session, .. } => session.as_ref(),
+            ClosedSurfaceRecord::Markdown { .. } => None,
+        }
+    }
+
+    fn stopped_sessions(targets: &[StopTarget]) -> Vec<SessionId> {
+        targets
+            .iter()
+            .map(|(_, session, _)| session.clone())
+            .collect()
+    }
+
+    fn closed_tab_record(tab_id: u64, surfaces: usize) -> ClosedRecord {
         ClosedRecord::Tab(ClosedTabRecord {
             tab_id,
             workspace_id: 1,
@@ -1352,21 +1495,8 @@ mod tests {
             layout: LayoutNode::Pane {
                 surfaces: Vec::new(),
             },
-            surfaces: replays
-                .iter()
-                .map(|len| terminal_surface_with_replay(Some(*len)))
-                .collect(),
+            surfaces: (0..surfaces).map(|_| terminal_surface(None)).collect(),
         })
-    }
-
-    fn has_replay(surface: &ClosedSurfaceRecord) -> bool {
-        matches!(
-            surface,
-            ClosedSurfaceRecord::Terminal {
-                replay: Some(_),
-                ..
-            }
-        )
     }
 
     fn tab_ids(records: &[ClosedRecord]) -> Vec<Option<u64>> {
@@ -1380,70 +1510,225 @@ mod tests {
     }
 
     #[test]
-    fn closed_pane_budget_drops_oldest_scrollback_not_record() {
-        let one_mib = 1024 * 1024;
-        let mut records = vec![
-            closed_pane_record_with_replay(one_mib),
-            closed_pane_record_with_replay(one_mib),
-        ];
+    fn a_silent_close_keeps_the_session_for_undo_until_its_deadline_then_stops_it() {
+        let session = SessionId::new();
+        let mut records = vec![closed_pane_record(Some(held(
+            &session,
+            SessionHold::Detached,
+        )))];
+        let closed_at = Instant::now();
+        let until = closed_at + std::time::Duration::from_millis(crate::CLOSED_SESSION_GRACE_MS);
 
-        push_closed_record(&mut records, closed_pane_record_with_replay(one_mib));
-
-        assert_eq!(records.len(), 3, "budget must preserve undo records");
-        assert!(
-            !has_replay(&records[0].surfaces()[0]),
-            "oldest scrollback should be released first"
+        let kept = settle_closed_sessions(
+            &mut records,
+            &HashSet::from([session.clone()]),
+            Some(SessionHold::UndoWindow { until }),
         );
-        assert!(has_replay(&records[1].surfaces()[0]));
-        assert!(has_replay(&records[2].surfaces()[0]));
+
+        assert_eq!(kept, HashSet::from([session.clone()]));
         assert_eq!(
-            closed_pane_scrollback_bytes(&records),
-            MAX_CLOSED_PANE_SCROLLBACK_BYTES
+            undo_window_session_ids(&records),
+            HashSet::from([session.clone()])
+        );
+        assert_eq!(
+            surface_reopen(first_session(&records[0]), &HashSet::new()),
+            SurfaceReopen::Reattach(session.clone()),
+            "an undo inside the window reattaches the same session"
+        );
+        assert!(
+            expire_held_sessions(&mut records, until - std::time::Duration::from_millis(1))
+                .is_empty(),
+            "nothing stops before the deadline"
+        );
+
+        let expired = expire_held_sessions(&mut records, until);
+
+        assert_eq!(stopped_sessions(&expired), vec![session]);
+        assert!(first_session(&records[0]).is_none());
+        assert!(undo_window_session_ids(&records).is_empty());
+        assert_eq!(
+            surface_reopen(first_session(&records[0]), &HashSet::new()),
+            SurfaceReopen::Fresh,
+            "after the deadline the undo opens a new shell"
         );
     }
 
     #[test]
-    fn closed_pane_budget_preserves_absent_scrollback_for_undo() {
+    fn an_explicit_stop_forgets_the_session_so_undo_opens_a_new_shell() {
+        let session = SessionId::new();
+        let mut records = vec![closed_pane_record(Some(held(
+            &session,
+            SessionHold::Detached,
+        )))];
+
+        let kept = settle_closed_sessions(&mut records, &HashSet::from([session]), None);
+
+        assert!(kept.is_empty());
+        assert_eq!(
+            surface_reopen(first_session(&records[0]), &HashSet::new()),
+            SurfaceReopen::Fresh
+        );
+    }
+
+    #[test]
+    fn a_detached_close_never_expires_stays_listed_and_undo_reattaches() {
+        let session = SessionId::new();
+        let mut records = vec![closed_pane_record(Some(held(
+            &session,
+            SessionHold::Detached,
+        )))];
+
+        let kept = settle_closed_sessions(
+            &mut records,
+            &HashSet::from([session.clone()]),
+            Some(SessionHold::Detached),
+        );
+
+        assert_eq!(kept, HashSet::from([session.clone()]));
+        assert!(
+            expire_held_sessions(
+                &mut records,
+                Instant::now() + std::time::Duration::from_secs(3600)
+            )
+            .is_empty()
+        );
+        assert!(
+            undo_window_session_ids(&records).is_empty(),
+            "a detached session stays in the sidebar"
+        );
+        assert!(take_undo_window_sessions(&mut records).is_empty());
+        assert_eq!(
+            surface_reopen(first_session(&records[0]), &HashSet::new()),
+            SurfaceReopen::Reattach(session)
+        );
+    }
+
+    #[test]
+    fn a_session_reclosed_after_a_sidebar_reopen_survives_the_undo_of_its_latest_close() {
+        let session = SessionId::new();
         let mut records = Vec::new();
         push_closed_record(
             &mut records,
-            ClosedRecord::Pane(ClosedPaneRecord {
-                surface: terminal_surface_with_replay(None),
-                workspace_idx: 0,
-            }),
+            closed_pane_record(Some(held(&session, SessionHold::Detached))),
+        );
+        push_closed_record(
+            &mut records,
+            closed_pane_record(Some(held(&session, SessionHold::Detached))),
+        );
+        let until =
+            Instant::now() + std::time::Duration::from_millis(crate::CLOSED_SESSION_GRACE_MS);
+        settle_closed_sessions(
+            &mut records,
+            &HashSet::from([session.clone()]),
+            Some(SessionHold::UndoWindow { until }),
         );
 
-        assert_eq!(records.len(), 1);
-        assert!(!has_replay(&records[0].surfaces()[0]));
-        assert_eq!(closed_pane_scrollback_bytes(&records), 0);
+        let undone = records.pop().expect("the latest close");
+        assert_eq!(
+            surface_reopen(first_session(&undone), &HashSet::new()),
+            SurfaceReopen::Reattach(session)
+        );
+        assert!(
+            first_session(&records[0]).is_none(),
+            "the earlier close no longer owns the session"
+        );
+        assert!(
+            expire_held_sessions(&mut records, until).is_empty(),
+            "the reattached session must not be stopped by the earlier close"
+        );
     }
 
     #[test]
-    fn closed_tab_budget_counts_every_surface_of_the_tab() {
-        let one_mib = 1024 * 1024;
-        let mut records = vec![closed_pane_record_with_replay(one_mib)];
+    fn a_close_that_leaves_nothing_to_undo_keeps_no_session() {
+        let recorded = SessionId::new();
+        let unrecorded = SessionId::new();
+        let mut records = vec![closed_pane_record(Some(held(
+            &recorded,
+            SessionHold::Detached,
+        )))];
 
-        push_closed_record(&mut records, closed_tab_record(7, &[one_mib, one_mib]));
-
-        assert_eq!(records.len(), 2);
-        assert!(
-            !has_replay(&records[0].surfaces()[0]),
-            "the older pane releases its scrollback before the newer tab"
+        let kept = settle_closed_sessions(
+            &mut records,
+            &HashSet::from([unrecorded]),
+            Some(SessionHold::UndoWindow {
+                until: Instant::now(),
+            }),
         );
-        assert!(records[1].surfaces().iter().all(has_replay));
+
+        assert!(kept.is_empty(), "the caller stops what no record keeps");
         assert_eq!(
-            closed_pane_scrollback_bytes(&records),
-            MAX_CLOSED_PANE_SCROLLBACK_BYTES
+            first_session(&records[0]).map(|held| held.hold),
+            Some(SessionHold::Detached),
+            "an unrelated record is untouched"
         );
+    }
+
+    #[test]
+    fn evicting_the_oldest_record_stops_only_its_undo_window_sessions() {
+        let held_for_undo = SessionId::new();
+        let detached = SessionId::new();
+        let until = Instant::now() + std::time::Duration::from_secs(60);
+        let mut records = vec![
+            closed_pane_record(Some(held(
+                &held_for_undo,
+                SessionHold::UndoWindow { until },
+            ))),
+            closed_pane_record(Some(held(&detached, SessionHold::Detached))),
+        ];
+        for tab_id in 0..(MAX_CLOSED_PANES - 2) as u64 {
+            assert!(push_closed_record(&mut records, closed_tab_record(tab_id, 1)).is_empty());
+        }
+
+        let first_eviction = push_closed_record(&mut records, closed_pane_record(None));
+        let second_eviction = push_closed_record(&mut records, closed_pane_record(None));
+
+        assert_eq!(stopped_sessions(&first_eviction), vec![held_for_undo]);
+        assert!(
+            second_eviction.is_empty(),
+            "a detached session outlives its undo entry"
+        );
+        assert_eq!(records.len(), MAX_CLOSED_PANES);
+    }
+
+    #[test]
+    fn quitting_takes_every_undo_window_session_and_leaves_detached_ones() {
+        let (first, second, detached) = (SessionId::new(), SessionId::new(), SessionId::new());
+        let until = Instant::now() + std::time::Duration::from_secs(60);
+        let mut records = vec![
+            closed_pane_record(Some(held(&first, SessionHold::UndoWindow { until }))),
+            closed_pane_record(Some(held(&detached, SessionHold::Detached))),
+            closed_pane_record(Some(held(&second, SessionHold::UndoWindow { until }))),
+        ];
+
+        let taken = take_undo_window_sessions(&mut records);
+
+        assert_eq!(stopped_sessions(&taken), vec![first, second]);
+        assert!(undo_window_session_ids(&records).is_empty());
+        assert_eq!(
+            first_session(&records[1]).map(|held| held.target.1.clone()),
+            Some(detached)
+        );
+    }
+
+    #[test]
+    fn undo_never_attaches_a_session_that_another_view_already_shows() {
+        let session = SessionId::new();
+        let held = held(&session, SessionHold::Detached);
+
+        assert_eq!(
+            surface_reopen(Some(&held), &HashSet::from([session])),
+            SurfaceReopen::AlreadyOpen
+        );
+        assert_eq!(surface_reopen(None, &HashSet::new()), SurfaceReopen::Fresh);
     }
 
     #[test]
     fn closed_record_cap_counts_a_tab_as_one_entry() {
         let mut records = Vec::new();
         for tab_id in 0..MAX_CLOSED_PANES as u64 {
-            push_closed_record(&mut records, closed_tab_record(tab_id, &[1, 1, 1]));
+            push_closed_record(&mut records, closed_tab_record(tab_id, 3));
         }
-        push_closed_record(&mut records, closed_pane_record_with_replay(1));
+        push_closed_record(&mut records, closed_pane_record(None));
 
         assert_eq!(records.len(), MAX_CLOSED_PANES);
         assert_eq!(
@@ -1457,9 +1742,9 @@ mod tests {
     #[test]
     fn take_closed_tab_record_removes_only_the_matching_tab() {
         let mut records = vec![
-            closed_tab_record(3, &[1]),
-            closed_pane_record_with_replay(1),
-            closed_tab_record(4, &[1, 1]),
+            closed_tab_record(3, 1),
+            closed_pane_record(None),
+            closed_tab_record(4, 2),
         ];
 
         let taken = take_closed_tab_record(&mut records, 3).map(|tab| tab.tab_id);

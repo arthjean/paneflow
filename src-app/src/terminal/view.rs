@@ -100,6 +100,32 @@ pub(super) struct HoverLinkCache {
     zones: Vec<HyperlinkZone>,
 }
 
+pub(super) type HoverLinkResolver =
+    fn(&str, Line, &[usize], Option<&std::path::Path>) -> Vec<HyperlinkZone>;
+
+pub(super) fn resolve_hover_links(
+    line_text: &str,
+    line: Line,
+    char_to_column: &[usize],
+    cwd: Option<&std::path::Path>,
+) -> Vec<HyperlinkZone> {
+    let mut zones =
+        crate::terminal::element::detect_urls_on_line_mapped(line_text, line, char_to_column);
+    zones.extend(crate::terminal::element::detect_file_paths_on_line_mapped(
+        line_text,
+        line,
+        char_to_column,
+        cwd,
+    ));
+    zones.extend(crate::terminal::element::detect_code_paths_on_line_mapped(
+        line_text,
+        line,
+        char_to_column,
+        cwd,
+    ));
+    zones
+}
+
 pub struct TerminalView {
     pub terminal: TerminalState,
     focus_handle: FocusHandle,
@@ -160,7 +186,9 @@ pub struct TerminalView {
     pub(super) ctrl_hovered_link: Option<HyperlinkZone>,
     pub(super) link_modifier_held: bool,
     pub(super) hover_link_cache: Option<HoverLinkCache>,
+    pub(super) hover_link_resolver: HoverLinkResolver,
     pub(super) mouse_down_link: Option<HyperlinkZone>,
+    pub(super) mouse_down_cell: Option<Point>,
     ime_marked_text: String,
     needs_initial_clear: Arc<std::sync::atomic::AtomicBool>,
     terminal_window_size: Arc<Mutex<Option<TerminalWindowSize>>>,
@@ -232,12 +260,6 @@ impl TerminalView {
         if let Some(text) = self.saved_scrollback.take() {
             self.restore_scrollback(&text);
         }
-    }
-
-    pub(crate) fn restore_replay(&self, replay: &[u8]) {
-        self.needs_initial_clear
-            .store(false, std::sync::atomic::Ordering::Relaxed);
-        self.terminal.restore_replay(replay);
     }
 
     pub(crate) fn set_integrated_glyphs_enabled(&mut self, enabled: bool, cx: &mut Context<Self>) {
@@ -401,12 +423,13 @@ impl TerminalView {
         cx: &mut Context<Self>,
     ) -> Self {
         let surface_id = cx.entity_id().as_u64();
-        let params = launch.spawn_params(surface_id);
+        let (params, shell_notice) = launch.spawn_params(surface_id);
         let (mut terminal, pending) = TerminalState::new_pending_with_shell_quoting(
             params.cols,
             params.rows,
             params.shell_quoting,
         );
+        terminal.pending_host_notices.extend(shell_notice);
         if let Some(session) = session {
             terminal.session_id = session;
         }
@@ -475,6 +498,7 @@ impl TerminalView {
 
         let config = paneflow_config::loader::load_config();
         let terminal_config = config.terminal.clone().unwrap_or_default();
+        terminal.osc52_policy = terminal_config.osc52_clipboard.unwrap_or_default();
         let scroll_multiplier = terminal_config.resolved_scroll_multiplier();
         let cursor_blink_mode = terminal_config.cursor_blink.unwrap_or_default();
         let default_cursor_shape =
@@ -554,7 +578,9 @@ impl TerminalView {
             ctrl_hovered_link: None,
             link_modifier_held: false,
             hover_link_cache: None,
+            hover_link_resolver: resolve_hover_links,
             mouse_down_link: None,
+            mouse_down_cell: None,
             ime_marked_text: String::new(),
             needs_initial_clear: Arc::new(std::sync::atomic::AtomicBool::new(true)),
             terminal_window_size: Arc::new(Mutex::new(None)),
@@ -595,8 +621,11 @@ struct HostedLaunch {
 }
 
 impl HostedLaunch {
-    fn spawn_params(&self, surface_id: u64) -> crate::terminal::pty_session::SpawnParams {
-        TerminalState::resolve_spawn_params_with_profile(
+    fn spawn_params(
+        &self,
+        surface_id: u64,
+    ) -> (crate::terminal::pty_session::SpawnParams, Option<String>) {
+        TerminalState::resolve_spawn_launch(
             self.cwd.clone(),
             self.workspace_id,
             surface_id,
@@ -735,6 +764,17 @@ impl TerminalView {
     }
 }
 
+fn link_under(zones: &[HyperlinkZone], point: Point) -> Option<HyperlinkZone> {
+    zones
+        .iter()
+        .find(|zone| {
+            point.line == zone.start.line
+                && point.column >= zone.start.column
+                && point.column <= zone.end.column
+        })
+        .cloned()
+}
+
 fn sequence_would_submit(seq: &str) -> bool {
     seq.contains('\r') || seq.contains('\n')
 }
@@ -746,38 +786,63 @@ impl TerminalView {
         Some((line.line, line.text, line.char_to_column))
     }
 
-    pub(super) fn detect_links_at_hover(&mut self) -> Vec<HyperlinkZone> {
-        let Some((line, line_text, char_to_col)) = self.hovered_line_text() else {
+    pub(super) fn resolve_links_at_hover(&mut self, hover_point: Point, cx: &mut Context<Self>) {
+        let Some((line, mut line_text, mut char_to_col)) = self.hovered_line_text() else {
             self.hover_link_cache = None;
-            return Vec::new();
+            self.ctrl_hovered_link = None;
+            return;
         };
-        let trimmed = line_text.trim_end();
-        let trimmed_chars = trimmed.chars().count();
-        let map = &char_to_col[..trimmed_chars];
-        let cwd_key = self.terminal.current_cwd.clone();
+        let trimmed_len = line_text.trim_end().len();
+        line_text.truncate(trimmed_len);
+        char_to_col.truncate(line_text.chars().count());
+        let cwd = self.terminal.current_cwd.clone();
         if let Some(cache) = &self.hover_link_cache
             && cache.line == line
-            && cache.cwd == cwd_key
-            && cache.line_text == trimmed
+            && cache.cwd == cwd
+            && cache.line_text == line_text
         {
-            return cache.zones.clone();
+            self.ctrl_hovered_link = link_under(&cache.zones, hover_point);
+            return;
         }
-        let cwd = cwd_key.as_deref().map(std::path::Path::new);
-
-        let mut zones = crate::terminal::element::detect_urls_on_line_mapped(trimmed, line, map);
-        zones.extend(crate::terminal::element::detect_file_paths_on_line_mapped(
-            trimmed, line, map, cwd,
-        ));
-        zones.extend(crate::terminal::element::detect_code_paths_on_line_mapped(
-            trimmed, line, map, cwd,
-        ));
-        self.hover_link_cache = Some(HoverLinkCache {
-            line,
-            cwd: cwd_key,
-            line_text: trimmed.to_string(),
-            zones: zones.clone(),
+        self.ctrl_hovered_link = None;
+        let resolver = self.hover_link_resolver;
+        let resolved = cx.background_executor().spawn({
+            let line_text = line_text.clone();
+            let cwd = cwd.clone();
+            async move {
+                resolver(
+                    &line_text,
+                    line,
+                    &char_to_col,
+                    cwd.as_deref().map(std::path::Path::new),
+                )
+            }
         });
-        zones
+        cx.spawn(
+            async move |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
+                let zones = resolved.await;
+                let _ = this.update(cx, |view, cx| {
+                    view.hover_link_cache = Some(HoverLinkCache {
+                        line,
+                        cwd,
+                        line_text,
+                        zones,
+                    });
+                    if !view.link_modifier_held || view.hovered_cell != Some(hover_point) {
+                        return;
+                    }
+                    let link = view
+                        .hover_link_cache
+                        .as_ref()
+                        .and_then(|cache| link_under(&cache.zones, hover_point));
+                    if link.is_some() {
+                        view.ctrl_hovered_link = link;
+                        cx.notify();
+                    }
+                });
+            },
+        )
+        .detach();
     }
 }
 
@@ -791,6 +856,7 @@ pub enum TerminalEvent {
     ServiceDetected(ServiceInfo),
     CancelSwapMode,
     SelectionCopied,
+    Notice(String),
     OpenMarkdownPath(std::path::PathBuf),
     OpenCodePath {
         path: std::path::PathBuf,
@@ -821,6 +887,9 @@ impl TerminalView {
         let mode = self.terminal.session_backend().modes();
         let mut ctx = KeyContext::default();
         ctx.add("Terminal");
+        if self.search_active {
+            ctx.add("Search");
+        }
 
         if mode.contains(Modes::ALT_SCREEN) {
             ctx.set("screen", "alt");
@@ -1228,6 +1297,9 @@ fn spawn_event_pump_task(
                                 )));
                             }
 
+                            for notice in std::mem::take(&mut view.terminal.pending_host_notices) {
+                                cx.emit(TerminalEvent::Notice(notice));
+                            }
                             for notification in
                                 std::mem::take(&mut view.terminal.pending_notifications)
                             {
@@ -1285,6 +1357,7 @@ impl Render for TerminalView {
                 self.link_modifier_held = false;
                 self.hover_link_cache = None;
                 self.mouse_down_link = None;
+                self.mouse_down_cell = None;
                 self.ime_marked_text.clear();
                 self.path_picker = None;
                 *self
@@ -1554,7 +1627,6 @@ impl Render for TerminalView {
             .child(terminal_body);
 
         if search_active {
-            el = el.key_context("Search");
             el = el.child(self.render_search_overlay(cx));
         }
 
@@ -2017,6 +2089,467 @@ mod tests {
         assert!(
             probe.hits() > 0,
             "mouse selection: the terminal view must notify itself"
+        );
+    }
+
+    fn pastes_after(
+        text: &str,
+        answer: Option<&str>,
+        cx: &mut gpui::TestAppContext,
+    ) -> (Vec<(String, bool)>, bool) {
+        let (terminal, _host, cx) = hosted_terminal(cx);
+        focus_terminal(&terminal, cx);
+        cx.write_to_clipboard(ClipboardItem::new_string(text.to_owned()));
+        cx.dispatch_action(crate::TerminalPaste);
+        let prompted = cx.has_pending_prompt();
+        if let Some(answer) = answer {
+            cx.simulate_prompt_answer(answer);
+        }
+        cx.run_until_parked();
+        (
+            terminal.read_with(cx, |view, _| view.terminal.queued_pastes()),
+            prompted,
+        )
+    }
+
+    #[gpui::test]
+    fn a_multiline_paste_without_bracketed_paste_asks_and_cancel_sends_nothing(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let (queued, prompted) = pastes_after("echo one\necho two\n", Some("Cancel"), cx);
+        assert!(prompted, "a multi-line paste asks for confirmation");
+        assert!(queued.is_empty(), "{queued:?}");
+    }
+
+    #[gpui::test]
+    fn a_confirmed_multiline_paste_is_sent_once(cx: &mut gpui::TestAppContext) {
+        let (queued, prompted) = pastes_after("echo one\r\necho two", Some("Paste"), cx);
+        assert!(prompted);
+        assert_eq!(queued, vec![("echo one\necho two".to_owned(), true)]);
+    }
+
+    #[gpui::test]
+    fn a_single_line_paste_never_asks(cx: &mut gpui::TestAppContext) {
+        let (queued, prompted) = pastes_after("echo hello", None, cx);
+        assert!(
+            !prompted,
+            "a single-line paste is sent without confirmation"
+        );
+        assert_eq!(queued, vec![("echo hello".to_owned(), false)]);
+    }
+
+    #[gpui::test]
+    fn terminal_shortcuts_stay_active_while_the_search_field_has_focus(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let (terminal, _host, cx) = hosted_terminal(cx);
+        cx.update(|_window, cx| {
+            cx.bind_keys([gpui::KeyBinding::new(
+                "ctrl-shift-f",
+                crate::ToggleSearch,
+                Some("Terminal"),
+            )]);
+        });
+        focus_terminal(&terminal, cx);
+
+        cx.simulate_keystrokes("ctrl-shift-f");
+        let search_focused = cx.update(|window, cx| {
+            let view = terminal.read(cx);
+            view.search_active && view.search_input.read(cx).focus_handle.is_focused(window)
+        });
+        assert!(
+            search_focused,
+            "the shortcut opens and focuses the search field"
+        );
+
+        cx.simulate_keystrokes("ctrl-shift-f");
+        assert!(
+            !terminal.read_with(cx, |view, _| view.search_active),
+            "a Terminal shortcut still fires from inside the search field"
+        );
+    }
+
+    #[gpui::test]
+    fn edit_paste_and_copy_with_the_search_field_focused_act_on_the_field(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let (terminal, _host, cx) = hosted_terminal(cx);
+        focus_terminal(&terminal, cx);
+        cx.dispatch_action(crate::ToggleSearch);
+        cx.write_to_clipboard(ClipboardItem::new_string("needle".to_owned()));
+
+        cx.dispatch_action(crate::TerminalPaste);
+        assert_eq!(
+            terminal.read_with(cx, |view, cx| view.search_input.read(cx).value()),
+            "needle"
+        );
+
+        cx.write_to_clipboard(ClipboardItem::new_string("untouched".to_owned()));
+        cx.dispatch_action(crate::TerminalCopy);
+        assert_eq!(
+            cx.read_from_clipboard().and_then(|item| item.text()),
+            Some("untouched".to_owned()),
+            "copy without a field selection leaves the clipboard alone"
+        );
+    }
+
+    #[gpui::test]
+    fn a_key_that_reveals_the_cursor_notifies_the_terminal_view(cx: &mut gpui::TestAppContext) {
+        let (terminal, _host, cx) = hosted_terminal(cx);
+        focus_terminal(&terminal, cx);
+        terminal.update(cx, |view, _cx| view.cursor_visible = false);
+        let probe = watch_notifications(&terminal, cx);
+        probe.reset();
+
+        cx.simulate_keystrokes("shift");
+
+        assert!(terminal.read_with(cx, |view, _| view.cursor_visible));
+        assert!(
+            probe.hits() > 0,
+            "revealing the cursor must repaint the terminal view"
+        );
+    }
+
+    fn record_events(
+        view: &Entity<TerminalView>,
+        cx: &mut gpui::VisualTestContext,
+    ) -> (
+        std::rc::Rc<std::cell::RefCell<Vec<String>>>,
+        gpui::Subscription,
+    ) {
+        let events = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        let sink = events.clone();
+        let subscription = cx.update(|_window, cx| {
+            cx.subscribe(view, move |_view, event: &TerminalEvent, _cx| {
+                let label = match event {
+                    TerminalEvent::Notice(message) => format!("notice:{message}"),
+                    TerminalEvent::SelectionCopied => "copied".to_owned(),
+                    TerminalEvent::OpenCodePath { path, .. } => {
+                        format!("open:{}", path.display())
+                    }
+                    _ => return,
+                };
+                sink.borrow_mut().push(label);
+            })
+        });
+        (events, subscription)
+    }
+
+    fn settle_until(
+        cx: &mut gpui::VisualTestContext,
+        what: &str,
+        mut done: impl FnMut(&mut gpui::VisualTestContext) -> bool,
+    ) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        loop {
+            cx.run_until_parked();
+            cx.update(|window, cx| {
+                window.draw(cx).clear(cx);
+                window.simulate_next_frame(cx);
+            });
+            if done(cx) {
+                return;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "timed out waiting for {what}"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    }
+
+    fn resolve_after_five_seconds(
+        _line_text: &str,
+        line: Line,
+        _char_to_column: &[usize],
+        _cwd: Option<&std::path::Path>,
+    ) -> Vec<HyperlinkZone> {
+        std::thread::sleep(std::time::Duration::from_secs(5));
+        vec![code_path_zone(line)]
+    }
+
+    fn resolve_immediately(
+        _line_text: &str,
+        line: Line,
+        _char_to_column: &[usize],
+        _cwd: Option<&std::path::Path>,
+    ) -> Vec<HyperlinkZone> {
+        vec![code_path_zone(line)]
+    }
+
+    fn code_path_zone(line: Line) -> HyperlinkZone {
+        HyperlinkZone {
+            uri: "src/main.rs".to_owned(),
+            start: Point::new(line.0, 0),
+            end: Point::new(line.0, 40),
+            is_openable: true,
+            source: crate::terminal::types::HyperlinkSource::CodePath,
+            line: None,
+            col: None,
+        }
+    }
+
+    #[gpui::test]
+    fn a_link_hovered_after_scrolling_back_fifty_lines_is_read_from_the_displayed_line(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let (terminal, _host, cx) = hosted_terminal(cx);
+        focus_terminal(&terminal, cx);
+        terminal.update(cx, |view, _cx| {
+            let lines: String = (0..200)
+                .map(|index| format!("n{index:03} https://example.com/n{index:03}\r\n"))
+                .collect();
+            view.terminal.write_output(lines.as_bytes());
+        });
+        settle_until(cx, "the output", |cx| {
+            terminal.read_with(cx, |view, _| {
+                view.terminal
+                    .session_backend()
+                    .grid_metrics()
+                    .topmost_line
+                    .0
+                    < -100
+            })
+        });
+        terminal.update(cx, |view, _cx| {
+            view.terminal.session_backend().scroll_delta(50);
+        });
+        settle_until(cx, "the scroll", |cx| {
+            terminal.read_with(cx, |view, _| {
+                view.terminal
+                    .session_backend()
+                    .grid_metrics()
+                    .display_offset
+                    == 50
+            })
+        });
+
+        cx.simulate_mouse_move(
+            gpui::point(gpui::px(120.0), gpui::px(120.0)),
+            None,
+            link_modifiers(),
+        );
+        settle_until(cx, "the hovered link", |cx| {
+            terminal.read_with(cx, |view, _| view.ctrl_hovered_link.is_some())
+        });
+
+        let (hovered, link, metrics) = terminal.read_with(cx, |view, _| {
+            (
+                view.hovered_cell.expect("a hovered cell"),
+                view.ctrl_hovered_link.clone().expect("a hovered link"),
+                view.terminal.session_backend().grid_metrics(),
+            )
+        });
+        assert_eq!(metrics.display_offset, 50);
+        let viewport_row = hovered.line.0 + 50;
+        let bottom_line = 199 - (i32::try_from(metrics.screen_lines).unwrap() - 2);
+        let displayed = bottom_line - 50 + viewport_row;
+        assert_eq!(link.uri, format!("https://example.com/n{displayed:03}"));
+        assert_eq!(link.start.line, hovered.line);
+    }
+
+    #[gpui::test]
+    fn a_hover_path_resolver_blocked_for_five_seconds_never_stalls_a_frame(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let (terminal, _host, cx) = hosted_terminal(cx);
+        terminal.update(cx, |view, _cx| {
+            view.terminal
+                .write_output(b"see src/main.rs:12 for details\r\n");
+        });
+        settle_until(cx, "the output", |cx| {
+            terminal.read_with(cx, |view, _| {
+                view.terminal
+                    .session_backend()
+                    .line_text_at(Point::new(0, 0))
+                    .is_some_and(|line| line.text.contains("main.rs"))
+            })
+        });
+        let hovered = Point::new(0, 6);
+        let moved = Point::new(1, 6);
+
+        let started = std::time::Instant::now();
+        terminal.update(cx, |view, cx| {
+            view.hover_link_resolver = resolve_after_five_seconds;
+            view.link_modifier_held = true;
+            view.hovered_cell = Some(hovered);
+            view.resolve_links_at_hover(hovered, cx);
+        });
+        cx.update(|window, cx| {
+            window.draw(cx).clear(cx);
+            window.simulate_next_frame(cx);
+        });
+        let frame = started.elapsed();
+        assert!(
+            frame < std::time::Duration::from_millis(50),
+            "hover and frame took {frame:?} while the resolver was blocked"
+        );
+
+        terminal.update(cx, |view, _cx| view.hovered_cell = Some(moved));
+        cx.run_until_parked();
+        assert!(
+            terminal.read_with(cx, |view, _| view.ctrl_hovered_link.is_none()),
+            "a result for a cell the pointer left is never applied"
+        );
+
+        terminal.update(cx, |view, cx| {
+            view.hover_link_cache = None;
+            view.hover_link_resolver = resolve_immediately;
+            view.hovered_cell = Some(hovered);
+            view.resolve_links_at_hover(hovered, cx);
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            terminal.read_with(cx, |view, _| view
+                .ctrl_hovered_link
+                .clone()
+                .map(|link| link.uri)),
+            Some("src/main.rs".to_owned())
+        );
+    }
+
+    #[gpui::test]
+    fn a_drag_started_on_a_link_selects_text_and_never_opens_the_link(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let (terminal, _host, cx) = hosted_terminal(cx);
+        focus_terminal(&terminal, cx);
+        terminal.update(cx, |view, _cx| {
+            view.hover_link_resolver = resolve_immediately;
+            view.terminal
+                .write_output(b"see src/main.rs:12 for the details of this failure\r\n");
+        });
+        settle_until(cx, "the output", |cx| {
+            terminal.read_with(cx, |view, _| {
+                view.terminal
+                    .session_backend()
+                    .line_text_at(Point::new(0, 0))
+                    .is_some_and(|line| line.text.contains("main.rs"))
+            })
+        });
+        let (events, _subscription) = record_events(&terminal, cx);
+        let (cell_width, line_height) = terminal.read_with(cx, |view, _| {
+            (view.cell_width.as_f32(), view.line_height.as_f32())
+        });
+        let origin = terminal.read_with(cx, |view, _| {
+            *view
+                .element_origin
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+        });
+        let at_column = |column: f32| {
+            gpui::point(
+                origin.x + gpui::px((column + 0.5) * cell_width),
+                origin.y + gpui::px(0.5 * line_height),
+            )
+        };
+
+        cx.simulate_mouse_move(at_column(2.0), None, link_modifiers());
+        settle_until(cx, "the hovered link", |cx| {
+            terminal.read_with(cx, |view, _| view.ctrl_hovered_link.is_some())
+        });
+        cx.simulate_mouse_down(at_column(2.0), MouseButton::Left, link_modifiers());
+        cx.simulate_mouse_move(at_column(20.0), Some(MouseButton::Left), link_modifiers());
+        cx.simulate_mouse_up(at_column(20.0), MouseButton::Left, link_modifiers());
+        settle_until(cx, "the copied selection", |_cx| {
+            events.borrow().iter().any(|event| event == "copied")
+        });
+        assert!(
+            !events
+                .borrow()
+                .iter()
+                .any(|event| event.starts_with("open:")),
+            "{:?}",
+            events.borrow()
+        );
+
+        events.borrow_mut().clear();
+        cx.simulate_mouse_move(at_column(3.0), None, link_modifiers());
+        settle_until(cx, "the hovered link", |cx| {
+            terminal.read_with(cx, |view, _| view.ctrl_hovered_link.is_some())
+        });
+        cx.simulate_mouse_down(at_column(3.0), MouseButton::Left, link_modifiers());
+        cx.simulate_mouse_up(at_column(3.0), MouseButton::Left, link_modifiers());
+        cx.run_until_parked();
+        assert_eq!(*events.borrow(), vec!["open:src/main.rs".to_owned()]);
+    }
+
+    #[gpui::test]
+    fn a_copy_over_the_selection_limit_shows_a_notice_and_keeps_the_selection(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let (terminal, _host, cx) = hosted_terminal(cx);
+        focus_terminal(&terminal, cx);
+        let row = "x".repeat(79);
+        terminal.update(cx, |view, _cx| {
+            let text: String = (0..6_000).map(|_| format!("{row}\r\n")).collect();
+            view.terminal.write_output(text.as_bytes());
+        });
+        settle_until(cx, "the output", |cx| {
+            terminal.read_with(cx, |view, _| {
+                view.terminal
+                    .session_backend()
+                    .grid_metrics()
+                    .topmost_line
+                    .0
+                    < -5_500
+            })
+        });
+        let (events, _subscription) = record_events(&terminal, cx);
+        terminal.update(cx, |view, _cx| {
+            let backend = view.terminal.session_backend();
+            let metrics = backend.grid_metrics();
+            backend.press_selection(
+                crate::terminal::types::SelectionKind::Simple,
+                Point::new(metrics.topmost_line.0, 0),
+                (0.0, 0.0),
+            );
+            backend.drag_selection(
+                Point::new(metrics.bottommost_line.0, 78),
+                (1.0, 1.0),
+                backend.selection_geometry(view.cell_width.as_f32(), view.line_height.as_f32()),
+                false,
+            );
+        });
+        settle_until(cx, "the selection", |cx| {
+            terminal.read_with(cx, |view, _| {
+                view.terminal.session_backend().selection_range().is_some()
+            })
+        });
+
+        let release = gpui::MouseUpEvent {
+            button: MouseButton::Left,
+            position: gpui::point(gpui::px(-10.0), gpui::px(-10.0)),
+            modifiers: gpui::Modifiers::default(),
+            click_count: 1,
+        };
+        let started = std::time::Instant::now();
+        cx.update(|window, cx| {
+            terminal.update(cx, |view, cx| view.handle_mouse_up(&release, window, cx));
+        });
+        let dispatch = started.elapsed();
+        assert!(
+            events.borrow().is_empty(),
+            "the copy runs off the UI thread"
+        );
+        assert!(
+            dispatch < std::time::Duration::from_millis(50),
+            "mouse-up took {dispatch:?}"
+        );
+
+        cx.run_until_parked();
+        assert_eq!(
+            *events.borrow(),
+            vec![format!(
+                "notice:{}",
+                crate::terminal::input::selection_too_large_notice(400_000)
+            )]
+        );
+        assert!(
+            terminal.read_with(cx, |view, _| {
+                view.terminal.session_backend().selection_range().is_some()
+            }),
+            "a refused copy keeps the selection"
         );
     }
 

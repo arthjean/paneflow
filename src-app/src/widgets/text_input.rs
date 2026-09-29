@@ -216,6 +216,10 @@ impl TextInput {
     }
 
     fn paste(&mut self, _: &TextInputPaste, window: &mut Window, cx: &mut Context<Self>) {
+        self.paste_clipboard(window, cx);
+    }
+
+    pub fn paste_clipboard(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
             let sanitized = text.replace("\r\n", " ").replace(['\r', '\n'], " ");
             self.replace_text_in_range(None, &sanitized, window, cx);
@@ -223,6 +227,10 @@ impl TextInput {
     }
 
     fn copy(&mut self, _: &TextInputCopy, _: &mut Window, cx: &mut Context<Self>) {
+        self.copy_selection(cx);
+    }
+
+    pub fn copy_selection(&self, cx: &mut Context<Self>) {
         if !self.selected_range.is_empty() {
             cx.write_to_clipboard(ClipboardItem::new_string(
                 self.content[self.selected_range.clone()].to_string(),
@@ -444,7 +452,7 @@ impl EntityInputHandler for TextInput {
         if last_layout.text != self.content {
             return None;
         }
-        let utf8_index = last_layout.index_for_x(point.x - line_point.x)?;
+        let utf8_index = last_layout.index_for_x(line_point.x)?;
         Some(self.offset_to_utf16(utf8_index))
     }
 }
@@ -676,5 +684,93 @@ impl Render for TextInput {
 impl Focusable for TextInput {
     fn focus_handle(&self, _: &App) -> FocusHandle {
         self.focus_handle.clone()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct Host {
+        input: Entity<TextInput>,
+    }
+
+    impl Render for Host {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            div()
+                .pl(px(240.0))
+                .pt(px(160.0))
+                .w(px(900.0))
+                .child(self.input.clone())
+        }
+    }
+
+    fn painted_input<'a>(
+        text: &'static str,
+        placeholder: &'static str,
+        cx: &'a mut gpui::TestAppContext,
+    ) -> (Entity<TextInput>, &'a mut gpui::VisualTestContext) {
+        let (host, cx) = cx.add_window_view(move |_window, cx| Host {
+            input: cx.new(|cx| TextInput::new(text, placeholder, cx)),
+        });
+        cx.update(|window, cx| {
+            window.draw(cx).clear(cx);
+        });
+        let input = host.read_with(cx, |host, _| host.input.clone());
+        (input, cx)
+    }
+
+    #[gpui::test]
+    fn points_on_a_field_far_from_the_window_origin_map_to_the_characters_under_them(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let (input, cx) = painted_input("d\u{e9}j\u{e0} vu \u{e9}t\u{e9}", "", cx);
+        let (bounds, third, ninth) = input.read_with(cx, |input, _| {
+            let layout = input.last_layout.as_ref().expect("a painted line");
+            let byte = |chars: usize| {
+                input
+                    .content
+                    .char_indices()
+                    .nth(chars)
+                    .map(|(index, _)| index)
+                    .expect("a character")
+            };
+            (
+                input.last_bounds.expect("painted bounds"),
+                layout.x_for_index(byte(2)),
+                layout.x_for_index(byte(8)),
+            )
+        });
+        assert!(bounds.left() > px(200.0), "{bounds:?}");
+        let inside = |x: Pixels| point(bounds.left() + x + px(1.0), bounds.top() + px(2.0));
+
+        let offsets = cx.update(|window, cx| {
+            input.update(cx, |input, cx| {
+                (
+                    input.character_index_for_point(inside(third), window, cx),
+                    input.character_index_for_point(inside(ninth), window, cx),
+                )
+            })
+        });
+
+        assert_eq!(offsets, (Some(2), Some(8)));
+    }
+
+    #[gpui::test]
+    fn an_empty_field_has_no_character_under_any_point(cx: &mut gpui::TestAppContext) {
+        let (input, cx) = painted_input("", "Search", cx);
+        let bounds = input.read_with(cx, |input, _| input.last_bounds.expect("painted bounds"));
+
+        let index = cx.update(|window, cx| {
+            input.update(cx, |input, cx| {
+                input.character_index_for_point(
+                    point(bounds.left() + px(4.0), bounds.top() + px(2.0)),
+                    window,
+                    cx,
+                )
+            })
+        });
+
+        assert_eq!(index, None);
     }
 }

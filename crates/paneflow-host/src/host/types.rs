@@ -53,6 +53,50 @@ pub struct CreateSession {
     pub rows: Option<u16>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub appearance: Option<SessionAppearance>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cell: Option<CellSize>,
+}
+
+pub const APPEARANCE_PALETTE_LEN: usize = 256;
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SessionAppearance {
+    pub foreground: [u8; 3],
+    pub background: [u8; 3],
+    pub cursor: [u8; 3],
+    pub palette: Vec<[u8; 3]>,
+    pub dark: bool,
+}
+
+impl SessionAppearance {
+    pub fn validate(&self) -> Result<(), HostError> {
+        if self.palette.len() != APPEARANCE_PALETTE_LEN {
+            return Err(HostError::InvalidRequest(format!(
+                "the appearance palette must hold {APPEARANCE_PALETTE_LEN} colors, got {}",
+                self.palette.len()
+            )));
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CellSize {
+    pub width: u16,
+    pub height: u16,
+}
+
+impl CellSize {
+    pub fn validate(self) -> Result<(), HostError> {
+        if self.width == 0 || self.height == 0 {
+            return Err(HostError::InvalidRequest(
+                "cell dimensions must be non-zero".to_string(),
+            ));
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

@@ -10,6 +10,8 @@ use crate::snapshot_ffi::{TerminalKittyKeyboardFlags, terminal_get};
 use crate::{BackendEvent, Modes, Result, Scroll, WindowSize};
 
 const CLEAR_SCREEN_AND_SCROLLBACK: &[u8] = b"\x1b[3J\x1b[2J\x1b[H";
+const CLEAR_SCROLLBACK: &[u8] = b"\x1b[3J";
+const RESET_DYNAMIC_COLORS: &[u8] = b"\x1b]104\x1b\\\x1b]110\x1b\\\x1b]111\x1b\\\x1b]112\x1b\\";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct MouseEncoderSize {
@@ -25,23 +27,14 @@ pub(crate) struct MouseEncoderSize {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct MouseModes {
-    report_click: bool,
+    x10: bool,
+    normal: bool,
     drag: bool,
     motion: bool,
-    sgr: bool,
     utf8: bool,
-}
-
-impl From<Modes> for MouseModes {
-    fn from(modes: Modes) -> Self {
-        Self {
-            report_click: modes.mouse_report_click,
-            drag: modes.mouse_drag,
-            motion: modes.mouse_motion,
-            sgr: modes.sgr_mouse,
-            utf8: modes.utf8_mouse,
-        }
-    }
+    sgr: bool,
+    urxvt: bool,
+    sgr_pixels: bool,
 }
 
 pub struct DisplayTerminal {
@@ -60,13 +53,89 @@ pub struct DisplayTerminal {
     pub(crate) mouse_encoder_size: Option<MouseEncoderSize>,
     pub(crate) key_encoder_overrides: crate::input_options::KeyEncoderOverrides,
     pub(crate) callbacks: Box<CallbackState>,
+    pub(crate) history_clear_pending: bool,
     pub(crate) _not_send_or_sync: PhantomData<Rc<()>>,
 }
 
 impl DisplayTerminal {
     pub fn feed(&mut self, bytes: &[u8]) -> Result<()> {
-        unsafe { sys::ghostty_terminal_vt_write(self.terminal.raw(), bytes.as_ptr(), bytes.len()) };
+        let mut rest = bytes;
+        if self.history_clear_pending {
+            let mut consumed = 0usize;
+            let result = unsafe {
+                sys::ghostty_terminal_vt_write_until_ground(
+                    self.terminal.raw(),
+                    rest.as_ptr(),
+                    rest.len(),
+                    &mut consumed,
+                )
+            };
+            match result {
+                sys::GhosttyResult_GHOSTTY_SUCCESS => {
+                    rest = rest.get(consumed..).unwrap_or_default();
+                    self.history_clear_pending = false;
+                    self.write_history_clear()?;
+                }
+                sys::GhosttyResult_GHOSTTY_NO_VALUE => rest = &[],
+                other => check("terminal_vt_write_until_ground", other)?,
+            }
+        }
+        unsafe { sys::ghostty_terminal_vt_write(self.terminal.raw(), rest.as_ptr(), rest.len()) };
         self.invalidate_search_rail();
+        Ok(())
+    }
+
+    pub fn clear_history(&mut self) -> Result<()> {
+        if self.at_ground()? {
+            self.write_history_clear()
+        } else {
+            self.history_clear_pending = true;
+            Ok(())
+        }
+    }
+
+    pub fn reset(&mut self) {
+        unsafe {
+            sys::ghostty_terminal_reset(self.terminal.raw());
+            sys::ghostty_terminal_vt_write(
+                self.terminal.raw(),
+                RESET_DYNAMIC_COLORS.as_ptr(),
+                RESET_DYNAMIC_COLORS.len(),
+            );
+        }
+        self.history_clear_pending = false;
+        self.invalidate_search_rail();
+        self.snapshot_cache.invalidate();
+    }
+
+    fn at_ground(&self) -> Result<bool> {
+        let mut consumed = 0usize;
+        let result = unsafe {
+            sys::ghostty_terminal_vt_write_until_ground(
+                self.terminal.raw(),
+                std::ptr::null(),
+                0,
+                &mut consumed,
+            )
+        };
+        if result == sys::GhosttyResult_GHOSTTY_NO_VALUE {
+            return Ok(false);
+        }
+        check("terminal_vt_write_until_ground", result)?;
+        Ok(true)
+    }
+
+    fn write_history_clear(&mut self) -> Result<()> {
+        let sequence = if self.modes()?.alternate_screen {
+            CLEAR_SCROLLBACK
+        } else {
+            CLEAR_SCREEN_AND_SCROLLBACK
+        };
+        unsafe {
+            sys::ghostty_terminal_vt_write(self.terminal.raw(), sequence.as_ptr(), sequence.len())
+        };
+        self.invalidate_search_rail();
+        self.snapshot_cache.invalidate();
         Ok(())
     }
 
@@ -140,7 +209,7 @@ impl DisplayTerminal {
         self.mode(2026)
     }
 
-    fn mode(&self, dec_mode: u16) -> Result<bool> {
+    pub(crate) fn mode(&self, dec_mode: u16) -> Result<bool> {
         let mut config = sys::GhosttyTerminalModeConfig {
             mode: dec_mode,
             value: false,
@@ -154,6 +223,19 @@ impl DisplayTerminal {
         };
         check("terminal_get_mode", result)?;
         Ok(config.value)
+    }
+
+    pub(crate) fn mouse_modes(&self) -> Result<MouseModes> {
+        Ok(MouseModes {
+            x10: self.mode(9)?,
+            normal: self.mode(1000)?,
+            drag: self.mode(1002)?,
+            motion: self.mode(1003)?,
+            utf8: self.mode(1005)?,
+            sgr: self.mode(1006)?,
+            urxvt: self.mode(1015)?,
+            sgr_pixels: self.mode(1016)?,
+        })
     }
 
     fn kitty_keyboard_flags(&self) -> Result<u8> {
@@ -214,6 +296,98 @@ mod tests {
         assert!(content.cells.iter().all(|cell| cell.character == ' '));
         assert_eq!(content.cursor.point, crate::Point::new(0, 0));
         assert!(terminal.modes().expect("modes after clear").bracketed_paste);
+    }
+
+    fn screen_text(terminal: &DisplayTerminal) -> String {
+        terminal
+            .format(crate::FormatterOptions::plain_text())
+            .expect("plain text")
+    }
+
+    #[test]
+    fn a_history_clear_waits_for_a_split_escape_sequence_to_complete() {
+        let size = WindowSize::new(20, 3, 8, 16).expect("valid terminal size");
+        let mut terminal = DisplayTerminal::new(size, 100, crate::TerminalAppearance::default())
+            .expect("terminal must initialize");
+        terminal
+            .feed(b"one\r\ntwo\r\nthree\r\nfour\r\n\x1b[3")
+            .expect("output ending inside a CSI");
+
+        terminal.clear_history().expect("clear request");
+        terminal.feed(b"1mRED\x1b[0m").expect("the CSI completes");
+
+        let content = terminal.snapshot().expect("snapshot");
+        assert_eq!(content.history_size, 0);
+        let text = screen_text(&terminal);
+        assert!(text.contains("RED"), "{text:?}");
+        assert!(!text.contains('m'), "the split CSI leaked as text: {text:?}");
+        assert!(!text.contains("four"), "{text:?}");
+        let red = content
+            .cells
+            .iter()
+            .find(|cell| cell.character == 'R')
+            .expect("the R cell");
+        assert_eq!(red.foreground, crate::Color::Palette(1));
+    }
+
+    #[test]
+    fn a_history_clear_on_the_alternate_screen_keeps_the_program_screen() {
+        let size = WindowSize::new(20, 3, 8, 16).expect("valid terminal size");
+        let mut terminal = DisplayTerminal::new(size, 100, crate::TerminalAppearance::default())
+            .expect("terminal must initialize");
+        terminal
+            .feed(b"one\r\ntwo\r\nthree\r\nfour\r\nfive")
+            .expect("primary output");
+        terminal
+            .feed(b"\x1b[?1049h\x1b[HTUI SCREEN")
+            .expect("alternate screen");
+
+        terminal.clear_history().expect("clear request");
+
+        assert!(screen_text(&terminal).contains("TUI SCREEN"));
+        terminal.feed(b"\x1b[?1049l").expect("leave the alternate screen");
+        assert!(screen_text(&terminal).contains("five"));
+    }
+
+    #[test]
+    fn a_reset_restores_the_initial_state_and_keeps_the_configured_colors() {
+        let size = WindowSize::new(20, 3, 8, 16).expect("valid terminal size");
+        let appearance = crate::TerminalAppearance {
+            background: crate::Rgb {
+                r: 0xfa,
+                g: 0xfb,
+                b: 0xfc,
+            },
+            ..crate::TerminalAppearance::default()
+        };
+        let mut terminal =
+            DisplayTerminal::new(size, 100, appearance).expect("terminal must initialize");
+        terminal
+            .feed(b"\x1b[?2004h\x1b[?1049hbusy\x1b]11;#000000\x1b\\")
+            .expect("program state");
+
+        terminal.reset();
+
+        let modes = terminal.modes().expect("modes");
+        assert!(!modes.bracketed_paste);
+        assert!(!modes.alternate_screen);
+        assert!(!screen_text(&terminal).contains("busy"));
+        terminal.drain_events();
+        terminal.feed(b"\x1b]11;?\x1b\\").expect("background query");
+        let replies = terminal
+            .drain_events()
+            .into_iter()
+            .filter_map(|event| match event {
+                BackendEvent::WritePty(bytes) => Some(bytes),
+                _ => None,
+            })
+            .flatten()
+            .collect::<Vec<_>>();
+        assert!(
+            String::from_utf8_lossy(&replies).contains("rgb:fafa/fbfb/fcfc"),
+            "{:?}",
+            String::from_utf8_lossy(&replies)
+        );
     }
 
     #[test]

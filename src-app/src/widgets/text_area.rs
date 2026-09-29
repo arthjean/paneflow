@@ -114,6 +114,12 @@ pub struct TextArea {
     on_escape: Option<EscapeFn>,
     on_submit_immediate: Option<SubmitImmediateFn>,
     last_bounds: Option<Bounds<Pixels>>,
+    last_layout: Option<TextAreaLayout>,
+}
+
+struct TextAreaLayout {
+    lines: Arc<Vec<ShapedLineInfo>>,
+    line_height: Pixels,
 }
 
 impl TextArea {
@@ -131,6 +137,7 @@ impl TextArea {
             on_escape: None,
             on_submit_immediate: None,
             last_bounds: None,
+            last_layout: None,
         }
     }
 
@@ -542,15 +549,21 @@ impl EntityInputHandler for TextArea {
     ) -> Option<Bounds<Pixels>> {
         let range = self.range_from_utf16(&range_utf16);
         let offset = range.start.min(self.content.len());
-        let row = self.content[..offset]
-            .chars()
-            .filter(|ch| *ch == '\n')
-            .count();
-        let line_start = line_start(&self.content, offset);
-        let col = self.content[line_start..offset].chars().count();
-        let x = element_bounds.left() + px(col as f32 * 7.0);
-        let y = element_bounds.top() + px(row as f32 * 20.0);
-        Some(Bounds::new(point(x, y), size(px(1.0), px(20.0))))
+        let layout = self.last_layout.as_ref()?;
+        let line = layout
+            .lines
+            .iter()
+            .find(|line| offset >= line.byte_start && offset <= line.byte_end)
+            .or_else(|| layout.lines.last())?;
+        let local = offset.saturating_sub(line.byte_start);
+        let position = line
+            .wrapped
+            .position_for_index(local, layout.line_height)
+            .unwrap_or_default();
+        Some(Bounds::new(
+            point(element_bounds.left() + position.x, line.y_top + position.y),
+            size(px(1.0), layout.line_height),
+        ))
     }
 
     fn character_index_for_point(
@@ -559,25 +572,12 @@ impl EntityInputHandler for TextArea {
         _window: &mut Window,
         _cx: &mut Context<Self>,
     ) -> Option<usize> {
-        let local = self
-            .last_bounds
-            .and_then(|bounds| bounds.localize(&point))
-            .unwrap_or(point);
-        let row = (local.y.as_f32() / 20.0).max(0.0).floor() as usize;
-        let col = (local.x.as_f32() / 7.0).max(0.0).floor() as usize;
-        let mut byte_offset = 0;
-        for (idx, line) in self.content.split('\n').enumerate() {
-            if idx == row {
-                let local = line
-                    .char_indices()
-                    .nth(col)
-                    .map(|(offset, _)| offset)
-                    .unwrap_or(line.len());
-                return Some(self.offset_to_utf16(byte_offset + local));
-            }
-            byte_offset += line.len() + 1;
-        }
-        Some(self.offset_to_utf16(self.content.len()))
+        let bounds = self.last_bounds?;
+        bounds.localize(&point)?;
+        let layout = self.last_layout.as_ref()?;
+        let offset = hit_test(&layout.lines, bounds.origin, layout.line_height, point);
+        let offset = clamp_to_grapheme(&self.content, offset.min(self.content.len()));
+        Some(self.offset_to_utf16(offset))
     }
 }
 
@@ -879,8 +879,11 @@ impl Element for TextAreaContent {
                 ElementInputHandler::new(bounds, entity.clone()),
                 cx,
             );
+            let lines = prepaint.lines.clone();
+            let line_height = self.line_height;
             entity.update(cx, |this, _cx| {
                 this.last_bounds = Some(bounds);
+                this.last_layout = Some(TextAreaLayout { lines, line_height });
             });
         }
 
@@ -1267,6 +1270,79 @@ fn offset_one_line_down(s: &str, offset: usize) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    struct Host {
+        area: gpui::Entity<TextArea>,
+    }
+
+    impl Render for Host {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            div()
+                .pl(px(180.0))
+                .pt(px(120.0))
+                .w(px(700.0))
+                .child(self.area.clone())
+        }
+    }
+
+    #[gpui::test]
+    fn ime_bounds_and_hit_tests_follow_the_painted_layout(cx: &mut gpui::TestAppContext) {
+        let (host, cx) = cx.add_window_view(|_window, cx| Host {
+            area: cx.new(|cx| {
+                let mut area = TextArea::new("", cx);
+                area.content = "alpha\nb\u{e9}ta gamma delta".to_owned();
+                area
+            }),
+        });
+        cx.update(|window, cx| {
+            window.draw(cx).clear(cx);
+        });
+        let area = host.read_with(cx, |host, _| host.area.clone());
+        let second_line = "alpha\n".len();
+        let caret = |chars: usize| {
+            second_line
+                + "b\u{e9}ta gamma delta"
+                    .char_indices()
+                    .nth(chars)
+                    .map(|(index, _)| index)
+                    .expect("a character")
+        };
+
+        let (bounds, first_row, sixth, hit) = cx.update(|window, cx| {
+            area.update(cx, |area, cx| {
+                let element = area.last_bounds.expect("painted bounds");
+                let first_row = area
+                    .bounds_for_range(0..0, element, window, cx)
+                    .expect("bounds of the first character");
+                let utf16 = area.offset_to_utf16(caret(6));
+                let sixth = area
+                    .bounds_for_range(utf16..utf16, element, window, cx)
+                    .expect("bounds of a second-row character");
+                let hit = area.character_index_for_point(
+                    point(sixth.left() + px(1.0), sixth.top() + px(2.0)),
+                    window,
+                    cx,
+                );
+                (element, first_row, sixth, hit)
+            })
+        });
+
+        let expected_x = area.read_with(cx, |area, _| {
+            let layout = area.last_layout.as_ref().expect("a painted layout");
+            layout.lines[1]
+                .wrapped
+                .position_for_index(caret(6) - second_line, layout.line_height)
+                .expect("a laid-out caret")
+                .x
+        });
+        assert_eq!(first_row.origin, bounds.origin);
+        assert_eq!(sixth.left(), bounds.left() + expected_x);
+        assert!(sixth.top() > first_row.top());
+        assert_eq!(
+            hit,
+            Some(area.read_with(cx, |area, _| area.offset_to_utf16(caret(6))))
+        );
+    }
 
     #[test]
     fn prev_grapheme_at_start_returns_zero() {

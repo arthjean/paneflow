@@ -71,6 +71,14 @@ impl TerminalView {
             session: self.terminal.session_id.clone(),
             workspace: crate::workspace::durable_workspace_id(self.launch.workspace_id),
             params,
+            appearance: crate::terminal::ghostty_session::current_host_appearance(),
+            cell: self
+                .recorded_window_size()
+                .filter(|size| size.cell_width > 0 && size.cell_height > 0)
+                .map(|size| paneflow_host::CellSize {
+                    width: size.cell_width,
+                    height: size.cell_height,
+                }),
         };
         let executor = cx.background_executor().clone();
         cx.spawn(
@@ -232,12 +240,14 @@ impl TerminalView {
     ) {
         self.session_intent = intent;
         let surface_id = cx.entity_id().as_u64();
-        let params = self.launch.spawn_params(surface_id);
+        let (params, shell_notice) = self.launch.spawn_params(surface_id);
         let (mut fresh, pending) = TerminalState::new_pending_with_shell_quoting(
             params.cols,
             params.rows,
             params.shell_quoting,
         );
+        fresh.pending_host_notices.extend(shell_notice);
+        fresh.osc52_policy = self.terminal.osc52_policy;
         fresh.session_id = if fresh_identity {
             paneflow_config::schema::SessionId::new()
         } else {

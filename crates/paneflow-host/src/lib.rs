@@ -40,7 +40,8 @@ pub use paneflow_config::schema::{HostInstanceToken, SessionGeneration, SessionI
 pub use bootstrap::{BootstrapError, Probe, ensure_host_running, probe};
 pub use client::{Attachment, HostClient, HostClientError};
 pub use host::{
-    CreateSession, HostError, SessionHost, SessionReconnection, SessionRow, SessionSummary,
+    CellSize, CreateSession, HostError, SessionAppearance, SessionHost, SessionReconnection,
+    SessionRow, SessionSummary,
 };
 pub use manifest::{SessionLifecycle, SessionManifest};
 pub use process::{ProcessIdentity, ProcessVerdict};

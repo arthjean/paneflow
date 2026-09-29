@@ -21,6 +21,7 @@ use paneflow_host::{HostClient, HostClientError};
 use super::clipboard_gate::ClipboardGate;
 use super::host_link::{CheckpointPayload, HostAttachment, HostLinkEnd, HostLinkState};
 use super::marks::{CommandMark, Osc133Scanner, RawMark, SharedMarkRing};
+use super::pty_session::SelectionCopy;
 #[cfg(test)]
 use super::pty_session::SpawnParams;
 use super::service_detector::ServiceOutputTail;
@@ -138,6 +139,9 @@ const SHUTDOWN_GRACE: Duration = Duration::from_millis(100);
 const WINDOWS_CHILD_POLL_INTERVAL: Duration = Duration::from_millis(10);
 const MAX_CLIPBOARD_EVENTS: usize = 8;
 const MAX_NOTIFICATION_EVENTS: usize = 8;
+const NOTIFICATION_WINDOW: Duration = Duration::from_secs(60);
+const MAX_NOTIFICATIONS_PER_WINDOW: usize = 3;
+const EFFECTS_OVERFLOW_WARN_INTERVAL: Duration = Duration::from_secs(60);
 
 const _: () = assert!(OUTPUT_POOL_BYTES <= NFR_005_MAX_PENDING_OUTPUT_BYTES);
 const _: () = assert!(MAX_QUEUED_INPUT_BYTES <= NFR_005_MAX_QUEUED_INPUT_BYTES);
@@ -798,6 +802,22 @@ impl GhosttySession {
         filter_copyable_selection_text(kind, self.selection_range(), text)
     }
 
+    pub(super) fn take_selection_for_copy(&self) -> SelectionCopy {
+        let text = match self.request(RuntimeMessage::SelectionText) {
+            Some(Err(ghostty::GhosttyError::LimitExceeded { limit, .. })) => {
+                return SelectionCopy::TooLarge { limit };
+            }
+            reply => reply.and_then(Result::ok).flatten(),
+        };
+        let kind = self.lock_gesture().kind;
+        let copied = filter_copyable_selection_text(kind, self.selection_range(), text);
+        self.clear_selection();
+        match copied.filter(|text| !text.is_empty()) {
+            Some(text) => SelectionCopy::Text(text),
+            None => SelectionCopy::Empty,
+        }
+    }
+
     pub(super) fn select_all_text(&self) -> Option<String> {
         {
             let mut gesture = self.lock_gesture();
@@ -821,6 +841,13 @@ impl GhosttySession {
             .inner
             .mailbox
             .try_send_control(RuntimeMessage::ClearScrollback);
+    }
+
+    pub(super) fn reset_terminal(&self) {
+        let _ = self
+            .inner
+            .mailbox
+            .try_send_control(RuntimeMessage::ResetTerminal);
     }
 
     pub(super) fn clear_selection(&self) {
@@ -873,7 +900,11 @@ impl GhosttySession {
     pub(super) fn line_text_at(&self, point: Point) -> Option<GridLineText> {
         let state = self.inner.state.read();
         let content = &state.content;
-        let row = usize::try_from(point.line.0).ok()?;
+        let viewport_line = point
+            .line
+            .0
+            .checked_add(i32::try_from(content.display_offset).ok()?)?;
+        let row = usize::try_from(viewport_line).ok()?;
         let start = row.checked_mul(content.cols)?;
         let cells = content
             .cells
@@ -881,7 +912,7 @@ impl GhosttySession {
             .filter(|cells| {
                 cells
                     .first()
-                    .is_some_and(|cell| cell.point.line == point.line)
+                    .is_some_and(|cell| cell.point.line.0 == viewport_line)
             })?;
         let mut text = String::with_capacity(cells.len());
         let mut char_to_column = Vec::with_capacity(cells.len());
@@ -1042,12 +1073,6 @@ impl GhosttySession {
             .and_then(Result::ok)
     }
 
-    pub(super) fn capture_replay(&self) -> Option<Vec<u8>> {
-        self.request(RuntimeMessage::CaptureReplay)
-            .and_then(Result::ok)
-            .filter(|replay| !replay.is_empty())
-    }
-
     pub(super) fn restore_scrollback(&self, text: &str) {
         let _ = self.request(|reply| RuntimeMessage::RestoreScrollback {
             text: text.to_owned(),
@@ -1164,6 +1189,24 @@ fn current_ghostty_palette() -> [ghostty::Rgb; ghostty::PALETTE_LEN] {
     crate::theme::generated_terminal_palette(&crate::theme::active_theme())
 }
 
+pub(in crate::terminal) fn current_host_appearance() -> paneflow_host::SessionAppearance {
+    host_appearance(current_ghostty_appearance(), &current_ghostty_palette())
+}
+
+fn host_appearance(
+    appearance: ghostty::TerminalAppearance,
+    palette: &[ghostty::Rgb; ghostty::PALETTE_LEN],
+) -> paneflow_host::SessionAppearance {
+    let rgb = |color: ghostty::Rgb| [color.r, color.g, color.b];
+    paneflow_host::SessionAppearance {
+        foreground: rgb(appearance.foreground),
+        background: rgb(appearance.background),
+        cursor: rgb(appearance.cursor),
+        palette: palette.iter().copied().map(rgb).collect(),
+        dark: appearance.color_scheme == ghostty::ColorScheme::Dark,
+    }
+}
+
 fn current_ghostty_appearance() -> ghostty::TerminalAppearance {
     let theme = crate::theme::active_theme();
     ghostty::TerminalAppearance::new(
@@ -1187,6 +1230,33 @@ mod tests {
     fn nfr_005_terminal_queue_caps_stay_below_budget() {
         assert_eq!(OUTPUT_POOL_BYTES, 128 * 1024);
         assert_eq!(MAX_QUEUED_INPUT_BYTES, 1024 * 1024);
+    }
+
+    #[test]
+    fn reset_and_clear_reach_the_emulator_and_never_the_program() {
+        let (mut state, pending) = TerminalState::new_pending(80, 24);
+        let runtime_pending = pending.ghostty;
+        state.promote_ghostty(SpawnedGhostty {
+            child_pid: 0,
+            cwd: std::env::current_dir().unwrap(),
+        });
+
+        state.session_backend().reset_terminal();
+        state.session_backend().clear_history();
+
+        let messages = runtime_pending.mailbox.drain();
+        assert!(matches!(
+            messages.as_slice(),
+            [
+                RuntimeMessage::ResetTerminal,
+                RuntimeMessage::ClearScrollback
+            ]
+        ));
+        assert!(
+            !messages
+                .iter()
+                .any(|message| message.queued_input_bytes().is_some())
+        );
     }
 
     #[test]

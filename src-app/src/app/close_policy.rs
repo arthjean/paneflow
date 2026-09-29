@@ -9,6 +9,7 @@ use crate::ai_types::AgentState;
 use crate::app::diff_dock::code::view::CodeView;
 use crate::app::hosted_sessions::{pane_terminals, tab_terminals};
 use crate::app::unsaved_dialog::UnsavedContinuation;
+use crate::app::workspace_ops::settle_closed_sessions;
 use crate::pane::Pane;
 use crate::settings::components::{
     ModalKey, confirmation_list, confirmation_warning, destructive_button, modal_backdrop,
@@ -24,6 +25,7 @@ const MAX_LISTED_SESSIONS: usize = 6;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CloseIntent {
     Stop,
+    Hold,
     Detach,
 }
 
@@ -262,7 +264,7 @@ impl PaneFlowApp {
         let rows = self.close_dialog_rows(&target, cx);
         if rows.is_empty() {
             discard_unsaved(discard, cx);
-            self.perform_close(target, CloseIntent::Stop, window, cx);
+            self.perform_close(target, CloseIntent::Hold, window, cx);
             return;
         }
         self.dismiss_transient_surfaces();
@@ -284,14 +286,13 @@ impl PaneFlowApp {
         window: Option<&mut Window>,
         cx: &mut Context<Self>,
     ) {
-        if intent == CloseIntent::Stop {
-            match &target {
-                CloseTarget::Session(session) => self.stop_listed_session(session, cx),
-                other => {
-                    let terminals = self.close_target_terminals(other, cx);
-                    self.stop_terminals(terminals, cx);
-                }
+        let terminals = self.close_target_terminals(&target, cx);
+        match (&target, intent) {
+            (CloseTarget::Session(session), CloseIntent::Stop | CloseIntent::Hold) => {
+                self.stop_listed_session(session, cx);
             }
+            (_, CloseIntent::Stop) => self.stop_terminals(terminals.clone(), cx),
+            (_, CloseIntent::Hold | CloseIntent::Detach) => {}
         }
         match target {
             CloseTarget::Session(_) => {}
@@ -323,8 +324,16 @@ impl PaneFlowApp {
                 }
             }
         }
-        if intent == CloseIntent::Detach {
-            self.refresh_owned_sessions(cx);
+        match intent {
+            CloseIntent::Stop => {
+                let closed = terminals
+                    .iter()
+                    .map(|terminal| terminal.read(cx).terminal.session_id.clone())
+                    .collect();
+                settle_closed_sessions(&mut self.closed_panes, &closed, None);
+            }
+            CloseIntent::Hold => self.hold_closed_sessions(terminals, cx),
+            CloseIntent::Detach => self.refresh_owned_sessions(cx),
         }
     }
 

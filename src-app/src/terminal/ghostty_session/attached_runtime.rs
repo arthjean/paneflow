@@ -37,9 +37,21 @@ impl ReconnectBackoff {
 enum ControlRequest {
     Input(Vec<u8>),
     BindRuntime(Option<&'static str>),
-    Resize { cols: u16, rows: u16 },
+    Resize {
+        cols: u16,
+        rows: u16,
+        cell: paneflow_host::CellSize,
+    },
+    Appearance(paneflow_host::SessionAppearance),
+    ClearHistory,
+    Reset,
     Release,
 }
+
+const HOST_HISTORY_NOT_CLEARED: &str =
+    "The session host could not clear its history; it can come back after a restart.";
+const HOST_STATE_NOT_RESET: &str =
+    "The session host could not reset its terminal; the old state can come back after a restart.";
 
 struct ControlLink {
     tx: SyncSender<ControlRequest>,
@@ -62,13 +74,32 @@ impl ControlLink {
                         ControlRequest::BindRuntime(runtime_id) => {
                             control.bind_runtime(&link, runtime_id);
                         }
-                        ControlRequest::Resize { cols, rows } => {
-                            if let Err(error) = control.resize(&link, cols, rows) {
+                        ControlRequest::Resize { cols, rows, cell } => {
+                            if let Err(error) = control.resize(&link, cols, rows, cell) {
                                 log::warn!(
                                     target: "paneflow::terminal::ghostty",
                                     "hosted resize to {cols}x{rows} was not applied by the host: {error}"
                                 );
                             }
+                        }
+                        ControlRequest::Appearance(appearance) => {
+                            control.set_appearance(&link, &appearance);
+                        }
+                        ControlRequest::ClearHistory => {
+                            control.apply_terminal_command(
+                                &inner,
+                                &link,
+                                HostClient::clear_history,
+                                HOST_HISTORY_NOT_CLEARED,
+                            );
+                        }
+                        ControlRequest::Reset => {
+                            control.apply_terminal_command(
+                                &inner,
+                                &link,
+                                HostClient::reset,
+                                HOST_STATE_NOT_RESET,
+                            );
                         }
                         ControlRequest::Release => control.release(),
                     }
@@ -106,10 +137,31 @@ impl ControlLink {
         let _ = self.tx.try_send(ControlRequest::BindRuntime(runtime_id));
     }
 
-    fn resize(&self, cols: u16, rows: u16) -> Result<(), String> {
+    fn resize(&self, cols: u16, rows: u16, cell: paneflow_host::CellSize) -> Result<(), String> {
         self.tx
-            .try_send(ControlRequest::Resize { cols, rows })
+            .try_send(ControlRequest::Resize { cols, rows, cell })
             .map_err(|_| "the host control queue did not accept the resize".to_string())
+    }
+
+    fn forward(&self, inner: &SessionInner, request: ControlRequest, refusal: &str) {
+        if self.tx.try_send(request).is_err() {
+            let _ = inner
+                .events_tx
+                .unbounded_send(GhosttyUiEvent::HostNotice(refusal.to_owned()));
+        }
+    }
+
+    fn set_appearance(&self, appearance: paneflow_host::SessionAppearance) {
+        if self
+            .tx
+            .try_send(ControlRequest::Appearance(appearance))
+            .is_err()
+        {
+            log::warn!(
+                target: "paneflow::terminal::ghostty",
+                "the host control queue did not accept the theme update"
+            );
+        }
     }
 
     fn release(&self) {
@@ -197,6 +249,7 @@ struct HostControl {
     client: Option<HostClient>,
     last_failure: Option<Instant>,
     gone: bool,
+    appearance_unsupported: bool,
 }
 
 impl HostControl {
@@ -206,6 +259,7 @@ impl HostControl {
             client: None,
             last_failure: None,
             gone: false,
+            appearance_unsupported: false,
         }
     }
 
@@ -291,19 +345,92 @@ impl HostControl {
         }
     }
 
-    fn resize(&mut self, link: &HostLinkShared, cols: u16, rows: u16) -> Result<(), String> {
+    fn apply_terminal_command(
+        &mut self,
+        inner: &SessionInner,
+        link: &HostLinkShared,
+        command: fn(
+            &mut HostClient,
+            &paneflow_config::schema::SessionId,
+            paneflow_config::schema::SessionGeneration,
+        ) -> Result<(), HostClientError>,
+        refusal: &str,
+    ) {
+        let (session, generation) = (self.attachment.session.clone(), self.attachment.generation);
+        let Some(client) = self.client(link) else {
+            let _ = inner
+                .events_tx
+                .unbounded_send(GhosttyUiEvent::HostNotice(refusal.to_owned()));
+            return;
+        };
+        if let Err(error) = command(client, &session, generation) {
+            log::warn!(
+                target: "paneflow::terminal::ghostty",
+                "the host refused a terminal command: {error}"
+            );
+            if !host_lacks_the_method(&error) {
+                self.note_failure(&error);
+            }
+            let _ = inner
+                .events_tx
+                .unbounded_send(GhosttyUiEvent::HostNotice(refusal.to_owned()));
+        }
+    }
+
+    fn set_appearance(
+        &mut self,
+        link: &HostLinkShared,
+        appearance: &paneflow_host::SessionAppearance,
+    ) {
+        if self.appearance_unsupported {
+            return;
+        }
+        let (session, generation) = (self.attachment.session.clone(), self.attachment.generation);
+        let Some(client) = self.client(link) else {
+            return;
+        };
+        match client.set_appearance(&session, generation, appearance) {
+            Ok(()) => {}
+            Err(error) if host_lacks_the_method(&error) => {
+                self.appearance_unsupported = true;
+                log::info!(
+                    target: "paneflow::terminal::ghostty",
+                    "the host does not support appearance updates; theme reports for session {session} keep the host defaults"
+                );
+            }
+            Err(error) => {
+                log::debug!(
+                    target: "paneflow::terminal::ghostty",
+                    "the host refused the theme update: {error}"
+                );
+                self.note_failure(&error);
+            }
+        }
+    }
+
+    fn resize(
+        &mut self,
+        link: &HostLinkShared,
+        cols: u16,
+        rows: u16,
+        cell: paneflow_host::CellSize,
+    ) -> Result<(), String> {
         let (session, generation) = (self.attachment.session.clone(), self.attachment.generation);
         let Some(client) = self.client(link) else {
             return Err("the session is not attached".to_string());
         };
         client
-            .resize(&session, generation, cols, rows)
+            .resize(&session, generation, cols, rows, Some(cell))
             .map_err(|error| {
                 let message = error.to_string();
                 self.note_failure(&error);
                 message
             })
     }
+}
+
+fn host_lacks_the_method(error: &HostClientError) -> bool {
+    error.code() == Some(paneflow_host::protocol::ERR_METHOD_NOT_FOUND)
 }
 
 pub(super) fn run_attached_runtime(
@@ -416,8 +543,41 @@ pub(super) fn run_attached_runtime(
                     publish_gate.interactive_until =
                         Some(Instant::now() + INTERACTIVE_OUTPUT_WINDOW);
                 }
+                let appearance_update = match &message {
+                    RuntimeMessage::UpdateAppearance(appearance) => {
+                        control.set_appearance(host_appearance(
+                            *appearance,
+                            &current_ghostty_palette(),
+                        ));
+                        true
+                    }
+                    RuntimeMessage::ClearScrollback => {
+                        control.forward(
+                            &inner,
+                            ControlRequest::ClearHistory,
+                            HOST_HISTORY_NOT_CLEARED,
+                        );
+                        false
+                    }
+                    RuntimeMessage::ResetTerminal => {
+                        control.forward(&inner, ControlRequest::Reset, HOST_STATE_NOT_RESET);
+                        false
+                    }
+                    _ => false,
+                };
                 match handle_terminal_command(&inner, &mut terminal, &mut publish_gate, message) {
-                    CommandOutcome::Handled => Ok(None),
+                    CommandOutcome::Handled => {
+                        if appearance_update
+                            && let Err(error) =
+                                handle_engine_events_to(&inner, &mut terminal, &mut |_| Ok(()))
+                        {
+                            log::warn!(
+                                target: "paneflow::terminal::ghostty",
+                                "the mirror could not settle its theme update: {error}"
+                            );
+                        }
+                        Ok(None)
+                    }
                     CommandOutcome::Unhandled(message) => Ok(Some(message)),
                 }
             }
@@ -596,7 +756,14 @@ pub(super) fn run_attached_runtime(
                             .unwrap_or(u16::MAX);
                         let rows = u16::try_from(size.rows.clamp(1, usize::from(u16::MAX)))
                             .unwrap_or(u16::MAX);
-                        control.resize(cols, rows)
+                        control.resize(
+                            cols,
+                            rows,
+                            paneflow_host::CellSize {
+                                width: size.cell_width.max(1),
+                                height: size.cell_height.max(1),
+                            },
+                        )
                     })
                     .and_then(|()| publish_gate.publish_now(&inner, &mut terminal));
                 let resize_succeeded = match resized {
@@ -962,6 +1129,8 @@ mod tests {
                 cols: Some(80),
                 rows: Some(24),
                 title: None,
+                appearance: None,
+                cell: None,
             })
             .expect("hosted session");
         let session = created.manifest.session.clone();
@@ -1120,6 +1289,292 @@ mod tests {
     }
 
     #[test]
+    fn a_host_without_the_appearance_method_is_recognized_from_its_reply() {
+        use paneflow_host::server::ServerHandle;
+        use paneflow_host::{ClientHello, HostClient, SessionHost};
+
+        let home = tempfile::tempdir().expect("host home");
+        let endpoint = attached_host_endpoint(home.path());
+        let host = SessionHost::open(home.path(), &endpoint).expect("session host");
+        let server = ServerHandle::spawn(Arc::clone(&host), endpoint.clone()).expect("host server");
+        let mut client =
+            HostClient::connect(&endpoint, &ClientHello::local("paneflow-desktop-test"))
+                .expect("control connection");
+
+        let unknown = client
+            .call("session.appearance.v0", serde_json::json!({}))
+            .expect_err("an older host has no such method");
+        assert!(host_lacks_the_method(&unknown), "{unknown:?}");
+        let missing = client
+            .set_appearance(
+                &paneflow_config::schema::SessionId::new(),
+                paneflow_config::schema::SessionGeneration::FIRST,
+                &current_host_appearance(),
+            )
+            .expect_err("no such session");
+        assert!(!host_lacks_the_method(&missing), "{missing:?}");
+
+        server.stop().expect("server stop");
+    }
+
+    fn method_not_found(
+        _: &mut HostClient,
+        _: &paneflow_config::schema::SessionId,
+        _: paneflow_config::schema::SessionGeneration,
+    ) -> Result<(), HostClientError> {
+        Err(HostClientError::Rpc {
+            code: paneflow_host::protocol::ERR_METHOD_NOT_FOUND,
+            message: "method not found: session.clear_history".to_owned(),
+            data: None,
+        })
+    }
+
+    #[test]
+    fn an_older_host_without_clear_or_reset_yields_a_notice_and_no_program_input() {
+        use paneflow_host::server::ServerHandle;
+        use paneflow_host::{ClientHello, CreateSession, HostClient, SessionHost};
+
+        let home = tempfile::tempdir().expect("host home");
+        let endpoint = attached_host_endpoint(home.path());
+        let host = SessionHost::open(home.path(), &endpoint).expect("session host");
+        let server = ServerHandle::spawn(Arc::clone(&host), endpoint.clone()).expect("host server");
+        let hello = ClientHello::local("paneflow-desktop-test");
+        let mut client = HostClient::connect(&endpoint, &hello).expect("control connection");
+        #[cfg(windows)]
+        let (shell, args) = ("cmd.exe", vec!["/Q".to_string(), "/D".to_string()]);
+        #[cfg(unix)]
+        let (shell, args) = ("/bin/sh", Vec::<String>::new());
+        let created = client
+            .create(&CreateSession {
+                shell: Some(shell.to_string()),
+                args,
+                cwd: Some(std::env::temp_dir().display().to_string()),
+                ..CreateSession::default()
+            })
+            .expect("hosted session");
+        let session = created.manifest.session.clone();
+        let attachment = client
+            .attach(&session, Some(created.manifest.generation))
+            .expect("checkpoint");
+        let (host_attachment, _payload) = test_attachment(&endpoint, &hello, &session, attachment);
+        let (mirror, _pending, mut events_rx) =
+            GhosttySession::pending(TerminalWindowSize::new(80, 24, 8, 16));
+        let link = HostLinkShared::default();
+        link.attached.store(true, Ordering::Release);
+        let mut control = HostControl::new(&host_attachment);
+
+        control.apply_terminal_command(
+            &mirror.inner,
+            &link,
+            method_not_found,
+            HOST_HISTORY_NOT_CLEARED,
+        );
+
+        match events_rx.try_recv() {
+            Ok(GhosttyUiEvent::HostNotice(message)) => {
+                assert_eq!(message, HOST_HISTORY_NOT_CLEARED);
+            }
+            other => panic!("expected a host notice, got {other:?}"),
+        }
+        host.stop(&session, None).expect("stop");
+        server.stop().expect("server stop");
+    }
+
+    #[test]
+    fn clearing_history_reaches_the_host_and_survives_a_reattach_and_the_final_output() {
+        use paneflow_host::server::ServerHandle;
+        use paneflow_host::{ClientHello, CreateSession, HostClient, SessionHost};
+
+        let _accounting = checkpoint_accounting_lock();
+        let home = tempfile::tempdir().expect("host home");
+        let endpoint = attached_host_endpoint(home.path());
+        let host = SessionHost::open(home.path(), &endpoint).expect("session host");
+        let server = ServerHandle::spawn(Arc::clone(&host), endpoint.clone()).expect("host server");
+        let hello = ClientHello::local("paneflow-desktop-test");
+        let mut client = HostClient::connect(&endpoint, &hello).expect("control connection");
+        #[cfg(windows)]
+        let (shell, args, flood, after) = (
+            "cmd.exe",
+            vec!["/Q".to_string(), "/D".to_string()],
+            "for /L %i in (1,1,60) do @echo SECRET_%i\r\n",
+            "echo AFTER_^CLEAR\r\n",
+        );
+        #[cfg(unix)]
+        let (shell, args, flood, after) = (
+            "/bin/sh",
+            Vec::<String>::new(),
+            "i=1; while [ $i -le 60 ]; do echo SECRET_$i; i=$((i+1)); done\r\n",
+            "echo AFTER_\"CLEAR\"\r\n",
+        );
+        let created = client
+            .create(&CreateSession {
+                shell: Some(shell.to_string()),
+                args,
+                cwd: Some(std::env::temp_dir().display().to_string()),
+                cols: Some(80),
+                rows: Some(24),
+                ..CreateSession::default()
+            })
+            .expect("hosted session");
+        let session = created.manifest.session.clone();
+        let generation = created.manifest.generation;
+        let attachment = client
+            .attach(&session, Some(generation))
+            .expect("checkpoint");
+        let (mirror, pending, _events_rx) =
+            GhosttySession::pending(TerminalWindowSize::new(80, 24, 8, 16));
+        let (host_attachment, payload) = test_attachment(&endpoint, &hello, &session, attachment);
+        mirror
+            .start_attached(pending, host_attachment, payload, 1_000)
+            .expect("attached mirror");
+        mirror.promote();
+
+        let wait_until = |what: &str, check: &mut dyn FnMut() -> bool| {
+            let deadline = Instant::now() + Duration::from_secs(30);
+            while Instant::now() < deadline {
+                if check() {
+                    return;
+                }
+                std::thread::sleep(Duration::from_millis(25));
+            }
+            panic!("timed out waiting for {what}");
+        };
+        let mirrored = |mirror: &GhosttySession| {
+            format!(
+                "{}{}",
+                mirror.extract_scrollback().unwrap_or_default(),
+                mirror.screen_text().unwrap_or_default()
+            )
+        };
+
+        assert!(mirror.write(flood.as_bytes().to_vec()).is_sent());
+        wait_until("the flood in the mirror", &mut || {
+            mirrored(&mirror).contains("SECRET_60")
+        });
+        mirror.clear_history();
+        wait_until("the host to forget the history", &mut || {
+            client
+                .text(&session)
+                .is_ok_and(|reply| !reply.text.contains("SECRET_"))
+        });
+        assert!(
+            !mirrored(&mirror).contains("SECRET_"),
+            "{}",
+            mirrored(&mirror)
+        );
+        assert!(mirror.write(after.as_bytes().to_vec()).is_sent());
+        wait_until("output after the clear", &mut || {
+            mirrored(&mirror).contains("AFTER_CLEAR")
+        });
+
+        let reattached = client.attach(&session, Some(generation)).expect("reattach");
+        let (second, second_pending, _second_events) =
+            GhosttySession::pending(TerminalWindowSize::new(80, 24, 8, 16));
+        let (second_attachment, second_payload) =
+            test_attachment(&endpoint, &hello, &session, reattached);
+        second
+            .start_attached(second_pending, second_attachment, second_payload, 1_000)
+            .expect("second mirror");
+        let restored = mirrored(&second);
+        assert!(restored.contains("AFTER_CLEAR"), "{restored:?}");
+        assert!(!restored.contains("SECRET_"), "{restored:?}");
+
+        mirror.shutdown();
+        second.shutdown();
+        host.stop(&session, Some(generation)).expect("stop");
+        let mut final_output = None;
+        wait_until("the final output file", &mut || {
+            final_output = paneflow_host::cold_text::read(home.path(), &session);
+            final_output.is_some()
+        });
+        let final_output = final_output.unwrap_or_default();
+        assert!(final_output.contains("AFTER_CLEAR"), "{final_output:?}");
+        assert!(!final_output.contains("SECRET_"), "{final_output:?}");
+        server.stop().expect("server stop");
+    }
+
+    #[test]
+    fn a_theme_update_on_a_session_created_without_one_leaves_the_pane_clean() {
+        use paneflow_host::server::ServerHandle;
+        use paneflow_host::{ClientHello, CreateSession, HostClient, SessionHost};
+
+        let _accounting = checkpoint_accounting_lock();
+        let home = tempfile::tempdir().expect("host home");
+        let endpoint = attached_host_endpoint(home.path());
+        let host = SessionHost::open(home.path(), &endpoint).expect("session host");
+        let server = ServerHandle::spawn(Arc::clone(&host), endpoint.clone()).expect("host server");
+        let hello = ClientHello::local("paneflow-desktop-test");
+        let mut client = HostClient::connect(&endpoint, &hello).expect("control connection");
+
+        #[cfg(windows)]
+        let (shell, args, command) = (
+            "cmd.exe",
+            vec!["/Q".to_string(), "/D".to_string()],
+            "echo THEMED_^OK\r\n",
+        );
+        #[cfg(unix)]
+        let (shell, args, command) = ("/bin/sh", Vec::<String>::new(), "echo THEMED_\"OK\"\r\n");
+        let created = client
+            .create(&CreateSession {
+                session: None,
+                workspace: None,
+                cwd: Some(std::env::temp_dir().display().to_string()),
+                shell: Some(shell.to_string()),
+                args,
+                env: Default::default(),
+                cols: Some(80),
+                rows: Some(24),
+                title: None,
+                appearance: None,
+                cell: None,
+            })
+            .expect("a session created by an app without theme reports");
+        let session = created.manifest.session.clone();
+        let attachment = client
+            .attach(&session, Some(created.manifest.generation))
+            .expect("checkpoint");
+
+        let (mirror, pending, mut events_rx) =
+            GhosttySession::pending(TerminalWindowSize::new(80, 24, 8, 16));
+        let (host_attachment, payload) = test_attachment(&endpoint, &hello, &session, attachment);
+        mirror
+            .start_attached(pending, host_attachment, payload, 1_000)
+            .expect("attached mirror");
+        mirror.promote();
+        assert!(mirror.refresh_appearance(), "the theme update is queued");
+        mirror.resize(TerminalWindowSize::new(90, 28, 9, 19));
+        assert!(mirror.write(command.as_bytes().to_vec()).is_sent());
+
+        let deadline = Instant::now() + Duration::from_secs(30);
+        let mut screen = String::new();
+        while Instant::now() < deadline {
+            screen = mirror.screen_text().unwrap_or_default();
+            if screen.contains("THEMED_OK") {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(25));
+        }
+        assert!(
+            screen.contains("THEMED_OK"),
+            "the pane still works: {screen:?}"
+        );
+        assert!(
+            !screen.contains("997") && !screen.contains("rgb:"),
+            "no report leaks into the pane: {screen:?}"
+        );
+        while let Ok(event) = events_rx.try_recv() {
+            assert!(
+                !matches!(event, GhosttyUiEvent::RuntimeFailed(_)),
+                "the mirror keeps running: {event:?}"
+            );
+        }
+
+        host.stop(&session, None).expect("stop");
+        mirror.shutdown();
+        server.stop().expect("server stop");
+    }
+
+    #[test]
     fn the_first_render_resize_keeps_the_restored_scrollback_of_an_attached_mirror() {
         use paneflow_host::server::ServerHandle;
         use paneflow_host::{ClientHello, CreateSession, HostClient, SessionHost};
@@ -1148,6 +1603,8 @@ mod tests {
                 cols: Some(80),
                 rows: Some(24),
                 title: None,
+                appearance: None,
+                cell: None,
             })
             .expect("hosted session");
         let session = created.manifest.session.clone();
@@ -1270,6 +1727,8 @@ mod tests {
                 cols: Some(80),
                 rows: Some(24),
                 title: None,
+                appearance: None,
+                cell: None,
             })
             .expect("hosted session");
         let session = created.manifest.session.clone();
@@ -1401,6 +1860,8 @@ mod tests {
                 cols: Some(80),
                 rows: Some(24),
                 title: None,
+                appearance: None,
+                cell: None,
             })
             .expect("hosted session");
         let session = created.manifest.session.clone();
@@ -1437,6 +1898,153 @@ mod tests {
             .stop(&session, Some(generation))
             .expect("explicit session stop");
         assert!(!stopped.live, "an explicit stop still ends the session");
+        server.stop().expect("server stop");
+    }
+
+    #[test]
+    fn a_closed_view_reattaches_to_the_same_process_with_its_links_style_and_cursor() {
+        use crate::terminal::types::{CellFlags, Content};
+        use paneflow_host::server::ServerHandle;
+        use paneflow_host::{ClientHello, CreateSession, HostClient, SessionHost};
+
+        let _accounting = checkpoint_accounting_lock();
+        let home = tempfile::tempdir().expect("host home");
+        let fixture = home.path().join("styled-output.txt");
+        std::fs::write(
+            &fixture,
+            b"\x1b]8;;https://example.com/doc\x1b\\link\x1b]8;;\x1b\\ \x1b[1mbold\x1b[0m\r\n",
+        )
+        .expect("styled fixture");
+        let endpoint = attached_host_endpoint(home.path());
+        let host = SessionHost::open(home.path(), &endpoint).expect("session host");
+        let server = ServerHandle::spawn(Arc::clone(&host), endpoint.clone()).expect("host server");
+        let hello = ClientHello::local("paneflow-desktop-test");
+        let mut client = HostClient::connect(&endpoint, &hello).expect("control connection");
+        #[cfg(windows)]
+        let (shell, args, show) = (
+            "cmd.exe",
+            vec!["/Q".to_string(), "/D".to_string()],
+            format!("type \"{}\"\r", fixture.display()),
+        );
+        #[cfg(unix)]
+        let (shell, args, show) = (
+            "/bin/sh",
+            Vec::<String>::new(),
+            format!("cat '{}'\r", fixture.display()),
+        );
+        let created = client
+            .create(&CreateSession {
+                shell: Some(shell.to_string()),
+                args,
+                cwd: Some(std::env::temp_dir().display().to_string()),
+                cols: Some(80),
+                rows: Some(24),
+                ..CreateSession::default()
+            })
+            .expect("hosted session");
+        let session = created.manifest.session.clone();
+        let generation = created.manifest.generation;
+        let pid = created.manifest.process.map(|process| process.pid);
+        let size = TerminalWindowSize::new(80, 24, 8, 16);
+
+        let wait_until = |what: &str, check: &mut dyn FnMut() -> bool| {
+            let deadline = Instant::now() + Duration::from_secs(30);
+            while Instant::now() < deadline {
+                if check() {
+                    return;
+                }
+                std::thread::sleep(Duration::from_millis(25));
+            }
+            panic!("timed out waiting for {what}");
+        };
+        let content = |mirror: &GhosttySession| mirror.render_content(size, 0, 23, false).0;
+        let styled = |content: &Content| {
+            let link = content
+                .cells
+                .iter()
+                .find(|cell| cell.hyperlink)
+                .map(|cell| (cell.c, cell.point));
+            let bold = content
+                .cells
+                .iter()
+                .any(|cell| cell.c == 'b' && cell.flags.contains(CellFlags::BOLD));
+            (link, bold)
+        };
+
+        let attachment = client
+            .attach(&session, Some(generation))
+            .expect("checkpoint");
+        let (first, first_pending, _first_events) = GhosttySession::pending(size);
+        let (first_attachment, first_payload) =
+            test_attachment(&endpoint, &hello, &session, attachment);
+        first
+            .start_attached(first_pending, first_attachment, first_payload, 1_000)
+            .expect("first mirror");
+        first.promote();
+        assert!(first.write(show.into_bytes()).is_sent());
+        wait_until("the styled output in the first view", &mut || {
+            let (link, bold) = styled(&content(&first));
+            link.is_some() && bold
+        });
+        let mut settled = content(&first).cursor.point;
+        let mut stable_since = Instant::now();
+        wait_until("a settled cursor", &mut || {
+            let now = content(&first).cursor.point;
+            if now != settled {
+                settled = now;
+                stable_since = Instant::now();
+            }
+            stable_since.elapsed() >= Duration::from_millis(500)
+        });
+
+        first.shutdown();
+        drop(first);
+        std::thread::sleep(Duration::from_millis(250));
+        let held = client
+            .inspect(&session)
+            .expect("the record survives the close");
+        assert!(held.live && held.owned, "{held:?}");
+
+        let reattached = client.attach(&session, Some(generation)).expect("reattach");
+        let (second, second_pending, mut second_events) = GhosttySession::pending(size);
+        let (second_attachment, second_payload) =
+            test_attachment(&endpoint, &hello, &session, reattached);
+        second
+            .start_attached(second_pending, second_attachment, second_payload, 1_000)
+            .expect("second mirror");
+        second.promote();
+        wait_until("the restored cursor", &mut || {
+            content(&second).cursor.point == settled
+        });
+        let (link, bold) = styled(&content(&second));
+        assert!(bold, "the bold cell survives the reattach");
+        let (link_char, link_point) = link.expect("the OSC 8 cell survives the reattach");
+        assert_eq!(link_char, 'l');
+        assert!(second.request_hyperlink_at(link_point));
+        let mut uri = None;
+        wait_until("the hyperlink lookup", &mut || {
+            while let Ok(event) = second_events.try_recv() {
+                if let GhosttyUiEvent::HyperlinkResolved { link, .. } = event {
+                    uri = link.map(|link| link.uri);
+                    return true;
+                }
+            }
+            false
+        });
+        assert_eq!(uri.as_deref(), Some("https://example.com/doc"));
+        assert_eq!(
+            client
+                .inspect(&session)
+                .expect("inspect")
+                .manifest
+                .process
+                .map(|process| process.pid),
+            pid,
+            "the undo reaches the process that was running before the close"
+        );
+
+        second.shutdown();
+        host.stop(&session, Some(generation)).expect("stop");
         server.stop().expect("server stop");
     }
 }

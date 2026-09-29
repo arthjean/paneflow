@@ -217,12 +217,16 @@ pub(super) fn handle_terminal_command(
             }
         }
         RuntimeMessage::ClearScrollback => {
-            if let Err(error) = terminal.clear_screen_and_scrollback() {
+            if let Err(error) = terminal.clear_history() {
                 log::warn!(
                     target: "paneflow::terminal::ghostty",
                     "Ghostty scrollback clear failed: {error}"
                 );
             }
+            let _ = gate.publish_now(inner, terminal);
+        }
+        RuntimeMessage::ResetTerminal => {
+            terminal.reset();
             let _ = gate.publish_now(inner, terminal);
         }
         RuntimeMessage::SetDefaultCursor { shape, blink } => {
@@ -294,7 +298,7 @@ pub(super) fn handle_terminal_command(
             );
         }
         RuntimeMessage::SelectionText(reply) => {
-            let _ = reply.send(terminal.selection_text().map_err(|error| error.to_string()));
+            let _ = reply.send(terminal.selection_text());
         }
         RuntimeMessage::SelectAll(reply) => {
             let _ = reply.send(select_all_text(inner, terminal));
@@ -339,9 +343,6 @@ pub(super) fn handle_terminal_command(
                     .format(ghostty::FormatterOptions::plain_text())
                     .map_err(|error| error.to_string()),
             );
-        }
-        RuntimeMessage::CaptureReplay(reply) => {
-            let _ = reply.send(terminal.capture_replay().map_err(|error| error.to_string()));
         }
         RuntimeMessage::RestoreScrollback { text, reply } => {
             let _ = terminal.restore_scrollback(&text);

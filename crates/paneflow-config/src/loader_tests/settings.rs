@@ -71,6 +71,7 @@ fn test_terminal_ligatures_default_when_block_empty() {
             scroll_multiplier: None,
             minimum_contrast: None,
             scrollbar: None,
+            osc52_clipboard: None,
         })
     );
     assert_eq!(
@@ -87,6 +88,7 @@ fn test_terminal_ligatures_default_when_block_empty() {
             scroll_multiplier: None,
             minimum_contrast: None,
             scrollbar: None,
+            osc52_clipboard: None,
         })
     );
 }
@@ -108,6 +110,7 @@ fn test_terminal_ligatures_true() {
             scroll_multiplier: None,
             minimum_contrast: None,
             scrollbar: None,
+            osc52_clipboard: None,
         })
     );
 
@@ -133,6 +136,7 @@ fn test_terminal_ligatures_false() {
             scroll_multiplier: None,
             minimum_contrast: None,
             scrollbar: None,
+            osc52_clipboard: None,
         })
     );
 }
@@ -164,6 +168,7 @@ fn test_terminal_integrated_glyphs_default_on_and_false_opt_out() {
             scroll_multiplier: None,
             minimum_contrast: None,
             scrollbar: None,
+            osc52_clipboard: None,
         })
     );
     assert!(
@@ -203,6 +208,7 @@ fn test_terminal_color_emoji_default_on_and_false_opt_out() {
             scroll_multiplier: None,
             minimum_contrast: None,
             scrollbar: None,
+            osc52_clipboard: None,
         })
     );
     assert!(
@@ -239,6 +245,7 @@ fn test_terminal_scrollback_lines_clamps_out_of_range() {
         scroll_multiplier: None,
         minimum_contrast: None,
         scrollbar: None,
+        osc52_clipboard: None,
     };
     assert_eq!(
         tc.resolved_scrollback_lines(),
@@ -256,6 +263,7 @@ fn test_terminal_scrollback_lines_clamps_out_of_range() {
         scroll_multiplier: None,
         minimum_contrast: None,
         scrollbar: None,
+        osc52_clipboard: None,
     };
     assert_eq!(
         tc.resolved_scrollback_lines(),

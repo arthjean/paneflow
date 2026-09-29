@@ -1,17 +1,25 @@
 use std::collections::{HashSet, VecDeque};
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 use gpui::{App, AppContext, Context, Entity, Focusable, Window};
 use paneflow_config::schema::{SessionGeneration, SessionId, WorkspaceId};
 use paneflow_host::{HostClientError, SessionLifecycle};
 
 use crate::app::close_policy::{CloseIntent, CloseTarget};
+use crate::app::workspace_ops::{
+    expire_held_sessions, settle_closed_sessions, take_undo_window_sessions,
+    undo_window_session_ids,
+};
 use crate::layout::{LayoutTree, SplitDirection};
 use crate::pane::{Pane, PaneSurface};
 use crate::terminal::TerminalView;
 use crate::terminal::host_link::{self, HostLinkState};
 use crate::workspace::{Tab, Workspace, next_workspace_id};
-use crate::{HidePane, PaneFlowApp, RemoveEndedSessions, ResumeEndedSessions, StopSession};
+use crate::{
+    CLOSED_SESSION_GRACE_MS, HidePane, PaneFlowApp, RemoveEndedSessions, ResumeEndedSessions,
+    SessionHold, StopSession,
+};
 
 pub(crate) type StopTarget = (PathBuf, SessionId, SessionGeneration);
 
@@ -203,7 +211,7 @@ pub(crate) fn fallback_workspace_dir(recorded: &str, home: Option<PathBuf>) -> O
     home.filter(|home| home.is_dir())
 }
 
-fn stop_and_forget(targets: Vec<StopTarget>) -> Vec<SessionId> {
+pub(crate) fn stop_and_forget(targets: Vec<StopTarget>) -> Vec<SessionId> {
     let mut failures = Vec::new();
     for (endpoint, session, generation) in targets {
         match host_link::stop_session(&endpoint, &session, generation) {
@@ -287,7 +295,63 @@ impl PaneFlowApp {
         Some((endpoint, row.session.clone(), row.generation))
     }
 
-    fn stop_hosted_sessions(&mut self, targets: Vec<StopTarget>, cx: &mut Context<Self>) {
+    pub(crate) fn hold_closed_sessions(
+        &mut self,
+        terminals: Vec<Entity<TerminalView>>,
+        cx: &mut Context<Self>,
+    ) {
+        let until = Instant::now() + Duration::from_millis(CLOSED_SESSION_GRACE_MS);
+        let closed: HashSet<SessionId> = terminals
+            .iter()
+            .map(|terminal| terminal.read(cx).terminal.session_id.clone())
+            .collect();
+        let kept = settle_closed_sessions(
+            &mut self.closed_panes,
+            &closed,
+            Some(SessionHold::UndoWindow { until }),
+        );
+        let unkept = terminals
+            .into_iter()
+            .filter(|terminal| !kept.contains(&terminal.read(cx).terminal.session_id))
+            .collect();
+        self.stop_terminals(unkept, cx);
+        if kept.is_empty() {
+            return;
+        }
+        let executor = cx.background_executor().clone();
+        cx.spawn(async move |this, cx: &mut gpui::AsyncApp| {
+            loop {
+                let left = until.saturating_duration_since(Instant::now());
+                if left.is_zero() {
+                    break;
+                }
+                executor.timer(left).await;
+            }
+            let _ = this.update(cx, |app, cx| app.expire_closed_sessions(cx));
+        })
+        .detach();
+    }
+
+    pub(crate) fn expire_closed_sessions(&mut self, cx: &mut Context<Self>) {
+        let expired = expire_held_sessions(&mut self.closed_panes, Instant::now());
+        self.stop_hosted_sessions(expired, cx);
+    }
+
+    pub(crate) fn release_undo_window_sessions(&mut self) -> Vec<StopTarget> {
+        take_undo_window_sessions(&mut self.closed_panes)
+    }
+
+    fn sidebar_hidden_sessions(&self, cx: &App) -> HashSet<SessionId> {
+        let mut hidden = self.attached_session_ids(cx);
+        hidden.extend(undo_window_session_ids(&self.closed_panes));
+        hidden
+    }
+
+    pub(crate) fn stop_hosted_sessions(
+        &mut self,
+        targets: Vec<StopTarget>,
+        cx: &mut Context<Self>,
+    ) {
         if targets.is_empty() {
             return;
         }
@@ -575,7 +639,7 @@ impl PaneFlowApp {
         if self.owned_sessions.rows.is_empty() {
             return Vec::new();
         }
-        let attached = self.attached_session_ids(cx);
+        let attached = self.sidebar_hidden_sessions(cx);
         visible_session_rows(
             &self.owned_sessions.rows,
             &ws.durable_id,
@@ -589,7 +653,7 @@ impl PaneFlowApp {
         if self.owned_sessions.rows.is_empty() {
             return Vec::new();
         }
-        let attached = self.attached_session_ids(cx);
+        let attached = self.sidebar_hidden_sessions(cx);
         fallback_session_rows(
             &self.owned_sessions.rows,
             &self.open_workspaces(),
@@ -1029,6 +1093,8 @@ mod tests {
                 cols: Some(80),
                 rows: Some(24),
                 title: None,
+                appearance: None,
+                cell: None,
             })
             .expect("hosted session");
         let session = created.manifest.session.clone();

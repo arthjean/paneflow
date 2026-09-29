@@ -419,6 +419,11 @@ impl PaneFlowApp {
                 self.remove_workspace_tab(ws_idx, tab_idx, window, cx);
             }
         }
+        crate::app::workspace_ops::settle_closed_sessions(
+            &mut self.closed_panes,
+            &consented_sessions.iter().cloned().collect(),
+            None,
+        );
         for blocker in &dialog.blockers {
             if let WorktreeBlocker::Workspace { id, .. } = blocker
                 && let Some(idx) = self.workspaces.iter().position(|ws| ws.id == *id)

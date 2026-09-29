@@ -6,7 +6,9 @@ use gpui::{
 
 use crate::agent_launcher::TerminalAgent;
 use crate::agents::notifications::{self as desktop_notifications, DesktopNotification};
-use crate::app::constants::{TOAST_ENTER_MS, TOAST_EXIT_MS, TOAST_HOLD_MS};
+use crate::app::constants::{
+    CLOSED_SESSION_GRACE_MS, TOAST_ENTER_MS, TOAST_EXIT_MS, TOAST_HOLD_MS,
+};
 use crate::settings::components::with_alpha;
 use crate::theme::UiColors;
 use crate::ui_primitives::{ROW_RADIUS, dismiss_button, squircle_skin};
@@ -71,7 +73,7 @@ impl PaneFlowApp {
             cx.notify();
             return;
         }
-        self.push_toast(message, actions, TOAST_HOLD_MS * 2, cx);
+        self.push_toast(message, actions, CLOSED_SESSION_GRACE_MS, cx);
     }
 
     pub(crate) fn show_update_error_toast(

@@ -7,10 +7,9 @@ use futures::channel::mpsc;
 use futures::future::Either;
 use gpui::{
     AnyElement, App, ClipboardItem, Context, FocusHandle, Focusable, Font, FontFeatures, FontStyle,
-    FontWeight, Hsla, InteractiveElement, IntoElement, KeyContext, KeyDownEvent, MouseButton,
-    MouseDownEvent, MouseMoveEvent, ParentElement, Point, Render, ScrollHandle, SharedString,
-    StrikethroughStyle, Styled, StyledText, TextRun, UnderlineStyle, Window, div, point,
-    prelude::*, px,
+    FontWeight, Hsla, InteractiveElement, IntoElement, KeyContext, MouseButton, MouseDownEvent,
+    MouseMoveEvent, ParentElement, Point, Render, ScrollHandle, SharedString, StrikethroughStyle,
+    Styled, StyledText, TextRun, UnderlineStyle, Window, div, point, prelude::*, px,
 };
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use pulldown_cmark::{Alignment, HeadingLevel};
@@ -45,6 +44,7 @@ pub struct MarkdownView {
     pending_restore_y: Option<f32>,
     search_active: bool,
     search_query: String,
+    search_input: gpui::Entity<crate::widgets::text_input::TextInput>,
     search_corpus: String,
     search_corpus_lower: String,
     search_lower_to_source: Vec<usize>,
@@ -61,6 +61,13 @@ impl MarkdownView {
     pub fn open(path: PathBuf, cx: &mut Context<Self>) -> Self {
         let element_id = make_element_id(&path);
         let pending_restore_y = state::lookup_offset_for(&path);
+        let search_input =
+            cx.new(|cx| crate::widgets::text_input::TextInput::new("", "Search", cx));
+        cx.observe(&search_input, |this, input, cx| {
+            let query = input.read(cx).value();
+            this.on_search_input_changed(query, cx);
+        })
+        .detach();
         let view = Self {
             path,
             ast: None,
@@ -72,6 +79,7 @@ impl MarkdownView {
             pending_restore_y,
             search_active: false,
             search_query: String::new(),
+            search_input,
             search_corpus: String::new(),
             search_corpus_lower: String::new(),
             search_lower_to_source: Vec::new(),
@@ -238,10 +246,12 @@ impl MarkdownView {
     fn handle_find_open(
         &mut self,
         _: &crate::MarkdownFindOpen,
-        _: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         self.search_active = true;
+        let input_focus = self.search_input.read(cx).focus_handle(cx);
+        input_focus.focus(window, cx);
         if let Some(ast) = self.ast.as_deref() {
             self.search_corpus = harvest_text(ast);
             let (lower, map) = lowercase_with_byte_map(&self.search_corpus);
@@ -259,11 +269,13 @@ impl MarkdownView {
     fn handle_find_dismiss(
         &mut self,
         _: &crate::MarkdownFindDismiss,
-        _: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         self.search_active = false;
         self.search_query.clear();
+        self.search_input.update(cx, |input, cx| input.clear(cx));
+        self.focus_handle.clone().focus(window, cx);
         self.search_corpus.clear();
         self.search_corpus_lower.clear();
         self.search_lower_to_source.clear();
@@ -332,36 +344,14 @@ impl MarkdownView {
         self.search_corpus[start..end].to_string()
     }
 
-    fn handle_search_key(
-        &mut self,
-        event: &KeyDownEvent,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if !self.search_active {
+    fn on_search_input_changed(&mut self, query: String, cx: &mut Context<Self>) {
+        if !self.search_active || query == self.search_query {
             return;
         }
-        let key = &event.keystroke.key;
-        match key.as_str() {
-            "backspace" => {
-                if self.search_query.pop().is_some() {
-                    self.recompute_matches();
-                    self.scroll_to_current_match();
-                    cx.notify();
-                }
-            }
-            _ => {
-                if let Some(ime_key) = event.keystroke.key_char.as_deref()
-                    && !ime_key.is_empty()
-                    && ime_key.chars().all(|c| !c.is_control())
-                {
-                    self.search_query.push_str(ime_key);
-                    self.recompute_matches();
-                    self.scroll_to_current_match();
-                    cx.notify();
-                }
-            }
-        }
+        self.search_query = query;
+        self.recompute_matches();
+        self.scroll_to_current_match();
+        cx.notify();
     }
 
     fn start_watcher(&mut self, cx: &mut Context<Self>) {
@@ -563,9 +553,6 @@ impl Render for MarkdownView {
                     }
                 }),
             );
-        if self.search_active {
-            root = root.on_key_down(cx.listener(Self::handle_search_key));
-        }
         root = root.child(scroll_root);
         if let Some(bar) = bar {
             root = root.child(bar);
@@ -585,11 +572,6 @@ impl MarkdownView {
             "0 of 0".to_string()
         } else {
             format!("{} of {}", self.search_current + 1, total)
-        };
-        let label: SharedString = if self.search_query.is_empty() {
-            "Type to search…".into()
-        } else {
-            SharedString::from(self.search_query.clone())
         };
         let position: SharedString = position.into();
         div()
@@ -613,7 +595,7 @@ impl MarkdownView {
                 div()
                     .min_w(px(120.0))
                     .text_color(palette.heading)
-                    .child(label),
+                    .child(self.search_input.clone()),
             )
             .child(div().text_color(palette.blockquote_text).child(position))
     }
@@ -1131,6 +1113,49 @@ mod tests {
     use super::*;
     use std::fs;
     use std::path::Path;
+
+    #[gpui::test]
+    fn markdown_search_types_into_the_shared_text_input(cx: &mut gpui::TestAppContext) {
+        cx.executor().allow_parking();
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = dir.path().join("notes.md");
+        fs::write(&path, "alpha beta\n\nbeta gamma\n").expect("markdown file");
+        let (view, cx) = cx.add_window_view(|_window, cx| MarkdownView::open(path, cx));
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while view.read_with(cx, |view, _| view.ast.is_none()) {
+            assert!(Instant::now() < deadline, "the markdown never loaded");
+            cx.run_until_parked();
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let focus = view.read_with(cx, |view, _| view.focus_handle.clone());
+        cx.update(|window, cx| focus.focus(window, cx));
+
+        cx.dispatch_action(crate::MarkdownFindOpen);
+        cx.update(|window, cx| {
+            window.draw(cx).clear(cx);
+        });
+        let input_focused = cx.update(|window, cx| {
+            view.read(cx)
+                .search_input
+                .read(cx)
+                .focus_handle
+                .is_focused(window)
+        });
+        assert!(input_focused, "opening the search focuses its text input");
+        cx.simulate_input("BETA");
+        cx.run_until_parked();
+
+        let (query, matches, field) = view.read_with(cx, |view, cx| {
+            (
+                view.search_query.clone(),
+                view.search_matches.len(),
+                view.search_input.read(cx).value(),
+            )
+        });
+        assert_eq!(field, "BETA");
+        assert_eq!(query, "BETA");
+        assert_eq!(matches, 2);
+    }
 
     #[cfg(unix)]
     fn mkfifo(path: &std::path::Path) {

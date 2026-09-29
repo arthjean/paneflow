@@ -129,21 +129,6 @@ pub(crate) fn program_notification(
     }
 }
 
-pub(crate) fn fire_program_notification(
-    notification: DesktopNotification,
-    seen: bool,
-    executor: BackgroundExecutor,
-) {
-    if seen {
-        return;
-    }
-    executor
-        .spawn(async move {
-            let _ = smol::unblock(move || show_desktop_notification(notification)).await;
-        })
-        .detach();
-}
-
 pub(crate) fn fire_desktop_notification(
     notification: DesktopNotification,
     config: &PaneFlowConfig,

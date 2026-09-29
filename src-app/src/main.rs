@@ -86,7 +86,7 @@ use window_chrome::{
 pub use app::actions::*;
 pub(crate) use app::bootstrap::warn_if_legacy_run_install;
 pub(crate) use app::constants::{
-    MAX_CLOSED_PANE_SCROLLBACK_BYTES, MAX_CLOSED_PANES, RESIZE_BORDER, SIDEBAR_WIDTH, TOAST_HOLD_MS,
+    CLOSED_SESSION_GRACE_MS, MAX_CLOSED_PANES, RESIZE_BORDER, SIDEBAR_WIDTH, TOAST_HOLD_MS,
 };
 pub(crate) use app::drag::{TabDrag, WorkspaceDrag, WorkspaceDragPreview};
 #[cfg(target_os = "macos")]

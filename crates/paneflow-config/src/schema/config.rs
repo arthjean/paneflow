@@ -1,6 +1,6 @@
 use super::{
-    AgentPanelConfig, CommandDefinition, CursorBlinkConfig, CursorShapeConfig, TelemetryConfig,
-    TerminalConfig,
+    AgentPanelConfig, CommandDefinition, CursorBlinkConfig, CursorShapeConfig,
+    Osc52ClipboardConfig, TelemetryConfig, TerminalConfig,
 };
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
@@ -390,6 +390,15 @@ where
     D: serde::Deserializer<'de>,
 {
     lenient_opt_value(d, "terminal cursor blink mode")
+}
+
+pub(super) fn lenient_opt_osc52_clipboard<'de, D>(
+    d: D,
+) -> Result<Option<Osc52ClipboardConfig>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    lenient_opt_value(d, "terminal OSC 52 clipboard policy")
 }
 
 pub(super) fn lenient_opt_string_map<'de, D>(

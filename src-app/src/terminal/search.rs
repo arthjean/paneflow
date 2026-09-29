@@ -34,7 +34,7 @@ impl TerminalView {
     }
 
     pub(super) fn reset_terminal(&mut self, cx: &mut Context<Self>) {
-        self.terminal.write_to_pty_silent(b"\x1bc".as_slice());
+        self.terminal.session_backend().reset_terminal();
         cx.notify();
     }
 

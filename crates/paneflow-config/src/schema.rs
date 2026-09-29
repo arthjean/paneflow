@@ -128,6 +128,7 @@ mod tests {
                 scroll_multiplier: Some(1.0),
                 minimum_contrast: Some(0.0),
                 scrollbar: Some(true),
+                osc52_clipboard: Some(Osc52ClipboardConfig::Copy),
             }),
             agent_panel: Some(AgentPanelConfig {
                 notify_when_agent_waiting: Some(NotifyWhenAgentWaiting::PrimaryScreen),

@@ -1,6 +1,6 @@
 use super::config::{
     lenient_opt_bool, lenient_opt_cursor_blink, lenient_opt_cursor_shape, lenient_opt_f32,
-    lenient_opt_string, lenient_opt_string_map, lenient_opt_usize,
+    lenient_opt_osc52_clipboard, lenient_opt_string, lenient_opt_string_map, lenient_opt_usize,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -62,6 +62,35 @@ pub enum CursorBlinkConfig {
     Off,
     #[default]
     TerminalControlled,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Osc52ClipboardConfig {
+    #[default]
+    Copy,
+    Off,
+}
+
+impl<'de> Deserialize<'de> for Osc52ClipboardConfig {
+    fn deserialize<D>(d: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let raw = String::deserialize(d)?;
+        Ok(match raw.as_str() {
+            "copy" => Self::Copy,
+            "off" => Self::Off,
+            other => {
+                tracing::warn!(
+                    target: "paneflow_config::terminal",
+                    value = other,
+                    "terminal.osc52_clipboard value not recognized, defaulting to copy",
+                );
+                Self::Copy
+            }
+        })
+    }
 }
 
 impl<'de> Deserialize<'de> for CursorShapeConfig {
@@ -161,6 +190,8 @@ pub struct TerminalConfig {
     pub minimum_contrast: Option<f32>,
     #[serde(default, deserialize_with = "lenient_opt_bool")]
     pub scrollbar: Option<bool>,
+    #[serde(default, deserialize_with = "lenient_opt_osc52_clipboard")]
+    pub osc52_clipboard: Option<Osc52ClipboardConfig>,
 }
 
 impl TerminalConfig {

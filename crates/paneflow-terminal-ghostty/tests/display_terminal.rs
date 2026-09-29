@@ -138,7 +138,8 @@ fn feed_produces_owned_snapshot_and_ordered_effects() {
             .iter()
             .filter(|event| matches!(event, BackendEvent::Bell))
             .count(),
-        2
+        1,
+        "two bells inside one bell interval ring once"
     );
     assert!(
         events

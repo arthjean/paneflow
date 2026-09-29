@@ -169,7 +169,7 @@ fn every_listed_conformance_case_passes_against_a_real_core() {
     covered.insert("input".to_string());
 
     client
-        .resize(&session, generation, 100, 30)
+        .resize(&session, generation, 100, 30, None)
         .expect("resize applies");
     let resized: SessionSummary = serde_json::from_value(
         client

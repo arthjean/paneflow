@@ -33,6 +33,7 @@ pub(super) enum RuntimeMessage {
     },
     ClearSelection,
     ClearScrollback,
+    ResetTerminal,
     BindRuntime(Option<&'static str>),
     UpdateAppearance(ghostty::TerminalAppearance),
     SetDefaultCursor {
@@ -54,11 +55,10 @@ pub(super) enum RuntimeMessage {
         lines: Vec<i32>,
         reply: SyncSender<Result<Vec<(i32, String)>, String>>,
     },
-    SelectionText(SyncSender<Result<Option<String>, String>>),
+    SelectionText(SyncSender<Result<Option<String>, ghostty::GhosttyError>>),
     SelectAll(SyncSender<Result<Option<String>, String>>),
     HyperlinkHover(ghostty::Point),
     ExtractScrollback(SyncSender<Result<Option<String>, String>>),
-    CaptureReplay(SyncSender<Result<Vec<u8>, String>>),
     ScreenText(SyncSender<Result<String, String>>),
     RestoreScrollback {
         text: String,

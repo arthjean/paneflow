@@ -616,6 +616,9 @@ impl PaneFlowApp {
             terminal::TerminalEvent::SelectionCopied => {
                 self.show_toast("Copied", cx);
             }
+            terminal::TerminalEvent::Notice(message) => {
+                self.show_toast(message.clone(), cx);
+            }
             terminal::TerminalEvent::OpenMarkdownPath(path) => {
                 self.open_markdown_in_pane(&terminal, path.clone(), cx);
             }
@@ -644,13 +647,15 @@ impl PaneFlowApp {
                     .is_some_and(|visible| visible.contains(&surface_id))
                     || ws_id.is_some_and(|ws_id| self.workspace_is_muted(ws_id));
                 let pane_title = terminal.read(cx).terminal.title.clone();
-                crate::agents::notifications::fire_program_notification(
+                crate::agents::notifications::fire_desktop_notification_for_session(
                     crate::agents::notifications::program_notification(
                         title.clone(),
                         body.clone(),
                         &pane_title,
                     ),
+                    &self.cached_config,
                     seen,
+                    Some(surface_id),
                     cx.background_executor().clone(),
                 );
             }

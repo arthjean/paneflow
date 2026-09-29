@@ -11,7 +11,7 @@ use serde_json::{Value, json};
 
 use crate::agent::AgentEvent;
 use crate::control::{ConnectionAliases, ControlError};
-use crate::host::{CreateSession, HostError, SessionHost};
+use crate::host::{CellSize, CreateSession, HostError, SessionAppearance, SessionHost};
 use crate::manifest::now_ms;
 use crate::protocol::{
     self, ClientHello, DATA_CHUNK_RAW_BYTES, ERR_BUSY, ERR_CHECKPOINT_TOO_LARGE, ERR_DEADLINE,
@@ -804,8 +804,41 @@ fn dispatch(host: &SessionHost, method: &str, params: &Value) -> Result<Value, D
                 .and_then(|r| u16::try_from(r).ok())
                 .filter(|r| *r > 0)
                 .ok_or_else(|| DispatchError::Params("rows must be 1..=65535".to_string()))?;
-            host.resize(&session, generation, cols, rows)?;
+            let cell = match params.get("cell") {
+                None | Some(Value::Null) => None,
+                Some(raw) => Some(
+                    serde_json::from_value::<CellSize>(raw.clone())
+                        .map_err(|e| DispatchError::Params(format!("invalid cell size: {e}")))?,
+                ),
+            };
+            host.resize(&session, generation, cols, rows, cell)?;
             Ok(json!({"cols": cols, "rows": rows}))
+        }
+        "session.appearance" => {
+            let session = param_session(params)?;
+            let generation = param_generation(params)?;
+            let appearance: SessionAppearance = params
+                .get("appearance")
+                .cloned()
+                .ok_or_else(|| DispatchError::Params("missing appearance".to_string()))
+                .and_then(|raw| {
+                    serde_json::from_value(raw)
+                        .map_err(|e| DispatchError::Params(format!("invalid appearance: {e}")))
+                })?;
+            host.set_appearance(&session, generation, appearance)?;
+            Ok(json!({}))
+        }
+        "session.clear_history" => {
+            let session = param_session(params)?;
+            let generation = param_generation(params)?;
+            host.clear_history(&session, generation)?;
+            Ok(json!({}))
+        }
+        "session.reset" => {
+            let session = param_session(params)?;
+            let generation = param_generation(params)?;
+            host.reset_terminal(&session, generation)?;
+            Ok(json!({}))
         }
         "session.text" => {
             let session = param_session(params)?;
@@ -2736,6 +2769,170 @@ mod tests {
         assert!(vanished.contains("Surface not found"), "{vanished}");
 
         host.stop(&sessions[0].0, None).unwrap();
+        server.stop().unwrap();
+    }
+
+    fn light_appearance(palette_len: usize) -> Value {
+        json!({
+            "foreground": [0x11, 0x22, 0x33],
+            "background": [0xfa, 0xfb, 0xfc],
+            "cursor": [0x44, 0x55, 0x66],
+            "palette": (0..palette_len).map(|index| [index % 256, 0, 0]).collect::<Vec<_>>(),
+            "dark": false,
+        })
+    }
+
+    #[test]
+    fn the_theme_and_cell_size_travel_with_create_resize_and_appearance_updates() {
+        let (_home, host, server) = start();
+        let hello = ClientHello::local("paneflow-host-test");
+        let mut client = HostClient::connect(server.endpoint(), &hello).unwrap();
+        let mut create = shell_create_params();
+        create["appearance"] = light_appearance(256);
+        create["cell"] = json!({"width": 9, "height": 19});
+        let created = client.call("session.create", create).unwrap();
+        let session = SessionId::parse(created["session"].as_str().unwrap()).unwrap();
+
+        let resized = client.call(
+            "session.resize",
+            json!({"session": session, "cols": 90, "rows": 30, "cell": {"width": 10, "height": 21}}),
+        );
+        assert!(resized.is_ok(), "{resized:?}");
+        let zero_cell = client.call(
+            "session.resize",
+            json!({"session": session, "cols": 90, "rows": 30, "cell": {"width": 0, "height": 21}}),
+        );
+        assert_eq!(
+            zero_cell.err().and_then(|e| e.code()),
+            Some(ERR_INVALID_PARAMS)
+        );
+
+        let updated = client.call(
+            "session.appearance",
+            json!({"session": session, "appearance": light_appearance(256)}),
+        );
+        assert!(updated.is_ok(), "{updated:?}");
+        let short_palette = client.call(
+            "session.appearance",
+            json!({"session": session, "appearance": light_appearance(3)}),
+        );
+        assert_eq!(
+            short_palette.err().and_then(|e| e.code()),
+            Some(ERR_INVALID_PARAMS)
+        );
+        let mut bad_create = shell_create_params();
+        bad_create["appearance"] = light_appearance(8);
+        let refused = client.call("session.create", bad_create);
+        assert_eq!(
+            refused.err().and_then(|e| e.code()),
+            Some(ERR_INVALID_PARAMS)
+        );
+
+        host.stop(&session, None).unwrap();
+        server.stop().unwrap();
+    }
+
+    #[test]
+    fn a_host_reset_clears_the_emulator_and_leaves_the_program_running() {
+        let (_home, host, server) = start();
+        let hello = ClientHello::local("paneflow-host-test");
+        let mut client = HostClient::connect(server.endpoint(), &hello).unwrap();
+        let created = client
+            .call("session.create", shell_create_params())
+            .unwrap();
+        let session = SessionId::parse(created["session"].as_str().unwrap()).unwrap();
+        let generation: SessionGeneration =
+            serde_json::from_value(created["generation"].clone()).unwrap();
+        let wait_for_text = |client: &mut HostClient, marker: &str| {
+            let deadline = Instant::now() + Duration::from_secs(15);
+            while Instant::now() < deadline {
+                if client
+                    .text(&session)
+                    .is_ok_and(|reply| reply.text.contains(marker))
+                {
+                    return true;
+                }
+                std::thread::sleep(Duration::from_millis(30));
+            }
+            false
+        };
+
+        client
+            .input(&session, generation, b"echo BEFORE_RESET\r\n")
+            .unwrap();
+        assert!(wait_for_text(&mut client, "BEFORE_RESET"));
+        client.reset(&session, generation).unwrap();
+        assert!(
+            !client.text(&session).unwrap().text.contains("BEFORE_RESET"),
+            "the host emulator forgot the screen"
+        );
+        client
+            .input(&session, generation, b"echo AFTER_RESET\r\n")
+            .unwrap();
+        assert!(
+            wait_for_text(&mut client, "AFTER_RESET"),
+            "the program kept running"
+        );
+
+        host.stop(&session, None).unwrap();
+        server.stop().unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_program_querying_the_background_receives_the_theme_background() {
+        let (_home, host, server) = start();
+        let hello = ClientHello::local("paneflow-host-test");
+        let mut client = HostClient::connect(server.endpoint(), &hello).unwrap();
+        let mut create = shell_create_params();
+        create["appearance"] = light_appearance(256);
+        let created = client.call("session.create", create).unwrap();
+        let session = SessionId::parse(created["session"].as_str().unwrap()).unwrap();
+        let generation: SessionGeneration =
+            serde_json::from_value(created["generation"].clone()).unwrap();
+
+        client
+            .input(
+                &session,
+                generation,
+                b"printf '\\033]11;?\\033\\\\\\033[?996n'\n",
+            )
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(15);
+        let mut collected = Vec::new();
+        let mut offset = 0;
+        while Instant::now() < deadline {
+            offset = client
+                .output(
+                    &session,
+                    Some(generation),
+                    offset,
+                    false,
+                    |_, bytes| {
+                        collected.extend_from_slice(bytes);
+                        true
+                    },
+                    || true,
+                )
+                .unwrap()
+                .next_offset;
+            let text = String::from_utf8_lossy(&collected);
+            if text.contains("rgb:fafa/fbfb/fcfc") && text.contains("[?997;2n") {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(30));
+        }
+        let text = String::from_utf8_lossy(&collected);
+        assert!(
+            text.contains("rgb:fafa/fbfb/fcfc"),
+            "the OSC 11 reply carries the theme background: {text:?}"
+        );
+        assert!(
+            text.contains("[?997;2n"),
+            "the scheme query is answered as light: {text:?}"
+        );
+
+        host.stop(&session, None).unwrap();
         server.stop().unwrap();
     }
 }

@@ -128,10 +128,22 @@ pub(crate) struct FilesContextMenu {
     pub(crate) position: Point<Pixels>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SessionHold {
+    UndoWindow { until: std::time::Instant },
+    Detached,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct HeldSession {
+    pub(crate) target: crate::app::hosted_sessions::StopTarget,
+    pub(crate) hold: SessionHold,
+}
+
 pub(crate) enum ClosedSurfaceRecord {
     Terminal {
         cwd: Option<std::path::PathBuf>,
-        replay: Option<Vec<u8>>,
+        session: Option<HeldSession>,
         custom_name: Option<String>,
         font_size: Option<f32>,
     },

@@ -124,6 +124,7 @@ CLI binary. `false` hides the button. `true` forces it visible.
 | `terminal.scrollback_lines` | integer/null | `10000` | New terminal | Range `100` to `100000`. Cached terminals cap at `1000`. |
 | `terminal.cursor_shape` | string/null | `block` | New terminal | `vintage`, `block`, `beam`, `underline`, `double_underline`, or `hollow`. |
 | `terminal.cursor_blink` | string/null | `terminal_controlled` | New terminal | `on`, `off`, or `terminal_controlled`. |
+| `terminal.osc52_clipboard` | string/null | `copy` | New terminal | Whether programs may write the system clipboard with OSC 52. `copy` lets the focused terminal copy; `off` refuses every OSC 52 write. |
 | `terminal.env` | object/null | none | New terminal | Environment variables injected into every new terminal. Per-surface `env` wins. Values are passed through verbatim: no `~` and no `$NAME` expansion, unlike `agent_profiles.*.env`. |
 | `terminal.scroll_multiplier` | number/null | `1.0` | New terminal view | Range `0.1` to `10.0`. Ignored in mouse-reporting and alternate-screen scroll paths. |
 | `terminal.minimum_contrast` | number/null | Auto (Lc 60) | Hot reload | Minimum APCA lightness contrast (Lc) between text and its cell background, applied only to the colors a program chose: truecolor and palette indices 16 to 255. The theme's own sixteen ANSI colors, foreground and background are never corrected. Unset means Auto, which is Lc 60 on every theme; `0` disables the correction. Range `0` to `90`. |

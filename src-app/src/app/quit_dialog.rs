@@ -427,9 +427,10 @@ impl PaneFlowApp {
                 ));
             }
         }
+        let held = crate::app::workspace_ops::undo_window_session_ids(&self.closed_panes);
         if let Some(target) = host_link::host_endpoint() {
             for listed in self.live_owned_sessions() {
-                if seen.insert(listed.session.clone()) {
+                if !held.contains(&listed.session) && seen.insert(listed.session.clone()) {
                     targets.push((
                         target.endpoint.clone(),
                         listed.session.clone(),
@@ -460,7 +461,23 @@ impl PaneFlowApp {
 
     fn quit_keeping_sessions(&mut self, cx: &mut Context<Self>) {
         self.remember_quit_choice(OnQuit::Keep);
-        self.quit_now(cx);
+        let held = self.release_undo_window_sessions();
+        if held.is_empty() {
+            self.quit_now(cx);
+            return;
+        }
+        self.session_exit_pending = true;
+        let executor = cx.background_executor().clone();
+        cx.spawn(async move |this, cx: &mut AsyncApp| {
+            executor
+                .spawn(async move { crate::app::hosted_sessions::stop_and_forget(held) })
+                .await;
+            let _ = this.update(cx, |app, cx| {
+                app.session_exit_pending = false;
+                app.quit_now(cx);
+            });
+        })
+        .detach();
     }
 
     fn exit_stopping_everything(&mut self, kind: ExitKind, cx: &mut Context<Self>) {
@@ -468,13 +485,14 @@ impl PaneFlowApp {
             self.remember_quit_choice(OnQuit::Stop);
         }
         self.save_session_before_exit(cx, move |app, cx| {
-            let targets = app.live_session_targets(cx);
+            let mut targets = app.live_session_targets(cx);
             let endpoint = host_link::host_endpoint().map(|target| target.endpoint);
             app.session_exit_pending = true;
             if let Some(dialog) = app.quit_dialog.as_mut() {
                 dialog.stopping = true;
                 dialog.sessions = targets.len();
             }
+            targets.extend(app.release_undo_window_sessions());
             cx.notify();
             let executor = cx.background_executor().clone();
             cx.spawn(async move |this, cx: &mut AsyncApp| {

@@ -1,4 +1,7 @@
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+static INTEGRATION_WRITE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 const ZSH_OSC7: &str = r#"# PaneFlow shell integration - OSC 7 CWD reporting
 if [[ -n "${PANEFLOW_ORIG_ZDOTDIR+x}" ]]; then
@@ -8,7 +11,20 @@ else
     unset ZDOTDIR
 fi
 [[ -f "${ZDOTDIR:-$HOME}/.zshenv" ]] && source "${ZDOTDIR:-$HOME}/.zshenv"
-__paneflow_osc7() { printf '\e]7;file://%s%s\a' "${HOST}" "${PWD}"; }
+__paneflow_urlencode() (
+    LC_ALL=C
+    str="$1"
+    while [ -n "$str" ]; do
+        safe="${str%%[!a-zA-Z0-9/._~-]*}"
+        printf '%s' "$safe"
+        str="${str#"$safe"}"
+        if [ -n "$str" ]; then
+            printf '%%%02X' "'$str"
+            str="${str#?}"
+        fi
+    done
+)
+__paneflow_osc7() { printf '\e]7;file://%s%s\a' "${HOST}" "$(__paneflow_urlencode "${PWD}")"; }
 __paneflow_path_prepend() {
     [[ -z "${PANEFLOW_BIN_DIR-}" ]] && return
     # Strip every existing occurrence then prepend, keeping our dir first
@@ -35,7 +51,20 @@ __paneflow_path_prepend
 
 const BASH_OSC7: &str = r#"# PaneFlow shell integration - OSC 7 CWD reporting
 [[ -f ~/.bashrc ]] && source ~/.bashrc
-__paneflow_osc7() { printf '\e]7;file://%s%s\a' "${HOSTNAME}" "${PWD}"; }
+__paneflow_urlencode() (
+    LC_ALL=C
+    str="$1"
+    while [ -n "$str" ]; do
+        safe="${str%%[!a-zA-Z0-9/._~-]*}"
+        printf '%s' "$safe"
+        str="${str#"$safe"}"
+        if [ -n "$str" ]; then
+            printf '%%%02X' "'$str"
+            str="${str#?}"
+        fi
+    done
+)
+__paneflow_osc7() { printf '\e]7;file://%s%s\a' "${HOSTNAME}" "$(__paneflow_urlencode "${PWD}")"; }
 __paneflow_path_prepend() {
     [[ -z "${PANEFLOW_BIN_DIR-}" ]] && return
     local p=":${PATH}:"
@@ -54,7 +83,7 @@ __paneflow_path_prepend
 
 const FISH_OSC7: &str = r#"# PaneFlow shell integration - OSC 7 CWD reporting
 function __paneflow_osc7 --on-variable PWD
-    printf '\e]7;file://%s%s\a' (hostname) "$PWD"
+    printf '\e]7;file://%s%s\a' (hostname) (string escape --style=url -- "$PWD")
 end
 __paneflow_osc7
 if set -q PANEFLOW_BIN_DIR; and test -n "$PANEFLOW_BIN_DIR"
@@ -179,20 +208,57 @@ __paneflow_path_prepend
 "#;
 
 pub(super) fn resolve_default_shell(configured: Option<&str>) -> String {
+    resolve_shell_for_spawn(configured).0
+}
+
+pub(super) fn resolve_shell_for_spawn(configured: Option<&str>) -> (String, Option<String>) {
     if let Some(path) = configured {
         if let Some(resolved) = configured_shell_if_usable(path) {
-            return resolved;
+            return (resolved, None);
         }
         log::warn!(
             "Configured default_shell {:?} not found or not executable, \
              falling back to platform defaults",
             path
         );
+        let fallback = resolve_default_shell_fallback();
+        let notice = format!(
+            "default_shell {path:?} is missing or not executable; started {fallback} instead."
+        );
+        return (fallback, Some(notice));
     }
-    resolve_default_shell_fallback()
+    (resolve_default_shell_fallback(), None)
+}
+
+fn expand_home_prefix(path: &str, home: Option<&std::path::Path>) -> Option<std::path::PathBuf> {
+    let rest = path
+        .strip_prefix("~/")
+        .or_else(|| path.strip_prefix("~\\"))?;
+    Some(home?.join(rest))
+}
+
+fn is_executable_file(candidate: &std::path::Path) -> bool {
+    if !candidate.is_file() {
+        return false;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStrExt;
+        std::ffi::CString::new(candidate.as_os_str().as_bytes())
+            .is_ok_and(|path| unsafe { libc::access(path.as_ptr(), libc::X_OK) } == 0)
+    }
+    #[cfg(windows)]
+    {
+        true
+    }
 }
 
 fn configured_shell_if_usable(path: &str) -> Option<String> {
+    let expanded = expand_home_prefix(path, dirs::home_dir().as_deref());
+    let path = expanded
+        .as_deref()
+        .and_then(std::path::Path::to_str)
+        .unwrap_or(path);
     let has_separator = path.contains('/') || path.contains('\\');
     let candidate: std::path::PathBuf = if has_separator {
         std::path::PathBuf::from(path)
@@ -214,20 +280,7 @@ fn configured_shell_if_usable(path: &str) -> Option<String> {
                 .or_else(|| well_known_shell_dir_lookup(path))?
         }
     };
-    let is_executable = candidate.is_file() && {
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::metadata(&candidate)
-                .map(|m| m.permissions().mode() & 0o111 != 0)
-                .unwrap_or(false)
-        }
-        #[cfg(windows)]
-        {
-            std::fs::metadata(&candidate).is_ok()
-        }
-    };
-    if is_executable {
+    if is_executable_file(&candidate) {
         Some(candidate.to_string_lossy().into_owned())
     } else {
         None
@@ -479,6 +532,40 @@ fn to_shell_path(p: &std::path::Path) -> String {
     }
 }
 
+fn write_integration_script(path: &std::path::Path, contents: &str) -> bool {
+    let is_current = |path: &std::path::Path| {
+        std::fs::read(path).is_ok_and(|bytes| bytes == contents.as_bytes())
+    };
+    if is_current(path) {
+        return true;
+    }
+    let (Some(parent), Some(name)) = (path.parent(), path.file_name()) else {
+        return false;
+    };
+    if std::fs::create_dir_all(parent).is_err() {
+        return false;
+    }
+    let staging = parent.join(format!(
+        ".{}.{}.{}.tmp",
+        name.to_string_lossy(),
+        std::process::id(),
+        INTEGRATION_WRITE_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+    ));
+    let written = std::fs::write(&staging, contents).and_then(|()| std::fs::rename(&staging, path));
+    if let Err(error) = written {
+        let _ = std::fs::remove_file(&staging);
+        if is_current(path) {
+            return true;
+        }
+        log::warn!(
+            "paneflow: could not write shell integration {}: {error}",
+            path.display()
+        );
+        return false;
+    }
+    true
+}
+
 pub(super) fn setup_shell_integration(
     shell: &str,
     env: &mut HashMap<String, String>,
@@ -486,7 +573,14 @@ pub(super) fn setup_shell_integration(
     let Some(base) = crate::runtime_paths::shell_integration_dir() else {
         return vec![];
     };
+    setup_shell_integration_in(&base, shell, env)
+}
 
+fn setup_shell_integration_in(
+    base: &std::path::Path,
+    shell: &str,
+    env: &mut HashMap<String, String>,
+) -> Vec<String> {
     let basename = std::path::Path::new(shell)
         .file_name()
         .and_then(|s| s.to_str())
@@ -496,10 +590,7 @@ pub(super) fn setup_shell_integration(
     match key {
         "zsh" => {
             let dir = base.join("zsh");
-            if std::fs::create_dir_all(&dir).is_err() {
-                return vec![];
-            }
-            if std::fs::write(dir.join(".zshenv"), ZSH_OSC7).is_err() {
+            if !write_integration_script(&dir.join(".zshenv"), ZSH_OSC7) {
                 return vec![];
             }
             if let Ok(orig) = std::env::var("ZDOTDIR") {
@@ -509,23 +600,15 @@ pub(super) fn setup_shell_integration(
             vec![]
         }
         "bash" => {
-            let dir = base.join("bash");
-            if std::fs::create_dir_all(&dir).is_err() {
-                return vec![];
-            }
-            let rcfile = dir.join("bashrc");
-            if std::fs::write(&rcfile, BASH_OSC7).is_err() {
+            let rcfile = base.join("bash").join("bashrc");
+            if !write_integration_script(&rcfile, BASH_OSC7) {
                 return vec![];
             }
             vec!["--rcfile".into(), to_shell_path(&rcfile)]
         }
         "fish" => {
-            let dir = base.join("fish");
-            if std::fs::create_dir_all(&dir).is_err() {
-                return vec![];
-            }
-            let initfile = dir.join("osc7.fish");
-            if std::fs::write(&initfile, FISH_OSC7).is_err() {
+            let initfile = base.join("fish").join("osc7.fish");
+            if !write_integration_script(&initfile, FISH_OSC7) {
                 return vec![];
             }
             vec![
@@ -533,14 +616,10 @@ pub(super) fn setup_shell_integration(
                 format!("source {}", quote_fish_arg(&to_shell_path(&initfile))),
             ]
         }
-        "wsl" => setup_wsl_shell_integration(&base),
+        "wsl" => setup_wsl_shell_integration(base),
         "pwsh" | "powershell" => {
-            let dir = base.join("pwsh");
-            if std::fs::create_dir_all(&dir).is_err() {
-                return vec![];
-            }
-            let initfile = dir.join("osc7.ps1");
-            if std::fs::write(&initfile, PWSH_OSC7).is_err() {
+            let initfile = base.join("pwsh").join("osc7.ps1");
+            if !write_integration_script(&initfile, PWSH_OSC7) {
                 return vec![];
             }
             let escaped = initfile.display().to_string().replace('\'', "''");
@@ -567,10 +646,7 @@ fn setup_wsl_shell_integration(base: &std::path::Path) -> Vec<String> {
         (&zshenv, ZSH_OSC7),
         (&fish_init, FISH_OSC7),
     ] {
-        let Some(parent) = path.parent() else {
-            return vec![];
-        };
-        if std::fs::create_dir_all(parent).is_err() || std::fs::write(path, contents).is_err() {
+        if !write_integration_script(path, contents) {
             log::warn!(
                 "paneflow: could not materialize WSL shell integration at {}",
                 path.display()
@@ -630,6 +706,192 @@ fn quote_fish_arg(arg: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{clear_then_for_shell, powershell_startup_args, wsl_startup_args};
+
+    fn replace_atomically(path: &std::path::Path, contents: &str) {
+        let staging = path.with_extension("reset");
+        std::fs::write(&staging, contents).unwrap();
+        std::fs::rename(&staging, path).unwrap();
+    }
+
+    #[test]
+    fn restoring_ten_panes_never_exposes_an_empty_or_partial_integration_script() {
+        use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+        use std::sync::{Arc, Barrier};
+
+        let base = tempfile::tempdir().unwrap();
+        let rcfile = base.path().join("bash").join("bashrc");
+        std::fs::create_dir_all(rcfile.parent().unwrap()).unwrap();
+        let stale = "# integration written by an older Paneflow\n".repeat(256);
+        std::fs::write(&rcfile, &stale).unwrap();
+
+        let done = Arc::new(AtomicBool::new(false));
+        let reads = Arc::new(AtomicUsize::new(0));
+        let readers: Vec<_> = (0..2)
+            .map(|_| {
+                let rcfile = rcfile.clone();
+                let stale = stale.clone();
+                let done = Arc::clone(&done);
+                let reads = Arc::clone(&reads);
+                std::thread::spawn(move || {
+                    while !done.load(Ordering::Acquire) {
+                        if let Ok(text) = std::fs::read_to_string(&rcfile) {
+                            assert!(
+                                text == stale || text == super::BASH_OSC7,
+                                "a shell read a {}-byte partial script",
+                                text.len()
+                            );
+                            reads.fetch_add(1, Ordering::Relaxed);
+                        }
+                    }
+                })
+            })
+            .collect();
+
+        for _ in 0..40 {
+            replace_atomically(&rcfile, &stale);
+            let start = Arc::new(Barrier::new(10));
+            let panes: Vec<_> = (0..10)
+                .map(|_| {
+                    let base = base.path().to_path_buf();
+                    let start = Arc::clone(&start);
+                    std::thread::spawn(move || {
+                        start.wait();
+                        super::setup_shell_integration_in(
+                            &base,
+                            "bash",
+                            &mut std::collections::HashMap::new(),
+                        )
+                    })
+                })
+                .collect();
+            for pane in panes {
+                assert_eq!(pane.join().unwrap()[0], "--rcfile");
+            }
+            assert_eq!(std::fs::read_to_string(&rcfile).unwrap(), super::BASH_OSC7);
+        }
+
+        done.store(true, Ordering::Release);
+        for reader in readers {
+            reader.join().unwrap();
+        }
+        assert!(reads.load(Ordering::Relaxed) > 0);
+    }
+
+    #[test]
+    fn an_unchanged_integration_script_is_not_rewritten() {
+        let base = tempfile::tempdir().unwrap();
+        let rcfile = base.path().join("bash").join("bashrc");
+        super::setup_shell_integration_in(
+            base.path(),
+            "bash",
+            &mut std::collections::HashMap::new(),
+        );
+        let written = std::fs::metadata(&rcfile).unwrap().modified().unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(50));
+
+        super::setup_shell_integration_in(
+            base.path(),
+            "bash",
+            &mut std::collections::HashMap::new(),
+        );
+
+        assert_eq!(
+            std::fs::metadata(&rcfile).unwrap().modified().unwrap(),
+            written
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_bash_hook_percent_encodes_every_byte_of_the_working_directory() {
+        use paneflow_terminal_ghostty as ghostty;
+
+        let root = tempfile::tempdir().unwrap();
+        let dir = root.path().join("a%20b").join("\u{e9}t\u{e9} x");
+        std::fs::create_dir_all(&dir).unwrap();
+        let rcfile = root.path().join("bashrc");
+        std::fs::write(&rcfile, super::BASH_OSC7).unwrap();
+
+        let output = std::process::Command::new("bash")
+            .args([
+                "--norc",
+                "--noprofile",
+                "-c",
+                "source \"$1\"; cd \"$2\" && __paneflow_osc7",
+                "paneflow-osc7-test",
+            ])
+            .arg(&rcfile)
+            .arg(&dir)
+            .env("HOME", root.path())
+            .env_remove("PANEFLOW_BIN_DIR")
+            .output()
+            .unwrap();
+        let report = String::from_utf8(output.stdout).unwrap();
+        assert!(
+            report.ends_with("/a%2520b/%C3%A9t%C3%A9%20x\u{7}"),
+            "{report:?}"
+        );
+
+        let mut terminal = ghostty::DisplayTerminal::new(
+            ghostty::WindowSize::new(80, 24, 8, 16).unwrap(),
+            100,
+            ghostty::TerminalAppearance::default(),
+        )
+        .unwrap();
+        terminal.feed(report.as_bytes()).unwrap();
+        let reported: Vec<String> = terminal
+            .drain_events()
+            .into_iter()
+            .filter_map(|event| match event {
+                ghostty::BackendEvent::WorkingDirectory(cwd) => Some(cwd),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(reported, vec![dir.display().to_string()]);
+    }
+
+    #[test]
+    fn every_hook_percent_encodes_its_working_directory() {
+        assert!(super::ZSH_OSC7.contains("\"$(__paneflow_urlencode \"${PWD}\")\""));
+        assert!(super::BASH_OSC7.contains("\"$(__paneflow_urlencode \"${PWD}\")\""));
+        assert!(super::FISH_OSC7.contains("(string escape --style=url -- \"$PWD\")"));
+    }
+
+    #[test]
+    fn default_shell_expands_a_home_relative_path() {
+        let home = std::path::Path::new("/home/dev");
+        assert_eq!(
+            super::expand_home_prefix("~/bin/zsh", Some(home)),
+            Some(home.join("bin/zsh"))
+        );
+        assert_eq!(super::expand_home_prefix("/bin/zsh", Some(home)), None);
+        assert_eq!(super::expand_home_prefix("~/bin/zsh", None), None);
+    }
+
+    #[test]
+    fn a_missing_default_shell_starts_the_platform_shell_and_names_the_refused_path() {
+        let refused = "~/definitely-not-a-paneflow-shell";
+        let (shell, notice) = super::resolve_shell_for_spawn(Some(refused));
+
+        assert_eq!(shell, super::resolve_default_shell(None));
+        let notice = notice.expect("a refused default_shell is reported");
+        assert!(notice.contains(refused), "{notice}");
+        assert!(notice.contains(&shell), "{notice}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_default_shell_without_execute_permission_is_refused() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let shell = dir.path().join("shell");
+        std::fs::write(&shell, "#!/bin/sh\n").unwrap();
+        std::fs::set_permissions(&shell, std::fs::Permissions::from_mode(0o644)).unwrap();
+        assert!(!super::is_executable_file(&shell));
+        std::fs::set_permissions(&shell, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(super::is_executable_file(&shell));
+    }
 
     #[cfg(unix)]
     #[test]

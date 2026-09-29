@@ -269,7 +269,8 @@ impl PaneFlowApp {
         self.prune_worktree_states();
         if let Some(record) = record {
             let tab_id = record.tab_id;
-            push_closed_record(&mut self.closed_panes, ClosedRecord::Tab(record));
+            let evicted = push_closed_record(&mut self.closed_panes, ClosedRecord::Tab(record));
+            self.stop_hosted_sessions(evicted, cx);
             self.show_tab_closed_toast(tab_id, cx);
         }
     }
@@ -317,10 +318,13 @@ impl PaneFlowApp {
             surfaces,
             ..
         } = record;
+        let attached = self.attached_session_ids(cx);
         let mut panes: VecDeque<Entity<Pane>> = surfaces
             .into_iter()
             .map(|surface| {
-                let surface = restore_closed_surface_record(surface, ws_id, cx);
+                let (surface, reopen) =
+                    restore_closed_surface_record(surface, ws_id, &attached, cx);
+                self.finish_surface_reopen(&surface, reopen, ws_id, cx);
                 self.create_pane_with_existing_surface(surface, ws_id, cx)
             })
             .collect();

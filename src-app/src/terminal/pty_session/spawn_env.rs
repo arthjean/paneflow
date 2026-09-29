@@ -12,6 +12,42 @@ pub(in crate::terminal) struct SpawnParams {
     pub(in crate::terminal) profile: TerminalSurfaceProfile,
 }
 
+pub(in crate::terminal) const PROTECTED_ENV_KEYS: &[&str] = &[
+    "TERM",
+    "COLORTERM",
+    "TERM_PROGRAM",
+    "TERM_PROGRAM_VERSION",
+    "SHLVL",
+    "PANEFLOW_WORKSPACE_ID",
+    "PANEFLOW_SURFACE_ID",
+    "PANEFLOW_SOCKET_PATH",
+    "PANEFLOW_BIN_DIR",
+    "ZDOTDIR",
+    "PANEFLOW_ORIG_ZDOTDIR",
+];
+
+const LOCALE_ENV_KEYS: &[&str] = &["LANG", "LC_ALL", "LC_CTYPE"];
+
+fn needs_default_lang(lookup: impl Fn(&str) -> Option<String>) -> bool {
+    LOCALE_ENV_KEYS
+        .iter()
+        .all(|key| lookup(key).is_none_or(|value| value.is_empty()))
+}
+
+fn log_filtered_env_key_once(key: &str, reason: &str) {
+    static LOGGED: std::sync::Mutex<Option<std::collections::HashSet<String>>> =
+        std::sync::Mutex::new(None);
+    let mut logged = LOGGED
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if logged
+        .get_or_insert_with(std::collections::HashSet::new)
+        .insert(key.to_owned())
+    {
+        log::warn!("terminal.env: ignoring {key:?}: {reason}");
+    }
+}
+
 fn paneflow_socket_path() -> Option<String> {
     crate::runtime_paths::socket_path().map(|p| p.display().to_string())
 }
@@ -166,10 +202,6 @@ fn assemble_pty_env(
 
     env.insert("TERM".into(), "xterm-256color".into());
 
-    if std::env::var("LANG").map_or(true, |v| v.is_empty()) {
-        env.insert("LANG".into(), "en_US.UTF-8".into());
-    }
-
     env.insert("TERM_PROGRAM".into(), "paneflow".into());
     env.insert(
         "TERM_PROGRAM_VERSION".into(),
@@ -182,28 +214,27 @@ fn assemble_pty_env(
     inject_ai_hook_env(&mut env);
 
     if let Some(user_vars) = user_env {
-        const PROTECTED: &[&str] = &[
-            "TERM",
-            "COLORTERM",
-            "TERM_PROGRAM",
-            "TERM_PROGRAM_VERSION",
-            "SHLVL",
-            "PANEFLOW_WORKSPACE_ID",
-            "PANEFLOW_SURFACE_ID",
-            "PANEFLOW_SOCKET_PATH",
-            "PANEFLOW_BIN_DIR",
-        ];
         for (k, v) in user_vars {
             #[cfg(windows)]
             let k = k.to_uppercase();
-            if !is_valid_env_name(&k) || is_forbidden_child_env_key(&k) {
+            if !is_valid_env_name(&k) {
+                log_filtered_env_key_once(&k, "not a valid variable name");
                 continue;
             }
-            if PROTECTED.contains(&k.as_str()) {
+            if is_forbidden_child_env_key(&k) {
+                log_filtered_env_key_once(&k, "it could change how programs load or run agents");
+                continue;
+            }
+            if PROTECTED_ENV_KEYS.contains(&k.as_str()) {
+                log_filtered_env_key_once(&k, "Paneflow sets it for every terminal");
                 continue;
             }
             env.insert(k, v);
         }
+    }
+
+    if needs_default_lang(|key| env.get(key).cloned().or_else(|| std::env::var(key).ok())) {
+        env.insert("LANG".into(), "en_US.UTF-8".into());
     }
 
     env.retain(|k, _| !is_inherited_agent_session_env_key(k));
@@ -231,6 +262,7 @@ impl TerminalState {
         )
     }
 
+    #[cfg(test)]
     pub(in crate::terminal) fn resolve_spawn_params_with_profile(
         working_directory: Option<std::path::PathBuf>,
         workspace_id: u64,
@@ -239,19 +271,38 @@ impl TerminalState {
         user_env: Option<std::collections::HashMap<String, String>>,
         profile: TerminalSurfaceProfile,
     ) -> SpawnParams {
+        Self::resolve_spawn_launch(
+            working_directory,
+            workspace_id,
+            surface_id,
+            initial_size,
+            user_env,
+            profile,
+        )
+        .0
+    }
+
+    pub(in crate::terminal) fn resolve_spawn_launch(
+        working_directory: Option<std::path::PathBuf>,
+        workspace_id: u64,
+        surface_id: u64,
+        initial_size: Option<(usize, usize)>,
+        user_env: Option<std::collections::HashMap<String, String>>,
+        profile: TerminalSurfaceProfile,
+    ) -> (SpawnParams, Option<String>) {
         let config = paneflow_config::loader::load_config();
-        let shell = {
+        let (shell, shell_notice) = {
             let configured = config
                 .default_shell
                 .as_deref()
                 .map(str::trim)
                 .filter(|s| !s.is_empty());
-            let resolved = resolve_default_shell(configured);
+            let (resolved, notice) = resolve_shell_for_spawn(configured);
             log::info!(
                 target: "paneflow::terminal::backend",
                 "Terminal shell resolved: {resolved:?} (default_shell={configured:?})"
             );
-            resolved
+            (resolved, notice)
         };
         let shell_quoting = ShellQuoting::for_shell(&shell);
         let global_env = config.terminal.as_ref().and_then(|t| t.env.clone());
@@ -276,16 +327,19 @@ impl TerminalState {
         }
         let cwd = working_directory.unwrap_or_else(crate::launch_cwd::implicit_launch_cwd);
         let (cols, rows) = initial_size.unwrap_or((120, 40));
-        SpawnParams {
-            shell,
-            shell_quoting,
-            extra_args,
-            env,
-            cwd,
-            cols,
-            rows,
-            profile,
-        }
+        (
+            SpawnParams {
+                shell,
+                shell_quoting,
+                extra_args,
+                env,
+                cwd,
+                cols,
+                rows,
+                profile,
+            },
+            shell_notice,
+        )
     }
 }
 
@@ -297,6 +351,74 @@ mod tests {
 
     fn platform_sep() -> char {
         if cfg!(windows) { ';' } else { ':' }
+    }
+
+    #[test]
+    fn lang_is_defaulted_only_when_no_locale_variable_is_set() {
+        let lookup = |set: &'static [(&'static str, &'static str)]| {
+            move |key: &str| {
+                set.iter()
+                    .find(|(name, _)| *name == key)
+                    .map(|(_, value)| (*value).to_owned())
+            }
+        };
+        assert!(needs_default_lang(lookup(&[])));
+        assert!(needs_default_lang(lookup(&[("LANG", "")])));
+        assert!(!needs_default_lang(lookup(&[("LANG", "fr_FR.UTF-8")])));
+        assert!(!needs_default_lang(lookup(&[("LC_ALL", "C.UTF-8")])));
+        assert!(!needs_default_lang(lookup(&[("LC_CTYPE", "UTF-8")])));
+    }
+
+    #[test]
+    fn a_terminal_env_locale_keeps_paneflow_from_setting_lang() {
+        let user_env = HashMap::from([("LC_ALL".to_owned(), "C.UTF-8".to_owned())]);
+        let env = assemble_pty_env(HashMap::new(), 1, 1, Some(user_env));
+        assert_eq!(env.get("LC_ALL").map(String::as_str), Some("C.UTF-8"));
+        assert_eq!(env.get("LANG"), None);
+    }
+
+    #[test]
+    fn terminal_env_cannot_override_the_zsh_integration_directory() {
+        let integration = HashMap::from([
+            ("ZDOTDIR".to_owned(), "/paneflow/shell/zsh".to_owned()),
+            (
+                "PANEFLOW_ORIG_ZDOTDIR".to_owned(),
+                "/home/dev/.zsh".to_owned(),
+            ),
+        ]);
+        let user_env = HashMap::from([
+            ("ZDOTDIR".to_owned(), "/elsewhere".to_owned()),
+            ("PANEFLOW_ORIG_ZDOTDIR".to_owned(), "/elsewhere".to_owned()),
+        ]);
+        let env = assemble_pty_env(integration, 1, 1, Some(user_env));
+        assert_eq!(
+            env.get("ZDOTDIR").map(String::as_str),
+            Some("/paneflow/shell/zsh")
+        );
+        assert_eq!(
+            env.get("PANEFLOW_ORIG_ZDOTDIR").map(String::as_str),
+            Some("/home/dev/.zsh")
+        );
+    }
+
+    #[test]
+    fn the_schema_documents_exactly_the_protected_terminal_env_keys() {
+        let schema: serde_json::Value =
+            serde_json::from_str(include_str!("../../../../schemas/paneflow.schema.json")).unwrap();
+        let description = schema
+            .pointer("/properties/terminal/properties/env/description")
+            .and_then(serde_json::Value::as_str)
+            .unwrap();
+        let listed = description
+            .split_once("Protected at PTY spawn: ")
+            .and_then(|(_, rest)| rest.split_once('.'))
+            .map(|(keys, _)| keys)
+            .unwrap();
+        let mut documented: Vec<&str> = listed.split(", ").collect();
+        let mut protected = PROTECTED_ENV_KEYS.to_vec();
+        documented.sort_unstable();
+        protected.sort_unstable();
+        assert_eq!(documented, protected);
     }
 
     #[test]

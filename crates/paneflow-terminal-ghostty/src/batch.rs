@@ -39,14 +39,47 @@ pub(crate) unsafe fn get_multi<H: Copy, K: Copy + std::fmt::Debug, const N: usiz
         let failing = keys
             .get(written)
             .map_or_else(|| "unknown".to_owned(), |key| format!("{key:?}"));
-        return Err(GhosttyError::AbiMismatch(format!(
-            "{operation} failed at key {failing} (result {result}, {written} of {N} written)"
-        )));
+        return Err(GhosttyError::BatchRead {
+            operation,
+            detail: format!("key {failing} returned {result} ({written} of {N} written)"),
+        });
     }
     if written != N {
-        return Err(GhosttyError::AbiMismatch(format!(
-            "{operation} wrote {written} of {N} values"
-        )));
+        return Err(GhosttyError::BatchRead {
+            operation,
+            detail: format!("{written} of {N} values written"),
+        });
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    unsafe extern "C" fn rejecting_get_multi(
+        _: usize,
+        _: usize,
+        _: *const u32,
+        _: *mut *mut c_void,
+        written: *mut usize,
+    ) -> sys::GhosttyResult {
+        unsafe { *written = 1 };
+        sys::GhosttyResult_GHOSTTY_NO_VALUE
+    }
+
+    #[test]
+    fn a_failed_batch_read_is_not_reported_as_an_abi_mismatch() {
+        let mut first = 0u32;
+        let mut second = 0u32;
+        let slots = unsafe { [Slot::new(7u32, &mut first), Slot::new(9u32, &mut second)] };
+        let error = unsafe { get_multi("test_get_multi", 0usize, rejecting_get_multi, slots) }
+            .expect_err("a rejected batch read must fail");
+
+        let message = error.to_string();
+        assert!(matches!(error, GhosttyError::BatchRead { .. }), "{error:?}");
+        assert!(!message.contains("ABI"), "{message}");
+        assert!(message.contains("test_get_multi"), "{message}");
+        assert!(message.contains("key 9"), "{message}");
+    }
 }

@@ -1,12 +1,10 @@
 pub(crate) fn working_directory_from_ghostty(raw: &str) -> Option<String> {
     let rest = raw.strip_prefix("file://")?;
-    let path = if rest.starts_with('/') {
-        rest.to_owned()
-    } else {
-        let (_, path) = rest.split_once('/')?;
-        format!("/{path}")
-    };
-    let decoded = percent_decode_uri_path(&path)?;
+    let (host, path) = rest.split_at(rest.find('/')?);
+    if !is_local_host(host, local_hostname().as_deref()) {
+        return None;
+    }
+    let decoded = percent_decode_uri_path(path)?;
 
     #[cfg(windows)]
     if let Some(msys_path) = msys_path_to_windows_path(&decoded) {
@@ -22,6 +20,40 @@ pub(crate) fn working_directory_from_ghostty(raw: &str) -> Option<String> {
         return Some(decoded[1..].replace('/', "\\"));
     }
     Some(decoded)
+}
+
+fn is_local_host(host: &str, local: Option<&str>) -> bool {
+    host.is_empty()
+        || host.eq_ignore_ascii_case("localhost")
+        || local.is_some_and(|local| host.eq_ignore_ascii_case(local))
+}
+
+fn local_hostname() -> Option<String> {
+    static LOCAL: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+    LOCAL.get_or_init(read_local_hostname).clone()
+}
+
+#[cfg(unix)]
+fn read_local_hostname() -> Option<String> {
+    let mut buffer = [0_u8; 256];
+    let status = unsafe { libc::gethostname(buffer.as_mut_ptr().cast(), buffer.len()) };
+    if status != 0 {
+        return None;
+    }
+    let end = buffer
+        .iter()
+        .position(|&byte| byte == 0)
+        .unwrap_or(buffer.len());
+    String::from_utf8(buffer[..end].to_vec())
+        .ok()
+        .filter(|name| !name.is_empty())
+}
+
+#[cfg(windows)]
+fn read_local_hostname() -> Option<String> {
+    std::env::var("COMPUTERNAME")
+        .ok()
+        .filter(|name| !name.is_empty())
 }
 
 #[cfg(windows)]
@@ -83,6 +115,28 @@ fn hex_value(byte: u8) -> Option<u8> {
 mod tests {
     use super::*;
 
+    #[test]
+    fn a_report_from_another_host_is_not_a_local_working_directory() {
+        assert!(is_local_host("", Some("devbox")));
+        assert!(is_local_host("localhost", Some("devbox")));
+        assert!(is_local_host("LOCALHOST", None));
+        assert!(is_local_host("devbox", Some("devbox")));
+        assert!(is_local_host("DEVBOX", Some("devbox")));
+        assert!(!is_local_host("buildserver", Some("devbox")));
+        assert!(!is_local_host("devbox", None));
+
+        assert_eq!(
+            working_directory_from_ghostty("file://definitely-not-this-machine.invalid/tmp"),
+            None
+        );
+        assert_eq!(
+            working_directory_from_ghostty("file://localhost/tmp/a%2520b"),
+            Some("/tmp/a%20b".to_owned())
+        );
+        let local = local_hostname().expect("the machine has a host name");
+        assert!(working_directory_from_ghostty(&format!("file://{local}/tmp")).is_some());
+    }
+
     #[cfg(not(windows))]
     #[test]
     fn osc7_preserves_drive_like_posix_path() {
@@ -99,8 +153,13 @@ mod tests {
             working_directory_from_ghostty("file:///C:/dev/path%20with%20space/%C3%A9"),
             Some(r"C:\dev\path with space\é".to_owned())
         );
+        let msys_host = local_hostname()
+            .expect("the machine has a host name")
+            .to_ascii_uppercase();
         assert_eq!(
-            working_directory_from_ghostty("file://DESKTOP-123/c/dev/path%20with%20space"),
+            working_directory_from_ghostty(&format!(
+                "file://{msys_host}/c/dev/path%20with%20space"
+            )),
             Some(r"C:\dev\path with space".to_owned())
         );
     }

@@ -163,7 +163,7 @@ fn oversized_terminal_dimensions_are_refused_before_reaching_the_engine() {
     ));
     let session = host.create(shell_request(80, 24)).unwrap().manifest.session;
     assert!(matches!(
-        host.resize(&session, None, u16::MAX, u16::MAX),
+        host.resize(&session, None, u16::MAX, u16::MAX, None),
         Err(HostError::InvalidRequest(_))
     ));
     assert!(host.inspect(&session).unwrap().live);
@@ -1544,6 +1544,8 @@ fn launch_owner_thread_failure_is_reconciled_by_the_existing_scan() {
         cols: 80,
         rows: 24,
         scrollback_lines: 500,
+        appearance: None,
+        cell: None,
     };
     spec.env
         .insert("PANEFLOW_TEST_SPAWN_DELAY_MS".into(), "100".into());

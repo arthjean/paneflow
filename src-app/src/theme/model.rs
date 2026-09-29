@@ -394,6 +394,7 @@ pub(super) fn ha(hex: u32, alpha: f32) -> Hsla {
 
 const CHROME_BACKGROUND_HEX: u32 = 0x141414;
 const TERMINAL_BACKGROUND_HEX: u32 = 0x181818;
+const SELECTION_QUANTIZATION_MARGIN: f32 = 1.0;
 const BORDER_HEX: u32 = 0x252525;
 
 pub(super) fn is_light_theme(theme: &TerminalTheme) -> bool {
@@ -402,14 +403,10 @@ pub(super) fn is_light_theme(theme: &TerminalTheme) -> bool {
 
 impl TerminalTheme {
     pub(crate) fn recompute_selection_foreground(&mut self) {
-        let selection_bg_opaque = Hsla {
-            a: 1.0,
-            ..self.selection
-        };
         self.selection_foreground = ensure_minimum_contrast(
             self.foreground,
-            selection_bg_opaque,
-            SELECTION_MIN_APCA_CONTRAST,
+            self.background.blend(self.selection),
+            SELECTION_MIN_APCA_CONTRAST + SELECTION_QUANTIZATION_MARGIN,
             None,
         );
     }
@@ -696,14 +693,11 @@ mod tests {
     }
 
     fn assert_selection_invariant(theme: &TerminalTheme, label: &str) {
-        let bg_opaque = Hsla {
-            a: 1.0,
-            ..theme.selection
-        };
-        let lc = apca_contrast(theme.selection_foreground, bg_opaque).abs();
+        let painted = theme.background.blend(theme.selection);
+        let lc = apca_contrast(theme.selection_foreground, painted).abs();
         assert!(
             lc >= SELECTION_MIN_APCA_CONTRAST,
-            "{label}: APCA Lc({lc}) < {SELECTION_MIN_APCA_CONTRAST} for selection_foreground vs selection"
+            "{label}: APCA Lc({lc}) < {SELECTION_MIN_APCA_CONTRAST} for selection_foreground vs background.blend(selection)"
         );
     }
 

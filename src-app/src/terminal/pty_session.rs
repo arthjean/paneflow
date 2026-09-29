@@ -15,7 +15,7 @@ use super::ghostty_session::{
 use super::host_link::{HostLinkState, HostedAttachment, HostedSession};
 use super::marks::SharedMarkRing;
 use super::service_detector::{ServiceInfo, detect_framework, parse_service_line};
-use super::shell::{resolve_default_shell, setup_shell_integration};
+use super::shell::{resolve_shell_for_spawn, setup_shell_integration};
 use super::types::{
     Content, GridLineText, GridMetrics, HyperlinkZone, Line, Modes, Point, SelectionGeometry,
     SelectionKind, SelectionRange, ShellQuoting, TerminalWindowSize,
@@ -166,6 +166,7 @@ pub struct TerminalState {
     pub(super) shell_quoting: ShellQuoting,
     pub(super) pending_clipboard_ops: Vec<String>,
     pub(super) pending_notifications: Vec<ProgramNotification>,
+    pub(super) pending_host_notices: Vec<String>,
     pub cached_foreground_command: Option<String>,
     pub cursor_blinking: bool,
     pub dirty: bool,
@@ -176,6 +177,7 @@ pub struct TerminalState {
     #[cfg(debug_assertions)]
     pub(crate) last_keystroke_at: Option<std::time::Instant>,
     pending_input: std::sync::Mutex<VecDeque<PendingTerminalInput>>,
+    pub(super) osc52_policy: paneflow_config::schema::Osc52ClipboardConfig,
 }
 
 const MAX_PENDING_INPUT_BYTES: usize = 1024 * 1024;
@@ -221,10 +223,35 @@ impl TerminalState {
         self.child_pid = spawned.child_pid;
         self.current_cwd = Some(spawned.cwd.to_string_lossy().into_owned());
         self.host_link = HostLinkState::Attached;
-        self.set_osc52_mode(Osc52Mode::CopyOnly);
+        self.set_osc52_mode(self.promoted_osc52_mode());
         self.cursor_blinking = true;
         self.dirty = true;
         self.flush_ghostty_pending_input();
+    }
+
+    fn promoted_osc52_mode(&self) -> Osc52Mode {
+        match self.osc52_policy {
+            paneflow_config::schema::Osc52ClipboardConfig::Copy => Osc52Mode::CopyOnly,
+            paneflow_config::schema::Osc52ClipboardConfig::Off => Osc52Mode::Disabled,
+        }
+    }
+
+    #[cfg(test)]
+    pub(super) fn queued_pastes(&self) -> Vec<(String, bool)> {
+        self.pending_input
+            .lock()
+            .map(|pending| {
+                pending
+                    .iter()
+                    .filter_map(|input| match input {
+                        PendingTerminalInput::Paste {
+                            text, allow_unsafe, ..
+                        } => Some((text.clone(), *allow_unsafe)),
+                        _ => None,
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 
     pub(super) fn promote_hosted(&mut self, hosted: HostedAttachment) {
@@ -236,7 +263,7 @@ impl TerminalState {
             generation: hosted.attachment.generation,
         });
         self.host_link = HostLinkState::Attached;
-        self.set_osc52_mode(Osc52Mode::CopyOnly);
+        self.set_osc52_mode(self.promoted_osc52_mode());
         self.cursor_blinking = true;
         self.dirty = true;
         self.flush_ghostty_pending_input();
@@ -463,6 +490,7 @@ impl TerminalState {
             shell_quoting,
             pending_clipboard_ops: Vec::new(),
             pending_notifications: Vec::new(),
+            pending_host_notices: Vec::new(),
             cached_foreground_command: None,
             cursor_blinking: false,
             title: String::from("Terminal"),
@@ -474,6 +502,7 @@ impl TerminalState {
             #[cfg(debug_assertions)]
             last_keystroke_at: None,
             pending_input: std::sync::Mutex::new(VecDeque::new()),
+            osc52_policy: paneflow_config::schema::Osc52ClipboardConfig::Copy,
         };
         (
             state,
@@ -606,6 +635,9 @@ impl TerminalState {
             }
             GhosttyUiEvent::HostLink(state) => {
                 self.mark_host_link(state);
+            }
+            GhosttyUiEvent::HostNotice(message) => {
+                self.pending_host_notices.push(message);
             }
         }
     }
@@ -810,12 +842,13 @@ impl TerminalState {
     pub(super) fn write_ghostty_paste(
         &self,
         text: String,
+        allow_unsafe: bool,
         location: paneflow_terminal_ghostty::ClipboardLocation,
     ) -> BackendInputResult {
         self.dispatch_ghostty_input(
             PendingTerminalInput::Paste {
                 text,
-                allow_unsafe: true,
+                allow_unsafe,
                 location,
             },
             true,
@@ -833,10 +866,6 @@ impl TerminalState {
         self.ghostty.bind_runtime(runtime_id);
     }
 
-    pub fn write_to_pty_silent(&self, input: impl Into<Cow<'static, [u8]>>) {
-        self.notify_or_buffer(input.into());
-    }
-
     pub fn retains_final_view(&self) -> bool {
         self.exited.is_some()
     }
@@ -849,10 +878,6 @@ impl TerminalState {
         let text = self.ghostty.screen_text()?;
         let trimmed = text.trim_end_matches(['\n', ' ']);
         (!trimmed.is_empty()).then(|| trimmed.to_owned())
-    }
-
-    pub fn capture_replay(&self) -> Option<Vec<u8>> {
-        self.ghostty.capture_replay()
     }
 
     pub fn foreground_command(&self) -> Option<String> {
@@ -884,10 +909,6 @@ impl TerminalState {
 
     pub fn restore_scrollback(&self, text: &str) {
         self.ghostty.restore_scrollback(text);
-    }
-
-    pub fn restore_replay(&self, bytes: &[u8]) {
-        self.ghostty.write_output(bytes);
     }
 }
 
@@ -1066,6 +1087,7 @@ mod tests {
         assert_eq!(
             state.write_ghostty_paste(
                 "paste".to_string(),
+                false,
                 paneflow_terminal_ghostty::ClipboardLocation::Primary,
             ),
             BackendInputResult::Accepted
@@ -1262,6 +1284,31 @@ mod tests {
     }
 
     #[test]
+    fn osc52_clipboard_off_refuses_every_program_clipboard_write() {
+        let (mut state, _pending) = TerminalState::new_pending(80, 24);
+        state.osc52_policy = paneflow_config::schema::Osc52ClipboardConfig::Off;
+        state.promote_ghostty(SpawnedGhostty {
+            child_pid: 0,
+            cwd: std::env::current_dir().unwrap(),
+        });
+        state.set_terminal_focused(true);
+
+        state.deliver_clipboard_text("secret".into());
+
+        assert!(state.osc52_mode == Osc52Mode::Disabled);
+        assert!(state.pending_clipboard_ops.is_empty());
+
+        let (mut copying, _pending) = TerminalState::new_pending(80, 24);
+        copying.promote_ghostty(SpawnedGhostty {
+            child_pid: 0,
+            cwd: std::env::current_dir().unwrap(),
+        });
+        copying.set_terminal_focused(true);
+        copying.deliver_clipboard_text("copied".into());
+        assert_eq!(copying.pending_clipboard_ops, vec!["copied".to_owned()]);
+    }
+
+    #[test]
     fn osc52_store_requires_focus_and_respects_the_shared_cap() {
         let mut state = TerminalState::new_display_only(5, 20);
         state.set_osc52_mode(Osc52Mode::CopyOnly);
@@ -1342,7 +1389,7 @@ mod tests {
         );
 
         std::thread::sleep(std::time::Duration::from_millis(250));
-        state.write_to_pty_silent(b"echo PANEFLOW_GEN_OK\n".to_vec());
+        state.notify_or_buffer(Cow::Owned(b"echo PANEFLOW_GEN_OK\n".to_vec()));
 
         let mut advanced = false;
         for _ in 0..240 {
@@ -1356,6 +1403,82 @@ mod tests {
         assert!(
             advanced,
             "output_generation must advance once the PTY emits output"
+        );
+    }
+
+    #[test]
+    fn a_bell_flood_and_a_huge_grapheme_keep_a_live_pane_running_until_its_real_exit() {
+        let dir = tempfile::tempdir().expect("flood fixture dir");
+        let flood_path = dir.path().join("bell-flood.bin");
+        let mut flood = b"\x07flood-txt".repeat(10_000);
+        assert_eq!(flood.len(), 100_000);
+        flood.extend_from_slice(b"\r\ne");
+        flood.extend("\u{0301}".repeat(1_999).as_bytes());
+        std::fs::write(&flood_path, &flood).expect("write flood fixture");
+        let flood_arg = flood_path.to_string_lossy().into_owned();
+        #[cfg(unix)]
+        let (shell, shell_quoting, extra_args) = (
+            "/bin/sh".to_owned(),
+            ShellQuoting::Posix,
+            vec![
+                "-c".to_owned(),
+                "cat \"$1\"; printf '\nPANEFLOW_FLOOD_%s\n' ok".to_owned(),
+                "sh".to_owned(),
+                flood_arg,
+            ],
+        );
+        #[cfg(target_os = "windows")]
+        let (shell, shell_quoting, extra_args) = (
+            "cmd.exe".to_owned(),
+            ShellQuoting::Cmd,
+            vec![
+                "/D".to_owned(),
+                "/Q".to_owned(),
+                "/C".to_owned(),
+                format!("type \"{flood_arg}\" & echo. & echo PANEFLOW_FLOOD_^ok"),
+            ],
+        );
+        let params = SpawnParams {
+            shell,
+            shell_quoting,
+            extra_args,
+            env: std::collections::HashMap::from([
+                ("TERM".into(), "xterm-256color".into()),
+                ("TERM_PROGRAM".into(), "paneflow".into()),
+            ]),
+            cwd: dir.path().to_path_buf(),
+            cols: 80,
+            rows: 24,
+            profile: TerminalSurfaceProfile::Normal,
+        };
+        let (mut state, pending) =
+            TerminalState::new_pending_with_shell_quoting(80, 24, shell_quoting);
+        let spawned = state
+            .ghostty_session()
+            .start(pending.ghostty, params, 10_000)
+            .expect("spawn the flood shell");
+        state.promote_ghostty(spawned);
+
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        while state.exited.is_none() && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(25));
+            state.sync();
+        }
+        assert_eq!(
+            state.exited,
+            Some(0),
+            "the flood must not turn the pane into a failed runtime before its real exit"
+        );
+        let (content, _) = state.session_backend().render_content(
+            TerminalWindowSize::new(80, 24, 8, 16),
+            -100,
+            100,
+            false,
+        );
+        let screen: String = content.cells.iter().map(|cell| cell.c).collect();
+        assert!(
+            screen.contains("PANEFLOW_FLOOD_ok"),
+            "the output after the flood reaches the screen: {screen:?}"
         );
     }
 }

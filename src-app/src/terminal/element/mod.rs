@@ -334,7 +334,7 @@ pub(crate) struct CursorInfo {
     col: usize,
     shape: CursorShape,
     color: Hsla,
-    cell_bg: Hsla,
+    text_color: Hsla,
     wide: bool,
     text: Option<char>,
     bold: bool,
@@ -393,12 +393,27 @@ fn selection_marker_cursor(
         col,
         shape: CursorShape::Block,
         color,
-        cell_bg,
+        text_color: cursor_glyph_color(cell_bg, color, ctx.colors.theme),
         wide,
         text,
         bold,
         italic,
     })
+}
+
+pub(crate) const CURSOR_GLYPH_MIN_APCA_CONTRAST: f32 = 45.0;
+
+fn cursor_glyph_color(
+    cell_bg: Hsla,
+    cursor_color: Hsla,
+    theme: &crate::theme::TerminalTheme,
+) -> Hsla {
+    let glyph = if cell_bg.a > 0.01 {
+        cell_bg
+    } else {
+        theme.ansi_background
+    };
+    ensure_minimum_contrast(glyph, cursor_color, CURSOR_GLYPH_MIN_APCA_CONTRAST, None)
 }
 
 fn cursor_from_content(
@@ -424,12 +439,13 @@ fn cursor_from_content(
         None
     };
 
+    let cell_bg = resolved_cell_background(cursor.fg, cursor.bg, cursor.flags, colors);
     Some(CursorInfo {
         line: cursor.point.line.0,
         col: cursor.point.column.0,
         shape,
         color: cursor_color,
-        cell_bg: resolved_cell_background(cursor.fg, cursor.bg, cursor.flags, colors),
+        text_color: cursor_glyph_color(cell_bg, cursor_color, colors.theme),
         wide: cursor.wide,
         text,
         bold: cursor.bold,
@@ -517,6 +533,8 @@ pub struct LayoutState {
     desired_cols: usize,
     desired_rows: usize,
     link_text_color: Hsla,
+    ime_text_color: Hsla,
+    ime_background: Hsla,
     ime_cursor_bounds: Option<Bounds<Pixels>>,
     color_emoji_enabled: bool,
 }
@@ -681,6 +699,7 @@ impl TerminalElement {
         _cx: &mut App,
     ) -> Arc<LayoutState> {
         let dims = self.frame_metrics.dimensions;
+        let theme_generation = crate::theme::theme_generation();
         let theme = crate::theme::active_theme();
 
         let inset_x = px(crate::app::constants::PANE_CONTENT_INSET_X);
@@ -766,7 +785,7 @@ impl TerminalElement {
 
         let key = LayoutCacheKey {
             content_generation: content.generation,
-            theme_generation: crate::theme::theme_generation(),
+            theme_generation,
             bounds,
             first_visible_row,
             last_visible_row,
@@ -1371,6 +1390,11 @@ pub(crate) fn layout_from_snapshot_cached(
         desired_cols,
         desired_rows,
         link_text_color: theme.link_text,
+        ime_text_color: theme.foreground,
+        ime_background: Hsla {
+            a: 1.0,
+            ..theme.background
+        },
         ime_cursor_bounds,
         color_emoji_enabled,
     }
@@ -2189,7 +2213,7 @@ mod golden_frame_tests {
             col,
             shape,
             color: white(),
-            cell_bg: crate::theme::paneflow_dark().ansi_background,
+            text_color: crate::theme::paneflow_dark().ansi_background,
             wide: false,
             text,
             bold: false,
@@ -3090,7 +3114,10 @@ mod golden_frame_tests {
             test_colors(&theme, &palette),
         )
         .expect("cursor visible");
-        assert_eq!(info.cell_bg, rgb_to_hsla(12, 34, 56));
+        assert_eq!(
+            info.text_color,
+            cursor_glyph_color(rgb_to_hsla(12, 34, 56), white(), &theme)
+        );
 
         let mut inverse = renderable_cursor_at(0, CursorShape::Block, 'x');
         inverse.fg = Color::Spec(Rgb { r: 90, g: 8, b: 7 });
@@ -3103,7 +3130,10 @@ mod golden_frame_tests {
             test_colors(&theme, &palette),
         )
         .expect("cursor visible");
-        assert_eq!(info.cell_bg, rgb_to_hsla(90, 8, 7));
+        assert_eq!(
+            info.text_color,
+            cursor_glyph_color(rgb_to_hsla(90, 8, 7), white(), &theme)
+        );
 
         let transparent = renderable_cursor_at(0, CursorShape::Block, 'x');
         let info = cursor_from_content(
@@ -3114,7 +3144,45 @@ mod golden_frame_tests {
             test_colors(&theme, &palette),
         )
         .expect("cursor visible");
-        assert_eq!(info.cell_bg.a, 0.0);
+        assert_eq!(
+            info.text_color,
+            cursor_glyph_color(theme.ansi_background, white(), &theme)
+        );
+    }
+
+    #[test]
+    fn the_glyph_under_a_block_cursor_stays_legible_on_light_themes() {
+        for (label, theme) in [
+            ("Vercel Light", crate::theme::theme_by_name("Vercel Light")),
+            (
+                "Tailwind Light",
+                crate::theme::theme_by_name("Tailwind Light"),
+            ),
+        ] {
+            let theme = theme.expect("bundled light theme");
+            let palette = ThemePalette::from_theme(&theme);
+            for cursor in [
+                renderable_cursor_at(0, CursorShape::Block, 'x'),
+                RenderableCursor {
+                    flags: CellFlags::INVERSE,
+                    ..renderable_cursor_at(0, CursorShape::Block, 'x')
+                },
+            ] {
+                let info = cursor_from_content(
+                    cursor,
+                    true,
+                    theme.cursor,
+                    CursorShape::Block,
+                    test_colors(&theme, &palette),
+                )
+                .expect("cursor visible");
+                let lc = color::apca_contrast(info.text_color, theme.cursor).abs();
+                assert!(
+                    lc >= CURSOR_GLYPH_MIN_APCA_CONTRAST,
+                    "{label}: glyph Lc {lc} under the block cursor"
+                );
+            }
+        }
     }
 
     #[test]
@@ -3314,6 +3382,16 @@ mod golden_frame_tests {
         assert!(
             state.rects.iter().any(|rect| rect.color.a == 0.0),
             "default background cells should be transparent"
+        );
+        assert_eq!(state.ime_text_color, theme.foreground);
+        assert_eq!(state.ime_background.a, 1.0);
+        assert_eq!(
+            (
+                state.ime_background.h,
+                state.ime_background.s,
+                state.ime_background.l
+            ),
+            (theme.background.h, theme.background.s, theme.background.l)
         );
         assert!(
             state.rects.iter().any(|rect| rect.color.a > 0.0),

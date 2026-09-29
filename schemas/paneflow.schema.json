@@ -281,6 +281,12 @@
           "enum": ["vintage", "block", "beam", "underline", "double_underline", "hollow", null],
           "default": "block"
         },
+        "osc52_clipboard": {
+          "type": ["string", "null"],
+          "description": "Whether programs may write the system clipboard with OSC 52. copy lets the focused terminal copy; off refuses every OSC 52 write.",
+          "enum": ["copy", "off", null],
+          "default": "copy"
+        },
         "cursor_blink": {
           "type": ["string", "null"],
           "description": "Cursor blink override.",
@@ -289,7 +295,7 @@
         },
         "env": {
           "type": ["object", "null"],
-          "description": "Environment variables injected into every new terminal. Per-surface values win on collision. TERM, COLORTERM, PANEFLOW_WORKSPACE_ID, PANEFLOW_SURFACE_ID, PANEFLOW_SOCKET_PATH, and PANEFLOW_BIN_DIR are protected at PTY spawn. LD_* and DYLD_* keys are dropped. PATH is accepted, but PANEFLOW_BIN_DIR is re-prepended so agent commands still route through the shim.",
+          "description": "Environment variables injected into every new terminal. Per-surface values win on collision. Protected at PTY spawn: TERM, COLORTERM, TERM_PROGRAM, TERM_PROGRAM_VERSION, SHLVL, PANEFLOW_WORKSPACE_ID, PANEFLOW_SURFACE_ID, PANEFLOW_SOCKET_PATH, PANEFLOW_BIN_DIR, ZDOTDIR, PANEFLOW_ORIG_ZDOTDIR. LD_* and DYLD_* keys and inherited agent session markers are dropped. Each ignored key is logged once. LANG defaults to en_US.UTF-8 only when LANG, LC_ALL, and LC_CTYPE are all unset. PATH is accepted, but PANEFLOW_BIN_DIR is re-prepended so agent commands still route through the shim.",
           "additionalProperties": { "type": "string" }
         },
         "scroll_multiplier": {

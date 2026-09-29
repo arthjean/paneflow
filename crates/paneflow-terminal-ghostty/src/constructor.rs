@@ -7,9 +7,10 @@ use crate::callbacks::{self, CallbackState};
 use crate::engine::DisplayTerminal;
 use crate::handles::{OwnedHandle, check, create};
 use crate::limits::MAX_SCROLLBACK_ROWS;
-use crate::{GhosttyError, Result, TerminalAppearance, WindowSize};
+use crate::{BackendEvent, ColorScheme, GhosttyError, Result, TerminalAppearance, WindowSize};
 
 const MAX_APC_BYTES: usize = 1024 * 1024;
+const COLOR_SCHEME_UPDATES_MODE: u16 = 2031;
 
 impl DisplayTerminal {
     pub fn new(
@@ -22,8 +23,14 @@ impl DisplayTerminal {
 
     pub fn set_appearance(&mut self, appearance: TerminalAppearance) -> Result<()> {
         configure_appearance(self.terminal.raw(), appearance)?;
+        let previous = self.callbacks.color_scheme();
         self.callbacks.set_color_scheme(appearance.color_scheme);
         self.snapshot_cache.invalidate();
+        if previous != appearance.color_scheme && self.mode(COLOR_SCHEME_UPDATES_MODE)? {
+            self.callbacks.push(BackendEvent::WritePty(
+                color_scheme_report(appearance.color_scheme).to_vec(),
+            ));
+        }
         Ok(())
     }
 
@@ -138,8 +145,16 @@ impl DisplayTerminal {
             terminal,
             snapshot_cache: Default::default(),
             callbacks,
+            history_clear_pending: false,
             _not_send_or_sync: PhantomData,
         })
+    }
+}
+
+fn color_scheme_report(scheme: ColorScheme) -> &'static [u8] {
+    match scheme {
+        ColorScheme::Dark => b"\x1b[?997;1n",
+        ColorScheme::Light => b"\x1b[?997;2n",
     }
 }
 
@@ -383,6 +398,44 @@ mod tests {
                 .windows(b"]12;rgb:7777/8888/9999".len())
                 .any(|window| window == b"]12;rgb:7777/8888/9999")
         );
+    }
+
+    fn pty_replies(terminal: &mut DisplayTerminal) -> Vec<u8> {
+        terminal
+            .drain_events()
+            .into_iter()
+            .filter_map(|event| match event {
+                BackendEvent::WritePty(bytes) => Some(bytes),
+                _ => None,
+            })
+            .flatten()
+            .collect()
+    }
+
+    #[test]
+    fn a_scheme_change_is_reported_only_to_programs_that_enabled_mode_2031() {
+        let dark = TerminalAppearance::default();
+        let light = TerminalAppearance {
+            color_scheme: crate::ColorScheme::Light,
+            ..dark
+        };
+        let mut terminal =
+            DisplayTerminal::new(WindowSize::new(80, 24, 8, 16).unwrap(), 1_000, dark)
+                .expect("terminal must initialize");
+
+        terminal.set_appearance(light).expect("light appearance");
+        assert!(pty_replies(&mut terminal).is_empty());
+
+        terminal.feed(b"\x1b[?2031h").expect("enable scheme reports");
+        terminal.set_appearance(dark).expect("dark appearance");
+        assert_eq!(pty_replies(&mut terminal), b"\x1b[?997;1n");
+        terminal.set_appearance(dark).expect("unchanged appearance");
+        assert!(pty_replies(&mut terminal).is_empty());
+        terminal.set_appearance(light).expect("light appearance");
+        assert_eq!(pty_replies(&mut terminal), b"\x1b[?997;2n");
+
+        terminal.feed(b"\x1b[?996n").expect("scheme query");
+        assert_eq!(pty_replies(&mut terminal), b"\x1b[?997;2n");
     }
 
     #[test]

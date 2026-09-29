@@ -7,8 +7,8 @@ use paneflow_host::protocol::{
     ERR_SESSION_NOT_LIVE,
 };
 use paneflow_host::{
-    BootstrapError, Checkpoint, CreateSession, HostClient, HostClientError, SessionReconnection,
-    SessionRow, SessionSummary,
+    BootstrapError, CellSize, Checkpoint, CreateSession, HostClient, HostClientError,
+    SessionAppearance, SessionReconnection, SessionRow, SessionSummary,
 };
 
 use super::pty_session::SpawnParams;
@@ -427,6 +427,8 @@ pub(super) struct AttachRequest {
     pub(super) session: SessionId,
     pub(super) workspace: Option<WorkspaceId>,
     pub(super) params: SpawnParams,
+    pub(super) appearance: SessionAppearance,
+    pub(super) cell: Option<CellSize>,
 }
 
 pub(crate) enum ResolveOutcome {
@@ -471,6 +473,8 @@ fn create_request(request: &AttachRequest) -> CreateSession {
         cols: u16::try_from(params.cols).ok().filter(|c| *c > 0),
         rows: u16::try_from(params.rows).ok().filter(|r| *r > 0),
         title: None,
+        appearance: Some(request.appearance.clone()),
+        cell: request.cell,
     }
 }
 
@@ -1219,6 +1223,11 @@ mod tests {
                 rows: 43,
                 profile: paneflow_config::schema::TerminalSurfaceProfile::Normal,
             },
+            appearance: crate::terminal::ghostty_session::current_host_appearance(),
+            cell: Some(CellSize {
+                width: 9,
+                height: 19,
+            }),
         };
         let created = create_request(&request);
         assert_eq!(created.session, Some(session));
@@ -1231,6 +1240,16 @@ mod tests {
         );
         assert_eq!((created.cols, created.rows), (Some(132), Some(43)));
         assert_eq!(created.cwd.as_deref(), Some("/tmp"));
+        let appearance = created.appearance.expect("the theme reaches the host");
+        assert_eq!(appearance.palette.len(), 256);
+        assert_eq!(appearance, request.appearance);
+        assert_eq!(
+            created.cell,
+            Some(CellSize {
+                width: 9,
+                height: 19,
+            })
+        );
     }
     #[test]
     fn restoration_and_stale_restart_do_not_launch_through_host_ipc() {
@@ -1279,6 +1298,8 @@ mod tests {
                         rows: 24,
                         profile: paneflow_config::schema::TerminalSurfaceProfile::Normal,
                     },
+                    appearance: crate::terminal::ghostty_session::current_host_appearance(),
+                    cell: None,
                 },
                 target.clone(),
             )
@@ -1351,6 +1372,8 @@ mod tests {
                             rows: 24,
                             profile: paneflow_config::schema::TerminalSurfaceProfile::Normal,
                         },
+                        appearance: crate::terminal::ghostty_session::current_host_appearance(),
+                        cell: None,
                     },
                     HostEndpoint {
                         home: home.path().into(),
