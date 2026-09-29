@@ -515,7 +515,10 @@ fn create_file_watcher(
     let bridge: WatchBridge = Arc::new(Mutex::new(Some(tx)));
     let notify_side = Arc::clone(&bridge);
     let mut watcher = RecommendedWatcher::new(
-        move |result| {
+        move |result: notify::Result<notify::Event>| {
+            if result.as_ref().is_ok_and(|event| event.kind.is_access()) {
+                return;
+            }
             if let Ok(guard) = notify_side.lock()
                 && let Some(tx) = guard.as_ref()
             {
