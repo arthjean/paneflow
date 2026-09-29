@@ -10,6 +10,22 @@ pub fn next_tab_id() -> u64 {
     NEXT_TAB_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
 }
 
+fn is_inside_checkout(cwd: &std::path::Path, checkout: &std::path::Path) -> bool {
+    if cwd
+        .components()
+        .any(|component| component == std::path::Component::ParentDir)
+    {
+        return false;
+    }
+    let canonical = |path: &std::path::Path| {
+        std::fs::canonicalize(path).map(crate::runtime_paths::strip_verbatim_prefix)
+    };
+    match (canonical(cwd), canonical(checkout)) {
+        (Ok(cwd), Ok(checkout)) => cwd.starts_with(checkout),
+        _ => false,
+    }
+}
+
 pub struct Tab {
     pub id: u64,
     title: String,
@@ -17,6 +33,7 @@ pub struct Tab {
     pub root: Option<LayoutTree>,
     pub saved_layout: Option<LayoutTree>,
     pub worktree: Option<std::path::PathBuf>,
+    worktree_generation: u64,
     pub files_sidebar_open: bool,
 }
 
@@ -29,6 +46,7 @@ impl Tab {
             root,
             saved_layout: None,
             worktree: None,
+            worktree_generation: 0,
             files_sidebar_open: false,
         }
     }
@@ -46,12 +64,25 @@ impl Tab {
         }
     }
 
+    pub fn worktree_generation(&self) -> u64 {
+        self.worktree_generation
+    }
+
+    pub fn bind_worktree(&mut self, worktree: Option<std::path::PathBuf>) -> bool {
+        if self.worktree == worktree {
+            return false;
+        }
+        self.worktree = worktree;
+        self.worktree_generation += 1;
+        true
+    }
+
     pub fn confine_cwd(&self, inherited: Option<std::path::PathBuf>) -> Option<std::path::PathBuf> {
         let Some(worktree) = self.worktree.as_ref() else {
             return inherited;
         };
         match inherited {
-            Some(cwd) if cwd.starts_with(worktree) => Some(cwd),
+            Some(cwd) if is_inside_checkout(&cwd, worktree) => Some(cwd),
             _ => Some(worktree.clone()),
         }
     }
@@ -388,7 +419,13 @@ mod tests {
 
     #[test]
     fn a_bound_tab_confines_every_pane_to_its_worktree() {
-        let worktree = std::path::PathBuf::from("/repo.worktrees/feat-login");
+        let tmp = tempfile::tempdir().unwrap();
+        let worktree = tmp.path().join("repo.worktrees").join("feat-login");
+        let sibling = tmp.path().join("repo.worktrees").join("feat-billing");
+        let repo = tmp.path().join("repo");
+        for dir in [&worktree.join("src").join("auth"), &sibling, &repo] {
+            std::fs::create_dir_all(dir).unwrap();
+        }
         let tab = Tab::restored(
             "login",
             TabTitleSource::Preset,
@@ -396,21 +433,57 @@ mod tests {
             Some(worktree.clone()),
         );
 
-        let inside = worktree.join("src/auth");
+        let inside = worktree.join("src").join("auth");
         assert_eq!(tab.confine_cwd(Some(inside.clone())), Some(inside));
 
+        assert_eq!(tab.confine_cwd(Some(repo)), Some(worktree.clone()));
         assert_eq!(
-            tab.confine_cwd(Some(std::path::PathBuf::from("/repo"))),
-            Some(worktree.clone())
-        );
-        assert_eq!(
-            tab.confine_cwd(Some(std::path::PathBuf::from(
-                "/repo.worktrees/feat-billing"
-            ))),
+            tab.confine_cwd(Some(sibling)),
             Some(worktree.clone()),
             "a sibling worktree is outside, however similar its path looks"
         );
+        assert_eq!(
+            tab.confine_cwd(Some(worktree.join("..").join("feat-billing"))),
+            Some(worktree.clone()),
+            "a path that climbs out with .. is refused"
+        );
+        assert_eq!(
+            tab.confine_cwd(Some(worktree.join("src").join("missing"))),
+            Some(worktree.clone()),
+            "a path that cannot be resolved is not trusted"
+        );
 
         assert_eq!(tab.confine_cwd(None), Some(worktree));
+    }
+
+    #[test]
+    fn a_symlink_out_of_the_worktree_is_resolved_before_confining() {
+        let tmp = tempfile::tempdir().unwrap();
+        let worktree = tmp.path().join("wt");
+        let outside = tmp.path().join("outside");
+        std::fs::create_dir_all(&worktree).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        let escape = worktree.join("escape");
+        #[cfg(unix)]
+        let linked = std::os::unix::fs::symlink(&outside, &escape).is_ok();
+        #[cfg(windows)]
+        let linked = std::os::windows::fs::symlink_dir(&outside, &escape).is_ok();
+        if !linked {
+            return;
+        }
+        let tab = Tab::restored("wt", TabTitleSource::Preset, None, Some(worktree.clone()));
+
+        assert_eq!(tab.confine_cwd(Some(escape)), Some(worktree));
+    }
+
+    #[test]
+    fn every_binding_change_bumps_the_generation() {
+        let mut tab = Tab::new("t", None);
+        let start = tab.worktree_generation();
+        assert!(!tab.bind_worktree(None));
+        assert_eq!(tab.worktree_generation(), start);
+        assert!(tab.bind_worktree(Some(std::path::PathBuf::from("wt"))));
+        assert!(tab.bind_worktree(None));
+        assert_eq!(tab.worktree_generation(), start + 2);
     }
 }

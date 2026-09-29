@@ -6,7 +6,9 @@ use paneflow_config::schema::SessionId;
 
 use crate::PaneFlowApp;
 use crate::ai_types::AgentState;
+use crate::app::diff_dock::code::view::CodeView;
 use crate::app::hosted_sessions::{pane_terminals, tab_terminals};
+use crate::app::unsaved_dialog::UnsavedContinuation;
 use crate::pane::Pane;
 use crate::settings::components::{
     ModalKey, confirmation_list, confirmation_warning, destructive_button, modal_backdrop,
@@ -109,7 +111,36 @@ impl CloseDialogRow {
 pub(crate) struct CloseDialog {
     target: CloseTarget,
     rows: Vec<CloseDialogRow>,
+    discard: Vec<Entity<CodeView>>,
+    tabs: Vec<u64>,
     focused: bool,
+}
+
+pub(crate) const STALE_CLOSE_MESSAGE: &str =
+    "Nothing was closed: the tabs changed while the dialog was open";
+
+pub(crate) fn close_target_tabs(
+    workspaces: &[crate::workspace::Workspace],
+    target: &CloseTarget,
+) -> Vec<u64> {
+    match target {
+        CloseTarget::Tab { ws_idx, tab_idx } => workspaces
+            .get(*ws_idx)
+            .and_then(|ws| ws.tabs().get(*tab_idx))
+            .map(|tab| vec![tab.id])
+            .unwrap_or_default(),
+        CloseTarget::Workspace(idx) => workspaces
+            .get(*idx)
+            .map(|ws| ws.tabs().iter().map(|tab| tab.id).collect())
+            .unwrap_or_default(),
+        _ => Vec::new(),
+    }
+}
+
+fn discard_unsaved(views: Vec<Entity<CodeView>>, cx: &mut gpui::App) {
+    for view in views {
+        view.update(cx, |view, _| view.discard_unsaved());
+    }
 }
 
 impl PaneFlowApp {
@@ -208,18 +239,39 @@ impl PaneFlowApp {
         window: Option<&mut Window>,
         cx: &mut Context<Self>,
     ) {
+        if self.close_dialog.is_some() || self.unsaved_dialog.is_some() {
+            return;
+        }
+        let unsaved = self.unsaved_views_for_close(&target, cx);
+        if self.ask_about_unsaved(unsaved, UnsavedContinuation::Close(target.clone()), cx) {
+            return;
+        }
+        self.request_close_checked(target, Vec::new(), window, cx);
+    }
+
+    pub(crate) fn request_close_checked(
+        &mut self,
+        target: CloseTarget,
+        discard: Vec<Entity<CodeView>>,
+        window: Option<&mut Window>,
+        cx: &mut Context<Self>,
+    ) {
         if self.close_dialog.is_some() {
             return;
         }
         let rows = self.close_dialog_rows(&target, cx);
         if rows.is_empty() {
+            discard_unsaved(discard, cx);
             self.perform_close(target, CloseIntent::Stop, window, cx);
             return;
         }
         self.dismiss_transient_surfaces();
+        let tabs = close_target_tabs(&self.workspaces, &target);
         self.close_dialog = Some(CloseDialog {
             target,
             rows,
+            discard,
+            tabs,
             focused: false,
         });
         cx.notify();
@@ -294,6 +346,12 @@ impl PaneFlowApp {
         let Some(dialog) = self.close_dialog.take() else {
             return;
         };
+        if close_target_tabs(&self.workspaces, &dialog.target) != dialog.tabs {
+            self.show_toast(STALE_CLOSE_MESSAGE, cx);
+            cx.notify();
+            return;
+        }
+        discard_unsaved(dialog.discard, cx);
         self.perform_close(dialog.target, intent, Some(window), cx);
         cx.notify();
     }
@@ -452,6 +510,45 @@ pub(crate) fn close_summary(busy: usize, unknown: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[gpui::test]
+    fn a_close_target_resolves_to_other_tabs_once_the_indices_shift(cx: &mut gpui::TestAppContext) {
+        use crate::workspace::{Tab, Workspace};
+        use gpui::AppContext as _;
+
+        let cx = cx.add_empty_window();
+        let mut workspaces: Vec<Workspace> = (1..=2)
+            .map(|id| {
+                let terminal = cx.new(|cx| TerminalView::display_only_for_test(id, cx));
+                let pane = cx.new(|cx| Pane::new(terminal, id, cx));
+                Workspace::with_id(id, format!("ws{id}"), pane)
+            })
+            .collect();
+        assert!(workspaces[0].open_tab(Tab::new("second", None)));
+        let tab = CloseTarget::Tab {
+            ws_idx: 0,
+            tab_idx: 1,
+        };
+        let workspace = CloseTarget::Workspace(1);
+        let tab_seen = close_target_tabs(&workspaces, &tab);
+        let workspace_seen = close_target_tabs(&workspaces, &workspace);
+        assert_eq!(tab_seen.len(), 1);
+        assert_eq!(workspace_seen.len(), 1);
+
+        workspaces[0].close_tab(0);
+        assert_ne!(
+            close_target_tabs(&workspaces, &tab),
+            tab_seen,
+            "a closed neighbor shifts the tab index to another tab"
+        );
+
+        workspaces.remove(0);
+        assert_ne!(
+            close_target_tabs(&workspaces, &workspace),
+            workspace_seen,
+            "a removed workspace shifts the workspace index"
+        );
+    }
 
     fn known(state: Option<AgentState>) -> AgentReading {
         AgentReading::Known(state)

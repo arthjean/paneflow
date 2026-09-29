@@ -275,7 +275,7 @@ impl PaneFlowApp {
         Option<paneflow_config::schema::SessionState>,
         Option<SessionCorruptionInfo>,
     ) {
-        let pending = path.with_extension("json.pending");
+        let pending = pending_session_path(path);
         let (recovered, recovery_error) = Self::load_session_at(&pending);
         if recovered.is_some() {
             log::info!(
@@ -499,7 +499,7 @@ impl PaneFlowApp {
                     tab_session.title.clone(),
                     restored_tab_title_source(tab_session, &ws_session.custom_buttons),
                     root,
-                    restored_tab_worktree(tab_session.worktree.as_deref()),
+                    restored_tab_worktree(tab_session),
                 ));
             }
             let mut workspace =
@@ -676,7 +676,7 @@ enum SessionRead {
 
 fn read_session_capped(path: &Path) -> std::io::Result<SessionRead> {
     use std::io::Read;
-    let file = match std::fs::File::open(path) {
+    let file = match paneflow_home::open_for_reading(path) {
         Ok(file) => file,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(SessionRead::Missing),
         Err(e) => return Err(e),
@@ -899,8 +899,11 @@ fn rehydrate_managed_worktree(
     )
 }
 
-fn restored_tab_worktree(path: Option<&str>) -> Option<PathBuf> {
-    let path = PathBuf::from(path.filter(|p| !p.is_empty())?);
+fn restored_tab_worktree(tab: &paneflow_config::schema::TabSession) -> Option<PathBuf> {
+    let path = match tab.worktree_raw.as_deref() {
+        Some(raw) => crate::runtime_paths::path_from_raw(raw)?,
+        None => PathBuf::from(tab.worktree.as_deref().filter(|p| !p.is_empty())?),
+    };
     path.is_dir().then_some(path)
 }
 
@@ -963,7 +966,7 @@ fn retry_session_io<T>(mut operation: impl FnMut() -> std::io::Result<T>) -> std
 fn archive_unrestored_session(path: &Path) -> anyhow::Result<Vec<PathBuf>> {
     let _guard = session_write_guard();
     let mut backups = Vec::new();
-    for source in [path.to_path_buf(), path.with_extension("json.pending")] {
+    for source in [path.to_path_buf(), pending_session_path(path)] {
         if let Some(backup) = archive_session_file(&source)? {
             backups.push(backup);
         }
@@ -973,8 +976,8 @@ fn archive_unrestored_session(path: &Path) -> anyhow::Result<Vec<PathBuf>> {
 
 fn archive_session_file(path: &Path) -> anyhow::Result<Option<PathBuf>> {
     use std::io::Write as _;
-    let mut source = match retry_session_io(|| std::fs::File::open(path)) {
-        Ok(file) => file,
+    let mut source = match retry_session_io(|| paneflow_home::open_regular_for_reading(path)) {
+        Ok((file, _)) => file,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(error).context("Could not read the previous session"),
     };
@@ -989,10 +992,7 @@ fn archive_session_file(path: &Path) -> anyhow::Result<Option<PathBuf>> {
         std::process::id()
     ));
     let backup = path.with_file_name(backup_name);
-    let mut target = std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&backup)?;
+    let mut target = create_private_file(&backup)?;
     std::io::copy(&mut source, &mut target).context("Could not back up the previous session")?;
     target.flush()?;
     target.sync_all()?;
@@ -1022,54 +1022,35 @@ fn write_session_json_inner(
     path: &Path,
     state: &paneflow_config::schema::SessionState,
 ) -> anyhow::Result<()> {
-    use std::io::Write as _;
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).context("Could not create the session directory")?;
+        paneflow_home::create_private_dir_all(parent)
+            .context("Could not create the session directory")?;
     }
     let json = serde_json::to_vec_pretty(state)?;
     anyhow::ensure!(
         json.len() as u64 <= MAX_SESSION_SIZE_BYTES,
         "The session exceeds the size that Paneflow can restore"
     );
-    let tmp_path = session_tmp_path(path);
-    let mut file = std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&tmp_path)
-        .context("Could not create the new session file")?;
-    let result = file.write_all(&json).and_then(|()| file.sync_all());
-    drop(file);
-    if let Err(error) = result {
-        let _ = std::fs::remove_file(&tmp_path);
-        return Err(error).context("Could not write the new session");
-    }
-    let recovery = path.with_extension("json.pending");
-    retry_session_io(|| std::fs::rename(&tmp_path, &recovery)).with_context(|| {
-        format!(
-            "Could not stage the session for recovery. The new session is preserved at {}",
-            tmp_path.display()
-        )
-    })?;
-    retry_session_io(|| std::fs::rename(&recovery, path)).with_context(|| {
+    let mut staged =
+        paneflow_home::stage_write(path, &json).context("Could not write the new session")?;
+    let target = staged.target().to_path_buf();
+    let recovery = pending_session_path(&target);
+    retry_session_io(|| staged.promote(&recovery))
+        .context("Could not stage the session for recovery")?;
+    retry_session_io(|| std::fs::rename(&recovery, &target)).with_context(|| {
         format!(
             "Could not replace {}. The new session is preserved at {}",
-            path.display(),
+            target.display(),
             recovery.display()
         )
     })?;
     Ok(())
 }
 
-fn session_tmp_path(path: &Path) -> PathBuf {
-    let seq = SESSION_TMP_COUNTER.fetch_add(1, Ordering::Relaxed);
-    let Some(parent) = path.parent() else {
-        return path.with_extension(format!("json.tmp.{}.{}", std::process::id(), seq));
-    };
-    let file_name = path
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("session.json");
-    parent.join(format!(".{file_name}.tmp.{}.{}", std::process::id(), seq))
+fn pending_session_path(path: &Path) -> PathBuf {
+    paneflow_home::resolve_write_target(path)
+        .unwrap_or_else(|_| path.to_path_buf())
+        .with_extension("json.pending")
 }
 
 fn serde_category_tag(err: &serde_json::Error) -> &'static str {
@@ -1094,7 +1075,7 @@ fn write_corruption_backup(
             ));
         }
     };
-    std::fs::create_dir_all(parent)?;
+    paneflow_home::create_private_dir_all(parent)?;
 
     let ts = match SystemTime::now().duration_since(UNIX_EPOCH) {
         Ok(d) => d.as_nanos(),
@@ -1109,10 +1090,24 @@ fn write_corruption_backup(
         "{stem}.corrupted-{ts}-{}-{seq}",
         std::process::id()
     ));
-    std::fs::write(&backup, contents)?;
+    {
+        use std::io::Write as _;
+        create_private_file(&backup)?.write_all(contents)?;
+    }
 
     rotate_corruption_backups(parent, stem);
     Ok(Some(backup))
+}
+
+fn create_private_file(path: &Path) -> std::io::Result<std::fs::File> {
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    options.open(path)
 }
 
 fn rotate_corruption_backups(dir: &Path, stem: &str) {
@@ -1127,7 +1122,13 @@ fn rotate_corruption_backups(dir: &Path, stem: &str) {
                     .is_some_and(|n| n.starts_with(&prefix))
             })
             .collect(),
-        Err(_) => return,
+        Err(error) => {
+            log::warn!(
+                "session backup rotation: could not list {}: {error}",
+                dir.display()
+            );
+            return;
+        }
     };
 
     if backups.len() <= MAX_CORRUPTION_BACKUPS {
@@ -1160,6 +1161,89 @@ fn corruption_backup_timestamp(suffix: &str) -> Option<u128> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    fn mkfifo(path: &std::path::Path) {
+        let made = std::process::Command::new("mkfifo")
+            .arg(path)
+            .status()
+            .is_ok_and(|status| status.success());
+        assert!(made, "mkfifo {}", path.display());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_fifo_session_or_pending_save_is_refused_at_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let session = dir.path().join("session.json");
+        mkfifo(&session);
+        mkfifo(&pending_session_path(&session));
+        let started = std::time::Instant::now();
+        assert_eq!(
+            read_session_capped(&session).unwrap(),
+            SessionRead::Rejected("non_regular")
+        );
+        assert_eq!(
+            read_session_capped(&pending_session_path(&session)).unwrap(),
+            SessionRead::Rejected("non_regular")
+        );
+        let (state, _) = PaneFlowApp::load_session_at(&session);
+        assert!(state.is_none(), "startup continues with the default state");
+        assert!(started.elapsed() < std::time::Duration::from_millis(100));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn session_backups_are_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let session = dir.path().join("paneflow").join("session.json");
+        let backup = write_corruption_backup(&session, b"{broken")
+            .unwrap()
+            .unwrap();
+        let mode = |path: &Path| std::fs::metadata(path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode(&backup), 0o600);
+        assert_eq!(mode(session.parent().unwrap()), 0o700);
+    }
+
+    #[test]
+    fn a_tab_worktree_with_a_non_utf8_path_is_restored_exactly() {
+        let tmp = tempfile::tempdir().unwrap();
+        #[cfg(unix)]
+        let name = {
+            use std::os::unix::ffi::OsStrExt;
+            std::ffi::OsStr::from_bytes(b"feat-caf\xe9").to_os_string()
+        };
+        #[cfg(windows)]
+        let name = {
+            use std::os::windows::ffi::OsStringExt;
+            let mut wide: Vec<u16> = "feat-caf".encode_utf16().collect();
+            wide.push(0xD800);
+            std::ffi::OsString::from_wide(&wide)
+        };
+        let worktree = tmp.path().join(name);
+        if std::fs::create_dir(&worktree).is_err() {
+            return;
+        }
+        let saved = paneflow_config::schema::TabSession {
+            worktree: Some(worktree.to_string_lossy().into_owned()),
+            worktree_raw: Some(crate::runtime_paths::path_to_raw(&worktree)),
+            ..Default::default()
+        };
+        let reloaded: paneflow_config::schema::TabSession =
+            serde_json::from_str(&serde_json::to_string(&saved).unwrap()).unwrap();
+
+        assert_eq!(restored_tab_worktree(&reloaded), Some(worktree.clone()));
+        let lossy_only = paneflow_config::schema::TabSession {
+            worktree_raw: None,
+            ..reloaded
+        };
+        assert_eq!(
+            restored_tab_worktree(&lossy_only),
+            None,
+            "without the raw form the binding would be lost"
+        );
+    }
 
     fn platform_root() -> PathBuf {
         std::env::current_dir()
@@ -2281,6 +2365,44 @@ mod tests {
             restored.teardown,
             crate::workspace::worktree::TeardownPolicy::Keep,
             "unknown restored policy must not become auto-remove"
+        );
+    }
+
+    fn link_to(target: &std::path::Path, link: &std::path::Path) {
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(target, link).expect("symlink");
+        #[cfg(windows)]
+        std::os::windows::fs::symlink_file(target, link).expect("symlink");
+    }
+
+    fn is_link(path: &std::path::Path) -> bool {
+        std::fs::symlink_metadata(path).is_ok_and(|meta| meta.file_type().is_symlink())
+    }
+
+    #[test]
+    fn a_symlinked_session_stays_a_link_and_recovers_the_pending_save_beside_its_target() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let store = tmp.path().join("store");
+        std::fs::create_dir_all(&store).expect("store");
+        let target = store.join("session.json");
+        persist_fixture(&target, &session_with_tabs(1));
+        let path = tmp.path().join("session.json");
+        link_to(&target, &path);
+
+        let saved = session_with_tabs(2);
+        persist_fixture(&path, &saved);
+
+        assert!(is_link(&path));
+        assert_eq!(PaneFlowApp::load_session_at(&target).0, Some(saved));
+        assert!(!tmp.path().join("session.json.pending").exists());
+
+        let interrupted = session_with_tabs(3);
+        let staging = store.join("staging.json");
+        persist_fixture(&staging, &interrupted);
+        std::fs::rename(&staging, store.join("session.json.pending")).expect("pending");
+        assert_eq!(
+            PaneFlowApp::load_session_with_recovery_at(&path).0,
+            Some(interrupted)
         );
     }
 }

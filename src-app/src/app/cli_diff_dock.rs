@@ -6,6 +6,7 @@ use gpui::{
 
 use crate::PaneFlowApp;
 use crate::app::diff_dock::code::controls::{EditorDisplay, editor_display, set_editor_display};
+use crate::app::diff_dock::code::view::CodeView;
 use crate::app::diff_dock::{DIFF_DOCK_PANEL_MIN_WIDTH, DiffDockData, DiffDockTab};
 
 const PANE_GRID_RESERVED_WIDTH: f32 =
@@ -54,6 +55,26 @@ impl DiffDockSlot {
     }
 }
 
+pub(crate) fn unsaved_file_views(
+    tabs: &[DiffDockTab],
+    cx: &gpui::App,
+) -> Vec<gpui::Entity<CodeView>> {
+    tabs.iter()
+        .filter_map(|tab| match tab {
+            DiffDockTab::File(view) if view.read(cx).is_dirty() => Some(view.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+pub(crate) fn take_unsaved_tabs(tabs: &mut Vec<DiffDockTab>, cx: &gpui::App) -> Vec<DiffDockTab> {
+    let (unsaved, rest) = std::mem::take(tabs)
+        .into_iter()
+        .partition(|tab| matches!(tab, DiffDockTab::File(view) if view.read(cx).is_dirty()));
+    *tabs = rest;
+    unsaved
+}
+
 impl PaneFlowApp {
     pub(crate) fn sync_diff_dock_session(&mut self, cx: &mut Context<Self>) {
         let active = self.active_session_id();
@@ -63,22 +84,87 @@ impl PaneFlowApp {
         let previous = self.diff_dock.owner;
         self.diff_dock.owner = active;
         self.park_live_diff_dock(previous, cx);
-        self.prune_parked_diff_docks();
+        self.prune_parked_diff_docks(cx);
         self.restore_diff_dock(active, cx);
+    }
+
+    pub(crate) fn unsaved_views_of_tab(
+        &self,
+        tab_id: u64,
+        cx: &gpui::App,
+    ) -> Vec<gpui::Entity<CodeView>> {
+        if self.diff_dock.owner == Some(tab_id) {
+            return unsaved_file_views(&self.diff_dock.diff_tabs, cx);
+        }
+        self.diff_dock
+            .parked
+            .get(&tab_id)
+            .map(|slot| unsaved_file_views(&slot.tabs, cx))
+            .unwrap_or_default()
+    }
+
+    pub(crate) fn all_unsaved_views(&self, cx: &gpui::App) -> Vec<gpui::Entity<CodeView>> {
+        let mut views = unsaved_file_views(&self.diff_dock.diff_tabs, cx);
+        for slot in self.diff_dock.parked.values() {
+            views.extend(unsaved_file_views(&slot.tabs, cx));
+        }
+        views
+    }
+
+    pub(crate) fn parked_diff_dock_data(&mut self, tab_id: u64) -> Option<&mut DiffDockData> {
+        self.diff_dock.parked.get_mut(&tab_id)?.data.as_mut()
+    }
+
+    pub(crate) fn transfer_diff_dock(&mut self, from: u64, to: u64) {
+        if self.diff_dock.owner == Some(from) {
+            self.diff_dock.owner = Some(to);
+        } else if let Some(slot) = self.diff_dock.parked.remove(&from) {
+            self.diff_dock.parked.insert(to, slot);
+        }
+    }
+
+    fn keep_rescued_diff_tabs(&mut self, rescued: Vec<DiffDockTab>, cx: &mut Context<Self>) {
+        if rescued.is_empty() {
+            return;
+        }
+        let count = rescued.len();
+        self.diff_dock.diff_tabs.extend(rescued);
+        self.diff_dock.picker = false;
+        self.diff_dock.picked = true;
+        self.show_toast(
+            format!(
+                "Kept {} from a closed tab",
+                super::plural(count, "unsaved file", "unsaved files")
+            ),
+            cx,
+        );
     }
 
     pub(crate) fn active_session_id(&self) -> Option<u64> {
         self.active_workspace().map(|ws| ws.active_tab().id)
     }
 
-    pub(crate) fn prune_parked_diff_docks(&mut self) {
-        let workspaces = &self.workspaces;
-        self.diff_dock.parked.retain(|id, _| {
-            workspaces
-                .iter()
-                .flat_map(|ws| ws.tabs())
-                .any(|tab| tab.id == *id)
-        });
+    pub(crate) fn prune_parked_diff_docks(&mut self, cx: &mut Context<Self>) {
+        let live: std::collections::HashSet<u64> = self
+            .workspaces
+            .iter()
+            .flat_map(|ws| ws.tabs())
+            .map(|tab| tab.id)
+            .collect();
+        let orphaned: Vec<u64> = self
+            .diff_dock
+            .parked
+            .keys()
+            .filter(|id| !live.contains(id))
+            .copied()
+            .collect();
+        let mut rescued = Vec::new();
+        for id in orphaned {
+            if let Some(mut slot) = self.diff_dock.parked.remove(&id) {
+                rescued.extend(take_unsaved_tabs(&mut slot.tabs, cx));
+            }
+        }
+        self.keep_rescued_diff_tabs(rescued, cx);
     }
 
     fn park_live_diff_dock(&mut self, owner: Option<u64>, cx: &mut Context<Self>) {
@@ -106,7 +192,12 @@ impl PaneFlowApp {
                 .any(|tab| tab.id == *id)
         });
         match owner {
-            None => drop(slot),
+            None => {
+                let mut slot = slot;
+                let rescued = take_unsaved_tabs(&mut slot.tabs, cx);
+                drop(slot);
+                self.keep_rescued_diff_tabs(rescued, cx);
+            }
             Some(id) if slot.is_idle() => {
                 self.diff_dock.parked.remove(&id);
             }
@@ -120,9 +211,11 @@ impl PaneFlowApp {
         let Some(slot) = session_id.and_then(|id| self.diff_dock.parked.remove(&id)) else {
             return;
         };
-        self.diff_dock.picker = slot.picker;
-        self.diff_dock.picked = slot.picked;
+        let rescued = std::mem::take(&mut self.diff_dock.diff_tabs);
+        self.diff_dock.picker = slot.picker && rescued.is_empty();
+        self.diff_dock.picked = slot.picked || !rescued.is_empty();
         self.diff_dock.diff_tabs = slot.tabs;
+        self.diff_dock.diff_tabs.extend(rescued);
         self.diff_dock.diff_active_tab = slot.active_tab;
         let cwd = slot
             .data
@@ -410,6 +503,40 @@ impl PaneFlowApp {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[gpui::test]
+    fn a_dock_without_an_owner_hands_back_every_unsaved_file(cx: &mut gpui::TestAppContext) {
+        use gpui::{AppContext as _, EntityInputHandler as _};
+
+        let (dirty, cx) = cx.add_window_view(|_window, cx| {
+            CodeView::ready_for_test("/repo/dirty.rs".into(), "fn main() {}\n", cx)
+        });
+        dirty.update_in(cx, |view, window, cx| {
+            view.replace_text_in_range(None, "edited ", window, cx);
+        });
+        let clean = cx.new(|cx| CodeView::ready_for_test("/repo/clean.rs".into(), "ok\n", cx));
+        let mut tabs = vec![
+            DiffDockTab::Changes,
+            DiffDockTab::File(clean.clone()),
+            DiffDockTab::File(dirty.clone()),
+        ];
+
+        let (unsaved, rescued) = cx.update(|_window, cx| {
+            (
+                unsaved_file_views(&tabs, cx),
+                take_unsaved_tabs(&mut tabs, cx),
+            )
+        });
+
+        assert_eq!(unsaved, vec![dirty.clone()]);
+        assert_eq!(rescued.len(), 1, "only the modified file is rescued");
+        assert!(matches!(&rescued[0], DiffDockTab::File(view) if *view == dirty));
+        assert_eq!(tabs.len(), 2, "the rest of the slot can be dropped");
+        assert!(
+            cx.update(|_window, cx| dirty.read(cx).is_dirty()),
+            "the rescued view keeps its edits"
+        );
+    }
 
     fn slot(open: bool, picked: bool, tabs: usize) -> DiffDockSlot {
         DiffDockSlot {

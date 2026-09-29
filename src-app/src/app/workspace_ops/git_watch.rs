@@ -1,6 +1,19 @@
 use super::*;
 use notify::Watcher;
 
+const GIT_EVENT_DEBOUNCE: std::time::Duration = std::time::Duration::from_millis(300);
+
+const GIT_EVENT_DEBOUNCE_CAP: std::time::Duration = std::time::Duration::from_secs(2);
+
+fn git_refresh_due(
+    burst_started: std::time::Instant,
+    last_event: std::time::Instant,
+    now: std::time::Instant,
+) -> bool {
+    now.duration_since(last_event) >= GIT_EVENT_DEBOUNCE
+        || now.duration_since(burst_started) >= GIT_EVENT_DEBOUNCE_CAP
+}
+
 impl PaneFlowApp {
     pub(in crate::app) fn watch_git_dir(&mut self, ws: &Workspace) {
         if let Some(ref git_dir) = ws.git_dir {
@@ -61,9 +74,8 @@ impl PaneFlowApp {
     pub(in crate::app) fn spawn_git_event_refresh(cx: &mut Context<Self>) {
         cx.spawn(
             async |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
-                let debounce = std::time::Duration::from_millis(300);
-                let mut last_event = std::time::Instant::now() - debounce;
-                let mut pending = false;
+                let mut last_event = std::time::Instant::now();
+                let mut burst_started: Option<std::time::Instant> = None;
                 let mut pending_git_dirs = std::collections::HashSet::<std::path::PathBuf>::new();
 
                 loop {
@@ -93,14 +105,16 @@ impl PaneFlowApp {
                         Ok(dirs) if !dirs.is_empty() => {
                             pending_git_dirs.extend(dirs);
                             last_event = std::time::Instant::now();
-                            pending = true;
+                            burst_started.get_or_insert(last_event);
                         }
                         Ok(_) => {}
                         Err(_) => break,
                     }
 
-                    if pending && last_event.elapsed() >= debounce {
-                        pending = false;
+                    if burst_started.is_some_and(|started| {
+                        git_refresh_due(started, last_event, std::time::Instant::now())
+                    }) {
+                        burst_started = None;
                         let affected_dirs = std::mem::take(&mut pending_git_dirs);
                         log::debug!(
                             "git watcher: debounced event fired for {} dir(s)",
@@ -215,5 +229,35 @@ impl PaneFlowApp {
         if changed && !refreshed_diff {
             cx.notify();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn a_quiet_repository_refreshes_after_the_debounce() {
+        let start = Instant::now();
+        assert!(!git_refresh_due(
+            start,
+            start,
+            start + Duration::from_millis(100)
+        ));
+        assert!(git_refresh_due(start, start, start + GIT_EVENT_DEBOUNCE));
+    }
+
+    #[test]
+    fn an_index_rewritten_nonstop_still_refreshes_within_two_seconds() {
+        let start = Instant::now();
+        let now = start + GIT_EVENT_DEBOUNCE_CAP;
+        let last_event = now - Duration::from_millis(10);
+        assert!(git_refresh_due(start, last_event, now));
+        assert!(!git_refresh_due(
+            start,
+            last_event,
+            now - Duration::from_millis(20)
+        ));
     }
 }

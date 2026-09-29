@@ -35,7 +35,7 @@ type WatchEvents = mpsc::UnboundedReceiver<notify::Result<notify::Event>>;
 use super::base::{Base, spawn_base_load};
 use super::controls::EditorControls;
 use super::cursor::{self, CodeSelection};
-use super::document::{CodeDocument, ReadOnlyReason, normalize_newlines};
+use super::document::{CodeDocument, LineEnding, ReadOnlyReason, normalize_newlines};
 use super::edit::{self, EditGroup, IndentUnit, TrackerWindow};
 #[cfg(test)]
 use super::element;
@@ -48,7 +48,7 @@ use super::highlight::{
     CodeHighlighter, DeferredParse, HIGHLIGHT_FRAME_BUDGET, HighlightOutcome, SYNC_PARSE_BUDGET,
     spawn_deferred_parse,
 };
-use super::load::{CodeLoadSlot, CodeLoadState, CodeOpen, spawn_code_load};
+use super::load::{CodeLoadError, CodeLoadSlot, CodeLoadState, CodeOpen, spawn_code_load};
 use super::markers::MARKER_COLUMN_W;
 use super::navigation::NavigationState;
 use super::save::{self, FileStamp};
@@ -100,16 +100,33 @@ struct MarkerPopup {
     base_text: String,
 }
 
+#[derive(Clone, Copy, Debug)]
+struct DiskFacts {
+    read_only: Option<ReadOnlyReason>,
+    line_ending: LineEnding,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct DiskMeta {
+    revision: u64,
+    stamp: FileStamp,
+    facts: Option<DiskFacts>,
+}
+
 struct DiskDiff {
     rope: Rope,
-    revision: u64,
+    meta: DiskMeta,
 }
 
 impl DiskDiff {
-    fn of(doc: &CodeDocument) -> Self {
+    fn of(doc: &CodeDocument, stamp: FileStamp) -> Self {
         Self {
             rope: doc.text().clone(),
-            revision: doc.revision(),
+            meta: DiskMeta {
+                revision: doc.revision(),
+                stamp,
+                facts: None,
+            },
         }
     }
 }
@@ -141,11 +158,16 @@ pub(crate) struct CodeView {
     indent: IndentUnit,
     marked: Option<Range<usize>>,
     read_only_flash: Option<Instant>,
-    stamp: Option<FileStamp>,
+    buffer_stamp: Option<FileStamp>,
+    disk_stamp: Option<FileStamp>,
+    disk_generation: u64,
+    reloading: bool,
+    save_after_reload: bool,
     disk: DiskState,
     save_error: Option<String>,
     saving: bool,
     base: Base,
+    base_request: u64,
     tracker: BlockTracker,
     tracker_generation: u64,
     hovered_marker: Option<usize>,
@@ -198,11 +220,16 @@ impl CodeView {
             indent: IndentUnit::Spaces(4),
             marked: None,
             read_only_flash: None,
-            stamp,
+            buffer_stamp: stamp,
+            disk_stamp: stamp,
+            disk_generation: 0,
+            reloading: false,
+            save_after_reload: false,
             disk: DiskState::default(),
             save_error: None,
             saving: false,
             base: Base::None,
+            base_request: 0,
             tracker: BlockTracker::inactive(),
             tracker_generation: 0,
             hovered_marker: None,
@@ -255,11 +282,16 @@ impl CodeView {
             indent: IndentUnit::Spaces(4),
             marked: None,
             read_only_flash: None,
-            stamp: None,
+            buffer_stamp: None,
+            disk_stamp: None,
+            disk_generation: 0,
+            reloading: false,
+            save_after_reload: false,
             disk: DiskState::default(),
             save_error: None,
             saving: false,
             base: Base::None,
+            base_request: 0,
             tracker: BlockTracker::inactive(),
             tracker_generation: 0,
             hovered_marker: None,
@@ -420,7 +452,11 @@ impl CodeView {
         self.saved_mark = edit::HistoryMark::default();
         self.marked = None;
         self.read_only_flash = None;
-        self.stamp = None;
+        self.buffer_stamp = None;
+        self.disk_stamp = None;
+        self.disk_generation = self.disk_generation.wrapping_add(1);
+        self.reloading = false;
+        self.save_after_reload = false;
         self.disk = DiskState::default();
         self.save_error = None;
         self.saving = false;
@@ -451,7 +487,8 @@ impl CodeView {
                 match outcome {
                     Ok(loaded) => {
                         view.indent = loaded.indent;
-                        view.stamp = loaded.stamp;
+                        view.buffer_stamp = loaded.stamp;
+                        view.disk_stamp = loaded.stamp;
                         view.state = CodeLoadState::Ready(Box::new(loaded));
                         view.start_initial_parse(cx);
                         view.start_base_load(cx);

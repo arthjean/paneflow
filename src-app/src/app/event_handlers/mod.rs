@@ -14,6 +14,7 @@ mod cwd_tracking;
 mod pane_scan;
 mod session_reaper;
 
+pub(crate) use cwd_tracking::CwdProbeSequence;
 use pane_scan::*;
 
 pub(crate) fn split_pane_at_edge(

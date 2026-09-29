@@ -155,34 +155,15 @@ pub fn save(state: &MarkdownState) -> std::io::Result<()> {
     let Some(path) = state_file_path() else {
         return Ok(());
     };
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    let json = serde_json::to_string_pretty(state)
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
-    let tmp = temp_path_for(&path);
-    if let Err(e) = std::fs::write(&tmp, &json) {
-        let _ = std::fs::remove_file(&tmp);
-        return Err(e);
-    }
-    if let Err(e) = std::fs::rename(&tmp, &path) {
-        log::warn!(
-            "markdown_state.json: rename failed ({}); leaving prior state",
-            e
-        );
-        let _ = std::fs::remove_file(&tmp);
-        return Err(e);
-    }
-    Ok(())
+    save_to(&path, state)
 }
 
-fn temp_path_for(path: &Path) -> PathBuf {
-    let parent = path.parent().unwrap_or_else(|| Path::new("."));
-    let filename = path
-        .file_name()
-        .map(|name| name.to_string_lossy().into_owned())
-        .unwrap_or_else(|| "markdown_state.json".to_string());
-    parent.join(format!(".{filename}.tmp.{}", std::process::id()))
+fn save_to(path: &Path, state: &MarkdownState) -> std::io::Result<()> {
+    let json = serde_json::to_string_pretty(state)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+    paneflow_home::write_atomically(path, json.as_bytes()).inspect_err(|e| {
+        log::warn!("markdown_state.json: write failed ({e}); leaving prior state");
+    })
 }
 
 #[cfg(test)]
@@ -272,5 +253,35 @@ mod tests {
         let state = load_from_path(dir.path());
         assert!(state.offsets.is_empty());
         assert_eq!(state.version, 1);
+    }
+
+    fn link_to(target: &std::path::Path, link: &std::path::Path) {
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(target, link).expect("symlink");
+        #[cfg(windows)]
+        std::os::windows::fs::symlink_file(target, link).expect("symlink");
+    }
+
+    fn is_link(path: &std::path::Path) -> bool {
+        std::fs::symlink_metadata(path).is_ok_and(|meta| meta.file_type().is_symlink())
+    }
+
+    #[test]
+    fn saving_through_a_symlink_keeps_the_link() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let target = dir.path().join("real.json");
+        std::fs::write(&target, "{}").expect("seed");
+        let link = dir.path().join("markdown_state.json");
+        link_to(&target, &link);
+        let mut state = MarkdownState::default();
+        state.record_offset(Path::new("/notes.md"), 42.0);
+
+        save_to(&link, &state).expect("save");
+
+        assert!(is_link(&link));
+        assert_eq!(
+            load_from_path(&target).lookup_offset(Path::new("/notes.md")),
+            Some(42.0)
+        );
     }
 }

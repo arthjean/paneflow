@@ -139,6 +139,10 @@ impl DiffDockData {
         self.unified_loaded || self.split_loaded
     }
 
+    pub(super) fn mark_stale(&mut self) {
+        self.loading = true;
+    }
+
     pub(super) fn message(cwd: String, error: String) -> Self {
         let mut data = Self::loading(cwd);
         data.loading = false;

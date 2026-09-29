@@ -577,7 +577,14 @@ impl PaneFlowApp {
                         .and_then(|i| i.as_u64())
                         .map(|i| i as usize)
                         .unwrap_or(self.active_idx);
-                    if idx < self.workspaces.len() {
+                    let unsaved = if idx < self.workspaces.len() {
+                        self.unsaved_file_names_in_workspace(idx, cx)
+                    } else {
+                        Vec::new()
+                    };
+                    if let Some(error) = crate::app::unsaved_dialog::unsaved_close_error(&unsaved) {
+                        serde_json::json!({"error": error, "unsaved": unsaved})
+                    } else if idx < self.workspaces.len() {
                         if let Some(dir) = self.workspaces[idx].git_dir.clone() {
                             self.unwatch_git_dir(&dir);
                         }

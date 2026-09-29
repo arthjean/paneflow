@@ -230,6 +230,7 @@ impl PaneFlowApp {
         let mut changed = false;
         for workspace in &mut self.workspaces {
             if workspace.cwd == cwd {
+                let stats = stats.clone().or_previous(&workspace.git_stats);
                 if workspace.git_branch != branch {
                     workspace.git_branch = branch.clone();
                     changed = true;
@@ -260,6 +261,9 @@ impl PaneFlowApp {
         cwd: &str,
         stats: crate::workspace::GitDiffStats,
     ) -> bool {
+        if stats.unavailable {
+            return false;
+        }
         let mut changed = false;
         for workspace in &mut self.workspaces {
             if workspace.cwd == cwd && workspace.git_stats != stats {
@@ -383,8 +387,8 @@ impl PaneFlowApp {
         if worktrees.is_empty() || !self.cached_config.worktrees.auto_remove_enabled() {
             return;
         }
-        cx.spawn(async move |_this, _cx: &mut gpui::AsyncApp| {
-            smol::unblock(move || {
+        cx.spawn(async move |this, cx: &mut gpui::AsyncApp| {
+            let kept = smol::unblock(move || {
                 let worktrees = match crate::terminal::host_link::live_sessions() {
                     crate::terminal::host_link::LiveSessionProbe::Sessions(sessions) => {
                         let cwds: Vec<std::path::PathBuf> =
@@ -394,12 +398,20 @@ impl PaneFlowApp {
                     crate::terminal::host_link::LiveSessionProbe::NoHost => worktrees,
                     crate::terminal::host_link::LiveSessionProbe::Unknown(error) => {
                         log::warn!("worktree teardown skipped: live session probe failed: {error}");
-                        return;
+                        return Vec::new();
                     }
                 };
                 crate::workspace::worktree::teardown_all(worktrees)
             })
             .await;
+            if kept.is_empty() {
+                return;
+            }
+            let _ = this.update(cx, |app: &mut Self, cx: &mut Context<Self>| {
+                for message in kept {
+                    app.show_toast(message, cx);
+                }
+            });
         })
         .detach();
     }

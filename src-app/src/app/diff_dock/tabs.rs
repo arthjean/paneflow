@@ -1,4 +1,5 @@
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 use gpui::{AppContext, Context, Focusable, Window};
 
@@ -7,6 +8,9 @@ use super::model::{DiffDockTab, MAX_DIFF_FILE_TABS};
 use crate::PaneFlowApp;
 use crate::app::close_policy::CloseTarget;
 use crate::terminal::{TerminalEvent, TerminalView};
+
+const CLOSE_ARM_DELAY: Duration = Duration::from_millis(400);
+const CLOSE_ARM_EXPIRY: Duration = Duration::from_secs(4);
 
 impl PaneFlowApp {
     pub(crate) fn diff_file_tab_active(&self) -> bool {
@@ -192,6 +196,7 @@ impl PaneFlowApp {
             self.diff_dock.picked = true;
             self.diff_dock.diff_active_tab = index;
             self.diff_dock.diff_tab_close_armed = None;
+            self.diff_dock.vertical_scrollbar.cancel_drag();
             cx.notify();
         }
     }
@@ -205,14 +210,32 @@ impl PaneFlowApp {
         if index >= self.diff_dock.diff_tabs.len() {
             return;
         }
-        if close_arms_first(
+        let now = Instant::now();
+        match close_click(
             &self.diff_tab_facts(cx),
             index,
             self.diff_dock.diff_tab_close_armed,
+            now,
         ) {
-            self.diff_dock.diff_tab_close_armed = Some(index);
-            cx.notify();
-            return;
+            CloseClick::Close => {}
+            CloseClick::Ignore => return,
+            CloseClick::Arm => {
+                self.diff_dock.diff_tab_close_armed = Some((index, now));
+                cx.spawn(
+                    async move |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
+                        cx.background_executor().timer(CLOSE_ARM_EXPIRY).await;
+                        let _ = this.update(cx, |app: &mut Self, cx: &mut Context<Self>| {
+                            if app.diff_dock.diff_tab_close_armed == Some((index, now)) {
+                                app.diff_dock.diff_tab_close_armed = None;
+                                cx.notify();
+                            }
+                        });
+                    },
+                )
+                .detach();
+                cx.notify();
+                return;
+            }
         }
         self.request_close(CloseTarget::DiffTerminal(index), Some(window), cx);
     }
@@ -248,6 +271,7 @@ impl PaneFlowApp {
         self.diff_dock.diff_active_tab =
             active_tab_after_close(self.diff_dock.diff_active_tab, index);
         self.diff_dock.diff_tab_close_armed = None;
+        self.diff_dock.vertical_scrollbar.cancel_drag();
         if self.diff_dock.diff_tabs.is_empty() {
             self.diff_dock.picker = true;
             self.diff_dock.picked = false;
@@ -284,12 +308,39 @@ pub(super) fn file_tab_eviction(facts: &[DiffTabFact], active: usize) -> Option<
     })
 }
 
-pub(super) fn close_arms_first(facts: &[DiffTabFact], index: usize, armed: Option<usize>) -> bool {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum CloseClick {
+    Arm,
+    Ignore,
+    Close,
+}
+
+pub(super) fn close_click(
+    facts: &[DiffTabFact],
+    index: usize,
+    armed: Option<(usize, Instant)>,
+    now: Instant,
+) -> CloseClick {
     let dirty = matches!(
         facts.get(index),
         Some(DiffTabFact::File { dirty: true, .. })
     );
-    dirty && armed != Some(index)
+    if !dirty {
+        return CloseClick::Close;
+    }
+    match armed {
+        Some((armed, at)) if armed == index => {
+            let elapsed = now.saturating_duration_since(at);
+            if elapsed < CLOSE_ARM_DELAY {
+                CloseClick::Ignore
+            } else if elapsed <= CLOSE_ARM_EXPIRY {
+                CloseClick::Close
+            } else {
+                CloseClick::Arm
+            }
+        }
+        _ => CloseClick::Arm,
+    }
 }
 
 pub(super) fn active_tab_after_close(active: usize, closed: usize) -> usize {
@@ -369,12 +420,50 @@ mod tests {
             DiffTabFact::Fixed,
         ];
 
-        assert!(close_arms_first(&facts, 1, None));
-        assert!(!close_arms_first(&facts, 1, Some(1)));
-        assert!(close_arms_first(&facts, 1, Some(2)));
-        assert!(!close_arms_first(&facts, 2, None));
-        assert!(!close_arms_first(&facts, 3, None));
-        assert!(!close_arms_first(&facts, 9, None));
+        let at = Instant::now();
+        let later = |ms: u64| at + Duration::from_millis(ms);
+
+        assert_eq!(close_click(&facts, 1, None, at), CloseClick::Arm);
+        assert_eq!(
+            close_click(&facts, 1, Some((1, at)), later(500)),
+            CloseClick::Close
+        );
+        assert_eq!(
+            close_click(&facts, 1, Some((2, at)), later(500)),
+            CloseClick::Arm
+        );
+        assert_eq!(close_click(&facts, 2, None, at), CloseClick::Close);
+        assert_eq!(close_click(&facts, 3, None, at), CloseClick::Close);
+        assert_eq!(close_click(&facts, 9, None, at), CloseClick::Close);
+    }
+
+    #[test]
+    fn a_fast_double_click_never_closes_a_modified_tab() {
+        let facts = [DiffTabFact::Fixed, file("/repo/dirty.rs", true)];
+        let at = Instant::now();
+        let later = |ms: u64| at + Duration::from_millis(ms);
+
+        assert_eq!(
+            close_click(&facts, 1, Some((1, at)), later(120)),
+            CloseClick::Ignore
+        );
+        assert_eq!(
+            close_click(&facts, 1, Some((1, at)), later(399)),
+            CloseClick::Ignore
+        );
+        assert_eq!(
+            close_click(&facts, 1, Some((1, at)), later(400)),
+            CloseClick::Close
+        );
+        assert_eq!(
+            close_click(&facts, 1, Some((1, at)), later(4000)),
+            CloseClick::Close
+        );
+        assert_eq!(
+            close_click(&facts, 1, Some((1, at)), later(4001)),
+            CloseClick::Arm,
+            "an arming older than four seconds has expired"
+        );
     }
 
     #[test]

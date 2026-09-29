@@ -84,6 +84,7 @@ impl CodeView {
         deferred: Option<DeferredParse>,
         cx: &mut Context<Self>,
     ) {
+        self.popup = None;
         if let Some(doc) = self.state.document() {
             self.selection = CodeSelection {
                 anchor: cursor::clamp(doc, after.anchor),

@@ -265,7 +265,7 @@ impl PaneFlowApp {
         self.sync_broadcast_stripes(cx);
         self.flush_pending_prefill(cx);
         self.sync_pending_chips(cx);
-        self.prune_parked_diff_docks();
+        self.prune_parked_diff_docks(cx);
         self.prune_worktree_states();
         if let Some(record) = record {
             let tab_id = record.tab_id;
@@ -593,6 +593,15 @@ impl PaneFlowApp {
             }
             return;
         }
+        let emptied_tab = pruned
+            .is_none()
+            .then(|| {
+                self.workspaces[src_ws_idx]
+                    .tabs()
+                    .get(src_tab_idx)
+                    .map(|tab| tab.id)
+            })
+            .flatten();
         match pruned {
             Some(rest) => {
                 if let Some(tab) = self.workspaces[src_ws_idx].tab_mut(src_tab_idx) {
@@ -631,6 +640,15 @@ impl PaneFlowApp {
         }
 
         let last = self.workspaces[dest_ws_idx].tab_count().saturating_sub(1);
+        if let (Some(from), Some(to)) = (
+            emptied_tab,
+            self.workspaces[dest_ws_idx]
+                .tabs()
+                .get(last)
+                .map(|tab| tab.id),
+        ) {
+            self.transfer_diff_dock(from, to);
+        }
         self.workspaces[dest_ws_idx].reorder_tab(last, insert_idx.min(last));
         self.workspaces[dest_ws_idx].sidebar_expanded = true;
         let dest_tab_idx = self.workspaces[dest_ws_idx].active_tab_idx();

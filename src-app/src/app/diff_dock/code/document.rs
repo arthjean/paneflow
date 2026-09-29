@@ -109,6 +109,10 @@ impl CodeDocument {
         self.line_ending
     }
 
+    pub(crate) fn set_line_ending(&mut self, line_ending: LineEnding) {
+        self.line_ending = line_ending;
+    }
+
     pub(crate) fn text(&self) -> &Rope {
         &self.text
     }

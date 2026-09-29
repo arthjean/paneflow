@@ -1,7 +1,6 @@
 use std::env;
 use std::ffi::OsStr;
-use std::fs::OpenOptions;
-use std::io::{Read, Write};
+use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use paneflow_agent_config::{canonical_command_for_alias, canonical_command_for_script_path};
@@ -17,7 +16,6 @@ const TOOL_ENV: &str = "PANEFLOW_AI_TOOL";
 const PID_ENV: &str = "PANEFLOW_AI_PID";
 const EXIT_CODE_ENV: &str = "PANEFLOW_AI_EXIT_CODE";
 const EVENT_SOURCE_ENV: &str = "PANEFLOW_AI_EVENT_SOURCE";
-const HOOK_LOG_ENV: &str = "PANEFLOW_HOOK_LOG";
 const HOST_ENDPOINT_ENV: &str = "PANEFLOW_HOST_ENDPOINT";
 const SESSION_ID_ENV: &str = "PANEFLOW_SESSION_ID";
 const SESSION_DIR_ENV: &str = "PANEFLOW_SESSION_DIR";
@@ -251,7 +249,12 @@ fn write_last_hook_event(
 }
 
 fn diagnose(message: &str) {
-    diagnose_to(message, env::var_os(HOOK_LOG_ENV).as_deref().map(Path::new));
+    diagnose_to(
+        message,
+        env::var_os(paneflow_ipc_client::hook_log::HOOK_LOG_ENV)
+            .as_deref()
+            .map(Path::new),
+    );
 }
 
 fn diagnose_to(message: &str, log_path: Option<&Path>) {
@@ -259,11 +262,7 @@ fn diagnose_to(message: &str, log_path: Option<&Path>) {
         return;
     };
     let line = format!("paneflow-ai-hook: {message}\n");
-    let _ = OpenOptions::new()
-        .append(true)
-        .create(true)
-        .open(log_path)
-        .and_then(|mut file| file.write_all(line.as_bytes()));
+    let _ = paneflow_ipc_client::hook_log::append(log_path, &line);
 }
 
 #[cfg(test)]
@@ -353,6 +352,13 @@ mod tests {
             Some(-1_073_741_510)
         );
         assert!(read_exit_code_from(Some("abc")).is_none());
+    }
+
+    #[test]
+    fn diagnose_never_creates_a_log_from_a_relative_path() {
+        let relative = Path::new("paneflow-ai-hook-relative-test.log");
+        diagnose_to("first", Some(relative));
+        assert!(!relative.exists());
     }
 
     #[test]

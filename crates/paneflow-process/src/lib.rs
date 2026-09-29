@@ -109,7 +109,44 @@ pub fn run_with_timeout(
     deadline: Duration,
     stdout_cap: u64,
 ) -> Result<BoundedOutput, ProcError> {
-    run_supervised(cmd, deadline, stdout_cap, None)
+    run_supervised(cmd, deadline, stdout_cap, None, StdoutCapture::Bounded)
+}
+
+pub fn run_with_timeout_keeping_stderr_tail(
+    cmd: Command,
+    deadline: Duration,
+    stdout_cap: u64,
+) -> Result<BoundedOutput, ProcError> {
+    run_supervised(
+        cmd,
+        deadline,
+        stdout_cap,
+        Some(Box::new(|_: &[u8]| {})),
+        StdoutCapture::Bounded,
+    )
+}
+
+pub fn run_with_timeout_keeping_stdout_head(
+    cmd: Command,
+    deadline: Duration,
+    stdout_cap: u64,
+) -> Result<(BoundedOutput, bool), ProcError> {
+    let mut output = run_supervised(
+        cmd,
+        deadline,
+        stdout_cap,
+        Some(Box::new(|_: &[u8]| {})),
+        StdoutCapture::Head,
+    )?;
+    let truncated = output.stdout.len() as u64 > stdout_cap;
+    output.stdout.truncate(validate_capture_cap(stdout_cap)?);
+    Ok((output, truncated))
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum StdoutCapture {
+    Bounded,
+    Head,
 }
 
 pub fn run_with_timeout_tapping_stderr(
@@ -118,7 +155,13 @@ pub fn run_with_timeout_tapping_stderr(
     stdout_cap: u64,
     stderr_tap: impl FnMut(&[u8]) + Send + 'static,
 ) -> Result<BoundedOutput, ProcError> {
-    run_supervised(cmd, deadline, stdout_cap, Some(Box::new(stderr_tap)))
+    run_supervised(
+        cmd,
+        deadline,
+        stdout_cap,
+        Some(Box::new(stderr_tap)),
+        StdoutCapture::Bounded,
+    )
 }
 
 fn run_supervised(
@@ -126,6 +169,7 @@ fn run_supervised(
     deadline: Duration,
     stdout_cap: u64,
     stderr_tap: Option<StderrTap>,
+    stdout_capture: StdoutCapture,
 ) -> Result<BoundedOutput, ProcError> {
     let stdout_cap = validate_capture_cap(stdout_cap)?;
     let stderr_cap = validate_capture_cap(STDERR_CAP)?;
@@ -164,14 +208,14 @@ fn run_supervised(
         stdout_cap,
         OutputStream::Stdout,
         reader_tx.clone(),
-        None,
+        ReaderMode::from_capture(stdout_capture),
     )?;
     spawn_bounded_reader(
         stderr_pipe,
         stderr_cap,
         OutputStream::Stderr,
         reader_tx,
-        stderr_tap,
+        stderr_tap.map_or(ReaderMode::Bounded, ReaderMode::Tail),
     )?;
 
     let mut capture = CaptureState::default();
@@ -445,12 +489,27 @@ struct ReaderMessage {
     result: Result<Vec<u8>, ReaderFailure>,
 }
 
+enum ReaderMode {
+    Bounded,
+    Head,
+    Tail(StderrTap),
+}
+
+impl ReaderMode {
+    fn from_capture(capture: StdoutCapture) -> Self {
+        match capture {
+            StdoutCapture::Bounded => Self::Bounded,
+            StdoutCapture::Head => Self::Head,
+        }
+    }
+}
+
 fn spawn_bounded_reader<R>(
     pipe: R,
     cap: usize,
     stream: OutputStream,
     sender: mpsc::Sender<ReaderMessage>,
-    tap: Option<StderrTap>,
+    mode: ReaderMode,
 ) -> Result<(), ProcError>
 where
     R: Read + Send + 'static,
@@ -458,9 +517,10 @@ where
     thread::Builder::new()
         .name(format!("paneflow-process-{stream}"))
         .spawn(move || {
-            let result = match tap {
-                Some(tap) => read_tapped_tail(pipe, cap, tap),
-                None => read_bounded(pipe, cap),
+            let result = match mode {
+                ReaderMode::Tail(tap) => read_tapped_tail(pipe, cap, tap),
+                ReaderMode::Head => read_head(pipe, cap),
+                ReaderMode::Bounded => read_bounded(pipe, cap),
             };
             let _ = sender.send(ReaderMessage { stream, result });
         })
@@ -480,6 +540,17 @@ where
     if bytes.len() > cap {
         return Err(ReaderFailure::LimitExceeded { cap: cap as u64 });
     }
+    Ok(bytes)
+}
+
+fn read_head<R>(pipe: R, cap: usize) -> Result<Vec<u8>, ReaderFailure>
+where
+    R: Read,
+{
+    let mut bytes = Vec::new();
+    pipe.take((cap as u64) + 1)
+        .read_to_end(&mut bytes)
+        .map_err(ReaderFailure::Read)?;
     Ok(bytes)
 }
 
@@ -582,10 +653,46 @@ static DETACHED_REAPER: OnceLock<Option<mpsc::Sender<Child>>> = OnceLock::new();
 
 pub fn spawn_detached(command: &mut Command) -> io::Result<()> {
     let child = command.spawn()?;
-    if let Some(sender) = DETACHED_REAPER.get_or_init(start_detached_reaper).as_ref() {
-        let _ = sender.send(child);
-    }
+    hand_to_reaper(
+        DETACHED_REAPER.get_or_init(start_detached_reaper).as_ref(),
+        child,
+    );
     Ok(())
+}
+
+fn hand_to_reaper(reaper: Option<&mpsc::Sender<Child>>, child: Child) {
+    let child = match reaper {
+        Some(sender) => match sender.send(child) {
+            Ok(()) => return,
+            Err(mpsc::SendError(child)) => {
+                log::warn!(
+                    "detached reaper stopped; waiting for pid {} on its own thread",
+                    child.id()
+                );
+                child
+            }
+        },
+        None => {
+            log::warn!(
+                "detached reaper thread is unavailable; waiting for pid {} on its own thread",
+                child.id()
+            );
+            child
+        }
+    };
+    wait_on_own_thread(child);
+}
+
+fn wait_on_own_thread(mut child: Child) {
+    let pid = child.id();
+    if let Err(error) = thread::Builder::new()
+        .name("paneflow-detached-wait".to_owned())
+        .spawn(move || {
+            let _ = child.wait();
+        })
+    {
+        log::error!("cannot wait for detached pid {pid}: {error}");
+    }
 }
 
 fn start_detached_reaper() -> Option<mpsc::Sender<Child>> {
@@ -921,6 +1028,111 @@ mod tests {
                 state == Some("Z") && ppid == Some(me)
             })
             .count()
+    }
+
+    #[cfg(target_os = "linux")]
+    fn wait_for_no_zombies(what: &str) {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            let zombies = zombie_child_count();
+            if zombies == 0 {
+                return;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "{what} left {zombies} zombie children unreaped"
+            );
+            thread::sleep(Duration::from_millis(50));
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_child_is_still_reaped_when_the_reaper_is_missing_or_gone() {
+        let missing = Command::new("true")
+            .spawn()
+            .expect("`true` must be spawnable");
+        hand_to_reaper(None, missing);
+        let (gone, receiver) = mpsc::channel::<Child>();
+        drop(receiver);
+        let orphan = Command::new("true")
+            .spawn()
+            .expect("`true` must be spawnable");
+        hand_to_reaper(Some(&gone), orphan);
+        wait_for_no_zombies("a missing or stopped reaper");
+    }
+
+    #[test]
+    fn a_stdout_past_the_cap_keeps_its_head_and_reports_the_truncation() {
+        let (out, truncated) = run_with_timeout_keeping_stdout_head(
+            loud_stdout_command(),
+            Duration::from_secs(30),
+            4096,
+        )
+        .expect("a long stdout is truncated, not an error");
+        assert!(truncated);
+        assert_eq!(out.stdout.len(), 4096);
+        assert!(out.stdout.iter().all(|byte| *byte == b'x'));
+
+        let (short, truncated) =
+            run_with_timeout_keeping_stdout_head(stdout_command(), Duration::from_secs(5), 4096)
+                .expect("a short stdout is complete");
+        assert!(!truncated);
+        assert!(short.stdout.starts_with(b"hello"));
+    }
+
+    #[cfg(unix)]
+    fn loud_stdout_command() -> Command {
+        sh("head -c 1048576 /dev/zero | tr '\\0' x")
+    }
+
+    #[cfg(windows)]
+    fn loud_stdout_command() -> Command {
+        let mut c = Command::new("powershell.exe");
+        c.args([
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            "[Console]::Out.Write('x' * 1048576)",
+        ]);
+        c
+    }
+
+    #[test]
+    fn stderr_past_the_capture_cap_keeps_its_tail_instead_of_failing() {
+        let out = run_with_timeout_keeping_stderr_tail(
+            loud_stderr_command(),
+            Duration::from_secs(30),
+            1 << 20,
+        )
+        .expect("a loud stderr must not fail the run");
+        assert!(out.status.success());
+        assert_eq!(out.stderr.len() as u64, STDERR_CAP);
+        assert!(
+            String::from_utf8_lossy(&out.stderr)
+                .trim_end()
+                .ends_with("tail-marker"),
+            "the retained stderr must be the tail"
+        );
+    }
+
+    #[cfg(unix)]
+    fn loud_stderr_command() -> Command {
+        sh("head -c 1048576 /dev/zero | tr '\\0' x >&2; echo tail-marker >&2")
+    }
+
+    #[cfg(windows)]
+    fn loud_stderr_command() -> Command {
+        let mut c = Command::new("powershell.exe");
+        c.args([
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            "[Console]::Error.Write('x' * 1048576); [Console]::Error.WriteLine('tail-marker')",
+        ]);
+        c
     }
 
     #[cfg(target_os = "linux")]

@@ -3,7 +3,11 @@ pub struct GitDiffStats {
     pub files_changed: usize,
     pub insertions: usize,
     pub deletions: usize,
+    pub untracked_capped: bool,
+    pub unavailable: bool,
 }
+
+const REFTABLE_HEAD: &str = "ref: refs/heads/.invalid";
 
 const GIT_DIFF_STAT_DEADLINE: std::time::Duration = std::time::Duration::from_secs(10);
 
@@ -16,19 +20,53 @@ const GIT_DIFF_STAT_FILE_BYTES_CAP: u64 = 512 * 1024;
 
 impl GitDiffStats {
     pub fn from_cwd(cwd: &str) -> Self {
-        let base = diff_stat_git_stdout(cwd, &["rev-parse", "--verify", "HEAD"])
-            .map(|out| String::from_utf8_lossy(&out).trim().to_string())
-            .filter(|base| !base.is_empty())
-            .unwrap_or_else(|| EMPTY_TREE_SHA.to_string());
+        Self::from_cwd_until(cwd, std::time::Instant::now() + GIT_DIFF_STAT_DEADLINE)
+    }
 
-        let mut stats = diff_stat_git_stdout(cwd, &["diff", "--shortstat", &base, "--"])
-            .map(|out| {
-                let text = String::from_utf8_lossy(&out);
-                Self::parse_shortstat(&text)
-            })
-            .unwrap_or_default();
-        stats.add_untracked(cwd);
+    fn from_cwd_until(cwd: &str, deadline: std::time::Instant) -> Self {
+        let Some(remaining) = deadline.checked_duration_since(std::time::Instant::now()) else {
+            return Self::unavailable();
+        };
+        let base = match resolve_head(std::path::Path::new(cwd), remaining) {
+            Ok(Some(sha)) => sha,
+            Ok(None) => EMPTY_TREE_SHA.to_string(),
+            Err(_) => return Self::unavailable(),
+        };
+        let Some(shortstat) =
+            diff_stat_git_stdout(cwd, &["diff", "--shortstat", &base, "--"], deadline)
+        else {
+            return Self::unavailable();
+        };
+        let mut stats = Self::parse_shortstat(&String::from_utf8_lossy(&shortstat));
+        if !stats.add_untracked(cwd, deadline) {
+            return Self::unavailable();
+        }
         stats
+    }
+
+    fn unavailable() -> Self {
+        Self {
+            unavailable: true,
+            ..Self::default()
+        }
+    }
+
+    pub fn or_previous(self, previous: &Self) -> Self {
+        if self.unavailable {
+            previous.clone()
+        } else {
+            self
+        }
+    }
+
+    pub fn files_changed_label(&self) -> String {
+        let plus = if self.untracked_capped { "+" } else { "" };
+        let plural = if self.files_changed == 1 && !self.untracked_capped {
+            ""
+        } else {
+            "s"
+        };
+        format!("{}{plus} file{plural}", self.files_changed)
     }
 
     fn parse_shortstat(text: &str) -> Self {
@@ -57,6 +95,7 @@ impl GitDiffStats {
             files_changed,
             insertions,
             deletions,
+            ..Self::default()
         }
     }
 
@@ -64,28 +103,94 @@ impl GitDiffStats {
         self.files_changed == 0 && self.insertions == 0 && self.deletions == 0
     }
 
-    fn add_untracked(&mut self, cwd: &str) {
-        let Some(out) =
-            diff_stat_git_stdout(cwd, &["ls-files", "--others", "--exclude-standard", "-z"])
-        else {
-            return;
+    fn add_untracked(&mut self, cwd: &str, deadline: std::time::Instant) -> bool {
+        let Some(remaining) = deadline.checked_duration_since(std::time::Instant::now()) else {
+            return false;
         };
-        let text = String::from_utf8_lossy(&out);
-        let mut paths = text.split('\0').filter(|p| !p.is_empty());
+        let Some((out, truncated)) = git_stdout_head(
+            cwd,
+            &[
+                "ls-files",
+                "--others",
+                "--exclude-standard",
+                "-z",
+                "--",
+                ":/",
+            ],
+            remaining,
+            GIT_DIFF_STAT_STDOUT_CAP,
+        ) else {
+            return false;
+        };
+        let mut records: Vec<&[u8]> = out.split(|byte| *byte == 0).collect();
+        if truncated || !out.ends_with(&[0]) {
+            records.pop();
+        }
+        let paths: Vec<String> = records
+            .into_iter()
+            .filter(|record| !record.is_empty())
+            .map(|record| String::from_utf8_lossy(record).into_owned())
+            .collect();
+        self.untracked_capped = truncated || paths.len() > GIT_DIFF_STAT_UNTRACKED_PATH_CAP;
         for (idx, path) in paths
-            .by_ref()
+            .iter()
             .take(GIT_DIFF_STAT_UNTRACKED_PATH_CAP)
             .enumerate()
         {
             self.files_changed += 1;
-            if idx < GIT_DIFF_STAT_UNTRACKED_FILE_CAP {
+            if idx < GIT_DIFF_STAT_UNTRACKED_FILE_CAP && std::time::Instant::now() < deadline {
                 self.insertions += untracked_insertions(cwd, path);
             }
         }
-        if paths.next().is_some() {
-            self.files_changed += 1;
-        }
+        true
     }
+}
+
+pub(crate) fn resolve_head(
+    cwd: &std::path::Path,
+    deadline: std::time::Duration,
+) -> Result<Option<String>, String> {
+    let mut cmd = crate::git_command::git(
+        crate::git_command::GitProfile::Probe,
+        ["rev-parse", "--verify", "--quiet", "HEAD^{commit}"],
+    );
+    cmd.current_dir(cwd);
+    let output = crate::git_command::run(cmd, deadline, 4096)
+        .map_err(|error| format!("git rev-parse HEAD failed: {error}"))?;
+    let sha = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    match output.status.code() {
+        Some(0) if !sha.is_empty() => Ok(Some(sha)),
+        Some(1) if sha.is_empty() && head_is_unborn(cwd, deadline) => Ok(None),
+        _ => Err(format!(
+            "git could not read HEAD: {}",
+            String::from_utf8_lossy(&output.stderr)
+                .lines()
+                .last()
+                .unwrap_or("unknown error")
+        )),
+    }
+}
+
+fn head_is_unborn(cwd: &std::path::Path, deadline: std::time::Duration) -> bool {
+    let mut cmd = crate::git_command::git(
+        crate::git_command::GitProfile::Probe,
+        ["symbolic-ref", "--quiet", "HEAD"],
+    );
+    cmd.current_dir(cwd);
+    crate::git_command::run(cmd, deadline, 4096).is_ok_and(|out| out.status.success())
+}
+
+pub(crate) fn git_stdout_head(
+    cwd: impl AsRef<std::path::Path>,
+    args: &[&str],
+    deadline: std::time::Duration,
+    stdout_cap: u64,
+) -> Option<(Vec<u8>, bool)> {
+    let mut cmd = crate::git_command::git(crate::git_command::GitProfile::Probe, args);
+    cmd.current_dir(cwd);
+    let (output, truncated) =
+        paneflow_process::run_with_timeout_keeping_stdout_head(cmd, deadline, stdout_cap).ok()?;
+    (truncated || output.status.success()).then_some((output.stdout, truncated))
 }
 
 pub(crate) fn git_stdout(
@@ -94,16 +199,15 @@ pub(crate) fn git_stdout(
     deadline: std::time::Duration,
     stdout_cap: u64,
 ) -> Option<Vec<u8>> {
-    let mut cmd = std::process::Command::new("git");
-    cmd.args(args)
-        .current_dir(cwd)
-        .env("GIT_TERMINAL_PROMPT", "0");
-    let output = paneflow_process::run_with_timeout(cmd, deadline, stdout_cap).ok()?;
+    let mut cmd = crate::git_command::git(crate::git_command::GitProfile::Probe, args);
+    cmd.current_dir(cwd);
+    let output = crate::git_command::run(cmd, deadline, stdout_cap).ok()?;
     output.status.success().then_some(output.stdout)
 }
 
-fn diff_stat_git_stdout(cwd: &str, args: &[&str]) -> Option<Vec<u8>> {
-    git_stdout(cwd, args, GIT_DIFF_STAT_DEADLINE, GIT_DIFF_STAT_STDOUT_CAP)
+fn diff_stat_git_stdout(cwd: &str, args: &[&str], deadline: std::time::Instant) -> Option<Vec<u8>> {
+    let remaining = deadline.checked_duration_since(std::time::Instant::now())?;
+    git_stdout(cwd, args, remaining, GIT_DIFF_STAT_STDOUT_CAP)
 }
 
 fn untracked_insertions(cwd: &str, rel_path: &str) -> usize {
@@ -115,9 +219,8 @@ fn untracked_insertions(cwd: &str, rel_path: &str) -> usize {
             .map(|target| text_line_count(&target.to_string_lossy()))
             .unwrap_or(0),
         Ok(_) => {
-            let file = match std::fs::File::open(&path) {
-                Ok(file) => file,
-                Err(_) => return 0,
+            let Ok((file, _)) = paneflow_home::open_regular_for_reading(&path) else {
+                return 0;
             };
             let mut bytes = Vec::new();
             if file
@@ -276,7 +379,9 @@ pub(super) fn parse_head(git_dir: &std::path::Path) -> (String, bool) {
     };
     let content = content.trim();
 
-    if let Some(branch) = content.strip_prefix("ref: refs/heads/") {
+    if content == REFTABLE_HEAD {
+        (String::new(), true)
+    } else if let Some(branch) = content.strip_prefix("ref: refs/heads/") {
         (branch.chars().filter(|c| !c.is_control()).collect(), true)
     } else if content.chars().all(|c| c.is_ascii_hexdigit())
         && (content.len() == 40 || content.len() == 64)
@@ -290,9 +395,34 @@ pub(super) fn parse_head(git_dir: &std::path::Path) -> (String, bool) {
 
 pub fn detect_branch(cwd: &str) -> (String, bool) {
     match find_git_dir(cwd) {
+        Some(git_dir) if uses_reftable(&git_dir) => (branch_from_git(cwd), true),
         Some(git_dir) => parse_head(&git_dir),
         None => (String::new(), false),
     }
+}
+
+fn uses_reftable(git_dir: &std::path::Path) -> bool {
+    read_capped(&git_dir.join("HEAD"), 512).is_ok_and(|head| head.trim() == REFTABLE_HEAD)
+}
+
+fn branch_from_git(cwd: &str) -> String {
+    let deadline = std::time::Duration::from_secs(5);
+    if let Some(branch) = git_stdout(
+        cwd,
+        &["symbolic-ref", "--quiet", "--short", "HEAD"],
+        deadline,
+        4096,
+    )
+    .map(|out| String::from_utf8_lossy(&out).trim().to_string())
+    .filter(|branch| !branch.is_empty())
+    {
+        return branch.chars().filter(|c| !c.is_control()).collect();
+    }
+    git_stdout(cwd, &["rev-parse", "--short=7", "HEAD"], deadline, 4096)
+        .map(|out| String::from_utf8_lossy(&out).trim().to_string())
+        .filter(|sha| !sha.is_empty())
+        .map(|sha| format!("({sha})"))
+        .unwrap_or_default()
 }
 
 #[cfg(test)]
@@ -668,6 +798,201 @@ mod tests {
         assert_eq!(stats.files_changed, 2);
         assert_eq!(stats.insertions, 3);
         assert_eq!(stats.deletions, 0);
+    }
+
+    fn commit_all(root: &std::path::Path, message: &str) {
+        assert!(test_git(root, &["add", "-A"]));
+        assert!(test_git(
+            root,
+            &[
+                "-c",
+                "user.email=paneflow@example.com",
+                "-c",
+                "user.name=Paneflow",
+                "commit",
+                "-q",
+                "-m",
+                message,
+            ],
+        ));
+    }
+
+    #[test]
+    fn untracked_files_past_the_cap_show_the_cap_and_a_plus() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        if !test_git(root, &["init", "-q"]) {
+            return;
+        }
+        std::fs::write(root.join("seed.txt"), "seed\n").unwrap();
+        commit_all(root, "seed");
+        for i in 0..1005 {
+            std::fs::write(root.join(format!("u{i:04}.txt")), "").unwrap();
+        }
+        let stats = GitDiffStats::from_cwd(root.to_str().unwrap());
+        assert_eq!(stats.files_changed, GIT_DIFF_STAT_UNTRACKED_PATH_CAP);
+        assert!(stats.untracked_capped);
+        assert_eq!(stats.files_changed_label(), "1000+ files");
+    }
+
+    #[test]
+    fn an_untracked_listing_past_the_byte_cap_still_counts_what_it_read() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        if !test_git(root, &["init", "-q"]) {
+            return;
+        }
+        std::fs::write(root.join("seed.txt"), "seed\n").unwrap();
+        commit_all(root, "seed");
+        let long = "n".repeat(200);
+        for bucket in 0..8 {
+            let dir = root.join(format!("{long}{bucket}"));
+            std::fs::create_dir_all(&dir).unwrap();
+            for i in 0..250 {
+                std::fs::write(dir.join(format!("{long}{i:03}")), "").unwrap();
+            }
+        }
+        let stats = GitDiffStats::from_cwd(root.to_str().unwrap());
+        assert!(stats.untracked_capped, "{stats:?}");
+        assert!(!stats.unavailable);
+        assert!(stats.files_changed > 0, "a byte cap never reads as 0 files");
+        assert!(stats.files_changed <= GIT_DIFF_STAT_UNTRACKED_PATH_CAP);
+    }
+
+    #[test]
+    fn a_subfolder_workspace_counts_the_untracked_files_of_the_whole_repository() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        if !test_git(root, &["init", "-q"]) {
+            return;
+        }
+        std::fs::create_dir_all(root.join("sub")).unwrap();
+        std::fs::write(root.join("sub").join("kept.txt"), "k\n").unwrap();
+        commit_all(root, "seed");
+        std::fs::write(root.join("top.txt"), "a\nb\n").unwrap();
+        std::fs::write(root.join("sub").join("inner.txt"), "c\n").unwrap();
+        let stats = GitDiffStats::from_cwd(root.join("sub").to_str().unwrap());
+        assert_eq!((stats.files_changed, stats.insertions), (2, 3));
+    }
+
+    #[test]
+    fn an_unreadable_head_is_an_error_and_an_unborn_branch_is_the_empty_tree() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        if !test_git(root, &["init", "-q"]) {
+            return;
+        }
+        std::fs::write(root.join("new.txt"), "x\n").unwrap();
+        assert_eq!(resolve_head(root, GIT_DIFF_STAT_DEADLINE), Ok(None));
+        let unborn = GitDiffStats::from_cwd(root.to_str().unwrap());
+        assert!(!unborn.unavailable);
+        assert_eq!(unborn.files_changed, 1);
+
+        commit_all(root, "first");
+        let branch = String::from_utf8(
+            std::process::Command::new("git")
+                .args(["symbolic-ref", "--short", "HEAD"])
+                .current_dir(root)
+                .output()
+                .unwrap()
+                .stdout,
+        )
+        .unwrap();
+        let head_ref = root
+            .join(".git")
+            .join("refs")
+            .join("heads")
+            .join(branch.trim());
+        std::fs::write(&head_ref, "not-a-sha\n").unwrap();
+        assert!(resolve_head(root, GIT_DIFF_STAT_DEADLINE).is_err());
+        let broken = GitDiffStats::from_cwd(root.to_str().unwrap());
+        assert!(
+            broken.unavailable,
+            "a broken HEAD is never shown as 0 files"
+        );
+    }
+
+    #[test]
+    fn a_reftable_repository_shows_its_real_branch() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        if !test_git(
+            root,
+            &["init", "-q", "--ref-format=reftable", "-b", "trunk"],
+        ) {
+            return;
+        }
+        let git_dir = root.join(".git");
+        assert_eq!(
+            parse_head(&git_dir).0,
+            "",
+            "the placeholder is never displayed"
+        );
+        assert_eq!(
+            detect_branch(root.to_str().unwrap()),
+            ("trunk".to_string(), true)
+        );
+    }
+
+    #[test]
+    fn the_badge_probes_share_one_deadline() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        if !test_git(root, &["init"]) {
+            return;
+        }
+        std::fs::write(root.join("untracked.txt"), "a\n").unwrap();
+        let started = std::time::Instant::now();
+        let stats = GitDiffStats::from_cwd_until(root.to_str().unwrap(), started);
+        assert!(
+            started.elapsed() < std::time::Duration::from_millis(500),
+            "no probe may start once the shared deadline has passed"
+        );
+        assert!(stats.is_empty());
+        assert_eq!(
+            GitDiffStats::from_cwd(root.to_str().unwrap()).files_changed,
+            1
+        );
+    }
+
+    #[test]
+    fn shortstat_counts_survive_a_french_locale() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        if !test_git(root, &["init"]) {
+            return;
+        }
+        assert!(test_git(root, &["config", "core.autocrlf", "false"]));
+        std::fs::write(root.join("tracked.txt"), "one\ntwo\n").unwrap();
+        assert!(test_git(root, &["add", "tracked.txt"]));
+        assert!(test_git(
+            root,
+            &[
+                "-c",
+                "user.email=paneflow@example.com",
+                "-c",
+                "user.name=Paneflow",
+                "commit",
+                "-m",
+                "init",
+            ],
+        ));
+        std::fs::write(root.join("tracked.txt"), "one\nthree\n").unwrap();
+
+        let mut command = crate::git_command::git(
+            crate::git_command::GitProfile::Probe,
+            ["diff", "--shortstat", "HEAD", "--"],
+        );
+        command
+            .current_dir(root)
+            .env("LANG", "fr_FR.UTF-8")
+            .env("LC_MESSAGES", "fr_FR.UTF-8");
+        let out = crate::git_command::run(command, GIT_DIFF_STAT_DEADLINE, 4096).unwrap();
+        let stats = GitDiffStats::parse_shortstat(&String::from_utf8_lossy(&out.stdout));
+        assert_eq!(
+            (stats.files_changed, stats.insertions, stats.deletions),
+            (1, 1, 1)
+        );
     }
 
     fn test_git(cwd: &std::path::Path, args: &[&str]) -> bool {

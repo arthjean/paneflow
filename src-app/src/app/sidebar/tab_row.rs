@@ -453,6 +453,7 @@ mod tests {
             files_changed: 3,
             insertions: 142,
             deletions: 38,
+            ..Default::default()
         }
     }
 

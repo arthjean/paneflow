@@ -8,6 +8,7 @@ use crate::PaneFlowApp;
 const TTL: Duration = Duration::from_secs(300);
 const DEADLINE: Duration = Duration::from_secs(15);
 const STDOUT_CAP: u64 = 256 * 1024;
+const GH_RETRY_AFTER: Duration = Duration::from_secs(600);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum PrState {
@@ -79,11 +80,16 @@ struct Cached {
     seeded: bool,
 }
 
+struct GhBackoff {
+    since: Instant,
+    branches: HashSet<String>,
+}
+
 #[derive(Default)]
 pub(crate) struct PrStates {
     entries: HashMap<(String, String), Cached>,
     inflight: HashSet<(String, String)>,
-    unavailable: HashSet<String>,
+    unavailable: HashMap<String, GhBackoff>,
 }
 
 impl PrStates {
@@ -98,7 +104,13 @@ impl PrStates {
     }
 
     fn is_stale(&self, repo_root: &str, branch: &str) -> bool {
-        if self.unavailable.contains(repo_root) {
+        self.is_stale_at(repo_root, branch, Instant::now())
+    }
+
+    fn is_stale_at(&self, repo_root: &str, branch: &str, now: Instant) -> bool {
+        if self.unavailable.get(repo_root).is_some_and(|backoff| {
+            now.duration_since(backoff.since) < GH_RETRY_AFTER && backoff.branches.contains(branch)
+        }) {
             return false;
         }
         let key = Self::key(repo_root, branch);
@@ -128,6 +140,7 @@ impl PrStates {
     fn store(&mut self, repo_root: &str, branch: &str, value: Option<PullRequest>) -> bool {
         let key = Self::key(repo_root, branch);
         self.inflight.remove(&key);
+        self.unavailable.remove(repo_root);
         let changed = self.entries.get(&key).map(|c| c.value) != Some(value);
         self.entries.insert(
             key,
@@ -141,8 +154,23 @@ impl PrStates {
     }
 
     fn mark_unavailable(&mut self, repo_root: &str, branch: &str) {
+        self.mark_unavailable_at(repo_root, branch, Instant::now());
+    }
+
+    fn mark_unavailable_at(&mut self, repo_root: &str, branch: &str, now: Instant) {
         self.inflight.remove(&Self::key(repo_root, branch));
-        self.unavailable.insert(repo_root.to_string());
+        let backoff = self
+            .unavailable
+            .entry(repo_root.to_string())
+            .or_insert_with(|| GhBackoff {
+                since: now,
+                branches: HashSet::new(),
+            });
+        if now.duration_since(backoff.since) >= GH_RETRY_AFTER {
+            backoff.since = now;
+            backoff.branches.clear();
+        }
+        backoff.branches.insert(branch.to_string());
     }
 }
 
@@ -309,6 +337,34 @@ mod tests {
             Some(PrState::Merged)
         );
         assert_eq!(PrState::from_wire("weird"), None);
+    }
+
+    #[test]
+    fn a_gh_failure_backs_off_ten_minutes_instead_of_until_restart() {
+        let mut states = super::PrStates::default();
+        let failed = std::time::Instant::now();
+        states.mark_unavailable_at("/repo", "main", failed);
+        assert!(!states.is_stale_at("/repo", "main", failed));
+        assert!(!states.is_stale_at(
+            "/repo",
+            "main",
+            failed + std::time::Duration::from_secs(599)
+        ));
+        assert!(
+            states.is_stale_at("/repo", "main", failed + super::GH_RETRY_AFTER),
+            "the repository is probed again once the backoff ends"
+        );
+        assert!(
+            states.is_stale_at("/repo", "feat/new", failed),
+            "a branch change lifts the backoff"
+        );
+        states.store("/repo", "feat/new", None);
+        assert!(
+            states.is_stale_at("/repo", "other", failed),
+            "a success lifts the backoff for the whole repository"
+        );
+        states.entries.clear();
+        assert!(states.is_stale_at("/repo", "main", failed));
     }
 
     #[test]

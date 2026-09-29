@@ -86,9 +86,11 @@ impl ConfigWatcher {
         )?;
 
         watcher.watch(&watch_dir, RecursiveMode::NonRecursive)?;
+        let mut watch = ConfigTargetWatch::new(watcher, config_path.clone(), watch_dir);
+        watch.follow();
 
         let thread = thread::spawn(move || {
-            event_loop(rx, &config_path, &callback, &watcher);
+            event_loop(rx, &config_path, &callback, &mut watch);
         });
 
         info!(
@@ -115,11 +117,63 @@ fn event_targets_config(event: &Event, config_path: &Path) -> bool {
     target_name.is_some() && event.paths.iter().any(|p| p.file_name() == target_name)
 }
 
+pub struct ConfigTargetWatch {
+    watcher: RecommendedWatcher,
+    config_path: PathBuf,
+    config_dir: PathBuf,
+    target: PathBuf,
+    target_dir: Option<PathBuf>,
+}
+
+impl ConfigTargetWatch {
+    pub fn new(watcher: RecommendedWatcher, config_path: PathBuf, config_dir: PathBuf) -> Self {
+        Self {
+            watcher,
+            target: config_path.clone(),
+            config_path,
+            config_dir,
+            target_dir: None,
+        }
+    }
+
+    pub fn follow(&mut self) {
+        self.target = paneflow_home::resolve_write_target(&self.config_path)
+            .unwrap_or_else(|_| self.config_path.clone());
+        let wanted = self
+            .target
+            .parent()
+            .filter(|dir| !dir.as_os_str().is_empty() && *dir != self.config_dir)
+            .map(Path::to_path_buf);
+        if wanted == self.target_dir {
+            return;
+        }
+        if let Some(previous) = self.target_dir.take() {
+            let _ = self.watcher.unwatch(&previous);
+        }
+        if let Some(dir) = wanted {
+            match self.watcher.watch(&dir, RecursiveMode::NonRecursive) {
+                Ok(()) => {
+                    info!(path = %dir.display(), "watching the config symlink target");
+                    self.target_dir = Some(dir);
+                }
+                Err(error) => {
+                    warn!(%error, path = %dir.display(), "could not watch the config symlink target")
+                }
+            }
+        }
+    }
+
+    pub fn targets(&mut self, event: &Event) -> bool {
+        self.follow();
+        event_targets_config(event, &self.config_path) || event_targets_config(event, &self.target)
+    }
+}
+
 fn event_loop(
     rx: mpsc::Receiver<WatcherMessage>,
     config_path: &Path,
     callback: &Arc<dyn Fn(PaneFlowConfig) + Send + Sync>,
-    _watcher: &RecommendedWatcher,
+    watch: &mut ConfigTargetWatch,
 ) {
     let mut current_config = load_config_from_path(config_path);
     let mut pending_reload: Option<Instant> = None;
@@ -144,7 +198,7 @@ fn event_loop(
 
         match event_result {
             Ok(WatcherMessage::Event(Ok(event))) => {
-                if is_relevant_event(&event.kind) && event_targets_config(&event, config_path) {
+                if is_relevant_event(&event.kind) && watch.targets(&event) {
                     let now = Instant::now();
                     let burst_start = *first_event_at.get_or_insert(now);
                     let deadline = (now + DEBOUNCE_DURATION).min(burst_start + MAX_DEBOUNCE);

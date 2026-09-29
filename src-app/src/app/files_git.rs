@@ -129,17 +129,17 @@ impl GitStatuses {
     }
 }
 
-pub(crate) fn read(root: &Path) -> GitStatuses {
-    let Some(prefix) = git_stdout(
+pub(crate) fn read(root: &Path) -> Option<GitStatuses> {
+    let prefix = git_stdout(
         root,
         &["rev-parse", "--show-prefix"],
         GIT_STATUS_DEADLINE,
         GIT_STATUS_STDOUT_CAP,
-    ) else {
-        return GitStatuses::default();
-    };
-    let prefix = String::from_utf8_lossy(&prefix).trim().to_string();
-    let Some(stdout) = git_stdout(
+    )?;
+    let prefix = String::from_utf8_lossy(&prefix)
+        .trim_end_matches(['\n', '\r'])
+        .to_string();
+    let stdout = git_stdout(
         root,
         &[
             "status",
@@ -152,10 +152,8 @@ pub(crate) fn read(root: &Path) -> GitStatuses {
         ],
         GIT_STATUS_DEADLINE,
         GIT_STATUS_STDOUT_CAP,
-    ) else {
-        return GitStatuses::default();
-    };
-    GitStatuses::parse(root, &prefix, &stdout)
+    )?;
+    Some(GitStatuses::parse(root, &prefix, &stdout))
 }
 
 pub(crate) fn label_color(summary: GitSummary, ui: UiColors) -> Option<Hsla> {
@@ -358,7 +356,7 @@ mod tests {
         std::fs::write(root.join("src").join("app").join("row.rs"), "two\n").expect("edit");
         std::fs::write(root.join("src").join("app").join("new.rs"), "new\n").expect("new file");
 
-        let statuses = read(root);
+        let statuses = read(root).expect("statuses of a real repository");
 
         assert_eq!(
             statuses
@@ -390,7 +388,7 @@ mod tests {
         std::fs::write(root.join("src").join("app").join("row.rs"), "two\n").expect("edit");
         std::fs::write(root.join("README.md"), "changed\n").expect("readme edit");
 
-        let statuses = read(&root.join("src"));
+        let statuses = read(&root.join("src")).expect("statuses of a subdirectory");
 
         assert_eq!(
             statuses
@@ -410,12 +408,39 @@ mod tests {
         }
         std::fs::write(dir.path().join("loose.txt"), "loose\n").expect("loose file");
 
-        let statuses = read(dir.path());
+        assert!(read(dir.path()).is_none());
+    }
 
-        assert!(
-            statuses
-                .summary(&dir.path().join("loose.txt"))
-                .is_unchanged()
+    #[test]
+    fn a_subdirectory_whose_name_starts_with_a_space_keeps_its_statuses() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root = dir.path();
+        if !committed_repo(root) {
+            return;
+        }
+        let spaced = root.join(" spaced");
+        std::fs::create_dir(&spaced).expect("spaced directory");
+        std::fs::write(spaced.join("file.txt"), "one\n").expect("file");
+        assert!(test_git(root, &["add", "."]));
+        assert!(test_git(
+            root,
+            &[
+                "-c",
+                "user.email=tests@paneflow.dev",
+                "-c",
+                "user.name=tests",
+                "commit",
+                "-m",
+                "spaced",
+            ],
+        ));
+        std::fs::write(spaced.join("file.txt"), "two\n").expect("edit");
+
+        let statuses = read(&spaced).expect("statuses of the spaced directory");
+
+        assert_eq!(
+            statuses.summary(&spaced.join("file.txt")).worktree.modified,
+            1
         );
     }
 

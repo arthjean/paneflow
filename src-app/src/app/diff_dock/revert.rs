@@ -2,43 +2,38 @@ use std::path::Path;
 
 use gpui::{Context, Pixels, Point, point, px};
 
-use super::code::save::{FileStamp, save_blocking};
+use super::code::save::{FileStamp, SaveFailure, save_blocking};
 use super::model::{DiffDockTab, DiffHover};
 use crate::PaneFlowApp;
 use crate::diff::{
-    CellKind, DiffHunk, DisplayRow, FileChange, FileDiff, RowKind, SplitRow, hunk_for_base_line,
-    hunk_for_new_line, revert_chip_bounds, row_at_offset,
+    CellKind, DiffHunk, DisplayRow, FileChange, FileDiff, RowKind, SplitRow, classify_git_bytes,
+    hunk_for_base_line, hunk_for_new_line, revert_chip_bounds, row_at_offset,
 };
 
 pub(super) const DIRTY_TAB_MESSAGE: &str = "Save or discard the editor changes first";
 pub(super) const STALE_FILE_MESSAGE: &str = "File changed on disk, refresh first";
 
-fn line_contents(text: &str) -> Vec<&str> {
+fn split_lines(text: &str) -> Vec<(&str, &str)> {
     let bytes = text.as_bytes();
     let mut lines = Vec::new();
     let mut start = 0usize;
     let mut index = 0usize;
     while index < bytes.len() {
-        match bytes[index] {
-            b'\n' => {
-                lines.push(&text[start..index]);
+        let terminator_len = match bytes[index] {
+            b'\n' => 1,
+            b'\r' if bytes.get(index + 1) == Some(&b'\n') => 2,
+            b'\r' => 1,
+            _ => {
                 index += 1;
-                start = index;
+                continue;
             }
-            b'\r' => {
-                lines.push(&text[start..index]);
-                index += if bytes.get(index + 1) == Some(&b'\n') {
-                    2
-                } else {
-                    1
-                };
-                start = index;
-            }
-            _ => index += 1,
-        }
+        };
+        lines.push((&text[start..index], &text[index..index + terminator_len]));
+        index += terminator_len;
+        start = index;
     }
     if start < bytes.len() {
-        lines.push(&text[start..]);
+        lines.push((&text[start..], ""));
     }
     lines
 }
@@ -55,8 +50,8 @@ fn dominant_terminator(text: &str) -> &'static str {
 
 pub(crate) fn splice_base_lines(new_text: &str, base_text: &str, hunk: &DiffHunk) -> String {
     let terminator = dominant_terminator(new_text);
-    let new_lines = line_contents(new_text);
-    let base_lines = line_contents(base_text);
+    let new_lines = split_lines(new_text);
+    let base_lines = split_lines(base_text);
     let start = (hunk.new_row_range.start as usize).min(new_lines.len());
     let end = (hunk.new_row_range.end as usize).clamp(start, new_lines.len());
     let base_start = (hunk.base_row_range.start as usize).min(base_lines.len());
@@ -64,35 +59,103 @@ pub(crate) fn splice_base_lines(new_text: &str, base_text: &str, hunk: &DiffHunk
 
     let mut lines = Vec::with_capacity(new_lines.len() + base_end - base_start);
     lines.extend_from_slice(&new_lines[..start]);
-    lines.extend_from_slice(&base_lines[base_start..base_end]);
+    let replaced = &new_lines[start..end];
+    lines.extend(base_lines[base_start..base_end].iter().enumerate().map(
+        |(offset, (content, _))| {
+            let ending = replaced
+                .get(offset)
+                .map(|(_, ending)| *ending)
+                .filter(|ending| matches!(*ending, "\n" | "\r\n"))
+                .unwrap_or(terminator);
+            (*content, ending)
+        },
+    ));
     lines.extend_from_slice(&new_lines[end..]);
-    let terminated = if end == new_lines.len() {
-        ends_with_newline(base_text)
-    } else {
-        ends_with_newline(new_text)
-    };
-    let mut out = lines.join(terminator);
-    if terminated && !lines.is_empty() {
-        out.push_str(terminator);
+    if end == new_lines.len()
+        && let Some(last) = lines.last_mut()
+    {
+        last.1 = match (ends_with_newline(base_text), last.1) {
+            (false, _) => "",
+            (true, "") => terminator,
+            (true, own) => own,
+        };
     }
-    out
+    lines
+        .iter()
+        .flat_map(|(content, ending)| [*content, *ending])
+        .collect()
 }
 
-pub(super) fn revert_hunk_blocking(
-    path: &Path,
-    base_text: &str,
-    hunk: &DiffHunk,
-    recorded: Option<FileStamp>,
-) -> Result<FileStamp, String> {
-    match (recorded, FileStamp::read(path)) {
-        (Some(recorded), Some(current)) if !recorded.differs(&current) => {}
-        _ => return Err(STALE_FILE_MESSAGE.to_string()),
+#[derive(Debug, PartialEq, Eq)]
+pub(super) enum RevertFailure {
+    Stale,
+    Refused(String),
+}
+
+pub(super) struct RevertRequest<'a> {
+    pub(super) path: &'a Path,
+    pub(super) expected_text: &'a str,
+    pub(super) base_text: &'a str,
+    pub(super) hunk: &'a DiffHunk,
+    pub(super) recorded: Option<FileStamp>,
+}
+
+fn display_name(path: &Path) -> String {
+    path.file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| path.display().to_string())
+}
+
+pub(super) fn type_change_message(path: &Path) -> String {
+    format!(
+        "{} changed between a file and a symlink; Revert cannot restore it",
+        display_name(path)
+    )
+}
+
+fn read_revert_source(path: &Path) -> Result<(Vec<u8>, FileStamp), RevertFailure> {
+    use std::io::Read as _;
+    let refused =
+        |err: std::io::Error| RevertFailure::Refused(format!("{}: {err}", path.display()));
+    let link = std::fs::symlink_metadata(path).map_err(refused)?;
+    if link.file_type().is_symlink() {
+        return Err(RevertFailure::Refused(format!(
+            "{} is a symlink; Revert only edits regular files",
+            display_name(path)
+        )));
     }
-    let bytes = std::fs::read(path).map_err(|err| format!("{}: {err}", path.display()))?;
-    let new_text =
-        String::from_utf8(bytes).map_err(|_| format!("{}: not UTF-8 text", path.display()))?;
-    let text = splice_base_lines(&new_text, base_text, hunk);
-    save_blocking(path, &text)
+    let (mut file, metadata) = paneflow_home::open_regular_for_reading(path).map_err(refused)?;
+    if cfg!(windows) && metadata.permissions().readonly() {
+        return Err(RevertFailure::Refused(format!(
+            "{} is read-only; Revert left it untouched",
+            display_name(path)
+        )));
+    }
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes).map_err(refused)?;
+    Ok((bytes, FileStamp::from_metadata(&metadata)))
+}
+
+pub(super) fn revert_hunk_blocking(request: RevertRequest<'_>) -> Result<FileStamp, RevertFailure> {
+    let (bytes, stamp) = read_revert_source(request.path)?;
+    if request
+        .recorded
+        .is_none_or(|recorded| recorded.differs(&stamp))
+    {
+        return Err(RevertFailure::Stale);
+    }
+    let (normalized, binary) = classify_git_bytes(bytes.clone());
+    if binary || normalized != request.expected_text {
+        return Err(RevertFailure::Stale);
+    }
+    let current = String::from_utf8(bytes).map_err(|_| {
+        RevertFailure::Refused(format!("{}: not UTF-8 text", request.path.display()))
+    })?;
+    let text = splice_base_lines(&current, request.base_text, request.hunk);
+    save_blocking(request.path, &text, Some(stamp)).map_err(|failure| match failure {
+        SaveFailure::ChangedOnDisk(_) => RevertFailure::Stale,
+        SaveFailure::Write(message) => RevertFailure::Refused(message),
+    })
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -106,7 +169,8 @@ fn revertable_file(anchors: &[(String, usize)], files: &[FileDiff], row: usize) 
     let (path, _) = anchors.iter().rev().find(|(_, header)| *header <= row)?;
     let index = files.iter().position(|file| file.path == *path)?;
     let file = &files[index];
-    (file.change == FileChange::Modified && !file.is_binary).then_some(index)
+    let revertable = matches!(file.change, FileChange::Modified | FileChange::TypeChanged);
+    (revertable && !file.is_binary).then_some(index)
 }
 
 fn hunk_index(hunks: &[DiffHunk], hunk: &DiffHunk) -> Option<usize> {
@@ -287,22 +351,40 @@ impl PaneFlowApp {
             return;
         };
         let path = toplevel.join(&file.path);
+        let type_changed = file.change == FileChange::TypeChanged;
+        let expected_text = file.new_text.clone();
         let base_text = file.base_text.clone();
         let recorded = data.stamps.get(&file.path).copied();
         let cwd = data.cwd.clone();
-        if self.dirty_file_tab_open(&path, cx) {
+        let origin = self.diff_dock.owner;
+        if type_changed {
+            self.show_diff_dock_error(&type_change_message(&path), cx);
+            return;
+        }
+        if self.dirty_view_of(&path, cx) {
             self.show_diff_dock_error(DIRTY_TAB_MESSAGE, cx);
             return;
         }
         cx.spawn(
             async move |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
-                let result =
-                    smol::unblock(move || revert_hunk_blocking(&path, &base_text, &hunk, recorded))
-                        .await;
+                let result = smol::unblock(move || {
+                    revert_hunk_blocking(RevertRequest {
+                        path: &path,
+                        expected_text: &expected_text,
+                        base_text: &base_text,
+                        hunk: &hunk,
+                        recorded,
+                    })
+                })
+                .await;
                 let _ = cx.update(|cx| {
                     this.update(cx, |app, cx| match result {
-                        Ok(_) => app.refresh_diff_dock(cwd, cx),
-                        Err(err) => app.show_diff_dock_error(&err, cx),
+                        Ok(_) => app.refresh_diff_dock_of_tab(origin, cwd, cx),
+                        Err(RevertFailure::Stale) => {
+                            app.refresh_diff_dock_of_tab(origin, cwd, cx);
+                            app.show_toast(STALE_FILE_MESSAGE, cx);
+                        }
+                        Err(RevertFailure::Refused(err)) => app.show_diff_dock_error(&err, cx),
                     })
                 });
             },
@@ -310,14 +392,23 @@ impl PaneFlowApp {
         .detach();
     }
 
-    fn dirty_file_tab_open(&self, path: &Path, cx: &Context<Self>) -> bool {
-        self.diff_dock.diff_tabs.iter().any(|tab| match tab {
-            DiffDockTab::File(view) => {
-                let view = view.read(cx);
-                view.path() == path && view.is_dirty()
-            }
-            _ => false,
-        })
+    fn dirty_view_of(&self, path: &Path, cx: &Context<Self>) -> bool {
+        self.all_unsaved_views(cx)
+            .iter()
+            .any(|view| view.read(cx).path() == path)
+    }
+
+    fn refresh_diff_dock_of_tab(
+        &mut self,
+        origin: Option<u64>,
+        cwd: String,
+        cx: &mut Context<Self>,
+    ) {
+        if self.diff_dock.owner == origin {
+            self.refresh_diff_dock(cwd, cx);
+        } else if let Some(data) = origin.and_then(|id| self.parked_diff_dock_data(id)) {
+            data.mark_stale();
+        }
     }
 
     fn show_diff_dock_error(&mut self, message: &str, cx: &mut Context<Self>) {
@@ -565,6 +656,36 @@ mod tests {
             )
     }
 
+    fn request<'a>(
+        path: &'a Path,
+        file: &'a FileDiff,
+        hunk: usize,
+        recorded: Option<FileStamp>,
+    ) -> RevertRequest<'a> {
+        RevertRequest {
+            path,
+            expected_text: &file.new_text,
+            base_text: &file.base_text,
+            hunk: &file.hunks[hunk],
+            recorded,
+        }
+    }
+
+    fn recorded_stamp(
+        metadata: &std::collections::HashMap<String, std::fs::Metadata>,
+        path: &str,
+    ) -> Option<FileStamp> {
+        metadata.get(path).map(FileStamp::from_metadata)
+    }
+
+    fn link_to(target: &Path, link: &Path) -> bool {
+        #[cfg(unix)]
+        let made = std::os::unix::fs::symlink(target, link);
+        #[cfg(windows)]
+        let made = std::os::windows::fs::symlink_file(target, link);
+        made.is_ok()
+    }
+
     fn repo() -> Option<tempfile::TempDir> {
         let dir = tempfile::tempdir().expect("tempdir");
         if !git(dir.path(), &["init", "-q"]) {
@@ -598,7 +719,7 @@ mod tests {
         assert_eq!(file.change, FileChange::Modified);
         assert_eq!(file.hunks.len(), 2);
         let on_disk = toplevel.join(&file.path);
-        let stamp = FileStamp::read(&on_disk);
+        let stamp = recorded_stamp(&diff.working_metadata, &file.path);
 
         let stale = FileStamp::from_metadata(&std::fs::metadata(&on_disk).expect("meta"));
         let wrong_len = {
@@ -609,16 +730,16 @@ mod tests {
         };
         assert!(stale.differs(&wrong_len));
         assert_eq!(
-            revert_hunk_blocking(&on_disk, &file.base_text, &file.hunks[0], Some(wrong_len)),
-            Err(STALE_FILE_MESSAGE.to_string())
+            revert_hunk_blocking(request(&on_disk, file, 0, Some(wrong_len))),
+            Err(RevertFailure::Stale)
         );
         assert_eq!(
-            revert_hunk_blocking(&on_disk, &file.base_text, &file.hunks[0], None),
-            Err(STALE_FILE_MESSAGE.to_string())
+            revert_hunk_blocking(request(&on_disk, file, 0, None)),
+            Err(RevertFailure::Stale)
         );
         assert_eq!(std::fs::read_to_string(&on_disk).expect("read"), edited);
 
-        revert_hunk_blocking(&on_disk, &file.base_text, &file.hunks[0], stamp).expect("revert");
+        revert_hunk_blocking(request(&on_disk, file, 0, stamp)).expect("revert");
         assert_eq!(
             std::fs::read_to_string(&on_disk).expect("read"),
             "one\ntwo\nthree\nfour\nfive\nSIX\n"
@@ -631,5 +752,198 @@ mod tests {
             .expect("notes.txt");
         assert_eq!(file.hunks.len(), 1);
         assert_eq!(file.hunks[0].new_row_range, 5..6);
+    }
+
+    #[test]
+    fn a_mixed_line_ending_file_only_changes_inside_the_hunk() {
+        let working = "a\r\nb\nc\rd\r\ne\n";
+        let base = "a\nb\nc\nD\ne\n";
+        let normalized = "a\nb\nc\nd\ne\n";
+        let block = hunks(base, normalized);
+        assert_eq!(block.len(), 1);
+
+        assert_eq!(
+            splice_base_lines(working, base, &block[0]),
+            "a\r\nb\nc\rD\r\ne\n"
+        );
+    }
+
+    #[test]
+    fn an_agent_write_between_the_build_and_the_click_leaves_the_disk_unchanged() {
+        let Some(dir) = repo() else {
+            return;
+        };
+        let path = dir.path().join("notes.txt");
+        std::fs::write(&path, "one\ntwo\nthree\n").expect("write base");
+        assert!(commit(dir.path(), "base"));
+        std::fs::write(&path, "ONE\ntwo\nthree\n").expect("write edit");
+        let diff = compute_head_diff(dir.path(), DiffOptions::default());
+        let file = diff
+            .files
+            .iter()
+            .find(|f| f.path == "notes.txt")
+            .expect("notes.txt");
+        let on_disk = diff.toplevel.clone().expect("toplevel").join(&file.path);
+        let stamp = recorded_stamp(&diff.working_metadata, &file.path);
+        let modified = std::fs::metadata(&on_disk)
+            .and_then(|meta| meta.modified())
+            .expect("mtime");
+
+        let agent = "ONE\ntwo\nTHREE\n";
+        std::fs::write(&on_disk, agent).expect("agent write");
+        std::fs::File::options()
+            .write(true)
+            .open(&on_disk)
+            .and_then(|handle| handle.set_modified(modified))
+            .expect("restore mtime");
+        assert_eq!(
+            FileStamp::read(&on_disk),
+            stamp,
+            "the agent write is invisible to the stamp"
+        );
+
+        assert_eq!(
+            revert_hunk_blocking(request(&on_disk, file, 0, stamp)),
+            Err(RevertFailure::Stale)
+        );
+        assert_eq!(std::fs::read_to_string(&on_disk).expect("read"), agent);
+    }
+
+    #[test]
+    fn a_symlink_is_refused_by_name_and_stays_a_symlink() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let target = dir.path().join("target.txt");
+        std::fs::write(&target, "a\nB\n").expect("target");
+        let link = dir.path().join("link.txt");
+        if !link_to(&target, &link) {
+            return;
+        }
+        let file = file("link.txt", FileChange::Modified, "a\nb\n", "a\nB\n");
+        let stamp = FileStamp::read(&link);
+
+        let refused = revert_hunk_blocking(request(&link, &file, 0, stamp));
+
+        assert_eq!(
+            refused,
+            Err(RevertFailure::Refused(
+                "link.txt is a symlink; Revert only edits regular files".to_string()
+            ))
+        );
+        assert!(
+            std::fs::symlink_metadata(&link)
+                .expect("link")
+                .file_type()
+                .is_symlink()
+        );
+        assert_eq!(std::fs::read_to_string(&target).expect("read"), "a\nB\n");
+    }
+
+    #[test]
+    fn a_type_change_is_parsed_as_such_and_named_in_the_refusal() {
+        let Some(dir) = repo() else {
+            return;
+        };
+        assert!(git(dir.path(), &["config", "core.symlinks", "true"]));
+        std::fs::write(dir.path().join("target.txt"), "x\n").expect("target");
+        let entry = dir.path().join("entry.txt");
+        std::fs::write(&entry, "entry\n").expect("entry");
+        assert!(commit(dir.path(), "base"));
+        std::fs::remove_file(&entry).expect("remove");
+        if !link_to(Path::new("target.txt"), &entry) {
+            return;
+        }
+
+        let diff = compute_head_diff(dir.path(), DiffOptions::default());
+        let file = diff
+            .files
+            .iter()
+            .find(|f| f.path == "entry.txt")
+            .expect("entry.txt");
+
+        assert_eq!(file.change, FileChange::TypeChanged);
+        assert_eq!(
+            type_change_message(&entry),
+            "entry.txt changed between a file and a symlink; Revert cannot restore it"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_read_only_mode_survives_a_revert() {
+        use std::os::unix::fs::PermissionsExt;
+        let Some(dir) = repo() else {
+            return;
+        };
+        for mode in [0o444, 0o555] {
+            let name = format!("file-{mode:o}.txt");
+            let path = dir.path().join(&name);
+            std::fs::write(&path, "one\ntwo\n").expect("base");
+            assert!(commit(dir.path(), "base"));
+            std::fs::write(&path, "ONE\ntwo\n").expect("edit");
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(mode)).expect("chmod");
+            let diff = compute_head_diff(dir.path(), DiffOptions::default());
+            let file = diff.files.iter().find(|f| f.path == name).expect("file");
+            let on_disk = diff.toplevel.clone().expect("toplevel").join(&file.path);
+
+            revert_hunk_blocking(request(
+                &on_disk,
+                file,
+                0,
+                recorded_stamp(&diff.working_metadata, &name),
+            ))
+            .expect("revert");
+
+            let meta = std::fs::metadata(&on_disk).expect("meta");
+            assert_eq!(meta.permissions().mode() & 0o777, mode);
+            assert_eq!(
+                std::fs::read_to_string(&on_disk).expect("read"),
+                "one\ntwo\n"
+            );
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_read_only_file_is_refused_and_keeps_its_attribute() {
+        let Some(dir) = repo() else {
+            return;
+        };
+        let path = dir.path().join("locked.txt");
+        std::fs::write(&path, "one\ntwo\n").expect("base");
+        assert!(commit(dir.path(), "base"));
+        std::fs::write(&path, "ONE\ntwo\n").expect("edit");
+        let mut permissions = std::fs::metadata(&path).expect("meta").permissions();
+        permissions.set_readonly(true);
+        std::fs::set_permissions(&path, permissions).expect("read-only");
+        let diff = compute_head_diff(dir.path(), DiffOptions::default());
+        let file = diff
+            .files
+            .iter()
+            .find(|f| f.path == "locked.txt")
+            .expect("file");
+        let on_disk = diff.toplevel.clone().expect("toplevel").join(&file.path);
+
+        let refused = revert_hunk_blocking(request(
+            &on_disk,
+            file,
+            0,
+            recorded_stamp(&diff.working_metadata, "locked.txt"),
+        ));
+
+        assert_eq!(
+            refused,
+            Err(RevertFailure::Refused(
+                "locked.txt is read-only; Revert left it untouched".to_string()
+            ))
+        );
+        let mut permissions = std::fs::metadata(&on_disk).expect("meta").permissions();
+        assert!(permissions.readonly());
+        assert_eq!(
+            std::fs::read_to_string(&on_disk).expect("read"),
+            "ONE\ntwo\n"
+        );
+        #[allow(clippy::permissions_set_readonly_false, reason = "test cleanup")]
+        permissions.set_readonly(false);
+        std::fs::set_permissions(&on_disk, permissions).expect("writable");
     }
 }

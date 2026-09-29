@@ -1,5 +1,6 @@
+use std::collections::HashMap;
+use std::io::Read as _;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use super::engine::{DiffHunk, DiffOptions, compute_hunk_report};
 
@@ -9,6 +10,7 @@ pub enum FileChange {
     Modified,
     Deleted,
     Renamed,
+    TypeChanged,
 }
 
 #[derive(Clone, Debug)]
@@ -40,6 +42,7 @@ pub struct WorktreeDiff {
     pub error: Option<String>,
     pub toplevel: Option<PathBuf>,
     pub head_sha: Option<String>,
+    pub working_metadata: HashMap<String, std::fs::Metadata>,
 }
 
 const GIT_DEADLINE: std::time::Duration = std::time::Duration::from_secs(30);
@@ -47,17 +50,14 @@ const GIT_DEADLINE: std::time::Duration = std::time::Duration::from_secs(30);
 const GIT_STDOUT_CAP: u64 = 16 * 1024 * 1024;
 
 fn run_git(dir: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
-    let mut cmd = Command::new("git");
-    cmd.args(args)
-        .current_dir(dir)
-        .env("GIT_TERMINAL_PROMPT", "0");
-    let output =
-        paneflow_process::run_with_timeout(cmd, GIT_DEADLINE, GIT_STDOUT_CAP).map_err(|e| {
-            format!(
-                "git {} failed: {e}",
-                args.first().copied().unwrap_or("command")
-            )
-        })?;
+    let mut cmd = crate::git_command::git(crate::git_command::GitProfile::Probe, args);
+    cmd.current_dir(dir);
+    let output = crate::git_command::run(cmd, GIT_DEADLINE, GIT_STDOUT_CAP).map_err(|e| {
+        format!(
+            "git {} failed: {e}",
+            args.first().copied().unwrap_or("command")
+        )
+    })?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         let msg = stderr.trim();
@@ -68,13 +68,6 @@ fn run_git(dir: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
         });
     }
     Ok(output.stdout)
-}
-
-pub(crate) fn worktree_toplevel(dir: &Path) -> PathBuf {
-    try_worktree_toplevel(dir)
-        .ok()
-        .flatten()
-        .unwrap_or_else(|| dir.to_path_buf())
 }
 
 pub(crate) fn try_worktree_toplevel(dir: &Path) -> Result<Option<PathBuf>, String> {
@@ -185,27 +178,61 @@ fn load_base_text(worktree_dir: &Path, merge_base: &str, rel_path: &str) -> (Str
     }
 }
 
-fn load_working_text(worktree_dir: &Path, rel_path: &str) -> (String, bool) {
+struct WorkingText {
+    text: String,
+    binary: bool,
+    metadata: Option<std::fs::Metadata>,
+}
+
+impl WorkingText {
+    fn plain(text: String, binary: bool) -> Self {
+        Self {
+            text,
+            binary,
+            metadata: None,
+        }
+    }
+}
+
+fn read_with_metadata(path: &Path) -> std::io::Result<(Vec<u8>, std::fs::Metadata)> {
+    let (file, metadata) = paneflow_home::open_regular_for_reading(path)?;
+    let mut bytes = Vec::new();
+    file.take(MAX_FILE_BYTES + 1).read_to_end(&mut bytes)?;
+    Ok((bytes, metadata))
+}
+
+fn load_working_text(worktree_dir: &Path, rel_path: &str) -> WorkingText {
     let path = worktree_dir.join(rel_path);
     match std::fs::symlink_metadata(&path) {
         Ok(meta) if meta.file_type().is_symlink() => {
             let target = std::fs::read_link(&path)
                 .map(|t| t.to_string_lossy().into_owned())
                 .unwrap_or_default();
-            (target, false)
+            WorkingText::plain(target, false)
         }
-        Ok(_) => match std::fs::read(&path) {
-            Ok(bytes) => classify(bytes),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => (String::new(), false),
+        Ok(_) => match read_with_metadata(&path) {
+            Ok((bytes, metadata)) => {
+                let (text, binary) = classify(bytes);
+                WorkingText {
+                    text,
+                    binary,
+                    metadata: Some(metadata),
+                }
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                WorkingText::plain(String::new(), false)
+            }
             Err(e) => {
                 log::warn!("git: failed to read working-tree file {rel_path}: {e}");
-                (String::new(), true)
+                WorkingText::plain(String::new(), true)
             }
         },
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => (String::new(), false),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            WorkingText::plain(String::new(), false)
+        }
         Err(e) => {
             log::warn!("git: failed to lstat working-tree file {rel_path}: {e}");
-            (String::new(), true)
+            WorkingText::plain(String::new(), true)
         }
     }
 }
@@ -242,6 +269,7 @@ fn parse_name_status_z(stdout: &[u8]) -> Vec<(FileChange, String, Option<String>
             'A' => FileChange::Added,
             'D' => FileChange::Deleted,
             'R' => FileChange::Renamed,
+            'T' => FileChange::TypeChanged,
             _ => FileChange::Modified,
         };
         out.push((change, path, old));
@@ -283,7 +311,7 @@ pub fn is_skipped_name(path: &str) -> bool {
 }
 
 fn is_too_large(worktree_dir: &Path, rel_path: &str) -> bool {
-    std::fs::metadata(worktree_dir.join(rel_path))
+    std::fs::symlink_metadata(worktree_dir.join(rel_path))
         .map(|m| m.len() > MAX_FILE_BYTES)
         .unwrap_or(false)
 }
@@ -302,14 +330,24 @@ fn stub_file(path: String, change: FileChange) -> FileDiff {
 
 const EMPTY_TREE_SHA: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 
+pub(crate) const NOT_A_GIT_REPOSITORY: &str = "Not a Git repository";
+
 pub fn compute_head_diff(worktree_dir: &Path, options: DiffOptions) -> WorktreeDiff {
-    let toplevel = worktree_toplevel(worktree_dir);
+    let failed = |error: String| WorktreeDiff {
+        error: Some(error),
+        ..Default::default()
+    };
+    let toplevel = match try_worktree_toplevel(worktree_dir) {
+        Ok(Some(toplevel)) => toplevel,
+        Ok(None) => return failed(NOT_A_GIT_REPOSITORY.to_string()),
+        Err(error) => return failed(error),
+    };
     let worktree_dir = toplevel.as_path();
     log::debug!("git: compute_head_diff dir={}", worktree_dir.display());
-    let head = run_git(worktree_dir, &["rev-parse", "--verify", "HEAD"])
-        .ok()
-        .map(|out| String::from_utf8_lossy(&out).trim().to_string())
-        .filter(|sha| !sha.is_empty());
+    let head = match crate::workspace::git::resolve_head(worktree_dir, GIT_DEADLINE) {
+        Ok(head) => head,
+        Err(error) => return failed(error),
+    };
     let base = head.clone().unwrap_or_else(|| EMPTY_TREE_SHA.to_string());
     let mut diff = compute_diff_against(worktree_dir, &base, options);
     diff.toplevel = Some(toplevel);
@@ -348,6 +386,7 @@ fn compute_diff_against(worktree_dir: &Path, base: &str, options: DiffOptions) -
     }
     log::debug!("git: {} changed files", changes.len());
     let mut files = Vec::new();
+    let mut working_metadata = HashMap::new();
     for (change, path, old_path) in changes {
         if files.len() >= MAX_FILE_COUNT {
             truncated = true;
@@ -367,10 +406,14 @@ fn compute_diff_against(worktree_dir: &Path, base: &str, options: DiffOptions) -
             FileChange::Added => (String::new(), false),
             _ => load_base_text(worktree_dir, base, base_lookup),
         };
-        let (new_text, new_bin) = match change {
-            FileChange::Deleted => (String::new(), false),
+        let working = match change {
+            FileChange::Deleted => WorkingText::plain(String::new(), false),
             _ => load_working_text(worktree_dir, &path),
         };
+        let (new_text, new_bin) = (working.text, working.binary);
+        if let Some(metadata) = working.metadata {
+            working_metadata.insert(path.clone(), metadata);
+        }
         if base_text.len() as u64 > MAX_FILE_BYTES || new_text.len() as u64 > MAX_FILE_BYTES {
             log::debug!("git: skip (oversized post-load) {path}");
             files.push(stub_file(path, change));
@@ -411,6 +454,7 @@ fn compute_diff_against(worktree_dir: &Path, base: &str, options: DiffOptions) -
     WorktreeDiff {
         files,
         error: None,
+        working_metadata,
         ..Default::default()
     }
 }
@@ -419,11 +463,54 @@ fn compute_diff_against(worktree_dir: &Path, base: &str, options: DiffOptions) -
 mod tests {
     use super::*;
 
+    #[cfg(unix)]
+    #[test]
+    fn a_tracked_file_replaced_by_a_fifo_reads_as_unreadable_at_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let made = std::process::Command::new("mkfifo")
+            .arg(dir.path().join("pipe"))
+            .status()
+            .is_ok_and(|status| status.success());
+        assert!(made);
+        let started = std::time::Instant::now();
+        let working = load_working_text(dir.path(), "pipe");
+        assert!(started.elapsed() < std::time::Duration::from_millis(100));
+        assert!(working.binary);
+        assert!(working.text.is_empty());
+    }
+
+    #[test]
+    fn a_tracked_symlink_is_sized_by_its_link_not_by_the_file_it_points_to() {
+        let dir = tempfile::tempdir().unwrap();
+        let big = dir.path().join("big.bin");
+        std::fs::write(&big, vec![b'x'; MAX_FILE_BYTES as usize + 1]).unwrap();
+        #[cfg(unix)]
+        let linked = std::os::unix::fs::symlink(&big, dir.path().join("link")).is_ok();
+        #[cfg(windows)]
+        let linked = std::os::windows::fs::symlink_file(&big, dir.path().join("link")).is_ok();
+        if !linked {
+            return;
+        }
+        assert!(is_too_large(dir.path(), "big.bin"));
+        assert!(!is_too_large(dir.path(), "link"));
+    }
+
+    #[test]
+    fn a_folder_outside_any_repository_reads_as_not_a_git_repository() {
+        let dir = tempfile::tempdir().unwrap();
+        let diff = compute_head_diff(dir.path(), DiffOptions::default());
+        assert_eq!(diff.error.as_deref(), Some(NOT_A_GIT_REPOSITORY));
+    }
+
     #[test]
     fn name_status_z_parsing() {
-        let raw = b"M\0src/main.rs\0A\0src/new.rs\0D\0old.rs\0R100\0from.rs\0to.rs\0";
+        let raw = b"M\0src/main.rs\0A\0src/new.rs\0D\0old.rs\0R100\0from.rs\0to.rs\0T\0link\0";
         let parsed = parse_name_status_z(raw);
-        assert_eq!(parsed.len(), 4);
+        assert_eq!(parsed.len(), 5);
+        assert_eq!(
+            parsed[4],
+            (FileChange::TypeChanged, "link".to_string(), None)
+        );
         assert_eq!(
             parsed[0],
             (FileChange::Modified, "src/main.rs".to_string(), None)

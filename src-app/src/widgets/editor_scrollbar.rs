@@ -24,6 +24,15 @@ pub(crate) struct EditorScrollbar {
 }
 
 impl EditorScrollbar {
+    pub(crate) fn cancel_drag(&self) {
+        self.drag.set(None);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn is_dragging(&self) -> bool {
+        self.drag.get().is_some()
+    }
+
     pub(crate) fn render<T: 'static>(
         &self,
         scroll: &ScrollHandle,
@@ -158,5 +167,26 @@ impl EditorScrollbar {
                 .size_full(),
             )
             .into_any_element()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_canceled_drag_stops_driving_the_handle() {
+        let scrollbar = EditorScrollbar::default();
+        let shared = scrollbar.clone();
+        scrollbar.drag.set(Some(Drag {
+            mouse_y: px(10.),
+            offset: 40.0,
+            units_per_pixel: 2.0,
+        }));
+        assert!(shared.is_dragging(), "clones share one drag");
+
+        shared.cancel_drag();
+
+        assert!(!scrollbar.is_dragging());
     }
 }

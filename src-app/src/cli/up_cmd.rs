@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use paneflow_config::schema::PaneFlowConfig;
@@ -14,6 +15,9 @@ use crate::workspace::worktree;
 pub(super) const DEFAULT_PORT_BASE: u16 = 3000;
 const PORT_STRIDE: u16 = 10;
 const DEFAULT_SETUP_TIMEOUT: Duration = Duration::from_secs(300);
+const SETUP_STDOUT_CAP: u64 = 8 * 1024 * 1024;
+const SETUP_STDERR_TAIL_BYTES: usize = 64 * 1024;
+const SETUP_STDERR_TAIL_LINES: usize = 20;
 
 pub fn up(client: &impl IpcTransport, file: &str, dry_run: bool) -> Result<i32, CliError> {
     let src = std::fs::read_to_string(file)
@@ -361,47 +365,88 @@ pub(super) fn execute_worktree_plan(plan: &WorktreePlan) -> Result<(), CliError>
     .map_err(|e| CliError::runtime(format!("pane {}: {e}", plan.pane_idx)))?;
 
     if plan.copy_env {
-        let copied = worktree::copy_include_files(&plan.repo_root, &plan.path);
-        if !copied.is_empty() {
+        let outcome = worktree::copy_include_files(&plan.repo_root, &plan.path);
+        if !outcome.copied.is_empty() {
             eprintln!(
                 "pane {}: copied {} into {}",
                 plan.pane_idx,
-                copied.join(", "),
+                outcome.copied.join(", "),
                 plan.path.display()
             );
         }
-    }
-
-    if let Some(setup) = plan.setup.as_deref().filter(|s| !s.is_empty()) {
-        #[cfg(unix)]
-        let mut cmd = {
-            let mut c = std::process::Command::new("sh");
-            c.arg("-c").arg(setup);
-            c
-        };
-        #[cfg(windows)]
-        let mut cmd = {
-            let mut c = std::process::Command::new("cmd");
-            c.arg("/C").arg(setup);
-            c
-        };
-        cmd.current_dir(&plan.path);
-        match paneflow_process::run_with_timeout(cmd, plan.setup_timeout, 256 * 1024) {
-            Ok(out) if out.status.success() => {}
-            Ok(out) => eprintln!(
-                "pane {}: setup failed in {} (exit {}) - agent started anyway",
-                plan.pane_idx,
-                plan.path.display(),
-                out.status.code().unwrap_or(-1)
-            ),
-            Err(e) => eprintln!(
-                "pane {}: setup failed in {} ({e}) - agent started anyway",
-                plan.pane_idx,
-                plan.path.display()
-            ),
+        for failure in outcome.failures {
+            eprintln!("pane {}: {failure}", plan.pane_idx);
         }
     }
+
+    if let Some(setup) = plan.setup.as_deref().filter(|s| !s.is_empty())
+        && let Err(reason) = run_setup(setup, &plan.path, plan.setup_timeout)
+    {
+        eprintln!(
+            "pane {}: setup failed in {} ({reason}) - agent started anyway",
+            plan.pane_idx,
+            plan.path.display()
+        );
+    }
     Ok(())
+}
+
+fn setup_command(setup: &str) -> std::process::Command {
+    #[cfg(unix)]
+    let mut command = std::process::Command::new("sh");
+    #[cfg(unix)]
+    command.arg("-c");
+    #[cfg(windows)]
+    let mut command = std::process::Command::new("cmd");
+    #[cfg(windows)]
+    command.arg("/C");
+    command.arg(setup);
+    command
+}
+
+fn run_setup(setup: &str, cwd: &Path, timeout: Duration) -> Result<(), String> {
+    let mut command = setup_command(setup);
+    command.current_dir(cwd);
+    let tail = Arc::new(Mutex::new(Vec::new()));
+    let sink = tail.clone();
+    let result = paneflow_process::run_with_timeout_tapping_stderr(
+        command,
+        timeout,
+        SETUP_STDOUT_CAP,
+        move |chunk| {
+            if let Ok(mut tail) = sink.lock() {
+                tail.extend_from_slice(chunk);
+                let excess = tail.len().saturating_sub(SETUP_STDERR_TAIL_BYTES);
+                tail.drain(..excess);
+            }
+        },
+    );
+    match result {
+        Ok(out) if out.status.success() => Ok(()),
+        Ok(out) => Err(format!("exit {}", out.status.code().unwrap_or(-1))),
+        Err(paneflow_process::ProcError::Timeout) => {
+            let last_lines = tail
+                .lock()
+                .map(|tail| last_stderr_lines(&tail, SETUP_STDERR_TAIL_LINES))
+                .unwrap_or_default();
+            let mut reason = format!("killed after its {}s timeout", timeout.as_secs());
+            if !last_lines.is_empty() {
+                reason.push_str("; last stderr lines:\n");
+                reason.push_str(&last_lines);
+            }
+            Err(reason)
+        }
+        Err(error) => Err(error.to_string()),
+    }
+}
+
+fn last_stderr_lines(stderr: &[u8], count: usize) -> String {
+    let text = String::from_utf8_lossy(stderr);
+    let lines: Vec<&str> = text
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .collect();
+    lines[lines.len().saturating_sub(count)..].join("\n")
 }
 
 pub(super) fn rollback_created_worktrees(plans: &[&WorktreePlan]) {
@@ -844,6 +889,71 @@ mod tests {
         let cfg = PaneFlowConfig::default();
         let resolved = resolve_command(0, &pane(None, Some("cargo watch")), &cfg).expect("ok");
         assert_eq!(resolved.as_deref(), Some("cargo watch"));
+    }
+
+    #[cfg(unix)]
+    const LOUD_SETUP: &str =
+        "head -c 1048576 /dev/zero | tr '\\0' x >&2; echo done > setup-finished";
+    #[cfg(windows)]
+    const LOUD_SETUP: &str = "powershell -NoProfile -NonInteractive -Command \
+         \"[Console]::Error.Write('x' * 1048576)\" & echo done> setup-finished";
+
+    #[cfg(unix)]
+    const HANGING_SETUP: &str = "for i in $(seq 1 30); do echo line$i >&2; done; sleep 30";
+    #[cfg(windows)]
+    const HANGING_SETUP: &str = "(for /L %i in (1,1,30) do @echo line%i 1>&2) & \
+         powershell -NoProfile -NonInteractive -Command Start-Sleep 30";
+
+    #[test]
+    fn a_setup_that_floods_stderr_still_runs_to_completion() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let repo = tmp.path().join("repo");
+        std::fs::create_dir_all(&repo).expect("repo dir");
+        if !test_git(&repo, &["init", "-q", "-b", "main"]) {
+            return;
+        }
+        std::fs::write(repo.join("README.md"), "init\n").expect("readme");
+        assert!(test_git(&repo, &["add", "README.md"]));
+        assert!(test_git(
+            &repo,
+            &[
+                "-c",
+                "user.email=paneflow@example.com",
+                "-c",
+                "user.name=Paneflow",
+                "commit",
+                "-q",
+                "-m",
+                "init",
+            ],
+        ));
+        let mut plan = dummy_plan(0, "", "feat/loud");
+        plan.repo_root = repo;
+        plan.path = tmp.path().join("checkout");
+        plan.copy_env = false;
+        plan.setup = Some(LOUD_SETUP.to_string());
+        plan.setup_timeout = Duration::from_secs(60);
+
+        execute_worktree_plan(&plan).expect("worktree created");
+
+        assert!(
+            plan.path.join("setup-finished").exists(),
+            "1 MiB of stderr must not kill the setup before it finishes"
+        );
+    }
+
+    #[test]
+    fn a_setup_past_its_timeout_is_killed_and_reports_its_last_stderr_lines() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let reason = run_setup(HANGING_SETUP, tmp.path(), Duration::from_secs(3))
+            .expect_err("a hanging setup must be killed");
+        assert!(reason.contains("3s timeout"), "got: {reason}");
+        let (_, tail) = reason
+            .split_once("last stderr lines:\n")
+            .unwrap_or_else(|| panic!("no stderr tail in: {reason}"));
+        let lines: Vec<&str> = tail.lines().map(str::trim).collect();
+        let expected: Vec<String> = (11..=30).map(|i| format!("line{i}")).collect();
+        assert_eq!(lines, expected);
     }
 
     fn test_git(cwd: &std::path::Path, args: &[&str]) -> bool {

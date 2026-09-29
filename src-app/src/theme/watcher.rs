@@ -8,6 +8,7 @@ use std::time::{Duration, Instant, SystemTime};
 use parking_lot::Mutex;
 
 use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
+use paneflow_config::watcher::ConfigTargetWatch;
 
 use super::builtin::{paneflow_dark, theme_by_name};
 use super::model::{TerminalTheme, apply_surface_overrides};
@@ -15,6 +16,8 @@ use super::model::{TerminalTheme, apply_surface_overrides};
 const THEME_CHECK_INTERVAL: Duration = Duration::from_millis(500);
 
 const DEBOUNCE_DURATION: Duration = Duration::from_millis(300);
+
+const DEBOUNCE_CAP: Duration = Duration::from_secs(2);
 
 struct CachedTheme {
     theme: TerminalTheme,
@@ -188,9 +191,11 @@ impl ThemeWatcher {
         )?;
 
         watcher.watch(&watch_dir, RecursiveMode::NonRecursive)?;
+        let mut watch = ConfigTargetWatch::new(watcher, config_path, watch_dir);
+        watch.follow();
 
         thread::spawn(move || {
-            event_loop(rx, &config_path, &callback, &watcher);
+            event_loop(rx, &callback, &mut watch);
         });
 
         log::info!(
@@ -208,24 +213,24 @@ fn is_relevant_event(kind: &EventKind) -> bool {
     )
 }
 
-fn event_targets_config(event: &Event, config_path: &std::path::Path) -> bool {
-    let target_name = config_path.file_name();
-    target_name.is_some() && event.paths.iter().any(|p| p.file_name() == target_name)
+fn reload_deadline(burst_started: Instant, now: Instant) -> Instant {
+    (now + DEBOUNCE_DURATION).min(burst_started + DEBOUNCE_CAP)
 }
 
 fn event_loop(
     rx: mpsc::Receiver<notify::Result<Event>>,
-    config_path: &std::path::Path,
     callback: &Arc<dyn Fn() + Send + Sync>,
-    _watcher: &RecommendedWatcher,
+    watch: &mut ConfigTargetWatch,
 ) {
     let mut pending_reload: Option<Instant> = None;
+    let mut burst_started: Option<Instant> = None;
 
     loop {
         let event_result = if let Some(deadline) = pending_reload {
             let remaining = deadline.saturating_duration_since(Instant::now());
             if remaining.is_zero() {
                 pending_reload = None;
+                burst_started = None;
                 fire_reload(callback);
                 continue;
             }
@@ -239,8 +244,10 @@ fn event_loop(
 
         match event_result {
             Ok(Ok(event)) => {
-                if is_relevant_event(&event.kind) && event_targets_config(&event, config_path) {
-                    pending_reload = Some(Instant::now() + DEBOUNCE_DURATION);
+                if is_relevant_event(&event.kind) && watch.targets(&event) {
+                    let now = Instant::now();
+                    let started = *burst_started.get_or_insert(now);
+                    pending_reload = Some(reload_deadline(started, now));
                 }
             }
             Ok(Err(e)) => {
@@ -248,6 +255,7 @@ fn event_loop(
             }
             Err(mpsc::RecvTimeoutError::Timeout) => {
                 pending_reload = None;
+                burst_started = None;
                 fire_reload(callback);
             }
             Err(mpsc::RecvTimeoutError::Disconnected) => {
@@ -271,6 +279,19 @@ mod tests {
     use std::sync::atomic::AtomicUsize;
     use std::time::Duration;
     use tempfile::TempDir;
+
+    #[test]
+    fn a_continuous_burst_still_reloads_within_the_cap() {
+        let started = Instant::now();
+        let quiet = reload_deadline(started, started);
+        assert_eq!(quiet, started + DEBOUNCE_DURATION);
+        let late = started + Duration::from_millis(1900);
+        assert_eq!(
+            reload_deadline(started, late),
+            started + DEBOUNCE_CAP,
+            "events every few ms must not postpone the reload past 2 s"
+        );
+    }
 
     fn wait_for<F: FnMut() -> bool>(mut pred: F, timeout: Duration) -> bool {
         let deadline = Instant::now() + timeout;

@@ -45,7 +45,7 @@ pub fn load_config() -> PaneFlowConfig {
 }
 
 pub fn read_config_string(path: &Path) -> Result<Option<String>, ConfigError> {
-    let file = match std::fs::File::open(path) {
+    let file = match paneflow_home::open_for_reading(path) {
         Ok(file) => file,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(source) => {

@@ -741,7 +741,7 @@ fn read_no_follow(path: &std::path::Path) -> ReadOutcome {
         use std::os::unix::fs::OpenOptionsExt;
         let file = match std::fs::OpenOptions::new()
             .read(true)
-            .custom_flags(libc::O_NOFOLLOW)
+            .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
             .open(path)
         {
             Ok(f) => f,
@@ -749,6 +749,11 @@ fn read_no_follow(path: &std::path::Path) -> ReadOutcome {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return ReadOutcome::NotFound,
             Err(e) => return ReadOutcome::Other(e),
         };
+        match file.metadata() {
+            Ok(meta) if meta.is_file() => {}
+            Ok(_) => return ReadOutcome::Other(paneflow_home::not_regular_file(path)),
+            Err(e) => return ReadOutcome::Other(e),
+        }
         let mut bytes = Vec::with_capacity(MAX_INPUT_BYTES.min(64 * 1024));
         let mut limited = file.take((MAX_INPUT_BYTES + 1) as u64);
         match limited.read_to_end(&mut bytes) {
@@ -1126,6 +1131,26 @@ mod tests {
     use super::*;
     use std::fs;
     use std::path::Path;
+
+    #[cfg(unix)]
+    fn mkfifo(path: &std::path::Path) {
+        let made = std::process::Command::new("mkfifo")
+            .arg(path)
+            .status()
+            .is_ok_and(|status| status.success());
+        assert!(made, "mkfifo {}", path.display());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_fifo_markdown_file_is_refused_at_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("notes.md");
+        mkfifo(&path);
+        let started = std::time::Instant::now();
+        assert!(matches!(read_no_follow(&path), ReadOutcome::Other(_)));
+        assert!(started.elapsed() < std::time::Duration::from_millis(100));
+    }
 
     #[test]
     fn table_col_count_caps_pathological_tables() {

@@ -3,28 +3,111 @@ use super::*;
 const RELOAD_DEBOUNCE: Duration = Duration::from_millis(200);
 const RELOAD_DIFF_ATTEMPTS: usize = 2;
 
+pub(crate) enum SaveStart {
+    Clean,
+    Deferred,
+    Started(gpui::Task<Result<(), String>>),
+    Refused(String),
+}
+
+fn file_name_of(path: &Path) -> String {
+    path.file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| path.display().to_string())
+}
+
+fn disk_generation(this: &WeakEntity<CodeView>, cx: &mut AsyncApp) -> Option<u64> {
+    cx.update(|cx| this.read_with(cx, |view: &CodeView, _| view.disk_generation))
+        .ok()
+}
+
+pub(super) struct DiskRead {
+    text: String,
+    stamp: FileStamp,
+    facts: DiskFacts,
+}
+
+pub(super) fn read_for_reload(path: &Path) -> Result<DiskRead, CodeLoadError> {
+    let disk = super::super::load::read_disk_text(path)?;
+    let longest = disk
+        .text
+        .lines()
+        .map(|line| line.chars().count())
+        .max()
+        .unwrap_or(0);
+    Ok(DiskRead {
+        facts: DiskFacts {
+            read_only: super::super::load::read_only_reason_for(longest, disk.read_only),
+            line_ending: LineEnding::detect(&disk.text),
+        },
+        stamp: disk.stamp,
+        text: disk.text,
+    })
+}
+
+async fn probe_disk(
+    this: &WeakEntity<CodeView>,
+    cx: &mut AsyncApp,
+    path: &Path,
+    force: bool,
+) -> bool {
+    let Some(generation) = disk_generation(this, cx) else {
+        return false;
+    };
+    let probe = path.to_path_buf();
+    let read = cx
+        .background_spawn(async move { read_for_reload(&probe) })
+        .await;
+    reload_from_disk(this, cx, generation, read, force).await
+}
+
 async fn reload_from_disk(
     this: &WeakEntity<CodeView>,
     cx: &mut AsyncApp,
-    stamp: Option<FileStamp>,
-    text: Option<String>,
+    generation: u64,
+    read: Result<DiskRead, CodeLoadError>,
     force: bool,
 ) -> bool {
-    let present = text.is_some();
+    let read = match read {
+        Ok(read) => Some(read),
+        Err(CodeLoadError::NotFound) => None,
+        Err(error) => {
+            return cx
+                .update(|cx| {
+                    this.update(cx, |view: &mut CodeView, cx: &mut Context<CodeView>| {
+                        if view.disk_generation == generation {
+                            view.disk_unreadable(error, force, cx);
+                        }
+                    })
+                })
+                .is_ok();
+        }
+    };
+    let stamp = read.as_ref().map(|read| read.stamp);
+    let present = read.is_some();
     let begun = cx.update(|cx| {
         this.update(cx, |view: &mut CodeView, cx: &mut Context<CodeView>| {
+            if view.disk_generation != generation {
+                return None;
+            }
+            if present && matches!(view.state, CodeLoadState::Failed(_)) {
+                view.start_load(cx);
+                return None;
+            }
             view.begin_disk_reload(stamp, present, force, cx)
         })
     });
     let Ok(begun) = begun else {
         return false;
     };
-    let (Some(mut diff), Some(text)) = (begun, text) else {
+    let (Some(mut diff), Some(read)) = (begun, read) else {
         return true;
     };
-    let text = Arc::new(text);
+    let facts = read.facts;
+    let text = Arc::new(read.text);
     for attempt in 0..RELOAD_DIFF_ATTEMPTS {
-        let DiskDiff { rope, revision } = diff;
+        let DiskDiff { rope, mut meta } = diff;
+        meta.facts = Some(facts);
         let incoming = Arc::clone(&text);
         let splices = cx
             .background_spawn(async move { edit::disk_splices(&rope, &incoming) })
@@ -32,7 +115,7 @@ async fn reload_from_disk(
         let retry = attempt + 1 < RELOAD_DIFF_ATTEMPTS;
         let finished = cx.update(|cx| {
             this.update(cx, |view: &mut CodeView, cx: &mut Context<CodeView>| {
-                view.finish_disk_reload(revision, splices, retry, force, cx)
+                view.finish_disk_reload(meta, splices, retry, force, cx)
             })
         });
         let Ok(next) = finished else {
@@ -57,73 +140,114 @@ impl CodeView {
     }
 
     fn save(&mut self, cx: &mut Context<Self>) {
+        if let SaveStart::Started(task) = self.start_save(true, cx) {
+            task.detach();
+        }
+    }
+
+    pub(crate) fn save_for_close(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> gpui::Task<Result<(), String>> {
+        match self.start_save(false, cx) {
+            SaveStart::Clean => gpui::Task::ready(Ok(())),
+            SaveStart::Started(task) => task,
+            SaveStart::Deferred => gpui::Task::ready(Err(format!(
+                "{} is reloading from disk.",
+                file_name_of(&self.path)
+            ))),
+            SaveStart::Refused(reason) => gpui::Task::ready(Err(reason)),
+        }
+    }
+
+    pub(crate) fn discard_unsaved(&mut self) {
+        self.saved_mark = self.history.mark();
+    }
+
+    pub(crate) fn start_save(&mut self, defer: bool, cx: &mut Context<Self>) -> SaveStart {
+        let name = file_name_of(&self.path);
         if self.saving {
-            return;
+            return SaveStart::Refused(format!("{name} is already being saved."));
         }
         let Some(doc) = self.state.document() else {
-            return;
+            return SaveStart::Clean;
         };
         if doc.is_read_only() {
             self.flash_read_only(cx);
-            return;
+            return SaveStart::Refused(format!("{name} is read-only."));
+        }
+        if self.disk == DiskState::Conflict {
+            cx.notify();
+            return SaveStart::Refused(format!(
+                "{name} changed on disk. Choose Keep mine or Reload."
+            ));
         }
         if !self.is_dirty() && self.disk == DiskState::InSync {
-            return;
+            return SaveStart::Clean;
+        }
+        if self.reloading {
+            if defer {
+                self.save_after_reload = true;
+                return SaveStart::Deferred;
+            }
+            return SaveStart::Refused(format!("{name} is reloading from disk."));
         }
         self.history.close_group();
         let contents = doc.to_disk_string();
         let path = self.path.clone();
-        let expected = self.stamp;
+        let expected = self.buffer_stamp;
         let mark = self.history.mark();
         self.saving = true;
         self.save_error = None;
         cx.notify();
-        cx.spawn(async move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
-            let outcome = cx
-                .background_spawn(async move {
-                    let current = FileStamp::read(&path);
-                    let conflict = match (expected, current) {
-                        (Some(expected), Some(current)) => expected.differs(&current),
-                        (None, Some(_)) => true,
-                        _ => false,
-                    };
-                    if conflict {
-                        return Err(None);
-                    }
-                    save::save_blocking(&path, &contents).map_err(Some)
+        SaveStart::Started(
+            cx.spawn(async move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
+                let outcome = cx
+                    .background_spawn(
+                        async move { save::save_blocking(&path, &contents, expected) },
+                    )
+                    .await;
+                cx.update(|cx| {
+                    this.update(cx, |view: &mut Self, cx: &mut Context<Self>| {
+                        view.finish_save(outcome, mark, cx)
+                    })
                 })
-                .await;
-            cx.update(|cx| {
-                let _ = this.update(cx, |view: &mut Self, cx: &mut Context<Self>| {
-                    view.finish_save(outcome, mark, cx);
-                });
-            });
-        })
-        .detach();
+                .unwrap_or_else(|_| Err(format!("{name} was closed before it was saved.")))
+            }),
+        )
     }
 
     fn finish_save(
         &mut self,
-        outcome: Result<FileStamp, Option<String>>,
+        outcome: Result<FileStamp, save::SaveFailure>,
         mark: edit::HistoryMark,
         cx: &mut Context<Self>,
-    ) {
+    ) -> Result<(), String> {
         self.saving = false;
+        cx.notify();
         match outcome {
             Ok(stamp) => {
-                self.stamp = Some(stamp);
+                self.buffer_stamp = Some(stamp);
+                self.disk_stamp = Some(stamp);
+                self.disk_generation = self.disk_generation.wrapping_add(1);
                 self.saved_mark = mark;
                 self.disk = DiskState::InSync;
                 self.save_error = None;
+                Ok(())
             }
-            Err(Some(message)) => {
-                self.save_error = Some(message);
+            Err(save::SaveFailure::Write(message)) => {
+                self.save_error = Some(message.clone());
+                Err(format!("{}: {message}", file_name_of(&self.path)))
             }
-            Err(None) => {
+            Err(save::SaveFailure::ChangedOnDisk(observed)) => {
+                self.disk_stamp = observed.or(self.disk_stamp);
                 self.disk = DiskState::Conflict;
+                Err(format!(
+                    "{} changed on disk. Choose Keep mine or Reload.",
+                    file_name_of(&self.path)
+                ))
             }
         }
-        cx.notify();
     }
 
     pub(super) fn start_watcher(&mut self, cx: &mut Context<Self>) {
@@ -159,7 +283,11 @@ impl CodeView {
                     }
                     view._watcher = Some(watcher);
                     view._watch_bridge = Some(bridge);
-                    view.spawn_reload_loop(path, name, rx, cx);
+                    view.spawn_reload_loop(path.clone(), name, rx, cx);
+                    cx.spawn(async move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
+                        probe_disk(&this, cx, &path, false).await;
+                    })
+                    .detach();
                 });
             });
         })
@@ -191,16 +319,7 @@ impl CodeView {
                         Either::Right(_) => break,
                     }
                 }
-                let probe = path.clone();
-                let (stamp, text) = cx
-                    .background_spawn(async move {
-                        (
-                            FileStamp::read(&probe),
-                            std::fs::read_to_string(&probe).ok(),
-                        )
-                    })
-                    .await;
-                if !reload_from_disk(&this, cx, stamp, text, false).await {
+                if !probe_disk(&this, cx, &path, false).await {
                     break;
                 }
             }
@@ -216,54 +335,98 @@ impl CodeView {
         cx: &mut Context<Self>,
     ) -> Option<DiskDiff> {
         let Some(stamp) = stamp.filter(|_| present) else {
+            self.disk_stamp = None;
             if self.disk != DiskState::Deleted {
                 self.disk = DiskState::Deleted;
                 cx.notify();
             }
             return None;
         };
+        let seen = self.disk_stamp == Some(stamp);
+        self.disk_stamp = Some(stamp);
         if !force {
-            if self.stamp == Some(stamp) && self.disk == DiskState::InSync {
+            if self.buffer_stamp == Some(stamp) && self.disk == DiskState::InSync {
                 return None;
             }
-            self.stamp = Some(stamp);
+            if seen && self.disk == DiskState::Conflict {
+                return None;
+            }
             if self.is_dirty() {
                 self.disk = DiskState::Conflict;
                 cx.notify();
                 return None;
             }
-        } else {
-            self.stamp = Some(stamp);
         }
         self.disk = DiskState::InSync;
-        self.state.document().map(DiskDiff::of)
+        let diff = self.state.document().map(|doc| DiskDiff::of(doc, stamp))?;
+        self.reloading = true;
+        Some(diff)
     }
 
     fn finish_disk_reload(
         &mut self,
-        revision: u64,
+        meta: DiskMeta,
         splices: Vec<(Range<usize>, String)>,
         retry: bool,
         force: bool,
         cx: &mut Context<Self>,
     ) -> Option<DiskDiff> {
-        let doc = self.state.document()?;
-        if doc.revision() != revision {
+        let Some(doc) = self.state.document() else {
+            self.end_disk_reload(cx);
+            return None;
+        };
+        if doc.revision() != meta.revision {
             if retry {
-                return Some(DiskDiff::of(doc));
+                return Some(DiskDiff::of(doc, meta.stamp));
             }
             self.disk = DiskState::Conflict;
-            cx.notify();
+            self.end_disk_reload(cx);
             return None;
         }
         if !force && self.is_dirty() {
             self.disk = DiskState::Conflict;
-            cx.notify();
+            self.end_disk_reload(cx);
             return None;
         }
         self.apply_disk_splices(&splices, cx);
+        if let Some(facts) = meta.facts
+            && let Some(doc) = self.state.document_mut()
+        {
+            doc.set_line_ending(facts.line_ending);
+            doc.set_read_only(facts.read_only);
+        }
         self.saved_mark = self.history.mark();
+        self.buffer_stamp = Some(meta.stamp);
+        self.end_disk_reload(cx);
         None
+    }
+
+    fn disk_unreadable(&mut self, error: CodeLoadError, force: bool, cx: &mut Context<Self>) {
+        if !force && self.is_dirty() {
+            if self.disk != DiskState::Conflict {
+                self.disk = DiskState::Conflict;
+                cx.notify();
+            }
+            return;
+        }
+        self.state = CodeLoadState::Failed(error);
+        self.history.clear();
+        self.saved_mark = edit::HistoryMark::default();
+        self.popup = None;
+        self.buffer_stamp = None;
+        self.disk_stamp = None;
+        self.disk = DiskState::InSync;
+        self.reloading = false;
+        self.save_after_reload = false;
+        cx.notify();
+    }
+
+    fn end_disk_reload(&mut self, cx: &mut Context<Self>) {
+        self.reloading = false;
+        cx.notify();
+        if std::mem::take(&mut self.save_after_reload) {
+            self.save(cx);
+        }
     }
 
     fn apply_disk_splices(&mut self, ops: &[(Range<usize>, String)], cx: &mut Context<Self>) {
@@ -298,36 +461,15 @@ impl CodeView {
     }
 
     pub(super) fn resolve_keep_mine(&mut self, cx: &mut Context<Self>) {
+        self.buffer_stamp = self.disk_stamp;
         self.disk = DiskState::InSync;
-        let path = self.path.clone();
-        cx.spawn(async move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
-            let stamp = cx
-                .background_spawn(async move { FileStamp::read(&path) })
-                .await;
-            cx.update(|cx| {
-                let _ = this.update(cx, |view: &mut Self, cx: &mut Context<Self>| {
-                    view.stamp = stamp;
-                    cx.notify();
-                });
-            });
-        })
-        .detach();
         cx.notify();
     }
 
     pub(super) fn resolve_reload(&mut self, cx: &mut Context<Self>) {
         let path = self.path.clone();
         cx.spawn(async move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
-            let probe = path.clone();
-            let (stamp, text) = cx
-                .background_spawn(async move {
-                    (
-                        FileStamp::read(&probe),
-                        std::fs::read_to_string(&probe).ok(),
-                    )
-                })
-                .await;
-            reload_from_disk(&this, cx, stamp, text, true).await;
+            probe_disk(&this, cx, &path, true).await;
         })
         .detach();
     }
@@ -351,7 +493,7 @@ impl CodeView {
             return;
         };
         let splices = edit::disk_splices(&diff.rope, &text);
-        self.finish_disk_reload(diff.revision, splices, false, false, cx);
+        self.finish_disk_reload(diff.meta, splices, false, false, cx);
     }
 
     pub(super) fn adopt_disk_text(&mut self, text: &str, cx: &mut Context<Self>) {
@@ -401,10 +543,21 @@ fn event_is_relevant(result: &notify::Result<notify::Event>, target: &std::ffi::
 
 #[cfg(test)]
 mod tests {
-    use gpui::TestAppContext;
+    use gpui::{Entity, TestAppContext, VisualTestContext};
 
     use super::super::tests::*;
     use super::*;
+
+    fn read_of(stamp: Option<FileStamp>, text: &str) -> Result<DiskRead, CodeLoadError> {
+        Ok(DiskRead {
+            text: text.to_string(),
+            stamp: stamp.expect("a stamped fixture"),
+            facts: DiskFacts {
+                read_only: None,
+                line_ending: LineEnding::detect(text),
+            },
+        })
+    }
 
     #[gpui::test]
     fn an_external_reload_that_drops_lines_rebinds_the_position(cx: &mut TestAppContext) {
@@ -498,6 +651,358 @@ mod tests {
     }
 
     #[gpui::test]
+    fn saving_during_a_conflict_writes_nothing_until_keep_mine(cx: &mut TestAppContext) {
+        let (dir, view, cx) = file_view(cx, "one\n", false);
+        let path = dir.path().join("main.rs");
+        view.update_in(cx, |view, window, cx| {
+            view.selection = CodeSelection::at(4);
+            view.replace_text_in_range(None, "mine\n", window, cx);
+        });
+        std::fs::write(&path, "the agent's version\n").expect("agent write");
+        let stamp = FileStamp::read(&path);
+        view.update(cx, |view, cx| {
+            view.disk_changed(stamp, Some("the agent's version\n".to_string()), cx);
+            assert!(view.has_conflict());
+        });
+
+        view.update_in(cx, |view, window, cx| view.save_action(&CeSave, window, cx));
+        cx.executor().allow_parking();
+        cx.run_until_parked();
+
+        assert_eq!(
+            std::fs::read_to_string(&path).expect("read"),
+            "the agent's version\n",
+            "Ctrl+S under the banner never overwrites the agent"
+        );
+        view.update(cx, |view, _cx| {
+            assert!(view.has_conflict(), "the banner stays up");
+            assert!(view.is_dirty());
+        });
+    }
+
+    #[gpui::test]
+    fn a_save_during_a_reload_waits_and_never_writes_over_the_new_disk_text(
+        cx: &mut TestAppContext,
+    ) {
+        let (dir, view, cx) = file_view(cx, "one\n", false);
+        let path = dir.path().join("main.rs");
+        std::fs::write(&path, "agent rewrote it\n").expect("agent write");
+        let stamp = FileStamp::read(&path);
+
+        view.update_in(cx, |view, window, cx| {
+            let diff = view
+                .begin_disk_reload(stamp, true, false, cx)
+                .expect("a clean document starts a reload");
+            view.selection = CodeSelection::at(0);
+            view.replace_text_in_range(None, "typed ", window, cx);
+            view.save_action(&CeSave, window, cx);
+            assert!(!view.saving, "the save waits for the reload to land");
+
+            let splices = edit::disk_splices(&diff.rope, "agent rewrote it\n");
+            let again = view
+                .finish_disk_reload(diff.meta, splices, true, false, cx)
+                .expect("the edit forces one recomputation");
+            let splices = edit::disk_splices(&again.rope, "agent rewrote it\n");
+            assert!(
+                view.finish_disk_reload(again.meta, splices, false, false, cx)
+                    .is_none()
+            );
+        });
+        cx.executor().allow_parking();
+        cx.run_until_parked();
+
+        assert_eq!(
+            std::fs::read_to_string(&path).expect("read"),
+            "agent rewrote it\n",
+            "the deferred save was compared with the disk text, not written over it"
+        );
+        view.update(cx, |view, _cx| {
+            assert!(view.has_conflict());
+            assert_eq!(text_of(view), "typed one\n");
+        });
+    }
+
+    #[gpui::test]
+    async fn a_probe_started_before_a_save_is_ignored_after_it(cx: &mut TestAppContext) {
+        let (dir, view, cx) = file_view(cx, "one\n", false);
+        let path = dir.path().join("main.rs");
+        let stale_stamp = FileStamp::read(&path);
+        let generation = view.update(cx, |view, _cx| view.disk_generation);
+
+        view.update_in(cx, |view, window, cx| {
+            view.selection = CodeSelection::at(4);
+            view.replace_text_in_range(None, "saved\n", window, cx);
+            view.save_action(&CeSave, window, cx);
+        });
+        cx.executor().allow_parking();
+        cx.run_until_parked();
+        assert_eq!(
+            std::fs::read_to_string(&path).expect("read"),
+            "one\nsaved\n"
+        );
+
+        let weak = view.downgrade();
+        let carried = cx
+            .spawn(|mut cx| async move {
+                reload_from_disk(
+                    &weak,
+                    &mut cx,
+                    generation,
+                    read_of(stale_stamp, "one\n"),
+                    false,
+                )
+                .await
+            })
+            .await;
+
+        assert!(carried);
+        view.update(cx, |view, _cx| {
+            assert_eq!(
+                text_of(view),
+                "one\nsaved\n",
+                "the pre-save read never reverts the saved text"
+            );
+            assert!(!view.has_conflict());
+            assert!(!view.is_dirty());
+        });
+    }
+
+    #[gpui::test]
+    async fn a_close_time_save_reports_a_conflict_and_keeps_the_file_dirty(
+        cx: &mut TestAppContext,
+    ) {
+        let (dir, view, cx) = file_view(cx, "one\n", false);
+        let path = dir.path().join("main.rs");
+        view.update_in(cx, |view, window, cx| {
+            view.selection = CodeSelection::at(4);
+            view.replace_text_in_range(None, "mine\n", window, cx);
+        });
+        std::fs::write(&path, "an agent got there first\n").expect("agent write");
+        cx.executor().allow_parking();
+
+        let save = view.update(cx, |view, cx| view.save_for_close(cx));
+        let outcome = save.await;
+
+        assert!(
+            outcome
+                .as_ref()
+                .is_err_and(|message| message.contains("changed on disk")),
+            "{outcome:?}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&path).expect("read"),
+            "an agent got there first\n"
+        );
+        view.update(cx, |view, cx| {
+            assert!(view.is_dirty(), "the file stays open and modified");
+            let again = view.save_for_close(cx);
+            assert!(view.has_conflict());
+            drop(again);
+        });
+
+        view.update(cx, |view, _cx| view.discard_unsaved());
+        view.update(cx, |view, _cx| {
+            assert!(!view.is_dirty(), "Don't Save lets the view go");
+        });
+    }
+
+    #[gpui::test]
+    async fn a_close_time_save_of_a_clean_or_saved_file_succeeds(cx: &mut TestAppContext) {
+        let (dir, view, cx) = file_view(cx, "one\n", false);
+        let path = dir.path().join("main.rs");
+        cx.executor().allow_parking();
+
+        let clean = view.update(cx, |view, cx| view.save_for_close(cx));
+        assert_eq!(clean.await, Ok(()));
+
+        view.update_in(cx, |view, window, cx| {
+            view.selection = CodeSelection::at(4);
+            view.replace_text_in_range(None, "two\n", window, cx);
+        });
+        let save = view.update(cx, |view, cx| view.save_for_close(cx));
+        assert_eq!(save.await, Ok(()));
+        assert_eq!(std::fs::read_to_string(&path).expect("read"), "one\ntwo\n");
+        view.update(cx, |view, _cx| assert!(!view.is_dirty()));
+    }
+
+    async fn probe(view: &Entity<CodeView>, cx: &mut VisualTestContext, path: &Path) {
+        let weak = view.downgrade();
+        let path = path.to_path_buf();
+        cx.executor().allow_parking();
+        cx.spawn(|mut cx| async move { probe_disk(&weak, &mut cx, &path, false).await })
+            .await;
+        cx.run_until_parked();
+    }
+
+    fn failure_of(view: &CodeView) -> Option<CodeLoadError> {
+        match &view.state {
+            CodeLoadState::Failed(error) => Some(error.clone()),
+            _ => None,
+        }
+    }
+
+    #[gpui::test]
+    async fn a_reload_applies_the_open_guards_instead_of_splicing(cx: &mut TestAppContext) {
+        let (dir, view, cx) = file_view(cx, "one\n", false);
+        let path = dir.path().join("main.rs");
+
+        std::fs::write(&path, b"bin\0ary\n").expect("binary write");
+        probe(&view, cx, &path).await;
+        view.update(cx, |view, _cx| {
+            assert_eq!(failure_of(view), Some(CodeLoadError::Binary));
+            assert_ne!(view.disk, DiskState::Deleted);
+        });
+
+        std::fs::write(&path, [b'o', b'k', 0xff, 0xfe, b'\n']).expect("invalid utf-8");
+        probe(&view, cx, &path).await;
+        view.update(cx, |view, _cx| {
+            assert_eq!(
+                failure_of(view),
+                Some(CodeLoadError::NotUtf8),
+                "invalid UTF-8 reads as unreadable, not as a deleted file"
+            );
+            assert_ne!(view.disk, DiskState::Deleted);
+        });
+
+        let huge = vec![b'x'; 11 * 1024 * 1024];
+        std::fs::write(&path, &huge).expect("grow to 11 MiB");
+        probe(&view, cx, &path).await;
+        view.update(cx, |view, _cx| {
+            assert!(
+                matches!(failure_of(view), Some(CodeLoadError::TooLarge { .. })),
+                "the view switches to the too-large state"
+            );
+        });
+
+        std::fs::write(&path, "back to text\n").expect("readable again");
+        probe(&view, cx, &path).await;
+        for _ in 0..200 {
+            cx.run_until_parked();
+            if view.update(cx, |view, _cx| view.document().is_some()) {
+                break;
+            }
+            smol::Timer::after(Duration::from_millis(5)).await;
+        }
+        view.update(cx, |view, _cx| {
+            assert_eq!(text_of(view), "back to text\n", "a readable file reopens");
+        });
+    }
+
+    #[gpui::test]
+    async fn a_reload_marks_a_giant_line_read_only(cx: &mut TestAppContext) {
+        let (dir, view, cx) = file_view(cx, "short\n", false);
+        let path = dir.path().join("main.rs");
+        let giant = format!("{}\n", "y".repeat(10_001));
+        std::fs::write(&path, &giant).expect("giant line");
+
+        probe(&view, cx, &path).await;
+
+        view.update(cx, |view, _cx| {
+            assert_eq!(text_of(view), giant);
+            assert!(matches!(
+                view.document().and_then(CodeDocument::read_only_reason),
+                Some(ReadOnlyReason::GiantLine { .. })
+            ));
+        });
+    }
+
+    #[gpui::test]
+    async fn an_unreadable_rewrite_of_a_dirty_buffer_is_a_conflict(cx: &mut TestAppContext) {
+        let (dir, view, cx) = file_view(cx, "one\n", false);
+        let path = dir.path().join("main.rs");
+        view.update_in(cx, |view, window, cx| {
+            view.selection = CodeSelection::at(4);
+            view.replace_text_in_range(None, "mine\n", window, cx);
+        });
+        std::fs::write(&path, b"\0\0\0").expect("binary write");
+
+        probe(&view, cx, &path).await;
+
+        view.update(cx, |view, _cx| {
+            assert!(view.has_conflict());
+            assert_eq!(text_of(view), "one\nmine\n", "the edits are kept");
+        });
+    }
+
+    #[gpui::test]
+    async fn a_clean_buffer_follows_a_switch_to_crlf_and_saves_it(cx: &mut TestAppContext) {
+        let (dir, view, cx) = file_view(cx, "one\ntwo\n", false);
+        let path = dir.path().join("main.rs");
+        std::fs::write(&path, "one\r\ntwo\r\n").expect("crlf rewrite");
+
+        probe(&view, cx, &path).await;
+
+        view.update_in(cx, |view, window, cx| {
+            assert_eq!(
+                view.document().map(CodeDocument::line_ending),
+                Some(LineEnding::Crlf)
+            );
+            view.selection = CodeSelection::at(8);
+            view.replace_text_in_range(None, "three\n", window, cx);
+            view.save_action(&CeSave, window, cx);
+        });
+        cx.run_until_parked();
+
+        assert_eq!(
+            std::fs::read_to_string(&path).expect("read"),
+            "one\r\ntwo\r\nthree\r\n"
+        );
+    }
+
+    #[gpui::test]
+    async fn a_write_before_the_watcher_starts_is_still_reloaded(cx: &mut TestAppContext) {
+        let (dir, view, cx) = file_view(cx, "one\n", false);
+        let path = dir.path().join("main.rs");
+        std::fs::write(&path, "written while the watcher was starting\n").expect("early write");
+        cx.executor().allow_parking();
+
+        view.update(cx, |view, cx| view.start_watcher(cx));
+        for _ in 0..300 {
+            cx.run_until_parked();
+            if view.update(cx, |view, _cx| {
+                text_of(view) == "written while the watcher was starting\n"
+            }) {
+                break;
+            }
+            smol::Timer::after(Duration::from_millis(10)).await;
+        }
+
+        view.update(cx, |view, _cx| {
+            assert_eq!(text_of(view), "written while the watcher was starting\n");
+            if let Some(bridge) = view._watch_bridge.take() {
+                *bridge.lock().expect("bridge lock") = None;
+            }
+            view._watcher = None;
+        });
+    }
+
+    #[gpui::test]
+    fn a_write_after_my_save_is_caught_by_the_next_save(cx: &mut TestAppContext) {
+        let (dir, view, cx) = file_view(cx, "one\n", false);
+        let path = dir.path().join("main.rs");
+        view.update_in(cx, |view, window, cx| {
+            view.selection = CodeSelection::at(4);
+            view.replace_text_in_range(None, "first\n", window, cx);
+            view.save_action(&CeSave, window, cx);
+        });
+        cx.executor().allow_parking();
+        cx.run_until_parked();
+
+        std::fs::write(&path, "another process wrote a longer file\n").expect("external");
+        view.update_in(cx, |view, window, cx| {
+            view.replace_text_in_range(None, "second\n", window, cx);
+            view.save_action(&CeSave, window, cx);
+        });
+        cx.run_until_parked();
+
+        assert_eq!(
+            std::fs::read_to_string(&path).expect("read"),
+            "another process wrote a longer file\n"
+        );
+        view.update(cx, |view, _cx| assert!(view.has_conflict()));
+    }
+
+    #[gpui::test]
     async fn an_external_write_reloads_through_the_watcher(cx: &mut TestAppContext) {
         let (dir, view, cx) = file_view(cx, "one\ntwo\n", true);
         let path = dir.path().join("main.rs");
@@ -543,7 +1048,7 @@ mod tests {
             view.replace_text_in_range(None, "x", window, cx);
 
             let again = view
-                .finish_disk_reload(diff.revision, splices, true, false, cx)
+                .finish_disk_reload(diff.meta, splices, true, false, cx)
                 .expect("a stale revision buys exactly one recomputation");
             assert_eq!(
                 text_of(view),
@@ -555,7 +1060,7 @@ mod tests {
             let splices = edit::disk_splices(&again.rope, "ONE!\nTWO!\n");
             view.replace_text_in_range(None, "y", window, cx);
             assert!(
-                view.finish_disk_reload(again.revision, splices, false, false, cx)
+                view.finish_disk_reload(again.meta, splices, false, false, cx)
                     .is_none(),
                 "the second stale delivery gives up"
             );
@@ -583,11 +1088,11 @@ mod tests {
             view.replace_text_in_range(None, "x", window, cx);
 
             let again = view
-                .finish_disk_reload(diff.revision, splices, true, false, cx)
+                .finish_disk_reload(diff.meta, splices, true, false, cx)
                 .expect("a stale revision buys exactly one recomputation");
             let splices = edit::disk_splices(&again.rope, "ONE!\nTWO!\n");
             assert!(
-                view.finish_disk_reload(again.revision, splices, false, false, cx)
+                view.finish_disk_reload(again.meta, splices, false, false, cx)
                     .is_none(),
                 "the recomputed diff reaches a document that stopped moving"
             );
@@ -621,7 +1126,7 @@ mod tests {
                 .expect("a forced reload ignores the dirty mark");
             let splices = edit::disk_splices(&diff.rope, "ONE!\nTWO!\n");
             assert!(
-                view.finish_disk_reload(diff.revision, splices, false, true, cx)
+                view.finish_disk_reload(diff.meta, splices, false, true, cx)
                     .is_none()
             );
             assert_eq!(
@@ -652,7 +1157,7 @@ mod tests {
 
         let carried = cx
             .spawn(|mut cx| async move {
-                reload_from_disk(&weak, &mut cx, stamp, Some("one\ntwo\n".to_string()), false).await
+                reload_from_disk(&weak, &mut cx, 0, read_of(stamp, "one\ntwo\n"), false).await
             })
             .await;
         assert!(
@@ -839,6 +1344,34 @@ mod tests {
     }
 
     #[gpui::test]
+    fn keep_mine_never_overrides_a_write_the_banner_did_not_show(cx: &mut TestAppContext) {
+        let (dir, view, cx) = file_view(cx, "one\n", false);
+        let path = dir.path().join("main.rs");
+        view.update_in(cx, |view, window, cx| {
+            view.selection = CodeSelection::at(4);
+            view.replace_text_in_range(None, "mine\n", window, cx);
+        });
+        std::fs::write(&path, "theirs\n").expect("agent write");
+        let stamp = FileStamp::read(&path);
+        view.update(cx, |view, cx| {
+            view.disk_changed(stamp, Some("theirs\n".to_string()), cx);
+            view.resolve_keep_mine(cx);
+        });
+        std::fs::write(&path, "a later agent write\n").expect("second agent write");
+
+        view.update_in(cx, |view, window, cx| view.save_action(&CeSave, window, cx));
+        cx.executor().allow_parking();
+        cx.run_until_parked();
+
+        assert_eq!(
+            std::fs::read_to_string(&path).expect("read"),
+            "a later agent write\n",
+            "Keep mine only overrides the version the banner showed"
+        );
+        view.update(cx, |view, _cx| assert!(view.has_conflict()));
+    }
+
+    #[gpui::test]
     fn a_deleted_file_is_flagged_and_saving_recreates_it(cx: &mut TestAppContext) {
         let (dir, view, cx) = file_view(cx, "one\n", false);
         let path = dir.path().join("main.rs");
@@ -846,7 +1379,7 @@ mod tests {
 
         view.update(cx, |view, cx| {
             view.disk_changed(None, None, cx);
-            view.stamp = None;
+            view.buffer_stamp = None;
             assert_eq!(view.disk, DiskState::Deleted);
         });
 

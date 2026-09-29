@@ -9,6 +9,7 @@ use serde_json::Value;
 
 use crate::PaneFlowApp;
 use crate::ai_types::AgentState;
+use crate::app::unsaved_dialog::UnsavedContinuation;
 use crate::settings::components::{
     MODAL_PADDING, destructive_button, menu_panel, modal_backdrop, modal_card, modal_footer,
     modal_header, secondary_button, setting_text, solid_button, switch_blue, toggle_pill,
@@ -207,6 +208,17 @@ impl PaneFlowApp {
         if self.quit_dialog.is_some() || self.session_exit_pending {
             return;
         }
+        let unsaved = self.all_unsaved_views(cx);
+        if self.ask_about_unsaved(unsaved, UnsavedContinuation::Quit, cx) {
+            return;
+        }
+        self.request_quit_checked(cx);
+    }
+
+    pub(crate) fn request_quit_checked(&mut self, cx: &mut Context<Self>) {
+        if self.quit_dialog.is_some() || self.session_exit_pending {
+            return;
+        }
         let sessions = self.live_session_targets(cx).len();
         match quit_plan(self.cached_config.resolved_on_quit(), sessions) {
             QuitPlan::QuitNow => self.quit_keeping_sessions(cx),
@@ -216,6 +228,17 @@ impl PaneFlowApp {
     }
 
     pub(crate) fn request_update_restart(&mut self, cx: &mut Context<Self>) {
+        if self.quit_dialog.is_some() || self.session_exit_pending {
+            return;
+        }
+        let unsaved = self.all_unsaved_views(cx);
+        if self.ask_about_unsaved(unsaved, UnsavedContinuation::UpdateRestart, cx) {
+            return;
+        }
+        self.request_update_restart_checked(cx);
+    }
+
+    pub(crate) fn request_update_restart_checked(&mut self, cx: &mut Context<Self>) {
         if self.quit_dialog.is_some() || self.session_exit_pending {
             return;
         }
@@ -426,8 +449,12 @@ impl PaneFlowApp {
             return;
         }
         let value = Value::String(choice.wire_str().to_string());
-        self.cached_config =
-            crate::config_writer::with_field(&self.cached_config, false, "on_quit", value.clone());
+        let Ok(next) =
+            crate::config_writer::with_field(&self.cached_config, false, "on_quit", value.clone())
+        else {
+            return;
+        };
+        self.cached_config = next;
         crate::config_writer::save_config_value_checked("on_quit", value);
     }
 

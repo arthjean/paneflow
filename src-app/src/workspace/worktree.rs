@@ -1,9 +1,10 @@
 use std::collections::HashSet;
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::sync::RwLock;
 use std::time::{Duration, SystemTime};
+
+use crate::git_command::{GitProfile, git};
 
 const GIT_DEADLINE: Duration = Duration::from_secs(10);
 const ADD_DEADLINE: Duration = Duration::from_secs(120);
@@ -418,7 +419,7 @@ fn unix_now() -> u64 {
 }
 
 fn current_branch(worktree_path: &Path) -> Option<String> {
-    run_git(
+    probe_git(
         worktree_path,
         &["symbolic-ref", "--quiet", "--short", "HEAD"],
         GIT_DEADLINE,
@@ -428,7 +429,7 @@ fn current_branch(worktree_path: &Path) -> Option<String> {
 }
 
 pub fn snapshot_worktree(repo_root: &Path, worktree_path: &Path) -> Result<Snapshot, String> {
-    let head = run_git(
+    let head = probe_git(
         worktree_path,
         &["rev-parse", "--verify", "HEAD"],
         GIT_DEADLINE,
@@ -443,12 +444,10 @@ pub fn snapshot_worktree(repo_root: &Path, worktree_path: &Path) -> Result<Snaps
     let index = git_dir.join("paneflow-snapshot-index");
     let _ = std::fs::remove_file(&index);
     let index_s = index.to_string_lossy().into_owned();
-    let mut add = Command::new("git");
-    add.arg("-C")
-        .arg(worktree_path)
-        .env("GIT_INDEX_FILE", &index_s)
-        .args(["add", "-A", "--", "."]);
-    let out = paneflow_process::run_with_timeout(add, ADD_DEADLINE, STDOUT_CAP)
+    let mut add = git(GitProfile::UserAction, ["add", "-A", "--", "."]);
+    add.current_dir(worktree_path)
+        .env("GIT_INDEX_FILE", &index_s);
+    let out = crate::git_command::run(add, ADD_DEADLINE, STDOUT_CAP)
         .map_err(|e| format!("git add -A failed: {e}"))?;
     if !out.status.success() {
         let _ = std::fs::remove_file(&index);
@@ -457,13 +456,11 @@ pub fn snapshot_worktree(repo_root: &Path, worktree_path: &Path) -> Result<Snaps
             String::from_utf8_lossy(&out.stderr).trim()
         ));
     }
-    let mut write_tree = Command::new("git");
+    let mut write_tree = git(GitProfile::UserAction, ["write-tree"]);
     write_tree
-        .arg("-C")
-        .arg(worktree_path)
-        .env("GIT_INDEX_FILE", &index_s)
-        .arg("write-tree");
-    let tree = paneflow_process::run_with_timeout(write_tree, ADD_DEADLINE, STDOUT_CAP)
+        .current_dir(worktree_path)
+        .env("GIT_INDEX_FILE", &index_s);
+    let tree = crate::git_command::run(write_tree, ADD_DEADLINE, STDOUT_CAP)
         .map_err(|e| format!("git write-tree failed: {e}"))
         .and_then(|out| {
             if out.status.success() {
@@ -508,7 +505,7 @@ pub fn snapshot_worktree(repo_root: &Path, worktree_path: &Path) -> Result<Snaps
 }
 
 pub fn list_snapshots(repo_root: &Path) -> Result<Vec<Snapshot>, String> {
-    let stdout = run_git(
+    let stdout = probe_git(
         repo_root,
         &[
             "for-each-ref",
@@ -605,7 +602,7 @@ pub fn restore_snapshot(repo_root: &Path, snapshot: &Snapshot) -> Result<PathBuf
             && !entries
                 .iter()
                 .any(|entry| entry.branch.as_deref() == Some(branch))
-            && run_git(
+            && probe_git(
                 repo_root,
                 &[
                     "rev-parse",
@@ -623,7 +620,9 @@ pub fn restore_snapshot(repo_root: &Path, snapshot: &Snapshot) -> Result<PathBuf
         run_git(&path, &["read-tree", "-m", "-u", &tree], ADD_DEADLINE)?;
         run_git(&path, &["reset", "--quiet", "--", "."], ADD_DEADLINE)?;
         write_owner_marker(&path, repo_root, &label)?;
-        copy_include_files(repo_root, &path);
+        for failure in copy_include_files(repo_root, &path).failures {
+            log::warn!("snapshot restore: {failure}");
+        }
         Ok(())
     };
     if let Err(e) = finish() {
@@ -700,18 +699,19 @@ pub fn trim_to_limit(
     candidates: Vec<ManagedWorktree>,
     keep: usize,
     bound: &HashSet<PathBuf>,
-) -> Vec<PathBuf> {
+) -> (Vec<PathBuf>, Vec<String>) {
     let mut aged: Vec<(SystemTime, ManagedWorktree)> = candidates
         .into_iter()
         .filter(|wt| wt.teardown == TeardownPolicy::Auto && wt.path.exists())
         .map(|wt| (created_at(&wt.path).unwrap_or(SystemTime::UNIX_EPOCH), wt))
         .collect();
     if aged.len() <= keep {
-        return Vec::new();
+        return (Vec::new(), Vec::new());
     }
     aged.sort_by_key(|(age, _)| *age);
     let mut excess = aged.len() - keep;
     let mut removed = Vec::new();
+    let mut kept = Vec::new();
     for (_, wt) in aged {
         if excess == 0 {
             break;
@@ -731,16 +731,34 @@ pub fn trim_to_limit(
                 removed.push(wt.path);
                 excess -= 1;
             }
-            Err(e) => log::warn!("worktree kept ({}): {e}", wt.path.display()),
+            Err(e) => kept.push(kept_worktree_message(&wt.path, &e)),
         }
     }
-    removed
+    (removed, kept)
+}
+
+fn kept_worktree_message(path: &Path, error: &str) -> String {
+    log::warn!("worktree kept ({}): {error}", path.display());
+    format!("{} was kept: {error}", path.display())
 }
 
 fn run_git(repo: &Path, args: &[&str], deadline: Duration) -> Result<String, String> {
-    let mut cmd = Command::new("git");
-    cmd.arg("-C").arg(repo).args(args);
-    let out = paneflow_process::run_with_timeout(cmd, deadline, STDOUT_CAP)
+    git_in(GitProfile::UserAction, repo, args, deadline)
+}
+
+fn probe_git(repo: &Path, args: &[&str], deadline: Duration) -> Result<String, String> {
+    git_in(GitProfile::Probe, repo, args, deadline)
+}
+
+fn git_in(
+    profile: GitProfile,
+    repo: &Path,
+    args: &[&str],
+    deadline: Duration,
+) -> Result<String, String> {
+    let mut cmd = git(profile, args);
+    cmd.current_dir(repo);
+    let out = crate::git_command::run(cmd, deadline, STDOUT_CAP)
         .map_err(|e| format!("git {} failed: {e}", args.join(" ")))?;
     if !out.status.success() {
         let stderr = String::from_utf8_lossy(&out.stderr);
@@ -754,7 +772,7 @@ fn run_git(repo: &Path, args: &[&str], deadline: Duration) -> Result<String, Str
 }
 
 pub fn list_worktrees(repo_root: &Path) -> Result<Vec<WorktreeEntry>, String> {
-    let stdout = run_git(
+    let stdout = probe_git(
         repo_root,
         &["worktree", "list", "--porcelain"],
         GIT_DEADLINE,
@@ -793,7 +811,7 @@ pub fn parse_worktree_porcelain(stdout: &str) -> Vec<WorktreeEntry> {
 }
 
 pub fn branch_exists(repo_root: &Path, branch: &str) -> bool {
-    run_git(
+    probe_git(
         repo_root,
         &[
             "rev-parse",
@@ -807,11 +825,11 @@ pub fn branch_exists(repo_root: &Path, branch: &str) -> bool {
 }
 
 pub fn list_branches(repo_root: &Path) -> Result<Vec<String>, String> {
-    let stdout = run_git(
+    let stdout = probe_git(
         repo_root,
         &[
             "for-each-ref",
-            "--format=%(refname:short)",
+            "--format=%(refname:lstrip=2)",
             "--sort=-committerdate",
             "refs/heads",
         ],
@@ -862,6 +880,7 @@ pub fn plan_branch_checkout(
 pub struct PreparedCheckout {
     pub path: PathBuf,
     pub created: bool,
+    pub include_failures: Vec<String>,
 }
 
 pub fn prepare_branch_checkout(repo_root: &Path, branch: &str) -> Result<PreparedCheckout, String> {
@@ -870,6 +889,7 @@ pub fn prepare_branch_checkout(repo_root: &Path, branch: &str) -> Result<Prepare
         BranchCheckout::Existing(path) => Ok(PreparedCheckout {
             path,
             created: false,
+            include_failures: Vec::new(),
         }),
         BranchCheckout::Create(path) => {
             if path.exists() {
@@ -879,10 +899,11 @@ pub fn prepare_branch_checkout(repo_root: &Path, branch: &str) -> Result<Prepare
                 ));
             }
             add_worktree(repo_root, &path, branch, false, None)?;
-            copy_include_files(repo_root, &path);
+            let include_failures = copy_include_files(repo_root, &path).failures;
             Ok(PreparedCheckout {
                 path,
                 created: true,
+                include_failures,
             })
         }
     }
@@ -892,7 +913,7 @@ pub fn validate_branch_name(repo_root: &Path, branch: &str) -> Result<(), String
     if branch.is_empty() {
         return Err("Branch name is empty".to_string());
     }
-    run_git(
+    probe_git(
         repo_root,
         &["check-ref-format", "--branch", branch],
         GIT_DEADLINE,
@@ -929,10 +950,11 @@ pub fn create_branch_checkout(
         ));
     }
     add_worktree(repo_root, &path, branch, true, base)?;
-    copy_include_files(repo_root, &path);
+    let include_failures = copy_include_files(repo_root, &path).failures;
     Ok(PreparedCheckout {
         path,
         created: true,
+        include_failures,
     })
 }
 
@@ -944,7 +966,7 @@ pub fn resolve_base_commit(repo_root: &Path, base: Option<&str>) -> Result<Strin
     if base.starts_with('-') {
         return Err(format!("'{base}' is not a valid base"));
     }
-    run_git(
+    probe_git(
         repo_root,
         &[
             "rev-parse",
@@ -967,7 +989,10 @@ pub fn detached_checkout_label(base: Option<&str>, sha: &str) -> String {
     format!("{}-{short}", branch_slug_or_default(base))
 }
 
-pub fn create_detached_checkout(repo_root: &Path, base: Option<&str>) -> Result<PathBuf, String> {
+pub fn create_detached_checkout(
+    repo_root: &Path,
+    base: Option<&str>,
+) -> Result<PreparedCheckout, String> {
     let sha = resolve_base_commit(repo_root, base)?;
     let label = detached_checkout_label(base, &sha);
     let entries = list_worktrees(repo_root)?;
@@ -994,8 +1019,12 @@ pub fn create_detached_checkout(repo_root: &Path, base: Option<&str>) -> Result<
         let _ = remove_worktree(repo_root, &path);
         return Err(e);
     }
-    copy_include_files(repo_root, &path);
-    Ok(path)
+    let include_failures = copy_include_files(repo_root, &path).failures;
+    Ok(PreparedCheckout {
+        path,
+        created: true,
+        include_failures,
+    })
 }
 
 pub fn switch_checkout(repo_root: &Path, branch: &str, base: Option<&str>) -> Result<(), String> {
@@ -1049,8 +1078,39 @@ pub fn add_worktree(
     Ok(())
 }
 
+const CLEAN_STATUS_ARGS: &[&str] = &[
+    "status",
+    "--porcelain=v1",
+    "-z",
+    "--untracked-files=all",
+    "--ignore-submodules=none",
+];
+
 pub fn is_clean(worktree_path: &Path) -> Result<bool, String> {
-    run_git(worktree_path, &["status", "--porcelain"], GIT_DEADLINE).map(|out| out.is_empty())
+    let mut cmd = git(GitProfile::Probe, CLEAN_STATUS_ARGS);
+    cmd.current_dir(worktree_path);
+    let failed = |reason: String| {
+        format!(
+            "git status could not check {} for uncommitted work: {reason}",
+            worktree_path.display()
+        )
+    };
+    match crate::git_command::run(cmd, GIT_DEADLINE, STDOUT_CAP) {
+        Ok(out) if out.status.success() => Ok(out.stdout.is_empty()),
+        Ok(out) => Err(failed(
+            String::from_utf8_lossy(&out.stderr)
+                .trim()
+                .lines()
+                .last()
+                .unwrap_or("non-zero exit")
+                .to_string(),
+        )),
+        Err(paneflow_process::ProcError::OutputLimitExceeded {
+            stream: paneflow_process::OutputStream::Stdout,
+            ..
+        }) => Ok(false),
+        Err(e) => Err(failed(e.to_string())),
+    }
 }
 
 pub fn remove_worktree(repo_root: &Path, path: &Path) -> Result<(), String> {
@@ -1060,8 +1120,15 @@ pub fn remove_worktree(repo_root: &Path, path: &Path) -> Result<(), String> {
     Ok(())
 }
 
+const PRUNE_EXPIRY: &str = "90.days.ago";
+
 pub fn prune(repo_root: &Path) -> Result<(), String> {
-    run_git(repo_root, &["worktree", "prune"], GIT_DEADLINE).map(|_| ())
+    run_git(
+        repo_root,
+        &["worktree", "prune", "--expire", PRUNE_EXPIRY],
+        GIT_DEADLINE,
+    )
+    .map(|_| ())
 }
 
 const INCLUDE_FILE: &str = ".worktreeinclude";
@@ -1102,23 +1169,99 @@ fn default_include_entries(src_root: &Path) -> Vec<String> {
     entries
 }
 
+fn ensure_real_dirs(root: &Path, rel_dir: &Path) -> std::io::Result<()> {
+    let mut dir = root.to_path_buf();
+    for component in rel_dir.components() {
+        dir.push(component);
+        match std::fs::symlink_metadata(&dir) {
+            Ok(meta) if meta.is_dir() => {}
+            Ok(_) => {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::AlreadyExists,
+                    format!("{} is not a real directory", dir.display()),
+                ));
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                std::fs::create_dir(&dir)?;
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(())
+}
+
 fn copy_tree(src: &Path, dst: &Path) -> std::io::Result<()> {
-    if src.is_dir() {
-        std::fs::create_dir_all(dst)?;
-        for entry in std::fs::read_dir(src)?.flatten() {
-            let name = entry.file_name();
-            copy_tree(&entry.path(), &dst.join(name))?;
+    let meta = std::fs::symlink_metadata(src)?;
+    let kind = meta.file_type();
+    if kind.is_symlink() {
+        copy_symlink(src, dst, &meta)
+    } else if kind.is_dir() {
+        std::fs::create_dir(dst)?;
+        for entry in std::fs::read_dir(src)? {
+            let entry = entry?;
+            copy_tree(&entry.path(), &dst.join(entry.file_name()))?;
         }
         Ok(())
+    } else if kind.is_file() {
+        copy_regular_file(src, dst, &meta)
     } else {
-        if let Some(parent) = dst.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        std::fs::copy(src, dst).map(|_| ())
+        Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("{} is not a regular file", src.display()),
+        ))
     }
 }
 
-pub fn copy_include_files(src_root: &Path, dst_root: &Path) -> Vec<String> {
+#[cfg(unix)]
+fn copy_symlink(src: &Path, dst: &Path, _meta: &std::fs::Metadata) -> std::io::Result<()> {
+    std::os::unix::fs::symlink(std::fs::read_link(src)?, dst)
+}
+
+#[cfg(windows)]
+fn copy_symlink(src: &Path, dst: &Path, meta: &std::fs::Metadata) -> std::io::Result<()> {
+    use std::os::windows::fs::FileTypeExt;
+    let target = std::fs::read_link(src)?;
+    if meta.file_type().is_symlink_dir() {
+        std::os::windows::fs::symlink_dir(target, dst)
+    } else {
+        std::os::windows::fs::symlink_file(target, dst)
+    }
+}
+
+fn copy_regular_file(src: &Path, dst: &Path, meta: &std::fs::Metadata) -> std::io::Result<()> {
+    let mut input = std::fs::File::open(src)?;
+    copy_into_new_file(&mut input, dst, meta.permissions())
+}
+
+fn copy_into_new_file(
+    input: &mut impl std::io::Read,
+    dst: &Path,
+    permissions: std::fs::Permissions,
+) -> std::io::Result<()> {
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NOFOLLOW);
+    }
+    let mut output = options.open(dst)?;
+    let written = std::io::copy(input, &mut output)
+        .map(|_| drop(output))
+        .and_then(|()| std::fs::set_permissions(dst, permissions));
+    if written.is_err() {
+        let _ = std::fs::remove_file(dst);
+    }
+    written
+}
+
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct IncludeCopy {
+    pub copied: Vec<String>,
+    pub failures: Vec<String>,
+}
+
+pub fn copy_include_files(src_root: &Path, dst_root: &Path) -> IncludeCopy {
     let listed = std::fs::read_to_string(src_root.join(INCLUDE_FILE))
         .ok()
         .map(|contents| parse_worktree_include(&contents));
@@ -1128,20 +1271,30 @@ pub fn copy_include_files(src_root: &Path, dst_root: &Path) -> Vec<String> {
     };
     entries.sort();
     entries.dedup();
-    let mut copied = Vec::new();
+    let mut outcome = IncludeCopy::default();
     for rel in entries {
         let rel_path = Path::new(rel.trim_end_matches(['/', '\\']));
         let src = src_root.join(rel_path);
         let dst = dst_root.join(rel_path);
-        if !src.exists() || dst.exists() {
+        if std::fs::symlink_metadata(&src).is_err() || std::fs::symlink_metadata(&dst).is_ok() {
             continue;
         }
-        match copy_tree(&src, &dst) {
-            Ok(()) => copied.push(rel),
-            Err(e) => log::warn!("worktree include: cannot copy {}: {e}", src.display()),
+        let copied = match rel_path.parent() {
+            Some(parent) => ensure_real_dirs(dst_root, parent),
+            None => Ok(()),
+        }
+        .and_then(|()| copy_tree(&src, &dst));
+        match copied {
+            Ok(()) => outcome.copied.push(rel),
+            Err(e) => {
+                log::warn!("worktree include: cannot copy {}: {e}", src.display());
+                outcome
+                    .failures
+                    .push(format!("could not copy {rel} into the worktree: {e}"));
+            }
         }
     }
-    copied
+    outcome
 }
 
 pub fn without_live_sessions(
@@ -1163,7 +1316,8 @@ pub fn without_live_sessions(
         .collect()
 }
 
-pub fn teardown_all(worktrees: Vec<ManagedWorktree>) {
+pub fn teardown_all(worktrees: Vec<ManagedWorktree>) -> Vec<String> {
+    let mut kept = Vec::new();
     for wt in worktrees {
         if wt.teardown == TeardownPolicy::Keep {
             continue;
@@ -1180,9 +1334,10 @@ pub fn teardown_all(worktrees: Vec<ManagedWorktree>) {
                     .map(|s| format!(" (snapshot {})", s.reference))
                     .unwrap_or_default()
             ),
-            Err(e) => log::warn!("worktree kept ({}): {e}", wt.path.display()),
+            Err(e) => kept.push(kept_worktree_message(&wt.path, &e)),
         }
     }
+    kept
 }
 
 #[cfg(test)]
@@ -1672,13 +1827,29 @@ mod tests {
     }
 
     fn test_git(cwd: &Path, args: &[&str]) -> bool {
-        Command::new("git")
+        std::process::Command::new("git")
             .args(args)
             .current_dir(cwd)
             .env("GIT_TERMINAL_PROMPT", "0")
             .output()
             .map(|out| out.status.success())
             .unwrap_or(false)
+    }
+
+    #[test]
+    fn a_branch_sharing_its_name_with_a_tag_is_listed_by_its_plain_name() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let repo_root = dir.path().join("repo");
+        if !init_test_repo(&repo_root) {
+            return;
+        }
+        assert!(test_git(&repo_root, &["branch", "feature"]));
+        assert!(test_git(&repo_root, &["tag", "feature"]));
+
+        let branches = list_branches(&repo_root).expect("branches");
+
+        assert!(branches.contains(&"feature".to_string()), "{branches:?}");
+        assert!(!branches.iter().any(|branch| branch.starts_with("heads/")));
     }
 
     fn init_test_repo(repo_root: &Path) -> bool {
@@ -1843,7 +2014,7 @@ mod tests {
         std::fs::write(src.path().join("sub/.env"), "C=3").unwrap();
         std::fs::write(dst.path().join(".env"), "KEEP").unwrap();
 
-        let copied = copy_include_files(src.path(), dst.path());
+        let copied = copy_include_files(src.path(), dst.path()).copied;
         assert_eq!(copied, vec![".env.local".to_string()]);
         assert_eq!(
             std::fs::read_to_string(dst.path().join(".env")).unwrap(),
@@ -1858,7 +2029,7 @@ mod tests {
     fn copy_env_files_missing_source_is_silent_empty() {
         let dst = tempfile::tempdir().expect("dst");
         let copied = copy_include_files(Path::new("/nonexistent-paneflow-test"), dst.path());
-        assert!(copied.is_empty());
+        assert_eq!(copied, IncludeCopy::default());
     }
 
     #[test]
@@ -1876,7 +2047,7 @@ mod tests {
         )
         .unwrap();
 
-        let copied = copy_include_files(src.path(), dst.path());
+        let copied = copy_include_files(src.path(), dst.path()).copied;
         assert_eq!(
             copied,
             vec!["config/local/".to_string(), "secrets.json".to_string()]
@@ -1894,8 +2065,183 @@ mod tests {
         let src = tempfile::tempdir().expect("src");
         let dst = tempfile::tempdir().expect("dst");
         std::fs::write(src.path().join("AGENTS.override.md"), "local").unwrap();
-        let copied = copy_include_files(src.path(), dst.path());
+        let copied = copy_include_files(src.path(), dst.path()).copied;
         assert_eq!(copied, vec!["AGENTS.override.md".to_string()]);
+    }
+
+    fn make_symlink(target: &Path, link: &Path, is_dir: bool) -> bool {
+        #[cfg(unix)]
+        let made = {
+            let _ = is_dir;
+            std::os::unix::fs::symlink(target, link)
+        };
+        #[cfg(windows)]
+        let made = if is_dir {
+            std::os::windows::fs::symlink_dir(target, link)
+        } else {
+            std::os::windows::fs::symlink_file(target, link)
+        };
+        made.is_ok()
+    }
+
+    #[test]
+    fn an_included_symlink_is_recreated_as_a_link_never_copied_as_content() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let outside = tmp.path().join("outside");
+        std::fs::create_dir_all(outside.join("keys")).unwrap();
+        std::fs::write(outside.join("secret.env"), "TOKEN=hunter2").unwrap();
+        std::fs::write(outside.join("keys").join("id"), "private").unwrap();
+        let src = tmp.path().join("src");
+        let dst = tmp.path().join("dst");
+        std::fs::create_dir_all(src.join("config")).unwrap();
+        std::fs::create_dir_all(&dst).unwrap();
+        if !make_symlink(&outside.join("secret.env"), &src.join(".env"), false)
+            || !make_symlink(
+                &outside.join("keys"),
+                &src.join("config").join("keys"),
+                true,
+            )
+        {
+            return;
+        }
+        std::fs::write(src.join(".worktreeinclude"), ".env\nconfig/\n").unwrap();
+
+        let outcome = copy_include_files(&src, &dst);
+
+        assert_eq!(outcome.failures, Vec::<String>::new());
+        assert_eq!(
+            outcome.copied,
+            vec![".env".to_string(), "config/".to_string()]
+        );
+        for (link, target) in [
+            (dst.join(".env"), outside.join("secret.env")),
+            (dst.join("config").join("keys"), outside.join("keys")),
+        ] {
+            let meta = std::fs::symlink_metadata(&link).expect("destination entry");
+            assert!(
+                meta.file_type().is_symlink(),
+                "{} was copied as content",
+                link.display()
+            );
+            assert_eq!(std::fs::read_link(&link).expect("link target"), target);
+        }
+    }
+
+    #[test]
+    fn a_dangling_symlink_at_the_destination_is_never_followed() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let src = tmp.path().join("src");
+        let dst = tmp.path().join("dst");
+        let victim_dir = tmp.path().join("victim-dir");
+        std::fs::create_dir_all(src.join("config")).unwrap();
+        std::fs::create_dir_all(&dst).unwrap();
+        std::fs::create_dir_all(&victim_dir).unwrap();
+        std::fs::write(src.join(".env"), "A=1").unwrap();
+        std::fs::write(src.join("config").join("dev.toml"), "x=1").unwrap();
+        if !make_symlink(&tmp.path().join("victim.env"), &dst.join(".env"), false)
+            || !make_symlink(&victim_dir, &dst.join("config"), true)
+        {
+            return;
+        }
+        std::fs::write(src.join(".worktreeinclude"), ".env\nconfig/dev.toml\n").unwrap();
+
+        let outcome = copy_include_files(&src, &dst);
+
+        assert!(!tmp.path().join("victim.env").exists());
+        assert!(
+            std::fs::read_dir(&victim_dir).unwrap().next().is_none(),
+            "nothing may be written through a symlinked destination directory"
+        );
+        assert!(outcome.copied.is_empty());
+        assert_eq!(outcome.failures.len(), 1, "{:?}", outcome.failures);
+        assert!(outcome.failures[0].contains("config/dev.toml"));
+    }
+
+    #[test]
+    fn a_directory_symlink_loop_is_copied_once_as_a_link() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let src = tmp.path().join("src");
+        let dst = tmp.path().join("dst");
+        std::fs::create_dir_all(src.join("cache")).unwrap();
+        std::fs::create_dir_all(&dst).unwrap();
+        std::fs::write(src.join("cache").join("data"), "d").unwrap();
+        if !make_symlink(&src.join("cache"), &src.join("cache").join("again"), true) {
+            return;
+        }
+        std::fs::write(src.join(".worktreeinclude"), "cache/\n").unwrap();
+
+        let outcome = copy_include_files(&src, &dst);
+
+        assert_eq!(outcome.copied, vec!["cache/".to_string()]);
+        assert_eq!(
+            std::fs::read_to_string(dst.join("cache").join("data")).unwrap(),
+            "d"
+        );
+        assert!(
+            std::fs::symlink_metadata(dst.join("cache").join("again"))
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+    }
+
+    #[test]
+    fn a_copy_that_fails_mid_file_removes_the_partial_file() {
+        struct FailsAfterOneChunk(bool);
+        impl std::io::Read for FailsAfterOneChunk {
+            fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+                if std::mem::replace(&mut self.0, true) {
+                    return Err(std::io::Error::other("device vanished"));
+                }
+                let n = buf.len().min(1024);
+                buf[..n].fill(b'x');
+                Ok(n)
+            }
+        }
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let dst = tmp.path().join("partial.bin");
+        let permissions = std::fs::metadata(tmp.path()).unwrap().permissions();
+
+        let result = copy_into_new_file(&mut FailsAfterOneChunk(false), &dst, permissions);
+
+        assert!(result.is_err());
+        assert!(!dst.exists(), "the partial file must be removed");
+    }
+
+    #[test]
+    fn an_include_that_cannot_be_copied_is_reported_by_the_created_checkout() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let _root = test_support::scoped_root(tmp.path().join("worktrees"));
+        let repo_root = tmp.path().join("repo");
+        if !init_test_repo(&repo_root) {
+            return;
+        }
+        let blocked = repo_root.join("blocked.env");
+        std::fs::write(&blocked, "TOKEN=1").unwrap();
+        std::fs::write(repo_root.join(".worktreeinclude"), "blocked.env\n").unwrap();
+        #[cfg(windows)]
+        let _exclusive = {
+            use std::os::windows::fs::OpenOptionsExt;
+            std::fs::OpenOptions::new()
+                .read(true)
+                .share_mode(0)
+                .open(&blocked)
+                .expect("exclusive handle")
+        };
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&blocked, std::fs::Permissions::from_mode(0o000)).unwrap();
+            if std::fs::File::open(&blocked).is_ok() {
+                return;
+            }
+        }
+
+        let prepared = create_branch_checkout(&repo_root, "feat/include", None).expect("created");
+
+        assert_eq!(prepared.include_failures.len(), 1, "{prepared:?}");
+        assert!(prepared.include_failures[0].contains("blocked.env"));
+        assert!(!prepared.path.join("blocked.env").exists());
     }
 
     #[test]
@@ -2082,6 +2428,184 @@ mod tests {
     }
 
     #[test]
+    fn an_untracked_file_hidden_by_the_repo_config_is_snapshotted_before_teardown() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let _root = test_support::scoped_root(tmp.path().join("worktrees"));
+        let repo_root = tmp.path().join("repo");
+        if !init_test_repo(&repo_root) {
+            return;
+        }
+        assert!(test_git(
+            &repo_root,
+            &["config", "status.showUntrackedFiles", "no"]
+        ));
+        let path = create_branch_checkout(&repo_root, "feat/hidden", None)
+            .expect("create")
+            .path;
+        std::fs::create_dir_all(path.join("src")).expect("src dir");
+        std::fs::write(path.join("src").join("agent.rs"), "fn main() {}\n").expect("untracked");
+        assert_eq!(is_clean(&path), Ok(false));
+
+        let kept = teardown_all(vec![ManagedWorktree {
+            path: path.clone(),
+            repo_root: repo_root.clone(),
+            branch: "feat/hidden".to_string(),
+            teardown: TeardownPolicy::Auto,
+        }]);
+
+        assert!(kept.is_empty(), "{kept:?}");
+        assert!(!path.exists());
+        let snapshots = list_snapshots(&repo_root).expect("list");
+        assert_eq!(snapshots.len(), 1, "the teardown wrote a snapshot");
+        assert_eq!(
+            run_git(
+                &repo_root,
+                &["show", &format!("{}:src/agent.rs", snapshots[0].commit)],
+                GIT_DEADLINE,
+            )
+            .as_deref(),
+            Ok("fn main() {}")
+        );
+    }
+
+    #[test]
+    fn a_snapshot_whose_git_add_floods_stderr_still_succeeds() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let _root = test_support::scoped_root(tmp.path().join("worktrees"));
+        let repo_root = tmp.path().join("repo");
+        if !init_test_repo(&repo_root) {
+            return;
+        }
+        assert!(test_git(&repo_root, &["config", "core.autocrlf", "true"]));
+        let path = create_branch_checkout(&repo_root, "feat/loud", None)
+            .expect("create")
+            .path;
+        for i in 0..1200 {
+            std::fs::write(path.join(format!("agent-output-{i:04}.txt")), "line\n")
+                .expect("untracked file");
+        }
+
+        let snapshot = snapshot_worktree(&repo_root, &path)
+            .expect("stderr warnings past 64 KiB must not fail the snapshot");
+
+        assert_eq!(
+            probe_git(
+                &repo_root,
+                &[
+                    "show",
+                    &format!("{}:agent-output-1199.txt", snapshot.commit)
+                ],
+                GIT_DEADLINE,
+            )
+            .as_deref(),
+            Ok("line")
+        );
+    }
+
+    #[test]
+    fn a_submodule_ignored_by_config_still_makes_the_checkout_dirty() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let sub_origin = tmp.path().join("sub-origin");
+        let repo_root = tmp.path().join("repo");
+        if !init_test_repo(&sub_origin) || !init_test_repo(&repo_root) {
+            return;
+        }
+        let origin = sub_origin.to_string_lossy().into_owned();
+        assert!(test_git(
+            &repo_root,
+            &[
+                "-c",
+                "protocol.file.allow=always",
+                "submodule",
+                "add",
+                "-q",
+                &origin,
+                "sub",
+            ]
+        ));
+        assert!(test_git(
+            &repo_root,
+            &[
+                "-c",
+                "user.email=paneflow@example.com",
+                "-c",
+                "user.name=Paneflow",
+                "commit",
+                "-q",
+                "-m",
+                "add sub",
+            ]
+        ));
+        assert!(test_git(
+            &repo_root,
+            &["config", "submodule.sub.ignore", "all"]
+        ));
+        assert_eq!(is_clean(&repo_root), Ok(true));
+
+        std::fs::write(repo_root.join("sub").join("README.md"), "changed\n").expect("edit");
+
+        assert_eq!(is_clean(&repo_root), Ok(false));
+    }
+
+    #[test]
+    fn a_recently_used_worktree_whose_folder_moved_survives_the_restore_prune() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let _root = test_support::scoped_root(tmp.path().join("worktrees"));
+        let repo_root = tmp.path().join("repo");
+        if !init_test_repo(&repo_root) {
+            return;
+        }
+        let path = create_branch_checkout(&repo_root, "feat/moved", None)
+            .expect("create")
+            .path;
+        std::fs::rename(&path, tmp.path().join("moved-away")).expect("move the checkout");
+
+        prune(&repo_root).expect("prune");
+
+        let listed = run_git(
+            &repo_root,
+            &["worktree", "list", "--porcelain"],
+            GIT_DEADLINE,
+        )
+        .expect("list");
+        assert!(
+            listed.contains("branch refs/heads/feat/moved"),
+            "the entry of a worktree used today is kept: {listed}"
+        );
+    }
+
+    #[test]
+    fn a_status_that_fails_cancels_the_teardown_instead_of_reading_clean() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let _root = test_support::scoped_root(tmp.path().join("worktrees"));
+        let repo_root = tmp.path().join("repo");
+        if !init_test_repo(&repo_root) {
+            return;
+        }
+        let outside = tmp.path().join("not-a-repo");
+        std::fs::create_dir_all(&outside).expect("plain dir");
+        assert!(is_clean(&outside).is_err(), "no repository is not clean");
+
+        let path = create_branch_checkout(&repo_root, "feat/corrupt", None)
+            .expect("create")
+            .path;
+        let index = worktree_git_dir(&path).expect("git dir").join("index");
+        std::fs::write(&index, b"not an index").expect("corrupt the index");
+        assert!(is_clean(&path).is_err());
+
+        let kept = teardown_all(vec![ManagedWorktree {
+            path: path.clone(),
+            repo_root: repo_root.clone(),
+            branch: "feat/corrupt".to_string(),
+            teardown: TeardownPolicy::Auto,
+        }]);
+
+        assert!(path.exists(), "a failed status never removes the checkout");
+        assert_eq!(kept.len(), 1);
+        assert!(kept[0].starts_with(&format!("{} was kept", path.display())));
+    }
+
+    #[test]
     fn switching_the_checkout_creates_reuses_or_detaches_without_a_worktree() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let _root = test_support::scoped_root(tmp.path().join("worktrees"));
@@ -2124,7 +2648,9 @@ mod tests {
         }
         assert!(test_git(&repo_root, &["branch", "develop"]));
 
-        let path = create_detached_checkout(&repo_root, Some("develop")).expect("detached");
+        let path = create_detached_checkout(&repo_root, Some("develop"))
+            .expect("detached")
+            .path;
         let sha = resolve_base_commit(&repo_root, Some("develop")).expect("sha");
         assert_eq!(
             path,
@@ -2137,7 +2663,8 @@ mod tests {
         assert_eq!(is_clean(&path), Ok(true));
 
         let second = create_detached_checkout(&repo_root, Some("develop"))
-            .expect("a second detached checkout from the same base gets its own dir");
+            .expect("a second detached checkout from the same base gets its own dir")
+            .path;
         assert_ne!(second, path);
         assert_eq!(list_worktrees(&repo_root).expect("list").len(), 3);
 

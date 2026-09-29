@@ -382,7 +382,7 @@ impl PaneFlowApp {
             self.pane_palette_set_error("This project is no longer open", cx);
             return;
         };
-        if let Some(branch) = self.branch_checkout_pending.clone() {
+        if let Some(branch) = self.pane_palette_pending_checkout() {
             self.pane_palette_set_error(format!("Checking out {branch}..."), cx);
             return;
         }
@@ -743,6 +743,17 @@ impl PaneFlowApp {
             .into_any_element()
     }
 
+    fn pane_palette_pending_checkout(&self) -> Option<String> {
+        let palette = self.pane_palette.as_ref()?;
+        let ws_idx = self.pane_palette_ws_idx()?;
+        let ws = &self.workspaces[ws_idx];
+        let tab_id = match &palette.placement {
+            PalettePlacement::Tab { tab_id } => *tab_id,
+            PalettePlacement::Split { target, .. } => ws.tab_for_pane(&target.upgrade()?)?.id,
+        };
+        self.branch_checkout_pending.get(&tab_id).cloned()
+    }
+
     fn pane_palette_tab(&self, palette: &PanePaletteState) -> Option<(usize, usize)> {
         let PalettePlacement::Tab { tab_id } = &palette.placement else {
             return None;
@@ -798,7 +809,7 @@ impl PaneFlowApp {
                 }),
         );
 
-        let current = self.branch_checkout_pending.clone().or_else(|| {
+        let current = self.pane_palette_pending_checkout().or_else(|| {
             options
                 .iter()
                 .find(|option| option.selected)

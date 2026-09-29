@@ -84,6 +84,28 @@ impl AgentConfigWriter for OpenCode {
 mod tests {
     use super::*;
 
+    #[cfg(unix)]
+    #[test]
+    fn a_fifo_jsonc_config_fails_at_once_and_releases_the_lock() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let jsonc = dir.path().join("opencode.jsonc");
+        let made = std::process::Command::new("mkfifo")
+            .arg(&jsonc)
+            .status()
+            .is_ok_and(|status| status.success());
+        assert!(made);
+        let w = test_writer(jsonc.clone());
+
+        let started = std::time::Instant::now();
+        assert!(w.install(Path::new("/data/paneflow-mcp")).is_err());
+        assert!(w.status(Some(Path::new("/data/paneflow-mcp"))).is_err());
+        assert!(started.elapsed() < std::time::Duration::from_millis(100));
+
+        let relocked = std::time::Instant::now();
+        drop(crate::io::lock_config(&jsonc).unwrap());
+        assert!(relocked.elapsed() < std::time::Duration::from_millis(100));
+    }
+
     fn test_writer(path: PathBuf) -> OpenCode {
         OpenCode {
             config_paths: vec![path],

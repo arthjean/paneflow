@@ -61,7 +61,7 @@ impl PaneFlowApp {
     pub(crate) fn close_settings(&mut self, cx: &mut Context<Self>) {
         self.settings_section = None;
         self.clear_shortcut_filters(cx);
-        self.shortcut_reset_pending = false;
+        self.shortcut_reset_armed_at = None;
         self.font_dropdown_open = false;
         self.font_search.clear();
         self.theme_dropdown_open = false;
@@ -71,7 +71,7 @@ impl PaneFlowApp {
         self.workspace_template_detail_open = false;
         self.agent_profile_editor = None;
         self.clear_settings_search(cx);
-        if self.recording_shortcut_idx.is_some() {
+        if self.recording_shortcut.is_some() {
             self.cancel_shortcut_recording();
             let config = paneflow_config::loader::load_config();
             keybindings::apply_keybindings(cx, &config.shortcuts);
@@ -79,15 +79,38 @@ impl PaneFlowApp {
     }
 
     pub(crate) fn cancel_shortcut_recording(&mut self) {
-        self.recording_shortcut_idx = None;
+        self.recording_shortcut = None;
         self.shortcut_conflict = None;
     }
 
-    pub(crate) fn start_shortcut_recording(&mut self, idx: usize, cx: &mut Context<Self>) {
+    pub(crate) fn start_shortcut_recording(
+        &mut self,
+        action_name: &'static str,
+        cx: &mut Context<Self>,
+    ) {
         self.set_shortcut_capture(false, cx);
-        self.shortcut_reset_pending = false;
-        self.recording_shortcut_idx = Some(idx);
+        self.shortcut_reset_armed_at = None;
+        self.recording_shortcut = Some(action_name);
         self.shortcut_conflict = None;
+    }
+
+    pub(crate) fn arm_shortcut_reset(&mut self) {
+        self.cancel_shortcut_recording();
+        self.shortcut_reset_armed_at = Some(std::time::Instant::now());
+    }
+
+    pub(crate) fn confirm_shortcut_reset(&mut self, cx: &mut Context<Self>) {
+        if !reset_confirmation_accepted(self.shortcut_reset_armed_at, std::time::Instant::now()) {
+            return;
+        }
+        self.shortcut_reset_armed_at = None;
+        if !config_writer::reset_shortcuts_checked() {
+            self.show_toast("Could not save shortcut", cx);
+            cx.notify();
+            return;
+        }
+        self.reload_shortcuts(cx);
+        cx.notify();
     }
 
     pub(crate) fn reload_shortcuts(&mut self, cx: &mut Context<Self>) {
@@ -108,7 +131,45 @@ impl PaneFlowApp {
             inp.clear(cx);
         });
     }
+}
 
+pub(crate) struct PendingSetting {
+    sequence: u64,
+    nested: bool,
+    key: &'static str,
+    value: serde_json::Value,
+}
+
+fn pending_setting_slot(nested: bool, key: &str) -> String {
+    if nested {
+        format!("terminal.{key}")
+    } else {
+        key.to_string()
+    }
+}
+
+pub(crate) fn overlay_pending_settings<'a>(
+    config: paneflow_config::schema::PaneFlowConfig,
+    pending: impl IntoIterator<Item = &'a PendingSetting>,
+) -> paneflow_config::schema::PaneFlowConfig {
+    let mut pending: Vec<&PendingSetting> = pending.into_iter().collect();
+    pending.sort_by_key(|setting| setting.sequence);
+    pending.into_iter().fold(config, |config, setting| {
+        config_writer::with_field(&config, setting.nested, setting.key, setting.value.clone())
+            .unwrap_or(config)
+    })
+}
+
+const RESET_CONFIRM_DELAY: std::time::Duration = std::time::Duration::from_millis(400);
+
+pub(crate) fn reset_confirmation_accepted(
+    armed_at: Option<std::time::Instant>,
+    now: std::time::Instant,
+) -> bool {
+    armed_at.is_some_and(|armed| now.saturating_duration_since(armed) >= RESET_CONFIRM_DELAY)
+}
+
+impl PaneFlowApp {
     pub(crate) fn persist_setting(
         &mut self,
         nested: bool,
@@ -120,8 +181,15 @@ impl PaneFlowApp {
             && key == "default_shell"
             && normalized_shell_setting(self.cached_config.default_shell.as_deref())
                 != normalized_shell_setting(value.as_str());
-        self.cached_config =
-            config_writer::with_field(&self.cached_config, nested, key, value.clone());
+        let next = match config_writer::with_field(&self.cached_config, nested, key, value.clone())
+        {
+            Ok(next) => next,
+            Err(_) => {
+                self.show_toast(format!("Could not save setting: {key}"), cx);
+                return;
+            }
+        };
+        self.cached_config = next;
         if crate::terminal::element::apply_font_config(&self.cached_config) {
             for ws in &self.workspaces {
                 ws.propagate_config(&self.cached_config, cx);
@@ -155,23 +223,37 @@ impl PaneFlowApp {
             self.handle_default_shell_changed(cx);
         }
         cx.notify();
+        let sequence = config_writer::next_setting_sequence();
+        let slot = pending_setting_slot(nested, key);
+        self.pending_settings.insert(
+            slot.clone(),
+            PendingSetting {
+                sequence,
+                nested,
+                key,
+                value: value.clone(),
+            },
+        );
         cx.spawn(async move |this, cx| {
-            let ok = smol::unblock(move || {
-                if nested {
-                    config_writer::save_terminal_field_checked(key, value)
-                } else {
-                    config_writer::save_config_value_checked(key, value)
-                }
+            let outcome = smol::unblock(move || {
+                config_writer::save_setting_ordered(nested, key, value, sequence)
             })
             .await;
-            if !ok {
-                log::warn!(
-                    "settings: failed to persist {key}; choice is in-memory only this session"
-                );
-                let _ = this.update(cx, |this, cx| {
+            let _ = this.update(cx, |this, cx| {
+                if this
+                    .pending_settings
+                    .get(&slot)
+                    .is_some_and(|pending| pending.sequence == sequence)
+                {
+                    this.pending_settings.remove(&slot);
+                }
+                if outcome == config_writer::SettingWrite::Failed {
+                    log::warn!(
+                        "settings: failed to persist {key}; choice is in-memory only this session"
+                    );
                     this.show_toast(format!("Could not save setting: {key}"), cx);
-                });
-            }
+                }
+            });
         })
         .detach();
     }
@@ -186,8 +268,13 @@ impl PaneFlowApp {
         value: serde_json::Value,
         cx: &mut Context<Self>,
     ) {
-        self.cached_config =
-            config_writer::with_agent_panel_field(&self.cached_config, key, value.clone());
+        match config_writer::with_agent_panel_field(&self.cached_config, key, value.clone()) {
+            Ok(next) => self.cached_config = next,
+            Err(_) => {
+                self.show_toast(format!("Could not save setting: agent_panel.{key}"), cx);
+                return;
+            }
+        }
         cx.notify();
         cx.spawn(async move |this, cx| {
             let ok =
@@ -237,7 +324,7 @@ impl PaneFlowApp {
             return;
         }
 
-        if event.keystroke.key == "escape" && self.recording_shortcut_idx.is_none() {
+        if event.keystroke.key == "escape" && self.recording_shortcut.is_none() {
             if self.terminal_dropdown.is_some() {
                 self.terminal_dropdown = None;
             } else if self.general_dropdown.is_some() {
@@ -266,7 +353,17 @@ impl PaneFlowApp {
             return false;
         }
 
-        if self.recording_shortcut_idx.is_some() {
+        if self.recording_shortcut.is_some() {
+            if self
+                .shortcut_search_input
+                .read(cx)
+                .focus_handle
+                .is_focused(window)
+            {
+                self.cancel_shortcut_recording();
+                cx.notify();
+                return false;
+            }
             self.handle_shortcut_recording(keystroke, window, cx);
             cx.notify();
             return true;
@@ -296,7 +393,7 @@ impl PaneFlowApp {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(idx) = self.recording_shortcut_idx else {
+        let Some(action_name) = self.recording_shortcut else {
             return;
         };
 
@@ -310,11 +407,15 @@ impl PaneFlowApp {
             return;
         }
 
-        let Some(action_name) = self.effective_shortcuts.get(idx).map(|e| e.action_name) else {
+        if !self
+            .effective_shortcuts
+            .iter()
+            .any(|entry| entry.action_name == action_name)
+        {
             self.cancel_shortcut_recording();
             cx.notify();
             return;
-        };
+        }
 
         let unassigns = matches!(keystroke.key.as_str(), "backspace" | "delete")
             && !keystroke.modifiers.modified();
@@ -339,15 +440,14 @@ impl PaneFlowApp {
             let owner = self
                 .effective_shortcuts
                 .iter()
-                .enumerate()
-                .filter(|(other_idx, _)| *other_idx != idx)
-                .find(|(_, entry)| {
+                .filter(|entry| entry.action_name != action_name)
+                .find(|entry| {
                     entry
                         .raw_key
                         .as_deref()
                         .is_some_and(|raw| keybindings::keystrokes_conflict(raw, &new_key))
                 });
-            if let Some((_, owner)) = owner {
+            if let Some(owner) = owner {
                 self.shortcut_conflict = Some(crate::settings::tabs::shortcuts::ShortcutConflict {
                     label: keybindings::format_keystroke(&new_key),
                     key: new_key,
@@ -376,6 +476,10 @@ impl PaneFlowApp {
             .unwrap_or_else(|e| e.into_inner())
             .take();
         if let Some(config) = new_config {
+            let config = overlay_pending_settings(config, self.pending_settings.values());
+            if self.recording_shortcut.is_some() {
+                self.cancel_shortcut_recording();
+            }
             crate::terminal::element::apply_font_config(&config);
             let default_shell_changed =
                 super::settings::normalized_shell_setting(
@@ -517,7 +621,8 @@ mod tests {
             true,
             "minimum_contrast",
             crate::settings::tabs::terminal::minimum_contrast_setting(1),
-        );
+        )
+        .expect("a valid contrast step");
         let terminal = off.terminal.clone().unwrap_or_default();
         assert_eq!(terminal.resolved_minimum_contrast(), 0.0);
 
@@ -526,7 +631,8 @@ mod tests {
             true,
             "minimum_contrast",
             crate::settings::tabs::terminal::minimum_contrast_setting(0),
-        );
+        )
+        .expect("auto is a valid step");
         assert_eq!(
             auto.terminal
                 .clone()
@@ -534,6 +640,50 @@ mod tests {
                 .resolved_minimum_contrast(),
             paneflow_config::schema::TerminalConfig::DEFAULT_MINIMUM_CONTRAST
         );
+    }
+
+    #[test]
+    fn a_reload_from_an_older_write_keeps_the_newer_value_in_memory() {
+        let on_disk = config_writer::with_field(
+            &paneflow_config::schema::PaneFlowConfig::default(),
+            false,
+            "font_size",
+            serde_json::json!(14.0),
+        )
+        .expect("a font size");
+        let pending = [
+            PendingSetting {
+                sequence: 8,
+                nested: false,
+                key: "font_size",
+                value: serde_json::json!(16.0),
+            },
+            PendingSetting {
+                sequence: 7,
+                nested: false,
+                key: "font_size",
+                value: serde_json::json!(15.0),
+            },
+        ];
+
+        let merged = overlay_pending_settings(on_disk, pending.iter());
+
+        assert_eq!(
+            merged.font_size,
+            Some(16.0),
+            "the second stepper click still shows after the first write reloads"
+        );
+    }
+
+    #[test]
+    fn a_reset_confirmation_needs_a_deliberate_pause() {
+        let armed = std::time::Instant::now();
+        let at = |ms: u64| armed + std::time::Duration::from_millis(ms);
+
+        assert!(!reset_confirmation_accepted(None, at(1000)));
+        assert!(!reset_confirmation_accepted(Some(armed), at(0)));
+        assert!(!reset_confirmation_accepted(Some(armed), at(399)));
+        assert!(reset_confirmation_accepted(Some(armed), at(400)));
     }
 
     #[test]

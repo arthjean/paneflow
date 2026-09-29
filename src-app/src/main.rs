@@ -29,6 +29,7 @@ mod env_expand;
 mod external_open;
 mod file_icons;
 mod fonts;
+mod git_command;
 mod host_bootstrap;
 mod ipc;
 mod ipc_events;
@@ -142,7 +143,7 @@ struct DiffDockState {
     pub(crate) parked: std::collections::HashMap<u64, crate::app::cli_diff_dock::DiffDockSlot>,
     pub(crate) diff_tabs: Vec<crate::app::diff_dock::DiffDockTab>,
     pub(crate) diff_active_tab: usize,
-    pub(crate) diff_tab_close_armed: Option<usize>,
+    pub(crate) diff_tab_close_armed: Option<(usize, std::time::Instant)>,
     pub(crate) diff_branch_menu: Option<crate::app::diff_dock::DiffBranchMenuState>,
     pub(crate) width: f32,
     pub(crate) maximized: Option<Option<gpui::FocusHandle>>,
@@ -218,10 +219,11 @@ struct PaneFlowApp {
     mcp_busy: bool,
     sidebar_scroll: gpui::ScrollHandle,
     effective_shortcuts: Vec<keybindings::ShortcutEntry>,
-    recording_shortcut_idx: Option<usize>,
+    recording_shortcut: Option<&'static str>,
+    pending_settings: std::collections::HashMap<String, crate::app::settings::PendingSetting>,
     shortcut_search_input: gpui::Entity<crate::widgets::text_input::TextInput>,
     shortcut_capture_active: bool,
-    shortcut_reset_pending: bool,
+    shortcut_reset_armed_at: Option<std::time::Instant>,
     shortcut_conflict: Option<crate::settings::tabs::shortcuts::ShortcutConflict>,
     shortcut_rows: Vec<crate::settings::tabs::shortcuts::ShortcutListRow>,
     shortcut_list: gpui::ListState,
@@ -235,7 +237,8 @@ struct PaneFlowApp {
     workspace_menu_open: Option<WorkspaceContextMenu>,
     session_menu_open: Option<SessionContextMenu>,
     pub(crate) worktree_states: crate::app::tab_worktree::WorktreeStates,
-    pub(crate) branch_checkout_pending: Option<String>,
+    pub(crate) branch_checkout_pending: std::collections::HashMap<u64, String>,
+    pub(crate) cwd_probes: crate::app::event_handlers::CwdProbeSequence,
     pub(crate) pr_states: crate::app::pull_request::PrStates,
     pub(crate) sidebar_customize_menu_open: bool,
     pub(crate) sidebar_show_submenu_open: bool,
@@ -261,6 +264,8 @@ struct PaneFlowApp {
     resume_batch: Option<crate::app::hosted_sessions::ResumeBatch>,
     close_dialog: Option<crate::app::close_policy::CloseDialog>,
     close_dialog_focus: FocusHandle,
+    unsaved_dialog: Option<crate::app::unsaved_dialog::UnsavedDialog>,
+    unsaved_dialog_focus: FocusHandle,
     worktree_remove_dialog: Option<crate::app::worktree_remove::WorktreeRemoveDialog>,
     worktree_remove_focus: FocusHandle,
     host_agents: crate::app::host_agents::HostAgentView,

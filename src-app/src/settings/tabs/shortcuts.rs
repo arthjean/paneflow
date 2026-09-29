@@ -344,6 +344,15 @@ impl PaneFlowApp {
             .rounded_full()
             .bg(ui.subtle)
             .cursor_text()
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _, _window, cx| {
+                    if this.recording_shortcut.is_some() {
+                        this.cancel_shortcut_recording();
+                        cx.notify();
+                    }
+                }),
+            )
             .child(
                 svg()
                     .size(px(16.))
@@ -419,9 +428,9 @@ impl PaneFlowApp {
         let Some(entry) = self.effective_shortcuts.get(idx) else {
             return gpui::Empty.into_any_element();
         };
-        let is_recording = self.recording_shortcut_idx == Some(idx);
-        let conflict = self.shortcut_conflict.as_ref().filter(|_| is_recording);
         let action_name = entry.action_name;
+        let is_recording = self.recording_shortcut == Some(action_name);
+        let conflict = self.shortcut_conflict.as_ref().filter(|_| is_recording);
         let row_group = format!("shortcut-{idx}-squircle");
 
         let trailing = if let Some(conflict) = conflict {
@@ -502,7 +511,7 @@ impl PaneFlowApp {
 
         menu_row(("shortcut", idx), false, ui)
             .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
-                this.start_shortcut_recording(idx, cx);
+                this.start_shortcut_recording(action_name, cx);
                 this.settings_focus.focus(window, cx);
                 cx.notify();
             }))
@@ -546,7 +555,7 @@ impl PaneFlowApp {
             .justify_between()
             .gap(px(12.));
 
-        let row = if self.shortcut_reset_pending {
+        let row = if self.shortcut_reset_armed_at.is_some() {
             row.child(
                 div()
                     .text_size(BODY)
@@ -563,7 +572,7 @@ impl PaneFlowApp {
                         select_item("reset-shortcuts-cancel", false, ui)
                             .text_color(ui.text)
                             .on_click(cx.listener(|this, _: &ClickEvent, _w, cx| {
-                                this.shortcut_reset_pending = false;
+                                this.shortcut_reset_armed_at = None;
                                 cx.notify();
                             }))
                             .child("Cancel"),
@@ -571,10 +580,7 @@ impl PaneFlowApp {
                     .child(
                         destructive_button("reset-shortcuts-confirm", "Reset").on_click(
                             cx.listener(|this, _: &ClickEvent, _w, cx| {
-                                config_writer::reset_shortcuts();
-                                this.shortcut_reset_pending = false;
-                                this.reload_shortcuts(cx);
-                                cx.notify();
+                                this.confirm_shortcut_reset(cx);
                             }),
                         ),
                     ),
@@ -590,8 +596,7 @@ impl PaneFlowApp {
                     select_item("reset-shortcuts", false, ui)
                         .text_color(ui.text)
                         .on_click(cx.listener(|this, _: &ClickEvent, _w, cx| {
-                            this.cancel_shortcut_recording();
-                            this.shortcut_reset_pending = true;
+                            this.arm_shortcut_reset();
                             cx.notify();
                         }))
                         .child("Reset all to defaults"),

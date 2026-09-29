@@ -264,13 +264,11 @@ fn clone_command(tool: CloneTool, target: &str, destination: &Path) -> std::proc
             command
         }
         CloneTool::Git => {
-            let mut command = std::process::Command::new("git");
-            command
-                .arg("clone")
-                .arg("--progress")
-                .arg("--")
-                .arg(git_target_for(target))
-                .arg(destination);
+            let mut command = crate::git_command::git(
+                crate::git_command::GitProfile::UserAction,
+                ["clone", "--progress", "--"],
+            );
+            command.arg(git_target_for(target)).arg(destination);
             command
         }
     };

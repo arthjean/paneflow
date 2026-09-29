@@ -194,6 +194,42 @@ impl TerminalView {
             HostLinkState::Unavailable(_) => (SessionIntent::Reattach, false),
             _ => return,
         };
+        self.start_hosted_session(intent, fresh_identity, cx);
+    }
+
+    pub(crate) fn launched_under(&self, root: &std::path::Path) -> bool {
+        let reported = self
+            .terminal
+            .current_cwd
+            .as_deref()
+            .is_some_and(|cwd| std::path::Path::new(cwd).starts_with(root));
+        reported
+            || self
+                .launch
+                .cwd
+                .as_deref()
+                .is_some_and(|cwd| cwd.starts_with(root))
+    }
+
+    pub(crate) fn relaunch_in(&mut self, cwd: std::path::PathBuf, cx: &mut Context<Self>) {
+        self.launch.cwd = Some(cwd);
+        self.relaunch_pending = true;
+        self.relaunch_when_ended(cx);
+    }
+
+    pub(super) fn relaunch_when_ended(&mut self, cx: &mut Context<Self>) {
+        if self.relaunch_pending && matches!(self.terminal.host_link, HostLinkState::Ended(_)) {
+            self.relaunch_pending = false;
+            self.start_hosted_session(SessionIntent::Create, true, cx);
+        }
+    }
+
+    fn start_hosted_session(
+        &mut self,
+        intent: SessionIntent,
+        fresh_identity: bool,
+        cx: &mut Context<Self>,
+    ) {
         self.session_intent = intent;
         let surface_id = cx.entity_id().as_u64();
         let params = self.launch.spawn_params(surface_id);

@@ -25,11 +25,11 @@ toml_edit = "0.22"
 which.workspace = true
 dirs.workspace = true
 anyhow.workspace = true
-# Used by `io::write_atomic` for same-dir temp file + atomic rename (not
-# test-only), so it lives in [dependencies], not [dev-dependencies].
-tempfile.workspace = true
 paneflow-agent-config = { workspace = true, features = ["config-io"] }
 paneflow-home.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
 
 [lints]
 workspace = true

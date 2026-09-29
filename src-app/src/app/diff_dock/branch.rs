@@ -147,14 +147,16 @@ impl PaneFlowApp {
         .detach();
     }
 
-    pub(super) fn diff_branch_for_cwd(&self, cwd: &str) -> Option<(String, usize)> {
+    pub(super) fn diff_branch_for_cwd(&self, cwd: &str) -> Option<(String, Option<String>)> {
         self.workspaces
             .iter()
             .find(|workspace| workspace.cwd == cwd && workspace.is_git_repo)
             .map(|workspace| {
+                let stats = &workspace.git_stats;
                 (
                     workspace.git_branch.clone(),
-                    workspace.git_stats.files_changed,
+                    (stats.files_changed > 0)
+                        .then(|| format!("Uncommitted: {}", stats.files_changed_label())),
                 )
             })
     }
@@ -163,7 +165,7 @@ impl PaneFlowApp {
 pub(super) fn render_diff_branch_chip(
     cwd: String,
     branch: String,
-    files_changed: usize,
+    uncommitted: Option<String>,
     menu: Option<&DiffBranchMenuState>,
     ui: crate::theme::UiColors,
     cx: &mut Context<PaneFlowApp>,
@@ -226,14 +228,14 @@ pub(super) fn render_diff_branch_chip(
             .text_color(ui.muted),
     )
     .when_some(menu.filter(|_| menu_open), |chip, menu| {
-        chip.child(render_diff_branch_menu(menu, files_changed, ui, cx))
+        chip.child(render_diff_branch_menu(menu, uncommitted, ui, cx))
     })
     .into_any_element()
 }
 
 fn render_diff_branch_menu(
     menu_state: &DiffBranchMenuState,
-    files_changed: usize,
+    uncommitted: Option<String>,
     ui: crate::theme::UiColors,
     cx: &mut Context<PaneFlowApp>,
 ) -> AnyElement {
@@ -288,7 +290,7 @@ fn render_diff_branch_menu(
                     idx,
                     branch,
                     selected,
-                    if selected { files_changed } else { 0 },
+                    uncommitted.clone().filter(|_| selected),
                     cwd.clone(),
                     ui,
                     cx,
@@ -347,7 +349,7 @@ fn render_diff_branch_item(
     idx: usize,
     branch: String,
     selected: bool,
-    files_changed: usize,
+    uncommitted: Option<String>,
     cwd: String,
     ui: crate::theme::UiColors,
     cx: &mut Context<PaneFlowApp>,
@@ -390,11 +392,8 @@ fn render_diff_branch_item(
                     .text_color(ui.text)
                     .child(branch),
             )
-            .when(files_changed > 0, |d| {
-                d.child(div().text_size(px(11.)).text_color(ui.muted).child(format!(
-                    "Uncommitted: {files_changed} file{}",
-                    if files_changed > 1 { "s" } else { "" }
-                )))
+            .when_some(uncommitted, |d, label| {
+                d.child(div().text_size(px(11.)).text_color(ui.muted).child(label))
             }),
     )
     .child(div().w(px(14.)).flex_none().child(if selected {
@@ -425,15 +424,14 @@ fn render_diff_branch_menu_status(
 }
 
 fn list_branches(cwd: &str) -> Result<Vec<String>, String> {
-    let mut command = std::process::Command::new("git");
-    command
-        .args(["branch", "--format=%(refname:short)"])
-        .current_dir(cwd)
-        .env("GIT_TERMINAL_PROMPT", "0");
+    let mut command = crate::git_command::git(
+        crate::git_command::GitProfile::Probe,
+        ["branch", "--format=%(refname:lstrip=2)"],
+    );
+    command.current_dir(cwd);
 
-    let output =
-        paneflow_process::run_with_timeout(command, BRANCH_GIT_DEADLINE, BRANCH_GIT_OUTPUT_CAP)
-            .map_err(|err| err.to_string())?;
+    let output = crate::git_command::run(command, BRANCH_GIT_DEADLINE, BRANCH_GIT_OUTPUT_CAP)
+        .map_err(|err| err.to_string())?;
     if !output.status.success() {
         return Err(git_output_error(&output));
     }
@@ -453,15 +451,14 @@ fn switch_branch(
     cwd: &str,
     branch: &str,
 ) -> Result<(String, bool, crate::workspace::GitDiffStats), String> {
-    let mut command = std::process::Command::new("git");
-    command
-        .args(["switch", "--", branch])
-        .current_dir(cwd)
-        .env("GIT_TERMINAL_PROMPT", "0");
+    let mut command = crate::git_command::git(
+        crate::git_command::GitProfile::UserAction,
+        ["switch", "--", branch],
+    );
+    command.current_dir(cwd);
 
-    let output =
-        paneflow_process::run_with_timeout(command, BRANCH_GIT_DEADLINE, BRANCH_GIT_OUTPUT_CAP)
-            .map_err(|err| err.to_string())?;
+    let output = crate::git_command::run(command, BRANCH_GIT_DEADLINE, BRANCH_GIT_OUTPUT_CAP)
+        .map_err(|err| err.to_string())?;
     if !output.status.success() {
         return Err(git_output_error(&output));
     }
@@ -481,5 +478,50 @@ fn git_output_error(output: &paneflow_process::BoundedOutput) -> String {
         format!("git exited with {}", output.status)
     } else {
         message.lines().next().unwrap_or(message).to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::list_branches;
+
+    fn test_git(cwd: &std::path::Path, args: &[&str]) -> bool {
+        std::process::Command::new("git")
+            .args(args)
+            .current_dir(cwd)
+            .env("GIT_TERMINAL_PROMPT", "0")
+            .output()
+            .is_ok_and(|out| out.status.success())
+    }
+
+    #[test]
+    fn the_branch_menu_lists_a_branch_shadowed_by_a_tag_by_its_plain_name() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root = dir.path();
+        if !test_git(root, &["init", "-q", "-b", "main"]) {
+            return;
+        }
+        std::fs::write(root.join("README.md"), "init\n").expect("readme");
+        assert!(test_git(root, &["add", "."]));
+        assert!(test_git(
+            root,
+            &[
+                "-c",
+                "user.email=paneflow@example.com",
+                "-c",
+                "user.name=Paneflow",
+                "commit",
+                "-q",
+                "-m",
+                "init",
+            ],
+        ));
+        assert!(test_git(root, &["branch", "release"]));
+        assert!(test_git(root, &["tag", "release"]));
+
+        let branches = list_branches(root.to_str().expect("utf-8 path")).expect("branches");
+
+        assert!(branches.contains(&"release".to_string()), "{branches:?}");
+        assert!(!branches.iter().any(|branch| branch.starts_with("heads/")));
     }
 }

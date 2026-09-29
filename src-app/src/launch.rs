@@ -152,6 +152,12 @@ fn detach_lonely_windows_console_for_gui_launch(is_scriptable_invocation: bool) 
 pub(crate) fn run() {
     startup_trace::begin();
     let args: Vec<String> = std::env::args().collect();
+    if let Some(home) = paneflow_home::paneflow_home()
+        && let Err(error) =
+            paneflow_home::secure_home_dir(&home, paneflow_home::is_default_home(&home))
+    {
+        eprintln!("paneflow: cannot secure {}: {error}", home.display());
+    }
     for migrated in paneflow_home::migrate_legacy_home() {
         eprintln!("paneflow: moved user state to {}", migrated.display());
     }

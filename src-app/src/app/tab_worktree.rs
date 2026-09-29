@@ -24,7 +24,10 @@ pub(crate) struct WorktreeStates {
 }
 
 impl WorktreeStates {
-    pub(crate) fn set_checkout(&mut self, cwd: &str, state: CheckoutGit) -> bool {
+    pub(crate) fn set_checkout(&mut self, cwd: &str, mut state: CheckoutGit) -> bool {
+        if let Some(current) = self.checkouts.get(cwd) {
+            state.stats = state.stats.or_previous(&current.stats);
+        }
         match self.checkouts.get(cwd) {
             Some(current) if *current == state => false,
             _ => {
@@ -163,10 +166,9 @@ impl PaneFlowApp {
         let Some(tab) = ws.tab_mut(tab_idx) else {
             return;
         };
-        if tab.worktree == worktree {
+        if !tab.bind_worktree(worktree.clone()) {
             return;
         }
-        tab.worktree = worktree.clone();
         if let Some(path) = worktree {
             Self::spawn_initial_git_stats(ws_id, path.to_string_lossy().into_owned(), cx);
         }
@@ -256,8 +258,7 @@ impl PaneFlowApp {
             return;
         }
 
-        self.branch_checkout_pending = Some(branch.clone());
-        cx.notify();
+        let generation = self.begin_tab_checkout(ws_idx, tab_idx, branch.clone(), cx);
         cx.spawn(
             async move |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
                 let probe = repo_root.clone();
@@ -268,9 +269,10 @@ impl PaneFlowApp {
                 .await;
                 let _ = cx.update(|cx| {
                     this.update(cx, |app: &mut Self, cx: &mut Context<Self>| {
-                        app.branch_checkout_pending = None;
+                        let bindable = app.finish_tab_checkout(ws_id, tab_id, generation);
                         match prepared {
                             Ok(prepared) => {
+                                app.report_include_failures(&prepared.include_failures, cx);
                                 if prepared.created {
                                     app.adopt_created_worktree(
                                         ws_id,
@@ -280,8 +282,7 @@ impl PaneFlowApp {
                                     );
                                     app.enforce_worktree_limit(cx);
                                 }
-                                let Some((ws_idx, tab_idx)) = app.tab_position(ws_id, tab_id)
-                                else {
+                                let Some((ws_idx, tab_idx)) = bindable else {
                                     cx.notify();
                                     return;
                                 };
@@ -345,12 +346,12 @@ impl PaneFlowApp {
             );
             return;
         }
-        self.branch_checkout_pending = Some(if branch.trim().is_empty() {
+        let label = if branch.trim().is_empty() {
             base.clone().unwrap_or_else(|| "HEAD".to_string())
         } else {
             branch.clone()
-        });
-        cx.notify();
+        };
+        let generation = self.begin_tab_checkout(ws_idx, tab_idx, label, cx);
         cx.spawn(
             async move |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
                 let probe = repo_root.clone();
@@ -360,7 +361,7 @@ impl PaneFlowApp {
                 .await;
                 let _ = cx.update(|cx| {
                     this.update(cx, |app: &mut Self, cx: &mut Context<Self>| {
-                        app.branch_checkout_pending = None;
+                        let bindable = app.finish_tab_checkout(ws_id, tab_id, generation);
                         match switched {
                             Ok(()) => {
                                 Self::spawn_initial_git_stats(
@@ -368,7 +369,7 @@ impl PaneFlowApp {
                                     repo_root.to_string_lossy().into_owned(),
                                     cx,
                                 );
-                                if let Some((ws_idx, tab_idx)) = app.tab_position(ws_id, tab_id) {
+                                if let Some((ws_idx, tab_idx)) = bindable {
                                     app.set_tab_worktree(ws_idx, tab_idx, None, cx);
                                     app.spawn_worktree_listing(ws_idx, cx);
                                     app.pane_palette_branch_created(tab_id, launch_preset, cx);
@@ -405,12 +406,12 @@ impl PaneFlowApp {
         };
         let ws_id = ws.id;
         let detached = branch.trim().is_empty();
-        self.branch_checkout_pending = Some(if detached {
+        let label = if detached {
             base.clone().unwrap_or_else(|| "HEAD".to_string())
         } else {
             branch.clone()
-        });
-        cx.notify();
+        };
+        let generation = self.begin_tab_checkout(ws_idx, tab_idx, label, cx);
         cx.spawn(
             async move |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
                 let probe = repo_root.clone();
@@ -421,12 +422,6 @@ impl PaneFlowApp {
                             &probe,
                             base.as_deref(),
                         )
-                        .map(|path| {
-                            crate::workspace::worktree::PreparedCheckout {
-                                path,
-                                created: true,
-                            }
-                        })
                     } else {
                         crate::workspace::worktree::create_branch_checkout(
                             &probe,
@@ -438,9 +433,10 @@ impl PaneFlowApp {
                 .await;
                 let _ = cx.update(|cx| {
                     this.update(cx, |app: &mut Self, cx: &mut Context<Self>| {
-                        app.branch_checkout_pending = None;
+                        let bindable = app.finish_tab_checkout(ws_id, tab_id, generation);
                         match created {
                             Ok(prepared) => {
+                                app.report_include_failures(&prepared.include_failures, cx);
                                 let path = prepared.path;
                                 let record = if detached {
                                     path.file_name()
@@ -453,10 +449,12 @@ impl PaneFlowApp {
                                     app.adopt_created_worktree(ws_id, &repo_root, &path, &record);
                                     app.enforce_worktree_limit(cx);
                                 }
-                                if let Some((ws_idx, tab_idx)) = app.tab_position(ws_id, tab_id) {
+                                if let Some((ws_idx, tab_idx)) = bindable {
                                     app.set_tab_worktree(ws_idx, tab_idx, Some(path), cx);
                                     app.spawn_worktree_listing(ws_idx, cx);
                                     app.pane_palette_branch_created(tab_id, launch_preset, cx);
+                                } else if let Some((ws_idx, _)) = app.tab_position(ws_id, tab_id) {
+                                    app.spawn_worktree_listing(ws_idx, cx);
                                 }
                             }
                             Err(message) => app.pane_palette_branch_failed(tab_id, message, cx),
@@ -467,6 +465,47 @@ impl PaneFlowApp {
             },
         )
         .detach();
+    }
+
+    fn begin_tab_checkout(
+        &mut self,
+        ws_idx: usize,
+        tab_idx: usize,
+        label: String,
+        cx: &mut Context<Self>,
+    ) -> u64 {
+        let Some(tab) = self
+            .workspaces
+            .get(ws_idx)
+            .and_then(|ws| ws.tabs().get(tab_idx))
+        else {
+            return 0;
+        };
+        let (tab_id, generation) = (tab.id, tab.worktree_generation());
+        self.branch_checkout_pending.insert(tab_id, label);
+        cx.notify();
+        generation
+    }
+
+    fn finish_tab_checkout(
+        &mut self,
+        ws_id: u64,
+        tab_id: u64,
+        generation: u64,
+    ) -> Option<(usize, usize)> {
+        self.branch_checkout_pending.remove(&tab_id);
+        let (ws_idx, tab_idx) = self.tab_position(ws_id, tab_id)?;
+        let unchanged = self.workspaces[ws_idx]
+            .tabs()
+            .get(tab_idx)
+            .is_some_and(|tab| tab.worktree_generation() == generation);
+        unchanged.then_some((ws_idx, tab_idx))
+    }
+
+    fn report_include_failures(&mut self, failures: &[String], cx: &mut Context<Self>) {
+        if !failures.is_empty() {
+            self.show_toast(format!("Worktree created, but {}", failures.join("; ")), cx);
+        }
     }
 
     pub(crate) fn notify_snapshot_kept(
@@ -625,16 +664,21 @@ impl PaneFlowApp {
         let bound = self.bound_worktree_paths();
         cx.spawn(
             async move |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
-                let removed = smol::unblock(move || {
+                let (removed, kept) = smol::unblock(move || {
                     crate::workspace::worktree::trim_to_limit(candidates, keep, &bound)
                 })
                 .await;
-                if removed.is_empty() {
+                if removed.is_empty() && kept.is_empty() {
                     return;
                 }
                 let _ = cx.update(|cx| {
                     this.update(cx, |app: &mut Self, cx: &mut Context<Self>| {
-                        app.forget_managed_paths(&removed, cx);
+                        for message in kept {
+                            app.show_toast(message, cx);
+                        }
+                        if !removed.is_empty() {
+                            app.forget_managed_paths(&removed, cx);
+                        }
                     })
                 });
             },
@@ -817,48 +861,31 @@ impl PaneFlowApp {
         self.worktree_states.retain_live(&live);
     }
 
-    pub(crate) fn remove_tab_worktree(
+    fn relaunch_tab_terminals_outside(
         &mut self,
         ws_idx: usize,
         tab_idx: usize,
+        removed: &std::path::Path,
         cx: &mut Context<Self>,
     ) {
         let Some(ws) = self.workspaces.get(ws_idx) else {
             return;
         };
-        let Some(repo_root) = ws.repo_root.clone() else {
+        let Some(root) = ws.repo_root.clone() else {
             return;
         };
-        let Some(path) = ws.tabs().get(tab_idx).and_then(|tab| tab.worktree.clone()) else {
-            return;
-        };
-        if self.workspaces.iter().any(|ws| ws.worktree_root == path) {
-            self.show_toast(
-                format!("{} is open as a workspace - close it first", path.display()),
-                cx,
-            );
-            return;
+        let terminals = ws
+            .tabs()
+            .get(tab_idx)
+            .map(|tab| crate::app::hosted_sessions::tab_terminals(tab, cx))
+            .unwrap_or_default();
+        for terminal in terminals {
+            terminal.update(cx, |view, cx| {
+                if view.launched_under(removed) {
+                    view.relaunch_in(root.clone(), cx);
+                }
+            });
         }
-        cx.spawn(
-            async move |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
-                let (probe_root, probe_path) = (repo_root.clone(), path.clone());
-                let removed =
-                    smol::unblock(move || remove_checkout(&probe_root, &probe_path)).await;
-                let _ = cx.update(|cx| {
-                    this.update(cx, |app: &mut Self, cx: &mut Context<Self>| {
-                        match removed {
-                            Ok(snapshot) => {
-                                app.forget_removed_worktree(&path, cx);
-                                app.notify_snapshot_kept(snapshot, cx);
-                            }
-                            Err(message) => app.show_toast(message, cx),
-                        }
-                        cx.notify();
-                    })
-                });
-            },
-        )
-        .detach();
     }
 
     pub(crate) fn forget_removed_worktree(
@@ -880,6 +907,7 @@ impl PaneFlowApp {
             })
             .collect();
         for (ws_idx, tab_idx) in &orphaned {
+            self.relaunch_tab_terminals_outside(*ws_idx, *tab_idx, path, cx);
             self.set_tab_worktree(*ws_idx, *tab_idx, None, cx);
         }
         self.prune_worktree_states();
@@ -912,6 +940,7 @@ mod tests {
                 files_changed: 1,
                 insertions,
                 deletions: 0,
+                ..GitDiffStats::default()
             },
         }
     }

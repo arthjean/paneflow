@@ -679,6 +679,10 @@ impl Render for PaneFlowApp {
             app_content = app_content.child(self.render_close_dialog(window, cx));
         }
 
+        if self.unsaved_dialog.is_some() {
+            app_content = app_content.child(self.render_unsaved_dialog(window, cx));
+        }
+
         if self.worktree_remove_dialog.is_some() {
             app_content = app_content.child(self.render_worktree_remove_dialog(window, cx));
         }

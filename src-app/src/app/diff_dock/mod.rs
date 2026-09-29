@@ -203,6 +203,7 @@ impl PaneFlowApp {
         self.diff_dock.collapsed.clear();
         self.diff_dock.expanded_folds.clear();
         self.diff_dock.scroll = ScrollHandle::new();
+        self.diff_dock.vertical_scrollbar.cancel_drag();
         self.diff_dock.h_offsets = std::rc::Rc::new(Vec::new());
         self.diff_dock.hover = None;
     }
@@ -262,6 +263,8 @@ impl PaneFlowApp {
                                     files_changed: built.file_count,
                                     insertions: built.added as usize,
                                     deletions: built.removed as usize,
+                                    untracked_capped: built.file_count_capped,
+                                    unavailable: false,
                                 };
                                 app.apply_git_stats_for_cwd(&cwd, stats);
                                 let head_changed = app
@@ -402,7 +405,7 @@ impl PaneFlowApp {
         let header = render_diff_tab_strip(
             &tabs,
             active,
-            self.diff_dock.diff_tab_close_armed,
+            self.diff_dock.diff_tab_close_armed.map(|(index, _)| index),
             self.diff_dock.diff_new_tab_menu_open,
             maximized,
             ui,
@@ -577,18 +580,16 @@ impl PaneFlowApp {
         ui: crate::theme::UiColors,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let chip = self
-            .diff_branch_for_cwd(cwd)
-            .map(|(branch, files_changed)| {
-                render_diff_branch_chip(
-                    cwd.to_string(),
-                    branch,
-                    files_changed,
-                    self.diff_dock.diff_branch_menu.as_ref(),
-                    ui,
-                    cx,
-                )
-            });
+        let chip = self.diff_branch_for_cwd(cwd).map(|(branch, uncommitted)| {
+            render_diff_branch_chip(
+                cwd.to_string(),
+                branch,
+                uncommitted,
+                self.diff_dock.diff_branch_menu.as_ref(),
+                ui,
+                cx,
+            )
+        });
         let chrome = DiffChrome {
             data,
             cwd: cwd.to_string(),

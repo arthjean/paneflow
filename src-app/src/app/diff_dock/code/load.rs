@@ -1,4 +1,3 @@
-use std::fs::File;
 use std::io::{ErrorKind, Read};
 use std::path::{Path, PathBuf};
 
@@ -69,12 +68,19 @@ pub(crate) fn load_blocking(path: &Path) -> CodeLoad {
     load_document_and_stamp(path).map(|(document, _)| document)
 }
 
-fn load_document_and_stamp(path: &Path) -> Result<(CodeDocument, FileStamp), CodeLoadError> {
+#[derive(Debug)]
+pub(crate) struct DiskText {
+    pub(crate) text: String,
+    pub(crate) stamp: FileStamp,
+    pub(crate) read_only: bool,
+}
+
+pub(crate) fn read_disk_text(path: &Path) -> Result<DiskText, CodeLoadError> {
     let path_meta = std::fs::metadata(path).map_err(|err| io_error(&err))?;
     if !path_meta.is_file() {
         return Err(CodeLoadError::NotAFile);
     }
-    let mut file = File::open(path).map_err(|err| io_error(&err))?;
+    let mut file = paneflow_home::open_for_reading(path).map_err(|err| io_error(&err))?;
     let meta = file.metadata().map_err(|err| io_error(&err))?;
     if !meta.is_file() {
         return Err(CodeLoadError::NotAFile);
@@ -88,7 +94,10 @@ fn load_document_and_stamp(path: &Path) -> Result<(CodeDocument, FileStamp), Cod
     }
 
     let mut bytes = Vec::with_capacity(len);
-    file.read_to_end(&mut bytes).map_err(|err| io_error(&err))?;
+    file.by_ref()
+        .take(MAX_FILE_BYTES as u64 + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|err| io_error(&err))?;
     if bytes.len() > MAX_FILE_BYTES {
         return Err(CodeLoadError::TooLarge {
             bytes: bytes.len(),
@@ -102,23 +111,39 @@ fn load_document_and_stamp(path: &Path) -> Result<(CodeDocument, FileStamp), Cod
         Ok(text) => text,
         Err(_) => return Err(CodeLoadError::NotUtf8),
     };
+    Ok(DiskText {
+        text,
+        stamp: FileStamp::from_metadata(&meta),
+        read_only: is_read_only(&meta),
+    })
+}
 
-    let stamp = FileStamp::from_metadata(&meta);
-    let document = build_document(path.to_path_buf(), &text, is_read_only(&meta));
-    Ok((document, stamp))
+pub(crate) fn read_only_reason_for(
+    longest_line_chars: usize,
+    read_only_on_disk: bool,
+) -> Option<ReadOnlyReason> {
+    if longest_line_chars > MAX_LINE_CHARS {
+        Some(ReadOnlyReason::GiantLine {
+            chars: longest_line_chars,
+            limit: MAX_LINE_CHARS,
+        })
+    } else if read_only_on_disk {
+        Some(ReadOnlyReason::Permissions)
+    } else {
+        None
+    }
+}
+
+fn load_document_and_stamp(path: &Path) -> Result<(CodeDocument, FileStamp), CodeLoadError> {
+    let disk = read_disk_text(path)?;
+    let document = build_document(path.to_path_buf(), &disk.text, disk.read_only);
+    Ok((document, disk.stamp))
 }
 
 pub(crate) fn build_document(path: PathBuf, text: &str, read_only_on_disk: bool) -> CodeDocument {
     let mut doc = CodeDocument::new(path, text);
-    let longest = doc.longest_line_chars();
-    if longest > MAX_LINE_CHARS {
-        doc.set_read_only(Some(ReadOnlyReason::GiantLine {
-            chars: longest,
-            limit: MAX_LINE_CHARS,
-        }));
-    } else if read_only_on_disk {
-        doc.set_read_only(Some(ReadOnlyReason::Permissions));
-    }
+    let reason = read_only_reason_for(doc.longest_line_chars(), read_only_on_disk);
+    doc.set_read_only(reason);
     doc
 }
 

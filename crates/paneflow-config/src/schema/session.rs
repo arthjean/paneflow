@@ -164,6 +164,8 @@ pub struct TabSession {
     pub layout: Option<LayoutNode>,
     #[serde(default)]
     pub worktree: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub worktree_raw: Option<Vec<u8>>,
     #[serde(default, skip_serializing_if = "is_false")]
     pub unread: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -188,6 +190,7 @@ impl TabSession {
             title_source: Some(TabTitleSource::Preset),
             layout: Some(layout),
             worktree: None,
+            worktree_raw: None,
             unread: false,
             pull_request: None,
         }
@@ -365,6 +368,7 @@ fn demote_panes_to_focused_surface(node: &mut LayoutNode, promoted: &mut Vec<Tab
                         surfaces: vec![surface],
                     }),
                     worktree: None,
+                    worktree_raw: None,
                     unread: false,
                     pull_request: None,
                 });

@@ -8,6 +8,9 @@ authors.workspace = true
 repository.workspace = true
 description = "Bounded external-process execution (wall-clock deadline + stdout cap) shared across Paneflow crates"
 
+[dependencies]
+log.workspace = true
+
 # Keep platform process-tree handling behind target-specific dependencies. The
 # app already ships these Windows crates, while paneflow-shim does not depend on
 # paneflow-process.

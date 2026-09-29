@@ -3,8 +3,18 @@ use std::path::Path;
 use anyhow::{Context, Result};
 use paneflow_agent_config::jsonc;
 
+pub(crate) const MAX_AGENT_CONFIG_BYTES: u64 = 64 * 1024 * 1024;
+
+pub(crate) fn read_agent_config(path: &Path) -> std::io::Result<Vec<u8>> {
+    paneflow_home::read_regular_capped(path, MAX_AGENT_CONFIG_BYTES)
+}
+
+pub(crate) fn read_agent_config_string(path: &Path) -> std::io::Result<String> {
+    paneflow_home::read_regular_string_capped(path, MAX_AGENT_CONFIG_BYTES)
+}
+
 pub fn read_json_or_default(path: &Path) -> Result<serde_json::Value> {
-    match std::fs::read(path) {
+    match read_agent_config(path) {
         Ok(bytes) => parse_json_or_jsonc(path, &bytes),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
             Ok(serde_json::Value::Object(serde_json::Map::new()))
@@ -82,7 +92,7 @@ pub fn json_to_bytes(root: &serde_json::Value) -> Result<Vec<u8>, serde_json::Er
 }
 
 pub fn read_toml_or_default(path: &Path) -> Result<toml_edit::DocumentMut> {
-    match std::fs::read_to_string(path) {
+    match read_agent_config_string(path) {
         Ok(text) => text.parse::<toml_edit::DocumentMut>().with_context(|| {
             format!(
                 "{} is not valid TOML - refusing to overwrite it; \

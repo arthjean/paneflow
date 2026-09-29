@@ -169,6 +169,7 @@ pub struct TerminalView {
     saved_scrollback: Option<String>,
     pump_epoch: u64,
     exit_announced: bool,
+    relaunch_pending: bool,
 }
 
 impl TerminalView {
@@ -562,6 +563,7 @@ impl TerminalView {
             saved_scrollback: None,
             pump_epoch: 0,
             exit_announced: false,
+            relaunch_pending: false,
         }
     }
 
@@ -1252,6 +1254,7 @@ fn spawn_event_pump_task(
                             }
 
                             view.process_dirty_terminal(cx);
+                            view.relaunch_when_ended(cx);
                             true
                         },
                     )

@@ -589,12 +589,12 @@ impl PaneFlowApp {
         self.general_dropdown = None;
         self.workspace_template_dropdown = None;
         self.workspace_template_detail_open = false;
-        if self.recording_shortcut_idx.is_some() {
-            self.recording_shortcut_idx = None;
+        if self.recording_shortcut.is_some() {
+            self.recording_shortcut = None;
             let config = paneflow_config::loader::load_config();
             crate::keybindings::apply_keybindings(cx, &config.shortcuts);
         }
-        self.shortcut_reset_pending = false;
+        self.shortcut_reset_armed_at = None;
         self.clear_shortcut_filters(cx);
         if section == SettingsSection::Shortcuts {
             self.rebuild_shortcut_rows(cx);

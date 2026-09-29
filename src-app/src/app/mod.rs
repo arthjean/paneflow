@@ -43,6 +43,7 @@ pub mod tab_worktree;
 pub mod telemetry_events;
 pub mod theme_selection;
 pub mod title_bar_menus;
+pub mod unsaved_dialog;
 pub mod welcome;
 pub mod win_timer;
 pub mod window;

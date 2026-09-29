@@ -26,23 +26,8 @@ pub fn backup(path: &Path) -> Result<Option<PathBuf>> {
 }
 
 pub fn write_atomic(path: &Path, contents: &[u8]) -> Result<()> {
-    let parent = path
-        .parent()
-        .filter(|p| !p.as_os_str().is_empty())
-        .map_or_else(|| PathBuf::from("."), Path::to_path_buf);
-    std::fs::create_dir_all(&parent)
-        .with_context(|| format!("create parent dir {} failed", parent.display()))?;
-
-    let mut tmp = tempfile::NamedTempFile::new_in(&parent)
-        .with_context(|| format!("tempfile in {} failed", parent.display()))?;
-    std::io::Write::write_all(&mut tmp, contents).context("write_all to tempfile failed")?;
-    tmp.as_file_mut()
-        .sync_all()
-        .context("sync_all on tempfile failed")?;
-    tmp.persist(path).map_err(|e| {
-        anyhow::anyhow!("atomic rename into {} failed: {}", path.display(), e.error)
-    })?;
-    Ok(())
+    paneflow_home::write_atomically(path, contents)
+        .with_context(|| format!("atomic write into {} failed", path.display()))
 }
 
 pub fn write_if_changed(path: &Path, contents: &[u8]) -> Result<bool> {
@@ -50,7 +35,7 @@ pub fn write_if_changed(path: &Path, contents: &[u8]) -> Result<bool> {
 }
 
 pub(crate) fn write_if_changed_unlocked(path: &Path, contents: &[u8]) -> Result<bool> {
-    if let Ok(existing) = std::fs::read(path) {
+    if let Ok(existing) = crate::merge::read_agent_config(path) {
         if existing == contents {
             return Ok(false);
         }
@@ -133,5 +118,30 @@ mod tests {
         let wrote = write_if_changed(&p, b"data").unwrap();
         assert!(wrote);
         assert_eq!(std::fs::read(&p).unwrap(), b"data");
+    }
+
+    fn link_to(target: &std::path::Path, link: &std::path::Path) {
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(target, link).expect("symlink");
+        #[cfg(windows)]
+        std::os::windows::fs::symlink_file(target, link).expect("symlink");
+    }
+
+    fn is_link(path: &std::path::Path) -> bool {
+        std::fs::symlink_metadata(path).is_ok_and(|meta| meta.file_type().is_symlink())
+    }
+
+    #[test]
+    fn an_agent_config_symlink_is_written_through_and_kept() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let target = dir.path().join("dotfiles-settings.json");
+        std::fs::write(&target, "{}").unwrap();
+        let p = dir.path().join("settings.json");
+        link_to(&target, &p);
+
+        assert!(write_if_changed(&p, b"data").unwrap());
+
+        assert!(is_link(&p));
+        assert_eq!(std::fs::read(&target).unwrap(), b"data");
     }
 }

@@ -4498,6 +4498,7 @@ name = "paneflow-home"
 version = "0.1.0"
 dependencies = [
  "dirs",
+ "libc",
  "tempfile",
 ]
 
@@ -4532,6 +4533,7 @@ name = "paneflow-ipc-client"
 version = "0.17.4"
 dependencies = [
  "interprocess",
+ "libc",
  "serde_json",
  "tempfile",
  "windows-sys 0.59.0",
@@ -4575,6 +4577,7 @@ dependencies = [
 name = "paneflow-process"
 version = "0.17.4"
 dependencies = [
+ "log",
  "win32job",
  "windows-sys 0.59.0",
 ]

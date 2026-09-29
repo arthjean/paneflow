@@ -16,17 +16,29 @@ const POPUP_PADDING: f32 = 6.0;
 impl CodeView {
     pub(super) fn start_base_load(&mut self, cx: &mut Context<Self>) {
         let generation = self.slot.current();
+        self.base_request = self.base_request.wrapping_add(1);
+        let request = self.base_request;
         spawn_base_load(
             self.path.clone(),
             generation,
             cx,
-            |view: &mut Self, generation, base: Base, cx| {
-                if !view.slot.accept(generation) {
-                    return;
-                }
-                view.install_base(base, cx);
+            move |view: &mut Self, generation, base: Base, cx| {
+                view.apply_loaded_base(generation, request, base, cx);
             },
         );
+    }
+
+    fn apply_loaded_base(
+        &mut self,
+        generation: u64,
+        request: u64,
+        base: Base,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.slot.accept(generation) || request != self.base_request {
+            return;
+        }
+        self.install_base(base, cx);
     }
 
     pub(crate) fn reload_base(&mut self, cx: &mut Context<Self>) {
@@ -228,6 +240,17 @@ impl CodeView {
             return;
         };
         cx.notify();
+        let current = self
+            .tracker
+            .block_at(popup.block.lines.start)
+            .map(|(_, block)| block.clone());
+        if current.as_ref() != Some(&popup.block) {
+            log::debug!(
+                "revert: the block shown for {} changed since the popup opened",
+                self.path.display()
+            );
+            return;
+        }
         self.revert_block(popup.block.lines.start as usize, cx);
     }
 
@@ -252,11 +275,7 @@ impl CodeView {
             let Some(base) = self.base.text() else {
                 return false;
             };
-            let base_lines = split_lines(base);
-            (
-                doc_line_range(doc, &block.lines),
-                base_block_text(&base_lines, &block.base_lines),
-            )
+            revert_splice(doc, &split_lines(base), &block)
         };
         let caret = CodeSelection::at(range.start);
         self.end_typing_group();
@@ -422,18 +441,40 @@ pub(crate) fn base_block_text(base_lines: &[&str], range: &Range<u32>) -> String
     text
 }
 
-pub(crate) fn doc_line_range(doc: &CodeDocument, lines: &Range<u32>) -> Range<usize> {
+pub(crate) fn revert_splice(
+    doc: &CodeDocument,
+    base_lines: &[&str],
+    block: &Block,
+) -> (Range<usize>, String) {
     let line_count = doc.line_count();
-    let start = (lines.start as usize).min(line_count);
-    let end = (lines.end as usize).min(line_count).max(start);
+    let len = doc.len_bytes();
+    let start = (block.lines.start as usize).min(line_count);
+    let end = (block.lines.end as usize).min(line_count).max(start);
+    let base_start = (block.base_lines.start as usize).min(base_lines.len());
+    let base_end = (block.base_lines.end as usize)
+        .min(base_lines.len())
+        .max(base_start);
+    let base = &base_lines[base_start..base_end];
     let byte_at = |line: usize| {
         if line < line_count {
             doc.line_to_byte(line)
         } else {
-            doc.len_bytes()
+            len
         }
     };
-    byte_at(start)..byte_at(end)
+    if end < line_count {
+        let text = base.iter().map(|line| format!("{line}\n")).collect();
+        return (byte_at(start)..byte_at(end), text);
+    }
+    if start == end {
+        let text = base.iter().map(|line| format!("\n{line}")).collect();
+        return (len..len, text);
+    }
+    if base.is_empty() {
+        let from = byte_at(start).saturating_sub(usize::from(start > 0));
+        return (from..len, String::new());
+    }
+    (byte_at(start)..len, base.join("\n"))
 }
 
 pub(crate) fn popup_title(block: &Block) -> String {
@@ -497,8 +538,6 @@ mod tests {
     use super::super::tests::*;
     use super::*;
 
-    use crate::app::diff_dock::code::load::build_document;
-
     fn tracked_view<'a>(
         cx: &'a mut TestAppContext,
         base: &str,
@@ -548,6 +587,41 @@ mod tests {
         });
         cx.run_until_parked();
         view.update(cx, |view, _cx| assert_eq!(view.base, Base::None));
+    }
+
+    #[gpui::test]
+    fn a_base_from_an_earlier_head_move_never_replaces_a_later_one(cx: &mut TestAppContext) {
+        let (view, cx) = view(
+            cx, "current
+",
+        );
+        view.update(cx, |view, cx| {
+            view.path = PathBuf::from("relative-only.rs");
+            view.start_base_load(cx);
+            let first = view.base_request;
+            view.start_base_load(cx);
+            let second = view.base_request;
+            let generation = view.slot.current();
+            let newer = Base::Text {
+                text: "newer
+"
+                .into(),
+                head_sha: "b".repeat(40),
+            };
+            view.apply_loaded_base(generation, second, newer.clone(), cx);
+            view.apply_loaded_base(
+                generation,
+                first,
+                Base::Text {
+                    text: "older
+"
+                    .into(),
+                    head_sha: "a".repeat(40),
+                },
+                cx,
+            );
+            assert_eq!(view.base, newer);
+        });
     }
 
     #[gpui::test]
@@ -988,19 +1062,60 @@ mod tests {
     }
 
     #[test]
-    fn base_block_text_and_doc_line_range_agree_on_terminators() {
+    fn base_block_text_agrees_on_terminators() {
         let base = ["a", "b", "c", ""];
         assert_eq!(base_block_text(&base, &(1..3)), "b\nc\n");
         assert_eq!(base_block_text(&base, &(2..4)), "c\n");
         assert_eq!(base_block_text(&base, &(1..1)), "");
         let unterminated = ["a", "b"];
         assert_eq!(base_block_text(&unterminated, &(1..2)), "b");
+    }
 
-        let doc = build_document(PathBuf::from("/nonexistent/x.txt"), "a\nb\nc\n", false);
-        assert_eq!(doc_line_range(&doc, &(1..3)), 2..6);
-        assert_eq!(doc_line_range(&doc, &(3..4)), 6..6);
-        assert_eq!(doc_line_range(&doc, &(1..1)), 2..2);
-        let short = build_document(PathBuf::from("/nonexistent/y.txt"), "a\nb", false);
-        assert_eq!(doc_line_range(&short, &(1..2)), 2..3);
+    #[gpui::test]
+    fn reverting_at_the_end_of_the_file_restores_the_base_byte_for_byte(cx: &mut TestAppContext) {
+        for (base, edited) in [
+            ("a\nb", "a\nb\n"),
+            ("a\nb\n", "a\nb\nc"),
+            ("a\nb", "a\nb\nc"),
+            ("a\nb", "a\nB"),
+            ("a\nb\n", "a\nB"),
+            ("a\nb\n", "a\nb"),
+            ("a\nb\nc\n", "a\n"),
+        ] {
+            let (view, cx) = tracked_view(cx, base, edited);
+            view.update(cx, |view, cx| {
+                let blocks = blocks_of(view);
+                assert_eq!(blocks.len(), 1, "{base:?} -> {edited:?}: {blocks:?}");
+                let line = blocks[0].1.start as usize;
+                assert!(view.revert_block(line, cx), "{base:?} -> {edited:?}");
+                assert_eq!(text_of(view), base, "reverting {edited:?}");
+            });
+        }
+    }
+
+    #[gpui::test]
+    fn an_edit_closes_the_marker_popup_and_a_stale_revert_does_nothing(cx: &mut TestAppContext) {
+        let (view, cx) = tracked_view(cx, "a\nb\nc\nd\n", "a\nB\nc\nd\n");
+        view.update_in(cx, |view, window, cx| {
+            view.open_marker_popup(0, cx);
+            assert!(view.popup.is_some());
+            view.selection = CodeSelection::at(0);
+            view.replace_text_in_range(None, "x", window, cx);
+            assert!(view.popup.is_none(), "typing closes the popup");
+        });
+
+        let (view, cx) = tracked_view(cx, "a\nb\nc\nd\n", "a\nB\nc\nd\n");
+        view.update(cx, |view, cx| {
+            view.open_marker_popup(0, cx);
+            if let Some(popup) = view.popup.as_mut() {
+                popup.block.lines = 2..3;
+            }
+            view.revert_from_popup(cx);
+            assert_eq!(
+                text_of(view),
+                "a\nB\nc\nd\n",
+                "a popup whose block no longer matches reverts nothing"
+            );
+        });
     }
 }

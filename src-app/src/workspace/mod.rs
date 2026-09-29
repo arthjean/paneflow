@@ -398,6 +398,11 @@ impl Workspace {
                     .worktree
                     .as_ref()
                     .map(|path| path.to_string_lossy().into_owned()),
+                worktree_raw: tab
+                    .worktree
+                    .as_deref()
+                    .filter(|path| path.to_str().is_none())
+                    .map(crate::runtime_paths::path_to_raw),
                 unread: self
                     .agent_completion_notification
                     .is_unread_for(&tab.surface_ids(cx)),

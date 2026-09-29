@@ -1,4 +1,3 @@
-use std::io::Write;
 use std::path::PathBuf;
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
@@ -78,58 +77,27 @@ pub(crate) fn save() {
     let Some(path) = state_path() else {
         return;
     };
-    let Some(parent) = path.parent() else {
-        return;
-    };
-    if let Err(error) = std::fs::create_dir_all(parent) {
-        log::warn!("window state: failed to create directory: {error}");
-        return;
-    }
-
-    let mut temporary = match tempfile::NamedTempFile::new_in(parent) {
-        Ok(file) => file,
-        Err(error) => {
-            log::warn!("window state: failed to create temporary file: {error}");
-            return;
-        }
-    };
-    if let Err(error) = serde_json::to_writer_pretty(&mut temporary, &state)
-        .and_then(|_| temporary.write_all(b"\n").map_err(serde_json::Error::io))
-    {
-        log::warn!("window state: failed to serialize: {error}");
-        return;
-    }
-    if let Err(error) = temporary.as_file().sync_all() {
-        log::warn!("window state: failed to sync temporary file: {error}");
-        return;
-    }
-    if let Err(error) = temporary.persist(&path) {
+    if let Err(error) = write_state(&path, &state) {
         log::warn!("window state: failed to persist: {error}");
     }
 }
 
+fn write_state(path: &std::path::Path, state: &PersistedWindowSize) -> std::io::Result<()> {
+    let mut json = serde_json::to_vec_pretty(state)?;
+    json.push(b'\n');
+    paneflow_home::write_atomically(path, &json)
+}
+
 fn load() -> Option<PersistedWindowSize> {
-    let path = state_path()?;
-    let metadata = match std::fs::metadata(&path) {
-        Ok(metadata) => metadata,
+    load_from(&state_path()?)
+}
+
+fn load_from(path: &std::path::Path) -> Option<PersistedWindowSize> {
+    let contents = match paneflow_home::read_regular_string_capped(path, MAX_WINDOW_STATE_BYTES) {
+        Ok(contents) => contents,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return None,
         Err(error) => {
-            log::warn!(
-                "window state: failed to inspect {}: {error}",
-                path.display()
-            );
-            return None;
-        }
-    };
-    if !metadata.is_file() || metadata.len() > MAX_WINDOW_STATE_BYTES {
-        log::warn!("window state: rejected invalid file at {}", path.display());
-        return None;
-    }
-
-    let contents = match std::fs::read_to_string(&path) {
-        Ok(contents) => contents,
-        Err(error) => {
-            log::warn!("window state: failed to read {}: {error}", path.display());
+            log::warn!("window state: rejected {}: {error}", path.display());
             return None;
         }
     };
@@ -164,4 +132,63 @@ fn last_windowed_size_guard() -> MutexGuard<'static, Option<PersistedWindowSize>
     LAST_WINDOWED_SIZE
         .lock()
         .unwrap_or_else(PoisonError::into_inner)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[cfg(unix)]
+    fn mkfifo(path: &std::path::Path) {
+        let made = std::process::Command::new("mkfifo")
+            .arg(path)
+            .status()
+            .is_ok_and(|status| status.success());
+        assert!(made, "mkfifo {}", path.display());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_fifo_window_state_is_refused_at_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("window-state.json");
+        mkfifo(&path);
+        let started = std::time::Instant::now();
+        assert_eq!(load_from(&path), None);
+        assert!(started.elapsed() < std::time::Duration::from_millis(100));
+    }
+
+    fn link_to(target: &std::path::Path, link: &std::path::Path) {
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(target, link).expect("symlink");
+        #[cfg(windows)]
+        std::os::windows::fs::symlink_file(target, link).expect("symlink");
+    }
+
+    fn is_link(path: &std::path::Path) -> bool {
+        std::fs::symlink_metadata(path).is_ok_and(|meta| meta.file_type().is_symlink())
+    }
+
+    #[test]
+    fn the_window_state_is_written_through_a_symlink() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let target = dir.path().join("real.json");
+        std::fs::write(&target, "{}").expect("seed");
+        let link = dir.path().join("window-state.json");
+        link_to(&target, &link);
+
+        write_state(
+            &link,
+            &PersistedWindowSize {
+                width: 1300.,
+                height: 900.,
+            },
+        )
+        .expect("write");
+
+        assert!(is_link(&link));
+        let written: PersistedWindowSize =
+            serde_json::from_str(&std::fs::read_to_string(&target).expect("read")).expect("json");
+        assert_eq!((written.width, written.height), (1300., 900.));
+    }
 }

@@ -13,6 +13,7 @@ use crate::settings::components::{
 };
 use crate::terminal::host_link::{LiveSession, LiveSessionProbe};
 use crate::ui_primitives::LABEL_SM;
+use crate::workspace::worktree::Snapshot;
 
 const DIALOG_WIDTH: Pixels = px(460.);
 const CARD_RADIUS: Pixels = crate::app::constants::PANE_CARD_RADIUS;
@@ -50,6 +51,87 @@ impl WorktreeBlocker {
             Self::Tab { .. } => "tab",
             Self::Session { .. } => "running session",
         }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RemovalOrigin {
+    Settings,
+    TabMenu,
+}
+
+pub(crate) fn needs_confirmation(
+    origin: RemovalOrigin,
+    blockers: &[WorktreeBlocker],
+    unlisted_sessions: Option<&str>,
+) -> bool {
+    origin == RemovalOrigin::TabMenu || !blockers.is_empty() || unlisted_sessions.is_some()
+}
+
+pub(crate) struct RemovalRecheck {
+    pub(crate) path: PathBuf,
+    pub(crate) open_workspaces: Vec<WorktreeBlocker>,
+    pub(crate) consented_sessions: Vec<SessionId>,
+    pub(crate) accepts_unlisted_sessions: bool,
+}
+
+#[derive(Debug)]
+pub(crate) enum RemovalOutcome {
+    Removed(Option<Snapshot>),
+    Blocked(Vec<WorktreeBlocker>),
+    Failed(String),
+}
+
+pub(crate) fn remove_unless_blocked(
+    recheck: RemovalRecheck,
+    probe: impl FnOnce() -> LiveSessionProbe,
+    remove: impl FnOnce() -> Result<Option<Snapshot>, String>,
+) -> RemovalOutcome {
+    let sessions = match probe() {
+        LiveSessionProbe::Sessions(sessions) => sessions,
+        LiveSessionProbe::NoHost => Vec::new(),
+        LiveSessionProbe::Unknown(_) if recheck.accepts_unlisted_sessions => Vec::new(),
+        LiveSessionProbe::Unknown(error) => {
+            return RemovalOutcome::Failed(format!(
+                "Removal of {} canceled: running sessions could not be listed ({error})",
+                recheck.path.display()
+            ));
+        }
+    };
+    let mut blockers = recheck.open_workspaces;
+    blockers.extend(
+        blockers_for(&recheck.path, &[], &[], &sessions)
+            .into_iter()
+            .filter(|blocker| match blocker {
+                WorktreeBlocker::Session { session, .. } => {
+                    !recheck.consented_sessions.contains(session)
+                }
+                _ => true,
+            }),
+    );
+    if !blockers.is_empty() {
+        return RemovalOutcome::Blocked(blockers);
+    }
+    match remove() {
+        Ok(snapshot) => RemovalOutcome::Removed(snapshot),
+        Err(message) => RemovalOutcome::Failed(message),
+    }
+}
+
+fn blocked_removal_message(path: &Path, blockers: &[WorktreeBlocker]) -> String {
+    format!(
+        "Removal of {} canceled: {}",
+        path.display(),
+        blocker_summary(blockers).to_lowercase()
+    )
+}
+
+fn failed_removal_message(path: &Path, message: String) -> String {
+    let shown = path.display().to_string();
+    if message.contains(&shown) {
+        message
+    } else {
+        format!("{shown} is still on disk: {message}")
     }
 }
 
@@ -194,9 +276,6 @@ impl PaneFlowApp {
         path: PathBuf,
         cx: &mut Context<Self>,
     ) {
-        if self.worktree_remove_dialog.is_some() {
-            return;
-        }
         let Some((repo_root, branch)) = self
             .workspaces
             .iter()
@@ -206,6 +285,63 @@ impl PaneFlowApp {
         else {
             return;
         };
+        self.open_worktree_removal(
+            RemovalOrigin::Settings,
+            Some(ws_id),
+            path,
+            repo_root,
+            branch,
+            cx,
+        );
+    }
+
+    pub(crate) fn remove_tab_worktree(
+        &mut self,
+        ws_idx: usize,
+        tab_idx: usize,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(ws) = self.workspaces.get(ws_idx) else {
+            return;
+        };
+        let Some(repo_root) = ws.repo_root.clone() else {
+            return;
+        };
+        let Some(path) = ws.tabs().get(tab_idx).and_then(|tab| tab.worktree.clone()) else {
+            return;
+        };
+        if self.workspaces.iter().any(|ws| ws.worktree_root == path) {
+            self.show_toast(
+                format!("{} is open as a workspace - close it first", path.display()),
+                cx,
+            );
+            return;
+        }
+        let branch = self
+            .workspace_worktree_listing(ws_idx)
+            .iter()
+            .find(|entry| entry.path == path)
+            .and_then(|entry| entry.branch.clone())
+            .unwrap_or_else(|| {
+                path.file_name()
+                    .map(|name| name.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| path.display().to_string())
+            });
+        self.open_worktree_removal(RemovalOrigin::TabMenu, None, path, repo_root, branch, cx);
+    }
+
+    fn open_worktree_removal(
+        &mut self,
+        origin: RemovalOrigin,
+        managed_by: Option<u64>,
+        path: PathBuf,
+        repo_root: PathBuf,
+        branch: String,
+        cx: &mut Context<Self>,
+    ) {
+        if self.worktree_remove_dialog.is_some() {
+            return;
+        }
         cx.spawn(
             async move |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
                 let probe = smol::unblock(crate::terminal::host_link::live_sessions).await;
@@ -219,8 +355,13 @@ impl PaneFlowApp {
                                 (Vec::new(), Some(error))
                             }
                         };
-                        let blockers = app.worktree_blockers(&path, &sessions);
-                        if blockers.is_empty() && unlisted_sessions.is_none() {
+                        let mut blockers = app.worktree_blockers(&path, &sessions);
+                        if origin == RemovalOrigin::TabMenu {
+                            blockers.retain(|b| !matches!(b, WorktreeBlocker::Tab { .. }));
+                        }
+                        if !needs_confirmation(origin, &blockers, unlisted_sessions.as_deref())
+                            && let Some(ws_id) = managed_by
+                        {
                             app.remove_managed_worktree(ws_id, path.clone(), cx);
                             return;
                         }
@@ -260,12 +401,17 @@ impl PaneFlowApp {
         let Some(dialog) = self.worktree_remove_dialog.take() else {
             return;
         };
-        for blocker in &dialog.blockers {
-            if let WorktreeBlocker::Session { session, .. } = blocker {
-                self.stop_listed_session(session, cx);
-            }
+        let consented_sessions: Vec<SessionId> = dialog
+            .blockers
+            .iter()
+            .filter_map(|blocker| match blocker {
+                WorktreeBlocker::Session { session, .. } => Some(session.clone()),
+                _ => None,
+            })
+            .collect();
+        for session in &consented_sessions {
+            self.stop_listed_session(session, cx);
         }
-        self.forget_managed_paths(std::slice::from_ref(&dialog.path), cx);
         for blocker in &dialog.blockers {
             if let WorktreeBlocker::Tab { ws_id, tab_id, .. } = blocker
                 && let Some((ws_idx, tab_idx)) = self.tab_position(*ws_id, *tab_id)
@@ -280,32 +426,53 @@ impl PaneFlowApp {
                 self.remove_workspace(idx, window, cx);
             }
         }
-        self.forget_removed_worktree(&dialog.path, cx);
-        self.spawn_worktree_checkout_removal(dialog.repo_root, dialog.path, cx);
+        let open_workspaces = self
+            .worktree_blockers(&dialog.path, &[])
+            .into_iter()
+            .filter(|b| matches!(b, WorktreeBlocker::Workspace { .. }))
+            .collect();
+        let recheck = RemovalRecheck {
+            path: dialog.path.clone(),
+            open_workspaces,
+            consented_sessions,
+            accepts_unlisted_sessions: dialog.unlisted_sessions.is_some(),
+        };
+        self.spawn_worktree_checkout_removal(dialog.repo_root, recheck, cx);
         cx.notify();
     }
 
     fn spawn_worktree_checkout_removal(
         &mut self,
         repo_root: PathBuf,
-        path: PathBuf,
+        recheck: RemovalRecheck,
         cx: &mut Context<Self>,
     ) {
+        let path = recheck.path.clone();
         cx.spawn(
             async move |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
-                let (probe_root, probe_path) = (repo_root, path.clone());
-                let removed = smol::unblock(move || {
-                    crate::workspace::worktree::snapshot_and_remove(&probe_root, &probe_path)
+                let probe_path = path.clone();
+                let outcome = smol::unblock(move || {
+                    remove_unless_blocked(
+                        recheck,
+                        crate::terminal::host_link::live_sessions,
+                        || crate::workspace::worktree::snapshot_and_remove(&repo_root, &probe_path),
+                    )
                 })
                 .await;
                 let _ = cx.update(|cx| {
                     this.update(cx, |app: &mut Self, cx: &mut Context<Self>| {
-                        match removed {
-                            Ok(snapshot) => {
+                        match outcome {
+                            RemovalOutcome::Removed(snapshot) => {
                                 app.forget_removed_worktree(&path, cx);
+                                app.forget_managed_paths(std::slice::from_ref(&path), cx);
                                 app.notify_snapshot_kept(snapshot, cx);
                             }
-                            Err(message) => app.show_toast(message, cx),
+                            RemovalOutcome::Blocked(blockers) => {
+                                app.show_toast(blocked_removal_message(&path, &blockers), cx)
+                            }
+                            RemovalOutcome::Failed(message) => {
+                                app.show_toast(failed_removal_message(&path, message), cx)
+                            }
                         }
                         cx.notify();
                     })
@@ -353,6 +520,12 @@ impl PaneFlowApp {
             ui,
             format!("Remove the worktree of {}?", dialog.branch),
             blocker_summary(&dialog.blockers),
+        )
+        .child(
+            div()
+                .text_size(LABEL_SM)
+                .text_color(ui.muted)
+                .child(dialog.path.display().to_string()),
         )
         .when_some(dialog.unlisted_sessions.clone(), |header, error| {
             header.child(
@@ -541,6 +714,143 @@ mod tests {
             blocker_summary(&blockers),
             "1 workspace, 1 tab and 1 running session are using it"
         );
+    }
+
+    fn recheck(path: &Path, consented: Vec<SessionId>) -> RemovalRecheck {
+        RemovalRecheck {
+            path: path.to_path_buf(),
+            open_workspaces: Vec::new(),
+            consented_sessions: consented,
+            accepts_unlisted_sessions: false,
+        }
+    }
+
+    #[test]
+    fn a_tab_menu_removal_always_asks_before_removing() {
+        let path = PathBuf::from("/wt/feat-x");
+        let live = blockers_for(&path, &[], &[], &[session("claude", "/wt/feat-x")]);
+
+        assert!(needs_confirmation(RemovalOrigin::TabMenu, &[], None));
+        assert!(needs_confirmation(RemovalOrigin::TabMenu, &live, None));
+        assert!(needs_confirmation(RemovalOrigin::Settings, &live, None));
+        assert!(!needs_confirmation(RemovalOrigin::Settings, &[], None));
+    }
+
+    #[test]
+    fn a_live_session_that_was_not_confirmed_keeps_the_checkout() {
+        let path = PathBuf::from("/wt/feat-x");
+        let agent = session("claude", "/wt/feat-x/src");
+        let removed = std::cell::Cell::new(false);
+
+        let outcome = remove_unless_blocked(
+            recheck(&path, Vec::new()),
+            || LiveSessionProbe::Sessions(vec![agent.clone()]),
+            || {
+                removed.set(true);
+                Ok(None)
+            },
+        );
+
+        assert!(!removed.get(), "snapshot_and_remove must never run");
+        assert!(matches!(outcome, RemovalOutcome::Blocked(ref b) if b.len() == 1));
+    }
+
+    #[test]
+    fn a_blocker_that_appears_after_confirmation_cancels_the_removal() {
+        let path = PathBuf::from("/wt/feat-x");
+        let stopping = session("zsh", "/wt/feat-x");
+        let newcomer = session("codex", "/wt/feat-x");
+        let removed = std::cell::Cell::new(false);
+
+        let outcome = remove_unless_blocked(
+            recheck(&path, vec![stopping.session.clone()]),
+            || LiveSessionProbe::Sessions(vec![stopping.clone(), newcomer.clone()]),
+            || {
+                removed.set(true);
+                Ok(None)
+            },
+        );
+
+        assert!(!removed.get(), "a session started after the dialog blocks");
+        let RemovalOutcome::Blocked(blockers) = outcome else {
+            panic!("expected the removal to be blocked");
+        };
+        assert_eq!(blockers.len(), 1);
+        assert_eq!(blockers[0].title(), "codex");
+        assert_eq!(
+            blocked_removal_message(&path, &blockers),
+            format!(
+                "Removal of {} canceled: 1 running session is using it",
+                path.display()
+            )
+        );
+
+        let mut reopened = recheck(&path, Vec::new());
+        reopened.open_workspaces = vec![WorktreeBlocker::Workspace {
+            id: 9,
+            title: "feat-x".to_string(),
+        }];
+        let outcome = remove_unless_blocked(
+            reopened,
+            || LiveSessionProbe::NoHost,
+            || {
+                removed.set(true);
+                Ok(None)
+            },
+        );
+        assert!(!removed.get(), "a workspace opened on the path blocks");
+        assert!(matches!(outcome, RemovalOutcome::Blocked(_)));
+    }
+
+    #[test]
+    fn confirmed_sessions_still_shutting_down_do_not_block() {
+        let path = PathBuf::from("/wt/feat-x");
+        let stopping = session("zsh", "/wt/feat-x");
+        let removed = std::cell::Cell::new(false);
+
+        let outcome = remove_unless_blocked(
+            recheck(&path, vec![stopping.session.clone()]),
+            || LiveSessionProbe::Sessions(vec![stopping.clone()]),
+            || {
+                removed.set(true);
+                Ok(None)
+            },
+        );
+
+        assert!(removed.get());
+        assert!(matches!(outcome, RemovalOutcome::Removed(None)));
+    }
+
+    #[test]
+    fn an_unlistable_host_cancels_a_removal_the_user_did_not_accept_blind() {
+        let path = PathBuf::from("/wt/feat-x");
+        let removed = std::cell::Cell::new(false);
+
+        let outcome = remove_unless_blocked(
+            recheck(&path, Vec::new()),
+            || LiveSessionProbe::Unknown("pipe closed".to_string()),
+            || {
+                removed.set(true);
+                Ok(None)
+            },
+        );
+
+        assert!(!removed.get());
+        assert!(matches!(outcome, RemovalOutcome::Failed(_)));
+    }
+
+    #[test]
+    fn a_failed_removal_names_the_path_left_on_disk() {
+        let path = PathBuf::from("/wt/feat-x");
+
+        let message = failed_removal_message(
+            &path,
+            "git worktree remove --force failed: Permission denied".to_string(),
+        );
+
+        assert!(message.starts_with(&format!("{} is still on disk", path.display())));
+        let named = format!("{} was not created by Paneflow", path.display());
+        assert_eq!(failed_removal_message(&path, named.clone()), named);
     }
 
     #[test]

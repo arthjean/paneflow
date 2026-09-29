@@ -358,3 +358,90 @@ fn test_debounce_coalesces_rapid_writes() {
         "debounce should coalesce rapid writes, got {count} callbacks for 5 writes"
     );
 }
+
+fn link_to(target: &Path, link: &Path) {
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(target, link).expect("symlink");
+    #[cfg(windows)]
+    std::os::windows::fs::symlink_file(target, link).expect("symlink");
+}
+
+fn start_recording(path: &Path) -> (RunningConfigWatcher, Arc<Mutex<Vec<PaneFlowConfig>>>) {
+    let received = Arc::new(Mutex::new(Vec::<PaneFlowConfig>::new()));
+    let received_clone = Arc::clone(&received);
+    let cb: Arc<dyn Fn(PaneFlowConfig) + Send + Sync> =
+        Arc::new(move |cfg| received_clone.lock().unwrap().push(cfg));
+    let running = ConfigWatcher::new_with_path(path.to_path_buf(), cb)
+        .start()
+        .expect("watcher should start");
+    thread::sleep(Duration::from_millis(100));
+    (running, received)
+}
+
+fn last_shell(received: &Arc<Mutex<Vec<PaneFlowConfig>>>) -> Option<String> {
+    received
+        .lock()
+        .unwrap()
+        .last()
+        .and_then(|config| config.default_shell.clone())
+}
+
+#[test]
+fn test_watcher_reloads_within_a_second_when_the_symlink_target_changes() {
+    let dir = TempDir::new().unwrap();
+    let dotfiles = dir.path().join("dotfiles");
+    let home = dir.path().join("home");
+    fs::create_dir_all(&dotfiles).unwrap();
+    fs::create_dir_all(&home).unwrap();
+    let target = dotfiles.join("paneflow.json");
+    write_valid_config(&target);
+    let path = home.join("paneflow.json");
+    link_to(&target, &path);
+    let (_running, received) = start_recording(&path);
+
+    let written_at = Instant::now();
+    write_updated_config(&target);
+    let fired = wait_for(
+        || last_shell(&received).as_deref() == Some("/bin/zsh"),
+        Duration::from_secs(1),
+    );
+
+    assert!(
+        fired,
+        "no reload within 1 s of editing the symlink target ({:?})",
+        written_at.elapsed()
+    );
+}
+
+#[test]
+fn test_watcher_follows_a_retargeted_symlink() {
+    let dir = TempDir::new().unwrap();
+    let first = dir.path().join("first");
+    let second = dir.path().join("second");
+    let home = dir.path().join("home");
+    for folder in [&first, &second, &home] {
+        fs::create_dir_all(folder).unwrap();
+    }
+    write_valid_config(&first.join("paneflow.json"));
+    let moved = second.join("paneflow.json");
+    write_updated_config(&moved);
+    let path = home.join("paneflow.json");
+    link_to(&first.join("paneflow.json"), &path);
+    let (_running, received) = start_recording(&path);
+
+    fs::remove_file(&path).unwrap();
+    link_to(&moved, &path);
+    assert!(wait_for(
+        || last_shell(&received).as_deref() == Some("/bin/zsh"),
+        Duration::from_secs(5),
+    ));
+
+    fs::write(&moved, r#"{"default_shell": "/bin/fish", "commands": []}"#).unwrap();
+    assert!(
+        wait_for(
+            || last_shell(&received).as_deref() == Some("/bin/fish"),
+            Duration::from_secs(5),
+        ),
+        "an edit of the new target must reload"
+    );
+}

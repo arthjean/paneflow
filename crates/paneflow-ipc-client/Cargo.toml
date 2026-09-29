@@ -10,6 +10,9 @@ description = "Blocking JSON-RPC client for Paneflow's local IPC socket (shared 
 interprocess.workspace = true
 serde_json.workspace = true
 
+[target.'cfg(unix)'.dependencies]
+libc.workspace = true
+
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.59", features = [
     "Win32_Foundation",

@@ -16,6 +16,7 @@ pub(super) struct DiffDockBuilt {
     pub(super) anchors_split: Vec<(String, usize)>,
     pub(super) paths: Vec<String>,
     pub(super) file_count: usize,
+    pub(super) file_count_capped: bool,
     pub(super) added: u32,
     pub(super) removed: u32,
     pub(super) files_full: Vec<FileDiff>,
@@ -28,12 +29,16 @@ pub(super) struct DiffDockBuilt {
     pub(super) stamps: HashMap<String, FileStamp>,
 }
 
-fn file_stamps(toplevel: &Path, files: &[FileDiff]) -> HashMap<String, FileStamp> {
+fn file_stamps(
+    files: &[FileDiff],
+    metadata: &HashMap<String, std::fs::Metadata>,
+) -> HashMap<String, FileStamp> {
     files
         .iter()
         .filter(|file| file.change == crate::diff::FileChange::Modified && !file.is_binary)
         .filter_map(|file| {
-            FileStamp::read(&toplevel.join(&file.path)).map(|stamp| (file.path.clone(), stamp))
+            let stamp = FileStamp::from_metadata(metadata.get(&file.path)?);
+            Some((file.path.clone(), stamp))
         })
         .collect()
 }
@@ -49,11 +54,7 @@ pub(super) fn build_diff_dock(
     if let Some(e) = diff.error {
         return Err(e);
     }
-    let stamps = diff
-        .toplevel
-        .as_deref()
-        .map(|toplevel| file_stamps(toplevel, &diff.files))
-        .unwrap_or_default();
+    let stamps = file_stamps(&diff.files, &diff.working_metadata);
     let syntax = DiffSyntax::from_theme(&theme);
     let row_caches = build_file_row_caches(&diff.files, Some(&syntax));
     let (unified, _) = build_display_rows_with_caches(&diff.files, &row_caches);
@@ -98,12 +99,14 @@ pub(super) fn build_diff_dock(
             u32::try_from(git_stats.deletions).unwrap_or(u32::MAX),
         )
     };
+    let file_count_capped = git_stats.untracked_capped;
     Ok(DiffDockBuilt {
         unified,
         anchors_unified,
         split,
         anchors_split,
         file_count,
+        file_count_capped,
         paths,
         added,
         removed,

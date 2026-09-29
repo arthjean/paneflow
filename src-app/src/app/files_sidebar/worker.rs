@@ -82,6 +82,12 @@ impl Scanner {
     }
 
     fn set_expanded(&mut self, expanded: Vec<PathBuf>) {
+        if expanded
+            .iter()
+            .any(|path| !self.tree.expanded.contains(path))
+        {
+            self.git_dirty = true;
+        }
         self.tree.expanded = expanded
             .into_iter()
             .filter(|path| path.starts_with(&self.tree.root))
@@ -169,14 +175,22 @@ impl Scanner {
         {
             self.watched.insert(git_dir);
         }
-        self.git = Arc::new(files_git::read(&self.tree.root));
+        match files_git::read(&self.tree.root) {
+            Some(statuses) => self.git = Arc::new(statuses),
+            None if self.git_dir.is_none() => self.git = Arc::default(),
+            None => log::debug!("files: git status failed; keeping the previous statuses"),
+        }
     }
 
     fn watcher_available(&self) -> bool {
-        self.tree
-            .children
-            .keys()
-            .all(|dir| self.watched.contains(dir))
+        self.git_dir
+            .as_ref()
+            .is_none_or(|git_dir| self.watched.contains(git_dir))
+            && self
+                .tree
+                .children
+                .keys()
+                .all(|dir| self.watched.contains(dir))
     }
 
     fn rescan(&mut self) {

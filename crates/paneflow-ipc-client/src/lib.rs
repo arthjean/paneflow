@@ -10,6 +10,7 @@
 
 pub mod agent;
 pub mod ai_hook;
+pub mod hook_log;
 pub mod host_control;
 pub mod line_wire;
 pub mod scrollback;

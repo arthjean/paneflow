@@ -248,6 +248,65 @@ pub fn strip_verbatim_prefix(path: PathBuf) -> PathBuf {
     stripped.unwrap_or(path)
 }
 
+#[cfg(unix)]
+pub fn path_to_raw(path: &Path) -> Vec<u8> {
+    use std::os::unix::ffi::OsStrExt;
+    path.as_os_str().as_bytes().to_vec()
+}
+
+#[cfg(windows)]
+pub fn path_to_raw(path: &Path) -> Vec<u8> {
+    use std::os::windows::ffi::OsStrExt;
+    path.as_os_str()
+        .encode_wide()
+        .flat_map(u16::to_le_bytes)
+        .collect()
+}
+
+#[cfg(unix)]
+pub fn path_from_raw(raw: &[u8]) -> Option<PathBuf> {
+    use std::os::unix::ffi::OsStrExt;
+    (!raw.is_empty()).then(|| PathBuf::from(std::ffi::OsStr::from_bytes(raw)))
+}
+
+#[cfg(windows)]
+pub fn path_from_raw(raw: &[u8]) -> Option<PathBuf> {
+    use std::os::windows::ffi::OsStringExt;
+    let (pairs, rest) = raw.as_chunks::<2>();
+    if pairs.is_empty() || !rest.is_empty() {
+        return None;
+    }
+    let wide: Vec<u16> = pairs.iter().copied().map(u16::from_le_bytes).collect();
+    Some(PathBuf::from(std::ffi::OsString::from_wide(&wide)))
+}
+
+#[cfg(test)]
+mod raw_path_tests {
+    use super::{path_from_raw, path_to_raw};
+
+    #[cfg(unix)]
+    fn non_utf8_path() -> std::path::PathBuf {
+        use std::os::unix::ffi::OsStrExt;
+        std::path::PathBuf::from(std::ffi::OsStr::from_bytes(b"/wt/caf\xe9"))
+    }
+
+    #[cfg(windows)]
+    fn non_utf8_path() -> std::path::PathBuf {
+        use std::os::windows::ffi::OsStringExt;
+        let mut wide: Vec<u16> = r"C:\wt\caf".encode_utf16().collect();
+        wide.push(0xD800);
+        std::path::PathBuf::from(std::ffi::OsString::from_wide(&wide))
+    }
+
+    #[test]
+    fn a_non_utf8_path_survives_the_raw_round_trip() {
+        let path = non_utf8_path();
+        assert!(path.to_str().is_none());
+        assert_eq!(path_from_raw(&path_to_raw(&path)), Some(path));
+        assert_eq!(path_from_raw(&[]), None);
+    }
+}
+
 #[cfg(test)]
 mod verbatim_prefix_tests {
     use super::strip_verbatim_prefix;
