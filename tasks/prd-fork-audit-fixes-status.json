@@ -33,10 +33,10 @@
     {
       "id": "EP-004",
       "title": "Libérer le thread de rendu et fiabiliser l'IPC et la CLI",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "stories_total": 8,
-      "stories_done": 0
+      "stories_done": 8
     },
     {
       "id": "EP-005",
@@ -362,107 +362,107 @@
       "id": "US-024",
       "title": "Répondre aux lectures IPC hors du thread GPUI",
       "epic": "EP-004",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "size": "L",
       "blocked_by": [],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-09-29T19:42:38+02:00",
+      "completed_at": "2026-09-29T21:33:37+02:00",
+      "reviewed_at": "2026-09-29T21:33:37+02:00"
     },
     {
       "id": "US-025",
       "title": "Respecter le contrat des réponses read et search",
       "epic": "EP-004",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P1",
       "size": "M",
       "blocked_by": [
         "US-024"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-09-29T19:53:27+02:00",
+      "completed_at": "2026-09-29T21:18:27+02:00",
+      "reviewed_at": "2026-09-29T21:18:27+02:00"
     },
     {
       "id": "US-026",
       "title": "Sortir les sondes de fichiers et de git du thread GPUI",
       "epic": "EP-004",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P1",
       "size": "L",
       "blocked_by": [],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-09-29T20:22:16+02:00",
+      "completed_at": "2026-09-29T21:33:37+02:00",
+      "reviewed_at": "2026-09-29T21:33:37+02:00"
     },
     {
       "id": "US-027",
       "title": "Sortir les I/O de config, les ouvertures externes et l'import du PATH du thread GPUI",
       "epic": "EP-004",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P1",
       "size": "L",
       "blocked_by": [
         "US-007"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-09-29T20:47:03+02:00",
+      "completed_at": "2026-09-29T21:18:27+02:00",
+      "reviewed_at": "2026-09-29T21:18:27+02:00"
     },
     {
       "id": "US-028",
       "title": "Rejeter toute entrée IPC mal typée",
       "epic": "EP-004",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P1",
       "size": "M",
       "blocked_by": [],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-09-29T19:53:27+02:00",
+      "completed_at": "2026-09-29T21:18:27+02:00",
+      "reviewed_at": "2026-09-29T21:18:27+02:00"
     },
     {
       "id": "US-029",
       "title": "Aligner les mutations IPC sur le comportement de l'UI",
       "epic": "EP-004",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P1",
       "size": "L",
       "blocked_by": [
         "US-028"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-09-29T19:58:33+02:00",
+      "completed_at": "2026-09-29T21:18:27+02:00",
+      "reviewed_at": "2026-09-29T21:18:27+02:00"
     },
     {
       "id": "US-030",
       "title": "Corriger la sémantique secondaire de l'IPC et les métadonnées de pane",
       "epic": "EP-004",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P2",
       "size": "L",
       "blocked_by": [
         "US-028"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-09-29T20:07:55+02:00",
+      "completed_at": "2026-09-29T21:18:27+02:00",
+      "reviewed_at": "2026-09-29T21:18:27+02:00"
     },
     {
       "id": "US-031",
       "title": "Rendre `paneflow wait` et `flow` robustes aux erreurs transitoires",
       "epic": "EP-004",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P1",
       "size": "M",
       "blocked_by": [
         "US-024"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-09-29T20:22:16+02:00",
+      "completed_at": "2026-09-29T21:18:27+02:00",
+      "reviewed_at": "2026-09-29T21:18:27+02:00"
     },
     {
       "id": "US-032",

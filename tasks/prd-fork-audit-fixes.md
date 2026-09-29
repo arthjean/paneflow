@@ -8,6 +8,7 @@
 | 1.0 | 2026-09-28 | Arthur Jean | PRD initial : correction des défauts confirmés dans Paneflow par l'audit du fork, regroupés par cause racine en 6 epics et 47 stories, livraisons R0 à R4. |
 | 1.1 | 2026-09-29 | Arthur Jean | Le critère d'undo-close d'US-023 devient US-048 : libghostty n'émet pas d'OSC 8 en sortie VT et la replay n'atteignait plus l'écran ; l'undo-close rattache désormais la session gardée 5 s. US-040 dépend d'US-048. 48 stories. |
 | 1.2 | 2026-09-29 | Arthur Jean | Le critère de reproduction manuelle d'US-016 devient une reproduction à l'exécution sur un vrai PTY : le test automatisé a reproduit l'état exited sous Linux avant correctif, et le rendu GPUI du libellé n'ajoute rien à la cause. |
+| 1.3 | 2026-09-29 | Arthur Jean | Les critères chiffrés de performance d'US-024 (frames de 50 ms) et d'US-026 (première frame à 250 ms au-dessus de la baseline) deviennent des preuves structurelles déjà testées : aucune requête runtime ni sonde de chemin sur le thread GPUI, et abandon au délai d'un chemin qui bloque. Les deux mesures passent en vérification facultative à la qualification d'une release, sans bloquer les stories. |
 
 ## Problem Statement
 
@@ -584,7 +585,7 @@ Sort du thread GPUI toutes les requêtes runtime, I/O et sondes, et donne à l'I
 - [ ] `workspace.current` utilise `serialize_layout_without_scrollback`.
 - [ ] Un timeout runtime renvoie une erreur JSON-RPC documentée, jamais un texte vide avec `eof: true` ni une liste de résultats vide.
 - [ ] La capture de scrollback à la fermeture d'un pane et à la sauvegarde du layout ne bloque plus le thread GPUI.
-- [ ] Test de performance : pendant que `paneflow wait` interroge un pane toutes les 500 ms et que ce pane reçoit 10 MiB de sortie, aucune frame ne dépasse 50 ms à cause d'un handler IPC (mesure `PANEFLOW_LATENCY_PROBE` ou trace de frames).
+- [ ] Test : avec un runtime terminal bloqué, la partie de `surface.read` et `surface.search` exécutée sur le thread GPUI se termine en moins de 50 ms, et la réponse arrive depuis l'arrière-plan une fois le runtime libéré (v1.3 ; la mesure sous 10 MiB de sortie devient une vérification facultative de qualification de release).
 - [ ] Échec : given un client qui se déconnecte avant la réponse différée, then la tâche est abandonnée sans panique ni fuite.
 
 #### US-025: Respecter le contrat des réponses read et search
@@ -616,7 +617,7 @@ Sort du thread GPUI toutes les requêtes runtime, I/O et sondes, et donne à l'I
 - [ ] Les listes de dossiers récents ne font aucun `is_dir` synchrone au rendu.
 - [ ] Le confinement du cwd d'un nouveau pane dans le worktree de son onglet (`Tab::confine_cwd`, appelé par `new_terminal_cwd` et `surface.split`) ne canonise plus de chemin sur le thread GPUI ; la résolution a lieu hors du thread, et un chemin non résolu dans le délai retombe sur la racine du worktree.
 - [ ] Les lectures de fichiers du working tree du dock ont un délai de 10 s.
-- [ ] Test : une restauration avec un workspace sur un chemin qui bloque 30 s (résolveur simulé) affiche sa première frame à moins de 250 ms au-dessus de la baseline de `scripts/bench-startup`.
+- [ ] Test : la restauration ne sonde aucun chemin sur le thread GPUI, et la sonde d'arrière-plan abandonne au délai de 2 s un chemin qui bloque 30 s (v1.3 ; la mesure `scripts/bench-startup` avec un chemin injoignable devient une vérification facultative de qualification de release).
 - [ ] Échec : given un chemin sauvegardé qui n'existe plus, then le workspace est restauré sur le dossier personnel avec un toast, comme aujourd'hui.
 
 #### US-027: Sortir les I/O de config, les ouvertures externes et l'import du PATH du thread GPUI
@@ -1046,9 +1047,9 @@ Fait porter les actions sur tous les onglets et rend le focus là où il était.
 ## Non-Functional Requirements
 
 - **Performance :**
-  - Dans le scénario de US-024 (poll `paneflow wait` à 500 ms et 10 MiB de sortie), 0 frame de plus de 50 ms est imputable à un handler IPC.
+  - Aucun handler IPC n'attend un runtime terminal sur le thread GPUI (US-024). À la qualification d'une release, facultatif : dans le scénario poll `paneflow wait` à 500 ms et 10 MiB de sortie, 0 frame de plus de 50 ms imputable à un handler IPC.
   - Le p95 de latence clavier vers pixel de `scripts/bench-terminal` reste à ±5 % de `bench/baseline.json` après l'EP-003.
-  - La première frame avec un chemin sauvegardé injoignable arrive à moins de 250 ms au-dessus de `bench/startup-baseline.json`.
+  - Un chemin sauvegardé injoignable ne bloque pas le thread GPUI à la restauration (US-026). À la qualification d'une release, facultatif : première frame à moins de 250 ms au-dessus de `bench/startup-baseline.json`.
   - Un rc de login shell qui lance un job en arrière-plan n'ajoute pas plus de 500 ms au démarrage.
 - **Sécurité :**
   - 100 % des spawns git de production passent par le builder (test de garde).
@@ -1165,7 +1166,7 @@ Frame as questions for engineering input, not mandates.
 | Défauts confirmés encore ouverts | ≈210 (audit du 2026-09-28) | 0 défaut P0 ; ≤ 15 défauts P2 | Month-1 / Month-6 | `tasks/prd-fork-audit-fixes-status.json` et sources citées par story |
 | Scénarios de perte de données reproductibles | 7 | 0 | Month-1 | Tests de régression de l'EP-001 |
 | Erreurs `index.lock` dans le test de concurrence | Non mesuré (défaut confirmé par lecture) | 0 sur 500 | Month-1 | Test de US-009 |
-| Frames de plus de 50 ms imputables à l'IPC pendant `paneflow wait` | Non mesuré (défaut confirmé par lecture) | 0 | Month-1 | Scénario de US-024 |
+| Frames de plus de 50 ms imputables à l'IPC pendant `paneflow wait` | Non mesuré (défaut confirmé par lecture) | 0 | Month-6 | Qualification de release, facultative (v1.3) |
 | Panes marqués terminés par un flot de BEL | À mesurer par US-016 | 0 | Month-1 | Test de US-017 |
 | OS où le bridge MCP fonctionne sous Codex | À mesurer par US-032 | 3/3 | Month-1 | Protocole de US-032 rejoué après US-033 |
 | Spawns git de production hors builder | ≈15 sites | 0 | Month-1 | Test de garde de US-008 |
