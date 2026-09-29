@@ -189,7 +189,7 @@ pub(crate) fn git_stdout_head(
     let mut cmd = crate::git_command::git(crate::git_command::GitProfile::Probe, args);
     cmd.current_dir(cwd);
     let (output, truncated) =
-        paneflow_process::run_with_timeout_keeping_stdout_head(cmd, deadline, stdout_cap).ok()?;
+        crate::git_command::run_keeping_stdout_head(cmd, deadline, stdout_cap).ok()?;
     (truncated || output.status.success()).then_some((output.stdout, truncated))
 }
 

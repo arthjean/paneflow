@@ -263,6 +263,122 @@ fn a_probe_never_runs_the_repository_fsmonitor_textconv_or_external_diff() {
     );
 }
 
+fn write_filter_script(script: &Path, marker: &Path) {
+    std::fs::write(
+        script,
+        format!("#!/bin/sh\necho hit >> \"{}\"\ncat\n", sh_path(marker)),
+    )
+    .expect("filter script");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(script, std::fs::Permissions::from_mode(0o755))
+            .expect("script mode");
+    }
+}
+
+fn repo_with_a_filter_driver(tmp: &Path) -> Option<(PathBuf, PathBuf)> {
+    let root = tmp.join("repo");
+    if !committed_repo(&root) {
+        return None;
+    }
+    let marker = tmp.join("filter-marker");
+    let script = tmp.join("filter.sh");
+    write_filter_script(&script, &marker);
+    let command = format!("sh {}", sh_path(&script));
+    assert!(test_git(&root, &["config", "filter.evil.clean", &command]));
+    assert!(test_git(&root, &["config", "filter.evil.required", "true"]));
+    std::fs::write(root.join(".gitattributes"), "*.txt filter=evil\n").expect("attributes");
+    let info = root.join(".git").join("info");
+    std::fs::create_dir_all(&info).expect("info dir");
+    std::fs::write(info.join("attributes"), "*.md filter=evil\n").expect("info attributes");
+    std::fs::write(root.join("notes.md"), "notes\n").expect("notes");
+    assert!(test_git(&root, &["add", ".gitattributes", "notes.md"]));
+    assert!(commit(&root, "attributes").status.success());
+    make_tracked_files_stat_dirty(&root, &["tracked.txt".to_string(), "notes.md".to_string()]);
+    let _ = std::fs::remove_file(&marker);
+    Some((root, marker))
+}
+
+#[test]
+fn a_probe_never_runs_a_repository_filter_driver() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let Some((root, marker)) = repo_with_a_filter_driver(tmp.path()) else {
+        return;
+    };
+
+    let _ = test_git_output(&root, &["status", "--porcelain"]);
+    assert!(
+        marker.exists(),
+        "an unisolated git status runs the repository filter, so this test can detect it"
+    );
+    std::fs::remove_file(&marker).expect("reset marker");
+
+    run_every_probe(&root);
+
+    assert!(
+        !marker.exists(),
+        "a probe ran a filter driver configured by the repository: {:?}",
+        std::fs::read_to_string(&marker)
+    );
+    assert!(
+        crate::workspace::worktree::is_clean(&root).is_ok(),
+        "a required filter that was neutralized must not fail the probe"
+    );
+}
+
+#[test]
+fn a_user_action_keeps_the_repository_filter_driver() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let Some((root, marker)) = repo_with_a_filter_driver(tmp.path()) else {
+        return;
+    };
+    let mut command = git(GitProfile::UserAction, ["status", "--porcelain"]);
+    command.current_dir(&root);
+    assert!(run(command, Duration::from_secs(30), 1 << 20).is_ok());
+    assert!(
+        marker.exists(),
+        "a user action keeps filters so that Git LFS keeps working"
+    );
+}
+
+#[test]
+fn only_filter_drivers_from_the_repository_config_are_neutralized() {
+    let listing: &[u8] = b"system\0filter.lfs.process\0global\0filter.lfs.clean\0\
+        local\0filter.evil.clean\0worktree\0filter.my.driver.process\0\
+        command\0filter.cli.clean\0local\0filter.evil.required\0";
+    let drivers = repository_filter_drivers(listing).expect("utf-8 listing");
+    assert_eq!(
+        drivers.into_iter().collect::<Vec<_>>(),
+        vec!["evil".to_string(), "my.driver".to_string()]
+    );
+    assert_eq!(
+        repository_filter_drivers(b"local\0filter.\xff.clean\0"),
+        None,
+        "a driver name that cannot be neutralized exactly refuses the probe"
+    );
+}
+
+#[test]
+fn only_worktree_reading_probes_query_the_filter_drivers() {
+    let mut show = git(GitProfile::Probe, ["show", "HEAD:tracked.txt"]);
+    assert!(neutralize_repository_filters(&mut show).is_ok());
+    assert!(
+        !show
+            .get_envs()
+            .any(|(key, _)| key == OsStr::new("GIT_CONFIG_COUNT"))
+    );
+    assert!(reads_the_worktree(&git(
+        GitProfile::Probe,
+        ["-C", "diff", "status"]
+    )));
+    assert!(!reads_the_worktree(&git(
+        GitProfile::Probe,
+        ["rev-parse", "HEAD"]
+    )));
+    assert!(!is_probe(&git(GitProfile::UserAction, ["status"])));
+}
+
 #[test]
 fn probes_work_in_a_worktree_linked_to_a_bare_repository() {
     let tmp = tempfile::tempdir().expect("tempdir");
