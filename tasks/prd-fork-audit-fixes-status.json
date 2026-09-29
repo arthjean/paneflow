@@ -20,7 +20,7 @@
       "status": "IN_REVIEW",
       "priority": "P0",
       "stories_total": 8,
-      "stories_done": 3
+      "stories_done": 7
     },
     {
       "id": "EP-003",
@@ -188,51 +188,51 @@
       "id": "US-011",
       "title": "Donner aux commandes utilisateur un budget de capture adapté",
       "epic": "EP-002",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P1",
       "size": "M",
       "blocked_by": [
         "US-008"
       ],
       "started_at": "2026-09-28T21:17:56+02:00",
-      "completed_at": null,
-      "reviewed_at": "2026-09-29T11:03:32+02:00"
+      "completed_at": "2026-09-29T12:49:19+02:00",
+      "reviewed_at": "2026-09-29T12:49:19+02:00"
     },
     {
       "id": "US-012",
       "title": "Écrire à travers les symlinks sans jamais les remplacer",
       "epic": "EP-002",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P0",
       "size": "L",
       "blocked_by": [],
       "started_at": "2026-09-28T13:50:37+02:00",
-      "completed_at": null,
-      "reviewed_at": "2026-09-29T11:03:32+02:00"
+      "completed_at": "2026-09-29T12:49:19+02:00",
+      "reviewed_at": "2026-09-29T12:49:19+02:00"
     },
     {
       "id": "US-013",
       "title": "Ne jamais bloquer ni suivre un fichier spécial en lisant ou en journalisant",
       "epic": "EP-002",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P1",
       "size": "L",
       "blocked_by": [],
       "started_at": "2026-09-28T21:17:56+02:00",
-      "completed_at": null,
-      "reviewed_at": "2026-09-29T11:03:32+02:00"
+      "completed_at": "2026-09-29T12:49:19+02:00",
+      "reviewed_at": "2026-09-29T12:49:19+02:00"
     },
     {
       "id": "US-014",
       "title": "Copier les fichiers d'include d'un worktree sans suivre les symlinks",
       "epic": "EP-002",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P1",
       "size": "S",
       "blocked_by": [],
       "started_at": "2026-09-28T21:17:56+02:00",
-      "completed_at": null,
-      "reviewed_at": "2026-09-29T11:03:32+02:00"
+      "completed_at": "2026-09-29T12:49:19+02:00",
+      "reviewed_at": "2026-09-29T12:49:19+02:00"
     },
     {
       "id": "US-015",
