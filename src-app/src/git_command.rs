@@ -25,6 +25,7 @@ const PROBE_CONFIG: &[&str] = &[
     "safe.bareRepository=explicit",
     "diff.external=",
     "diff.autoRefreshIndex=false",
+    "log.showSignature=false",
 ];
 
 const PROBE_ENV: &[(&str, &str)] = &[

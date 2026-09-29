@@ -1229,7 +1229,25 @@ fn copy_symlink(src: &Path, dst: &Path, meta: &std::fs::Metadata) -> std::io::Re
 }
 
 fn copy_regular_file(src: &Path, dst: &Path, meta: &std::fs::Metadata) -> std::io::Result<()> {
-    let mut input = std::fs::File::open(src)?;
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        options.custom_flags(windows_sys::Win32::Storage::FileSystem::FILE_FLAG_OPEN_REPARSE_POINT);
+    }
+    let mut input = options.open(src)?;
+    if !input.metadata()?.is_file() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("{} is no longer a regular file", src.display()),
+        ));
+    }
     copy_into_new_file(&mut input, dst, meta.permissions())
 }
 
@@ -2082,6 +2100,24 @@ mod tests {
             std::os::windows::fs::symlink_file(target, link)
         };
         made.is_ok()
+    }
+
+    #[test]
+    fn a_source_swapped_for_a_symlink_after_the_check_is_never_followed() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let secret = tmp.path().join("secret.env");
+        std::fs::write(&secret, "TOKEN=hunter2").unwrap();
+        let checked = tmp.path().join("checked.env");
+        std::fs::write(&checked, "PLAIN=1").unwrap();
+        let meta = std::fs::symlink_metadata(&checked).unwrap();
+        std::fs::remove_file(&checked).unwrap();
+        if !make_symlink(&secret, &checked, false) {
+            return;
+        }
+        let dst = tmp.path().join("copied.env");
+
+        assert!(copy_regular_file(&checked, &dst, &meta).is_err());
+        assert!(!dst.exists(), "nothing of the link target reaches the copy");
     }
 
     #[test]
