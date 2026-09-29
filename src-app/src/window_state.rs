@@ -154,7 +154,7 @@ mod tests {
         let path = dir.path().join("window-state.json");
         mkfifo(&path);
         let started = std::time::Instant::now();
-        assert_eq!(load_from(&path), None);
+        assert!(load_from(&path).is_none());
         assert!(started.elapsed() < std::time::Duration::from_millis(100));
     }
 
