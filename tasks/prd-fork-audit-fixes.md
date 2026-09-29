@@ -597,6 +597,7 @@ Sort du thread GPUI toutes les requêtes runtime, I/O et sondes, et donne à l'I
 - [ ] La restauration de session sonde les cwd et worktrees sauvegardés hors du thread GPUI, avec un délai global de 2 s.
 - [ ] Un chemin non résolu dans ce délai garde sa valeur sauvegardée et est sondé de nouveau plus tard.
 - [ ] Les listes de dossiers récents ne font aucun `is_dir` synchrone au rendu.
+- [ ] Le confinement du cwd d'un nouveau pane dans le worktree de son onglet (`Tab::confine_cwd`, appelé par `new_terminal_cwd` et `surface.split`) ne canonise plus de chemin sur le thread GPUI ; la résolution a lieu hors du thread, et un chemin non résolu dans le délai retombe sur la racine du worktree.
 - [ ] Les lectures de fichiers du working tree du dock ont un délai de 10 s.
 - [ ] Test : une restauration avec un workspace sur un chemin qui bloque 30 s (résolveur simulé) affiche sa première frame à moins de 250 ms au-dessus de la baseline de `scripts/bench-startup`.
 - [ ] Échec : given un chemin sauvegardé qui n'existe plus, then le workspace est restauré sur le dossier personnel avec un toast, comme aujourd'hui.
