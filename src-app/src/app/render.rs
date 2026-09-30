@@ -80,13 +80,10 @@ impl PaneFlowApp {
         }
         let now = std::time::Instant::now();
         let from_width = self.primary_sidebar_width_at(now);
-        self.primary_sidebar_visible = !self.primary_sidebar_visible;
-
         if self.settings_section.is_some() {
-            self.primary_sidebar_animation = None;
-            cx.notify();
-            return;
+            self.close_settings(cx);
         }
+        self.primary_sidebar_visible = !self.primary_sidebar_visible;
 
         let to_width = if self.primary_sidebar_visible {
             self.primary_sidebar_expanded_width()

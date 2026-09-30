@@ -58,7 +58,11 @@ impl PaneFlowApp {
                 return true;
             }
             if self.shortcut_capture_active {
-                return entry.key.to_lowercase() == query;
+                return entry.key.to_lowercase() == query
+                    || entry
+                        .extra_raw_keys
+                        .iter()
+                        .any(|raw| keybindings::format_keystroke(raw).to_lowercase() == query);
             }
             entry.description.to_lowercase().contains(&query)
                 || entry.key.to_lowercase().contains(&query)
@@ -506,6 +510,9 @@ impl PaneFlowApp {
                 } else {
                     keycaps(ui, &entry.key, KeycapTone::Normal)
                 })
+                .children(entry.extra_raw_keys.iter().map(|raw| {
+                    keycaps(ui, &keybindings::format_keystroke(raw), KeycapTone::Normal)
+                }))
         };
 
         menu_row(("shortcut", idx), false, ui)

@@ -1,6 +1,6 @@
 use gpui::{
-    ClickEvent, Context, CursorStyle, Hsla, InteractiveElement, IntoElement, MouseButton,
-    ParentElement, SharedString, Styled, div, prelude::*, px, svg,
+    ClickEvent, Context, CursorStyle, Hsla, InteractiveElement, IntoElement, ParentElement,
+    SharedString, Styled, div, prelude::*, px, svg,
 };
 
 use paneflow_config::schema::{InterfaceStyle, PaneFlowConfig};
@@ -9,10 +9,10 @@ use crate::GeneralDropdown;
 use crate::PaneFlowApp;
 use crate::settings::components::{
     deferred_select_menu, menu_row, secondary_button, section_header, section_header_with_action,
-    select_chevron, select_menu, select_trigger, setting_text, toggle_pill, with_alpha,
+    select_chevron, select_menu, select_trigger, setting_text, toggle_switch, with_alpha,
 };
 use crate::settings::search::{self, Block, SearchCard};
-use crate::ui_primitives::{AnimatedHoverExt, lerp_color};
+use crate::ui_primitives::{AccessibleControlExt, AnimatedHoverExt, lerp_color};
 
 const THEME_MODE_TILE_HEIGHT: f32 = 134.;
 const THEME_MODE_TILE_RADIUS: f32 = 10.;
@@ -81,18 +81,20 @@ impl PaneFlowApp {
                 search::REDUCE_MOTION.description,
             ))
             .child(
-                div()
-                    .id("reduce-motion-toggle")
-                    .flex_shrink_0()
-                    .on_click(cx.listener(move |this, _: &ClickEvent, _window, cx| {
-                        this.persist_setting(
-                            false,
-                            "reduce_motion",
-                            serde_json::Value::Bool(!reduce_motion),
-                            cx,
-                        );
-                    }))
-                    .child(toggle_pill(reduce_motion, ui)),
+                toggle_switch(
+                    "reduce-motion-toggle",
+                    search::REDUCE_MOTION.title,
+                    reduce_motion,
+                    ui,
+                )
+                .on_click(cx.listener(move |this, _: &ClickEvent, _window, cx| {
+                    this.persist_setting(
+                        false,
+                        "reduce_motion",
+                        serde_json::Value::Bool(!reduce_motion),
+                        cx,
+                    );
+                })),
             );
 
         let theme_block = Block::new("Theme")
@@ -132,21 +134,22 @@ impl PaneFlowApp {
                     search::CHROME_MATERIAL.description,
                 ))
                 .child(
-                    div()
-                        .id("windows-chrome-material-toggle")
-                        .flex_shrink_0()
-                        .on_click(cx.listener(move |this, _: &ClickEvent, _window, cx| {
+                    crate::settings::components::toggle_switch(
+                        "windows-chrome-material-toggle",
+                        search::CHROME_MATERIAL.title,
+                        chrome_material,
+                        ui,
+                    )
+                    .on_click(cx.listener(
+                        move |this, _: &ClickEvent, _window, cx| {
                             this.persist_setting(
                                 false,
                                 "windows_chrome_material",
                                 serde_json::Value::Bool(!chrome_material),
                                 cx,
                             );
-                        }))
-                        .child(crate::settings::components::toggle_pill(
-                            chrome_material,
-                            ui,
-                        )),
+                        },
+                    )),
                 );
 
             content.child(
@@ -176,21 +179,22 @@ impl PaneFlowApp {
                     search::SIDEBAR_TRANSPARENCY.description,
                 ))
                 .child(
-                    div()
-                        .id("macos-chrome-material-toggle")
-                        .flex_shrink_0()
-                        .on_click(cx.listener(move |this, _: &ClickEvent, _window, cx| {
+                    crate::settings::components::toggle_switch(
+                        "macos-chrome-material-toggle",
+                        search::SIDEBAR_TRANSPARENCY.title,
+                        sidebar_material,
+                        ui,
+                    )
+                    .on_click(cx.listener(
+                        move |this, _: &ClickEvent, _window, cx| {
                             this.persist_setting(
                                 false,
                                 "macos_chrome_material",
                                 serde_json::Value::Bool(!sidebar_material),
                                 cx,
                             );
-                        }))
-                        .child(crate::settings::components::toggle_pill(
-                            sidebar_material,
-                            ui,
-                        )),
+                        },
+                    )),
                 );
 
             content.child(
@@ -223,21 +227,22 @@ impl PaneFlowApp {
                     search::CHROME_TRANSPARENCY.description,
                 ))
                 .child(
-                    div()
-                        .id("linux-chrome-material-toggle")
-                        .flex_shrink_0()
-                        .on_click(cx.listener(move |this, _: &ClickEvent, _window, cx| {
+                    crate::settings::components::toggle_switch(
+                        "linux-chrome-material-toggle",
+                        search::CHROME_TRANSPARENCY.title,
+                        chrome_material,
+                        ui,
+                    )
+                    .on_click(cx.listener(
+                        move |this, _: &ClickEvent, _window, cx| {
                             this.persist_setting(
                                 false,
                                 "linux_chrome_material",
                                 serde_json::Value::Bool(!chrome_material),
                                 cx,
                             );
-                        }))
-                        .child(crate::settings::components::toggle_pill(
-                            chrome_material,
-                            ui,
-                        )),
+                        },
+                    )),
                 );
 
             content.child(
@@ -355,16 +360,13 @@ impl PaneFlowApp {
                 && crate::theme::theme_name_is_light(&self.current_theme_name()));
         let current_name = current.name;
 
-        let mut trigger = select_trigger("theme-preset-select", ui)
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(move |this, _, window, cx| {
-                    cx.stop_propagation();
-                    this.theme_dropdown_open = !is_open;
-                    this.settings_focus.focus(window, cx);
-                    cx.notify();
-                }),
-            )
+        let mut trigger = select_trigger("theme-preset-select", "Theme", is_open, ui)
+            .on_press(cx.listener(move |this, _, window, cx| {
+                cx.stop_propagation();
+                this.theme_dropdown_open = !is_open;
+                this.settings_focus.focus(window, cx);
+                cx.notify();
+            }))
             .child(
                 div()
                     .flex()
@@ -453,20 +455,17 @@ impl PaneFlowApp {
         let is_open = self.general_dropdown == Some(GeneralDropdown::InterfaceStyle);
         let current = self.cached_config.interface_style();
 
-        let mut trigger = select_trigger("interface-style-select", ui)
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(move |this, _, window, cx| {
-                    cx.stop_propagation();
-                    this.general_dropdown = if is_open {
-                        None
-                    } else {
-                        Some(GeneralDropdown::InterfaceStyle)
-                    };
-                    this.settings_focus.focus(window, cx);
-                    cx.notify();
-                }),
-            )
+        let mut trigger = select_trigger("interface-style-select", "Interface style", is_open, ui)
+            .on_press(cx.listener(move |this, _, window, cx| {
+                cx.stop_propagation();
+                this.general_dropdown = if is_open {
+                    None
+                } else {
+                    Some(GeneralDropdown::InterfaceStyle)
+                };
+                this.settings_focus.focus(window, cx);
+                cx.notify();
+            }))
             .child(
                 div()
                     .flex_1()

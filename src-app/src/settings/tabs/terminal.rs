@@ -8,10 +8,10 @@ use paneflow_config::schema::{CursorShapeConfig, MinimumContrast, TerminalConfig
 
 use crate::settings::components::{
     SETTINGS_CONTROL_CORNER_RADIUS, deferred_select_menu, hairline, menu_row, section_header,
-    select_chevron, select_menu, select_trigger_with_hover, setting_text, toggle_pill,
+    select_chevron, select_menu, select_trigger_with_hover, setting_text, toggle_switch,
 };
 use crate::settings::search::{self, Block, SearchCard};
-use crate::ui_primitives::AnimatedHoverExt;
+use crate::ui_primitives::{AccessibleControlExt, AnimatedHoverExt};
 
 use crate::{PaneFlowApp, TerminalDropdown};
 
@@ -64,6 +64,51 @@ pub(crate) fn minimum_contrast_setting(step: usize) -> Value {
         .get(step)
         .and_then(|(_, lc)| *lc)
         .map_or(Value::Null, |lc| json!(lc))
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum FontPick<'a> {
+    Default,
+    Named(&'a str),
+}
+
+pub(crate) struct FontMatches<'a> {
+    pub(crate) default_label: String,
+    pub(crate) default_matches: bool,
+    pub(crate) names: Vec<&'a str>,
+}
+
+impl<'a> FontMatches<'a> {
+    pub(crate) fn new(names: &'a [String], default_font: &str, search: &str) -> Self {
+        let search = search.to_lowercase();
+        let default_label = format!("PaneFlow default - {default_font}");
+        let default_matches = search.is_empty() || default_label.to_lowercase().contains(&search);
+        let names = names
+            .iter()
+            .map(String::as_str)
+            .filter(|name| {
+                *name != default_font
+                    && (search.is_empty() || name.to_lowercase().contains(&search))
+            })
+            .collect();
+        Self {
+            default_label,
+            default_matches,
+            names,
+        }
+    }
+
+    pub(crate) fn first(&self) -> Option<FontPick<'a>> {
+        if self.default_matches {
+            Some(FontPick::Default)
+        } else {
+            self.names.first().map(|name| FontPick::Named(name))
+        }
+    }
+}
+
+pub(crate) fn font_search_accepts(key_char: &str) -> bool {
+    !key_char.is_empty() && !key_char.chars().any(char::is_control)
 }
 
 fn hex_string_from_u32(hex: u32) -> String {
@@ -409,53 +454,48 @@ impl PaneFlowApp {
 
         let font_open = self.font_dropdown_open;
         let trigger_hover_bg = lighter_control_hover(ui.subtle);
-        let mut trigger =
-            select_trigger_with_hover("terminal-font-family-trigger", ui, trigger_hover_bg)
-                .on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(move |this, _, window, cx| {
-                        cx.stop_propagation();
-                        this.terminal_dropdown = None;
-                        this.font_dropdown_open = !font_open;
-                        this.font_search.clear();
-                        if this.font_dropdown_open && this.mono_font_names.is_empty() {
-                            cx.spawn(async move |this, cx| {
-                                let fonts = smol::unblock(crate::fonts::load_mono_fonts).await;
-                                let _ = this.update(cx, |this, cx| {
-                                    this.mono_font_names = fonts;
-                                    cx.notify();
-                                });
-                            })
-                            .detach();
-                        }
-                        this.settings_focus.focus(window, cx);
+        let mut trigger = select_trigger_with_hover(
+            "terminal-font-family-trigger",
+            search::FONT_FAMILY.title,
+            font_open,
+            ui,
+            trigger_hover_bg,
+        )
+        .on_press(cx.listener(move |this, _, window, cx| {
+            cx.stop_propagation();
+            this.terminal_dropdown = None;
+            this.font_dropdown_open = !font_open;
+            this.font_search.clear();
+            if this.font_dropdown_open && this.mono_font_names.is_empty() {
+                cx.spawn(async move |this, cx| {
+                    let fonts = smol::unblock(crate::fonts::load_mono_fonts).await;
+                    let _ = this.update(cx, |this, cx| {
+                        this.mono_font_names = fonts;
                         cx.notify();
-                    }),
-                )
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w_0()
-                        .text_size(px(12.))
-                        .text_color(trigger_label_color)
-                        .truncate()
-                        .child(trigger_label),
-                )
-                .child(select_chevron(ui));
+                    });
+                })
+                .detach();
+            }
+            this.settings_focus.focus(window, cx);
+            cx.notify();
+        }))
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .text_size(px(12.))
+                .text_color(trigger_label_color)
+                .truncate()
+                .child(trigger_label),
+        )
+        .child(select_chevron(ui));
 
         if self.font_dropdown_open {
-            let search = self.font_search.to_lowercase();
-            let default_label = format!("PaneFlow default - {default_font}");
-            let default_matches =
-                search.is_empty() || default_label.to_lowercase().contains(&search);
-            let filtered: Vec<&String> = self
-                .mono_font_names
-                .iter()
-                .filter(|name| {
-                    name.as_str() != default_font.as_str()
-                        && (search.is_empty() || name.to_lowercase().contains(&search))
-                })
-                .collect();
+            let FontMatches {
+                default_label,
+                default_matches,
+                names: filtered,
+            } = FontMatches::new(&self.mono_font_names, &default_font, &self.font_search);
 
             let mut menu = select_menu("terminal-font-dropdown", ui).on_mouse_down_out(
                 cx.listener(|this, _, _w, cx| {
@@ -492,8 +532,8 @@ impl PaneFlowApp {
             }
 
             for (i, name) in filtered.iter().enumerate() {
-                let name_owned = (*name).clone();
-                let is_current = **name == current_font;
+                let name_owned = (*name).to_string();
+                let is_current = *name == current_font;
                 menu = menu.child(
                     menu_row(("terminal-font", i), is_current, ui)
                         .cursor(CursorStyle::Arrow)
@@ -513,7 +553,7 @@ impl PaneFlowApp {
                                 .min_w_0()
                                 .truncate()
                                 .text_color(ui.text)
-                                .child((*name).clone()),
+                                .child(name.to_string()),
                         ),
                 );
             }
@@ -650,20 +690,16 @@ impl PaneFlowApp {
                 swatch_grid = swatch_grid.child(swatch_row);
             }
 
-            let scheme_bg = if uses_theme {
-                Hsla::from(gpui::rgb(0x2fd7f2))
+            let theme_chip = crate::settings::components::accent_button_colors(ui.accent);
+            let (scheme_bg, scheme_hover_bg, scheme_text) = if uses_theme {
+                (theme_chip.rest, theme_chip.rest, theme_chip.ink)
             } else {
-                ui.subtle
-            };
-            let scheme_text = if uses_theme { gpui::black() } else { ui.text };
-            let scheme_hover_bg = if uses_theme {
-                scheme_bg
-            } else {
-                lighter_control_hover(ui.subtle)
+                (ui.subtle, lighter_control_hover(ui.subtle), ui.text)
             };
             let controls = div().flex().flex_col().gap(px(8.)).child(
                 div()
                     .id("term-cursor-color-theme")
+                    .accessible_control(gpui::accesskit::Role::Button, "Use color scheme color")
                     .h(px(32.))
                     .min_w(px(200.))
                     .px(px(10.))
@@ -719,20 +755,19 @@ impl PaneFlowApp {
         let trigger_hover_bg = lighter_control_hover(ui.subtle);
         let mut trigger = select_trigger_with_hover(
             SharedString::from(format!("term-dd-{config_key}")),
+            title,
+            is_open,
             ui,
             trigger_hover_bg,
         )
-        .on_mouse_down(
-            MouseButton::Left,
-            cx.listener(move |this, _, window, cx| {
-                cx.stop_propagation();
-                this.font_dropdown_open = false;
-                this.font_search.clear();
-                this.terminal_dropdown = if is_open { None } else { Some(which) };
-                this.settings_focus.focus(window, cx);
-                cx.notify();
-            }),
-        )
+        .on_press(cx.listener(move |this, _, window, cx| {
+            cx.stop_propagation();
+            this.font_dropdown_open = false;
+            this.font_search.clear();
+            this.terminal_dropdown = if is_open { None } else { Some(which) };
+            this.settings_focus.focus(window, cx);
+            cx.notify();
+        }))
         .child(
             div()
                 .flex_1()
@@ -810,13 +845,11 @@ impl PaneFlowApp {
             .py(px(10.))
             .child(setting_text(ui, title, description))
             .child(
-                div()
-                    .id(SharedString::from(id))
-                    .flex_shrink_0()
-                    .on_click(cx.listener(move |this, _: &ClickEvent, _window, cx| {
+                toggle_switch(SharedString::from(id), title, current, ui).on_click(cx.listener(
+                    move |this, _: &ClickEvent, _window, cx| {
                         this.persist_setting(nested, config_key, Value::Bool(target_value), cx);
-                    }))
-                    .child(toggle_pill(current, ui)),
+                    },
+                )),
             )
             .into_any_element()
     }
@@ -963,6 +996,37 @@ fn stepper_frame(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn font_search_ignores_the_newline_and_tab_macos_sends() {
+        assert!(!font_search_accepts("\n"));
+        assert!(!font_search_accepts("\r"));
+        assert!(!font_search_accepts("\t"));
+        assert!(!font_search_accepts(""));
+        assert!(font_search_accepts("J"));
+        assert!(font_search_accepts(" "));
+    }
+
+    #[test]
+    fn enter_picks_the_first_font_the_filter_shows() {
+        let names = vec![
+            "Fira Code".to_string(),
+            "JetBrains Mono".to_string(),
+            "JuliaMono".to_string(),
+        ];
+        let matches = FontMatches::new(&names, "JetBrains Mono", "");
+        assert_eq!(matches.first(), Some(FontPick::Default));
+        assert_eq!(matches.names, ["Fira Code", "JuliaMono"]);
+
+        let matches = FontMatches::new(&names, "JetBrains Mono", "ju");
+        assert_eq!(matches.first(), Some(FontPick::Named("JuliaMono")));
+
+        let matches = FontMatches::new(&names, "JetBrains Mono", "jetbrains");
+        assert_eq!(matches.first(), Some(FontPick::Default));
+
+        let matches = FontMatches::new(&names, "JetBrains Mono", "zzz");
+        assert_eq!(matches.first(), None);
+    }
 
     fn with_contrast(minimum_contrast: Option<f32>) -> TerminalConfig {
         TerminalConfig {

@@ -29,6 +29,49 @@ use super::path_picker::{PathPicker, PathPickerEvent};
 mod host_attach;
 
 const RENDER_WAKEUP_IMMEDIATELY: bool = true;
+const SEARCH_REGEX_TOGGLE_LABEL: &str = "Regular expression";
+const COPY_MODE_BADGE_LABEL: &str = "Copy mode";
+
+fn search_regex_toggle(
+    active: bool,
+    ui: crate::theme::UiColors,
+    active_background: gpui::Hsla,
+) -> gpui::Stateful<gpui::Div> {
+    use gpui::{FontWeight, px};
+
+    use crate::ui_primitives::AccessibleControlExt;
+
+    div()
+        .id("search-regex-toggle")
+        .accessible_control(gpui::accesskit::Role::Button, SEARCH_REGEX_TOGGLE_LABEL)
+        .aria_toggled(if active {
+            gpui::accesskit::Toggled::True
+        } else {
+            gpui::accesskit::Toggled::False
+        })
+        .flex_none()
+        .px(px(4.))
+        .rounded(px(4.))
+        .text_size(px(13.))
+        .font_weight(FontWeight::MEDIUM)
+        .text_color(if active {
+            ui.text
+        } else {
+            ui.muted.opacity(0.6)
+        })
+        .when(active, |toggle| toggle.bg(active_background))
+        .child(".*")
+}
+
+fn copy_mode_badge() -> gpui::Stateful<gpui::Div> {
+    use crate::ui_primitives::TooltipDelayExt;
+
+    div()
+        .id("copy-mode-badge")
+        .role(gpui::accesskit::Role::Status)
+        .aria_label(COPY_MODE_BADGE_LABEL)
+        .delayed_tooltip(crate::ui_primitives::text_tooltip(COPY_MODE_BADGE_LABEL))
+}
 
 #[cfg(debug_assertions)]
 pub(crate) fn probe_enabled() -> bool {
@@ -993,10 +1036,10 @@ impl TerminalView {
     }
 
     fn render_search_overlay(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
-        use gpui::{FontWeight, Hsla, MouseButton, px, svg};
+        use gpui::{Hsla, px, svg};
 
         use crate::settings::components::with_alpha;
-        use crate::ui_primitives::{ROW_RADIUS, squircle_skin};
+        use crate::ui_primitives::{AccessibleControlExt, ROW_RADIUS, squircle_skin};
 
         let ui = crate::theme::ui_colors();
 
@@ -1046,43 +1089,51 @@ impl TerminalView {
             .text_color(ui.text)
             .child(self.search_input.clone());
 
-        let icon_btn = move |id: &'static str, icon: &'static str, color: Hsla| {
-            squircle_skin(
-                div()
-                    .id(id)
-                    .flex_none()
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .size(px(28.)),
-                id,
-                ROW_RADIUS,
-                None,
-                Some(button_hover),
-            )
-            .child(svg().size(px(14.)).flex_none().path(icon).text_color(color))
-        };
+        let icon_btn =
+            move |id: &'static str, label: &'static str, icon: &'static str, color: Hsla| {
+                squircle_skin(
+                    div()
+                        .id(id)
+                        .accessible_control(gpui::accesskit::Role::Button, label)
+                        .flex_none()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .size(px(28.)),
+                    id,
+                    ROW_RADIUS,
+                    None,
+                    Some(button_hover),
+                )
+                .child(svg().size(px(14.)).flex_none().path(icon).text_color(color))
+            };
         let nav_color = if has_matches {
             ui.muted
         } else {
             ui.muted.opacity(0.35)
         };
 
-        let prev_btn = icon_btn("search-prev", "icons/chevron_up.svg", nav_color).on_mouse_down(
-            MouseButton::Left,
-            cx.listener(|this, _, _window, cx| this.search_prev(cx)),
-        );
-        let next_btn = icon_btn("search-next", "icons/chevron_down.svg", nav_color).on_mouse_down(
-            MouseButton::Left,
-            cx.listener(|this, _, _window, cx| this.search_next(cx)),
-        );
-        let close_btn = icon_btn("search-close", "icons/close.svg", ui.muted).on_mouse_down(
-            MouseButton::Left,
-            cx.listener(|this, _, window, cx| {
+        let prev_btn = icon_btn(
+            "search-prev",
+            "Previous match",
+            "icons/chevron_up.svg",
+            nav_color,
+        )
+        .on_pointer_press(cx.listener(|this, _, _window, cx| this.search_prev(cx)));
+        let next_btn = icon_btn(
+            "search-next",
+            "Next match",
+            "icons/chevron_down.svg",
+            nav_color,
+        )
+        .on_pointer_press(cx.listener(|this, _, _window, cx| this.search_next(cx)));
+        let close_btn = icon_btn("search-close", "Close search", "icons/close.svg", ui.muted)
+            .on_pointer_press(cx.listener(|this, _, window, cx| {
                 this.dismiss_search(cx);
                 this.focus_handle.clone().focus(window, cx);
-            }),
-        );
+            }));
+        let regex_toggle = search_regex_toggle(regex_active, ui, button_hover)
+            .on_pointer_press(cx.listener(|this, _, _window, cx| this.toggle_search_regex(cx)));
 
         squircle_skin(
             div()
@@ -1110,21 +1161,7 @@ impl TerminalView {
             ui.border,
         ))
         .child(field)
-        .when(regex_active, |el| {
-            el.child(
-                div()
-                    .id("search-regex-mark")
-                    .flex_none()
-                    .text_size(px(13.))
-                    .font_weight(FontWeight::MEDIUM)
-                    .text_color(ui.text)
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(|this, _, _window, cx| this.toggle_search_regex(cx)),
-                    )
-                    .child(".*"),
-            )
-        })
+        .child(regex_toggle)
         .when(!status_text.is_empty(), |el| {
             el.child(
                 div()
@@ -1690,8 +1727,7 @@ impl Render for TerminalView {
         }
 
         if self.copy_mode_active {
-            let copy_badge = div()
-                .id("copy-mode-badge")
+            let copy_badge = copy_mode_badge()
                 .absolute()
                 .top_1()
                 .right_1()
@@ -1737,6 +1773,38 @@ mod tests {
     use gpui::Entity;
 
     use super::*;
+
+    fn a11y_node(element: &gpui::Stateful<gpui::Div>) -> gpui::accesskit::Node {
+        use gpui::Element as _;
+        let mut node =
+            gpui::accesskit::Node::new(element.a11y_role().expect("the control exposes a role"));
+        element.write_a11y_info(&mut node);
+        node
+    }
+
+    #[test]
+    fn the_regex_toggle_is_always_rendered_with_its_pressed_state() {
+        use gpui::Element as _;
+        let ui = crate::theme::ui_colors();
+        for (active, expected) in [
+            (true, gpui::accesskit::Toggled::True),
+            (false, gpui::accesskit::Toggled::False),
+        ] {
+            let toggle = search_regex_toggle(active, ui, ui.subtle);
+            assert_eq!(toggle.a11y_role(), Some(gpui::accesskit::Role::Button));
+            let node = a11y_node(&toggle);
+            assert_eq!(node.label(), Some(SEARCH_REGEX_TOGGLE_LABEL));
+            assert_eq!(node.toggled(), Some(expected));
+        }
+    }
+
+    #[test]
+    fn the_copy_mode_badge_has_a_role_and_a_name() {
+        use gpui::Element as _;
+        let badge = copy_mode_badge();
+        assert_eq!(badge.a11y_role(), Some(gpui::accesskit::Role::Status));
+        assert_eq!(a11y_node(&badge).label(), Some("Copy mode"));
+    }
 
     #[test]
     fn sequence_would_submit_flags_cr_and_lf_only() {

@@ -179,7 +179,8 @@ pub(crate) fn run() {
         && !is_mcp_subcommand
         && !is_cli_subcommand
         && !is_hook_utility_subcommand
-        && args.iter().any(|a| a == "--help" || a == "-h");
+        && (args.iter().any(|a| a == "--help" || a == "-h")
+            || cli::is_help_verb(args.get(1).map(String::as_str)));
     let is_global_version = !is_msi_relay
         && !is_mcp_subcommand
         && !is_cli_subcommand
@@ -213,34 +214,8 @@ pub(crate) fn run() {
 
     if is_global_help {
         println!(
-            "PaneFlow {version} - native terminal workspace for coding agents\n\
-             \n\
-             Usage: paneflow [OPTIONS]\n\
-             \x20      paneflow mcp <install|status|uninstall>\n\
-             \x20      paneflow integrations <list|install|remove>\n\
-             \x20      paneflow host <start|status|stop>\n\
-             \x20      paneflow serve <start|status|stop>\n\
-             \n\
-             Options:\n\
-             \x20 -h, --help       Print this help message\n\
-             \x20 -v, --version    Print version\n\
-             \x20 --update-and-exit  Check for an update and exit (CI harness)\n\
-             \n\
-             Agent workflow:\n\
-             \x20 Launch Claude Code, Codex, opencode, Pi, or any CLI agent in panes\n\
-             \x20 Use `paneflow mcp install` so capable agents can read pane output\n\
-             \n\
-             Keybindings:\n\
-             \x20 Ctrl+Shift+D/E   Split horizontal/vertical\n\
-             \x20 Ctrl+Shift+W     Close pane\n\
-             \x20 Alt+Arrow        Focus adjacent pane\n\
-             \x20 Ctrl+Shift+N     New workspace\n\
-             \x20 Ctrl+Tab         Next workspace\n\
-             \x20 Ctrl+1-9         Switch to workspace N\n\
-             \n\
-             Config paths and IPC endpoints are documented in the README.\n\
-             https://github.com/arthjean/paneflow",
-            version = env!("CARGO_PKG_VERSION")
+            "{}",
+            cli::global_help(env!("CARGO_PKG_VERSION"), cfg!(target_os = "macos"))
         );
         return;
     }
@@ -330,7 +305,7 @@ pub(crate) fn run() {
     }
 
     if is_unknown_verb && let Some(verb) = args.get(1) {
-        eprintln!("paneflow: unknown verb '{verb}'; see `paneflow --help` for the verb list");
+        eprintln!("{}", cli::unknown_verb_message(verb));
         std::process::exit(2);
     }
 

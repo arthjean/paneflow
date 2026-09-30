@@ -1,6 +1,6 @@
 use gpui::{
-    AnyElement, ClickEvent, Context, CursorStyle, IntoElement, MouseButton, ParentElement,
-    SharedString, Styled, div, prelude::*, px,
+    AnyElement, ClickEvent, Context, CursorStyle, IntoElement, ParentElement, SharedString, Styled,
+    div, prelude::*, px,
 };
 use paneflow_config::schema::{NotifyWhenAgentWaiting, OnQuit};
 use serde_json::Value;
@@ -12,6 +12,7 @@ use crate::settings::components::{
     select_trigger, setting_text, toggle_row_with,
 };
 use crate::settings::search::{self, Block, SearchCard};
+use crate::ui_primitives::AccessibleControlExt;
 
 type SelectOption = (String, Option<Logo>, Value, bool);
 
@@ -209,17 +210,21 @@ impl PaneFlowApp {
                         search::NATIVE_NOTIFICATIONS.description,
                         None,
                         ui,
-                        div()
-                            .id("row-native-notifications")
-                            .flex_shrink_0()
-                            .on_click(cx.listener(move |this, _: &ClickEvent, _window, cx| {
+                        crate::settings::components::toggle_switch(
+                            "row-native-notifications",
+                            search::NATIVE_NOTIFICATIONS.title,
+                            enabled,
+                            ui,
+                        )
+                        .on_click(cx.listener(
+                            move |this, _: &ClickEvent, _window, cx| {
                                 this.persist_agent_panel_setting(
                                     "notify_when_agent_waiting",
                                     target.clone(),
                                     cx,
                                 );
-                            }))
-                            .child(crate::settings::components::toggle_pill(enabled, ui)),
+                            },
+                        )),
                     ),
                 ),
             )
@@ -260,19 +265,20 @@ impl PaneFlowApp {
                 .child(current_label),
         );
 
-        let mut trigger =
-            select_trigger(SharedString::from(format!("general-dd-{config_key}")), ui)
-                .on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(move |this, _, window, cx| {
-                        cx.stop_propagation();
-                        this.general_dropdown = if is_open { None } else { Some(which) };
-                        this.settings_focus.focus(window, cx);
-                        cx.notify();
-                    }),
-                )
-                .child(value)
-                .child(select_chevron(ui));
+        let mut trigger = select_trigger(
+            SharedString::from(format!("general-dd-{config_key}")),
+            title,
+            is_open,
+            ui,
+        )
+        .on_press(cx.listener(move |this, _, window, cx| {
+            cx.stop_propagation();
+            this.general_dropdown = if is_open { None } else { Some(which) };
+            this.settings_focus.focus(window, cx);
+            cx.notify();
+        }))
+        .child(value)
+        .child(select_chevron(ui));
 
         if is_open {
             let mut menu = select_menu(

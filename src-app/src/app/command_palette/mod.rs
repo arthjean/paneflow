@@ -476,6 +476,7 @@ impl PaneFlowApp {
         filter_field(
             "command-palette-field",
             "command-palette-field-clear",
+            "Search the command palette",
             ui,
             style,
             focused,

@@ -63,6 +63,7 @@ pub struct TextInput {
     pub focus_handle: FocusHandle,
     content: SharedString,
     placeholder: SharedString,
+    accessible_name: Option<SharedString>,
     selected_range: Range<usize>,
     selection_reversed: bool,
     marked_range: Option<Range<usize>>,
@@ -83,6 +84,7 @@ impl TextInput {
             focus_handle: cx.focus_handle(),
             content,
             placeholder: placeholder.into(),
+            accessible_name: None,
             selected_range: cursor..cursor,
             selection_reversed: false,
             marked_range: None,
@@ -90,6 +92,15 @@ impl TextInput {
             last_bounds: None,
             is_selecting: false,
         }
+    }
+
+    pub fn with_accessible_name(mut self, name: impl Into<SharedString>) -> Self {
+        self.accessible_name = Some(name.into());
+        self
+    }
+
+    pub fn accessible_name(&self) -> SharedString {
+        accessible_field_name(self.accessible_name.as_ref(), &self.placeholder)
     }
 
     pub fn value(&self) -> String {
@@ -651,6 +662,11 @@ impl Render for TextInput {
         let selection = hsla(ui.accent.h, ui.accent.s, ui.accent.l, 0.28);
 
         div()
+            .id(("paneflow-text-input", cx.entity_id().as_u64()))
+            .role(gpui::accesskit::Role::TextInput)
+            .aria_label(self.accessible_name())
+            .aria_value(self.content.clone())
+            .aria_placeholder(self.placeholder.clone())
             .w_full()
             .key_context("TextInput")
             .track_focus(&self.focus_handle(cx))
@@ -679,6 +695,17 @@ impl Render for TextInput {
                 placeholder_color: ui.muted,
             })
     }
+}
+
+pub(crate) fn accessible_field_name(
+    explicit: Option<&SharedString>,
+    placeholder: &SharedString,
+) -> SharedString {
+    explicit
+        .filter(|name| !name.trim().is_empty())
+        .or(Some(placeholder).filter(|name| !name.trim().is_empty()))
+        .cloned()
+        .unwrap_or_else(|| SharedString::from("Text field"))
 }
 
 impl Focusable for TextInput {
@@ -718,6 +745,49 @@ mod tests {
         });
         let input = host.read_with(cx, |host, _| host.input.clone());
         (input, cx)
+    }
+
+    #[gpui::test]
+    fn the_field_exposes_a_text_role_its_name_and_its_value(cx: &mut gpui::TestAppContext) {
+        let (input, cx) = painted_input("hello", "Search settings", cx);
+        let node = cx.update(|window, cx| {
+            input.update(cx, |input, cx| {
+                let element = input.render(window, cx).into_element();
+                assert_eq!(element.a11y_role(), Some(gpui::accesskit::Role::TextInput));
+                let mut node = gpui::accesskit::Node::new(gpui::accesskit::Role::TextInput);
+                element.write_a11y_info(&mut node);
+                node
+            })
+        });
+        assert_eq!(node.label(), Some("Search settings"));
+        assert_eq!(node.value(), Some("hello"));
+
+        input.update(cx, |input, cx| input.set_value("world", cx));
+        let (name, value) = cx.update(|window, cx| {
+            input.update(cx, |input, cx| {
+                let element = input.render(window, cx).into_element();
+                let mut node = gpui::accesskit::Node::new(gpui::accesskit::Role::TextInput);
+                element.write_a11y_info(&mut node);
+                (
+                    node.label().map(str::to_owned),
+                    node.value().map(str::to_owned),
+                )
+            })
+        });
+        assert_eq!(name.as_deref(), Some("Search settings"));
+        assert_eq!(value.as_deref(), Some("world"));
+    }
+
+    #[test]
+    fn an_example_placeholder_yields_to_an_explicit_name() {
+        let placeholder = SharedString::from("e.g. Dev Server");
+        let explicit = SharedString::from("Name");
+        assert_eq!(accessible_field_name(Some(&explicit), &placeholder), "Name");
+        assert_eq!(accessible_field_name(None, &placeholder), "e.g. Dev Server");
+        assert_eq!(
+            accessible_field_name(None, &SharedString::default()),
+            "Text field"
+        );
     }
 
     #[gpui::test]

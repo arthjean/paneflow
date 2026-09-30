@@ -88,7 +88,8 @@ pub(super) fn render_file_breadcrumbs(root: &str, path: &str, ui: UiColors) -> A
                         svg()
                             .path("icons/chevron-right.svg")
                             .size(px(12.))
-                            .flex_none(),
+                            .flex_none()
+                            .text_color(ui.muted),
                     )
                 })
                 .child(

@@ -81,8 +81,9 @@ pub(crate) fn lerp_color(from: Hsla, to: Hsla, delta: f32) -> Hsla {
 
 static REDUCE_MOTION: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
-pub(crate) fn set_reduce_motion(enabled: bool) {
+pub(crate) fn set_reduce_motion(enabled: bool, cx: &mut App) {
     REDUCE_MOTION.store(enabled, std::sync::atomic::Ordering::Relaxed);
+    cx.set_reduce_motion(enabled);
 }
 
 pub(crate) fn reduce_motion() -> bool {
@@ -429,7 +430,6 @@ pub(crate) fn dismiss_button(
     wash: Hsla,
 ) -> Stateful<Div> {
     let id: SharedString = id.into();
-    let label: SharedString = label.into();
     let group = SharedString::from(format!("{id}-hover"));
     squircle_skin(
         div()
@@ -444,9 +444,7 @@ pub(crate) fn dismiss_button(
         None,
         Some(wash),
     )
-    .role(gpui::accesskit::Role::Button)
-    .aria_label(label.clone())
-    .delayed_tooltip(text_tooltip(label))
+    .accessible_control(gpui::accesskit::Role::Button, label)
     .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
     .child(
         svg()
@@ -476,6 +474,52 @@ impl<E: StatefulInteractiveElement> TooltipDelayExt for E {
             .tooltip_show_delay(TOOLTIP_SHOW_DELAY)
     }
 }
+
+pub(crate) struct Press;
+
+pub(crate) trait AccessibleControlExt: StatefulInteractiveElement + Sized {
+    fn accessible_control(
+        self,
+        role: gpui::accesskit::Role,
+        label: impl Into<SharedString>,
+    ) -> Self {
+        let label: SharedString = label.into();
+        debug_assert!(
+            !label.trim().is_empty(),
+            "an interactive control needs an accessible label"
+        );
+        self.role(role)
+            .aria_label(label.clone())
+            .delayed_tooltip(text_tooltip(label))
+    }
+
+    fn on_pointer_press(self, handler: impl Fn(&Press, &mut Window, &mut App) + 'static) -> Self {
+        let handler = std::rc::Rc::new(handler);
+        let pointer = handler.clone();
+        self.on_mouse_down(MouseButton::Left, move |_, window, cx| {
+            cx.stop_propagation();
+            window.prevent_default();
+            pointer(&Press, window, cx);
+        })
+        .on_a11y_action(gpui::accesskit::Action::Click, move |_, window, cx| {
+            handler(&Press, window, cx)
+        })
+    }
+
+    fn on_press(self, handler: impl Fn(&Press, &mut Window, &mut App) + 'static) -> Self {
+        let handler = std::rc::Rc::new(handler);
+        let keyboard = handler.clone();
+        self.focusable()
+            .on_pointer_press(move |press, window, cx| handler(press, window, cx))
+            .on_click(move |event, window, cx| {
+                if event.is_keyboard() {
+                    keyboard(&Press, window, cx);
+                }
+            })
+    }
+}
+
+impl<E: StatefulInteractiveElement> AccessibleControlExt for E {}
 
 pub(crate) const TOOLTIP_RADIUS: Pixels = px(14.);
 
@@ -520,14 +564,18 @@ pub(crate) fn text_tooltip(
 pub(crate) fn filter_pill(
     id: impl Into<ElementId>,
     clear_id: impl Into<ElementId>,
+    label: impl Into<SharedString>,
     ui: UiColors,
     input: impl IntoElement,
     show_clear: bool,
     on_clear: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
 ) -> Stateful<Div> {
     let clear_id = clear_id.into();
+    let label: SharedString = label.into();
+    let clear_label = SharedString::from(format!("Clear {}", label.to_lowercase()));
     let mut field = div()
         .id(id.into())
+        .accessible_control(gpui::accesskit::Role::Search, label)
         .flex()
         .flex_row()
         .items_center()
@@ -565,6 +613,7 @@ pub(crate) fn filter_pill(
                 .rounded(px(3.))
                 .cursor(CursorStyle::Arrow)
                 .text_color(ui.muted)
+                .accessible_control(gpui::accesskit::Role::Button, clear_label)
                 .animated_hover_element(move |button, delta| {
                     let icon_color = lerp_color(ui.muted, ui.text, delta);
                     button
@@ -655,6 +704,7 @@ impl FilterFieldGlyph {
 pub(crate) fn filter_field(
     id: impl Into<ElementId>,
     clear_id: impl Into<ElementId>,
+    label: impl Into<SharedString>,
     ui: UiColors,
     style: FilterFieldStyle,
     focused: bool,
@@ -667,9 +717,12 @@ pub(crate) fn filter_field(
     let active_bg = crate::app::constants::sidebar_tab_active_background();
     let hover_bg = crate::app::constants::sidebar_tab_hover_background();
     let clear_id = clear_id.into();
+    let label: SharedString = label.into();
+    let clear_label = SharedString::from(format!("Clear {}", label.to_lowercase()));
     let id: ElementId = id.into();
     let base = div()
         .id(id.clone())
+        .accessible_control(gpui::accesskit::Role::Search, label)
         .min_w_0()
         .h(style.height)
         .px(style.padding)
@@ -727,7 +780,7 @@ pub(crate) fn filter_field(
                     .rounded_full()
                     .bg(ui.muted.opacity(0.2))
                     .cursor_pointer()
-                    .delayed_tooltip(text_tooltip("Clear filter"))
+                    .accessible_control(gpui::accesskit::Role::Button, clear_label)
                     .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                     .on_click(on_clear)
                     .child(
@@ -783,6 +836,12 @@ pub(crate) fn section_eyebrow(label: impl Into<SharedString>, ui: UiColors) -> D
         .child(label.into())
 }
 
+const EMPTY_STATE_PROGRESS_LABEL: &str = "Loading";
+
+fn empty_state_spins(animate: bool, reduce_motion: bool) -> bool {
+    animate && !reduce_motion
+}
+
 pub(crate) fn panel_empty_state(
     ui: UiColors,
     icon: Option<&'static str>,
@@ -805,7 +864,7 @@ pub(crate) fn panel_empty_state(
             .flex_none()
             .path(path)
             .text_color(with_alpha(ui.muted, 0.8));
-        col = col.child(if animate {
+        let glyph = if empty_state_spins(animate, reduce_motion()) {
             glyph
                 .with_animation(
                     "panel-empty-spin",
@@ -817,6 +876,16 @@ pub(crate) fn panel_empty_state(
                 .into_any_element()
         } else {
             glyph.into_any_element()
+        };
+        col = col.child(if animate {
+            div()
+                .id("panel-empty-progress")
+                .role(gpui::accesskit::Role::ProgressIndicator)
+                .aria_label(EMPTY_STATE_PROGRESS_LABEL)
+                .child(glyph)
+                .into_any_element()
+        } else {
+            glyph
         });
     }
     if let Some(title) = title {
@@ -897,6 +966,196 @@ mod tests {
                         .cached(StyleRefinement::default().w(px(100.)).h(px(20.))),
                 )
         }
+    }
+
+    fn labeled_control<E: Element>(element: &E) -> (gpui::accesskit::Role, Option<String>) {
+        let role = element
+            .a11y_role()
+            .expect("a shared interactive helper exposes a role");
+        let mut node = gpui::accesskit::Node::new(role);
+        element.write_a11y_info(&mut node);
+        (role, node.label().map(str::to_owned))
+    }
+
+    type HelperCheck = (
+        &'static str,
+        fn(&'static str) -> (gpui::accesskit::Role, Option<String>),
+    );
+
+    fn shared_interactive_helpers() -> Vec<HelperCheck> {
+        use crate::settings::components as c;
+        vec![
+            ("toggle_switch", |label| {
+                labeled_control(&c::toggle_switch(
+                    "t",
+                    label,
+                    true,
+                    crate::theme::ui_colors(),
+                ))
+            }),
+            ("select_trigger", |label| {
+                labeled_control(&c::select_trigger(
+                    "s",
+                    label,
+                    false,
+                    crate::theme::ui_colors(),
+                ))
+            }),
+            ("select_trigger_with_hover", |label| {
+                let ui = crate::theme::ui_colors();
+                labeled_control(&c::select_trigger_with_hover(
+                    "s", label, true, ui, ui.subtle,
+                ))
+            }),
+            ("icon_button", |label| {
+                labeled_control(&c::icon_button(
+                    "i",
+                    label,
+                    "icons/plus.svg",
+                    crate::theme::ui_colors(),
+                    true,
+                    true,
+                ))
+            }),
+            ("destructive_icon_button", |label| {
+                labeled_control(&c::destructive_icon_button(
+                    "d",
+                    label,
+                    "icons/trash.svg",
+                    crate::theme::ui_colors(),
+                    true,
+                ))
+            }),
+            ("save_icon_button", |label| {
+                labeled_control(&c::save_icon_button(
+                    "v",
+                    label,
+                    "icons/check.svg",
+                    crate::theme::ui_colors(),
+                    true,
+                ))
+            }),
+            ("secondary_button", |label| {
+                labeled_control(&c::secondary_button(
+                    "b",
+                    label,
+                    crate::theme::ui_colors(),
+                    |_, _, _| {},
+                ))
+            }),
+            ("solid_button", |label| {
+                labeled_control(&c::solid_button("o", label, gpui::black()))
+            }),
+            ("destructive_button", |label| {
+                labeled_control(&c::destructive_button("r", label))
+            }),
+            ("dismiss_button", |label| {
+                labeled_control(&dismiss_button(
+                    "x",
+                    label,
+                    ROW_RADIUS,
+                    gpui::black(),
+                    gpui::black(),
+                    gpui::white(),
+                ))
+            }),
+            ("filter_pill", |label| {
+                labeled_control(&filter_pill(
+                    "f",
+                    "fc",
+                    label,
+                    crate::theme::ui_colors(),
+                    div(),
+                    true,
+                    |_, _, _| {},
+                ))
+            }),
+            ("filter_field", |label| {
+                labeled_control(&filter_field(
+                    "ff",
+                    "ffc",
+                    label,
+                    crate::theme::ui_colors(),
+                    FilterFieldStyle::palette(),
+                    false,
+                    true,
+                    true,
+                    None,
+                    div(),
+                    |_, _, _| {},
+                ))
+            }),
+            ("render_window_button", |label| {
+                let _ = label;
+                labeled_control(&crate::window_chrome::csd::render_window_button(
+                    "right",
+                    gpui::WindowButton::Close,
+                    false,
+                    px(32.),
+                    |_, _| {},
+                ))
+            }),
+            ("render_diff_header_icon_button", |label| {
+                labeled_control(&crate::app::diff_dock::render_diff_header_icon_button(
+                    "h",
+                    label,
+                    "icons/close.svg",
+                    |_, _, _| {},
+                    gpui::black(),
+                ))
+            }),
+        ]
+    }
+
+    #[test]
+    fn every_shared_interactive_helper_exposes_its_label_as_role_and_name() {
+        for (name, build) in shared_interactive_helpers() {
+            let (role, label) = build("Do the thing");
+            assert_ne!(role, gpui::accesskit::Role::GenericContainer, "{name}");
+            let expected = if name == "render_window_button" {
+                "Close"
+            } else {
+                "Do the thing"
+            };
+            assert_eq!(label.as_deref(), Some(expected), "{name}");
+        }
+    }
+
+    #[test]
+    fn no_shared_interactive_helper_can_be_built_without_a_label() {
+        let previous = std::panic::take_hook();
+        std::panic::set_hook(Box::new(|_| {}));
+        let unlabeled: Vec<&str> = shared_interactive_helpers()
+            .into_iter()
+            .filter(|(name, _)| *name != "render_window_button")
+            .filter(|(_, build)| {
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| build("  "))).is_ok()
+            })
+            .map(|(name, _)| name)
+            .collect();
+        std::panic::set_hook(previous);
+        assert!(
+            unlabeled.is_empty(),
+            "these helpers build without an accessible label: {unlabeled:?}"
+        );
+        for button in [
+            gpui::WindowButton::Minimize,
+            gpui::WindowButton::Maximize,
+            gpui::WindowButton::Close,
+        ] {
+            for maximized in [false, true] {
+                let label = crate::window_chrome::csd::window_button_label(button, maximized);
+                assert!(!label.trim().is_empty());
+            }
+        }
+    }
+
+    #[test]
+    fn the_empty_state_spinner_is_static_under_reduce_motion() {
+        assert!(empty_state_spins(true, false));
+        assert!(!empty_state_spins(true, true));
+        assert!(!empty_state_spins(false, false));
+        assert!(!EMPTY_STATE_PROGRESS_LABEL.is_empty());
     }
 
     #[gpui::test]

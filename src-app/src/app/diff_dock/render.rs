@@ -9,7 +9,7 @@ use super::new_tab_menu::render_diff_new_tab_menu;
 use super::options_menu::render_diff_options_button;
 use crate::PaneFlowApp;
 use crate::settings::components::with_alpha;
-use crate::ui_primitives::{AnimatedHoverExt, ROW_RADIUS, squircle_skin};
+use crate::ui_primitives::{AccessibleControlExt, AnimatedHoverExt, ROW_RADIUS, squircle_skin};
 
 pub(super) fn render_diff_resize_handle(
     width: f32,
@@ -104,6 +104,7 @@ pub(super) fn render_diff_tab_strip(
         .child(div().flex_1().min_w_0())
         .child(render_diff_header_icon_button(
             "diff-dock-agent-sessions",
+            "Agent sessions",
             "icons/sessions.svg",
             cx.listener(|this, _: &ClickEvent, window, cx| {
                 if let Some(pane) = this.focused_or_first_pane(window, cx) {
@@ -117,6 +118,11 @@ pub(super) fn render_diff_tab_strip(
         .child(render_diff_header_icon_button(
             "diff-dock-maximize",
             if maximized {
+                "Restore panel"
+            } else {
+                "Maximize panel"
+            },
+            if maximized {
                 "icons/minimize.svg"
             } else {
                 "icons/maximize.svg"
@@ -128,6 +134,7 @@ pub(super) fn render_diff_tab_strip(
         ))
         .child(render_diff_header_icon_button(
             "diff-dock-close",
+            "Close panel",
             "icons/layout-sidebar-right-collapse.svg",
             cx.listener(|this, _: &ClickEvent, _w, cx| {
                 this.dismiss_diff_dock_panel(cx);
@@ -368,12 +375,13 @@ pub(super) fn render_diff_file_header(
         .into_any_element()
 }
 
-pub(super) fn render_diff_header_icon_button(
+pub(crate) fn render_diff_header_icon_button(
     id: &'static str,
+    label: &'static str,
     icon: &'static str,
     on_click: impl Fn(&ClickEvent, &mut Window, &mut gpui::App) + 'static,
     color: Hsla,
-) -> AnyElement {
+) -> gpui::Stateful<gpui::Div> {
     squircle_skin(
         div()
             .id(id)
@@ -387,10 +395,10 @@ pub(super) fn render_diff_header_icon_button(
         None,
         Some(crate::app::constants::sidebar_tab_hover_background()),
     )
+    .accessible_control(gpui::accesskit::Role::Button, label)
     .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
     .on_click(on_click)
     .child(svg().size(px(14.)).flex_none().path(icon).text_color(color))
-    .into_any_element()
 }
 
 pub(super) fn render_diff_files_toolbar(

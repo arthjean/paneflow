@@ -7,10 +7,10 @@ use paneflow_mcp_install::{InstallKind, OverallState, StatusKind};
 
 use crate::PaneFlowApp;
 use crate::settings::components::{
-    SETTINGS_CONTROL_CORNER_RADIUS, section_header, setting_text, with_alpha,
+    SETTINGS_CONTROL_CORNER_RADIUS, accent_button_colors, section_header, setting_text,
 };
 use crate::settings::search::{self, Block, SearchCard};
-use crate::ui_primitives::AnimatedHoverExt;
+use crate::ui_primitives::{AccessibleControlExt, AnimatedHoverExt};
 
 impl PaneFlowApp {
     pub(crate) fn render_mcp_servers_content(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -33,14 +33,15 @@ impl PaneFlowApp {
             }
         };
 
-        let button_bg = if enabled { ui.accent } else { ui.subtle };
-        let button_hover_bg = if enabled {
-            with_alpha(ui.accent, 0.85)
+        let accent_button = accent_button_colors(ui.accent);
+        let (button_bg, button_hover_bg, button_ink) = if enabled {
+            (accent_button.rest, accent_button.hover, accent_button.ink)
         } else {
-            button_bg
+            (ui.subtle, ui.subtle, ui.muted)
         };
         let button = div()
             .id("mcp-install-btn")
+            .accessible_control(gpui::accesskit::Role::Button, label.clone())
             .flex_shrink_0()
             .px(px(12.))
             .py(px(6.))
@@ -48,7 +49,7 @@ impl PaneFlowApp {
             .text_size(px(12.))
             .font_weight(FontWeight::MEDIUM)
             .bg(button_bg)
-            .text_color(if enabled { gpui::white() } else { ui.muted })
+            .text_color(button_ink)
             .animated_hover_bg(button_bg, button_hover_bg)
             .child(label)
             .when(enabled, |button| {

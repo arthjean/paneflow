@@ -386,6 +386,14 @@ fn list_github_repos() -> Result<Vec<GitHubRepo>, String> {
     Ok(parse_github_repos(&output.stdout))
 }
 
+fn clone_sweep_rest_left() -> f32 {
+    (1.0 - CLONE_SWEEP_WIDTH) / 2.0
+}
+
+fn clone_sweep_left(delta: f32) -> f32 {
+    -CLONE_SWEEP_WIDTH + (1.0 + CLONE_SWEEP_WIDTH) * delta
+}
+
 fn clone_progress_fill() -> gpui::Hsla {
     gpui::rgb(CLONE_PROGRESS_FILL).into()
 }
@@ -412,25 +420,30 @@ fn render_clone_progress(
             .rounded_full()
             .bg(clone_progress_fill())
             .into_any_element(),
-        None => div()
-            .absolute()
-            .top_0()
-            .bottom_0()
-            .w(relative(CLONE_SWEEP_WIDTH))
-            .rounded_full()
-            .bg(clone_progress_fill())
-            .with_animation(
-                "clone-progress-sweep",
-                Animation::new(Duration::from_millis(CLONE_SWEEP_MS))
-                    .repeat()
-                    .with_easing(ease_in_out),
-                |bar, delta| {
-                    bar.left(relative(
-                        -CLONE_SWEEP_WIDTH + (1.0 + CLONE_SWEEP_WIDTH) * delta,
-                    ))
-                },
-            )
-            .into_any_element(),
+        None => {
+            let sweep = div()
+                .absolute()
+                .top_0()
+                .bottom_0()
+                .w(relative(CLONE_SWEEP_WIDTH))
+                .rounded_full()
+                .bg(clone_progress_fill());
+            if crate::ui_primitives::reduce_motion() {
+                sweep
+                    .left(relative(clone_sweep_rest_left()))
+                    .into_any_element()
+            } else {
+                sweep
+                    .with_animation(
+                        "clone-progress-sweep",
+                        Animation::new(Duration::from_millis(CLONE_SWEEP_MS))
+                            .repeat()
+                            .with_easing(ease_in_out),
+                        |bar, delta| bar.left(relative(clone_sweep_left(delta))),
+                    )
+                    .into_any_element()
+            }
+        }
     };
 
     div()
@@ -927,6 +940,14 @@ impl PaneFlowApp {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_reduced_motion_sweep_is_a_fixed_visible_segment() {
+        assert!(clone_sweep_left(0.0) + CLONE_SWEEP_WIDTH <= 0.0);
+        let rest = clone_sweep_rest_left();
+        assert!(rest >= 0.0);
+        assert!(rest + CLONE_SWEEP_WIDTH <= 1.0);
+    }
 
     #[test]
     fn repo_name_reads_an_ssh_remote() {

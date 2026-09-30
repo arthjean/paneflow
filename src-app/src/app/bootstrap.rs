@@ -162,8 +162,10 @@ impl PaneFlowApp {
             cx.new(|cx| crate::widgets::text_input::TextInput::new("", "Pane cwd", cx));
         cx.observe(&workspace_pane_cwd_input, |_, _, cx| cx.notify())
             .detach();
-        let workspace_pane_command_input =
-            cx.new(|cx| crate::widgets::text_input::TextInput::new("", "clear && bun dev", cx));
+        let workspace_pane_command_input = cx.new(|cx| {
+            crate::widgets::text_input::TextInput::new("", "clear && bun dev", cx)
+                .with_accessible_name("Pane command")
+        });
         cx.observe(&workspace_pane_command_input, |_, _, cx| cx.notify())
             .detach();
         let workspace_pane_prompt_input =
@@ -171,12 +173,16 @@ impl PaneFlowApp {
         cx.observe(&workspace_pane_prompt_input, |_, _, cx| cx.notify())
             .detach();
 
-        let agent_profile_name_input =
-            cx.new(|cx| crate::widgets::text_input::TextInput::new("", "Claude perso", cx));
+        let agent_profile_name_input = cx.new(|cx| {
+            crate::widgets::text_input::TextInput::new("", "Claude perso", cx)
+                .with_accessible_name("Profile name")
+        });
         cx.observe(&agent_profile_name_input, |_, _, cx| cx.notify())
             .detach();
-        let agent_profile_args_input =
-            cx.new(|cx| crate::widgets::text_input::TextInput::new("", "--model opus", cx));
+        let agent_profile_args_input = cx.new(|cx| {
+            crate::widgets::text_input::TextInput::new("", "--model opus", cx)
+                .with_accessible_name("Extra arguments")
+        });
         cx.observe(&agent_profile_args_input, |_, _, cx| cx.notify())
             .detach();
 
@@ -449,7 +455,7 @@ impl PaneFlowApp {
             app.emit_session_corrupted(&info);
         }
 
-        crate::ui_primitives::set_reduce_motion(app.cached_config.reduce_motion_enabled());
+        crate::ui_primitives::set_reduce_motion(app.cached_config.reduce_motion_enabled(), cx);
         crate::app::diff_dock::code::controls::set_editor_display(
             crate::app::diff_dock::code::controls::EditorDisplay::from_config(
                 &app.cached_config.editor,

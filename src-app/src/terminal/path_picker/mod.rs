@@ -60,7 +60,7 @@ impl PathPicker {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let input = cx.new(|cx| TextInput::new("", "", cx));
+        let input = cx.new(|cx| TextInput::new("", "", cx).with_accessible_name("Filter paths"));
         let focus = input.read(cx).focus_handle.clone();
         let subscriptions = [
             cx.observe(&input, |picker, input, cx| {

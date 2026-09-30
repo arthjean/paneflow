@@ -1,4 +1,5 @@
 use super::*;
+use crate::ui_primitives::AccessibleControlExt;
 
 impl PaneFlowApp {
     pub(super) fn render_workspace_template_editor(
@@ -108,20 +109,17 @@ impl PaneFlowApp {
         let is_open = self.workspace_template_dropdown == Some(WorkspaceTemplateDropdown::Layout);
         let pane_count = template_surfaces(workspace).len().max(1);
 
-        let mut trigger = select_trigger("workspace-layout-trigger", ui)
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(move |this, _, window, cx| {
-                    cx.stop_propagation();
-                    this.workspace_template_dropdown = if is_open {
-                        None
-                    } else {
-                        Some(WorkspaceTemplateDropdown::Layout)
-                    };
-                    this.settings_focus.focus(window, cx);
-                    cx.notify();
-                }),
-            )
+        let mut trigger = select_trigger("workspace-layout-trigger", "Layout", is_open, ui)
+            .on_press(cx.listener(move |this, _, window, cx| {
+                cx.stop_propagation();
+                this.workspace_template_dropdown = if is_open {
+                    None
+                } else {
+                    Some(WorkspaceTemplateDropdown::Layout)
+                };
+                this.settings_focus.focus(window, cx);
+                cx.notify();
+            }))
             .child(layout_preview(preset, pane_count, ui))
             .child(
                 div()

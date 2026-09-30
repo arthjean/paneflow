@@ -66,7 +66,7 @@ pub(super) const DEFAULTS: &[DefaultBinding] = &[
         context: None,
     },
     DefaultBinding {
-        key: "secondary-tab",
+        key: "ctrl-tab",
         action_name: "next_workspace",
         context: None,
     },
@@ -417,8 +417,13 @@ pub(super) const DEFAULTS: &[DefaultBinding] = &[
     },
 ];
 
-#[cfg(target_os = "macos")]
-pub(super) const PLATFORM_DEFAULTS: &[DefaultBinding] = &[
+pub(super) const PLATFORM_DEFAULTS: &[DefaultBinding] = if cfg!(target_os = "macos") {
+    MACOS_PLATFORM_DEFAULTS
+} else {
+    OTHER_PLATFORM_DEFAULTS
+};
+
+const MACOS_PLATFORM_DEFAULTS: &[DefaultBinding] = &[
     DefaultBinding {
         key: "cmd-c",
         action_name: "terminal_copy",
@@ -446,8 +451,7 @@ pub(super) const PLATFORM_DEFAULTS: &[DefaultBinding] = &[
     },
 ];
 
-#[cfg(not(target_os = "macos"))]
-pub(super) const PLATFORM_DEFAULTS: &[DefaultBinding] = &[DefaultBinding {
+const OTHER_PLATFORM_DEFAULTS: &[DefaultBinding] = &[DefaultBinding {
     key: "ctrl-v",
     action_name: "terminal_paste",
     context: Some("Terminal"),
@@ -495,7 +499,6 @@ mod tests {
             "close_pane",
             "new_workspace",
             "close_workspace",
-            "next_workspace",
             "select_workspace_1",
             "select_workspace_2",
             "select_workspace_3",
@@ -517,6 +520,51 @@ mod tests {
                 entry.key,
             );
         }
+    }
+
+    fn resolve_for_macos(key: &str) -> (Vec<&str>, &str) {
+        let (modifiers, key) = match key.strip_suffix("--") {
+            Some(modifiers) => (modifiers, "-"),
+            None => key.rsplit_once('-').unwrap_or(("", key)),
+        };
+        let mut modifiers: Vec<&str> = modifiers
+            .split('-')
+            .filter(|part| !part.is_empty())
+            .map(|part| if part == "secondary" { "cmd" } else { part })
+            .collect();
+        modifiers.sort_unstable();
+        (modifiers, key)
+    }
+
+    #[test]
+    fn no_macos_default_uses_cmd_tab_or_cmd_space() {
+        for binding in DEFAULTS.iter().chain(MACOS_PLATFORM_DEFAULTS.iter()) {
+            let (modifiers, key) = resolve_for_macos(binding.key);
+            assert!(
+                !(key == "tab" && modifiers.contains(&"cmd")),
+                "`{}` ({}) resolves to Cmd+Tab on macOS, which the app switcher swallows",
+                binding.key,
+                binding.action_name,
+            );
+            assert!(
+                !(key == "space" && modifiers == ["cmd"]),
+                "`{}` ({}) resolves to Cmd+Space on macOS, which Spotlight swallows",
+                binding.key,
+                binding.action_name,
+            );
+        }
+    }
+
+    #[test]
+    fn next_workspace_is_ctrl_tab_on_every_platform() {
+        let next = DEFAULTS
+            .iter()
+            .chain(MACOS_PLATFORM_DEFAULTS.iter())
+            .chain(OTHER_PLATFORM_DEFAULTS.iter())
+            .filter(|d| d.action_name == "next_workspace")
+            .map(|d| d.key)
+            .collect::<Vec<_>>();
+        assert_eq!(next, ["ctrl-tab"]);
     }
 
     #[test]

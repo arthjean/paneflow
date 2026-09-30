@@ -18,6 +18,7 @@ impl FilesSidebar {
                 crate::ui_primitives::filter_pill(
                     "files-sidebar-filter",
                     "files-sidebar-filter-clear",
+                    "Filter files",
                     ui,
                     self.filter_input.clone(),
                     !is_empty,

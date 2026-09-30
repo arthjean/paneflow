@@ -6,7 +6,7 @@ use gpui::{
 use paneflow_config::schema::ButtonCommand;
 
 use crate::PaneFlowApp;
-use crate::ui_primitives::{AnimatedHoverExt, lerp_color};
+use crate::ui_primitives::{AccessibleControlExt, AnimatedHoverExt, lerp_color};
 use crate::widgets::scrollbar;
 use crate::widgets::text_input::TextInput;
 
@@ -112,8 +112,11 @@ impl PaneFlowApp {
     }
 
     fn begin_new_button(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let name_input = cx.new(|cx| TextInput::new("", "e.g. Dev Server", cx));
-        let command_input = cx.new(|cx| TextInput::new("", "e.g. clear && bun dev", cx));
+        let name_input =
+            cx.new(|cx| TextInput::new("", "e.g. Dev Server", cx).with_accessible_name("Name"));
+        let command_input = cx.new(|cx| {
+            TextInput::new("", "e.g. clear && bun dev", cx).with_accessible_name("Command")
+        });
         let name_focus = name_input.read(cx).focus_handle.clone();
         if let Some(modal) = self.custom_buttons_modal.as_mut() {
             modal.view = ModalView::Form {
@@ -241,11 +244,12 @@ impl PaneFlowApp {
         };
 
         match &modal.view {
-            ModalView::List => {
-                if key == "escape" {
-                    self.close_custom_buttons_modal(cx);
-                }
-            }
+            ModalView::List => match key {
+                "escape" => self.close_custom_buttons_modal(cx),
+                "tab" if event.keystroke.modifiers.shift => window.focus_prev(cx),
+                "tab" => window.focus_next(cx),
+                _ => {}
+            },
             ModalView::Form {
                 name_input,
                 command_input,
@@ -504,9 +508,12 @@ impl PaneFlowApp {
                 let del_id = btn.id.clone();
                 let icon_path = SharedString::from(btn.icon.clone());
                 let name = btn.name.clone();
+                let actions_id = SharedString::from(format!("cbtn-actions-{btn_id}"));
                 let cmd_preview = btn.command.clone();
                 let edit_button = div()
                     .id(SharedString::from(format!("cbtn-edit-{edit_id}")))
+                    .tab_index(0)
+                    .accessible_control(gpui::accesskit::Role::Button, format!("Edit {name}"))
                     .flex()
                     .items_center()
                     .justify_center()
@@ -529,6 +536,8 @@ impl PaneFlowApp {
                     );
                 let delete_button = div()
                     .id(SharedString::from(format!("cbtn-del-{del_id}")))
+                    .tab_index(0)
+                    .accessible_control(gpui::accesskit::Role::Button, format!("Delete {name}"))
                     .flex()
                     .items_center()
                     .justify_center()
@@ -605,6 +614,8 @@ impl PaneFlowApp {
                             row.style()
                                 .bg(lerp_color(ui.subtle.opacity(0.0), ui.subtle, delta));
                             let actions = div()
+                                .id(actions_id)
+                                .focusable()
                                 .absolute()
                                 .top_0()
                                 .left_0()
@@ -612,7 +623,7 @@ impl PaneFlowApp {
                                 .flex_row()
                                 .gap(px(10.))
                                 .opacity(delta)
-                                .when(delta <= f32::EPSILON, |actions| actions.hidden())
+                                .in_focus(|actions| actions.opacity(1.))
                                 .child(edit_button)
                                 .child(delete_button);
                             let actions_slot = div()
@@ -630,6 +641,8 @@ impl PaneFlowApp {
 
         let new_row = div()
             .id("cbtn-new")
+            .tab_index(0)
+            .accessible_control(gpui::accesskit::Role::Button, "New button")
             .mt(px(4.))
             .px(px(8.))
             .py(px(8.))

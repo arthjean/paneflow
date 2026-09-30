@@ -8,7 +8,7 @@ use gpui::{
 use crate::app::constants::{
     TITLE_BAR_CONTROL_SIZE, TITLE_BAR_CONTROL_SPACING, TITLE_BAR_EDGE_INSET,
 };
-use crate::ui_primitives::{AnimatedHoverExt, lerp_color};
+use crate::ui_primitives::{AccessibleControlExt, AnimatedHoverExt, lerp_color};
 
 pub fn default_button_layout() -> WindowButtonLayout {
     WindowButtonLayout {
@@ -259,6 +259,7 @@ pub(crate) fn render_button_group(
         })
         .map(|button| {
             render_window_button(side, button, is_maximized, bar_height, on_close.clone())
+                .into_any_element()
         })
         .collect();
 
@@ -322,7 +323,7 @@ pub(crate) fn render_window_button(
     is_maximized: bool,
     bar_height: Pixels,
     on_close: impl Fn(&mut Window, &mut App) + 'static,
-) -> AnyElement {
+) -> crate::ui_primitives::AnimatedHover {
     let id = match button {
         WindowButton::Minimize => "wc-minimize",
         WindowButton::Maximize => "wc-maximize",
@@ -357,6 +358,10 @@ pub(crate) fn render_window_button(
 
     let btn = div()
         .id(element_id)
+        .accessible_control(
+            gpui::accesskit::Role::Button,
+            window_button_label(button, is_maximized),
+        )
         .window_control_area(control_area)
         .flex()
         .items_center()
@@ -407,7 +412,15 @@ pub(crate) fn render_window_button(
             button_element.extend([icon]);
         })
         .active(move |style| style.bg(pressed_bg).text_color(hover_text))
-        .into_any_element()
+}
+
+pub(crate) fn window_button_label(button: WindowButton, is_maximized: bool) -> &'static str {
+    match (button, is_maximized) {
+        (WindowButton::Minimize, _) => "Minimize",
+        (WindowButton::Maximize, true) => "Restore",
+        (WindowButton::Maximize, false) => "Maximize",
+        (WindowButton::Close, _) => "Close",
+    }
 }
 
 #[cfg(test)]

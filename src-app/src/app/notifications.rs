@@ -309,35 +309,43 @@ impl PaneFlowApp {
 
         let hold_ms = toast.hold_ms;
         let click_url = toast.click_url.clone();
-        deferred(
-            div()
-                .id(SharedString::from(format!("copy-toast-{}", toast.id)))
-                .absolute()
-                .right(px(18.))
-                .bottom(px(18.))
-                .max_w(max_w)
-                .min_w(px(220.))
-                .rounded(px(8.))
-                .bg(ui.subtle)
-                .text_sm()
-                .text_color(ui.text)
-                .overflow_hidden()
-                .when_some(click_url, |el, url| {
-                    el.cursor_pointer()
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.open_external_url(url.clone(), cx);
-                        }))
-                })
-                .child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .pl(px(12.))
-                        .pr(px(14.))
-                        .py(px(11.))
-                        .child(header)
-                        .children(action_row),
-                )
+        let static_motion = toast_motion_is_static(cx);
+        let toast_el = div()
+            .id(SharedString::from(format!("copy-toast-{}", toast.id)))
+            .absolute()
+            .right(px(18.))
+            .bottom(px(18.))
+            .max_w(max_w)
+            .min_w(px(220.))
+            .rounded(px(8.))
+            .bg(ui.subtle)
+            .text_sm()
+            .text_color(ui.text)
+            .overflow_hidden()
+            .when_some(click_url, |el, url| {
+                el.cursor_pointer()
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.open_external_url(url.clone(), cx);
+                    }))
+            })
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .pl(px(12.))
+                    .pr(px(14.))
+                    .py(px(11.))
+                    .child(header)
+                    .children(action_row),
+            );
+        let toast_el = if static_motion {
+            let (opacity, lift) = toast_frame(TOAST_HOLD_STAGE, 0.0);
+            toast_el
+                .opacity(opacity)
+                .bottom(px(20.0 + lift))
+                .into_any_element()
+        } else {
+            toast_el
                 .with_animations(
                     SharedString::from(format!("copy-toast-anim-{}", toast.id)),
                     vec![
@@ -347,21 +355,14 @@ impl PaneFlowApp {
                         Animation::new(std::time::Duration::from_millis(TOAST_EXIT_MS))
                             .with_easing(ease_in_out),
                     ],
-                    |toast_el, stage, delta| match stage {
-                        0 => {
-                            let lift = 8.0 * (1.0 - delta);
-                            toast_el.opacity(delta).bottom(px(20.0 + lift))
-                        }
-                        1 => toast_el.opacity(1.0).bottom(px(20.0)),
-                        _ => {
-                            let drop = 8.0 * delta;
-                            toast_el.opacity(1.0 - delta).bottom(px(20.0 + drop))
-                        }
+                    |toast_el, stage, delta| {
+                        let (opacity, lift) = toast_frame(stage, delta);
+                        toast_el.opacity(opacity).bottom(px(20.0 + lift))
                     },
-                ),
-        )
-        .priority(2)
-        .into_any_element()
+                )
+                .into_any_element()
+        };
+        deferred(toast_el).priority(2).into_any_element()
     }
 }
 
@@ -499,6 +500,20 @@ impl PaneFlowApp {
     }
 }
 
+const TOAST_HOLD_STAGE: usize = 1;
+
+fn toast_motion_is_static(cx: &gpui::App) -> bool {
+    cx.reduce_motion() || crate::ui_primitives::reduce_motion()
+}
+
+fn toast_frame(stage: usize, delta: f32) -> (f32, f32) {
+    match stage {
+        0 => (delta, 8.0 * (1.0 - delta)),
+        TOAST_HOLD_STAGE => (1.0, 0.0),
+        _ => (1.0 - delta, 8.0 * delta),
+    }
+}
+
 fn toast_message_reads_like_error(message: &str) -> bool {
     let message = message.to_lowercase();
     [
@@ -595,6 +610,20 @@ mod tests {
             messages(&queue),
             vec!["toast 3", "toast 4", "toast 5", "toast 6", "toast 7"]
         );
+    }
+
+    #[gpui::test]
+    fn a_toast_stays_visible_when_reduce_motion_reaches_gpui(cx: &mut gpui::TestAppContext) {
+        let (last_opacity, _) = super::toast_frame(2, 1.0);
+        assert_eq!(
+            last_opacity, 0.0,
+            "GPUI renders the final stage of a staged animation under reduce motion"
+        );
+        assert!(!cx.update(|cx| super::toast_motion_is_static(cx)));
+        cx.update(|cx| cx.set_reduce_motion(true));
+        assert!(cx.update(|cx| super::toast_motion_is_static(cx)));
+        let (opacity, lift) = super::toast_frame(super::TOAST_HOLD_STAGE, 0.0);
+        assert_eq!((opacity, lift), (1.0, 0.0));
     }
 
     #[test]

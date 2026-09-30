@@ -329,6 +329,7 @@ impl PaneFlowApp {
         crate::ui_primitives::filter_field(
             "settings-search",
             "settings-search-clear",
+            "Search settings",
             ui,
             crate::ui_primitives::FilterFieldStyle::sidebar(
                 crate::ui_primitives::FilterFieldGlyph::Search,

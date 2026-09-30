@@ -46,22 +46,29 @@ pub(crate) fn install_macos_menu_action_fallbacks(cx: &mut gpui::App) {
         TerminalPaste, TerminalSelectAll,
     };
 
+    fn paneflow_menu_window(cx: &gpui::App) -> Option<gpui::WindowHandle<PaneFlowApp>> {
+        menu_target_window(cx.active_window(), cx.windows(), |window| {
+            window.downcast::<PaneFlowApp>()
+        })
+    }
+
     fn with_active_paneflow_window(
         cx: &mut gpui::App,
         f: impl FnOnce(&mut PaneFlowApp, &mut gpui::Window, &mut Context<PaneFlowApp>),
     ) {
-        let Some(window) = cx.active_window() else {
-            return;
-        };
-        let Some(window) = window.downcast::<PaneFlowApp>() else {
+        let Some(window) = paneflow_menu_window(cx) else {
             return;
         };
         if let Err(err) = window.update(cx, f) {
-            log::debug!("macOS menu fallback: active PaneFlow window unavailable: {err}");
+            log::debug!("macOS menu fallback: PaneFlow window unavailable: {err}");
         }
     }
 
     cx.on_action(|_: &Quit, cx| {
+        if paneflow_menu_window(cx).is_none() {
+            cx.quit();
+            return;
+        }
         with_active_paneflow_window(cx, |app, _window, cx| {
             app.request_quit(cx);
         });
@@ -117,4 +124,42 @@ pub(crate) fn install_macos_menu_action_fallbacks(cx: &mut gpui::App) {
             app.request_update_check(cx);
         });
     });
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn menu_target_window<W, T>(
+    active: Option<W>,
+    windows: impl IntoIterator<Item = W>,
+    downcast: impl Fn(W) -> Option<T>,
+) -> Option<T> {
+    active
+        .and_then(&downcast)
+        .or_else(|| windows.into_iter().find_map(downcast))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::menu_target_window;
+
+    fn paneflow_only(window: u32) -> Option<u32> {
+        (window % 2 == 0).then_some(window)
+    }
+
+    #[test]
+    fn menu_actions_use_the_active_paneflow_window() {
+        assert_eq!(
+            menu_target_window(Some(4), [2, 4, 6], paneflow_only),
+            Some(4)
+        );
+    }
+
+    #[test]
+    fn a_minimized_window_falls_back_to_the_first_paneflow_window() {
+        assert_eq!(
+            menu_target_window(None, [1, 3, 6, 8], paneflow_only),
+            Some(6)
+        );
+        assert_eq!(menu_target_window(Some(5), [1, 8], paneflow_only), Some(8));
+        assert_eq!(menu_target_window(None, [1, 3], paneflow_only), None);
+    }
 }

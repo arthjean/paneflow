@@ -3,8 +3,8 @@ mod editor;
 use crate::ui_primitives::TooltipDelayExt;
 use gpui::{
     AnyElement, ClickEvent, Context, CursorStyle, ElementId, FontWeight, InteractiveElement,
-    IntoElement, MouseButton, ParentElement, PathPromptOptions, SharedString, Styled, div,
-    prelude::*, px, rgb, svg,
+    IntoElement, ParentElement, PathPromptOptions, SharedString, Styled, div, prelude::*, px, rgb,
+    svg,
 };
 use paneflow_config::schema::{
     CommandDefinition, CommandTarget, SurfaceDefinition, WorkspaceDefinition,

@@ -6,7 +6,7 @@ use paneflow_config::schema::{WORKTREES_KEEP_LIMIT_MAX, WorktreesConfig};
 
 use crate::PaneFlowApp;
 use crate::settings::components::{
-    hairline, secondary_button, section_header, setting_card, toggle_pill, toggle_row_with,
+    hairline, secondary_button, section_header, setting_card, toggle_row_with, toggle_switch,
     with_alpha,
 };
 use crate::settings::search::{self, Block, SearchCard};
@@ -75,15 +75,17 @@ impl PaneFlowApp {
             search::AUTO_REMOVE_WORKTREES.description,
             None,
             ui,
-            div()
-                .id("worktrees-auto-remove")
-                .flex_shrink_0()
-                .on_click(cx.listener(move |this, _: &ClickEvent, _window, cx| {
-                    let mut next = this.cached_config.worktrees.clone();
-                    next.auto_remove = Some(!auto_remove);
-                    this.persist_worktrees(next, cx);
-                }))
-                .child(toggle_pill(auto_remove, ui)),
+            toggle_switch(
+                "worktrees-auto-remove",
+                search::AUTO_REMOVE_WORKTREES.title,
+                auto_remove,
+                ui,
+            )
+            .on_click(cx.listener(move |this, _: &ClickEvent, _window, cx| {
+                let mut next = this.cached_config.worktrees.clone();
+                next.auto_remove = Some(!auto_remove);
+                this.persist_worktrees(next, cx);
+            })),
         );
 
         let limit_control = div()

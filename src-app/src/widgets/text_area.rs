@@ -110,6 +110,7 @@ pub struct TextArea {
     drag_anchor: Option<usize>,
     last_click: Option<(Instant, usize, u8)>,
     placeholder: SharedString,
+    accessible_name: Option<SharedString>,
     on_submit: Option<SubmitFn>,
     on_escape: Option<EscapeFn>,
     on_submit_immediate: Option<SubmitImmediateFn>,
@@ -133,12 +134,18 @@ impl TextArea {
             drag_anchor: None,
             last_click: None,
             placeholder: placeholder.into(),
+            accessible_name: None,
             on_submit: None,
             on_escape: None,
             on_submit_immediate: None,
             last_bounds: None,
             last_layout: None,
         }
+    }
+
+    pub fn with_accessible_name(mut self, name: impl Into<SharedString>) -> Self {
+        self.accessible_name = Some(name.into());
+        self
     }
 
     pub(crate) fn place_cursor_at(&mut self, offset: usize, cx: &mut Context<Self>) {
@@ -613,7 +620,14 @@ impl Render for TextArea {
         };
 
         div()
-            .id("paneflow-text-area")
+            .id(("paneflow-text-area", cx.entity_id().as_u64()))
+            .role(gpui::accesskit::Role::MultilineTextInput)
+            .aria_label(super::text_input::accessible_field_name(
+                self.accessible_name.as_ref(),
+                &self.placeholder,
+            ))
+            .aria_value(SharedString::from(self.content.clone()))
+            .aria_placeholder(self.placeholder.clone())
             .key_context("PaneflowTextArea")
             .track_focus(&self.focus_handle)
             .on_action(cx.listener(Self::backspace))
@@ -1283,6 +1297,44 @@ mod tests {
                 .w(px(700.0))
                 .child(self.area.clone())
         }
+    }
+
+    #[gpui::test]
+    fn every_text_area_has_its_own_id_and_exposes_its_name_and_value(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let (host, cx) = cx.add_window_view(|_window, cx| Host {
+            area: cx.new(|cx| {
+                let mut area = TextArea::new("Write a prompt", cx).with_accessible_name("Prompt");
+                area.content = "fix the build".to_owned();
+                area
+            }),
+        });
+        let first = host.read_with(cx, |host, _| host.area.clone());
+        let second = cx.update(|_, cx| cx.new(|cx| TextArea::new("Notes", cx)));
+        let inspect = |area: &gpui::Entity<TextArea>, cx: &mut gpui::VisualTestContext| {
+            cx.update(|window, cx| {
+                area.update(cx, |area, cx| {
+                    let element = area.render(window, cx).into_element();
+                    let mut node =
+                        gpui::accesskit::Node::new(gpui::accesskit::Role::MultilineTextInput);
+                    element.write_a11y_info(&mut node);
+                    (
+                        element.id(),
+                        element.a11y_role(),
+                        node.label().map(str::to_owned),
+                        node.value().map(str::to_owned),
+                    )
+                })
+            })
+        };
+        let (first_id, first_role, first_name, first_value) = inspect(&first, cx);
+        let (second_id, _, second_name, _) = inspect(&second, cx);
+        assert_ne!(first_id, second_id);
+        assert_eq!(first_role, Some(gpui::accesskit::Role::MultilineTextInput));
+        assert_eq!(first_name.as_deref(), Some("Prompt"));
+        assert_eq!(first_value.as_deref(), Some("fix the build"));
+        assert_eq!(second_name.as_deref(), Some("Notes"));
     }
 
     #[gpui::test]

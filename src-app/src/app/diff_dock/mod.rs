@@ -6,6 +6,8 @@ mod model;
 mod new_tab_menu;
 mod options_menu;
 mod render;
+#[cfg(test)]
+pub(crate) use render::render_diff_header_icon_button;
 mod revert;
 mod surface_picker;
 mod tabs;

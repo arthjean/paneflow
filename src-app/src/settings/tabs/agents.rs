@@ -2,8 +2,7 @@ use std::collections::BTreeMap;
 
 use gpui::{
     AnyElement, ClickEvent, Context, CursorStyle, Entity, Hsla, InteractiveElement, IntoElement,
-    MouseButton, ParentElement, SharedString, StatefulInteractiveElement, Styled, div, prelude::*,
-    px, rgb, svg,
+    ParentElement, SharedString, StatefulInteractiveElement, Styled, div, prelude::*, px, rgb, svg,
 };
 use paneflow_config::schema::AgentProfileConfig;
 use paneflow_mcp_install::IntegrationState;
@@ -14,13 +13,13 @@ use crate::agent_launcher::{AgentProfile, TerminalAgent};
 use crate::settings::components::{
     SETTINGS_CONTROL_CORNER_RADIUS, deferred_select_menu, destructive_color, hairline,
     hairline_inset, menu_row, secondary_button, section_header_with_action, section_title,
-    select_chevron, select_menu, select_trigger, setting_card, setting_text, toggle_pill,
-    toggle_row, with_alpha,
+    select_chevron, select_menu, select_trigger, setting_card, setting_text, toggle_row,
+    toggle_switch, with_alpha,
 };
 use crate::settings::search::{self, Block, SearchCard};
 use crate::ui_primitives::{
-    AnimatedHoverExt, BODY, BODY_EMPHASIS, LABEL_SM, LABEL_XS, ROW_RADIUS, TooltipDelayExt,
-    text_tooltip,
+    AccessibleControlExt, AnimatedHoverExt, BODY, BODY_EMPHASIS, LABEL_SM, LABEL_XS, ROW_RADIUS,
+    TooltipDelayExt, text_tooltip,
 };
 use crate::widgets::text_input::TextInput;
 
@@ -329,14 +328,16 @@ impl PaneFlowApp {
         };
         let key = agent.visibility_config_key();
         let target = !visible;
-        let toggle = div()
-            .id(SharedString::from(format!("agent-visible-{}", agent.tag())))
-            .flex_shrink_0()
-            .cursor(CursorStyle::PointingHand)
-            .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
-                this.persist_setting(false, key, serde_json::Value::Bool(target), cx);
-            }))
-            .child(toggle_pill(visible, ui));
+        let toggle = toggle_switch(
+            SharedString::from(format!("agent-visible-{}", agent.tag())),
+            format!("Show {} in the agent picker", agent.display_name()),
+            visible,
+            ui,
+        )
+        .cursor(CursorStyle::PointingHand)
+        .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
+            this.persist_setting(false, key, serde_json::Value::Bool(target), cx);
+        }));
 
         div()
             .flex()
@@ -861,41 +862,43 @@ impl PaneFlowApp {
     ) -> AnyElement {
         let is_open = editor.agent_menu_open;
         let current = editor.agent;
-        let mut trigger = select_trigger(SharedString::from("agent-profile-agent"), ui)
-            .w_full()
-            .max_w(px(CONTROL_WIDTH))
-            .h(px(INPUT_HEIGHT))
-            .py(px(0.))
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(move |this, _, window, cx| {
-                    cx.stop_propagation();
-                    if let Some(editor) = this.agent_profile_editor.as_mut() {
-                        editor.agent_menu_open = !is_open;
-                    }
-                    this.settings_focus.focus(window, cx);
-                    cx.notify();
-                }),
-            )
-            .child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .gap(px(8.))
-                    .flex_1()
-                    .min_w_0()
-                    .child(agent_icon_sized(current, 14., ui))
-                    .child(
-                        div()
-                            .min_w_0()
-                            .text_size(BODY)
-                            .text_color(ui.text)
-                            .truncate()
-                            .child(current.display_name()),
-                    ),
-            )
-            .child(select_chevron(ui));
+        let mut trigger = select_trigger(
+            SharedString::from("agent-profile-agent"),
+            "Agent",
+            is_open,
+            ui,
+        )
+        .w_full()
+        .max_w(px(CONTROL_WIDTH))
+        .h(px(INPUT_HEIGHT))
+        .py(px(0.))
+        .on_press(cx.listener(move |this, _, window, cx| {
+            cx.stop_propagation();
+            if let Some(editor) = this.agent_profile_editor.as_mut() {
+                editor.agent_menu_open = !is_open;
+            }
+            this.settings_focus.focus(window, cx);
+            cx.notify();
+        }))
+        .child(
+            div()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap(px(8.))
+                .flex_1()
+                .min_w_0()
+                .child(agent_icon_sized(current, 14., ui))
+                .child(
+                    div()
+                        .min_w_0()
+                        .text_size(BODY)
+                        .text_color(ui.text)
+                        .truncate()
+                        .child(current.display_name()),
+                ),
+        )
+        .child(select_chevron(ui));
         if is_open {
             let mut menu = select_menu(SharedString::from("agent-profile-agent-list"), ui)
                 .on_mouse_down_out(cx.listener(|this, _, _w, cx| {
@@ -1147,9 +1150,12 @@ impl PaneFlowApp {
 }
 
 fn new_env_row(key: &str, value: &str, cx: &mut Context<PaneFlowApp>) -> EnvRowInputs {
-    let key = cx.new(|cx| TextInput::new(key.to_string(), "KEY", cx));
+    let key = cx
+        .new(|cx| TextInput::new(key.to_string(), "KEY", cx).with_accessible_name("Variable name"));
     cx.observe(&key, |_, _, cx| cx.notify()).detach();
-    let value = cx.new(|cx| TextInput::new(value.to_string(), "value", cx));
+    let value = cx.new(|cx| {
+        TextInput::new(value.to_string(), "value", cx).with_accessible_name("Variable value")
+    });
     cx.observe(&value, |_, _, cx| cx.notify()).detach();
     EnvRowInputs { key, value }
 }

@@ -197,8 +197,8 @@ mod tests {
         assert!(
             DEFAULTS
                 .iter()
-                .any(|d| d.key == "secondary-tab" && d.action_name == "next_workspace"),
-            "the tab shortcuts must not steal secondary-tab from next_workspace"
+                .any(|d| d.key == "ctrl-tab" && d.action_name == "next_workspace"),
+            "the tab shortcuts must not steal ctrl-tab from next_workspace"
         );
     }
 

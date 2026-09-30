@@ -26,7 +26,8 @@ impl PaneFlowApp {
             return;
         };
         self.dismiss_transient_surfaces();
-        let input = cx.new(|cx| TextInput::new("", "feat/topic", cx));
+        let input =
+            cx.new(|cx| TextInput::new("", "feat/topic", cx).with_accessible_name("Branch name"));
         let focus = input.read(cx).focus_handle.clone();
         self.branch_prompt = Some(BranchPromptState {
             workspace_id,

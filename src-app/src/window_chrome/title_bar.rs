@@ -1,4 +1,4 @@
-use crate::ui_primitives::TooltipDelayExt;
+use crate::ui_primitives::AccessibleControlExt;
 
 use gpui::{
     AnyElement, Context, Decorations, EventEmitter, IntoElement, MouseButton, Render, Styled,
@@ -347,7 +347,7 @@ impl Render for TitleBar {
                             delta,
                         ));
                     })
-                    .delayed_tooltip(crate::ui_primitives::text_tooltip(sidebar_tooltip))
+                    .accessible_control(gpui::accesskit::Role::Button, sidebar_tooltip)
                     .on_mouse_down(MouseButton::Left, move |_, _, cx| {
                         cx.stop_propagation();
                         if let Some(entity) = toggle_sidebar_handle.upgrade() {

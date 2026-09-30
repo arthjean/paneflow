@@ -51,8 +51,117 @@ pub fn is_cli_verb(arg: Option<&str>) -> bool {
     matches!(arg, Some(v) if VERBS.contains(&v))
 }
 
+const HELP_VERB: &str = "help";
+
+const EXTERNAL_VERBS: &[(&str, &str)] = &[
+    (
+        "mcp",
+        "Install, inspect or remove the MCP bridge (install | status | uninstall)",
+    ),
+    (
+        "integrations",
+        "List, install or remove agent integrations (list | install | remove)",
+    ),
+    (
+        "hooks",
+        "Set up, inspect or remove agent status hooks (setup | status | uninstall)",
+    ),
+];
+
+pub fn is_help_verb(arg: Option<&str>) -> bool {
+    arg == Some(HELP_VERB)
+}
+
 pub fn looks_like_unknown_verb(arg: Option<&str>) -> bool {
-    matches!(arg, Some(v) if !v.is_empty() && !v.starts_with('-') && !VERBS.contains(&v))
+    matches!(arg, Some(v) if !v.is_empty() && !v.starts_with('-') && !VERBS.contains(&v) && v != HELP_VERB)
+}
+
+pub fn unknown_verb_message(verb: &str) -> String {
+    format!("paneflow: unknown verb '{verb}'; see `paneflow --help` for the verb list")
+}
+
+fn verb_rows() -> Vec<(String, String)> {
+    use clap::CommandFactory;
+
+    let mut rows: Vec<(String, String)> = Cli::command()
+        .get_subcommands()
+        .filter(|command| command.get_name() != HELP_VERB)
+        .map(|command| {
+            let names = std::iter::once(command.get_name())
+                .chain(command.get_all_aliases())
+                .collect::<Vec<_>>()
+                .join(", ");
+            let about = command
+                .get_about()
+                .map(|about| about.to_string())
+                .unwrap_or_default();
+            (names, about)
+        })
+        .collect();
+    rows.extend(
+        EXTERNAL_VERBS
+            .iter()
+            .map(|(name, about)| ((*name).to_string(), (*about).to_string())),
+    );
+    rows
+}
+
+fn aligned_rows(rows: &[(String, String)]) -> String {
+    let width = rows.iter().map(|(label, _)| label.len()).max().unwrap_or(0);
+    rows.iter()
+        .map(|(label, about)| format!("  {label:<width$}  {about}"))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+pub fn global_help(version: &str, macos: bool) -> String {
+    let (secondary, alt) = if macos {
+        ("Cmd", "Option")
+    } else {
+        ("Ctrl", "Alt")
+    };
+    let verbs = aligned_rows(&verb_rows());
+    let keybindings = aligned_rows(&[
+        (
+            format!("{secondary}+Shift+D/E"),
+            "Split horizontal/vertical".to_string(),
+        ),
+        (format!("{secondary}+Shift+W"), "Close pane".to_string()),
+        (format!("{alt}+Arrow"), "Focus adjacent pane".to_string()),
+        (format!("{secondary}+Shift+N"), "New workspace".to_string()),
+        ("Ctrl+Tab".to_string(), "Next workspace".to_string()),
+        (
+            format!("{secondary}+1-9"),
+            "Switch to workspace N".to_string(),
+        ),
+    ]);
+    format!(
+        "Paneflow {version} - native terminal workspace for coding agents\n\
+         \n\
+         Usage: paneflow [OPTIONS]\n\
+         \x20      paneflow <VERB> [ARGS]\n\
+         \x20      paneflow help\n\
+         \n\
+         Verbs:\n\
+         {verbs}\n\
+         \n\
+         Run `paneflow <VERB> --help` for a verb's options.\n\
+         \n\
+         Options:\n\
+         \x20 -h, --help         Print this help message\n\
+         \x20 -v, --version      Print version\n\
+         \x20 --update-and-exit  Check for an update and exit (CI harness)\n\
+         \n\
+         Agent workflow:\n\
+         \x20 Launch Claude Code, Codex, opencode, Pi, or any CLI agent in panes\n\
+         \x20 Use `paneflow mcp install` so capable agents can read pane output\n\
+         \n\
+         Keybindings:\n\
+         {keybindings}\n\
+         \n\
+         Config paths and IPC endpoints are documented in the README.\n\
+         https://github.com/arthjean/paneflow"
+    )
 }
 
 #[derive(Parser, Debug)]
@@ -602,6 +711,68 @@ pub(super) fn reject_legacy_error(result: Value) -> Result<Value, CliError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn global_help_lists_every_verb() {
+        for macos in [false, true] {
+            let help = global_help("0.0.0", macos);
+            for verb in VERBS
+                .iter()
+                .copied()
+                .chain(EXTERNAL_VERBS.iter().map(|(verb, _)| *verb))
+            {
+                assert!(
+                    help.lines().any(|line| line.starts_with("  ")
+                        && line.split([',', ' ']).any(|word| word == verb)),
+                    "`{verb}` missing from --help:\n{help}"
+                );
+            }
+            assert!(help.contains("paneflow help"));
+        }
+    }
+
+    #[test]
+    fn every_clap_verb_is_dispatched_as_a_cli_verb() {
+        use clap::CommandFactory;
+
+        for command in Cli::command().get_subcommands() {
+            for name in std::iter::once(command.get_name()).chain(command.get_all_aliases()) {
+                assert!(is_cli_verb(Some(name)), "`{name}` is not routed to the CLI");
+            }
+        }
+    }
+
+    #[test]
+    fn global_help_uses_the_platform_secondary_key() {
+        let linux = global_help("0.0.0", false);
+        assert!(linux.contains("Ctrl+Shift+D/E"));
+        assert!(linux.contains("Ctrl+1-9"));
+        assert!(linux.contains("Alt+Arrow"));
+        assert!(!linux.contains("Cmd+"));
+
+        let macos = global_help("0.0.0", true);
+        assert!(macos.contains("Cmd+Shift+D/E"));
+        assert!(macos.contains("Cmd+Shift+W"));
+        assert!(macos.contains("Cmd+1-9"));
+        assert!(macos.contains("Option+Arrow"));
+        assert!(macos.contains("Ctrl+Tab"));
+        assert!(!macos.contains("Ctrl+Shift"));
+    }
+
+    #[test]
+    fn an_unknown_verb_points_to_a_help_that_lists_the_verbs() {
+        assert!(looks_like_unknown_verb(Some("sned")));
+        let message = unknown_verb_message("sned");
+        assert!(message.contains("`paneflow --help`"), "{message}");
+        let help = global_help("0.0.0", cfg!(target_os = "macos"));
+        assert!(help.contains("\nVerbs:\n"));
+        assert!(
+            help.lines()
+                .any(|line| line.trim_start().starts_with("send "))
+        );
+        assert!(!looks_like_unknown_verb(Some("help")));
+        assert!(is_help_verb(Some("help")));
+    }
 
     #[test]
     fn a_window_only_action_names_what_the_host_cannot_do() {

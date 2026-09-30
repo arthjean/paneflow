@@ -5,7 +5,7 @@ use gpui::{
 };
 
 use crate::PaneFlowApp;
-use crate::ui_primitives::{ROW_RADIUS, squircle_skin};
+use crate::ui_primitives::{AccessibleControlExt, ROW_RADIUS, squircle_skin};
 use crate::widgets::text_input::TextInput;
 
 const BRANCH_GIT_DEADLINE: std::time::Duration = std::time::Duration::from_secs(30);
@@ -192,17 +192,16 @@ pub(super) fn render_diff_branch_chip(
         menu_open.then_some(rail_hover),
         Some(rail_hover),
     )
-    .on_mouse_down(
-        MouseButton::Left,
-        cx.listener(move |this, _: &gpui::MouseDownEvent, window, cx| {
-            cx.stop_propagation();
-            if menu_open {
-                this.close_diff_branch_menu(window, cx);
-            } else {
-                this.open_diff_branch_menu(chip_cwd.clone(), current.clone(), window, cx);
-            }
-        }),
-    )
+    .accessible_control(gpui::accesskit::Role::ComboBox, format!("Branch {branch}"))
+    .aria_expanded(menu_open)
+    .on_press(cx.listener(move |this, _, window, cx| {
+        cx.stop_propagation();
+        if menu_open {
+            this.close_diff_branch_menu(window, cx);
+        } else {
+            this.open_diff_branch_menu(chip_cwd.clone(), current.clone(), window, cx);
+        }
+    }))
     .child(
         svg()
             .size(px(13.))

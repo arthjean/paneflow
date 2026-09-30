@@ -78,6 +78,7 @@ impl PathPicker {
         filter_field(
             "path-picker-field",
             "path-picker-field-clear",
+            "Filter paths",
             ui,
             FilterFieldStyle::palette(),
             focus.is_focused(window),

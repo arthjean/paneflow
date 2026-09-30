@@ -70,8 +70,10 @@ impl PaneFlowApp {
         };
 
         let weak_app = cx.entity().downgrade();
-        let input =
-            cx.new(|cx| TextArea::new("Write a prompt - Enter pre-fills, never submits", cx));
+        let input = cx.new(|cx| {
+            TextArea::new("Write a prompt - Enter pre-fills, never submits", cx)
+                .with_accessible_name("Prompt")
+        });
         input.update(cx, |ta, _| {
             let w = weak_app.clone();
             ta.on_submit(move |text, _window, cx| {

@@ -9,6 +9,7 @@ use super::registry::{ACTIONS, action_description};
 pub struct ShortcutEntry {
     pub key: String,
     pub raw_key: Option<String>,
+    pub extra_raw_keys: Vec<String>,
     pub customized: bool,
     pub description: String,
     pub action_name: &'static str,
@@ -55,9 +56,24 @@ pub fn default_keys(action_name: &str) -> Vec<&'static str> {
         .collect()
 }
 
+fn split_keystroke(raw_key: &str) -> (&str, &str) {
+    match raw_key.strip_suffix("--") {
+        Some(modifiers) => (modifiers, "-"),
+        None => match raw_key.rsplit_once('-') {
+            Some((modifiers, key)) => (modifiers, key),
+            None => ("", raw_key),
+        },
+    }
+}
+
 pub fn format_keystroke(key: &str) -> String {
     let is_macos = cfg!(target_os = "macos");
-    let parts = key.split('-').map(|part| match part {
+    let (modifier_part, key) = split_keystroke(key);
+    let tokens = modifier_part
+        .split('-')
+        .filter(|part| !part.is_empty())
+        .chain(std::iter::once(key));
+    let parts = tokens.map(|part| match part {
         "secondary" => {
             if is_macos {
                 "\u{2318}".to_string()
@@ -118,13 +134,7 @@ fn key_label(key: &str) -> String {
 }
 
 fn ascii_key_forms(raw_key: &str) -> String {
-    let (modifier_part, key) = match raw_key.strip_suffix("--") {
-        Some(modifiers) => (modifiers, "-"),
-        None => match raw_key.rsplit_once('-') {
-            Some((modifiers, key)) => (modifiers, key),
-            None => ("", raw_key),
-        },
-    };
+    let (modifier_part, key) = split_keystroke(raw_key);
 
     let alternatives: Vec<Vec<&str>> = modifier_part
         .split('-')
@@ -157,11 +167,17 @@ fn ascii_key_forms(raw_key: &str) -> String {
 }
 
 pub fn effective_shortcuts(user_shortcuts: &HashMap<String, String>) -> Vec<ShortcutEntry> {
-    let mut user_by_action: HashMap<&str, &str> = HashMap::new();
+    let mut user_by_action: HashMap<&str, Vec<&str>> = HashMap::new();
     for (key, action_name) in user_shortcuts {
         if action_name != "none" && ACTIONS.iter().any(|a| a.name == action_name) {
-            user_by_action.insert(action_name.as_str(), key.as_str());
+            user_by_action
+                .entry(action_name.as_str())
+                .or_default()
+                .push(key.as_str());
         }
+    }
+    for keys in user_by_action.values_mut() {
+        keys.sort_unstable();
     }
 
     let unbound_canonical: HashSet<Keystroke> = user_shortcuts
@@ -202,45 +218,31 @@ pub fn effective_shortcuts(user_shortcuts: &HashMap<String, String>) -> Vec<Shor
             _ => d.key,
         };
 
-        let user_key = user_by_action.get(d.action_name).copied();
-        let raw_key = match user_key {
-            Some(user_key) => user_key,
+        let user_keys = user_by_action.get(d.action_name);
+        let keys: &[&str] = match user_keys {
+            Some(user_keys) => user_keys,
             None => {
                 if is_unbound(default_key) || is_user_claimed(default_key) {
                     continue;
                 }
-                default_key
+                std::slice::from_ref(&default_key)
             }
         };
 
+        let Some((primary, extras)) = keys.split_first() else {
+            continue;
+        };
         seen_actions.insert(meta.name);
-        entries.push(ShortcutEntry {
-            key: format_keystroke(raw_key),
-            raw_key: Some(raw_key.to_string()),
-            customized: user_key.is_some(),
-            description: meta.description.to_string(),
-            action_name: meta.name,
-            group: meta.group,
-            search_key: ascii_key_forms(raw_key),
-        });
+        entries.push(bound_entry(meta, primary, extras, user_keys.is_some()));
     }
 
-    for (key, action_name) in user_shortcuts {
-        if action_name == "none" {
-            continue;
-        }
-        if let Some(meta) = ACTIONS.iter().find(|a| a.name == action_name)
+    for meta in ACTIONS {
+        if let Some((primary, extras)) = user_by_action
+            .get(meta.name)
+            .and_then(|keys| keys.split_first())
             && seen_actions.insert(meta.name)
         {
-            entries.push(ShortcutEntry {
-                key: format_keystroke(key),
-                raw_key: Some(key.clone()),
-                customized: true,
-                description: meta.description.to_string(),
-                action_name: meta.name,
-                group: meta.group,
-                search_key: ascii_key_forms(key),
-            });
+            entries.push(bound_entry(meta, primary, extras, true));
         }
     }
 
@@ -249,6 +251,7 @@ pub fn effective_shortcuts(user_shortcuts: &HashMap<String, String>) -> Vec<Shor
             entries.push(ShortcutEntry {
                 key: "Unassigned".to_string(),
                 raw_key: None,
+                extra_raw_keys: Vec::new(),
                 customized: !default_keys(meta.name).is_empty(),
                 description: action_description(meta.name).to_string(),
                 action_name: meta.name,
@@ -259,6 +262,28 @@ pub fn effective_shortcuts(user_shortcuts: &HashMap<String, String>) -> Vec<Shor
     }
 
     entries
+}
+
+fn bound_entry(
+    meta: &'static super::registry::ActionMeta,
+    primary: &str,
+    extras: &[&str],
+    customized: bool,
+) -> ShortcutEntry {
+    ShortcutEntry {
+        key: format_keystroke(primary),
+        raw_key: Some((*primary).to_string()),
+        extra_raw_keys: extras.iter().map(|key| (*key).to_string()).collect(),
+        customized,
+        description: meta.description.to_string(),
+        action_name: meta.name,
+        group: meta.group,
+        search_key: std::iter::once(primary)
+            .chain(extras.iter().copied())
+            .map(ascii_key_forms)
+            .collect::<Vec<_>>()
+            .join(" "),
+    }
 }
 
 pub fn is_bare_modifier(keystroke: &Keystroke) -> bool {
@@ -670,6 +695,87 @@ mod tests {
         assert_eq!(format_keystroke("secondary-shift-d"), "Ctrl+Shift+D");
         assert_eq!(format_keystroke("secondary-tab"), "Ctrl+Tab");
         assert_eq!(format_keystroke("secondary-1"), "Ctrl+1");
+    }
+
+    #[test]
+    fn format_keystroke_keeps_the_minus_key() {
+        let (secondary, shift) = if cfg!(target_os = "macos") {
+            ("\u{2318}", "\u{21E7}")
+        } else {
+            ("Ctrl+", "Shift+")
+        };
+        assert_eq!(format_keystroke("secondary--"), format!("{secondary}-"));
+        assert_eq!(
+            format_keystroke("secondary-shift--"),
+            format!("{secondary}{shift}-")
+        );
+        assert_eq!(format_keystroke("secondary-="), format!("{secondary}="));
+        assert_eq!(format_keystroke("tab"), "Tab");
+        assert_eq!(
+            keystroke_caps(&format_keystroke("secondary--"))
+                .last()
+                .map(String::as_str),
+            Some("-")
+        );
+    }
+
+    #[test]
+    fn font_size_decrease_shows_its_minus_key_in_the_shortcut_list() {
+        let entries = effective_shortcuts(&HashMap::new());
+        let decrease = entries
+            .iter()
+            .find(|entry| entry.action_name == "font_size_decrease")
+            .expect("font_size_decrease is listed");
+        assert_eq!(decrease.raw_key.as_deref(), Some("secondary--"));
+        assert!(decrease.key.ends_with('-'), "{}", decrease.key);
+    }
+
+    #[test]
+    fn every_user_shortcut_of_an_action_is_listed_in_a_stable_order() {
+        let user: HashMap<String, String> = [
+            ("ctrl-alt-z", "split_horizontally"),
+            ("ctrl-alt-a", "split_horizontally"),
+            ("ctrl-alt-m", "split_horizontally"),
+        ]
+        .into_iter()
+        .map(|(key, action)| (key.to_string(), action.to_string()))
+        .collect();
+        for _ in 0..8 {
+            let entries = effective_shortcuts(&user);
+            let split: Vec<_> = entries
+                .iter()
+                .filter(|entry| entry.action_name == "split_horizontally")
+                .collect();
+            assert_eq!(split.len(), 1);
+            assert_eq!(split[0].raw_key.as_deref(), Some("ctrl-alt-a"));
+            assert_eq!(split[0].extra_raw_keys, ["ctrl-alt-m", "ctrl-alt-z"]);
+            assert!(split[0].customized);
+            for form in ["ctrl+alt+a", "ctrl+alt+m", "ctrl+alt+z"] {
+                assert!(split[0].search_key.contains(form), "{form}");
+            }
+        }
+    }
+
+    #[test]
+    fn user_only_actions_list_all_their_shortcuts() {
+        let unbound_by_default = ACTIONS
+            .iter()
+            .find(|meta| default_keys(meta.name).is_empty())
+            .expect("at least one action ships without a default");
+        let user: HashMap<String, String> = [
+            ("ctrl-alt-y", unbound_by_default.name),
+            ("ctrl-alt-b", unbound_by_default.name),
+        ]
+        .into_iter()
+        .map(|(key, action)| (key.to_string(), action.to_string()))
+        .collect();
+        let entries = effective_shortcuts(&user);
+        let entry = entries
+            .iter()
+            .find(|entry| entry.action_name == unbound_by_default.name)
+            .expect("the user-bound action is listed");
+        assert_eq!(entry.raw_key.as_deref(), Some("ctrl-alt-b"));
+        assert_eq!(entry.extra_raw_keys, ["ctrl-alt-y"]);
     }
 
     #[cfg(target_os = "macos")]

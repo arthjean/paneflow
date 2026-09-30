@@ -12,7 +12,7 @@ use crate::ai_types::AgentState;
 use crate::app::unsaved_dialog::UnsavedContinuation;
 use crate::settings::components::{
     MODAL_PADDING, destructive_button, menu_panel, modal_backdrop, modal_card, modal_footer,
-    modal_header, secondary_button, setting_text, solid_button, switch_blue, toggle_pill,
+    modal_header, secondary_button, setting_text, solid_button, switch_blue, toggle_switch,
     with_alpha,
 };
 use crate::terminal::host_link::{self, HostLinkState, StopAllOutcome};
@@ -765,7 +765,12 @@ impl PaneFlowApp {
                 quit_action_label(QuitAction::ToggleRemember, kind, failure_state),
                 "Change it in Settings > General.",
             ))
-            .child(toggle_pill(remember, ui))
+            .child(toggle_switch(
+                "quit-dialog-remember-switch",
+                quit_action_label(QuitAction::ToggleRemember, kind, failure_state),
+                remember,
+                ui,
+            ))
             .when(selected == QuitAction::ToggleRemember, |row| {
                 row.child(quit_focus_ring(px(QUIT_REMEMBER_RADIUS), ui))
             });

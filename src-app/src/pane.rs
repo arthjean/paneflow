@@ -13,7 +13,7 @@ use gpui::{
 use crate::ui_primitives::squircle::{
     squircle_border, squircle_fill, squircle_path, squircle_stroke_path,
 };
-use crate::ui_primitives::{AnimatedHoverExt, lerp_color, squircle_skin};
+use crate::ui_primitives::{AccessibleControlExt, AnimatedHoverExt, lerp_color, squircle_skin};
 
 use crate::markdown::MarkdownView;
 use crate::pane_drag::{
@@ -1034,32 +1034,33 @@ impl Pane {
             .child(icon);
 
         let distance = (target - from).abs();
-        let visual = if epoch == 0 || distance <= f32::EPSILON {
-            live_progress.set(target);
-            let tint = hover_tint
-                .map(|hover_tint| base_tint.blend(hover_tint.opacity(target)))
-                .unwrap_or(base_tint);
-            visual.text_color(tint).into_any_element()
-        } else {
-            let animation_id = SharedString::from(format!("pane-action-hover-{id}-{epoch}"));
-            let duration = Duration::from_secs_f32(
-                Duration::from_millis(HEADER_HOVER_MS).as_secs_f32() * distance,
-            );
-            visual
-                .with_animation(
-                    animation_id,
-                    Animation::new(duration).with_easing(ease_out_quint()),
-                    move |visual, delta| {
-                        let progress = (from + (target - from) * delta).clamp(0.0, 1.0);
-                        live_progress.set(progress);
-                        let tint = hover_tint
-                            .map(|hover_tint| base_tint.blend(hover_tint.opacity(progress)))
-                            .unwrap_or(base_tint);
-                        visual.text_color(tint)
-                    },
-                )
-                .into_any_element()
-        };
+        let visual =
+            if !header_hover_animates(epoch, distance, crate::ui_primitives::reduce_motion()) {
+                live_progress.set(target);
+                let tint = hover_tint
+                    .map(|hover_tint| base_tint.blend(hover_tint.opacity(target)))
+                    .unwrap_or(base_tint);
+                visual.text_color(tint).into_any_element()
+            } else {
+                let animation_id = SharedString::from(format!("pane-action-hover-{id}-{epoch}"));
+                let duration = Duration::from_secs_f32(
+                    Duration::from_millis(HEADER_HOVER_MS).as_secs_f32() * distance,
+                );
+                visual
+                    .with_animation(
+                        animation_id,
+                        Animation::new(duration).with_easing(ease_out_quint()),
+                        move |visual, delta| {
+                            let progress = (from + (target - from) * delta).clamp(0.0, 1.0);
+                            live_progress.set(progress);
+                            let tint = hover_tint
+                                .map(|hover_tint| base_tint.blend(hover_tint.opacity(progress)))
+                                .unwrap_or(base_tint);
+                            visual.text_color(tint)
+                        },
+                    )
+                    .into_any_element()
+            };
 
         squircle_skin(
             button,
@@ -1142,18 +1143,33 @@ impl Pane {
 
         let has_attention = self.attention;
         let has_errored = self.errored;
-        let status_dot = (has_errored || has_attention).then(|| {
-            div()
+        let status_dot = pane_status_label(has_errored, has_attention).map(|label| {
+            let marker = div()
+                .id("pane-status-marker")
                 .flex_none()
-                .w(px(6.0))
-                .h(px(6.0))
-                .rounded_full()
-                .bg(if has_errored {
-                    ui.agent_error
-                } else {
-                    ui.vc_conflict
-                })
-                .into_any_element()
+                .flex()
+                .items_center()
+                .justify_center()
+                .accessible_control(gpui::accesskit::Role::Image, label);
+            if has_errored {
+                marker
+                    .size(px(12.0))
+                    .child(
+                        svg()
+                            .size(px(12.0))
+                            .flex_none()
+                            .path("icons/triangle-alert.svg")
+                            .text_color(ui.agent_error),
+                    )
+                    .into_any_element()
+            } else {
+                marker
+                    .w(px(6.0))
+                    .h(px(6.0))
+                    .rounded_full()
+                    .bg(ui.vc_conflict)
+                    .into_any_element()
+            }
         });
 
         let has_pending = self.pending_prefill;
@@ -1795,6 +1811,8 @@ impl Pane {
         if self.zoomed {
             action_cluster = action_cluster.child(
                 div()
+                    .id("pane-zoom-badge")
+                    .accessible_control(gpui::accesskit::Role::Image, PANE_ZOOM_BADGE_LABEL)
                     .flex()
                     .items_center()
                     .justify_center()
@@ -2098,6 +2116,22 @@ impl Render for Pane {
     }
 }
 
+const PANE_ZOOM_BADGE_LABEL: &str = "Zoomed pane";
+
+fn header_hover_animates(epoch: u64, distance: f32, reduce_motion: bool) -> bool {
+    epoch != 0 && distance > f32::EPSILON && !reduce_motion
+}
+
+fn pane_status_label(errored: bool, attention: bool) -> Option<&'static str> {
+    if errored {
+        Some("Agent error")
+    } else if attention {
+        Some("Agent needs attention")
+    } else {
+        None
+    }
+}
+
 fn progress_chip_label(report: paneflow_terminal_ghostty::ProgressReport) -> Option<SharedString> {
     use paneflow_terminal_ghostty::ProgressState;
 
@@ -2122,10 +2156,31 @@ mod tests {
     use gpui::{AppContext, Entity, TestAppContext};
 
     use super::{
-        MAX_SURFACE_TITLE_LEN, Pane, PaneEvent, PaneSurface, pane_card_background,
-        progress_chip_label, truncate_surface_title,
+        MAX_SURFACE_TITLE_LEN, PANE_ZOOM_BADGE_LABEL, Pane, PaneEvent, PaneSurface,
+        header_hover_animates, pane_card_background, pane_status_label, progress_chip_label,
+        truncate_surface_title,
     };
     use crate::terminal::TerminalView;
+
+    #[test]
+    fn pane_states_carry_a_text_label_and_not_only_a_color() {
+        assert_eq!(pane_status_label(true, false), Some("Agent error"));
+        assert_eq!(pane_status_label(true, true), Some("Agent error"));
+        assert_eq!(
+            pane_status_label(false, true),
+            Some("Agent needs attention")
+        );
+        assert_eq!(pane_status_label(false, false), None);
+        assert_eq!(PANE_ZOOM_BADGE_LABEL, "Zoomed pane");
+    }
+
+    #[test]
+    fn the_header_hover_does_not_animate_under_reduce_motion() {
+        assert!(header_hover_animates(1, 0.5, false));
+        assert!(!header_hover_animates(1, 0.5, true));
+        assert!(!header_hover_animates(0, 0.5, false));
+        assert!(!header_hover_animates(1, 0.0, false));
+    }
 
     fn terminal_surface(cx: &mut impl AppContext) -> PaneSurface {
         PaneSurface::Terminal(cx.new(|cx| TerminalView::display_only_for_test(1, cx)))

@@ -23,8 +23,34 @@ fn rust_sources(dir: &Path) -> Vec<PathBuf> {
 
 fn builder_chain(src: &str, start: usize) -> &str {
     let rest = &src[start..];
-    let end = rest.find(';').unwrap_or(rest.len());
-    &rest[..end]
+    let mut depth = 0usize;
+    for (index, ch) in rest.char_indices() {
+        match ch {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' if depth == 0 => return &rest[..index],
+            ')' | ']' | '}' => depth -= 1,
+            ',' | ';' if depth == 0 => return &rest[..index],
+            _ => {}
+        }
+    }
+    rest
+}
+
+#[test]
+fn the_chain_stops_at_the_end_of_the_svg_expression() {
+    let src = "div().child(svg().path(\"a.svg\").size(px(12.))).child(div().text_color(ink))";
+    let start = src
+        .find("svg()")
+        .unwrap_or_else(|| panic!("fixture has an svg"));
+    let chain = builder_chain(src, start);
+    assert_eq!(chain, "svg().path(\"a.svg\").size(px(12.))");
+    assert!(!chain.contains(".text_color("));
+
+    let src = "let icon = svg()\n    .path(p)\n    .when(on, |s| s.text_color(x));";
+    let start = src
+        .find("svg()")
+        .unwrap_or_else(|| panic!("fixture has an svg"));
+    assert!(builder_chain(src, start).contains(".text_color("));
 }
 
 #[test]

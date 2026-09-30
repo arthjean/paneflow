@@ -5,14 +5,64 @@ use gpui::{
 };
 
 use crate::ui_primitives::{
-    AnimatedHover, AnimatedHoverExt, ROW_RADIUS, highlight_matches, lerp_color, squircle,
-    squircle_skin,
+    AccessibleControlExt, AnimatedHover, AnimatedHoverExt, ROW_RADIUS, highlight_matches,
+    lerp_color, squircle, squircle_skin,
 };
 
 pub(crate) const SETTINGS_CONTROL_CORNER_RADIUS: Pixels = px(8.);
 
 pub fn with_alpha(color: Hsla, alpha: f32) -> Hsla {
     Hsla { a: alpha, ..color }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct AccentButtonColors {
+    pub(crate) rest: Hsla,
+    pub(crate) hover: Hsla,
+    pub(crate) ink: Hsla,
+}
+
+const ACCENT_BUTTON_HOVER_SHIFT: f32 = 0.06;
+
+pub(crate) fn wcag_contrast(foreground: Hsla, background: Hsla) -> f32 {
+    fn luminance(color: Hsla) -> f32 {
+        let rgba = gpui::Rgba::from(color);
+        let channel = |value: f32| {
+            if value <= 0.04045 {
+                value / 12.92
+            } else {
+                ((value + 0.055) / 1.055).powf(2.4)
+            }
+        };
+        0.2126 * channel(rgba.r) + 0.7152 * channel(rgba.g) + 0.0722 * channel(rgba.b)
+    }
+    let (a, b) = (luminance(foreground), luminance(background));
+    (a.max(b) + 0.05) / (a.min(b) + 0.05)
+}
+
+pub(crate) fn readable_ink(background: Hsla) -> Hsla {
+    let white = gpui::white();
+    let black = gpui::black();
+    if wcag_contrast(white, background) >= wcag_contrast(black, background) {
+        white
+    } else {
+        black
+    }
+}
+
+pub(crate) fn accent_button_colors(accent: Hsla) -> AccentButtonColors {
+    let rest = Hsla { a: 1.0, ..accent };
+    let ink = readable_ink(rest);
+    let shift = if ink.l > 0.5 {
+        -ACCENT_BUTTON_HOVER_SHIFT
+    } else {
+        ACCENT_BUTTON_HOVER_SHIFT
+    };
+    let hover = Hsla {
+        l: (rest.l + shift).clamp(0.0, 1.0),
+        ..rest
+    };
+    AccentButtonColors { rest, hover, ink }
 }
 
 pub fn section_header(ui: crate::theme::UiColors, label: &'static str) -> impl IntoElement {
@@ -132,14 +182,31 @@ pub fn toggle_row(
         description,
         icon,
         ui,
-        div()
-            .id(SharedString::from(id))
-            .flex_shrink_0()
-            .on_click(cx.listener(move |this, _: &ClickEvent, _window, cx| {
+        toggle_switch(id, title, current, ui).on_click(cx.listener(
+            move |this, _: &ClickEvent, _window, cx| {
                 this.persist_setting(false, config_key, serde_json::Value::Bool(target_value), cx);
-            }))
-            .child(toggle_pill(current, ui)),
+            },
+        )),
     )
+}
+
+pub fn toggle_switch(
+    id: impl Into<ElementId>,
+    label: impl Into<SharedString>,
+    on: bool,
+    ui: crate::theme::UiColors,
+) -> Stateful<Div> {
+    div()
+        .id(id)
+        .flex_shrink_0()
+        .focusable()
+        .accessible_control(gpui::accesskit::Role::Switch, label)
+        .aria_toggled(if on {
+            gpui::accesskit::Toggled::True
+        } else {
+            gpui::accesskit::Toggled::False
+        })
+        .child(toggle_pill(on, ui))
 }
 
 pub fn toggle_row_with(
@@ -161,7 +228,7 @@ pub fn toggle_row_with(
         .child(control)
 }
 
-pub fn toggle_pill(on: bool, ui: crate::theme::UiColors) -> impl IntoElement {
+fn toggle_pill(on: bool, ui: crate::theme::UiColors) -> impl IntoElement {
     let track_bg = if on {
         Hsla::from(gpui::rgb(0x339cff))
     } else {
@@ -233,7 +300,7 @@ pub fn secondary_button(
     label: &'static str,
     ui: crate::theme::UiColors,
     on_click: impl Fn(&ClickEvent, &mut gpui::Window, &mut gpui::App) + 'static,
-) -> impl IntoElement {
+) -> Stateful<Div> {
     let hover_bg = lerp_color(ui.subtle, ui.text, 0.06);
     let id = id.into();
 
@@ -251,8 +318,7 @@ pub fn secondary_button(
         Some(ui.subtle),
         Some(hover_bg),
     )
-    .role(gpui::accesskit::Role::Button)
-    .aria_label(label)
+    .accessible_control(gpui::accesskit::Role::Button, label)
     .child(label)
     .on_click(on_click)
 }
@@ -289,8 +355,7 @@ pub fn solid_button(
         Some(resting),
         Some(hovered),
     )
-    .role(gpui::accesskit::Role::Button)
-    .aria_label(label)
+    .accessible_control(gpui::accesskit::Role::Button, label)
     .child(label)
 }
 
@@ -495,17 +560,32 @@ pub fn select_chevron(ui: crate::theme::UiColors) -> impl IntoElement {
         .text_color(with_alpha(ui.muted, 0.7))
 }
 
-pub fn select_trigger(id: impl Into<ElementId>, ui: crate::theme::UiColors) -> AnimatedHover {
-    select_trigger_with_hover(id, ui, lerp_color(ui.subtle, ui.text, 0.06))
+pub fn select_trigger(
+    id: impl Into<ElementId>,
+    label: impl Into<SharedString>,
+    expanded: bool,
+    ui: crate::theme::UiColors,
+) -> AnimatedHover {
+    select_trigger_with_hover(
+        id,
+        label,
+        expanded,
+        ui,
+        lerp_color(ui.subtle, ui.text, 0.06),
+    )
 }
 
 pub fn select_trigger_with_hover(
     id: impl Into<ElementId>,
+    label: impl Into<SharedString>,
+    expanded: bool,
     ui: crate::theme::UiColors,
     hover_bg: Hsla,
 ) -> AnimatedHover {
     div()
         .id(id.into())
+        .accessible_control(gpui::accesskit::Role::ComboBox, label)
+        .aria_expanded(expanded)
         .relative()
         .flex()
         .flex_row()
@@ -771,8 +851,10 @@ pub(crate) fn icon_button(
     } else {
         with_alpha(ui.text, 0.06)
     };
+    let label: SharedString = label.into();
     div()
         .id(id)
+        .accessible_control(gpui::accesskit::Role::Button, label.clone())
         .flex()
         .flex_row()
         .items_center()
@@ -792,7 +874,7 @@ pub(crate) fn icon_button(
                 .path(icon)
                 .text_color(if enabled { fg } else { disabled_fg }),
         )
-        .child(label.into())
+        .child(label)
 }
 
 pub(crate) fn destructive_icon_button(
@@ -814,8 +896,10 @@ pub(crate) fn destructive_icon_button(
     } else {
         resting_background
     };
+    let label: SharedString = label.into();
     div()
         .id(id)
+        .accessible_control(gpui::accesskit::Role::Button, label.clone())
         .flex()
         .flex_row()
         .items_center()
@@ -835,7 +919,7 @@ pub(crate) fn destructive_icon_button(
                 .path(icon)
                 .text_color(if enabled { fg } else { ui.muted }),
         )
-        .child(label.into())
+        .child(label)
 }
 
 pub(crate) fn save_icon_button(
@@ -863,8 +947,10 @@ pub(crate) fn save_icon_button(
         resting_background
     };
 
+    let label: SharedString = label.into();
     div()
         .id(id)
+        .accessible_control(gpui::accesskit::Role::Button, label.clone())
         .flex()
         .flex_row()
         .items_center()
@@ -884,12 +970,52 @@ pub(crate) fn save_icon_button(
                 .path(icon)
                 .text_color(if enabled { fg } else { ui.muted }),
         )
-        .child(label.into())
+        .child(label)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn shipped_themes() -> Vec<(&'static str, crate::theme::UiColors)> {
+        crate::theme::THEMES
+            .iter()
+            .map(|(name, build)| (*name, crate::theme::ui_colors_with(&build())))
+            .collect()
+    }
+
+    #[test]
+    fn the_accent_button_label_reads_on_every_shipped_theme() {
+        let themes = shipped_themes();
+        assert_eq!(themes.len(), 10);
+        for (name, ui) in themes {
+            let colors = accent_button_colors(ui.accent);
+            let rest = wcag_contrast(colors.ink, colors.rest);
+            let hover = wcag_contrast(colors.ink, colors.hover);
+            assert!(rest >= 4.5, "{name}: {rest:.2}:1 at rest");
+            assert!(hover >= 4.5, "{name}: {hover:.2}:1 on hover");
+        }
+    }
+
+    #[test]
+    fn white_on_the_raw_accent_fails_the_contrast_floor_on_most_themes() {
+        let failing = shipped_themes()
+            .into_iter()
+            .filter(|(_, ui)| wcag_contrast(gpui::white(), ui.accent) < 4.5)
+            .count();
+        assert!(
+            failing > 0,
+            "the regression this guards against disappeared"
+        );
+    }
+
+    #[test]
+    fn wcag_contrast_matches_reference_values() {
+        let black_on_white = wcag_contrast(gpui::black(), gpui::white());
+        assert!((black_on_white - 21.0).abs() < 0.01, "{black_on_white}");
+        let same = wcag_contrast(gpui::white(), gpui::white());
+        assert!((same - 1.0).abs() < 0.001, "{same}");
+    }
 
     #[test]
     fn menu_rows_nest_concentrically_inside_the_menu_surface() {

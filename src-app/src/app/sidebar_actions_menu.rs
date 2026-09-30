@@ -159,6 +159,7 @@ impl PaneFlowApp {
         let filter = crate::ui_primitives::filter_field(
             "sidebar-filter",
             "sidebar-filter-clear",
+            "Filter workspaces",
             ui,
             crate::ui_primitives::FilterFieldStyle::sidebar(
                 crate::ui_primitives::FilterFieldGlyph::Filter,

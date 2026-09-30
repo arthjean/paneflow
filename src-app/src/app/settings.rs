@@ -234,7 +234,7 @@ impl PaneFlowApp {
             }
         }
         if !nested && key == "reduce_motion" {
-            crate::ui_primitives::set_reduce_motion(self.cached_config.reduce_motion_enabled());
+            crate::ui_primitives::set_reduce_motion(self.cached_config.reduce_motion_enabled(), cx);
         }
         if !nested && key == "editor" {
             self.apply_editor_display(cx);
@@ -336,9 +336,11 @@ impl PaneFlowApp {
                     self.font_search.pop();
                     cx.notify();
                 }
+                "enter" => self.pick_first_matching_font(cx),
+                "tab" => {}
                 _ => {
                     if let Some(ch) = &event.keystroke.key_char
-                        && !ch.is_empty()
+                        && crate::settings::tabs::terminal::font_search_accepts(ch)
                         && !event.keystroke.modifiers.control
                         && !event.keystroke.modifiers.platform
                     {
@@ -351,19 +353,40 @@ impl PaneFlowApp {
         }
 
         if event.keystroke.key == "escape" && self.recording_shortcut.is_none() {
-            if self.terminal_dropdown.is_some() {
-                self.terminal_dropdown = None;
-            } else if self.general_dropdown.is_some() {
-                self.general_dropdown = None;
-            } else if self.workspace_template_dropdown.is_some() {
-                self.workspace_template_dropdown = None;
-            } else if self.agent_profile_editor.is_some() {
-                self.close_agent_profile_editor(cx);
-            } else {
-                self.close_settings(cx);
+            match settings_escape_target(SettingsOverlays {
+                terminal_dropdown: self.terminal_dropdown.is_some(),
+                general_dropdown: self.general_dropdown.is_some(),
+                theme_preset_menu: self.theme_dropdown_open,
+                workspace_template_dropdown: self.workspace_template_dropdown.is_some(),
+                agent_profile_editor: self.agent_profile_editor.is_some(),
+            }) {
+                SettingsEscape::TerminalDropdown => self.terminal_dropdown = None,
+                SettingsEscape::GeneralDropdown => self.general_dropdown = None,
+                SettingsEscape::ThemePresetMenu => self.theme_dropdown_open = false,
+                SettingsEscape::WorkspaceTemplateDropdown => {
+                    self.workspace_template_dropdown = None;
+                }
+                SettingsEscape::AgentProfileEditor => self.close_agent_profile_editor(cx),
+                SettingsEscape::CloseSettings => self.close_settings(cx),
             }
             cx.notify();
         }
+    }
+
+    fn pick_first_matching_font(&mut self, cx: &mut Context<Self>) {
+        use crate::settings::tabs::terminal::{FontMatches, FontPick};
+
+        let default_font = crate::terminal::element::resolve_font_family(None);
+        let value = match FontMatches::new(&self.mono_font_names, &default_font, &self.font_search)
+            .first()
+        {
+            Some(FontPick::Default) => serde_json::Value::Null,
+            Some(FontPick::Named(name)) => serde_json::Value::String(name.to_string()),
+            None => return,
+        };
+        self.font_dropdown_open = false;
+        self.font_search.clear();
+        self.persist_setting(false, "font_family", value, cx);
     }
 
     pub(crate) fn intercept_shortcut_keystroke(
@@ -463,8 +486,9 @@ impl PaneFlowApp {
                 .find(|entry| {
                     entry
                         .raw_key
-                        .as_deref()
-                        .is_some_and(|raw| keybindings::keystrokes_conflict(raw, &new_key))
+                        .iter()
+                        .chain(entry.extra_raw_keys.iter())
+                        .any(|raw| keybindings::keystrokes_conflict(raw, &new_key))
                 });
             if let Some(owner) = owner {
                 self.shortcut_conflict = Some(crate::settings::tabs::shortcuts::ShortcutConflict {
@@ -511,7 +535,7 @@ impl PaneFlowApp {
             self.cached_config = config;
             crate::config_snapshot::publish(&self.cached_config, cx);
             self.theme_mode = theme_mode;
-            crate::ui_primitives::set_reduce_motion(self.cached_config.reduce_motion_enabled());
+            crate::ui_primitives::set_reduce_motion(self.cached_config.reduce_motion_enabled(), cx);
             self.apply_editor_display(cx);
             if default_shell_changed {
                 self.handle_default_shell_changed(cx);
@@ -572,6 +596,41 @@ impl PaneFlowApp {
     }
 }
 
+#[derive(Clone, Copy, Default)]
+struct SettingsOverlays {
+    terminal_dropdown: bool,
+    general_dropdown: bool,
+    theme_preset_menu: bool,
+    workspace_template_dropdown: bool,
+    agent_profile_editor: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SettingsEscape {
+    TerminalDropdown,
+    GeneralDropdown,
+    ThemePresetMenu,
+    WorkspaceTemplateDropdown,
+    AgentProfileEditor,
+    CloseSettings,
+}
+
+fn settings_escape_target(open: SettingsOverlays) -> SettingsEscape {
+    if open.terminal_dropdown {
+        SettingsEscape::TerminalDropdown
+    } else if open.general_dropdown {
+        SettingsEscape::GeneralDropdown
+    } else if open.theme_preset_menu {
+        SettingsEscape::ThemePresetMenu
+    } else if open.workspace_template_dropdown {
+        SettingsEscape::WorkspaceTemplateDropdown
+    } else if open.agent_profile_editor {
+        SettingsEscape::AgentProfileEditor
+    } else {
+        SettingsEscape::CloseSettings
+    }
+}
+
 pub(crate) fn normalized_shell_setting(shell: Option<&str>) -> &str {
     shell.map(str::trim).filter(|s| !s.is_empty()).unwrap_or("")
 }
@@ -599,9 +658,9 @@ pub(crate) fn reconcile_telemetry(old: Option<bool>, new: Option<bool>) -> Telem
         };
     }
     let toast_msg = Some(match new {
-        Some(true) => "Télémétrie activée",
-        Some(false) => "Télémétrie désactivée",
-        None => "Télémétrie : la demande réapparaîtra au prochain lancement",
+        Some(true) => "Telemetry enabled",
+        Some(false) => "Telemetry disabled",
+        None => "Telemetry: you will be asked again at the next launch",
     });
     TelemetryReconciliation {
         rebuild: true,
@@ -613,6 +672,45 @@ pub(crate) fn reconcile_telemetry(old: Option<bool>, new: Option<bool>) -> Telem
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn telemetry_toasts_are_written_in_us_english() {
+        for (old, new) in [
+            (None, Some(true)),
+            (Some(true), Some(false)),
+            (Some(true), None),
+        ] {
+            let toast = reconcile_telemetry(old, new)
+                .toast_msg
+                .expect("a consent change shows a toast");
+            assert!(toast.is_ascii(), "{toast}");
+            assert!(toast.starts_with("Telemetry"), "{toast}");
+        }
+    }
+
+    #[test]
+    fn escape_closes_the_theme_preset_menu_before_settings() {
+        let theme_open = SettingsOverlays {
+            theme_preset_menu: true,
+            ..SettingsOverlays::default()
+        };
+        assert_eq!(
+            settings_escape_target(theme_open),
+            SettingsEscape::ThemePresetMenu
+        );
+        assert_eq!(
+            settings_escape_target(SettingsOverlays::default()),
+            SettingsEscape::CloseSettings
+        );
+        let template_open = SettingsOverlays {
+            workspace_template_dropdown: true,
+            ..SettingsOverlays::default()
+        };
+        assert_eq!(
+            settings_escape_target(template_open),
+            SettingsEscape::WorkspaceTemplateDropdown
+        );
+    }
 
     #[test]
     fn every_hot_reloading_terminal_key_reaches_the_open_terminals() {
@@ -719,7 +817,7 @@ mod tests {
             !r.reenabled,
             "first-ever consent (None → true) is not a re-enable"
         );
-        assert_eq!(r.toast_msg, Some("Télémétrie activée"));
+        assert_eq!(r.toast_msg, Some("Telemetry enabled"));
     }
 
     #[test]
@@ -727,7 +825,7 @@ mod tests {
         let r = reconcile_telemetry(None, Some(false));
         assert!(r.rebuild);
         assert!(!r.reenabled);
-        assert_eq!(r.toast_msg, Some("Télémétrie désactivée"));
+        assert_eq!(r.toast_msg, Some("Telemetry disabled"));
     }
 
     #[test]
@@ -738,7 +836,7 @@ mod tests {
             r.reenabled,
             "opted-out → opted-in is the only transition that emits telemetry_reenabled"
         );
-        assert_eq!(r.toast_msg, Some("Télémétrie activée"));
+        assert_eq!(r.toast_msg, Some("Telemetry enabled"));
     }
 
     #[test]
@@ -746,7 +844,7 @@ mod tests {
         let r = reconcile_telemetry(Some(true), Some(false));
         assert!(r.rebuild);
         assert!(!r.reenabled);
-        assert_eq!(r.toast_msg, Some("Télémétrie désactivée"));
+        assert_eq!(r.toast_msg, Some("Telemetry disabled"));
     }
 
     #[test]
@@ -756,7 +854,7 @@ mod tests {
         assert!(!r.reenabled);
         assert_eq!(
             r.toast_msg,
-            Some("Télémétrie : la demande réapparaîtra au prochain lancement")
+            Some("Telemetry: you will be asked again at the next launch")
         );
     }
 
@@ -767,7 +865,7 @@ mod tests {
         assert!(!r.reenabled);
         assert_eq!(
             r.toast_msg,
-            Some("Télémétrie : la demande réapparaîtra au prochain lancement")
+            Some("Telemetry: you will be asked again at the next launch")
         );
     }
 }
