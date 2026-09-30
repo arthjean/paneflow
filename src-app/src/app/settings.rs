@@ -217,7 +217,11 @@ impl PaneFlowApp {
         if !nested
             && matches!(
                 key,
-                "windows_terminal_material" | "windows_chrome_material" | "macos_chrome_material"
+                "windows_terminal_material"
+                    | "windows_chrome_material"
+                    | "macos_chrome_material"
+                    | "linux_terminal_material"
+                    | "linux_chrome_material"
             )
         {
             for ws in &self.workspaces {

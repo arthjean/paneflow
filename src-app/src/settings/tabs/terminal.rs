@@ -356,6 +356,32 @@ impl PaneFlowApp {
             )
         };
 
+        #[cfg(target_os = "linux")]
+        let content = {
+            let material_card = SearchCard::new(ui).row(
+                &search::TERMINAL_TRANSPARENCY,
+                self.terminal_toggle_row(
+                    "term-linux-terminal-material",
+                    search::TERMINAL_TRANSPARENCY.title,
+                    search::TERMINAL_TRANSPARENCY.description,
+                    config.linux_terminal_material_enabled(),
+                    "linux_terminal_material",
+                    false,
+                    ui,
+                    cx,
+                ),
+            );
+
+            content.child(
+                Block::new("Window")
+                    .top_gap(20.)
+                    .gap(20.)
+                    .child(section_header(ui, "Window"))
+                    .card(material_card)
+                    .finish(),
+            )
+        };
+
         content
     }
 

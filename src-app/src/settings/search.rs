@@ -46,6 +46,9 @@ pub(crate) const INTERFACE_STYLE: SettingCopy = SettingCopy {
     description: if cfg!(target_os = "macos") {
         "Themed paints the app in solid theme colors. Blended shows the native macOS material \
          behind the sidebar."
+    } else if cfg!(target_os = "linux") {
+        "Themed paints the app in solid theme colors. Blended lets the desktop show through the \
+         sidebar and the terminal."
     } else {
         "Themed paints the app in solid theme colors. Blended lets Mica show through the sidebar \
          and the terminal."
@@ -65,6 +68,12 @@ pub(crate) const CHROME_MATERIAL: SettingCopy = SettingCopy {
 pub(crate) const SIDEBAR_TRANSPARENCY: SettingCopy = SettingCopy {
     title: "Sidebar transparency",
     description: "Show the native macOS Sidebar material in the navigation card.",
+};
+#[cfg(target_os = "linux")]
+pub(crate) const CHROME_TRANSPARENCY: SettingCopy = SettingCopy {
+    title: "Sidebar transparency",
+    description: "Let the desktop show through the sidebar and the title bar. The blur comes from \
+                  your compositor, for example Blur my Shell on GNOME.",
 };
 pub(crate) const CURSOR_SHAPE: SettingCopy = SettingCopy {
     title: "Cursor shape",
@@ -117,6 +126,12 @@ pub(crate) const SCROLLBAR: SettingCopy = SettingCopy {
 pub(crate) const ACRYLIC_MATERIAL: SettingCopy = SettingCopy {
     title: "Enable acrylic material",
     description: "Applies a translucent texture behind the terminal window.",
+};
+#[cfg(target_os = "linux")]
+pub(crate) const TERMINAL_TRANSPARENCY: SettingCopy = SettingCopy {
+    title: "Terminal transparency",
+    description: "Let the desktop show through the terminal, behind a denser veil than the \
+                  sidebar.",
 };
 pub(crate) const WORKTREE_ROOT: SettingCopy = SettingCopy {
     title: "Worktree root",
@@ -180,7 +195,14 @@ const APPEARANCE_COPIES: &[&SettingCopy] = &[
     &REDUCE_MOTION,
     &SIDEBAR_TRANSPARENCY,
 ];
-#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+#[cfg(target_os = "linux")]
+const APPEARANCE_COPIES: &[&SettingCopy] = &[
+    &THEME_PRESET,
+    &INTERFACE_STYLE,
+    &REDUCE_MOTION,
+    &CHROME_TRANSPARENCY,
+];
+#[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
 const APPEARANCE_COPIES: &[&SettingCopy] = &[&THEME_PRESET, &REDUCE_MOTION];
 #[cfg(target_os = "windows")]
 const TERMINAL_COPIES: &[&SettingCopy] = &[
@@ -197,7 +219,22 @@ const TERMINAL_COPIES: &[&SettingCopy] = &[
     &MINIMUM_CONTRAST,
     &ACRYLIC_MATERIAL,
 ];
-#[cfg(not(target_os = "windows"))]
+#[cfg(target_os = "linux")]
+const TERMINAL_COPIES: &[&SettingCopy] = &[
+    &CURSOR_SHAPE,
+    &CURSOR_COLOR,
+    &FONT_FAMILY,
+    &FONT_SIZE,
+    &LINE_HEIGHT,
+    &CELL_WIDTH,
+    &FONT_WEIGHT,
+    &INTEGRATED_GLYPHS,
+    &COLOR_EMOJI,
+    &SCROLLBAR,
+    &MINIMUM_CONTRAST,
+    &TERMINAL_TRANSPARENCY,
+];
+#[cfg(not(any(target_os = "windows", target_os = "linux")))]
 const TERMINAL_COPIES: &[&SettingCopy] = &[
     &CURSOR_SHAPE,
     &CURSOR_COLOR,
@@ -221,11 +258,13 @@ const GENERAL_HEADERS: &[&str] = &["Defaults", "Notifications"];
 const APPEARANCE_HEADERS: &[&str] = &["Theme", "Preferences", "Windows", "System", "Light", "Dark"];
 #[cfg(target_os = "macos")]
 const APPEARANCE_HEADERS: &[&str] = &["Theme", "Preferences", "macOS", "System", "Light", "Dark"];
-#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+#[cfg(target_os = "linux")]
+const APPEARANCE_HEADERS: &[&str] = &["Theme", "Preferences", "Linux", "System", "Light", "Dark"];
+#[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
 const APPEARANCE_HEADERS: &[&str] = &["Theme", "Preferences", "System", "Light", "Dark"];
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", target_os = "linux"))]
 const TERMINAL_HEADERS: &[&str] = &["Cursor", "Display", "Window"];
-#[cfg(not(target_os = "windows"))]
+#[cfg(not(any(target_os = "windows", target_os = "linux")))]
 const TERMINAL_HEADERS: &[&str] = &["Cursor", "Display"];
 const AGENTS_HEADERS: &[&str] = &["Agents", "Not installed", "Profiles", "Permissions"];
 const MCP_HEADERS: &[&str] = &["MCP bridge"];

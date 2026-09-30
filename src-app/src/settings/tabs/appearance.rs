@@ -205,6 +205,52 @@ impl PaneFlowApp {
             )
         };
 
+        #[cfg(target_os = "linux")]
+        let content = {
+            let chrome_material = self.cached_config.cockpit_chrome_material_enabled();
+            let chrome_material_row = div()
+                .id("row-linux-chrome-material")
+                .flex()
+                .flex_row()
+                .items_center()
+                .justify_between()
+                .gap(px(16.))
+                .px(px(12.))
+                .py(px(10.))
+                .child(setting_text(
+                    ui,
+                    search::CHROME_TRANSPARENCY.title,
+                    search::CHROME_TRANSPARENCY.description,
+                ))
+                .child(
+                    div()
+                        .id("linux-chrome-material-toggle")
+                        .flex_shrink_0()
+                        .on_click(cx.listener(move |this, _: &ClickEvent, _window, cx| {
+                            this.persist_setting(
+                                false,
+                                "linux_chrome_material",
+                                serde_json::Value::Bool(!chrome_material),
+                                cx,
+                            );
+                        }))
+                        .child(crate::settings::components::toggle_pill(
+                            chrome_material,
+                            ui,
+                        )),
+                );
+
+            content.child(
+                Block::new("Linux")
+                    .top_gap(18.)
+                    .child(section_header(ui, "Linux"))
+                    .card(
+                        SearchCard::new(ui).row(&search::CHROME_TRANSPARENCY, chrome_material_row),
+                    )
+                    .finish(),
+            )
+        };
+
         content
     }
 
