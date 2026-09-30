@@ -19,6 +19,10 @@ const DARK_SIDEBAR_TAB_ACTIVE_OPACITY: f32 = 0.11;
 const DARK_SIDEBAR_TAB_HOVER_OPACITY: f32 = 0.07;
 const LIGHT_SIDEBAR_TAB_ACTIVE_OPACITY: f32 = 0.08;
 const LIGHT_SIDEBAR_TAB_HOVER_OPACITY: f32 = 0.04;
+#[cfg(target_os = "linux")]
+const LINUX_DARK_SHELL_OPACITY: f32 = 0.72;
+#[cfg(target_os = "linux")]
+const LINUX_LIGHT_SHELL_OPACITY: f32 = 0.62;
 
 pub(crate) const SIDEBAR_TAB_CORNER_RADIUS: Pixels = px(8.);
 
@@ -154,43 +158,54 @@ fn windows_supports_system_backdrop() -> bool {
 }
 
 pub(crate) fn cockpit_chrome_background(background: Hsla, material_active: bool) -> Hsla {
-    #[cfg(target_os = "windows")]
-    {
-        if material_active {
-            gpui::transparent_black()
-        } else {
-            Hsla {
-                a: 1.0,
-                ..background
-            }
-        }
-    }
-
-    #[cfg(not(target_os = "windows"))]
-    {
-        let _ = (background, material_active);
-        gpui::transparent_black()
-    }
-}
-
-pub(crate) fn cockpit_backdrop_background(background: Hsla, material_active: bool) -> Hsla {
     #[cfg(target_os = "linux")]
-    {
-        let _ = material_active;
+    let opaque_without_material = crate::window_chrome::linux_backdrop::translucent_window_active();
+    #[cfg(not(target_os = "linux"))]
+    let opaque_without_material = cfg!(target_os = "windows");
+
+    if material_active || !opaque_without_material {
+        gpui::transparent_black()
+    } else {
         Hsla {
             a: 1.0,
             ..background
         }
     }
+}
 
-    #[cfg(not(target_os = "linux"))]
-    {
-        if material_active {
-            gpui::transparent_black()
-        } else {
-            background
-        }
+pub(crate) fn window_border_color(border: Hsla, terminal_material_visible: bool) -> Hsla {
+    if terminal_material_visible && cfg!(target_os = "windows") {
+        gpui::transparent_black()
+    } else {
+        border
     }
+}
+
+pub(crate) fn cockpit_backdrop_background(background: Hsla, material_active: bool) -> Hsla {
+    if material_active {
+        gpui::transparent_black()
+    } else if cfg!(target_os = "linux") {
+        Hsla {
+            a: 1.0,
+            ..background
+        }
+    } else {
+        background
+    }
+}
+
+pub(crate) fn cockpit_shell_background(background: Hsla, material_active: bool) -> Hsla {
+    #[cfg(target_os = "linux")]
+    if material_active {
+        let a = if background.l > 0.5 {
+            LINUX_LIGHT_SHELL_OPACITY
+        } else {
+            LINUX_DARK_SHELL_OPACITY
+        };
+        return Hsla { a, ..background };
+    }
+
+    cockpit_backdrop_background(background, material_active)
 }
 
 pub(crate) fn sidebar_tab_active_background() -> Hsla {
@@ -254,15 +269,14 @@ fn sidebar_tab_background(light_opacity: f32, dark_opacity: f32) -> Hsla {
     let tint = Hsla::from(gpui::rgb(tint)).opacity(opacity);
 
     #[cfg(target_os = "linux")]
-    {
-        Hsla {
+    if !crate::window_chrome::linux_backdrop::translucent_window_active() {
+        return Hsla {
             a: 1.0,
             ..theme.title_bar_background
         }
-        .blend(tint)
+        .blend(tint);
     }
 
-    #[cfg(not(target_os = "linux"))]
     tint
 }
 
@@ -298,6 +312,26 @@ mod tests {
                 WindowBackgroundAppearance::Opaque
             );
         }
+    }
+
+    #[test]
+    fn translucent_linux_shell_carries_one_veil_and_clears_the_corner_masks() {
+        let dark = Hsla::from(gpui::rgb(0x141414));
+        let light = Hsla::from(gpui::rgb(0xf5f7fd));
+
+        assert_eq!(
+            cockpit_shell_background(dark, true).a,
+            LINUX_DARK_SHELL_OPACITY
+        );
+        assert_eq!(
+            cockpit_shell_background(light, true).a,
+            LINUX_LIGHT_SHELL_OPACITY
+        );
+        assert_eq!(
+            cockpit_backdrop_background(dark, true),
+            gpui::transparent_black()
+        );
+        assert_eq!(cockpit_shell_background(dark, false), dark);
     }
 }
 
@@ -355,17 +389,25 @@ mod material_tests {
 
     #[cfg(target_os = "linux")]
     #[test]
-    fn linux_chrome_stays_opaque_when_material_is_requested() {
+    fn linux_chrome_stays_opaque_until_translucency_is_requested() {
         let dark = gpui::hsla(0.71, 0.62, 0.32, 0.42);
         let light = gpui::hsla(0.09, 0.54, 0.78, 0.58);
 
-        assert_eq!(
-            cockpit_backdrop_background(dark, true),
-            Hsla { a: 1.0, ..dark }
-        );
-        assert_eq!(
-            cockpit_backdrop_background(light, true),
-            Hsla { a: 1.0, ..light }
-        );
+        for background in [dark, light] {
+            assert_eq!(
+                cockpit_backdrop_background(background, false),
+                Hsla {
+                    a: 1.0,
+                    ..background
+                }
+            );
+            assert_eq!(
+                cockpit_shell_background(background, false),
+                Hsla {
+                    a: 1.0,
+                    ..background
+                }
+            );
+        }
     }
 }

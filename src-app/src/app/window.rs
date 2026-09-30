@@ -223,7 +223,10 @@ pub(crate) fn mount_paneflow_app(window: &mut Window, cx: &mut App) -> Entity<Pa
         let subscription = cx.observe_window_bounds(window, |this, window, cx| {
             crate::window_state::record_windowed_size(window);
             #[cfg(target_os = "linux")]
-            crate::window_chrome::linux_backdrop::refresh_blur_region(window);
+            crate::window_chrome::linux_backdrop::refresh_blur_region(
+                window,
+                this.cached_config.native_material_requested(),
+            );
             if this.settings_section.is_some() {
                 this.reset_settings_scroll();
                 cx.notify();
@@ -246,13 +249,16 @@ pub(crate) fn mount_paneflow_app(window: &mut Window, cx: &mut App) -> Entity<Pa
         }
     });
     view.update(cx, |_, cx| {
-        let subscription = cx.observe_window_activation(window, |_, window, cx| {
+        let subscription = cx.observe_window_activation(window, |_this, window, cx| {
             crate::agents::notifications::set_window_active(
                 window.window_handle().window_id(),
                 window.is_window_active(),
             );
             #[cfg(target_os = "linux")]
-            crate::window_chrome::linux_backdrop::refresh_blur_region(window);
+            crate::window_chrome::linux_backdrop::refresh_blur_region(
+                window,
+                _this.cached_config.native_material_requested(),
+            );
             cx.notify();
         });
         subscription.detach();

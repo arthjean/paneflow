@@ -113,7 +113,10 @@ impl PaneFlowApp {
                     None
                 };
                 #[cfg(target_os = "linux")]
-                crate::window_chrome::linux_backdrop::apply_subtle_chrome_material(window);
+                crate::window_chrome::linux_backdrop::apply_subtle_chrome_material(
+                    window,
+                    config.native_material_requested(),
+                );
                 let window_id = window.window_handle().window_id();
                 crate::agents::notifications::set_window_active(
                     window_id,
@@ -127,7 +130,7 @@ impl PaneFlowApp {
                             this.chrome_material_enabled =
                                 owner.cached_config.cockpit_chrome_material_enabled();
                             this.terminal_material_enabled =
-                                owner.cached_config.windows_terminal_material_enabled();
+                                owner.cached_config.terminal_material_enabled();
                             if !owner.owns_pane(&this.pane) {
                                 this.orphaned = true;
                             }
@@ -152,7 +155,7 @@ impl PaneFlowApp {
                         orphaned: false,
                         reveal_tabs: true,
                         chrome_material_enabled: config.cockpit_chrome_material_enabled(),
-                        terminal_material_enabled: config.windows_terminal_material_enabled(),
+                        terminal_material_enabled: config.terminal_material_enabled(),
                         #[cfg(target_os = "windows")]
                         backdrop_light: None,
                         #[cfg(target_os = "macos")]
@@ -261,6 +264,11 @@ impl Render for DetachedPaneWindow {
         window.set_window_title(&format!("{title} - Paneflow"));
         let ui = crate::theme::ui_colors();
         let theme = crate::theme::active_theme();
+        #[cfg(target_os = "linux")]
+        crate::window_chrome::linux_backdrop::refresh_blur_region(
+            window,
+            self.chrome_material_enabled || self.terminal_material_enabled,
+        );
         let material_active = self.chrome_material_enabled
             && !crate::native_material_suppressed_by_fullscreen(window.is_fullscreen());
         #[cfg(target_os = "macos")]
@@ -284,7 +292,7 @@ impl Render for DetachedPaneWindow {
         };
         let shell_background =
             crate::app::constants::cockpit_backdrop_background(shell_color, material_active);
-        let backdrop_background = crate::app::constants::cockpit_backdrop_background(
+        let backdrop_background = crate::app::constants::cockpit_shell_background(
             shell_color,
             material_active
                 || (self.terminal_material_enabled

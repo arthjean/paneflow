@@ -141,7 +141,7 @@ impl Render for PaneFlowApp {
         } else {
             0.
         };
-        let terminal_material_active = self.cached_config.windows_terminal_material_enabled();
+        let terminal_material_active = self.cached_config.terminal_material_enabled();
         let chrome_material_active =
             self.cached_config.cockpit_chrome_material_enabled() && !chrome_material_suppressed;
         let terminal_surface_mounted = self
@@ -166,7 +166,7 @@ impl Render for PaneFlowApp {
             ..shell_color
         };
         let app_backdrop_bg =
-            crate::app::constants::cockpit_backdrop_background(shell_color, native_material_active);
+            crate::app::constants::cockpit_shell_background(shell_color, native_material_active);
         let panel_bg = if settings_open {
             ui.base
         } else {
@@ -200,7 +200,10 @@ impl Render for PaneFlowApp {
             - main_panel_left_inset
             - crate::app::constants::PANEL_INSET;
         #[cfg(target_os = "linux")]
-        crate::window_chrome::linux_backdrop::refresh_blur_region(window);
+        crate::window_chrome::linux_backdrop::refresh_blur_region(
+            window,
+            chrome_material_active || terminal_material_active,
+        );
 
         if let Some(pane) = self.pending_pane_focus.take()
             && !Self::focus_pane_window(pane.clone(), cx)
@@ -719,11 +722,7 @@ impl Render for PaneFlowApp {
             app_content,
             window,
             app_backdrop_bg,
-            if terminal_material_visible {
-                gpui::transparent_black()
-            } else {
-                ui.border
-            },
+            crate::app::constants::window_border_color(ui.border, terminal_material_visible),
         );
         startup_trace::on_app_render_built();
         shell

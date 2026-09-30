@@ -980,7 +980,7 @@ while the window is unfocused.
 | Windows 11 build 22621 and later | Mica by default (`window_backdrop: auto`), transparent by choice; `blurred` and `acrylic` in `paneflow.json` resolve to `auto`, so blur needs `PANEFLOW_WINDOW_BACKDROP=blurred` for one launch | Reveals the backdrop when `windows_chrome_material` is on | Transparent default background when `windows_terminal_material` is on, masked to the panel; the panel inset gutters are repainted opaque only while `windows_chrome_material` is off | Native caption glyphs in light and dark |
 | Windows 10 and older 11 | Opaque | Opaque card | Opaque | Same glyphs |
 | macOS | Transparent window surface, material dropped in fullscreen | AppKit Sidebar material when `macos_chrome_material` is on | Opaque | Traffic lights with 80 px brand padding |
-| Linux | Opaque shell, with no compositor blur | Opaque, tinted from the title bar color | Opaque | Client-side decorations with GPUI's generic glyphs, or server-side when `window_decorations: server` |
+| Linux | Opaque shell by default. `linux_chrome_material` or `linux_terminal_material` makes the surface transparent and paints the shell as a theme veil (0.72 on dark themes, 0.62 on light ones); Paneflow requests no blur, so any blur comes from the compositor, for instance Blur my Shell on GNOME | Opaque, tinted from the title bar color; reveals the veil when `linux_chrome_material` is on | Opaque; with `linux_terminal_material` the terminal card adds a 0.35 shade over the veil, black on dark themes and white on light ones, so the terminal reads denser than the sidebar | Client-side decorations with GPUI's generic glyphs, or server-side when `window_decorations: server` |
 
 Rules that follow:
 
@@ -1057,8 +1057,9 @@ already need the same behavior.
 - The `System` theme tile resolves to a concrete variant at click time; it is
   not a persistent follow-the-OS mode.
 - `window_decorations` and `window_backdrop` are read once at startup.
-- The Linux sidebar cannot reveal a native material; it blends the tint into
-  the title bar color instead.
+- The Linux sidebar cannot reveal a native material. The translucent shell is
+  opt-in and requests no compositor blur, so without an external blur it
+  shows the raw wallpaper through the veil.
 - `reduce_motion` stops hover interpolation, the sidebar slide, the Workspaces
   row motion, menu reveals, and the thinking matrix only; the other animations
   listed in 4.8 ignore it.

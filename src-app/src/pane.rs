@@ -72,13 +72,38 @@ fn pane_card_background(
         }
     }
 
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(target_os = "linux")]
+    {
+        let shade = if theme.background.l <= 0.5 {
+            gpui::black()
+        } else {
+            gpui::white()
+        };
+        shade.opacity(LINUX_TERMINAL_SHADE)
+    }
+
+    #[cfg(not(any(target_os = "windows", target_os = "linux")))]
     {
         theme.background
     }
 }
 
+fn pane_card_fill(radius: Pixels, color: Hsla) -> AnyElement {
+    if cfg!(target_os = "linux") && color.a < 1.0 {
+        div()
+            .absolute()
+            .inset_0()
+            .rounded(radius)
+            .bg(color)
+            .into_any_element()
+    } else {
+        squircle_fill(radius, color).into_any_element()
+    }
+}
+
 const HEADER_GAP: f32 = 7.0;
+#[cfg(target_os = "linux")]
+const LINUX_TERMINAL_SHADE: f32 = 0.35;
 const SECTION_PX: f32 = crate::app::constants::PANE_CONTENT_INSET_X;
 const ACTION_BUTTON_SIZE: f32 = 22.0;
 
@@ -1373,6 +1398,13 @@ impl Pane {
         let pane_id = cx.entity().entity_id().as_u64();
         let rail_hover = crate::app::constants::sidebar_tab_hover_background();
         let rail_active = crate::app::constants::sidebar_tab_active_background();
+        let unified_active_background = if self.cached_config.linux_terminal_material_enabled() {
+            rail_active
+        } else if ui.base.l > 0.5 {
+            ui.base
+        } else {
+            ui.overlay
+        };
 
         let mut strip = div()
             .id("pane-tab-strip")
@@ -1430,7 +1462,7 @@ impl Pane {
                     .pr(px(8.))
                     .gap(px(10.))
                     .when(active, |chip| {
-                        chip.bg(if ui.base.l > 0.5 { ui.base } else { ui.overlay })
+                        chip.bg(unified_active_background)
                             .border_color(unified_active_border)
                             .shadow(vec![unified_active_shadow])
                     })
@@ -1529,7 +1561,7 @@ impl Pane {
         } else {
             pane_card_background(
                 &crate::theme::active_theme(),
-                self.cached_config.windows_terminal_material_enabled(),
+                self.cached_config.terminal_material_enabled(),
                 true,
             )
         };
@@ -1828,7 +1860,7 @@ impl Render for Pane {
         let theme = crate::theme::active_theme();
         let card_background = pane_card_background(
             &theme,
-            self.cached_config.windows_terminal_material_enabled(),
+            self.cached_config.terminal_material_enabled(),
             terminal_selected,
         );
 
@@ -2012,7 +2044,7 @@ impl Render for Pane {
             .size_full()
             .relative()
             .overflow_hidden()
-            .child(squircle_fill(card_radius, card_background))
+            .child(pane_card_fill(card_radius, card_background))
             .child(content)
             .when_some(self.broadcast_stripe, |d, idx| {
                 d.child(
@@ -2258,7 +2290,9 @@ mod tests {
         let material = pane_card_background(&theme, true, true);
         #[cfg(target_os = "windows")]
         assert_eq!(material, theme.background.opacity(0.35));
-        #[cfg(not(target_os = "windows"))]
+        #[cfg(target_os = "linux")]
+        assert_eq!(material, gpui::black().opacity(super::LINUX_TERMINAL_SHADE));
+        #[cfg(not(any(target_os = "windows", target_os = "linux")))]
         assert_eq!(material, theme.background);
     }
 

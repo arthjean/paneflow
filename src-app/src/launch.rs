@@ -441,7 +441,10 @@ pub(crate) fn run() {
                         );
                     }
                     #[cfg(target_os = "linux")]
-                    crate::window_chrome::linux_backdrop::apply_subtle_chrome_material(window);
+                    crate::window_chrome::linux_backdrop::apply_subtle_chrome_material(
+                        window,
+                        config.native_material_requested(),
+                    );
 
                     startup_trace::mark("window_created");
                     mount_paneflow_app(window, cx)
