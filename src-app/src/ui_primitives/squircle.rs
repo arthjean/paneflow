@@ -1,6 +1,6 @@
 use gpui::{
-    Bounds, Hsla, IntoElement, ParentElement, Path, PathBuilder, Pixels, Styled, canvas, div,
-    point, px, size,
+    AnyElement, Bounds, Hsla, IntoElement, ParentElement, Path, PathBuilder, Pixels, Styled,
+    canvas, div, point, px, size,
 };
 
 const CORNER_EXTENT: f32 = 1.528_665;
@@ -69,21 +69,45 @@ pub(crate) fn squircle_stroke_path(
     builder.build().ok()
 }
 
-pub(crate) fn squircle_fill(radius: Pixels, color: Hsla) -> impl IntoElement {
-    div().absolute().inset_0().child(
-        canvas(
-            |_, _, _| {},
-            move |bounds, _, window, _| {
-                if color.a <= f32::EPSILON {
-                    return;
-                }
-                if let Some(path) = squircle_path(bounds, radius) {
-                    window.paint_path(path, color);
-                }
-            },
+pub(crate) fn squircle_fill(radius: Pixels, color: Hsla) -> AnyElement {
+    if translucent_over_transparent_window(color) {
+        return div()
+            .absolute()
+            .inset_0()
+            .rounded(radius)
+            .bg(color)
+            .into_any_element();
+    }
+    div()
+        .absolute()
+        .inset_0()
+        .child(
+            canvas(
+                |_, _, _| {},
+                move |bounds, _, window, _| {
+                    if color.a <= f32::EPSILON {
+                        return;
+                    }
+                    if let Some(path) = squircle_path(bounds, radius) {
+                        window.paint_path(path, color);
+                    }
+                },
+            )
+            .size_full(),
         )
-        .size_full(),
-    )
+        .into_any_element()
+}
+
+fn translucent_over_transparent_window(color: Hsla) -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        color.a < 1.0 && crate::window_chrome::linux_backdrop::translucent_window_active()
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = color;
+        false
+    }
 }
 
 pub(crate) fn squircle_border(radius: Pixels, width: Pixels, color: Hsla) -> impl IntoElement {
