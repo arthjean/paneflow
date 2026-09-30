@@ -2118,6 +2118,27 @@ impl SessionHost {
         Ok(())
     }
 
+    pub fn set_workspace(
+        &self,
+        session: &SessionId,
+        workspace: WorkspaceId,
+    ) -> Result<(), HostError> {
+        let (manifest, durability) = {
+            let sessions = self.lock_sessions();
+            let record = sessions
+                .get(session)
+                .ok_or_else(|| HostError::SessionNotFound(session.clone()))?;
+            (Arc::clone(&record.manifest), Arc::clone(&record.durability))
+        };
+        if self.commit(&manifest, &durability, None, WriteClass::Metadata, |m| {
+            m.workspace = Some(workspace)
+        }) {
+            Ok(())
+        } else {
+            Err(HostError::SessionNotFound(session.clone()))
+        }
+    }
+
     pub fn clear_history(
         &self,
         session: &SessionId,

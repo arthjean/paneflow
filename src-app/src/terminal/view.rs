@@ -667,6 +667,15 @@ impl TerminalView {
     }
 
     #[cfg(test)]
+    pub(crate) fn launch_workspace_id(&self) -> u64 {
+        self.launch.workspace_id
+    }
+
+    pub(crate) fn move_to_workspace(&mut self, workspace_id: u64) {
+        self.launch.workspace_id = workspace_id;
+    }
+
+    #[cfg(test)]
     pub(crate) fn display_only_for_test(workspace_id: u64, cx: &mut Context<Self>) -> Self {
         let mut terminal = TerminalState::new_display_only(24, 80);
         drop(terminal.take_backend_events());

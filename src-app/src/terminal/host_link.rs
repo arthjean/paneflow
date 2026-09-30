@@ -556,6 +556,15 @@ fn resolve_at(
             }
         }
     };
+    if let Some(workspace) =
+        workspace_to_assign(live.manifest.workspace.as_ref(), request.workspace.as_ref())
+        && let Err(error) = client.set_workspace(&request.session, workspace)
+    {
+        log::debug!(
+            "paneflow: the host kept session {} in its previous workspace: {error}",
+            request.session
+        );
+    }
     let generation = live.manifest.generation;
     let attachment = match client.attach(&request.session, Some(generation)) {
         Ok(attachment) => attachment,
@@ -967,9 +976,48 @@ pub(crate) fn remove_session(endpoint: &Path, session: &SessionId) -> Result<(),
     connect(endpoint)?.remove(session)
 }
 
+fn workspace_to_assign<'a>(
+    current: Option<&WorkspaceId>,
+    requested: Option<&'a WorkspaceId>,
+) -> Option<&'a WorkspaceId> {
+    requested.filter(|requested| current != Some(*requested))
+}
+
+pub(crate) fn assign_workspace(sessions: &[SessionId], workspace: &WorkspaceId) {
+    let Some(target) = host_endpoint() else {
+        return;
+    };
+    let mut client = match connect(&target.endpoint) {
+        Ok(client) => client,
+        Err(error) => {
+            log::debug!("paneflow: cannot tell the host about moved sessions: {error}");
+            return;
+        }
+    };
+    for session in sessions {
+        if let Err(error) = client.set_workspace(session, workspace) {
+            log::debug!(
+                "paneflow: the host kept session {session} in its previous workspace: {error}"
+            );
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_attach_reassigns_only_a_session_the_host_files_under_another_workspace() {
+        let (layout, stale) = (WorkspaceId::new(), WorkspaceId::new());
+        assert_eq!(
+            workspace_to_assign(Some(&stale), Some(&layout)),
+            Some(&layout)
+        );
+        assert_eq!(workspace_to_assign(None, Some(&layout)), Some(&layout));
+        assert_eq!(workspace_to_assign(Some(&layout), Some(&layout)), None);
+        assert_eq!(workspace_to_assign(Some(&stale), None), None);
+    }
 
     #[test]
     fn end_states_carry_their_exit_and_restartability() {

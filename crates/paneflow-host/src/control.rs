@@ -209,10 +209,21 @@ pub fn resolve_session(
     })
 }
 
-fn scope_workspace(
-    host: &SessionHost,
-    params: &Value,
-) -> Result<Option<Option<WorkspaceId>>, ControlError> {
+struct ReadScope {
+    session: SessionId,
+    workspace: Option<WorkspaceId>,
+}
+
+impl ReadScope {
+    fn admits(&self, session: &SessionId, workspace: &Option<WorkspaceId>) -> bool {
+        match &self.workspace {
+            Some(scope) => workspace.as_ref() == Some(scope),
+            None => *session == self.session,
+        }
+    }
+}
+
+fn read_scope(host: &SessionHost, params: &Value) -> Result<Option<ReadScope>, ControlError> {
     let Some(raw) = params.get("scope_session") else {
         return Ok(None);
     };
@@ -225,7 +236,12 @@ fn scope_workspace(
     host.list(None)
         .into_iter()
         .find(|summary| summary.manifest.session == session)
-        .map(|summary| Some(summary.manifest.workspace))
+        .map(|summary| {
+            Some(ReadScope {
+                session: summary.manifest.session,
+                workspace: summary.manifest.workspace,
+            })
+        })
         .ok_or_else(|| {
             ControlError::Params(format!("scope session {raw} is not hosted by this host"))
         })
@@ -233,13 +249,13 @@ fn scope_workspace(
 
 fn authorize_scoped_session(
     host: &SessionHost,
-    scope: Option<&Option<WorkspaceId>>,
+    scope: Option<&ReadScope>,
     session: &SessionId,
 ) -> Result<(), ControlError> {
-    let Some(workspace) = scope else {
+    let Some(scope) = scope else {
         return Ok(());
     };
-    if host.inspect(session)?.manifest.workspace == *workspace {
+    if scope.admits(session, &host.inspect(session)?.manifest.workspace) {
         Ok(())
     } else {
         Err(ControlError::Params(format!(
@@ -283,14 +299,14 @@ fn answer(
             "host": host.identity(),
         })),
         "surface.list" => {
-            let scope = scope_workspace(host, params)?;
+            let scope = read_scope(host, params)?;
             let mut sessions: Vec<SessionSummary> = host
                 .list(None)
                 .into_iter()
                 .filter(|summary| {
-                    scope
-                        .as_ref()
-                        .is_none_or(|workspace| summary.manifest.workspace == *workspace)
+                    scope.as_ref().is_none_or(|scope| {
+                        scope.admits(&summary.manifest.session, &summary.manifest.workspace)
+                    })
                 })
                 .collect();
             sessions.sort_by(|a, b| a.manifest.session.cmp(&b.manifest.session));
@@ -305,13 +321,13 @@ fn answer(
                 "workspace": Value::Null,
                 "surfaces": surfaces,
             });
-            if let Some(workspace) = scope {
-                result["scope_workspace"] = json!(workspace);
+            if let Some(scope) = scope {
+                result["scope_workspace"] = json!(scope.workspace);
             }
             Ok(result)
         }
         "surface.read" => {
-            let scope = scope_workspace(host, params)?;
+            let scope = read_scope(host, params)?;
             let session = resolve_session(aliases, params)?;
             authorize_scoped_session(host, scope.as_ref(), &session)?;
             let lines = param_usize(params, "lines")
@@ -370,7 +386,7 @@ fn answer(
                     "pattern exceeds {MAX_SEARCH_PATTERN_BYTES} bytes"
                 )));
             }
-            let scope = scope_workspace(host, params)?;
+            let scope = read_scope(host, params)?;
             let session = resolve_session(aliases, params)?;
             authorize_scoped_session(host, scope.as_ref(), &session)?;
             let max_matches = param_usize(params, "max_matches")

@@ -516,7 +516,6 @@ impl PaneFlowApp {
             self.show_toast("Tab limit reached for this workspace", cx);
             return;
         }
-        let dest_id = dest.id;
         let Some(tab_idx) = self
             .workspaces
             .get(source_ws_idx)
@@ -529,12 +528,7 @@ impl PaneFlowApp {
         };
         let surfaces = tab.surface_ids(cx);
         self.hand_surfaces_between(source_ws_idx, dest_ws_idx, &surfaces);
-        for pane in tab.collect_panes() {
-            pane.update(cx, |pane, cx| {
-                pane.workspace_id = dest_id;
-                cx.notify();
-            });
-        }
+        self.rehome_panes(&tab.collect_panes(), dest_ws_idx, cx);
         if !self.workspaces[dest_ws_idx].open_tab(tab) {
             log::warn!("tab move: destination refused the tab after the cap check");
             return;
@@ -547,6 +541,22 @@ impl PaneFlowApp {
         self.focus_workspace_tab(dest_ws_idx, dest_tab_idx, window, cx);
         self.save_session(cx);
         cx.notify();
+    }
+
+    fn rehome_panes(&self, panes: &[Entity<Pane>], dest_ws_idx: usize, cx: &mut Context<Self>) {
+        let Some(dest) = self.workspaces.get(dest_ws_idx) else {
+            return;
+        };
+        let durable = dest.durable_id.clone();
+        let sessions = move_panes_to_workspace(panes, dest.id, cx);
+        if sessions.is_empty() {
+            return;
+        }
+        cx.background_executor()
+            .spawn(async move {
+                crate::terminal::host_link::assign_workspace(&sessions, &durable);
+            })
+            .detach();
     }
 
     fn hand_surfaces_between(
@@ -655,11 +665,7 @@ impl PaneFlowApp {
             }
         }
 
-        let dest_id = self.workspaces[dest_ws_idx].id;
-        pane.update(cx, |pane, cx| {
-            pane.workspace_id = dest_id;
-            cx.notify();
-        });
+        self.rehome_panes(std::slice::from_ref(&pane), dest_ws_idx, cx);
         let surfaces: std::collections::HashSet<u64> = pane
             .read(cx)
             .terminals()
@@ -710,4 +716,65 @@ fn sole_terminal(tab: &Tab, cx: &App) -> Option<Entity<TerminalView>> {
         .flat_map(|pane| pane.read(cx).terminals().cloned().collect::<Vec<_>>());
     let first = terminals.next()?;
     terminals.next().is_none().then_some(first)
+}
+
+fn move_panes_to_workspace(
+    panes: &[Entity<Pane>],
+    workspace_id: u64,
+    cx: &mut App,
+) -> Vec<paneflow_config::schema::SessionId> {
+    let mut sessions = Vec::new();
+    for pane in panes {
+        let terminals: Vec<Entity<TerminalView>> = pane.read(cx).terminals().cloned().collect();
+        for terminal in terminals {
+            sessions.push(terminal.update(cx, |view, _| {
+                view.move_to_workspace(workspace_id);
+                view.terminal.session_id.clone()
+            }));
+        }
+        pane.update(cx, |pane, cx| {
+            pane.workspace_id = workspace_id;
+            cx.notify();
+        });
+    }
+    sessions
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[gpui::test]
+    fn moved_panes_name_every_stacked_session_and_relaunch_in_the_new_workspace(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let cx = cx.add_empty_window();
+        let front = cx.new(|cx| TerminalView::display_only_for_test(1, cx));
+        let behind = cx.new(|cx| TerminalView::display_only_for_test(1, cx));
+        let other = cx.new(|cx| TerminalView::display_only_for_test(1, cx));
+        let stacked = cx.new(|cx| Pane::new(behind.clone(), 1, cx));
+        stacked.update(cx, |pane, cx| {
+            pane.push_surface(crate::pane::PaneSurface::Terminal(front.clone()), cx);
+        });
+        let single = cx.new(|cx| Pane::new(other.clone(), 1, cx));
+
+        let sessions =
+            cx.update(|_, cx| move_panes_to_workspace(&[stacked.clone(), single.clone()], 7, cx));
+
+        cx.update(|_, cx| {
+            let mut expected: Vec<_> = [&behind, &front, &other]
+                .iter()
+                .map(|terminal| terminal.read(cx).terminal.session_id.clone())
+                .collect();
+            let mut got = sessions.clone();
+            expected.sort_by_key(ToString::to_string);
+            got.sort_by_key(ToString::to_string);
+            assert_eq!(got, expected);
+            for terminal in [&behind, &front, &other] {
+                assert_eq!(terminal.read(cx).launch_workspace_id(), 7);
+            }
+            assert_eq!(stacked.read(cx).workspace_id, 7);
+            assert_eq!(single.read(cx).workspace_id, 7);
+        });
+    }
 }

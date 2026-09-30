@@ -337,6 +337,18 @@ impl HostClient {
         .map(|_| ())
     }
 
+    pub fn set_workspace(
+        &mut self,
+        session: &SessionId,
+        workspace: &WorkspaceId,
+    ) -> Result<(), HostClientError> {
+        self.call(
+            "session.workspace",
+            json!({"session": session, "workspace": workspace}),
+        )
+        .map(|_| ())
+    }
+
     pub fn attach(
         &mut self,
         session: &SessionId,

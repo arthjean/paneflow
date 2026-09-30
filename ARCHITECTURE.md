@@ -888,7 +888,9 @@ engine identity (libghostty source sha and API version) before any effect;
 `session.list/create/inspect/stop/restart`, `session.attach` (native
 snapshot checkpoint plus its output offset, captured in one runtime
 operation), `session.output` (contiguous bytes from an offset, optionally
-followed), `session.input`, `session.resize`, `agent.snapshot` and
+followed), `session.input`, `session.resize`, `session.workspace` (files
+a session under the workspace that now holds it, sent when a tab or pane
+moves between workspaces and again on every attach), `agent.snapshot` and
 `host.shutdown` (refused with the live session list while any session runs)
 follow. Control frames
 are capped at 64 KiB, and output travels in 32 KiB data chunks inside those

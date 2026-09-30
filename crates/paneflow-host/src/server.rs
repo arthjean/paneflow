@@ -828,6 +828,19 @@ fn dispatch(host: &SessionHost, method: &str, params: &Value) -> Result<Value, D
             host.set_appearance(&session, generation, appearance)?;
             Ok(json!({}))
         }
+        "session.workspace" => {
+            let session = param_session(params)?;
+            let workspace: WorkspaceId = params
+                .get("workspace")
+                .cloned()
+                .ok_or_else(|| DispatchError::Params("missing workspace".to_string()))
+                .and_then(|raw| {
+                    serde_json::from_value(raw)
+                        .map_err(|e| DispatchError::Params(format!("invalid workspace: {e}")))
+                })?;
+            host.set_workspace(&session, workspace)?;
+            Ok(json!({}))
+        }
         "session.clear_history" => {
             let session = param_session(params)?;
             let generation = param_generation(params)?;
@@ -2829,6 +2842,128 @@ mod tests {
             .call("surface.list", json!({"scope_session": SessionId::new()}))
             .expect_err("an unknown scope session is refused");
         assert!(unknown.contains("not hosted"), "{unknown}");
+
+        for session in &sessions {
+            host.stop(session, None).unwrap();
+        }
+        server.stop().unwrap();
+    }
+
+    #[test]
+    fn a_scope_session_without_a_workspace_reaches_only_itself() {
+        use paneflow_ipc_client::IpcTransport;
+        use paneflow_ipc_client::host_control::HostTransport;
+
+        let (_home, host, server) = start();
+        let mut sessions = Vec::new();
+        for _ in 0..2 {
+            let created = host
+                .create(serde_json::from_value(shell_create_params()).unwrap())
+                .unwrap();
+            assert!(created.manifest.workspace.is_none());
+            sessions.push(created.manifest.session);
+        }
+        let transport = HostTransport::connect(server.endpoint(), "scope-test").unwrap();
+        let scope = json!(sessions[0]);
+
+        let listed = transport
+            .call("surface.list", json!({"scope_session": scope}))
+            .unwrap();
+        let listed_sessions: Vec<&Value> = listed["surfaces"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|surface| &surface["session"])
+            .collect();
+        assert_eq!(listed_sessions, vec![&json!(sessions[0])], "{listed}");
+
+        let everything = transport.call("surface.list", json!({})).unwrap();
+        let other = everything["surfaces"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|surface| surface["session"] == json!(sessions[1]))
+            .and_then(|surface| surface["surface_id"].as_u64())
+            .unwrap();
+        for method in ["surface.read", "surface.search"] {
+            let refused = transport
+                .call(
+                    method,
+                    json!({"scope_session": scope, "surface_id": other, "pattern": "x"}),
+                )
+                .expect_err("another workspace-less session is outside the scope");
+            assert!(
+                refused.contains("outside the workspace"),
+                "{method}: {refused}"
+            );
+        }
+
+        for session in &sessions {
+            host.stop(session, None).unwrap();
+        }
+        server.stop().unwrap();
+    }
+
+    #[test]
+    fn a_session_moved_to_another_workspace_is_scoped_to_its_new_workspace() {
+        use paneflow_config::schema::WorkspaceId;
+        use paneflow_ipc_client::IpcTransport;
+        use paneflow_ipc_client::host_control::HostTransport;
+
+        let (_home, host, server) = start();
+        let (source, dest) = (WorkspaceId::new(), WorkspaceId::new());
+        let mut sessions = Vec::new();
+        for workspace in [&source, &source, &dest] {
+            let mut params = shell_create_params();
+            params["workspace"] = json!(workspace);
+            let created = host
+                .create(serde_json::from_value(params).unwrap())
+                .unwrap();
+            sessions.push(created.manifest.session);
+        }
+        let hello = ClientHello::local("paneflow-host-test");
+        let mut client = HostClient::connect(server.endpoint(), &hello).unwrap();
+        client.set_workspace(&sessions[0], &dest).unwrap();
+        client.set_workspace(&sessions[0], &dest).unwrap();
+        assert_eq!(
+            host.inspect(&sessions[0]).unwrap().manifest.workspace,
+            Some(dest.clone())
+        );
+        let missing = client.set_workspace(&SessionId::new(), &dest);
+        assert!(missing.is_err(), "{missing:?}");
+
+        let transport = HostTransport::connect(server.endpoint(), "scope-test").unwrap();
+        let scope = json!(sessions[0]);
+        let listed = transport
+            .call("surface.list", json!({"scope_session": scope}))
+            .unwrap();
+        assert_eq!(listed["scope_workspace"], json!(dest));
+        let mut listed_sessions: Vec<Value> = listed["surfaces"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|surface| surface["session"].clone())
+            .collect();
+        listed_sessions.sort_by_key(|session| session.to_string());
+        let mut expected = vec![json!(sessions[0]), json!(sessions[2])];
+        expected.sort_by_key(|session| session.to_string());
+        assert_eq!(listed_sessions, expected, "{listed}");
+
+        let everything = transport.call("surface.list", json!({})).unwrap();
+        let left_behind = everything["surfaces"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|surface| surface["session"] == json!(sessions[1]))
+            .and_then(|surface| surface["surface_id"].as_u64())
+            .unwrap();
+        let refused = transport
+            .call(
+                "surface.read",
+                json!({"scope_session": scope, "surface_id": left_behind}),
+            )
+            .expect_err("the source workspace is no longer in scope");
+        assert!(refused.contains("outside the workspace"), "{refused}");
 
         for session in &sessions {
             host.stop(session, None).unwrap();
