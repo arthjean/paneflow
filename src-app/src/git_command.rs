@@ -70,6 +70,8 @@ where
         command.env_remove(key);
     }
     command.env("GIT_TERMINAL_PROMPT", "0");
+    #[cfg(test)]
+    crate::git_fixture::isolate(&mut command);
     if profile == GitProfile::Probe {
         command.envs(PROBE_ENV.iter().copied());
         for setting in PROBE_CONFIG {
@@ -218,9 +220,7 @@ pub(crate) fn run_keeping_stdout_head(
 pub(crate) fn empty_hooks_dir() -> &'static Path {
     static DIR: OnceLock<PathBuf> = OnceLock::new();
     DIR.get_or_init(|| {
-        let dir = paneflow_home::cache_dir()
-            .unwrap_or_else(std::env::temp_dir)
-            .join(EMPTY_HOOKS_DIR_NAME);
+        let dir = empty_hooks_dir_in(&empty_hooks_parent());
         if let Err(error) = std::fs::create_dir_all(&dir) {
             log::warn!(
                 "git: cannot create the empty hooks dir {}: {error}",
@@ -229,6 +229,20 @@ pub(crate) fn empty_hooks_dir() -> &'static Path {
         }
         dir
     })
+}
+
+fn empty_hooks_dir_in(cache: &Path) -> PathBuf {
+    cache.join(EMPTY_HOOKS_DIR_NAME)
+}
+
+#[cfg(not(test))]
+fn empty_hooks_parent() -> PathBuf {
+    paneflow_home::cache_dir().unwrap_or_else(std::env::temp_dir)
+}
+
+#[cfg(test)]
+fn empty_hooks_parent() -> PathBuf {
+    std::env::temp_dir().join("paneflow-tests-cache")
 }
 
 #[cfg(test)]

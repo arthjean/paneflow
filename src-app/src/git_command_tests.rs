@@ -1,49 +1,17 @@
 use super::*;
+use crate::git_fixture as fixture;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Instant, SystemTime};
 
 const RAW_GIT_SPAWN: &str = "Command::new(\"git\")";
 
-fn test_git(cwd: &Path, args: &[&str]) -> bool {
-    test_git_output(cwd, args).is_some_and(|out| out.status.success())
+fn commit(cwd: &Path, message: &str) -> paneflow_process::BoundedOutput {
+    fixture::output(cwd, &["commit", "-q", "-m", message])
 }
 
-fn test_git_output(cwd: &Path, args: &[&str]) -> Option<std::process::Output> {
-    std::process::Command::new("git")
-        .args(args)
-        .current_dir(cwd)
-        .env("GIT_TERMINAL_PROMPT", "0")
-        .output()
-        .ok()
-}
-
-fn commit(cwd: &Path, message: &str) -> std::process::Output {
-    test_git_output(
-        cwd,
-        &[
-            "-c",
-            "user.email=paneflow@example.com",
-            "-c",
-            "user.name=Paneflow",
-            "commit",
-            "-q",
-            "-m",
-            message,
-        ],
-    )
-    .expect("git commit spawns")
-}
-
-fn committed_repo(root: &Path) -> bool {
-    std::fs::create_dir_all(root).expect("repo dir");
-    if !test_git(root, &["init", "-q", "-b", "main"]) {
-        return false;
-    }
-    assert!(test_git(root, &["config", "core.autocrlf", "false"]));
-    std::fs::write(root.join("tracked.txt"), "one\ntwo\n").expect("tracked file");
-    assert!(test_git(root, &["add", "tracked.txt"]));
-    commit(root, "init").status.success()
+fn committed_repo(root: &Path) {
+    fixture::committed_repo(root, &[("tracked.txt", "one\ntwo\n")]);
 }
 
 fn sh_path(path: &Path) -> String {
@@ -159,6 +127,47 @@ fn every_production_git_spawn_goes_through_the_builder() {
     assert!(production_part(&builder_source).contains(RAW_GIT_SPAWN));
 }
 
+fn all_sources(dir: &Path, out: &mut Vec<PathBuf>) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            all_sources(&path, out);
+        } else if path.extension().is_some_and(|ext| ext == "rs") {
+            out.push(path);
+        }
+    }
+}
+
+#[test]
+fn every_test_git_fixture_goes_through_the_isolating_helper() {
+    let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let builder = manifest.join("src").join("git_command.rs");
+    let mut sources = Vec::new();
+    all_sources(&manifest.join("src"), &mut sources);
+    all_sources(&manifest.join("tests"), &mut sources);
+    assert!(sources.len() > 100);
+    let offenders: Vec<String> = sources
+        .iter()
+        .filter(|path| **path != builder)
+        .filter(|path| {
+            let compact: String = std::fs::read_to_string(path)
+                .unwrap_or_default()
+                .chars()
+                .filter(|c| !c.is_whitespace())
+                .collect();
+            compact.contains(RAW_GIT_SPAWN)
+        })
+        .map(|path| path.display().to_string())
+        .collect();
+    assert!(
+        offenders.is_empty(),
+        "spawn test git through crate::git_fixture, which isolates it from the user's git config: {offenders:?}"
+    );
+}
+
 #[test]
 fn both_profiles_strip_the_inherited_repository_env_and_never_prompt() {
     for profile in [GitProfile::Probe, GitProfile::UserAction] {
@@ -221,33 +230,46 @@ fn only_the_probe_profile_isolates_config_and_disables_diff_programs() {
 }
 
 #[test]
-fn the_empty_hooks_dir_is_a_real_directory_under_the_paneflow_cache() {
+fn the_empty_hooks_dir_is_a_real_directory_that_tests_keep_out_of_the_paneflow_home() {
     let dir = empty_hooks_dir();
     assert!(dir.is_dir(), "{} must exist", dir.display());
-    if let Some(cache) = paneflow_home::cache_dir() {
-        assert!(dir.starts_with(cache));
+    assert_eq!(dir, empty_hooks_dir_in(&empty_hooks_parent()));
+    if let Some(home) = paneflow_home::paneflow_home() {
+        assert!(
+            !dir.starts_with(home),
+            "tests never write under the Paneflow home"
+        );
     }
+    let cache = Path::new("cache-root");
+    assert_eq!(empty_hooks_dir_in(cache), cache.join("git-empty-hooks"));
 }
 
 #[test]
 fn a_probe_never_runs_the_repository_fsmonitor_textconv_or_external_diff() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let root = tmp.path().join("repo");
-    if !committed_repo(&root) {
-        return;
-    }
+    committed_repo(&root);
     let marker = tmp.path().join("marker");
     let script = tmp.path().join("hook.sh");
     write_marker_script(&script, &marker);
     let script = sh_path(&script);
-    assert!(test_git(&root, &["config", "core.fsmonitor", &script]));
-    assert!(test_git(&root, &["config", "diff.external", &script]));
-    assert!(test_git(&root, &["config", "diff.evil.textconv", &script]));
+    assert!(fixture::git_succeeds(
+        &root,
+        &["config", "core.fsmonitor", &script]
+    ));
+    assert!(fixture::git_succeeds(
+        &root,
+        &["config", "diff.external", &script]
+    ));
+    assert!(fixture::git_succeeds(
+        &root,
+        &["config", "diff.evil.textconv", &script]
+    ));
     std::fs::write(root.join(".gitattributes"), "*.txt diff=evil\n").expect("attributes");
     std::fs::write(root.join("tracked.txt"), "one\nchanged\n").expect("edit");
     std::fs::write(root.join("untracked.txt"), "new\n").expect("untracked");
 
-    let _ = test_git_output(&root, &["status", "--porcelain"]);
+    let _ = fixture::output(&root, &["status", "--porcelain"]);
     assert!(
         marker.exists(),
         "an unisolated git status runs the repository fsmonitor, so this test can detect it"
@@ -277,37 +299,42 @@ fn write_filter_script(script: &Path, marker: &Path) {
     }
 }
 
-fn repo_with_a_filter_driver(tmp: &Path) -> Option<(PathBuf, PathBuf)> {
+fn repo_with_a_filter_driver(tmp: &Path) -> (PathBuf, PathBuf) {
     let root = tmp.join("repo");
-    if !committed_repo(&root) {
-        return None;
-    }
+    committed_repo(&root);
     let marker = tmp.join("filter-marker");
     let script = tmp.join("filter.sh");
     write_filter_script(&script, &marker);
     let command = format!("sh {}", sh_path(&script));
-    assert!(test_git(&root, &["config", "filter.evil.clean", &command]));
-    assert!(test_git(&root, &["config", "filter.evil.required", "true"]));
+    assert!(fixture::git_succeeds(
+        &root,
+        &["config", "filter.evil.clean", &command]
+    ));
+    assert!(fixture::git_succeeds(
+        &root,
+        &["config", "filter.evil.required", "true"]
+    ));
     std::fs::write(root.join(".gitattributes"), "*.txt filter=evil\n").expect("attributes");
     let info = root.join(".git").join("info");
     std::fs::create_dir_all(&info).expect("info dir");
     std::fs::write(info.join("attributes"), "*.md filter=evil\n").expect("info attributes");
     std::fs::write(root.join("notes.md"), "notes\n").expect("notes");
-    assert!(test_git(&root, &["add", ".gitattributes", "notes.md"]));
+    assert!(fixture::git_succeeds(
+        &root,
+        &["add", ".gitattributes", "notes.md"]
+    ));
     assert!(commit(&root, "attributes").status.success());
     make_tracked_files_stat_dirty(&root, &["tracked.txt".to_string(), "notes.md".to_string()]);
     let _ = std::fs::remove_file(&marker);
-    Some((root, marker))
+    (root, marker)
 }
 
 #[test]
 fn a_probe_never_runs_a_repository_filter_driver() {
     let tmp = tempfile::tempdir().expect("tempdir");
-    let Some((root, marker)) = repo_with_a_filter_driver(tmp.path()) else {
-        return;
-    };
+    let (root, marker) = repo_with_a_filter_driver(tmp.path());
 
-    let _ = test_git_output(&root, &["status", "--porcelain"]);
+    let _ = fixture::output(&root, &["status", "--porcelain"]);
     assert!(
         marker.exists(),
         "an unisolated git status runs the repository filter, so this test can detect it"
@@ -330,9 +357,7 @@ fn a_probe_never_runs_a_repository_filter_driver() {
 #[test]
 fn a_user_action_keeps_the_repository_filter_driver() {
     let tmp = tempfile::tempdir().expect("tempdir");
-    let Some((root, marker)) = repo_with_a_filter_driver(tmp.path()) else {
-        return;
-    };
+    let (root, marker) = repo_with_a_filter_driver(tmp.path());
     let mut command = git(GitProfile::UserAction, ["status", "--porcelain"]);
     command.current_dir(&root);
     assert!(run(command, Duration::from_secs(30), 1 << 20).is_ok());
@@ -383,16 +408,14 @@ fn only_worktree_reading_probes_query_the_filter_drivers() {
 fn probes_work_in_a_worktree_linked_to_a_bare_repository() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let origin = tmp.path().join("origin");
-    if !committed_repo(&origin) {
-        return;
-    }
+    committed_repo(&origin);
     let bare = tmp.path().join("bare.git");
-    assert!(test_git(
+    assert!(fixture::git_succeeds(
         tmp.path(),
         &["clone", "-q", "--bare", &sh_path(&origin), &sh_path(&bare)]
     ));
     let linked = tmp.path().join("linked");
-    assert!(test_git(
+    assert!(fixture::git_succeeds(
         &bare,
         &["worktree", "add", "-q", &sh_path(&linked), "HEAD"]
     ));
@@ -411,16 +434,14 @@ fn probes_work_in_a_worktree_linked_to_a_bare_repository() {
 fn probes_never_rewrite_the_index_of_stat_dirty_files() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let root = tmp.path().join("repo");
-    if !committed_repo(&root) {
-        return;
-    }
+    committed_repo(&root);
     make_tracked_files_stat_dirty(&root, &["tracked.txt".to_string()]);
     let before = index_state(&root);
 
     run_every_probe(&root);
 
     assert!(index_state(&root) == before, "a probe rewrote .git/index");
-    let _ = test_git_output(&root, &["status", "--porcelain"]);
+    let _ = fixture::output(&root, &["status", "--porcelain"]);
     assert!(
         index_state(&root) != before,
         "an unisolated git status refreshes this index, so the test detects a rewrite"
@@ -431,9 +452,7 @@ fn probes_never_rewrite_the_index_of_stat_dirty_files() {
 fn agent_commits_never_hit_index_lock_while_probes_run() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let root = tmp.path().join("repo");
-    if !committed_repo(&root) {
-        return;
-    }
+    committed_repo(&root);
     let stop = Arc::new(AtomicBool::new(false));
     let probes = {
         let root = root.clone();
@@ -452,7 +471,7 @@ fn agent_commits_never_hit_index_lock_while_probes_run() {
     let started = Instant::now();
     for iteration in 0..500 {
         std::fs::write(root.join("tracked.txt"), format!("{iteration}\n")).expect("edit");
-        let added = test_git_output(&root, &["add", "tracked.txt"]).expect("git add spawns");
+        let added = fixture::output(&root, &["add", "tracked.txt"]);
         let committed = commit(&root, &format!("agent {iteration}"));
         for out in [&added, &committed] {
             if !out.status.success() {
@@ -484,14 +503,12 @@ fn agent_commits_never_hit_index_lock_while_probes_run() {
 fn a_probe_killed_at_its_deadline_leaves_no_index_lock() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let root = tmp.path().join("repo");
-    if !committed_repo(&root) {
-        return;
-    }
+    committed_repo(&root);
     let names: Vec<String> = (0..2000).map(|i| format!("f{i}.txt")).collect();
     for name in &names {
         std::fs::write(root.join(name), "x\n").expect("file");
     }
-    assert!(test_git(&root, &["add", "."]));
+    assert!(fixture::git_succeeds(&root, &["add", "."]));
     assert!(commit(&root, "many").status.success());
     make_tracked_files_stat_dirty(&root, &names);
 

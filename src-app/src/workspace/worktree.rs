@@ -1385,6 +1385,7 @@ pub(crate) mod test_support {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::git_fixture as fixture;
 
     fn managed(path: &str) -> ManagedWorktree {
         ManagedWorktree {
@@ -1844,25 +1845,13 @@ mod tests {
         );
     }
 
-    fn test_git(cwd: &Path, args: &[&str]) -> bool {
-        std::process::Command::new("git")
-            .args(args)
-            .current_dir(cwd)
-            .env("GIT_TERMINAL_PROMPT", "0")
-            .output()
-            .map(|out| out.status.success())
-            .unwrap_or(false)
-    }
-
     #[test]
     fn a_branch_sharing_its_name_with_a_tag_is_listed_by_its_plain_name() {
         let dir = tempfile::tempdir().expect("tempdir");
         let repo_root = dir.path().join("repo");
-        if !init_test_repo(&repo_root) {
-            return;
-        }
-        assert!(test_git(&repo_root, &["branch", "feature"]));
-        assert!(test_git(&repo_root, &["tag", "feature"]));
+        init_test_repo(&repo_root);
+        fixture::run(&repo_root, &["branch", "feature"]);
+        fixture::run(&repo_root, &["tag", "feature"]);
 
         let branches = list_branches(&repo_root).expect("branches");
 
@@ -1870,27 +1859,8 @@ mod tests {
         assert!(!branches.iter().any(|branch| branch.starts_with("heads/")));
     }
 
-    fn init_test_repo(repo_root: &Path) -> bool {
-        std::fs::create_dir_all(repo_root).expect("repo dir");
-        if !test_git(repo_root, &["init", "-q", "-b", "main"]) {
-            return false;
-        }
-        assert!(test_git(repo_root, &["config", "core.autocrlf", "false"]));
-        std::fs::write(repo_root.join("README.md"), "init\n").expect("readme");
-        assert!(test_git(repo_root, &["add", "README.md"]));
-        test_git(
-            repo_root,
-            &[
-                "-c",
-                "user.email=paneflow@example.com",
-                "-c",
-                "user.name=Paneflow",
-                "commit",
-                "-q",
-                "-m",
-                "init",
-            ],
-        )
+    fn init_test_repo(repo_root: &Path) {
+        fixture::committed_repo(repo_root, &[("README.md", "init\n")]);
     }
 
     #[test]
@@ -1898,9 +1868,7 @@ mod tests {
         let tmp = tempfile::tempdir().expect("tempdir");
         let _root = test_support::scoped_root(tmp.path().join("worktrees"));
         let repo_root = tmp.path().join("repo");
-        if !init_test_repo(&repo_root) {
-            return;
-        }
+        init_test_repo(&repo_root);
 
         let path = create_branch_checkout(&repo_root, "feat/clean", None)
             .expect("create")
@@ -1929,16 +1897,14 @@ mod tests {
         let tmp = tempfile::tempdir().expect("tempdir");
         let _root = test_support::scoped_root(tmp.path().join("worktrees"));
         let repo_root = tmp.path().join("repo");
-        if !init_test_repo(&repo_root) {
-            return;
-        }
+        init_test_repo(&repo_root);
 
         let claimed = "feat/a b";
         let colliding = "feat/a-b";
         let claimed_path = worktree_dir(&repo_root, claimed);
         std::fs::create_dir_all(claimed_path.parent().expect("worktree parent"))
             .expect("parent dir");
-        if !test_git(
+        if !fixture::git_succeeds(
             &repo_root,
             &[
                 "worktree",
@@ -1971,13 +1937,11 @@ mod tests {
         let tmp = tempfile::tempdir().expect("tempdir");
         let _root = test_support::scoped_root(tmp.path().join("worktrees"));
         let repo_root = tmp.path().join("repo");
-        if !init_test_repo(&repo_root) {
-            return;
-        }
-        assert!(test_git(&repo_root, &["branch", "develop"]));
+        init_test_repo(&repo_root);
+        fixture::run(&repo_root, &["branch", "develop"]);
         std::fs::write(repo_root.join("main-only.txt"), "x\n").expect("file");
-        assert!(test_git(&repo_root, &["add", "main-only.txt"]));
-        assert!(test_git(
+        fixture::run(&repo_root, &["add", "main-only.txt"]);
+        fixture::run(
             &repo_root,
             &[
                 "-c",
@@ -1989,7 +1953,7 @@ mod tests {
                 "-m",
                 "main moves on",
             ],
-        ));
+        );
 
         let prepared = create_branch_checkout(&repo_root, "feat/from-develop", Some("develop"))
             .expect("create");
@@ -2249,9 +2213,7 @@ mod tests {
         let tmp = tempfile::tempdir().expect("tempdir");
         let _root = test_support::scoped_root(tmp.path().join("worktrees"));
         let repo_root = tmp.path().join("repo");
-        if !init_test_repo(&repo_root) {
-            return;
-        }
+        init_test_repo(&repo_root);
         let blocked = repo_root.join("blocked.env");
         std::fs::write(&blocked, "TOKEN=1").unwrap();
         std::fs::write(repo_root.join(".worktreeinclude"), "blocked.env\n").unwrap();
@@ -2334,9 +2296,7 @@ mod tests {
         let tmp = tempfile::tempdir().expect("tempdir");
         let _root = test_support::scoped_root(tmp.path().join("worktrees"));
         let repo_root = tmp.path().join("repo");
-        if !init_test_repo(&repo_root) {
-            return;
-        }
+        init_test_repo(&repo_root);
         let path = create_branch_checkout(&repo_root, "feat/moved", None)
             .expect("create")
             .path;
@@ -2405,9 +2365,7 @@ mod tests {
         let tmp = tempfile::tempdir().expect("tempdir");
         let _root = test_support::scoped_root(tmp.path().join("worktrees"));
         let repo_root = tmp.path().join("repo");
-        if !init_test_repo(&repo_root) {
-            return;
-        }
+        init_test_repo(&repo_root);
         let path = create_branch_checkout(&repo_root, "feat/snap", None)
             .expect("create")
             .path;
@@ -2468,13 +2426,8 @@ mod tests {
         let tmp = tempfile::tempdir().expect("tempdir");
         let _root = test_support::scoped_root(tmp.path().join("worktrees"));
         let repo_root = tmp.path().join("repo");
-        if !init_test_repo(&repo_root) {
-            return;
-        }
-        assert!(test_git(
-            &repo_root,
-            &["config", "status.showUntrackedFiles", "no"]
-        ));
+        init_test_repo(&repo_root);
+        fixture::run(&repo_root, &["config", "status.showUntrackedFiles", "no"]);
         let path = create_branch_checkout(&repo_root, "feat/hidden", None)
             .expect("create")
             .path;
@@ -2509,10 +2462,8 @@ mod tests {
         let tmp = tempfile::tempdir().expect("tempdir");
         let _root = test_support::scoped_root(tmp.path().join("worktrees"));
         let repo_root = tmp.path().join("repo");
-        if !init_test_repo(&repo_root) {
-            return;
-        }
-        assert!(test_git(&repo_root, &["config", "core.autocrlf", "true"]));
+        init_test_repo(&repo_root);
+        fixture::run(&repo_root, &["config", "core.autocrlf", "true"]);
         let path = create_branch_checkout(&repo_root, "feat/loud", None)
             .expect("create")
             .path;
@@ -2543,11 +2494,10 @@ mod tests {
         let tmp = tempfile::tempdir().expect("tempdir");
         let sub_origin = tmp.path().join("sub-origin");
         let repo_root = tmp.path().join("repo");
-        if !init_test_repo(&sub_origin) || !init_test_repo(&repo_root) {
-            return;
-        }
+        init_test_repo(&sub_origin);
+        init_test_repo(&repo_root);
         let origin = sub_origin.to_string_lossy().into_owned();
-        assert!(test_git(
+        fixture::run(
             &repo_root,
             &[
                 "-c",
@@ -2557,9 +2507,9 @@ mod tests {
                 "-q",
                 &origin,
                 "sub",
-            ]
-        ));
-        assert!(test_git(
+            ],
+        );
+        fixture::run(
             &repo_root,
             &[
                 "-c",
@@ -2570,12 +2520,9 @@ mod tests {
                 "-q",
                 "-m",
                 "add sub",
-            ]
-        ));
-        assert!(test_git(
-            &repo_root,
-            &["config", "submodule.sub.ignore", "all"]
-        ));
+            ],
+        );
+        fixture::run(&repo_root, &["config", "submodule.sub.ignore", "all"]);
         assert_eq!(is_clean(&repo_root), Ok(true));
 
         std::fs::write(repo_root.join("sub").join("README.md"), "changed\n").expect("edit");
@@ -2588,9 +2535,7 @@ mod tests {
         let tmp = tempfile::tempdir().expect("tempdir");
         let _root = test_support::scoped_root(tmp.path().join("worktrees"));
         let repo_root = tmp.path().join("repo");
-        if !init_test_repo(&repo_root) {
-            return;
-        }
+        init_test_repo(&repo_root);
         let path = create_branch_checkout(&repo_root, "feat/moved", None)
             .expect("create")
             .path;
@@ -2615,9 +2560,7 @@ mod tests {
         let tmp = tempfile::tempdir().expect("tempdir");
         let _root = test_support::scoped_root(tmp.path().join("worktrees"));
         let repo_root = tmp.path().join("repo");
-        if !init_test_repo(&repo_root) {
-            return;
-        }
+        init_test_repo(&repo_root);
         let outside = tmp.path().join("not-a-repo");
         std::fs::create_dir_all(&outside).expect("plain dir");
         assert!(is_clean(&outside).is_err(), "no repository is not clean");
@@ -2646,9 +2589,7 @@ mod tests {
         let tmp = tempfile::tempdir().expect("tempdir");
         let _root = test_support::scoped_root(tmp.path().join("worktrees"));
         let repo_root = tmp.path().join("repo");
-        if !init_test_repo(&repo_root) {
-            return;
-        }
+        init_test_repo(&repo_root);
         let before = list_worktrees(&repo_root).expect("list").len();
 
         switch_checkout(&repo_root, "feat/local", None).expect("create in place");
@@ -2679,10 +2620,8 @@ mod tests {
         let tmp = tempfile::tempdir().expect("tempdir");
         let _root = test_support::scoped_root(tmp.path().join("worktrees"));
         let repo_root = tmp.path().join("repo");
-        if !init_test_repo(&repo_root) {
-            return;
-        }
-        assert!(test_git(&repo_root, &["branch", "develop"]));
+        init_test_repo(&repo_root);
+        fixture::run(&repo_root, &["branch", "develop"]);
 
         let path = create_detached_checkout(&repo_root, Some("develop"))
             .expect("detached")

@@ -66,7 +66,11 @@ fn path_without_dir(path: &std::ffi::OsStr, dir: &Path) -> Option<std::ffi::OsSt
 }
 
 pub(crate) fn shell_integration_dir() -> Option<PathBuf> {
-    data_dir().map(|dir| dir.join("shell"))
+    data_dir().map(|dir| shell_integration_dir_in(&dir))
+}
+
+pub(crate) fn shell_integration_dir_in(home: &std::path::Path) -> PathBuf {
+    home.join("shell")
 }
 
 pub fn cache_dir() -> Option<PathBuf> {
@@ -164,21 +168,20 @@ pub fn data_dir() -> Option<PathBuf> {
 }
 
 pub fn bridge_binary_path() -> Option<PathBuf> {
-    let suffix = if cfg!(windows) { ".exe" } else { "" };
-    Some(
-        data_dir()?
-            .join("bin")
-            .join(format!("paneflow-mcp{suffix}")),
-    )
+    Some(bridge_binary_path_in(&data_dir()?))
 }
 
-pub fn ai_hook_binary_path() -> Option<PathBuf> {
+pub fn bridge_binary_path_in(home: &std::path::Path) -> PathBuf {
+    helper_binary_path_in(home, "paneflow-mcp")
+}
+
+pub fn ai_hook_binary_path_in(home: &std::path::Path) -> PathBuf {
+    helper_binary_path_in(home, "paneflow-ai-hook")
+}
+
+fn helper_binary_path_in(home: &std::path::Path, name: &str) -> PathBuf {
     let suffix = if cfg!(windows) { ".exe" } else { "" };
-    Some(
-        data_dir()?
-            .join("bin")
-            .join(format!("paneflow-ai-hook{suffix}")),
-    )
+    home.join("bin").join(format!("{name}{suffix}"))
 }
 
 #[cfg(unix)]

@@ -428,6 +428,7 @@ mod tests {
         DiffOptions, build_display_rows_with_caches, build_file_row_caches,
         build_split_rows_with_caches, compute_head_diff,
     };
+    use crate::git_fixture as fixture;
 
     fn hunks(base: &str, new: &str) -> Vec<DiffHunk> {
         crate::diff::compute_hunks(base, new)
@@ -629,33 +630,6 @@ mod tests {
         assert!(split_revert_target(&rows, &anchors, &files, changed[3]).is_none());
     }
 
-    fn git(cwd: &Path, args: &[&str]) -> bool {
-        std::process::Command::new("git")
-            .args(args)
-            .current_dir(cwd)
-            .env("GIT_TERMINAL_PROMPT", "0")
-            .output()
-            .map(|out| out.status.success())
-            .unwrap_or(false)
-    }
-
-    fn commit(root: &Path, message: &str) -> bool {
-        git(root, &["add", "-A"])
-            && git(
-                root,
-                &[
-                    "-c",
-                    "user.email=paneflow@example.com",
-                    "-c",
-                    "user.name=Paneflow",
-                    "commit",
-                    "-q",
-                    "-m",
-                    message,
-                ],
-            )
-    }
-
     fn request<'a>(
         path: &'a Path,
         file: &'a FileDiff,
@@ -686,24 +660,19 @@ mod tests {
         made.is_ok()
     }
 
-    fn repo() -> Option<tempfile::TempDir> {
+    fn repo() -> tempfile::TempDir {
         let dir = tempfile::tempdir().expect("tempdir");
-        if !git(dir.path(), &["init", "-q"]) {
-            return None;
-        }
-        assert!(git(dir.path(), &["config", "core.autocrlf", "false"]));
-        Some(dir)
+        fixture::init(dir.path());
+        dir
     }
 
     #[test]
     fn reverting_the_first_of_two_blocks_writes_the_base_for_it_and_keeps_the_second() {
-        let Some(dir) = repo() else {
-            return;
-        };
+        let dir = repo();
         let path = dir.path().join("notes.txt");
         let base = "one\ntwo\nthree\nfour\nfive\nsix\n";
         std::fs::write(&path, base).expect("write base");
-        assert!(commit(dir.path(), "base"));
+        fixture::commit_all(dir.path(), "base");
         let edited = "ONE\ntwo\nthree\nfour\nfive\nSIX\n";
         std::fs::write(&path, edited).expect("write edit");
 
@@ -770,12 +739,10 @@ mod tests {
 
     #[test]
     fn an_agent_write_between_the_build_and_the_click_leaves_the_disk_unchanged() {
-        let Some(dir) = repo() else {
-            return;
-        };
+        let dir = repo();
         let path = dir.path().join("notes.txt");
         std::fs::write(&path, "one\ntwo\nthree\n").expect("write base");
-        assert!(commit(dir.path(), "base"));
+        fixture::commit_all(dir.path(), "base");
         std::fs::write(&path, "ONE\ntwo\nthree\n").expect("write edit");
         let diff = compute_head_diff(dir.path(), DiffOptions::default());
         let file = diff
@@ -840,14 +807,12 @@ mod tests {
 
     #[test]
     fn a_type_change_is_parsed_as_such_and_named_in_the_refusal() {
-        let Some(dir) = repo() else {
-            return;
-        };
-        assert!(git(dir.path(), &["config", "core.symlinks", "true"]));
+        let dir = repo();
+        fixture::run(dir.path(), &["config", "core.symlinks", "true"]);
         std::fs::write(dir.path().join("target.txt"), "x\n").expect("target");
         let entry = dir.path().join("entry.txt");
         std::fs::write(&entry, "entry\n").expect("entry");
-        assert!(commit(dir.path(), "base"));
+        fixture::commit_all(dir.path(), "base");
         std::fs::remove_file(&entry).expect("remove");
         if !link_to(Path::new("target.txt"), &entry) {
             return;
@@ -871,14 +836,12 @@ mod tests {
     #[test]
     fn a_read_only_mode_survives_a_revert() {
         use std::os::unix::fs::PermissionsExt;
-        let Some(dir) = repo() else {
-            return;
-        };
+        let dir = repo();
         for mode in [0o444, 0o555] {
             let name = format!("file-{mode:o}.txt");
             let path = dir.path().join(&name);
             std::fs::write(&path, "one\ntwo\n").expect("base");
-            assert!(commit(dir.path(), "base"));
+            fixture::commit_all(dir.path(), "base");
             std::fs::write(&path, "ONE\ntwo\n").expect("edit");
             std::fs::set_permissions(&path, std::fs::Permissions::from_mode(mode)).expect("chmod");
             let diff = compute_head_diff(dir.path(), DiffOptions::default());
@@ -905,12 +868,10 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn a_read_only_file_is_refused_and_keeps_its_attribute() {
-        let Some(dir) = repo() else {
-            return;
-        };
+        let dir = repo();
         let path = dir.path().join("locked.txt");
         std::fs::write(&path, "one\ntwo\n").expect("base");
-        assert!(commit(dir.path(), "base"));
+        fixture::commit_all(dir.path(), "base");
         std::fs::write(&path, "ONE\ntwo\n").expect("edit");
         let mut permissions = std::fs::metadata(&path).expect("meta").permissions();
         permissions.set_readonly(true);

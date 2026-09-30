@@ -484,39 +484,15 @@ fn git_output_error(output: &paneflow_process::BoundedOutput) -> String {
 mod tests {
     use super::list_branches;
 
-    fn test_git(cwd: &std::path::Path, args: &[&str]) -> bool {
-        std::process::Command::new("git")
-            .args(args)
-            .current_dir(cwd)
-            .env("GIT_TERMINAL_PROMPT", "0")
-            .output()
-            .is_ok_and(|out| out.status.success())
-    }
+    use crate::git_fixture as fixture;
 
     #[test]
     fn the_branch_menu_lists_a_branch_shadowed_by_a_tag_by_its_plain_name() {
         let dir = tempfile::tempdir().expect("tempdir");
         let root = dir.path();
-        if !test_git(root, &["init", "-q", "-b", "main"]) {
-            return;
-        }
-        std::fs::write(root.join("README.md"), "init\n").expect("readme");
-        assert!(test_git(root, &["add", "."]));
-        assert!(test_git(
-            root,
-            &[
-                "-c",
-                "user.email=paneflow@example.com",
-                "-c",
-                "user.name=Paneflow",
-                "commit",
-                "-q",
-                "-m",
-                "init",
-            ],
-        ));
-        assert!(test_git(root, &["branch", "release"]));
-        assert!(test_git(root, &["tag", "release"]));
+        fixture::committed_repo(root, &[("README.md", "init\n")]);
+        fixture::run(root, &["branch", "release"]);
+        fixture::run(root, &["tag", "release"]);
 
         let branches = list_branches(root.to_str().expect("utf-8 path")).expect("branches");
 

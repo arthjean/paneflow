@@ -94,7 +94,11 @@ pub fn window_state_path() -> Option<PathBuf> {
 }
 
 pub fn cache_dir() -> Option<PathBuf> {
-    paneflow_home().map(|home| home.join("cache"))
+    paneflow_home().map(|home| cache_dir_in(&home))
+}
+
+pub fn cache_dir_in(home: &Path) -> PathBuf {
+    home.join("cache")
 }
 
 pub fn worktrees_dir() -> Option<PathBuf> {

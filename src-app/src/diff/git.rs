@@ -476,6 +476,7 @@ fn compute_diff_against(worktree_dir: &Path, base: &str, options: DiffOptions) -
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::git_fixture as fixture;
 
     #[cfg(unix)]
     #[test]
@@ -592,9 +593,7 @@ mod tests {
     fn list_untracked_limited_reports_truncation() {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
-        if !test_git(root, &["init"]) {
-            return;
-        }
+        fixture::init(root);
         std::fs::write(root.join("a.txt"), "a\n").unwrap();
         std::fs::write(root.join("b.txt"), "b\n").unwrap();
         std::fs::write(root.join("c.txt"), "c\n").unwrap();
@@ -616,15 +615,5 @@ mod tests {
             is_binary: false,
         };
         assert_eq!(fd.line_counts(), (5, 1));
-    }
-
-    fn test_git(cwd: &std::path::Path, args: &[&str]) -> bool {
-        std::process::Command::new("git")
-            .args(args)
-            .current_dir(cwd)
-            .env("GIT_TERMINAL_PROMPT", "0")
-            .output()
-            .map(|out| out.status.success())
-            .unwrap_or(false)
     }
 }

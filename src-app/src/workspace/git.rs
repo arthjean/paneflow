@@ -457,6 +457,7 @@ fn branch_from_git(cwd: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::git_fixture as fixture;
 
     fn canonical_expectation(path: &std::path::Path) -> std::path::PathBuf {
         crate::runtime_paths::strip_verbatim_prefix(std::fs::canonicalize(path).unwrap())
@@ -800,13 +801,11 @@ mod tests {
     fn from_cwd_counts_staged_and_untracked_changes() {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
-        if !test_git(root, &["init"]) {
-            return;
-        }
-        assert!(test_git(root, &["config", "core.autocrlf", "false"]));
+        fixture::init(root);
+        fixture::run(root, &["config", "core.autocrlf", "false"]);
         std::fs::write(root.join("tracked.txt"), "one\n").unwrap();
-        assert!(test_git(root, &["add", "tracked.txt"]));
-        assert!(test_git(
+        fixture::run(root, &["add", "tracked.txt"]);
+        fixture::run(
             root,
             &[
                 "-c",
@@ -817,10 +816,10 @@ mod tests {
                 "-m",
                 "init",
             ],
-        ));
+        );
 
         std::fs::write(root.join("tracked.txt"), "one\ntwo\n").unwrap();
-        assert!(test_git(root, &["add", "tracked.txt"]));
+        fixture::run(root, &["add", "tracked.txt"]);
         std::fs::write(root.join("untracked.txt"), "alpha\nbeta\n").unwrap();
 
         let stats = GitDiffStats::from_cwd(root.to_str().unwrap());
@@ -830,29 +829,14 @@ mod tests {
     }
 
     fn commit_all(root: &std::path::Path, message: &str) {
-        assert!(test_git(root, &["add", "-A"]));
-        assert!(test_git(
-            root,
-            &[
-                "-c",
-                "user.email=paneflow@example.com",
-                "-c",
-                "user.name=Paneflow",
-                "commit",
-                "-q",
-                "-m",
-                message,
-            ],
-        ));
+        fixture::commit_all(root, message);
     }
 
     #[test]
     fn untracked_files_past_the_cap_show_the_cap_and_a_plus() {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
-        if !test_git(root, &["init", "-q"]) {
-            return;
-        }
+        fixture::init(root);
         std::fs::write(root.join("seed.txt"), "seed\n").unwrap();
         commit_all(root, "seed");
         for i in 0..1005 {
@@ -868,9 +852,7 @@ mod tests {
     fn an_untracked_listing_past_the_byte_cap_still_counts_what_it_read() {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
-        if !test_git(root, &["init", "-q"]) {
-            return;
-        }
+        fixture::init(root);
         std::fs::write(root.join("seed.txt"), "seed\n").unwrap();
         commit_all(root, "seed");
         let long = "n".repeat(200);
@@ -892,9 +874,7 @@ mod tests {
     fn a_subfolder_workspace_counts_the_untracked_files_of_the_whole_repository() {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
-        if !test_git(root, &["init", "-q"]) {
-            return;
-        }
+        fixture::init(root);
         std::fs::create_dir_all(root.join("sub")).unwrap();
         std::fs::write(root.join("sub").join("kept.txt"), "k\n").unwrap();
         commit_all(root, "seed");
@@ -908,9 +888,7 @@ mod tests {
     fn an_unreadable_head_is_an_error_and_an_unborn_branch_is_the_empty_tree() {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
-        if !test_git(root, &["init", "-q"]) {
-            return;
-        }
+        fixture::init(root);
         std::fs::write(root.join("new.txt"), "x\n").unwrap();
         assert_eq!(resolve_head(root, GIT_DIFF_STAT_DEADLINE), Ok(None));
         let unborn = GitDiffStats::from_cwd(root.to_str().unwrap());
@@ -918,15 +896,7 @@ mod tests {
         assert_eq!(unborn.files_changed, 1);
 
         commit_all(root, "first");
-        let branch = String::from_utf8(
-            std::process::Command::new("git")
-                .args(["symbolic-ref", "--short", "HEAD"])
-                .current_dir(root)
-                .output()
-                .unwrap()
-                .stdout,
-        )
-        .unwrap();
+        let branch = fixture::run(root, &["symbolic-ref", "--short", "HEAD"]);
         let head_ref = root
             .join(".git")
             .join("refs")
@@ -945,10 +915,16 @@ mod tests {
     fn a_reftable_repository_shows_its_real_branch() {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
-        if !test_git(
+        let init = fixture::output(
             root,
             &["init", "-q", "--ref-format=reftable", "-b", "trunk"],
-        ) {
+        );
+        if !init.status.success() {
+            let stderr = String::from_utf8_lossy(&init.stderr);
+            assert!(
+                stderr.contains("ref-format") || stderr.contains("reftable"),
+                "git init failed for a reason other than missing reftable support: {stderr}"
+            );
             return;
         }
         let git_dir = root.join(".git");
@@ -967,9 +943,7 @@ mod tests {
     fn the_badge_probes_share_one_deadline() {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
-        if !test_git(root, &["init"]) {
-            return;
-        }
+        fixture::init(root);
         std::fs::write(root.join("untracked.txt"), "a\n").unwrap();
         let started = std::time::Instant::now();
         let stats = GitDiffStats::from_cwd_until(root.to_str().unwrap(), started);
@@ -988,13 +962,11 @@ mod tests {
     fn shortstat_counts_survive_a_french_locale() {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
-        if !test_git(root, &["init"]) {
-            return;
-        }
-        assert!(test_git(root, &["config", "core.autocrlf", "false"]));
+        fixture::init(root);
+        fixture::run(root, &["config", "core.autocrlf", "false"]);
         std::fs::write(root.join("tracked.txt"), "one\ntwo\n").unwrap();
-        assert!(test_git(root, &["add", "tracked.txt"]));
-        assert!(test_git(
+        fixture::run(root, &["add", "tracked.txt"]);
+        fixture::run(
             root,
             &[
                 "-c",
@@ -1005,7 +977,7 @@ mod tests {
                 "-m",
                 "init",
             ],
-        ));
+        );
         std::fs::write(root.join("tracked.txt"), "one\nthree\n").unwrap();
 
         let mut command = crate::git_command::git(
@@ -1022,15 +994,5 @@ mod tests {
             (stats.files_changed, stats.insertions, stats.deletions),
             (1, 1, 1)
         );
-    }
-
-    fn test_git(cwd: &std::path::Path, args: &[&str]) -> bool {
-        std::process::Command::new("git")
-            .args(args)
-            .current_dir(cwd)
-            .env("GIT_TERMINAL_PROMPT", "0")
-            .output()
-            .map(|out| out.status.success())
-            .unwrap_or(false)
     }
 }

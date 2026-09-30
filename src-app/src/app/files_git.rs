@@ -199,6 +199,7 @@ pub(crate) fn status_indicator(summary: GitSummary, ui: UiColors) -> Option<(&'s
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::git_fixture as fixture;
 
     fn ui() -> UiColors {
         crate::theme::ui_colors_with(&crate::theme::paneflow_dark())
@@ -217,36 +218,11 @@ mod tests {
         GitStatuses::parse(Path::new("/repo"), "", &porcelain(records))
     }
 
-    fn test_git(cwd: &Path, args: &[&str]) -> bool {
-        std::process::Command::new("git")
-            .args(args)
-            .current_dir(cwd)
-            .env("GIT_TERMINAL_PROMPT", "0")
-            .output()
-            .map(|out| out.status.success())
-            .unwrap_or(false)
-    }
-
-    fn committed_repo(root: &Path) -> bool {
-        if !test_git(root, &["init"]) {
-            return false;
-        }
-        std::fs::create_dir_all(root.join("src").join("app")).expect("nested directory");
-        std::fs::write(root.join("src").join("app").join("row.rs"), "one\n").expect("row");
-        std::fs::write(root.join("README.md"), "readme\n").expect("readme");
-        test_git(root, &["add", "."])
-            && test_git(
-                root,
-                &[
-                    "-c",
-                    "user.email=tests@paneflow.dev",
-                    "-c",
-                    "user.name=tests",
-                    "commit",
-                    "-m",
-                    "init",
-                ],
-            )
+    fn committed_repo(root: &Path) {
+        fixture::committed_repo(
+            root,
+            &[("src/app/row.rs", "one\n"), ("README.md", "readme\n")],
+        );
     }
 
     #[test]
@@ -350,9 +326,7 @@ mod tests {
     fn read_maps_a_real_repository_onto_absolute_paths() {
         let dir = tempfile::tempdir().expect("tempdir");
         let root = dir.path();
-        if !committed_repo(root) {
-            return;
-        }
+        committed_repo(root);
         std::fs::write(root.join("src").join("app").join("row.rs"), "two\n").expect("edit");
         std::fs::write(root.join("src").join("app").join("new.rs"), "new\n").expect("new file");
 
@@ -382,9 +356,7 @@ mod tests {
     fn read_from_a_subdirectory_scopes_to_that_subtree() {
         let dir = tempfile::tempdir().expect("tempdir");
         let root = dir.path();
-        if !committed_repo(root) {
-            return;
-        }
+        committed_repo(root);
         std::fs::write(root.join("src").join("app").join("row.rs"), "two\n").expect("edit");
         std::fs::write(root.join("README.md"), "changed\n").expect("readme edit");
 
@@ -403,7 +375,7 @@ mod tests {
     #[test]
     fn read_outside_a_repository_yields_no_statuses() {
         let dir = tempfile::tempdir().expect("tempdir");
-        if test_git(dir.path(), &["rev-parse", "--git-dir"]) {
+        if fixture::git_succeeds(dir.path(), &["rev-parse", "--git-dir"]) {
             return;
         }
         std::fs::write(dir.path().join("loose.txt"), "loose\n").expect("loose file");
@@ -415,25 +387,11 @@ mod tests {
     fn a_subdirectory_whose_name_starts_with_a_space_keeps_its_statuses() {
         let dir = tempfile::tempdir().expect("tempdir");
         let root = dir.path();
-        if !committed_repo(root) {
-            return;
-        }
+        committed_repo(root);
         let spaced = root.join(" spaced");
         std::fs::create_dir(&spaced).expect("spaced directory");
         std::fs::write(spaced.join("file.txt"), "one\n").expect("file");
-        assert!(test_git(root, &["add", "."]));
-        assert!(test_git(
-            root,
-            &[
-                "-c",
-                "user.email=tests@paneflow.dev",
-                "-c",
-                "user.name=tests",
-                "commit",
-                "-m",
-                "spaced",
-            ],
-        ));
+        fixture::commit_all(root, "spaced");
         std::fs::write(spaced.join("file.txt"), "two\n").expect("edit");
 
         let statuses = read(&spaced).expect("statuses of the spaced directory");

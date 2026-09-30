@@ -567,13 +567,14 @@ fn write_integration_script(path: &std::path::Path, contents: &str) -> bool {
 }
 
 pub(super) fn setup_shell_integration(
+    base: Option<&std::path::Path>,
     shell: &str,
     env: &mut HashMap<String, String>,
 ) -> Vec<String> {
-    let Some(base) = crate::runtime_paths::shell_integration_dir() else {
+    let Some(base) = base else {
         return vec![];
     };
-    setup_shell_integration_in(&base, shell, env)
+    setup_shell_integration_in(base, shell, env)
 }
 
 fn setup_shell_integration_in(

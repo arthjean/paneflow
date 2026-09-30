@@ -1,4 +1,5 @@
 use super::*;
+use crate::git_fixture as fixture;
 
 fn scanner(root: PathBuf, expanded: Vec<PathBuf>) -> Scanner {
     let mut scanner = Scanner::new(root);
@@ -204,15 +205,6 @@ fn replacing_loaded_directory_invalidates_descendant_watches_and_listings() {
     assert_eq!(scanner.tree.children[&inner][0].path, new_file);
 }
 
-fn init_git(root: &std::path::Path) -> bool {
-    std::process::Command::new("git")
-        .args(["init", "-q"])
-        .current_dir(root)
-        .env("GIT_TERMINAL_PROMPT", "0")
-        .status()
-        .is_ok_and(|status| status.success())
-}
-
 #[test]
 fn expanding_a_directory_refreshes_the_git_statuses() {
     let temp = tempfile::tempdir().expect("temporary directory");
@@ -238,9 +230,7 @@ fn expanding_a_directory_refreshes_the_git_statuses() {
 fn an_unwatched_git_dir_falls_back_to_polling() {
     let temp = tempfile::tempdir().expect("temporary directory");
     let root = temp.path().to_path_buf();
-    if !init_git(&root) {
-        return;
-    }
+    fixture::init(&root);
     let scanner_state = scanner(root.clone(), Vec::new());
     let mut scanner = scanner_state;
     let git_dir = scanner.git_dir.clone().expect("the repository git dir");
@@ -255,9 +245,7 @@ fn an_unwatched_git_dir_falls_back_to_polling() {
 fn a_failed_git_status_keeps_the_previous_statuses() {
     let temp = tempfile::tempdir().expect("temporary directory");
     let root = temp.path().to_path_buf();
-    if !init_git(&root) {
-        return;
-    }
+    fixture::init(&root);
     let mut scanner = scanner(root.clone(), Vec::new());
     let tracked = root.join("tracked.txt");
     let previous = Arc::new(GitStatuses::parse(&root, "", b" M tracked.txt\0"));

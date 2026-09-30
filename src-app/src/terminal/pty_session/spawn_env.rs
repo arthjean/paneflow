@@ -52,8 +52,33 @@ fn paneflow_socket_path() -> Option<String> {
     crate::runtime_paths::socket_path().map(|p| p.display().to_string())
 }
 
-fn inject_ai_hook_env(env: &mut std::collections::HashMap<String, String>) {
-    let bin_dir = match crate::ai_hooks::extract::ensure_binaries_extracted() {
+pub(in crate::terminal) struct SpawnHome {
+    shell_integration_dir: Option<std::path::PathBuf>,
+    helper_bin_dir: anyhow::Result<std::path::PathBuf>,
+}
+
+impl SpawnHome {
+    fn installed() -> Self {
+        Self {
+            shell_integration_dir: crate::runtime_paths::shell_integration_dir(),
+            helper_bin_dir: crate::ai_hooks::extract::ensure_binaries_extracted(),
+        }
+    }
+
+    #[cfg(test)]
+    pub(in crate::terminal) fn at(home: &std::path::Path) -> Self {
+        Self {
+            shell_integration_dir: Some(crate::runtime_paths::shell_integration_dir_in(home)),
+            helper_bin_dir: crate::ai_hooks::extract::extract_binaries_in_home(home),
+        }
+    }
+}
+
+fn inject_ai_hook_env(
+    env: &mut std::collections::HashMap<String, String>,
+    helper_bin_dir: anyhow::Result<std::path::PathBuf>,
+) {
+    let bin_dir = match helper_bin_dir {
         Ok(p) => p,
         Err(e) => {
             log::warn!(
@@ -184,6 +209,7 @@ fn assemble_pty_env(
     workspace_id: u64,
     surface_id: u64,
     user_env: Option<std::collections::HashMap<String, String>>,
+    helper_bin_dir: anyhow::Result<std::path::PathBuf>,
 ) -> std::collections::HashMap<String, String> {
     if workspace_id != 0 {
         env.insert("PANEFLOW_WORKSPACE_ID".into(), workspace_id.to_string());
@@ -211,7 +237,7 @@ fn assemble_pty_env(
 
     env.insert("SHLVL".into(), "0".into());
 
-    inject_ai_hook_env(&mut env);
+    inject_ai_hook_env(&mut env, helper_bin_dir);
 
     if let Some(user_vars) = user_env {
         for (k, v) in user_vars {
@@ -243,6 +269,11 @@ fn assemble_pty_env(
     env
 }
 
+#[cfg(test)]
+fn test_spawn_home() -> std::path::PathBuf {
+    std::env::temp_dir().join("paneflow-tests-home")
+}
+
 impl TerminalState {
     #[cfg(test)]
     pub(in crate::terminal) fn resolve_spawn_params(
@@ -271,7 +302,7 @@ impl TerminalState {
         user_env: Option<std::collections::HashMap<String, String>>,
         profile: TerminalSurfaceProfile,
     ) -> SpawnParams {
-        Self::resolve_spawn_launch(
+        Self::resolve_spawn_launch_in(
             &paneflow_config::loader::load_config(),
             working_directory,
             workspace_id,
@@ -279,6 +310,7 @@ impl TerminalState {
             initial_size,
             user_env,
             profile,
+            SpawnHome::at(&test_spawn_home()),
         )
         .0
     }
@@ -291,6 +323,32 @@ impl TerminalState {
         initial_size: Option<(usize, usize)>,
         user_env: Option<std::collections::HashMap<String, String>>,
         profile: TerminalSurfaceProfile,
+    ) -> (SpawnParams, Option<String>) {
+        Self::resolve_spawn_launch_in(
+            config,
+            working_directory,
+            workspace_id,
+            surface_id,
+            initial_size,
+            user_env,
+            profile,
+            SpawnHome::installed(),
+        )
+    }
+
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "the spawn request fields plus the home that owns the helper files"
+    )]
+    fn resolve_spawn_launch_in(
+        config: &paneflow_config::schema::PaneFlowConfig,
+        working_directory: Option<std::path::PathBuf>,
+        workspace_id: u64,
+        surface_id: u64,
+        initial_size: Option<(usize, usize)>,
+        user_env: Option<std::collections::HashMap<String, String>>,
+        profile: TerminalSurfaceProfile,
+        home: SpawnHome,
     ) -> (SpawnParams, Option<String>) {
         let (shell, shell_notice) = {
             let configured = config
@@ -318,11 +376,17 @@ impl TerminalState {
         };
         let mut env = std::collections::HashMap::new();
         let extra_args = if config.shell_integration.unwrap_or(true) {
-            setup_shell_integration(&shell, &mut env)
+            setup_shell_integration(home.shell_integration_dir.as_deref(), &shell, &mut env)
         } else {
             vec![]
         };
-        let mut env = assemble_pty_env(env, workspace_id, surface_id, merged_env);
+        let mut env = assemble_pty_env(
+            env,
+            workspace_id,
+            surface_id,
+            merged_env,
+            home.helper_bin_dir,
+        );
         if is_wsl_shell(&shell) {
             augment_wslenv(&mut env);
         }
@@ -348,6 +412,17 @@ impl TerminalState {
 mod tests {
     use super::*;
     use std::collections::HashMap;
+
+    fn assemble_in_temp_home(
+        env: HashMap<String, String>,
+        workspace_id: u64,
+        surface_id: u64,
+        user_env: Option<HashMap<String, String>>,
+    ) -> HashMap<String, String> {
+        let home = tempfile::tempdir().expect("temporary Paneflow home");
+        let bins = crate::ai_hooks::extract::extract_binaries_in_home(home.path());
+        assemble_pty_env(env, workspace_id, surface_id, user_env, bins)
+    }
     use std::path::{Path, PathBuf};
 
     fn platform_sep() -> char {
@@ -373,7 +448,7 @@ mod tests {
     #[test]
     fn a_terminal_env_locale_keeps_paneflow_from_setting_lang() {
         let user_env = HashMap::from([("LC_ALL".to_owned(), "C.UTF-8".to_owned())]);
-        let env = assemble_pty_env(HashMap::new(), 1, 1, Some(user_env));
+        let env = assemble_in_temp_home(HashMap::new(), 1, 1, Some(user_env));
         assert_eq!(env.get("LC_ALL").map(String::as_str), Some("C.UTF-8"));
         assert_eq!(env.get("LANG"), None);
     }
@@ -391,7 +466,7 @@ mod tests {
             ("ZDOTDIR".to_owned(), "/elsewhere".to_owned()),
             ("PANEFLOW_ORIG_ZDOTDIR".to_owned(), "/elsewhere".to_owned()),
         ]);
-        let env = assemble_pty_env(integration, 1, 1, Some(user_env));
+        let env = assemble_in_temp_home(integration, 1, 1, Some(user_env));
         assert_eq!(
             env.get("ZDOTDIR").map(String::as_str),
             Some("/paneflow/shell/zsh")
@@ -584,12 +659,7 @@ mod tests {
 
     #[test]
     fn pty_spawn_injects_paneflow_bin_dir_and_prepends_path() {
-        if dirs::cache_dir().is_none() {
-            eprintln!("skip: dirs::cache_dir() unresolvable in this environment");
-            return;
-        }
-
-        let env = assemble_pty_env(HashMap::new(), 7, 3, None);
+        let env = assemble_in_temp_home(HashMap::new(), 7, 3, None);
 
         let bin_dir = env
             .get("PANEFLOW_BIN_DIR")
@@ -615,7 +685,7 @@ mod tests {
 
     #[test]
     fn detached_terminal_does_not_advertise_fake_workspace_id() {
-        let env = assemble_pty_env(HashMap::new(), 0, 3, None);
+        let env = assemble_in_temp_home(HashMap::new(), 0, 3, None);
 
         assert!(
             !env.contains_key("PANEFLOW_WORKSPACE_ID"),
@@ -632,7 +702,7 @@ mod tests {
         let mut user = HashMap::new();
         user.insert("ANTHROPIC_API_KEY".to_string(), "sk-test-123".to_string());
         user.insert("MY_CUSTOM_VAR".to_string(), "hello".to_string());
-        let env = assemble_pty_env(HashMap::new(), 1, 1, Some(user));
+        let env = assemble_in_temp_home(HashMap::new(), 1, 1, Some(user));
 
         assert_eq!(
             env.get("ANTHROPIC_API_KEY").map(String::as_str),
@@ -650,11 +720,10 @@ mod tests {
     fn user_path_cannot_shadow_paneflow_bin_dir() {
         let mut user = HashMap::new();
         user.insert("PATH".to_string(), "/custom/bin".to_string());
-        let env = assemble_pty_env(HashMap::new(), 1, 1, Some(user));
-        let Some(bin_dir) = env.get("PANEFLOW_BIN_DIR") else {
-            eprintln!("skip: PANEFLOW_BIN_DIR unavailable in this environment");
-            return;
-        };
+        let env = assemble_in_temp_home(HashMap::new(), 1, 1, Some(user));
+        let bin_dir = env
+            .get("PANEFLOW_BIN_DIR")
+            .expect("a temporary Paneflow home always provides the helper dir");
         let path = env.get("PATH").expect("PATH must be present");
         let mut parts = std::env::split_paths(path);
         assert_eq!(
@@ -677,7 +746,7 @@ mod tests {
         user.insert("TERM_PROGRAM_VERSION".to_string(), "0.0.0".to_string());
         user.insert("SHLVL".to_string(), "99".to_string());
         user.insert("KEEP_ME".to_string(), "yes".to_string());
-        let env = assemble_pty_env(HashMap::new(), 1, 1, Some(user));
+        let env = assemble_in_temp_home(HashMap::new(), 1, 1, Some(user));
 
         assert_eq!(
             env.get("TERM").map(String::as_str),
@@ -722,7 +791,7 @@ mod tests {
             "/tmp/e.dylib".to_string(),
         );
         user.insert("KEEP_ME".to_string(), "yes".to_string());
-        let env = assemble_pty_env(HashMap::new(), 1, 1, Some(user));
+        let env = assemble_in_temp_home(HashMap::new(), 1, 1, Some(user));
 
         assert_eq!(
             env.get("LD_PRELOAD"),
@@ -759,7 +828,7 @@ mod tests {
         user.insert("CLAUDECODE".to_string(), "1".to_string());
         user.insert("KEEP_ME".to_string(), "yes".to_string());
 
-        let env = assemble_pty_env(base, 1, 1, Some(user));
+        let env = assemble_in_temp_home(base, 1, 1, Some(user));
 
         assert_eq!(
             env.get("CLAUDECODE"),
@@ -779,7 +848,7 @@ mod tests {
         }
         user.insert("KEEP_ME".to_string(), "yes".to_string());
 
-        let env = assemble_pty_env(base, 1, 1, Some(user));
+        let env = assemble_in_temp_home(base, 1, 1, Some(user));
 
         for key in INHERITED_AGENT_SESSION_ENV {
             assert_eq!(
@@ -797,7 +866,7 @@ mod tests {
 
     #[test]
     fn host_terminal_markers_are_not_smuggled_through_the_assembled_env() {
-        let env = assemble_pty_env(HashMap::new(), 1, 1, None);
+        let env = assemble_in_temp_home(HashMap::new(), 1, 1, None);
         for key in env.keys() {
             assert!(
                 !paneflow_host::env::is_inherited_host_terminal_env_key(key),

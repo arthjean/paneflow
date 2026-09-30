@@ -134,51 +134,22 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::git_fixture as fixture;
 
-    fn git(cwd: &Path, args: &[&str]) -> bool {
-        std::process::Command::new("git")
-            .args(args)
-            .current_dir(cwd)
-            .env("GIT_TERMINAL_PROMPT", "0")
-            .output()
-            .map(|out| out.status.success())
-            .unwrap_or(false)
-    }
-
-    fn commit(root: &Path, message: &str) -> bool {
-        git(root, &["add", "-A"])
-            && git(
-                root,
-                &[
-                    "-c",
-                    "user.email=paneflow@example.com",
-                    "-c",
-                    "user.name=Paneflow",
-                    "commit",
-                    "-q",
-                    "-m",
-                    message,
-                ],
-            )
-    }
-
-    fn repo() -> Option<tempfile::TempDir> {
+    fn repo() -> tempfile::TempDir {
         let dir = tempfile::tempdir().expect("tempdir");
-        if !git(dir.path(), &["init", "-q"]) {
-            return None;
-        }
-        assert!(git(dir.path(), &["config", "core.autocrlf", "false"]));
-        Some(dir)
+        fixture::init(dir.path());
+        dir
     }
 
     #[test]
     fn a_committed_then_modified_file_loads_its_committed_text_and_head_sha() {
-        let Some(dir) = repo() else { return };
+        let dir = repo();
         let root = dir.path();
         std::fs::create_dir_all(root.join("src")).expect("mkdir");
         let file = root.join("src").join("main.rs");
         std::fs::write(&file, "fn main() {}\n").expect("seed");
-        assert!(commit(root, "init"));
+        fixture::commit_all(root, "init");
         std::fs::write(&file, "fn main() { edited(); }\n").expect("modify");
 
         let base = load_base_blocking(&file);
@@ -192,11 +163,11 @@ mod tests {
 
     #[test]
     fn crlf_committed_content_is_normalized_like_the_document() {
-        let Some(dir) = repo() else { return };
+        let dir = repo();
         let root = dir.path();
         let file = root.join("notes.txt");
         std::fs::write(&file, "one\r\ntwo\r\n").expect("seed");
-        assert!(commit(root, "init"));
+        fixture::commit_all(root, "init");
         assert_eq!(
             load_base_blocking(&file)
                 .text()
@@ -207,23 +178,23 @@ mod tests {
 
     #[test]
     fn an_untracked_file_and_a_file_missing_from_head_are_untracked() {
-        let Some(dir) = repo() else { return };
+        let dir = repo();
         let root = dir.path();
         std::fs::write(root.join("tracked.txt"), "x\n").expect("seed");
-        assert!(commit(root, "init"));
+        fixture::commit_all(root, "init");
         let fresh = root.join("fresh.txt");
         std::fs::write(&fresh, "new\n").expect("write");
         assert_eq!(load_base_blocking(&fresh), Base::Untracked);
 
         let staged = root.join("staged.txt");
         std::fs::write(&staged, "staged\n").expect("write");
-        assert!(git(root, &["add", "staged.txt"]));
+        fixture::run(root, &["add", "staged.txt"]);
         assert_eq!(load_base_blocking(&staged), Base::Untracked);
     }
 
     #[test]
     fn a_repository_without_a_commit_yields_untracked() {
-        let Some(dir) = repo() else { return };
+        let dir = repo();
         let file = dir.path().join("first.txt");
         std::fs::write(&file, "x\n").expect("write");
         assert_eq!(load_base_blocking(&file), Base::Untracked);
@@ -246,13 +217,13 @@ mod tests {
 
     #[test]
     fn binary_and_oversized_head_content_have_no_base() {
-        let Some(dir) = repo() else { return };
+        let dir = repo();
         let root = dir.path();
         let blob = root.join("blob.bin");
         std::fs::write(&blob, [b'a', 0, b'b', b'\n']).expect("seed");
         let huge = root.join("huge.txt");
         std::fs::write(&huge, vec![b'x'; MAX_DIFF_FILE_BYTES as usize + 1]).expect("seed");
-        assert!(commit(root, "init"));
+        fixture::commit_all(root, "init");
         assert_eq!(load_base_blocking(&blob), Base::None);
         assert_eq!(load_base_blocking(&huge), Base::None);
     }

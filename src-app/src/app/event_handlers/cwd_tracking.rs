@@ -238,37 +238,10 @@ impl PaneFlowApp {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::git_fixture as fixture;
 
-    fn test_git(cwd: &std::path::Path, args: &[&str]) -> bool {
-        std::process::Command::new("git")
-            .args(args)
-            .current_dir(cwd)
-            .env("GIT_TERMINAL_PROMPT", "0")
-            .output()
-            .is_ok_and(|out| out.status.success())
-    }
-
-    fn committed_repo(root: &std::path::Path) -> bool {
-        std::fs::create_dir_all(root.join("src")).unwrap();
-        if !test_git(root, &["init", "-q", "-b", "main"]) {
-            return false;
-        }
-        assert!(test_git(root, &["config", "core.autocrlf", "false"]));
-        std::fs::write(root.join("src").join("lib.rs"), "one\n").unwrap();
-        assert!(test_git(root, &["add", "."]));
-        test_git(
-            root,
-            &[
-                "-c",
-                "user.email=paneflow@example.com",
-                "-c",
-                "user.name=Paneflow",
-                "commit",
-                "-q",
-                "-m",
-                "init",
-            ],
-        )
+    fn committed_repo(root: &std::path::Path) {
+        fixture::committed_repo(root, &[("src/lib.rs", "one\n")]);
     }
 
     fn workspace_at(cwd: &std::path::Path) -> WorkspaceCheckout {
@@ -320,9 +293,8 @@ mod tests {
         let foreign = tmp.path().join("foreign");
         let outside = tmp.path().join("outside");
         std::fs::create_dir_all(&outside).unwrap();
-        if !committed_repo(&repo) || !committed_repo(&foreign) {
-            return;
-        }
+        committed_repo(&repo);
+        committed_repo(&foreign);
         std::fs::write(repo.join("src").join("lib.rs"), "one\ntwo\n").unwrap();
         std::fs::write(foreign.join("scratch.txt"), "a\nb\nc\n").unwrap();
         let workspace = workspace_at(&repo);
@@ -351,14 +323,12 @@ mod tests {
     fn a_pane_in_a_linked_worktree_binds_it_and_the_main_checkout_unbinds() {
         let tmp = tempfile::tempdir().unwrap();
         let repo = tmp.path().join("repo");
-        if !committed_repo(&repo) {
-            return;
-        }
+        committed_repo(&repo);
         let linked = tmp.path().join("linked");
-        assert!(test_git(
+        fixture::run(
             &repo,
-            &["worktree", "add", "-q", "-b", "feat/x", &cwd(&linked)]
-        ));
+            &["worktree", "add", "-q", "-b", "feat/x", &cwd(&linked)],
+        );
         let workspace = workspace_at(&repo);
 
         let CwdGit::Worktree { checkout, git } =

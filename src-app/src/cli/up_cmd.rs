@@ -630,6 +630,7 @@ fn resolve_agent(name: &str) -> Option<TerminalAgent> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::git_fixture as fixture;
 
     #[test]
     fn resolve_agent_accepts_aliases() {
@@ -820,9 +821,7 @@ mod tests {
         let tmp = tempfile::tempdir().expect("tempdir");
         let repo_root = tmp.path().join("repo");
         std::fs::create_dir(&repo_root).expect("repo dir");
-        if !test_git(&repo_root, &["init"]) {
-            return;
-        }
+        fixture::init(&repo_root);
 
         let branch_a = "feat/a b";
         let branch_b = "feat/a-b";
@@ -909,12 +908,10 @@ mod tests {
         let tmp = tempfile::tempdir().expect("tempdir");
         let repo = tmp.path().join("repo");
         std::fs::create_dir_all(&repo).expect("repo dir");
-        if !test_git(&repo, &["init", "-q", "-b", "main"]) {
-            return;
-        }
+        fixture::init(&repo);
         std::fs::write(repo.join("README.md"), "init\n").expect("readme");
-        assert!(test_git(&repo, &["add", "README.md"]));
-        assert!(test_git(
+        fixture::run(&repo, &["add", "README.md"]);
+        fixture::run(
             &repo,
             &[
                 "-c",
@@ -926,7 +923,7 @@ mod tests {
                 "-m",
                 "init",
             ],
-        ));
+        );
         let mut plan = dummy_plan(0, "", "feat/loud");
         plan.repo_root = repo;
         plan.path = tmp.path().join("checkout");
@@ -954,15 +951,5 @@ mod tests {
         let lines: Vec<&str> = tail.lines().map(str::trim).collect();
         let expected: Vec<String> = (11..=30).map(|i| format!("line{i}")).collect();
         assert_eq!(lines, expected);
-    }
-
-    fn test_git(cwd: &std::path::Path, args: &[&str]) -> bool {
-        std::process::Command::new("git")
-            .args(args)
-            .current_dir(cwd)
-            .env("GIT_TERMINAL_PROMPT", "0")
-            .output()
-            .map(|out| out.status.success())
-            .unwrap_or(false)
     }
 }

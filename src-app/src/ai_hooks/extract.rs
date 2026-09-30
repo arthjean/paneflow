@@ -9,7 +9,7 @@ use crate::assets::Bins;
 
 const TARGET_TRIPLE: &str = env!("PANEFLOW_TARGET_TRIPLE");
 
-#[cfg(any(not(windows), debug_assertions))]
+#[cfg(any(not(windows), debug_assertions, test))]
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 fn extract_plan() -> Vec<(&'static str, &'static str)> {
@@ -72,28 +72,38 @@ fn ensure_binaries_extracted_uncached() -> Result<PathBuf> {
     {
         let cache_root = crate::runtime_paths::cache_dir()
             .ok_or_else(|| anyhow!("US-008: cache dir unresolvable; cannot extract"))?;
-        let target_dir = cache_root.join("bin").join(VERSION);
-
-        let suffix = exe_suffix();
-        let plan = extract_plan();
-        let mut buffers: Vec<(String, std::borrow::Cow<'static, [u8]>)> =
-            Vec::with_capacity(plan.len());
-        for (out_name, src_name) in plan {
-            let src_full = format!("{src_name}{suffix}");
-            let out_full = format!("{out_name}{suffix}");
-            buffers.push((out_full, embedded_bytes(&src_full)?));
-        }
-        let entries: Vec<Entry<'_>> = buffers
-            .iter()
-            .map(|(n, b)| Entry {
-                filename: n.clone(),
-                bytes: b.as_ref(),
-            })
-            .collect();
-
-        extract_into(&entries, &target_dir)?;
-        Ok(target_dir)
+        extract_binaries_under(&cache_root)
     }
+}
+
+#[cfg(any(not(windows), debug_assertions, test))]
+fn extract_binaries_under(cache_root: &Path) -> Result<PathBuf> {
+    let target_dir = cache_root.join("bin").join(VERSION);
+
+    let suffix = exe_suffix();
+    let plan = extract_plan();
+    let mut buffers: Vec<(String, std::borrow::Cow<'static, [u8]>)> =
+        Vec::with_capacity(plan.len());
+    for (out_name, src_name) in plan {
+        let src_full = format!("{src_name}{suffix}");
+        let out_full = format!("{out_name}{suffix}");
+        buffers.push((out_full, embedded_bytes(&src_full)?));
+    }
+    let entries: Vec<Entry<'_>> = buffers
+        .iter()
+        .map(|(n, b)| Entry {
+            filename: n.clone(),
+            bytes: b.as_ref(),
+        })
+        .collect();
+
+    extract_into(&entries, &target_dir)?;
+    Ok(target_dir)
+}
+
+#[cfg(test)]
+pub(crate) fn extract_binaries_in_home(home: &Path) -> Result<PathBuf> {
+    extract_binaries_under(&paneflow_home::cache_dir_in(home))
 }
 
 #[cfg(windows)]
@@ -109,61 +119,37 @@ fn packaged_bin_dir_if_complete() -> Option<PathBuf> {
 }
 
 pub fn ensure_bridge_extracted() -> Result<PathBuf> {
-    let bridge_path = crate::runtime_paths::bridge_binary_path().ok_or_else(|| {
+    let home = crate::runtime_paths::data_dir().ok_or_else(|| {
         anyhow!("EP-001 US-003: data_dir() unresolvable/unwritable; cannot extract paneflow-mcp")
     })?;
-    let target_dir = bridge_path
-        .parent()
-        .ok_or_else(|| {
-            anyhow!(
-                "EP-001 US-003: bridge path {} has no parent",
-                bridge_path.display()
-            )
-        })?
-        .to_path_buf();
-    let filename = bridge_path
-        .file_name()
-        .ok_or_else(|| {
-            anyhow!(
-                "EP-001 US-003: bridge path {} has no filename",
-                bridge_path.display()
-            )
-        })?
-        .to_string_lossy()
-        .into_owned();
+    extract_bridge_in_home(&home)
+}
 
-    let bytes = embedded_bytes(&filename)?;
-    let entry = Entry {
-        filename,
-        bytes: bytes.as_ref(),
-    };
-    extract_into(std::slice::from_ref(&entry), &target_dir)?;
-    Ok(bridge_path)
+pub(crate) fn extract_bridge_in_home(home: &Path) -> Result<PathBuf> {
+    extract_single_helper(&crate::runtime_paths::bridge_binary_path_in(home))
 }
 
 pub fn ensure_ai_hook_extracted() -> Result<PathBuf> {
-    let hook_path = crate::runtime_paths::ai_hook_binary_path().ok_or_else(|| {
+    let home = crate::runtime_paths::data_dir().ok_or_else(|| {
         anyhow!(
             "EP-004 US-016: data_dir() unresolvable/unwritable; cannot extract paneflow-ai-hook"
         )
     })?;
-    let target_dir = hook_path
+    extract_ai_hook_in_home(&home)
+}
+
+pub(crate) fn extract_ai_hook_in_home(home: &Path) -> Result<PathBuf> {
+    extract_single_helper(&crate::runtime_paths::ai_hook_binary_path_in(home))
+}
+
+fn extract_single_helper(helper_path: &Path) -> Result<PathBuf> {
+    let target_dir = helper_path
         .parent()
-        .ok_or_else(|| {
-            anyhow!(
-                "EP-004 US-016: ai-hook path {} has no parent",
-                hook_path.display()
-            )
-        })?
+        .ok_or_else(|| anyhow!("helper path {} has no parent", helper_path.display()))?
         .to_path_buf();
-    let filename = hook_path
+    let filename = helper_path
         .file_name()
-        .ok_or_else(|| {
-            anyhow!(
-                "EP-004 US-016: ai-hook path {} has no filename",
-                hook_path.display()
-            )
-        })?
+        .ok_or_else(|| anyhow!("helper path {} has no filename", helper_path.display()))?
         .to_string_lossy()
         .into_owned();
 
@@ -173,7 +159,7 @@ pub fn ensure_ai_hook_extracted() -> Result<PathBuf> {
         bytes: bytes.as_ref(),
     };
     extract_into(std::slice::from_ref(&entry), &target_dir)?;
-    Ok(hook_path)
+    Ok(helper_path.to_path_buf())
 }
 
 pub(crate) fn extract_into(entries: &[Entry<'_>], target_dir: &Path) -> Result<()> {
@@ -544,11 +530,9 @@ mod tests {
 
     #[test]
     fn ensure_binaries_extracted_produces_all_agent_wrappers() {
-        if dirs::cache_dir().is_none() {
-            eprintln!("skip: dirs::cache_dir() unresolvable in this environment");
-            return;
-        }
-        let dir = ensure_binaries_extracted().unwrap();
+        let home = tempfile::TempDir::new().unwrap();
+        let dir = extract_binaries_in_home(home.path()).unwrap();
+        assert_eq!(dir, home.path().join("cache").join("bin").join(VERSION));
         let suffix = exe_suffix();
         let mut expected: Vec<String> = crate::agent_launcher::TerminalAgent::all()
             .map(|a| format!("{}{suffix}", a.binary()))
@@ -577,11 +561,8 @@ mod tests {
 
     #[test]
     fn ensure_bridge_extracted_produces_stable_path() {
-        if crate::runtime_paths::bridge_binary_path().is_none() {
-            eprintln!("skip: bridge_binary_path() unresolvable in this environment");
-            return;
-        }
-        let path = ensure_bridge_extracted().unwrap();
+        let home = tempfile::TempDir::new().unwrap();
+        let path = extract_bridge_in_home(home.path()).unwrap();
         assert!(
             path.is_file(),
             "EP-001 US-003: ensure_bridge_extracted must produce {}",
@@ -589,31 +570,37 @@ mod tests {
         );
         let suffix = exe_suffix();
         assert_eq!(
-            path.file_name().unwrap().to_string_lossy(),
-            format!("paneflow-mcp{suffix}"),
-            "EP-001 US-003: bridge filename must be paneflow-mcp[.exe]"
+            path,
+            home.path()
+                .join("bin")
+                .join(format!("paneflow-mcp{suffix}"))
         );
+        let hook = extract_ai_hook_in_home(home.path()).unwrap();
+        assert_eq!(
+            hook,
+            home.path()
+                .join("bin")
+                .join(format!("paneflow-ai-hook{suffix}"))
+        );
+        assert!(hook.is_file());
     }
 
     #[test]
     fn bridge_path_is_non_versioned_and_distinct_from_cache() {
-        let Some(bridge) = crate::runtime_paths::bridge_binary_path() else {
-            eprintln!("skip: bridge_binary_path() unresolvable in this environment");
-            return;
-        };
+        let home = tempfile::TempDir::new().unwrap();
+        let bridge = extract_bridge_in_home(home.path()).unwrap();
         let bridge_str = bridge.to_string_lossy();
         let version = env!("CARGO_PKG_VERSION");
         assert!(
             !bridge_str.contains(version),
             "EP-001 US-003: bridge path {bridge_str} must NOT embed the version {version}"
         );
-        if let Ok(cache) = ensure_binaries_extracted() {
-            assert_ne!(
-                bridge.parent(),
-                Some(cache.as_path()),
-                "EP-001 US-003: bridge dir must differ from the versioned cache dir"
-            );
-        }
+        let cache = extract_binaries_in_home(home.path()).unwrap();
+        assert_ne!(
+            bridge.parent(),
+            Some(cache.as_path()),
+            "EP-001 US-003: bridge dir must differ from the versioned cache dir"
+        );
     }
 
     #[test]
