@@ -202,25 +202,34 @@ mod tests {
         );
     }
 
-    #[test]
-    fn user_override_of_a_tab_shortcut_wins_over_the_default() {
+    #[gpui::test]
+    fn user_override_of_a_tab_shortcut_wins_over_the_default(cx: &mut gpui::TestAppContext) {
         use super::super::defaults::DEFAULTS;
 
-        let user_key = "ctrl+]";
+        let user_key = "secondary+]";
         let user_claimed = canonical_keystroke(user_key).expect("a parsable user chord");
-        let dropped: Vec<&str> = DEFAULTS
-            .iter()
-            .filter(|d| canonical_keystroke(d.key).is_some_and(|k| k == user_claimed))
-            .map(|d| d.action_name)
-            .collect();
-        #[cfg(not(target_os = "macos"))]
-        assert_eq!(dropped, vec!["next_tab"]);
-        #[cfg(target_os = "macos")]
-        assert!(dropped.is_empty());
-
         assert!(
-            make_binding(user_key, Box::new(SplitHorizontally), None).is_some(),
-            "the user override must produce a valid binding"
+            DEFAULTS.iter().any(|d| d.action_name == "next_tab"
+                && canonical_keystroke(d.key).is_some_and(|k| k == user_claimed)),
+            "the default next_tab must own the chord the user claims"
+        );
+        let shortcuts = HashMap::from([(user_key.to_string(), "split_horizontally".to_string())]);
+
+        let bound = cx.update(|cx| {
+            apply_keybindings(cx, &shortcuts);
+            cx.all_bindings_for_input(std::slice::from_ref(&user_claimed))
+        });
+
+        assert!(!bound.is_empty(), "the user chord must stay bound");
+        assert!(
+            bound
+                .iter()
+                .all(|binding| binding.action().partial_eq(&SplitHorizontally)),
+            "the default next_tab binding must not survive the user override: {:?}",
+            bound
+                .iter()
+                .map(|binding| binding.action().name())
+                .collect::<Vec<_>>()
         );
     }
 

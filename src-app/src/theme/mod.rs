@@ -20,7 +20,7 @@ pub use signal::{
 };
 #[cfg(test)]
 pub use watcher::invalidate_theme_cache;
-pub use watcher::{ThemeWatcher, active_theme, config_mtime, set_active_theme, theme_generation};
+pub use watcher::{active_theme, set_active_theme, theme_generation};
 
 #[cfg(test)]
 pub(crate) fn app_theme_by_name(name: &str) -> Option<TerminalTheme> {

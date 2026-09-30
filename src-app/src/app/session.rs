@@ -2363,44 +2363,6 @@ mod tests {
     }
 
     #[test]
-    fn save_seq_burst_coalesces_to_a_single_write() {
-        use std::sync::atomic::{AtomicU64, Ordering::SeqCst};
-
-        let save_seq = AtomicU64::new(0);
-        let captured: Vec<u64> = (0..20).map(|_| save_seq.fetch_add(1, SeqCst) + 1).collect();
-
-        let latest = save_seq.load(SeqCst);
-        let survivors = captured.iter().filter(|&&s| s == latest).count();
-        assert_eq!(survivors, 1, "a 20-save burst coalesces to one write");
-        assert_eq!(
-            captured.last().copied(),
-            Some(latest),
-            "the most-recent snapshot is the survivor"
-        );
-    }
-
-    #[test]
-    fn deferred_save_skips_write_when_superseded_before_write() {
-        use std::sync::atomic::{AtomicU64, Ordering::SeqCst};
-
-        let save_seq = AtomicU64::new(0);
-        let deferred = save_seq.fetch_add(1, SeqCst) + 1;
-        assert_eq!(
-            save_seq.load(SeqCst),
-            deferred,
-            "deferred is latest pre-drain"
-        );
-
-        save_seq.fetch_add(1, SeqCst);
-
-        assert_ne!(
-            save_seq.load(SeqCst),
-            deferred,
-            "deferred write must be skipped after a quit-time bump"
-        );
-    }
-
-    #[test]
     fn restored_managed_worktree_must_be_a_paneflow_worktree_of_the_repo() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let _root =

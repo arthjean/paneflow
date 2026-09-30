@@ -143,18 +143,18 @@ pub fn start_server() -> (
 
     if !multiple_instances_allowed(std::env::var("PANEFLOW_ALLOW_MULTIPLE").ok().as_deref())
         && let Some(socket_spec) = socket_path_spec()
-        && let Some(info) = detect_existing_instance(socket_spec.path())
+        && let Some(info) = detect_existing_instance(&socket_spec.path)
     {
         eprintln!(
             "paneflow: another Paneflow instance is already running on {}.\n\
              Existing instance: {}\n\
              Close the open window first, or set PANEFLOW_ALLOW_MULTIPLE=1 to override.",
-            socket_spec.path().display(),
+            socket_spec.path.display(),
             info
         );
         log::error!(
             "singleton guard: refusing to start; existing instance on {} ({})",
-            socket_spec.path().display(),
+            socket_spec.path.display(),
             info
         );
         std::process::exit(1);
@@ -171,7 +171,7 @@ pub fn start_server() -> (
                 );
                 return;
             };
-            let socket_path = socket_spec.path().to_path_buf();
+            let socket_path = socket_spec.path.clone();
 
             #[cfg(unix)]
             if !prepare_socket_parent(&socket_spec) {
@@ -386,12 +386,12 @@ fn windows_named_pipe_security_descriptor() -> std::io::Result<SecurityDescripto
 }
 
 #[cfg(unix)]
-fn prepare_socket_parent(socket_spec: &crate::runtime_paths::IpcSocketPath) -> bool {
-    let Some(parent) = socket_spec.path().parent() else {
+fn prepare_socket_parent(socket_spec: &paneflow_home::IpcEndpoint) -> bool {
+    let Some(parent) = socket_spec.path.parent() else {
         return true;
     };
 
-    if socket_spec.owned_parent() {
+    if socket_spec.owned_parent {
         if let Err(e) = std::fs::create_dir_all(parent) {
             log::error!(
                 "IPC server: failed to create socket parent {} ({e}); refusing to serve",
@@ -1172,7 +1172,7 @@ fn await_or_cancel(
     }
 }
 
-fn socket_path_spec() -> Option<crate::runtime_paths::IpcSocketPath> {
+fn socket_path_spec() -> Option<paneflow_home::IpcEndpoint> {
     crate::runtime_paths::socket_path_spec()
 }
 

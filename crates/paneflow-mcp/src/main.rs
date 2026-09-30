@@ -27,7 +27,7 @@ const CLIENT_NAME: &str = "paneflow-mcp";
 
 fn main() -> ExitCode {
     let Some(target) = resolve_control_target(
-        paneflow_home::isolated_ipc_endpoint_for_current_home(),
+        paneflow_home::ipc_endpoint(),
         paneflow_home::host_endpoint_path_for_current_home(),
         paneflow_home::reserved_host_endpoint(),
     ) else {

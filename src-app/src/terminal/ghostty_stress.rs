@@ -277,7 +277,8 @@ fn cycle_spec() -> SpawnSpec {
         quoting: ShellQuoting::Posix,
         args: vec![
             "-c".into(),
-            "IFS= read -r line; printf 'PANEFLOW_STRESS:%s\\n' \"$line\"".into(),
+            "trap '' HUP; sleep 30 </dev/null >/dev/null 2>&1 & IFS= read -r line; printf 'PANEFLOW_STRESS:%s\\n' \"$line\""
+                .into(),
         ],
     }
 }
@@ -322,7 +323,7 @@ fn burst_spec() -> SpawnSpec {
 
 fn run_cycle(surface_id: u64) -> (Duration, usize) {
     let mut pane = StressPane::spawn(surface_id, cycle_spec());
-    let descendants = descendant_pids(pane.pid);
+    let descendants = cycle_descendants(surface_id, pane.pid);
     let output_before = pane.session.processed_output_bytes_for_test();
     pane.resize_storm();
     pane.write(format!("cycle-{surface_id}\r").into_bytes());
@@ -431,7 +432,6 @@ fn process_entries() -> Vec<(u32, u32)> {
     entries
 }
 
-#[cfg(target_os = "windows")]
 fn descendant_pids(root_pid: u32) -> Vec<u32> {
     fn visit(
         pid: u32,
@@ -457,9 +457,64 @@ fn descendant_pids(root_pid: u32) -> Vec<u32> {
     output
 }
 
+#[cfg(target_os = "linux")]
+fn process_entries() -> Vec<(u32, u32)> {
+    let Ok(entries) = std::fs::read_dir("/proc") else {
+        return Vec::new();
+    };
+    entries
+        .filter_map(Result::ok)
+        .filter_map(|entry| {
+            let pid = entry.file_name().to_str()?.parse::<u32>().ok()?;
+            let stat = std::fs::read_to_string(entry.path().join("stat")).ok()?;
+            let parent = stat
+                .rsplit_once(')')?
+                .1
+                .split_whitespace()
+                .nth(1)?
+                .parse::<u32>()
+                .ok()?;
+            Some((pid, parent))
+        })
+        .collect()
+}
+
+#[cfg(all(unix, not(target_os = "linux")))]
+fn process_entries() -> Vec<(u32, u32)> {
+    let Ok(output) = std::process::Command::new("ps")
+        .args(["-A", "-o", "pid=", "-o", "ppid="])
+        .output()
+    else {
+        return Vec::new();
+    };
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter_map(|line| {
+            let mut fields = line.split_whitespace();
+            Some((fields.next()?.parse().ok()?, fields.next()?.parse().ok()?))
+        })
+        .collect()
+}
+
 #[cfg(unix)]
-fn descendant_pids(_root_pid: u32) -> Vec<u32> {
-    Vec::new()
+fn cycle_descendants(surface_id: u64, pid: u32) -> Vec<u32> {
+    let deadline = Instant::now() + CYCLE_TIMEOUT;
+    loop {
+        let descendants = descendant_pids(pid);
+        if !descendants.is_empty() {
+            return descendants;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "scenario=cycle surface={surface_id} pid={pid} phase=descendants: the cycle shell never started its background child"
+        );
+        std::thread::sleep(POLL_INTERVAL);
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn cycle_descendants(_surface_id: u64, pid: u32) -> Vec<u32> {
+    descendant_pids(pid)
 }
 
 #[cfg(target_os = "windows")]

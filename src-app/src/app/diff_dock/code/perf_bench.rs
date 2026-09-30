@@ -10,8 +10,9 @@ use gpui::{
 };
 
 use crate::bench_harness::{
-    Metric, SegmentTimer, count_tree_sitter_allocations, live_bytes, measure, measure_segments,
-    process_cpu_time, publish, refuse_debug_profile, tree_sitter_live_bytes,
+    Metric, SegmentTimer, count_tree_sitter_allocations_in_a_process_that_has_not_parsed_yet,
+    live_bytes, measure, measure_segments, process_cpu_time, publish, refuse_debug_profile,
+    tree_sitter_live_bytes,
 };
 use crate::diff::{
     DiffSyntax, MAX_HIGHLIGHT_BYTES, MAX_MARKDOWN_HIGHLIGHT_BYTES, grammar_for_ext, is_markdown,
@@ -913,10 +914,72 @@ fn tree_bytes_of(ext: &str, source: &str) -> (i64, i64) {
     (held, tree_sitter_live_bytes() - before)
 }
 
+const TREE_MEMORY_PROBE_CHILD_ENV: &str = "PANEFLOW_TREE_MEMORY_PROBE_CHILD";
+
+const TREE_MEMORY_PROBE_RAN: &str = "PANEFLOW_TREE_MEMORY_PROBE_RAN";
+
+fn tree_memory_probe_child_test_name() -> String {
+    let module = module_path!()
+        .split_once("::")
+        .map_or(module_path!(), |(_, rest)| rest);
+    format!("{module}::tree_memory_probe_in_a_fresh_process")
+}
+
+fn passed_test_count(stdout: &str) -> Option<usize> {
+    stdout.lines().find_map(|line| {
+        let rest = line.strip_prefix("test result: ")?;
+        let (_, counts) = rest.split_once(". ")?;
+        let passed: usize = counts.split_once(" passed")?.0.trim().parse().ok()?;
+        let failed: usize = counts
+            .split_once("; ")?
+            .1
+            .split_once(" failed")?
+            .0
+            .trim()
+            .parse()
+            .ok()?;
+        Some(passed + failed)
+    })
+}
+
 #[test]
-#[ignore = "tree memory probe: cargo test --release -p paneflow-app --bin paneflow app::diff_dock::code::perf_bench::tree_memory_probe -- --ignored --exact --nocapture --test-threads=1"]
+#[ignore = "tree memory probe: cargo test --release -p paneflow-app --bin paneflow app::diff_dock::code::perf_bench::tree_memory_probe -- --ignored --exact --nocapture"]
 fn tree_memory_probe() {
-    count_tree_sitter_allocations();
+    let child = tree_memory_probe_child_test_name();
+    let output = std::process::Command::new(std::env::current_exe().expect("test binary path"))
+        .args([
+            child.as_str(),
+            "--ignored",
+            "--exact",
+            "--nocapture",
+            "--test-threads=1",
+        ])
+        .env(TREE_MEMORY_PROBE_CHILD_ENV, "1")
+        .output()
+        .expect("the probe child process starts");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    print!("{stdout}");
+    eprint!("{}", String::from_utf8_lossy(&output.stderr));
+    assert!(output.status.success(), "the probe child failed");
+    assert_eq!(
+        passed_test_count(&stdout),
+        Some(1),
+        "the probe child must run exactly one test ({child})"
+    );
+    assert!(
+        stdout.contains(TREE_MEMORY_PROBE_RAN),
+        "the probe child ran {child} without measuring"
+    );
+}
+
+#[test]
+#[ignore = "run only by tree_memory_probe, in its own process"]
+fn tree_memory_probe_in_a_fresh_process() {
+    if std::env::var_os(TREE_MEMORY_PROBE_CHILD_ENV).is_none() {
+        return;
+    }
+    unsafe { count_tree_sitter_allocations_in_a_process_that_has_not_parsed_yet() };
+    println!("{TREE_MEMORY_PROBE_RAN}");
     let cases = [
         ("rust_300kb", "rs", rust_source(HIGHLIGHTED_RUST_BYTES)),
         ("rust_2mb", "rs", rust_source(RELOAD_RUST_BYTES)),
@@ -1050,6 +1113,26 @@ fn editor_pipeline_benchmark() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_probe_parent_counts_the_tests_its_child_ran() {
+        assert_eq!(
+            passed_test_count("running 1 test\ntest result: ok. 1 passed; 0 failed; 0 ignored"),
+            Some(1)
+        );
+        assert_eq!(
+            passed_test_count("test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured"),
+            Some(0)
+        );
+        assert_eq!(
+            passed_test_count("test result: FAILED. 1 passed; 1 failed; 0 ignored"),
+            Some(2)
+        );
+        assert_eq!(passed_test_count("no summary"), None);
+        assert!(
+            tree_memory_probe_child_test_name().starts_with("app::diff_dock::code::perf_bench::")
+        );
+    }
 
     #[test]
     fn every_corpus_reaches_the_path_the_bench_claims() {

@@ -4474,6 +4474,7 @@ name = "paneflow-config"
 version = "0.17.4"
 dependencies = [
  "dirs",
+ "log",
  "notify",
  "paneflow-home",
  "serde",
@@ -4535,6 +4536,7 @@ version = "0.17.4"
 dependencies = [
  "interprocess",
  "libc",
+ "paneflow-home",
  "serde_json",
  "tempfile",
  "windows-sys 0.59.0",

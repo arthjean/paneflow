@@ -1,38 +1,12 @@
-use std::path::PathBuf;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::mpsc;
-use std::thread;
-use std::time::{Duration, Instant, SystemTime};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use parking_lot::Mutex;
-
-use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
-use paneflow_config::watcher::ConfigTargetWatch;
 
 use super::builtin::{paneflow_dark, theme_by_name};
 use super::model::{TerminalTheme, apply_surface_overrides};
 
-const THEME_CHECK_INTERVAL: Duration = Duration::from_millis(500);
-
-const DEBOUNCE_DURATION: Duration = Duration::from_millis(300);
-
-const DEBOUNCE_CAP: Duration = Duration::from_secs(2);
-
-struct CachedTheme {
-    theme: TerminalTheme,
-    mtime: Option<SystemTime>,
-    last_check: Instant,
-}
-
-static THEME_CACHE: Mutex<Option<CachedTheme>> = Mutex::new(None);
+static ACTIVE_THEME: Mutex<Option<TerminalTheme>> = Mutex::new(None);
 static THEME_GENERATION: AtomicU64 = AtomicU64::new(0);
-
-static WATCHER_ACTIVE: AtomicBool = AtomicBool::new(false);
-
-fn read_config_theme_name() -> Option<String> {
-    paneflow_config::loader::load_config().theme
-}
 
 fn resolve_theme_name(name: Option<&str>) -> TerminalTheme {
     if let Some(name) = name {
@@ -44,21 +18,9 @@ fn resolve_theme_name(name: Option<&str>) -> TerminalTheme {
     apply_surface_overrides(paneflow_dark())
 }
 
-fn resolve_theme() -> TerminalTheme {
-    resolve_theme_name(read_config_theme_name().as_deref())
-}
-
-fn install_theme(
-    cache: &mut Option<CachedTheme>,
-    theme: TerminalTheme,
-    mtime: Option<SystemTime>,
-) -> TerminalTheme {
-    let changed = cache.as_ref().is_some_and(|cached| cached.theme != theme);
-    *cache = Some(CachedTheme {
-        theme,
-        mtime,
-        last_check: Instant::now(),
-    });
+fn install_theme(active: &mut Option<TerminalTheme>, theme: TerminalTheme) -> TerminalTheme {
+    let changed = active.is_some_and(|current| current != theme);
+    *active = Some(theme);
     let generation = if changed {
         THEME_GENERATION.fetch_add(1, Ordering::AcqRel) + 1
     } else {
@@ -69,21 +31,12 @@ fn install_theme(
 }
 
 pub fn set_active_theme(name: Option<&str>) {
-    let theme = resolve_theme_name(name);
-    let mut cache = THEME_CACHE.lock();
-    let mtime = cache.as_ref().and_then(|cached| cached.mtime);
-    install_theme(&mut cache, theme, mtime);
-}
-
-fn reload_theme() {
-    let mtime = config_mtime();
-    let theme = resolve_theme();
-    install_theme(&mut THEME_CACHE.lock(), theme, mtime);
+    install_theme(&mut ACTIVE_THEME.lock(), resolve_theme_name(name));
 }
 
 #[cfg(test)]
 pub fn invalidate_theme_cache() {
-    *THEME_CACHE.lock() = None;
+    *ACTIVE_THEME.lock() = None;
     THEME_GENERATION.fetch_add(1, Ordering::AcqRel);
 }
 
@@ -91,240 +44,26 @@ pub fn theme_generation() -> u64 {
     THEME_GENERATION.load(Ordering::Acquire)
 }
 
-pub fn config_mtime() -> Option<SystemTime> {
-    let config_path = paneflow_config::loader::config_path()?;
-    std::fs::metadata(config_path).ok()?.modified().ok()
-}
-
 pub fn active_theme() -> TerminalTheme {
-    let mut cache = THEME_CACHE.lock();
-
-    if let Some(cached) = cache.as_ref() {
-        if WATCHER_ACTIVE.load(Ordering::Acquire) {
-            return cached.theme;
-        }
-        if cached.last_check.elapsed() < THEME_CHECK_INTERVAL {
-            return cached.theme;
-        }
+    let mut active = ACTIVE_THEME.lock();
+    match *active {
+        Some(theme) => theme,
+        None => install_theme(
+            &mut active,
+            resolve_theme_name(paneflow_config::loader::load_config().theme.as_deref()),
+        ),
     }
-
-    let current_mtime = config_mtime();
-    let needs_reload = match (&*cache, current_mtime) {
-        (None, _) => true,
-        (_, None) => true,
-        (Some(cached), Some(_)) => cached.mtime != current_mtime,
-    };
-
-    if needs_reload {
-        install_theme(&mut cache, resolve_theme(), current_mtime)
-    } else {
-        #[allow(clippy::expect_used)]
-        let cached = cache
-            .as_mut()
-            .expect("needs_reload=false implies cache is Some");
-        cached.last_check = Instant::now();
-        cached.theme
-    }
-}
-
-pub struct ThemeWatcher {
-    callback: Arc<dyn Fn() + Send + Sync>,
-    config_path: PathBuf,
-}
-
-impl ThemeWatcher {
-    pub fn new(callback: Arc<dyn Fn() + Send + Sync>) -> Option<Self> {
-        let config_path = paneflow_config::loader::config_path()?;
-        Some(Self {
-            callback,
-            config_path,
-        })
-    }
-
-    #[cfg(test)]
-    fn new_with_path(path: PathBuf, callback: Arc<dyn Fn() + Send + Sync>) -> Self {
-        Self {
-            callback,
-            config_path: path,
-        }
-    }
-
-    pub fn start(&self) -> Result<(), notify::Error> {
-        if WATCHER_ACTIVE
-            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-            .is_err()
-        {
-            return Err(notify::Error::generic(
-                "theme watcher already running - start() called twice",
-            ));
-        }
-
-        let result = self.install_watcher();
-        if result.is_err() {
-            WATCHER_ACTIVE.store(false, Ordering::Release);
-        }
-        result
-    }
-
-    fn install_watcher(&self) -> Result<(), notify::Error> {
-        #[allow(clippy::expect_used)]
-        let watch_dir = self
-            .config_path
-            .parent()
-            .expect("config path has no parent directory")
-            .to_path_buf();
-
-        if !watch_dir.exists() {
-            std::fs::create_dir_all(&watch_dir).map_err(notify::Error::io)?;
-        }
-
-        let config_path = self.config_path.clone();
-        let callback = Arc::clone(&self.callback);
-
-        let (tx, rx) = mpsc::channel::<notify::Result<Event>>();
-
-        let mut watcher = RecommendedWatcher::new(
-            move |res| {
-                let _ = tx.send(res);
-            },
-            notify::Config::default(),
-        )?;
-
-        watcher.watch(&watch_dir, RecursiveMode::NonRecursive)?;
-        let mut watch = ConfigTargetWatch::new(watcher, config_path, watch_dir);
-        watch.follow();
-
-        thread::spawn(move || {
-            event_loop(rx, &callback, &mut watch);
-        });
-
-        log::info!(
-            "theme watcher started (path={})",
-            self.config_path.display()
-        );
-        Ok(())
-    }
-}
-
-fn is_relevant_event(kind: &EventKind) -> bool {
-    matches!(
-        kind,
-        EventKind::Create(_) | EventKind::Modify(_) | EventKind::Remove(_)
-    )
-}
-
-fn reload_deadline(burst_started: Instant, now: Instant) -> Instant {
-    (now + DEBOUNCE_DURATION).min(burst_started + DEBOUNCE_CAP)
-}
-
-fn event_loop(
-    rx: mpsc::Receiver<notify::Result<Event>>,
-    callback: &Arc<dyn Fn() + Send + Sync>,
-    watch: &mut ConfigTargetWatch,
-) {
-    let mut pending_reload: Option<Instant> = None;
-    let mut burst_started: Option<Instant> = None;
-
-    loop {
-        let event_result = if let Some(deadline) = pending_reload {
-            let remaining = deadline.saturating_duration_since(Instant::now());
-            if remaining.is_zero() {
-                pending_reload = None;
-                burst_started = None;
-                fire_reload(callback);
-                continue;
-            }
-            rx.recv_timeout(remaining)
-        } else {
-            match rx.recv() {
-                Ok(ev) => Ok(ev),
-                Err(_) => break,
-            }
-        };
-
-        match event_result {
-            Ok(Ok(event)) => {
-                if is_relevant_event(&event.kind) && watch.targets(&event) {
-                    let now = Instant::now();
-                    let started = *burst_started.get_or_insert(now);
-                    pending_reload = Some(reload_deadline(started, now));
-                }
-            }
-            Ok(Err(e)) => {
-                log::warn!("theme watcher error: {e}");
-            }
-            Err(mpsc::RecvTimeoutError::Timeout) => {
-                pending_reload = None;
-                burst_started = None;
-                fire_reload(callback);
-            }
-            Err(mpsc::RecvTimeoutError::Disconnected) => {
-                break;
-            }
-        }
-    }
-
-    WATCHER_ACTIVE.store(false, Ordering::Release);
-    log::debug!("theme watcher event loop exited");
-}
-
-fn fire_reload(callback: &Arc<dyn Fn() + Send + Sync>) {
-    reload_theme();
-    callback();
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::AtomicUsize;
-    use std::time::Duration;
-    use tempfile::TempDir;
-
-    #[test]
-    fn a_continuous_burst_still_reloads_within_the_cap() {
-        let started = Instant::now();
-        let quiet = reload_deadline(started, started);
-        assert_eq!(quiet, started + DEBOUNCE_DURATION);
-        let late = started + Duration::from_millis(1900);
-        assert_eq!(
-            reload_deadline(started, late),
-            started + DEBOUNCE_CAP,
-            "events every few ms must not postpone the reload past 2 s"
-        );
-    }
-
-    fn wait_for<F: FnMut() -> bool>(mut pred: F, timeout: Duration) -> bool {
-        let deadline = Instant::now() + timeout;
-        while Instant::now() < deadline {
-            if pred() {
-                return true;
-            }
-            thread::sleep(Duration::from_millis(50));
-        }
-        pred()
-    }
 
     static SERIAL_TEST_GUARD: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
-    struct SerialGuard<'a>(#[allow(dead_code)] std::sync::MutexGuard<'a, ()>);
-    impl Drop for SerialGuard<'_> {
-        fn drop(&mut self) {
-            WATCHER_ACTIVE.store(false, Ordering::Release);
-        }
-    }
-    fn serial() -> SerialGuard<'static> {
-        let lock = SERIAL_TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
-        WATCHER_ACTIVE.store(false, Ordering::Release);
-        SerialGuard(lock)
-    }
-
-    fn write_config(path: &std::path::Path, theme: &str) {
-        std::fs::write(path, format!(r#"{{"theme": "{theme}"}}"#)).unwrap();
-    }
-
     #[test]
     fn installing_the_same_theme_twice_bumps_the_generation_once() {
-        let _g = serial();
+        let _g = SERIAL_TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
         set_active_theme(Some("Vercel Dark"));
         let before = theme_generation();
         set_active_theme(Some("Vercel Dark"));
@@ -334,127 +73,17 @@ mod tests {
     }
 
     #[test]
-    fn test_theme_watcher_start_succeeds_and_flips_flag() {
-        let _g = serial();
-        let dir = TempDir::new().unwrap();
+    fn an_invalid_config_on_disk_never_changes_the_active_theme() {
+        let _g = SERIAL_TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+        set_active_theme(Some("Claude Dark"));
+        let before = theme_generation();
+        let dir = tempfile::tempdir().expect("config dir");
         let path = dir.path().join("paneflow.json");
-        write_config(&path, "One Dark");
-
-        let watcher = ThemeWatcher::new_with_path(path.clone(), Arc::new(|| {}));
-        watcher
-            .start()
-            .expect("start must succeed on a normal tempdir");
-
-        assert!(WATCHER_ACTIVE.load(Ordering::Acquire));
-    }
-
-    #[test]
-    fn test_theme_watcher_invokes_callback_on_change() {
-        let _g = serial();
-        let dir = TempDir::new().unwrap();
-        let path = dir.path().join("paneflow.json");
-        write_config(&path, "One Dark");
-
-        let counter = Arc::new(AtomicUsize::new(0));
-        let counter_clone = Arc::clone(&counter);
-        let watcher = ThemeWatcher::new_with_path(
-            path.clone(),
-            Arc::new(move || {
-                counter_clone.fetch_add(1, Ordering::Release);
-            }),
-        );
-        watcher.start().expect("start must succeed");
-
-        write_config(&path, "One Dark");
-
-        let fired = wait_for(
-            || counter.load(Ordering::Acquire) >= 1,
-            Duration::from_millis(1500),
-        );
-        assert!(fired, "callback should fire at least once on a file modify");
-    }
-
-    #[test]
-    fn test_theme_watcher_debounce_coalesces_burst() {
-        let _g = serial();
-        let dir = TempDir::new().unwrap();
-        let path = dir.path().join("paneflow.json");
-        write_config(&path, "One Dark");
-
-        let counter = Arc::new(AtomicUsize::new(0));
-        let counter_clone = Arc::clone(&counter);
-        let watcher = ThemeWatcher::new_with_path(
-            path.clone(),
-            Arc::new(move || {
-                counter_clone.fetch_add(1, Ordering::Release);
-            }),
-        );
-        watcher.start().expect("start must succeed");
-
-        for theme in ["A", "B", "C", "D", "E"] {
-            write_config(&path, theme);
-            thread::sleep(Duration::from_millis(20));
-        }
-
-        thread::sleep(Duration::from_millis(800));
-
-        let fires = counter.load(Ordering::Acquire);
-        assert!(
-            fires >= 1,
-            "burst of 5 writes should fire the debounced callback at least once, got {fires}"
-        );
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn test_theme_watcher_start_failure_keeps_polling_fallback() {
-        let _g = serial();
-
-        let bogus = PathBuf::from("/proc/self/__paneflow_us006_test/paneflow.json");
-        let watcher = ThemeWatcher::new_with_path(bogus, Arc::new(|| {}));
-        let result = watcher.start();
-        assert!(result.is_err(), "start should fail on /proc/self subdir");
-        assert!(
-            !WATCHER_ACTIVE.load(Ordering::Acquire),
-            "WATCHER_ACTIVE must be false after init failure (AC #3) so the \
-             500ms polling fallback in active_theme() takes over"
-        );
-    }
-
-    #[test]
-    fn test_theme_watcher_double_start_rejected() {
-        let _g = serial();
-        let dir = TempDir::new().unwrap();
-        let path = dir.path().join("paneflow.json");
-        write_config(&path, "One Dark");
-
-        let w1 = ThemeWatcher::new_with_path(path.clone(), Arc::new(|| {}));
-        w1.start().expect("first start must succeed");
-        assert!(WATCHER_ACTIVE.load(Ordering::Acquire));
-
-        let w2 = ThemeWatcher::new_with_path(path.clone(), Arc::new(|| {}));
-        let err = w2
-            .start()
-            .expect_err("second start must reject - single-watcher contract");
-        let _ = err;
-        assert!(
-            WATCHER_ACTIVE.load(Ordering::Acquire),
-            "first watcher's lease must survive a rejected second start()"
-        );
-    }
-
-    #[test]
-    fn test_theme_watcher_background_thread_outlives_struct_drop() {
-        let _g = serial();
-        let dir = TempDir::new().unwrap();
-        let path = dir.path().join("paneflow.json");
-        write_config(&path, "One Dark");
-
-        {
-            let watcher = ThemeWatcher::new_with_path(path.clone(), Arc::new(|| {}));
-            watcher.start().expect("start must succeed");
-            assert!(WATCHER_ACTIVE.load(Ordering::Acquire));
-        }
+        std::fs::write(&path, "{ \"theme\": ").expect("invalid config");
+        let loaded = paneflow_config::loader::load_config_from_path(&path);
+        assert_eq!(loaded.theme, None, "an invalid file loads as defaults");
+        assert!(active_theme() == resolve_theme_name(Some("Claude Dark")));
+        assert_eq!(theme_generation(), before);
     }
 
     #[test]

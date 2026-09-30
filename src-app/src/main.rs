@@ -318,7 +318,6 @@ struct PaneFlowApp {
     telemetry: std::sync::Arc<crate::telemetry::client::TelemetryClient>,
     launch_instant: std::time::Instant,
     telemetry_enabled_last: Option<bool>,
-    theme_changed: std::sync::Arc<std::sync::atomic::AtomicBool>,
     pub(crate) diff_dock: DiffDockState,
     pub(crate) sidebar_order_cache: std::cell::RefCell<crate::app::sidebar::SidebarOrderCache>,
 }

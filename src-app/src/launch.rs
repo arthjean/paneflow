@@ -343,6 +343,7 @@ pub(crate) fn run() {
             startup_trace::mark("gpui_app_ready");
             let config = paneflow_config::loader::load_config();
             startup_trace::mark("config_loaded");
+            crate::theme::set_active_theme(config.theme.as_deref());
             cx.set_text_rendering_mode(gpui::TextRenderingMode::Grayscale);
             keybindings::apply_keybindings(cx, &config.shortcuts);
 

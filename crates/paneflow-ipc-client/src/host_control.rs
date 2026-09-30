@@ -76,22 +76,24 @@ pub fn choose_control_target(
 }
 
 pub fn resolve_control_target(
-    isolated_controller: Option<PathBuf>,
+    controller: Option<paneflow_home::IpcEndpoint>,
     home_host_endpoint: Option<PathBuf>,
     reserved_host_endpoint: Option<PathBuf>,
 ) -> Option<ControlTarget> {
-    let owned_host_endpoint = isolated_controller
-        .is_some()
+    let home_is_isolated = controller
+        .as_ref()
+        .is_some_and(|endpoint| endpoint.home_is_isolated);
+    let owned_host_endpoint = home_is_isolated
         .then(|| home_host_endpoint.clone())
         .flatten();
-    let host_endpoint = crate::honored_socket_override(
+    let host_endpoint = paneflow_home::honored_endpoint_override(
         host_endpoint_from_env(),
         owned_host_endpoint.as_deref(),
         reserved_host_endpoint.as_deref(),
-        crate::socket_override_allowed(),
+        paneflow_home::endpoint_override_allowed(),
     )
     .or(home_host_endpoint);
-    let controller = crate::resolve_socket_path_or(isolated_controller);
+    let controller = controller.map(|endpoint| endpoint.path);
     let listening = controller
         .as_deref()
         .is_some_and(crate::socket_is_listening);

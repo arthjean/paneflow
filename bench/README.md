@@ -330,13 +330,25 @@ The measurement is a second ignored test, `tree_memory_probe`, in the same
 file as the editor suite. It routes tree-sitter's own C allocator to a counting
 allocator through `tree_sitter::set_allocator`, so the bytes it reports are the
 tree and nothing else. That counter is deliberately kept out of the timed
-suite: installing it would change every parse timing, and freeing a block
-allocated before it was installed would corrupt the heap. Run it alone.
+suite: installing it would change every parse timing.
+
+The installer is the `unsafe fn`
+`count_tree_sitter_allocations_in_a_process_that_has_not_parsed_yet`
+(`src-app/src/bench_harness.rs`), and its name is its precondition: no
+tree-sitter object may exist in the process when it runs. Every block
+tree-sitter allocated before the switch would later be freed through the
+counting allocator, which reads a size header that block never had, and the
+heap is corrupted. A test binary shares one process across every test it runs,
+so `tree_memory_probe` never installs the counter itself. It relaunches the
+test binary as a child with `--exact` on
+`tree_memory_probe_in_a_fresh_process`, which installs the counter first and
+then measures, and it fails unless that child reports exactly one test run and
+the measurement ran.
 
 ```bash
 cargo test --release --locked -p paneflow-app --bin paneflow \
   app::diff_dock::code::perf_bench::tree_memory_probe \
-  -- --ignored --exact --nocapture --test-threads=1
+  -- --ignored --exact --nocapture
 ```
 
 Measured on Windows 11 x86_64, release profile, tree-sitter 0.26.13, on the

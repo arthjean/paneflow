@@ -1087,18 +1087,13 @@ impl PaneFlowApp {
                         return input_rejected_error(reason).into_value();
                     }
                 }
-                if unrestricted {
-                    tracing::info!(
-                        target: "paneflow::ipc::unrestricted",
-                        method = "surface.send_text",
-                        surface_id = wrote_sid,
-                        caller_pid = ?caller_pid,
-                        length = text.len() as u64,
-                        submit = submit,
-                        paste = paste,
-                        "ai_unrestricted: authorized PTY write to pane"
-                    );
-                }
+                log_pane_write(
+                    "surface.send_text",
+                    wrote_sid,
+                    caller_pid,
+                    text.len(),
+                    unrestricted,
+                );
                 let submit_mode = if submit && paste && !text.is_empty() {
                     serde_json::Value::String("deferred_paste_cr".to_string())
                 } else if submit {
@@ -1152,7 +1147,16 @@ impl PaneFlowApp {
                 };
                 match terminal {
                     Some(t) => match t.read(cx).send_keystroke(keystroke) {
-                        Ok(()) => serde_json::json!({"sent": true}),
+                        Ok(()) => {
+                            log_pane_write(
+                                "surface.send_keystroke",
+                                t.entity_id().as_u64(),
+                                caller_pid,
+                                keystroke.len(),
+                                unrestricted,
+                            );
+                            serde_json::json!({"sent": true})
+                        }
                         Err(e) if e == crate::terminal::view::INPUT_REJECTED => {
                             input_rejected_error(crate::terminal::view::INPUT_REJECTED).into_value()
                         }
@@ -1442,21 +1446,39 @@ mod tests {
         assert!(eof);
     }
 
-    #[test]
-    fn paginate_total_drives_us025_offset_guard() {
-        let (_, _, total_at_top, eof_at_top) =
-            paneflow_ipc_client::scrollback::paginate_scrollback("a\nb\nc", 2, 3);
-        assert_eq!(total_at_top, 3);
-        assert!(eof_at_top);
-        assert!(3 <= total_at_top, "offset == total is in range (boundary)");
+    #[gpui::test]
+    fn paginate_total_drives_us025_offset_guard(cx: &mut gpui::TestAppContext) {
+        let cx = cx.add_empty_window();
+        let terminal = display_terminal(cx);
+        write_terminal(&terminal, b"a\nb\nc\n", cx);
+        let backend = backend_of(&terminal, cx);
+        let read_at = |offset: usize| {
+            promote_response(
+                answer_surface_read(
+                    &backend,
+                    &SurfaceReadRequest {
+                        offset,
+                        ..read_request(2)
+                    },
+                    Duration::from_secs(5),
+                ),
+                serde_json::json!(1),
+            )
+        };
+        let total = read_at(0)["result"]["total_lines"]
+            .as_u64()
+            .expect("total_lines") as usize;
+        assert!(total >= 3);
 
-        let (_, _, total_past, _) =
-            paneflow_ipc_client::scrollback::paginate_scrollback("a\nb\nc", 2, 4);
-        assert_eq!(total_past, 3);
+        let at_top = read_at(total);
         assert!(
-            4 > total_past,
-            "offset > total is out of range → handler returns -32602"
+            at_top.get("error").is_none(),
+            "offset == total is in range: {at_top}"
         );
+        assert_eq!(at_top["result"]["total_lines"], total);
+
+        let past = read_at(total + 1);
+        assert_eq!(past["error"]["code"], -32602, "{past}");
     }
 
     #[test]

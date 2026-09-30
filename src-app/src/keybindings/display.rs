@@ -474,13 +474,20 @@ mod tests {
     #[test]
     fn effective_shortcuts_carry_matching_action_name() {
         let entries = effective_shortcuts(&HashMap::new());
+        let mut listed = HashSet::new();
         for e in &entries {
             assert_eq!(
                 e.description,
                 action_description(e.action_name),
                 "row description must match its action_name"
             );
+            assert!(
+                listed.insert(e.action_name),
+                "{} is listed twice although it has a default on several keys",
+                e.action_name
+            );
         }
+        assert!(listed.contains("terminal_copy"));
     }
 
     #[test]

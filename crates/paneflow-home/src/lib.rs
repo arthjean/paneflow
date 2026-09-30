@@ -1,7 +1,16 @@
 use std::path::{Path, PathBuf};
 
+mod endpoint;
 mod read;
 mod write;
+
+#[cfg(unix)]
+pub use endpoint::runtime_dir;
+pub use endpoint::{
+    ALLOW_SOCKET_OVERRIDE_ENV, EndpointEnv, IpcEndpoint, SOCKET_PATH_ENV, endpoint_from_env,
+    endpoint_override_allowed, honored_endpoint_override, ipc_endpoint, ipc_endpoint_in,
+    same_endpoint,
+};
 
 pub use read::{
     create_private_dir_all, not_regular_file, open_for_reading, open_regular_for_reading,
@@ -162,23 +171,10 @@ pub fn host_endpoint_path(home: &Path) -> PathBuf {
 
 #[cfg(unix)]
 pub fn host_endpoint_path(home: &Path) -> PathBuf {
-    host_runtime_dir().join(format!(
+    runtime_dir().join(format!(
         "{HOST_ENDPOINT_PREFIX}{}.sock",
         home_fingerprint(home)
     ))
-}
-
-#[cfg(unix)]
-fn host_runtime_dir() -> PathBuf {
-    std::env::var_os("XDG_RUNTIME_DIR")
-        .map(PathBuf::from)
-        .filter(|p| !p.as_os_str().is_empty() && p.is_absolute())
-        .or_else(|| {
-            std::env::var_os("TMPDIR")
-                .map(PathBuf::from)
-                .filter(|p| !p.as_os_str().is_empty() && p.is_absolute())
-        })
-        .unwrap_or_else(|| PathBuf::from("/tmp"))
 }
 
 pub fn host_endpoint_path_for_current_home() -> Option<PathBuf> {
@@ -232,7 +228,7 @@ pub fn serve_endpoint_path(home: &Path) -> PathBuf {
 
 #[cfg(unix)]
 pub fn serve_endpoint_path(home: &Path) -> PathBuf {
-    host_runtime_dir().join(format!(
+    runtime_dir().join(format!(
         "{SERVE_ENDPOINT_PREFIX}{}.sock",
         home_fingerprint(home)
     ))
@@ -254,16 +250,15 @@ pub fn ipc_endpoint_path(home: &Path) -> PathBuf {
 
 #[cfg(unix)]
 pub fn ipc_endpoint_path(home: &Path) -> PathBuf {
-    host_runtime_dir().join(format!(
+    ipc_endpoint_path_in(&runtime_dir(), home)
+}
+
+#[cfg(unix)]
+fn ipc_endpoint_path_in(runtime_dir: &Path, home: &Path) -> PathBuf {
+    runtime_dir.join(format!(
         "{IPC_ENDPOINT_PREFIX}{}.sock",
         home_fingerprint(home)
     ))
-}
-
-pub fn isolated_ipc_endpoint_for_current_home() -> Option<PathBuf> {
-    paneflow_home()
-        .filter(|home| !is_default_home(home))
-        .map(|home| ipc_endpoint_path(&home))
 }
 
 pub fn legacy_config_path() -> Option<PathBuf> {

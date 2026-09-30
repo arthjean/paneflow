@@ -5,6 +5,8 @@ use std::time::{Duration, Instant};
 
 const LOCK_TIMEOUT: Duration = Duration::from_secs(5);
 const LOCK_RETRY: Duration = Duration::from_millis(25);
+
+#[must_use = "the config lock is released as soon as this guard is dropped"]
 pub struct ConfigLock {
     _file: File,
 }

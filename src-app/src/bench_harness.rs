@@ -127,7 +127,7 @@ unsafe extern "C" fn tree_sitter_free(ptr: *mut c_void) {
     }
 }
 
-pub(crate) fn count_tree_sitter_allocations() {
+pub(crate) unsafe fn count_tree_sitter_allocations_in_a_process_that_has_not_parsed_yet() {
     static INSTALLED: Once = Once::new();
     INSTALLED.call_once(|| unsafe {
         tree_sitter::set_allocator(
@@ -567,7 +567,28 @@ pub(crate) fn resident_set_bytes() -> u64 {
     u64::try_from(memory.WorkingSetSize).unwrap_or(u64::MAX)
 }
 
-#[cfg(not(any(target_os = "linux", target_os = "windows")))]
+#[cfg(target_os = "macos")]
+fn current_task_info() -> Option<libc::proc_taskinfo> {
+    let mut info: libc::proc_taskinfo = unsafe { std::mem::zeroed() };
+    let size = std::mem::size_of::<libc::proc_taskinfo>() as libc::c_int;
+    let written = unsafe {
+        libc::proc_pidinfo(
+            libc::getpid(),
+            libc::PROC_PIDTASKINFO,
+            0,
+            (&raw mut info).cast(),
+            size,
+        )
+    };
+    (written == size).then_some(info)
+}
+
+#[cfg(target_os = "macos")]
+pub(crate) fn resident_set_bytes() -> u64 {
+    current_task_info().map_or(0, |info| info.pti_resident_size)
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
 pub(crate) fn resident_set_bytes() -> u64 {
     0
 }
@@ -622,9 +643,27 @@ pub(crate) fn process_cpu_time() -> Duration {
     )
 }
 
-#[cfg(not(any(target_os = "linux", target_os = "windows")))]
+#[cfg(target_os = "macos")]
+pub(crate) fn process_cpu_time() -> Duration {
+    let Some(info) = current_task_info() else {
+        return Duration::ZERO;
+    };
+    let mut timebase = libc::mach_timebase_info { numer: 0, denom: 0 };
+    if unsafe { libc::mach_timebase_info(&mut timebase) } != 0 || timebase.denom == 0 {
+        return Duration::ZERO;
+    }
+    let ticks = info.pti_total_user.saturating_add(info.pti_total_system);
+    Duration::from_nanos(mach_ticks_to_nanos(ticks, timebase.numer, timebase.denom))
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
 pub(crate) fn process_cpu_time() -> Duration {
     Duration::ZERO
+}
+
+fn mach_ticks_to_nanos(ticks: u64, numer: u32, denom: u32) -> u64 {
+    let nanos = u128::from(ticks) * u128::from(numer) / u128::from(denom.max(1));
+    u64::try_from(nanos).unwrap_or(u64::MAX)
 }
 
 #[cfg(target_os = "linux")]
@@ -656,6 +695,26 @@ pub(crate) fn refuse_debug_profile() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mach_ticks_convert_through_the_timebase() {
+        assert_eq!(mach_ticks_to_nanos(1_000, 1, 1), 1_000);
+        assert_eq!(mach_ticks_to_nanos(24_000_000, 125, 3), 1_000_000_000);
+        assert_eq!(mach_ticks_to_nanos(u64::MAX, 125, 3), u64::MAX);
+        assert_eq!(mach_ticks_to_nanos(7, 1, 0), 7);
+    }
+
+    #[test]
+    fn this_platform_reports_resident_memory_and_cpu_time() {
+        let start = process_cpu_time();
+        let deadline = std::time::Instant::now() + Duration::from_millis(50);
+        let mut spin = 0_u64;
+        while std::time::Instant::now() < deadline {
+            spin = std::hint::black_box(spin.wrapping_add(1));
+        }
+        assert!(resident_set_bytes() > 0);
+        assert!(process_cpu_time() > start);
+    }
 
     #[test]
     fn comparison_table_reports_speedups_from_the_baseline() {

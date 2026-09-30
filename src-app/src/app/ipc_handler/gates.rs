@@ -64,6 +64,29 @@ pub(super) fn send_text_gate_open(scripting_enabled: bool, unrestricted: bool) -
     scripting_enabled || unrestricted
 }
 
+pub(super) fn log_pane_write(
+    method: &str,
+    surface_id: u64,
+    caller_pid: Option<i64>,
+    length: usize,
+    unrestricted: bool,
+) {
+    let authorization = if unrestricted {
+        "ai_unrestricted"
+    } else {
+        "scripting"
+    };
+    tracing::info!(
+        target: "paneflow::ipc::write",
+        method,
+        surface_id,
+        caller_pid = ?caller_pid,
+        length = length as u64,
+        authorization,
+        "authorized PTY write to pane"
+    );
+}
+
 pub(super) fn capabilities_value(scripting: bool, orchestration: bool) -> serde_json::Value {
     let methods = [
         "system.ping",
@@ -98,6 +121,20 @@ pub(super) fn capabilities_value(scripting: bool, orchestration: bool) -> serde_
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tracing_test::traced_test]
+    #[test]
+    fn every_authorized_pane_write_is_logged_with_its_length_in_both_modes() {
+        log_pane_write("surface.send_text", 7, Some(42), 11, false);
+        log_pane_write("surface.send_keystroke", 8, None, 6, true);
+        assert!(logs_contain("INFO"));
+        assert!(logs_contain("method=\"surface.send_text\" surface_id=7"));
+        assert!(logs_contain("length=11 authorization=\"scripting\""));
+        assert!(logs_contain(
+            "method=\"surface.send_keystroke\" surface_id=8"
+        ));
+        assert!(logs_contain("length=6 authorization=\"ai_unrestricted\""));
+    }
 
     #[test]
     fn capabilities_never_advertise_the_retired_ai_methods() {

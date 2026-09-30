@@ -74,6 +74,10 @@ impl LayoutTree {
             }
         }
 
+        if rows == 1 {
+            return LayoutTree::from_panes_equal(SplitDirection::Vertical, panes);
+        }
+
         let row_ratio = 1.0 / rows as f32;
         let mut pane_iter = panes.into_iter();
         let mut row_children: Vec<LayoutChild> = Vec::with_capacity(rows);
@@ -101,5 +105,82 @@ impl LayoutTree {
             drag: Rc::new(Cell::new(None)),
             container_size: Rc::new(Cell::new(0.0)),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use gpui::{AppContext, Entity, TestAppContext};
+
+    use crate::pane::Pane;
+    use crate::terminal::TerminalView;
+
+    use super::*;
+
+    fn test_pane(cx: &mut impl AppContext) -> Entity<Pane> {
+        let terminal = cx.new(|cx| TerminalView::display_only_for_test(1, cx));
+        cx.new(|cx| Pane::new(terminal, 1, cx))
+    }
+
+    fn shape(tree: &LayoutTree) -> String {
+        match tree {
+            LayoutTree::Leaf(_) => "L".to_string(),
+            LayoutTree::Container {
+                direction,
+                children,
+                ..
+            } => {
+                let tag = match direction {
+                    SplitDirection::Horizontal => "H",
+                    SplitDirection::Vertical => "V",
+                };
+                let inner: Vec<String> = children.iter().map(|child| shape(&child.node)).collect();
+                format!("{tag}[{}]", inner.join(","))
+            }
+        }
+    }
+
+    fn assert_no_single_child_container(tree: &LayoutTree, panes: usize) {
+        if let LayoutTree::Container { children, .. } = tree {
+            assert!(
+                children.len() > 1,
+                "{panes} panes: a container holds a single child in {}",
+                shape(tree)
+            );
+            for child in children {
+                assert_no_single_child_container(&child.node, panes);
+            }
+        }
+    }
+
+    #[gpui::test]
+    fn tiled_grids_from_one_to_nine_panes(cx: &mut TestAppContext) {
+        let cx = cx.add_empty_window();
+        let expected = [
+            "L",
+            "V[L,L]",
+            "H[V[L,L],L]",
+            "H[V[L,L],V[L,L]]",
+            "H[V[L,L,L],V[L,L]]",
+            "H[V[L,L,L],V[L,L,L]]",
+            "H[V[L,L,L],V[L,L,L],L]",
+            "H[V[L,L,L],V[L,L,L],V[L,L]]",
+            "H[V[L,L,L],V[L,L,L],V[L,L,L]]",
+        ];
+        for (index, expected) in expected.into_iter().enumerate() {
+            let count = index + 1;
+            let panes: Vec<Entity<Pane>> = (0..count).map(|_| test_pane(cx)).collect();
+            let ids: Vec<_> = panes.iter().map(Entity::entity_id).collect();
+            let tree = LayoutTree::tiled(panes).expect("a non-empty grid");
+            assert_eq!(shape(&tree), expected, "{count} panes");
+            assert_no_single_child_container(&tree, count);
+            let leaves: Vec<_> = tree
+                .collect_leaves()
+                .into_iter()
+                .map(|pane| pane.entity_id())
+                .collect();
+            assert_eq!(leaves, ids, "{count} panes keep their order");
+        }
+        assert!(LayoutTree::tiled(Vec::new()).is_none());
     }
 }

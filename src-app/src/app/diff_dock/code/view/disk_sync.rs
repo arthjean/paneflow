@@ -1398,9 +1398,28 @@ mod tests {
 
     #[gpui::test]
     fn opening_a_real_file_registers_the_conflict_watcher(cx: &mut TestAppContext) {
-        let (_dir, view, cx) = file_view(cx, "one\n", true);
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("watched.rs");
+        std::fs::write(&path, "watched\n").expect("fixture");
+        let (view, cx) = view(cx, "seed\n");
         cx.executor().allow_parking();
-        cx.run_until_parked();
+
+        view.update(cx, |view, cx| view.open(path, cx));
+        let mut loaded = false;
+        for _ in 0..100 {
+            cx.run_until_parked();
+            loaded = view.update(cx, |view, _cx| {
+                view.document()
+                    .and_then(|doc| doc.line_string(0))
+                    .as_deref()
+                    == Some("watched")
+            });
+            if loaded {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(loaded, "the opened file loads");
         view.update(cx, |view, _cx| {
             assert!(view._watcher.is_some(), "the parent directory is watched");
             let bridge = view

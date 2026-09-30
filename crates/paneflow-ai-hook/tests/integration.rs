@@ -21,6 +21,8 @@ const HOOK_BIN: &str = env!("CARGO_BIN_EXE_paneflow-ai-hook");
 const SESSION_ID: &str = "550e8400-e29b-41d4-a716-446655440000";
 const EXIT_TIMEOUT: Duration = Duration::from_millis(800);
 
+const WATCHDOG_TIMEOUT: Duration = Duration::from_secs(10);
+
 #[cfg(unix)]
 type PathKeepalive = tempfile::TempDir;
 
@@ -75,9 +77,21 @@ impl MockHost {
 
 impl Drop for MockHost {
     fn drop(&mut self) {
-        if let Some(thread) = self.thread.take() {
-            thread.join().expect("host thread");
+        let Some(thread) = self.thread.take() else {
+            return;
+        };
+        let deadline = Instant::now() + WATCHDOG_TIMEOUT;
+        while !thread.is_finished() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(5));
         }
+        if std::thread::panicking() {
+            return;
+        }
+        assert!(
+            thread.is_finished(),
+            "mock host thread still running after {WATCHDOG_TIMEOUT:?}"
+        );
+        thread.join().expect("host thread");
     }
 }
 
@@ -178,14 +192,19 @@ fn run_reporter(
                     .expect("stdout")
                     .read_to_end(&mut stdout)
                     .expect("read stdout");
-                return (status, started.elapsed(), stdout);
+                let elapsed = started.elapsed();
+                assert!(
+                    elapsed < EXIT_TIMEOUT,
+                    "reporter took {elapsed:?}, past {EXIT_TIMEOUT:?}"
+                );
+                return (status, elapsed, stdout);
             }
-            Ok(None) if started.elapsed() < EXIT_TIMEOUT => {
+            Ok(None) if started.elapsed() < WATCHDOG_TIMEOUT => {
                 std::thread::sleep(Duration::from_millis(1));
             }
             Ok(None) => {
                 let _ = child.kill();
-                panic!("reporter exceeded {EXIT_TIMEOUT:?}");
+                panic!("reporter still running after the {WATCHDOG_TIMEOUT:?} watchdog");
             }
             Err(error) => panic!("reporter wait failed: {error}"),
         }

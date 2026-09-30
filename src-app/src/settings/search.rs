@@ -164,7 +164,7 @@ pub(crate) const CLAUDE_FULL_ACCESS: SettingCopy = SettingCopy {
 pub(crate) const AI_FREE_ACCESS: SettingCopy = SettingCopy {
     title: "AI free access",
     description: "Lets an agent auto-submit prompts to your other panes, without the \
-                  PANEFLOW_IPC_SCRIPTING gate. Every write is logged.",
+                  PANEFLOW_IPC_SCRIPTING gate.",
 };
 pub(crate) const INJECTION_FENCE: SettingCopy = SettingCopy {
     title: "Injection fence",

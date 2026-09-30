@@ -80,7 +80,7 @@ JetBrains IDEs, Helix, and other JSON Schema-aware editors:
 | `commands` | array | `[]` | Settings/Run | Command palette entries and workspace templates. |
 | `agent_profiles` | array | `[]` | Hot reload | Custom launcher entries that run a built-in agent with extra environment variables and arguments, for example a second Claude Code account through `CLAUDE_CONFIG_DIR`. Settings > Agents > Profiles edits the same list. |
 | `claude_code_bypass_permissions` | boolean/null | `false` | Next Claude launch | Adds `--permission-mode bypassPermissions` to the Claude Code launcher. High-risk opt-in. |
-| `ai_unrestricted` | boolean/null | `false` | Per IPC call | Allows trusted conductors to submit to peer panes without `PANEFLOW_IPC_SCRIPTING`. Every write is traced. |
+| `ai_unrestricted` | boolean/null | `false` | Per IPC call | Allows trusted conductors to submit to peer panes without `PANEFLOW_IPC_SCRIPTING`. |
 | `ai_injection_fence` | boolean/null | `true` | Per read call | Wraps `surface.read` output in an untrusted-output fence by default. |
 | `menu_attention_detection` | boolean/null | `true` | Worker start | Marks a session as needing input when Claude Code or Codex draws a numbered approval menu, which fires no lifecycle hook. Set to `false` to leave such a session on its hook- or screen-derived state. The worker (`paneflow serve`) reads it when it starts. |
 | `on_quit` | `ask`, `keep`, `stop`, null | `ask` | At quit | What quitting does while hosted sessions run: `ask` opens the quit dialog, `keep` leaves every session running, `stop` stops them all and shuts the host down. With no live session the app exits and shuts the idle host down. |
@@ -261,11 +261,13 @@ Surface keys inside a pane:
 | `commands[].workspace.layout.surfaces[].command` | string/null | shell | Command to run when the surface is created. |
 | `commands[].workspace.layout.surfaces[].prompt` | string/null | none | Prompt to prefill after launching an agent command. |
 | `commands[].workspace.layout.surfaces[].cwd` | string/null | workspace cwd | Per-surface working directory. Relative paths resolve against workspace cwd. |
+| `commands[].workspace.layout.surfaces[].path` | string/null | none | File opened by a `markdown` surface. Ignored by terminal surfaces. |
 | `commands[].workspace.layout.surfaces[].env` | object/null | none | Extra environment variables. Wins over `terminal.env` on collision. |
 | `commands[].workspace.layout.surfaces[].focus` | boolean/null | false | Gives this surface initial focus. |
 | `commands[].workspace.layout.surfaces[].scrollback` | string/null | none | Saved plain-text scrollback restored with the surface. |
 | `commands[].workspace.layout.surfaces[].agent` | string/null | none | Stable tag of the agent CLI last detected in the surface. |
 | `commands[].workspace.layout.surfaces[].font_size` | number/null | global `font_size` | Per-surface font-size override, range `8.0` to `32.0`. |
+| `commands[].workspace.layout.surfaces[].session` | string/null | none | UUID of the persistent host session the terminal reattaches to on restore. Written by Paneflow. |
 
 ## `telemetry`
 

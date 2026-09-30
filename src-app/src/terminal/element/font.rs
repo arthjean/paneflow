@@ -1,4 +1,3 @@
-#[cfg(target_os = "macos")]
 use std::collections::HashSet;
 #[cfg(target_os = "macos")]
 use std::sync::LazyLock;
@@ -142,16 +141,38 @@ pub fn resolve_font_family(configured: Option<&str>) -> String {
         return candidate.to_string();
     }
 
-    #[cfg(target_os = "macos")]
-    if !INSTALLED_MONO_FONTS.is_empty() && !INSTALLED_MONO_FONTS.contains(candidate) {
+    if !mono_family_is_installed(candidate) {
         let fallback = default_font_family();
-        log::warn!(
-            "font_family '{candidate}' is not an installed monospace family; using default '{fallback}'"
-        );
+        if first_fallback_for_family(candidate) {
+            log::warn!(
+                "font_family '{candidate}' is not an installed monospace family; using default '{fallback}'"
+            );
+        }
         return fallback.to_string();
     }
 
     candidate.to_string()
+}
+
+#[cfg(target_os = "macos")]
+fn mono_family_is_installed(family: &str) -> bool {
+    INSTALLED_MONO_FONTS.is_empty() || INSTALLED_MONO_FONTS.contains(family)
+}
+
+#[cfg(not(target_os = "macos"))]
+fn mono_family_is_installed(_family: &str) -> bool {
+    true
+}
+
+static WARNED_FALLBACK_FAMILIES: std::sync::Mutex<Option<HashSet<String>>> =
+    std::sync::Mutex::new(None);
+
+fn first_fallback_for_family(family: &str) -> bool {
+    WARNED_FALLBACK_FAMILIES
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .get_or_insert_with(HashSet::new)
+        .insert(family.to_string())
 }
 
 pub(super) fn cached_font_config() -> FontSettings {
@@ -632,6 +653,14 @@ fn cell_metrics_for(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_font_family_fallback_warns_once_per_value() {
+        assert!(first_fallback_for_family("Missing Mono A"));
+        assert!(!first_fallback_for_family("Missing Mono A"));
+        assert!(!first_fallback_for_family("Missing Mono A"));
+        assert!(first_fallback_for_family("Missing Mono B"));
+    }
 
     #[test]
     fn font_configuration_resolves_dimensions_and_fallback_changes() {

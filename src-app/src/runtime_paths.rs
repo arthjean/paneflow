@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use paneflow_ipc_client::SOCKET_PATH_ENV;
+use paneflow_home::SOCKET_PATH_ENV;
 
 #[cfg(unix)]
 pub(crate) const MAX_SOCKET_PATH_BYTES: usize = 104;
@@ -11,78 +11,17 @@ pub const APP_SUBDIR: &str = if cfg!(debug_assertions) {
     "paneflow"
 };
 
-#[cfg(unix)]
-const SOCKET_FILE: &str = if cfg!(debug_assertions) {
-    "paneflow-dev.sock"
-} else {
-    "paneflow.sock"
-};
-
-#[cfg(windows)]
-const PIPE_PATH: &str = if cfg!(debug_assertions) {
-    r"\\.\pipe\paneflow-dev"
-} else {
-    r"\\.\pipe\paneflow"
-};
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct IpcSocketPath {
-    path: PathBuf,
-    owned_parent: bool,
+pub(crate) fn socket_path_spec() -> Option<paneflow_home::IpcEndpoint> {
+    socket_path_spec_in(&paneflow_home::EndpointEnv::from_process())
 }
 
-impl IpcSocketPath {
-    pub(crate) fn path(&self) -> &Path {
-        &self.path
-    }
-
+fn socket_path_spec_in(env: &paneflow_home::EndpointEnv) -> Option<paneflow_home::IpcEndpoint> {
+    let spec = paneflow_home::ipc_endpoint_in(env)?;
     #[cfg(unix)]
-    pub(crate) fn owned_parent(&self) -> bool {
-        self.owned_parent
+    if !check_sun_path_fits(&spec.path) {
+        return None;
     }
-}
-
-#[cfg(unix)]
-fn runtime_dir() -> Option<PathBuf> {
-    std::env::var("XDG_RUNTIME_DIR")
-        .ok()
-        .map(PathBuf::from)
-        .filter(|p| !p.as_os_str().is_empty())
-        .or_else(dirs::runtime_dir)
-        .or_else(|| {
-            std::env::var("TMPDIR")
-                .ok()
-                .map(PathBuf::from)
-                .filter(|p| !p.as_os_str().is_empty())
-        })
-        .or_else(|| dirs::cache_dir().map(|d| d.join("run")))
-}
-
-#[cfg(unix)]
-pub(crate) fn socket_path_spec() -> Option<IpcSocketPath> {
-    let spec = match chosen_endpoint() {
-        Some(path) => IpcSocketPath {
-            path,
-            owned_parent: false,
-        },
-        None => IpcSocketPath {
-            path: runtime_dir()?.join(APP_SUBDIR).join(SOCKET_FILE),
-            owned_parent: true,
-        },
-    };
-    check_sun_path_fits(&spec.path).then_some(spec)
-}
-
-#[cfg(windows)]
-pub(crate) fn socket_path_spec() -> Option<IpcSocketPath> {
-    Some(IpcSocketPath {
-        path: chosen_endpoint().unwrap_or_else(|| PathBuf::from(PIPE_PATH)),
-        owned_parent: false,
-    })
-}
-
-fn chosen_endpoint() -> Option<PathBuf> {
-    paneflow_ipc_client::chosen_endpoint(paneflow_home::isolated_ipc_endpoint_for_current_home())
+    Some(spec)
 }
 
 pub(crate) fn socket_path() -> Option<PathBuf> {
@@ -410,129 +349,92 @@ mod socket_env_tests {
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
-    use std::sync::Mutex;
+    use paneflow_home::EndpointEnv;
 
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
+    const SOCKET_FILE: &str = if cfg!(debug_assertions) {
+        "paneflow-dev.sock"
+    } else {
+        "paneflow.sock"
+    };
 
-    const GUARDED_ENV: [&str; 5] = [
-        "PANEFLOW_SOCKET_PATH",
-        "PANEFLOW_HOME",
-        "PANEFLOW_ALLOW_SOCKET_OVERRIDE",
-        "XDG_RUNTIME_DIR",
-        "TMPDIR",
-    ];
-
-    struct EnvGuard {
-        saved: Vec<(&'static str, Option<std::ffi::OsString>)>,
-        _guard: std::sync::MutexGuard<'static, ()>,
-    }
-
-    impl EnvGuard {
-        fn take() -> Self {
-            let guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-            Self {
-                saved: GUARDED_ENV
-                    .iter()
-                    .map(|key| (*key, std::env::var_os(key)))
-                    .collect(),
-                _guard: guard,
-            }
-        }
-
-        fn clear(&self) {
-            for key in GUARDED_ENV {
-                unsafe { std::env::remove_var(key) };
-            }
-        }
-    }
-
-    impl Drop for EnvGuard {
-        fn drop(&mut self) {
-            for (key, value) in &self.saved {
-                match value {
-                    Some(value) => unsafe { std::env::set_var(key, value) },
-                    None => unsafe { std::env::remove_var(key) },
-                }
-            }
+    fn env(xdg_runtime_dir: Option<&str>) -> EndpointEnv {
+        EndpointEnv {
+            user_home: Some(PathBuf::from("/home/u")),
+            xdg_runtime_dir: xdg_runtime_dir.map(Into::into),
+            ..EndpointEnv::default()
         }
     }
 
     #[test]
     fn a_debug_build_launched_from_an_installed_pane_keeps_its_own_socket() {
-        let g = EnvGuard::take();
-        g.clear();
-        unsafe {
-            std::env::set_var("XDG_RUNTIME_DIR", "/run/user/1000");
-            std::env::set_var(
-                "PANEFLOW_SOCKET_PATH",
-                "/run/user/1000/paneflow/paneflow.sock",
-            );
-        }
+        let tmpdir = tempfile::tempdir().expect("tmpdir");
+        let release = tmpdir.path().join("paneflow").join("paneflow.sock");
+        let spec = socket_path_spec_in(&EndpointEnv {
+            socket_path: Some(release.clone().into_os_string()),
+            tmpdir: Some(tmpdir.path().as_os_str().to_owned()),
+            ..env(None)
+        })
+        .expect("socket spec");
         let expected = if cfg!(debug_assertions) {
-            "/run/user/1000/paneflow-dev/paneflow-dev.sock"
+            tmpdir.path().join("paneflow-dev").join("paneflow-dev.sock")
         } else {
-            "/run/user/1000/paneflow/paneflow.sock"
+            release
         };
-        assert_eq!(socket_path(), Some(PathBuf::from(expected)));
+        assert_eq!(spec.path, expected);
     }
 
     #[test]
     fn paneflow_socket_path_env_wins_when_absolute() {
-        let g = EnvGuard::take();
-        g.clear();
-        unsafe {
-            std::env::set_var("PANEFLOW_SOCKET_PATH", "/tmp/paneflow-isolated.sock");
-            std::env::set_var("XDG_RUNTIME_DIR", "/run/user/1000");
-        }
-        assert_eq!(
-            socket_path(),
-            Some(PathBuf::from("/tmp/paneflow-isolated.sock"))
-        );
-        let spec = socket_path_spec().expect("env socket path resolves");
-        assert_eq!(spec.path(), Path::new("/tmp/paneflow-isolated.sock"));
+        let spec = socket_path_spec_in(&EndpointEnv {
+            socket_path: Some("/tmp/paneflow-isolated.sock".into()),
+            ..env(Some("/run/user/1000"))
+        })
+        .expect("env socket path resolves");
+        assert_eq!(spec.path, Path::new("/tmp/paneflow-isolated.sock"));
         assert!(
-            !spec.owned_parent(),
+            !spec.owned_parent,
             "env override parent must not be treated as Paneflow-owned"
         );
     }
 
     #[test]
-    fn xdg_runtime_dir_wins_when_set() {
-        let g = EnvGuard::take();
-        g.clear();
-        unsafe { std::env::set_var("XDG_RUNTIME_DIR", "/run/user/1000") };
-        let p = socket_path().expect("runtime dir must resolve");
-        assert_eq!(
-            p,
-            PathBuf::from(format!("/run/user/1000/{APP_SUBDIR}/{SOCKET_FILE}")),
-            "AC5: Linux with XDG_RUNTIME_DIR must resolve to the XDG path \
-             (subdir + filename vary by build profile via APP_SUBDIR / SOCKET_FILE)"
-        );
+    fn a_usable_xdg_runtime_dir_wins_on_linux() {
+        let runtime = tempfile::tempdir().expect("runtime dir");
+        let runtime_str = runtime.path().to_str().expect("utf-8 tempdir");
+        let spec = socket_path_spec_in(&env(Some(runtime_str))).expect("socket spec");
+        if cfg!(target_os = "macos") {
+            assert!(!spec.path.starts_with(runtime.path()));
+        } else {
+            assert_eq!(spec.path, runtime.path().join(APP_SUBDIR).join(SOCKET_FILE));
+        }
         assert!(
-            socket_path_spec().expect("socket spec").owned_parent(),
+            spec.owned_parent,
             "default runtime-dir socket is Paneflow-owned"
         );
     }
 
     #[test]
-    fn tmpdir_fallback_when_xdg_and_runtime_dir_missing() {
-        let g = EnvGuard::take();
-        g.clear();
-        unsafe { std::env::set_var("TMPDIR", "/tmp/macos-stub") };
-        let p = socket_path();
-        if let Some(p) = p {
-            assert!(p.ends_with(format!("{APP_SUBDIR}/{SOCKET_FILE}")));
-        }
+    fn tmpdir_is_the_fallback_when_xdg_runtime_dir_is_missing() {
+        let tmpdir = tempfile::tempdir().expect("tmpdir");
+        let spec = socket_path_spec_in(&EndpointEnv {
+            tmpdir: Some(tmpdir.path().as_os_str().to_owned()),
+            ..env(None)
+        })
+        .expect("socket spec");
+        assert_eq!(spec.path, tmpdir.path().join(APP_SUBDIR).join(SOCKET_FILE));
     }
 
     #[test]
     fn overlong_path_returns_none() {
-        let g = EnvGuard::take();
-        g.clear();
-        let long = "/".to_string() + &"x".repeat(119);
-        unsafe { std::env::set_var("XDG_RUNTIME_DIR", &long) };
+        let long = std::env::temp_dir().join("x".repeat(119));
+        std::fs::create_dir_all(&long).expect("long runtime dir");
+        let spec = socket_path_spec_in(&EndpointEnv {
+            tmpdir: Some(long.as_os_str().to_owned()),
+            ..env(None)
+        });
+        let _ = std::fs::remove_dir(&long);
         assert!(
-            socket_path().is_none(),
+            spec.is_none(),
             "AC6: over-long sun_path must return None rather than a bind-time error"
         );
     }
@@ -541,52 +443,15 @@ mod tests {
 #[cfg(all(test, windows))]
 mod windows_tests {
     use super::*;
-    use std::sync::Mutex;
-
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
-
-    struct EnvGuard {
-        socket: Option<String>,
-        home: Option<std::ffi::OsString>,
-        _guard: std::sync::MutexGuard<'static, ()>,
-    }
-
-    impl EnvGuard {
-        fn take() -> Self {
-            let guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-            Self {
-                socket: std::env::var("PANEFLOW_SOCKET_PATH").ok(),
-                home: std::env::var_os("PANEFLOW_HOME"),
-                _guard: guard,
-            }
-        }
-    }
-
-    impl Drop for EnvGuard {
-        fn drop(&mut self) {
-            unsafe {
-                match &self.socket {
-                    Some(v) => std::env::set_var("PANEFLOW_SOCKET_PATH", v),
-                    None => std::env::remove_var("PANEFLOW_SOCKET_PATH"),
-                }
-                match &self.home {
-                    Some(v) => std::env::set_var("PANEFLOW_HOME", v),
-                    None => std::env::remove_var("PANEFLOW_HOME"),
-                }
-            }
-        }
-    }
 
     #[test]
     fn paneflow_socket_path_env_wins_for_named_pipe() {
-        let _guard = EnvGuard::take();
-        unsafe {
-            std::env::remove_var("PANEFLOW_HOME");
-            std::env::set_var("PANEFLOW_SOCKET_PATH", r"\\.\pipe\paneflow-isolated-test");
-        }
-        assert_eq!(
-            socket_path(),
-            Some(PathBuf::from(r"\\.\pipe\paneflow-isolated-test"))
-        );
+        let spec = socket_path_spec_in(&paneflow_home::EndpointEnv {
+            user_home: Some(PathBuf::from(r"C:\Users\u")),
+            socket_path: Some(r"\\.\pipe\paneflow-isolated-test".into()),
+            ..paneflow_home::EndpointEnv::default()
+        })
+        .expect("named pipe");
+        assert_eq!(spec.path, PathBuf::from(r"\\.\pipe\paneflow-isolated-test"));
     }
 }

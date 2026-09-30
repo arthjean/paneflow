@@ -44,8 +44,6 @@ impl PaneFlowApp {
 
         let (pending_config, running_config_watcher) = Self::start_config_watcher();
 
-        let theme_changed = Self::start_theme_watcher();
-
         let cached_config = paneflow_config::loader::load_config();
         crate::config_snapshot::publish(&cached_config, cx);
         crate::terminal::element::apply_font_config(&cached_config);
@@ -400,7 +398,6 @@ impl PaneFlowApp {
             telemetry,
             launch_instant: std::time::Instant::now(),
             telemetry_enabled_last,
-            theme_changed,
             diff_dock: crate::DiffDockState {
                 open: false,
                 data: None,
@@ -511,26 +508,6 @@ impl PaneFlowApp {
             }
         });
         (pending_config, running_config_watcher)
-    }
-
-    fn start_theme_watcher() -> std::sync::Arc<std::sync::atomic::AtomicBool> {
-        let theme_changed = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let theme_changed_writer = std::sync::Arc::clone(&theme_changed);
-        match crate::theme::ThemeWatcher::new(std::sync::Arc::new(move || {
-            theme_changed_writer.store(true, std::sync::atomic::Ordering::Release);
-        })) {
-            Some(watcher) => {
-                if let Err(e) = watcher.start() {
-                    log::warn!(
-                        "theme watcher failed to start: {e}; falling back to 500 ms polling"
-                    );
-                }
-            }
-            None => {
-                log::warn!("theme watcher: no config dir resolved; falling back to 500 ms polling");
-            }
-        }
-        theme_changed
     }
 
     fn spawn_automation_tick(

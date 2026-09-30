@@ -8,6 +8,7 @@ description = "Blocking JSON-RPC client for Paneflow's local IPC socket (shared 
 
 [dependencies]
 interprocess.workspace = true
+paneflow-home.workspace = true
 serde_json.workspace = true
 
 [target.'cfg(unix)'.dependencies]

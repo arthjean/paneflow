@@ -546,13 +546,6 @@ impl PaneFlowApp {
             cx.notify();
         }
 
-        if self
-            .theme_changed
-            .swap(false, std::sync::atomic::Ordering::AcqRel)
-        {
-            cx.notify();
-        }
-
         crate::theme::publish_theme_generation(cx);
     }
 

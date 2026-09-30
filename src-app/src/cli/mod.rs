@@ -542,9 +542,7 @@ pub(super) enum CliTransport {
 impl CliTransport {
     pub(super) fn controller_socket(&self) -> Option<std::path::PathBuf> {
         match self {
-            Self::Controller(_) => paneflow_ipc_client::resolve_socket_path_or(
-                paneflow_home::isolated_ipc_endpoint_for_current_home(),
-            ),
+            Self::Controller(_) => paneflow_home::ipc_endpoint().map(|endpoint| endpoint.path),
             Self::Host(_) => None,
         }
     }
@@ -570,7 +568,7 @@ const CLIENT_NAME: &str = "paneflow-cli";
 
 fn connect() -> Result<CliTransport, String> {
     match resolve_control_target(
-        paneflow_home::isolated_ipc_endpoint_for_current_home(),
+        paneflow_home::ipc_endpoint(),
         paneflow_host::endpoint::host_endpoint_path_for_current_home(),
         paneflow_home::reserved_host_endpoint(),
     ) {

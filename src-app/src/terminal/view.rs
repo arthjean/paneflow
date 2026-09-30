@@ -1868,13 +1868,7 @@ mod tests {
     #[test]
     fn extract_scrollback_empty_terminal_returns_none() {
         let state = TerminalState::new_display_only(24, 80);
-        let scrollback = state.extract_scrollback();
-        if let Some(ref text) = scrollback {
-            assert!(
-                text.trim().is_empty(),
-                "Expected empty or whitespace-only scrollback, got: {text}"
-            );
-        }
+        assert_eq!(state.extract_scrollback(), None);
     }
 
     const HOST_WINDOW_W: f32 = 800.0;
