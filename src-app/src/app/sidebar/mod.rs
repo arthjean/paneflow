@@ -25,8 +25,8 @@ pub(crate) use style::*;
 pub(crate) use tab_row::*;
 
 use crate::{
-    PaneFlowApp, SIDEBAR_WIDTH, TabContextMenu, TabDrag, WorkspaceContextMenu, WorkspaceDrag,
-    WorkspaceDragPreview, ai_types,
+    PaneFlowApp, SIDEBAR_WIDTH, TabContextMenu, TabDrag, TabKey, WorkspaceContextMenu,
+    WorkspaceDrag, WorkspaceDragPreview, ai_types,
     ai_types::AgentState,
     app::host_agents::HostAgentRow,
     app::hosted_sessions::{OwnedSession, SessionRowScope, lifecycle_sentence, relative_age},
@@ -228,7 +228,7 @@ impl PaneFlowApp {
         hasher.finish()
     }
 
-    fn compute_display_order(workspaces: &[Workspace]) -> Vec<usize> {
+    pub(crate) fn compute_display_order(workspaces: &[Workspace]) -> Vec<usize> {
         let mut repo_members: std::collections::HashMap<&std::path::Path, Vec<usize>> =
             std::collections::HashMap::new();
         for (index, workspace) in workspaces.iter().enumerate() {

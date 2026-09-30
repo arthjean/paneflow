@@ -348,10 +348,10 @@ pub(crate) fn reveal_surface(
     cx: &mut App,
 ) -> Option<SurfaceLocation> {
     let loc = find_pane_by_surface_id(workspaces, surface_id, cx)?;
-    let ws = workspaces.get_mut(loc.workspace_idx)?;
-    ws.set_active_tab(loc.tab_idx);
-    ws.active_tab_mut().reveal_pane(&loc.pane, cx);
-    Some(loc)
+    workspaces
+        .get_mut(loc.workspace_idx)?
+        .reveal_pane(&loc.pane, cx)
+        .then_some(loc)
 }
 
 pub(crate) use paneflow_ipc_client::scrollback::{

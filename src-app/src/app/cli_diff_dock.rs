@@ -273,18 +273,12 @@ impl PaneFlowApp {
         };
         let to = match self.diff_dock.maximized.take() {
             Some(previous_focus) => {
-                match previous_focus {
-                    Some(focus) => window.focus(&focus, cx),
-                    None => {
-                        if let Some(ws) = self.workspaces.get(self.active_idx) {
-                            ws.focus_first(window, cx);
-                        }
-                    }
-                }
+                self.diff_dock.focus_after_restore = Some(previous_focus);
                 full
             }
             None => {
-                self.diff_dock.maximized = Some(window.focused(cx));
+                self.diff_dock.focus_after_restore = None;
+                self.diff_dock.maximized = Some(crate::FocusReturn::capture(window, cx));
                 self.focus_diff_tab(self.diff_dock.diff_active_tab, window, cx);
                 0.
             }
@@ -322,6 +316,19 @@ impl PaneFlowApp {
         }
     }
 
+    pub(crate) fn settle_dock_restore_focus(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.diff_dock.maximize_animation.is_some() {
+            return;
+        }
+        if let Some(origin) = self.diff_dock.focus_after_restore.take() {
+            self.return_focus(&origin, window, cx);
+        }
+    }
+
     pub(crate) fn diff_dock_fills_panel(&self) -> bool {
         self.diff_dock.maximized.is_some() || self.diff_dock.maximize_animation.is_some()
     }
@@ -345,6 +352,9 @@ impl PaneFlowApp {
         if let Some(animation) = self.diff_dock.maximize_animation {
             if animation.is_finished(now) {
                 self.diff_dock.maximize_animation = None;
+                if self.diff_dock.focus_after_restore.is_some() {
+                    window.request_animation_frame();
+                }
             } else {
                 window.request_animation_frame();
                 return PaneGridLayout::Clipped {

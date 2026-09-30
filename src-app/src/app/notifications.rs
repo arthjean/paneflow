@@ -14,8 +14,17 @@ use crate::theme::UiColors;
 use crate::ui_primitives::{ROW_RADIUS, dismiss_button, squircle_skin};
 use crate::{PaneFlowApp, StartSelfUpdate, update};
 
+const TOAST_QUEUE_LIMIT: usize = 5;
+
+static NEXT_TOAST_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
+fn next_toast_id() -> u64 {
+    NEXT_TOAST_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+}
+
 #[derive(Clone)]
 pub(crate) struct Toast {
+    pub(crate) id: u64,
     pub(crate) message: String,
     pub(crate) actions: Vec<ToastAction>,
     pub(crate) hold_ms: u64,
@@ -23,7 +32,43 @@ pub(crate) struct Toast {
     pub(crate) persistent: bool,
 }
 
-#[derive(Clone)]
+impl Toast {
+    fn new(message: String, actions: Vec<ToastAction>, hold_ms: u64) -> Self {
+        Self {
+            id: next_toast_id(),
+            message,
+            actions,
+            hold_ms,
+            click_url: None,
+            persistent: false,
+        }
+    }
+
+    fn repeats(&self, other: &Self) -> bool {
+        self.message == other.message && self.actions == other.actions
+    }
+}
+
+fn queue_toast(
+    queue: &mut std::collections::VecDeque<Toast>,
+    showing: Option<&Toast>,
+    toast: Toast,
+) -> bool {
+    if queue
+        .back()
+        .or(showing)
+        .is_some_and(|last| last.repeats(&toast))
+    {
+        return false;
+    }
+    while queue.len() >= TOAST_QUEUE_LIMIT {
+        queue.pop_front();
+    }
+    queue.push_back(toast);
+    true
+}
+
+#[derive(Clone, PartialEq)]
 pub(crate) enum ToastAction {
     RetryUpdate,
     OpenReleasesPage(String),
@@ -59,6 +104,7 @@ impl PaneFlowApp {
         let url = crate::update::release_notes::changelog_url(version);
         self.enqueue_toast(
             Toast {
+                id: next_toast_id(),
                 message: format!("Updated to Paneflow {version}"),
                 actions: vec![ToastAction::OpenReleaseNotes(url.clone())],
                 hold_ms: 0,
@@ -109,20 +155,14 @@ impl PaneFlowApp {
         hold_ms: u64,
         cx: &mut Context<Self>,
     ) {
-        let toast = Toast {
-            message,
-            actions,
-            hold_ms,
-            click_url: None,
-            persistent: false,
-        };
-        self.enqueue_toast(toast, cx);
+        self.enqueue_toast(Toast::new(message, actions, hold_ms), cx);
     }
 
     fn enqueue_toast(&mut self, toast: Toast, cx: &mut Context<Self>) {
         if self.toast.is_some() {
-            self.toast_queue.push_back(toast);
-            cx.notify();
+            if queue_toast(&mut self.toast_queue, self.toast.as_ref(), toast) {
+                cx.notify();
+            }
             return;
         }
         self.show_next_toast(toast, cx);
@@ -271,7 +311,7 @@ impl PaneFlowApp {
         let click_url = toast.click_url.clone();
         deferred(
             div()
-                .id("copy-toast")
+                .id(SharedString::from(format!("copy-toast-{}", toast.id)))
                 .absolute()
                 .right(px(18.))
                 .bottom(px(18.))
@@ -299,7 +339,7 @@ impl PaneFlowApp {
                         .children(action_row),
                 )
                 .with_animations(
-                    SharedString::from("copy-toast-anim"),
+                    SharedString::from(format!("copy-toast-anim-{}", toast.id)),
                     vec![
                         Animation::new(std::time::Duration::from_millis(TOAST_ENTER_MS))
                             .with_easing(ease_in_out),
@@ -402,7 +442,7 @@ impl PaneFlowApp {
         let click_url = toast.click_url.clone();
         deferred(
             div()
-                .id("release-toast")
+                .id(SharedString::from(format!("release-toast-{}", toast.id)))
                 .absolute()
                 .right(px(12.))
                 .bottom(px(12.))
@@ -443,7 +483,7 @@ impl PaneFlowApp {
                 )
                 .children(action)
                 .with_animations(
-                    SharedString::from("release-toast-anim"),
+                    SharedString::from(format!("release-toast-anim-{}", toast.id)),
                     vec![
                         Animation::new(std::time::Duration::from_millis(TOAST_ENTER_MS))
                             .with_easing(ease_in_out),
@@ -513,6 +553,50 @@ pub(crate) fn fire_agent_exit_notification(
 
 #[cfg(test)]
 mod tests {
+    use super::{TOAST_QUEUE_LIMIT, Toast, ToastAction, queue_toast};
+
+    fn toast(message: &str) -> Toast {
+        Toast::new(message.to_string(), Vec::new(), 1_000)
+    }
+
+    fn messages(queue: &std::collections::VecDeque<Toast>) -> Vec<&str> {
+        queue.iter().map(|toast| toast.message.as_str()).collect()
+    }
+
+    #[test]
+    fn every_toast_gets_its_own_id() {
+        let (first, second) = (toast("Saved"), toast("Saved"));
+        assert_ne!(first.id, second.id);
+    }
+
+    #[test]
+    fn consecutive_duplicates_merge_into_one_toast() {
+        let showing = toast("Copied");
+        let mut queue = std::collections::VecDeque::new();
+
+        assert!(!queue_toast(&mut queue, Some(&showing), toast("Copied")));
+        assert!(queue_toast(&mut queue, Some(&showing), toast("Saved")));
+        assert!(!queue_toast(&mut queue, Some(&showing), toast("Saved")));
+        assert!(queue_toast(&mut queue, Some(&showing), toast("Copied")));
+        let retry = Toast::new("Saved".to_string(), vec![ToastAction::RetryUpdate], 1_000);
+        assert!(queue_toast(&mut queue, Some(&showing), retry));
+
+        assert_eq!(messages(&queue), vec!["Saved", "Copied", "Saved"]);
+    }
+
+    #[test]
+    fn the_toast_queue_keeps_the_latest_five() {
+        let mut queue = std::collections::VecDeque::new();
+        for n in 0..8 {
+            assert!(queue_toast(&mut queue, None, toast(&format!("toast {n}"))));
+        }
+        assert_eq!(queue.len(), TOAST_QUEUE_LIMIT);
+        assert_eq!(
+            messages(&queue),
+            vec!["toast 3", "toast 4", "toast 5", "toast 6", "toast 7"]
+        );
+    }
+
     #[test]
     fn agent_exit_body_carries_workspace_and_code() {
         assert_eq!(

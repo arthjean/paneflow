@@ -109,17 +109,73 @@ pub(crate) struct SessionContextMenu {
     pub(crate) position: Point<Pixels>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct TabKey {
+    pub(crate) workspace_id: u64,
+    pub(crate) tab_id: u64,
+}
+
+impl TabKey {
+    pub(crate) fn of(workspace: &crate::workspace::Workspace, tab_idx: usize) -> Option<Self> {
+        workspace.tabs().get(tab_idx).map(|tab| Self {
+            workspace_id: workspace.id,
+            tab_id: tab.id,
+        })
+    }
+
+    pub(crate) fn resolve(
+        self,
+        workspaces: &[crate::workspace::Workspace],
+    ) -> Option<(usize, usize)> {
+        let ws_idx = workspaces
+            .iter()
+            .position(|ws| ws.id == self.workspace_id)?;
+        let tab_idx = workspaces[ws_idx]
+            .tabs()
+            .iter()
+            .position(|tab| tab.id == self.tab_id)?;
+        Some((ws_idx, tab_idx))
+    }
+}
+
 #[derive(Clone, Copy)]
 pub(crate) struct TabContextMenu {
-    pub(crate) ws_idx: usize,
-    pub(crate) tab_idx: usize,
+    pub(crate) tab: TabKey,
     pub(crate) position: Point<Pixels>,
 }
 
 #[derive(Clone)]
 pub(crate) struct PaneContextMenu {
-    pub(crate) pane: Entity<Pane>,
+    pub(crate) pane: gpui::WeakEntity<Pane>,
     pub(crate) position: Point<Pixels>,
+}
+
+#[derive(Clone, Default)]
+pub(crate) struct FocusReturn(Option<gpui::WeakFocusHandle>);
+
+impl FocusReturn {
+    pub(crate) fn capture(window: &Window, cx: &App) -> Self {
+        Self(window.focused(cx).map(|handle| handle.downgrade()))
+    }
+
+    pub(crate) fn capture_once(&mut self, window: &Window, cx: &App) {
+        if self.0.is_none() {
+            *self = Self::capture(window, cx);
+        }
+    }
+
+    pub(crate) fn restore(&self, window: &mut Window, cx: &mut App) -> bool {
+        let Some(handle) = self.0.as_ref().and_then(gpui::WeakFocusHandle::upgrade) else {
+            return false;
+        };
+        window.focus(&handle, cx);
+        true
+    }
+}
+
+pub(crate) struct SwapMode {
+    pub(crate) source: gpui::WeakEntity<Pane>,
+    pub(crate) _source_released: gpui::Subscription,
 }
 
 #[derive(Clone)]
@@ -155,7 +211,9 @@ pub(crate) enum ClosedSurfaceRecord {
 
 pub(crate) struct ClosedPaneRecord {
     pub(crate) surface: ClosedSurfaceRecord,
-    pub(crate) workspace_idx: usize,
+    pub(crate) workspace_id: u64,
+    pub(crate) tab_id: u64,
+    pub(crate) worktree: Option<std::path::PathBuf>,
 }
 
 impl PaneFlowApp {
@@ -218,6 +276,10 @@ pub(crate) fn mount_paneflow_app(window: &mut Window, cx: &mut App) -> Entity<Pa
             if consumed {
                 cx.stop_propagation();
             }
+        })
+        .detach();
+        cx.on_focus_lost(window, |this, window, cx| {
+            this.handle_focus_lost(window, cx)
         })
         .detach();
         let subscription = cx.observe_window_bounds(window, |this, window, cx| {

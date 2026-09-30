@@ -27,6 +27,7 @@ pub(crate) struct FleetSearchState {
     pub(crate) error: Option<String>,
     pub(crate) running: bool,
     pub(crate) selected: usize,
+    pub(crate) return_focus: crate::FocusReturn,
 }
 
 impl PaneFlowApp {
@@ -39,32 +40,34 @@ impl PaneFlowApp {
         let mut targets: Vec<(u64, String, String, crate::terminal::TerminalSessionBackend)> =
             Vec::new();
         for ws in &self.workspaces {
-            if let Some(root) = &ws.active_tab().root {
-                for pane in root.collect_leaves() {
-                    for t in pane.read(cx).terminals() {
-                        let r = t.read(cx);
-                        let raw_name = r
-                            .terminal
-                            .custom_name
-                            .clone()
-                            .filter(|s| !s.is_empty())
-                            .unwrap_or_else(|| r.terminal.title.clone());
-                        let name = crate::markdown::strip_bidi_zero_width(
-                            raw_name.chars().take(64).collect(),
-                        );
-                        targets.push((
-                            t.entity_id().as_u64(),
-                            name,
-                            ws.title.clone(),
-                            r.terminal.session_backend(),
-                        ));
-                    }
+            for pane in ws.collect_panes() {
+                for t in pane.read(cx).terminals() {
+                    let r = t.read(cx);
+                    let raw_name = r
+                        .terminal
+                        .custom_name
+                        .clone()
+                        .filter(|s| !s.is_empty())
+                        .unwrap_or_else(|| r.terminal.title.clone());
+                    let name =
+                        crate::markdown::strip_bidi_zero_width(raw_name.chars().take(64).collect());
+                    targets.push((
+                        t.entity_id().as_u64(),
+                        name,
+                        ws.title.clone(),
+                        r.terminal.session_backend(),
+                    ));
                 }
             }
         }
 
         self.fleet_search_generation += 1;
         let generation = self.fleet_search_generation;
+        let return_focus = self
+            .fleet_search
+            .take()
+            .map(|state| state.return_focus)
+            .unwrap_or_default();
         self.fleet_search = Some(FleetSearchState {
             query: query.clone(),
             regex,
@@ -73,6 +76,7 @@ impl PaneFlowApp {
             error: None,
             running: true,
             selected: 0,
+            return_focus,
         });
         self.fleet_search_pending_focus = true;
         cx.notify();
@@ -160,17 +164,23 @@ impl PaneFlowApp {
         counts: &std::collections::HashMap<u64, usize>,
         cx: &mut Context<Self>,
     ) {
-        for ws in &self.workspaces {
-            if let Some(root) = &ws.active_tab().root {
-                for pane in root.collect_leaves() {
-                    let hits = pane
-                        .read(cx)
-                        .active_terminal_opt()
-                        .and_then(|t| counts.get(&t.entity_id().as_u64()).copied());
-                    pane.update(cx, |p, cx| p.set_search_hits(hits, cx));
-                }
-            }
+        for pane in crate::workspace::panes_across(&self.workspaces) {
+            let hits = pane
+                .read(cx)
+                .active_terminal_opt()
+                .and_then(|t| counts.get(&t.entity_id().as_u64()).copied());
+            pane.update(cx, |p, cx| p.set_search_hits(hits, cx));
         }
+    }
+
+    pub(crate) fn dismiss_fleet_search(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let origin = self
+            .fleet_search
+            .as_ref()
+            .map(|state| state.return_focus.clone())
+            .unwrap_or_default();
+        self.close_fleet_search(cx);
+        self.return_focus(&origin, window, cx);
     }
 
     pub(crate) fn close_fleet_search(&mut self, cx: &mut Context<Self>) {
@@ -201,9 +211,6 @@ impl PaneFlowApp {
             return;
         };
         let (ws_idx, pane) = (loc.workspace_idx, loc.pane);
-        if let Some(ws) = self.workspaces.get_mut(ws_idx) {
-            ws.set_active_tab(loc.tab_idx);
-        }
         self.activate_workspace_at(
             ws_idx,
             WorkspaceFocusTarget::Pane { pane: pane.clone() },
@@ -228,7 +235,7 @@ impl PaneFlowApp {
             None => return,
         };
         match key {
-            "escape" => self.close_fleet_search(cx),
+            "escape" => self.dismiss_fleet_search(window, cx),
             "enter" if len > 0 => {
                 let idx = selected.min(len - 1);
                 let sid = self
@@ -267,8 +274,8 @@ impl PaneFlowApp {
             .occlude()
             .track_focus(&self.fleet_search_focus)
             .on_key_down(cx.listener(Self::handle_fleet_search_key_down))
-            .on_mouse_down_out(cx.listener(|this, _, _, cx| {
-                this.close_fleet_search(cx);
+            .on_mouse_down_out(cx.listener(|this, _, window, cx| {
+                this.dismiss_fleet_search(window, cx);
             }))
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .on_mouse_down(MouseButton::Right, |_, _, cx| cx.stop_propagation())

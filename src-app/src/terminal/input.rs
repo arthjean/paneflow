@@ -305,11 +305,11 @@ impl TerminalView {
     pub(super) fn handle_key_down(
         &mut self,
         event: &KeyDownEvent,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if crate::SWAP_MODE.load(std::sync::atomic::Ordering::Relaxed)
-            && event.keystroke.key == "escape"
+        if event.keystroke.key == "escape"
+            && crate::app::workspace_ops::swap_mode_active_in(window.window_handle().window_id())
         {
             cx.emit(TerminalEvent::CancelSwapMode);
             return;

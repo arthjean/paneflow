@@ -342,6 +342,7 @@ pub struct Pane {
     composer_slot: Option<crate::app::composer::ComposerSlot>,
     pending_prefill: bool,
     broadcast_stripe: Option<usize>,
+    swap_source: bool,
     dimmed: bool,
     dim_from: f32,
     dim_alpha: Rc<Cell<f32>>,
@@ -400,6 +401,7 @@ impl Pane {
             composer_slot: None,
             pending_prefill: false,
             broadcast_stripe: None,
+            swap_source: false,
             dimmed: false,
             dim_from: 0.0,
             dim_alpha: Rc::new(Cell::new(0.0)),
@@ -549,6 +551,13 @@ impl Pane {
         self.dim_seq = self.dim_seq.wrapping_add(1);
         self.dimmed = dimmed;
         cx.notify();
+    }
+
+    pub fn set_swap_source(&mut self, source: bool, cx: &mut Context<Self>) {
+        if self.swap_source != source {
+            self.swap_source = source;
+            cx.notify();
+        }
     }
 
     pub fn set_broadcast_stripe(&mut self, color_idx: Option<usize>, cx: &mut Context<Self>) {
@@ -2048,6 +2057,32 @@ impl Render for Pane {
                         .bottom(card_radius)
                         .w(px(3.))
                         .bg(pane_colors().group_color(idx)),
+                )
+            })
+            .when(self.swap_source, |d| {
+                let tint = pane_colors().text;
+                d.child(
+                    div()
+                        .absolute()
+                        .inset_0()
+                        .rounded(card_radius)
+                        .border_2()
+                        .border_color(tint.opacity(SWAP_OVERLAY_BORDER_ALPHA))
+                        .bg(tint.opacity(SWAP_OVERLAY_FILL_ALPHA))
+                        .flex()
+                        .items_start()
+                        .justify_center()
+                        .pt(px(10.))
+                        .child(
+                            div()
+                                .px(px(8.))
+                                .py(px(3.))
+                                .rounded(px(6.))
+                                .bg(pane_colors().overlay)
+                                .text_size(px(11.))
+                                .text_color(tint)
+                                .child("Swap: pick a direction, Esc cancels"),
+                        ),
                 )
             })
             .child(squircle_border(

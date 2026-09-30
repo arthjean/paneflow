@@ -3,7 +3,7 @@ use gpui::{AppContext, Context};
 use crate::telemetry;
 use crate::terminal::blink::{BlinkPhase, BlinkPhaseGlobal, CURSOR_BLINK_INTERVAL};
 use crate::window_chrome::title_bar;
-use crate::{PaneFlowApp, ipc, keybindings, update};
+use crate::{FocusReturn, PaneFlowApp, ipc, keybindings, update};
 
 impl PaneFlowApp {
     pub(crate) fn spawn_telemetry_flusher(
@@ -327,7 +327,7 @@ impl PaneFlowApp {
             #[cfg(target_os = "windows")]
             windows_backdrop_light: None,
             jump_cursor: None,
-            swap_source: None,
+            swap_mode: None,
             closed_panes: Vec::new(),
             owned_sessions: Default::default(),
             resume_batch: None,
@@ -350,9 +350,11 @@ impl PaneFlowApp {
             broadcast_picker_renaming: None,
             broadcast_picker_error: None,
             broadcast_picker_focus: cx.focus_handle(),
+            broadcast_picker_return: FocusReturn::default(),
             attention_queue_open: false,
             attention_queue_selected: 0,
             attention_queue_focus: cx.focus_handle(),
+            attention_queue_return: FocusReturn::default(),
             fleet_search: None,
             fleet_search_generation: 0,
             fleet_search_focus: cx.focus_handle(),
@@ -415,6 +417,7 @@ impl PaneFlowApp {
                 diff_branch_menu: None,
                 width: crate::app::diff_dock::DIFF_DOCK_PANEL_WIDTH,
                 maximized: None,
+                focus_after_restore: None,
                 maximize_animation: None,
                 reveal_animation: None,
                 pane_grid_width: std::rc::Rc::default(),

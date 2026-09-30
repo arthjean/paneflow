@@ -116,6 +116,13 @@ pub struct Workspace {
     pub(crate) pending_pull_requests: Vec<(String, crate::app::pull_request::PullRequest)>,
 }
 
+pub fn panes_across(workspaces: &[Workspace]) -> Vec<Entity<Pane>> {
+    workspaces
+        .iter()
+        .flat_map(Workspace::collect_panes)
+        .collect()
+}
+
 static DURABLE_WORKSPACE_IDS: std::sync::Mutex<
     std::collections::BTreeMap<u64, paneflow_config::schema::WorkspaceId>,
 > = std::sync::Mutex::new(std::collections::BTreeMap::new());
@@ -369,6 +376,15 @@ impl Workspace {
         panes
     }
 
+    pub fn reveal_pane(&mut self, pane: &Entity<Pane>, cx: &mut App) -> bool {
+        let Some(tab_idx) = self.tab_index_containing_pane(pane) else {
+            return false;
+        };
+        self.set_active_tab(tab_idx);
+        self.active_tab_mut().reveal_pane(pane, cx);
+        true
+    }
+
     pub fn focus_first(&self, window: &mut Window, cx: &mut App) {
         self.active_tab().focus_first(window, cx);
     }
@@ -482,6 +498,88 @@ mod tests {
         let terminal = cx.new(|cx| TerminalView::display_only_for_test(1, cx));
         let pane = cx.new(|cx| crate::pane::Pane::new(terminal, 1, cx));
         Workspace::build(1, "ws".to_string(), String::new(), LayoutTree::Leaf(pane))
+    }
+
+    fn test_pane(cx: &mut impl AppContext) -> gpui::Entity<crate::pane::Pane> {
+        let terminal = cx.new(|cx| TerminalView::display_only_for_test(1, cx));
+        cx.new(|cx| crate::pane::Pane::new(terminal, 1, cx))
+    }
+
+    fn zoomed_tab(
+        zoomed: &gpui::Entity<crate::pane::Pane>,
+        hidden: &gpui::Entity<crate::pane::Pane>,
+    ) -> Tab {
+        let mut tab = Tab::new("zoomed", Some(LayoutTree::Leaf(zoomed.clone())));
+        let mut saved = LayoutTree::Leaf(zoomed.clone());
+        saved.split_first_leaf(crate::layout::SplitDirection::Horizontal, hidden.clone());
+        tab.saved_layout = Some(saved);
+        tab
+    }
+
+    #[gpui::test]
+    fn panes_across_covers_inactive_tabs_and_counts_a_zoomed_pane_once(cx: &mut TestAppContext) {
+        let cx = cx.add_empty_window();
+        let (active, zoomed, hidden, other) =
+            (test_pane(cx), test_pane(cx), test_pane(cx), test_pane(cx));
+        let first = Workspace::restored_with_id(
+            1,
+            "ws",
+            std::path::PathBuf::new(),
+            vec![
+                Tab::new("active", Some(LayoutTree::Leaf(active.clone()))),
+                zoomed_tab(&zoomed, &hidden),
+            ],
+            0,
+        );
+        let second = Workspace::restored_with_id(
+            2,
+            "other",
+            std::path::PathBuf::new(),
+            vec![Tab::new("only", Some(LayoutTree::Leaf(other.clone())))],
+            0,
+        );
+
+        assert_eq!(
+            super::panes_across(&[first, second]),
+            vec![active, zoomed, hidden, other]
+        );
+    }
+
+    #[gpui::test]
+    fn revealing_a_pane_activates_its_tab_and_leaves_zoom_only_when_hidden(
+        cx: &mut TestAppContext,
+    ) {
+        let cx = cx.add_empty_window();
+        let (active, zoomed, hidden, stranger) =
+            (test_pane(cx), test_pane(cx), test_pane(cx), test_pane(cx));
+        let mut ws = Workspace::restored_with_id(
+            1,
+            "ws",
+            std::path::PathBuf::new(),
+            vec![
+                Tab::new("active", Some(LayoutTree::Leaf(active.clone()))),
+                zoomed_tab(&zoomed, &hidden),
+            ],
+            0,
+        );
+
+        assert!(!cx.update(|_, cx| ws.reveal_pane(&stranger, cx)));
+        assert_eq!(ws.active_tab_idx(), 0);
+
+        assert!(cx.update(|_, cx| ws.reveal_pane(&zoomed, cx)));
+        assert_eq!(ws.active_tab_idx(), 1);
+        assert!(ws.is_zoomed(), "the visible zoomed pane keeps the zoom");
+
+        ws.set_active_tab(0);
+        assert!(cx.update(|_, cx| ws.reveal_pane(&hidden, cx)));
+        assert_eq!(ws.active_tab_idx(), 1);
+        assert!(!ws.is_zoomed());
+        assert!(
+            ws.active_tab()
+                .root
+                .as_ref()
+                .is_some_and(|root| root.contains_leaf(&hidden))
+        );
     }
 
     #[gpui::test]

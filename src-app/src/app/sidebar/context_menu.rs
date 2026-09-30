@@ -505,11 +505,10 @@ impl PaneFlowApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let TabContextMenu {
-            ws_idx,
-            tab_idx,
-            position,
-        } = menu;
+        let TabContextMenu { tab: key, position } = menu;
+        let Some((ws_idx, tab_idx)) = key.resolve(&self.workspaces) else {
+            return div().into_any_element();
+        };
         let tab = self
             .workspaces
             .get(ws_idx)
@@ -571,7 +570,9 @@ impl PaneFlowApp {
                 ui,
                 cx.listener(move |this, _: &ClickEvent, window, cx| {
                     this.tab_menu_open = None;
-                    this.open_branch_prompt(ws_idx, path.clone(), window, cx);
+                    if let Some((ws_idx, _)) = key.resolve(&this.workspaces) {
+                        this.open_branch_prompt(ws_idx, path.clone(), window, cx);
+                    }
                     cx.stop_propagation();
                 }),
             )
@@ -584,7 +585,9 @@ impl PaneFlowApp {
                 ui,
                 cx.listener(move |this, _: &ClickEvent, _window, cx| {
                     this.tab_menu_open = None;
-                    this.remove_tab_worktree(ws_idx, tab_idx, cx);
+                    if let Some((ws_idx, tab_idx)) = key.resolve(&this.workspaces) {
+                        this.remove_tab_worktree(ws_idx, tab_idx, cx);
+                    }
                     cx.stop_propagation();
                 }),
             )
@@ -608,7 +611,9 @@ impl PaneFlowApp {
                 ui,
                 cx.listener(move |this, _: &ClickEvent, _window, cx| {
                     this.tab_menu_open = None;
-                    this.begin_tab_rename(ws_idx, tab_idx, cx);
+                    if let Some((ws_idx, tab_idx)) = key.resolve(&this.workspaces) {
+                        this.begin_tab_rename(ws_idx, tab_idx, cx);
+                    }
                     cx.stop_propagation();
                 }),
             ))
@@ -620,7 +625,9 @@ impl PaneFlowApp {
                     ui,
                     cx.listener(move |this, _: &ClickEvent, _window, cx| {
                         this.tab_menu_open = None;
-                        this.reset_tab_name(ws_idx, tab_idx, cx);
+                        if let Some((ws_idx, tab_idx)) = key.resolve(&this.workspaces) {
+                            this.reset_tab_name(ws_idx, tab_idx, cx);
+                        }
                         cx.stop_propagation();
                     }),
                 ))
@@ -632,7 +639,9 @@ impl PaneFlowApp {
                 ui,
                 cx.listener(move |this, _: &ClickEvent, window, cx| {
                     this.tab_menu_open = None;
-                    this.close_workspace_tab(ws_idx, tab_idx, window, cx);
+                    if let Some((ws_idx, tab_idx)) = key.resolve(&this.workspaces) {
+                        this.close_workspace_tab(ws_idx, tab_idx, window, cx);
+                    }
                     cx.stop_propagation();
                 }),
             ))
@@ -650,8 +659,10 @@ impl PaneFlowApp {
                         .cursor(CursorStyle::Arrow)
                         .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
                             this.tab_menu_open = None;
-                            this.open_pane_palette(ws_idx, window, cx);
-                            this.pane_palette_open_new_branch(window, cx);
+                            if let Some((ws_idx, _)) = key.resolve(&this.workspaces) {
+                                this.open_pane_palette(ws_idx, window, cx);
+                                this.pane_palette_open_new_branch(window, cx);
+                            }
                             cx.stop_propagation();
                         }))
                         .child(
@@ -680,6 +691,9 @@ impl PaneFlowApp {
                         .cursor(CursorStyle::Arrow)
                         .on_click(cx.listener(move |this, _: &ClickEvent, _window, cx| {
                             this.tab_menu_open = None;
+                            let Some((ws_idx, tab_idx)) = key.resolve(&this.workspaces) else {
+                                return;
+                            };
                             match detached.clone() {
                                 Some(path) => {
                                     this.set_tab_worktree(ws_idx, tab_idx, Some(path), cx)
@@ -720,7 +734,9 @@ impl PaneFlowApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let source = menu.pane.clone();
+        let Some(source) = menu.pane.upgrade() else {
+            return div().into_any_element();
+        };
 
         let owner_id = source.read(cx).workspace_id;
         let workspace_cwd: Option<PathBuf> = self

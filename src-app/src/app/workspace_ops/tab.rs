@@ -252,7 +252,10 @@ impl PaneFlowApp {
         };
         let record = capture_closed_tab_record(&tab, ws_id, tab_idx, cx);
         drop(tab);
-        if self.renaming_tab.is_some_and(|(w, _)| w == ws_idx) {
+        if self
+            .renaming_tab
+            .is_some_and(|key| key.workspace_id == ws_id)
+        {
             self.renaming_tab = None;
         }
         self.dismiss_transient_surfaces();
@@ -323,7 +326,7 @@ impl PaneFlowApp {
             .into_iter()
             .map(|surface| {
                 let (surface, reopen) =
-                    restore_closed_surface_record(surface, ws_id, &attached, cx);
+                    restore_closed_surface_record(surface, ws_id, None, &attached, cx);
                 self.finish_surface_reopen(&surface, reopen, ws_id, cx);
                 self.create_pane_with_existing_surface(surface, ws_id, cx)
             })
@@ -401,17 +404,17 @@ impl PaneFlowApp {
         cx: &mut Context<Self>,
     ) {
         self.commit_rename(cx);
-        let Some(title) = self
-            .workspaces
-            .get(ws_idx)
-            .and_then(|ws| ws.tabs().get(tab_idx))
-            .map(|tab| tab.title().to_string())
+        let Some(ws) = self.workspaces.get(ws_idx) else {
+            return;
+        };
+        let Some((key, title)) = crate::TabKey::of(ws, tab_idx)
+            .zip(ws.tabs().get(tab_idx).map(|tab| tab.title().to_string()))
         else {
             return;
         };
         self.rename_input
             .update(cx, |input, cx| input.set_value(title, cx));
-        self.renaming_tab = Some((ws_idx, tab_idx));
+        self.renaming_tab = Some(key);
         cx.notify();
     }
 

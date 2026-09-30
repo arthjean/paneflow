@@ -41,13 +41,9 @@ pub(crate) fn wait_label(secs: u64) -> String {
 impl PaneFlowApp {
     pub(crate) fn attention_queue_rows(&self, cx: &Context<Self>) -> Vec<QueueRow> {
         let mut live_surfaces: HashSet<u64> = HashSet::new();
-        for ws in &self.workspaces {
-            if let Some(root) = &ws.active_tab().root {
-                for pane in root.collect_leaves() {
-                    for t in pane.read(cx).terminals() {
-                        live_surfaces.insert(t.entity_id().as_u64());
-                    }
-                }
+        for pane in crate::workspace::panes_across(&self.workspaces) {
+            for t in pane.read(cx).terminals() {
+                live_surfaces.insert(t.entity_id().as_u64());
             }
         }
         let mut rows = Vec::new();
@@ -87,6 +83,7 @@ impl PaneFlowApp {
             self.close_attention_queue_and_restore_focus(window, cx);
             return;
         }
+        self.attention_queue_return = crate::FocusReturn::capture(window, cx);
         self.attention_queue_open = true;
         self.attention_queue_selected = 0;
         self.attention_queue_focus.focus(window, cx);
@@ -96,6 +93,7 @@ impl PaneFlowApp {
     pub(crate) fn close_attention_queue(&mut self, cx: &mut Context<Self>) {
         self.attention_queue_open = false;
         self.attention_queue_selected = 0;
+        self.attention_queue_return = crate::FocusReturn::default();
         cx.notify();
     }
 
@@ -104,10 +102,9 @@ impl PaneFlowApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let origin = std::mem::take(&mut self.attention_queue_return);
         self.close_attention_queue(cx);
-        if let Some(ws) = self.workspaces.get_mut(self.active_idx) {
-            ws.focus_first(window, cx);
-        }
+        self.return_focus(&origin, window, cx);
     }
 
     pub(crate) fn attention_queue_activate(
@@ -121,9 +118,6 @@ impl PaneFlowApp {
             return;
         };
         let (ws_idx, pane) = (loc.workspace_idx, loc.pane);
-        if let Some(ws) = self.workspaces.get_mut(ws_idx) {
-            ws.set_active_tab(loc.tab_idx);
-        }
         self.activate_workspace_at(ws_idx, WorkspaceFocusTarget::Pane { pane }, window, cx);
         self.jump_cursor = Some(surface_id);
         self.close_attention_queue(cx);

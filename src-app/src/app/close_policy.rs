@@ -140,6 +140,7 @@ pub(crate) struct CloseDialog {
     discard: Vec<Entity<CodeView>>,
     tabs: Vec<u64>,
     focused: bool,
+    return_focus: crate::FocusReturn,
 }
 
 pub(crate) const STALE_CLOSE_MESSAGE: &str =
@@ -328,6 +329,7 @@ impl PaneFlowApp {
             discard,
             tabs,
             focused: false,
+            return_focus: crate::FocusReturn::default(),
         });
         cx.notify();
     }
@@ -387,10 +389,8 @@ impl PaneFlowApp {
     }
 
     pub(crate) fn close_close_dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.close_dialog.take().is_some() {
-            if let Some(ws) = self.workspaces.get_mut(self.active_idx) {
-                ws.focus_first(window, cx);
-            }
+        if let Some(dialog) = self.close_dialog.take() {
+            self.return_focus(&dialog.return_focus, window, cx);
             cx.notify();
         }
     }
@@ -404,6 +404,7 @@ impl PaneFlowApp {
         let Some(dialog) = self.close_dialog.take() else {
             return;
         };
+        self.return_focus(&dialog.return_focus, window, cx);
         if close_target_tabs(&self.workspaces, &dialog.target) != dialog.tabs {
             self.show_toast(STALE_CLOSE_MESSAGE, cx);
             cx.notify();
@@ -441,6 +442,7 @@ impl PaneFlowApp {
         };
         if !dialog.focused {
             dialog.focused = true;
+            dialog.return_focus.capture_once(window, cx);
             self.close_dialog_focus.focus(window, cx);
         }
         let Some(dialog) = self.close_dialog.as_ref() else {
@@ -605,6 +607,52 @@ mod tests {
             close_target_tabs(&workspaces, &workspace),
             workspace_seen,
             "a removed workspace shifts the workspace index"
+        );
+    }
+
+    #[gpui::test]
+    fn cancelling_the_close_dialog_returns_focus_to_the_pane_it_came_from(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        use gpui::{AppContext as _, Focusable as _};
+
+        let cx = cx.add_empty_window();
+        let pane = |cx: &mut gpui::VisualTestContext| {
+            let terminal = cx.new(|cx| TerminalView::display_only_for_test(1, cx));
+            cx.new(|cx| Pane::new(terminal, 1, cx))
+        };
+        let (a, b, c) = (pane(cx), pane(cx), pane(cx));
+        let dialog = cx.update(|_, cx| cx.focus_handle());
+        let handle = |pane: &Entity<Pane>, cx: &mut gpui::VisualTestContext| {
+            cx.update(|_, cx| pane.read(cx).focus_handle(cx))
+        };
+        let (a_focus, b_focus, c_focus) = (handle(&a, cx), handle(&b, cx), handle(&c, cx));
+
+        let mut origin = crate::FocusReturn::default();
+        cx.update(|window, cx| {
+            window.focus(&c_focus, cx);
+            origin.capture_once(window, cx);
+            window.focus(&dialog, cx);
+            b_focus.focus(window, cx);
+            origin.capture_once(window, cx);
+            window.focus(&dialog, cx);
+        });
+
+        assert!(cx.update(|window, cx| origin.restore(window, cx)));
+        cx.update(|window, _| {
+            assert!(c_focus.is_focused(window));
+            assert!(!a_focus.is_focused(window));
+        });
+
+        let gone = cx.update(|window, cx| {
+            let closing = cx.focus_handle();
+            window.focus(&closing, cx);
+            crate::FocusReturn::capture(window, cx)
+        });
+        cx.update(|window, cx| window.focus(&dialog, cx));
+        assert!(
+            !cx.update(|window, cx| gone.restore(window, cx)),
+            "a closed origin reports that the active pane must take focus"
         );
     }
 

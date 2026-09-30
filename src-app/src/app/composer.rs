@@ -311,15 +311,12 @@ impl PaneFlowApp {
     }
 
     pub(crate) fn sync_pending_chips(&self, cx: &mut Context<Self>) {
-        for ws in &self.workspaces {
-            if let Some(root) = &ws.active_tab().root {
-                for pane in root.collect_leaves() {
-                    let pending = pane.read(cx).active_terminal_opt().is_some_and(|t| {
-                        self.broadcast.pending.contains_key(&t.entity_id().as_u64())
-                    });
-                    pane.update(cx, |p, cx| p.set_pending_prefill(pending, cx));
-                }
-            }
+        for pane in crate::workspace::panes_across(&self.workspaces) {
+            let pending = pane
+                .read(cx)
+                .active_terminal_opt()
+                .is_some_and(|t| self.broadcast.pending.contains_key(&t.entity_id().as_u64()));
+            pane.update(cx, |p, cx| p.set_pending_prefill(pending, cx));
         }
     }
 

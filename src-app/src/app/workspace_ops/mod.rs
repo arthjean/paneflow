@@ -2,6 +2,7 @@ mod focus;
 mod git_watch;
 mod layout;
 mod swap;
+pub(crate) use swap::swap_mode_active_in;
 mod tab;
 mod template_launch;
 pub(crate) mod templates;
@@ -231,13 +232,61 @@ fn capture_closed_surface_record(
 
 fn capture_closed_pane_record(
     pane: &gpui::Entity<crate::pane::Pane>,
-    workspace_idx: usize,
+    workspace: &Workspace,
     cx: &App,
 ) -> ClosedPaneRecord {
+    let tab = workspace
+        .tab_for_pane(pane)
+        .unwrap_or_else(|| workspace.active_tab());
     ClosedPaneRecord {
         surface: capture_closed_surface_record(pane, cx),
-        workspace_idx,
+        workspace_id: workspace.id,
+        tab_id: tab.id,
+        worktree: tab.worktree.clone(),
     }
+}
+
+fn undo_pane_destination(
+    workspaces: &[Workspace],
+    active_idx: usize,
+    record: &ClosedPaneRecord,
+) -> Result<(usize, usize), String> {
+    let ws_idx = workspaces
+        .iter()
+        .position(|ws| ws.id == record.workspace_id)
+        .or((active_idx < workspaces.len()).then_some(active_idx))
+        .ok_or_else(|| "No active workspace to restore pane".to_string())?;
+    let ws = &workspaces[ws_idx];
+    let tab_idx = ws
+        .tabs()
+        .iter()
+        .position(|tab| tab.id == record.tab_id)
+        .unwrap_or_else(|| ws.active_tab_idx());
+    let tab = &ws.tabs()[tab_idx];
+    if tab.is_zoomed() {
+        return Err("Unzoom before restoring a closed pane".to_string());
+    }
+    if !tab.can_add_pane() {
+        return Err(format!("Maximum pane count reached ({MAX_PANES})"));
+    }
+    Ok((ws_idx, tab_idx))
+}
+
+fn release_foreign_session(
+    surface: &mut ClosedSurfaceRecord,
+    origin: Option<&std::path::Path>,
+    destination: Option<&std::path::Path>,
+) -> Option<StopTarget> {
+    if origin == destination {
+        return None;
+    }
+    let ClosedSurfaceRecord::Terminal { session, .. } = surface else {
+        return None;
+    };
+    session
+        .take()
+        .filter(is_undo_window)
+        .map(|held| held.target)
 }
 
 fn capture_closed_tab_record(
@@ -267,6 +316,7 @@ fn capture_closed_tab_record(
 fn restore_closed_surface_record(
     tab: ClosedSurfaceRecord,
     ws_id: u64,
+    worktree: Option<&std::path::Path>,
     attached: &HashSet<SessionId>,
     cx: &mut Context<PaneFlowApp>,
 ) -> (crate::pane::PaneSurface, SurfaceReopen) {
@@ -282,9 +332,16 @@ fn restore_closed_surface_record(
                 SurfaceReopen::Reattach(session) => {
                     TerminalView::attach_existing(ws_id, cwd, session.clone(), cx)
                 }
-                SurfaceReopen::Fresh | SurfaceReopen::AlreadyOpen => {
-                    TerminalView::with_cwd(ws_id, cwd, None, cx)
-                }
+                SurfaceReopen::Fresh | SurfaceReopen::AlreadyOpen => match worktree {
+                    Some(worktree) => TerminalView::spawned(
+                        ws_id,
+                        crate::workspace::SpawnCwd::within(Some(worktree), cwd),
+                        None,
+                        TerminalSurfaceProfile::Normal,
+                        cx,
+                    ),
+                    None => TerminalView::with_cwd(ws_id, cwd, None, cx),
+                },
             });
             terminal.update(cx, |view, _| {
                 view.terminal.custom_name = custom_name;
@@ -442,6 +499,7 @@ impl PaneFlowApp {
                 self.workspaces[idx].focus_first(window, cx);
             }
             WorkspaceFocusTarget::Pane { pane } => {
+                self.workspaces[idx].reveal_pane(&pane, cx);
                 pane.update(cx, |_p, cx| cx.notify());
                 if !Self::focus_pane_window(pane.clone(), cx) {
                     pane.read(cx).focus_handle(cx).focus(window, cx);
@@ -742,8 +800,10 @@ impl PaneFlowApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let workspace_idx = self.active_idx;
-        let record = capture_closed_pane_record(&pane, workspace_idx, cx);
+        let Some(workspace) = self.active_workspace() else {
+            return;
+        };
+        let record = capture_closed_pane_record(&pane, workspace, cx);
         let evicted = push_closed_record(&mut self.closed_panes, ClosedRecord::Pane(record));
         self.stop_hosted_sessions(evicted, cx);
         pane.read(cx).focus_handle(cx).focus(window, cx);
@@ -818,17 +878,33 @@ impl PaneFlowApp {
             }
         };
 
-        if record.workspace_idx < self.workspaces.len() {
-            self.active_idx = record.workspace_idx;
+        let (ws_idx, tab_idx) =
+            match undo_pane_destination(&self.workspaces, self.active_idx, &record) {
+                Ok(destination) => destination,
+                Err(message) => {
+                    self.closed_panes.push(ClosedRecord::Pane(record));
+                    self.show_toast(message, cx);
+                    return;
+                }
+            };
+        self.dismiss_transient_surfaces();
+        self.active_idx = ws_idx;
+        self.workspaces[ws_idx].set_active_tab(tab_idx);
+        let ws_id = self.workspaces[ws_idx].id;
+        let worktree = self.workspaces[ws_idx].active_tab().worktree.clone();
+        let ClosedPaneRecord {
+            mut surface,
+            worktree: origin,
+            ..
+        } = record;
+        if let Some(target) =
+            release_foreign_session(&mut surface, origin.as_deref(), worktree.as_deref())
+        {
+            self.stop_hosted_sessions(vec![target], cx);
         }
-
-        let Some(ws_id) = self.active_workspace().map(|ws| ws.id) else {
-            self.closed_panes.push(ClosedRecord::Pane(record));
-            self.show_toast("No active workspace to restore pane", cx);
-            return;
-        };
         let attached = self.attached_session_ids(cx);
-        let (surface, reopen) = restore_closed_surface_record(record.surface, ws_id, &attached, cx);
+        let (surface, reopen) =
+            restore_closed_surface_record(surface, ws_id, worktree.as_deref(), &attached, cx);
         self.finish_surface_reopen(&surface, reopen, ws_id, cx);
         let new_pane = self.create_pane_with_existing_surface(surface, ws_id, cx);
 
@@ -954,7 +1030,14 @@ impl PaneFlowApp {
         let worktrees = std::mem::take(&mut self.workspaces[idx].managed_worktrees);
         self.prune_worktree_states();
         self.spawn_worktree_teardown(worktrees, cx);
-        self.workspaces.remove(idx);
+        let removed = self.workspaces.remove(idx);
+        if self
+            .renaming_tab
+            .is_some_and(|key| key.workspace_id == removed.id)
+        {
+            self.renaming_tab = None;
+        }
+        self.dismiss_transient_surfaces();
         if self.workspaces.is_empty() {
             self.active_idx = 0;
         } else {
@@ -1080,19 +1163,11 @@ impl PaneFlowApp {
     }
 
     pub(crate) fn commit_rename(&mut self, cx: &mut Context<Self>) {
-        let Some((ws_idx, tab_idx)) = self.renaming_tab.take() else {
+        let Some(key) = self.renaming_tab.take() else {
             return;
         };
-        let text = self.rename_input.read(cx).value().trim().to_string();
-        if text.is_empty() {
-            return;
-        }
-        if self
-            .workspaces
-            .get_mut(ws_idx)
-            .and_then(|ws| ws.tab_mut(tab_idx))
-            .is_some_and(|tab| tab.set_title(&text, TabTitleSource::User))
-        {
+        let text = self.rename_input.read(cx).value().to_string();
+        if commit_tab_title(&mut self.workspaces, key, &text) {
             self.save_session(cx);
         }
     }
@@ -1103,8 +1178,8 @@ impl PaneFlowApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !self.workspaces.is_empty() {
-            let next = (self.active_idx + 1) % self.workspaces.len();
+        let order = Self::compute_display_order(&self.workspaces);
+        if let Some(next) = next_in_display_order(&order, self.active_idx) {
             self.select_workspace(next, window, cx);
         }
     }
@@ -1119,7 +1194,9 @@ impl PaneFlowApp {
             self.open_recent_workspace(idx, window, cx);
             return;
         }
-        self.select_workspace(idx, window, cx);
+        if let Some(target) = Self::compute_display_order(&self.workspaces).get(idx) {
+            self.select_workspace(*target, window, cx);
+        }
     }
 
     pub(crate) fn handle_ws1(
@@ -1194,6 +1271,25 @@ impl PaneFlowApp {
     ) {
         self.handle_select_ws(8, w, cx);
     }
+}
+
+fn next_in_display_order(order: &[usize], active: usize) -> Option<usize> {
+    let position = order.iter().position(|&idx| idx == active);
+    let next = position.map_or(0, |position| (position + 1) % order.len());
+    order.get(next).copied()
+}
+
+fn commit_tab_title(workspaces: &mut [Workspace], key: crate::TabKey, text: &str) -> bool {
+    let text = text.trim();
+    if text.is_empty() {
+        return false;
+    }
+    let Some((ws_idx, tab_idx)) = key.resolve(workspaces) else {
+        return false;
+    };
+    workspaces[ws_idx]
+        .tab_mut(tab_idx)
+        .is_some_and(|tab| tab.set_title(text, TabTitleSource::User))
 }
 
 pub(crate) async fn reveal_in_file_manager(path: &std::path::Path) -> Result<(), String> {
@@ -1465,10 +1561,210 @@ mod tests {
     }
 
     fn closed_pane_record(session: Option<HeldSession>) -> ClosedRecord {
-        ClosedRecord::Pane(ClosedPaneRecord {
+        ClosedRecord::Pane(pane_record(session, 1, 1, None))
+    }
+
+    fn pane_record(
+        session: Option<HeldSession>,
+        workspace_id: u64,
+        tab_id: u64,
+        worktree: Option<&str>,
+    ) -> ClosedPaneRecord {
+        ClosedPaneRecord {
             surface: terminal_surface(session),
-            workspace_idx: 0,
-        })
+            workspace_id,
+            tab_id,
+            worktree: worktree.map(std::path::PathBuf::from),
+        }
+    }
+
+    #[gpui::test]
+    fn undo_close_resolves_the_workspace_by_id_and_refuses_a_zoomed_or_full_tab(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        use crate::workspace::Tab;
+
+        let cx = cx.add_empty_window();
+        let pane = |cx: &mut gpui::VisualTestContext| {
+            let terminal = cx.new(|cx| TerminalView::display_only_for_test(1, cx));
+            cx.new(|cx| Pane::new(terminal, 1, cx))
+        };
+        let origin = Tab::new("origin", Some(LayoutTree::Leaf(pane(cx))));
+        let origin_id = origin.id;
+        let zoomed = pane(cx);
+        let mut zoomed_tab = Tab::new("zoomed", Some(LayoutTree::Leaf(zoomed.clone())));
+        let mut saved = LayoutTree::Leaf(zoomed);
+        saved.split_first_leaf(SplitDirection::Horizontal, pane(cx));
+        zoomed_tab.saved_layout = Some(saved);
+        let zoomed_id = zoomed_tab.id;
+        let mut full = LayoutTree::Leaf(pane(cx));
+        for _ in 1..MAX_PANES {
+            full.split_first_leaf(SplitDirection::Horizontal, pane(cx));
+        }
+        let full_tab = Tab::new("full", Some(full));
+        let full_id = full_tab.id;
+        let workspaces = vec![
+            Workspace::restored_with_id(
+                7,
+                "first",
+                std::path::PathBuf::new(),
+                vec![Tab::new("spare", Some(LayoutTree::Leaf(pane(cx))))],
+                0,
+            ),
+            Workspace::restored_with_id(
+                9,
+                "second",
+                std::path::PathBuf::new(),
+                vec![origin, zoomed_tab, full_tab],
+                1,
+            ),
+        ];
+        let unzoom = Err("Unzoom before restoring a closed pane".to_string());
+
+        assert_eq!(
+            undo_pane_destination(&workspaces, 0, &pane_record(None, 9, origin_id, None)),
+            Ok((1, 0)),
+            "the record follows its workspace id, not the active index"
+        );
+        assert_eq!(
+            undo_pane_destination(&workspaces, 0, &pane_record(None, 9, zoomed_id, None)),
+            unzoom
+        );
+        assert_eq!(
+            undo_pane_destination(&workspaces, 0, &pane_record(None, 9, 404, None)),
+            unzoom,
+            "a vanished tab falls back to the active tab, which is zoomed here"
+        );
+        assert_eq!(
+            undo_pane_destination(&workspaces, 0, &pane_record(None, 9, full_id, None)),
+            Err(format!("Maximum pane count reached ({MAX_PANES})"))
+        );
+        assert_eq!(
+            undo_pane_destination(&workspaces, 0, &pane_record(None, 42, origin_id, None)),
+            Ok((0, 0)),
+            "a closed workspace falls back to the active one"
+        );
+    }
+
+    #[test]
+    fn a_pane_restored_into_another_worktree_opens_a_confined_shell() {
+        let session = SessionId::new();
+        let mut same = terminal_surface(Some(held(&session, SessionHold::Detached)));
+        assert_eq!(
+            release_foreign_session(
+                &mut same,
+                Some(std::path::Path::new("/repo/wt-a")),
+                Some(std::path::Path::new("/repo/wt-a")),
+            ),
+            None
+        );
+        assert!(matches!(
+            same,
+            ClosedSurfaceRecord::Terminal {
+                session: Some(_),
+                ..
+            }
+        ));
+
+        let until = Instant::now() + std::time::Duration::from_secs(30);
+        let mut undo = terminal_surface(Some(held(&session, SessionHold::UndoWindow { until })));
+        let stopped =
+            release_foreign_session(&mut undo, None, Some(std::path::Path::new("/repo/wt-b")));
+        assert_eq!(stopped.map(|target| target.1), Some(session.clone()));
+        assert!(matches!(
+            undo,
+            ClosedSurfaceRecord::Terminal { session: None, .. }
+        ));
+
+        let mut detached = terminal_surface(Some(held(&session, SessionHold::Detached)));
+        assert_eq!(
+            release_foreign_session(
+                &mut detached,
+                Some(std::path::Path::new("/repo/wt-a")),
+                Some(std::path::Path::new("/repo/wt-b")),
+            ),
+            None,
+            "a detached session stays listed instead of being stopped"
+        );
+        assert!(matches!(
+            detached,
+            ClosedSurfaceRecord::Terminal { session: None, .. }
+        ));
+
+        let spawn = crate::workspace::SpawnCwd::within(
+            Some(std::path::Path::new("/repo/wt-b")),
+            Some(std::path::PathBuf::from("/repo/wt-a/src")),
+        );
+        assert_eq!(
+            spawn.confine_to.as_deref(),
+            Some(std::path::Path::new("/repo/wt-b"))
+        );
+        assert!(spawn.needs_resolving());
+    }
+
+    fn named_workspace(id: u64, repo: Option<&str>, tabs: &[&str]) -> Workspace {
+        let mut ws = Workspace::restored_with_id(
+            id,
+            format!("ws{id}"),
+            std::path::PathBuf::new(),
+            tabs.iter()
+                .map(|title| crate::workspace::Tab::new(*title, None))
+                .collect(),
+            0,
+        );
+        ws.repo_root = repo.map(std::path::PathBuf::from);
+        ws
+    }
+
+    #[test]
+    fn workspace_shortcuts_follow_the_sidebar_order() {
+        let workspaces = vec![
+            named_workspace(1, Some("/repo"), &["a"]),
+            named_workspace(2, None, &["b"]),
+            named_workspace(3, Some("/repo"), &["c"]),
+        ];
+        let order = PaneFlowApp::compute_display_order(&workspaces);
+        assert_eq!(
+            order,
+            vec![0, 2, 1],
+            "the sidebar groups checkouts of one repo"
+        );
+
+        assert_eq!(
+            order.get(1).copied(),
+            Some(2),
+            "Cmd/Ctrl+2 opens the second row"
+        );
+        assert_eq!(next_in_display_order(&order, 0), Some(2));
+        assert_eq!(next_in_display_order(&order, 2), Some(1));
+        assert_eq!(next_in_display_order(&order, 1), Some(0));
+        assert_eq!(next_in_display_order(&[], 0), None);
+    }
+
+    #[test]
+    fn closing_the_workspace_under_an_open_rename_retitles_no_other_tab() {
+        let mut workspaces = vec![
+            named_workspace(1, None, &["renamed", "sibling"]),
+            named_workspace(2, None, &["first", "second"]),
+        ];
+        let key = crate::TabKey::of(&workspaces[0], 0).expect("the tab exists");
+        let titles = |workspaces: &[Workspace]| {
+            workspaces
+                .iter()
+                .flat_map(|ws| ws.tabs().iter().map(|tab| tab.title().to_string()))
+                .collect::<Vec<_>>()
+        };
+
+        workspaces.remove(0);
+        let before = titles(&workspaces);
+        assert!(!commit_tab_title(&mut workspaces, key, "typed title"));
+        assert_eq!(titles(&workspaces), before);
+
+        let mut workspaces = vec![named_workspace(1, None, &["left", "renamed"])];
+        let key = crate::TabKey::of(&workspaces[0], 1).expect("the tab exists");
+        workspaces[0].close_tab(0);
+        assert!(commit_tab_title(&mut workspaces, key, "  typed title  "));
+        assert_eq!(titles(&workspaces), vec!["typed title".to_string()]);
     }
 
     fn held(session: &SessionId, hold: SessionHold) -> HeldSession {

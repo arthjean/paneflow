@@ -139,6 +139,7 @@ pub(crate) struct QuitDialog {
     remember: bool,
     stopping: bool,
     focused: bool,
+    return_focus: crate::FocusReturn,
     failure: Option<StopAllOutcome>,
     details_open: bool,
     selected: Option<QuitAction>,
@@ -318,6 +319,7 @@ impl PaneFlowApp {
             remember: false,
             stopping: false,
             focused: false,
+            return_focus: crate::FocusReturn::default(),
             failure: None,
             details_open: false,
             selected: None,
@@ -338,9 +340,16 @@ impl PaneFlowApp {
         self.session_exit_pending = false;
         let sessions = self.live_session_targets(cx).len();
         let (working, waiting) = self.busy_agent_counts();
-        let (remember, details_open) = self.quit_dialog.as_ref().map_or((false, false), |dialog| {
-            (dialog.remember, dialog.details_open)
-        });
+        let (remember, details_open, return_focus) = self.quit_dialog.as_ref().map_or(
+            (false, false, crate::FocusReturn::default()),
+            |dialog| {
+                (
+                    dialog.remember,
+                    dialog.details_open,
+                    dialog.return_focus.clone(),
+                )
+            },
+        );
         self.quit_dialog = Some(QuitDialog {
             kind,
             sessions,
@@ -349,6 +358,7 @@ impl PaneFlowApp {
             remember,
             stopping: false,
             focused: false,
+            return_focus,
             failure: Some(outcome),
             details_open,
             selected: None,
@@ -408,9 +418,8 @@ impl PaneFlowApp {
         if !self.session_exit_pending
             && matches!(self.quit_dialog.as_ref(), Some(dialog) if !dialog.stopping)
         {
-            self.quit_dialog = None;
-            if let Some(ws) = self.workspaces.get_mut(self.active_idx) {
-                ws.focus_first(window, cx);
+            if let Some(dialog) = self.quit_dialog.take() {
+                self.return_focus(&dialog.return_focus, window, cx);
             }
             cx.notify();
         }
@@ -657,6 +666,7 @@ impl PaneFlowApp {
         };
         if !dialog.focused {
             dialog.focused = true;
+            dialog.return_focus.capture_once(window, cx);
             self.quit_dialog_focus.focus(window, cx);
         }
         let Some(dialog) = self.quit_dialog.as_ref() else {
@@ -1088,6 +1098,7 @@ mod tests {
             remember: false,
             stopping,
             focused: false,
+            return_focus: crate::FocusReturn::default(),
             failure,
             details_open: false,
             selected: None,

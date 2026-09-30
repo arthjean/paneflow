@@ -20,6 +20,23 @@ pub struct SpawnCwd {
 }
 
 impl SpawnCwd {
+    pub fn within(
+        worktree: Option<&std::path::Path>,
+        inherited: Option<std::path::PathBuf>,
+    ) -> Self {
+        match worktree {
+            None => Self {
+                cwd: inherited,
+                ..Self::default()
+            },
+            Some(worktree) => Self {
+                cwd: Some(inherited.unwrap_or_else(|| worktree.to_path_buf())),
+                confine_to: Some(worktree.to_path_buf()),
+                fallback: None,
+            },
+        }
+    }
+
     pub fn needs_resolving(&self) -> bool {
         self.confine_to.is_some() || self.fallback.is_some()
     }
@@ -122,17 +139,7 @@ impl Tab {
     }
 
     pub fn spawn_cwd(&self, inherited: Option<std::path::PathBuf>) -> SpawnCwd {
-        match &self.worktree {
-            None => SpawnCwd {
-                cwd: inherited,
-                ..SpawnCwd::default()
-            },
-            Some(worktree) => SpawnCwd {
-                cwd: Some(inherited.unwrap_or_else(|| worktree.clone())),
-                confine_to: Some(worktree.clone()),
-                fallback: None,
-            },
-        }
+        SpawnCwd::within(self.worktree.as_deref(), inherited)
     }
 
     pub fn empty() -> Self {

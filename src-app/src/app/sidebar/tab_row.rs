@@ -33,7 +33,11 @@ impl PaneFlowApp {
         let title = tab_display_title(tab, tab_idx);
         let is_active_tab = tab_idx == ws.active_tab_idx();
         let is_active_workspace = ws_idx == self.active_idx;
-        let is_renaming = self.renaming_tab == Some((ws_idx, tab_idx));
+        let tab_key = TabKey {
+            workspace_id: ws_id,
+            tab_id,
+        };
+        let is_renaming = self.renaming_tab == Some(tab_key);
 
         let panes = tab.collect_panes();
         let detached_panes: Vec<_> = panes
@@ -204,8 +208,7 @@ impl PaneFlowApp {
                     this.dismiss_transient_surfaces();
                     this.place_sidebar_cursor(SidebarRow::Tab(ws_idx, tab_idx), window, cx);
                     this.tab_menu_open = Some(TabContextMenu {
-                        ws_idx,
-                        tab_idx,
+                        tab: tab_key,
                         position,
                     });
                     this.spawn_worktree_listing(ws_idx, cx);
@@ -214,7 +217,7 @@ impl PaneFlowApp {
                 }
             }))
             .on_key_down(cx.listener(move |this, e: &KeyDownEvent, _window, cx| {
-                if this.renaming_tab != Some((ws_idx, tab_idx)) {
+                if this.renaming_tab != Some(tab_key) {
                     return;
                 }
                 match e.keystroke.key.as_str() {

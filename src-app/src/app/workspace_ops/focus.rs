@@ -3,7 +3,7 @@ use gpui::{Context, Focusable, Window};
 use super::WorkspaceFocusTarget;
 use crate::PaneFlowApp;
 use crate::layout::{FocusDirection, FocusNav, LayoutTree};
-use crate::{FocusDown, FocusLeft, FocusRight, FocusUp, JumpNextWaiting, SWAP_MODE};
+use crate::{FocusDown, FocusLeft, FocusReturn, FocusRight, FocusUp, JumpNextWaiting};
 
 impl PaneFlowApp {
     pub(crate) fn nav_root(&self) -> Option<&LayoutTree> {
@@ -27,6 +27,39 @@ impl PaneFlowApp {
         }
     }
 
+    pub(crate) fn pane_grid_mounted(&self) -> bool {
+        self.settings_section.is_none()
+            && self.diff_dock.maximized.is_none()
+            && self
+                .active_workspace()
+                .is_some_and(|ws| ws.active_tab().root.is_some())
+    }
+
+    pub(crate) fn focus_active_pane(&self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.pane_grid_mounted()
+            && let Some(ws) = self.active_workspace()
+        {
+            ws.focus_first(window, cx);
+        }
+    }
+
+    pub(crate) fn return_focus(
+        &self,
+        origin: &FocusReturn,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !origin.restore(window, cx) {
+            self.focus_active_pane(window, cx);
+        }
+    }
+
+    pub(crate) fn handle_focus_lost(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if window.focused(cx).is_none() {
+            self.focus_active_pane(window, cx);
+        }
+    }
+
     pub(crate) fn exit_nav_zoom(&mut self, cx: &mut Context<Self>) {
         if let Some(ws) = self.active_workspace_mut() {
             ws.exit_zoom(cx);
@@ -39,9 +72,12 @@ impl PaneFlowApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(source) = self.swap_source.take() {
-            SWAP_MODE.store(false, std::sync::atomic::Ordering::Relaxed);
-
+        if let Some(source) = self.end_swap_mode(cx) {
+            let Some(source) = source.upgrade() else {
+                self.show_toast("Swap source pane is no longer available", cx);
+                cx.notify();
+                return;
+            };
             if let Some(root) = self.nav_root() {
                 let moved = matches!(root.focus_in_direction(dir, window, cx), FocusNav::Moved);
                 if let Some(target) = root.focused_pane(window, cx)
@@ -132,13 +168,11 @@ impl PaneFlowApp {
             if matching.is_empty() {
                 continue;
             }
-            if let Some(root) = &ws.active_tab().root {
-                for pane in root.collect_leaves() {
-                    if let Some(t) = pane.read(cx).active_terminal_opt() {
-                        let sid = t.entity_id().as_u64();
-                        if matching.contains(&sid) {
-                            order.push((ws_idx, pane.clone(), sid));
-                        }
+            for pane in ws.collect_panes() {
+                if let Some(t) = pane.read(cx).active_terminal_opt() {
+                    let sid = t.entity_id().as_u64();
+                    if matching.contains(&sid) {
+                        order.push((ws_idx, pane.clone(), sid));
                     }
                 }
             }

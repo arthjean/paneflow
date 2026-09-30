@@ -7,7 +7,7 @@ use crate::PaneFlowApp;
 use crate::widgets::text_input::TextInput;
 
 pub(crate) struct BranchPromptState {
-    pub(crate) ws_idx: usize,
+    pub(crate) workspace_id: u64,
     pub(crate) path: std::path::PathBuf,
     pub(crate) input: Entity<TextInput>,
     pub(crate) running: bool,
@@ -22,11 +22,14 @@ impl PaneFlowApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let Some(workspace_id) = self.workspaces.get(ws_idx).map(|ws| ws.id) else {
+            return;
+        };
         self.dismiss_transient_surfaces();
         let input = cx.new(|cx| TextInput::new("", "feat/topic", cx));
         let focus = input.read(cx).focus_handle.clone();
         self.branch_prompt = Some(BranchPromptState {
-            ws_idx,
+            workspace_id,
             path,
             input,
             running: false,
@@ -56,7 +59,15 @@ impl PaneFlowApp {
             self.branch_prompt_set_error("Branch name is empty", cx);
             return;
         }
-        let (ws_idx, path) = (prompt.ws_idx, prompt.path.clone());
+        let path = prompt.path.clone();
+        let Some(ws_idx) = self
+            .workspaces
+            .iter()
+            .position(|ws| ws.id == prompt.workspace_id)
+        else {
+            self.branch_prompt_set_error("This project was closed", cx);
+            return;
+        };
         if let Some(prompt) = self.branch_prompt.as_mut() {
             prompt.running = true;
             prompt.error = None;

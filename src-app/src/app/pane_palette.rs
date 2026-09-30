@@ -1,7 +1,7 @@
 use gpui::{
-    AnyElement, ClickEvent, Context, CursorStyle, Entity, FocusHandle, Focusable,
-    InteractiveElement, IntoElement, KeyDownEvent, MouseButton, MouseUpEvent, ParentElement,
-    ScrollHandle, SharedString, Styled, WeakEntity, Window, deferred, div, prelude::*, px, svg,
+    AnyElement, ClickEvent, Context, CursorStyle, Entity, Focusable, InteractiveElement,
+    IntoElement, KeyDownEvent, MouseButton, MouseUpEvent, ParentElement, ScrollHandle,
+    SharedString, Styled, WeakEntity, Window, deferred, div, prelude::*, px, svg,
 };
 use paneflow_config::schema::{ButtonCommand, PaneFlowConfig, TerminalSurfaceProfile};
 
@@ -130,7 +130,7 @@ pub(crate) struct PanePaletteState {
     pub(crate) placement: PalettePlacement,
     pub(crate) selected: usize,
     pub(crate) error: Option<String>,
-    pub(crate) restore_focus: Option<FocusHandle>,
+    pub(crate) restore_focus: crate::FocusReturn,
     pub(crate) scroll: ScrollHandle,
     pub(crate) branch_picker_open: bool,
     pub(crate) new_branch: Option<NewBranchDraft>,
@@ -177,7 +177,7 @@ impl PaneFlowApp {
         let ws_id = ws.id;
         self.commit_rename(cx);
         self.dismiss_transient_surfaces();
-        let restore_focus = window.focused(cx);
+        let restore_focus = crate::FocusReturn::capture(window, cx);
 
         let tab = crate::workspace::Tab::new(PALETTE_TAB_TITLE, None);
         let tab_id = tab.id;
@@ -238,7 +238,7 @@ impl PaneFlowApp {
             placement: PalettePlacement::Tab { tab_id },
             selected: 0,
             error: None,
-            restore_focus: None,
+            restore_focus: crate::FocusReturn::default(),
             scroll: ScrollHandle::new(),
             branch_picker_open: false,
             new_branch: None,
@@ -281,7 +281,7 @@ impl PaneFlowApp {
             },
             selected: 0,
             error: None,
-            restore_focus: None,
+            restore_focus: crate::FocusReturn::default(),
             scroll: ScrollHandle::new(),
             branch_picker_open: false,
             new_branch: None,
@@ -352,15 +352,16 @@ impl PaneFlowApp {
                 if let Some((ws_idx, tab_idx)) = position {
                     self.close_workspace_tab(ws_idx, tab_idx, window, cx);
                 }
+                self.return_focus(&palette.restore_focus, window, cx);
             }
             PalettePlacement::Split { target, .. } => {
-                if let Some(target) = target.upgrade() {
-                    target.read(cx).focus_handle(cx).focus(window, cx);
+                if !palette.restore_focus.restore(window, cx) {
+                    match target.upgrade() {
+                        Some(target) => target.read(cx).focus_handle(cx).focus(window, cx),
+                        None => self.focus_active_pane(window, cx),
+                    }
                 }
             }
-        }
-        if let Some(handle) = palette.restore_focus {
-            window.focus(&handle, cx);
         }
         cx.notify();
     }

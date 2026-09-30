@@ -75,6 +75,9 @@ impl PaneFlowApp {
     }
 
     pub(crate) fn toggle_primary_sidebar(&mut self, cx: &mut Context<Self>) {
+        if self.primary_sidebar_visible {
+            self.commit_rename(cx);
+        }
         let now = std::time::Instant::now();
         let from_width = self.primary_sidebar_width_at(now);
         self.primary_sidebar_visible = !self.primary_sidebar_visible;
@@ -205,12 +208,16 @@ impl Render for PaneFlowApp {
             chrome_material_active || terminal_material_active,
         );
 
+        self.settle_dock_restore_focus(window, cx);
         if let Some(pane) = self.pending_pane_focus.take()
             && !Self::focus_pane_window(pane.clone(), cx)
         {
             pane.read(cx).focus_handle(cx).focus(window, cx);
         }
         if std::mem::take(&mut self.pending_palette_focus) {
+            if let Some(palette) = self.pane_palette.as_mut() {
+                palette.restore_focus.capture_once(window, cx);
+            }
             window.focus(&self.pane_palette_focus, cx);
         }
         if let Some(idx) = self.take_pane_palette_pending_launch() {
@@ -651,6 +658,9 @@ impl Render for PaneFlowApp {
         }
         if self.fleet_search.is_some() {
             if std::mem::take(&mut self.fleet_search_pending_focus) {
+                if let Some(state) = self.fleet_search.as_mut() {
+                    state.return_focus.capture_once(window, cx);
+                }
                 self.fleet_search_focus.focus(window, cx);
             }
             app_content = app_content.child(self.render_fleet_search(cx));
@@ -702,14 +712,21 @@ impl Render for PaneFlowApp {
         }
 
         if let Some(menu) = self.tab_menu_open
-            && self
-                .workspaces
-                .get(menu.ws_idx)
-                .is_some_and(|ws| menu.tab_idx < ws.tab_count())
+            && menu.tab.resolve(&self.workspaces).is_some()
         {
             app_content = app_content.child(self.render_tab_context_menu(menu, ui, window, cx));
         }
 
+        if self.pane_menu_open.as_ref().is_some_and(|menu| {
+            menu.pane.upgrade().is_none_or(|pane| {
+                !self
+                    .workspaces
+                    .iter()
+                    .any(|ws| ws.any_pane(|leaf| *leaf == pane))
+            })
+        }) {
+            self.pane_menu_open = None;
+        }
         if let Some(menu) = self.pane_menu_open.clone() {
             app_content = app_content.child(self.render_pane_context_menu(menu, ui, window, cx));
         }

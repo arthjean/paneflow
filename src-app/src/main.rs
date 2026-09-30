@@ -149,7 +149,8 @@ struct DiffDockState {
     pub(crate) diff_tab_close_armed: Option<(usize, std::time::Instant)>,
     pub(crate) diff_branch_menu: Option<crate::app::diff_dock::DiffBranchMenuState>,
     pub(crate) width: f32,
-    pub(crate) maximized: Option<Option<gpui::FocusHandle>>,
+    pub(crate) maximized: Option<FocusReturn>,
+    pub(crate) focus_after_restore: Option<FocusReturn>,
     pub(crate) maximize_animation: Option<SidebarWidthAnimation>,
     pub(crate) reveal_animation: Option<SidebarWidthAnimation>,
     pub(crate) pane_grid_width: std::rc::Rc<std::cell::Cell<f32>>,
@@ -164,7 +165,7 @@ struct PaneFlowApp {
     pending_detached_panes: Vec<paneflow_config::schema::DetachedPaneSession>,
     workspaces: Vec<Workspace>,
     active_idx: usize,
-    renaming_tab: Option<(usize, usize)>,
+    renaming_tab: Option<TabKey>,
     sidebar_focus: FocusHandle,
     sidebar_cursor: Option<app::sidebar::keyboard::SidebarCursor>,
     rename_input: gpui::Entity<crate::widgets::text_input::TextInput>,
@@ -262,7 +263,7 @@ struct PaneFlowApp {
     #[cfg(target_os = "windows")]
     windows_backdrop_light: Option<bool>,
     jump_cursor: Option<u64>,
-    swap_source: Option<Entity<crate::pane::Pane>>,
+    swap_mode: Option<SwapMode>,
     closed_panes: Vec<crate::app::workspace_ops::ClosedRecord>,
     owned_sessions: crate::app::hosted_sessions::OwnedSessions,
     resume_batch: Option<crate::app::hosted_sessions::ResumeBatch>,
@@ -285,9 +286,11 @@ struct PaneFlowApp {
     broadcast_picker_renaming: Option<usize>,
     broadcast_picker_error: Option<String>,
     broadcast_picker_focus: FocusHandle,
+    broadcast_picker_return: FocusReturn,
     attention_queue_open: bool,
     attention_queue_selected: usize,
     attention_queue_focus: FocusHandle,
+    attention_queue_return: FocusReturn,
     fleet_search: Option<app::fleet_search::FleetSearchState>,
     fleet_search_generation: u64,
     fleet_search_focus: FocusHandle,
@@ -320,7 +323,7 @@ struct PaneFlowApp {
     pub(crate) sidebar_order_cache: std::cell::RefCell<crate::app::sidebar::SidebarOrderCache>,
 }
 
-pub static SWAP_MODE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+pub static SWAP_WINDOW: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 fn main() {
     run();

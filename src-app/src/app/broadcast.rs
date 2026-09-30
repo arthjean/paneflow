@@ -80,6 +80,15 @@ pub(crate) fn validate_group_name<Id>(
     Ok(())
 }
 
+pub(crate) fn retain_live_members<Id: Eq + std::hash::Hash>(
+    groups: &mut [BroadcastGroup<Id>],
+    live: &HashSet<Id>,
+) {
+    for group in groups {
+        group.members.retain(|member| live.contains(member));
+    }
+}
+
 impl PaneFlowApp {
     pub(crate) fn focused_or_first_pane(
         &self,
@@ -98,33 +107,16 @@ impl PaneFlowApp {
         else {
             return Vec::new();
         };
-        let mut out = Vec::new();
-        for ws in &self.workspaces {
-            if let Some(root) = &ws.active_tab().root {
-                for pane in root.collect_leaves() {
-                    if group.members.contains(&pane.entity_id()) {
-                        out.push(pane);
-                    }
-                }
-            }
-        }
-        out
+        crate::workspace::panes_across(&self.workspaces)
+            .into_iter()
+            .filter(|pane| group.members.contains(&pane.entity_id()))
+            .collect()
     }
 
     pub(crate) fn sync_broadcast_stripes(&mut self, cx: &mut Context<Self>) {
-        let mut live: HashSet<gpui::EntityId> = HashSet::new();
-        let mut leaves: Vec<gpui::Entity<Pane>> = Vec::new();
-        for ws in &self.workspaces {
-            if let Some(root) = &ws.active_tab().root {
-                for pane in root.collect_leaves() {
-                    live.insert(pane.entity_id());
-                    leaves.push(pane);
-                }
-            }
-        }
-        for g in &mut self.broadcast.groups {
-            g.members.retain(|m| live.contains(m));
-        }
+        let leaves = crate::workspace::panes_across(&self.workspaces);
+        let live: HashSet<gpui::EntityId> = leaves.iter().map(|pane| pane.entity_id()).collect();
+        retain_live_members(&mut self.broadcast.groups, &live);
         let mut color_of: HashMap<gpui::EntityId, usize> = HashMap::new();
         for g in &self.broadcast.groups {
             for m in &g.members {
@@ -164,13 +156,16 @@ impl PaneFlowApp {
         cx: &mut Context<Self>,
     ) {
         if self.broadcast_picker_open {
-            self.close_broadcast_picker(cx);
+            self.close_broadcast_picker(window, cx);
         } else {
             self.open_broadcast_picker(window, cx);
         }
     }
 
     pub(crate) fn open_broadcast_picker(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.broadcast_picker_open {
+            self.broadcast_picker_return = crate::FocusReturn::capture(window, cx);
+        }
         self.broadcast_picker_open = true;
         self.broadcast_picker_query.clear();
         self.broadcast_picker_selected = self.broadcast.active.unwrap_or(0);
@@ -180,15 +175,17 @@ impl PaneFlowApp {
         cx.notify();
     }
 
-    pub(crate) fn close_broadcast_picker(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn close_broadcast_picker(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.broadcast_picker_open = false;
         self.broadcast_picker_query.clear();
         self.broadcast_picker_renaming = None;
         self.broadcast_picker_error = None;
+        let origin = std::mem::take(&mut self.broadcast_picker_return);
+        self.return_focus(&origin, window, cx);
         cx.notify();
     }
 
-    fn create_broadcast_group(&mut self, name: &str, cx: &mut Context<Self>) {
+    fn create_broadcast_group(&mut self, name: &str, window: &mut Window, cx: &mut Context<Self>) {
         match validate_group_name(&self.broadcast.groups, name, None) {
             Ok(()) => {
                 let color_idx = next_free_color(&self.broadcast.groups);
@@ -198,7 +195,7 @@ impl PaneFlowApp {
                     members: Vec::new(),
                 });
                 self.broadcast.active = Some(self.broadcast.groups.len() - 1);
-                self.close_broadcast_picker(cx);
+                self.close_broadcast_picker(window, cx);
             }
             Err(e) => {
                 self.broadcast_picker_error = Some(e);
@@ -249,7 +246,7 @@ impl PaneFlowApp {
     pub(crate) fn handle_broadcast_picker_key_down(
         &mut self,
         event: &KeyDownEvent,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let key = event.keystroke.key.as_str();
@@ -262,7 +259,7 @@ impl PaneFlowApp {
                     self.broadcast_picker_error = None;
                     cx.notify();
                 } else {
-                    self.close_broadcast_picker(cx);
+                    self.close_broadcast_picker(window, cx);
                 }
             }
             "enter" => {
@@ -271,12 +268,12 @@ impl PaneFlowApp {
                     self.commit_broadcast_rename(idx, &name, cx);
                 } else if !self.broadcast_picker_query.trim().is_empty() {
                     let name = self.broadcast_picker_query.clone();
-                    self.create_broadcast_group(&name, cx);
+                    self.create_broadcast_group(&name, window, cx);
                 } else if len > 0 {
                     let idx = self.broadcast_picker_selected.min(len - 1);
                     self.broadcast.active = Some(idx);
                     self.refresh_composer_slot(cx);
-                    self.close_broadcast_picker(cx);
+                    self.close_broadcast_picker(window, cx);
                 }
             }
             "up" => {
@@ -316,14 +313,10 @@ impl PaneFlowApp {
         let ui = crate::theme::ui_colors();
         let renaming = self.broadcast_picker_renaming;
 
-        let mut live: HashSet<gpui::EntityId> = HashSet::new();
-        for ws in &self.workspaces {
-            if let Some(root) = &ws.active_tab().root {
-                for pane in root.collect_leaves() {
-                    live.insert(pane.entity_id());
-                }
-            }
-        }
+        let live: HashSet<gpui::EntityId> = crate::workspace::panes_across(&self.workspaces)
+            .iter()
+            .map(|pane| pane.entity_id())
+            .collect();
 
         let placeholder = if renaming.is_some() {
             "Rename group…"
@@ -346,8 +339,8 @@ impl PaneFlowApp {
             .occlude()
             .track_focus(&self.broadcast_picker_focus)
             .on_key_down(cx.listener(Self::handle_broadcast_picker_key_down))
-            .on_mouse_down_out(cx.listener(|this, _, _, cx| {
-                this.close_broadcast_picker(cx);
+            .on_mouse_down_out(cx.listener(|this, _, window, cx| {
+                this.close_broadcast_picker(window, cx);
             }))
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .on_mouse_down(MouseButton::Right, |_, _, cx| cx.stop_propagation())
@@ -464,10 +457,10 @@ impl PaneFlowApp {
                         .bg(resting_background)
                         .text_color(if is_active { ui.accent } else { ui.text })
                         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                        .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
+                        .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
                             this.broadcast.active = Some(idx);
                             this.refresh_composer_slot(cx);
-                            this.close_broadcast_picker(cx);
+                            this.close_broadcast_picker(window, cx);
                             cx.stop_propagation();
                         }))
                         .child(
@@ -635,6 +628,55 @@ mod tests {
         assert!(validate_group_name(&groups, &"x".repeat(64), None).is_ok());
         assert!(validate_group_name(&groups, &"x".repeat(65), None).is_err());
         assert!(validate_group_name(&groups, &"é".repeat(64), None).is_ok());
+    }
+
+    #[gpui::test]
+    fn syncing_keeps_members_in_inactive_and_zoom_hidden_tabs(cx: &mut gpui::TestAppContext) {
+        use crate::layout::{LayoutTree, SplitDirection};
+        use crate::workspace::{Tab, Workspace};
+        use gpui::AppContext as _;
+
+        let cx = cx.add_empty_window();
+        let pane = |cx: &mut gpui::VisualTestContext| {
+            let terminal = cx.new(|cx| crate::terminal::TerminalView::display_only_for_test(1, cx));
+            cx.new(|cx| Pane::new(terminal, 1, cx))
+        };
+        let (active, background, zoomed, hidden, closed) =
+            (pane(cx), pane(cx), pane(cx), pane(cx), pane(cx));
+        let mut zoomed_tab = Tab::new("zoomed", Some(LayoutTree::Leaf(zoomed.clone())));
+        let mut saved = LayoutTree::Leaf(zoomed.clone());
+        saved.split_first_leaf(SplitDirection::Horizontal, hidden.clone());
+        zoomed_tab.saved_layout = Some(saved);
+        let workspaces = vec![Workspace::restored_with_id(
+            1,
+            "ws",
+            std::path::PathBuf::new(),
+            vec![
+                Tab::new("active", Some(LayoutTree::Leaf(active.clone()))),
+                Tab::new("background", Some(LayoutTree::Leaf(background.clone()))),
+                zoomed_tab,
+            ],
+            0,
+        )];
+        let ids = |panes: &[&gpui::Entity<Pane>]| {
+            panes
+                .iter()
+                .map(|pane| pane.entity_id())
+                .collect::<Vec<_>>()
+        };
+        let mut groups = vec![BroadcastGroup {
+            name: "fleet".to_string(),
+            color_idx: 0,
+            members: ids(&[&active, &background, &hidden, &closed]),
+        }];
+
+        let live: HashSet<gpui::EntityId> = crate::workspace::panes_across(&workspaces)
+            .iter()
+            .map(|pane| pane.entity_id())
+            .collect();
+        retain_live_members(&mut groups, &live);
+
+        assert_eq!(groups[0].members, ids(&[&active, &background, &hidden]));
     }
 
     #[test]
