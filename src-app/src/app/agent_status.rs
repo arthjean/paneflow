@@ -52,19 +52,6 @@ impl PaneFlowApp {
         (!visible.is_empty()).then_some(visible)
     }
 
-    pub(super) fn session_is_seen(&self, workspace_id: u64, key: u32, cx: &gpui::App) -> bool {
-        let surface = self
-            .workspaces
-            .iter()
-            .find(|ws| ws.id == workspace_id)
-            .and_then(|ws| ws.agent_sessions.get(&key))
-            .and_then(|session| session.surface_id);
-        completion_was_seen(
-            self.surfaces_under_user_eye(workspace_id, cx).as_ref(),
-            surface,
-        )
-    }
-
     pub(super) fn workspace_id_for_surface(&self, surface_id: u64, cx: &gpui::App) -> Option<u64> {
         self.workspaces
             .iter()

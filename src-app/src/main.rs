@@ -125,6 +125,7 @@ struct AgentSessionsState {
     sessions_group_collapsed: [bool; agent_sessions::SESSION_AGENT_COUNT],
     sessions_group_show_all: [bool; agent_sessions::SESSION_AGENT_COUNT],
     sessions_scanning: [bool; agent_sessions::SESSION_AGENT_COUNT],
+    sessions_in_flight: [Option<(String, u64)>; agent_sessions::SESSION_AGENT_COUNT],
 }
 
 struct DiffDockState {

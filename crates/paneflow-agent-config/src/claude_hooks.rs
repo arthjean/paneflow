@@ -4,8 +4,8 @@ use std::path::Path;
 use serde_json::{json, Value};
 
 pub use crate::hook_command::{
-    command_program_token, display_hook_program, is_paneflow_hook_command,
-    paneflow_hook_program_token, render_hook_command, shell_program_path,
+    cmd_command_word, command_program_token, display_hook_program, is_paneflow_hook_command,
+    paneflow_hook_program_token, render_hook_command, sh_command_word, shell_program_path,
 };
 
 pub const CLAUDE_HOOK_EVENTS: &[&str] = &[

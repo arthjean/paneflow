@@ -52,7 +52,7 @@ where
     let candidates = candidate_names(tool);
 
     for dir in path_entries {
-        if same_canonical_dir(&self_canon, &dir) {
+        if same_canonical_dir(&self_canon, &dir) || is_helper_dir(&dir) {
             continue;
         }
         for name in &candidates {
@@ -81,6 +81,29 @@ where
         }
     }
     None
+}
+
+pub(crate) const HOOK_BINARY_NAME: &str = if cfg!(windows) {
+    "paneflow-ai-hook.exe"
+} else {
+    "paneflow-ai-hook"
+};
+
+pub(crate) fn is_helper_dir(dir: &Path) -> bool {
+    dir.join(HOOK_BINARY_NAME).is_file()
+}
+
+pub(crate) fn launched_as_another_shims_target(
+    target: Option<&std::ffi::OsStr>,
+    self_exe: Option<&Path>,
+) -> bool {
+    match (target, self_exe) {
+        (Some(target), Some(self_exe)) => {
+            let target = Path::new(target);
+            target == self_exe || is_same_file_as_shim(&file_identity(self_exe), target)
+        }
+        _ => false,
+    }
 }
 
 pub(crate) fn file_identity(path: &Path) -> Option<same_file::Handle> {

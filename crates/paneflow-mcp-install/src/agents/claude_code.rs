@@ -35,12 +35,12 @@ impl ClaudeCode {
         let found = support::string_command(entry);
         let shape_ok = found
             .as_deref()
-            .is_some_and(|path| *entry == Self::entry(path));
+            .is_some_and(|path| support::has_fields(entry, &Self::entry(path)));
         support::classify_entry(
             found,
             expected,
             shape_ok,
-            "Claude Code MCP entry must be stdio, have empty args, and no env block",
+            "Claude Code MCP entry must be stdio and have empty args",
         )
     }
 }
@@ -66,15 +66,21 @@ impl AgentConfigWriter for ClaudeCode {
 
     fn install(&self, bridge: &Path) -> Result<InstallOutcome> {
         let bridge_s = bridge.to_string_lossy().into_owned();
-        support::json_install(self.path()?, CONTAINER, Self::entry(&bridge_s))
+        support::json_install(
+            self.path()?,
+            CONTAINER,
+            &Self::entry(&bridge_s),
+            &json!({}),
+            false,
+        )
     }
 
     fn uninstall(&self) -> Result<UninstallOutcome> {
-        support::json_uninstall(self.path()?, CONTAINER)
+        support::json_uninstall(self.path()?, CONTAINER, false)
     }
 
     fn status(&self, bridge: Option<&Path>) -> Result<StatusOutcome> {
-        support::json_status(self.path()?, CONTAINER, bridge, Self::validate_entry)
+        support::json_status(self.path()?, CONTAINER, false, bridge, Self::validate_entry)
     }
 }
 
@@ -129,10 +135,9 @@ mod tests {
             serde_json::to_vec(&json!({
                 "mcpServers": {
                     "paneflow": {
-                        "type": "stdio",
+                        "type": "sse",
                         "command": "/data/paneflow-mcp",
-                        "args": [],
-                        "env": { "SHOULD_NOT_BE_HERE": "1" }
+                        "args": []
                     }
                 }
             }))
@@ -145,6 +150,51 @@ mod tests {
             w.status(Some(Path::new("/data/paneflow-mcp"))).unwrap(),
             StatusOutcome::NeedsRepair { .. }
         ));
+    }
+
+    #[test]
+    fn install_repairs_managed_fields_and_keeps_user_keys() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let p = dir.path().join(".claude.json");
+        std::fs::write(
+            &p,
+            serde_json::to_vec(&json!({
+                "mcpServers": {
+                    "paneflow": {
+                        "type": "stdio",
+                        "command": "/old/paneflow-mcp",
+                        "args": ["--stale"],
+                        "env": { "RUST_LOG": "debug" },
+                        "timeout": 30000
+                    }
+                }
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        let w = test_writer(p.clone());
+
+        assert_eq!(
+            w.install(Path::new("/data/paneflow-mcp")).unwrap(),
+            InstallOutcome::Updated
+        );
+        let root: serde_json::Value = serde_json::from_slice(&std::fs::read(&p).unwrap()).unwrap();
+        assert_eq!(
+            root["mcpServers"]["paneflow"],
+            json!({
+                "type": "stdio",
+                "command": "/data/paneflow-mcp",
+                "args": [],
+                "env": { "RUST_LOG": "debug" },
+                "timeout": 30000
+            })
+        );
+        assert_eq!(
+            w.status(Some(Path::new("/data/paneflow-mcp"))).unwrap(),
+            StatusOutcome::Installed {
+                path: "/data/paneflow-mcp".into()
+            }
+        );
     }
 
     #[test]

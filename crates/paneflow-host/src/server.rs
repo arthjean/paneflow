@@ -2772,6 +2772,70 @@ mod tests {
         server.stop().unwrap();
     }
 
+    #[test]
+    fn a_session_scope_lists_reads_and_searches_only_its_own_workspace() {
+        use paneflow_config::schema::WorkspaceId;
+        use paneflow_ipc_client::IpcTransport;
+        use paneflow_ipc_client::host_control::HostTransport;
+
+        let (_home, host, server) = start();
+        let (mine, theirs) = (WorkspaceId::new(), WorkspaceId::new());
+        let mut sessions = Vec::new();
+        for workspace in [&mine, &mine, &theirs] {
+            let mut params = shell_create_params();
+            params["workspace"] = json!(workspace);
+            let created = host
+                .create(serde_json::from_value(params).unwrap())
+                .unwrap();
+            sessions.push(created.manifest.session);
+        }
+        let transport = HostTransport::connect(server.endpoint(), "scope-test").unwrap();
+        let scope = json!(sessions[0]);
+
+        let listed = transport
+            .call("surface.list", json!({"scope_session": scope}))
+            .unwrap();
+        assert_eq!(listed["scope_workspace"], json!(mine));
+        let listed_sessions: Vec<&Value> = listed["surfaces"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|surface| &surface["session"])
+            .collect();
+        assert_eq!(listed_sessions.len(), 2, "{listed}");
+        assert!(!listed_sessions.contains(&&json!(sessions[2])));
+
+        let everything = transport.call("surface.list", json!({})).unwrap();
+        let foreign = everything["surfaces"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|surface| surface["session"] == json!(sessions[2]))
+            .and_then(|surface| surface["surface_id"].as_u64())
+            .unwrap();
+        for method in ["surface.read", "surface.search"] {
+            let refused = transport
+                .call(
+                    method,
+                    json!({"scope_session": scope, "surface_id": foreign, "pattern": "x"}),
+                )
+                .expect_err("a numeric target outside the scope is refused");
+            assert!(
+                refused.contains("outside the workspace"),
+                "{method}: {refused}"
+            );
+        }
+        let unknown = transport
+            .call("surface.list", json!({"scope_session": SessionId::new()}))
+            .expect_err("an unknown scope session is refused");
+        assert!(unknown.contains("not hosted"), "{unknown}");
+
+        for session in &sessions {
+            host.stop(session, None).unwrap();
+        }
+        server.stop().unwrap();
+    }
+
     fn light_appearance(palette_len: usize) -> Value {
         json!({
             "foreground": [0x11, 0x22, 0x33],

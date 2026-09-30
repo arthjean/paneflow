@@ -608,6 +608,73 @@ pub(crate) fn unix_millis_to_iso8601(millis: u64) -> String {
     )
 }
 
+pub(crate) enum CappedLine {
+    Eof,
+    Oversized(u64),
+    Line(String, u64),
+}
+
+pub(crate) fn read_capped_line<R: std::io::BufRead>(
+    reader: &mut R,
+    skip_limit: u64,
+) -> std::io::Result<CappedLine> {
+    use std::io::{BufRead, Read};
+
+    let mut bytes = Vec::new();
+    let read = reader
+        .by_ref()
+        .take(crate::limits::MAX_LINE_BYTES)
+        .read_until(b'\n', &mut bytes)? as u64;
+    if read == 0 {
+        return Ok(CappedLine::Eof);
+    }
+    if read == crate::limits::MAX_LINE_BYTES
+        && bytes.last() != Some(&b'\n')
+        && !reader.fill_buf()?.is_empty()
+    {
+        return Ok(CappedLine::Oversized(
+            read + skip_rest_of_line(reader, skip_limit)?,
+        ));
+    }
+    Ok(CappedLine::Line(
+        String::from_utf8_lossy(&bytes).into_owned(),
+        read,
+    ))
+}
+
+fn skip_rest_of_line<R: std::io::BufRead>(reader: &mut R, limit: u64) -> std::io::Result<u64> {
+    let mut skipped = 0u64;
+    while skipped < limit {
+        let chunk = reader.fill_buf()?;
+        if chunk.is_empty() {
+            break;
+        }
+        let allowed = usize::try_from(limit - skipped).unwrap_or(usize::MAX);
+        if let Some(newline) = chunk.iter().take(allowed).position(|&byte| byte == b'\n') {
+            reader.consume(newline + 1);
+            return Ok(skipped + newline as u64 + 1);
+        }
+        let consumed = chunk.len().min(allowed);
+        reader.consume(consumed);
+        skipped += consumed as u64;
+    }
+    Ok(skipped)
+}
+
+pub(crate) fn open_session_file(path: &std::path::Path) -> Option<std::fs::File> {
+    std::fs::File::open(path)
+        .inspect_err(|error| log_unreadable_session(path, error))
+        .ok()
+}
+
+pub(crate) fn log_unreadable_session(path: &std::path::Path, error: &std::io::Error) {
+    log::warn!(
+        target: "paneflow_app::agent_sessions",
+        "skipped unreadable session file {}: {error}",
+        path.display()
+    );
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

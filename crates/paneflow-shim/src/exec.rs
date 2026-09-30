@@ -14,7 +14,8 @@ pub(crate) fn run_real(tool: &str, path: &Path, args: &[OsString]) -> (ExitCode,
     cmd.args(args)
         .envs(env::vars_os())
         .env("PANEFLOW_AI_TOOL", tool)
-        .env("PANEFLOW_AI_PID", std::process::id().to_string());
+        .env("PANEFLOW_AI_PID", std::process::id().to_string())
+        .env(crate::PANEFLOW_SHIM_TARGET_ENV, path);
 
     #[cfg(unix)]
     unsafe {

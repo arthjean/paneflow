@@ -301,9 +301,9 @@ agent CLI (claude, codex, opencode, …)
   └─ launched through a PATH shim (paneflow-shim)
        ├─ agent hooks fire paneflow-ai-hook on lifecycle events ─┐
        ├─ the shim fires session_start / exit / session_end ─────┤
-       │                                                         └─ ai.*
-       ├─ the agent's own OSC 9;4 + OSC 9/777 in the pane's grid     JSON-RPC
-       └─ the agent's own session registry on disk                   socket
+       │                                                         └─ agent.event
+       ├─ the agent's own OSC 9;4 + OSC 9/777 in the pane's grid     to the
+       └─ the agent's own session registry on disk                   host
                                                                       │
             ┌─────────────────────────────────────────────────────────┘
             └─ one write choke point, ordered by source
@@ -319,7 +319,9 @@ agent CLI (claude, codex, opencode, …)
   the agent cooperating.
 - **Hooks**: agents that support lifecycle hooks (Claude Code, Codex, …)
   report `session_start`, `prompt_submit`, `tool_use`, `notification`, `stop`,
-  `exit`, and `session_end` through the `ai.*` IPC namespace. Richest source,
+  `exit`, and `session_end` as `agent.event` frames on the host endpoint; the
+  worker projects them and the app rebroadcasts them as `ai.*` events. The
+  app socket itself answers an `ai.*` call with `-32601`. Richest source,
   and the only one that names the active sub-tool or carries a turn summary.
 - **Hooks own the state once a session latches.** The first hook event of a
   session makes it hook-owned, and from then on only hook events and the
@@ -351,9 +353,10 @@ gated scripting path.
 A JSON-RPC 2.0 endpoint (Unix socket at `$XDG_RUNTIME_DIR/paneflow/`, named
 pipe on Windows; an isolated `PANEFLOW_HOME` owns `paneflow-ipc-<fp>` beside
 its host endpoint instead, and a debug build never binds or dials the release
-one) exposes `workspace.*`, `surface.*`, `fleet.*`, `events.*`,
-and `ai.*` namespaces - enough to script workspace creation, read panes, send
-text behind the scripting gate, and subscribe to agent events. The `paneflow`
+one) exposes the `workspace.*`, `surface.*`, `fleet.*`, and `events.*`
+namespaces - enough to script workspace creation, read panes, send text behind
+the scripting gate, and subscribe to agent events, which arrive as `ai.*`
+event types. The `paneflow`
 CLI (`paneflow up`, `paneflow flow`, `paneflow watch`, `paneflow wait`) is
 built on the same socket.
 

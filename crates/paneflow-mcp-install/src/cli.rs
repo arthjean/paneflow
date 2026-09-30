@@ -9,6 +9,7 @@ paneflow mcp - register the Paneflow MCP bridge with your CLI agents
 
 Usage:
   paneflow mcp install      Register the bridge with every detected agent
+                            (a debug build also needs --force-dev)
   paneflow mcp uninstall    Remove the Paneflow entry from every agent
   paneflow mcp status       Report the bridge registration state per agent";
 
@@ -30,6 +31,8 @@ impl Command {
     }
 }
 
+const FORCE_DEV: &str = "--force-dev";
+
 #[must_use]
 pub fn run_cli(args: &[String], bridge_path: Option<PathBuf>) -> i32 {
     let writers = agents::default_writers();
@@ -39,6 +42,7 @@ pub fn run_cli(args: &[String], bridge_path: Option<PathBuf>) -> i32 {
         &writers,
         &mut std::io::stdout(),
         &mut std::io::stderr(),
+        cfg!(debug_assertions),
     )
 }
 
@@ -48,13 +52,24 @@ pub(crate) fn run_with(
     writers: &[Box<dyn AgentConfigWriter>],
     out: &mut dyn Write,
     err: &mut dyn Write,
+    debug_build: bool,
 ) -> i32 {
     let Some(command) = Command::parse(args.first().map(String::as_str)) else {
         let _ = writeln!(err, "{USAGE}");
         return 2;
     };
-    if args.len() != 1 {
+    let force_dev =
+        command == Command::Install && args.get(1).map(String::as_str) == Some(FORCE_DEV);
+    if args.len() != 1 + usize::from(force_dev) {
         let _ = writeln!(err, "unexpected argument after `{}`\n\n{USAGE}", args[0]);
+        return 2;
+    }
+    if command == Command::Install && debug_build && !force_dev {
+        let _ = writeln!(
+            err,
+            "error: this is a debug build; `paneflow mcp install` would point every agent at a \
+             development bridge. Re-run with {FORCE_DEV} if that is what you want."
+        );
         return 2;
     }
 
@@ -187,6 +202,13 @@ fn run_status(
                     r.id
                 );
             }
+            StatusKind::DisabledByUser { path } => {
+                let _ = writeln!(
+                    out,
+                    "{}: installed ({path}) but disabled in the agent config by the user",
+                    r.id
+                );
+            }
             StatusKind::NotInstalled => {
                 let _ = writeln!(out, "{}: detected but not installed", r.id);
             }
@@ -214,15 +236,54 @@ mod tests {
         bridge: Option<&Path>,
         writers: &[Box<dyn AgentConfigWriter>],
     ) -> (i32, String, String) {
+        run_as(args, bridge, writers, false)
+    }
+
+    fn run_as(
+        args: &[&str],
+        bridge: Option<&Path>,
+        writers: &[Box<dyn AgentConfigWriter>],
+        debug_build: bool,
+    ) -> (i32, String, String) {
         let args: Vec<String> = args.iter().map(|s| (*s).to_string()).collect();
         let mut out = Vec::new();
         let mut err = Vec::new();
-        let code = run_with(&args, bridge, writers, &mut out, &mut err);
+        let code = run_with(&args, bridge, writers, &mut out, &mut err, debug_build);
         (
             code,
             String::from_utf8(out).unwrap(),
             String::from_utf8(err).unwrap(),
         )
+    }
+
+    #[test]
+    fn a_debug_build_refuses_a_durable_install_without_force_dev() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let bridge_file = dir.path().join("paneflow-mcp");
+        std::fs::write(&bridge_file, b"bridge").unwrap();
+        let writers = vec![boxed(Mock::present("claude-code"))];
+        let bridge = Some(bridge_file.as_path());
+
+        let (code, out, err) = run_as(&["install"], bridge, &writers, true);
+        assert_eq!(code, 2, "{out}");
+        assert!(err.contains("--force-dev"), "{err}");
+        assert!(
+            matches!(
+                writers[0].install(Path::new("/x")),
+                Ok(crate::agents::InstallOutcome::Installed)
+            ),
+            "the refused run never reached the writer"
+        );
+
+        let writers = vec![boxed(Mock::present("claude-code"))];
+        let (code, out, err) = run_as(&["install", "--force-dev"], bridge, &writers, true);
+        assert_eq!(code, 0, "{err}");
+        assert!(out.contains("claude-code"), "{out}");
+
+        let (code, _, err) = run_as(&["status", "--force-dev"], bridge, &writers, true);
+        assert_eq!(code, 2, "--force-dev only belongs to install: {err}");
+        let (code, _, _) = run_as(&["status"], bridge, &writers, true);
+        assert_eq!(code, 0, "status stays available in a debug build");
     }
 
     #[test]

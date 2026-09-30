@@ -195,6 +195,7 @@ pub(crate) fn extract_into(entries: &[Entry<'_>], target_dir: &Path) -> Result<(
         let final_path = target_dir.join(&entry.filename);
 
         if file_matches_digest(&final_path, entry.bytes)? {
+            restore_executable_mode(&final_path)?;
             continue;
         }
 
@@ -210,6 +211,25 @@ pub(crate) fn extract_into(entries: &[Entry<'_>], target_dir: &Path) -> Result<(
         }
     }
 
+    Ok(())
+}
+
+#[cfg(unix)]
+fn restore_executable_mode(path: &Path) -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    let mode = std::fs::metadata(path)
+        .with_context(|| format!("US-008: stat {} failed", path.display()))?
+        .permissions()
+        .mode();
+    if mode & 0o777 == 0o755 {
+        return Ok(());
+    }
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755))
+        .with_context(|| format!("US-008: chmod 0o755 on {} failed", path.display()))
+}
+
+#[cfg(not(unix))]
+fn restore_executable_mode(_path: &Path) -> Result<()> {
     Ok(())
 }
 
@@ -489,6 +509,22 @@ mod tests {
                 mode & 0o777
             );
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_up_to_date_helper_that_lost_its_exec_bit_gets_0o755_back() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::TempDir::new().unwrap();
+        let entries = synthetic_entries();
+        extract_into(&entries, dir.path()).unwrap();
+        let stripped = dir.path().join(&entries[0].filename);
+        std::fs::set_permissions(&stripped, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+        extract_into(&entries, dir.path()).unwrap();
+
+        let mode = std::fs::metadata(&stripped).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o755);
     }
 
     #[test]

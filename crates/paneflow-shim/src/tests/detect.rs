@@ -205,3 +205,75 @@ fn find_real_binary_in_completes_under_15ms_budget() {
         "PATH walk must complete under 15 ms; got {elapsed:?}"
     );
 }
+
+fn write_tool(dir: &std::path::Path, name: &str) -> PathBuf {
+    let path = dir.join(name);
+    std::fs::write(&path, b"#!/bin/sh\n").unwrap();
+    #[cfg(unix)]
+    make_executable(&path);
+    path
+}
+
+#[test]
+fn find_real_binary_in_skips_every_paneflow_helper_dir() {
+    let release = tempfile::TempDir::new().unwrap();
+    let nested = tempfile::TempDir::new().unwrap();
+    let real = tempfile::TempDir::new().unwrap();
+    let tool = &candidate_names("claude")[0];
+    for helper in [release.path(), nested.path()] {
+        write_tool(helper, tool);
+        write_tool(helper, crate::detect::HOOK_BINARY_NAME);
+    }
+    let expected = write_tool(real.path(), tool);
+
+    let found = find_real_binary_in(
+        "claude",
+        vec![
+            nested.path().to_path_buf(),
+            release.path().to_path_buf(),
+            real.path().to_path_buf(),
+        ],
+        None,
+        None,
+    );
+
+    assert_eq!(found, Some(expected));
+}
+
+#[test]
+fn find_real_binary_in_finds_nothing_when_only_helper_dirs_hold_the_tool() {
+    let release = tempfile::TempDir::new().unwrap();
+    let nested = tempfile::TempDir::new().unwrap();
+    let tool = &candidate_names("claude")[0];
+    for helper in [release.path(), nested.path()] {
+        write_tool(helper, tool);
+        write_tool(helper, crate::detect::HOOK_BINARY_NAME);
+    }
+
+    let found = find_real_binary_in(
+        "claude",
+        vec![nested.path().to_path_buf(), release.path().to_path_buf()],
+        None,
+        None,
+    );
+
+    assert_eq!(found, None);
+}
+
+#[test]
+fn a_shim_named_as_another_shims_target_is_detected() {
+    use crate::detect::launched_as_another_shims_target;
+    let dir = tempfile::TempDir::new().unwrap();
+    let shim = write_tool(dir.path(), &candidate_names("claude")[0]);
+    let other = write_tool(dir.path(), &candidate_names("codex")[0]);
+
+    assert!(launched_as_another_shims_target(
+        Some(shim.as_os_str()),
+        Some(&shim)
+    ));
+    assert!(!launched_as_another_shims_target(
+        Some(other.as_os_str()),
+        Some(&shim)
+    ));
+    assert!(!launched_as_another_shims_target(None, Some(&shim)));
+}

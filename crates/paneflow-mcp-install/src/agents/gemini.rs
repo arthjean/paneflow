@@ -35,7 +35,7 @@ impl Gemini {
         let found = support::string_command(entry);
         let shape_ok = found
             .as_deref()
-            .is_some_and(|path| *entry == Self::entry(path));
+            .is_some_and(|path| support::has_fields(entry, &Self::entry(path)));
         support::classify_entry(
             found,
             expected,
@@ -65,15 +65,21 @@ impl AgentConfigWriter for Gemini {
 
     fn install(&self, bridge: &Path) -> Result<InstallOutcome> {
         let bridge_s = bridge.to_string_lossy().into_owned();
-        support::json_install(self.path()?, CONTAINER, Self::entry(&bridge_s))
+        support::json_install(
+            self.path()?,
+            CONTAINER,
+            &Self::entry(&bridge_s),
+            &json!({}),
+            true,
+        )
     }
 
     fn uninstall(&self) -> Result<UninstallOutcome> {
-        support::json_uninstall(self.path()?, CONTAINER)
+        support::json_uninstall(self.path()?, CONTAINER, true)
     }
 
     fn status(&self, bridge: Option<&Path>) -> Result<StatusOutcome> {
-        support::json_status(self.path()?, CONTAINER, bridge, Self::validate_entry)
+        support::json_status(self.path()?, CONTAINER, true, bridge, Self::validate_entry)
     }
 }
 
@@ -85,6 +91,40 @@ mod tests {
         Gemini {
             config_path: Some(path),
         }
+    }
+
+    #[test]
+    fn install_edits_a_commented_settings_file_as_jsonc() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let p = dir.path().join("settings.json");
+        std::fs::write(
+            &p,
+            "{\n  // theme picked by hand\n  \"theme\": \"GitHub\",\n  \"mcpServers\": {\n    \"other\": { \"command\": \"x\" }, // keep\n  },\n}\n",
+        )
+        .unwrap();
+        let w = test_writer(p.clone());
+
+        assert_eq!(
+            w.install(Path::new("/data/paneflow-mcp")).unwrap(),
+            InstallOutcome::Installed
+        );
+        let text = std::fs::read_to_string(&p).unwrap();
+        assert!(text.contains("// theme picked by hand"), "{text}");
+        assert!(text.contains("// keep"), "{text}");
+        let root = paneflow_agent_config::jsonc::parse(&text).unwrap();
+        assert_eq!(
+            root["mcpServers"]["paneflow"]["command"],
+            "/data/paneflow-mcp"
+        );
+        assert_eq!(root["mcpServers"]["other"]["command"], "x");
+        assert_eq!(
+            w.status(Some(Path::new("/data/paneflow-mcp"))).unwrap(),
+            StatusOutcome::Installed {
+                path: "/data/paneflow-mcp".into()
+            }
+        );
+        assert_eq!(w.uninstall().unwrap(), UninstallOutcome::Removed);
+        assert!(std::fs::read_to_string(&p).unwrap().contains("// keep"));
     }
 
     #[test]

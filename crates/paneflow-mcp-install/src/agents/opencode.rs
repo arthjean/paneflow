@@ -31,20 +31,29 @@ impl OpenCode {
     }
 
     fn entry(bridge: &str) -> serde_json::Value {
-        json!({ "type": "local", "command": [bridge], "enabled": true })
+        json!({ "type": "local", "command": [bridge] })
+    }
+
+    fn defaults() -> serde_json::Value {
+        json!({ "enabled": true })
     }
 
     fn validate_entry(entry: &serde_json::Value, expected: Option<&Path>) -> StatusOutcome {
         let found = support::array_command(entry);
         let shape_ok = found
             .as_deref()
-            .is_some_and(|path| *entry == Self::entry(path));
-        support::classify_entry(
+            .is_some_and(|path| support::has_fields(entry, &Self::entry(path)));
+        let outcome = support::classify_entry(
             found,
             expected,
             shape_ok,
-            "opencode MCP entry must be local, enabled, and use command array form",
-        )
+            "opencode MCP entry must be local and use command array form",
+        );
+        if entry.get("enabled") == Some(&json!(false)) {
+            support::disabled_by_user(outcome)
+        } else {
+            outcome
+        }
     }
 }
 
@@ -68,15 +77,32 @@ impl AgentConfigWriter for OpenCode {
 
     fn install(&self, bridge: &Path) -> Result<InstallOutcome> {
         let bridge_s = bridge.to_string_lossy().into_owned();
-        support::json_install(self.path()?, CONTAINER, Self::entry(&bridge_s))
+        let path = self.path()?;
+        support::json_install(
+            path,
+            CONTAINER,
+            &Self::entry(&bridge_s),
+            &Self::defaults(),
+            crate::merge::has_jsonc_extension(path),
+        )
     }
 
     fn uninstall(&self) -> Result<UninstallOutcome> {
-        support::json_uninstall(self.path()?, CONTAINER)
+        support::json_uninstall(
+            self.path()?,
+            CONTAINER,
+            crate::merge::has_jsonc_extension(self.path()?),
+        )
     }
 
     fn status(&self, bridge: Option<&Path>) -> Result<StatusOutcome> {
-        support::json_status(self.path()?, CONTAINER, bridge, Self::validate_entry)
+        support::json_status(
+            self.path()?,
+            CONTAINER,
+            crate::merge::has_jsonc_extension(self.path()?),
+            bridge,
+            Self::validate_entry,
+        )
     }
 }
 
@@ -110,6 +136,25 @@ mod tests {
         OpenCode {
             config_paths: vec![path],
         }
+    }
+
+    #[test]
+    fn a_pathologically_nested_config_reports_a_parse_error_to_settings() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let p = dir.path().join("opencode.jsonc");
+        std::fs::write(
+            &p,
+            format!("{}{}", "{\"a\":".repeat(10_000) + "1", "}".repeat(10_000)),
+        )
+        .unwrap();
+        let writers: Vec<Box<dyn AgentConfigWriter>> = vec![Box::new(test_writer(p))];
+
+        let statuses = crate::api::status_with(Some(Path::new("/data/paneflow-mcp")), &writers);
+
+        let crate::api::StatusKind::Error(message) = &statuses[0].kind else {
+            unreachable!("expected a parse error, got {:?}", statuses[0].kind);
+        };
+        assert!(message.contains("not valid JSONC"), "{message}");
     }
 
     #[test]
@@ -180,7 +225,7 @@ mod tests {
     }
 
     #[test]
-    fn status_needs_repair_when_disabled() {
+    fn status_reports_a_user_disabled_entry_and_install_keeps_it_disabled() {
         let dir = tempfile::TempDir::new().unwrap();
         let p = dir.path().join("opencode.json");
         std::fs::write(
@@ -197,12 +242,20 @@ mod tests {
             .unwrap(),
         )
         .unwrap();
-        let w = test_writer(p);
+        let w = test_writer(p.clone());
 
-        assert!(matches!(
+        assert_eq!(
             w.status(Some(Path::new("/data/paneflow-mcp"))).unwrap(),
-            StatusOutcome::NeedsRepair { .. }
-        ));
+            StatusOutcome::DisabledByUser {
+                path: "/data/paneflow-mcp".into()
+            }
+        );
+        assert_eq!(
+            w.install(Path::new("/data/paneflow-mcp")).unwrap(),
+            InstallOutcome::AlreadyCurrent
+        );
+        let root: serde_json::Value = serde_json::from_slice(&std::fs::read(&p).unwrap()).unwrap();
+        assert_eq!(root["mcp"]["paneflow"]["enabled"], json!(false));
     }
 
     #[test]

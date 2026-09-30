@@ -1,5 +1,4 @@
 pub(crate) mod git;
-pub mod pid_resolve;
 mod ports;
 pub mod surface_naming;
 mod tab;
@@ -78,6 +77,14 @@ impl AgentCompletionNotification {
 
     pub(crate) fn clear(&mut self) {
         self.unread.clear();
+    }
+
+    fn take_surfaces(&mut self, surfaces: &std::collections::HashSet<u64>) -> Self {
+        let (moved, kept) = std::mem::take(&mut self.unread)
+            .into_iter()
+            .partition(|key| key.is_some_and(|id| surfaces.contains(&id)));
+        self.unread = kept;
+        Self { unread: moved }
     }
 }
 
@@ -408,6 +415,28 @@ impl Workspace {
 }
 
 impl Workspace {
+    pub(crate) fn hand_surfaces_to(
+        &mut self,
+        dest: &mut Workspace,
+        surfaces: &std::collections::HashSet<u64>,
+    ) {
+        let keys: Vec<u32> = self
+            .agent_sessions
+            .iter()
+            .filter(|(_, session)| session.surface_id.is_some_and(|id| surfaces.contains(&id)))
+            .map(|(key, _)| *key)
+            .collect();
+        for key in keys {
+            if let Some(session) = self.agent_sessions.remove(&key) {
+                crate::ai_types::insert_session_for_surface(&mut dest.agent_sessions, key, session);
+            }
+        }
+        let moved = self.agent_completion_notification.take_surfaces(surfaces);
+        dest.agent_completion_notification
+            .unread
+            .extend(moved.unread);
+    }
+
     pub fn propagate_config(&self, config: &paneflow_config::schema::PaneFlowConfig, cx: &mut App) {
         for tab in &self.tabs {
             if let Some(root) = &tab.root {
@@ -453,6 +482,65 @@ mod tests {
         let terminal = cx.new(|cx| TerminalView::display_only_for_test(1, cx));
         let pane = cx.new(|cx| crate::pane::Pane::new(terminal, 1, cx));
         Workspace::build(1, "ws".to_string(), String::new(), LayoutTree::Leaf(pane))
+    }
+
+    #[gpui::test]
+    fn a_moved_tab_takes_its_agent_rows_and_unread_marks_to_the_destination(
+        cx: &mut TestAppContext,
+    ) {
+        use crate::agent_launcher::TerminalAgent;
+        use crate::ai_types::{AgentSession, AgentState};
+
+        let cx = cx.add_empty_window();
+        let mut source = test_workspace(cx);
+        let mut dest = test_workspace(cx);
+        let agent = |surface: u64| {
+            let mut session = AgentSession::new(TerminalAgent::ClaudeCode, AgentState::Thinking);
+            session.surface_id = Some(surface);
+            session
+        };
+        source.agent_sessions.insert(4242, agent(7));
+        source.agent_sessions.insert(5151, agent(8));
+        source
+            .agent_completion_notification
+            .record_finished(false, Some(7));
+        source
+            .agent_completion_notification
+            .record_finished(false, Some(8));
+        dest.agent_sessions.insert(4242, agent(9));
+
+        source.hand_surfaces_to(&mut dest, &HashSet::from([7]));
+
+        assert_eq!(
+            source
+                .agent_sessions
+                .values()
+                .filter_map(|s| s.surface_id)
+                .collect::<HashSet<_>>(),
+            HashSet::from([8])
+        );
+        assert_eq!(
+            dest.agent_sessions
+                .values()
+                .filter_map(|s| s.surface_id)
+                .collect::<HashSet<_>>(),
+            HashSet::from([7, 9]),
+            "a key already held by another surface never overwrites that row"
+        );
+        assert!(
+            dest.agent_completion_notification
+                .is_unread_for(&HashSet::from([7]))
+        );
+        assert!(
+            !source
+                .agent_completion_notification
+                .is_unread_for(&HashSet::from([7]))
+        );
+        assert!(
+            source
+                .agent_completion_notification
+                .is_unread_for(&HashSet::from([8]))
+        );
     }
 
     #[gpui::test]

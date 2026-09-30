@@ -162,7 +162,8 @@ fn write_instance_record(worker: &Worker) {
     }
 }
 
-pub fn refresh_integrations() {
+pub fn refresh_integrations(home: &Path) {
+    remove_legacy_project_hooks(home);
     let Some(binaries) = crate::integrations::resolve_binaries() else {
         log::info!("paneflow-serve: no helper binaries staged; integrations are left untouched");
         return;
@@ -177,11 +178,54 @@ pub fn refresh_integrations() {
     }
 }
 
+fn session_project_dirs(session: &[u8]) -> Vec<PathBuf> {
+    let Ok(state) = serde_json::from_slice::<paneflow_config::schema::SessionState>(session) else {
+        return Vec::new();
+    };
+    let mut dirs: Vec<PathBuf> = Vec::new();
+    for workspace in &state.workspaces {
+        let candidates = std::iter::once(workspace.cwd.as_str()).chain(
+            workspace
+                .tabs
+                .iter()
+                .filter_map(|tab| tab.worktree.as_deref()),
+        );
+        for candidate in candidates {
+            let dir = PathBuf::from(candidate);
+            if dir.is_absolute() && !dirs.contains(&dir) {
+                dirs.push(dir);
+            }
+        }
+    }
+    dirs
+}
+
+fn remove_legacy_project_hooks(home: &Path) {
+    let Ok(session) = std::fs::read(home.join("session.json")) else {
+        return;
+    };
+    for (path, result) in
+        paneflow_mcp_install::remove_legacy_project_hooks(&session_project_dirs(&session))
+    {
+        match result {
+            Ok(()) => log::info!(
+                "paneflow-serve: removed pre-0.17 Paneflow hooks from {}",
+                path.display()
+            ),
+            Err(error) => log::warn!(
+                "paneflow-serve: cannot remove pre-0.17 Paneflow hooks from {}: {error}",
+                path.display()
+            ),
+        }
+    }
+}
+
 pub fn run(home: &Path) -> Result<(), WorkerError> {
     let running = open(home)?;
+    let integrations_home = home.to_path_buf();
     if let Err(error) = std::thread::Builder::new()
         .name("paneflow-serve-integrations".into())
-        .spawn(refresh_integrations)
+        .spawn(move || refresh_integrations(&integrations_home))
     {
         log::warn!("paneflow-serve: cannot start the integration refresh: {error}");
     }
@@ -313,6 +357,58 @@ mod tests {
     fn open_with_config(home: &Path, body: &str) -> RunningWorker {
         std::fs::write(home.join("paneflow.json"), body).expect("the config is written");
         open_with_build_id(home, "test-build".to_string()).expect("the worker opens")
+    }
+
+    #[test]
+    fn pre_0_17_project_hooks_are_removed_for_workspaces_in_the_session() {
+        let home = tempfile::tempdir().expect("a temporary home");
+        let project = tempfile::tempdir().expect("a project");
+        let untracked = tempfile::tempdir().expect("a project absent from the session");
+        let mut legacy = json!({ "permissions": { "allow": ["Bash(ls)"] }, "hooks": {} });
+        paneflow_agent_config::claude_hooks::reconcile_hooks(&mut legacy, |event| {
+            format!("/old/bin/paneflow-ai-hook {event}")
+        })
+        .expect("legacy hooks");
+        legacy["hooks"]["Stop"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({ "hooks": [{ "type": "command", "command": "my-hook" }] }));
+        for dir in [project.path(), untracked.path()] {
+            std::fs::create_dir_all(dir.join(".claude")).unwrap();
+            std::fs::write(
+                dir.join(".claude").join("settings.local.json"),
+                serde_json::to_vec_pretty(&legacy).unwrap(),
+            )
+            .unwrap();
+        }
+        let session = json!({
+            "version": 3,
+            "active_workspace": 0,
+            "workspaces": [{ "title": "p", "cwd": project.path(), "tabs": [] }],
+        });
+        std::fs::write(
+            home.path().join("session.json"),
+            serde_json::to_vec(&session).unwrap(),
+        )
+        .unwrap();
+
+        remove_legacy_project_hooks(home.path());
+
+        let cleaned: Value = serde_json::from_slice(
+            &std::fs::read(project.path().join(".claude").join("settings.local.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(cleaned["permissions"]["allow"][0], "Bash(ls)");
+        let text = cleaned.to_string();
+        assert!(!text.contains("paneflow-ai-hook"), "{text}");
+        assert_eq!(
+            cleaned["hooks"]["Stop"][0]["hooks"][0]["command"],
+            "my-hook"
+        );
+        let untouched =
+            std::fs::read_to_string(untracked.path().join(".claude").join("settings.local.json"))
+                .unwrap();
+        assert!(untouched.contains("paneflow-ai-hook"));
     }
 
     #[test]

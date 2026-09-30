@@ -5,8 +5,8 @@ use std::time::Duration;
 use gpui::{App, AppContext, BackgroundExecutor, Context, Entity, Focusable};
 use paneflow_config::schema::{LayoutNode, PaneFlowConfig, TabTitleSource, TerminalSurfaceProfile};
 use paneflow_ipc_client::ai_hook::{
-    AiToolName, LifecycleEventSource, METHOD_EXIT, METHOD_NOTIFICATION, METHOD_PROMPT_SUBMIT,
-    METHOD_SESSION_END, METHOD_SESSION_START, METHOD_STOP, METHOD_TOOL_USE, SessionPid, SurfaceId,
+    AiToolName, LifecycleEventSource, METHOD_PROMPT_SUBMIT, METHOD_SESSION_START, METHOD_STOP,
+    SessionPid, SurfaceId,
 };
 
 use crate::agent_launcher::TerminalAgent;
@@ -14,9 +14,6 @@ use crate::agents::notifications::{self as desktop_notifications, DesktopNotific
 use crate::ai_types::AgentSession;
 pub(crate) use crate::app::notifications::{
     fire_agent_exit_notification, fire_worker_notification,
-};
-use crate::app::notifications::{
-    fire_attention_notification, fire_turn_end_notification, sanitize_notification_message,
 };
 use crate::layout::LayoutTree;
 use crate::layout::{MAX_PANES, SplitDirection};
@@ -41,9 +38,6 @@ use params::*;
 pub(crate) use surface_methods::*;
 use transcript::*;
 pub(crate) use workspace_methods::*;
-
-#[cfg(test)]
-pub(crate) use agent_frames::frame_is_hook_sourced;
 
 pub(crate) type IpcJob = Box<dyn FnOnce() -> serde_json::Value + Send>;
 
@@ -115,12 +109,6 @@ impl PaneFlowApp {
                     continue;
                 }
             };
-            if req.method.starts_with("ai.")
-                && result.get("error").is_none()
-                && result.get("_jsonrpc_error").is_none()
-            {
-                self.broadcast_ai_frame(&req.method, &req.params);
-            }
             let _ = req.response_tx.send(result);
         }
     }
@@ -173,9 +161,6 @@ impl PaneFlowApp {
             }
             m if m.starts_with("surface.") || m == "fleet.list" => {
                 IpcReply::Ready(self.handle_surface_method(method, params, caller_pid, cx))
-            }
-            m if m.starts_with("ai.") => {
-                IpcReply::Ready(self.handle_agent_frame(method, params, cx))
             }
             _ => IpcReply::Ready(
                 JsonRpcError::method_not_found(format!("Method not found: {method}")).into_value(),

@@ -313,6 +313,7 @@ impl PaneFlowApp {
                 sessions_group_collapsed: [false; crate::agent_sessions::SESSION_AGENT_COUNT],
                 sessions_group_show_all: [false; crate::agent_sessions::SESSION_AGENT_COUNT],
                 sessions_scanning: [false; crate::agent_sessions::SESSION_AGENT_COUNT],
+                sessions_in_flight: std::array::from_fn(|_| None),
             },
             files_sidebar_open: false,
             files_sidebar_animation: None,

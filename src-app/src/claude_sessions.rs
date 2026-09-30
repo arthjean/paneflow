@@ -1,11 +1,11 @@
 use std::fs;
-use std::io::{BufRead, BufReader, Read};
+use std::io::BufReader;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 use serde::Deserialize;
 
-use crate::agent_sessions::{SessionAgent, SessionMeta, clean_session_label};
+use crate::agent_sessions::{CappedLine, SessionAgent, SessionMeta, clean_session_label};
 
 const TITLE_SCAN_LIMIT: usize = 2048;
 
@@ -36,9 +36,9 @@ pub fn slug_for_cwd(cwd: &str) -> String {
 }
 
 pub fn project_dir_for_cwd(cwd: &str) -> Option<PathBuf> {
-    let home = dirs::home_dir()?;
+    let paths = paneflow_agent_config::ClaudePaths::current()?;
     let slug = slug_for_cwd(normalize_cwd_for_slug(cwd));
-    Some(home.join(".claude").join("projects").join(slug))
+    Some(paths.projects().join(slug))
 }
 
 fn normalize_cwd_for_slug(cwd: &str) -> &str {
@@ -91,22 +91,7 @@ pub fn read_sessions_for_cwd_with_omitted(cwd: &str) -> (Vec<SessionMeta>, usize
     {
         return cached;
     }
-    let Ok(entries) = fs::read_dir(&project_dir) else {
-        return (Vec::new(), 0);
-    };
-
-    let sessions = entries.flatten().filter_map(|entry| {
-        let path = entry.path();
-        if !is_jsonl_file(&path) {
-            return None;
-        }
-        read_session_meta(&path).filter(|meta| crate::agent_sessions::cwd_matches(&meta.cwd, cwd))
-    });
-
-    let (sessions, omitted) = crate::agent_sessions::collect_recent_sessions(
-        sessions,
-        crate::agent_sessions::SIDEBAR_SESSION_RETAINED_PER_SOURCE,
-    );
+    let (sessions, omitted) = sessions_in_project_dir(&project_dir, cwd);
     if let Some(snapshot_mtime) = project_snapshot_mtime(&project_dir) {
         crate::agent_sessions::cache::store_result_with_mtime(
             SessionAgent::Claude,
@@ -117,6 +102,23 @@ pub fn read_sessions_for_cwd_with_omitted(cwd: &str) -> (Vec<SessionMeta>, usize
         );
     }
     (sessions, omitted)
+}
+
+fn sessions_in_project_dir(project_dir: &Path, cwd: &str) -> (Vec<SessionMeta>, usize) {
+    let Ok(entries) = fs::read_dir(project_dir) else {
+        return (Vec::new(), 0);
+    };
+    let sessions = entries.flatten().filter_map(|entry| {
+        let path = entry.path();
+        if !is_jsonl_file(&path) {
+            return None;
+        }
+        read_session_meta(&path).filter(|meta| crate::agent_sessions::cwd_matches(&meta.cwd, cwd))
+    });
+    crate::agent_sessions::collect_recent_sessions(
+        sessions,
+        crate::agent_sessions::SIDEBAR_SESSION_RETAINED_PER_SOURCE,
+    )
 }
 
 fn is_jsonl_file(path: &Path) -> bool {
@@ -149,9 +151,7 @@ struct SessionHead {
 }
 
 fn scan_session_head(path: &Path) -> Option<SessionHead> {
-    let file = fs::File::open(path).ok()?;
-    let mut reader = BufReader::new(file);
-    let mut buf = String::new();
+    let mut reader = BufReader::new(crate::agent_sessions::open_session_file(path)?);
 
     let mut envelope: Option<FirstLineEnvelope> = None;
     let mut ai_title: Option<String> = None;
@@ -162,47 +162,27 @@ fn scan_session_head(path: &Path) -> Option<SessionHead> {
         if title_budget < MAX_LINE_BYTES {
             break;
         }
-        buf.clear();
-        let n = reader
-            .by_ref()
-            .take(MAX_LINE_BYTES)
-            .read_line(&mut buf)
-            .ok()?;
-        if n == 0 {
-            break;
-        }
-        title_budget = title_budget.saturating_sub(n as u64);
-        if n as u64 == MAX_LINE_BYTES && !buf.ends_with('\n') {
-            let more_follows = match reader.fill_buf() {
-                Ok(b) => !b.is_empty(),
-                Err(_) => return None,
-            };
-            if more_follows {
+        let buf = match crate::agent_sessions::read_capped_line(&mut reader, title_budget) {
+            Ok(CappedLine::Eof) => break,
+            Ok(CappedLine::Oversized(consumed)) => {
                 log::debug!(
                     target: "paneflow_app::claude_sessions",
                     "skipped an oversized (>{} B) line in {}; continuing scan for the envelope",
                     MAX_LINE_BYTES,
                     path.display(),
                 );
-                loop {
-                    let chunk = match reader.fill_buf() {
-                        Ok(b) => b,
-                        Err(_) => return None,
-                    };
-                    if chunk.is_empty() {
-                        return None;
-                    }
-                    if let Some(nl) = chunk.iter().position(|&b| b == b'\n') {
-                        reader.consume(nl + 1);
-                        break;
-                    }
-                    let consumed = chunk.len();
-                    reader.consume(consumed);
-                    title_budget = title_budget.saturating_sub(consumed as u64);
-                }
+                title_budget = title_budget.saturating_sub(consumed);
                 continue;
             }
-        }
+            Ok(CappedLine::Line(line, consumed)) => {
+                title_budget = title_budget.saturating_sub(consumed);
+                line
+            }
+            Err(error) => {
+                crate::agent_sessions::log_unreadable_session(path, &error);
+                break;
+            }
+        };
         let trimmed = buf.trim_end();
         if !trimmed.starts_with('{') {
             continue;
@@ -750,5 +730,59 @@ mod tests {
             read_session_meta(&path).is_none(),
             "an oversized line must be skipped, not parsed"
         );
+    }
+
+    const ENVELOPE: &str = r#"{"type":"user","message":{"role":"user","content":"hi"},"timestamp":"2026-04-26T13:38:41.095Z","cwd":"/tmp/proj","sessionId":"aaaaaaaa-1111-2222-3333-444444444444"}"#;
+
+    fn line_with_emoji_across_the_cap() -> String {
+        let prefix = r#"{"type":"user","message":{"role":"user","content":""#;
+        let pad = MAX_LINE_BYTES as usize - prefix.len() - 2;
+        format!("{prefix}{}😀 tail\"}}}}\n", "x".repeat(pad))
+    }
+
+    #[test]
+    fn an_emoji_cut_at_the_line_cap_keeps_the_session_and_its_title() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("emoji.jsonl");
+        let body = format!(
+            "{ENVELOPE}\n{}{}\n",
+            line_with_emoji_across_the_cap(),
+            r#"{"type":"ai-title","aiTitle":"After the emoji"}"#
+        );
+        std::fs::write(&path, body).expect("write");
+        let meta = read_session_meta(&path).expect("the session survives the split emoji");
+        assert_eq!(meta.summary.as_deref(), Some("After the emoji"));
+    }
+
+    #[test]
+    fn a_file_ending_inside_an_overlong_line_keeps_the_envelope_found_before_it() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("cut.jsonl");
+        let body = format!(
+            "{ENVELOPE}\n{{\"type\":\"user\",\"p\":\"{}",
+            "x".repeat(MAX_LINE_BYTES as usize * 2)
+        );
+        std::fs::write(&path, body).expect("write");
+        let meta = read_session_meta(&path).expect("EOF mid-line never cancels the session");
+        assert_eq!(meta.cwd, "/tmp/proj");
+        assert_eq!(meta.summary.as_deref(), Some("hi"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_unreadable_session_file_leaves_the_others_listed() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::write(dir.path().join("good.jsonl"), format!("{ENVELOPE}\n")).expect("write");
+        let locked = dir.path().join("locked.jsonl");
+        std::fs::write(&locked, format!("{ENVELOPE}\n")).expect("write");
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).expect("chmod");
+        if std::fs::File::open(&locked).is_ok() {
+            return;
+        }
+        let (sessions, omitted) = sessions_in_project_dir(dir.path(), "/tmp/proj");
+        assert_eq!(omitted, 0);
+        assert_eq!(sessions.len(), 1, "the readable session is still listed");
     }
 }

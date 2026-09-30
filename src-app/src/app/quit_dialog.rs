@@ -84,6 +84,29 @@ pub(crate) fn update_restart_plan(
     }
 }
 
+fn busy_agent_counts<'a>(
+    agents: impl Iterator<Item = &'a crate::ai_types::AgentSession>,
+) -> (usize, usize) {
+    let mut by_surface = std::collections::HashMap::new();
+    let mut unbound = Vec::new();
+    for agent in agents {
+        match agent.surface_id {
+            Some(surface) => {
+                by_surface.insert(surface, agent.state);
+            }
+            None => unbound.push(agent.state),
+        }
+    }
+    by_surface
+        .into_values()
+        .chain(unbound)
+        .fold((0, 0), |(working, waiting), state| match state {
+            AgentState::Thinking => (working + 1, waiting),
+            AgentState::WaitingForInput => (working, waiting + 1),
+            AgentState::Finished | AgentState::Errored => (working, waiting),
+        })
+}
+
 pub(crate) fn quit_summary(sessions: usize, working: usize, waiting: usize) -> String {
     let mut text = format!(
         "{} running.",
@@ -394,14 +417,11 @@ impl PaneFlowApp {
     }
 
     fn busy_agent_counts(&self) -> (usize, usize) {
-        self.workspaces
-            .iter()
-            .flat_map(|ws| ws.agent_sessions.values())
-            .fold((0, 0), |(working, waiting), agent| match agent.state {
-                AgentState::Thinking => (working + 1, waiting),
-                AgentState::WaitingForInput => (working, waiting + 1),
-                AgentState::Finished | AgentState::Errored => (working, waiting),
-            })
+        busy_agent_counts(
+            self.workspaces
+                .iter()
+                .flat_map(|ws| ws.agent_sessions.values()),
+        )
     }
 
     pub(crate) fn live_session_targets(&self, cx: &gpui::App) -> Vec<StopTarget> {
@@ -931,6 +951,24 @@ fn quit_focus_ring(radius: Pixels, ui: crate::theme::UiColors) -> impl IntoEleme
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_agent_listed_under_two_workspaces_is_counted_once() {
+        let agent = |surface: u64, state: AgentState| {
+            let mut session = crate::ai_types::AgentSession::new(
+                crate::agent_launcher::TerminalAgent::ClaudeCode,
+                state,
+            );
+            session.surface_id = Some(surface);
+            session
+        };
+        let source = [agent(7, AgentState::Thinking)];
+        let dest = [
+            agent(7, AgentState::Thinking),
+            agent(8, AgentState::WaitingForInput),
+        ];
+        assert_eq!(busy_agent_counts(source.iter().chain(dest.iter())), (1, 1));
+    }
 
     #[test]
     fn no_live_session_shuts_the_idle_host_down_without_asking_whatever_the_policy() {

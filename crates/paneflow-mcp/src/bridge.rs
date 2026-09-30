@@ -14,6 +14,7 @@ pub const MAX_SAFE_JSON_INTEGER: u64 = 9_007_199_254_740_991;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BridgeError {
+    Scope(String),
     Target(String),
     Transport {
         method: &'static str,
@@ -28,6 +29,7 @@ pub enum BridgeError {
 impl fmt::Display for BridgeError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Scope(message) => write!(f, "scope error: {message}"),
             Self::Target(message) => f.write_str(message),
             Self::Transport { method, message } => {
                 write!(f, "Paneflow IPC {method} failed: {message}")
@@ -100,7 +102,7 @@ pub struct Surface {
     pub cwd: Option<String>,
     pub cmd: Option<String>,
     pub workspace_id: Option<u64>,
-    pub workspace: Option<u64>,
+    pub workspace: Option<Value>,
     pub scope: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tab_id: Option<u64>,
@@ -142,33 +144,50 @@ impl<'a, T: IpcTransport + ?Sized> Bridge<'a, T> {
         Self { transport, scope }
     }
 
-    pub fn scope(&self) -> BridgeScope {
-        self.scope
+    pub fn scope(&self) -> &BridgeScope {
+        &self.scope
+    }
+
+    fn require_scope(&self) -> Result<(), BridgeError> {
+        match self.scope.error() {
+            Some(error) => Err(BridgeError::Scope(error.to_string())),
+            None => Ok(()),
+        }
     }
 
     pub fn surfaces(&self) -> Result<Vec<Surface>, BridgeError> {
-        let result: SurfaceListResult = self.call("surface.list", self.scope.ipc_params())?;
-        if let Some(expected) = self.scope.workspace_id() {
-            if let Some(surface) = result
-                .surfaces
-                .iter()
-                .find(|surface| surface.workspace_id != Some(expected))
-            {
-                return Err(BridgeError::Protocol {
-                    method: "surface.list",
-                    message: format!(
-                        "surface_id {} escaped requested workspace_id {expected}",
-                        surface.surface_id
-                    ),
-                });
-            }
+        self.require_scope()?;
+        let value: Value = self.call("surface.list", self.scope.ipc_params())?;
+        let result: SurfaceListResult =
+            serde_json::from_value(value.clone()).map_err(|error| BridgeError::Protocol {
+                method: "surface.list",
+                message: error.to_string(),
+            })?;
+        if matches!(self.scope, BridgeScope::Session(_)) {
+            ensure_session_scope_applied(&value, &result.surfaces)?;
         }
         Ok(result.surfaces)
     }
 
     pub fn resolve_target(&self, target: &SurfaceTarget) -> Result<u64, BridgeError> {
+        self.require_scope()?;
         match target {
-            SurfaceTarget::Id(surface_id) => Ok(*surface_id),
+            SurfaceTarget::Id(surface_id) if matches!(self.scope, BridgeScope::All) => {
+                Ok(*surface_id)
+            }
+            SurfaceTarget::Id(surface_id) => {
+                if self
+                    .surfaces()?
+                    .iter()
+                    .any(|surface| surface.surface_id == *surface_id)
+                {
+                    Ok(*surface_id)
+                } else {
+                    Err(BridgeError::Target(format!(
+                        "surface_id {surface_id} is not in this session's workspace; call list_panes"
+                    )))
+                }
+            }
             SurfaceTarget::Name(name) => {
                 let surfaces = self.surfaces()?;
                 let refs: Vec<SurfaceRef> = surfaces
@@ -189,6 +208,7 @@ impl<'a, T: IpcTransport + ?Sized> Bridge<'a, T> {
         lines: Option<u64>,
         offset: Option<u64>,
     ) -> Result<SurfaceReadResult, BridgeError> {
+        self.require_scope()?;
         let mut params = self.surface_params(surface_id);
         params.insert("fenced".into(), json!(false));
         if let Some(lines) = lines {
@@ -206,6 +226,7 @@ impl<'a, T: IpcTransport + ?Sized> Bridge<'a, T> {
         pattern: &str,
         max_matches: Option<u64>,
     ) -> Result<SurfaceSearchResult, BridgeError> {
+        self.require_scope()?;
         let mut params = self.surface_params(surface_id);
         params.insert("pattern".into(), json!(pattern));
         if let Some(max_matches) = max_matches {
@@ -237,6 +258,37 @@ impl<'a, T: IpcTransport + ?Sized> Bridge<'a, T> {
     }
 }
 
+fn ensure_session_scope_applied(list: &Value, surfaces: &[Surface]) -> Result<(), BridgeError> {
+    let escaped = match (
+        list.get("scope_workspace_id")
+            .filter(|value| !value.is_null()),
+        list.get("scope_workspace"),
+    ) {
+        (Some(expected), _) => surfaces
+            .iter()
+            .find(|surface| json!(surface.workspace_id) != *expected),
+        (None, Some(expected)) => surfaces
+            .iter()
+            .find(|surface| surface.workspace.as_ref().unwrap_or(&Value::Null) != expected),
+        (None, None) => {
+            return Err(BridgeError::Protocol {
+                method: "surface.list",
+                message: "the server did not apply the session scope; update Paneflow".to_string(),
+            });
+        }
+    };
+    match escaped {
+        Some(surface) => Err(BridgeError::Protocol {
+            method: "surface.list",
+            message: format!(
+                "surface_id {} escaped the workspace of the scope session",
+                surface.surface_id
+            ),
+        }),
+        None => Ok(()),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -255,13 +307,21 @@ mod tests {
         })
     }
 
+    fn session() -> BridgeScope {
+        BridgeScope::Session("0a9e5266".into())
+    }
+
+    fn scoped_list(surfaces: Vec<Value>, workspace_id: u64) -> Value {
+        json!({"surfaces": surfaces, "scope_workspace_id": workspace_id})
+    }
+
     #[test]
     fn surface_list_reports_the_owning_tab_and_tolerates_its_absence() {
         let mut tabbed = surface(7, Some(42));
         tabbed["tab_id"] = json!(11);
         tabbed["tab_title"] = json!("build");
-        let transport = FakeTransport::new().with("surface.list", json!({"surfaces": [tabbed]}));
-        let bridge = Bridge::new(&transport, BridgeScope::Workspace(42));
+        let transport = FakeTransport::new().with("surface.list", scoped_list(vec![tabbed], 42));
+        let bridge = Bridge::new(&transport, session());
         let surfaces = bridge.surfaces().expect("valid list");
         assert_eq!(surfaces[0].tab_id, Some(11));
         assert_eq!(surfaces[0].tab_title.as_deref(), Some("build"));
@@ -271,8 +331,8 @@ mod tests {
         );
 
         let transport =
-            FakeTransport::new().with("surface.list", json!({"surfaces": [surface(7, Some(42))]}));
-        let bridge = Bridge::new(&transport, BridgeScope::Workspace(42));
+            FakeTransport::new().with("surface.list", scoped_list(vec![surface(7, Some(42))], 42));
+        let bridge = Bridge::new(&transport, session());
         let legacy = bridge.surfaces().expect("a tab-less list still parses");
         assert_eq!(legacy[0].tab_id, None);
         let rendered = serde_json::to_value(&legacy[0]).unwrap();
@@ -283,26 +343,105 @@ mod tests {
     }
 
     #[test]
-    fn scoped_surface_list_passes_stable_id_to_server() {
+    fn scoped_surface_list_presents_the_session_to_the_server() {
         let transport =
-            FakeTransport::new().with("surface.list", json!({"surfaces": [surface(7, Some(42))]}));
-        let bridge = Bridge::new(&transport, BridgeScope::Workspace(42));
+            FakeTransport::new().with("surface.list", scoped_list(vec![surface(7, Some(42))], 42));
+        let bridge = Bridge::new(&transport, session());
 
         assert_eq!(bridge.surfaces().expect("valid list").len(), 1);
-        assert_eq!(
-            transport.last_params("surface.list").unwrap()["workspace_id"],
-            42
-        );
+        let params = transport.last_params("surface.list").unwrap();
+        assert_eq!(params["scope_session"], "0a9e5266");
+        assert!(params.get("workspace_id").is_none());
     }
 
     #[test]
     fn scoped_surface_list_rejects_server_scope_escape() {
         let transport =
-            FakeTransport::new().with("surface.list", json!({"surfaces": [surface(7, Some(99))]}));
-        let bridge = Bridge::new(&transport, BridgeScope::Workspace(42));
+            FakeTransport::new().with("surface.list", scoped_list(vec![surface(7, Some(99))], 42));
+        let bridge = Bridge::new(&transport, session());
 
         let error = bridge.surfaces().expect_err("scope escape must fail");
-        assert!(error.to_string().contains("escaped requested workspace_id"));
+        assert!(
+            error.to_string().contains("escaped the workspace"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn a_server_that_ignores_the_session_scope_fails_closed() {
+        let transport = FakeTransport::new().with(
+            "surface.list",
+            json!({"surfaces": [surface(7, Some(42)), surface(8, Some(99))]}),
+        );
+        let bridge = Bridge::new(&transport, session());
+
+        let error = bridge
+            .surfaces()
+            .expect_err("an unscoped answer is refused");
+        assert!(error
+            .to_string()
+            .contains("did not apply the session scope"));
+    }
+
+    #[test]
+    fn a_host_scope_is_checked_against_the_workspace_identity() {
+        let mut mine = surface(1, None);
+        mine["workspace"] = json!("5c1d");
+        let mut theirs = surface(2, None);
+        theirs["workspace"] = json!("9e0f");
+        let transport = FakeTransport::new().with(
+            "surface.list",
+            json!({"surfaces": [mine.clone()], "scope_workspace": "5c1d"}),
+        );
+        assert_eq!(
+            Bridge::new(&transport, session()).surfaces().unwrap().len(),
+            1
+        );
+
+        let transport = FakeTransport::new().with(
+            "surface.list",
+            json!({"surfaces": [mine, theirs], "scope_workspace": "5c1d"}),
+        );
+        assert!(Bridge::new(&transport, session()).surfaces().is_err());
+    }
+
+    #[test]
+    fn an_unavailable_scope_refuses_every_call_without_touching_the_server() {
+        let transport = FakeTransport::new();
+        let bridge = Bridge::new(
+            &transport,
+            BridgeScope::Unavailable(crate::scope::ScopeConfigError::MissingSession),
+        );
+
+        for result in [
+            bridge.surfaces().map(|_| ()),
+            bridge.resolve_target(&SurfaceTarget::Id(1)).map(|_| ()),
+            bridge.read_surface(1, None, None).map(|_| ()),
+            bridge.search_surface(1, "x", None).map(|_| ()),
+        ] {
+            let error = result.expect_err("refused");
+            assert!(matches!(error, BridgeError::Scope(_)), "{error}");
+            assert!(
+                error.to_string().contains("PANEFLOW_MCP_SCOPE=all"),
+                "{error}"
+            );
+        }
+        assert!(transport.calls().is_empty());
+    }
+
+    #[test]
+    fn a_numeric_target_outside_the_session_workspace_is_refused() {
+        let transport =
+            FakeTransport::new().with("surface.list", scoped_list(vec![surface(7, Some(42))], 42));
+        let bridge = Bridge::new(&transport, session());
+
+        assert_eq!(bridge.resolve_target(&SurfaceTarget::Id(7)).unwrap(), 7);
+        let error = bridge
+            .resolve_target(&SurfaceTarget::Id(8))
+            .expect_err("foreign id");
+        assert!(error
+            .to_string()
+            .contains("not in this session's workspace"));
     }
 
     #[test]
@@ -328,21 +467,20 @@ mod tests {
     }
 
     #[test]
-    fn scoped_read_is_authorized_atomically_by_server() {
+    fn scoped_read_carries_the_session_to_the_server() {
         let transport = FakeTransport::new().with(
             "surface.read",
             json!({"text": "ok", "total_lines": 1, "eof": true}),
         );
-        let bridge = Bridge::new(&transport, BridgeScope::Workspace(42));
+        let bridge = Bridge::new(&transport, session());
 
         bridge.read_surface(7, Some(20), Some(2)).expect("read");
         let params = transport.last_params("surface.read").unwrap();
-        assert_eq!(params["workspace_id"], 42);
+        assert_eq!(params["scope_session"], "0a9e5266");
         assert_eq!(params["surface_id"], 7);
         assert_eq!(params["fenced"], false);
         assert_eq!(params["lines"], 20);
         assert_eq!(params["offset"], 2);
-        assert!(transport.last_params("surface.list").is_none());
     }
 
     #[test]

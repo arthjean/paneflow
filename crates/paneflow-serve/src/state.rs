@@ -2286,4 +2286,87 @@ mod tests {
             Some(KIND_NEEDS_INPUT)
         );
     }
+
+    fn two_running_sessions(home: &Path) -> (WorkerState, SessionId, SessionId) {
+        let (first, second) = (SessionId::new(), SessionId::new());
+        for session in [&first, &second] {
+            write_manifest(home, &manifest(session.clone(), None)).unwrap();
+        }
+        let mut state = WorkerState::new(home);
+        state.rebuild_from_home(home);
+        (state, first, second)
+    }
+
+    fn frame_from_pid(session: &SessionId, kind: &str, hook_event_name: &str, pid: u32) -> Value {
+        let mut frame = frame(session, kind, hook_event_name, json!({}));
+        frame["pid"] = json!(pid);
+        frame
+    }
+
+    fn core_row(session: &SessionId) -> Value {
+        json!({
+            "session": session,
+            "generation": SessionGeneration::FIRST,
+            "generation_started_at_ms": LAUNCHED_AT,
+            "live": true,
+            "lifecycle": SessionLifecycle::Running,
+            "host_protocol_version": paneflow_host::HOST_PROTOCOL_VERSION,
+            "host_build_id": "test-build",
+        })
+    }
+
+    #[test]
+    fn two_agents_of_one_tool_keep_their_own_rows_and_closing_one_pane_keeps_the_other() {
+        let home = tempfile::tempdir().unwrap();
+        let (mut state, first, second) = two_running_sessions(home.path());
+        for (session, pid) in [(&first, 101), (&second, 102)] {
+            state.apply_core_event(&frame_from_pid(
+                session,
+                "ai.prompt_submit",
+                "UserPromptSubmit",
+                pid,
+            ));
+        }
+        state.apply_core_event(&frame_from_pid(&first, "ai.stop", "Stop", 101));
+        assert_eq!(state.get(&first).unwrap().status(), "idle");
+        assert_eq!(
+            state.get(&second).unwrap().status(),
+            "busy",
+            "the stop of one Claude session never settles its sibling"
+        );
+
+        state.apply_core_snapshot(&[core_row(&second)]);
+        assert!(state.get(&first).is_none(), "the closed pane's row is gone");
+        let kept = state.get(&second).expect("the other pane's row stays");
+        assert_eq!(kept.status(), "busy");
+        assert_eq!(kept.activity.as_ref().unwrap().tool, "claude");
+    }
+
+    #[test]
+    fn a_pid_recycled_into_another_pane_never_moves_the_session_that_held_it() {
+        let home = tempfile::tempdir().unwrap();
+        let (mut state, first, second) = two_running_sessions(home.path());
+        state.apply_core_event(&frame_from_pid(
+            &first,
+            "ai.prompt_submit",
+            "UserPromptSubmit",
+            4242,
+        ));
+        state.apply_core_event(&frame_from_pid(&first, "ai.stop", "Stop", 4242));
+
+        state.apply_core_event(&frame_from_pid(
+            &second,
+            "ai.prompt_submit",
+            "UserPromptSubmit",
+            4242,
+        ));
+        assert_eq!(state.get(&second).unwrap().status(), "busy");
+        let first_entry = state.get(&first).unwrap();
+        assert_eq!(
+            first_entry.status(),
+            "idle",
+            "a new agent reusing the PID is its own session, never the old one resumed"
+        );
+        assert_eq!(first_entry.outcome.as_deref(), Some("completed"));
+    }
 }

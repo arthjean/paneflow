@@ -15,11 +15,13 @@ use std::process::ExitCode;
 
 const PANEFLOW_AI_EVENT_SOURCE_ENV: &str = "PANEFLOW_AI_EVENT_SOURCE";
 const PANEFLOW_AI_EVENT_SOURCE_INTERRUPT: &str = "interrupt";
+const PANEFLOW_SHIM_TARGET_ENV: &str = "PANEFLOW_SHIM_TARGET";
 
+mod codex;
 mod detect;
 mod exec;
 
-use detect::{detect_tool, find_real_binary};
+use detect::{detect_tool, find_real_binary, launched_as_another_shims_target, HOOK_BINARY_NAME};
 use exec::run_real;
 
 fn main() -> ExitCode {
@@ -33,12 +35,29 @@ fn main() -> ExitCode {
         return ExitCode::from(2);
     };
 
+    if launched_as_another_shims_target(
+        env::var_os(PANEFLOW_SHIM_TARGET_ENV).as_deref(),
+        env::current_exe().ok().as_deref(),
+    ) {
+        eprintln!(
+            "paneflow-shim: refusing to run '{tool}': another Paneflow shim resolved this shim \
+             as the real '{tool}'; put the real '{tool}' ahead of every Paneflow helper \
+             directory on PATH"
+        );
+        return ExitCode::from(127);
+    }
+
     let Some(real) = find_real_binary(tool) else {
         eprintln!("paneflow-shim: could not find real '{tool}' on PATH after self-exclusion");
         return ExitCode::from(127);
     };
 
     let args: Vec<OsString> = env::args_os().skip(1).collect();
+    let args = if tool == "codex" {
+        codex::pane_session_args(args, in_pane_session())
+    } else {
+        args
+    };
 
     notify_session_start(tool);
 
@@ -52,6 +71,10 @@ fn main() -> ExitCode {
     notify_session_end(tool, interrupted_exit);
 
     code
+}
+
+fn in_pane_session() -> bool {
+    env::var_os("PANEFLOW_SESSION_ID").is_some_and(|session| !session.is_empty())
 }
 
 fn is_interrupt_exit_code(exit_code: i32) -> bool {
@@ -132,11 +155,7 @@ fn notify_session_end(tool: &str, interrupted: bool) {
 pub(crate) fn locate_sibling_hook_binary() -> Option<PathBuf> {
     let exe = env::current_exe().ok()?;
     let dir = exe.parent()?;
-    #[cfg(unix)]
-    let name = "paneflow-ai-hook";
-    #[cfg(windows)]
-    let name = "paneflow-ai-hook.exe";
-    let candidate = dir.join(name);
+    let candidate = dir.join(HOOK_BINARY_NAME);
     candidate.is_file().then_some(candidate)
 }
 

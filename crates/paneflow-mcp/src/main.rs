@@ -39,7 +39,6 @@ fn main() -> ExitCode {
         return ExitCode::FAILURE;
     };
 
-    let hosted = matches!(target, ControlTarget::Host(_));
     let transport: Box<dyn IpcTransport> = match target {
         ControlTarget::Controller(socket) => Box::new(paneflow_ipc_client::IpcClient::new(socket)),
         ControlTarget::Host(endpoint) => match HostTransport::connect(&endpoint, CLIENT_NAME) {
@@ -53,18 +52,10 @@ fn main() -> ExitCode {
 
     let stdin = std::io::stdin().lock();
     let stdout = std::io::stdout().lock();
-    let scope = if hosted {
-        scope::BridgeScope::from_env_for_host()
-    } else {
-        scope::BridgeScope::from_env()
-    };
-    let scope = match scope {
-        Ok(scope) => scope,
-        Err(error) => {
-            eprintln!("paneflow-mcp: invalid read scope: {error}");
-            return ExitCode::FAILURE;
-        }
-    };
+    let scope = scope::BridgeScope::from_env();
+    if let Some(error) = scope.error() {
+        eprintln!("paneflow-mcp: every read will be refused: {error}");
+    }
     let bridge = bridge::Bridge::new(transport.as_ref(), scope);
 
     match mcp::serve(stdin, stdout, &bridge) {

@@ -59,10 +59,7 @@ pub fn paneflow_hook_program_token(command: &str) -> Option<String> {
 }
 
 fn is_paneflow_hook_program(program: &str) -> bool {
-    let basename = Path::new(program)
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or(program);
+    let basename = program.rsplit(['/', '\\']).next().unwrap_or(program);
     basename == HOOK_PROGRAM || basename == "paneflow-ai-hook.exe"
 }
 
@@ -138,4 +135,99 @@ pub fn command_program_token(command: &str) -> Option<String> {
     }
 
     (!output.is_empty()).then_some(output)
+}
+
+pub fn sh_command_word(program: &str) -> String {
+    let needs_quotes = program.starts_with('~')
+        || program.chars().any(|character| {
+            character.is_whitespace()
+                || matches!(
+                    character,
+                    '\'' | '"'
+                        | '$'
+                        | '`'
+                        | ';'
+                        | '&'
+                        | '|'
+                        | '<'
+                        | '>'
+                        | '('
+                        | ')'
+                        | '*'
+                        | '?'
+                        | '['
+                        | ']'
+                        | '#'
+                        | '{'
+                        | '}'
+                        | '!'
+                )
+        });
+    if needs_quotes {
+        format!("'{}'", program.replace('\'', "'\\''"))
+    } else {
+        program.to_string()
+    }
+}
+
+pub fn cmd_command_word(program: &str) -> String {
+    let needs_quotes = program.chars().any(|character| {
+        character.is_whitespace()
+            || matches!(
+                character,
+                '&' | '|' | '<' | '>' | '^' | '(' | ')' | '%' | '!' | ',' | ';' | '=' | '"'
+            )
+    });
+    if needs_quotes {
+        format!("\"{}\"", program.replace('"', ""))
+    } else {
+        program.to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn plain_reporter_paths_keep_their_exact_command_word() {
+        for program in [
+            "/home/u/.paneflow/bin/paneflow-ai-hook.sh",
+            r"C:\Users\jdupont\.paneflow\bin\paneflow-ai-hook.exe",
+            "/opt/paneflow-1.2+dev@x/bin/hook",
+        ] {
+            assert_eq!(sh_command_word(program), program);
+            assert_eq!(cmd_command_word(program), program);
+        }
+    }
+
+    #[test]
+    fn a_windows_profile_with_a_space_is_quoted_for_both_shells() {
+        let program = r"C:\Users\Jean Dupont\.paneflow\bin\paneflow-ai-hook.exe";
+        let cmd = format!("{} SessionStart", cmd_command_word(program));
+        assert_eq!(
+            cmd,
+            r#""C:\Users\Jean Dupont\.paneflow\bin\paneflow-ai-hook.exe" SessionStart"#
+        );
+        let sh = format!("{} SessionStart", sh_command_word(program));
+        assert_eq!(
+            sh,
+            r"'C:\Users\Jean Dupont\.paneflow\bin\paneflow-ai-hook.exe' SessionStart"
+        );
+        assert_eq!(command_program_token(&cmd).as_deref(), Some(program));
+        assert_eq!(command_program_token(&sh).as_deref(), Some(program));
+        assert!(is_paneflow_hook_command(&cmd));
+    }
+
+    #[test]
+    fn shell_specials_are_quoted_and_round_trip() {
+        let program = "/home/o'neil/(work)/paneflow-ai-hook";
+        let word = sh_command_word(program);
+        assert_eq!(word, r"'/home/o'\''neil/(work)/paneflow-ai-hook'");
+        assert_eq!(command_program_token(&word).as_deref(), Some(program));
+        assert_eq!(
+            cmd_command_word("C:\\a&b\\hook.exe"),
+            "\"C:\\a&b\\hook.exe\""
+        );
+    }
 }

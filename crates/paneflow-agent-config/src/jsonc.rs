@@ -38,6 +38,7 @@ pub fn upsert_entry(
     let root = semantic
         .as_object()
         .ok_or_else(|| JsoncError::invalid("config root must be a JSON object"))?;
+    let mut existing_entry = None;
     if let Some(container) = root.get(container_key) {
         let container = container.as_object().ok_or_else(|| {
             JsoncError::invalid(format!("config key `{container_key}` must be an object"))
@@ -45,14 +46,39 @@ pub fn upsert_entry(
         if container.get(entry_key) == Some(entry_value) {
             return Ok(None);
         }
+        existing_entry = container.get(entry_key);
+    }
+    let mut expected = root.clone();
+    if let Value::Object(container) = expected
+        .entry(container_key.to_string())
+        .or_insert_with(|| Value::Object(serde_json::Map::new()))
+    {
+        container.insert(entry_key.to_string(), entry_value.clone());
     }
 
+    let updated = match (
+        existing_entry.and_then(Value::as_object),
+        entry_value.as_object(),
+    ) {
+        (Some(_), Some(target)) => splice_entry_members(input, container_key, entry_key, target)?,
+        _ => replace_or_insert_entry(input, container_key, entry_key, entry_value)?,
+    };
+    ensure_only_entry_changed(&updated, &Value::Object(expected))?;
+    Ok(Some(updated))
+}
+
+fn replace_or_insert_entry(
+    input: &str,
+    container_key: &str,
+    entry_key: &str,
+    entry_value: &Value,
+) -> Result<String, JsoncError> {
     let document = Parser::new(input).parse_document()?;
     let root_object = document
         .object
         .as_ref()
         .ok_or_else(|| JsoncError::invalid("config root must be a JSON object"))?;
-    let updated = if let Some(container_index) = member_index(root_object, container_key) {
+    if let Some(container_index) = member_index(root_object, container_key) {
         let container = root_object.members[container_index]
             .value
             .object
@@ -61,17 +87,88 @@ pub fn upsert_entry(
                 JsoncError::invalid(format!("config key `{container_key}` must be an object"))
             })?;
         if let Some(entry_index) = member_index(container, entry_key) {
-            replace_value(input, &container.members[entry_index].value, entry_value)?
+            replace_value(input, &container.members[entry_index].value, entry_value)
         } else {
-            insert_member(input, container, entry_key, entry_value)?
+            insert_member(input, container, entry_key, entry_value)
         }
     } else {
         let mut container = serde_json::Map::new();
         container.insert(entry_key.to_string(), entry_value.clone());
-        insert_member(input, root_object, container_key, &Value::Object(container))?
-    };
-    parse(&updated)?;
-    Ok(Some(updated))
+        insert_member(input, root_object, container_key, &Value::Object(container))
+    }
+}
+
+fn splice_entry_members(
+    input: &str,
+    container_key: &str,
+    entry_key: &str,
+    target: &serde_json::Map<String, Value>,
+) -> Result<String, JsoncError> {
+    let mut current = input.to_string();
+    let budget = target.len()
+        + parse(input)?
+            .get(container_key)
+            .and_then(|container| container.get(entry_key))
+            .and_then(Value::as_object)
+            .map_or(0, serde_json::Map::len);
+    for _ in 0..=budget {
+        let semantic = parse(&current)?;
+        let existing = semantic
+            .get(container_key)
+            .and_then(|container| container.get(entry_key))
+            .and_then(Value::as_object)
+            .ok_or_else(|| JsoncError::invalid(format!("could not locate entry `{entry_key}`")))?;
+        let document = Parser::new(&current).parse_document()?;
+        let entry = entry_object(&document, container_key, entry_key)
+            .ok_or_else(|| JsoncError::invalid(format!("could not locate entry `{entry_key}`")))?;
+        let next = if let Some((key, value)) = target
+            .iter()
+            .find(|(key, value)| existing.get(key.as_str()) != Some(value))
+        {
+            match member_index(entry, key) {
+                Some(index) => replace_value(&current, &entry.members[index].value, value)?,
+                None => insert_member(&current, entry, key, value)?,
+            }
+        } else if let Some(index) = entry
+            .members
+            .iter()
+            .position(|member| !target.contains_key(&member.key))
+        {
+            remove_member(&current, entry, index)
+        } else {
+            return Ok(current);
+        };
+        current = next;
+    }
+    Err(JsoncError::invalid(format!(
+        "editing entry `{entry_key}` did not converge"
+    )))
+}
+
+fn entry_object<'n>(
+    document: &'n Node,
+    container_key: &str,
+    entry_key: &str,
+) -> Option<&'n ObjectNode> {
+    let root = document.object.as_ref()?;
+    let container = root.members[member_index(root, container_key)?]
+        .value
+        .object
+        .as_ref()?;
+    container.members[member_index(container, entry_key)?]
+        .value
+        .object
+        .as_ref()
+}
+
+fn ensure_only_entry_changed(updated: &str, expected: &Value) -> Result<(), JsoncError> {
+    if parse(updated)? == *expected {
+        Ok(())
+    } else {
+        Err(JsoncError::invalid(
+            "refusing an edit that would change more than the targeted entry",
+        ))
+    }
 }
 
 pub fn remove_entry(
@@ -92,6 +189,10 @@ pub fn remove_entry(
     if !container.contains_key(entry_key) {
         return Ok(None);
     }
+    let mut expected = root.clone();
+    if let Some(Value::Object(container)) = expected.get_mut(container_key) {
+        container.remove(entry_key);
+    }
 
     let document = Parser::new(input).parse_document()?;
     let root_object = document
@@ -111,7 +212,7 @@ pub fn remove_entry(
     let entry_index = member_index(container, entry_key)
         .ok_or_else(|| JsoncError::invalid(format!("could not locate entry `{entry_key}`")))?;
     let updated = remove_member(input, container, entry_index);
-    parse(&updated)?;
+    ensure_only_entry_changed(&updated, &Value::Object(expected))?;
     Ok(Some(updated))
 }
 
@@ -237,10 +338,13 @@ struct Member {
     comma: Option<Range<usize>>,
 }
 
+pub const MAX_DEPTH: usize = 128;
+
 struct Parser<'a> {
     input: &'a str,
     bytes: &'a [u8],
     position: usize,
+    depth: usize,
 }
 
 impl<'a> Parser<'a> {
@@ -249,7 +353,21 @@ impl<'a> Parser<'a> {
             input,
             bytes: input.as_bytes(),
             position: 0,
+            depth: 0,
         }
+    }
+
+    fn nested<T>(
+        &mut self,
+        parse: impl FnOnce(&mut Self) -> Result<T, JsoncError>,
+    ) -> Result<T, JsoncError> {
+        if self.depth >= MAX_DEPTH {
+            return Err(self.error(format!("nesting deeper than {MAX_DEPTH} levels")));
+        }
+        self.depth += 1;
+        let parsed = parse(self);
+        self.depth -= 1;
+        parsed
     }
 
     fn parse_document(mut self) -> Result<Node, JsoncError> {
@@ -266,8 +384,8 @@ impl<'a> Parser<'a> {
         self.skip_trivia()?;
         let start = self.position;
         match self.peek() {
-            Some(b'{') => self.parse_object(),
-            Some(b'[') => self.parse_array(),
+            Some(b'{') => self.nested(Self::parse_object),
+            Some(b'[') => self.nested(Self::parse_array),
             Some(b'"') => {
                 self.parse_string()?;
                 Ok(Node {
@@ -632,6 +750,81 @@ mod tests {
         let result =
             upsert_entry(SOURCE, "mcp", "paneflow", &json!({ "command": ["/old"] })).unwrap();
         assert_eq!(result, None);
+    }
+
+    #[test]
+    fn upsert_updates_managed_members_in_place_and_keeps_user_members() {
+        let source = r#"{
+  "mcp": {
+    // the bridge
+    "paneflow": {
+      "type": "local",
+      "command": ["/old"], // managed
+      "enabled": false, // user choice
+      "environment": { "A": "1" },
+      "timeout": 9000
+    },
+    "other": { "command": ["x"] }
+  }
+}
+"#;
+        let target = json!({
+            "type": "local",
+            "command": ["/new"],
+            "enabled": false,
+            "environment": { "A": "1" },
+            "timeout": 9000
+        });
+        let updated = upsert_entry(source, "mcp", "paneflow", &target)
+            .unwrap()
+            .unwrap();
+        assert!(updated.contains("// the bridge"));
+        assert!(updated.contains("// user choice"));
+        assert!(updated.contains("// managed"));
+        let parsed = parse(&updated).unwrap();
+        assert_eq!(parsed["mcp"]["paneflow"], target);
+        assert_eq!(parsed["mcp"]["other"], json!({ "command": ["x"] }));
+        assert_eq!(
+            updated.replace("\"/new\"", "\"/old\""),
+            source,
+            "only the managed member changed"
+        );
+    }
+
+    #[test]
+    fn upsert_inserts_missing_members_into_an_existing_entry() {
+        let source = "{\n  \"mcp\": {\n    \"paneflow\": {\n      \"command\": [\"/p\"],\n      \"timeout\": 5\n    }\n  }\n}\n";
+        let target = json!({ "command": ["/p"], "timeout": 5, "type": "local" });
+        let updated = upsert_entry(source, "mcp", "paneflow", &target)
+            .unwrap()
+            .unwrap();
+        assert_eq!(parse(&updated).unwrap()["mcp"]["paneflow"], target);
+    }
+
+    #[test]
+    fn semantic_guard_refuses_an_edit_that_touches_anything_else() {
+        let before = json!({ "mcp": { "paneflow": { "command": ["/p"] } }, "theme": "dark" });
+        let drifted = r#"{ "mcp": { "paneflow": { "command": ["/p"] } }, "theme": "light" }"#;
+        assert!(ensure_only_entry_changed(drifted, &before).is_err());
+        let same = r#"{ "mcp": { "paneflow": { "command": ["/p"] } }, "theme": "dark" }"#;
+        assert!(ensure_only_entry_changed(same, &before).is_ok());
+    }
+
+    #[test]
+    fn nesting_past_the_depth_limit_is_an_error_not_a_stack_overflow() {
+        let deep_arrays = format!("{}{}", "[".repeat(10_000), "]".repeat(10_000));
+        let error = parse(&deep_arrays).expect_err("too deep");
+        assert!(
+            error.to_string().contains("nesting deeper than 128"),
+            "{error}"
+        );
+
+        let deep_objects = format!("{}1{}", "{\"a\":".repeat(10_000), "}".repeat(10_000));
+        assert!(parse(&deep_objects).is_err());
+        assert!(upsert_entry(&deep_objects, "mcp", "paneflow", &json!({})).is_err());
+
+        let at_limit = format!("{}{}", "[".repeat(MAX_DEPTH), "]".repeat(MAX_DEPTH));
+        assert!(Parser::new(&at_limit).parse_document().is_ok());
     }
 
     #[test]

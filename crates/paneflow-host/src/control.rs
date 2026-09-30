@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use paneflow_config::schema::SessionId;
+use paneflow_config::schema::{SessionId, WorkspaceId};
 use paneflow_ipc_client::scrollback::{
     fit_matches_to_ipc_frame, neutralize_untrusted, paginate_scrollback, search_text,
     truncate_ipc_text, wrap_untrusted,
@@ -209,6 +209,45 @@ pub fn resolve_session(
     })
 }
 
+fn scope_workspace(
+    host: &SessionHost,
+    params: &Value,
+) -> Result<Option<Option<WorkspaceId>>, ControlError> {
+    let Some(raw) = params.get("scope_session") else {
+        return Ok(None);
+    };
+    let raw = raw
+        .as_str()
+        .map(str::trim)
+        .filter(|raw| !raw.is_empty())
+        .ok_or_else(|| ControlError::Params("'scope_session' must be a session id".to_string()))?;
+    let session = SessionId::parse(raw).map_err(|error| ControlError::Params(error.to_string()))?;
+    host.list(None)
+        .into_iter()
+        .find(|summary| summary.manifest.session == session)
+        .map(|summary| Some(summary.manifest.workspace))
+        .ok_or_else(|| {
+            ControlError::Params(format!("scope session {raw} is not hosted by this host"))
+        })
+}
+
+fn authorize_scoped_session(
+    host: &SessionHost,
+    scope: Option<&Option<WorkspaceId>>,
+    session: &SessionId,
+) -> Result<(), ControlError> {
+    let Some(workspace) = scope else {
+        return Ok(());
+    };
+    if host.inspect(session)?.manifest.workspace == *workspace {
+        Ok(())
+    } else {
+        Err(ControlError::Params(format!(
+            "session {session} is outside the workspace of the scope session"
+        )))
+    }
+}
+
 pub fn dispatch(
     host: &SessionHost,
     aliases: &mut ConnectionAliases,
@@ -244,7 +283,16 @@ fn answer(
             "host": host.identity(),
         })),
         "surface.list" => {
-            let mut sessions = host.list(None);
+            let scope = scope_workspace(host, params)?;
+            let mut sessions: Vec<SessionSummary> = host
+                .list(None)
+                .into_iter()
+                .filter(|summary| {
+                    scope
+                        .as_ref()
+                        .is_none_or(|workspace| summary.manifest.workspace == *workspace)
+                })
+                .collect();
             sessions.sort_by(|a, b| a.manifest.session.cmp(&b.manifest.session));
             aliases.refresh(&sessions);
             let surfaces: Vec<Value> = sessions
@@ -252,14 +300,20 @@ fn answer(
                 .enumerate()
                 .map(|(index, summary)| surface_value(index as u64 + 1, summary))
                 .collect();
-            Ok(json!({
+            let mut result = json!({
                 "pane_count": surfaces.len(),
                 "workspace": Value::Null,
                 "surfaces": surfaces,
-            }))
+            });
+            if let Some(workspace) = scope {
+                result["scope_workspace"] = json!(workspace);
+            }
+            Ok(result)
         }
         "surface.read" => {
+            let scope = scope_workspace(host, params)?;
             let session = resolve_session(aliases, params)?;
+            authorize_scoped_session(host, scope.as_ref(), &session)?;
             let lines = param_usize(params, "lines")
                 .map(|lines| lines.clamp(1, MAX_READ_LINES))
                 .unwrap_or(DEFAULT_READ_LINES);
@@ -316,7 +370,9 @@ fn answer(
                     "pattern exceeds {MAX_SEARCH_PATTERN_BYTES} bytes"
                 )));
             }
+            let scope = scope_workspace(host, params)?;
             let session = resolve_session(aliases, params)?;
+            authorize_scoped_session(host, scope.as_ref(), &session)?;
             let max_matches = param_usize(params, "max_matches")
                 .map(|max| max.clamp(1, MAX_SEARCH_MATCHES))
                 .unwrap_or(DEFAULT_SEARCH_MATCHES);

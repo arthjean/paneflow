@@ -72,6 +72,34 @@ pub fn without_helper_dirs(path: &str, home: &Path, retired: &[&Path]) -> Option
         .map(|joined| joined.to_string_lossy().into_owned())
 }
 
+pub fn prune_versioned_helper_dirs(home: &Path, keep: &[&str]) -> Vec<PathBuf> {
+    let root = versioned_helper_root(home);
+    let Ok(entries) = std::fs::read_dir(&root) else {
+        return Vec::new();
+    };
+    let mut removed = Vec::new();
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else {
+            continue;
+        };
+        let is_version = name.starts_with(|c: char| c.is_ascii_digit());
+        let is_dir = entry.file_type().is_ok_and(|kind| kind.is_dir());
+        if !is_version || !is_dir || keep.contains(&name) {
+            continue;
+        }
+        let path = entry.path();
+        match std::fs::remove_dir_all(&path) {
+            Ok(()) => removed.push(path),
+            Err(error) => log::warn!(
+                "paneflow: cannot remove the retired helper directory {}: {error}",
+                path.display()
+            ),
+        }
+    }
+    removed
+}
+
 pub fn prepend_to_path(existing: Option<&str>, dir: &Path) -> Option<String> {
     let mut components: Vec<PathBuf> = vec![dir.to_path_buf()];
     if let Some(existing) = existing.filter(|value| !value.is_empty()) {
@@ -158,6 +186,28 @@ mod tests {
             std::env::split_paths(&pruned).collect::<Vec<_>>(),
             vec![PathBuf::from("/usr/bin"), home.join("cache")]
         );
+    }
+
+    #[test]
+    fn retired_helper_versions_are_removed_and_live_ones_kept() {
+        let root = tempfile::tempdir().unwrap();
+        let home = root.path();
+        let bin = home.join("cache").join("bin");
+        for version in ["0.15.0", "0.16.2", "0.17.4", "0.18.0"] {
+            touch(&bin.join(version).join(file_name(AI_HOOK_STEM)));
+        }
+        touch(&bin.join("notes.txt"));
+        std::fs::create_dir_all(bin.join("scratch")).unwrap();
+
+        let mut removed = prune_versioned_helper_dirs(home, &["0.18.0", "0.17.4"]);
+        removed.sort();
+
+        assert_eq!(removed, vec![bin.join("0.15.0"), bin.join("0.16.2")]);
+        assert!(bin.join("0.17.4").is_dir());
+        assert!(bin.join("0.18.0").is_dir());
+        assert!(bin.join("notes.txt").is_file());
+        assert!(bin.join("scratch").is_dir());
+        assert!(prune_versioned_helper_dirs(&home.join("absent"), &[]).is_empty());
     }
 
     #[test]

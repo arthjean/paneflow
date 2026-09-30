@@ -121,7 +121,7 @@ mod tests {
     }
 
     #[test]
-    fn status_needs_repair_when_disabled() {
+    fn status_reports_a_user_disabled_entry_instead_of_needs_repair() {
         let dir = tempfile::TempDir::new().unwrap();
         let p = dir.path().join("config.toml");
         std::fs::write(
@@ -131,8 +131,59 @@ mod tests {
         .unwrap();
         let w = test_writer(p);
 
-        assert!(matches!(
+        assert_eq!(
             w.status(Some(Path::new("/data/paneflow-mcp"))).unwrap(),
+            StatusOutcome::DisabledByUser {
+                path: "/data/paneflow-mcp".into()
+            }
+        );
+    }
+
+    #[test]
+    fn install_writes_the_bridge_env_vars_and_status_requires_them() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let p = dir.path().join("config.toml");
+        std::fs::write(
+            &p,
+            "[mcp_servers.paneflow]\ncommand = \"/data/paneflow-mcp\"\nargs = []\n",
+        )
+        .unwrap();
+        let w = test_writer(p.clone());
+        let bridge = Path::new("/data/paneflow-mcp");
+
+        let status = w.status(Some(bridge)).unwrap();
+        let StatusOutcome::NeedsRepair { reason, .. } = &status else {
+            unreachable!("expected NeedsRepair, got {status:?}");
+        };
+        assert!(reason.contains("PANEFLOW_SESSION_ID"), "{reason}");
+        assert!(reason.contains("XDG_RUNTIME_DIR"), "{reason}");
+        assert_eq!(w.install(bridge).unwrap(), InstallOutcome::Updated);
+        let doc = std::fs::read_to_string(&p)
+            .unwrap()
+            .parse::<toml_edit::DocumentMut>()
+            .unwrap();
+        let names: Vec<&str> = doc["mcp_servers"]["paneflow"]["env_vars"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|name| name.as_str())
+            .collect();
+        assert_eq!(names, support::CODEX_BRIDGE_ENV_VARS);
+        assert_eq!(
+            w.status(Some(bridge)).unwrap(),
+            StatusOutcome::Installed {
+                path: "/data/paneflow-mcp".into()
+            }
+        );
+
+        let mut partial = doc.clone();
+        partial["mcp_servers"]["paneflow"]["env_vars"]
+            .as_array_mut()
+            .unwrap()
+            .retain(|name| name.as_str() != Some("PANEFLOW_HOST_ENDPOINT"));
+        std::fs::write(&p, partial.to_string()).unwrap();
+        assert!(matches!(
+            w.status(Some(bridge)).unwrap(),
             StatusOutcome::NeedsRepair { .. }
         ));
     }

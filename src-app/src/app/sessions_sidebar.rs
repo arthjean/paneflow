@@ -76,6 +76,13 @@ impl PaneFlowApp {
     ) {
         let idx = agent_index(agent);
         self.agent_sessions.sessions_scanning[idx] = true;
+        if !claim_scan(
+            &mut self.agent_sessions.sessions_in_flight[idx],
+            &cwd,
+            generation,
+        ) {
+            return;
+        }
         cx.spawn(async move |this, cx| {
             let scan_cwd = cwd.clone();
             let started = std::time::Instant::now();
@@ -94,6 +101,11 @@ impl PaneFlowApp {
                 elapsed
             );
             let _ = this.update(cx, |app, cx| {
+                let Some(generation) =
+                    finish_scan(&mut app.agent_sessions.sessions_in_flight[idx], &cwd)
+                else {
+                    return;
+                };
                 if should_apply_scan_result(
                     app.agent_sessions.sessions_sidebar_open,
                     app.agent_sessions.sessions_cwd.as_deref(),
@@ -842,6 +854,25 @@ fn should_apply_scan_result(
     sidebar_open && current_cwd == Some(expected_cwd) && current_generation == expected_generation
 }
 
+fn claim_scan(in_flight: &mut Option<(String, u64)>, cwd: &str, generation: u64) -> bool {
+    match in_flight {
+        Some((running_cwd, running_generation)) if running_cwd == cwd => {
+            *running_generation = generation;
+            false
+        }
+        _ => {
+            *in_flight = Some((cwd.to_string(), generation));
+            true
+        }
+    }
+}
+
+fn finish_scan(in_flight: &mut Option<(String, u64)>, cwd: &str) -> Option<u64> {
+    in_flight
+        .take_if(|(running_cwd, _)| running_cwd == cwd)
+        .map(|(_, generation)| generation)
+}
+
 pub(crate) fn agent_index(agent: SessionAgent) -> usize {
     agent.index()
 }
@@ -1078,6 +1109,31 @@ mod tests {
     fn older_sessions_hidden_label_pluralizes() {
         assert_eq!(older_sessions_hidden_label(1), "1 older session hidden");
         assert_eq!(older_sessions_hidden_label(2), "2 older sessions hidden");
+    }
+
+    #[test]
+    fn reopening_on_the_same_cwd_adopts_the_scan_already_running() {
+        let mut in_flight = None;
+        assert!(claim_scan(&mut in_flight, "/repo", 1));
+        assert!(
+            !claim_scan(&mut in_flight, "/repo", 2),
+            "a second open for the same agent and cwd starts no second scan"
+        );
+        let generation = finish_scan(&mut in_flight, "/repo").expect("the running scan");
+        assert!(
+            should_apply_scan_result(true, Some("/repo"), "/repo", 2, generation),
+            "the adopted scan answers the newer open"
+        );
+        assert!(in_flight.is_none());
+
+        assert!(claim_scan(&mut in_flight, "/repo", 3));
+        assert!(claim_scan(&mut in_flight, "/other", 4));
+        assert_eq!(
+            finish_scan(&mut in_flight, "/repo"),
+            None,
+            "a scan for a cwd left behind never claims the newer one's slot"
+        );
+        assert_eq!(finish_scan(&mut in_flight, "/other"), Some(4));
     }
 
     #[test]

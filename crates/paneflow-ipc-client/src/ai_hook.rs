@@ -11,16 +11,6 @@ pub const METHOD_STOP: &str = "ai.stop";
 pub const METHOD_TOOL_USE: &str = "ai.tool_use";
 pub const METHOD_EXIT: &str = "ai.exit";
 
-pub const METHODS: &[&str] = &[
-    METHOD_SESSION_START,
-    METHOD_PROMPT_SUBMIT,
-    METHOD_TOOL_USE,
-    METHOD_NOTIFICATION,
-    METHOD_STOP,
-    METHOD_EXIT,
-    METHOD_SESSION_END,
-];
-
 pub const DEFAULT_TOOL: &str = "claude";
 pub const EVENT_REORDER_TOLERANCE_MS: u64 = 5_000;
 pub const MAX_TOOL_NAME_BYTES: usize = 64;

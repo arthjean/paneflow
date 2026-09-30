@@ -1,10 +1,7 @@
 use crate::agent_launcher::TerminalAgent;
 use std::collections::{HashMap, HashSet};
 
-pub use paneflow_ipc_client::agent::{
-    AgentLifecycleEvent, AgentState, AgentStateSource, FieldUpdate, SessionTransition,
-    accepts_event, accepts_source, next_waiting_since, reduce_lifecycle_event,
-};
+pub use paneflow_ipc_client::agent::{AgentState, AgentStateSource};
 
 #[derive(Debug, Clone)]
 pub struct AgentSession {
@@ -21,6 +18,27 @@ pub struct AgentSession {
     pub last_event_at_ms: Option<u64>,
     pub pending_tab_title: Option<String>,
     pub auto_naming: crate::auto_naming::SessionNaming,
+}
+
+const SURFACE_KEY_BAND: u32 = 0x8000_0000;
+
+pub fn surface_session_key(surface_id: u64) -> u32 {
+    SURFACE_KEY_BAND | (surface_id as u32 & !SURFACE_KEY_BAND)
+}
+
+pub fn insert_session_for_surface(
+    sessions: &mut HashMap<u32, AgentSession>,
+    key: u32,
+    session: AgentSession,
+) {
+    let taken_by_another_surface = sessions
+        .get(&key)
+        .is_some_and(|held| held.surface_id != session.surface_id);
+    let key = match session.surface_id {
+        Some(surface_id) if taken_by_another_surface => surface_session_key(surface_id),
+        _ => key,
+    };
+    sessions.insert(key, session);
 }
 
 impl AgentSession {
@@ -150,15 +168,6 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn the_shared_reducer_is_the_one_the_host_owns() {
-        assert_eq!(
-            reduce_lifecycle_event(AgentLifecycleEvent::PromptSubmit),
-            paneflow_ipc_client::agent::reduce_lifecycle_event(AgentLifecycleEvent::PromptSubmit)
-        );
-        assert_eq!(AgentState::Thinking.wire_str(), "thinking");
-    }
 
     fn s(tool: TerminalAgent, state: AgentState) -> AgentSession {
         AgentSession::new(tool, state)

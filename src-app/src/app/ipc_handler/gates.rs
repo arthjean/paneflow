@@ -65,7 +65,7 @@ pub(super) fn send_text_gate_open(scripting_enabled: bool, unrestricted: bool) -
 }
 
 pub(super) fn capabilities_value(scripting: bool, orchestration: bool) -> serde_json::Value {
-    let mut methods = vec![
+    let methods = [
         "system.ping",
         "system.capabilities",
         "system.identify",
@@ -88,7 +88,6 @@ pub(super) fn capabilities_value(scripting: bool, orchestration: bool) -> serde_
         "fleet.list",
         "events.subscribe",
     ];
-    methods.extend_from_slice(paneflow_ipc_client::ai_hook::METHODS);
     serde_json::json!({
         "scripting": scripting,
         "orchestration": orchestration,
@@ -99,6 +98,20 @@ pub(super) fn capabilities_value(scripting: bool, orchestration: bool) -> serde_
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn capabilities_never_advertise_the_retired_ai_methods() {
+        let value = capabilities_value(true, true);
+        let methods = value["methods"].as_array().expect("methods");
+        assert!(methods.iter().any(|method| method == "events.subscribe"));
+        assert!(
+            methods
+                .iter()
+                .filter_map(serde_json::Value::as_str)
+                .all(|method| !method.starts_with("ai.")),
+            "the app socket answers ai.* with -32601, so it never lists them"
+        );
+    }
 
     #[test]
     fn send_text_rejected_when_scripting_disabled() {

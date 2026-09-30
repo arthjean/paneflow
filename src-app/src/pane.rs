@@ -299,7 +299,7 @@ pub struct Pane {
     pub(crate) detached: Option<crate::app::detached_panes::DetachedPanePlacement>,
     surfaces: Vec<PaneSurface>,
     active_surface: usize,
-    attention: Option<String>,
+    attention: bool,
     errored: bool,
     search_hits: Option<usize>,
     pub zoomed: bool,
@@ -357,7 +357,7 @@ impl Pane {
             surfaces,
             detached: None,
             active_surface,
-            attention: None,
+            attention: false,
             errored: false,
             search_hits: None,
             zoomed: false,
@@ -479,7 +479,7 @@ impl Pane {
         cx.notify();
     }
 
-    pub fn set_attention(&mut self, attention: Option<String>, cx: &mut Context<Self>) {
+    pub fn set_attention(&mut self, attention: bool, cx: &mut Context<Self>) {
         if self.attention != attention {
             self.attention = attention;
             cx.notify();
@@ -1106,7 +1106,7 @@ impl Pane {
     fn render_header(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let ui = pane_colors();
 
-        let has_attention = self.attention.is_some();
+        let has_attention = self.attention;
         let has_errored = self.errored;
         let status_dot = (has_errored || has_attention).then(|| {
             div()
@@ -1998,7 +1998,7 @@ impl Render for Pane {
             .children(dim_layer)
             .child(overlay);
 
-        let has_attention = self.attention.is_some();
+        let has_attention = self.attention;
         let attention_color = pane_colors().vc_conflict;
         let composer = self.render_composer_overlay(cx);
         let card_radius = if self.is_detached() {

@@ -80,6 +80,21 @@ pub(crate) fn find_terminal_by_surface_id(
     None
 }
 
+fn workspace_idx_holding_surface(
+    workspaces: &[Workspace],
+    surface_id: u64,
+    cx: &App,
+) -> Option<usize> {
+    workspaces.iter().position(|ws| {
+        ws.tabs().iter().any(|tab| {
+            [tab.root.as_ref(), tab.saved_layout.as_ref()]
+                .into_iter()
+                .flatten()
+                .any(|tree| find_terminal_in_tree(tree, surface_id, cx).is_some())
+        })
+    })
+}
+
 pub(crate) fn tab_for_surface(ws: &Workspace, surface_id: u64, cx: &App) -> Option<(usize, usize)> {
     ws.tabs().iter().enumerate().find_map(|(idx, tab)| {
         let panes = tab.collect_panes();
@@ -280,6 +295,32 @@ fn requested_workspace_id(params: &serde_json::Value) -> Result<Option<u64>, Jso
     value.as_u64().map(Some).ok_or_else(|| {
         JsonRpcError::invalid_params("'workspace_id' must be a non-negative integer")
     })
+}
+
+fn scoped_workspace_id(
+    params: &serde_json::Value,
+    session_workspace: impl FnOnce(&str) -> Option<u64>,
+) -> Result<Option<u64>, JsonRpcError> {
+    let Some(value) = params.get("scope_session") else {
+        return requested_workspace_id(params);
+    };
+    let session = value
+        .as_str()
+        .filter(|session| !session.trim().is_empty())
+        .ok_or_else(|| JsonRpcError::invalid_params("'scope_session' must be a session id"))?;
+    session_workspace(session.trim()).map(Some).ok_or_else(|| {
+        JsonRpcError::invalid_params(format!(
+            "scope session {session} is not open in any workspace of this window"
+        ))
+    })
+}
+
+fn session_workspace_id(workspaces: &[Workspace], session: &str, cx: &App) -> Option<u64> {
+    workspace_surface_entries(workspaces, cx)
+        .iter()
+        .find(|entry| entry.entity.read(cx).terminal.session_id.to_string() == session)
+        .and_then(|entry| workspaces.get(entry.workspace_idx))
+        .map(|workspace| workspace.id)
 }
 
 fn surface_matches_workspace(surface: &SurfaceMeta, workspace_id: Option<u64>) -> bool {
@@ -660,7 +701,17 @@ impl PaneFlowApp {
     }
 
     fn surface_workspace_idx(&self, surface_id: u64, cx: &App) -> Option<usize> {
-        find_pane_by_surface_id(&self.workspaces, surface_id, cx).map(|loc| loc.workspace_idx)
+        workspace_idx_holding_surface(&self.workspaces, surface_id, cx)
+    }
+
+    fn scope_workspace_id(
+        &self,
+        params: &serde_json::Value,
+        cx: &App,
+    ) -> Result<Option<u64>, JsonRpcError> {
+        scoped_workspace_id(params, |session| {
+            session_workspace_id(&self.workspaces, session, cx)
+        })
     }
 
     fn workspace_id_for_workspace_idx(&self, idx: usize) -> Option<u64> {
@@ -721,7 +772,7 @@ impl PaneFlowApp {
         cx: &App,
     ) -> Result<gpui::Entity<TerminalView>, JsonRpcError> {
         let terminal = self.resolve_surface(params, cx)?;
-        let expected_workspace_id = requested_workspace_id(params)?;
+        let expected_workspace_id = self.scope_workspace_id(params, cx)?;
         let surface_id = terminal.entity_id().as_u64();
         let actual_workspace_id = self
             .surface_workspace_idx(surface_id, cx)
@@ -844,7 +895,7 @@ impl PaneFlowApp {
     ) -> serde_json::Value {
         match method {
             "surface.list" => {
-                let requested_workspace_id = match requested_workspace_id(params) {
+                let requested_workspace_id = match self.scope_workspace_id(params, cx) {
                     Ok(workspace_id) => workspace_id,
                     Err(error) => return error.into_value(),
                 };
@@ -865,6 +916,7 @@ impl PaneFlowApp {
                 serde_json::json!({
                     "pane_count": count,
                     "workspace": workspace,
+                    "scope_workspace_id": requested_workspace_id,
                     "surfaces": surfaces,
                 })
             }
@@ -1117,6 +1169,129 @@ impl PaneFlowApp {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[gpui::test]
+    fn a_moved_tab_takes_its_session_scope_to_the_destination_workspace(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        use gpui::AppContext as _;
+
+        let cx = cx.add_empty_window();
+        let session = paneflow_config::schema::SessionId::new();
+        let terminal = cx.new(|cx| TerminalView::display_only_for_test(1, cx));
+        terminal.update(cx, |view, _| view.terminal.session_id = session.clone());
+        let other = cx.new(|cx| TerminalView::display_only_for_test(1, cx));
+        let pane = cx.new(|cx| crate::pane::Pane::new(terminal.clone(), 1, cx));
+        let other_pane = cx.new(|cx| crate::pane::Pane::new(other, 1, cx));
+        let tab = |name: &str, pane| crate::workspace::Tab::new(name, Some(LayoutTree::Leaf(pane)));
+        let params = serde_json::json!({ "scope_session": session.to_string() });
+
+        let before = vec![
+            Workspace::restored_with_id(
+                1,
+                "a",
+                Default::default(),
+                vec![tab("t", pane.clone())],
+                0,
+            ),
+            Workspace::restored_with_id(
+                2,
+                "b",
+                Default::default(),
+                vec![tab("o", other_pane.clone())],
+                0,
+            ),
+        ];
+        let scope = cx
+            .update(|_, cx| scoped_workspace_id(&params, |s| session_workspace_id(&before, s, cx)));
+        assert_eq!(scope.unwrap(), Some(1));
+
+        let after = vec![
+            Workspace::restored_with_id(1, "a", Default::default(), vec![], 0),
+            Workspace::restored_with_id(
+                2,
+                "b",
+                Default::default(),
+                vec![tab("o", other_pane), tab("t", pane)],
+                0,
+            ),
+        ];
+        let scope = cx
+            .update(|_, cx| scoped_workspace_id(&params, |s| session_workspace_id(&after, s, cx)));
+        assert_eq!(scope.unwrap(), Some(2));
+    }
+
+    #[gpui::test]
+    fn a_stacked_terminal_that_is_not_active_still_belongs_to_its_workspace(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        use gpui::AppContext as _;
+
+        let cx = cx.add_empty_window();
+        let behind = cx.new(|cx| TerminalView::display_only_for_test(1, cx));
+        let front = cx.new(|cx| TerminalView::display_only_for_test(1, cx));
+        let pane = cx.new(|cx| crate::pane::Pane::new(behind.clone(), 1, cx));
+        pane.update(cx, |pane, cx| {
+            pane.push_surface(crate::pane::PaneSurface::Terminal(front.clone()), cx);
+        });
+        let other = cx.new(|cx| TerminalView::display_only_for_test(1, cx));
+        let other_pane = cx.new(|cx| crate::pane::Pane::new(other, 1, cx));
+        let tab = |name: &str, pane| crate::workspace::Tab::new(name, Some(LayoutTree::Leaf(pane)));
+        let workspaces = vec![
+            Workspace::restored_with_id(1, "a", Default::default(), vec![tab("o", other_pane)], 0),
+            Workspace::restored_with_id(2, "b", Default::default(), vec![tab("t", pane)], 0),
+        ];
+        let behind_id = behind.entity_id().as_u64();
+        let front_id = front.entity_id().as_u64();
+
+        cx.update(|_, cx| {
+            assert_eq!(
+                workspace_idx_holding_surface(&workspaces, behind_id, cx),
+                Some(1),
+                "a listed terminal stays readable under its workspace scope when another \
+                 surface of its pane is in front"
+            );
+            assert_eq!(
+                workspace_idx_holding_surface(&workspaces, front_id, cx),
+                Some(1)
+            );
+            assert_eq!(
+                workspace_idx_holding_surface(&workspaces, u64::MAX, cx),
+                None
+            );
+        });
+    }
+
+    #[test]
+    fn a_scope_session_resolves_to_the_workspace_that_holds_it_now() {
+        let params = serde_json::json!({ "scope_session": "0a9e5266", "workspace_id": 1 });
+        assert_eq!(
+            scoped_workspace_id(&params, |session| (session == "0a9e5266").then_some(7)).unwrap(),
+            Some(7),
+            "the live mapping wins over any workspace_id the caller sends"
+        );
+        let moved = serde_json::json!({ "scope_session": "0a9e5266" });
+        assert_eq!(
+            scoped_workspace_id(&moved, |_| Some(9)).unwrap(),
+            Some(9),
+            "each call re-derives the scope, so a moved tab follows its session"
+        );
+        assert!(scoped_workspace_id(&moved, |_| None).is_err());
+        assert!(
+            scoped_workspace_id(&serde_json::json!({ "scope_session": 3 }), |_| Some(1)).is_err()
+        );
+        assert!(
+            scoped_workspace_id(&serde_json::json!({ "scope_session": " " }), |_| Some(1)).is_err()
+        );
+        assert_eq!(
+            scoped_workspace_id(&serde_json::json!({ "workspace_id": 4 }), |_| None).unwrap(),
+            Some(4)
+        );
+        assert_eq!(
+            scoped_workspace_id(&serde_json::json!({}), |_| None).unwrap(),
+            None
+        );
+    }
 
     #[test]
     fn agent_from_command_uses_executable_stem() {

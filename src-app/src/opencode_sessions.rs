@@ -12,7 +12,7 @@ fn read_sessions_with_program(program: &str, cwd: &str) -> (Vec<SessionMeta>, us
     let Some(stdout) = crate::command_sessions::run_list_command(
         program,
         &["session", "list", "--format", "json"],
-        None,
+        Some(cwd),
         OPENCODE_STDOUT_CAP,
         "OpenCode",
     ) else {
@@ -27,7 +27,20 @@ fn parse_sessions(stdout: &[u8], cwd: &str) -> (Vec<SessionMeta>, usize) {
     }
     let array: Vec<Value> = match serde_json::from_slice(stdout) {
         Ok(Value::Array(arr)) => arr,
-        Ok(_) | Err(_) => return (Vec::new(), 0),
+        Ok(_) => {
+            log::warn!(
+                target: "paneflow_app::opencode_sessions",
+                "opencode session list printed JSON that is not an array; OpenCode sessions will be empty"
+            );
+            return (Vec::new(), 0);
+        }
+        Err(error) => {
+            log::warn!(
+                target: "paneflow_app::opencode_sessions",
+                "opencode session list printed invalid JSON ({error}); OpenCode sessions will be empty"
+            );
+            return (Vec::new(), 0);
+        }
     };
 
     let sessions = array
@@ -106,6 +119,28 @@ mod tests {
     use super::*;
 
     const FIXTURE: &str = include_str!("../tests/fixtures/opencode-session-list.json");
+
+    #[cfg(unix)]
+    #[test]
+    fn the_session_list_runs_in_the_workspace_directory() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let bin = tempfile::tempdir().unwrap();
+        let workspace = tempfile::tempdir().unwrap();
+        let program = bin.path().join("opencode");
+        std::fs::write(
+            &program,
+            "#!/bin/sh\nprintf '[{\"id\":\"ses_here\",\"directory\":\"%s\",\"updated\":1}]' \"$PWD\"\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let cwd = workspace.path().canonicalize().unwrap();
+        let cwd = cwd.to_str().unwrap();
+
+        let (sessions, _) = read_sessions_with_program(program.to_str().unwrap(), cwd);
+        assert_eq!(sessions.len(), 1, "the CLI saw the workspace as its cwd");
+        assert_eq!(sessions[0].session_id, "ses_here");
+    }
 
     #[test]
     fn parse_sessions_happy_path_extracts_real_cli_record() {

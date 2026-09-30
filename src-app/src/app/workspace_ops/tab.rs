@@ -524,6 +524,8 @@ impl PaneFlowApp {
         let Some(tab) = self.workspaces[source_ws_idx].close_tab(tab_idx) else {
             return;
         };
+        let surfaces = tab.surface_ids(cx);
+        self.hand_surfaces_between(source_ws_idx, dest_ws_idx, &surfaces);
         for pane in tab.collect_panes() {
             pane.update(cx, |pane, cx| {
                 pane.workspace_id = dest_id;
@@ -542,6 +544,28 @@ impl PaneFlowApp {
         self.focus_workspace_tab(dest_ws_idx, dest_tab_idx, window, cx);
         self.save_session(cx);
         cx.notify();
+    }
+
+    fn hand_surfaces_between(
+        &mut self,
+        source_ws_idx: usize,
+        dest_ws_idx: usize,
+        surfaces: &std::collections::HashSet<u64>,
+    ) {
+        if source_ws_idx == dest_ws_idx
+            || source_ws_idx >= self.workspaces.len()
+            || dest_ws_idx >= self.workspaces.len()
+        {
+            return;
+        }
+        let (source, dest) = if source_ws_idx < dest_ws_idx {
+            let (head, tail) = self.workspaces.split_at_mut(dest_ws_idx);
+            (&mut head[source_ws_idx], &mut tail[0])
+        } else {
+            let (head, tail) = self.workspaces.split_at_mut(source_ws_idx);
+            (&mut tail[0], &mut head[dest_ws_idx])
+        };
+        source.hand_surfaces_to(dest, surfaces);
     }
 
     pub(crate) fn move_pane_to_new_tab(
@@ -633,6 +657,11 @@ impl PaneFlowApp {
             pane.workspace_id = dest_id;
             cx.notify();
         });
+        let surfaces: std::collections::HashSet<u64> = pane
+            .read(cx)
+            .terminals()
+            .map(|terminal| terminal.entity_id().as_u64())
+            .collect();
 
         if !self.open_pane_in_new_workspace_tab(dest_ws_idx, pane.clone(), cx) {
             log::warn!("pane move: destination refused the tab after the cap check");
@@ -650,6 +679,7 @@ impl PaneFlowApp {
             cx.notify();
             return;
         }
+        self.hand_surfaces_between(src_ws_idx, dest_ws_idx, &surfaces);
 
         let last = self.workspaces[dest_ws_idx].tab_count().saturating_sub(1);
         if let (Some(from), Some(to)) = (

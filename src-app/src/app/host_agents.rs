@@ -259,6 +259,39 @@ fn projected_session(
     Some(session)
 }
 
+pub(crate) fn seed_projected_session(
+    sessions: &mut std::collections::HashMap<u32, AgentSession>,
+    row: &HostAgentRow,
+    surface_id: u64,
+    start_time: impl Fn(u32) -> Option<u64>,
+) -> bool {
+    let held_key = sessions
+        .iter()
+        .find(|(_, session)| session.surface_id == Some(surface_id))
+        .map(|(key, _)| *key);
+    let previous = held_key.and_then(|key| sessions.get(&key));
+    let Some(mut session) = projected_session(row, surface_id, previous) else {
+        return held_key.and_then(|key| sessions.remove(&key)).is_some();
+    };
+    let key = row
+        .pid
+        .filter(|pid| *pid <= i32::MAX as u32)
+        .filter(|pid| {
+            sessions
+                .get(pid)
+                .is_none_or(|held| held.surface_id == Some(surface_id))
+        })
+        .unwrap_or_else(|| crate::ai_types::surface_session_key(surface_id));
+    if held_key != Some(key) || session.proc_start.is_none() {
+        session.proc_start = (key <= i32::MAX as u32).then(|| start_time(key)).flatten();
+    }
+    if let Some(old_key) = held_key.filter(|old_key| *old_key != key) {
+        sessions.remove(&old_key);
+    }
+    sessions.insert(key, session);
+    true
+}
+
 fn follow_once(endpoint: &std::path::Path, tx: &SyncSender<HostAgentFrame>) -> Result<(), String> {
     let mut control = HostControl::connect(endpoint, CLIENT_NAME)?;
     let capabilities: Vec<String> = control.identity()["capabilities"]
@@ -476,30 +509,17 @@ impl PaneFlowApp {
         workspace_id: u64,
         surface_id: u64,
     ) -> bool {
-        let Some(ws) = self.workspaces.iter_mut().find(|ws| ws.id == workspace_id) else {
-            return false;
-        };
-        let held_key = ws
-            .agent_sessions
-            .iter()
-            .find(|(_, session)| session.surface_id == Some(surface_id))
-            .map(|(key, _)| *key);
-        let previous = held_key.and_then(|key| ws.agent_sessions.get(&key));
-        let Some(session) = projected_session(row, surface_id, previous) else {
-            if let Some(key) = held_key {
-                ws.agent_sessions.remove(&key);
-                return true;
-            }
-            return false;
-        };
-        let key = held_key.or(row.pid).unwrap_or(surface_id as u32);
-        if let Some(old_key) = held_key
-            && old_key != key
-        {
-            ws.agent_sessions.remove(&old_key);
-        }
-        ws.agent_sessions.insert(key, session);
-        true
+        self.workspaces
+            .iter_mut()
+            .find(|ws| ws.id == workspace_id)
+            .is_some_and(|ws| {
+                seed_projected_session(
+                    &mut ws.agent_sessions,
+                    row,
+                    surface_id,
+                    paneflow_host::process::process_start_time,
+                )
+            })
     }
 
     pub(crate) fn seed_surface_from_host(
@@ -608,8 +628,10 @@ impl PaneFlowApp {
                 &workspace.title,
                 exit_code,
                 &self.cached_config,
-                self.session_is_seen(workspace_id, row.pid.unwrap_or(surface_id as u32), cx)
-                    || workspace.muted,
+                crate::app::agent_status::completion_was_seen(
+                    self.surfaces_under_user_eye(workspace_id, cx).as_ref(),
+                    Some(surface_id),
+                ) || workspace.muted,
                 cx.background_executor().clone(),
             );
         }
@@ -876,22 +898,18 @@ mod tests {
         });
         let params = legacy_ai_params(&frame, 7, 11).expect("params");
         assert_eq!(params["activity_source"], "screen");
-        assert!(
-            !crate::app::ipc_handler::frame_is_hook_sourced(&params),
-            "a screen verdict never counts as a completion"
-        );
         let hooked = legacy_ai_params(
             &json!({"kind": "ai.stop", "tool": "claude", "activity_source": "hooks"}),
             7,
             11,
         )
         .expect("params");
-        assert!(crate::app::ipc_handler::frame_is_hook_sourced(&hooked));
+        assert_eq!(hooked["activity_source"], "hooks");
         let silent =
             legacy_ai_params(&json!({"kind": "ai.stop", "tool": "claude"}), 7, 11).expect("params");
         assert!(
-            crate::app::ipc_handler::frame_is_hook_sourced(&silent),
-            "a frame with no source is a direct hook client, as before the worker"
+            silent["activity_source"].is_null(),
+            "a frame with no source is never labelled as a hook"
         );
     }
 
@@ -981,6 +999,110 @@ mod tests {
         assert_eq!(
             WorkerNotification::from_frame(&json!({"notify": {"kind": "alert"}})),
             None
+        );
+    }
+
+    fn projected_row(tool: Option<&str>, pid: Option<u32>) -> HostAgentRow {
+        let activity = tool.map(|tool| {
+            json!({"tool": tool, "state": "thinking", "source": "hook", "pid": pid, "updated_at_ms": 1})
+        });
+        row_from_snapshot(&json!({
+            "session": SessionId::new().to_string(),
+            "live": true,
+            "activity": activity,
+        }))
+        .expect("row")
+    }
+
+    fn surfaces_of(sessions: &std::collections::HashMap<u32, AgentSession>) -> Vec<(u32, u64)> {
+        let mut held: Vec<(u32, u64)> = sessions
+            .iter()
+            .filter_map(|(key, session)| session.surface_id.map(|surface| (*key, surface)))
+            .collect();
+        held.sort_unstable();
+        held
+    }
+
+    #[test]
+    fn two_claude_sessions_keep_two_rows_and_closing_pane_a_leaves_b_on_screen() {
+        let mut sessions = std::collections::HashMap::new();
+        let start = |pid: u32| Some(u64::from(pid) * 10);
+        assert!(seed_projected_session(
+            &mut sessions,
+            &projected_row(Some("claude"), Some(101)),
+            1,
+            start
+        ));
+        assert!(seed_projected_session(
+            &mut sessions,
+            &projected_row(Some("claude"), Some(102)),
+            2,
+            start
+        ));
+        assert_eq!(surfaces_of(&sessions), vec![(101, 1), (102, 2)]);
+        assert_eq!(sessions[&101].proc_start, Some(1010));
+
+        assert!(seed_projected_session(
+            &mut sessions,
+            &projected_row(None, None),
+            1,
+            start
+        ));
+        assert_eq!(surfaces_of(&sessions), vec![(102, 2)]);
+        assert_eq!(sessions[&102].tool, TerminalAgent::ClaudeCode);
+    }
+
+    #[test]
+    fn a_recycled_pid_on_another_surface_never_replaces_the_row_that_held_it() {
+        let mut sessions = std::collections::HashMap::new();
+        let probed = std::cell::RefCell::new(Vec::new());
+        let start = |pid: u32| {
+            probed.borrow_mut().push(pid);
+            Some(7)
+        };
+        seed_projected_session(
+            &mut sessions,
+            &projected_row(Some("claude"), Some(4242)),
+            1,
+            start,
+        );
+        seed_projected_session(
+            &mut sessions,
+            &projected_row(Some("claude"), Some(4242)),
+            2,
+            start,
+        );
+
+        let band = crate::ai_types::surface_session_key(2);
+        assert_eq!(surfaces_of(&sessions), vec![(4242, 1), (band, 2)]);
+        assert_eq!(
+            sessions[&band].proc_start, None,
+            "a surface key is never probed"
+        );
+        assert_eq!(*probed.borrow(), vec![4242]);
+
+        seed_projected_session(
+            &mut sessions,
+            &projected_row(Some("claude"), Some(5151)),
+            1,
+            start,
+        );
+        assert_eq!(surfaces_of(&sessions), vec![(5151, 1), (band, 2)]);
+        assert_eq!(
+            *probed.borrow(),
+            vec![4242, 5151],
+            "a new agent on the surface pins its own start time"
+        );
+        seed_projected_session(
+            &mut sessions,
+            &projected_row(Some("claude"), Some(5151)),
+            1,
+            start,
+        );
+        assert_eq!(
+            probed.borrow().len(),
+            2,
+            "an unchanged agent is not probed again"
         );
     }
 }

@@ -8,10 +8,11 @@ description = "Dependency-light shared primitives for safely editing coding-agen
 
 [features]
 default = ["config-io"]
-config-io = ["dep:dirs", "dep:paneflow-home"]
+config-io = ["dep:dirs", "dep:log", "dep:paneflow-home"]
 
 [dependencies]
 dirs = { workspace = true, optional = true }
+log = { workspace = true, optional = true }
 paneflow-home = { workspace = true, optional = true }
 serde_json.workspace = true
 

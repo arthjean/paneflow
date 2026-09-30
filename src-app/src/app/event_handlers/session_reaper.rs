@@ -42,7 +42,7 @@ fn pid_matches(pid: u32, pinned_start: Option<u64>) -> bool {
         paneflow_host::process::process_start_time(pid),
     ) {
         (Some(pinned), Some(current)) => pinned == current,
-        _ => true,
+        _ => false,
     }
 }
 
@@ -237,6 +237,19 @@ mod tests {
     use crate::agent_launcher::TerminalAgent;
     use crate::ai_types::{AgentSession, AgentState};
     use std::collections::HashSet;
+
+    #[test]
+    fn a_live_pid_without_a_pinned_start_time_is_no_proof_of_life() {
+        let own = std::process::id();
+        let started = paneflow_host::process::process_start_time(own);
+        assert!(started.is_some());
+        assert!(!pid_matches(own, None));
+        assert!(pid_matches(own, started));
+        assert!(
+            !pid_matches(own, started.map(|start| start + 1)),
+            "a recycled PID carries another start time"
+        );
+    }
 
     #[test]
     fn surface_purge_drops_sessions_bound_to_dying_surface() {

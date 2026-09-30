@@ -25,6 +25,9 @@ pub enum StatusKind {
         path: Option<String>,
         reason: String,
     },
+    DisabledByUser {
+        path: String,
+    },
     NotInstalled,
     Error(String),
 }
@@ -126,6 +129,9 @@ pub(crate) fn status_with(
                     }
                     Ok(StatusOutcome::NeedsRepair { path, reason }) => {
                         StatusKind::NeedsRepair { path, reason }
+                    }
+                    Ok(StatusOutcome::DisabledByUser { path }) => {
+                        StatusKind::DisabledByUser { path }
                     }
                     Ok(StatusOutcome::NotInstalled) => StatusKind::NotInstalled,
                     Err(e) => StatusKind::Error(format!("{e:#}")),

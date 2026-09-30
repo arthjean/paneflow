@@ -14,7 +14,9 @@ pub mod runtime_catalog;
 mod build_support;
 
 #[cfg(feature = "config-io")]
-pub use io::{claude_config_dir, home_dir};
+pub use io::{
+    absolute_env_dir, claude_config_dir, codex_home, codex_home_from, home_dir, ClaudePaths,
+};
 #[cfg(feature = "config-io")]
 pub use lock::{lock_config, ConfigLock};
 pub use runtime_catalog::*;

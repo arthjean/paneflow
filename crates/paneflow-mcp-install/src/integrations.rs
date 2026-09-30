@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::{anyhow, bail, Context, Result};
-use paneflow_agent_config::claude_hooks::MANAGED_MARKER;
+use paneflow_agent_config::claude_hooks::{cmd_command_word, sh_command_word, MANAGED_MARKER};
 use paneflow_agent_config::{
     runtime_by_command_alias, runtime_by_slug, Runtime, RuntimeHookAdapter,
     RuntimeLifecycleAuthority, RUNTIMES,
@@ -73,20 +73,16 @@ struct ConfigPaths {
 
 impl ConfigPaths {
     fn resolve() -> Result<Self> {
-        let home = dirs::home_dir().ok_or_else(|| anyhow!("cannot resolve the user home"))?;
         let marker_home = paneflow_home::paneflow_home()
             .ok_or_else(|| anyhow!("cannot resolve PANEFLOW_HOME"))?;
-        let claude_settings = paneflow_agent_config::claude_config_dir()
-            .ok_or_else(|| anyhow!("cannot resolve the Claude config directory"))?
-            .join("settings.json");
-        let codex_home = std::env::var_os("CODEX_HOME")
-            .map(PathBuf::from)
-            .filter(|path| !path.as_os_str().is_empty())
-            .unwrap_or_else(|| home.join(".codex"));
+        let claude = paneflow_agent_config::ClaudePaths::current()
+            .ok_or_else(|| anyhow!("cannot resolve the Claude config directory"))?;
+        let codex_home = paneflow_agent_config::codex_home()
+            .ok_or_else(|| anyhow!("cannot resolve the Codex home"))?;
         Ok(Self {
             marker_home,
-            claude_settings,
-            claude_mcp: home.join(".claude.json"),
+            claude_settings: claude.settings(),
+            claude_mcp: claude.global_config,
             codex_hooks: codex_home.join("hooks.json"),
             codex_config: codex_home.join("config.toml"),
         })
@@ -573,12 +569,12 @@ fn install_codex(
     refuse_symlink(&paths.codex_config)?;
     io::with_config_lock(&paths.codex_config, || {
         let mut document = merge::read_toml_or_default(&paths.codex_config)?;
+        let bridge = binaries.bridge_binary.display().to_string();
         merge::upsert_toml_entry(
             &mut document,
-            "mcp_servers",
-            "paneflow",
-            &binaries.bridge_binary.display().to_string(),
-            &[],
+            crate::agents::CODEX_TABLE,
+            crate::agents::MCP_ENTRY,
+            &crate::agents::codex_entry(&bridge),
         )?;
         io::write_if_changed_unlocked(&paths.codex_config, &merge::toml_to_bytes(&document))?;
         Ok(())
@@ -702,8 +698,14 @@ fn reconcile_codex_hooks(
             MANAGED_MARKER: true,
             "hooks": [{
                 "type": "command",
-                "command": format!("{} {}", unix_reporter.display(), event),
-                "command_windows": format!("{} {}", windows_reporter.display(), event),
+                "command": format!(
+                    "{} {event}",
+                    sh_command_word(&unix_reporter.display().to_string())
+                ),
+                "command_windows": format!(
+                    "{} {event}",
+                    cmd_command_word(&windows_reporter.display().to_string())
+                ),
                 "timeout": timeout,
             }],
         });
@@ -798,6 +800,36 @@ fn strip_owned_handlers(entries: &mut Vec<Value>) {
 
 fn is_paneflow_reporter_command(command: &str) -> bool {
     command.contains("paneflow-ai-hook")
+}
+
+pub fn remove_legacy_project_hooks(
+    project_dirs: &[PathBuf],
+) -> Vec<(PathBuf, std::result::Result<(), String>)> {
+    let mut results = Vec::new();
+    for dir in project_dirs {
+        let path = dir.join(".claude").join("settings.local.json");
+        if !path.is_file() {
+            continue;
+        }
+        match remove_legacy_project_hooks_at(&path) {
+            Ok(false) => {}
+            Ok(true) => results.push((path, Ok(()))),
+            Err(error) => results.push((path, Err(format_error(error)))),
+        }
+    }
+    results
+}
+
+fn remove_legacy_project_hooks_at(path: &Path) -> Result<bool> {
+    refuse_symlink(path)?;
+    io::with_config_lock(path, || {
+        let mut root = merge::read_json_or_default(path)?;
+        if !paneflow_agent_config::claude_hooks::remove_hooks_lenient(&mut root) {
+            return Ok(false);
+        }
+        io::write_if_changed_unlocked(path, &merge::json_to_bytes(&root)?)?;
+        Ok(true)
+    })
 }
 
 fn refuse_symlink(path: &Path) -> Result<()> {
@@ -1013,6 +1045,112 @@ mod tests {
         assert_eq!(root["hooks"]["Interrupt"][0]["hooks"][0]["timeout"], 1);
         assert_eq!(root["hooks"]["SessionEnd"][0]["hooks"][0]["timeout"], 1);
         assert!(root.get("notify").is_none());
+    }
+
+    #[test]
+    fn the_worker_refresh_updates_the_codex_entry_in_place_and_keeps_every_user_key() {
+        let (_directory, paths, binaries) = fixture();
+        install_integration_at(&paths, "codex", &binaries, None).expect("install");
+        std::fs::write(&paths.codex_config, "# user\n[mcp_servers.paneflow]\ncommand = \"/old/paneflow-mcp\"\nargs = [\"--stale\"]\nenv_vars = [\"MY_TOKEN\", \"PANEFLOW_HOME\"]\nenabled = false\nrequired = true\nstartup_timeout_sec = 20\nstartup_timeout_ms = 20000\ntool_timeout_sec = 90\ncwd = \"/work\"\nenabled_tools = [\"list_panes\"]\ndisabled_tools = [\"search_pane\"]\n\n[mcp_servers.paneflow.env]\nRUST_LOG = \"debug\"\n\n[mcp_servers.paneflow.tools.read_pane]\napproval_mode = \"approve\"\n").expect("user entry");
+
+        let results = adopt_and_refresh_installed_at(&paths, &binaries);
+
+        assert!(
+            results
+                .iter()
+                .any(|(slug, result)| slug == "codex" && result.is_ok()),
+            "{results:?}"
+        );
+        let text = std::fs::read_to_string(&paths.codex_config).expect("config");
+        let doc = text.parse::<toml_edit::DocumentMut>().expect("TOML");
+        let entry = &doc["mcp_servers"]["paneflow"];
+        assert_eq!(
+            entry["command"].as_str(),
+            Some(binaries.bridge_binary.display().to_string().as_str())
+        );
+        assert_eq!(entry["args"].as_array().map(|args| args.len()), Some(0));
+        let env_vars: Vec<&str> = entry["env_vars"]
+            .as_array()
+            .expect("env_vars")
+            .iter()
+            .filter_map(|name| name.as_str())
+            .collect();
+        assert_eq!(&env_vars[..2], ["MY_TOKEN", "PANEFLOW_HOME"]);
+        for name in crate::agents::CODEX_BRIDGE_ENV_VARS {
+            assert_eq!(
+                env_vars.iter().filter(|seen| *seen == name).count(),
+                1,
+                "{name}"
+            );
+        }
+        assert_eq!(entry["enabled"].as_bool(), Some(false));
+        assert_eq!(entry["required"].as_bool(), Some(true));
+        assert_eq!(entry["startup_timeout_sec"].as_integer(), Some(20));
+        assert_eq!(entry["startup_timeout_ms"].as_integer(), Some(20000));
+        assert_eq!(entry["tool_timeout_sec"].as_integer(), Some(90));
+        assert_eq!(entry["cwd"].as_str(), Some("/work"));
+        assert_eq!(entry["enabled_tools"][0].as_str(), Some("list_panes"));
+        assert_eq!(entry["disabled_tools"][0].as_str(), Some("search_pane"));
+        assert_eq!(entry["env"]["RUST_LOG"].as_str(), Some("debug"));
+        assert_eq!(
+            entry["tools"]["read_pane"]["approval_mode"].as_str(),
+            Some("approve")
+        );
+        assert!(text.starts_with("# user\n"));
+    }
+
+    #[test]
+    fn codex_hook_commands_quote_only_a_reporter_path_that_needs_it() {
+        let (_directory, paths, binaries) = fixture();
+        install_integration_at(&paths, "codex", &binaries, None).expect("install");
+        let plain: Value =
+            serde_json::from_slice(&std::fs::read(&paths.codex_hooks).expect("hooks")).unwrap();
+        let hook = &plain["hooks"]["SessionStart"][0]["hooks"][0];
+        assert_eq!(
+            hook["command_windows"],
+            format!("{} SessionStart", binaries.hook_binary.display()),
+            "a path without special characters keeps the command Codex already approved"
+        );
+        assert!(!hook["command"].as_str().unwrap().starts_with('\''));
+
+        let spaced = tempfile::tempdir().expect("temp directory");
+        let bin = spaced.path().join("Jean Dupont").join("bin");
+        std::fs::create_dir_all(&bin).expect("bin directory");
+        let hook_binary = bin.join(if cfg!(windows) {
+            "paneflow-ai-hook.exe"
+        } else {
+            "paneflow-ai-hook"
+        });
+        std::fs::write(&hook_binary, b"hook").expect("hook binary");
+        let spaced_binaries = IntegrationBinaries {
+            hook_binary: hook_binary.clone(),
+            bridge_binary: binaries.bridge_binary.clone(),
+        };
+        install_integration_at(&paths, "codex", &spaced_binaries, None).expect("reinstall");
+        let quoted: Value =
+            serde_json::from_slice(&std::fs::read(&paths.codex_hooks).expect("hooks")).unwrap();
+        let groups = quoted["hooks"]["SessionStart"].as_array().unwrap();
+        assert_eq!(
+            groups.len(),
+            1,
+            "the old handler was replaced, not duplicated"
+        );
+        let hook = &groups[0]["hooks"][0];
+        assert_eq!(
+            hook["command_windows"],
+            format!("\"{}\" SessionStart", hook_binary.display())
+        );
+        let command = hook["command"].as_str().unwrap();
+        assert!(
+            command.starts_with('\'') && command.ends_with("' SessionStart"),
+            "{command}"
+        );
+        let program = paneflow_agent_config::claude_hooks::command_program_token(command)
+            .expect("program token");
+        assert!(
+            program.contains("Jean Dupont") && program.ends_with("paneflow-ai-hook.sh"),
+            "{program}"
+        );
     }
 
     #[test]

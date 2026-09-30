@@ -479,39 +479,6 @@ fn toast_message_reads_like_error(message: &str) -> bool {
     .any(|needle| message.contains(needle))
 }
 
-pub(crate) fn fire_turn_end_notification(
-    agent: TerminalAgent,
-    workspace_title: &str,
-    session_summary: Option<&str>,
-    config: &paneflow_config::schema::PaneFlowConfig,
-    seen: bool,
-    executor: gpui::BackgroundExecutor,
-) {
-    desktop_notifications::fire_desktop_notification(
-        DesktopNotification::turn_finished(agent, workspace_title, session_summary),
-        config,
-        seen,
-        executor,
-    );
-}
-
-pub(crate) fn fire_attention_notification(
-    agent: TerminalAgent,
-    workspace_title: &str,
-    message: Option<&str>,
-    config: &paneflow_config::schema::PaneFlowConfig,
-    seen: bool,
-    executor: gpui::BackgroundExecutor,
-) {
-    fire_worker_notification(
-        DesktopNotification::needs_input_for(agent.display_name(), workspace_title, message),
-        config,
-        seen,
-        None,
-        executor,
-    );
-}
-
 pub(crate) fn fire_worker_notification(
     notification: DesktopNotification,
     config: &paneflow_config::schema::PaneFlowConfig,
@@ -526,10 +493,6 @@ pub(crate) fn fire_worker_notification(
         session_key,
         executor,
     );
-}
-
-pub(super) fn sanitize_notification_message(raw: &str) -> String {
-    desktop_notifications::sanitize_notification_message(raw)
 }
 
 pub(crate) fn fire_agent_exit_notification(

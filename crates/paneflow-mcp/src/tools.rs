@@ -1,7 +1,7 @@
 use paneflow_ipc_client::IpcTransport;
-use serde::de::DeserializeOwned;
+use serde::de::{DeserializeOwned, IgnoredAny};
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::{json, Map, Value};
 
 use crate::bridge::{
     Bridge, SearchMatch, SurfaceTarget, MAX_LINES, MAX_MATCHES, MAX_SAFE_JSON_INTEGER,
@@ -77,39 +77,91 @@ struct ToolCall {
     name: String,
     #[serde(default = "empty_object")]
     arguments: Value,
+    #[serde(default, rename = "_meta")]
+    _meta: IgnoredAny,
 }
 
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ListPanesArgs {}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
 struct ReadPaneArgs {
     target: SurfaceTarget,
     lines: Option<u64>,
     offset: Option<u64>,
 }
 
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
+impl ReadPaneArgs {
+    fn parse(arguments: &Value) -> Result<Self, String> {
+        let args = Arguments::parse(arguments, &["target", "lines", "offset"])?;
+        Ok(Self {
+            target: args.required("target")?,
+            lines: args.optional("lines")?,
+            offset: args.optional("offset")?,
+        })
+    }
+}
+
 struct SearchPaneArgs {
     target: SurfaceTarget,
     pattern: String,
     max_matches: Option<u64>,
 }
 
-pub fn dispatch_call<T: IpcTransport + ?Sized>(params: &Value, bridge: &Bridge<'_, T>) -> Value {
-    let outcome = decode::<ToolCall>(params).and_then(|call| match call.name.as_str() {
-        "list_panes" => {
-            decode::<ListPanesArgs>(&call.arguments)?;
-            list_panes(bridge)
+impl SearchPaneArgs {
+    fn parse(arguments: &Value) -> Result<Self, String> {
+        let args = Arguments::parse(arguments, &["target", "pattern", "max_matches"])?;
+        Ok(Self {
+            target: args.required("target")?,
+            pattern: args.required("pattern")?,
+            max_matches: args.optional("max_matches")?,
+        })
+    }
+}
+
+struct Arguments<'a>(&'a Map<String, Value>);
+
+impl<'a> Arguments<'a> {
+    fn parse(arguments: &'a Value, known: &[&str]) -> Result<Self, String> {
+        let Value::Object(map) = arguments else {
+            return Err("invalid arguments: expected an object".to_string());
+        };
+        if let Some(unknown) = map.keys().find(|key| !known.contains(&key.as_str())) {
+            return Err(format!(
+                "invalid arguments: unknown argument '{unknown}', expected one of: {}",
+                known.join(", ")
+            ));
         }
-        "read_pane" => read_pane(decode(&call.arguments)?, bridge),
-        "search_pane" => search_pane(decode(&call.arguments)?, bridge),
-        other => Err(format!("unknown tool: {other}")),
-    });
-    tool_result(outcome)
+        Ok(Self(map))
+    }
+
+    fn required<T: DeserializeOwned>(&self, name: &str) -> Result<T, String> {
+        self.optional(name)?
+            .ok_or_else(|| format!("invalid arguments: missing argument '{name}'"))
+    }
+
+    fn optional<T: DeserializeOwned>(&self, name: &str) -> Result<Option<T>, String> {
+        match self.0.get(name) {
+            None | Some(Value::Null) => Ok(None),
+            Some(value) => serde_json::from_value(value.clone())
+                .map(Some)
+                .map_err(|error| format!("invalid argument '{name}': {error}")),
+        }
+    }
+}
+
+pub fn dispatch_call<T: IpcTransport + ?Sized>(
+    params: &Value,
+    bridge: &Bridge<'_, T>,
+) -> Result<Value, String> {
+    let call = decode::<ToolCall>(params)?;
+    let outcome = match call.name.as_str() {
+        "list_panes" => Arguments::parse(&call.arguments, &[]).and_then(|_| list_panes(bridge)),
+        "read_pane" => {
+            ReadPaneArgs::parse(&call.arguments).and_then(|args| read_pane(args, bridge))
+        }
+        "search_pane" => {
+            SearchPaneArgs::parse(&call.arguments).and_then(|args| search_pane(args, bridge))
+        }
+        other => return Err(format!("unknown tool: {other}")),
+    };
+    Ok(tool_result(outcome))
 }
 
 fn list_panes<T: IpcTransport + ?Sized>(bridge: &Bridge<'_, T>) -> Result<String, String> {
@@ -227,6 +279,10 @@ mod tests {
     use crate::scope::BridgeScope;
     use crate::test_support::FakeTransport;
 
+    fn call<T: IpcTransport + ?Sized>(params: &Value, bridge: &Bridge<'_, T>) -> Value {
+        dispatch_call(params, bridge).expect("a protocol-level success")
+    }
+
     fn surface(surface_id: u64, name: &str, workspace_id: Option<u64>) -> Value {
         json!({
             "surface_id": surface_id,
@@ -277,10 +333,10 @@ mod tests {
     fn list_panes_returns_typed_scoped_metadata() {
         let transport = FakeTransport::new().with(
             "surface.list",
-            json!({"surfaces": [surface(7, "cargo-run", Some(42))]}),
+            json!({"surfaces": [surface(7, "cargo-run", Some(42))], "scope_workspace_id": 42}),
         );
-        let bridge = Bridge::new(&transport, BridgeScope::Workspace(42));
-        let result = dispatch_call(&json!({"name": "list_panes", "arguments": {}}), &bridge);
+        let bridge = Bridge::new(&transport, BridgeScope::Session("0a9e5266".into()));
+        let result = call(&json!({"name": "list_panes", "arguments": {}}), &bridge);
 
         assert_eq!(result["isError"], false);
         let text = result["content"][0]["text"].as_str().unwrap();
@@ -293,14 +349,14 @@ mod tests {
         let transport = FakeTransport::new()
             .with(
                 "surface.list",
-                json!({"surfaces": [surface(7, "vite", Some(42))]}),
+                json!({"surfaces": [surface(7, "vite", Some(42))], "scope_workspace_id": 42}),
             )
             .with(
                 "surface.read",
                 json!({"text": "ready", "total_lines": 1, "eof": true}),
             );
-        let bridge = Bridge::new(&transport, BridgeScope::Workspace(42));
-        let result = dispatch_call(
+        let bridge = Bridge::new(&transport, BridgeScope::Session("0a9e5266".into()));
+        let result = call(
             &json!({"name": "read_pane", "arguments": {"target": "vite", "lines": 20}}),
             &bridge,
         );
@@ -308,7 +364,7 @@ mod tests {
         assert_eq!(result["isError"], false);
         let params = transport.last_params("surface.read").unwrap();
         assert_eq!(params["surface_id"], 7);
-        assert_eq!(params["workspace_id"], 42);
+        assert_eq!(params["scope_session"], "0a9e5266");
         assert_eq!(params["lines"], 20);
     }
 
@@ -325,9 +381,89 @@ mod tests {
             json!({"name": "search_pane", "arguments": {"target": 1, "pattern": ""}}),
             json!({"name": "read_pane", "arguments": null}),
         ] {
-            let result = dispatch_call(&params, &bridge);
+            let result = call(&params, &bridge);
             assert_eq!(result["isError"], true, "params: {params}");
         }
+        assert!(transport.calls().is_empty());
+    }
+
+    #[test]
+    fn claude_code_meta_is_ignored_by_every_tool() {
+        let transport = FakeTransport::new()
+            .with(
+                "surface.list",
+                json!({"surfaces": [surface(7, "vite", Some(42))], "scope_workspace_id": 42}),
+            )
+            .with(
+                "surface.read",
+                json!({"text": "ready", "total_lines": 1, "eof": true}),
+            )
+            .with(
+                "surface.search",
+                json!({"matches": [{"line": 1, "text": "ready"}], "truncated": false}),
+            );
+        let bridge = Bridge::new(&transport, BridgeScope::Session("0a9e5266".into()));
+        let meta = json!({"claudecode/toolUseId": "toolu_01", "progressToken": 3});
+        for (name, arguments) in [
+            ("list_panes", json!({})),
+            ("read_pane", json!({"target": "vite"})),
+            ("search_pane", json!({"target": 7, "pattern": "ready"})),
+        ] {
+            let result = call(
+                &json!({"name": name, "arguments": arguments, "_meta": meta}),
+                &bridge,
+            );
+            assert_eq!(result["isError"], false, "{name}: {result}");
+            assert!(
+                result["content"][0]["text"]
+                    .as_str()
+                    .unwrap()
+                    .contains("ready")
+                    || name == "list_panes"
+            );
+        }
+        assert!(transport.last_params("surface.read").is_some());
+        assert!(transport.last_params("surface.search").is_some());
+    }
+
+    #[test]
+    fn meta_does_not_open_the_envelope_to_other_fields() {
+        let transport = FakeTransport::new();
+        let bridge = Bridge::new(&transport, BridgeScope::All);
+        let error = dispatch_call(
+            &json!({"name": "list_panes", "arguments": {}, "_meta": {}, "extra": 1}),
+            &bridge,
+        )
+        .expect_err("an unknown envelope field is a protocol error");
+        assert!(error.contains("extra"), "{error}");
+    }
+
+    #[test]
+    fn a_mistyped_argument_next_to_meta_is_named_in_the_error() {
+        let transport = FakeTransport::new();
+        let bridge = Bridge::new(&transport, BridgeScope::All);
+        let result = call(
+            &json!({
+                "name": "read_pane",
+                "arguments": {"target": 1, "lines": "lots"},
+                "_meta": {"claudecode/toolUseId": "toolu_02"}
+            }),
+            &bridge,
+        );
+        assert_eq!(result["isError"], true);
+        let text = result["content"][0]["text"].as_str().unwrap();
+        assert!(text.contains("'lines'"), "{text}");
+        assert!(!text.contains("_meta"), "{text}");
+        assert!(transport.calls().is_empty());
+    }
+
+    #[test]
+    fn an_unknown_tool_is_a_protocol_error() {
+        let transport = FakeTransport::new();
+        let bridge = Bridge::new(&transport, BridgeScope::All);
+        let error = dispatch_call(&json!({"name": "write_pane", "arguments": {}}), &bridge)
+            .expect_err("unknown tool");
+        assert_eq!(error, "unknown tool: write_pane");
         assert!(transport.calls().is_empty());
     }
 
@@ -341,7 +477,7 @@ mod tests {
             }),
         );
         let bridge = Bridge::new(&transport, BridgeScope::All);
-        let result = dispatch_call(
+        let result = call(
             &json!({"name": "search_pane", "arguments": {"target": 7, "pattern": "error"}}),
             &bridge,
         );

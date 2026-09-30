@@ -11,6 +11,10 @@ pub mod opencode;
 mod support;
 
 #[cfg(test)]
+pub(crate) use support::CODEX_BRIDGE_ENV_VARS;
+pub(crate) use support::{codex_entry, CODEX_TABLE, ENTRY as MCP_ENTRY};
+
+#[cfg(test)]
 pub(crate) mod testutil;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -38,6 +42,9 @@ pub enum StatusOutcome {
     NeedsRepair {
         path: Option<String>,
         reason: String,
+    },
+    DisabledByUser {
+        path: String,
     },
     NotInstalled,
 }

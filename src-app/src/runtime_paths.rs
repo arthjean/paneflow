@@ -94,7 +94,13 @@ pub(crate) unsafe fn shed_inherited_instance_env() {
         .is_some_and(|raw| paneflow_home::paneflow_home().as_deref() != Some(Path::new(&raw)));
     let foreign_socket = std::env::var_os(SOCKET_PATH_ENV)
         .is_some_and(|raw| socket_path().as_deref() != Some(Path::new(&raw)));
+    let shed_path = std::env::var_os(BIN_DIR_ENV).and_then(|bin_dir| {
+        std::env::var_os("PATH").and_then(|path| path_without_dir(&path, Path::new(&bin_dir)))
+    });
     unsafe {
+        if let Some(path) = shed_path {
+            std::env::set_var("PATH", path);
+        }
         for key in paneflow_host::env::PANE_CONTEXT_ENV {
             std::env::remove_var(key);
         }
@@ -105,6 +111,19 @@ pub(crate) unsafe fn shed_inherited_instance_env() {
             std::env::remove_var(SOCKET_PATH_ENV);
         }
     }
+}
+
+const BIN_DIR_ENV: &str = "PANEFLOW_BIN_DIR";
+
+fn path_without_dir(path: &std::ffi::OsStr, dir: &Path) -> Option<std::ffi::OsString> {
+    let entries: Vec<PathBuf> = std::env::split_paths(path).collect();
+    let kept: Vec<&PathBuf> = entries
+        .iter()
+        .filter(|entry| entry.as_path() != dir)
+        .collect();
+    (kept.len() != entries.len())
+        .then(|| std::env::join_paths(kept).ok())
+        .flatten()
 }
 
 pub(crate) fn shell_integration_dir() -> Option<PathBuf> {
@@ -355,6 +374,29 @@ mod verbatim_prefix_tests {
 #[cfg(test)]
 mod socket_env_tests {
     use super::*;
+
+    #[test]
+    fn shedding_the_instance_context_drops_the_inherited_helper_dir_from_path() {
+        let inherited = PathBuf::from("/home/u/.paneflow/cache/bin/0.17.4");
+        let path = std::env::join_paths([
+            inherited.clone(),
+            PathBuf::from("/usr/bin"),
+            inherited.clone(),
+            PathBuf::from("/bin"),
+        ])
+        .expect("join");
+        let shed = path_without_dir(&path, &inherited).expect("changed");
+        assert_eq!(
+            std::env::split_paths(&shed).collect::<Vec<_>>(),
+            [PathBuf::from("/usr/bin"), PathBuf::from("/bin")]
+        );
+        assert_eq!(
+            path_without_dir(&shed, &inherited),
+            None,
+            "no inherited helper dir, nothing to rewrite"
+        );
+        assert!(paneflow_host::env::PANE_CONTEXT_ENV.contains(&BIN_DIR_ENV));
+    }
 
     #[test]
     fn shedding_pane_context_never_drops_an_honored_home_or_socket() {
