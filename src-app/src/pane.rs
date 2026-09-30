@@ -1398,13 +1398,6 @@ impl Pane {
         let pane_id = cx.entity().entity_id().as_u64();
         let rail_hover = crate::app::constants::sidebar_tab_hover_background();
         let rail_active = crate::app::constants::sidebar_tab_active_background();
-        let unified_active_background = if self.cached_config.linux_terminal_material_enabled() {
-            rail_active
-        } else if ui.base.l > 0.5 {
-            ui.base
-        } else {
-            ui.overlay
-        };
 
         let mut strip = div()
             .id("pane-tab-strip")
@@ -1462,7 +1455,7 @@ impl Pane {
                     .pr(px(8.))
                     .gap(px(10.))
                     .when(active, |chip| {
-                        chip.bg(unified_active_background)
+                        chip.bg(rail_active)
                             .border_color(unified_active_border)
                             .shadow(vec![unified_active_shadow])
                     })

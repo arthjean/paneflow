@@ -13,12 +13,8 @@ pub(crate) const SETTINGS_CARD_RADIUS: Pixels = px(20.);
 pub(crate) const DIFF_DOCK_CONTENT_INSET: Pixels = px(8.);
 pub(crate) const PANE_CONTENT_INSET_X: f32 = 10.;
 pub(crate) const PANE_CONTENT_INSET_Y: f32 = 6.;
-const DARK_SIDEBAR_TAB_TINT: u32 = 0xffffff;
-const LIGHT_SIDEBAR_TAB_TINT: u32 = 0x262626;
-const DARK_SIDEBAR_TAB_ACTIVE_OPACITY: f32 = 0.11;
-const DARK_SIDEBAR_TAB_HOVER_OPACITY: f32 = 0.07;
-const LIGHT_SIDEBAR_TAB_ACTIVE_OPACITY: f32 = 0.08;
-const LIGHT_SIDEBAR_TAB_HOVER_OPACITY: f32 = 0.04;
+const SIDEBAR_TAB_ACTIVE_OPACITY: f32 = 0.16;
+const SIDEBAR_TAB_HOVER_OPACITY: f32 = 0.10;
 #[cfg(target_os = "linux")]
 const LINUX_DARK_SHELL_OPACITY: f32 = 0.72;
 #[cfg(target_os = "linux")]
@@ -209,10 +205,7 @@ pub(crate) fn cockpit_shell_background(background: Hsla, material_active: bool) 
 }
 
 pub(crate) fn sidebar_tab_active_background() -> Hsla {
-    sidebar_tab_background(
-        LIGHT_SIDEBAR_TAB_ACTIVE_OPACITY,
-        DARK_SIDEBAR_TAB_ACTIVE_OPACITY,
-    )
+    sidebar_tab_background(SIDEBAR_TAB_ACTIVE_OPACITY)
 }
 
 pub(crate) fn sidebar_filter_icon_color() -> Hsla {
@@ -252,21 +245,12 @@ pub(crate) fn filter_match_color() -> Hsla {
 }
 
 pub(crate) fn sidebar_tab_hover_background() -> Hsla {
-    sidebar_tab_background(
-        LIGHT_SIDEBAR_TAB_HOVER_OPACITY,
-        DARK_SIDEBAR_TAB_HOVER_OPACITY,
-    )
+    sidebar_tab_background(SIDEBAR_TAB_HOVER_OPACITY)
 }
 
-fn sidebar_tab_background(light_opacity: f32, dark_opacity: f32) -> Hsla {
+fn sidebar_tab_background(opacity: f32) -> Hsla {
     let theme = crate::theme::active_theme();
-    let is_light = theme.background.l > 0.5;
-    let (tint, opacity) = if is_light {
-        (LIGHT_SIDEBAR_TAB_TINT, light_opacity)
-    } else {
-        (DARK_SIDEBAR_TAB_TINT, dark_opacity)
-    };
-    let tint = Hsla::from(gpui::rgb(tint)).opacity(opacity);
+    let tint = crate::theme::ui_colors_with(&theme).text.opacity(opacity);
 
     #[cfg(target_os = "linux")]
     if !crate::window_chrome::linux_backdrop::translucent_window_active() {

@@ -254,8 +254,8 @@ theme load until it clears APCA Lc 45 against the selection background.
 
 | Tint | Dark | Light | Where |
 | --- | --- | --- | --- |
-| Sidebar row active | white at 0.11 | `#262626` at 0.08 | `sidebar_tab_active_background` |
-| Sidebar row hover | white at 0.07 | `#262626` at 0.04 | `sidebar_tab_hover_background` |
+| Sidebar row and pane tab active | `text` at 0.16 | same | `sidebar_tab_active_background` |
+| Sidebar row and pane tab hover | `text` at 0.10 | same | `sidebar_tab_hover_background` |
 | Tab icon card | title bar color blended with the active tint, then darkened 0.10 | darkened 0.05 | `sidebar_tab_icon_card_background` |
 | Menu item selected | `text` at 0.10 | same | `select_item` |
 | Menu item hover | `text` at 0.05 | same | `select_item` |
