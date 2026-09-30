@@ -163,10 +163,20 @@ fn write_instance_record(worker: &Worker) {
 }
 
 pub fn refresh_integrations(home: &Path) {
+    refresh_integrations_as(home, cfg!(debug_assertions));
+}
+
+fn refresh_integrations_as(home: &Path, debug_build: bool) -> bool {
     remove_legacy_project_hooks(home);
+    if debug_build {
+        log::info!(
+            "paneflow-serve: a debug build leaves the agent integrations untouched; `paneflow mcp install --force-dev` points them at it"
+        );
+        return false;
+    }
     let Some(binaries) = crate::integrations::resolve_binaries() else {
         log::info!("paneflow-serve: no helper binaries staged; integrations are left untouched");
-        return;
+        return false;
     };
     for (runtime, result) in paneflow_mcp_install::adopt_and_refresh_installed(&binaries) {
         match result {
@@ -176,6 +186,7 @@ pub fn refresh_integrations(home: &Path) {
             }
         }
     }
+    true
 }
 
 fn session_project_dirs(session: &[u8]) -> Vec<PathBuf> {
@@ -360,7 +371,7 @@ mod tests {
     }
 
     #[test]
-    fn pre_0_17_project_hooks_are_removed_for_workspaces_in_the_session() {
+    fn a_debug_worker_removes_pre_0_17_project_hooks_but_leaves_integrations_alone() {
         let home = tempfile::tempdir().expect("a temporary home");
         let project = tempfile::tempdir().expect("a project");
         let untracked = tempfile::tempdir().expect("a project absent from the session");
@@ -392,7 +403,10 @@ mod tests {
         )
         .unwrap();
 
-        remove_legacy_project_hooks(home.path());
+        assert!(
+            !refresh_integrations_as(home.path(), true),
+            "a debug worker never rewrites the user's agent integrations"
+        );
 
         let cleaned: Value = serde_json::from_slice(
             &std::fs::read(project.path().join(".claude").join("settings.local.json")).unwrap(),
