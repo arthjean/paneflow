@@ -9,6 +9,7 @@
 | 1.1 | 2026-09-29 | Arthur Jean | Le critère d'undo-close d'US-023 devient US-048 : libghostty n'émet pas d'OSC 8 en sortie VT et la replay n'atteignait plus l'écran ; l'undo-close rattache désormais la session gardée 5 s. US-040 dépend d'US-048. 48 stories. |
 | 1.2 | 2026-09-29 | Arthur Jean | Le critère de reproduction manuelle d'US-016 devient une reproduction à l'exécution sur un vrai PTY : le test automatisé a reproduit l'état exited sous Linux avant correctif, et le rendu GPUI du libellé n'ajoute rien à la cause. |
 | 1.3 | 2026-09-29 | Arthur Jean | Les critères chiffrés de performance d'US-024 (frames de 50 ms) et d'US-026 (première frame à 250 ms au-dessus de la baseline) deviennent des preuves structurelles déjà testées : aucune requête runtime ni sonde de chemin sur le thread GPUI, et abandon au délai d'un chemin qui bloque. Les deux mesures passent en vérification facultative à la qualification d'une release, sans bloquer les stories. |
+| 1.4 | 2026-09-30 | Arthur Jean | EP-005 revérifié sur `main` @ `14f47ab9` et sur la source de Codex @ `d42056091a`. Nouvelle US-049 (P0, R1) : le bridge refuse le `_meta` de Claude Code, critère déplacé d'US-036. US-032 et US-033 visent le daemon partagé de Codex 0.159, qui fait voir aux hooks et au bridge l'environnement du premier pane ; le shim force `--no-daemon`. US-036 dérive la portée de la session côté serveur. US-037 corrige le chemin de `hook_command.rs` et limite le quoting Codex aux chemins qui l'exigent ; l'installation par profil passe en Non-Goals. US-038 cible la projection du worker et retire les replis sans appelant. Critères déjà satisfaits retirés : refus d'une config Codex invalide (US-033), `access(X_OK)` (US-035), tri Gemini, délai de sonde et cache Claude (US-039). 49 stories. |
 
 ## Problem Statement
 
@@ -24,13 +25,13 @@ Le fork privé theaamgroup/PaneFlow a fait tourner des agents d'audit sur son co
 2. **Code exécuté sans action de l'utilisateur, et verrous volés.** Aucun des 15 sites `Command::new("git")` n'isole la config du dépôt. Or les sondes tournent à chaque changement de cwd (OSC 7) et toutes les 30 s : un `core.fsmonitor` local à un dépôt s'exécute donc sans action de l'utilisateur. Ces mêmes sondes réécrivent `.git/index`, si bien que les `git commit` des agents lancés en parallèle échouent sur `index.lock`. C'est le cas d'usage central de Paneflow.
 3. **Thread de rendu bloqué.** C'est une violation directe de AGENTS.md. `surface.read`, `surface.search` et `workspace.current` construisent tout le scrollback sur le thread GPUI, avec jusqu'à 1 s par requête, alors que `paneflow wait` interroge toutes les 500 ms. La résolution de chemins au survol, l'import du PATH du login shell et l'ouverture d'URL sous Linux bloquent aussi.
 4. **Terminal qui ment sur son état.** Plus de 256 BEL dans un même chunk font afficher « exited -1 » sur un shell vivant et purgent ses sessions agent ; un `cat` de binaire suffit. Le host répond aux requêtes de couleur avec un thème sombre codé en dur. « Reset terminal » envoie `ESC c` comme une frappe, ce qui interrompt Claude ou Codex.
-5. **Intégration agents cassée ou trop permissive.** L'entrée MCP écrite pour Codex ne transmet aucune variable `PANEFLOW_*`. La portée MCP échoue en mode ouvert côté host. `CLAUDE_CONFIG_DIR` n'est respecté que pour les hooks. Un Paneflow lancé depuis un pane peut faire boucler ses shims.
+5. **Intégration agents cassée ou trop permissive.** Le bridge MCP refuse le `_meta` que Claude Code envoie à chaque appel et ne sert donc aucune requête. Sous Codex 0.159, le daemon partagé fait voir aux hooks et au bridge l'environnement du premier pane qui l'a lancé, et l'entrée MCP écrite pour Codex ne transmet aucune variable `PANEFLOW_*`. La portée MCP échoue en mode ouvert côté host. `CLAUDE_CONFIG_DIR` n'est respecté que pour les hooks. Un Paneflow lancé depuis un pane peut faire boucler ses shims.
 
 **Why now:** Ces défauts ont été confirmés dans le code en une seule passe, avec pour chacun le fichier, la ligne et souvent un correctif de référence dans le fork. Les corriger maintenant coûte une lecture ; les corriger plus tard coûtera un signalement utilisateur, souvent après une perte de données. La v0.17 a déplacé le PTY dans `paneflow-host` et les hooks vers une installation globale : plusieurs défauts (couleurs du host, scope MCP côté host, Cmd+K) sont nés de cette architecture récente et ne feront que s'étendre.
 
 ## Overview
 
-Le PRD corrige les défauts par cause racine plutôt qu'un par un. Chaque story commence par un test qui échoue sur `8c3dd2ca` ; un défaut que ce test ne reproduit pas est annulé avec la preuve, sans correctif spéculatif. Trois défauts à fort impact mais confirmés seulement par lecture reçoivent une story de reproduction dédiée avant leur correctif : le bridge MCP sous Codex, la boucle des shims en Paneflow imbriqué, et le pane déclaré mort par un flot de BEL.
+Le PRD corrige les défauts par cause racine plutôt qu'un par un. Chaque story commence par un test qui échoue sur `8c3dd2ca` ; un défaut que ce test ne reproduit pas est annulé avec la preuve, sans correctif spéculatif. Trois défauts à fort impact mais confirmés seulement par lecture reçoivent une story de reproduction dédiée avant leur correctif : l'attribution des hooks et du bridge Codex sous le daemon partagé, la boucle des shims en Paneflow imbriqué, et le pane déclaré mort par un flot de BEL.
 
 Quatre abstractions partagées portent l'essentiel des correctifs :
 - **Un builder git unique à deux profils.** `Probe` sert aux lectures automatiques : config isolée, verrous optionnels désactivés, locale C. `UserAction` sert aux opérations demandées par l'utilisateur et garde hooks et filtres, pour ne pas casser Git LFS.
@@ -45,7 +46,7 @@ Cinq livraisons :
 | Livraison | Contenu | Stories | Condition de passage |
 |-----------|---------|---------|----------------------|
 | R0 : reproductions | Trois défauts à confirmer à l'exécution | 3 | Preuve consignée pour chacun ; un défaut non reproduit reclasse sa story de correctif |
-| R1 : intégrité et sécurité | Toutes les stories P0 hors reproduction | 13 | Aucun scénario de perte de données reproductible ; builder git et écrivain symlink-safe en place |
+| R1 : intégrité et sécurité | Toutes les stories P0 hors reproduction | 14 | Aucun scénario de perte de données reproductible ; builder git et écrivain symlink-safe en place |
 | R2 : robustesse du cœur | Stories P1 des EP-001 à EP-004 | 17 | Aucune requête runtime, I/O ou sous-processus bloquant sur le thread GPUI dans les chemins listés |
 | R3 : agents, UI et outillage | Stories P1 des EP-005 et EP-006 | 11 | Intégrations agents et accessibilité conformes aux critères |
 | R4 : finitions | Stories P2 | 3 | Résultats git exacts, sémantique IPC secondaire, tests et bench fiables |
@@ -59,8 +60,8 @@ L'état et les preuves de l'audit sont conservés localement dans `tasks/fork-au
 | Éliminer la perte de données silencieuse | 7/7 scénarios corrigés, chacun couvert par un test de régression | 0 nouveau signalement de perte de données |
 | Sécuriser les sondes automatiques | 100 % des spawns git de production passent par le builder ; 0 exécution de `core.fsmonitor` local dans les tests | 0 régression Git LFS ou hooks signalée |
 | Libérer le thread de rendu | 0 frame > 50 ms due à un handler IPC dans le scénario de US-024 | 100 % des chemins de l'EP-004 hors du thread GPUI |
-| Rétablir l'intégration agents | Bridge MCP fonctionnel sous Codex sur Linux, macOS et Windows | 0 clé utilisateur perdue par une réinstallation MCP |
-| Clore l'audit | R0 et R1 DONE (16 stories) | ≥ 45/48 stories DONE |
+| Rétablir l'intégration agents | Bridge MCP fonctionnel sous Claude Code et Codex sur Linux, macOS et Windows ; événements Codex attribués au pane qui les émet | 0 clé utilisateur perdue par une réinstallation MCP |
+| Clore l'audit | R0 et R1 DONE (17 stories) | ≥ 46/49 stories DONE |
 
 ## Target Users
 
@@ -74,7 +75,7 @@ L'état et les preuves de l'audit sont conservés localement dans `tasks/fork-au
 ### Orchestrateur scripté
 - **Role:** Un script, un autre agent ou le skill `paneflow-conductor` qui pilote Paneflow par la CLI `paneflow`, l'IPC ou le bridge MCP.
 - **Behaviors:** Il interroge les panes par `paneflow wait`, `surface.read` et `surface.search`, crée des workspaces et des splits, et envoie du texte.
-- **Pain points:** Un id mal typé cible le pane actif ; un index mal typé ferme le workspace actif ; un timeout renvoie un texte vide présenté comme vrai ; `flow` met plusieurs unités dans le même checkout ; le bridge MCP ne démarre pas sous Codex.
+- **Pain points:** Un id mal typé cible le pane actif ; un index mal typé ferme le workspace actif ; un timeout renvoie un texte vide présenté comme vrai ; `flow` met plusieurs unités dans le même checkout ; le bridge MCP ne sert aucun appel sous Claude Code et vise le mauvais pane sous Codex.
 - **Current workaround:** Il valide ses paramètres lui-même, relance les commandes et évite Codex pour l'orchestration.
 - **Success looks like:** Toute entrée invalide est rejetée en -32602, toute erreur est une erreur, et le bridge fonctionne sous chaque agent supporté.
 
@@ -101,7 +102,8 @@ Key findings that informed this PRD:
 - Lectures git d'arrière-plan : `git --no-optional-locks` ou `GIT_OPTIONAL_LOCKS=0` pour `status` ([git-status, BACKGROUND REFRESH](https://git-scm.com/docs/git-status)), et `diff.autoRefreshIndex=false` pour `diff` ([git-config](https://git-scm.com/docs/git-config#Documentation/git-config.txt-diffautoRefreshIndex)).
 - Git sur un dossier non fiable : neutraliser `core.fsmonitor`, `core.hooksPath`, `diff.external`, textconv, et poser `safe.bareRepository=explicit` ([CVE-2022-24765](https://nvd.nist.gov/vuln/detail/CVE-2022-24765), [analyse des dépôts bare enfouis](https://github.com/justinsteven/advisories/blob/main/2022_git_buried_bare_repos_and_fsmonitor_various_abuses.md)). Sous Windows il n'y a pas de `/dev/null` : un dossier de hooks vide est la seule valeur portable.
 - Écriture atomique qui préserve les symlinks : résoudre la cible, créer le fichier temporaire dans le dossier de la cible, `fsync`, puis renommer sur la cible. `rename` et `NamedTempFile::persist` remplacent le lien lui-même ([tempfile](https://docs.rs/tempfile/latest/tempfile/struct.NamedTempFile.html#method.persist)).
-- Codex ne transmet à un serveur MCP stdio qu'une liste fixe de variables (`DEFAULT_ENV_VARS` dans codex-rs), plus celles nommées dans `env_vars` ([doc MCP Codex](https://learn.chatgpt.com/docs/extend/mcp?surface=cli)).
+- Codex lance un serveur MCP stdio avec un environnement vidé, auquel il ajoute `DEFAULT_ENV_VARS`, les noms listés dans `env_vars` et les valeurs de `env` ([doc MCP Codex](https://learn.chatgpt.com/docs/extend/mcp?surface=cli), `codex-rs/rmcp-client/src/utils.rs` et `codex-rs/utils/pty/src/child_command.rs` @ `d42056091a`). Les valeurs sont lues dans l'environnement du processus Codex qui lance le serveur. Depuis la 0.159, ce processus est par défaut un daemon partagé par `CODEX_HOME` qui hérite de l'environnement de la première CLI, et les hooks figent ce même environnement (`codex-rs/app-server-daemon/src/backend/pid_start.rs`, `codex-rs/hooks/src/registry.rs`). `--no-daemon` garde la session dans le processus du pane.
+- Codex exécute une commande de hook par `sh -c` ou `cmd.exe /C` et indexe son approbation sur le hash du handler (`codex-rs/hooks/src/engine/command_runner.rs`, `codex-rs/hooks/src/engine/discovery.rs`).
 - MCP 2025-06-18 réserve `params._meta` sur toute requête ([spec](https://modelcontextprotocol.io/specification/2025-06-18/basic/index)).
 - ureq 3 : `timeout_global` couvre tout le transfert et il n'existe pas de délai d'inactivité ; un gros téléchargement a besoin de délais de connexion et de réponse plus un délai de stagnation implémenté autour du lecteur.
 - `open` 5.4.2 : `that` attend la fin du lanceur, `that_detached` non (sous macOS, `that_detached` appelle `that`, ce qui ne bloque pas).
@@ -111,7 +113,7 @@ Key findings that informed this PRD:
 ## Assumptions & Constraints
 
 ### Assumptions (to validate)
-- Codex ne transmet à un serveur MCP que `DEFAULT_ENV_VARS` et les noms listés dans `env_vars`. C'est vérifié dans la source codex-rs, pas à l'exécution ; US-032 le valide.
+- Le filtrage de l'environnement MCP de Codex et l'héritage de l'environnement par son daemon sont vérifiés dans la source codex-rs @ `d42056091a`, et `daemon_auto_start` est actif dans `codex-cli` 0.159.0. L'attribution des événements à l'exécution reste à valider ; US-032 le fait.
 - `safe.bareRepository=explicit` ne casse pas les worktrees liés à un dépôt bare ; un critère de US-008 le valide.
 - Neutraliser `core.fsmonitor` dans les sondes ne ralentit pas `git status` de plus de 2x sur un dépôt de 100 000 fichiers ; US-008 le mesure.
 - Une fois l'apparence fournie au host, libghostty répond lui-même à OSC 10/11/12 et à `CSI ? 996 n` (le test `constructor.rs:334-385` prouve OSC 10/11) ; US-018 le valide.
@@ -150,7 +152,7 @@ Pour une story qui revendique un gain de performance : mesure par `scripts/bench
 | Livraison | Stories |
 |-----------|---------|
 | R0 | US-016, US-032, US-034 |
-| R1 | US-001, US-002, US-003, US-004, US-006, US-008, US-009, US-012, US-017, US-018, US-024, US-033, US-035 |
+| R1 | US-001, US-002, US-003, US-004, US-006, US-008, US-009, US-012, US-017, US-018, US-024, US-033, US-035, US-049 |
 | R2 | US-005, US-007, US-011, US-013, US-014, US-015, US-019, US-020, US-021, US-022, US-023, US-048, US-025, US-026, US-027, US-028, US-029, US-031 |
 | R3 | US-036, US-037, US-038, US-039, US-040, US-041, US-042, US-043, US-044, US-045, US-046 |
 | R4 | US-010, US-030, US-047 |
@@ -712,41 +714,49 @@ Sort du thread GPUI toutes les requêtes runtime, I/O et sondes, et donne à l'I
 
 ### EP-005: Réparer l'intégration agents, MCP et hooks
 
-Rend le bridge MCP fonctionnel sous chaque agent, empêche les shims de se lancer mutuellement, ferme la portée MCP, respecte les emplacements de config des agents et rend exact l'état des sessions agent.
+Rend le bridge MCP utilisable sous chaque agent, attribue chaque événement Codex au pane qui l'a lancé, empêche les shims de se lancer mutuellement, dérive la portée MCP côté serveur, respecte les emplacements de config des agents et rend exact l'état des sessions agent.
+
+Les stories de cet epic ont été revérifiées le 2026-09-30 sur `main` @ `14f47ab9` et sur la source de Codex (`openai/codex` @ `d42056091a`, avec `codex-cli` 0.159.0 installé). Leurs références de lignes Paneflow se rapportent à `14f47ab9`, celles de Codex à `d42056091a`. Deux faits établis ce jour-là changent l'epic :
+- Claude Code envoie `params._meta` dans `tools/call` et le bridge le refuse. L'appel `list_panes` répond `invalid arguments: unknown field _meta, expected name or arguments` (`crates/paneflow-mcp/src/tools.rs:74-80`). Le bridge démarre mais ne sert aucun appel.
+- Depuis la 0.159, `codex` interactif lance ou rejoint par défaut un daemon partagé par `CODEX_HOME` : `daemon_auto_start` est stable et actif (`codex-rs/features/src/lib.rs:953-956`, confirmé par `codex features list`). Ce daemon est détaché et hérite de tout l'environnement de la première CLI qui l'a lancé (`codex-rs/app-server-daemon/src/backend/pid_start.rs:91-94,137-209`). Les hooks figent l'environnement du processus qui héberge la session (`codex-rs/hooks/src/registry.rs:79`), les serveurs MCP locaux sont lancés dans ce même processus (`codex-rs/codex-mcp/src/rmcp_client.rs:1232-1239`), et `thread/start` ne transmet aucun environnement (`codex-rs/app-server-protocol/src/protocol/v2/thread.rs:62`). Un hook ou un bridge Codex lancé depuis un pane voit donc les variables `PANEFLOW_*` du pane qui a démarré le daemon, ou aucune. `--no-daemon`, comme toute surcharge `-c` hors d'une courte liste de features, garde la session dans le processus du pane (`codex-rs/tui/src/daemon_startup.rs:25-105`).
 
 **Definition of Done:**
-- Le bridge MCP démarre sous Claude Code et sous Codex sur les trois OS.
+- Le bridge MCP sert ses outils sous Claude Code et sous Codex sur les trois OS.
+- Un événement de hook Codex et le bridge lancé par Codex visent la session du pane qui a lancé Codex.
 - Un Paneflow imbriqué ne crée pas de boucle de processus.
-- Sans preuve de pane, la portée MCP est refusée.
+- Sans session de pane, la portée MCP est refusée.
 - Une réinstallation ne perd aucune clé de l'utilisateur.
 
-#### US-032: Reproduire l'échec du bridge MCP sous Codex
-**Description:** En tant que mainteneur, je veux mesurer à l'exécution ce que le bridge MCP reçoit sous Codex afin de confirmer le défaut avant de modifier les entrées MCP. Sources : ed4a3aad, fork #411 (6506e187) ; `crates/paneflow-mcp-install/src/agents/support.rs:201-216`, `crates/paneflow-mcp/src/main.rs:28-66`, `crates/paneflow-mcp/src/scope.rs:44-80`, `crates/paneflow-ipc-client/src/host_control.rs:78-99`.
+#### US-032: Reproduire l'attribution des hooks et du bridge Codex sous le daemon partagé
+**Description:** En tant que mainteneur, je veux observer à l'exécution quelle session reçoit les hooks Codex et quelles variables reçoit le bridge quand plusieurs panes lancent Codex, afin de confirmer le défaut avant de modifier le lancement de Codex et son entrée MCP. Sources : `codex-rs/tui/src/startup_orchestration.rs:494-556`, `codex-rs/app-server-daemon/src/backend/pid_start.rs:91-94,137-209`, `codex-rs/hooks/src/registry.rs:79`, `codex-rs/codex-mcp/src/rmcp_client.rs:1232-1239`, `codex-rs/rmcp-client/src/utils.rs:16-58,163-176`, `codex-rs/utils/pty/src/child_command.rs:95-105` ; `crates/paneflow-ai-hook/src/runtime.rs:37-60`, `crates/paneflow-mcp/src/main.rs:28-67`, `crates/paneflow-mcp/src/scope.rs:44-84`, `crates/paneflow-ipc-client/src/lib.rs:696-712`, `crates/paneflow-home/src/lib.rs:170-183` ; ed4a3aad, fork #411 (6506e187).
 
 **Priority:** P0
 **Size:** S (2 pts)
 **Dependencies:** None
 
 **Acceptance Criteria:**
-- [ ] Après `paneflow mcp install`, Codex lancé dans un pane Paneflow avec la fenêtre ouverte liste les outils Paneflow ou montre l'erreur du bridge ; le stderr du bridge est capturé.
-- [ ] La même vérification est faite fenêtre fermée (chemin host), sur au moins deux OS parmi Linux, macOS et Windows.
-- [ ] La liste des noms de variables reçues par le bridge est consignée, sans aucune valeur.
-- [ ] Échec : si le bridge fonctionne dans tous les cas, la preuve est consignée et US-033 est réduite à la préservation des clés utilisateur, en P1.
+- [ ] Deux panes A et B dans deux workspaces distincts, aucun daemon Codex actif, Codex 0.159 ou plus avec sa config par défaut : Codex est lancé dans A puis dans B, et B joue un tour. La session Paneflow qui reçoit les événements de B est consignée (`last-hook-event.json`, journal du host).
+- [ ] La même mesure est refaite avec `codex --no-daemon` dans B.
+- [ ] Dans chaque cas, le bridge lancé par le Codex de B consigne les noms des variables `PANEFLOW_*` reçues, et si `PANEFLOW_SESSION_ID` vaut l'id de A, celui de B ou rien, sans aucune autre valeur.
+- [ ] Sous Linux, la mesure consigne aussi si le bridge atteint le socket du contrôleur et l'endpoint du host sans `XDG_RUNTIME_DIR`, que Codex ne transmet pas.
+- [ ] Les mesures sont faites sous Windows et sur au moins un OS Unix.
+- [ ] Échec : si les événements de B atteignent B en mode daemon, la preuve est consignée et US-033 retire son critère `--no-daemon`.
 
-#### US-033: Écrire des entrées MCP complètes sans écraser celles de l'utilisateur
-**Description:** En tant que développeur qui utilise Codex et règle ses serveurs MCP, je veux que Paneflow écrive une entrée qui fonctionne et conserve mes réglages afin que le bridge démarre sans perdre ma configuration. Sources : ed4a3aad, fork #411 (6506e187), #42 (8a970f2e), #93 (31a76f5a), #214, #648, #680 ; `crates/paneflow-mcp-install/src/merge.rs:98-131`, `crates/paneflow-mcp-install/src/integrations.rs:548-582`, `crates/paneflow-mcp-install/src/agents/support.rs:201-216`, `crates/paneflow-agent-config/src/jsonc.rs:62-66,214-216`, `crates/paneflow-serve/src/worker.rs:165-189`.
+#### US-033: Ancrer Codex dans son pane et écrire une entrée MCP complète sans écraser l'utilisateur
+**Description:** En tant que développeur qui fait tourner Codex dans plusieurs panes et règle ses serveurs MCP, je veux que chaque Codex lancé dans un pane rapporte ses hooks à ce pane et que Paneflow écrive une entrée MCP qui fonctionne sans perdre mes réglages. Sources : US-032 ; `codex-rs/tui/src/cli.rs:83-85`, `codex-rs/cli/src/main.rs:3874-3884`, `codex-rs/config/src/mcp_types.rs:365-430`, `codex-rs/rmcp-client/src/utils.rs:16-58,90-101` ; `crates/paneflow-shim/src/exec.rs:12-17`, `crates/paneflow-mcp-install/src/merge.rs:106-139`, `crates/paneflow-mcp-install/src/integrations.rs:365-404,576-582`, `crates/paneflow-mcp-install/src/agents/support.rs:243-262`, `crates/paneflow-serve/src/worker.rs:165-186` ; ed4a3aad, fork #411 (6506e187), #42 (8a970f2e), #93 (31a76f5a), #214, #648, #680.
 
 **Priority:** P0
 **Size:** M (3 pts)
 **Dependencies:** Blocked by US-032
 
 **Acceptance Criteria:**
-- [ ] L'entrée Codex `[mcp_servers.paneflow]` contient `env_vars` avec `PANEFLOW_SOCKET_PATH`, `PANEFLOW_HOST_ENDPOINT`, `PANEFLOW_HOME`, `PANEFLOW_WORKSPACE_ID`, `PANEFLOW_SURFACE_ID` et `PANEFLOW_SESSION_ID`, fusionnés avec les entrées existantes de l'utilisateur.
-- [ ] `paneflow mcp status` rapporte « needs repair » quand cette liste manque ou est incomplète.
-- [ ] Install, Repair et le rafraîchissement du worker mettent à jour `command` et `args` en place et conservent toutes les autres clés (`startup_timeout_sec`, `tool_timeout_sec`, `env`, `enabled`), en TOML comme en JSON (tests).
-- [ ] `enabled = false` posé par l'utilisateur n'est pas réactivé par le rafraîchissement du worker.
-- [ ] Les opérations JSONC ciblent la dernière occurrence d'une clé dupliquée ; une assertion après chaque splice vérifie que seule l'entrée visée a changé sémantiquement.
-- [ ] Échec : given une config Codex invalide, then l'installation est refusée sans modifier le fichier.
+- [ ] Quand `PANEFLOW_SESSION_ID` est présent, le shim `codex` ajoute `--no-daemon` aux invocations qui ouvrent une session interactive (sans sous-commande, `resume`, `fork`), sauf si l'utilisateur l'a déjà passé. Toute autre sous-commande et tout lancement hors pane passent inchangés (test du classifieur d'arguments).
+- [ ] L'entrée Codex `[mcp_servers.paneflow]` contient `env_vars` avec les noms que le bridge lit : `PANEFLOW_SESSION_ID`, `PANEFLOW_WORKSPACE_ID`, `PANEFLOW_HOME`, `PANEFLOW_SOCKET_PATH`, `PANEFLOW_HOST_ENDPOINT` et `XDG_RUNTIME_DIR`, fusionnés avec les noms déjà posés par l'utilisateur.
+- [ ] `paneflow mcp status` rapporte « needs repair » quand un de ces noms manque.
+- [ ] Install, Repair et le rafraîchissement du worker mettent à jour `command`, `args` et `env_vars` en place et conservent toutes les autres clés de l'entrée (`enabled`, `required`, `startup_timeout_sec`, `startup_timeout_ms`, `tool_timeout_sec`, `env`, `cwd`, `enabled_tools`, `disabled_tools`, `tools`), en TOML comme en JSON (tests). Aujourd'hui `upsert_toml_entry` remplace toute la table (`merge.rs:131-138`).
+- [ ] `enabled = false` posé par l'utilisateur n'est pas réactivé par le rafraîchissement du worker, et `status` le rapporte comme désactivé par l'utilisateur plutôt que « needs repair » (`support.rs:251-261`).
+- [ ] Les opérations JSONC gardent le refus d'une clé dupliquée (`crates/paneflow-agent-config/src/jsonc.rs:309-311`), et une assertion après chaque splice vérifie que seule l'entrée visée a changé sémantiquement.
+- [ ] Échec : given deux panes Codex dans deux workspaces, when B joue un tour, then ses événements atteignent la session de B et son bridge voit l'id de session de B.
 
 #### US-034: Reproduire la boucle des shims dans un Paneflow imbriqué
 **Description:** En tant que mainteneur qui développe Paneflow depuis un pane, je veux reproduire à l'exécution la résolution mutuelle des shims afin de corriger la cause réelle. Sources : fork #871 (49bcd918) ; `crates/paneflow-shim/src/detect.rs:40-80`, `crates/paneflow-host/src/helpers.rs:62-72`, `crates/paneflow-host/src/host/spawn_env.rs:138-156`, `src-app/src/terminal/pty_session/spawn_env.rs:45-60`, `src-app/src/runtime_paths.rs:92-108`.
@@ -762,7 +772,7 @@ Rend le bridge MCP fonctionnel sous chaque agent, empêche les shims de se lance
 - [ ] Échec : si aucune boucle n'apparaît, le PATH observé est consigné et US-035 conserve uniquement ses critères d'hygiène des helpers.
 
 #### US-035: Empêcher un shim de lancer un autre shim et assainir les dossiers helpers
-**Description:** En tant que mainteneur, je veux qu'un shim trouve toujours le vrai binaire de l'agent et que les dossiers helpers restent propres afin qu'une instance imbriquée ne sature jamais la session. Sources : fork #871 (49bcd918), #894 (96f02cfd), 3ce1d640, b8aba9a1, #442 (5ed99746, 3f2dface, 2d155bee) ; `crates/paneflow-shim/src/detect.rs:55-73`, `src-app/src/ai_hooks/extract.rs:75,197-265`, `src-app/src/runtime_paths.rs:92-108`, `crates/paneflow-host/src/helpers.rs:62-72`.
+**Description:** En tant que mainteneur, je veux qu'un shim trouve toujours le vrai binaire de l'agent et que les dossiers helpers restent propres afin qu'une instance imbriquée ne sature jamais la session. Le host imbriqué ne retire du PATH que les dossiers versionnés de son propre home (`crates/paneflow-host/src/helpers.rs:62-73`), et le shim n'écarte que son propre dossier et son propre fichier (`crates/paneflow-shim/src/detect.rs:54-82`). Le test d'exécutabilité par bits de mode (`detect.rs:63-72`) et la sortie 127 sans candidat (`crates/paneflow-shim/src/main.rs:36-39`) existent déjà. Sources : fork #871 (49bcd918), #894 (96f02cfd), 3ce1d640, b8aba9a1, #442 (5ed99746, 3f2dface, 2d155bee) ; `crates/paneflow-shim/src/detect.rs:54-82`, `crates/paneflow-shim/src/exec.rs:12-17`, `src-app/src/ai_hooks/extract.rs:196-199,258-265`, `src-app/src/runtime_paths.rs:92-108`, `crates/paneflow-host/src/helpers.rs:62-73`, `crates/paneflow-host/src/host/spawn_env.rs:138-156`.
 
 **Priority:** P0
 **Size:** M (3 pts)
@@ -773,70 +783,78 @@ Rend le bridge MCP fonctionnel sous chaque agent, empêche les shims de se lance
 - [ ] Un shim refuse d'exécuter un binaire quand la variable exportée par `run_real` montre qu'il a été lancé par un autre shim.
 - [ ] Test : deux dossiers helpers distincts dans le PATH, chacun avec un shim `claude`, puis un vrai `claude` plus loin ; le shim résout le vrai binaire.
 - [ ] L'abandon du contexte d'instance retire aussi du PATH l'entrée de `PANEFLOW_BIN_DIR` héritée.
-- [ ] Sous Unix, le test d'exécutabilité utilise `access(X_OK)`.
 - [ ] Un helper extrait dont le contenu est à jour mais qui a perdu son bit exécutable retrouve le mode 0755.
 - [ ] Les anciens dossiers `cache/bin/<version>` sont supprimés au démarrage, sauf ceux qui figurent dans le PATH d'une session hébergée vivante.
 - [ ] La taille de `paneflow-shim` reste sous 512 KiB.
-- [ ] Échec : given aucun vrai binaire dans le PATH, then le shim échoue avec le code 127 et un message qui nomme l'outil, sans boucle.
+- [ ] Échec : given deux dossiers helpers dans le PATH et aucun vrai binaire, then le shim échoue avec le code 127 et un message qui nomme l'outil, sans boucle.
 
-#### US-036: Faire échouer la portée MCP en mode fermé et respecter le protocole
-**Description:** En tant que développeur, je veux qu'un agent ne voie que les panes de son workspace et que le bridge accepte les requêtes MCP conformes afin que l'isolation annoncée soit réelle et que chaque client fonctionne. Sources : fork #20 (fc625f3d, 0ccf6f30), #412 (4f234813), #250 (0cd118a7), #249, #251, #312 (08034286), #151, #61 (39c9d52a) ; `crates/paneflow-mcp/src/scope.rs:44-80`, `crates/paneflow-mcp/src/main.rs:55-66`, `crates/paneflow-mcp/src/bridge.rs:149-220`, `crates/paneflow-mcp/src/tools.rs:74-146`, `crates/paneflow-mcp/src/mcp.rs:55-65,163`, `crates/paneflow-mcp/src/resources.rs:46-69`, `crates/paneflow-host/src/control.rs:139,245-313`, `src-app/src/terminal/pty_session/spawn_env.rs:145-158`.
+#### US-049: Rendre le bridge MCP utilisable sous Claude Code
+**Description:** En tant que développeur qui donne à Claude Code l'accès aux autres panes, je veux que le bridge serve les requêtes MCP conformes afin que `list_panes`, `read_pane` et `search_pane` répondent. Critère déplacé d'US-036 après la preuve à l'exécution du 2026-09-30. Sources : réponse `invalid arguments: unknown field _meta, expected name or arguments` à un appel `list_panes` de Claude Code ; `crates/paneflow-mcp/src/tools.rs:74-80`, `crates/paneflow-mcp/src/mcp.rs:55-58` ; spec MCP 2025-06-18, qui réserve `params._meta`.
 
-**Priority:** P1
-**Size:** L (5 pts)
+**Priority:** P0
+**Size:** S (1 pt)
 **Dependencies:** None
 
 **Acceptance Criteria:**
-- [ ] Sur le chemin host, sans preuve de pane hébergé (`PANEFLOW_SESSION_ID`), la portée est refusée au lieu de valoir « tous les workspaces ».
-- [ ] Le host filtre `surface.list`, `surface.read` et `surface.search` par workspace côté serveur ; une cible numérique hors portée renvoie une erreur.
-- [ ] La portée d'un bridge lancé dans un pane est dérivée côté serveur de la surface appelante et de son appartenance actuelle ; après le déplacement de l'onglet ou un redémarrage de l'app, le bridge voit les panes du workspace actuel.
-- [ ] `tools/call` et `resources/read` acceptent et ignorent `params._meta`.
-- [ ] `resources/templates/list` est implémenté.
-- [ ] Un outil inconnu renvoie une erreur JSON-RPC.
-- [ ] `resources/read` accepte une pagination.
-- [ ] La boucle stdio lit des lignes bornées à 1 MiB, répond -32700 à une ligne trop longue et continue de servir.
+- [ ] `tools/call` et `resources/read` acceptent et ignorent `params._meta` ; tout autre champ inconnu reste refusé.
+- [ ] Test : une requête `tools/call` de la forme émise par Claude Code, `_meta` compris, est servie par `list_panes`, `read_pane` et `search_pane`.
 - [ ] La taille de `paneflow-mcp` reste sous 512 KiB.
-- [ ] Échec : given un bridge lancé hors de tout pane avec la fenêtre fermée, then `list_panes` renvoie une erreur de portée.
+- [ ] Échec : given un `tools/call` avec `_meta` et un argument mal typé, then la réponse nomme l'argument, pas `_meta`.
 
-#### US-037: Respecter les emplacements et formats de config des agents
-**Description:** En tant que développeur qui utilise plusieurs comptes ou des dossiers de config personnalisés, je veux que hooks, MCP et sessions suivent le dossier de config réel de chaque agent afin que chaque profil soit intégré. Sources : fork #31 (af91213f), #253, #292 (36d10049), #233 (403f7ea9), #874 (35c77058), #1054, #60 (a04ad9bd), #216 (805c2c7a), #544, #662 ; `crates/paneflow-mcp-install/src/integrations.rs:79-89,705-706`, `crates/paneflow-mcp-install/src/agents/support.rs:12-92`, `crates/paneflow-mcp-install/src/hook_command.rs:17-42`, `src-app/src/claude_sessions.rs:38-42`, `crates/paneflow-agent-config/src/io.rs:5-13`, `crates/paneflow-agent-config/src/jsonc.rs:23-28,265-351`, `crates/paneflow-mcp-install/src/merge.rs:16-41`, `src-app/src/runtime_paths.rs:208-215`, `src-app/src/agent_launcher.rs:452-463`.
+#### US-036: Dériver la portée MCP côté serveur et respecter le protocole
+**Description:** En tant que développeur, je veux qu'un agent ne voie que les panes du workspace de sa session et que le bridge suive le protocole MCP afin que l'isolation annoncée soit réelle et que chaque client fonctionne. Aujourd'hui la portée vient de `PANEFLOW_WORKSPACE_ID`, figée au démarrage du bridge ; côté host, son absence vaut « tous les workspaces » par choix testé (`crates/paneflow-mcp/src/scope.rs:57-65,137-141`), et le host ne filtre rien (`crates/paneflow-host/src/control.rs:140,246-259`). Seul le bridge vérifie qu'aucune surface ne sort de sa portée (`crates/paneflow-mcp/src/bridge.rs:149-160`). Sources : fork #20 (fc625f3d, 0ccf6f30), #412 (4f234813), #250 (0cd118a7), #249, #251, #312 (08034286), #151, #61 (39c9d52a) ; `crates/paneflow-mcp/src/scope.rs:44-84,137-141`, `crates/paneflow-mcp/src/main.rs:56-67`, `crates/paneflow-mcp/src/bridge.rs:149-160`, `crates/paneflow-mcp/src/tools.rs:104-112`, `crates/paneflow-mcp/src/mcp.rs:55-78,163`, `crates/paneflow-mcp/src/resources.rs:46-69`, `crates/paneflow-host/src/control.rs:130-141,246-313`, `src-app/src/terminal/pty_session/spawn_env.rs:189-196`.
 
 **Priority:** P1
 **Size:** L (5 pts)
 **Dependencies:** Blocked by US-033
 
 **Acceptance Criteria:**
+- [ ] Le bridge présente `PANEFLOW_SESSION_ID` au serveur, qui en déduit le workspace courant de la session ; `PANEFLOW_WORKSPACE_ID` n'est plus la source de la portée.
+- [ ] Sur les chemins contrôleur et host, un bridge sans session est refusé, sauf `PANEFLOW_MCP_SCOPE=all` explicite.
+- [ ] Le host et l'app filtrent `surface.list`, `surface.read` et `surface.search` par workspace côté serveur ; une cible numérique hors portée renvoie une erreur. La vérification du bridge reste en défense.
+- [ ] Après le déplacement de l'onglet ou un redémarrage de l'app, le bridge voit les panes du workspace actuel de sa session.
+- [ ] `resources/templates/list` est implémenté.
+- [ ] Un outil inconnu renvoie une erreur JSON-RPC -32602 au lieu d'un résultat `isError` (`tools.rs:110`).
+- [ ] `resources/read` accepte une pagination.
+- [ ] La boucle stdio lit des lignes bornées à 1 MiB, répond -32700 à une ligne trop longue et continue de servir (`mcp.rs:65` lit sans borne).
+- [ ] La taille de `paneflow-mcp` reste sous 512 KiB.
+- [ ] Échec : given un bridge lancé hors de tout pane, fenêtre fermée, sans `PANEFLOW_MCP_SCOPE`, then `list_panes` renvoie une erreur de portée.
+
+#### US-037: Respecter les emplacements et formats de config des agents
+**Description:** En tant que développeur qui utilise des dossiers de config personnalisés ou un profil dont le chemin contient un espace, je veux que hooks, MCP et sessions suivent le dossier de config réel de chaque agent afin que chaque intégration fonctionne. Le dossier Claude est résolu à trois endroits divergents : `CLAUDE_CONFIG_DIR` pour les hooks (`crates/paneflow-agent-config/src/io.rs:5-13`), `~/.claude.json` codé en dur pour l'entrée MCP (`crates/paneflow-mcp-install/src/integrations.rs:89`, `crates/paneflow-mcp-install/src/agents/support.rs:12-14`), `~/.claude/projects` codé en dur pour les sessions (`src-app/src/claude_sessions.rs:38-42`). Les commandes de hooks Codex sont écrites sans guillemets (`integrations.rs:705-706`) et Codex les exécute par `sh -c` ou `cmd.exe /C` (`codex-rs/hooks/src/engine/command_runner.rs:384-410`). Sources : fork #31 (af91213f), #253, #292 (36d10049), #233 (403f7ea9), #874 (35c77058), #1054, #60 (a04ad9bd), #216 (805c2c7a), #544, #662 ; `crates/paneflow-agent-config/src/io.rs:5-13`, `crates/paneflow-agent-config/src/hook_command.rs`, `crates/paneflow-agent-config/src/jsonc.rs:265-351`, `crates/paneflow-mcp-install/src/integrations.rs:79-89,697-712`, `crates/paneflow-mcp-install/src/agents/support.rs:12-14,32-93,357-375`, `crates/paneflow-mcp-install/src/merge.rs:16-50`, `src-app/src/claude_sessions.rs:36-42`, `src-app/src/runtime_paths.rs:208-215` ; `codex-rs/hooks/src/engine/discovery.rs:777-818` ; `crates/paneflow-shim/src/hooks/claude.rs:85` à `5db6249a^`.
+
+**Priority:** P1
+**Size:** M (3 pts)
+**Dependencies:** Blocked by US-033
+
+**Acceptance Criteria:**
 - [ ] Un résolveur unique calcule le dossier de config Claude à partir d'une table d'environnement ; les hooks, l'entrée MCP et la lecture des sessions l'utilisent.
-- [ ] Pour chaque `CLAUDE_CONFIG_DIR` distinct déclaré par un profil d'agent, hooks et entrée MCP sont installés dans ce dossier, et Settings affiche l'état de chaque dossier.
 - [ ] Une valeur relative de `CLAUDE_CONFIG_DIR`, `CODEX_HOME` ou `OPENCODE_CONFIG_DIR` est rejetée avec un avertissement.
-- [ ] Avec `OPENCODE_CONFIG_DIR`, l'entrée est écrite dans `$OPENCODE_CONFIG_DIR/opencode.json(c)`, sans segment `opencode/` supplémentaire.
-- [ ] Le `settings.json` de Gemini est lu et modifié comme du JSONC.
+- [ ] Avec `OPENCODE_CONFIG_DIR`, l'entrée est écrite dans `$OPENCODE_CONFIG_DIR/opencode.json(c)`, sans segment `opencode/` supplémentaire (`support.rs:89-93` ; le test de `support.rs:357-375` fige aujourd'hui ce segment).
+- [ ] Le `settings.json` de Gemini est lu et modifié comme du JSONC ; il est aujourd'hui analysé en JSON strict et un commentaire fait refuser l'installation (`merge.rs:26-50`).
 - [ ] Le parser JSONC refuse une profondeur de plus de 128 niveaux avec une erreur, sans débordement de pile.
 - [ ] Un build debug refuse un `mcp install` durable, sauf avec le drapeau explicite `--force-dev`.
-- [ ] Les commandes de hook Codex utilisent le quoting de `hook_command.rs` ; test avec un chemin de profil Windows qui contient un espace.
+- [ ] Les commandes de hooks Codex (`command` et `command_windows`) mettent le chemin du reporter entre guillemets pour `sh -c` et pour `cmd.exe /C` quand il contient un espace ou un caractère spécial. Un chemin qui n'en contient pas garde sa commande actuelle : Codex indexe l'approbation d'un hook sur le hash de son handler (`discovery.rs:777-818`), et toute réécriture redemanderait l'approbation. Test avec un profil Windows qui contient un espace.
 - [ ] Les blocs de hooks écrits par les versions antérieures à 0.17 dans `<projet>/.claude/settings.local.json` sont retirés pour les workspaces présents dans `session.json`.
 - [ ] Échec : given un `opencode.jsonc` imbriqué sur 10 000 niveaux, when Settings s'ouvre, then l'app reste ouverte et affiche une erreur d'analyse.
 
 #### US-038: Rendre l'état des sessions agent exact
-**Description:** En tant que développeur qui fait tourner plusieurs agents du même outil, je veux que chaque ligne d'agent reflète son agent et son workspace réels afin que la sidebar, l'attention et les dialogues de fermeture disent vrai. Sources : fork #886 (9a98b4cd), #831, 1b9b8c2d, f6681018, #488 (ed5a5302), #934 (8b38aeab, 1e22d40e), #28 (a5234a06), 07360a6d, #414 (16f00e8e), #515 (87c506a4), #196 (a7d93fc8) ; `src-app/src/app/ipc_handler/agent_frames.rs:102-238,344-354,597-613,899-1022`, `src-app/src/app/event_handlers/session_reaper.rs:36-97,179`, `src-app/src/app/host_agents.rs:235-261,455-503`, `src-app/src/app/workspace_ops/tab.rs:479-535`, `src-app/src/workspace/mod.rs:34-81`, `crates/paneflow-ipc-client/src/agent.rs:69-79`.
+**Description:** En tant que développeur qui fait tourner plusieurs agents, je veux que chaque ligne d'agent reflète son agent et son workspace réels afin que la sidebar, l'attention et les dialogues de fermeture disent vrai. Pour un pane hébergé, la sidebar est projetée depuis le worker (`src-app/src/app/host_agents.rs:473-503,536-622`), et `paneflow-ai-hook` n'écrit qu'au host (`crates/paneflow-ai-hook/src/runtime.rs:37-60`). Les replis visés par le fork vivent dans `handle_agent_frame` (`src-app/src/app/ipc_handler/agent_frames.rs:623-1036`), que seul un appel `ai.*` sur le socket de l'app atteint encore (`src-app/src/app/ipc_handler/mod.rs:177`) ; aucun producteur de l'arbre ne l'appelle. Sources : fork #886 (9a98b4cd), #831, 1b9b8c2d, f6681018, #488 (ed5a5302), #934 (8b38aeab, 1e22d40e), #28 (a5234a06), 07360a6d, #414 (16f00e8e), #515 (87c506a4), #196 (a7d93fc8) ; `src-app/src/app/ipc_handler/agent_frames.rs:169-172,898-921,1000-1023`, `src-app/src/app/event_handlers/session_reaper.rs:36-47`, `src-app/src/app/host_agents.rs:473-503,536-622`, `src-app/src/app/workspace_ops/tab.rs:479-535`, `crates/paneflow-serve/src/hook_state.rs`, `crates/paneflow-serve/src/state.rs`.
 
 **Priority:** P1
 **Size:** L (5 pts)
 **Dependencies:** None
 
 **Acceptance Criteria:**
-- [ ] `ai.session_end` avec un PID réel sans ligne correspondante ne retire aucune autre ligne ; le repli ne s'applique qu'aux frames sans PID ou aux lignes synthétiques.
-- [ ] Une frame sans PID se lie d'abord par `surface_id` validé et n'accepte qu'un candidat unique.
-- [ ] Une ligne Errored est évincée quand un autre outil se lie à la même surface ; une ligne Errored qui se lie tardivement n'évince pas un jumeau vivant.
-- [ ] Le minuteur de 5 s après un stop porte un compteur de tour et ne retire pas une ligne Finished plus récente.
-- [ ] L'heure de démarrage du processus est comparée : un PID recyclé ne rejoint pas une ligne morte, et une heure absente n'est plus traitée comme la preuve d'un processus vivant.
+- [ ] Les écritures `ai.*` sur le socket de l'app sont retirées (-32601) ou transmises au host comme `agent.event`. Les replis de `handle_agent_frame` qui n'ont plus d'appelant sont supprimés : repli par PID de `ai.session_end`, liaison au premier agent du même outil, minuteur de 5 s après un stop.
+- [ ] `pid_matches` ne traite plus une heure de démarrage absente comme la preuve d'un processus vivant (`session_reaper.rs:36-47`).
 - [ ] Un agent en attente sans message affiche l'anneau et le point d'attention.
-- [ ] Une ligne en attente d'entrée n'est remplacée par une source de rang inférieur qu'après être sortie de cet état.
 - [ ] Déplacer un onglet déplace ses lignes d'agent et ses marques de complétion non lues vers le workspace de destination ; les dialogues de fermeture et de quit ne comptent jamais un agent deux fois.
-- [ ] Échec : given deux sessions Claude dans un workspace, when le pane A est fermé, then la ligne de B reste affichée (test).
+- [ ] Pour chacun de ces cas, un test sur la projection du worker échoue avant correction ou prouve l'absence du défaut : deux agents du même outil dans un workspace, PID recyclé, stop perdu.
+- [ ] Échec : given deux sessions Claude dans un workspace, when le pane A est fermé, then la ligne de B reste affichée (test sur la projection du worker).
 
 #### US-039: Fiabiliser la lecture et le scan des sessions d'agents
-**Description:** En tant que développeur qui reprend des sessions depuis la sidebar, je veux que toutes mes sessions récentes soient listées sans scans en double afin de pouvoir les reprendre de façon fiable. Sources : fork #888 (10c719a3), #713 (a2f1ff7e), #718 (648786f1), #889 (9df048c5), #907 (ef0e1460), #311 (8296d9de), #302 (cdb876fe), #137 (400f1b19), #905 (46259575) ; `src-app/src/claude_sessions.rs:84-117,165-193`, `src-app/src/pi_sessions.rs:40-72,152-199`, `src-app/src/command_sessions.rs:139-162`, `src-app/src/agent_sessions.rs:461-483`, `src-app/src/app/sessions_sidebar.rs:19-111`, `src-app/src/opencode_sessions.rs:11-31`, `src-app/src/agent_launcher.rs:285-322`.
+**Description:** En tant que développeur qui reprend des sessions depuis la sidebar, je veux que toutes mes sessions récentes soient listées sans scans en double afin de pouvoir les reprendre de façon fiable. Le tri Gemini avant plafond (`src-app/src/agent_sessions.rs:424-449`) et le délai de la sonde des agents installés (`src-app/src/agent_launcher.rs:305-330`) sont déjà en place ; le cache Claude par empreinte n'existe plus. Sources : fork #888 (10c719a3), #713 (a2f1ff7e), #718 (648786f1), #889 (9df048c5), #907 (ef0e1460), #311 (8296d9de), #302 (cdb876fe), #137 (400f1b19), #905 (46259575) ; `src-app/src/claude_sessions.rs:150-195`, `src-app/src/pi_sessions.rs:40-63,152-158`, `src-app/src/opencode_sessions.rs:11-31`, `src-app/src/app/sessions_sidebar.rs:51-53,96-103`.
 
 **Priority:** P1
 **Size:** M (3 pts)
@@ -844,13 +862,10 @@ Rend le bridge MCP fonctionnel sous chaque agent, empêche les shims de se lance
 
 **Acceptance Criteria:**
 - [ ] Les lecteurs Claude et Pi lisent avec `read_until` puis décodent en lossy ; une ligne coupée au milieu d'un caractère UTF-8 à la frontière des 64 KiB ne fait plus disparaître la session (test avec un emoji).
-- [ ] Une fois l'enveloppe trouvée, une fin de fichier au milieu d'une ligne trop longue n'annule pas la session.
-- [ ] Le cache Claude est indexé par l'empreinte prise avant le scan.
-- [ ] Les sessions Gemini sont triées des plus récentes aux plus anciennes avant l'application du plafond.
-- [ ] Un scan en cours pour le même agent et le même cwd n'est pas relancé au changement de workspace.
-- [ ] La découverte Pi est plafonnée à 10 000 entrées et 8 MiB lus.
-- [ ] `opencode session list` s'exécute avec le cwd du workspace, et une sortie invalide est journalisée.
-- [ ] La sonde des agents installés a un délai de 5 s ; un délai dépassé termine le scan avec l'état déjà connu.
+- [ ] Une fois l'enveloppe trouvée, une fin de fichier ou une erreur de lecture au milieu d'une ligne trop longue n'annule pas la session (`claude_sessions.rs:176-195`).
+- [ ] Ouvrir la sidebar ne relance pas un scan déjà en cours pour le même agent et le même cwd ; la garde de génération écarte déjà les résultats périmés.
+- [ ] La découverte Pi est plafonnée à 10 000 entrées et 8 MiB lus ; seule la profondeur est bornée aujourd'hui.
+- [ ] `opencode session list` s'exécute avec le cwd du workspace, et une sortie invalide est journalisée au lieu d'être ignorée en silence.
 - [ ] Échec : given un fichier de session illisible, then les autres sessions restent listées et une ligne de log nomme le fichier.
 
 ---
@@ -1029,17 +1044,18 @@ Fait porter les actions sur tous les onglets et rend le focus là où il était.
 - FR-08 : Le thread GPUI n'exécute ni requête runtime synchrone, ni I/O fichier, ni sous-processus, ni sonde de chemin dans les chemins listés par l'EP-004. (US-020, US-024, US-026, US-027)
 - FR-09 : Toute entrée IPC mal typée reçoit -32602, et toute défaillance runtime est renvoyée comme erreur, jamais comme résultat vide. (US-024, US-025, US-028)
 - FR-10 : Une mutation IPC respecte la même politique de fermeture, la même barrière d'orchestration et le même confinement de worktree que l'UI. (US-029)
-- FR-11 : Le bridge MCP démarre sous chaque agent supporté, et sa portée est refusée sans preuve de pane. (US-032, US-033, US-036)
+- FR-11 : Le bridge MCP sert ses outils sous chaque agent supporté, et sa portée est refusée sans session de pane. (US-032, US-033, US-036, US-049)
 - FR-12 : Une réinstallation MCP ou un rafraîchissement d'intégration ne supprime aucune clé que l'utilisateur a posée. (US-033)
 - FR-13 : Hooks, entrée MCP et lecture des sessions utilisent le dossier de config réel de chaque agent et de chaque profil. (US-037, US-039)
 - FR-14 : Les actions multi-agents couvrent tous les onglets, et chaque overlay rend le focus à son origine. (US-040, US-041)
 - FR-15 : Les workflows de release n'exécutent que des actions épinglées par SHA, sans jeton persistant. (US-046)
+- FR-16 : Un hook ou un bridge lancé par un agent vise la session du pane qui a lancé cet agent. (US-032, US-033)
 
 ### Priorités MoSCoW
 
 | Niveau | Capacités | Livraison |
 |--------|-----------|-----------|
-| Must Have | Perte de données, isolation git, verrous de l'index, écritures symlink-safe, flots terminal, thème du host, lectures IPC hors GPUI, entrée MCP Codex, boucle des shims | R0, R1 (P0) |
+| Must Have | Perte de données, isolation git, verrous de l'index, écritures symlink-safe, flots terminal, thème du host, lectures IPC hors GPUI, entrée MCP Codex, attribution des hooks Codex, bridge sous Claude Code, boucle des shims | R0, R1 (P0) |
 | Should Have | Robustesse de l'éditeur, des fichiers spéciaux, du terminal, de l'IPC, de la CLI, de l'intégration agents, de l'UI, de l'accessibilité, de la mise à jour et de la CI | R2, R3 (P1) |
 | Could Have | Exactitude git secondaire, sémantique IPC secondaire, fiabilité des tests et benchs | R4 (P2) |
 | Won't Have | Les fonctionnalités du fork et les choix produit hors défauts | Section Non-Goals |
@@ -1088,12 +1104,13 @@ Fait porter les actions sur tous les onglets et rend le focus là où il était.
 | 10 | Host plus ancien que l'app | Reattach après une mise à jour | Fonctionnement normal, fonctions host nouvelles désactivées | Log une fois : "host does not support appearance updates" |
 | 11 | Paramètre IPC mal typé | `"surface_id": "42"` | -32602, aucune action | "Invalid params: surface_id must be an integer" |
 | 12 | Timeout runtime IPC | Pane très occupé | Erreur JSON-RPC, pas de texte vide | "Terminal runtime did not answer in time" |
-| 13 | Codex sans variables Paneflow | Bridge lancé par Codex | `env_vars` transmet les variables ; `status` signale une entrée incomplète | "needs repair" |
+| 13 | Codex dans deux panes | Le daemon partagé a été lancé depuis le premier pane | Chaque Codex lancé par le shim reste dans le processus de son pane ; ses hooks et son bridge visent sa session ; `status` signale une entrée sans `env_vars` | "needs repair" |
 | 14 | Paneflow imbriqué | `dev.sh` lancé depuis un pane | Le shim résout le vrai binaire | (aucun) |
 | 15 | Connexion lente pendant la mise à jour | 256 Ko/s | Téléchargement mené à terme | (aucun) |
 | 16 | Connexion bloquée pendant la mise à jour | Aucun octet pendant 60 s | Échec en 60 s au plus, nouvel essai possible | "Download stalled. Try again." |
 | 17 | Collage multi-lignes sans bracketed paste | Collage de 5 lignes à un prompt | Confirmation avant envoi | "Paste 5 lines into the terminal?" |
-| 18 | Chemin de profil avec espace sous Windows | `C:\Users\Jean Dupont` | Hooks Codex quotés et fonctionnels | (aucun) |
+| 18 | Chemin de profil avec espace sous Windows | `C:\Users\Jean Dupont` | Hooks Codex quotés et fonctionnels ; un chemin sans espace garde sa commande et son approbation | (aucun) |
+| 19 | Requête MCP avec `_meta` | `tools/call` de Claude Code | Appel servi, `_meta` ignoré | (aucun) |
 
 ## Risks & Mitigations
 
@@ -1107,7 +1124,9 @@ Fait porter les actions sur tous les onglets et rend le focus là où il était.
 | 6 | Le code `#[cfg(windows)]` n'est pas compilable hors Windows et casse la CI Windows | Med | Med | Tests natifs sur la machine Windows d'Arthur ; relecture de l'ordre des items par rapport à `mod tests` |
 | 7 | 47 stories font dériver le calendrier et diluent les correctifs P0 | High | Med | Livraisons R0 à R4 ; R1 (P0) passe avant tout le reste ; toute réduction de périmètre passe d'abord par ce PRD |
 | 8 | Des changements de comportement surprennent les utilisateurs (prompt au quit, confirmation de collage, notifications de programme) | Med | Low | Notes de release explicites, défauts conservateurs (`osc52_clipboard = copy`) |
-| 9 | Des modifications locales en cours touchent les mêmes fichiers (terminal, raccourcis) | Med | Med | Chaque story repart du `main` à jour et rebase avant de commencer ; les lignes citées se rapportent à `8c3dd2ca` |
+| 9 | Des modifications locales en cours touchent les mêmes fichiers (terminal, raccourcis) | Med | Med | Chaque story repart du `main` à jour et rebase avant de commencer ; les lignes citées se rapportent à `8c3dd2ca`, sauf en EP-005 (`14f47ab9`) |
+| 10 | Forcer `--no-daemon` prive les panes des fonctions du serveur partagé de Codex, ou casse avec une version future de Codex | Med | Med | Seules les invocations interactives lancées par le shim dans un pane hébergé sont touchées ; US-032 rejoué à chaque montée de version majeure de Codex ; note de release |
+| 11 | Réécrire la commande d'un hook Codex invalide son approbation | High | Med | Quoting appliqué seulement aux chemins qui l'exigent (US-037) |
 
 ## Non-Goals
 
@@ -1134,6 +1153,8 @@ Explicit boundaries: what this version does NOT include.
 - Suppressions choisies par le propriétaire du fork (API de tâches, verbes CLI `new`, `select`, `split`, `focus`, `ls`, `read`, `search`), refonte Review du fork, Sentry, sidecar Foundation Models.
 - Tout défaut introduit par le fork lui-même ou confiné à ses scripts, sa CI macOS-only ou sa notarisation.
 - Doublon du symbole `_memset` dans l'archive libghostty macOS : dépend de l'amont et n'est pas un défaut de Paneflow.
+- Installation des hooks et du MCP dans chaque `CLAUDE_CONFIG_DIR` déclaré par un profil d'agent, avec l'état de chaque dossier dans Settings : fonctionnalité, retirée d'US-037 en v1.4.
+- Retrait du shim PATH : il porte encore le code de sortie des agents et `PANEFLOW_AI_TOOL`, et devient le véhicule de `--no-daemon`. À réexaminer quand l'intégration shell rapportera les codes de sortie sur les trois OS.
 
 ## Files NOT to Modify
 
@@ -1157,7 +1178,7 @@ Frame as questions for engineering input, not mandates.
 - **Journaux :** activer la feature `log` de `tracing` dans la dépendance du workspace (une ligne, sans nouvelle crate) ou brancher un subscriber vers `env_logger` ? La première option est recommandée.
 - **Téléchargement :** ureq 3 n'a pas de délai d'inactivité ; le délai de stagnation doit envelopper le lecteur du corps. Un lecteur maison, ou `timeout_recv_body` par morceaux ?
 - **Dialogue des buffers sales :** étendre les lignes de `close_dialog_rows`, ou créer un dialogue dédié réutilisé par quit et par la fermeture d'onglet ? Réutiliser `close_policy` est recommandé.
-- **Migration :** aucune migration de données. `terminal.osc52_clipboard` est une nouvelle clé optionnelle, rétrocompatible. Les entrées MCP existantes sont réparées en place au prochain rafraîchissement du worker.
+- **Migration :** aucune migration de données. `terminal.osc52_clipboard` est une nouvelle clé optionnelle, rétrocompatible. Les entrées MCP existantes sont réparées en place au prochain rafraîchissement du worker. Une commande de hook Codex ne change que si son chemin exige des guillemets.
 
 ## Success Metrics
 
@@ -1168,9 +1189,10 @@ Frame as questions for engineering input, not mandates.
 | Erreurs `index.lock` dans le test de concurrence | Non mesuré (défaut confirmé par lecture) | 0 sur 500 | Month-1 | Test de US-009 |
 | Frames de plus de 50 ms imputables à l'IPC pendant `paneflow wait` | Non mesuré (défaut confirmé par lecture) | 0 | Month-6 | Qualification de release, facultative (v1.3) |
 | Panes marqués terminés par un flot de BEL | À mesurer par US-016 | 0 | Month-1 | Test de US-017 |
-| OS où le bridge MCP fonctionne sous Codex | À mesurer par US-032 | 3/3 | Month-1 | Protocole de US-032 rejoué après US-033 |
+| OS où hooks et bridge Codex visent le pane qui a lancé Codex | À mesurer par US-032 | 3/3 | Month-1 | Protocole de US-032 rejoué après US-033 |
+| Appels MCP servis sous Claude Code | 0 % (`_meta` refusé, 2026-09-30) | 100 % | Month-1 | Test de US-049 |
 | Spawns git de production hors builder | ≈15 sites | 0 | Month-1 | Test de garde de US-008 |
-| Stories DONE | 0/48 | 16/48 (R0 et R1) ; ≥ 45/48 | Month-1 / Month-6 | Fichier de statut |
+| Stories DONE | 0/49 | 17/49 (R0 et R1) ; ≥ 46/49 | Month-1 / Month-6 | Fichier de statut |
 | Tests de régression ajoutés | 0 | ≥ 47, au moins un par story | Month-6 | Revue des PR |
 
 ## Open Questions
@@ -1181,4 +1203,7 @@ Frame as questions for engineering input, not mandates.
 - Si US-032 ou US-034 ne reproduisent pas leur défaut, que deviennent US-033 et US-035 ? Les critères sont déjà prévus dans les stories ; Arthur valide leur reclassement.
 - Est-il souhaitable de citer les numéros d'issues et les sha d'un fork privé dans un document suivi par git ? Arthur, avant le premier commit de ce PRD.
 - Faut-il ajouter à `workspace.close` un paramètre `force` qui ignore la confirmation (buffers sales, agents vivants) pour les orchestrateurs ? Engineering, pendant US-029.
+- Le shim peut-il forcer `--no-daemon` pour Codex dans un pane, au prix des fonctions du serveur partagé (continuation après la sortie du TUI, vue des agents entre terminaux) ? Aucune autre voie ne transmet l'environnement du pane au daemon. Arthur, avant US-033.
+- Côté host, un bridge sans session doit-il être refusé, comme le demande US-036, alors que le repli actuel vers tous les workspaces est un choix testé ? Arthur, avant US-036.
+- Les écritures `ai.*` sur le socket de l'app, documentées comme « Lifecycle telemetry » mais sans producteur dans l'arbre, sont-elles retirées ou transmises au host ? Arthur, avant US-038.
 [/PRD]

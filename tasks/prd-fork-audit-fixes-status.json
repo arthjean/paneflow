@@ -43,7 +43,7 @@
       "title": "Réparer l'intégration agents, MCP et hooks",
       "status": "TODO",
       "priority": "P0",
-      "stories_total": 8,
+      "stories_total": 9,
       "stories_done": 0
     },
     {
@@ -466,7 +466,7 @@
     },
     {
       "id": "US-032",
-      "title": "Reproduire l'échec du bridge MCP sous Codex",
+      "title": "Reproduire l'attribution des hooks et du bridge Codex sous le daemon partagé",
       "epic": "EP-005",
       "status": "TODO",
       "priority": "P0",
@@ -478,7 +478,7 @@
     },
     {
       "id": "US-033",
-      "title": "Écrire des entrées MCP complètes sans écraser celles de l'utilisateur",
+      "title": "Ancrer Codex dans son pane et écrire une entrée MCP complète sans écraser l'utilisateur",
       "epic": "EP-005",
       "status": "TODO",
       "priority": "P0",
@@ -517,13 +517,27 @@
       "reviewed_at": null
     },
     {
+      "id": "US-049",
+      "title": "Rendre le bridge MCP utilisable sous Claude Code",
+      "epic": "EP-005",
+      "status": "TODO",
+      "priority": "P0",
+      "size": "S",
+      "blocked_by": [],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
       "id": "US-036",
-      "title": "Faire échouer la portée MCP en mode fermé et respecter le protocole",
+      "title": "Dériver la portée MCP côté serveur et respecter le protocole",
       "epic": "EP-005",
       "status": "TODO",
       "priority": "P1",
       "size": "L",
-      "blocked_by": [],
+      "blocked_by": [
+        "US-033"
+      ],
       "started_at": null,
       "completed_at": null,
       "reviewed_at": null
@@ -534,7 +548,7 @@
       "epic": "EP-005",
       "status": "TODO",
       "priority": "P1",
-      "size": "L",
+      "size": "M",
       "blocked_by": [
         "US-033"
       ],
