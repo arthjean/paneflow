@@ -51,7 +51,7 @@
       "title": "Corriger UI, focus, accessibilité, config, mise à jour et CI",
       "status": "TODO",
       "priority": "P1",
-      "stories_total": 8,
+      "stories_total": 9,
       "stories_done": 0
     }
   ],
@@ -623,7 +623,7 @@
       "title": "Rendre les contrôles accessibles, lisibles et conformes à Reduce motion",
       "epic": "EP-006",
       "status": "TODO",
-      "priority": "P1",
+      "priority": "P2",
       "size": "L",
       "blocked_by": [],
       "started_at": null,
@@ -673,6 +673,18 @@
       "status": "TODO",
       "priority": "P2",
       "size": "L",
+      "blocked_by": [],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-050",
+      "title": "Isoler les tests du home et de la config git de l'utilisateur",
+      "epic": "EP-006",
+      "status": "TODO",
+      "priority": "P1",
+      "size": "M",
       "blocked_by": [],
       "started_at": null,
       "completed_at": null,

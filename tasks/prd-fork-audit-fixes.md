@@ -10,6 +10,7 @@
 | 1.2 | 2026-09-29 | Arthur Jean | Le critère de reproduction manuelle d'US-016 devient une reproduction à l'exécution sur un vrai PTY : le test automatisé a reproduit l'état exited sous Linux avant correctif, et le rendu GPUI du libellé n'ajoute rien à la cause. |
 | 1.3 | 2026-09-29 | Arthur Jean | Les critères chiffrés de performance d'US-024 (frames de 50 ms) et d'US-026 (première frame à 250 ms au-dessus de la baseline) deviennent des preuves structurelles déjà testées : aucune requête runtime ni sonde de chemin sur le thread GPUI, et abandon au délai d'un chemin qui bloque. Les deux mesures passent en vérification facultative à la qualification d'une release, sans bloquer les stories. |
 | 1.4 | 2026-09-30 | Arthur Jean | EP-005 revérifié sur `main` @ `14f47ab9` et sur la source de Codex @ `d42056091a`. Nouvelle US-049 (P0, R1) : le bridge refuse le `_meta` de Claude Code, critère déplacé d'US-036. US-032 et US-033 visent le daemon partagé de Codex 0.159, qui fait voir aux hooks et au bridge l'environnement du premier pane ; le shim force `--no-daemon`. US-036 dérive la portée de la session côté serveur. US-037 corrige le chemin de `hook_command.rs` et limite le quoting Codex aux chemins qui l'exigent ; l'installation par profil passe en Non-Goals. US-038 cible la projection du worker et retire les replis sans appelant. Critères déjà satisfaits retirés : refus d'une config Codex invalide (US-033), `access(X_OK)` (US-035), tri Gemini, délai de sonde et cache Claude (US-039). 49 stories. |
+| 1.5 | 2026-09-30 | Arthur Jean | EP-006 revérifié sur `main` @ `4c4e9457` : aucun de ses critères n'y était satisfait. US-045 corrige la sémantique des délais d'ureq 3.4 (`timeout_recv_body` est un délai par lecture ; les délais global, par appel et de réponse restent actifs pendant le corps), ajoute `release-assets.githubusercontent.com` aux hôtes vérifiés sur les redirections et remplace le test à 256 Ko/s, qui passe déjà. Nouvelle US-050 (P1, R3) : isolation des tests du home et de la config git, critères déplacés d'US-047. US-047 remplace la mutation de chaque test cité par une liste de tests à supprimer ou à rendre rouges sous une mutation nommée, remplace `Drop` sur `ConfigLock` (le flock est déjà libéré à la fermeture du fd) par `#[must_use]` et sépare le watchdog de la borne du test `paneflow-ai-hook`. US-043 passe en P2 et en R4 ; la navigation Tab entre contrôles passe en Non-Goals. US-046 exclut `bench-startup` du contrôle de contention. US-040 livre ensemble la couverture des onglets et la sortie du zoom ; le dialogue de fermeture, déjà contrôlé par ids, sort de son critère 6. US-044 étend le critère du journal au schéma et à la doc. 50 stories. |
 
 ## Problem Statement
 
@@ -48,8 +49,8 @@ Cinq livraisons :
 | R0 : reproductions | Trois défauts à confirmer à l'exécution | 3 | Preuve consignée pour chacun ; un défaut non reproduit reclasse sa story de correctif |
 | R1 : intégrité et sécurité | Toutes les stories P0 hors reproduction | 14 | Aucun scénario de perte de données reproductible ; builder git et écrivain symlink-safe en place |
 | R2 : robustesse du cœur | Stories P1 des EP-001 à EP-004 | 17 | Aucune requête runtime, I/O ou sous-processus bloquant sur le thread GPUI dans les chemins listés |
-| R3 : agents, UI et outillage | Stories P1 des EP-005 et EP-006 | 11 | Intégrations agents et accessibilité conformes aux critères |
-| R4 : finitions | Stories P2 | 3 | Résultats git exacts, sémantique IPC secondaire, tests et bench fiables |
+| R3 : agents, UI et outillage | Stories P1 des EP-005 et EP-006 | 11 | Intégrations agents, UI, mise à jour et CI conformes aux critères ; aucun test n'écrit dans le home réel |
+| R4 : finitions | Stories P2 | 4 | Résultats git exacts, sémantique IPC secondaire, accessibilité, tests et bench fiables |
 
 L'état et les preuves de l'audit sont conservés localement dans `tasks/fork-audit/`. Ce dossier n'est pas suivi par git et n'existe que sur la machine d'Arthur : un autre agent ne peut pas le lire. Chaque story cite donc ses sources directement : fichiers upstream et références du fork (numéro d'issue ou sha dans `theaamgroup/PaneFlow`).
 
@@ -61,7 +62,7 @@ L'état et les preuves de l'audit sont conservés localement dans `tasks/fork-au
 | Sécuriser les sondes automatiques | 100 % des spawns git de production passent par le builder ; 0 exécution de `core.fsmonitor` local dans les tests | 0 régression Git LFS ou hooks signalée |
 | Libérer le thread de rendu | 0 frame > 50 ms due à un handler IPC dans le scénario de US-024 | 100 % des chemins de l'EP-004 hors du thread GPUI |
 | Rétablir l'intégration agents | Bridge MCP fonctionnel sous Claude Code et Codex sur Linux, macOS et Windows ; événements Codex attribués au pane qui les émet | 0 clé utilisateur perdue par une réinstallation MCP |
-| Clore l'audit | R0 et R1 DONE (17 stories) | ≥ 46/49 stories DONE |
+| Clore l'audit | R0 et R1 DONE (17 stories) | ≥ 47/50 stories DONE |
 
 ## Target Users
 
@@ -105,7 +106,7 @@ Key findings that informed this PRD:
 - Codex lance un serveur MCP stdio avec un environnement vidé, auquel il ajoute `DEFAULT_ENV_VARS`, les noms listés dans `env_vars` et les valeurs de `env` ([doc MCP Codex](https://learn.chatgpt.com/docs/extend/mcp?surface=cli), `codex-rs/rmcp-client/src/utils.rs` et `codex-rs/utils/pty/src/child_command.rs` @ `d42056091a`). Les valeurs sont lues dans l'environnement du processus Codex qui lance le serveur. Depuis la 0.159, ce processus est par défaut un daemon partagé par `CODEX_HOME` qui hérite de l'environnement de la première CLI, et les hooks figent ce même environnement (`codex-rs/app-server-daemon/src/backend/pid_start.rs`, `codex-rs/hooks/src/registry.rs`). `--no-daemon` garde la session dans le processus du pane.
 - Codex exécute une commande de hook par `sh -c` ou `cmd.exe /C` et indexe son approbation sur le hash du handler (`codex-rs/hooks/src/engine/command_runner.rs`, `codex-rs/hooks/src/engine/discovery.rs`).
 - MCP 2025-06-18 réserve `params._meta` sur toute requête ([spec](https://modelcontextprotocol.io/specification/2025-06-18/basic/index)).
-- ureq 3 : `timeout_global` couvre tout le transfert et il n'existe pas de délai d'inactivité ; un gros téléchargement a besoin de délais de connexion et de réponse plus un délai de stagnation implémenté autour du lecteur.
+- ureq 3.4 : chaque attente vérifie son propre délai, ceux des étapes qui la précèdent, `timeout_global` et `timeout_per_call` (`src/timings.rs`). Pendant le corps, `timeout_recv_response`, `timeout_global` et `timeout_per_call` restent donc actifs, et une fois leur échéance passée chaque lecture ne dispose plus que d'1 s (`NextTimeout::not_zero`). `timeout_recv_body` se réarme à chaque lecture et sert de délai de stagnation ; `timeout_send_request` borne l'attente des en-têtes sans s'appliquer au corps. Un gros téléchargement combine `timeout_connect`, `timeout_send_request` et `timeout_recv_body`, et contrôle son plafond global dans la boucle de copie.
 - `open` 5.4.2 : `that` attend la fin du lanceur, `that_detached` non (sous macOS, `that_detached` appelle `that`, ce qui ne bloque pas).
 
 *Full research sources available in project documentation.*
@@ -154,8 +155,8 @@ Pour une story qui revendique un gain de performance : mesure par `scripts/bench
 | R0 | US-016, US-032, US-034 |
 | R1 | US-001, US-002, US-003, US-004, US-006, US-008, US-009, US-012, US-017, US-018, US-024, US-033, US-035, US-049 |
 | R2 | US-005, US-007, US-011, US-013, US-014, US-015, US-019, US-020, US-021, US-022, US-023, US-048, US-025, US-026, US-027, US-028, US-029, US-031 |
-| R3 | US-036, US-037, US-038, US-039, US-040, US-041, US-042, US-043, US-044, US-045, US-046 |
-| R4 | US-010, US-030, US-047 |
+| R3 | US-036, US-037, US-038, US-039, US-040, US-041, US-042, US-044, US-045, US-046, US-050 |
+| R4 | US-010, US-030, US-043, US-047 |
 
 Chaque story commence par un test qui échoue sur `8c3dd2ca`. Un critère que ce test ne reproduit pas est retiré de la story avec la preuve consignée dans la PR ; il n'est jamais corrigé à l'aveugle. Les dépendances du JSON font foi.
 
@@ -872,7 +873,7 @@ Les stories de cet epic ont été revérifiées le 2026-09-30 sur `main` @ `14f4
 
 ### EP-006: Corriger UI, focus, accessibilité, config, mise à jour et CI
 
-Fait porter les actions sur tous les onglets et rend le focus là où il était. Rend les contrôles accessibles et les erreurs de config visibles. Fiabilise la mise à jour et durcit la chaîne de release.
+Fait porter les actions sur tous les onglets et rend le focus là où il était. Rend les contrôles accessibles et les erreurs de config visibles. Fiabilise la mise à jour, durcit la chaîne de release et isole les tests du poste de l'utilisateur.
 
 **Definition of Done:**
 - Aucune action multi-agents n'ignore un onglet inactif.
@@ -881,6 +882,7 @@ Fait porter les actions sur tous les onglets et rend le focus là où il était.
 - Les erreurs de config sont journalisées sur les trois OS.
 - Les téléchargements de mise à jour survivent à une connexion lente.
 - Toutes les actions de release sont épinglées.
+- Aucun test n'écrit dans le home Paneflow réel ni n'hérite de la config git de l'utilisateur.
 
 #### US-040: Faire porter les actions multi-agents sur tous les onglets
 **Description:** En tant que développeur qui répartit ses agents dans plusieurs onglets, je veux que broadcast, sauts, file d'attention et recherche voient tous les onglets afin qu'aucun agent en attente ne soit invisible. Sources : fork #293 (c68a17d4), #294 (db37310e), #601, #602, #722 (84a4609d), #723 (d5b316f9), #48 (5c775339), #702 (4818e7d0), #140 (400f1b19), #890 (7c230395), #935 (dd5f9a6b), #936 (4fd2f318), #113 (6461ba8e), #347 et #348 ; `src-app/src/app/broadcast.rs:93-130,315-326`, `src-app/src/app/workspace_ops/focus.rs:118-154`, `src-app/src/app/attention_queue.rs:41-61`, `src-app/src/app/fleet_search.rs:42,164`, `src-app/src/app/composer.rs:313-324`, `src-app/src/app/window.rs:112-116,143-146`, `src-app/src/app/workspace_ops/mod.rs:183-206,665-713,802-981`, `src-app/src/app/workspace_ops/tab.rs:172-189,289-349`, `src-app/src/app/sidebar/tab_row.rs:207-211`, `src-app/src/app/sidebar/mod.rs:231-260`, `src-app/src/main.rs:163`.
@@ -890,12 +892,12 @@ Fait porter les actions sur tous les onglets et rend le focus là où il était.
 **Dependencies:** US-048
 
 **Acceptance Criteria:**
-- [ ] Broadcast, jump-to-waiting, attention queue, fleet search, badges et chips parcourent tous les onglets, y compris les panes masqués par le zoom.
-- [ ] Un saut active l'onglet cible et sort du zoom avant de donner le focus.
+- [ ] Broadcast, jump-to-waiting, attention queue, fleet search, badges et chips parcourent tous les onglets, y compris les panes masqués par le zoom, par `Workspace::collect_panes()`, qui ne compte qu'une fois le pane zoomé. Sont compris le compteur du picker de broadcast, celui du composer et le nettoyage des badges de fleet search. Les badges et compteurs de la sidebar, qui passent déjà par `Tab::collect_panes()`, ne changent pas.
+- [ ] Un saut active l'onglet cible et sort du zoom avant de donner le focus, par un chemin unique partagé par jump-to-waiting, attention queue et fleet search. Ce critère est livré dans le même commit que le précédent : lister un pane masqué par le zoom sans en sortir au saut produirait une ligne inerte.
 - [ ] La synchronisation du broadcast ne retire plus les membres situés dans un onglet inactif.
 - [ ] L'undo-close d'un pane résout le workspace par id et refuse, avec un toast, un onglet zoomé ou au plafond de panes.
-- [ ] L'undo-close d'un pane confine le cwd au worktree lié à l'onglet.
-- [ ] Le renommage d'onglet, le menu d'onglet et le dialogue de fermeture référencent des ids stables.
+- [ ] L'enregistrement d'undo-close garde l'id de l'onglet d'origine ; le pane revient dans cet onglet s'il existe encore, sinon dans l'onglet actif du workspace, et son cwd est confiné au worktree de l'onglet qui le reçoit.
+- [ ] Le renommage d'onglet et le menu d'onglet référencent des ids stables. Le dialogue de fermeture, qui compare déjà les ids d'onglets avant d'agir (`close_policy.rs`), n'est pas modifié.
 - [ ] Fermer ou insérer un workspace ou un onglet ne redirige jamais un renommage, un menu ou un dialogue vers un autre onglet.
 - [ ] Cmd/Ctrl+1 à 9 et Next Workspace suivent l'ordre affiché par la sidebar.
 - [ ] Échec : given un renommage ouvert et la fermeture du workspace par Cmd/Ctrl+Shift+Q, then aucun autre onglet ne reçoit le titre (test).
@@ -908,7 +910,7 @@ Fait porter les actions sur tous les onglets et rend le focus là où il était.
 **Dependencies:** None
 
 **Acceptance Criteria:**
-- [ ] Chaque overlay ou modal mémorise son handle de focus d'origine et le restaure à toute fermeture : attention queue, fleet search, dialogues de fermeture et de quit, broadcast, theme picker, pane palette.
+- [ ] Chaque overlay ou modal mémorise son handle de focus d'origine et le restaure à toute fermeture : attention queue, fleet search, dialogues de fermeture et de quit, broadcast, pane palette dans toutes ses variantes. La command palette, qui porte aussi le theme picker, le fait déjà et sert de modèle.
 - [ ] Si le handle d'origine n'existe plus, le focus va au pane actif de l'onglet actif.
 - [ ] Un listener `on_focus_lost` enregistré au montage rend le focus au pane actif.
 - [ ] Masquer la sidebar pendant un renommage valide ou annule ce renommage.
@@ -933,7 +935,7 @@ Fait porter les actions sur tous les onglets et rend le focus là où il était.
 - [ ] La touche moins s'affiche `-` dans les libellés de raccourcis.
 - [ ] Quand une action a plusieurs raccourcis utilisateur, tous sont affichés, dans un ordre stable.
 - [ ] Escape avec le menu Preset ouvert ne ferme que ce menu.
-- [ ] La saisie de recherche de police ignore `\n` et `\t`, et Entrée sélectionne la police mise en évidence.
+- [ ] La saisie de recherche de police ignore `\n` et `\t`, que seul macOS transmet, et Entrée sélectionne le premier résultat du filtre sur les trois OS.
 - [ ] Le bouton de sidebar, pendant que Settings est ouvert, ne change pas l'état masqué de façon invisible.
 - [ ] `paneflow --help` liste les verbes CLI et `paneflow help` fonctionne.
 - [ ] Les raccourcis affichés dans l'aide utilisent la touche secondaire de la plateforme.
@@ -942,19 +944,19 @@ Fait porter les actions sur tous les onglets et rend le focus là où il était.
 #### US-043: Rendre les contrôles accessibles, lisibles et conformes à Reduce motion
 **Description:** En tant que développeur qui utilise un lecteur d'écran, le clavier seul ou Reduce motion, je veux que chaque contrôle ait un nom, un rôle et un contraste suffisant afin de pouvoir utiliser Paneflow sans souris ni animation. Sources : fork #275 (b217fcc7), #316, #317, #320, #321 et #340 (9a6b6719, 58ed4bf4, ebb7b27b, 1583f54e), #361 (e5d20e97), #659 (49523d97), #881 (c8af8490), #882 (221d7b75), #918 (6a0c0158), #658 (daf0712b), #274 (01848e83), #676 (3fc06edc), #322 (d5c32349), #323 (b7fbbb39), #919 (7ad3d1f0), #325 (092082e0), ae5c5f23, #318 (4171e0e0), #916 (2a17a459), #276 (3c7e8df7), #1034 (163d4640), #719 (4a67f369) ; `src-app/src/settings/components.rs:118-185,502-690`, `src-app/src/pane.rs:937-1121,1760-1773`, `src-app/src/ui_primitives.rs:549-815`, `src-app/src/app/window_chrome/csd.rs:319-373`, `src-app/src/app/window_chrome/title_bar.rs:336-365`, `src-app/src/widgets/text_input.rs:645-650`, `src-app/src/widgets/text_area.rs:616-618`, `src-app/src/app/custom_buttons_modal.rs:243-616`, `src-app/src/app/diff_dock/branch.rs:193-203`, `src-app/src/terminal/view.rs:915-997,1483-1491`, `src-app/src/terminal/element/mod.rs:1700`, `src-app/src/app/clone_repo.rs:424-434`, `src-app/src/settings/tabs/mcp.rs:35-51`, `src-app/src/settings/tabs/terminal.rs:627-631`, `src-app/tests/svg_icon_color_policy.rs:24-28`, `src-app/src/app/diff_dock/file_chrome.rs:86-91`, `src-app/src/app/settings.rs:482-486`.
 
-**Priority:** P1
+**Priority:** P2
 **Size:** L (5 pts)
 **Dependencies:** None
 
 **Acceptance Criteria:**
 - [ ] Les helpers partagés de toggle, select, bouton icône, champ de filtre et contrôles de fenêtre exigent un libellé, qui fournit le rôle, le nom accessible et le tooltip.
-- [ ] Les toggles exposent leur état et répondent à Espace et Entrée ; les selects s'ouvrent au clavier.
+- [ ] Les toggles exposent leur état (`aria_toggled`) et, une fois focalisés, répondent à Espace et Entrée ; les selects s'ouvrent par l'action Click d'AccessKit et, focalisés, au clavier. La navigation Tab entre contrôles est hors périmètre (Non-Goals).
 - [ ] `TextInput` et `TextArea` exposent le rôle de champ texte, un nom et une valeur ; chaque `TextArea` a un id unique.
 - [ ] Le point d'état du pane et le badge de zoom ont un libellé textuel ; aucun état n'est transmis par la couleur seule.
 - [ ] Le modal des boutons personnalisés et le chip de branche sont utilisables au clavier ; Edit et Delete sont visibles au focus.
-- [ ] Les boutons de la barre de recherche du terminal, le badge COPY et la bascule regex ont un rôle, un nom et, pour la bascule, un état pressé.
-- [ ] Le spinner d'état vide, la barre de progression du clone et le survol de l'en-tête de pane respectent Reduce motion.
-- [ ] Le libellé du bouton Install MCP atteint un contraste d'au moins 4,5:1 sur tous les thèmes livrés (test calculé) ; le chip « uses theme » utilise l'accent du thème.
+- [ ] Les boutons de la barre de recherche du terminal, le badge COPY et la bascule regex ont un rôle, un nom et, pour la bascule, un état pressé. La bascule regex, rendue aujourd'hui seulement quand le mode est actif, est affichée en permanence avec son état.
+- [ ] Le spinner d'état vide, la barre de progression du clone et le survol de l'en-tête de pane respectent Reduce motion ; la barre de clone affiche alors un segment fixe et le spinner figé garde un libellé. Si le réglage est transmis à GPUI (`cx.set_reduce_motion`), les toasts, dont l'animation à étapes finirait sur son état de sortie, restent visibles (test).
+- [ ] Le libellé du bouton Install MCP atteint un contraste WCAG d'au moins 4,5:1 sur tous les thèmes livrés, au repos et au survol (test calculé ; 7 thèmes sur 10 échouent sur `4c4e9457`) ; le chip « uses theme » utilise l'accent du thème avec une encre qui passe le même test.
 - [ ] Le test de couleur d'icône SVG ne lit que la chaîne de l'icône elle-même, et le chevron du breadcrumb a sa propre couleur.
 - [ ] Les toasts de télémétrie sont en anglais US.
 - [ ] Échec : un test énumère les helpers partagés et échoue si l'un d'eux peut être construit sans libellé.
@@ -968,14 +970,14 @@ Fait porter les actions sur tous les onglets et rend le focus là où il était.
 
 **Acceptance Criteria:**
 - [ ] Les événements `tracing` de paneflow-config et de l'app apparaissent dans le log `env_logger` sous Linux, macOS et Windows.
-- [ ] Test : un `paneflow.json` invalide produit une ligne « using defaults » sur chacun des trois OS.
+- [ ] Test : un `paneflow.json` invalide produit une ligne « using defaults » sur chacun des trois OS. Le test vit dans `paneflow-config`, capture par un `log::Log` et n'installe aucun subscriber `tracing` : `tracing-test` en pose un global, qui masquerait l'absence du pont. Sous Linux, la feature `log` de `tracing` n'est aujourd'hui activée que par unification, via `calloop`.
 - [ ] Un `paneflow.json` invalide ne change pas le thème actif ; le thème ne suit que le callback du watcher de config.
 - [ ] L'avertissement de repli de `font_family` est émis une fois par valeur.
 - [ ] Le schéma `surface` contient `path` et `session`, et le test de dérive remplit chaque champ optionnel.
 - [ ] La GUI, la CLI, le bridge et le host résolvent l'endpoint IPC par une seule fonction de `paneflow-home`.
 - [ ] Sous macOS, cette fonction ignore `XDG_RUNTIME_DIR`.
 - [ ] Une valeur inutilisable de `XDG_RUNTIME_DIR` bascule vers le repli documenté, identiquement côté client et côté serveur.
-- [ ] Le texte de consentement « AI free access » ne promet plus de journal ; les écritures `surface.send_text` et `surface.send_keystroke` sont journalisées au niveau info.
+- [ ] Le texte de consentement « AI free access » ne promet plus de journal, pas plus que `schemas/paneflow.schema.json` et la page de schéma de paneflow-web. Les écritures `surface.send_text` et `surface.send_keystroke` sont journalisées au niveau info dans tous les modes d'autorisation, avec leur longueur et jamais leur texte.
 - [ ] Échec : given `XDG_RUNTIME_DIR` pointant vers un dossier appartenant à root, then l'IPC reste disponible par le repli, et `paneflow send` lancé depuis un terminal externe le trouve.
 
 #### US-045: Fiabiliser la mise à jour
@@ -986,12 +988,12 @@ Fait porter les actions sur tous les onglets et rend le focus là où il était.
 **Dependencies:** None
 
 **Acceptance Criteria:**
-- [ ] Le téléchargement d'un asset utilise un délai de connexion de 30 s, un délai de réponse de 30 s, un délai de stagnation de 60 s entre deux lectures et un plafond global de 15 min, aligné sur le watchdog ; le flux JSON et `.minisig` gardent 30 s.
-- [ ] Test : un serveur local qui sert 60 MB à 256 Ko/s mène le téléchargement à terme, et un serveur qui cesse d'envoyer le fait échouer en 60 s au plus.
-- [ ] `TarGz` n'est choisi que sous Linux ; une installation Unknown ou non gérée sous macOS et Windows ouvre la page des releases sans enregistrer d'échec.
-- [ ] `html_url` n'est ouvert que s'il est en https sur un hôte GitHub ; sinon, l'URL fixe des releases est utilisée.
-- [ ] Les redirections du flux sont limitées et leur cible finale est vérifiée par rapport à la liste des hôtes autorisés.
-- [ ] Échec : given une signature minisign invalide, then l'installation est refusée comme aujourd'hui (test de non-régression).
+- [ ] Le téléchargement d'un asset utilise `timeout_connect` à 30 s, `timeout_send_request` à 30 s et `timeout_recv_body` à 60 s, sans délai global, par appel ni de réception de réponse, qui resteraient actifs pendant le corps. Un plafond de 15 min est contrôlé dans la boucle de copie, et `DOWNLOAD_WATCHDOG` dépasse ce plafond augmenté du délai d'installation de la plateforme (jusqu'à 15 min pour `msiexec`). Le flux JSON et `.minisig` gardent 30 s.
+- [ ] Test, avec des délais injectés pour durer moins de 30 s : un transfert plus long que l'ancien délai global, avec une pause plus courte que le délai de stagnation, aboutit (rouge sur la configuration actuelle) ; un serveur qui cesse d'envoyer fait échouer au délai de stagnation.
+- [ ] `TarGz` n'est choisi que sous Linux, y compris par `AssetFormat::from_install_method` pour `Unknown` et `ExternallyManaged` ; une installation Unknown ou non gérée sous macOS et Windows ouvre la page des releases sans enregistrer d'échec.
+- [ ] `html_url` n'est ouvert que s'il est en https, sur l'hôte `github.com` et sans userinfo ; sinon, l'URL fixe des releases est utilisée. Le test refuse `https://evil.com\@github.com/`, que l'extracteur d'hôte actuel (`url_host`) attribue à `github.com`.
+- [ ] Les redirections sont suivies une à une, en https seulement et au plus 5 fois, et chaque cible est vérifiée par rapport à la liste des hôtes autorisés, qui inclut `release-assets.githubusercontent.com`, cible réelle des assets GitHub au 2026-09-30. Le test couvre cette chaîne.
+- [ ] Échec : given une signature minisign invalide, then l'installation est refusée comme aujourd'hui, le `.partial` est supprimé et la destination n'est pas créée ; le test passe par `download_verified_asset` avec une clé injectée.
 
 #### US-046: Durcir les workflows de release et de CI
 **Description:** En tant que mainteneur, je veux que la chaîne de release n'exécute que des actions épinglées, sans jeton persistant, et que la CI teste chaque changement qui peut casser un test, afin qu'une release signée ne puisse être ni détournée ni cassée en silence. Sources : fork #924, #207, #208, #716 (4dbf074d), #923, #52, #35, #700, #715 (e0469a92), #914 (4d0283ff), #547 (0984da93), #152, #901 (8f6c7c4f), #902 (981f2802) ; `.github/workflows/release.yml:40-41,78,94-105,189-194,244,301-310,526-527,1840,2367-2369,3281-3283`, `.github/workflows/audit.yml:36-38,45,61,90-123`, `.github/workflows/run_tests.yml:80-88,191-197,441-446,812-816`, `.github/workflows/repo_publish.yml:134`, `.github/workflows/update_cask.yml:116`, `scripts/notarize-macos.sh:22-85`, `scripts/sign-macos.sh:104-135`, `scripts/create-dmg.sh:56-66`, `scripts/fetch-libghostty.sh:87-89`, `scripts/fetch-libghostty.ps1:49`, `scripts/bundle-appimage.sh:49`, `scripts/bench-terminal.sh:38-39`, `scripts/bench-startup.sh:40-41`, `scripts/bundle-macos.sh:59-83`, `src-app/build.rs:58`.
@@ -1005,16 +1007,16 @@ Fait porter les actions sur tous les onglets et rend le focus là où il était.
 - [ ] Chaque checkout pose `persist-credentials: false`, et `contents: write` est limité au job de publication.
 - [ ] Le ref de checkout du tag de release est qualifié (`refs/tags/<tag>`).
 - [ ] `audit.yml` n'ouvre pas de nouvelle issue pour un avis déjà ouvert, grâce à un titre stable par avis, et installe `cargo-deny` à une version épinglée.
-- [ ] La release échoue dès le premier job si la clé publique minisign est vide.
-- [ ] Le filtre de chemins `rust` de `run_tests.yml` inclut `schemas/**`, `docs/user/configuration/schema.md`, `src-app/src/diff/queries/**`, `src-app/src/diff/fixtures/**`, `protocol/**`, `examples/**`, `src-app/tests/fixtures/**` et `runtimes/**`.
-- [ ] La notarisation, le staple, le timestamp de signature et `hdiutil` sont réessayés 3 fois avec backoff, et les téléchargements des scripts ont un délai.
+- [ ] La release échoue dès le premier job si la clé publique minisign est vide ou mal formée ; seule la clé `_NEXT` peut être vide.
+- [ ] Le filtre de chemins `rust` de `run_tests.yml` inclut `schemas/**`, `docs/user/configuration/schema.md`, `src-app/src/diff/queries/**`, `src-app/src/diff/fixtures/**`, `protocol/**`, `examples/**`, `src-app/tests/fixtures/**`, `runtimes/**` et `mcps/paneflow/tools/**`.
+- [ ] La notarisation, le staple, le timestamp de signature et `hdiutil` sont réessayés 3 fois avec backoff, sans réessayer un rejet `Invalid` ou `Rejected` ; un échec isolé de `notarytool info` n'interrompt plus la boucle d'attente. Les téléchargements des scripts ont un délai de connexion et un délai total.
 - [ ] `PANEFLOW_SKIP_EMBED_BUILD` n'est actif que pour la valeur `1`.
-- [ ] `bench-terminal` et `bench-startup` appliquent le contrôle de contention avant `--set-baseline`.
+- [ ] `bench-terminal` applique avant `--set-baseline` le contrôle de contention de `bench-editor` (`cpu_share` d'au moins 0,90) ; sous macOS, ce contrôle dépend de `process_cpu_time` (US-047). `bench-startup`, dont `cpu_share` vaut toujours 0 parce que le travail tourne dans un processus enfant, en reste exclu tant qu'il ne mesure pas le CPU de cet enfant.
 - [ ] `bundle-macos.sh` vérifie la version des binaires qu'il embarque.
-- [ ] Échec : given une action ajoutée sans épinglage par SHA, then un contrôle CI échoue.
+- [ ] Échec : given une action tierce ajoutée sans épinglage par SHA à l'un des quatre workflows de release, then un contrôle CI échoue ; les actions `actions/*` en sont exemptées.
 
 #### US-047: Rendre les tests et les benchmarks fiables
-**Description:** En tant que mainteneur, je veux que chaque test vérifie réellement ce qu'il nomme, n'écrive jamais dans mes vrais dossiers, et que les benchs soient exploitables sur macOS, afin que la CI et les mesures de performance soient dignes de confiance. Sources : fork #346 et #425 (51a408f1, 846d063c), fef05bba, #66 (9e7655c6), #516 (7cada6d3), #305 (337c0869), #927 (9a2d7c20), #477 (c930b310), #740 (ba1d0fe6), #395 (8d0c8576), #399 (50292a28), #67 (c1e33d71), #304 (18c21dc5), #308 (3f5c503f), #876, #1049, #926, #117 (ec7a2f0f), #484 (cc864b7e) ; `src-app/src/bench_harness.rs:115-140,570-628`, `src-app/src/runtime_paths.rs:314-425`, `src-app/src/workspace/git.rs:461-465,631-661`, `src-app/src/app/diff_dock/revert.rs:551-575`, `src-app/src/diff/git.rs:474-476`, `src-app/src/app/diff_dock/code/base.rs:165-172`, `src-app/src/terminal/element/hyperlink.rs:857-895`, `src-app/tests/ghostty_stress.rs:461-463`, `src-app/src/app/session.rs:2160-2175`, `src-app/src/app/ipc_handler/surface_methods.rs:1243-1255`, `src-app/src/terminal/ghostty_session/convert.rs:434-470`, `src-app/src/terminal/view.rs:1586-1595`, `src-app/src/keybindings/display.rs:450-459`, `src-app/src/keybindings/apply.rs:205-225`, `src-app/src/layout/presets.rs:59-104`, `src-app/src/ai_hooks/extract.rs:509-560`, `crates/paneflow-ai-hook/tests/integration.rs:22`, `src-app/src/app/diff_dock/code/view/disk_sync.rs:864-877`, `crates/paneflow-agent-config/src/lock.rs:8-78`.
+**Description:** En tant que mainteneur, je veux que chaque test vérifie réellement ce qu'il nomme et que les benchs soient exploitables sur macOS, afin que la CI et les mesures de performance soient dignes de confiance. Sources : fork #346 et #425 (51a408f1, 846d063c), fef05bba, #66 (9e7655c6), #516 (7cada6d3), #305 (337c0869), #927 (9a2d7c20), #477 (c930b310), #740 (ba1d0fe6), #395 (8d0c8576), #399 (50292a28), #67 (c1e33d71), #304 (18c21dc5), #308 (3f5c503f), #876, #1049, #926, #117 (ec7a2f0f), #484 (cc864b7e) ; `src-app/src/bench_harness.rs:115-140,570-628`, `src-app/src/runtime_paths.rs:314-425`, `src-app/src/terminal/element/hyperlink.rs:857-895`, `src-app/src/terminal/ghostty_stress.rs:461-463`, `src-app/src/app/session.rs:2160-2175`, `src-app/src/app/ipc_handler/surface_methods.rs:1243-1255`, `src-app/src/terminal/ghostty_session/convert.rs:434-470`, `src-app/src/terminal/view.rs:1586-1595`, `src-app/src/keybindings/display.rs:450-459`, `src-app/src/keybindings/apply.rs:205-225`, `src-app/src/layout/presets.rs:59-104`, `crates/paneflow-ai-hook/tests/integration.rs:22`, `src-app/src/app/diff_dock/code/view/disk_sync.rs:864-877`, `crates/paneflow-agent-config/src/lock.rs:8-78`.
 
 **Priority:** P2
 **Size:** L (5 pts)
@@ -1023,14 +1025,32 @@ Fait porter les actions sur tous les onglets et rend le focus là où il était.
 **Acceptance Criteria:**
 - [ ] `resident_set_bytes` et `process_cpu_time` sont implémentés sous macOS (libproc et `mach_timebase_info`) ; un run de bench macOS n'est plus marqué comme sous contention à tort.
 - [ ] Les tests de `runtime_paths` passent l'environnement en paramètre au lieu de modifier `TMPDIR` et `PANEFLOW_HOME` du processus.
-- [ ] La sonde mémoire tree-sitter est une `unsafe fn` à précondition documentée et s'exécute dans un processus enfant lancé avec `--exact`.
-- [ ] Les fixtures git échouent au lieu de passer quand `git init` échoue ; elles pointent `GIT_CONFIG_GLOBAL` vers un fichier vide temporaire, désactivent la signature et ont un délai.
-- [ ] Chaque test cité dans les sources devient rouge sous une mutation ciblée du comportement qu'il nomme ; la mutation est consignée dans la PR.
-- [ ] Les tests d'extraction de helpers utilisent un `PANEFLOW_HOME` temporaire.
-- [ ] La borne de sortie du test d'intégration de `paneflow-ai-hook` passe à 10 s.
-- [ ] `ConfigLock` implémente `Drop` en appelant `unlock()`.
-- [ ] `LayoutTree::tiled` a des tests de grille.
-- [ ] Échec : given `cargo test --workspace --locked` lancé depuis un pane d'un Paneflow release, then le hash de `~/.paneflow/bin/paneflow-mcp` est inchangé.
+- [ ] La sonde mémoire tree-sitter (`tree_memory_probe`) appelle une `unsafe fn` dont le nom porte la précondition, décrite dans `bench/README.md` puisque AGENTS.md interdit les commentaires. Elle s'exécute dans un processus enfant lancé avec `--exact`, et le parent échoue si ce processus n'a pas exécuté exactement un test.
+- [ ] `save_seq_burst_coalesces_to_a_single_write` et `deferred_save_skips_write_when_superseded_before_write` (`session.rs`), qui n'exercent aucun code de production, sont supprimés ; `a_superseded_snapshot_never_replaces_the_final_snapshot` couvre déjà ce comportement.
+- [ ] Chaque test suivant devient rouge sous la mutation nommée, vérifiée une fois et consignée dans la PR :
+  - `paginate_total_drives_us025_offset_guard` : retrait du garde `offset > total` d'`answer_surface_read` ;
+  - `user_override_of_a_tab_shortcut_wins_over_the_default` : retrait du filtre `is_user_claimed` d'`apply_keybindings` ;
+  - `extract_scrollback_empty_terminal_returns_none` : un terminal vide qui renvoie `Some(String::new())` ;
+  - `opening_a_real_file_registers_the_conflict_watcher` : une ouverture de fichier qui n'appelle plus `start_watcher` ;
+  - `effective_shortcuts_carry_matching_action_name` : retrait du dédoublonnage `seen_actions` ;
+  - `ghostty_stress` sous Unix : une fermeture de session qui laisse vivre un descendant, ce qui exige d'implémenter le stub `descendant_pids`.
+- [ ] Le test d'intégration de `paneflow-ai-hook` donne 10 s à son watchdog par une constante distincte ; la borne comportementale `elapsed < EXIT_TIMEOUT` reste à 800 ms, et `MockHost::drop` borne sa jointure.
+- [ ] `ConfigLock` est `#[must_use]`, pour que `lock_config(p)?;` ne libère plus le verrou aussitôt acquis.
+- [ ] `LayoutTree::tiled` a des tests de grille de 1 à 9 panes, qui vérifient aussi qu'aucun conteneur n'a un seul enfant.
+- [ ] Échec : given un run de `bench-editor --set-baseline` sans contention sous macOS, then la baseline est enregistrée ; sur `4c4e9457` elle est refusée parce que `cpu_share` vaut 0.
+
+#### US-050: Isoler les tests du home et de la config git de l'utilisateur
+**Description:** En tant que mainteneur qui lance `cargo test` sur son poste, je veux que les tests n'écrivent jamais dans mon home Paneflow et n'héritent pas de ma config git, afin que la suite ne remplace pas mes binaires installés, ne signe rien avec ma clé et ne passe pas en silence quand une fixture échoue. Critères déplacés d'US-047 en v1.5, mêmes références du fork. Sources : `src-app/src/workspace/git.rs:461-465,631-661`, `src-app/src/app/diff_dock/revert.rs:551-575`, `src-app/src/diff/git.rs:474-476`, `src-app/src/app/diff_dock/code/base.rs:165-172`, `src-app/src/ai_hooks/extract.rs:509-560`, `src-app/src/terminal/pty_session/spawn_env.rs` (tests `assemble_pty_env`).
+
+**Priority:** P1
+**Size:** M (3 pts)
+**Dependencies:** None
+
+**Acceptance Criteria:**
+- [ ] Les fixtures git passent par un helper unique qui échoue, au lieu de sauter le test, quand `git init` ou le commit initial échoue.
+- [ ] Ce helper pose `GIT_CONFIG_GLOBAL` vers un fichier vide temporaire et `GIT_CONFIG_NOSYSTEM=1`, désactive la signature des commits et des tags, retire `GIT_DIR` et `GIT_INDEX_FILE` hérités, et borne chaque commande par un délai.
+- [ ] Les tests d'extraction de helpers et les tests `assemble_pty_env` reçoivent un `PANEFLOW_HOME` temporaire en paramètre, sans `set_var`, puisque l'extraction est mémoïsée par un `OnceLock`.
+- [ ] Échec : given `cargo test --workspace --locked` lancé en debug puis en `--release` depuis un pane d'un Paneflow release, then aucun fichier n'est créé ni modifié sous `~/.paneflow` ni `~/.paneflow-dev`, et le hash de `~/.paneflow/bin/paneflow-mcp` est inchangé.
 
 ## Functional Requirements
 
@@ -1050,14 +1070,15 @@ Fait porter les actions sur tous les onglets et rend le focus là où il était.
 - FR-14 : Les actions multi-agents couvrent tous les onglets, et chaque overlay rend le focus à son origine. (US-040, US-041)
 - FR-15 : Les workflows de release n'exécutent que des actions épinglées par SHA, sans jeton persistant. (US-046)
 - FR-16 : Un hook ou un bridge lancé par un agent vise la session du pane qui a lancé cet agent. (US-032, US-033)
+- FR-17 : Les tests n'écrivent pas dans le home Paneflow réel et n'héritent pas de la config git de l'utilisateur. (US-050)
 
 ### Priorités MoSCoW
 
 | Niveau | Capacités | Livraison |
 |--------|-----------|-----------|
 | Must Have | Perte de données, isolation git, verrous de l'index, écritures symlink-safe, flots terminal, thème du host, lectures IPC hors GPUI, entrée MCP Codex, attribution des hooks Codex, bridge sous Claude Code, boucle des shims | R0, R1 (P0) |
-| Should Have | Robustesse de l'éditeur, des fichiers spéciaux, du terminal, de l'IPC, de la CLI, de l'intégration agents, de l'UI, de l'accessibilité, de la mise à jour et de la CI | R2, R3 (P1) |
-| Could Have | Exactitude git secondaire, sémantique IPC secondaire, fiabilité des tests et benchs | R4 (P2) |
+| Should Have | Robustesse de l'éditeur, des fichiers spéciaux, du terminal, de l'IPC, de la CLI, de l'intégration agents, de l'UI, de la mise à jour, de la CI et de l'isolation des tests | R2, R3 (P1) |
+| Could Have | Exactitude git secondaire, sémantique IPC secondaire, accessibilité, fiabilité des tests et benchs | R4 (P2) |
 | Won't Have | Les fonctionnalités du fork et les choix produit hors défauts | Section Non-Goals |
 
 ## Non-Functional Requirements
@@ -1077,12 +1098,12 @@ Fait porter les actions sur tous les onglets et rend le focus là où il était.
   - 0 erreur `index.lock` sur 500 itérations `git add` puis `git commit` concurrentes aux sondes.
   - Un pane reste vivant après 10 000 BEL.
   - Au plus 1 bell par 250 ms et 3 notifications OS par 60 s par surface.
-  - Un téléchargement de 60 MB à 256 Ko/s aboutit, et une connexion bloquée échoue en 60 s au plus.
+  - Un téléchargement lent aboutit tant qu'aucune pause ne dépasse 60 s et qu'il dure moins de 15 min ; une connexion bloquée échoue en 60 s au plus.
   - Une FIFO à un chemin d'état fait échouer la lecture en moins de 100 ms.
 - **Accessibilité :**
   - 100 % des helpers interactifs partagés exigent un libellé accessible.
-  - Le texte des boutons atteint un contraste d'au moins 4,5:1 sur tous les thèmes livrés.
-  - Tous les contrôles de Settings sont utilisables au clavier seul.
+  - Le texte des boutons atteint un contraste d'au moins 4,5:1 sur tous les thèmes livrés, au repos et au survol.
+  - Un contrôle de Settings qui a le focus répond au clavier ; la navigation Tab entre contrôles est hors périmètre.
   - Les animations listées en US-043 sont statiques quand Reduce motion est actif.
 - **Compatibilité :**
   - Chaque story vaut pour Linux x86_64 et aarch64, macOS aarch64 et Windows x86_64 ; sa PR déclare, par OS, si la vérification a été faite nativement ou par lecture.
@@ -1106,7 +1127,7 @@ Fait porter les actions sur tous les onglets et rend le focus là où il était.
 | 12 | Timeout runtime IPC | Pane très occupé | Erreur JSON-RPC, pas de texte vide | "Terminal runtime did not answer in time" |
 | 13 | Codex dans deux panes | Le daemon partagé a été lancé depuis le premier pane | Chaque Codex lancé par le shim reste dans le processus de son pane ; ses hooks et son bridge visent sa session ; `status` signale une entrée sans `env_vars` | "needs repair" |
 | 14 | Paneflow imbriqué | `dev.sh` lancé depuis un pane | Le shim résout le vrai binaire | (aucun) |
-| 15 | Connexion lente pendant la mise à jour | 256 Ko/s | Téléchargement mené à terme | (aucun) |
+| 15 | Connexion lente et irrégulière pendant la mise à jour | 256 Ko/s avec des pauses de quelques secondes | Téléchargement mené à terme | (aucun) |
 | 16 | Connexion bloquée pendant la mise à jour | Aucun octet pendant 60 s | Échec en 60 s au plus, nouvel essai possible | "Download stalled. Try again." |
 | 17 | Collage multi-lignes sans bracketed paste | Collage de 5 lignes à un prompt | Confirmation avant envoi | "Paste 5 lines into the terminal?" |
 | 18 | Chemin de profil avec espace sous Windows | `C:\Users\Jean Dupont` | Hooks Codex quotés et fonctionnels ; un chemin sans espace garde sa commande et son approbation | (aucun) |
@@ -1122,9 +1143,9 @@ Fait porter les actions sur tous les onglets et rend le focus là où il était.
 | 4 | Les nouvelles commandes host cassent un host plus ancien encore attaché | Med | High | Négociation ou tolérance explicite, testée par un reattach à une session créée avant la mise à jour (US-018, US-019) |
 | 5 | Le mécanisme de réponse IPC différée change la sémantique vue par les clients (timeouts, ordre) | Med | Med | Format de fil inchangé, délai client de 10 s conservé, tests CLI `wait` et `flow` existants rejoués (US-024) |
 | 6 | Le code `#[cfg(windows)]` n'est pas compilable hors Windows et casse la CI Windows | Med | Med | Tests natifs sur la machine Windows d'Arthur ; relecture de l'ordre des items par rapport à `mod tests` |
-| 7 | 47 stories font dériver le calendrier et diluent les correctifs P0 | High | Med | Livraisons R0 à R4 ; R1 (P0) passe avant tout le reste ; toute réduction de périmètre passe d'abord par ce PRD |
+| 7 | 50 stories font dériver le calendrier et diluent les correctifs P0 | High | Med | Livraisons R0 à R4 ; R1 (P0) passe avant tout le reste ; toute réduction de périmètre passe d'abord par ce PRD |
 | 8 | Des changements de comportement surprennent les utilisateurs (prompt au quit, confirmation de collage, notifications de programme) | Med | Low | Notes de release explicites, défauts conservateurs (`osc52_clipboard = copy`) |
-| 9 | Des modifications locales en cours touchent les mêmes fichiers (terminal, raccourcis) | Med | Med | Chaque story repart du `main` à jour et rebase avant de commencer ; les lignes citées se rapportent à `8c3dd2ca`, sauf en EP-005 (`14f47ab9`) |
+| 9 | Des modifications locales en cours touchent les mêmes fichiers (terminal, raccourcis) | Med | Med | Chaque story repart du `main` à jour et rebase avant de commencer ; les lignes citées se rapportent à `8c3dd2ca`, sauf en EP-005 (`14f47ab9`) ; l'EP-006 a été revérifié sur `4c4e9457` sans renuméroter ses sources |
 | 10 | Forcer `--no-daemon` prive les panes des fonctions du serveur partagé de Codex, ou casse avec une version future de Codex | Med | Med | Seules les invocations interactives lancées par le shim dans un pane hébergé sont touchées ; US-032 rejoué à chaque montée de version majeure de Codex ; note de release |
 | 11 | Réécrire la commande d'un hook Codex invalide son approbation | High | Med | Quoting appliqué seulement aux chemins qui l'exigent (US-037) |
 
@@ -1154,6 +1175,7 @@ Explicit boundaries: what this version does NOT include.
 - Tout défaut introduit par le fork lui-même ou confiné à ses scripts, sa CI macOS-only ou sa notarisation.
 - Doublon du symbole `_memset` dans l'archive libghostty macOS : dépend de l'amont et n'est pas un défaut de Paneflow.
 - Installation des hooks et du MCP dans chaque `CLAUDE_CONFIG_DIR` déclaré par un profil d'agent, avec l'état de chaque dossier dans Settings : fonctionnalité, retirée d'US-037 en v1.4.
+- Navigation Tab entre les contrôles de l'interface : elle entre en conflit avec le passage de Tab au terminal et relève d'une décision d'interaction séparée, retirée d'US-043 en v1.5.
 - Retrait du shim PATH : il porte encore le code de sortie des agents et `PANEFLOW_AI_TOOL`, et devient le véhicule de `--no-daemon`. À réexaminer quand l'intégration shell rapportera les codes de sortie sur les trois OS.
 
 ## Files NOT to Modify
@@ -1176,7 +1198,7 @@ Frame as questions for engineering input, not mandates.
 - **Protocole host :** les commandes d'apparence, de clear et de reset doivent-elles passer par une version de protocole négociée à l'attache, ou par des commandes optionnelles ignorées par un host ancien ? Les hosts survivent aux mises à jour de l'app.
 - **Git et fsmonitor :** si la mesure de US-008 dépasse 2x sur un gros dépôt, faut-il autoriser le daemon intégré (`core.fsmonitor=true`) tout en refusant les chemins de hook ?
 - **Journaux :** activer la feature `log` de `tracing` dans la dépendance du workspace (une ligne, sans nouvelle crate) ou brancher un subscriber vers `env_logger` ? La première option est recommandée.
-- **Téléchargement :** ureq 3 n'a pas de délai d'inactivité ; le délai de stagnation doit envelopper le lecteur du corps. Un lecteur maison, ou `timeout_recv_body` par morceaux ?
+- **Téléchargement :** avec ureq 3.4, `timeout_recv_body` sert de délai de stagnation et le plafond global se contrôle dans la boucle de copie (Research Findings). Ce comportement relève de l'implémentation d'ureq : le test d'US-045 le fige, et il faudra le rejouer à chaque montée de version d'ureq.
 - **Dialogue des buffers sales :** étendre les lignes de `close_dialog_rows`, ou créer un dialogue dédié réutilisé par quit et par la fermeture d'onglet ? Réutiliser `close_policy` est recommandé.
 - **Migration :** aucune migration de données. `terminal.osc52_clipboard` est une nouvelle clé optionnelle, rétrocompatible. Les entrées MCP existantes sont réparées en place au prochain rafraîchissement du worker. Une commande de hook Codex ne change que si son chemin exige des guillemets.
 
@@ -1192,8 +1214,8 @@ Frame as questions for engineering input, not mandates.
 | OS où hooks et bridge Codex visent le pane qui a lancé Codex | À mesurer par US-032 | 3/3 | Month-1 | Protocole de US-032 rejoué après US-033 |
 | Appels MCP servis sous Claude Code | 0 % (`_meta` refusé, 2026-09-30) | 100 % | Month-1 | Test de US-049 |
 | Spawns git de production hors builder | ≈15 sites | 0 | Month-1 | Test de garde de US-008 |
-| Stories DONE | 0/49 | 17/49 (R0 et R1) ; ≥ 46/49 | Month-1 / Month-6 | Fichier de statut |
-| Tests de régression ajoutés | 0 | ≥ 47, au moins un par story | Month-6 | Revue des PR |
+| Stories DONE | 0/50 | 17/50 (R0 et R1) ; ≥ 47/50 | Month-1 / Month-6 | Fichier de statut |
+| Tests de régression ajoutés | 0 | ≥ 50, au moins un par story | Month-6 | Revue des PR |
 
 ## Open Questions
 

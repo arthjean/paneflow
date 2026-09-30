@@ -6,6 +6,7 @@
 | Version | Date | Author | Summary |
 |---------|------|--------|---------|
 | 1.0 | 2026-09-30 | Arthur Jean | PRD initial : met en œuvre les recommandations de l'analyse concurrentielle du 2026-09-30 (herdr, Unpeel, cmux face à Paneflow `main` @ `a23713b9`). 6 epics, 35 stories, livraisons R1 à R4. |
+| 1.1 | 2026-09-30 | Arthur Jean | Coordination : l'US-040 de `prd-fork-audit-fixes.md` conditionne toute ligne de l'Attention Queue. |
 
 ## Problem Statement
 
@@ -187,7 +188,7 @@ Key findings that informed this PRD:
   - Pas de flux « Review with agent ».
 - **Domicile Paneflow :** l'état propre à Paneflow vit sous le domicile de `crates/paneflow-home`, jamais sous `dirs::config_dir`.
 - **Coordination avec d'autres PRD :**
-  - `tasks/prd-fork-audit-fixes.md` : US-032, US-034 et US-038 sont en revue ; US-041 et US-044 sont à faire.
+  - `tasks/prd-fork-audit-fixes.md` : US-032, US-034 et US-038 sont en revue ; US-041 et US-044 sont à faire. US-040, à faire, conditionne toute ligne de l'Attention Queue : la file ignore aujourd'hui les panes des onglets inactifs et ceux masqués par le zoom (`src-app/src/app/attention_queue.rs:45`). US-004 et l'objectif d'une attente visible en moins de 2 s en dépendent.
   - `tasks/prd-agents-browser.md` EP-006 : il partage le modèle d'accès agent par workspace.
 
 ## Quality Gates
