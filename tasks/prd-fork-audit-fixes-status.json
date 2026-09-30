@@ -41,10 +41,10 @@
     {
       "id": "EP-005",
       "title": "Réparer l'intégration agents, MCP et hooks",
-      "status": "TODO",
+      "status": "IN_REVIEW",
       "priority": "P0",
       "stories_total": 9,
-      "stories_done": 0
+      "stories_done": 6
     },
     {
       "id": "EP-006",
@@ -468,117 +468,117 @@
       "id": "US-032",
       "title": "Reproduire l'attribution des hooks et du bridge Codex sous le daemon partagé",
       "epic": "EP-005",
-      "status": "TODO",
+      "status": "IN_REVIEW",
       "priority": "P0",
       "size": "S",
       "blocked_by": [],
-      "started_at": null,
+      "started_at": "2026-09-30T09:50:21+02:00",
       "completed_at": null,
-      "reviewed_at": null
+      "reviewed_at": "2026-09-30T11:13:03+02:00"
     },
     {
       "id": "US-033",
       "title": "Ancrer Codex dans son pane et écrire une entrée MCP complète sans écraser l'utilisateur",
       "epic": "EP-005",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "size": "M",
       "blocked_by": [
         "US-032"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-09-30T09:57:49+02:00",
+      "completed_at": "2026-09-30T11:13:03+02:00",
+      "reviewed_at": "2026-09-30T11:13:03+02:00"
     },
     {
       "id": "US-034",
       "title": "Reproduire la boucle des shims dans un Paneflow imbriqué",
       "epic": "EP-005",
-      "status": "TODO",
+      "status": "IN_REVIEW",
       "priority": "P0",
       "size": "S",
       "blocked_by": [],
-      "started_at": null,
+      "started_at": "2026-09-30T10:05:03+02:00",
       "completed_at": null,
-      "reviewed_at": null
+      "reviewed_at": "2026-09-30T11:13:03+02:00"
     },
     {
       "id": "US-035",
       "title": "Empêcher un shim de lancer un autre shim et assainir les dossiers helpers",
       "epic": "EP-005",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "size": "M",
       "blocked_by": [
         "US-034"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-09-30T10:10:43+02:00",
+      "completed_at": "2026-09-30T11:13:03+02:00",
+      "reviewed_at": "2026-09-30T11:13:03+02:00"
     },
     {
       "id": "US-049",
       "title": "Rendre le bridge MCP utilisable sous Claude Code",
       "epic": "EP-005",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "size": "S",
       "blocked_by": [],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-09-30T09:49:13+02:00",
+      "completed_at": "2026-09-30T11:13:03+02:00",
+      "reviewed_at": "2026-09-30T11:13:03+02:00"
     },
     {
       "id": "US-036",
       "title": "Dériver la portée MCP côté serveur et respecter le protocole",
       "epic": "EP-005",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P1",
       "size": "L",
       "blocked_by": [
         "US-033"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-09-30T10:13:09+02:00",
+      "completed_at": "2026-09-30T11:13:03+02:00",
+      "reviewed_at": "2026-09-30T11:13:03+02:00"
     },
     {
       "id": "US-037",
       "title": "Respecter les emplacements et formats de config des agents",
       "epic": "EP-005",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P1",
       "size": "M",
       "blocked_by": [
         "US-033"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-09-30T10:20:08+02:00",
+      "completed_at": "2026-09-30T11:13:03+02:00",
+      "reviewed_at": "2026-09-30T11:13:03+02:00"
     },
     {
       "id": "US-038",
       "title": "Rendre l'état des sessions agent exact",
       "epic": "EP-005",
-      "status": "TODO",
+      "status": "IN_REVIEW",
       "priority": "P1",
       "size": "L",
       "blocked_by": [],
-      "started_at": null,
+      "started_at": "2026-09-30T10:27:11+02:00",
       "completed_at": null,
-      "reviewed_at": null
+      "reviewed_at": "2026-09-30T11:13:03+02:00"
     },
     {
       "id": "US-039",
       "title": "Fiabiliser la lecture et le scan des sessions d'agents",
       "epic": "EP-005",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P1",
       "size": "M",
       "blocked_by": [],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-09-30T10:37:51+02:00",
+      "completed_at": "2026-09-30T11:13:03+02:00",
+      "reviewed_at": "2026-09-30T11:13:03+02:00"
     },
     {
       "id": "US-040",
