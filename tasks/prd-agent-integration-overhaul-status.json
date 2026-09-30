@@ -1,0 +1,540 @@
+{
+  "prd": {
+    "file": "tasks/prd-agent-integration-overhaul.md",
+    "title": "Refonte de l'intégration des agents",
+    "created_at": "2026-09-30",
+    "status": "READY"
+  },
+  "epics": [
+    {
+      "id": "EP-001",
+      "title": "Rendre le statut et l'attention véridiques",
+      "status": "TODO",
+      "priority": "P0",
+      "stories_total": 5,
+      "stories_done": 0
+    },
+    {
+      "id": "EP-002",
+      "title": "Sécuriser le plan de contrôle et fiabiliser la livraison des prompts",
+      "status": "TODO",
+      "priority": "P0",
+      "stories_total": 5,
+      "stories_done": 0
+    },
+    {
+      "id": "EP-003",
+      "title": "Reprendre les conversations d'agents après perte du host",
+      "status": "TODO",
+      "priority": "P1",
+      "stories_total": 6,
+      "stories_done": 0
+    },
+    {
+      "id": "EP-004",
+      "title": "Unifier le catalogue, les installateurs et les boucles de rafraîchissement",
+      "status": "TODO",
+      "priority": "P1",
+      "stories_total": 8,
+      "stories_done": 0
+    },
+    {
+      "id": "EP-005",
+      "title": "Détecter l'état des agents par des règles d'écran déclaratives",
+      "status": "TODO",
+      "priority": "P1",
+      "stories_total": 6,
+      "stories_done": 0
+    },
+    {
+      "id": "EP-006",
+      "title": "Orchestrer les agents entre eux sous contrôle humain",
+      "status": "TODO",
+      "priority": "P2",
+      "stories_total": 5,
+      "stories_done": 0
+    }
+  ],
+  "stories": [
+    {
+      "id": "US-001",
+      "title": "Rendre le catalogue fidèle aux intégrations réelles",
+      "epic": "EP-001",
+      "status": "TODO",
+      "priority": "P0",
+      "size": "M",
+      "blocked_by": [],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-002",
+      "title": "Reproduire puis corriger la perte du latch à la première observation du runtime",
+      "epic": "EP-001",
+      "status": "TODO",
+      "priority": "P0",
+      "size": "S",
+      "blocked_by": [],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-003",
+      "title": "Faire remonter les échecs de tour et retirer l'attribution par défaut à Claude",
+      "epic": "EP-001",
+      "status": "TODO",
+      "priority": "P0",
+      "size": "S",
+      "blocked_by": [],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-004",
+      "title": "Transformer le BEL en signal d'attention pour les agents sans hook",
+      "epic": "EP-001",
+      "status": "TODO",
+      "priority": "P0",
+      "size": "M",
+      "blocked_by": [
+        "US-001"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-005",
+      "title": "Rendre `agent.status` véridique",
+      "epic": "EP-001",
+      "status": "TODO",
+      "priority": "P0",
+      "size": "S",
+      "blocked_by": [
+        "US-001"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-006",
+      "title": "Soumettre les écritures du host aux gates du desktop",
+      "epic": "EP-002",
+      "status": "TODO",
+      "priority": "P0",
+      "size": "M",
+      "blocked_by": [],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-007",
+      "title": "Limiter les écritures d'un pane à son workspace",
+      "epic": "EP-002",
+      "status": "TODO",
+      "priority": "P0",
+      "size": "S",
+      "blocked_by": [
+        "US-006"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-008",
+      "title": "Refuser la livraison à un agent bloqué ou absent du premier plan",
+      "epic": "EP-002",
+      "status": "TODO",
+      "priority": "P0",
+      "size": "M",
+      "blocked_by": [
+        "US-005"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-009",
+      "title": "Confirmer le démarrage d'un tour par une transition d'état",
+      "epic": "EP-002",
+      "status": "TODO",
+      "priority": "P0",
+      "size": "M",
+      "blocked_by": [
+        "US-005"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-010",
+      "title": "Faire suivre la fin de tour à `wait --idle` et garder la soumission différée côté host",
+      "epic": "EP-002",
+      "status": "TODO",
+      "priority": "P0",
+      "size": "M",
+      "blocked_by": [
+        "US-005"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-011",
+      "title": "Déclarer les commandes de reprise et de fork dans le catalogue",
+      "epic": "EP-003",
+      "status": "TODO",
+      "priority": "P1",
+      "size": "M",
+      "blocked_by": [
+        "US-001"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-012",
+      "title": "Mémoriser par surface l'id de session de l'agent",
+      "epic": "EP-003",
+      "status": "TODO",
+      "priority": "P1",
+      "size": "M",
+      "blocked_by": [
+        "US-011"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-013",
+      "title": "Relancer l'agent dans son pane après perte du host",
+      "epic": "EP-003",
+      "status": "TODO",
+      "priority": "P1",
+      "size": "L",
+      "blocked_by": [
+        "US-012"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-014",
+      "title": "Détecter l'échec d'une reprise et proposer une nouvelle session",
+      "epic": "EP-003",
+      "status": "TODO",
+      "priority": "P1",
+      "size": "M",
+      "blocked_by": [
+        "US-013"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-015",
+      "title": "Forker une conversation dans un nouveau split",
+      "epic": "EP-003",
+      "status": "TODO",
+      "priority": "P2",
+      "size": "M",
+      "blocked_by": [
+        "US-012",
+        "US-014"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-016",
+      "title": "Pré-assigner l'id de session de Claude Code au lancement",
+      "epic": "EP-003",
+      "status": "TODO",
+      "priority": "P2",
+      "size": "S",
+      "blocked_by": [
+        "US-012"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-017",
+      "title": "Générer depuis le catalogue la connaissance par agent de l'application",
+      "epic": "EP-004",
+      "status": "TODO",
+      "priority": "P1",
+      "size": "L",
+      "blocked_by": [
+        "US-011"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-018",
+      "title": "Vérifier les listes de shims du packaging contre le catalogue",
+      "epic": "EP-004",
+      "status": "TODO",
+      "priority": "P1",
+      "size": "S",
+      "blocked_by": [],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-019",
+      "title": "Fusionner les moteurs d'installation des intégrations",
+      "epic": "EP-004",
+      "status": "TODO",
+      "priority": "P1",
+      "size": "L",
+      "blocked_by": [
+        "US-001"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-020",
+      "title": "Installer et versionner le skill conductor",
+      "epic": "EP-004",
+      "status": "TODO",
+      "priority": "P1",
+      "size": "S",
+      "blocked_by": [
+        "US-019"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-021",
+      "title": "Remplacer le poll IPC de 50 ms du thread GPUI par un réveil poussé",
+      "epic": "EP-004",
+      "status": "TODO",
+      "priority": "P1",
+      "size": "M",
+      "blocked_by": [],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-022",
+      "title": "Remplacer le poll de snapshot de 2 s du worker par les événements du host",
+      "epic": "EP-004",
+      "status": "TODO",
+      "priority": "P1",
+      "size": "M",
+      "blocked_by": [],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-023",
+      "title": "Sortir l'attente de durabilité du verrou d'ingestion des hooks",
+      "epic": "EP-004",
+      "status": "TODO",
+      "priority": "P1",
+      "size": "M",
+      "blocked_by": [],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-024",
+      "title": "Supprimer le code mort et les doublons de l'intégration agents",
+      "epic": "EP-004",
+      "status": "TODO",
+      "priority": "P1",
+      "size": "S",
+      "blocked_by": [
+        "US-017",
+        "US-019"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-025",
+      "title": "Constituer le corpus d'écrans de référence et la commande de capture",
+      "epic": "EP-005",
+      "status": "TODO",
+      "priority": "P1",
+      "size": "M",
+      "blocked_by": [],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-026",
+      "title": "Définir les règles d'écran v2 et leur évaluateur dans le host",
+      "epic": "EP-005",
+      "status": "TODO",
+      "priority": "P1",
+      "size": "L",
+      "blocked_by": [
+        "US-025"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-027",
+      "title": "Exposer titre et progression OSC aux règles et laisser un bloqueur visible l'emporter",
+      "epic": "EP-005",
+      "status": "TODO",
+      "priority": "P1",
+      "size": "M",
+      "blocked_by": [
+        "US-026"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-028",
+      "title": "Surcharger localement les règles, les recharger à chaud et expliquer une décision",
+      "epic": "EP-005",
+      "status": "TODO",
+      "priority": "P1",
+      "size": "M",
+      "blocked_by": [
+        "US-026"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-029",
+      "title": "Distribuer un catalogue de règles signé et versionné",
+      "epic": "EP-005",
+      "status": "TODO",
+      "priority": "P1",
+      "size": "L",
+      "blocked_by": [
+        "US-026",
+        "US-028"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-030",
+      "title": "Intégrer fx comme runtime déclaratif",
+      "epic": "EP-005",
+      "status": "TODO",
+      "priority": "P1",
+      "size": "M",
+      "blocked_by": [
+        "US-004",
+        "US-013",
+        "US-019",
+        "US-027"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-031",
+      "title": "Borner le schéma des outils MCP et annoncer leur nature",
+      "epic": "EP-006",
+      "status": "TODO",
+      "priority": "P2",
+      "size": "S",
+      "blocked_by": [],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-032",
+      "title": "Faire approuver par un humain chaque paire d'agents qui s'écrivent",
+      "epic": "EP-006",
+      "status": "TODO",
+      "priority": "P2",
+      "size": "L",
+      "blocked_by": [
+        "US-006",
+        "US-007"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-033",
+      "title": "Ajouter l'outil MCP d'écriture avec provenance",
+      "epic": "EP-006",
+      "status": "TODO",
+      "priority": "P2",
+      "size": "M",
+      "blocked_by": [
+        "US-008",
+        "US-009",
+        "US-031",
+        "US-032"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-034",
+      "title": "Valider l'hypothèse : inventaire des commandes tmux des équipes d'agents Claude",
+      "epic": "EP-006",
+      "status": "TODO",
+      "priority": "P2",
+      "size": "S",
+      "blocked_by": [],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-035",
+      "title": "Ouvrir les coéquipiers Claude dans des panes Paneflow via un shim tmux",
+      "epic": "EP-006",
+      "status": "TODO",
+      "priority": "P2",
+      "size": "L",
+      "blocked_by": [
+        "US-034",
+        "US-006",
+        "US-007"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    }
+  ]
+}
