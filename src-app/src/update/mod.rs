@@ -14,6 +14,9 @@ pub mod migrations;
 
 pub use error::UpdateError;
 
+pub(crate) const LONGEST_PLATFORM_INSTALL: std::time::Duration =
+    std::time::Duration::from_secs(15 * 60);
+
 #[derive(Clone, Debug, Default)]
 pub enum SelfUpdateStatus {
     #[default]

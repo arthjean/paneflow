@@ -16,7 +16,12 @@ const ALLOWED_UPDATE_HOSTS: &[&str] = &[
     "api.github.com",
     "github.com",
     "objects.githubusercontent.com",
+    "release-assets.githubusercontent.com",
 ];
+
+pub(crate) const RELEASES_PAGE_URL: &str = "https://github.com/arthjean/paneflow/releases";
+
+const RELEASES_PAGE_HOST: &str = "github.com";
 
 pub(crate) fn update_feed_url() -> String {
     match std::env::var("PANEFLOW_UPDATE_FEED_URL") {
@@ -55,11 +60,45 @@ fn is_allowed_update_url_impl(url: &str, allow_insecure_http: bool) -> bool {
     false
 }
 
-fn url_host(after_scheme: &str) -> &str {
-    let authority = after_scheme
-        .split(['/', '?', '#'])
+pub(crate) fn is_allowed_redirect_target(url: &str) -> bool {
+    let Some(rest) = strip_https(url) else {
+        return false;
+    };
+    let authority = url_authority(rest);
+    !authority.contains('@')
+        && ALLOWED_UPDATE_HOSTS
+            .iter()
+            .any(|allowed| allowed.eq_ignore_ascii_case(url_host(rest)))
+}
+
+pub(crate) fn trusted_releases_page(html_url: &str) -> String {
+    let trusted = !html_url
+        .chars()
+        .any(|c| c.is_control() || c.is_whitespace())
+        && strip_https(html_url)
+            .is_some_and(|rest| url_authority(rest).eq_ignore_ascii_case(RELEASES_PAGE_HOST));
+    if trusted {
+        html_url.to_string()
+    } else {
+        log::warn!("update check: ignoring release page URL {html_url:?}");
+        RELEASES_PAGE_URL.to_string()
+    }
+}
+
+fn strip_https(url: &str) -> Option<&str> {
+    let (scheme, rest) = url.split_once("://")?;
+    scheme.eq_ignore_ascii_case("https").then_some(rest)
+}
+
+fn url_authority(after_scheme: &str) -> &str {
+    after_scheme
+        .split(['/', '\\', '?', '#'])
         .next()
-        .unwrap_or(after_scheme);
+        .unwrap_or(after_scheme)
+}
+
+fn url_host(after_scheme: &str) -> &str {
+    let authority = url_authority(after_scheme);
     let host_port = match authority.rsplit_once('@') {
         Some((_userinfo, host)) => host,
         None => authority,
@@ -182,8 +221,12 @@ impl AssetFormat {
         }
     }
 
-    fn from_install_method(method: &InstallMethod) -> Self {
-        match method {
+    fn from_install_method(method: &InstallMethod) -> Option<Self> {
+        Self::for_install_method(method, cfg!(target_os = "linux"))
+    }
+
+    fn for_install_method(method: &InstallMethod, linux: bool) -> Option<Self> {
+        let format = match method {
             InstallMethod::SystemPackage {
                 manager: PackageManager::Apt,
             } => AssetFormat::Deb,
@@ -205,7 +248,8 @@ impl AssetFormat {
             InstallMethod::WindowsMsi { .. } => AssetFormat::Msi,
             InstallMethod::ExternallyManaged { .. } => AssetFormat::TarGz,
             InstallMethod::Unknown => AssetFormat::TarGz,
-        }
+        };
+        (format != AssetFormat::TarGz || linux).then_some(format)
     }
 }
 
@@ -305,7 +349,7 @@ pub fn pick_asset<'a>(
     arch: &str,
     method: InstallMethod,
 ) -> Option<&'a GitHubAsset> {
-    let format = AssetFormat::from_install_method(&method);
+    let format = AssetFormat::from_install_method(&method)?;
     let expected = format!(
         "-{arch}{}{}",
         format.target_qualifier(),
@@ -408,7 +452,7 @@ pub(crate) fn check_github_release(
         let (asset_url, asset_format) = match picked {
             Some(asset) => (
                 Some(asset.browser_download_url.clone()),
-                Some(AssetFormat::from_install_method(&method)),
+                AssetFormat::from_install_method(&method),
             ),
             None => (None, None),
         };
@@ -425,7 +469,7 @@ pub(crate) fn check_github_release(
         }
         UpdateStatus::Available {
             version: remote.to_string(),
-            url: release.html_url,
+            url: trusted_releases_page(&release.html_url),
             asset_url,
             asset_format,
         }
@@ -888,28 +932,92 @@ mod tests {
 
     #[test]
     fn format_from_install_method_mapping() {
-        assert_eq!(AssetFormat::from_install_method(&apt()), AssetFormat::Deb);
-        assert_eq!(AssetFormat::from_install_method(&dnf()), AssetFormat::Rpm);
+        for linux in [true, false] {
+            assert_eq!(
+                AssetFormat::for_install_method(&app_bundle(), linux),
+                Some(AssetFormat::Dmg)
+            );
+        }
+        let linux = |method: InstallMethod| AssetFormat::for_install_method(&method, true);
+        assert_eq!(linux(apt()), Some(AssetFormat::Deb));
+        assert_eq!(linux(dnf()), Some(AssetFormat::Rpm));
+        assert_eq!(linux(zypper()), Some(AssetFormat::Rpm));
+        assert_eq!(linux(tar_gz()), Some(AssetFormat::TarGz));
+        assert_eq!(linux(app_image()), Some(AssetFormat::AppImage));
+        assert_eq!(linux(InstallMethod::Unknown), Some(AssetFormat::TarGz));
         assert_eq!(
-            AssetFormat::from_install_method(&zypper()),
-            AssetFormat::Rpm
+            linux(InstallMethod::ExternallyManaged {
+                explanation: String::new()
+            }),
+            Some(AssetFormat::TarGz)
         );
+    }
+
+    #[test]
+    fn a_tarball_is_never_the_update_asset_outside_linux() {
+        for method in [
+            InstallMethod::Unknown,
+            InstallMethod::ExternallyManaged {
+                explanation: String::new(),
+            },
+            tar_gz(),
+        ] {
+            assert_eq!(AssetFormat::for_install_method(&method, false), None);
+        }
         assert_eq!(
-            AssetFormat::from_install_method(&tar_gz()),
-            AssetFormat::TarGz
+            AssetFormat::from_install_method(&InstallMethod::Unknown).is_some(),
+            cfg!(target_os = "linux")
         );
+    }
+
+    #[test]
+    fn the_release_page_opens_only_on_https_github_without_userinfo() {
+        let genuine = "https://github.com/arthjean/paneflow/releases/tag/v0.17.4";
+        assert_eq!(trusted_releases_page(genuine), genuine);
+        for hostile in [
+            "https://evil.com\\@github.com/",
+            "https://user@github.com/arthjean/paneflow/releases",
+            "https://github.com@evil.com/releases",
+            "http://github.com/arthjean/paneflow/releases",
+            "https://github.com.evil.com/releases",
+            "https://github.com:8443/releases",
+            "javascript:alert(1)//github.com/",
+            "https://github.com/a b",
+            "",
+        ] {
+            assert_eq!(
+                trusted_releases_page(hostile),
+                RELEASES_PAGE_URL,
+                "{hostile}"
+            );
+        }
         assert_eq!(
-            AssetFormat::from_install_method(&app_image()),
-            AssetFormat::AppImage
+            url_host("evil.com\\@github.com/"),
+            "evil.com",
+            "a backslash ends the authority, as browsers parse it"
         );
-        assert_eq!(
-            AssetFormat::from_install_method(&InstallMethod::Unknown),
-            AssetFormat::TarGz
-        );
-        assert_eq!(
-            AssetFormat::from_install_method(&app_bundle()),
-            AssetFormat::Dmg
-        );
+    }
+
+    #[test]
+    fn redirects_follow_the_github_asset_chain_over_https_only() {
+        for hop in [
+            "https://github.com/arthjean/paneflow/releases/download/v0.17.4/paneflow-0.17.4-x86_64.tar.gz",
+            "https://release-assets.githubusercontent.com/github-production-release-asset/1198799207/d0a08f6f?sp=r&sv=2018-11-09",
+            "https://objects.githubusercontent.com/github-production-release-asset-2e65be/x",
+        ] {
+            assert!(is_allowed_redirect_target(hop), "{hop}");
+        }
+        for hop in [
+            "http://release-assets.githubusercontent.com/x",
+            "https://evil.example/x",
+            "https://release-assets.githubusercontent.com.evil.example/x",
+            "https://user@release-assets.githubusercontent.com/x",
+            "https://evil.example\\@release-assets.githubusercontent.com/x",
+            "https://127.0.0.1/x",
+            "/relative/path",
+        ] {
+            assert!(!is_allowed_redirect_target(hop), "{hop}");
+        }
     }
 
     #[test]

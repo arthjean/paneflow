@@ -1,13 +1,10 @@
 use std::path::{Path, PathBuf};
-use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
 
 use crate::update::swap::{recover_and_clean_staging, staging_dirs};
 
 const MAX_TARBALL_BYTES: u64 = 500 * 1024 * 1024;
-
-const UPDATE_HTTP_TIMEOUT: Duration = Duration::from_secs(30);
 
 pub fn run_update(asset_url: &str) -> Result<PathBuf> {
     let home = std::env::var_os("HOME")
@@ -91,7 +88,6 @@ fn download_with_verification(asset_url: &str, dest: &Path) -> Result<()> {
         asset_url,
         dest,
         MAX_TARBALL_BYTES,
-        UPDATE_HTTP_TIMEOUT,
         "tarball",
     )
 }

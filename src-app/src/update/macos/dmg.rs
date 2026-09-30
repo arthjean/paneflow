@@ -8,9 +8,10 @@ use crate::update::swap::{recover_and_clean_staging, staging_dirs};
 
 use super::super::error::UpdateError;
 
-const UPDATE_HTTP_TIMEOUT: Duration = Duration::from_secs(30);
-
 const NATIVE_INSTALLER_TIMEOUT: Duration = Duration::from_secs(10 * 60);
+
+const _: () =
+    assert!(NATIVE_INSTALLER_TIMEOUT.as_secs() <= super::super::LONGEST_PLATFORM_INSTALL.as_secs());
 
 const NATIVE_DETACH_TIMEOUT: Duration = Duration::from_secs(60);
 
@@ -149,13 +150,7 @@ fn install_in(
 }
 
 fn download_with_verification(asset_url: &str, dest: &Path) -> Result<()> {
-    super::super::verified_download::download_verified_asset(
-        asset_url,
-        dest,
-        MAX_DMG_BYTES,
-        UPDATE_HTTP_TIMEOUT,
-        "DMG",
-    )
+    super::super::verified_download::download_verified_asset(asset_url, dest, MAX_DMG_BYTES, "DMG")
 }
 
 fn copy_and_swap(mounted_volume: &Path, install_dir: &Path) -> Result<()> {

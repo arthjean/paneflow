@@ -4,7 +4,12 @@ use crate::window_chrome::title_bar::{SystemPackageKind, UpdatePill};
 use crate::{DismissUpdate, PaneFlowApp, StartSelfUpdate, TOAST_HOLD_MS, ToastAction, update};
 use update::checker::UpdateStatus;
 
-const DOWNLOAD_WATCHDOG: std::time::Duration = std::time::Duration::from_secs(15 * 60);
+const WATCHDOG_MARGIN: std::time::Duration = std::time::Duration::from_secs(5 * 60);
+
+const DOWNLOAD_WATCHDOG: std::time::Duration = update::verified_download::ASSET_TRANSFER
+    .total
+    .saturating_add(update::LONGEST_PLATFORM_INSTALL)
+    .saturating_add(WATCHDOG_MARGIN);
 
 pub(crate) fn install_method_label(method: &update::install_method::InstallMethod) -> &'static str {
     match method {
@@ -733,6 +738,15 @@ pub(crate) fn system_package_update_command(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_watchdog_outlives_the_longest_download_plus_install() {
+        assert!(
+            DOWNLOAD_WATCHDOG
+                > update::verified_download::ASSET_TRANSFER.total
+                    + update::LONGEST_PLATFORM_INSTALL
+        );
+    }
 
     #[test]
     fn unknown_targz_fallback_excludes_macos() {

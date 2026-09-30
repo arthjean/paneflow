@@ -15,7 +15,7 @@ const EMBEDDED_PUBKEY_CURRENT: Option<&str> = option_env!("PANEFLOW_MINISIGN_PUB
 
 const EMBEDDED_PUBKEY_NEXT: Option<&str> = option_env!("PANEFLOW_MINISIGN_PUBKEY_NEXT");
 
-fn embedded_public_keys() -> Vec<PublicKey> {
+pub(crate) fn embedded_public_keys() -> Vec<PublicKey> {
     [
         ("PANEFLOW_MINISIGN_PUBKEY", EMBEDDED_PUBKEY_CURRENT),
         ("PANEFLOW_MINISIGN_PUBKEY_NEXT", EMBEDDED_PUBKEY_NEXT),
@@ -96,34 +96,40 @@ fn verify_with_keys(artifact: &Path, sig_text: &str, keys: &[PublicKey]) -> Resu
     }
 }
 
-pub(crate) fn verify_detached_file(artifact: &Path, sig_text: &str) -> Result<()> {
-    verify_with_keys(artifact, sig_text, &embedded_public_keys())
+pub(crate) fn fetch_and_verify(artifact: &Path, asset_url: &str) -> Result<()> {
+    fetch_and_verify_with(
+        artifact,
+        asset_url,
+        &embedded_public_keys(),
+        super::checker::is_allowed_redirect_target,
+    )
 }
 
-pub(crate) fn fetch_and_verify(artifact: &Path, asset_url: &str) -> Result<()> {
-    if !has_embedded_key() {
+pub(crate) fn fetch_and_verify_with(
+    artifact: &Path,
+    asset_url: &str,
+    keys: &[PublicKey],
+    redirect_allowed: fn(&str) -> bool,
+) -> Result<()> {
+    if keys.is_empty() {
         return Err(reject(
             "no verification key embedded in this build - refusing to install an unverifiable update",
         ));
     }
 
     let sig_url = format!("{asset_url}.minisig");
-    let sig_text = fetch_signature_text(&sig_url)?;
-    verify_detached_file(artifact, &sig_text)
+    let sig_text = fetch_signature_text(&sig_url, redirect_allowed)?;
+    verify_with_keys(artifact, &sig_text, keys)
         .with_context(|| format!("verify minisign signature of {}", artifact.display()))
 }
 
-fn fetch_signature_text(sig_url: &str) -> Result<String> {
-    let mut response = ureq::get(sig_url)
-        .config()
-        .timeout_global(Some(SIG_HTTP_TIMEOUT))
-        .build()
-        .header(
-            "User-Agent",
-            &format!("paneflow/{}", env!("CARGO_PKG_VERSION")),
-        )
-        .call()
-        .with_context(|| "Could not fetch update signature. Try again when online.".to_string())?;
+fn fetch_signature_text(sig_url: &str, redirect_allowed: fn(&str) -> bool) -> Result<String> {
+    let mut response = super::verified_download::get_following_redirects(
+        sig_url,
+        super::verified_download::HttpTimeouts::whole_request(SIG_HTTP_TIMEOUT),
+        redirect_allowed,
+    )
+    .with_context(|| "Could not fetch update signature. Try again when online.".to_string())?;
 
     let status = response.status();
     if !status.is_success() {

@@ -5,19 +5,22 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 #[cfg(target_os = "windows")]
 use std::process::Stdio;
+#[cfg(target_os = "windows")]
 use std::time::Duration;
 
 #[cfg(target_os = "windows")]
 use anyhow::Context;
 use anyhow::{Result, bail};
 
-const UPDATE_HTTP_TIMEOUT: Duration = Duration::from_secs(30);
-
 #[cfg(target_os = "windows")]
 const PARENT_EXIT_TIMEOUT: Duration = Duration::from_secs(2 * 60);
 
 #[cfg(target_os = "windows")]
 const MSIEXEC_TIMEOUT: Duration = Duration::from_secs(15 * 60);
+
+#[cfg(target_os = "windows")]
+const _: () =
+    assert!(MSIEXEC_TIMEOUT.as_secs() <= super::super::LONGEST_PLATFORM_INSTALL.as_secs());
 
 #[cfg(target_os = "windows")]
 const WINDOWS_WAIT_SLICE_MS: u32 = 500;
@@ -915,13 +918,7 @@ fn windows_signer_organization(
 }
 
 fn download_with_verification(asset_url: &str, dest: &Path) -> Result<()> {
-    super::super::verified_download::download_verified_asset(
-        asset_url,
-        dest,
-        MAX_MSI_BYTES,
-        UPDATE_HTTP_TIMEOUT,
-        "MSI",
-    )
+    super::super::verified_download::download_verified_asset(asset_url, dest, MAX_MSI_BYTES, "MSI")
 }
 
 #[cfg(target_os = "windows")]

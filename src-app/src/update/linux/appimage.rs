@@ -8,9 +8,10 @@ use sha2::{Digest, Sha256};
 
 use super::super::error::{IntegrityMismatch, UpdateError};
 
-const UPDATE_HTTP_TIMEOUT: Duration = Duration::from_secs(30);
-
 const APPIMAGE_TOOL_DEADLINE: Duration = Duration::from_secs(10 * 60);
+
+const _: () =
+    assert!(APPIMAGE_TOOL_DEADLINE.as_secs() <= super::super::LONGEST_PLATFORM_INSTALL.as_secs());
 
 const APPIMAGE_TOOL_STDOUT_CAP: u64 = 1024 * 1024;
 
@@ -140,16 +141,13 @@ fn cache_path_for(arch: &str) -> Result<PathBuf> {
 fn download_tool(url: &str, expected: &[u8; 32], dest: &Path) -> Result<()> {
     log::info!("self-update/appimage: downloading appimageupdatetool from {url}");
 
-    let mut response = ureq::get(url)
-        .config()
-        .timeout_global(Some(UPDATE_HTTP_TIMEOUT))
-        .build()
-        .header(
-            "User-Agent",
-            &format!("paneflow/{}", env!("CARGO_PKG_VERSION")),
-        )
-        .call()
-        .with_context(|| "Could not download update tool. Try again when online.".to_string())?;
+    let transfer = super::super::verified_download::ASSET_TRANSFER;
+    let mut response = super::super::verified_download::get_following_redirects(
+        url,
+        transfer.http,
+        transfer.redirect_allowed,
+    )
+    .with_context(|| "Could not download update tool. Try again when online.".to_string())?;
 
     if response.status().as_u16() == 404 {
         return Err(anyhow::Error::new(UpdateError::ReleaseAssetMissing {
@@ -176,15 +174,19 @@ fn download_tool(url: &str, expected: &[u8; 32], dest: &Path) -> Result<()> {
     const MAX_TOOL_BYTES: u64 = 100 * 1024 * 1024;
     let stream_result = {
         let reader = response.body_mut().as_reader();
-        let mut reader = Read::take(reader, MAX_TOOL_BYTES + 1);
         let mut file =
             std::fs::File::create(&tmp).with_context(|| format!("create {}", tmp.display()))?;
-        std::io::copy(&mut reader, &mut file)
-            .context("stream download to disk")
-            .and_then(|written| {
-                file.sync_all().context("flush download to disk")?;
-                Ok(written)
-            })
+        super::super::verified_download::copy_bounded(
+            reader,
+            &mut file,
+            MAX_TOOL_BYTES,
+            transfer.total,
+            "appimageupdatetool",
+        )
+        .and_then(|written| {
+            file.sync_all().context("flush download to disk")?;
+            Ok(written)
+        })
     };
     let written = match stream_result {
         Ok(n) => n,
