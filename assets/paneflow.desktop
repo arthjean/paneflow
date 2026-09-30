@@ -1,6 +1,6 @@
 [Desktop Entry]
 Name=PaneFlow
-Comment=Native terminal workspace for coding agents
+Comment=Native terminal multiplexer for coding agents
 Exec=paneflow
 Icon=paneflow
 Terminal=false

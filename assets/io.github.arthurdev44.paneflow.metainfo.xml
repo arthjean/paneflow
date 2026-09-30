@@ -2,7 +2,7 @@
 <component type="desktop-application">
   <id>io.github.arthurdev44.paneflow</id>
   <name>PaneFlow</name>
-  <summary>Terminal for coding agents</summary>
+  <summary>Native terminal multiplexer for coding agents</summary>
 
   <metadata_license>CC0-1.0</metadata_license>
   <project_license>GPL-3.0-or-later</project_license>
@@ -14,18 +14,19 @@
 
   <description>
     <p>
-      PaneFlow is a native terminal workspace for running coding agents in
-      parallel. Launch Claude Code, Codex, opencode, Pi, or any CLI agent in
-      real panes, keep each session visible, and react when one needs input.
+      Paneflow is a native terminal multiplexer for coding agents. Run agents
+      in parallel, keep sessions running when you close the app, and review
+      their changes in an interface built with Rust and GPUI.
     </p>
     <p>Features:</p>
     <ul>
-      <li>One-click coding-agent launchers with per-session status tracking</li>
-      <li>Horizontal and vertical split panes with drag-to-resize, up to 32 panes</li>
-      <li>Branch-aware workspaces with rename, quick-switch, and session restore</li>
-      <li>In-app Git diff viewer and branch review prompts for agents</li>
-      <li>MCP bridge so capable agents can read other panes without copy/paste</li>
-      <li>JSON-RPC 2.0 IPC for local automation and integrations</li>
+      <li>Projects, tabs, and split panes for running several CLI agents</li>
+      <li>Persistent terminal sessions with a choice to keep running when quitting</li>
+      <li>Git branches and optional worktrees to separate parallel tasks</li>
+      <li>Agent activity tracking and notifications when input is needed</li>
+      <li>Checkout diffs against HEAD and an integrated file editor with Git markers</li>
+      <li>Read-only MCP bridge for sharing terminal context between agents</li>
+      <li>CLI control and declarative workflows with explicit permissions</li>
       <li>Native Rust/GPUI rendering with Wayland and X11 support on Linux</li>
     </ul>
   </description>

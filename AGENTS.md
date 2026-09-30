@@ -1,7 +1,7 @@
 # Paneflow agent guidance
 
-Paneflow is a native Rust terminal workspace for running coding agents in
-parallel, built on Zed's GPUI framework. Linux, macOS, and Windows are all
+Paneflow is a native terminal multiplexer for coding agents, built with Rust
+and Zed's GPUI framework. Linux, macOS, and Windows are all
 shipping targets. This file is the canonical instruction source for every agent;
 `CLAUDE.md` imports it.
 

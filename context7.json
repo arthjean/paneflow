@@ -1,7 +1,7 @@
 {
   "$schema": "https://context7.com/schema/context7.json",
   "projectTitle": "Paneflow",
-  "description": "Cross-platform GPU-native terminal multiplexer for agentic CLI workflows. Runs Claude Code, Codex, and OpenCode side by side in branch-aware workspaces on Linux, macOS, and Windows.",
+  "description": "Native terminal multiplexer for coding agents. Persistent sessions, Git worktrees, diffs, and an integrated editor. Built with Rust and GPUI.",
   "folders": [],
   "excludeFolders": [
     "docs/release",
@@ -19,11 +19,14 @@
     "AGENTS.md"
   ],
   "rules": [
-    "Paneflow is a GPU-native terminal multiplexer rendered via GPUI (Zed's Rust UI framework). It is NOT a TUI and NOT an Electron app.",
+    "Paneflow is a native terminal multiplexer for coding agents, built with Rust and GPUI. Projects contain tabs and split panes; a tab can hold several agents. Git branches and worktrees are optional ways to separate tasks.",
+    "Terminal sessions run in a separate host process. Keep sessions running preserves live processes when the desktop app closes, while the host and machine stay running. Reconnecting to a live session, restarting an ended terminal as a fresh shell, and resuming an agent conversation are distinct operations.",
+    "Changes compares the active checkout with HEAD, including staged and unstaged changes and untracked files. Files opens an editable code editor with Git markers and save-conflict handling.",
+    "The MCP bridge is read-only: list_panes, read_pane, and search_pane. Automatic MCP configuration supports Claude Code, Codex, Gemini CLI, and OpenCode. For CLI text injection, launch Paneflow with PANEFLOW_IPC_SCRIPTING=1. Spawning panes with commands or prompts requires PANEFLOW_IPC_ORCHESTRATION=1 or PANEFLOW_IPC_SCRIPTING=1. Submission is explicit; the desktop ai_unrestricted setting also authorizes pane input.",
     "Configuration lives in paneflow.json under ~/.paneflow/ on Linux and macOS and %USERPROFILE%\\.paneflow\\ on Windows; PANEFLOW_HOME overrides that directory. Config keys are English and must never be translated or renamed.",
     "Keybinding strings use Ctrl/Alt/Shift modifier names verbatim (e.g. Ctrl+Shift+D).",
-    "Paneflow is free and open source under GPL-3.0. There is no paid tier, no login, and no hosted backend. Desktop telemetry is disabled unless the user explicitly opts in, never includes terminal contents/prompts/paths, and PANEFLOW_NO_TELEMETRY=1 disables it unconditionally.",
-    "Paneflow ships native builds for Linux, macOS Apple Silicon, and Windows x64. Windows ARM64 and macOS Intel are not shipped today.",
+    "Paneflow is free and open source under GPL-3.0-or-later. There is no paid tier, no login, and no hosted agent runtime. Agents connect to their own model providers. Desktop telemetry is disabled unless the user explicitly opts in, never includes terminal contents/prompts/paths, and PANEFLOW_NO_TELEMETRY=1 disables it unconditionally.",
+    "Paneflow ships native builds for Linux x86_64 and aarch64, macOS Apple Silicon, and Windows x64. Windows ARM64 and macOS Intel are not shipped today.",
     "The live documentation is at https://paneflow.dev/docs. Raw Markdown twins of every docs page are served at the page URL plus .md (e.g. https://paneflow.dev/docs/installation/linux.md)."
   ],
   "url": "https://context7.com/arthjean/paneflow",

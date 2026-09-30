@@ -6,15 +6,17 @@
 [![platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-000000?style=flat&colorA=000000&colorB=000000)](#install)
 [![discord](https://img.shields.io/badge/discord-join-000000?style=flat&colorA=000000&colorB=000000)](https://discord.gg/UqGM29Gvat)
 
-The workspace where your coding agents work, and where you read what they changed.
+The multiplexer for the agent era.
 
-Paneflow is a native workspace for coding agents. The Workspaces rail lists every repository you have open; each tab is an agent session bound to its own branch or worktree, named after its work, with the agent's live state: thinking, waiting, failed, or done. Inside a session, the agent runs in a real Ghostty terminal pane you can read, interrupt, and take over. A dock beside the session holds Changes (the checkout's diff against its base branch), Files (a code editor with git markers in the gutter and the file tree), and a terminal.
+Paneflow is a native terminal multiplexer for coding agents. Run agents in parallel, keep their sessions running when you close the app, and review their changes in a native interface.
+
+Organize projects into tabs and split panes, with several agents in a tab when useful. Work in an existing checkout or create a branch and Git worktree for a separate task. Follow agent activity, see which sessions need attention, and read, interrupt, or take over any terminal. The dock brings together Changes (the checkout's diff against `HEAD`), Files (an integrated editor with Git markers and a file tree), and a terminal.
 
 Works with any CLI agent - Claude Code, Codex, Gemini, opencode, Pi, Hermes, you name it.
 
-Everything runs locally: agents are ordinary CLI processes in ordinary terminals, there is no hosted runtime and no proxy in front of your model. Prompts are pre-filled and you press Enter; auto-submit is explicit and gated.
+Paneflow runs locally: agents are ordinary CLI processes in ordinary terminals and connect to their own model providers. Prompts are pre-filled and you press Enter; auto-submit is explicit and gated. Activity tracking depends on the integrations available for each agent.
 
-Written in Rust on [Zed's GPUI](https://github.com/zed-industries/zed/tree/main/crates/gpui), with panes emulated by [Ghostty](https://github.com/ghostty-org/ghostty): the same `libghostty-vt` engine, statically linked, on every target and with no fallback. Native builds for Linux, macOS Apple Silicon, and Windows x64. No Electron, no WSL.
+Free and open source under [GPL-3.0-or-later](LICENSE). Built with Rust and [Zed's GPUI](https://github.com/zed-industries/zed/tree/main/crates/gpui), using [Ghostty's](https://github.com/ghostty-org/ghostty) `libghostty-vt` terminal engine. Native builds for Linux x86_64 and aarch64, macOS Apple Silicon, and Windows x64.
 
 [Website →](https://paneflow.dev)
 
@@ -28,11 +30,11 @@ On macOS:
 brew install --cask arthjean/paneflow/paneflow
 ```
 
-Everywhere else, take the build for your machine from the [latest release](https://github.com/arthjean/paneflow/releases/latest): the `.AppImage` runs on any Linux, the `.deb` and `.rpm` also register the package repo so later versions arrive through `apt upgrade` or `dnf upgrade`, and the `.msi` installs on Windows. Every artifact ships a SHA-256 sidecar and a Minisign signature.
+Everywhere else, take the build for your machine from the [latest release](https://github.com/arthjean/paneflow/releases/latest): Linux builds come as `.AppImage`, `.deb`, and `.rpm`, and the `.msi` installs on Windows. The `.deb` and `.rpm` also register the package repo so later versions arrive through `apt upgrade` or `dnf upgrade`. Every artifact ships a SHA-256 sidecar and a Minisign signature.
 
 [Install docs →](https://paneflow.dev/docs/installation)
 
-<img alt="Claude Code and fx running in parallel panes, the dock open on a Rust file beside the file tree, and the Workspaces rail listing one tab per session" src="./assets/images/demo-0.12.png" width="100%">
+<img alt="Claude Code and fx running in parallel panes, the dock open on a Rust file beside the file tree, and project tabs in the Workspaces rail" src="./assets/images/demo-0.12.png" width="100%">
 
 ### 2. Install for agents
 
@@ -42,13 +44,13 @@ Let one agent read another agent's pane, so you stop copy-pasting scrollback bet
 paneflow mcp install
 ```
 
-This registers a local read-only MCP bridge - `list_panes`, `read_pane`, `search_pane` - for every agent it detects. The bridge cannot type into panes or control them, and terminal output comes back wrapped as untrusted data so the reading agent analyzes it instead of obeying it.
+This registers a local read-only MCP bridge for supported agents it detects: Claude Code, Codex, Gemini CLI, and OpenCode. Its tools are `list_panes`, `read_pane`, and `search_pane`. The bridge cannot type into panes or control them, and terminal output comes back wrapped as untrusted data for the reading agent to analyze.
 
 [Bridge docs →](docs/user/scripting.md)
 
 ### 3. Coordinate a fleet
 
-The `paneflow` CLI talks to the same local socket as the app, so a script or an agent can drive the fleet you are watching.
+The `paneflow` CLI lets a script or an agent read, monitor, and control the panes you are watching. For text injection, launch Paneflow with `PANEFLOW_IPC_SCRIPTING=1`; `send` pre-fills text unless you explicitly add `--submit`.
 
 ```bash
 paneflow ps
@@ -58,7 +60,7 @@ paneflow wait --match claude-impl --pattern "REPORT_DONE"
 paneflow watch --type ai.stop
 ```
 
-`paneflow up` spawns a declarative workspace, and `paneflow flow run` executes a `flow.toml` DAG with spawn, wait, send, capture, and review steps.
+`paneflow up` spawns a declarative workspace. `paneflow flow run` executes the steps you define in `flow.toml`: spawn panes or send text, order steps through dependencies, wait for readiness patterns, and capture output. Launching panes with commands or prompts requires `PANEFLOW_IPC_ORCHESTRATION=1` or `PANEFLOW_IPC_SCRIPTING=1`. Prompt submission remains explicit and permission-gated.
 
 [Conductor docs →](docs/user/conductor.md)
 
@@ -68,9 +70,17 @@ Themes, shell, keybindings, and shortcuts live in `~/.paneflow/paneflow.json` (`
 
 [Learn more →](docs/user/configuration.md)
 
+## Keep sessions running
+
+Terminal sessions live in a separate host process. Choose **Keep sessions running** when quitting Paneflow to leave the terminals and their processes alive, then reopen the app to reconnect. Choose **Stop everything and quit** to end them.
+
+This keeps live sessions across app closure while the host and machine remain running. Restarting an ended terminal starts a fresh shell; resuming an agent conversation uses that agent's own session support. Neither operation restores a process after a machine restart or host crash.
+
 ## Read what the agents changed
 
-The Changes tab shows the session's checkout against its base branch, split or unified, with the words that differ highlighted inside each modified line and a Revert chip on each block of a modified file. Whitespace can be trimmed or ignored so a reformat reads as one change. A file open in the dock carries the same blocks in its gutter, with a popup to read, copy, or revert the previous text.
+The Changes tab compares the active checkout with `HEAD`, including staged and unstaged changes and untracked files. Read split or unified diffs, highlight changes within lines, and revert individual blocks in modified files. Whitespace can be trimmed or ignored.
+
+Open files in the integrated editor to make changes, save, undo, or redo. Git markers in the gutter open a popup to read, copy, or revert the previous text. Paneflow also detects changes made on disk while you edit and lets you resolve save conflicts.
 
 ## Telemetry
 

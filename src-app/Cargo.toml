@@ -483,15 +483,15 @@ maintainer-scripts = "../packaging/debian"
 # empty on slim images.
 depends = "libc6, libwayland-client0, libxcb1, libxkbcommon0, libxkbcommon-x11-0, libx11-6, libvulkan1, libfontconfig1, libfreetype6, fontconfig, ca-certificates"
 extended-description = """\
-PaneFlow is a native Rust terminal workspace for running coding agents in
-parallel. Launch Claude Code, Codex, opencode, Pi, and other CLI agents in real
-panes; keep each session visible; and see when one needs input.
+Paneflow is a native terminal multiplexer for coding agents. Run agents in
+parallel, keep sessions running when you close the app, and review their
+changes in a native interface built with Rust and GPUI.
 
-Features horizontal and vertical split panes with drag-to-resize (up to 32
-panes), branch-aware workspaces with session restore, in-app Git diffs and
-agent review prompts, an MCP bridge for pane reading, configurable keybindings,
-and JSON-RPC 2.0 IPC for local automation. The Linux package supports both
-Wayland and X11."""
+Organize projects into tabs and split panes, use Git worktrees to separate
+tasks, and follow agent activity. Inspect checkout changes against HEAD in
+the diff viewer and edit files in the integrated editor. A read-only MCP
+bridge shares terminal context; the CLI controls panes with explicit
+permissions. The Linux package supports Wayland and X11."""
 assets = [
     ["target/release/paneflow", "usr/bin/", "755"],
     ["target/release/paneflow-host", "usr/bin/", "755"],
