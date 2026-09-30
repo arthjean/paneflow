@@ -1,4 +1,5 @@
 use gpui::{Context, Window};
+use paneflow_config::schema::InterfaceStyle;
 use serde_json::{Value, json};
 
 use crate::{PaneFlowApp, SettingsSection, ThemeMode};
@@ -16,12 +17,14 @@ pub(crate) enum Needs {
     GitRepo,
     ManyWorkspaces,
     ManyTabs,
+    NativeMaterial,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum Scope {
     Theme,
     ThemeMode,
+    InterfaceStyle,
     Workspace,
     Tab,
     OpenWorkspaceIn,
@@ -66,6 +69,7 @@ pub(crate) enum Apply {
     },
     Theme(usize),
     Mode(ThemeMode),
+    InterfaceStyle(InterfaceStyle),
     Workspace(usize),
     Tab(usize),
     Action(&'static str),
@@ -75,7 +79,9 @@ pub(crate) enum Apply {
 impl Apply {
     pub(crate) fn applies_in_place(&self) -> bool {
         match self {
-            Apply::Setting { .. } | Apply::Theme(_) | Apply::Mode(_) => true,
+            Apply::Setting { .. } | Apply::Theme(_) | Apply::Mode(_) | Apply::InterfaceStyle(_) => {
+                true
+            }
             Apply::Workspace(_) | Apply::Tab(_) | Apply::Action(_) | Apply::Settings(_) => false,
         }
     }
@@ -92,6 +98,7 @@ impl Scope {
         match self {
             Scope::Theme => "Theme",
             Scope::ThemeMode => "Theme mode",
+            Scope::InterfaceStyle => "Interface style",
             Scope::Workspace => "Workspace",
             Scope::Tab => "Tab",
             Scope::OpenWorkspaceIn => "Open in",
@@ -126,6 +133,7 @@ impl Scope {
         match self {
             Scope::Theme => theme_values(app),
             Scope::ThemeMode => mode_values(app),
+            Scope::InterfaceStyle => interface_style_values(app),
             Scope::Workspace => workspace_values(app),
             Scope::Tab => tab_values(app),
             Scope::OpenWorkspaceIn => action_values(&[
@@ -185,6 +193,18 @@ fn mode_values(app: &PaneFlowApp) -> Vec<ScopeValue> {
         apply: Apply::Mode(mode),
     })
     .collect()
+}
+
+fn interface_style_values(app: &PaneFlowApp) -> Vec<ScopeValue> {
+    let current = app.cached_config.interface_style();
+    InterfaceStyle::ALL
+        .into_iter()
+        .map(|style| ScopeValue {
+            label: style.label().to_string(),
+            current: current == Some(style),
+            apply: Apply::InterfaceStyle(style),
+        })
+        .collect()
 }
 
 fn workspace_values(app: &PaneFlowApp) -> Vec<ScopeValue> {
@@ -1075,6 +1095,13 @@ pub(crate) const COMMANDS: &[Command] = &[
         kind: Kind::Scope(Scope::ThemeMode),
     },
     Command {
+        label: "Interface style",
+        icon: None,
+        keywords: "appearance themed blended transparency translucent blur material mica vibrancy",
+        needs: Needs::NativeMaterial,
+        kind: Kind::Scope(Scope::InterfaceStyle),
+    },
+    Command {
         label: "Terminal font",
         icon: None,
         keywords: "typeface family appearance",
@@ -1398,6 +1425,7 @@ mod tests {
         let scopes = [
             Scope::Theme,
             Scope::ThemeMode,
+            Scope::InterfaceStyle,
             Scope::Workspace,
             Scope::Tab,
             Scope::OpenWorkspaceIn,
@@ -1463,6 +1491,7 @@ mod tests {
         );
         assert!(Apply::Theme(0).applies_in_place());
         assert!(Apply::Mode(ThemeMode::Dark).applies_in_place());
+        assert!(Apply::InterfaceStyle(InterfaceStyle::Blended).applies_in_place());
         assert!(!Apply::Workspace(0).applies_in_place());
         assert!(!Apply::Tab(0).applies_in_place());
         assert!(!Apply::Action("split_vertically").applies_in_place());

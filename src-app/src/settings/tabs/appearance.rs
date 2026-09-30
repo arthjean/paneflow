@@ -3,6 +3,9 @@ use gpui::{
     ParentElement, SharedString, Styled, div, prelude::*, px, svg,
 };
 
+use paneflow_config::schema::{InterfaceStyle, PaneFlowConfig};
+
+use crate::GeneralDropdown;
 use crate::PaneFlowApp;
 use crate::settings::components::{
     deferred_select_menu, menu_row, secondary_button, section_header, section_header_with_action,
@@ -54,6 +57,13 @@ impl PaneFlowApp {
         }
 
         let preset_row = self.render_theme_preset_select(preset, ui, cx);
+        let mut preset_card = SearchCard::new(ui).row(&search::THEME_PRESET, preset_row);
+        if !PaneFlowConfig::INTERFACE_STYLE_KEYS.is_empty() {
+            preset_card = preset_card.row(
+                &search::INTERFACE_STYLE,
+                self.render_interface_style_select(ui, cx),
+            );
+        }
 
         let reduce_motion = self.cached_config.reduce_motion_enabled();
         let motion_row = div()
@@ -91,7 +101,7 @@ impl PaneFlowApp {
             .child(div().h(px(14.)).flex_none())
             .child(render_theme_diff_preview(ui))
             .child(div().h(px(12.)).flex_none())
-            .card(SearchCard::new(ui).row(&search::THEME_PRESET, preset_row))
+            .card(preset_card)
             .finish();
         let preferences_block = Block::new("Preferences")
             .top_gap(18.)
@@ -387,6 +397,105 @@ impl PaneFlowApp {
             ))
             .child(div().flex_shrink_0().child(trigger))
             .into_any_element()
+    }
+
+    fn render_interface_style_select(
+        &self,
+        ui: crate::theme::UiColors,
+        cx: &mut Context<Self>,
+    ) -> gpui::AnyElement {
+        let is_open = self.general_dropdown == Some(GeneralDropdown::InterfaceStyle);
+        let current = self.cached_config.interface_style();
+
+        let mut trigger = select_trigger("interface-style-select", ui)
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |this, _, window, cx| {
+                    cx.stop_propagation();
+                    this.general_dropdown = if is_open {
+                        None
+                    } else {
+                        Some(GeneralDropdown::InterfaceStyle)
+                    };
+                    this.settings_focus.focus(window, cx);
+                    cx.notify();
+                }),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .text_size(crate::ui_primitives::BODY)
+                    .text_color(ui.text)
+                    .truncate()
+                    .child(current.map_or("Custom", InterfaceStyle::label)),
+            )
+            .child(select_chevron(ui));
+
+        if is_open {
+            let mut menu = select_menu("interface-style-list", ui).on_mouse_down_out(cx.listener(
+                |this, _, _w, cx| {
+                    if this.general_dropdown == Some(GeneralDropdown::InterfaceStyle) {
+                        this.general_dropdown = None;
+                        cx.notify();
+                    }
+                },
+            ));
+            for (idx, style) in InterfaceStyle::ALL.into_iter().enumerate() {
+                let is_current = current == Some(style);
+                menu = menu.child(
+                    menu_row(("interface-style", idx), is_current, ui)
+                        .cursor(CursorStyle::Arrow)
+                        .on_click(cx.listener(move |this, _: &ClickEvent, _window, cx| {
+                            this.general_dropdown = None;
+                            this.apply_interface_style(style, cx);
+                        }))
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .truncate()
+                                .text_color(ui.text)
+                                .child(style.label()),
+                        )
+                        .child(
+                            svg()
+                                .size(px(13.))
+                                .flex_none()
+                                .path("icons/check.svg")
+                                .text_color(if is_current {
+                                    ui.text
+                                } else {
+                                    with_alpha(ui.text, 0.0)
+                                }),
+                        ),
+                );
+            }
+            trigger = trigger.child(deferred_select_menu(menu));
+        }
+
+        div()
+            .flex()
+            .flex_row()
+            .items_center()
+            .justify_between()
+            .gap(px(16.))
+            .px(px(12.))
+            .py(px(10.))
+            .child(setting_text(
+                ui,
+                search::INTERFACE_STYLE.title,
+                search::INTERFACE_STYLE.description,
+            ))
+            .child(div().flex_shrink_0().child(trigger))
+            .into_any_element()
+    }
+
+    pub(crate) fn apply_interface_style(&mut self, style: InterfaceStyle, cx: &mut Context<Self>) {
+        let enabled = style == InterfaceStyle::Blended;
+        for &key in PaneFlowConfig::INTERFACE_STYLE_KEYS {
+            self.persist_setting(false, key, serde_json::Value::Bool(enabled), cx);
+        }
     }
 
     pub(crate) fn apply_theme_mode(

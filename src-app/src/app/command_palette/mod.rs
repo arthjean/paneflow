@@ -162,6 +162,9 @@ impl PaneFlowApp {
             Needs::ManyTabs => self
                 .active_workspace()
                 .is_some_and(|workspace| workspace.tab_count() > 1),
+            Needs::NativeMaterial => {
+                !paneflow_config::schema::PaneFlowConfig::INTERFACE_STYLE_KEYS.is_empty()
+            }
         }
     }
 
@@ -325,6 +328,7 @@ impl PaneFlowApp {
                 let preset = self.current_theme_preset();
                 self.apply_theme_preset(preset, window, cx);
             }
+            Apply::InterfaceStyle(style) => self.apply_interface_style(style, cx),
             Apply::Workspace(idx) => self.select_workspace(idx, window, cx),
             Apply::Tab(idx) => {
                 let workspace = self.active_idx;

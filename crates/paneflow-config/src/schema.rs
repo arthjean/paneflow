@@ -384,17 +384,19 @@ mod tests {
         let cfg = PaneFlowConfig::default();
         assert_eq!(
             cfg.cockpit_chrome_material_enabled(),
-            !cfg!(target_os = "windows")
+            cfg!(not(any(target_os = "windows", target_os = "macos")))
         );
 
         let cfg = PaneFlowConfig {
             windows_chrome_material: Some(true),
+            macos_chrome_material: Some(true),
             ..Default::default()
         };
         assert!(cfg.cockpit_chrome_material_enabled());
 
         let cfg = PaneFlowConfig {
             windows_chrome_material: Some(false),
+            macos_chrome_material: Some(true),
             ..Default::default()
         };
         assert_eq!(
@@ -411,14 +413,14 @@ mod tests {
     }
 
     #[test]
-    fn macos_chrome_material_defaults_on_and_respects_switches() {
-        assert!(PaneFlowConfig::default().macos_chrome_material_enabled());
+    fn macos_chrome_material_defaults_off_and_respects_switches() {
+        assert!(!PaneFlowConfig::default().macos_chrome_material_enabled());
 
-        let disabled = PaneFlowConfig {
-            macos_chrome_material: Some(false),
+        let enabled = PaneFlowConfig {
+            macos_chrome_material: Some(true),
             ..Default::default()
         };
-        assert!(!disabled.macos_chrome_material_enabled());
+        assert!(enabled.macos_chrome_material_enabled());
 
         let globally_opaque = PaneFlowConfig {
             window_backdrop: Some("opaque".to_string()),

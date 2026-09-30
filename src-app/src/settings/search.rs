@@ -41,6 +41,16 @@ pub(crate) const THEME_PRESET: SettingCopy = SettingCopy {
     title: "Preset",
     description: "Palette applied to the terminal grid and the app chrome.",
 };
+pub(crate) const INTERFACE_STYLE: SettingCopy = SettingCopy {
+    title: "Interface style",
+    description: if cfg!(target_os = "macos") {
+        "Themed paints the app in solid theme colors. Blended shows the native macOS material \
+         behind the sidebar."
+    } else {
+        "Themed paints the app in solid theme colors. Blended lets Mica show through the sidebar \
+         and the terminal."
+    },
+};
 pub(crate) const REDUCE_MOTION: SettingCopy = SettingCopy {
     title: "Reduce motion",
     description: "Settle hover transitions and the sidebar slide instantly instead of animating \
@@ -157,9 +167,19 @@ const GENERAL_COPIES: &[&SettingCopy] = &[
     &NATIVE_NOTIFICATIONS,
 ];
 #[cfg(target_os = "windows")]
-const APPEARANCE_COPIES: &[&SettingCopy] = &[&THEME_PRESET, &REDUCE_MOTION, &CHROME_MATERIAL];
+const APPEARANCE_COPIES: &[&SettingCopy] = &[
+    &THEME_PRESET,
+    &INTERFACE_STYLE,
+    &REDUCE_MOTION,
+    &CHROME_MATERIAL,
+];
 #[cfg(target_os = "macos")]
-const APPEARANCE_COPIES: &[&SettingCopy] = &[&THEME_PRESET, &REDUCE_MOTION, &SIDEBAR_TRANSPARENCY];
+const APPEARANCE_COPIES: &[&SettingCopy] = &[
+    &THEME_PRESET,
+    &INTERFACE_STYLE,
+    &REDUCE_MOTION,
+    &SIDEBAR_TRANSPARENCY,
+];
 #[cfg(not(any(target_os = "windows", target_os = "macos")))]
 const APPEARANCE_COPIES: &[&SettingCopy] = &[&THEME_PRESET, &REDUCE_MOTION];
 #[cfg(target_os = "windows")]

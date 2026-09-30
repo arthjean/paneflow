@@ -5,6 +5,22 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
 
 ## [Unreleased]
 
+### Added
+
+- `Interface style` on Windows and macOS, in Settings > Appearance under the
+  theme preset and in the command palette. `Themed` paints the app in solid
+  theme colors. `Blended` turns every window material on at once: on Windows,
+  Mica shows through the sidebar and the terminal (`windows_chrome_material`
+  and `windows_terminal_material`); on macOS, the native Sidebar material shows
+  behind the sidebar (`macos_chrome_material`). Setting those switches one by
+  one to different values reads as `Custom`.
+
+### Changed
+
+- On macOS the sidebar is opaque by default, to match the default `Themed`
+  style: `macos_chrome_material` now defaults to `false`. Pick `Blended`, or
+  set it to `true`, to bring the native Sidebar material back.
+
 ## [0.17.4] - 2026-09-27
 
 A patch that removes the limit of 20 open workspaces. A new workspace past the

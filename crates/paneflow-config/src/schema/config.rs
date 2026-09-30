@@ -263,7 +263,31 @@ impl PaneFlowConfig {
                 .window_backdrop
                 .as_deref()
                 .is_some_and(|value| value.trim().eq_ignore_ascii_case("transparent"))
-            && self.macos_chrome_material.unwrap_or(true)
+            && self.macos_chrome_material.unwrap_or(false)
+    }
+
+    pub const INTERFACE_STYLE_KEYS: &'static [&'static str] = if cfg!(target_os = "windows") {
+        &["windows_chrome_material", "windows_terminal_material"]
+    } else if cfg!(target_os = "macos") {
+        &["macos_chrome_material"]
+    } else {
+        &[]
+    };
+
+    pub fn interface_style(&self) -> Option<InterfaceStyle> {
+        let windows = [
+            self.cockpit_chrome_material_enabled(),
+            self.windows_terminal_material_enabled(),
+        ];
+        let macos = [self.macos_chrome_material_enabled()];
+        let materials: &[bool] = if cfg!(target_os = "windows") {
+            &windows
+        } else if cfg!(target_os = "macos") {
+            &macos
+        } else {
+            &[]
+        };
+        InterfaceStyle::from_materials(materials)
     }
 
     pub fn cockpit_chrome_material_enabled(&self) -> bool {
@@ -456,6 +480,33 @@ impl OnQuit {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InterfaceStyle {
+    Themed,
+    Blended,
+}
+
+impl InterfaceStyle {
+    pub const ALL: [Self; 2] = [Self::Themed, Self::Blended];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Themed => "Themed",
+            Self::Blended => "Blended",
+        }
+    }
+
+    fn from_materials(materials: &[bool]) -> Option<Self> {
+        if materials.iter().all(|enabled| !enabled) {
+            Some(Self::Themed)
+        } else if materials.iter().all(|enabled| *enabled) {
+            Some(Self::Blended)
+        } else {
+            None
+        }
+    }
+}
+
 fn lenient_value_or_default<'de, D, T>(d: D) -> Result<T, D::Error>
 where
     D: serde::Deserializer<'de>,
@@ -543,5 +594,44 @@ mod tests {
         assert_eq!(config.resolved_on_quit(), OnQuit::Ask);
         let config: PaneFlowConfig = serde_json::from_str(r#"{"on_quit": 3}"#).unwrap();
         assert_eq!(config.resolved_on_quit(), OnQuit::Ask);
+    }
+
+    #[test]
+    fn interface_style_is_themed_or_blended_only_when_every_material_agrees() {
+        assert_eq!(
+            InterfaceStyle::from_materials(&[]),
+            Some(InterfaceStyle::Themed)
+        );
+        assert_eq!(
+            InterfaceStyle::from_materials(&[false, false]),
+            Some(InterfaceStyle::Themed)
+        );
+        assert_eq!(
+            InterfaceStyle::from_materials(&[true, true]),
+            Some(InterfaceStyle::Blended)
+        );
+        assert_eq!(InterfaceStyle::from_materials(&[true, false]), None);
+    }
+
+    #[test]
+    fn interface_style_defaults_to_themed_and_its_keys_select_blended() {
+        assert_eq!(
+            PaneFlowConfig::default().interface_style(),
+            Some(InterfaceStyle::Themed)
+        );
+
+        let blended: serde_json::Map<String, serde_json::Value> =
+            PaneFlowConfig::INTERFACE_STYLE_KEYS
+                .iter()
+                .map(|key| ((*key).to_string(), serde_json::Value::Bool(true)))
+                .collect();
+        let config: PaneFlowConfig =
+            serde_json::from_value(serde_json::Value::Object(blended)).unwrap();
+        let expected = if PaneFlowConfig::INTERFACE_STYLE_KEYS.is_empty() {
+            InterfaceStyle::Themed
+        } else {
+            InterfaceStyle::Blended
+        };
+        assert_eq!(config.interface_style(), Some(expected));
     }
 }
