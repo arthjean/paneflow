@@ -209,6 +209,16 @@
       "description": "macOS-only. When true, the primary sidebar card reveals AppKit's native Sidebar material. Other platforms ignore this field.",
       "default": false
     },
+    "linux_terminal_material": {
+      "type": ["boolean", "null"],
+      "description": "Linux-only. When true, the window surface turns transparent and the terminal card becomes a translucent shade over the window veil, so a compositor blur shows through. Other platforms ignore this field.",
+      "default": false
+    },
+    "linux_chrome_material": {
+      "type": ["boolean", "null"],
+      "description": "Linux-only. When true, the window surface turns transparent and the sidebar and title bar show a translucent theme veil, so a compositor blur shows through. Other platforms ignore this field.",
+      "default": false
+    },
     "option_as_meta": {
       "type": ["boolean", "null"],
       "description": "Treat Alt/Option as Meta and send an ESC prefix. Default true on Linux and Windows. On macOS, set to false if you rely on Option to produce Unicode characters.",

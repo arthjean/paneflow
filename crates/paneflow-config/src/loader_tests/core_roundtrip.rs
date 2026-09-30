@@ -26,6 +26,8 @@ fn test_serialization_roundtrip() {
         windows_terminal_material: None,
         windows_chrome_material: None,
         macos_chrome_material: None,
+        linux_terminal_material: None,
+        linux_chrome_material: None,
         unfocused_pane_opacity: None,
         reduce_motion: None,
         sidebar_show: SidebarShow::default(),

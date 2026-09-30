@@ -29,6 +29,10 @@ pub struct PaneFlowConfig {
     #[serde(default, deserialize_with = "lenient_value_or_default")]
     pub macos_chrome_material: Option<bool>,
     #[serde(default, deserialize_with = "lenient_value_or_default")]
+    pub linux_terminal_material: Option<bool>,
+    #[serde(default, deserialize_with = "lenient_value_or_default")]
+    pub linux_chrome_material: Option<bool>,
+    #[serde(default, deserialize_with = "lenient_value_or_default")]
     pub unfocused_pane_opacity: Option<f32>,
     #[serde(default, deserialize_with = "lenient_value_or_default")]
     pub reduce_motion: Option<bool>,
@@ -250,6 +254,18 @@ impl PaneFlowConfig {
         cfg!(target_os = "windows") && self.windows_terminal_material.unwrap_or(false)
     }
 
+    pub fn linux_terminal_material_enabled(&self) -> bool {
+        cfg!(target_os = "linux") && self.linux_terminal_material.unwrap_or(false)
+    }
+
+    pub fn terminal_material_enabled(&self) -> bool {
+        self.windows_terminal_material_enabled() || self.linux_terminal_material_enabled()
+    }
+
+    pub fn native_material_requested(&self) -> bool {
+        self.cockpit_chrome_material_enabled() || self.terminal_material_enabled()
+    }
+
     fn window_backdrop_disables_chrome_material(&self) -> bool {
         self.window_backdrop.as_deref().is_some_and(|value| {
             let value = value.trim();
@@ -270,18 +286,20 @@ impl PaneFlowConfig {
         &["windows_chrome_material", "windows_terminal_material"]
     } else if cfg!(target_os = "macos") {
         &["macos_chrome_material"]
+    } else if cfg!(target_os = "linux") {
+        &["linux_chrome_material", "linux_terminal_material"]
     } else {
         &[]
     };
 
     pub fn interface_style(&self) -> Option<InterfaceStyle> {
-        let windows = [
+        let dual = [
             self.cockpit_chrome_material_enabled(),
-            self.windows_terminal_material_enabled(),
+            self.terminal_material_enabled(),
         ];
         let macos = [self.macos_chrome_material_enabled()];
-        let materials: &[bool] = if cfg!(target_os = "windows") {
-            &windows
+        let materials: &[bool] = if cfg!(any(target_os = "windows", target_os = "linux")) {
+            &dual
         } else if cfg!(target_os = "macos") {
             &macos
         } else {
@@ -299,8 +317,10 @@ impl PaneFlowConfig {
             self.windows_chrome_material.unwrap_or(false)
         } else if cfg!(target_os = "macos") {
             self.macos_chrome_material_enabled()
+        } else if cfg!(target_os = "linux") {
+            self.linux_chrome_material.unwrap_or(false)
         } else {
-            true
+            false
         }
     }
 

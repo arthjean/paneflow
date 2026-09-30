@@ -58,6 +58,8 @@ mod tests {
             windows_terminal_material: Some(true),
             windows_chrome_material: Some(true),
             macos_chrome_material: Some(true),
+            linux_terminal_material: Some(true),
+            linux_chrome_material: Some(true),
             unfocused_pane_opacity: Some(0.7),
             reduce_motion: Some(false),
             sidebar_show: SidebarShow {
@@ -382,14 +384,12 @@ mod tests {
     #[test]
     fn cockpit_chrome_material_respects_current_platform_switch() {
         let cfg = PaneFlowConfig::default();
-        assert_eq!(
-            cfg.cockpit_chrome_material_enabled(),
-            cfg!(not(any(target_os = "windows", target_os = "macos")))
-        );
+        assert!(!cfg.cockpit_chrome_material_enabled());
 
         let cfg = PaneFlowConfig {
             windows_chrome_material: Some(true),
             macos_chrome_material: Some(true),
+            linux_chrome_material: Some(true),
             ..Default::default()
         };
         assert!(cfg.cockpit_chrome_material_enabled());
@@ -397,11 +397,21 @@ mod tests {
         let cfg = PaneFlowConfig {
             windows_chrome_material: Some(false),
             macos_chrome_material: Some(true),
+            linux_chrome_material: Some(false),
             ..Default::default()
         };
         assert_eq!(
             cfg.cockpit_chrome_material_enabled(),
-            !cfg!(target_os = "windows")
+            cfg!(target_os = "macos")
+        );
+
+        let cfg = PaneFlowConfig {
+            linux_chrome_material: Some(true),
+            ..Default::default()
+        };
+        assert_eq!(
+            cfg.cockpit_chrome_material_enabled(),
+            cfg!(target_os = "linux")
         );
 
         let cfg = PaneFlowConfig {
@@ -410,6 +420,39 @@ mod tests {
             ..Default::default()
         };
         assert!(!cfg.cockpit_chrome_material_enabled());
+    }
+
+    #[test]
+    fn linux_materials_default_off_and_drive_the_interface_style() {
+        let themed = PaneFlowConfig::default();
+        assert!(!themed.terminal_material_enabled());
+        assert!(!themed.native_material_requested());
+
+        let blended = PaneFlowConfig {
+            linux_chrome_material: Some(true),
+            linux_terminal_material: Some(true),
+            ..Default::default()
+        };
+        assert_eq!(
+            blended.terminal_material_enabled(),
+            cfg!(target_os = "linux")
+        );
+        assert_eq!(
+            blended.native_material_requested(),
+            cfg!(target_os = "linux")
+        );
+        if cfg!(target_os = "linux") {
+            assert_eq!(themed.interface_style(), Some(InterfaceStyle::Themed));
+            assert_eq!(blended.interface_style(), Some(InterfaceStyle::Blended));
+            assert_eq!(
+                PaneFlowConfig {
+                    linux_terminal_material: Some(true),
+                    ..Default::default()
+                }
+                .interface_style(),
+                None
+            );
+        }
     }
 
     #[test]

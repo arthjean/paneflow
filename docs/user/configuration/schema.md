@@ -67,6 +67,8 @@ JetBrains IDEs, Helix, and other JSON Schema-aware editors:
 | `windows_terminal_material` | boolean/null | `false` | Window/terminal render | Windows-only terminal background material toggle. Ignored on other platforms. |
 | `windows_chrome_material` | boolean/null | `false` | Window/chrome render | Windows-only native material in the primary navigation card. Ignored on other platforms. |
 | `macos_chrome_material` | boolean/null | `true` | Window/chrome render | macOS-only native Sidebar material in the primary navigation card. Ignored on other platforms. |
+| `linux_terminal_material` | boolean/null | `false` | Window/terminal render | Linux-only translucent terminal card over the window veil, so a compositor blur shows through. Ignored on other platforms. |
+| `linux_chrome_material` | boolean/null | `false` | Window/chrome render | Linux-only translucent veil behind the sidebar and the title bar, so a compositor blur shows through. Ignored on other platforms. |
 | `option_as_meta` | boolean/null | `true` on Linux and Windows, `false` on macOS | Hot reload | Sends Alt/Option as ESC-prefix Meta. On macOS, `true` makes Option plus a letter send Meta instead of composing a character; keep `false` when Option should type Unicode characters. A config reload applies it to open terminals. |
 | `shell_integration` | boolean/null | `true` | New terminal | Enables Paneflow shell snippets for OSC 7 CWD and OSC 133 command marks. |
 | `editor` | object/null | minimap off, scrollbar on | Hot reload | What the code editor draws beside the text: `minimap` adds a minimap along the right edge, `scrollbar` keeps the vertical scrollbar. Toggled from the editor's controls menu; the choice applies to every open file. |
