@@ -34,6 +34,7 @@ launching the app.
 | `watch [--surface <sel>] [--type <event>]` | `events.subscribe` | No | Stream lifecycle and surface events |
 | `up <file>` | Workspace spec engine | Prefill only | Create a declarative workspace |
 | `flow run <file>` | Flow engine | Gated for submitting steps | Run a local multi-agent DAG |
+| `sessions [--json] [--follow]` | Worker session stream | No | Read agent session state, with or without a window |
 
 Aliases accepted by the CLI: `list_panes` maps to `ls`,
 `read_pane` maps to `read`, and `search_pane` maps to `search`.
@@ -285,14 +286,43 @@ Returned terminal output is fenced as untrusted data.
 
 ## Lifecycle hooks
 
-`paneflow-ai-hook` reads event JSON on stdin, posts one JSON-RPC `ai.*`
-frame, and exits `0` so a stopped Paneflow instance does not break the
-agent. The hook surface powers status, notifications, `ps`, `status`,
-and `watch`.
+`paneflow-ai-hook` reads event JSON on stdin, sends one lifecycle event
+(`ai.stop`, `ai.notification`, and so on) to the local host, and exits `0` so
+a stopped Paneflow instance does not break the agent. The hook surface powers
+status, notifications, `ps`, `status`, `watch`, and `paneflow sessions`.
 
-Persistent `paneflow hooks setup` is Claude Code scoped. Codex uses
-per-launch shim hooks. Agents with no hook surface still run, but their
-state may be limited to process detection.
+| Command | Effect |
+| --- | --- |
+| `paneflow integrations list` | List the runtimes that have an installer and their state |
+| `paneflow integrations install <runtime>` | Install the hooks for `claude-code` (or `claude`) or `codex`, and register the `paneflow` MCP server |
+| `paneflow integrations remove <runtime>` | Remove Paneflow's own handlers; a handler of yours in the same hook group is kept |
+| `paneflow hooks setup` | Install every detected runtime that has an installer |
+| `paneflow hooks uninstall` | Remove the integrations and the `paneflow` MCP entry |
+| `paneflow hooks status` | Print one `<runtime>: <state>` line per runtime; always exits `0` |
+
+Hooks are installed once per machine, from the CLI or **Settings > Agents**.
+Claude Code hooks go to `$CLAUDE_CONFIG_DIR/settings.json` (default
+`~/.claude/settings.json`), Codex hooks to `$CODEX_HOME/hooks.json` (default
+`~/.codex/hooks.json`), and they exit immediately outside a Paneflow pane.
+Other agents have no installer: they still run, but their state is limited to
+process detection.
+
+## Worker and sessions
+
+Agent state lives in a per-home worker, started as `paneflow serve run`. It
+runs detached, one per `PANEFLOW_HOME`, reduces hook events to one state per
+session, rebuilds that state from disk when it restarts, and never touches a
+running shell. Without a running window, `ps` and `status` cannot see hook
+state and `send --submit` cannot confirm through it; `paneflow sessions` reads
+the worker directly.
+
+| Command | Effect |
+| --- | --- |
+| `paneflow serve start` | Start the worker for this `PANEFLOW_HOME`, or adopt the one already serving it |
+| `paneflow serve status` | Print the pid, protocol, home, session count, and capabilities |
+| `paneflow serve stop [--drain-ms 5000]` | Stop the worker; terminals are untouched |
+| `paneflow sessions [--json] [--follow]` | Print the session list the sidebar shows; `--follow` prints one line per transition and reconnects when the worker restarts |
+| `paneflow sessions ack <session-id>...` | Lower the `unread` flag a finished turn raises |
 
 ## Related
 

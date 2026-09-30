@@ -39,6 +39,7 @@ text unless you deliberately pass `--raw`.
 | `paneflow up <file>` | Create a named workspace from TOML | Prefill only |
 | `paneflow flow run <file>` | Run a local multi-agent DAG | Only when a step submits |
 | `paneflow hooks setup` | Report agent lifecycle state to Paneflow | No |
+| `paneflow sessions` | Read agent session state from the worker, with or without a window | No |
 
 The CLI and MCP bridge use the same local socket. Inside a Paneflow
 pane, `PANEFLOW_SOCKET_PATH` is injected automatically. Outside
@@ -179,18 +180,28 @@ without clobbering unrelated entries.
 ## How do lifecycle hooks fit in?
 
 Lifecycle hooks report agent state back to Paneflow. They power sidebar
-status, notifications, `ps`, `status`, and `watch`; they are not a
+status, notifications, `ps`, `status`, `watch`, and
+`paneflow sessions`; they are not a
 generic workflow trigger system.
 
 ```bash
-paneflow hooks setup
+paneflow integrations list
+paneflow integrations install claude-code
+paneflow integrations install codex
 paneflow hooks status
-paneflow hooks uninstall
 ```
 
-Persistent setup is Claude Code scoped. Codex gets per-launch hooks
-through the shim. Agents without a hook surface can still run in panes,
-but fleet state and lifecycle events are limited.
+Claude Code and Codex are the two runtimes with an installer. Install each
+once per machine, from the CLI or with **Install hooks** in
+**Settings > Agents**; installing also registers the `paneflow` MCP server,
+and Codex asks you once to trust the new hooks with `/hooks`. The hooks exit immediately
+outside a Paneflow pane. `paneflow hooks setup` installs every detected
+runtime that has an installer. Agents without an installer can still run in
+panes, but fleet state and lifecycle events are limited.
+
+Hook state lives in a per-home worker, `paneflow serve`, that outlives the
+window. Without a running window, `ps` and `status` cannot see it; read it
+with `paneflow sessions`, which takes `--json` and `--follow`.
 
 ## Related
 

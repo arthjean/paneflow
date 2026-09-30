@@ -53,6 +53,7 @@ text in a terminal pane and copies Markdown in a Markdown pane.
 | Workspaces | `close_workspace` | `Cmd/Ctrl+Shift+Q` |
 | Workspaces | `next_workspace` | `Cmd/Ctrl+Tab` |
 | Workspaces | `jump_next_waiting` | `Cmd/Ctrl+Shift+J` |
+| Workspaces | `focus_workspaces_sidebar` | `Cmd/Ctrl+Alt+S` |
 | Workspaces | `select_workspace_1` | `Cmd/Ctrl+1` |
 | Workspaces | `select_workspace_2` | `Cmd/Ctrl+2` |
 | Workspaces | `select_workspace_3` | `Cmd/Ctrl+3` |
@@ -74,7 +75,6 @@ text in a terminal pane and copies Markdown in a Markdown pane.
 | App views | `toggle_broadcast_member` | `Cmd/Ctrl+Shift+B` |
 | App views | `open_broadcast_groups` | `Cmd/Ctrl+Shift+M` |
 | App views | `open_attention_queue` | `Cmd/Ctrl+Shift+U` |
-| App views | `open_launch_pad` | `Cmd/Ctrl+Shift+L` |
 | Terminal pane | `terminal_copy` | `Ctrl+Shift+C` |
 | Terminal pane | `terminal_paste` | `Ctrl+Shift+V` |
 | Terminal pane | `terminal_copy` | `Cmd+C (macOS only)` |

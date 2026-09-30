@@ -29,7 +29,7 @@ remain available in [`paneflow.json`](/docs/configuration/schema).
 | Terminal | Cursor shape and color, font family, font size, font weight, line height, cell width, integrated glyphs, color emoji, minimum contrast, and Windows terminal material. | `terminal.cursor_shape`, `terminal.cursor_color`, `font_family`, `font_size`, `font_weight`, `line_height`, `cell_width`, `terminal.integrated_glyphs`, `terminal.color_emoji`, `terminal.minimum_contrast`, `windows_terminal_material` | Display controls hot-reload. Cursor shape applies to the next new terminal. |
 | Workspaces | Reusable workspace templates with panes, agents, shell commands, cwd, env, and prompt prefill. | `commands[].workspace` | Templates run through the same workspace launch path as `paneflow up`. |
 | Worktrees | Root directory for the worktrees Paneflow creates, automatic removal with a keep limit, the list of managed worktrees with a remove action, and the snapshots taken before a removal with restore and delete actions. | `worktrees.dir`, `worktrees.auto_remove`, `worktrees.keep_limit` | Hot-reloads. The root applies to worktrees created from then on. |
-| Agents | Which agents the launcher shows, with their installed version, custom agent profiles, Claude Code full access, AI free access, and the injection fence. | `*_button_visible`, `agent_profiles`, `claude_code_bypass_permissions`, `ai_unrestricted`, `ai_injection_fence` | Launcher and access changes hot-reload. |
+| Agents | Which agents the launcher shows, with their installed version and hook state, an **Install hooks** button for Claude Code and Codex, custom agent profiles, Claude Code full access, AI free access, and the injection fence. | `*_button_visible`, `agent_profiles`, `claude_code_bypass_permissions`, `ai_unrestricted`, `ai_injection_fence`; **Install hooks** writes the agent's own hook config | Launcher and access changes hot-reload. |
 | Plugins | Installs or repairs the bundled `paneflow-mcp` bridge for Claude Code, Codex, Gemini, and opencode. | Agent config files, not `paneflow.json` | Re-run after a Paneflow update or when an agent config changes. |
 
 ## Terminal contrast
@@ -43,17 +43,20 @@ under `Minimum contrast`.
 | --- | --- | --- |
 | Auto | key absent | APCA Lc 60 on every theme, light and dark. |
 | Off | `0` | No correction. Programs keep the colors they asked for. |
-| 45, 60, 75, 90 | that number | An explicit APCA Lc target, clamped to the `0` to `90` range. |
+| 45, 60, 75, 90 | that number | An explicit APCA Lc target. |
 
-Only the colors a program chose are corrected: truecolor and palette
-indices 16 to 255. The theme's own sixteen ANSI colors, its foreground
-and its background are never corrected, so a theme still looks like
-itself. Corrected text keeps its hue, and lands on the nearest theme
-color when the correction has to drain its saturation.
+Values above `90` are capped at `90`. Negative or invalid values fall
+back to Auto.
 
-Changes hot-reload: every open terminal repaints on the next frame. To
-turn the correction off everywhere, set `"minimum_contrast": 0` under
-`terminal` in [`paneflow.json`](/docs/configuration/schema).
+Only colors a program chose are corrected: truecolor and palette
+indices 16 to 255. The theme's own sixteen ANSI colors, its foreground,
+and its background are left unchanged. The correction first adjusts
+lightness while preserving hue. If it has to remove too much saturation,
+it moves toward the nearest theme color.
+
+Changes hot-reload in open terminals. To turn the correction off
+everywhere, set `"minimum_contrast": 0` under `terminal` in
+[`paneflow.json`](/docs/configuration/schema).
 
 ## AI access vs MCP
 

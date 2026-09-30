@@ -63,16 +63,16 @@ JetBrains IDEs, Helix, and other JSON Schema-aware editors:
 | `sidebar_show` | object/null | all off | Hot reload | What a session tab row shows beyond its name: `branch` adds its git branch, `diffstat` adds its insertion and deletion counts, `pr` turns the branch icon into a pull-request glyph colored by the request's state when one exists, `indent_guide` draws a hairline under a workspace's folder icon down its tab rows. The first two read the tab's bound worktree, or its workspace's checkout when the tab is unbound; `pr` needs the `gh` CLI and answers for GitHub remotes only. Toggled from the rail's Customize Sidebar menu. |
 | `worktrees` | object/null | see below | Hot reload | Where Paneflow keeps the git worktrees it creates for branches and how it cleans them up: `dir`, `auto_remove`, `keep_limit`, `for_new_branches`. Settings > Worktrees edits the same keys. |
 | `window_decorations` | string/null | `client` | Startup | `client` draws Paneflow chrome; `server` delegates to the OS compositor. |
-| `window_backdrop` | string/null | `auto` | Startup | `auto`, `mica`, `blurred`, `acrylic`, `transparent`, `opaque`, or `off`. `PANEFLOW_WINDOW_BACKDROP` overrides for one launch. |
+| `window_backdrop` | string/null | `auto` | Startup | `auto`, `mica`, `blurred`, `acrylic`, `transparent`, `opaque`, or `off`. On Windows, `blurred` and `acrylic` set in the config resolve to `auto`; only `PANEFLOW_WINDOW_BACKDROP` applies blur there. `PANEFLOW_WINDOW_BACKDROP` overrides for one launch. |
 | `windows_terminal_material` | boolean/null | `false` | Window/terminal render | Windows-only terminal background material toggle. Ignored on other platforms. |
 | `windows_chrome_material` | boolean/null | `false` | Window/chrome render | Windows-only native material in the primary navigation card. Ignored on other platforms. |
 | `macos_chrome_material` | boolean/null | `true` | Window/chrome render | macOS-only native Sidebar material in the primary navigation card. Ignored on other platforms. |
-| `option_as_meta` | boolean/null | `true` | New terminal | Sends Alt/Option as ESC-prefix Meta. Set `false` on macOS when Option should type Unicode characters. |
+| `option_as_meta` | boolean/null | `true` on Linux and Windows, `false` on macOS | Hot reload | Sends Alt/Option as ESC-prefix Meta. On macOS, `true` makes Option plus a letter send Meta instead of composing a character; keep `false` when Option should type Unicode characters. A config reload applies it to open terminals. |
 | `shell_integration` | boolean/null | `true` | New terminal | Enables Paneflow shell snippets for OSC 7 CWD and OSC 133 command marks. |
 | `editor` | object/null | minimap off, scrollbar on | Hot reload | What the code editor draws beside the text: `minimap` adds a minimap along the right edge, `scrollbar` keeps the vertical scrollbar. Toggled from the editor's controls menu; the choice applies to every open file. |
 | `automation` | object/null | all off | Hot reload | Background work run after an agent turn: `tab_auto_naming` summarizes the session's recent exchange into a 2-5 word tab name through the agent's own CLI (`claude -p`, `codex exec`, `opencode run`, `pi --print`) with tools disabled, at most once per three minutes per session and only when the conversation grew. A name you typed is never replaced; "Reset name" reopens the tab to it. |
 | `submit_paste_delay_ms` | integer/null | `70` | IPC send | Floor delay between bracketed paste and Enter for `paneflow send --submit`. Range `10` to `5000`. |
-| `external_editor` | string/null | `auto` | Next open action | `auto`, `system`, `zed`, `cursor`, `windsurf`, or `code`. |
+| `external_editor` | string/null | `auto` | Next open action | Editor that opens file links, including terminal file links: `auto`, `system`, `zed`, `cursor`, `windsurf`, `code`, or `visual_studio`. `auto` uses `$VISUAL`, then `$EDITOR`, then the first known editor on `PATH`; `system` always uses the OS opener. A named editor that is not on `PATH` falls back to `auto`. |
 | `shortcuts` | object | `{}` | Hot reload | Maps keystrokes to action names. See [shortcuts and actions](/docs/keybindings). |
 | `terminal` | object/null | defaults below | Mixed | Namespaced terminal renderer and PTY settings. |
 | `commands` | array | `[]` | Settings/Run | Command palette entries and workspace templates. |
@@ -80,7 +80,7 @@ JetBrains IDEs, Helix, and other JSON Schema-aware editors:
 | `claude_code_bypass_permissions` | boolean/null | `false` | Next Claude launch | Adds `--permission-mode bypassPermissions` to the Claude Code launcher. High-risk opt-in. |
 | `ai_unrestricted` | boolean/null | `false` | Per IPC call | Allows trusted conductors to submit to peer panes without `PANEFLOW_IPC_SCRIPTING`. Every write is traced. |
 | `ai_injection_fence` | boolean/null | `true` | Per read call | Wraps `surface.read` output in an untrusted-output fence by default. |
-| `menu_attention_detection` | boolean/null | `true` | Next viewport scan | Raises the attention badge when an agent draws a numbered select menu, which fires no lifecycle hook. Set to `false` to leave such a session on its hook- or screen-derived state. |
+| `menu_attention_detection` | boolean/null | `true` | Worker start | Marks a session as needing input when Claude Code or Codex draws a numbered approval menu, which fires no lifecycle hook. Set to `false` to leave such a session on its hook- or screen-derived state. The worker (`paneflow serve`) reads it when it starts. |
 | `on_quit` | `ask`, `keep`, `stop`, null | `ask` | At quit | What quitting does while hosted sessions run: `ask` opens the quit dialog, `keep` leaves every session running, `stop` stops them all and shuts the host down. With no live session the app exits and shuts the idle host down. |
 | `sidebar_ended_sessions` | `0`, `3`, `5`, `10`, null | `5` | Next sidebar render | How many ended sessions a workspace previews in the sidebar before the rest collapse under one "N more ended sessions" row. Nothing is pruned; the cap only controls the preview. |
 | `agent_panel` | object/null | defaults below | Agents UI | Agents-view notification preferences. |
@@ -90,6 +90,11 @@ JetBrains IDEs, Helix, and other JSON Schema-aware editors:
 
 Each button key is `boolean/null`. `null` or omission auto-detects the
 CLI binary. `false` hides the button. `true` forces it visible.
+
+On Windows, the pane palette, the New pane menu, and the welcome screen offer
+only Claude Code, Codex, Amp, Gemini, and Copilot, the runtimes that declare
+Windows support, and hide `agent_profiles` entries based on the others. Linux
+and macOS keep every agent below.
 
 | Key | Agent |
 | --- | --- |
@@ -123,11 +128,11 @@ CLI binary. `false` hides the button. `true` forces it visible.
 | `terminal.scrollbar` | boolean/null | `true` | New terminal view | Overlay scrollbar shown while scrolling or hovering the right edge of a pane. |
 | `terminal.scrollback_lines` | integer/null | `10000` | New terminal | Range `100` to `100000`. Cached terminals cap at `1000`. |
 | `terminal.cursor_shape` | string/null | `block` | New terminal | `vintage`, `block`, `beam`, `underline`, `double_underline`, or `hollow`. |
+| `terminal.osc52_clipboard` | string/null | `copy` | New terminal view | **Development builds only; unavailable in v0.17.0 and v0.17.4.** `copy` lets the focused terminal write the system clipboard through OSC 52; `off` refuses all OSC 52 writes. OSC 52 clipboard reads are always denied. Existing terminal views keep their policy until recreated. |
 | `terminal.cursor_blink` | string/null | `terminal_controlled` | New terminal | `on`, `off`, or `terminal_controlled`. |
-| `terminal.osc52_clipboard` | string/null | `copy` | New terminal | Whether programs may write the system clipboard with OSC 52. `copy` lets the focused terminal copy; `off` refuses every OSC 52 write. |
 | `terminal.env` | object/null | none | New terminal | Environment variables injected into every new terminal. Per-surface `env` wins. Values are passed through verbatim: no `~` and no `$NAME` expansion, unlike `agent_profiles.*.env`. |
 | `terminal.scroll_multiplier` | number/null | `1.0` | New terminal view | Range `0.1` to `10.0`. Ignored in mouse-reporting and alternate-screen scroll paths. |
-| `terminal.minimum_contrast` | number/null | Auto (Lc 60) | Hot reload | Minimum APCA lightness contrast (Lc) between text and its cell background, applied only to the colors a program chose: truecolor and palette indices 16 to 255. The theme's own sixteen ANSI colors, foreground and background are never corrected. Unset means Auto, which is Lc 60 on every theme; `0` disables the correction. Range `0` to `90`. |
+| `terminal.minimum_contrast` | number/null | Auto (`60`) | Hot reload | Minimum APCA lightness contrast (Lc) enforced between text and its cell background, on the colors a program chose (truecolor and palette indices 16 to 255). The theme's sixteen ANSI colors, foreground, and background are never corrected. Unset means Auto, which is `60` on every theme; `0` turns the correction off; a negative or non-numeric value means Auto. Range `0` to `90`. |
 
 ## `agent_panel`
 
@@ -138,7 +143,7 @@ CLI binary. `false` hides the button. `true` forces it visible.
 ## `worktrees`
 
 Paneflow creates a git worktree when you open a branch from the "New pane"
-palette, the Launch Pad, or `paneflow up`. Nothing is written inside the
+palette, a tab's context menu, or `paneflow up`. Nothing is written inside the
 checkout: the ownership marker lives in the worktree's own git dir
 (`.git/worktrees/<name>/` in the main repository), so `git status` stays
 clean and the marker disappears with the worktree. Settings > Worktrees edits
@@ -183,8 +188,7 @@ Delete drops the ref. A clean worktree leaves no snapshot.
 
 `agent_profiles` is a list. Each entry adds a launcher item that runs one of
 the built-in agents with extra environment variables and arguments. Profiles
-show up in the pane palette and the worktree launch pad next to the built-in
-agents, and keep the base agent's status tracking, hooks, and sessions.
+show up in the pane palette next to the built-in agents, and keep the base agent's status tracking, hooks, and sessions.
 Settings > Agents > Profiles edits the same list.
 
 | Key | Type | Default | Notes |
