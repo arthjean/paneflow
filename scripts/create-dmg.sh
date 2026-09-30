@@ -53,16 +53,16 @@ ln -s /Applications "$STAGING/Applications"
 mkdir -p "$(dirname "$FINAL_DMG")"
 
 echo "Creating $FINAL_DMG (source: $(du -sh "$STAGING" | awk '{print $1}'))..."
-hdiutil create \
+"$SCRIPT_DIR/retry-with-backoff.sh" hdiutil create \
     -volname "$VOLNAME" \
     -srcfolder "$STAGING" \
     -ov \
     -format UDZO \
     "$FINAL_DMG" >/dev/null
 
-hdiutil verify "$FINAL_DMG" >/dev/null
+"$SCRIPT_DIR/retry-with-backoff.sh" hdiutil verify "$FINAL_DMG" >/dev/null
 
-VERIFY_MOUNT="$(hdiutil attach -nobrowse -readonly -noautoopen "$FINAL_DMG")"
+VERIFY_MOUNT="$("$SCRIPT_DIR/retry-with-backoff.sh" hdiutil attach -nobrowse -readonly -noautoopen "$FINAL_DMG")"
 VERIFY_DEV="$(echo "$VERIFY_MOUNT" | awk 'NR==1 {print $1}')"
 VERIFY_PT="/Volumes/$VOLNAME"
 if ! codesign --verify --deep --strict "$VERIFY_PT/$BUNDLE_NAME"; then

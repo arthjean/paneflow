@@ -36,6 +36,15 @@ if [ ! -f "$out" ]; then
 fi
 echo "result: $out"
 if [ "$mode" = "set-baseline" ]; then
+  cpu_share=$(sed -n 's/^[[:space:]]*"cpu_share":[[:space:]]*\([0-9.eE+-]*\).*/\1/p' "$out" | head -n 1)
+  if [ -z "$cpu_share" ]; then
+    echo "the result carries no cpu_share, refusing to record a baseline from it: $out" >&2
+    exit 1
+  fi
+  if awk "BEGIN { exit !($cpu_share < 0.9) }"; then
+    echo "cpu_share $cpu_share is below 0.90: this run got less than 90% of a core, so its timings are inflated and every later comparison against them would read as a false improvement. Close the competing workload and run again." >&2
+    exit 1
+  fi
   cp "$out" bench/baseline.json
   echo "baseline: bench/baseline.json now points at $sha"
 fi

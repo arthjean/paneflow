@@ -1,5 +1,6 @@
 #Requires -Version 7
 $ErrorActionPreference = 'Stop'
+. "$PSScriptRoot/bounded-download.ps1"
 $root = Join-Path (Split-Path -Parent $PSScriptRoot) 'native/conpty'
 $manifest = Get-Content -LiteralPath (Join-Path $root 'manifest.json') -Raw | ConvertFrom-Json -AsHashtable
 $missing = @()
@@ -20,7 +21,7 @@ $scratch = Join-Path ([IO.Path]::GetTempPath()) "paneflow-conpty-$([Guid]::NewGu
 $null = New-Item -ItemType Directory -Path $scratch
 try {
     $package = Join-Path $scratch 'conpty.nupkg'
-    Invoke-WebRequest -Uri $manifest.url -OutFile $package
+    Save-Download -Uri $manifest.url -OutFile $package
     if ((Get-FileHash -LiteralPath $package -Algorithm SHA256).Hash.ToLowerInvariant() -ne $manifest.sha256) {
         throw 'ConPTY package SHA-256 mismatch'
     }

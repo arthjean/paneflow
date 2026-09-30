@@ -3,6 +3,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd -P)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd -P)"
+RETRY="$SCRIPT_DIR/retry-with-backoff.sh"
 
 ENTITLEMENTS="$REPO_ROOT/packaging/macos/paneflow.entitlements"
 APP=""
@@ -101,7 +102,7 @@ for sub in "${NESTED_PATTERNS[@]}"; do
     [ -d "$dir" ] || continue
 
     while IFS= read -r -d '' nested; do
-        codesign \
+        "$RETRY" codesign \
             --force \
             --options runtime \
             --timestamp \
@@ -110,7 +111,7 @@ for sub in "${NESTED_PATTERNS[@]}"; do
     done < <(find -d "$dir" -name '*.dylib' -print0)
 
     while IFS= read -r -d '' nested; do
-        codesign \
+        "$RETRY" codesign \
             --force \
             --options runtime \
             --timestamp \
@@ -125,7 +126,7 @@ for sub in "${NESTED_PATTERNS[@]}"; do
                 \) -print0)
 done
 
-codesign \
+"$RETRY" codesign \
     --force \
     --options runtime \
     --timestamp \

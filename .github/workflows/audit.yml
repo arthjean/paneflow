@@ -42,23 +42,24 @@ jobs:
     name: cargo-deny check (cron)
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
 
-      - uses: dtolnay/rust-toolchain@master
+      - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88
         with:
           toolchain: "1.98.0"
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
         with:
           prefix-key: "v1-rust"
           key: cron-audit
 
-      # Pin cargo-deny to the same 0.19.x band the PR gate uses.
-      # See run_tests.yml::security_audit for the rationale on the
-      # 0.19 floor (workspace-scoped unmaintained + license
-      # exception syntax).
-      - name: Install cargo-deny (pinned 0.19.x)
-        run: cargo install cargo-deny --locked --version '^0.19'
+      # Pin cargo-deny to the exact version the PR gate uses
+      # (run_tests.yml::security_audit), so the cron and the gate can
+      # never disagree about the same lockfile.
+      - name: Install cargo-deny (pinned)
+        run: cargo install cargo-deny --locked --version 0.19.8
 
       - name: cargo deny check advisories
         id: deny
@@ -85,58 +86,71 @@ jobs:
           RUN_ID: ${{ github.run_id }}
         run: |
           set -euo pipefail
-          DATE=$(date -u +"%Y-%m-%d")
-          NOW_UTC=$(date -u +"%H:%M UTC")
-          TITLE="Security: cargo-deny advisory hit on ${DATE}"
-          # Idempotency: only one open issue per day. If a previous
-          # cron tick already opened one, this re-run reuses it via
-          # a comment rather than spawning a duplicate. `--search`
-          # with `in:title` is GitHub-side string match; the title
-          # has no user-supplied content so this is injection-safe.
-          EXISTING=$(gh issue list \
-            --state open \
-            --search "in:title \"${TITLE}\"" \
-            --json number \
-            --jq '.[0].number // empty')
-
-          if [ -z "${EXISTING}" ]; then
-            # Build the issue body in pure shell with no `$(...)`
-            # inside a single-quoted heredoc -- the previous attempt
-            # silently captured literal `$(cat ...)` because the
-            # delimiter suppressed substitution.
-            {
-              echo "Daily \`cargo-deny\` cron flagged a new advisory against \`Cargo.lock\`."
-              echo
-              echo "## Output"
-              echo
-              echo '```'
-              cat deny-output.txt
-              echo '```'
-              echo
-              echo "## Triage"
-              echo
-              echo "1. Check the linked advisory at https://rustsec.org/advisories/."
-              echo "2. If a fixed upgrade exists, bump the dep and verify locally."
-              echo "3. If no fixed upgrade exists but the code path is unreachable"
-              echo "   from PaneFlow, add the advisory ID to \`deny.toml\`'s"
-              echo "   \`[advisories].ignore\` list with a rationale matching the"
-              echo "   pattern of the existing \`RUSTSEC-2023-0071\` entry."
-              echo "4. The \`run_tests.yml::security_audit\` job will gate the next"
-              echo "   PR -- fix here unblocks every downstream PR."
-              echo
-              echo "## Workflow"
-              echo
-              echo "- File: \`.github/workflows/audit.yml\`"
-              echo "- Run: https://github.com/${REPO_SLUG}/actions/runs/${RUN_ID}"
-            } > issue-body.md
-            gh issue create \
-              --title "${TITLE}" \
-              --label "security,automated" \
-              --body-file issue-body.md
+          NOW_UTC=$(date -u +"%Y-%m-%d %H:%M UTC")
+          # One issue per advisory, under a title that only depends on the
+          # advisory ID, so an advisory that stays open is commented on
+          # every day instead of being filed again. IDs are read from the
+          # `error[...]` blocks only: warnings name ignored advisories too.
+          # A failure that names no advisory falls back to one stable title.
+          ADVISORIES=$(awk '
+            /^error\[/ { in_error = 1; next }
+            /^(warning|note|help)\[/ { in_error = 0; next }
+            in_error { while (match($0, /RUSTSEC-[0-9][0-9][0-9][0-9]-[0-9][0-9][0-9][0-9]/)) { print substr($0, RSTART, RLENGTH); $0 = substr($0, RSTART + RLENGTH) } }
+          ' deny-output.txt | sort -u)
+          if [ -z "${ADVISORIES}" ]; then
+            TITLES=("Security: cargo-deny advisories check failed")
           else
-            gh issue comment "${EXISTING}" \
-              --body "Re-fired by cron at ${NOW_UTC}. See run https://github.com/${REPO_SLUG}/actions/runs/${RUN_ID}."
+            TITLES=()
+            while IFS= read -r advisory; do
+              TITLES+=("Security: cargo-deny advisory ${advisory}")
+            done <<< "${ADVISORIES}"
           fi
+
+          {
+            echo "Daily \`cargo-deny\` cron flagged an advisory against \`Cargo.lock\`."
+            echo
+            echo "## Output"
+            echo
+            echo '```'
+            cat deny-output.txt
+            echo '```'
+            echo
+            echo "## Triage"
+            echo
+            echo "1. Check the linked advisory at https://rustsec.org/advisories/."
+            echo "2. If a fixed upgrade exists, bump the dep and verify locally."
+            echo "3. If no fixed upgrade exists but the code path is unreachable"
+            echo "   from Paneflow, add the advisory ID to \`deny.toml\`'s"
+            echo "   \`[advisories].ignore\` list with a rationale matching the"
+            echo "   pattern of the existing \`RUSTSEC-2023-0071\` entry."
+            echo "4. The \`run_tests.yml::security_audit\` job will gate the next"
+            echo "   PR -- fix here unblocks every downstream PR."
+            echo
+            echo "## Workflow"
+            echo
+            echo "- File: \`.github/workflows/audit.yml\`"
+            echo "- Run: https://github.com/${REPO_SLUG}/actions/runs/${RUN_ID}"
+          } > issue-body.md
+
+          for TITLE in "${TITLES[@]}"; do
+            # `--search` is a fuzzy match, so the exact title is compared
+            # client-side before an existing issue is reused.
+            EXISTING=$(gh issue list \
+              --state open \
+              --limit 100 \
+              --search "in:title \"${TITLE}\"" \
+              --json number,title \
+              --jq "map(select(.title == \"${TITLE}\")) | .[0].number // empty")
+            if [ -z "${EXISTING}" ]; then
+              gh issue create \
+                --title "${TITLE}" \
+                --label "security,automated" \
+                --body-file issue-body.md
+            else
+              gh issue comment "${EXISTING}" \
+                --body "Still flagged by the cron at ${NOW_UTC}. See run https://github.com/${REPO_SLUG}/actions/runs/${RUN_ID}."
+            fi
+          done
 
       - name: Final status
         if: steps.deny.outputs.deny_failed == 'true'

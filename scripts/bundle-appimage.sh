@@ -46,7 +46,9 @@ download_verified_tool() {
 
     tmp="${dst}.tmp.$$"
     rm -f "$tmp"
-    curl --fail --location --silent --show-error -o "$tmp" "$url"
+    curl --fail --location --silent --show-error \
+        --connect-timeout 30 --max-time 600 \
+        -o "$tmp" "$url"
     verify_sha256 "$tmp" "$expected"
     mv "$tmp" "$dst"
     chmod +x "$dst"

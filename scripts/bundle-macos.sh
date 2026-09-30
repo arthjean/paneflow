@@ -70,6 +70,13 @@ ICNS_SRC="$REPO_ROOT/assets/PaneFlow.icns"
 [ -f "$INFO_PLIST_SRC" ]   || die "Info.plist template not found at $INFO_PLIST_SRC"
 [ -f "$ICNS_SRC" ]         || die "PaneFlow.icns not found at $ICNS_SRC (scripts/build-icons.sh generates it from the macOS icon master)"
 
+for binary in "$BIN" "$HOST_BIN"; do
+    name="$(basename "$binary")"
+    reported="$("$binary" --version)" || die "$binary --version failed"
+    [ "$reported" = "$name $VERSION" ] \
+        || die "$binary reports '$reported', expected '$name $VERSION': rebuild it from the tagged source before bundling"
+done
+
 APP="$REPO_ROOT/dist/PaneFlow.app"
 CONTENTS="$APP/Contents"
 MACOS_DIR="$CONTENTS/MacOS"

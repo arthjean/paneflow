@@ -460,10 +460,12 @@ does not. That table is the artifact to share.
 the suite's baseline. The committed terminal baseline is the state of the
 pipeline before the September 2026 performance work.
 
-`scripts/bench-editor` refuses `--set-baseline` when the run reports a
-`cpu_share` below 0.90: a contended run inflates every timing it would freeze,
-and every later comparison against it would read as a false improvement. Close
-the competing workload and run again.
+`scripts/bench-editor` and `scripts/bench-terminal` refuse `--set-baseline`
+when the run reports a `cpu_share` below 0.90: a contended run inflates every
+timing it would freeze, and every later comparison against it would read as a
+false improvement. Close the competing workload and run again.
+`scripts/bench-startup` is exempt: its work runs in a child process, so its
+`cpu_share` is always 0 until it measures that child's CPU time.
 
 **A change that moves a metric updates the baseline in the same pull request.**
 A baseline older than the code it is compared against turns every table into

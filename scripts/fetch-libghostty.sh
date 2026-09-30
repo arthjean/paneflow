@@ -85,6 +85,7 @@ for target in "${TARGETS[@]}"; do
   rm -f "$partial"
   echo "$target: downloading $url"
   curl --fail --silent --show-error --location \
+    --connect-timeout 30 --max-time 600 \
     --retry 3 --retry-delay 5 \
     --output "$partial" "$url"
   actual="$(sha256_of "$partial")"

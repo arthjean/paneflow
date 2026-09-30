@@ -10,6 +10,7 @@ $Root = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot "..")).Path
 $ManifestPath = Join-Path $Root "native\libghostty\manifest.toml"
 
 . "$PSScriptRoot/libghostty-manifest.ps1"
+. "$PSScriptRoot/bounded-download.ps1"
 
 function Get-Sha256 {
     param([Parameter(Mandatory = $true)][string]$Path)
@@ -46,7 +47,7 @@ foreach ($triple in $Target) {
     $attempts = 3
     for ($attempt = 1; $attempt -le $attempts; $attempt++) {
         try {
-            Invoke-WebRequest -Uri $url -OutFile $partial -MaximumRetryCount 0
+            Save-Download -Uri $url -OutFile $partial
             break
         }
         catch {

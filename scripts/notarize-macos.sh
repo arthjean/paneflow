@@ -2,6 +2,7 @@
 set -euo pipefail
 
 APP="${1:-dist/PaneFlow.app}"
+RETRY="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/retry-with-backoff.sh"
 
 [ -d "$APP" ] || { echo "error: bundle not found: $APP" >&2; exit 1; }
 
@@ -19,7 +20,7 @@ trap cleanup EXIT
 ditto -c -k --keepParent "$APP" "$ZIP"
 
 echo "Submitting $ZIP to notarytool..."
-SUBMIT_JSON="$(xcrun notarytool submit "$ZIP" \
+SUBMIT_JSON="$("$RETRY" xcrun notarytool submit "$ZIP" \
     --apple-id "$APPLE_ID" \
     --password "$APPLE_APP_SPECIFIC_PASSWORD" \
     --team-id "$APPLE_TEAM_ID" \
@@ -36,12 +37,14 @@ MAX_WAIT_SECONDS=$((90 * 60))
 START_TIME=$(date +%s)
 
 while true; do
-    INFO_JSON="$(xcrun notarytool info "$SUBMISSION_ID" \
+    STATUS="InfoFailed"
+    if INFO_JSON="$(xcrun notarytool info "$SUBMISSION_ID" \
         --apple-id "$APPLE_ID" \
         --password "$APPLE_APP_SPECIFIC_PASSWORD" \
         --team-id "$APPLE_TEAM_ID" \
-        --output-format json)"
-    STATUS="$(python3 -c 'import json,sys; print(json.load(sys.stdin).get("status", "Unknown"))' <<< "$INFO_JSON")"
+        --output-format json)"; then
+        STATUS="$(python3 -c 'import json,sys; print(json.load(sys.stdin).get("status", "Unknown"))' <<< "$INFO_JSON" 2>/dev/null || echo Unknown)"
+    fi
 
     NOW=$(date +%s)
     ELAPSED=$((NOW - START_TIME))
@@ -65,6 +68,9 @@ while true; do
         "In Progress")
             echo "[+${ELAPSED_FMT}] In Progress... (next poll in ${POLL_INTERVAL}s)"
             ;;
+        InfoFailed)
+            echo "[+${ELAPSED_FMT}] notarytool info failed; polling again in ${POLL_INTERVAL}s"
+            ;;
         *)
             echo "[+${ELAPSED_FMT}] Unexpected status: $STATUS - continuing to poll"
             ;;
@@ -82,7 +88,7 @@ while true; do
     sleep "$POLL_INTERVAL"
 done
 
-xcrun stapler staple "$APP"
+"$RETRY" xcrun stapler staple "$APP"
 xcrun stapler validate "$APP"
 
 spctl --assess --type exec --verbose "$APP"

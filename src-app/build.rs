@@ -55,12 +55,13 @@ fn main() {
         "cargo:rerun-if-changed={}",
         workspace_root.join("Cargo.toml").display()
     );
-    let skip_nested_build = std::env::var_os("PANEFLOW_SKIP_EMBED_BUILD").is_some();
+    let skip_nested_build =
+        std::env::var_os("PANEFLOW_SKIP_EMBED_BUILD").is_some_and(|value| value == "1");
     if !skip_nested_build {
         stage_ai_hook_binaries(&workspace_root, &target, &embed_dir);
     } else {
         println!(
-            "cargo:warning=PANEFLOW_SKIP_EMBED_BUILD is set - assuming {} is already populated",
+            "cargo:warning=PANEFLOW_SKIP_EMBED_BUILD=1 - assuming {} is already populated",
             embed_dir.display()
         );
     }

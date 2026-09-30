@@ -36,6 +36,15 @@ if (-not (Test-Path $out)) {
 }
 Write-Host "result: $out"
 if ($SetBaseline) {
+    $cpuShare = (Get-Content $out -Raw | ConvertFrom-Json).cpu_share
+    if ($null -eq $cpuShare) {
+        Write-Error "the result carries no cpu_share, refusing to record a baseline from it: $out"
+        exit 1
+    }
+    if ($cpuShare -lt 0.9) {
+        Write-Error "cpu_share $cpuShare is below 0.90: this run got less than 90% of a core, so its timings are inflated and every later comparison against them would read as a false improvement. Close the competing workload and run again."
+        exit 1
+    }
     Copy-Item $out "bench/baseline.json" -Force
     Write-Host "baseline: bench/baseline.json now points at $sha"
 }

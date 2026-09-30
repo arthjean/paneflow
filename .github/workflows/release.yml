@@ -38,7 +38,7 @@ on:
         default: ""
 
 permissions:
-  contents: write
+  contents: read
 
 # Serialize releases by ref. A tag-push race (or a dry-run launched on
 # top of a real tag) shouldn't double-publish or interrupt a half-baked
@@ -72,10 +72,11 @@ env:
   # (where `inputs.version` is null), so this is safe in both
   # contexts.
   RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && format('v{0}', inputs.version) || github.ref_name }}
-  # Branch / ref to check out. Tag-push mode picks the tag (matches
-  # the historical `actions/checkout@v5` default behaviour); dry-run
-  # uses the user-supplied target_ref (default: main).
-  RELEASE_REF: ${{ github.event_name == 'workflow_dispatch' && (inputs.target_ref || 'main') || github.ref_name }}
+  # Branch / ref to check out. Tag-push mode picks the tag through its
+  # fully qualified `refs/tags/<tag>` ref, so a branch sharing the tag's
+  # name can never be checked out in its place; dry-run uses the
+  # user-supplied target_ref (default: main).
+  RELEASE_REF: ${{ github.event_name == 'workflow_dispatch' && (inputs.target_ref || 'main') || format('refs/tags/{0}', github.ref_name) }}
   # A dry-run may need to exercise an upgrade from the latest release while
   # the checked-out source still reports that same version. The override only
   # changes the non-published MSI ProductVersion; real releases always use the
@@ -91,18 +92,30 @@ jobs:
     name: Release test gate (Linux x86_64)
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
         with:
+          persist-credentials: false
           ref: ${{ env.RELEASE_REF }}
+
+      # Fail the whole release in its first job when the embedded update
+      # key is missing or malformed: every build leg bakes it into the
+      # binary, and a keyless build refuses every future update. Only the
+      # `_NEXT` rotation slot may be empty.
+      - name: Verify minisign public keys
+        env:
+          PANEFLOW_MINISIGN_PUBKEY: ${{ vars.PANEFLOW_MINISIGN_PUBKEY }}
+          PANEFLOW_MINISIGN_PUBKEY_NEXT: ${{ vars.PANEFLOW_MINISIGN_PUBKEY_NEXT }}
+        run: scripts/check-minisign-pubkeys.sh
+
       - uses: ./.github/actions/fetch-libghostty
 
       - uses: ./.github/actions/linux-build-deps
 
-      - uses: dtolnay/rust-toolchain@master
+      - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88
         with:
           toolchain: "1.98.0"
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
         with:
           prefix-key: "v1-rust"
           key: release-test-linux
@@ -186,17 +199,18 @@ jobs:
           # hard release gate like Linux and macOS.
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
         with:
+          persist-credentials: false
           # US-003: dry-run runs check out `inputs.target_ref` (default
-          # `main`); tag-push runs check out the tag (RELEASE_REF
-          # echoes github.ref_name there).
+          # `main`); tag-push runs check out `refs/tags/<tag>`.
           ref: ${{ env.RELEASE_REF }}
 
       - name: Checkout pinned Ghostty source
         if: runner.os == 'Linux'
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
         with:
+          persist-credentials: false
           repository: ghostty-org/ghostty
           ref: ${{ env.GHOSTTY_SHA }}
           path: .ghostty-source
@@ -241,7 +255,7 @@ jobs:
 
       - name: Setup MSVC developer environment
         if: runner.os == 'Windows'
-        uses: ilammy/msvc-dev-cmd@v1
+        uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1.13.0
 
       - name: Verify Windows compiler and signing tools
         if: runner.os == 'Windows'
@@ -298,7 +312,7 @@ jobs:
       # `@master` ref + explicit `toolchain` input so the action reads the
       # same channel everywhere instead of resolving `@stable` at runtime,
       # which drifts each Rust point release and broke fmt mid-v0.2.11.
-      - uses: dtolnay/rust-toolchain@master
+      - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88
         with:
           # Must match `rust-toolchain.toml` channel verbatim. The
           # workspace dep graph (oo7, cosmic-text, smol_str, wgpu)
@@ -307,7 +321,7 @@ jobs:
           components: rustfmt, clippy
           targets: ${{ matrix.target }}
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
         with:
           prefix-key: "v1-rust"
           key: ${{ matrix.target }}
@@ -1690,7 +1704,7 @@ jobs:
           fi
 
       - name: Upload release artifacts (for smoke-test jobs)
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           # US-019: include runner.os in the artifact name because Linux
           # aarch64 and macOS aarch64 would otherwise collide on
@@ -1773,7 +1787,7 @@ jobs:
         # (x86_64 + aarch64 today, more later). `merge-multiple: true`
         # flattens them into a single directory so `files: release-assets/*`
         # picks up every built asset.
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           path: release-assets
           pattern: release-assets-*
@@ -1837,7 +1851,7 @@ jobs:
           done
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
           files: release-assets/*
           generate_release_notes: true
@@ -1948,7 +1962,7 @@ jobs:
             ca-certificates
 
       - name: Download built .deb
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           # US-019: artifact name carries runner.os to avoid Linux/macOS
           # aarch64 name collisions. Linux-x86_64 leg uploads to this
@@ -2036,7 +2050,7 @@ jobs:
         shell: bash
     steps:
       - name: Download built .rpm
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           # US-019: see the deb smoke test for the same naming rationale.
           name: release-assets-x86_64-Linux
@@ -2127,7 +2141,7 @@ jobs:
           done
 
       - name: Download built .deb
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: release-assets-x86_64-Linux
           path: ./release-assets
@@ -2211,7 +2225,7 @@ jobs:
           done
 
       - name: Download built .rpm
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: release-assets-x86_64-Linux
           path: ./release-assets
@@ -2302,7 +2316,7 @@ jobs:
           done
 
       - name: Download tar.gz tarball
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: release-assets-x86_64-Linux
           path: ./release-assets
@@ -2364,13 +2378,14 @@ jobs:
       run:
         shell: pwsh
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
         with:
+          persist-credentials: false
           ref: ${{ env.RELEASE_REF }}
       - uses: ./.github/actions/fetch-libghostty
 
       - name: Download signed Windows MSI
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: release-assets-x86_64-Windows
           path: ./release-assets
@@ -2916,7 +2931,7 @@ jobs:
 
       - name: Upload Windows MSI smoke logs on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: windows-msi-smoke-logs-${{ github.run_id }}
           path: ${{ runner.temp }}\paneflow-msi-smoke
@@ -2946,7 +2961,7 @@ jobs:
         shell: pwsh
     steps:
       - name: Download signed Windows MSI
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: release-assets-x86_64-Windows
           path: ./release-assets
@@ -3168,7 +3183,7 @@ jobs:
 
       - name: Upload Windows MSI live-host upgrade logs on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: windows-msi-live-host-logs-${{ github.run_id }}
           path: ${{ runner.temp }}\paneflow-msi-live-host
@@ -3193,7 +3208,7 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       - name: Download all release-assets-* workflow artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           path: release-assets
           pattern: release-assets-*
@@ -3278,8 +3293,9 @@ jobs:
     # which the dynamic linker resolves at exec, before main(), regardless of
     # whether a window opens. See the explicit install step below.
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
         with:
+          persist-credentials: false
           ref: ${{ env.RELEASE_REF }}
           # Shallow checkout is enough now that the harness no longer
           # does `git worktree add` for the OLD source.
@@ -3303,7 +3319,7 @@ jobs:
       # artifact (.tar.gz, .deb, .rpm, AppImage, sha256 sidecars); the
       # harness only consumes paneflow-<ver>-x86_64.tar.gz.
       - name: Download NEW build artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: release-assets-x86_64-Linux
           path: ${{ runner.temp }}/e2e-new
@@ -3442,7 +3458,7 @@ jobs:
 
       - name: Upload e2e logs on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: auto-update-e2e-logs-${{ github.run_id }}
           path: |
