@@ -3094,7 +3094,7 @@ mod tests {
             .input(
                 &session,
                 generation,
-                b"printf '\\033]11;?\\033\\\\\\033[?996n'\n",
+                b"printf '\\033]11;?\\033\\\\\\033[?996n'; sleep 2\n",
             )
             .unwrap();
         let deadline = Instant::now() + Duration::from_secs(15);
