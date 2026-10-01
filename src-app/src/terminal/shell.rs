@@ -19,7 +19,7 @@ __paneflow_urlencode() (
         printf '%s' "$safe"
         str="${str#"$safe"}"
         if [ -n "$str" ]; then
-            printf '%%%02X' "'$str"
+            printf '%%%02X' "$(( $(printf '%d' "'$str") & 255 ))"
             str="${str#?}"
         fi
     done
@@ -59,7 +59,7 @@ __paneflow_urlencode() (
         printf '%s' "$safe"
         str="${str#"$safe"}"
         if [ -n "$str" ]; then
-            printf '%%%02X' "'$str"
+            printf '%%%02X' "$(( $(printf '%d' "'$str") & 255 ))"
             str="${str#?}"
         fi
     done
