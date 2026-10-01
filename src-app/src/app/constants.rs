@@ -10,6 +10,7 @@ pub(crate) const PANE_OUTER_GUTTER: f32 = crate::layout::PANE_GUTTER_PX - PANEL_
 pub(crate) const PANEL_CORNER_RADIUS: Pixels = WINDOW_CORNER_RADIUS;
 pub(crate) const PANE_CARD_RADIUS: Pixels = px(24.);
 pub(crate) const SETTINGS_CARD_RADIUS: Pixels = px(20.);
+pub(crate) const TOAST_RADIUS: Pixels = px(20.);
 pub(crate) const DIFF_DOCK_CONTENT_INSET: Pixels = px(8.);
 pub(crate) const PANE_CONTENT_INSET_X: f32 = 10.;
 pub(crate) const PANE_CONTENT_INSET_Y: f32 = 6.;

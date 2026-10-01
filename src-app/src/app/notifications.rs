@@ -7,10 +7,11 @@ use gpui::{
 use crate::agent_launcher::TerminalAgent;
 use crate::agents::notifications::{self as desktop_notifications, DesktopNotification};
 use crate::app::constants::{
-    CLOSED_SESSION_GRACE_MS, TOAST_ENTER_MS, TOAST_EXIT_MS, TOAST_HOLD_MS,
+    CLOSED_SESSION_GRACE_MS, TOAST_ENTER_MS, TOAST_EXIT_MS, TOAST_HOLD_MS, TOAST_RADIUS,
 };
 use crate::settings::components::with_alpha;
 use crate::theme::UiColors;
+use crate::ui_primitives::squircle::squircle_fill;
 use crate::ui_primitives::{ROW_RADIUS, dismiss_button, squircle_skin};
 use crate::{PaneFlowApp, StartSelfUpdate, update};
 
@@ -217,11 +218,6 @@ impl PaneFlowApp {
         }
         let is_error = toast.actions.iter().any(ToastAction::reports_failure)
             || toast_message_reads_like_error(&toast.message);
-        let (icon, icon_color) = if is_error {
-            ("icons/triangle-alert.svg", ui.agent_error)
-        } else {
-            ("icons/check.svg", ui.vc_added)
-        };
         let max_w = if is_error || has_actions {
             px(440.)
         } else {
@@ -233,13 +229,15 @@ impl PaneFlowApp {
             .flex_row()
             .items_center()
             .gap(px(9.))
-            .child(
-                svg()
-                    .size(px(15.))
-                    .flex_none()
-                    .path(icon)
-                    .text_color(icon_color),
-            )
+            .when(is_error, |header| {
+                header.child(
+                    svg()
+                        .size(px(15.))
+                        .flex_none()
+                        .path("icons/triangle-alert.svg")
+                        .text_color(ui.agent_error),
+                )
+            })
             .child(
                 div()
                     .flex_1()
@@ -253,7 +251,12 @@ impl PaneFlowApp {
             );
 
         let action_row = if has_actions {
-            let mut row = div().flex().flex_row().gap(px(8.)).mt(px(10.)).pl(px(24.));
+            let mut row = div()
+                .flex()
+                .flex_row()
+                .gap(px(8.))
+                .mt(px(10.))
+                .when(is_error, |row| row.pl(px(24.)));
             for (idx, action) in toast.actions.iter().enumerate() {
                 let (label, button_id): (&str, String) = match action {
                     ToastAction::RetryUpdate => ("Retry", format!("toast-retry-{idx}")),
@@ -317,11 +320,11 @@ impl PaneFlowApp {
             .bottom(px(18.))
             .max_w(max_w)
             .min_w(px(220.))
-            .rounded(px(8.))
-            .bg(ui.subtle)
             .text_sm()
             .text_color(ui.text)
             .overflow_hidden()
+            .cursor(CursorStyle::Arrow)
+            .child(squircle_fill(TOAST_RADIUS, ui.subtle))
             .when_some(click_url, |el, url| {
                 el.cursor_pointer()
                     .on_click(cx.listener(move |this, _, _, cx| {
@@ -332,9 +335,8 @@ impl PaneFlowApp {
                 div()
                     .flex()
                     .flex_col()
-                    .pl(px(12.))
-                    .pr(px(14.))
-                    .py(px(11.))
+                    .px(px(16.))
+                    .py(px(12.))
                     .child(header)
                     .children(action_row),
             );

@@ -180,7 +180,7 @@ hides the workspace name while Settings is open.
 | Tooltip | After 800 ms | Squircle 14 on the title bar color with a 1 px border | `src-app/src/ui_primitives.rs` |
 | Terminal search | Top right of the pane, 8 px inset | Squircle 14 on `subtle` with a 1 px `border`, 325 by 36, padding 14 left and 4 right, gap 8: the field, a `.*` mark only while regex mode is on, the match count, a 1 px divider, then previous, next and close as 28 px squircle icon buttons with the sidebar hover tint | `src-app/src/terminal/view.rs` |
 | Path picker | Anchored to the terminal cursor: under it, or above it with the field last when the space below cannot hold ten rows | The command palette panel of 5.7 at 420 wide, ten rows before the list scrolls | `src-app/src/terminal/path_picker/` |
-| Toast | Bottom right, 18 px inset | Radius 8 on `subtle`, minimum width 220, one header row and an optional action row | `src-app/src/app/notifications.rs` |
+| Toast | Bottom right, 18 px inset | Squircle 20 on `subtle`, minimum width 220, one header row and an optional action row; a one-line toast is too short for 20, so its corner caps at the height limit and reads as a capsule | `src-app/src/app/notifications.rs` |
 | Worktree removal dialog | Centered | The card of the close dialog: squircle at `PANE_CARD_RADIUS`, 460 wide, padding 20 over a 0.55 black scrim, the blocking workspaces, tabs and sessions on `subtle` at 0.5 on radius 8, one kind word per row at 10 px muted, then `Cancel` and a destructive `Remove` | `src-app/src/app/worktree_remove.rs` |
 | Quit dialog | Centered | The card of the close dialog at `PANE_CARD_RADIUS`, 460 wide: the question with the session and agent counts, one muted line of consequence, the `Remember my choice` toggle row on `subtle` at 0.5 on radius 8 (after a failed stop, a muted 11 px `Show details` trigger with a 12 px chevron instead, collapsed by default, that unfolds a `menu_panel` of the raw host errors, one per line in Geist Mono 11, scrolling past 160 px), then a footer whose alternative destructive action (`destructive_button`) sits alone on the leading edge, apart from `Cancel` and the default action on the trailing edge. The default action is the one Enter runs: a solid `switch_blue` button, or `Cancel` when every other choice ends sessions. Tab, Shift-Tab, left and right move a 1 px `text` ring at 0.35, drawn 3 px outside the control with a concentric radius, across the toggle row or the details trigger and the buttons; Enter or Space runs the ringed control and Escape cancels | `src-app/src/app/quit_dialog.rs` |
 | System Info dialog | Centered | The card of the close dialog at squircle 20, 560 wide, padding 20: a 44 px app icon beside a 16 px Semibold title and the build line at 11 px muted, then one 11 px muted eyebrow and one `menu_panel` per report section (`System`, `Rendering`) whose rows set a 116 px muted label column beside the value in Geist Mono 12, then the privacy line at 11 px muted, `Close`, and a solid `Copy` button in the toggle blue `#339cff` with a white label (`solid_button`). Escape closes, Enter copies, and focus returns to where it was | `src-app/src/app/system_info_dialog.rs` |
@@ -289,7 +289,7 @@ to the surfaces named:
 | Window | 10 | round | 1 px `border` on free edges |
 | Main panel | 10 | round, masked | none |
 | Pane card and right diff dock | 24 | squircle | 1 px `border`, or `vc_conflict` at 0.7 with attention; content stays inside the corner curve through its inset, 10 by 6 for a pane and 8 for the dock body, because GPUI clips to rectangles only |
-| Settings card, System Info and About dialogs | 20 | squircle | none on a settings card, 1 px `border` at 0.6 on a dialog |
+| Settings card, System Info and About dialogs, toast | 20 | squircle | none on a settings card or a toast, 1 px `border` at 0.6 on a dialog |
 | Pane palette ground | 24 | squircle | none |
 | Menu, select popup | 18 | squircle | 1 px `border` at 0.6 |
 | Primary sidebar workspace and tab rows | 9 | continuous corner approximation | no border |
@@ -300,7 +300,7 @@ to the surfaces named:
 | Tab icon cards, shared row skin, secondary button, menu item, tooltip, terminal search, title bar update pill, sidebar update banner, toast action button | 14 | squircle | tab icon card, tooltip and terminal search, 1 px `border` |
 | Theme tile | 10 | round | 2 px `text` at 0.12, 0.32 on hover, 0.85 when selected |
 | Filter field, settings control, select trigger, title bar menu trigger | 8 | round | none |
-| Toast, composer, drop overlay, drop placeholder | 8 | round | drop overlay 2 px blue |
+| Release toast, composer, drop overlay, drop placeholder | 8 | round | drop overlay 2 px blue |
 | Theme mockup inner frame | 7 | round | none |
 | Dismiss button (`dismiss_button`), sidebar update banner `Retry` | 24 tall, concentric with the host: 7 in the sidebar banner, 6 in the release toast | squircle | none |
 | Toolbar pill, sidebar IPC banner, sidebar branch chip, branch prompt field | 6 | round | IPC banner 1 px `border` |
@@ -334,7 +334,7 @@ small circular controls and the explicitly round surfaces in the table.
 | Icon buttons | small 20 outer with 12 icon, medium 24 outer with 13 icon |
 | Toolbar pill | height 24, padding 8, gap 5 |
 | Filter field | padding 10 by 6, gap 6, 13 px search icon, 16 px clear button with a 10 px glyph |
-| Toast | inset 18, padding 12 / 14 by 11, minimum width 220, action buttons 26 tall; the release toast is inset 12, padding 12, width 448, close button 20, action button 26 tall |
+| Toast | inset 18, padding 16 by 12, minimum width 220, action buttons 26 tall; the release toast is inset 12, padding 12, width 448, close button 20, action button 26 tall |
 | Scrollbar | width 6, gutter 10, minimum thumb 24, inset 2. Terminal panes overlay it: shown on any viewport move, held 1 s, faded out over 200 ms; hovering the gutter or dragging pins it, grows the thumb to the full gutter and reveals the track over 120 ms; `reduce_motion` snaps both |
 | Diff | body inset 8 on the sides and bottom, row 18, file header 32, fold row 32, sticky header 24, gutter 36, change bar 4, split divider 3, column header 30, minimum split column 360, revert chip 56 by 16 inset 10 |
 | Code editor | 12 px mono, caret 2, scrollbar 15, minimum thumb 25; git marker column 6 left of the numbers, bar 4 radius 2 inset 1, deleted dot 8, hover grows 3 to the left |
@@ -387,7 +387,7 @@ sidebar footer settings button uses the matching `settings.svg` gear.
 | 12 | Small icon button, select chevron, drag ghost |
 | 13 | Medium icon button, filter search, preset logo, menu check mark, path picker recent clock |
 | 14 | Title bar sidebar toggle, editor logos, sidebar footer banners and gear |
-| 15 | Toast icon, sidebar folder, sidebar header glyphs |
+| 15 | Toast error icon, sidebar folder, sidebar header glyphs |
 | 16 | Sidebar tab icon, callout icon, diff dock tab icon, diff file header file-type icon |
 | 17 | Diff file header generic glyph |
 | 18 | Empty-state glyph |
@@ -871,10 +871,10 @@ Every other target clones with git.
 
 ### 5.8 Feedback
 
-Toasts stack bottom right on `subtle` with a 15 px icon, 12.5 px text, and
+Toasts stack bottom right on a squircle 20 of `subtle` with 12.5 px text and
 26 px squircle 14 action buttons at 12 px Medium on `text` at 0.08 to 0.12.
-Error messages are detected
-and get the error icon. The release toast is **Contextual** and does not
+A success toast carries no icon; error messages are detected
+and get the 15 px error icon. The release toast is **Contextual** and does not
 follow that shape: it is a Zed notification frame, 448 wide, inset 12,
 padding 12, gap 8, radius 8, a 1 px `text` hairline at 0.10 on the title bar
 color, the same fill as the sidebar, and Zed's four-layer elevation shadow. No
