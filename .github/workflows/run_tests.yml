@@ -657,7 +657,8 @@ jobs:
         # and skipping codesign keeps this gate free of Apple secrets.
         run: |
           set -euo pipefail
-          bash scripts/bundle-macos.sh --version "0.0.0-ci" --arch aarch64
+          version="$(grep -m 1 '^version = ' Cargo.toml | cut -d '"' -f 2)"
+          bash scripts/bundle-macos.sh --version "$version" --arch aarch64
 
       - name: Create a persistent fixture session
         run: |
