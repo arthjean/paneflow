@@ -59,7 +59,10 @@ pub(crate) fn install_macos_menu_action_fallbacks(cx: &mut gpui::App) {
         let Some(window) = paneflow_menu_window(cx) else {
             return;
         };
-        if let Err(err) = window.update(cx, f) {
+        if let Err(err) = window.update(cx, |app, window, cx| {
+            window.activate_window();
+            f(app, window, cx)
+        }) {
             log::debug!("macOS menu fallback: PaneFlow window unavailable: {err}");
         }
     }
@@ -96,10 +99,7 @@ pub(crate) fn install_macos_menu_action_fallbacks(cx: &mut gpui::App) {
     });
     cx.on_action(|_: &NextWorkspace, cx| {
         with_active_paneflow_window(cx, |app, window, cx| {
-            if !app.workspaces.is_empty() {
-                let next = (app.active_idx + 1) % app.workspaces.len();
-                app.select_workspace(next, window, cx);
-            }
+            app.handle_next_workspace(&NextWorkspace, window, cx);
         });
     });
 
@@ -142,7 +142,7 @@ mod tests {
     use super::menu_target_window;
 
     fn paneflow_only(window: u32) -> Option<u32> {
-        (window % 2 == 0).then_some(window)
+        window.is_multiple_of(2).then_some(window)
     }
 
     #[test]
