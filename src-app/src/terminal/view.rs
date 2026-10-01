@@ -2635,31 +2635,21 @@ mod tests {
     ) {
         let (terminal, _host, cx) = hosted_terminal(cx);
         focus_terminal(&terminal, cx);
-        let row = "x".repeat(79);
+        let row = "\u{20ac}".repeat(79);
         terminal.update(cx, |view, _cx| {
-            let text: String = (0..6_000).map(|_| format!("{row}\r\n")).collect();
+            let text: String = (0..3_000).map(|_| format!("{row}\r\n")).collect();
             view.terminal.write_output(text.as_bytes());
         });
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-        loop {
-            cx.run_until_parked();
-            cx.update(|window, cx| {
-                window.draw(cx).clear(cx);
-                window.simulate_next_frame(cx);
-            });
-            let metrics =
-                terminal.read_with(cx, |view, _| view.terminal.session_backend().grid_metrics());
-            if metrics.topmost_line.0 < -5_500 {
-                break;
-            }
-            assert!(
-                std::time::Instant::now() < deadline,
-                "timed out waiting for the output: topmost {}, bottommost {}",
-                metrics.topmost_line.0,
-                metrics.bottommost_line.0
-            );
-            std::thread::sleep(std::time::Duration::from_millis(10));
-        }
+        settle_until(cx, "the output", |cx| {
+            terminal.read_with(cx, |view, _| {
+                view.terminal
+                    .session_backend()
+                    .grid_metrics()
+                    .topmost_line
+                    .0
+                    < -2_500
+            })
+        });
         let (events, _subscription) = record_events(&terminal, cx);
         terminal.update(cx, |view, _cx| {
             let backend = view.terminal.session_backend();
