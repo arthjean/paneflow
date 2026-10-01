@@ -168,23 +168,36 @@ pub(crate) struct FinalText {
     pub(crate) complete: bool,
 }
 
-pub(crate) static RETAINED_CHECKPOINT_BYTES: std::sync::atomic::AtomicUsize =
-    std::sync::atomic::AtomicUsize::new(0);
+#[cfg(test)]
+thread_local! {
+    static RETAINED_CHECKPOINT_BYTES: std::sync::Arc<std::sync::atomic::AtomicUsize> =
+        std::sync::Arc::default();
+}
 
 #[cfg(test)]
 pub(crate) fn retained_checkpoint_bytes() -> usize {
-    RETAINED_CHECKPOINT_BYTES.load(std::sync::atomic::Ordering::Acquire)
+    RETAINED_CHECKPOINT_BYTES.with(|retained| retained.load(std::sync::atomic::Ordering::Acquire))
 }
 
 #[derive(Debug)]
 pub(crate) struct CheckpointPayload {
     bytes: Vec<u8>,
+    #[cfg(test)]
+    retained_by_creating_thread: std::sync::Arc<std::sync::atomic::AtomicUsize>,
 }
 
 impl CheckpointPayload {
     pub(crate) fn new(bytes: Vec<u8>) -> Self {
-        RETAINED_CHECKPOINT_BYTES.fetch_add(bytes.len(), std::sync::atomic::Ordering::AcqRel);
-        Self { bytes }
+        #[cfg(test)]
+        let retained_by_creating_thread = RETAINED_CHECKPOINT_BYTES.with(|retained| {
+            retained.fetch_add(bytes.len(), std::sync::atomic::Ordering::AcqRel);
+            retained.clone()
+        });
+        Self {
+            bytes,
+            #[cfg(test)]
+            retained_by_creating_thread,
+        }
     }
 
     pub(crate) fn as_slice(&self) -> &[u8] {
@@ -192,9 +205,11 @@ impl CheckpointPayload {
     }
 }
 
+#[cfg(test)]
 impl Drop for CheckpointPayload {
     fn drop(&mut self) {
-        RETAINED_CHECKPOINT_BYTES.fetch_sub(self.bytes.len(), std::sync::atomic::Ordering::AcqRel);
+        self.retained_by_creating_thread
+            .fetch_sub(self.bytes.len(), std::sync::atomic::Ordering::AcqRel);
     }
 }
 
