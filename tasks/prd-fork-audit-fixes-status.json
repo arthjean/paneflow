@@ -49,10 +49,10 @@
     {
       "id": "EP-006",
       "title": "Corriger UI, focus, accessibilité, config, mise à jour et CI",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P1",
       "stories_total": 9,
-      "stories_done": 4
+      "stories_done": 9
     }
   ],
   "stories": [
@@ -584,15 +584,15 @@
       "id": "US-040",
       "title": "Faire porter les actions multi-agents sur tous les onglets",
       "epic": "EP-006",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P1",
       "size": "L",
       "blocked_by": [
         "US-048"
       ],
       "started_at": "2026-09-30T17:51:45+02:00",
-      "completed_at": null,
-      "reviewed_at": "2026-10-01T00:54:24+02:00"
+      "completed_at": "2026-10-01T11:42:36+02:00",
+      "reviewed_at": "2026-10-01T11:42:36+02:00"
     },
     {
       "id": "US-041",
@@ -610,13 +610,13 @@
       "id": "US-042",
       "title": "Corriger les défauts macOS, des raccourcis et de l'aide CLI",
       "epic": "EP-006",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P1",
       "size": "M",
       "blocked_by": [],
       "started_at": "2026-09-30T17:51:45+02:00",
-      "completed_at": null,
-      "reviewed_at": "2026-10-01T00:54:24+02:00"
+      "completed_at": "2026-10-01T11:42:36+02:00",
+      "reviewed_at": "2026-10-01T11:42:36+02:00"
     },
     {
       "id": "US-043",
@@ -634,13 +634,13 @@
       "id": "US-044",
       "title": "Rendre la config, les journaux et les chemins runtime cohérents",
       "epic": "EP-006",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P1",
       "size": "M",
       "blocked_by": [],
       "started_at": "2026-09-30T17:51:45+02:00",
-      "completed_at": null,
-      "reviewed_at": "2026-10-01T00:54:24+02:00"
+      "completed_at": "2026-10-01T11:42:36+02:00",
+      "reviewed_at": "2026-10-01T11:42:36+02:00"
     },
     {
       "id": "US-045",
@@ -658,25 +658,25 @@
       "id": "US-046",
       "title": "Durcir les workflows de release et de CI",
       "epic": "EP-006",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P1",
       "size": "L",
       "blocked_by": [],
       "started_at": "2026-09-30T17:51:45+02:00",
-      "completed_at": null,
-      "reviewed_at": "2026-10-01T00:54:24+02:00"
+      "completed_at": "2026-10-01T11:42:36+02:00",
+      "reviewed_at": "2026-10-01T11:42:36+02:00"
     },
     {
       "id": "US-047",
       "title": "Rendre les tests et les benchmarks fiables",
       "epic": "EP-006",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P2",
       "size": "L",
       "blocked_by": [],
       "started_at": "2026-09-30T17:51:45+02:00",
-      "completed_at": null,
-      "reviewed_at": "2026-10-01T00:54:24+02:00"
+      "completed_at": "2026-10-01T11:42:36+02:00",
+      "reviewed_at": "2026-10-01T11:42:36+02:00"
     },
     {
       "id": "US-050",
