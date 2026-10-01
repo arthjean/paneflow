@@ -17,10 +17,10 @@
     {
       "id": "EP-002",
       "title": "Sécuriser le plan de contrôle et fiabiliser la livraison des prompts",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "stories_total": 5,
-      "stories_done": 0
+      "stories_done": 5
     },
     {
       "id": "EP-003",
@@ -124,69 +124,69 @@
       "id": "US-006",
       "title": "Soumettre les écritures du host aux gates du desktop",
       "epic": "EP-002",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "size": "M",
       "blocked_by": [],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-10-01",
+      "completed_at": "2026-10-01T23:01:54+02:00",
+      "reviewed_at": "2026-10-01T23:01:54+02:00"
     },
     {
       "id": "US-007",
       "title": "Limiter les écritures d'un pane à son workspace",
       "epic": "EP-002",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "size": "S",
       "blocked_by": [
         "US-006"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-10-01",
+      "completed_at": "2026-10-01T23:01:54+02:00",
+      "reviewed_at": "2026-10-01T23:01:54+02:00"
     },
     {
       "id": "US-008",
       "title": "Refuser la livraison à un agent bloqué ou absent du premier plan",
       "epic": "EP-002",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "size": "M",
       "blocked_by": [
         "US-005"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-10-01",
+      "completed_at": "2026-10-01T23:01:54+02:00",
+      "reviewed_at": "2026-10-01T23:01:54+02:00"
     },
     {
       "id": "US-009",
       "title": "Confirmer le démarrage d'un tour par une transition d'état",
       "epic": "EP-002",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "size": "M",
       "blocked_by": [
         "US-005"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-10-01",
+      "completed_at": "2026-10-01T23:01:54+02:00",
+      "reviewed_at": "2026-10-01T23:01:54+02:00"
     },
     {
       "id": "US-010",
       "title": "Faire suivre la fin de tour à `wait --idle` et garder la soumission différée côté host",
       "epic": "EP-002",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "size": "M",
       "blocked_by": [
         "US-005"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-10-01",
+      "completed_at": "2026-10-01T23:01:54+02:00",
+      "reviewed_at": "2026-10-01T23:01:54+02:00"
     },
     {
       "id": "US-011",

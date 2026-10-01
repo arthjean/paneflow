@@ -7,6 +7,7 @@
 |---------|------|--------|---------|
 | 1.0 | 2026-09-30 | Arthur Jean | PRD initial : met en œuvre les recommandations de l'analyse concurrentielle du 2026-09-30 (herdr, Unpeel, cmux face à Paneflow `main` @ `a23713b9`). 6 epics, 35 stories, livraisons R1 à R4. |
 | 1.1 | 2026-09-30 | Arthur Jean | Coordination : l'US-040 de `prd-fork-audit-fixes.md` conditionne toute ligne de l'Attention Queue. |
+| 1.2 | 2026-10-01 | Arthur Jean | US-010 : `wait --idle` rend aussi la main sur `blocked` et aussitôt sur un agent qui attend déjà, pour ne pas tenir jusqu'au timeout un tour fini avant son démarrage. |
 
 ## Problem Statement
 
@@ -386,7 +387,7 @@ Aujourd'hui l'écho du collage suffit à confirmer (`src-app/src/cli/send_cmd.rs
 **Dependencies:** Blocked by US-005
 
 **Acceptance Criteria:**
-- [ ] Given un pane dont le runtime a `authority = "complete"` ou `screen`, when `wait --idle` tourne, then il rend la main sur une transition vers `idle` ou `attention` postérieure à son démarrage, et non sur le silence de sortie.
+- [ ] Given un pane dont le runtime a `authority = "complete"` ou `screen`, when `wait --idle` tourne, then il rend la main quand l'état réduit devient `idle`, `attention` ou `blocked`, et aussitôt si l'agent attend déjà à son démarrage, et non sur le silence de sortie.
 - [ ] Pour les autres panes, la quiescence de sortie actuelle reste le critère (test de non-régression).
 - [ ] Given le desktop fermé et le host vivant, when `paneflow send --submit` passe par le host, then le collage entre crochets et le `\r` différé suivent les délais du desktop : plancher de 70 ms, poll d'écho de 15 ms, marge de 500 ms (`src-app/src/app/ipc_handler/surface_methods.rs`, `crates/paneflow-config/src/schema/config.rs:245`). Test sur le host.
 - [ ] Échec : given un agent hooké qui exécute un outil silencieux pendant 30 s, when `wait --idle --for 5s` tourne, then il ne rend pas la main avant le hook `Stop` (test avec hooks simulés).
