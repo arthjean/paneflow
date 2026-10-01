@@ -406,6 +406,13 @@ fn an_invalid_signature_refuses_the_install_and_leaves_no_file() {
 
 #[test]
 fn the_release_transfer_streams_without_a_whole_request_deadline() {
+    assert!((ASSET_TRANSFER.redirect_allowed)(
+        "https://release-assets.githubusercontent.com/x"
+    ));
+    assert!(!(ASSET_TRANSFER.redirect_allowed)(
+        "http://release-assets.githubusercontent.com/x"
+    ));
+    assert!(!(ASSET_TRANSFER.redirect_allowed)("https://evil.example/x"));
     let http = ASSET_TRANSFER.http;
     assert_eq!(http.global, None);
     assert_eq!(http.connect, Some(Duration::from_secs(30)));

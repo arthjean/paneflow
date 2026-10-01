@@ -805,6 +805,7 @@ mod tests {
         );
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn tar_gz_method_picks_tar_gz() {
         let assets = vec![
@@ -818,6 +819,7 @@ mod tests {
         );
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn tar_gz_method_picks_tar_gz_aarch64() {
         let assets = vec![
@@ -833,6 +835,7 @@ mod tests {
         );
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn unknown_method_falls_back_to_tar_gz() {
         let assets = vec![
