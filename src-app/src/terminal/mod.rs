@@ -2,6 +2,7 @@
 pub(crate) mod bench_corpus;
 pub mod blink;
 mod clipboard_gate;
+mod clipboard_image;
 pub mod element;
 mod ghostty_session;
 #[cfg(test)]

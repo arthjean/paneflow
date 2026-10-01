@@ -2,7 +2,7 @@ mod fuzzy;
 mod history;
 mod listing;
 mod render;
-mod wsl;
+pub(in crate::terminal) mod wsl;
 
 use std::path::PathBuf;
 use std::sync::Arc;

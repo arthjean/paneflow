@@ -8,7 +8,7 @@ const PROBE_SCRIPT: &str =
 static CACHED: Mutex<Option<Arc<WslRoots>>> = Mutex::new(None);
 
 #[derive(Debug, PartialEq, Eq)]
-pub(super) struct WslRoots {
+pub(in crate::terminal) struct WslRoots {
     distro_root: PathBuf,
     home: String,
     mount_root: Option<String>,
@@ -50,7 +50,7 @@ impl WslRoots {
         path
     }
 
-    pub(super) fn to_linux(&self, path: &Path) -> Option<String> {
+    pub(in crate::terminal) fn to_linux(&self, path: &Path) -> Option<String> {
         if let Ok(rest) = path.strip_prefix(&self.distro_root) {
             let linux = append_components(String::new(), rest)?;
             return Some(if linux.is_empty() {
@@ -84,7 +84,7 @@ impl WslRoots {
     }
 }
 
-pub(super) fn roots() -> Option<Arc<WslRoots>> {
+pub(in crate::terminal) fn roots() -> Option<Arc<WslRoots>> {
     let mut cached = CACHED.lock().unwrap_or_else(PoisonError::into_inner);
     if let Some(roots) = cached.as_ref() {
         return Some(roots.clone());
@@ -103,10 +103,10 @@ fn probe() -> Option<String> {
         .stderr(std::process::Stdio::null())
         .creation_flags(windows_sys::Win32::System::Threading::CREATE_NO_WINDOW)
         .output()
-        .inspect_err(|error| log::warn!("path picker: could not start wsl.exe: {error}"))
+        .inspect_err(|error| log::warn!("WSL probe: could not start wsl.exe: {error}"))
         .ok()?;
     if !output.status.success() {
-        log::warn!("path picker: the WSL probe exited with {}", output.status);
+        log::warn!("WSL probe: wsl.exe exited with {}", output.status);
         return None;
     }
     String::from_utf8(output.stdout).ok()

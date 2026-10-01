@@ -47,9 +47,12 @@ gpui_platform = { git = "https://github.com/zed-industries/zed", rev = "fecc3273
 
 # Kitty graphics: `image::Frame` is the only way to build a `gpui::RenderImage`
 # from raw pixels, and the `png` decoder is what the protocol's `f=100`
-# payloads need. GPUI already depends on this exact crate with `png` enabled,
-# so declaring it directly adds no new transitive dependency.
-image = { version = "0.25", default-features = false, features = ["png"] }
+# payloads need. A pasted clipboard image is stored as a file agents can read:
+# Windows hands it over as BMP and some macOS apps as TIFF, so both decoders
+# are needed to transcode it to PNG. GPUI already depends on this exact crate
+# with `png`, `bmp` and `tiff` enabled, so declaring it directly adds no new
+# transitive dependency.
+image = { version = "0.25", default-features = false, features = ["png", "bmp", "tiff"] }
 
 # Font tables GPUI does not expose: line gap, `post` underline metrics, and
 # per-glyph ink bounds. The terminal renderer reads them from the embedded

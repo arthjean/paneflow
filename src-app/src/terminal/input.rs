@@ -1,4 +1,5 @@
 use std::borrow::Cow;
+use std::path::PathBuf;
 
 use gpui::{
     ClipboardEntry, ClipboardItem, Context, ExternalPaths, Focusable, KeyDownEvent, KeyUpEvent,
@@ -8,12 +9,15 @@ use gpui::{
 
 use paneflow_terminal_ghostty as ghostty;
 
+use crate::app::diff_dock::code::spawn_blocking_then;
 use crate::keys::TerminalKeySequence;
 use crate::terminal::types::{
     HyperlinkSource, HyperlinkZone, Modes, Point, SelectionGeometry, SelectionKind, ShellQuoting,
     terminal_metric_to_u16,
 };
 
+use super::clipboard_image;
+use super::path_picker::wsl;
 #[cfg(debug_assertions)]
 use super::probe_enabled;
 use super::pty_session::{BackendInputResult, SelectionCopy};
@@ -1123,13 +1127,40 @@ impl TerminalView {
             return;
         }
 
-        if clipboard
-            .entries()
-            .iter()
-            .any(|entry| matches!(entry, ClipboardEntry::Image(image) if !image.bytes.is_empty()))
-        {
-            self.terminal.write_to_pty(vec![0x16]);
+        if let Some(image) = clipboard.into_entries().find_map(|entry| match entry {
+            ClipboardEntry::Image(image) if !image.bytes.is_empty() => Some(image),
+            _ => None,
+        }) {
+            self.paste_clipboard_image(image, cx);
         }
+    }
+
+    fn paste_clipboard_image(&self, image: gpui::Image, cx: &mut Context<Self>) {
+        let Some(dir) = self.clipboard_image_dir.clone() else {
+            log::warn!("clipboard image paste: no Paneflow home to store the image in");
+            return;
+        };
+        let quoting = self.terminal.shell_quoting;
+        spawn_blocking_then(
+            cx,
+            move || -> std::io::Result<PathBuf> {
+                let path = clipboard_image::materialize(&image, &dir)?;
+                Ok(match quoting {
+                    ShellQuoting::Wsl => wsl::roots()
+                        .and_then(|roots| roots.to_linux(&path))
+                        .map_or(path, PathBuf::from),
+                    _ => path,
+                })
+            },
+            move |view: &mut Self, stored, _cx| match stored {
+                Ok(path) => {
+                    if let Some(text) = paths_to_pty_text(&[path], quoting) {
+                        view.write_paste_text(&text);
+                    }
+                }
+                Err(error) => log::warn!("clipboard image paste: {error}"),
+            },
+        );
     }
 
     pub(super) fn handle_file_drop(
