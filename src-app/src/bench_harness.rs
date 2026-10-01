@@ -644,6 +644,10 @@ pub(crate) fn process_cpu_time() -> Duration {
 }
 
 #[cfg(target_os = "macos")]
+#[allow(
+    deprecated,
+    reason = "libc deprecates mach_timebase_info in favor of the mach2 crate, which is not a dependency"
+)]
 pub(crate) fn process_cpu_time() -> Duration {
     let Some(info) = current_task_info() else {
         return Duration::ZERO;
