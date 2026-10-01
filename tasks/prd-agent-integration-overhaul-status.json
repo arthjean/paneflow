@@ -9,10 +9,10 @@
     {
       "id": "EP-001",
       "title": "Rendre le statut et l'attention véridiques",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "stories_total": 5,
-      "stories_done": 0
+      "stories_done": 5
     },
     {
       "id": "EP-002",
@@ -60,65 +60,65 @@
       "id": "US-001",
       "title": "Rendre le catalogue fidèle aux intégrations réelles",
       "epic": "EP-001",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "size": "M",
       "blocked_by": [],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-10-01T19:24:13Z",
+      "completed_at": "2026-10-01T22:13:49+02:00",
+      "reviewed_at": "2026-10-01T22:13:49+02:00"
     },
     {
       "id": "US-002",
       "title": "Reproduire puis corriger la perte du latch à la première observation du runtime",
       "epic": "EP-001",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "size": "S",
       "blocked_by": [],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-10-01T19:27:10Z",
+      "completed_at": "2026-10-01T22:13:49+02:00",
+      "reviewed_at": "2026-10-01T22:13:49+02:00"
     },
     {
       "id": "US-003",
       "title": "Faire remonter les échecs de tour et retirer l'attribution par défaut à Claude",
       "epic": "EP-001",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "size": "S",
       "blocked_by": [],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-10-01T19:28:27Z",
+      "completed_at": "2026-10-01T22:13:49+02:00",
+      "reviewed_at": "2026-10-01T22:13:49+02:00"
     },
     {
       "id": "US-004",
       "title": "Transformer le BEL en signal d'attention pour les agents sans hook",
       "epic": "EP-001",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "size": "M",
       "blocked_by": [
         "US-001"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-10-01T19:32:26Z",
+      "completed_at": "2026-10-01T22:13:49+02:00",
+      "reviewed_at": "2026-10-01T22:13:49+02:00"
     },
     {
       "id": "US-005",
       "title": "Rendre `agent.status` véridique",
       "epic": "EP-001",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "size": "S",
       "blocked_by": [
         "US-001"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-10-01T19:47:30Z",
+      "completed_at": "2026-10-01T22:13:49+02:00",
+      "reviewed_at": "2026-10-01T22:13:49+02:00"
     },
     {
       "id": "US-006",
