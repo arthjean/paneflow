@@ -63,6 +63,8 @@ jobs:
 
       - name: cargo deny check advisories
         id: deny
+        env:
+          CARGO_TERM_COLOR: never
         # The cron job ONLY scans advisories -- license + sources
         # gates already run on every PR via run_tests.yml. Scoping
         # the cron to advisories keeps the cron's blast radius

@@ -16,6 +16,9 @@ else
   for workflow in "${RELEASE_WORKFLOWS[@]}"; do
     files+=("$ROOT/$workflow")
   done
+  for composite in "$ROOT"/.github/actions/*/action.yml; do
+    files+=("$composite")
+  done
 fi
 
 status=0
