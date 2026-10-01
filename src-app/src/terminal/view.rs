@@ -207,6 +207,7 @@ pub struct TerminalView {
     pub(super) search_native_navigation_generation: u64,
     pub(super) search_native_navigation_queue: std::collections::VecDeque<bool>,
     path_picker: Option<PathPickerSlot>,
+    pub(super) clipboard_image_dir: Option<std::path::PathBuf>,
     appearance_theme_generation: u64,
     pub(super) option_as_meta: bool,
     pub(super) cursor_blink_mode: paneflow_config::schema::CursorBlinkConfig,
@@ -631,6 +632,7 @@ impl TerminalView {
             search_native_navigation_generation: 0,
             search_native_navigation_queue: std::collections::VecDeque::new(),
             path_picker: None,
+            clipboard_image_dir: super::clipboard_image::default_dir(),
             appearance_theme_generation: crate::theme::theme_generation(),
             option_as_meta,
             cursor_blink_mode,
@@ -2265,6 +2267,33 @@ mod tests {
     }
 
     #[gpui::test]
+    fn an_image_only_clipboard_pastes_the_path_of_a_png_copy(cx: &mut gpui::TestAppContext) {
+        let (terminal, _host, cx) = hosted_terminal(cx);
+        focus_terminal(&terminal, cx);
+        let dir = tempfile::tempdir().expect("tempdir");
+        let stored_in = dir.path().to_path_buf();
+        terminal.update(cx, |view, _| view.clipboard_image_dir = Some(stored_in));
+        let mut bmp = std::io::Cursor::new(Vec::new());
+        image::DynamicImage::new_rgb8(2, 2)
+            .write_to(&mut bmp, image::ImageFormat::Bmp)
+            .expect("encode the fixture");
+        let copied = gpui::Image::from_bytes(gpui::ImageFormat::Bmp, bmp.into_inner());
+        cx.write_to_clipboard(ClipboardItem::new_image(&copied));
+
+        cx.dispatch_action(crate::TerminalPaste);
+        cx.run_until_parked();
+
+        let file_name = format!("{:016x}.png", copied.id);
+        let queued = terminal.read_with(cx, |view, _| view.terminal.queued_pastes());
+        assert!(
+            matches!(queued.as_slice(), [(text, false)] if text.contains(&file_name)),
+            "one paste of the stored PNG path, got {queued:?}"
+        );
+        let stored = std::fs::read(dir.path().join(&file_name)).expect("the PNG copy exists");
+        assert!(stored.starts_with(b"\x89PNG"));
+    }
+
+    #[gpui::test]
     fn terminal_shortcuts_stay_active_while_the_search_field_has_focus(
         cx: &mut gpui::TestAppContext,
     ) {
@@ -2611,16 +2640,26 @@ mod tests {
             let text: String = (0..6_000).map(|_| format!("{row}\r\n")).collect();
             view.terminal.write_output(text.as_bytes());
         });
-        settle_until(cx, "the output", |cx| {
-            terminal.read_with(cx, |view, _| {
-                view.terminal
-                    .session_backend()
-                    .grid_metrics()
-                    .topmost_line
-                    .0
-                    < -5_500
-            })
-        });
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        loop {
+            cx.run_until_parked();
+            cx.update(|window, cx| {
+                window.draw(cx).clear(cx);
+                window.simulate_next_frame(cx);
+            });
+            let metrics =
+                terminal.read_with(cx, |view, _| view.terminal.session_backend().grid_metrics());
+            if metrics.topmost_line.0 < -5_500 {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "timed out waiting for the output: topmost {}, bottommost {}",
+                metrics.topmost_line.0,
+                metrics.bottommost_line.0
+            );
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
         let (events, _subscription) = record_events(&terminal, cx);
         terminal.update(cx, |view, _cx| {
             let backend = view.terminal.session_backend();
