@@ -41,10 +41,10 @@
     {
       "id": "EP-005",
       "title": "Réparer l'intégration agents, MCP et hooks",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P0",
       "stories_total": 9,
-      "stories_done": 6
+      "stories_done": 9
     },
     {
       "id": "EP-006",
@@ -468,13 +468,13 @@
       "id": "US-032",
       "title": "Reproduire l'attribution des hooks et du bridge Codex sous le daemon partagé",
       "epic": "EP-005",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P0",
       "size": "S",
       "blocked_by": [],
       "started_at": "2026-09-30T09:50:21+02:00",
-      "completed_at": null,
-      "reviewed_at": "2026-09-30T23:58:00+02:00"
+      "completed_at": "2026-10-01T12:11:21+02:00",
+      "reviewed_at": "2026-10-01T12:11:21+02:00"
     },
     {
       "id": "US-033",
@@ -494,13 +494,13 @@
       "id": "US-034",
       "title": "Reproduire la boucle des shims dans un Paneflow imbriqué",
       "epic": "EP-005",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P0",
       "size": "S",
       "blocked_by": [],
       "started_at": "2026-09-30T10:05:03+02:00",
-      "completed_at": null,
-      "reviewed_at": "2026-09-30T23:58:00+02:00"
+      "completed_at": "2026-10-01T12:11:21+02:00",
+      "reviewed_at": "2026-10-01T12:11:21+02:00"
     },
     {
       "id": "US-035",
@@ -560,13 +560,13 @@
       "id": "US-038",
       "title": "Rendre l'état des sessions agent exact",
       "epic": "EP-005",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P1",
       "size": "L",
       "blocked_by": [],
       "started_at": "2026-09-30T10:27:11+02:00",
-      "completed_at": null,
-      "reviewed_at": "2026-09-30T22:30:00+02:00"
+      "completed_at": "2026-10-01T12:11:21+02:00",
+      "reviewed_at": "2026-10-01T12:11:21+02:00"
     },
     {
       "id": "US-039",
