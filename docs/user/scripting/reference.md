@@ -193,8 +193,8 @@ that were created remain in Paneflow.
 
 | Property | Value |
 | --- | --- |
-| Linux endpoint | `$XDG_RUNTIME_DIR/paneflow/paneflow.sock`; when `XDG_RUNTIME_DIR` is unset or not a writable directory, `$TMPDIR`, else `/tmp` |
-| macOS endpoint | `$TMPDIR/paneflow/paneflow.sock`, else `/tmp`; `XDG_RUNTIME_DIR` is ignored |
+| Linux endpoint | `$XDG_RUNTIME_DIR/paneflow/paneflow.sock`; when `XDG_RUNTIME_DIR` is unset or not a writable directory, `$TMPDIR`, else `~/.cache/run` |
+| macOS endpoint | `$TMPDIR/paneflow/paneflow.sock`, else `~/Library/Caches/run`; `XDG_RUNTIME_DIR` is ignored |
 | Windows endpoint | `\\.\pipe\paneflow` |
 | Framing | Newline-delimited JSON-RPC 2.0 |
 | Request model | One request per connection, except `events.subscribe` |

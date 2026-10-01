@@ -23,6 +23,7 @@ pub struct EndpointEnv {
     pub allow_socket_override: Option<OsString>,
     pub xdg_runtime_dir: Option<OsString>,
     pub tmpdir: Option<OsString>,
+    pub user_cache_dir: Option<PathBuf>,
 }
 
 impl EndpointEnv {
@@ -34,6 +35,7 @@ impl EndpointEnv {
             allow_socket_override: std::env::var_os(ALLOW_SOCKET_OVERRIDE_ENV),
             xdg_runtime_dir: std::env::var_os("XDG_RUNTIME_DIR"),
             tmpdir: std::env::var_os("TMPDIR"),
+            user_cache_dir: dirs::cache_dir(),
         }
     }
 
@@ -76,7 +78,25 @@ impl EndpointEnv {
         } else {
             ("paneflow", "paneflow.sock")
         };
-        self.runtime_dir().join(subdir).join(socket_file)
+        self.default_ipc_runtime_dir()
+            .join(subdir)
+            .join(socket_file)
+    }
+
+    #[cfg(unix)]
+    fn default_ipc_runtime_dir(&self) -> PathBuf {
+        usable_runtime_dir_from(
+            self.xdg_runtime_dir.as_deref(),
+            self.tmpdir.as_deref(),
+            runtime_dir_is_usable,
+        )
+        .or_else(|| {
+            self.user_cache_dir
+                .as_ref()
+                .filter(|dir| dir.is_absolute())
+                .map(|dir| dir.join("run"))
+        })
+        .unwrap_or_else(|| PathBuf::from(FALLBACK_RUNTIME_DIR))
     }
 
     #[cfg(windows)]
@@ -166,13 +186,22 @@ fn runtime_dir_from(
     tmpdir: Option<&OsStr>,
     usable: impl Fn(&Path) -> bool,
 ) -> PathBuf {
+    usable_runtime_dir_from(xdg_runtime_dir, tmpdir, usable)
+        .unwrap_or_else(|| PathBuf::from(FALLBACK_RUNTIME_DIR))
+}
+
+#[cfg(unix)]
+fn usable_runtime_dir_from(
+    xdg_runtime_dir: Option<&OsStr>,
+    tmpdir: Option<&OsStr>,
+    usable: impl Fn(&Path) -> bool,
+) -> Option<PathBuf> {
     let xdg_runtime_dir = xdg_runtime_dir.filter(|_| !cfg!(target_os = "macos"));
     [xdg_runtime_dir, tmpdir]
         .into_iter()
         .flatten()
         .map(PathBuf::from)
         .find(|dir| dir.is_absolute() && usable(dir))
-        .unwrap_or_else(|| PathBuf::from(FALLBACK_RUNTIME_DIR))
 }
 
 #[cfg(unix)]
@@ -232,8 +261,13 @@ mod tests {
 
     #[test]
     fn an_isolated_home_resolves_its_own_socket_over_an_inherited_one() {
-        let user_home = Path::new("/home/u");
-        let isolated_home = Path::new("/home/u/.paneflow-dev-alpha");
+        let user_home = if cfg!(windows) {
+            Path::new(r"C:\Users\u")
+        } else {
+            Path::new("/home/u")
+        };
+        let isolated_home = user_home.join(".paneflow-dev-alpha");
+        let isolated_home = isolated_home.as_path();
         let inherited = endpoint("paneflow-ipc-fedcba9876543210");
         let env = |allow: Option<&str>| EndpointEnv {
             paneflow_home: Some(isolated_home.as_os_str().to_owned()),
@@ -425,6 +459,26 @@ mod tests {
                 PathBuf::from(FALLBACK_RUNTIME_DIR)
             );
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn without_a_usable_runtime_dir_the_default_socket_stays_in_the_user_cache() {
+        let cache = tempfile::tempdir().expect("cache");
+        let env = EndpointEnv {
+            xdg_runtime_dir: Some("relative".into()),
+            tmpdir: None,
+            user_cache_dir: Some(cache.path().to_path_buf()),
+            ..env_with_user_home(Path::new("/home/u"))
+        };
+        let socket = if cfg!(debug_assertions) {
+            "paneflow-dev/paneflow-dev.sock"
+        } else {
+            "paneflow/paneflow.sock"
+        };
+        let endpoint = ipc_endpoint_in(&env).expect("endpoint");
+        assert_eq!(endpoint.path, cache.path().join("run").join(socket));
+        assert!(endpoint.owned_parent);
     }
 
     #[cfg(unix)]
