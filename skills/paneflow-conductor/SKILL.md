@@ -273,7 +273,9 @@ target or re-send rather than waiting forever on a turn that is not running.
 - **Stop when blocked.** If a target does not resolve (exit 3), if the instance
   is unreachable (exit 1), or if you have asked an agent to do something and it is
   `waiting_for_input`, surface the situation to the user and stop. Never loop on a
-  failing command.
+  failing command. When `send` refuses a pane because its agent waits for a
+  decision or left the foreground, the decision belongs to the human: do not
+  rerun it with `--force`.
 
 ## Exit codes
 
@@ -281,7 +283,7 @@ target or re-send rather than waiting forever on a turn that is not running.
 |------|---------|
 | 0 | OK |
 | 1 | runtime error (instance down, IPC failure, write refused) |
-| 3 | target not found or ambiguous - re-check `paneflow ls` |
+| 3 | target not found or ambiguous - re-check `paneflow ls`; or `send` refused an agent that waits for a decision or left the foreground |
 | 4 | `wait` reached its deadline |
 
 When a command exits non-zero, read the message, fix the target or surface the

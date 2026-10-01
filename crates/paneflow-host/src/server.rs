@@ -317,6 +317,7 @@ enum Flow {
 fn handle_connection(mut wire: Wire, host: Arc<SessionHost>, shutdown: Arc<AtomicBool>) {
     let mut greeted = false;
     let mut attaches = false;
+    let mut client = String::new();
     let mut aliases = ConnectionAliases::default();
     loop {
         if shutdown.load(Ordering::Acquire) {
@@ -395,9 +396,10 @@ fn handle_connection(mut wire: Wire, host: Arc<SessionHost>, shutdown: Arc<Atomi
                 return;
             }
             match handshake(&host, &params) {
-                Ok((identity, offers_engine)) => {
+                Ok((identity, hello)) => {
                     greeted = true;
-                    attaches = offers_engine;
+                    attaches = hello.attaches();
+                    client = hello.client;
                     if wire.write_json(&result_envelope(&id, identity)).is_err() {
                         return;
                     }
@@ -503,21 +505,37 @@ fn handle_connection(mut wire: Wire, host: Arc<SessionHost>, shutdown: Arc<Atomi
                 }
             }
             _ => {
-                let answered = crate::control::dispatch(
+                let envelope = match crate::control::authorize_session_write(
                     &host,
-                    &mut aliases,
+                    attaches,
                     host.permissions(),
                     method,
                     &params,
-                    now_ms(),
-                );
-                let envelope = match answered {
-                    Some(Ok(result)) => result_envelope(&id, result),
-                    Some(Err(error)) => control_error_to_envelope(&id, error),
-                    None => match dispatch(&host, method, &params) {
-                        Ok(result) => fit_control_frame(&id, result_envelope(&id, result)),
-                        Err(error) => error_to_envelope(&id, error),
-                    },
+                ) {
+                    Err(error) => control_error_to_envelope(&id, error),
+                    Ok(()) => {
+                        let answered = crate::control::dispatch(
+                            &host,
+                            &mut aliases,
+                            host.permissions(),
+                            method,
+                            &params,
+                            now_ms(),
+                        );
+                        match answered {
+                            Some(Ok(result)) => result_envelope(&id, result),
+                            Some(Err(error)) => control_error_to_envelope(&id, error),
+                            None => match dispatch(&host, method, &params) {
+                                Ok(result) => {
+                                    if method == "session.input" && !attaches {
+                                        audit_control_input(&client, &params, &result);
+                                    }
+                                    fit_control_frame(&id, result_envelope(&id, result))
+                                }
+                                Err(error) => error_to_envelope(&id, error),
+                            },
+                        }
+                    }
                 };
                 #[cfg(test)]
                 if method == "session.input"
@@ -553,7 +571,18 @@ fn wake_accept_loop(endpoint: &Path) {
     }
 }
 
-fn handshake(host: &SessionHost, params: &Value) -> Result<(Value, bool), String> {
+fn audit_control_input(client: &str, params: &Value, result: &Value) {
+    let Ok(session) = param_session(params) else {
+        return;
+    };
+    let bytes = result["accepted_bytes"].as_u64().unwrap_or_default();
+    log::info!(
+        "paneflow-host: {}",
+        crate::control::control_input_audit(client, &session, bytes)
+    );
+}
+
+fn handshake(host: &SessionHost, params: &Value) -> Result<(Value, ClientHello), String> {
     let hello: ClientHello = serde_json::from_value(params.clone())
         .map_err(|error| format!("host.hello params are invalid: {error}"))?;
     let identity = host.identity();
@@ -575,15 +604,15 @@ fn handshake(host: &SessionHost, params: &Value) -> Result<(Value, bool), String
             hello.client
         );
     }
-    let offers_engine = hello.attaches();
     serde_json::to_value(identity)
-        .map(|identity| (identity, offers_engine))
+        .map(|identity| (identity, hello))
         .map_err(|error| error.to_string())
 }
 
 fn control_error_to_envelope(id: &Value, error: ControlError) -> Value {
     match error {
         ControlError::Params(message) => error_envelope(id, ERR_INVALID_PARAMS, message, None),
+        ControlError::Disabled(message) => error_envelope(id, ERR_METHOD_NOT_FOUND, message, None),
         ControlError::NoController(message) => error_envelope(id, ERR_NO_CONTROLLER, message, None),
         ControlError::Host(error) => error_to_envelope(id, DispatchError::Host(error)),
     }
@@ -3235,6 +3264,311 @@ mod tests {
             text.contains("[?997;2n"),
             "the scheme query is answered as light: {text:?}"
         );
+
+        host.stop(&session, None).unwrap();
+        server.stop().unwrap();
+    }
+
+    fn granted(scripting: bool, orchestration: bool) -> crate::control::ControlPermissions {
+        crate::control::ControlPermissions {
+            scripting,
+            orchestration,
+            fenced_reads: true,
+        }
+    }
+
+    fn text_shows(host: &SessionHost, session: &SessionId, needle: &str) -> bool {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            if host
+                .text(session)
+                .is_ok_and(|text| text.text.contains(needle))
+            {
+                return true;
+            }
+            if Instant::now() >= deadline {
+                return false;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    }
+
+    fn shell_in(workspace: &WorkspaceId) -> Value {
+        let mut params = shell_create_params();
+        params["workspace"] = json!(workspace);
+        params
+    }
+
+    #[test]
+    fn a_control_client_without_scripting_writes_nothing_while_an_attached_client_still_types() {
+        let (_home, host, server) = start();
+        host.override_permissions(granted(false, false));
+        let created = host
+            .create(serde_json::from_value(shell_create_params()).unwrap())
+            .unwrap();
+        let session = created.manifest.session;
+        let generation = created.manifest.generation;
+        let mut control =
+            HostClient::connect(server.endpoint(), &ClientHello::control("gate-test")).unwrap();
+
+        let refused = control
+            .input(&session, generation, b"echo pf-gate-refused\r")
+            .unwrap_err();
+        assert_eq!(refused.code(), Some(ERR_METHOD_NOT_FOUND));
+        assert!(
+            refused.to_string().contains("PANEFLOW_IPC_SCRIPTING"),
+            "{refused}"
+        );
+
+        let mut desktop =
+            HostClient::connect(server.endpoint(), &ClientHello::local("desktop")).unwrap();
+        desktop
+            .input(&session, generation, b"echo pf-desktop-typed\r")
+            .unwrap();
+        assert!(text_shows(&host, &session, "pf-desktop-typed"));
+
+        host.override_permissions(granted(true, false));
+        control
+            .input(&session, generation, b"echo pf-gate-opened\r")
+            .unwrap();
+        assert!(text_shows(&host, &session, "pf-gate-opened"));
+        assert!(
+            !host
+                .text(&session)
+                .unwrap()
+                .text
+                .contains("pf-gate-refused"),
+            "the refused bytes never reached the terminal"
+        );
+
+        host.stop(&session, None).unwrap();
+        server.stop().unwrap();
+    }
+
+    #[test]
+    fn a_control_client_input_audit_names_the_client_the_session_and_the_size_only() {
+        let session = SessionId::new();
+        let line = crate::control::control_input_audit("paneflow-cli", &session, 42);
+        assert_eq!(
+            line,
+            format!("control client paneflow-cli wrote 42 bytes to session {session}")
+        );
+    }
+
+    #[test]
+    fn a_control_client_needs_orchestration_to_launch_a_command_and_scripting_to_create() {
+        let (_home, host, server) = start();
+        let mut control =
+            HostClient::connect(server.endpoint(), &ClientHello::control("create-gate")).unwrap();
+        let cwd = std::env::temp_dir().display().to_string();
+
+        host.override_permissions(granted(true, false));
+        for launching in [
+            shell_create_params(),
+            json!({"cwd": cwd, "command": "make"}),
+            json!({"cwd": cwd, "prompt": "fix the build"}),
+            json!({"cwd": cwd, "env": {"PROMPT_COMMAND": "date"}}),
+        ] {
+            let refused = control
+                .call("session.create", launching.clone())
+                .unwrap_err();
+            assert_eq!(refused.code(), Some(ERR_METHOD_NOT_FOUND), "{launching}");
+            assert!(
+                refused.to_string().contains("PANEFLOW_IPC_ORCHESTRATION"),
+                "{refused}"
+            );
+        }
+        assert!(
+            host.list(None).is_empty(),
+            "a refused create launches no process"
+        );
+
+        host.override_permissions(granted(false, false));
+        let refused = control
+            .call("session.create", json!({"cwd": cwd}))
+            .unwrap_err();
+        assert!(
+            refused.to_string().contains("PANEFLOW_IPC_SCRIPTING"),
+            "{refused}"
+        );
+        assert!(host.list(None).is_empty());
+
+        host.override_permissions(granted(true, true));
+        let created = control
+            .call("session.create", shell_create_params())
+            .unwrap();
+        let session = SessionId::parse(created["session"].as_str().unwrap()).unwrap();
+        assert_eq!(host.list(None).len(), 1);
+
+        host.stop(&session, None).unwrap();
+        server.stop().unwrap();
+    }
+
+    #[test]
+    fn an_ungated_agent_event_from_a_previous_generation_is_refused() {
+        let (_home, host, server) = start();
+        host.override_permissions(granted(false, false));
+        let session = host
+            .create(serde_json::from_value(shell_create_params()).unwrap())
+            .unwrap()
+            .manifest
+            .session;
+        host.stop(&session, None).unwrap();
+        let restarted = host.restart(&session, None).unwrap();
+        assert_eq!(
+            restarted.manifest.generation,
+            SessionGeneration::FIRST.next()
+        );
+        let mut hook =
+            HostClient::connect(server.endpoint(), &ClientHello::control("stale-hook")).unwrap();
+        let event = |generation: u64| {
+            json!({
+                "session": session,
+                "runtime_generation": generation,
+                "kind": "ai.prompt_submit",
+                "tool": "claude",
+                "hook_payload": {"hook_event_name": "UserPromptSubmit"},
+            })
+        };
+
+        let stale = hook.call(METHOD_AGENT_EVENT, event(1)).unwrap();
+        assert_eq!(stale["accepted"], false);
+        assert_eq!(
+            stale["reason"],
+            "the event names a generation this session has left"
+        );
+        assert!(host.inspect(&session).unwrap().manifest.last_hook.is_none());
+
+        let live = hook.call(METHOD_AGENT_EVENT, event(2)).unwrap();
+        assert_eq!(
+            live["accepted"], true,
+            "no permission gates the hook ingress"
+        );
+
+        host.stop(&session, None).unwrap();
+        server.stop().unwrap();
+    }
+
+    #[test]
+    fn a_pane_writes_only_inside_its_workspace_unless_scope_all_is_granted() {
+        use paneflow_ipc_client::IpcTransport;
+        use paneflow_ipc_client::host_control::HostTransport;
+
+        let (_home, host, server) = start();
+        host.override_permissions(granted(true, false));
+        let mine = WorkspaceId::new();
+        let theirs = WorkspaceId::new();
+        let mut sessions = Vec::new();
+        for workspace in [&mine, &mine, &theirs] {
+            let created = host
+                .create(serde_json::from_value(shell_in(workspace)).unwrap())
+                .unwrap();
+            sessions.push((created.manifest.session, created.manifest.generation));
+        }
+        let (caller, neighbor, foreign) = (&sessions[0].0, &sessions[1].0, &sessions[2]);
+        let transport = HostTransport::connect(server.endpoint(), "scope-write-test").unwrap();
+        let send = |target: &SessionId, text: &str, extra: Value| {
+            let mut params =
+                json!({"session": target, "text": text, "submit": true, "scope_session": caller});
+            if let (Some(params), Some(extra)) = (params.as_object_mut(), extra.as_object()) {
+                params.extend(extra.clone());
+            }
+            transport.call("surface.send_text", params)
+        };
+
+        send(neighbor, "echo pf-same-workspace", json!({}))
+            .expect("a pane writes into its own workspace");
+        assert!(text_shows(&host, neighbor, "pf-same-workspace"));
+
+        let refused = send(&foreign.0, "echo pf-cross-refused", json!({}))
+            .expect_err("a pane cannot write into another workspace");
+        assert!(refused.contains(&theirs.to_string()), "{refused}");
+        assert!(refused.contains("--scope all"), "{refused}");
+        let raw_input = transport
+            .call(
+                "session.input",
+                json!({
+                    "session": foreign.0,
+                    "generation": foreign.1,
+                    "data": encode_data(b"echo pf-cross-input"),
+                    "scope_session": caller,
+                }),
+            )
+            .expect_err("session.input honors the same scope");
+        assert!(raw_input.contains("--scope all"), "{raw_input}");
+
+        let ungranted = send(&foreign.0, "echo pf-scope-all", json!({"scope": "all"}))
+            .expect_err("scope all needs orchestration");
+        assert!(
+            ungranted.contains("PANEFLOW_IPC_ORCHESTRATION"),
+            "{ungranted}"
+        );
+
+        host.override_permissions(granted(true, true));
+        send(&foreign.0, "echo pf-scope-all", json!({"scope": "all"}))
+            .expect("scope all with orchestration crosses workspaces");
+        assert!(text_shows(&host, &foreign.0, "pf-scope-all"));
+
+        let unknown = transport
+            .call(
+                "surface.send_text",
+                json!({"session": neighbor, "text": "echo pf-unknown", "scope_session": SessionId::new()}),
+            )
+            .expect_err("an unknown caller session is refused");
+        assert!(unknown.contains("unknown caller session"), "{unknown}");
+
+        transport
+            .call(
+                "surface.send_text",
+                json!({"session": foreign.0, "text": "echo pf-outside-any-pane", "submit": true}),
+            )
+            .expect("a caller outside every pane keeps the instance scope");
+        assert!(text_shows(&host, &foreign.0, "pf-outside-any-pane"));
+        let foreign_text = host.text(&foreign.0).unwrap().text;
+        assert!(!foreign_text.contains("pf-cross-refused"));
+        assert!(!foreign_text.contains("pf-cross-input"));
+
+        for (session, _) in &sessions {
+            host.stop(session, None).unwrap();
+        }
+        server.stop().unwrap();
+    }
+
+    #[test]
+    fn a_host_deferred_submit_waits_for_the_paste_echo_within_the_desktop_budget() {
+        use paneflow_ipc_client::IpcTransport;
+        use paneflow_ipc_client::host_control::HostTransport;
+
+        let (_home, host, server) = start();
+        host.override_permissions(granted(true, true));
+        let session = host
+            .create(serde_json::from_value(shell_create_params()).unwrap())
+            .unwrap()
+            .manifest
+            .session;
+        let transport = HostTransport::connect(server.endpoint(), "submit-test").unwrap();
+        let started = Instant::now();
+        let reply = transport
+            .call(
+                "surface.send_text",
+                json!({"session": session, "text": "echo pf-deferred", "submit": true, "paste": true}),
+            )
+            .unwrap();
+        let elapsed = started.elapsed();
+        let floor = host.submit_paste_delay();
+        assert_eq!(reply["submit_mode"], "deferred_paste_cr", "{reply}");
+        assert!(
+            elapsed >= floor,
+            "the CR never precedes the floor: {elapsed:?}"
+        );
+        assert!(
+            elapsed
+                < floor
+                    + paneflow_ipc_client::send_text::SUBMIT_ECHO_EXTRA
+                    + Duration::from_secs(2),
+            "the CR waits at most floor + 500 ms for the echo: {elapsed:?}"
+        );
+        assert!(text_shows(&host, &session, "pf-deferred"));
 
         host.stop(&session, None).unwrap();
         server.stop().unwrap();

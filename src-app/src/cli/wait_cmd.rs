@@ -8,12 +8,15 @@ use regex::Regex;
 use serde_json::{Value, json};
 
 use super::selector::{resolve_all, resolve_target};
+use super::send_cmd::status_of;
 use super::surface_read::{
     READ_WINDOW_LINES, ReadSnapshot, SurfaceRead, read_baseline, read_surface, text_after_baseline,
 };
+use super::worker_state::{ATTENTION, BLOCKED, IDLE, agent_runtime, reduced_state, reports_turns};
 use super::{CliError, EXIT_OK, EXIT_TIMEOUT};
 
 const POLL_INTERVAL_MS: u64 = 500;
+const TURN_POLL: Duration = Duration::from_millis(250);
 const DEFAULT_TIMEOUT_SECS: u64 = 300;
 const DEFAULT_IDLE_FOR_MS: u64 = 1000;
 const IDLE_SLICE_CAP_MS: u64 = 100;
@@ -238,9 +241,64 @@ fn pane_matches_since(
     )
 }
 
+fn turn_settled(state: Option<&str>) -> bool {
+    matches!(state, Some(IDLE | ATTENTION | BLOCKED))
+}
+
+fn follows_turns(status: &Value) -> bool {
+    agent_runtime(status).is_some_and(reports_turns) && status.get("state_seq").is_some()
+}
+
+fn wait_turn_end(
+    client: &impl IpcTransport,
+    id: u64,
+    status: Value,
+    deadline: Instant,
+    re: Option<&Regex>,
+) -> Result<i32, CliError> {
+    let baseline = match re {
+        Some(_) => read_baseline(client, id, READ_WINDOW_LINES).map_err(CliError::runtime)?,
+        None => None,
+    };
+    let mut current = status;
+    loop {
+        let state = reduced_state(&current);
+        if turn_settled(state) {
+            super::print_json(&json!({
+                "surface_id": id,
+                "idle": true,
+                "matched": false,
+                "state": state,
+                "signal": "agent_state",
+            }))?;
+            return Ok(EXIT_OK);
+        }
+        if let Some(re) = re
+            && pane_matches_since(client, id, re, baseline.as_ref())
+        {
+            super::print_json(
+                &json!({ "surface_id": id, "idle": false, "matched": true, "state": state }),
+            )?;
+            return Ok(EXIT_OK);
+        }
+        if Instant::now() >= deadline {
+            eprintln!("paneflow: timeout waiting for the agent in surface {id} to end its turn");
+            return Ok(EXIT_TIMEOUT);
+        }
+        sleep(TURN_POLL);
+        match status_of(client, id) {
+            Some(status) => current = status,
+            None if matches!(read_snapshot(client, id)?, SurfaceRead::Gone) => {
+                return Err(CliError::runtime("target pane closed before it went idle"));
+            }
+            None => {}
+        }
+    }
+}
+
 pub fn wait_idle(
     client: &impl IpcTransport,
-    socket: &std::path::Path,
+    socket: Option<&std::path::Path>,
     target: &str,
     for_ms: Option<u64>,
     timeout_secs: Option<u64>,
@@ -258,6 +316,13 @@ pub fn wait_idle(
     let slice = Duration::from_millis(window_ms.clamp(1, IDLE_SLICE_CAP_MS));
     let timeout = Duration::from_secs(timeout_secs.unwrap_or(DEFAULT_TIMEOUT_SECS));
     let deadline = Instant::now() + timeout;
+
+    if let Some(status) = status_of(client, id).filter(follows_turns) {
+        return wait_turn_end(client, id, status, deadline, re.as_ref());
+    }
+    let Some(socket) = socket else {
+        return Err(super::CliTransport::no_controller("paneflow wait --idle"));
+    };
 
     let Some(baseline) = read_baseline(client, id, READ_WINDOW_LINES).map_err(CliError::runtime)?
     else {
@@ -418,6 +483,95 @@ mod tests {
         fn call(&self, _: &str, _: Value) -> Result<Value, String> {
             Err("transport should not be called".to_string())
         }
+    }
+
+    struct HookedAgent {
+        statuses: std::cell::RefCell<Vec<Value>>,
+        status_calls: std::cell::Cell<usize>,
+    }
+    impl IpcTransport for HookedAgent {
+        fn call(&self, method: &str, _params: Value) -> Result<Value, String> {
+            match method {
+                "surface.list" => Ok(json!({
+                    "surfaces": [{ "surface_id": 1u64, "name": "agent", "cmd": "claude", "cwd": "/tmp" }]
+                })),
+                "surface.read" => {
+                    Ok(json!({ "text": "running a silent tool\n", "output_generation": 7 }))
+                }
+                "surface.status" => {
+                    self.status_calls.set(self.status_calls.get() + 1);
+                    let mut statuses = self.statuses.borrow_mut();
+                    Ok(if statuses.len() > 1 {
+                        statuses.remove(0)
+                    } else {
+                        statuses[0].clone()
+                    })
+                }
+                other => Err(format!("unexpected method {other}")),
+            }
+        }
+    }
+
+    fn hooked(state: &str, state_seq: u64) -> Value {
+        json!({
+            "state": state,
+            "state_seq": state_seq,
+            "hooked": true,
+            "agent_runtime": "com.anthropic.claude-code",
+            "output_generation": 7,
+        })
+    }
+
+    #[test]
+    fn a_hooked_agent_in_a_silent_tool_is_not_idle_before_its_stop_hook() {
+        let mut statuses = vec![hooked("thinking", 1); 5];
+        statuses.push(hooked("finished", 2));
+        let agent = HookedAgent {
+            statuses: std::cell::RefCell::new(statuses),
+            status_calls: std::cell::Cell::new(0),
+        };
+        let never_listened = std::path::Path::new("paneflow-no-such-event-stream");
+        let code = wait_idle(&agent, Some(never_listened), "1", Some(5), Some(30), None)
+            .expect("the turn end ends the wait");
+        assert_eq!(code, EXIT_OK);
+        assert_eq!(
+            agent.status_calls.get(),
+            6,
+            "the wait outlived a 5 ms quiet window and returned on the Stop-driven state"
+        );
+    }
+
+    #[test]
+    fn an_agent_already_waiting_returns_at_once() {
+        let agent = HookedAgent {
+            statuses: std::cell::RefCell::new(vec![hooked("waiting_for_input", 4)]),
+            status_calls: std::cell::Cell::new(0),
+        };
+        assert_eq!(
+            wait_idle(&agent, None, "1", None, Some(5), None).expect("settled"),
+            EXIT_OK
+        );
+        assert_eq!(agent.status_calls.get(), 1);
+    }
+
+    #[test]
+    fn a_pane_without_turn_signals_keeps_the_quiescence_wait() {
+        let shell = HookedAgent {
+            statuses: std::cell::RefCell::new(vec![json!({"state": "idle", "state_seq": 0})]),
+            status_calls: std::cell::Cell::new(0),
+        };
+        let err = wait_idle(&shell, None, "1", None, Some(5), None)
+            .expect_err("a shell needs the output stream");
+        assert!(err.message.contains("wait --idle"), "{}", err.message);
+        let quiet_runtime = HookedAgent {
+            statuses: std::cell::RefCell::new(vec![json!({
+                "state": "thinking",
+                "state_seq": 3,
+                "agent_runtime": "com.sourcegraph.amp",
+            })]),
+            status_calls: std::cell::Cell::new(0),
+        };
+        assert!(wait_idle(&quiet_runtime, None, "1", None, Some(5), None).is_err());
     }
 
     #[test]

@@ -70,6 +70,7 @@ pub(super) fn log_pane_write(
     caller_pid: Option<i64>,
     length: usize,
     unrestricted: bool,
+    forced: bool,
 ) {
     let authorization = if unrestricted {
         "ai_unrestricted"
@@ -83,6 +84,7 @@ pub(super) fn log_pane_write(
         caller_pid = ?caller_pid,
         length = length as u64,
         authorization,
+        forced,
         "authorized PTY write to pane"
     );
 }
@@ -125,11 +127,13 @@ mod tests {
     #[tracing_test::traced_test]
     #[test]
     fn every_authorized_pane_write_is_logged_with_its_length_in_both_modes() {
-        log_pane_write("surface.send_text", 7, Some(42), 11, false);
-        log_pane_write("surface.send_keystroke", 8, None, 6, true);
+        log_pane_write("surface.send_text", 7, Some(42), 11, false, true);
+        log_pane_write("surface.send_keystroke", 8, None, 6, true, false);
         assert!(logs_contain("INFO"));
         assert!(logs_contain("method=\"surface.send_text\" surface_id=7"));
-        assert!(logs_contain("length=11 authorization=\"scripting\""));
+        assert!(logs_contain(
+            "length=11 authorization=\"scripting\" forced=true"
+        ));
         assert!(logs_contain(
             "method=\"surface.send_keystroke\" surface_id=8"
         ));

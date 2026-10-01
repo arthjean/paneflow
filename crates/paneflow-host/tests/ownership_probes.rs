@@ -84,8 +84,13 @@ struct DetachedHost {
 
 impl DetachedHost {
     fn start(name: &str) -> Self {
+        Self::start_with_config(name, "{}")
+    }
+
+    fn start_with_config(name: &str, config: &str) -> Self {
         allow_breakaway_like_the_desktop_does();
         let home = tempfile::tempdir().unwrap();
+        std::fs::write(home.path().join("paneflow.json"), config).unwrap();
         let endpoint = paneflow_host::endpoint::host_endpoint_path(home.path());
         bootstrap::ensure_host_running(home.path(), &host_executable(), name)
             .expect("a detached host starts from the sibling executable");
@@ -288,7 +293,7 @@ fn h01_root_exit_and_pty_hangup_do_not_prove_descendant_exit() {
 
 #[test]
 fn h02_a_requester_that_disconnects_mid_create_leaves_the_host_owning_the_child() {
-    let host = DetachedHost::start("ownership-probe");
+    let host = DetachedHost::start_with_config("ownership-probe", r#"{"ai_unrestricted": true}"#);
     let session = paneflow_host::SessionId::new();
     {
         let mut control = HostControl::connect(&host.endpoint, "ownership-probe").unwrap();

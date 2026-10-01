@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 pub const BRACKETED_PASTE_START: &str = "\x1b[200~";
 
 pub const BRACKETED_PASTE_END: &str = "\x1b[201~";
@@ -53,9 +55,52 @@ pub fn bracketed_paste_frame(text: &str) -> String {
     )
 }
 
+pub const SUBMIT_ECHO_POLL: Duration = Duration::from_millis(15);
+
+pub const SUBMIT_ECHO_EXTRA: Duration = Duration::from_millis(500);
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum SubmitTick {
+    Wait,
+    Submit,
+    Abort,
+}
+
+pub fn submit_echo_tick(
+    gen_before: u64,
+    gen_now: Option<u64>,
+    waited: Duration,
+    cap: Duration,
+) -> SubmitTick {
+    match gen_now {
+        None => SubmitTick::Abort,
+        Some(g) if g > gen_before => SubmitTick::Submit,
+        Some(_) if waited >= cap => SubmitTick::Submit,
+        Some(_) => SubmitTick::Wait,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn submit_echo_tick_decides_wait_submit_abort() {
+        let cap = Duration::from_millis(570);
+        assert_eq!(
+            submit_echo_tick(5, Some(5), Duration::from_millis(70), cap),
+            SubmitTick::Wait
+        );
+        assert_eq!(
+            submit_echo_tick(5, Some(6), Duration::from_millis(70), cap),
+            SubmitTick::Submit
+        );
+        assert_eq!(submit_echo_tick(5, Some(5), cap, cap), SubmitTick::Submit);
+        assert_eq!(
+            submit_echo_tick(5, None, Duration::from_millis(70), cap),
+            SubmitTick::Abort
+        );
+    }
 
     #[test]
     fn resolve_paste_mode_auto_targets_agents_or_bracketed_tuis() {

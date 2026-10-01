@@ -220,6 +220,8 @@ pub struct SessionHost {
     barrier: Mutex<Option<BarrierHook>>,
     #[cfg(test)]
     fail_launch_owner_spawn: AtomicBool,
+    #[cfg(test)]
+    permission_override: Mutex<Option<crate::control::ControlPermissions>>,
     weak: Weak<Self>,
     _owner: OwnerLock,
 }
@@ -339,6 +341,8 @@ impl SessionHost {
             barrier: Mutex::new(None),
             #[cfg(test)]
             fail_launch_owner_spawn: AtomicBool::new(false),
+            #[cfg(test)]
+            permission_override: Mutex::new(None),
             weak: weak.clone(),
             _owner: owner,
         });
@@ -549,7 +553,23 @@ impl SessionHost {
     }
 
     pub fn permissions(&self) -> crate::control::ControlPermissions {
+        #[cfg(test)]
+        if let Some(permissions) = *self
+            .permission_override
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+        {
+            return permissions;
+        }
         self.permissions
+    }
+
+    #[cfg(test)]
+    pub(crate) fn override_permissions(&self, permissions: crate::control::ControlPermissions) {
+        *self
+            .permission_override
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(permissions);
     }
 
     pub fn submit_paste_delay(&self) -> std::time::Duration {

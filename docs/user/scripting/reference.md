@@ -59,7 +59,7 @@ except commands that explicitly accept multiple matches such as
 | `0` | Success |
 | `1` | Runtime failure: instance unreachable, pane closed, gate refused, or handler error |
 | `2` | CLI usage error |
-| `3` | Target not found or ambiguous |
+| `3` | Target not found or ambiguous, or `send` refused a target agent that waits for a decision or left the foreground |
 | `4` | `wait` timeout or flow ready timeout |
 
 ## Write gates
@@ -71,6 +71,10 @@ Reading is allowed by default. Writes are split by capability:
 | `send` without `--submit` | `PANEFLOW_IPC_SCRIPTING=1` or `ai_unrestricted` |
 | `send --submit` | `PANEFLOW_IPC_SCRIPTING=1` or `ai_unrestricted` |
 | `key` | `PANEFLOW_IPC_SCRIPTING=1` |
+| `send --scope all`, `key --scope all`, `flow run --scope all` from inside a pane | `PANEFLOW_IPC_ORCHESTRATION=1` |
+| Host `session.input` from a control client | `PANEFLOW_IPC_SCRIPTING=1` |
+| Host `session.create` from a control client with a command, prompt, or env | `PANEFLOW_IPC_ORCHESTRATION=1` |
+| Host `session.create` from a control client, otherwise | `PANEFLOW_IPC_SCRIPTING=1` |
 | Flow step with `submit = true` | Scripting capability reported by `system.capabilities` |
 
 `send` does not append a carriage return unless `--submit` is present.
@@ -314,9 +318,9 @@ process detection.
 Agent state lives in a per-home worker, started as `paneflow serve run`. It
 runs detached, one per `PANEFLOW_HOME`, reduces hook events to one state per
 session, rebuilds that state from disk when it restarts, and never touches a
-running shell. Without a running window, `ps` and `status` cannot see hook
-state and `send --submit` cannot confirm through it; `paneflow sessions` reads
-the worker directly.
+running shell. `status`, `send --submit`, and `wait --idle` read the reduced
+state from the worker whether or not a window is open; `paneflow sessions`
+reads the worker directly.
 
 | Command | Effect |
 | --- | --- |

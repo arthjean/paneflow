@@ -108,6 +108,56 @@ PTY can drive an agent or shell. There are two relevant controls:
 | `ai_unrestricted` | `false` | Allows trusted AI automation to submit text without the env gate |
 | `ai_injection_fence` | `true` | Wraps peer terminal output as untrusted text on the `read` path |
 
+The window and the detached host apply the same gates. A client that
+attaches a terminal engine, the Paneflow window itself, types for the
+human and is not gated. Every other control client, such as `paneflow
+send` with no window open, the MCP bridge, or a custom socket client,
+needs `PANEFLOW_IPC_SCRIPTING=1` for `session.input`. `session.create`
+needs `PANEFLOW_IPC_ORCHESTRATION=1` (or scripting, which includes it)
+when the request launches a command, a prompt, or environment
+variables, and scripting otherwise. The host logs each accepted
+`session.input` from a control client at info level with the client
+name, the target session, and the byte count, never the content. Hook
+delivery (`agent.event`) stays ungated: the host accepts an event only
+for the live launch generation of its session. These gates protect a
+pane from a confused agent, not from a hostile process running as your
+user.
+
+Inside a Paneflow pane, `send`, `key`, and the `send` steps of
+`flow run` that target a pane the flow did not spawn pass the pane's
+`PANEFLOW_SESSION_ID`, and the instance refuses a write into a pane of
+another workspace with a message that names that workspace. Pass
+`--scope all` to reach every workspace; it needs
+`PANEFLOW_IPC_ORCHESTRATION=1`. A caller session the instance does not
+know is refused. A script run from a terminal outside Paneflow keeps
+the instance scope.
+
+`send` also refuses, with exit code 3 and no byte written, a pane whose
+agent waits for a decision (permission, menu, or question) or whose
+agent no longer runs in the foreground (a shell or an editor took the
+pane back). Answer in the pane, or pass `--force`; the instance logs
+every forced write. A pane without an agent is never held by these
+checks.
+
+With `--submit`, the JSON reply reports what happened:
+
+| Field | Meaning |
+|---|---|
+| `delivered` | `true` once the text and the carriage return were written. |
+| `started` | `true` when the agent's reduced state moved (`state_seq` grew) within 5 s, `false` when it did not, `null` when the runtime has neither hooks nor screen rules to report a turn. The paste echo alone never counts. |
+| `reason` | `state_transition`, `no_state_transition`, or `no_signal`. |
+| `state` | The last reduced state observed: `working`, `attention`, `blocked`, or `idle`. |
+
+A reply with `started: false` exits with code 1, as an unconfirmed
+start always did.
+
+`wait --idle` follows the turn of an agent whose runtime reports
+through hooks or screen rules: it returns when the agent's reduced
+state becomes `idle`, `attention`, or `blocked`, and at once when the
+agent already waits, so a long silent tool call is never mistaken for
+the end of a turn. `--for` does not apply there. Other panes still wait
+for their output to stay quiet for `--for` milliseconds.
+
 Keep `ai_injection_fence` enabled. A peer pane can contain hostile
 terminal text, especially when it runs an agent over an untrusted repo.
 The fence helps an LLM treat that output as evidence, not instructions.

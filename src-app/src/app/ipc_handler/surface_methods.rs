@@ -1,9 +1,8 @@
 use super::*;
 
-const SUBMIT_ECHO_POLL: Duration = Duration::from_millis(15);
-
-const SUBMIT_ECHO_EXTRA: Duration = Duration::from_millis(500);
-
+use paneflow_ipc_client::send_text::{
+    SUBMIT_ECHO_EXTRA, SUBMIT_ECHO_POLL, SubmitTick, submit_echo_tick,
+};
 pub(crate) use paneflow_ipc_client::send_text::{resolve_paste_mode, resolve_send_text_body_mode};
 
 fn first_command_token(command: &str) -> Option<&str> {
@@ -25,27 +24,6 @@ fn agent_from_command(command: &str) -> Option<TerminalAgent> {
     let token = first_command_token(command)?;
     let stem = crate::agent_launcher::executable_stem(token);
     TerminalAgent::from_binary(stem)
-}
-
-#[derive(Debug, PartialEq, Eq)]
-enum SubmitTick {
-    Wait,
-    Submit,
-    Abort,
-}
-
-fn submit_echo_tick(
-    gen_before: u64,
-    gen_now: Option<u64>,
-    waited: Duration,
-    cap: Duration,
-) -> SubmitTick {
-    match gen_now {
-        None => SubmitTick::Abort,
-        Some(g) if g > gen_before => SubmitTick::Submit,
-        Some(_) if waited >= cap => SubmitTick::Submit,
-        Some(_) => SubmitTick::Wait,
-    }
 }
 
 pub(crate) fn find_first_terminal(
@@ -313,6 +291,52 @@ fn scoped_workspace_id(
             "scope session {session} is not open in any workspace of this window"
         ))
     })
+}
+
+fn authorize_write_scope(
+    params: &serde_json::Value,
+    orchestration: bool,
+    caller_workspace: impl FnOnce(&str) -> Option<u64>,
+    surface_id: u64,
+    target: Option<(u64, &str)>,
+) -> Result<(), JsonRpcError> {
+    match params.get("scope").map(serde_json::Value::as_str) {
+        None | Some(Some("workspace")) => {}
+        Some(Some("all")) if orchestration => return Ok(()),
+        Some(Some("all")) => {
+            return Err(JsonRpcError::method_not_enabled(
+                "scope all needs orchestration; set PANEFLOW_IPC_ORCHESTRATION=1 or \
+                 PANEFLOW_IPC_SCRIPTING=1 to write across workspaces",
+            ));
+        }
+        Some(_) => {
+            return Err(JsonRpcError::invalid_params(
+                "'scope' must be \"workspace\" or \"all\"",
+            ));
+        }
+    }
+    let Some(caller) = params.get("scope_session") else {
+        return Ok(());
+    };
+    let expected = scoped_workspace_id(params, caller_workspace).map_err(|_| {
+        let caller = caller
+            .as_str()
+            .map_or_else(|| caller.to_string(), str::to_string);
+        JsonRpcError::invalid_params(format!(
+            "unknown caller session {caller}: no workspace of this window holds it, so the write is refused"
+        ))
+    })?;
+    if expected.is_some() && target.map(|(id, _)| id) == expected {
+        return Ok(());
+    }
+    let place = target.map_or_else(
+        || "no workspace".to_string(),
+        |(id, title)| format!("workspace \"{title}\" (id {id})"),
+    );
+    Err(JsonRpcError::invalid_params(format!(
+        "surface {surface_id} belongs to {place}, outside the workspace of the calling pane; \
+         rerun with --scope all (needs PANEFLOW_IPC_ORCHESTRATION=1) to write across workspaces"
+    )))
 }
 
 fn session_workspace_id(workspaces: &[Workspace], session: &str, cx: &App) -> Option<u64> {
@@ -725,6 +749,26 @@ impl PaneFlowApp {
         })
     }
 
+    fn authorize_surface_write(
+        &self,
+        params: &serde_json::Value,
+        surface_id: u64,
+        unrestricted: bool,
+        cx: &App,
+    ) -> Result<(), JsonRpcError> {
+        let target = self
+            .surface_workspace_idx(surface_id, cx)
+            .and_then(|idx| self.workspaces.get(idx))
+            .map(|workspace| (workspace.id, workspace.title.as_str()));
+        authorize_write_scope(
+            params,
+            ipc_orchestration_enabled() || unrestricted,
+            |session| session_workspace_id(&self.workspaces, session, cx),
+            surface_id,
+            target,
+        )
+    }
+
     fn workspace_id_for_workspace_idx(&self, idx: usize) -> Option<u64> {
         self.workspaces.get(idx).map(|workspace| workspace.id)
     }
@@ -957,6 +1001,7 @@ impl PaneFlowApp {
                 };
                 let sid = terminal.entity_id().as_u64();
                 let output_generation = terminal.read(cx).terminal.output_generation;
+                let session_id = terminal.read(cx).terminal.session_id.to_string();
                 let projected_state_seq = self
                     .host_agent_row(&terminal.read(cx).terminal.session_id)
                     .map(|row| row.state_seq);
@@ -965,13 +1010,15 @@ impl PaneFlowApp {
                     .iter()
                     .flat_map(|ws| ws.agent_sessions.values())
                     .find(|s| s.surface_id == Some(sid));
-                surface_status_value(
+                let mut status = surface_status_value(
                     sid,
                     session,
                     output_generation,
                     std::time::Instant::now(),
                     projected_state_seq,
-                )
+                );
+                status["session"] = serde_json::json!(session_id);
+                status
             }
             "surface.rename" => {
                 if let Err(error) = opt_str(params, "new_name") {
@@ -1070,6 +1117,12 @@ impl PaneFlowApp {
                     return JsonRpcError::invalid_params("No active terminal").into_value();
                 };
                 let wrote_sid = terminal.entity_id().as_u64();
+                if let Err(error) =
+                    self.authorize_surface_write(params, wrote_sid, unrestricted, cx)
+                {
+                    return error.into_value();
+                }
+                let forced = matches!(opt_bool(params, "force"), Ok(Some(true)));
                 let agent_hint = self.surface_agent_hint(wrote_sid, cx);
                 let terminal_bracketed_paste = terminal.read(cx).bracketed_paste_enabled();
                 let paste = resolve_paste_mode(
@@ -1113,6 +1166,7 @@ impl PaneFlowApp {
                     caller_pid,
                     text.len(),
                     unrestricted,
+                    forced,
                 );
                 let submit_mode = if submit && paste && !text.is_empty() {
                     serde_json::Value::String("deferred_paste_cr".to_string())
@@ -1165,6 +1219,16 @@ impl PaneFlowApp {
                 } else {
                     None
                 };
+                if let Some(t) = &terminal
+                    && let Err(error) = self.authorize_surface_write(
+                        params,
+                        t.entity_id().as_u64(),
+                        unrestricted,
+                        cx,
+                    )
+                {
+                    return error.into_value();
+                }
                 match terminal {
                     Some(t) => match t.read(cx).send_keystroke(keystroke) {
                         Ok(()) => {
@@ -1174,6 +1238,7 @@ impl PaneFlowApp {
                                 caller_pid,
                                 keystroke.len(),
                                 unrestricted,
+                                false,
                             );
                             serde_json::json!({"sent": true})
                         }
@@ -1287,6 +1352,45 @@ mod tests {
     }
 
     #[test]
+    fn a_pane_write_stays_in_the_workspace_of_its_calling_pane() {
+        let caller = |session: &str| (session == "0a9e5266").then_some(7);
+        let scoped = serde_json::json!({ "scope_session": "0a9e5266" });
+        assert!(authorize_write_scope(&scoped, false, caller, 12, Some((7, "api"))).is_ok());
+
+        let refused = authorize_write_scope(&scoped, false, caller, 18, Some((9, "web")))
+            .expect_err("a write into another workspace is refused");
+        assert!(
+            refused.message.contains("workspace \"web\" (id 9)"),
+            "{}",
+            refused.message
+        );
+        assert!(
+            refused.message.contains("--scope all"),
+            "{}",
+            refused.message
+        );
+
+        let widened = serde_json::json!({ "scope_session": "0a9e5266", "scope": "all" });
+        let ungranted = authorize_write_scope(&widened, false, caller, 18, Some((9, "web")))
+            .expect_err("scope all needs orchestration");
+        assert!(ungranted.message.contains("PANEFLOW_IPC_ORCHESTRATION"));
+        assert!(authorize_write_scope(&widened, true, caller, 18, Some((9, "web"))).is_ok());
+
+        let unknown = serde_json::json!({ "scope_session": "deadbeef" });
+        let refused = authorize_write_scope(&unknown, false, caller, 12, Some((7, "api")))
+            .expect_err("an unknown caller session is refused");
+        assert!(refused.message.contains("unknown caller session deadbeef"));
+
+        let outside = serde_json::json!({});
+        assert!(
+            authorize_write_scope(&outside, false, |_| None, 18, Some((9, "web"))).is_ok(),
+            "a caller outside every pane keeps the instance scope"
+        );
+        let bogus = serde_json::json!({ "scope": "galaxy" });
+        assert!(authorize_write_scope(&bogus, true, |_| None, 18, Some((9, "web"))).is_err());
+    }
+
+    #[test]
     fn a_scope_session_resolves_to_the_workspace_that_holds_it_now() {
         let params = serde_json::json!({ "scope_session": "0a9e5266", "workspace_id": 1 });
         assert_eq!(
@@ -1384,25 +1488,6 @@ mod tests {
             resolve_send_text_body_mode("line one\nline two", Some(false), false, true).is_err(),
             "explicit paste=false must not bypass the CR/LF guard"
         );
-    }
-
-    #[test]
-    fn submit_echo_tick_decides_wait_submit_abort() {
-        use super::{SubmitTick, submit_echo_tick};
-        let cap = Duration::from_millis(570);
-        assert_eq!(
-            submit_echo_tick(5, None, Duration::from_millis(0), cap),
-            SubmitTick::Abort
-        );
-        assert_eq!(
-            submit_echo_tick(5, Some(6), Duration::from_millis(70), cap),
-            SubmitTick::Submit
-        );
-        assert_eq!(
-            submit_echo_tick(5, Some(5), Duration::from_millis(100), cap),
-            SubmitTick::Wait
-        );
-        assert_eq!(submit_echo_tick(5, Some(5), cap, cap), SubmitTick::Submit);
     }
 
     #[test]

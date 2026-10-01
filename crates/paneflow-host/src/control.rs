@@ -7,7 +7,8 @@ use paneflow_ipc_client::scrollback::{
     truncate_ipc_text, wrap_untrusted,
 };
 use paneflow_ipc_client::send_text::{
-    bracketed_paste_frame, resolve_paste_mode, resolve_send_text_body_mode,
+    SUBMIT_ECHO_EXTRA, SUBMIT_ECHO_POLL, SubmitTick, bracketed_paste_frame, resolve_paste_mode,
+    resolve_send_text_body_mode, submit_echo_tick,
 };
 use serde_json::{Value, json};
 
@@ -48,6 +49,7 @@ pub const CONTROLLER_ONLY_METHODS: &[&str] = &[
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ControlError {
     Params(String),
+    Disabled(String),
     NoController(&'static str),
     Host(HostError),
 }
@@ -206,12 +208,178 @@ fn agent_status_value(
     Value::Object(value)
 }
 
+fn foreground_runtime(summary: &SessionSummary) -> Value {
+    json!(
+        summary
+            .manifest
+            .runtime
+            .as_ref()
+            .and_then(|runtime| runtime.current_observation.as_ref())
+            .map(|observation| observation.id.as_str())
+    )
+}
+
 fn output_generation(host: &SessionHost, session: &SessionId) -> Option<u64> {
     match host.output_stream(session, None) {
         Ok(Ok(stream)) => Some(stream.end_offset()),
         Ok(Err(ended)) => Some(ended.end_offset),
         Err(_) => None,
     }
+}
+
+pub const SCOPE_ALL: &str = "all";
+
+const SCOPE_WORKSPACE: &str = "workspace";
+
+fn string_is_nonempty(value: Option<&Value>) -> bool {
+    value
+        .and_then(Value::as_str)
+        .is_some_and(|text| !text.is_empty())
+}
+
+pub fn create_requires_orchestration(params: &Value) -> bool {
+    string_is_nonempty(params.get("command"))
+        || string_is_nonempty(params.get("prompt"))
+        || string_is_nonempty(params.get("shell"))
+        || params
+            .get("args")
+            .and_then(Value::as_array)
+            .is_some_and(|args| !args.is_empty())
+        || params
+            .get("env")
+            .and_then(Value::as_object)
+            .is_some_and(|env| env.values().any(Value::is_string))
+}
+
+fn create_gate(params: &Value, permissions: ControlPermissions) -> Result<(), ControlError> {
+    if create_requires_orchestration(params) {
+        if permissions.orchestration {
+            return Ok(());
+        }
+        return Err(ControlError::Disabled(
+            "session.create orchestration disabled; set PANEFLOW_IPC_ORCHESTRATION=1 or \
+             PANEFLOW_IPC_SCRIPTING=1 to launch a command, prompt, or env"
+                .to_string(),
+        ));
+    }
+    if permissions.scripting {
+        return Ok(());
+    }
+    Err(ControlError::Disabled(
+        "session.create disabled; set PANEFLOW_IPC_SCRIPTING=1 to enable".to_string(),
+    ))
+}
+
+fn input_gate(permissions: ControlPermissions) -> Result<(), ControlError> {
+    if permissions.scripting {
+        return Ok(());
+    }
+    Err(ControlError::Disabled(
+        "session.input disabled; set PANEFLOW_IPC_SCRIPTING=1 to enable".to_string(),
+    ))
+}
+
+pub fn authorize_session_write(
+    host: &SessionHost,
+    attaches: bool,
+    permissions: ControlPermissions,
+    method: &str,
+    params: &Value,
+) -> Result<(), ControlError> {
+    match method {
+        "session.input" => {
+            if !attaches {
+                input_gate(permissions)?;
+            }
+            match params
+                .get("session")
+                .and_then(Value::as_str)
+                .map(SessionId::parse)
+            {
+                Some(Ok(target)) => authorize_write_scope(host, params, permissions, &target),
+                _ => Ok(()),
+            }
+        }
+        "session.create" if !attaches => create_gate(params, permissions),
+        _ => Ok(()),
+    }
+}
+
+pub fn control_input_audit(client: &str, session: &SessionId, bytes: u64) -> String {
+    format!("control client {client} wrote {bytes} bytes to session {session}")
+}
+
+fn caller_scope(host: &SessionHost, params: &Value) -> Result<Option<ReadScope>, ControlError> {
+    read_scope(host, params).map_err(|_| {
+        let caller = params
+            .get("scope_session")
+            .map(|raw| raw.as_str().map_or_else(|| raw.to_string(), str::to_string))
+            .unwrap_or_default();
+        ControlError::Params(format!(
+            "unknown caller session {caller}: this instance does not host it, so the write is refused"
+        ))
+    })
+}
+
+pub fn authorize_write_scope(
+    host: &SessionHost,
+    params: &Value,
+    permissions: ControlPermissions,
+    target: &SessionId,
+) -> Result<(), ControlError> {
+    match params.get("scope").map(Value::as_str) {
+        None | Some(Some(SCOPE_WORKSPACE)) => {}
+        Some(Some(SCOPE_ALL)) => {
+            if permissions.orchestration {
+                return Ok(());
+            }
+            return Err(ControlError::Disabled(
+                "scope all needs orchestration; set PANEFLOW_IPC_ORCHESTRATION=1 or \
+                 PANEFLOW_IPC_SCRIPTING=1 to write across workspaces"
+                    .to_string(),
+            ));
+        }
+        Some(_) => {
+            return Err(ControlError::Params(
+                "'scope' must be \"workspace\" or \"all\"".to_string(),
+            ));
+        }
+    }
+    let Some(scope) = caller_scope(host, params)? else {
+        return Ok(());
+    };
+    let workspace = host.inspect(target)?.manifest.workspace;
+    if scope.admits(target, &workspace) {
+        return Ok(());
+    }
+    let place = workspace.map_or_else(
+        || "no workspace".to_string(),
+        |workspace| format!("workspace {workspace}"),
+    );
+    Err(ControlError::Params(format!(
+        "session {target} belongs to {place}, outside the workspace of the calling pane; \
+         rerun with --scope all (needs PANEFLOW_IPC_ORCHESTRATION=1) to write across workspaces"
+    )))
+}
+
+fn submit_after_echo(
+    host: &SessionHost,
+    session: &SessionId,
+    generation: Option<SessionGeneration>,
+    before: u64,
+) -> Result<(), ControlError> {
+    let floor = host.submit_paste_delay();
+    let cap = floor + SUBMIT_ECHO_EXTRA;
+    std::thread::sleep(floor);
+    let mut waited = floor;
+    while submit_echo_tick(before, output_generation(host, session), waited, cap)
+        == SubmitTick::Wait
+    {
+        std::thread::sleep(SUBMIT_ECHO_POLL);
+        waited += SUBMIT_ECHO_POLL;
+    }
+    host.input(session, generation, b"\r".to_vec())?;
+    Ok(())
 }
 
 pub fn send_text_gate(permissions: ControlPermissions) -> Result<(), ControlError> {
@@ -449,14 +617,16 @@ fn answer(
             let session = resolve_session(aliases, params)?;
             let summary = host.inspect(&session)?;
             let alias = aliases.alias_of(&session).unwrap_or(0);
-            Ok(agent_status_value(
+            let mut status = agent_status_value(
                 alias,
                 &session,
                 summary.manifest.generation,
                 summary.manifest.last_hook.as_ref(),
                 output_generation(host, &session),
                 now_ms,
-            ))
+            );
+            status["foreground_runtime"] = foreground_runtime(&summary);
+            Ok(status)
         }
         "fleet.list" => {
             let mut sessions = host.list(None);
@@ -502,9 +672,15 @@ fn answer(
                 ));
             }
             let session = resolve_session(aliases, params)?;
+            authorize_write_scope(host, params, permissions, &session)?;
             let summary = host.inspect(&session)?;
             let generation = Some(summary.manifest.generation);
             let agent_target = summary.manifest.last_hook.is_some();
+            let forced = params
+                .get("force")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            let before = output_generation(host, &session).unwrap_or_default();
             let terminal_bracketed_paste = host.bracketed_paste_enabled(&session)?;
             let paste =
                 resolve_paste_mode(paste_param, submit, agent_target, terminal_bracketed_paste);
@@ -522,8 +698,7 @@ fn answer(
             let submit_mode = match (submit, paste && !text.is_empty()) {
                 (false, _) => Value::Null,
                 (true, true) => {
-                    std::thread::sleep(host.submit_paste_delay());
-                    host.input(&session, generation, b"\r".to_vec())?;
+                    submit_after_echo(host, &session, generation, before)?;
                     json!("deferred_paste_cr")
                 }
                 (true, false) => {
@@ -531,6 +706,15 @@ fn answer(
                     json!("inline_cr")
                 }
             };
+            log::info!(
+                "paneflow-host: surface.send_text wrote {} bytes to session {session}{}",
+                text.len(),
+                if forced {
+                    " (forced past the agent delivery checks)"
+                } else {
+                    ""
+                }
+            );
             Ok(json!({
                 "sent": true,
                 "length": text.len(),
@@ -716,6 +900,36 @@ mod tests {
         );
         assert!(!value.to_string().contains("unknown"));
         assert!(!bare.to_string().contains("unknown"));
+    }
+
+    #[test]
+    fn the_status_names_the_runtime_the_host_sees_in_the_foreground_now() {
+        let mut held = summary(SessionId::new(), None, "/a");
+        assert_eq!(foreground_runtime(&held), Value::Null);
+        held.manifest.runtime = Some(crate::manifest::HostedSessionRuntime {
+            current_observation: Some(crate::runtime_observer::RuntimeObservation {
+                id: "com.anthropic.claude-code".to_string(),
+                pid: 42,
+                pid_started_at: Some(7),
+                process_group: 42,
+                process_name: "claude".to_string(),
+                argv: None,
+            }),
+            launch_binding: Some("com.anthropic.claude-code".to_string()),
+        });
+        assert_eq!(
+            foreground_runtime(&held),
+            json!("com.anthropic.claude-code")
+        );
+        held.manifest.runtime = Some(crate::manifest::HostedSessionRuntime {
+            current_observation: None,
+            launch_binding: Some("com.anthropic.claude-code".to_string()),
+        });
+        assert_eq!(
+            foreground_runtime(&held),
+            Value::Null,
+            "a launch binding is not a foreground observation"
+        );
     }
 
     #[test]

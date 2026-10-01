@@ -291,6 +291,18 @@ enum Commands {
             help = "Ask the agent to write its complete result to this file and print `REPORT_DONE <path>` after the file is fully written. The path is resolved relative to the caller's current directory"
         )]
         report_file: Option<String>,
+        #[arg(
+            long,
+            help = "Write even when the target agent waits for a decision (permission, menu, question) or no longer runs in the foreground. The forced write is logged by the instance"
+        )]
+        force: bool,
+        #[arg(
+            long,
+            value_parser = ["workspace", "all"],
+            default_value = "workspace",
+            help = "From inside a Paneflow pane, writes stay in that pane's workspace. `all` reaches every workspace and needs PANEFLOW_IPC_ORCHESTRATION=1 on the instance"
+        )]
+        scope: String,
     },
     #[command(about = "Give a targeted surface the keyboard focus")]
     Focus {
@@ -306,6 +318,13 @@ enum Commands {
         target: String,
         #[arg(help = "Dash-separated keystroke description (\"escape\", \"ctrl-c\", \"alt-f\")")]
         keystroke: String,
+        #[arg(
+            long,
+            value_parser = ["workspace", "all"],
+            default_value = "workspace",
+            help = "From inside a Paneflow pane, keystrokes stay in that pane's workspace. `all` reaches every workspace and needs PANEFLOW_IPC_ORCHESTRATION=1 on the instance"
+        )]
+        scope: String,
     },
     #[command(
         subcommand,
@@ -342,7 +361,7 @@ enum Commands {
         pattern: Option<String>,
         #[arg(
             long,
-            help = "Wait until the pane's output goes quiet (no `output_generation` change for `--for` ms) by subscribing to the push stream - zero client-side polling (EP-003 US-007). Single-target"
+            help = "Wait until the pane's agent ends its turn: for a runtime with hooks or screen rules, return on its next idle or attention state (at once if it already waits). Other panes wait for their output to go quiet (no `output_generation` change for `--for` ms) on the push stream. Single-target"
         )]
         idle: bool,
         #[arg(
@@ -428,6 +447,13 @@ enum FlowCommand {
             help = "Final machine-readable report on stdout (live transitions move to stderr)"
         )]
         json: bool,
+        #[arg(
+            long,
+            value_parser = ["workspace", "all"],
+            default_value = "workspace",
+            help = "From inside a Paneflow pane, `send` steps that target a pane the flow did not spawn stay in that pane's workspace. `all` reaches every workspace and needs PANEFLOW_IPC_ORCHESTRATION=1 on the instance"
+        )]
+        scope: String,
     },
 }
 
@@ -559,7 +585,9 @@ impl CliTransport {
 impl IpcTransport for CliTransport {
     fn call(&self, method: &str, params: Value) -> Result<Value, String> {
         match self {
-            Self::Controller(client) => client.call(method, params),
+            Self::Controller(client) => client
+                .call(method, params)
+                .map(|result| worker_state::with_worker_state(method, result)),
             Self::Host(transport) => transport
                 .call(method, params)
                 .map(|result| worker_state::with_worker_state(method, result)),
@@ -621,22 +649,33 @@ fn dispatch(command: Commands, client: &CliTransport) -> Result<i32, CliError> {
             submit,
             paste,
             report_file,
+            force,
+            scope,
         } => send_cmd::send(
             client,
             &target,
             &text,
-            broadcast,
-            submit,
-            paste,
+            send_cmd::SendOptions {
+                broadcast,
+                submit,
+                paste,
+                force,
+                scope_all: scope == "all",
+            },
             report_file.as_deref(),
         ),
         Commands::Focus { target } => control_cmds::focus(client, &target),
-        Commands::Key { target, keystroke } => send_cmd::key(client, &target, &keystroke),
+        Commands::Key {
+            target,
+            keystroke,
+            scope,
+        } => send_cmd::key(client, &target, &keystroke, scope == "all"),
         Commands::Flow(FlowCommand::Run {
             file,
             dry_run,
             json,
-        }) => flow_cmd::run(client, &file, dry_run, json),
+            scope,
+        }) => flow_cmd::run(client, &file, dry_run, json, scope == "all"),
         Commands::Up { file, dry_run } => up_cmd::up(client, &file, dry_run),
         Commands::Wait {
             selector,
@@ -648,17 +687,14 @@ fn dispatch(command: Commands, client: &CliTransport) -> Result<i32, CliError> {
             all,
         } => {
             if idle {
-                match client.controller_socket() {
-                    Some(socket) => wait_cmd::wait_idle(
-                        client,
-                        &socket,
-                        &selector,
-                        for_ms,
-                        timeout,
-                        pattern.as_deref(),
-                    ),
-                    None => Err(CliTransport::no_controller("paneflow wait --idle")),
-                }
+                wait_cmd::wait_idle(
+                    client,
+                    client.controller_socket().as_deref(),
+                    &selector,
+                    for_ms,
+                    timeout,
+                    pattern.as_deref(),
+                )
             } else {
                 let Some(pattern) = pattern else {
                     return Err(CliError::runtime(

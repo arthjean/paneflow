@@ -30,6 +30,7 @@ pub fn run(
     file: &str,
     dry_run: bool,
     json_out: bool,
+    scope_all: bool,
 ) -> Result<i32, CliError> {
     let src = std::fs::read_to_string(file)
         .map_err(|e| CliError::runtime(format!("cannot read '{file}': {e}")))?;
@@ -63,6 +64,8 @@ pub fn run(
         json_out,
         split_count: 0,
         anchor: None,
+        caller: super::send_cmd::caller_session(),
+        scope_all,
     }
     .execute()
 }
@@ -246,6 +249,7 @@ struct UnitRun {
     started: Option<Instant>,
     finished: Option<Instant>,
     error: Option<String>,
+    outside_flow: bool,
 }
 
 impl UnitRun {
@@ -259,6 +263,7 @@ impl UnitRun {
             started: None,
             finished: None,
             error: None,
+            outside_flow: false,
         }
     }
 }
@@ -274,6 +279,8 @@ struct Engine<'c, T: IpcTransport> {
     json_out: bool,
     split_count: usize,
     anchor: Option<u64>,
+    caller: Option<String>,
+    scope_all: bool,
 }
 
 impl<T: IpcTransport> Engine<'_, T> {
@@ -540,14 +547,14 @@ impl<T: IpcTransport> Engine<'_, T> {
         };
         let submit = self.runs[i].unit.submit;
         let before_submit = if submit {
-            super::send_cmd::status_snapshot(self.client, sid)
+            super::send_cmd::status_of(self.client, sid)
         } else {
             None
         };
-        match self.client.call(
-            "surface.send_text",
-            json!({ "surface_id": sid, "text": text, "submit": submit }),
-        ) {
+        match self
+            .client
+            .call("surface.send_text", self.feed_params(i, sid, &text, submit))
+        {
             Ok(result) => {
                 if let Some(msg) = result.get("error").and_then(Value::as_str) {
                     let msg = msg.to_string();
@@ -555,23 +562,22 @@ impl<T: IpcTransport> Engine<'_, T> {
                     return Ok(());
                 }
                 if super::send_cmd::should_wait_for_submit_start(&result) {
-                    match super::send_cmd::wait_for_submit_start(
+                    let start = super::send_cmd::confirm_turn_start(
                         self.client,
                         sid,
                         before_submit.as_ref(),
-                    ) {
-                        super::send_cmd::SubmitStart::Confirmed(_) => {}
-                        super::send_cmd::SubmitStart::Unconfirmed(reason) => {
-                            self.fail(
-                                i,
-                                &format!(
-                                    "submit was written to agent pane {sid}, but no turn start was confirmed within {}ms ({reason})",
-                                    super::send_cmd::SUBMIT_START_TIMEOUT.as_millis()
-                                ),
-                                false,
-                            );
-                            return Ok(());
-                        }
+                    );
+                    if start.started == Some(false) {
+                        self.fail(
+                            i,
+                            &format!(
+                                "submit was written to agent pane {sid}, but no turn start was confirmed within {}ms ({})",
+                                super::send_cmd::SUBMIT_START_TIMEOUT.as_millis(),
+                                start.reason
+                            ),
+                            false,
+                        );
+                        return Ok(());
                     }
                 }
                 let next = self.barrier_or_ready(i, baseline);
@@ -691,7 +697,10 @@ impl<T: IpcTransport> Engine<'_, T> {
                 let target = target.clone();
                 let sid = match self.resolve_flow_target(&target) {
                     Some(result) => result,
-                    None => super::selector::resolve_target(self.client, &target),
+                    None => {
+                        self.runs[i].outside_flow = true;
+                        super::selector::resolve_target(self.client, &target)
+                    }
                 };
                 match sid {
                     Ok(sid) => {
@@ -706,6 +715,14 @@ impl<T: IpcTransport> Engine<'_, T> {
             }
         }
         Ok(())
+    }
+
+    fn feed_params(&self, i: usize, sid: u64, text: &str, submit: bool) -> Value {
+        let mut params = json!({ "surface_id": sid, "text": text, "submit": submit });
+        if self.runs[i].outside_flow {
+            super::send_cmd::add_write_scope(&mut params, self.caller.clone(), self.scope_all);
+        }
+        params
     }
 
     fn resolve_flow_target(&self, target: &str) -> Option<Result<u64, CliError>> {
@@ -1003,7 +1020,7 @@ mod tests {
         let mut run = UnitRun::new(spawn, Some("true".to_string()), None);
         run.surface_id = Some(42);
         let fake = FakeInstance::new(true);
-        let engine = Engine {
+        let mut engine = Engine {
             client: &fake,
             on_failure: OnFailure::FailFast,
             name: "flow".to_string(),
@@ -1014,6 +1031,8 @@ mod tests {
             json_out: true,
             split_count: 0,
             anchor: Some(42),
+            caller: Some("0a9e5266".to_string()),
+            scope_all: false,
         };
         assert_eq!(
             engine
@@ -1036,6 +1055,18 @@ mod tests {
                 .expect("ok"),
             42
         );
+
+        let own = engine.feed_params(0, 42, "go", true);
+        assert!(
+            own.get("scope_session").is_none(),
+            "a pane the flow spawned is fed without the caller's workspace scope"
+        );
+        engine.runs[0].outside_flow = true;
+        let outside = engine.feed_params(0, 7, "go", true);
+        assert_eq!(outside["scope_session"], "0a9e5266");
+        assert!(outside.get("scope").is_none());
+        engine.scope_all = true;
+        assert_eq!(engine.feed_params(0, 7, "go", true)["scope"], "all");
     }
 
     struct FakeInstance {
@@ -1100,7 +1131,7 @@ mod tests {
         )
         .unwrap();
         let fake = FakeInstance::new(false);
-        let err = run(&fake, file.to_str().unwrap(), true, false).expect_err("refused");
+        let err = run(&fake, file.to_str().unwrap(), true, false, false).expect_err("refused");
         assert!(
             err.message.contains("PANEFLOW_IPC_SCRIPTING"),
             "got: {}",
@@ -1120,7 +1151,7 @@ mod tests {
         )
         .unwrap();
         let fake = FakeInstance::new(false);
-        let err = run(&fake, file.to_str().unwrap(), false, false).expect_err("refused");
+        let err = run(&fake, file.to_str().unwrap(), false, false, false).expect_err("refused");
         assert!(
             err.message.contains("PANEFLOW_IPC_ORCHESTRATION"),
             "got: {}",
@@ -1140,7 +1171,7 @@ mod tests {
         )
         .unwrap();
         let fake = FakeInstance::new(true);
-        let code = run(&fake, file.to_str().unwrap(), true, false).expect("ok");
+        let code = run(&fake, file.to_str().unwrap(), true, false, false).expect("ok");
         assert_eq!(code, EXIT_OK);
         assert!(fake.calls.borrow().is_empty(), "no IPC at all (no submit)");
     }
@@ -1178,7 +1209,7 @@ mod tests {
         .unwrap();
         let fake = FakeInstance::new(true);
         fake.push_reads(1, &["building...", "tests passed", "tests passed"]);
-        let code = run(&fake, file.to_str().unwrap(), false, true).expect("ok");
+        let code = run(&fake, file.to_str().unwrap(), false, true, false).expect("ok");
         assert_eq!(code, EXIT_OK);
         let calls = fake.calls.borrow();
         let sent: Vec<&Value> = calls
@@ -1206,7 +1237,7 @@ mod tests {
         .unwrap();
         let fake = FakeInstance::new(true);
         fake.push_reads(1, &["nope"]);
-        let code = run(&fake, file.to_str().unwrap(), false, true).expect("report");
+        let code = run(&fake, file.to_str().unwrap(), false, true, false).expect("report");
         assert_eq!(code, EXIT_TIMEOUT);
         assert!(
             fake.calls

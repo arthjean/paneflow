@@ -1,24 +1,37 @@
 use paneflow_ipc_client::IpcTransport;
-use serde_json::json;
+use paneflow_ipc_client::host_control::session_id_from;
+use serde_json::{Value, json};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use super::selector::{resolve_all, resolve_target};
+use super::worker_state::{
+    BLOCKED, agent_runtime, blocked_reason, foreground_departure, reduced_state, reports_turns,
+    with_host_foreground,
+};
 use super::{CliError, EXIT_OK, EXIT_RUNTIME};
 
-pub(super) const SUBMIT_START_TIMEOUT: Duration = Duration::from_millis(3000);
+pub(super) const SUBMIT_START_TIMEOUT: Duration = Duration::from_secs(5);
 const SUBMIT_START_POLL: Duration = Duration::from_millis(60);
+const CALLER_SESSION_ENV: &str = "PANEFLOW_SESSION_ID";
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct SendOptions {
+    pub broadcast: bool,
+    pub submit: bool,
+    pub paste: bool,
+    pub force: bool,
+    pub scope_all: bool,
+}
 
 pub fn send(
     client: &impl IpcTransport,
     target: &str,
     text: &str,
-    broadcast: bool,
-    submit: bool,
-    paste: bool,
+    options: SendOptions,
     report_file: Option<&str>,
 ) -> Result<i32, CliError> {
-    if broadcast && report_file.is_some() {
+    if options.broadcast && report_file.is_some() {
         return Err(CliError::runtime(
             "send --report-file cannot be combined with --broadcast; use one report file per target",
         ));
@@ -28,21 +41,25 @@ pub fn send(
         Some(report) => prompt_with_report_contract(text, report),
         None => text.to_string(),
     };
-    if broadcast {
-        return send_broadcast(client, target, &text, submit, paste);
+    if options.broadcast {
+        return send_broadcast(client, target, &text, options);
     }
     let surface_id = resolve_target(client, target)?;
-    match send_to(client, surface_id, &text, submit, paste) {
-        Ok(mut result) => {
-            if let Some(report) = report {
-                result["report_file"] = json!(report.path);
-                result["report_sentinel"] = json!(report.sentinel);
-            }
-            super::print_json(&result)?;
-            Ok(EXIT_OK)
-        }
-        Err(e) => Err(e),
+    let mut result = send_to(client, surface_id, &text, options)?;
+    if let Some(report) = report {
+        result["report_file"] = json!(report.path);
+        result["report_sentinel"] = json!(report.sentinel);
     }
+    super::print_json(&result)?;
+    if start_unconfirmed(&result) {
+        eprintln!(
+            "paneflow: the prompt was delivered to pane {surface_id}, but no turn start was confirmed within {}ms ({})",
+            SUBMIT_START_TIMEOUT.as_millis(),
+            result["reason"].as_str().unwrap_or_default()
+        );
+        return Ok(EXIT_RUNTIME);
+    }
+    Ok(EXIT_OK)
 }
 
 struct ReportContract {
@@ -90,40 +107,67 @@ fn prompt_with_report_contract(text: &str, report: &ReportContract) -> String {
     prompt
 }
 
+pub(super) fn caller_session() -> Option<String> {
+    session_id_from(std::env::var(CALLER_SESSION_ENV).ok().as_deref())
+}
+
+pub(super) fn add_write_scope(params: &mut Value, caller: Option<String>, scope_all: bool) {
+    if let Some(caller) = caller {
+        params["scope_session"] = json!(caller);
+    }
+    if scope_all {
+        params["scope"] = json!("all");
+    }
+}
+
+pub(super) fn delivery_refusal(surface_id: u64, status: &Value) -> Option<String> {
+    if reduced_state(status) == Some(BLOCKED) {
+        return Some(format!(
+            "surface {surface_id} is waiting for a decision ({}): answer in the pane or rerun with --force",
+            blocked_reason(status)
+        ));
+    }
+    let runtime = agent_runtime(status)?;
+    let holder = foreground_departure(status, runtime)?;
+    Some(format!(
+        "surface {surface_id} no longer runs {} in the foreground ({holder} has it): rerun with --force to write anyway",
+        runtime.label
+    ))
+}
+
 fn send_to(
     client: &impl IpcTransport,
     surface_id: u64,
     text: &str,
-    submit: bool,
-    paste: bool,
-) -> Result<serde_json::Value, CliError> {
-    let before = if submit {
-        status_snapshot(client, surface_id)
-    } else {
-        None
-    };
-    let mut params = json!({ "surface_id": surface_id, "text": text, "submit": submit });
-    if paste {
+    options: SendOptions,
+) -> Result<Value, CliError> {
+    let mut before = status_of(client, surface_id);
+    if !options.force
+        && let Some(status) = before.as_mut()
+        && agent_runtime(status).is_some()
+    {
+        with_host_foreground(status);
+    }
+    if !options.force
+        && let Some(refusal) = before
+            .as_ref()
+            .and_then(|status| delivery_refusal(surface_id, status))
+    {
+        return Err(CliError::target(refusal));
+    }
+    let mut params = json!({ "surface_id": surface_id, "text": text, "submit": options.submit });
+    if options.paste {
         params["paste"] = json!(true);
     }
+    if options.force {
+        params["force"] = json!(true);
+    }
+    add_write_scope(&mut params, caller_session(), options.scope_all);
     match client.call("surface.send_text", params) {
         Ok(result) => {
             let mut result = super::reject_legacy_error(result)?;
             if should_wait_for_submit_start(&result) {
-                match wait_for_submit_start(client, surface_id, before.as_ref()) {
-                    SubmitStart::Confirmed(reason) => {
-                        result["started"] = json!(true);
-                        result["start_reason"] = json!(reason);
-                    }
-                    SubmitStart::Unconfirmed(reason) => {
-                        result["started"] = json!(false);
-                        result["start_reason"] = json!(reason);
-                        return Err(CliError::runtime(format!(
-                            "submit was written to agent pane {surface_id}, but no turn start was confirmed within {}ms ({reason})",
-                            SUBMIT_START_TIMEOUT.as_millis()
-                        )));
-                    }
-                }
+                confirm_turn_start(client, surface_id, before.as_ref()).annotate(&mut result);
             }
             Ok(result)
         }
@@ -135,79 +179,82 @@ fn send_to(
     }
 }
 
-pub(super) enum SubmitStart {
-    Confirmed(&'static str),
-    Unconfirmed(&'static str),
-}
-
-pub(super) struct StatusSnapshot {
-    state: String,
-    output_generation: Option<u64>,
-}
-
-pub(super) fn status_snapshot(
-    client: &impl IpcTransport,
-    surface_id: u64,
-) -> Option<StatusSnapshot> {
-    let v = client
+pub(super) fn status_of(client: &impl IpcTransport, surface_id: u64) -> Option<Value> {
+    client
         .call("surface.status", json!({ "surface_id": surface_id }))
-        .ok()?;
-    Some(StatusSnapshot {
-        state: v
-            .get("state")
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or("idle")
-            .to_string(),
-        output_generation: v
-            .get("output_generation")
-            .and_then(serde_json::Value::as_u64),
-    })
+        .ok()
+        .filter(|status| status.get("error").is_none())
 }
 
-pub(super) fn wait_for_submit_start(
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct TurnStart {
+    pub started: Option<bool>,
+    pub reason: &'static str,
+    pub state: Option<&'static str>,
+}
+
+impl TurnStart {
+    fn annotate(&self, result: &mut Value) {
+        result["delivered"] = json!(true);
+        result["started"] = json!(self.started);
+        result["reason"] = json!(self.reason);
+        if let Some(state) = self.state {
+            result["state"] = json!(state);
+        }
+    }
+}
+
+pub(super) fn start_unconfirmed(result: &Value) -> bool {
+    result.get("started") == Some(&Value::Bool(false))
+}
+
+pub(super) fn confirm_turn_start(
     client: &impl IpcTransport,
     surface_id: u64,
-    before: Option<&StatusSnapshot>,
-) -> SubmitStart {
+    before: Option<&Value>,
+) -> TurnStart {
+    let baseline = before
+        .filter(|status| agent_runtime(status).is_some_and(reports_turns))
+        .and_then(|status| status.get("state_seq").and_then(Value::as_u64));
+    let Some(baseline) = baseline else {
+        return TurnStart {
+            started: None,
+            reason: "no_signal",
+            state: status_of(client, surface_id)
+                .as_ref()
+                .and_then(reduced_state),
+        };
+    };
     let deadline = Instant::now() + SUBMIT_START_TIMEOUT;
+    let mut last_state = before.and_then(reduced_state);
     loop {
-        if let Ok(status) = client.call("surface.status", json!({ "surface_id": surface_id })) {
-            let state = status
-                .get("state")
-                .and_then(serde_json::Value::as_str)
-                .unwrap_or("idle");
-            let hooked = status
-                .get("hooked")
-                .and_then(serde_json::Value::as_bool)
-                .unwrap_or(false);
-            let state_changed = before.is_none_or(|b| b.state != state);
-            if hooked
-                && state_changed
-                && matches!(state, "thinking" | "waiting_for_input" | "finished")
-            {
-                return SubmitStart::Confirmed("hook_state_changed");
-            }
-            let generation_changed =
-                before
-                    .and_then(|b| b.output_generation)
-                    .is_some_and(|baseline| {
-                        status
-                            .get("output_generation")
-                            .and_then(serde_json::Value::as_u64)
-                            .is_some_and(|generation| generation > baseline)
-                    });
-            if generation_changed {
-                return SubmitStart::Confirmed("output_generation_changed");
+        if let Some(status) = status_of(client, surface_id) {
+            let state = reduced_state(&status);
+            last_state = state.or(last_state);
+            let advanced = status
+                .get("state_seq")
+                .and_then(Value::as_u64)
+                .is_some_and(|seq| seq > baseline);
+            if advanced && state.is_some() {
+                return TurnStart {
+                    started: Some(true),
+                    reason: "state_transition",
+                    state,
+                };
             }
         }
         if Instant::now() >= deadline {
-            return SubmitStart::Unconfirmed("no_hook_state_or_output_confirmation");
+            return TurnStart {
+                started: Some(false),
+                reason: "no_state_transition",
+                state: last_state,
+            };
         }
         std::thread::sleep(SUBMIT_START_POLL);
     }
 }
 
-pub(super) fn should_wait_for_submit_start(result: &serde_json::Value) -> bool {
+pub(super) fn should_wait_for_submit_start(result: &Value) -> bool {
     if !result["submitted"].as_bool().unwrap_or(false) {
         return false;
     }
@@ -219,14 +266,19 @@ fn send_broadcast(
     client: &impl IpcTransport,
     target: &str,
     text: &str,
-    submit: bool,
-    paste: bool,
+    options: SendOptions,
 ) -> Result<i32, CliError> {
     let ids = resolve_all(client, target)?;
     let mut sent: Vec<u64> = Vec::new();
-    let mut failed: Vec<serde_json::Value> = Vec::new();
+    let mut failed: Vec<Value> = Vec::new();
     for id in ids {
-        match send_to(client, id, text, submit, paste) {
+        match send_to(client, id, text, options) {
+            Ok(result) if start_unconfirmed(&result) => failed.push(json!({
+                "surface_id": id,
+                "delivered": true,
+                "started": false,
+                "error": result["reason"],
+            })),
             Ok(_) => sent.push(id),
             Err(e) if e.message.contains("PANEFLOW_IPC_SCRIPTING") && sent.is_empty() => {
                 return Err(e);
@@ -235,16 +287,20 @@ fn send_broadcast(
         }
     }
     let all_ok = failed.is_empty();
-    super::print_json(&json!({ "sent": sent, "failed": failed, "submitted": submit }))?;
+    super::print_json(&json!({ "sent": sent, "failed": failed, "submitted": options.submit }))?;
     Ok(if all_ok { EXIT_OK } else { EXIT_RUNTIME })
 }
 
-pub fn key(client: &impl IpcTransport, target: &str, keystroke: &str) -> Result<i32, CliError> {
+pub fn key(
+    client: &impl IpcTransport,
+    target: &str,
+    keystroke: &str,
+    scope_all: bool,
+) -> Result<i32, CliError> {
     let surface_id = resolve_target(client, target)?;
-    match client.call(
-        "surface.send_keystroke",
-        json!({ "surface_id": surface_id, "keystroke": keystroke }),
-    ) {
+    let mut params = json!({ "surface_id": surface_id, "keystroke": keystroke });
+    add_write_scope(&mut params, caller_session(), scope_all);
+    match client.call("surface.send_keystroke", params) {
         Ok(result) => {
             let result = super::reject_legacy_error(result)?;
             super::print_json(&result)?;
@@ -274,19 +330,32 @@ fn method_disabled_error(error: &str, method: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::Value;
     use std::cell::RefCell;
 
     struct ScriptedTransport {
         calls: RefCell<Vec<(String, Value)>>,
         replies: RefCell<Vec<Result<Value, String>>>,
+        statuses: RefCell<Vec<Value>>,
     }
     impl ScriptedTransport {
         fn new(replies: Vec<Result<Value, String>>) -> Self {
+            Self::with_statuses(replies, Vec::new())
+        }
+
+        fn with_statuses(replies: Vec<Result<Value, String>>, statuses: Vec<Value>) -> Self {
             Self {
                 calls: RefCell::new(Vec::new()),
                 replies: RefCell::new(replies),
+                statuses: RefCell::new(statuses),
             }
+        }
+
+        fn writes(&self) -> usize {
+            self.calls
+                .borrow()
+                .iter()
+                .filter(|(method, _)| method == "surface.send_text")
+                .count()
         }
     }
     impl IpcTransport for ScriptedTransport {
@@ -298,25 +367,12 @@ mod tests {
                 ]}));
             }
             if method == "surface.status" {
-                self.calls
-                    .borrow_mut()
-                    .push((method.to_string(), params.clone()));
-                let mut replies = self.replies.borrow_mut();
-                let scripted_status = replies.first().is_some_and(|r| {
-                    r.as_ref().is_ok_and(|v| {
-                        v.get("state").is_some()
-                            || v.get("hooked").is_some()
-                            || v.get("output_generation").is_some()
-                    })
+                let mut statuses = self.statuses.borrow_mut();
+                return Ok(match statuses.len() {
+                    0 => json!({ "hooked": false, "output_generation": 0 }),
+                    1 => statuses[0].clone(),
+                    _ => statuses.remove(0),
                 });
-                if scripted_status {
-                    return replies.remove(0);
-                }
-                return Ok(json!({
-                    "state": "idle",
-                    "hooked": false,
-                    "output_generation": 0
-                }));
             }
             self.calls
                 .borrow_mut()
@@ -329,11 +385,42 @@ mod tests {
         }
     }
 
+    fn opts(broadcast: bool, submit: bool, paste: bool) -> SendOptions {
+        SendOptions {
+            broadcast,
+            submit,
+            paste,
+            ..SendOptions::default()
+        }
+    }
+
+    fn agent_status(state: &str, state_seq: u64) -> Value {
+        json!({
+            "state": state,
+            "state_seq": state_seq,
+            "hooked": true,
+            "tool": "claude",
+            "agent_runtime": "com.anthropic.claude-code",
+            "foreground_runtime": "com.anthropic.claude-code",
+            "output_generation": 40 + state_seq,
+        })
+    }
+
+    fn agent_reply() -> Result<Value, String> {
+        Ok(json!({
+            "sent": true,
+            "submitted": true,
+            "agent_target": true,
+            "paste": true,
+            "submit_mode": "deferred_paste_cr"
+        }))
+    }
+
     #[test]
     fn send_passes_submit_flag_through() {
         let fake = ScriptedTransport::new(vec![Ok(json!({ "sent": true, "submitted": true }))]);
         assert_eq!(
-            send(&fake, "shard-api", "run", false, true, false, None).expect("ok"),
+            send(&fake, "shard-api", "run", opts(false, true, false), None).expect("ok"),
             EXIT_OK
         );
         let calls = fake.calls.borrow();
@@ -344,19 +431,20 @@ mod tests {
         assert_eq!(send_call.1["submit"], true);
         assert_eq!(send_call.1["surface_id"], 12);
         assert!(send_call.1.get("paste").is_none());
+        assert!(send_call.1.get("force").is_none());
     }
 
     #[test]
     fn send_default_is_not_submitting() {
         let fake = ScriptedTransport::new(vec![Ok(json!({ "sent": true }))]);
-        send(&fake, "shard-api", "run", false, false, false, None).expect("ok");
+        send(&fake, "shard-api", "run", opts(false, false, false), None).expect("ok");
         assert_eq!(fake.calls.borrow()[0].1["submit"], false);
     }
 
     #[test]
     fn paste_flag_is_forwarded_only_when_set() {
         let fake = ScriptedTransport::new(vec![Ok(json!({ "sent": true, "paste": true }))]);
-        send(&fake, "shard-api", "hi", false, true, true, None).expect("ok");
+        send(&fake, "shard-api", "hi", opts(false, true, true), None).expect("ok");
         let calls = fake.calls.borrow();
         let send_call = calls
             .iter()
@@ -367,63 +455,150 @@ mod tests {
     }
 
     #[test]
-    fn submit_to_agent_waits_for_hook_state_start() {
-        let fake = ScriptedTransport::new(vec![
-            Ok(json!({ "state": "idle", "hooked": true, "output_generation": 1 })),
-            Ok(json!({
-                "sent": true,
-                "submitted": true,
-                "agent_target": true,
-                "paste": true
-            })),
-            Ok(json!({ "state": "thinking", "hooked": true, "output_generation": 2 })),
-        ]);
+    fn a_blocked_agent_receives_no_byte_and_fails_as_a_target_error() {
+        let mut blocked = agent_status("waiting_for_input", 3);
+        blocked["message"] = json!("Allow Bash(rm -rf build)?");
+        let fake = ScriptedTransport::with_statuses(vec![agent_reply()], vec![blocked]);
+        let err = send(&fake, "shard-api", "go on", opts(false, true, false), None)
+            .expect_err("a blocked agent refuses the prompt");
+        assert_eq!(err.code, crate::cli::EXIT_TARGET);
+        assert!(
+            err.message.contains("surface 12 is waiting for a decision"),
+            "{}",
+            err.message
+        );
+        assert!(err.message.contains("Allow Bash(rm -rf build)?"));
+        assert!(err.message.contains("--force"));
+        assert_eq!(fake.writes(), 0, "no byte reaches a blocked agent");
+    }
+
+    #[test]
+    fn an_agent_that_left_the_foreground_refuses_the_prompt() {
+        let mut departed = agent_status("finished", 4);
+        departed["foreground_runtime"] = Value::Null;
+        let fake = ScriptedTransport::with_statuses(vec![], vec![departed]);
+        let err = send(&fake, "shard-api", "hello", opts(false, false, false), None)
+            .expect_err("the agent no longer holds the pane");
+        assert_eq!(err.code, crate::cli::EXIT_TARGET);
+        assert!(
+            err.message.contains("no longer runs Claude Code"),
+            "{}",
+            err.message
+        );
+        assert!(err.message.contains("a shell or another program"));
+        assert_eq!(fake.writes(), 0);
+
+        let mut editor = agent_status("finished", 4);
+        editor["foreground_runtime"] = json!("com.example.not-in-catalog");
+        assert!(
+            delivery_refusal(12, &editor)
+                .is_some_and(|refusal| refusal.contains("com.example.not-in-catalog"))
+        );
+    }
+
+    #[test]
+    fn force_bypasses_both_checks_and_says_so_to_the_server() {
+        let blocked = agent_status("waiting_for_input", 3);
+        let fake =
+            ScriptedTransport::with_statuses(vec![Ok(json!({ "sent": true }))], vec![blocked]);
+        let options = SendOptions {
+            force: true,
+            ..opts(false, false, false)
+        };
         assert_eq!(
-            send(&fake, "shard-api", "hi", false, true, false, None).expect("ok"),
+            send(&fake, "shard-api", "y", options, None).expect("forced"),
             EXIT_OK
         );
         let calls = fake.calls.borrow();
-        assert!(
-            calls.iter().any(|(method, _)| method == "surface.status"),
-            "submit start verification probes status"
+        assert_eq!(calls.len(), 1);
+        assert_eq!(
+            calls[0].1["force"], true,
+            "the server logs the forced write"
         );
     }
 
     #[test]
-    fn submit_to_agent_accepts_output_generation_start_confirmation() {
-        let fake = ScriptedTransport::new(vec![
-            Ok(json!({ "state": "idle", "hooked": false, "output_generation": 41 })),
-            Ok(json!({
-                "sent": true,
-                "submitted": true,
-                "agent_target": true,
-                "paste": true
-            })),
-            Ok(json!({ "state": "idle", "hooked": false, "output_generation": 42 })),
-        ]);
-        let result = send_to(&fake, 12, "hi", true, false).expect("output confirms start");
-        assert_eq!(result["started"], true);
-        assert_eq!(result["start_reason"], "output_generation_changed");
+    fn a_plain_shell_is_never_held_by_the_agent_checks() {
+        let shell =
+            json!({ "state": "idle", "state_seq": 0, "hooked": false, "foreground_runtime": null });
+        assert_eq!(delivery_refusal(12, &shell), None);
+        let fake = ScriptedTransport::with_statuses(vec![], vec![shell]);
+        send(&fake, "shard-api", "ls", opts(false, false, false), None).expect("shell write");
+        assert_eq!(fake.writes(), 1);
     }
 
     #[test]
-    fn deferred_paste_submit_without_agent_hint_still_waits_for_start() {
-        let fake = ScriptedTransport::new(vec![
-            Ok(json!({ "state": "idle", "hooked": false, "output_generation": 10 })),
-            Ok(json!({
-                "sent": true,
-                "submitted": true,
-                "agent_target": false,
-                "paste": true,
-                "submit_mode": "deferred_paste_cr",
-                "terminal_bracketed_paste": true
-            })),
-            Ok(json!({ "state": "idle", "hooked": false, "output_generation": 11 })),
-        ]);
-
-        let result = send_to(&fake, 12, "hi", true, false).expect("output confirms start");
+    fn a_turn_starts_only_on_a_state_transition() {
+        let fake = ScriptedTransport::with_statuses(
+            vec![agent_reply()],
+            vec![
+                agent_status("finished", 4),
+                agent_status("finished", 4),
+                agent_status("thinking", 5),
+            ],
+        );
+        let result = send_to(&fake, 12, "hi", opts(false, true, false)).expect("started");
+        assert_eq!(result["delivered"], true);
         assert_eq!(result["started"], true);
-        assert_eq!(result["start_reason"], "output_generation_changed");
+        assert_eq!(result["reason"], "state_transition");
+        assert_eq!(result["state"], "working");
+    }
+
+    #[test]
+    fn the_paste_echo_alone_never_confirms_a_start() {
+        let mut echoed = agent_status("finished", 4);
+        echoed["output_generation"] = json!(9_999);
+        let fake = ScriptedTransport::with_statuses(
+            vec![agent_reply()],
+            vec![agent_status("finished", 4), echoed],
+        );
+        let result = send_to(&fake, 12, "hi", opts(false, true, false)).expect("delivered");
+        assert_eq!(result["delivered"], true);
+        assert_eq!(result["started"], false);
+        assert_eq!(result["reason"], "no_state_transition");
+        assert_eq!(result["state"], "idle");
+    }
+
+    #[test]
+    fn an_unconfirmed_start_prints_the_report_and_exits_like_before() {
+        let fake = ScriptedTransport::with_statuses(
+            vec![agent_reply()],
+            vec![agent_status("finished", 4)],
+        );
+        let code = send(&fake, "shard-api", "hi", opts(false, true, false), None)
+            .expect("the delivery is reported, not raised");
+        assert_eq!(code, EXIT_RUNTIME);
+    }
+
+    #[test]
+    fn a_runtime_without_hooks_or_screen_rules_reports_no_signal() {
+        let quiet = json!({
+            "state": "idle",
+            "state_seq": 2,
+            "agent_runtime": "com.sourcegraph.amp",
+            "foreground_runtime": "com.sourcegraph.amp",
+        });
+        assert!(agent_runtime(&quiet).is_some_and(|runtime| !reports_turns(runtime)));
+        let fake = ScriptedTransport::with_statuses(vec![agent_reply()], vec![quiet]);
+        let result = send_to(&fake, 12, "hi", opts(false, true, false)).expect("delivered");
+        assert_eq!(result["delivered"], true);
+        assert_eq!(result["started"], Value::Null, "{result}");
+        assert_eq!(result["reason"], "no_signal");
+        assert_eq!(result["state"], "idle");
+    }
+
+    #[test]
+    fn an_agent_that_blocks_right_after_the_submit_still_started() {
+        let fake = ScriptedTransport::with_statuses(
+            vec![agent_reply()],
+            vec![
+                agent_status("finished", 4),
+                agent_status("waiting_for_input", 5),
+            ],
+        );
+        let result = send_to(&fake, 12, "hi", opts(false, true, false)).expect("started");
+        assert_eq!(result["started"], true);
+        assert_eq!(result["state"], "blocked");
     }
 
     #[test]
@@ -435,23 +610,28 @@ mod tests {
             "submit_mode": "inline_cr"
         }))]);
 
-        let result = send_to(&fake, 12, "hi", true, false).expect("inline shell submit is ok");
+        let result =
+            send_to(&fake, 12, "hi", opts(false, true, false)).expect("inline shell submit is ok");
         assert!(result.get("started").is_none());
-        assert_eq!(
-            fake.calls
-                .borrow()
-                .iter()
-                .filter(|(method, _)| method == "surface.status")
-                .count(),
-            1,
-            "only the pre-submit snapshot should run"
-        );
+    }
+
+    #[test]
+    fn the_write_carries_the_calling_pane_and_the_widened_scope() {
+        let mut params = json!({});
+        add_write_scope(&mut params, Some("0a9e5266".to_string()), false);
+        assert_eq!(params["scope_session"], "0a9e5266");
+        assert!(params.get("scope").is_none());
+        let mut widened = json!({});
+        add_write_scope(&mut widened, None, true);
+        assert!(widened.get("scope_session").is_none());
+        assert_eq!(widened["scope"], "all");
     }
 
     #[test]
     fn send_multi_match_without_broadcast_is_target_error() {
         let fake = ScriptedTransport::new(vec![]);
-        let err = send(&fake, "shard", "x", false, false, false, None).expect_err("ambiguous");
+        let err =
+            send(&fake, "shard", "x", opts(false, false, false), None).expect_err("ambiguous");
         assert_eq!(err.code, crate::cli::EXIT_TARGET);
         assert!(fake.calls.borrow().is_empty());
     }
@@ -463,7 +643,7 @@ mod tests {
             Ok(json!({ "sent": true })),
         ]);
         assert_eq!(
-            send(&fake, "shard", "x", true, false, false, None).expect("ok"),
+            send(&fake, "shard", "x", opts(true, false, false), None).expect("ok"),
             EXIT_OK
         );
         let calls = fake.calls.borrow();
@@ -477,7 +657,8 @@ mod tests {
             Ok(json!({ "error": "Surface not found" })),
             Ok(json!({ "sent": true })),
         ]);
-        let code = send(&fake, "shard", "x", true, false, false, None).expect("report, not abort");
+        let code =
+            send(&fake, "shard", "x", opts(true, false, false), None).expect("report, not abort");
         assert_eq!(code, EXIT_RUNTIME);
         assert_eq!(fake.calls.borrow().len(), 2, "second pane still served");
     }
@@ -485,7 +666,7 @@ mod tests {
     #[test]
     fn broadcast_no_match_is_target_error() {
         let fake = ScriptedTransport::new(vec![]);
-        let err = send(&fake, "zzz", "x", true, false, false, None).expect_err("no match");
+        let err = send(&fake, "zzz", "x", opts(true, false, false), None).expect_err("no match");
         assert_eq!(err.code, crate::cli::EXIT_TARGET);
         assert!(fake.calls.borrow().is_empty(), "no partial send");
     }
@@ -495,7 +676,7 @@ mod tests {
         let fake = ScriptedTransport::new(vec![Err(
             "server error -32601: surface.send_text disabled".to_string(),
         )]);
-        let err = send(&fake, "shard", "x", true, false, false, None).expect_err("gate off");
+        let err = send(&fake, "shard", "x", opts(true, false, false), None).expect_err("gate off");
         assert_eq!(err.code, EXIT_RUNTIME);
         assert!(err.message.contains("PANEFLOW_IPC_SCRIPTING"));
         assert_eq!(fake.calls.borrow().len(), 1, "aborted after first reply");
@@ -522,9 +703,7 @@ mod tests {
                 &fake,
                 "shard-api",
                 "audit the system",
-                false,
-                false,
-                false,
+                opts(false, false, false),
                 Some("reports/out.md"),
             )
             .expect("ok"),
@@ -548,9 +727,7 @@ mod tests {
             &fake,
             "shard",
             "audit",
-            true,
-            false,
-            false,
+            opts(true, false, false),
             Some("reports/out.md"),
         )
         .expect_err("one report file cannot serve multiple panes");
@@ -564,14 +741,18 @@ mod tests {
         let fake = ScriptedTransport::new(vec![Err(
             "server error -32601: surface.send_keystroke disabled".to_string(),
         )]);
-        let err = key(&fake, "shard-api", "escape").expect_err("gate off");
+        let err = key(&fake, "shard-api", "escape", false).expect_err("gate off");
         assert!(err.message.contains("PANEFLOW_IPC_SCRIPTING"));
 
         let fake = ScriptedTransport::new(vec![Ok(json!({ "sent": true }))]);
-        assert_eq!(key(&fake, "shard-api", "escape").expect("ok"), EXIT_OK);
+        assert_eq!(
+            key(&fake, "shard-api", "escape", true).expect("ok"),
+            EXIT_OK
+        );
         let calls = fake.calls.borrow();
         assert_eq!(calls[0].0, "surface.send_keystroke");
         assert_eq!(calls[0].1["keystroke"], "escape");
+        assert_eq!(calls[0].1["scope"], "all");
     }
 
     #[test]
@@ -579,7 +760,7 @@ mod tests {
         let fake = ScriptedTransport::new(vec![Ok(
             json!({ "error": "keystroke 'enter' would submit (CR/LF); use surface.send_text with submit=true (`paneflow send --submit`) instead" }),
         )]);
-        let err = key(&fake, "shard-api", "enter").expect_err("refused");
+        let err = key(&fake, "shard-api", "enter", false).expect_err("refused");
         assert_eq!(err.code, EXIT_RUNTIME);
         assert!(err.message.contains("send --submit"), "hint present");
     }
@@ -591,7 +772,7 @@ mod tests {
             "sent": true, "length": payload.len(), "submitted": true
         }))]);
         assert_eq!(
-            send(&fake, "shard-api", &payload, false, true, false, None).expect("ok"),
+            send(&fake, "shard-api", &payload, opts(false, true, false), None).expect("ok"),
             EXIT_OK
         );
         let calls = fake.calls.borrow();
