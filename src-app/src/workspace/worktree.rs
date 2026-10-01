@@ -1899,12 +1899,13 @@ mod tests {
         let repo_root = tmp.path().join("repo");
         init_test_repo(&repo_root);
 
-        let claimed = "feat/a b";
+        let claimed = "feat/a+b";
         let colliding = "feat/a-b";
         let claimed_path = worktree_dir(&repo_root, claimed);
+        assert_eq!(claimed_path, worktree_dir(&repo_root, colliding));
         std::fs::create_dir_all(claimed_path.parent().expect("worktree parent"))
             .expect("parent dir");
-        if !fixture::git_succeeds(
+        fixture::run(
             &repo_root,
             &[
                 "worktree",
@@ -1913,9 +1914,7 @@ mod tests {
                 "-b",
                 claimed,
             ],
-        ) {
-            return;
-        }
+        );
         let entries = list_worktrees(&repo_root).expect("list");
 
         assert_eq!(

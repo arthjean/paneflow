@@ -100,12 +100,21 @@ pub(crate) fn committed_repo(root: &Path, files: &[(&str, &str)]) {
     commit_all(root, "init");
 }
 
+pub(crate) fn private_temp_root() -> &'static Path {
+    static ROOT: OnceLock<tempfile::TempDir> = OnceLock::new();
+    ROOT.get_or_init(|| {
+        tempfile::TempDir::new()
+            .unwrap_or_else(|error| panic!("create the private git fixture root: {error}"))
+    })
+    .path()
+}
+
 fn empty_global_config() -> &'static Path {
     static PATH: OnceLock<PathBuf> = OnceLock::new();
     PATH.get_or_init(|| {
-        let path = std::env::temp_dir().join(EMPTY_GLOBAL_CONFIG_NAME);
+        let path = private_temp_root().join(EMPTY_GLOBAL_CONFIG_NAME);
         let file = std::fs::OpenOptions::new()
-            .create(true)
+            .create_new(true)
             .append(true)
             .open(&path)
             .unwrap_or_else(|error| panic!("create {}: {error}", path.display()));

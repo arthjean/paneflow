@@ -4,8 +4,24 @@ use anyhow::{Context, Result};
 pub use paneflow_agent_config::ConfigLock;
 
 pub fn lock_config(path: &Path) -> Result<ConfigLock> {
+    lock_config_in_paneflow_home(path).with_context(|| format!("lock {} failed", path.display()))
+}
+
+#[cfg(not(test))]
+fn lock_config_in_paneflow_home(path: &Path) -> std::io::Result<ConfigLock> {
     paneflow_agent_config::lock_config(path)
-        .with_context(|| format!("lock {} failed", path.display()))
+}
+
+#[cfg(test)]
+fn lock_config_in_paneflow_home(path: &Path) -> std::io::Result<ConfigLock> {
+    paneflow_agent_config::lock_config_in(test_lock_home(), path)
+}
+
+#[cfg(test)]
+fn test_lock_home() -> &'static Path {
+    static HOME: std::sync::OnceLock<tempfile::TempDir> = std::sync::OnceLock::new();
+    HOME.get_or_init(|| tempfile::TempDir::new().expect("config lock home"))
+        .path()
 }
 
 pub fn with_config_lock<T>(path: &Path, f: impl FnOnce() -> Result<T>) -> Result<T> {
@@ -48,6 +64,18 @@ pub(crate) fn write_if_changed_unlocked(path: &Path, contents: &[u8]) -> Result<
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tests_take_the_config_lock_outside_the_paneflow_home() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let config = dir.path().join("settings.json");
+        let lock = lock_config(&config).unwrap();
+        assert!(test_lock_home().join("agent-config.lock").is_file());
+        assert!(
+            paneflow_home::paneflow_home().is_none_or(|home| !test_lock_home().starts_with(home))
+        );
+        drop(lock);
+    }
 
     #[test]
     fn backup_noop_when_absent() {

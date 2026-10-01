@@ -1,6 +1,6 @@
 use std::fs::{File, OpenOptions, TryLockError};
 use std::io::{Error, ErrorKind, Result};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::time::{Duration, Instant};
 
 const LOCK_TIMEOUT: Duration = Duration::from_secs(5);
@@ -11,19 +11,19 @@ pub struct ConfigLock {
     _file: File,
 }
 
-fn lock_path() -> Result<PathBuf> {
+pub fn lock_config(path: &Path) -> Result<ConfigLock> {
     let paneflow_dir = paneflow_home::paneflow_home().ok_or_else(|| {
         Error::new(
             ErrorKind::NotFound,
             "could not resolve the Paneflow home directory",
         )
     })?;
-    std::fs::create_dir_all(&paneflow_dir)?;
-    Ok(paneflow_dir.join("agent-config.lock"))
+    lock_config_in(&paneflow_dir, path)
 }
 
-pub fn lock_config(path: &Path) -> Result<ConfigLock> {
-    acquire_lock(&lock_path()?, path, LOCK_TIMEOUT)
+pub fn lock_config_in(paneflow_dir: &Path, path: &Path) -> Result<ConfigLock> {
+    std::fs::create_dir_all(paneflow_dir)?;
+    acquire_lock(&paneflow_dir.join("agent-config.lock"), path, LOCK_TIMEOUT)
 }
 
 fn acquire_lock(lock_path: &Path, target: &Path, timeout: Duration) -> Result<ConfigLock> {
@@ -57,6 +57,7 @@ fn acquire_lock(lock_path: &Path, target: &Path, timeout: Duration) -> Result<Co
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
 
     #[test]
     fn lock_is_exclusive_and_released_on_drop() {

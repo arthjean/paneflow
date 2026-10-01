@@ -242,7 +242,7 @@ fn empty_hooks_parent() -> PathBuf {
 
 #[cfg(test)]
 fn empty_hooks_parent() -> PathBuf {
-    std::env::temp_dir().join("paneflow-tests-cache")
+    crate::git_fixture::private_temp_root().join("cache")
 }
 
 #[cfg(test)]
