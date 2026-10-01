@@ -64,6 +64,17 @@
   <content_rating type="oars-1.1" />
 
   <releases>
+    <release version="0.17.5" date="2026-10-01">
+      <description>
+        <p>A hardening release. Unsaved editor changes are no longer lost when you close a tab or quit, removing a worktree no longer deletes uncommitted files that git status hid, and background git checks no longer run a repository's hooks or filters. It also adds an insert-path picker, image paste for agents, and an Interface style setting with transparency on Linux.</p>
+        <ul>
+          <li>The MCP bridge works with Claude Code again and reads only the workspace of the agent's session</li>
+          <li>Reset and Clear scroll history now also apply to the session host, and programs that query colors get the Paneflow theme</li>
+          <li>Desktop notifications sent by terminal programs follow the Native OS notifications setting</li>
+          <li>On macOS the sidebar is opaque by default and Next Workspace moves to Ctrl+Tab</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.17.4" date="2026-09-27">
       <description>
         <p>A patch that removes the limit of 20 open workspaces. A new workspace past the twentieth no longer does nothing, and a session with more than 20 workspaces restores all of them.</p>

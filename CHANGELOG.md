@@ -5,25 +5,117 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
 
 ## [Unreleased]
 
+## [0.17.5] - 2026-10-01
+
+Paneflow 0.17.5 comes out of a full audit of the app. Edits in the code editor are no longer lost when you close a tab or quit, removing a worktree no longer deletes uncommitted files that `git status` hid, and the git commands Paneflow runs in the background no longer execute a repository's hooks, filters, or fsmonitor. The terminal and its session host now agree on the theme and on Reset and Clear, the MCP bridge works with Claude Code again, and the IPC and CLI answer with precise errors instead of acting on the wrong pane. The release also adds an insert-path picker, image paste for agents, and an Interface style setting that brings transparency to Linux.
+
+### Upgrade notes
+
+- **Program notifications follow your notification setting.** A desktop notification sent by a program with OSC 9 or OSC 777 used to show whenever its pane was hidden, whatever your settings. It now follows Settings > General > Native OS notifications (`agent_panel.notify_when_agent_waiting`), which is off by default, and a pane sends at most 3 per minute. Turn that toggle on, or set `"agent_panel": {"notify_when_agent_waiting": "PrimaryScreen"}`, to keep build and program notifications.
+- **macOS: the sidebar is opaque by default.** `macos_chrome_material` now defaults to `false`, to match the default `Themed` interface style. Pick `Blended` in Settings > Appearance > Interface style, or set `"macos_chrome_material": true`, to bring the native Sidebar material back.
+- **macOS: Next Workspace moves to `Ctrl+Tab`.** Its default was `Cmd+Tab`, which the app switcher always took, so it never worked. `Ctrl+Tab` no longer reaches programs in the terminal on macOS; remap `next_workspace` if you need it there. On every platform, `Cmd/Ctrl+1` to `9` and Next Workspace now follow the sidebar order, which groups checkouts of the same repository, instead of creation order.
+- **`Ctrl+Shift+I` (`Cmd+Shift+I` on macOS) opens the new path picker** in a terminal pane and no longer reaches the program. Remove or remap `insert_path` if a program you run uses that key.
+- **Pasting an image pastes a file path.** With only an image on the clipboard, Paste used to send `Ctrl+V` (0x16) to the program. Paneflow now saves the image and pastes its path, which Claude Code and Codex attach as an image, including Claude Code on Windows, where `Ctrl+V` attached nothing.
+- **A multi-line paste into a program without bracketed paste asks first.** Each line would run as soon as it arrived, so Paneflow now asks `Paste N lines?` with `Paste` and `Cancel`. One line with no trailing newline, or a paste into a program that enables bracketed paste, never prompts.
+- **IPC and CLI scripts:**
+  - `workspace.close` and `workspace.select` require `index`. `workspace.close` without it used to close the active workspace.
+  - A parameter of the wrong type is refused with JSON-RPC `-32602` instead of falling back to a default. A `"surface_id": "42"` string used to send text to the active pane.
+  - Errors carry specific codes instead of `-32603`: `-32602` invalid parameters, `-32005` confirmation required in Paneflow (unsaved files or busy agents on close), `-32002` timeout, `-32003` the pane runtime is gone or refused the input, `-32000` busy, `-32800` search superseded. `surface.send_text` and `surface.send_keystroke` now fail with `-32003` when the pane did not take the input, where they answered `{"sent": true}` and lost the text, and `surface.read` and `surface.search` fail instead of returning empty results.
+  - `workspace.create` with a layout and `workspace.restore_layout` require `PANEFLOW_IPC_ORCHESTRATION=1` or `PANEFLOW_IPC_SCRIPTING=1` when the layout carries a command, a prompt, an environment, a session, or scrollback.
+  - `surface.split` refuses a `cwd` outside the worktree bound to the tab, and `managed_worktree` opens the pane in the tab bound to that worktree.
+  - The `ai.*` methods are gone from the app socket (`-32601`). Agent status comes from the `paneflow-ai-hook` reporter that `paneflow integrations install <runtime>` sets up; `events.subscribe` still delivers `ai.*` events.
+  - `workspace.current` no longer includes surface scrollback, and `PANEFLOW_ALLOW_MULTIPLE` only takes effect with the exact value `1`.
+- **MCP bridge:**
+  - Reads are scoped to the workspace of the session the agent runs in, through `PANEFLOW_SESSION_ID`. An agent started outside a Paneflow pane now gets every read refused; launch it from a pane, or set `PANEFLOW_MCP_SCOPE=all` to read the whole instance on purpose.
+  - If you set `CLAUDE_CONFIG_DIR` or `OPENCODE_CONFIG_DIR`, run `paneflow mcp install` again: the entry now goes to `$CLAUDE_CONFIG_DIR/.claude.json` and `$OPENCODE_CONFIG_DIR/opencode.json[c]`. The old entry in `~/.claude.json` or `$OPENCODE_CONFIG_DIR/opencode/` stays where it was until you remove it.
+  - A relative `CLAUDE_CONFIG_DIR`, `CODEX_HOME`, or `OPENCODE_CONFIG_DIR` is ignored with a warning, and the default location is used.
+  - Codex started in a pane runs with `--no-daemon`, so its hooks and the bridge see that pane instead of the first pane that started the shared daemon.
+- **Files Paneflow writes:**
+  - A read-only `paneflow.json`, for example a link into the Nix store, is no longer replaced: each change shows `Could not save setting: <key>`.
+  - Symlinked `paneflow.json`, `session.json`, `window-state.json`, and agent configs stay symlinks, and a dangling link fails the write instead of being replaced by a file.
+  - On Linux and macOS, `~/.paneflow` is tightened to `0700` at launch. A home chosen with `PANEFLOW_HOME` keeps its mode.
+  - `PANEFLOW_HOOK_LOG` must be an absolute path; a relative one logs nothing.
+- **IPC socket path.** On macOS, an exported `XDG_RUNTIME_DIR` is now ignored and the socket lives at `$TMPDIR/paneflow/paneflow.sock`. On Linux, an `XDG_RUNTIME_DIR` that is not a writable directory is skipped for `$TMPDIR`, where Paneflow used to refuse to serve IPC at all. Scripts should read `PANEFLOW_SOCKET_PATH`, which every pane exports, rather than hard-code a path.
+- **Terminal environment.** `terminal.env` can no longer set `ZDOTDIR` or `PANEFLOW_ORIG_ZDOTDIR`; each ignored key is logged once. `LANG=en_US.UTF-8` is injected only when `LANG`, `LC_ALL`, and `LC_CTYPE` are all unset.
+- **Sessions kept running through the update stay on the previous session host** until they stop. On those, theme changes do not reach the host, and Clear scroll history and Reset terminal show a toast when the host cannot apply them. Stopping those sessions, or quitting with Stop everything, moves the next launch to the new host.
+
 ### Added
 
-- `Interface style` on Windows, macOS and Linux, in Settings > Appearance under
-  the theme preset and in the command palette. `Themed` paints the app in solid
-  theme colors. `Blended` turns every window material on at once: on Windows,
-  Mica shows through the sidebar and the terminal (`windows_chrome_material`
-  and `windows_terminal_material`); on macOS, the native Sidebar material shows
-  behind the sidebar (`macos_chrome_material`); on Linux, the desktop shows
-  through a theme veil behind the sidebar and a denser one behind the terminal
-  (`linux_chrome_material` and `linux_terminal_material`, also in Settings >
-  Appearance and Settings > Terminal), and the compositor supplies the blur,
-  for example Blur my Shell on GNOME. Setting those switches one by one to
-  different values reads as `Custom`.
+- **Insert-path picker.** `Ctrl+Shift+I` (`Cmd+Shift+I` on macOS), or `Insert path` in the command palette, opens a 420 px picker at the terminal cursor. An empty query lists up to 5 recent paths, then the working directory with folders first and hidden files left out. A query fuzzy-matches a background index of the working directory that follows `.gitignore`, and a query with a separator or `~` browses that folder. `Tab` completes, `Enter` or a click inserts the path relative to the working directory when it is inside it, absolute otherwise, quoted for the pane's shell, and `Esc` closes. Recent paths live in `~/.paneflow/path-history.json`, 50 at most. In a `wsl.exe` pane on Windows, the picker browses `/mnt/<drive>` and the distribution, and inserts Linux paths.
+- **Image paste for agents.** Pasting an image-only clipboard (`Ctrl+Shift+V`, `Ctrl+V` on Linux and Windows, `Cmd+V` on macOS) saves the image under `~/.paneflow/cache/clipboard-images/` and pastes its path. PNG, JPEG, GIF, and WebP are kept as is, BMP and TIFF are converted to PNG, and images older than 7 days are removed at the next image paste. A `wsl.exe` pane receives the `/mnt/c/...` form.
+- **Interface style.** Settings > Appearance, under the theme preset, and `Interface style` in the command palette. `Themed` paints the app in solid theme colors. `Blended` turns on every window material: Mica behind the sidebar and the terminal on Windows, the native Sidebar material on macOS, and on Linux a theme veil behind the sidebar and the title bar with a denser one behind the terminal. When the individual switches disagree, the setting reads `Custom`.
+- **Linux transparency.** New `linux_chrome_material` and `linux_terminal_material` keys, also in Settings > Appearance > Linux > Sidebar transparency and Settings > Terminal > Window > Terminal transparency. The window turns transparent on Wayland and X11; the sidebar veil is 72% opaque on dark themes and 62% on light ones, and the terminal card is a 35% shade. Paneflow requests no blur: your compositor provides it, for example Blur my Shell on GNOME.
+- **`terminal.osc52_clipboard`.** `copy` (default) lets the focused terminal write the clipboard with OSC 52, as before; `off` refuses every OSC 52 write. OSC 52 reads stay denied.
+- **Undo close reattaches the session.** A pane or tab closed without a dialog keeps its session for 5 seconds, and `Cmd/Ctrl+Shift+T` within that time brings back the same process with its screen, styles, links, and cursor. Later, it opens a fresh shell in the same folder, as before. The `Tab closed` toast now stays 5 seconds.
+- **Unsaved-changes dialog.** Closing a tab or a workspace, quitting, or restarting to update with modified files in the code editor asks `Save changes before ...?` with `Cancel`, `Don't Save`, and `Save`. A file that fails to save stays open and nothing is closed.
+- **MCP:** `resources/templates/list` and paging on `pane://surface/{surface_id}/content{?lines,offset}` (`lines` 1 to 4000, default 200).
+- **CLI:** `paneflow help` prints the help and exits 0 (it was an unknown-verb error), `paneflow --help` lists every verb, and `paneflow mcp install --force-dev` is required to point agents at a debug build.
 
 ### Changed
 
-- On macOS the sidebar is opaque by default, to match the default `Themed`
-  style: `macos_chrome_material` now defaults to `false`. Pick `Blended`, or
-  set it to `true`, to bring the native Sidebar material back.
+- **Toasts** lose the check icon on success (errors keep their alert glyph), become a 20 px squircle with 16 by 12 px padding, and show an arrow cursor instead of the terminal I-beam. At most 5 wait in the queue, and a repeat of the last one is dropped.
+- **Hover and selection tints** of sidebar rows, menus, Settings navigation, and title bar controls derive from the theme text color, 10% on hover and 16% when active, instead of fixed white or gray. The active pane tab uses the same tint instead of a solid fill.
+- **Multi-agent actions cover every tab.** Broadcast, jump to the next waiting agent (`Cmd/Ctrl+Shift+J`), the attention queue (`Cmd/Ctrl+Shift+U`), and fleet search (`Alt+F`) reach panes in inactive tabs and panes hidden by a zoom. Switching tabs no longer removes panes from their broadcast group.
+- **Focus returns where it was** after the attention queue, fleet search, the broadcast picker, the close and quit dialogs, the unsaved-changes dialog, and the pane palette.
+- **Swap mode** (`Cmd/Ctrl+Shift+S`) marks the source pane with `Swap: pick a direction, Esc cancels`, stays in its own window, and ends when the source pane closes.
+- **Accessibility:** toggles, selects, filter fields, window controls, text fields, and pane header buttons expose roles and names, and show their label as a tooltip. Selects open from the keyboard. An agent error in a pane header shows an alert icon instead of a red dot. Reduce motion now also stops toast, progress, and spinner animations. The `Install MCP bridge` button meets 4.5:1 contrast on every built-in theme.
+- **Updates** no longer fail when a download takes longer than 30 seconds: a download now stops only after 60 seconds without data or 15 minutes in total.
+- **Reset terminal** (`Cmd/Ctrl+Shift+R`) resets the emulator and the session host instead of typing `ESC c` into the program. **Clear scroll history** (`Cmd/Ctrl+Shift+K`, `Cmd+K` on macOS) also clears the host, so the history no longer comes back after a reattach, a restart, or in the saved final output, and on the alternate screen it keeps the full-screen program's display.
+- **Programs that ask for colors get the Paneflow theme.** OSC 10, 11, and 4 queries, the dark or light report (`CSI ?996n`, mode 2031), and the window and cell size in pixels now use the real theme and cell size instead of the engine defaults and 8 by 16 px cells.
+- **Settings > Shortcuts** lists every key bound to an action, `Ctrl+-` and `⌘-` read correctly, and Escape with the theme menu open closes only that menu.
+- `paneflow wait --pattern` matches a second occurrence of a line it already saw, fails when it cannot read the starting screen, and `paneflow wait --idle` exits 1 when the pane closes.
+- Open in editor skips terminal editors named by `$VISUAL` or `$EDITOR`, such as vim or nvim, which used to start without a terminal.
+- Package metadata (AppStream, `.desktop`, Debian) describes Paneflow as a native terminal multiplexer for coding agents.
+
+### Fixed
+
+- **Code editor:** `Ctrl+S` under the "changed on disk" banner no longer overwrites the other version, and `Keep mine` overrides only the version the banner showed. A write that lands while saving becomes a conflict instead of being overwritten. Reloading a file that turned binary, non-UTF-8, or larger than 10 MiB shows that state instead of "deleted", and saving a symlinked file keeps the link. On Linux, a program merely opening the file, Paneflow included, no longer triggers a reload.
+- **Hunk revert** in the Changes tab leaves line endings outside the hunk alone, refuses when the file changed on disk, and refuses symlinks and read-only files instead of replacing them.
+- **Worktrees:** `Remove worktree` in the tab menu always confirms, and rechecks running sessions before deleting. The clean check now sees untracked files hidden by `status.showUntrackedFiles=no` and modified submodules set to `ignore=all`, which used to be deleted without a snapshot. A kept worktree shows why in a toast, and so does a `.worktreeinclude` entry that cannot be copied. `paneflow up` setup commands are no longer killed by a long error output, and print their last error lines on timeout.
+- **Git state:** a background check no longer takes `index.lock`, so an agent's `git commit` no longer fails on it. A `cd` into another repository no longer paints that repository's branch on the workspace, a failed check keeps the previous diff stats instead of showing 0, a branch named like a tag no longer reads `heads/<name>`, and reftable repositories no longer show `.invalid`. A failed pull request check retries after 10 minutes instead of at the next launch.
+- **Terminal:**
+  - A burst of bells or notifications no longer marks a running pane as exited.
+  - Mouse reports land on the right cell with fractional cell sizes, and the 1015 and 1016 mouse modes are supported.
+  - Ctrl or Cmd link hover works while scrolled back.
+  - Dragging from a link selects text instead of opening it.
+  - A selection over 400 KB keeps the selection and says it was not copied.
+  - IME preedit text is visible, and the glyph under a block cursor stays readable on light themes.
+  - The shell integration reports working directories with spaces, `%`, `#`, or non-ASCII names correctly, including under macOS `/bin/bash`, and ignores directories reported by a remote host over SSH.
+  - A missing or non-executable `default_shell` falls back to the platform shell with a toast, and `default_shell` accepts `~/`.
+  - Restoring many panes at once no longer lets a shell read a half-written integration script.
+  - On Windows, files dropped or pasted into a `wsl.exe` pane are quoted for the Linux shell, so their backslashes survive.
+- **Text fields:** the IME candidate window follows the caret in multi-line fields, a click lands on the right character in fields away from the window edge, the terminal search field keeps the terminal shortcuts and copies and pastes into itself, and Markdown search is a real text field with a cursor, paste, and IME.
+- **Responsiveness:**
+  - Reading and searching a pane's scrollback no longer runs on the render thread, so `paneflow wait` no longer stalls the window.
+  - Session restore no longer blocks on a missing or unresponsive folder, such as a stuck network mount: a vanished workspace folder opens in the launch folder with a toast.
+  - Links, help, and release pages open off the render thread and say so when no browser could be started.
+  - On Linux and macOS, a background job started by your shell profile no longer makes Paneflow lose the `PATH` it imports from your login shell.
+- **IPC and CLI:** a request reported as timed out no longer runs afterwards, a multi-line prompt from a workspace template or `workspace.up` arrives as one paste instead of submitting each line, and `paneflow flow` units with their own worktree run in that worktree instead of the first unit's checkout. The CLI gives up on an unreachable Paneflow after 10 seconds, and `paneflow search --human` prints real line numbers.
+- **Panes:** a service chip no longer labels a port with the framework printed for another one, a pane is named after the program in the foreground of its terminal rather than a background helper, and on macOS listening ports are found past the first 1024 file descriptors.
+- **MCP bridge:** `list_panes`, `read_pane`, and `search_pane` work from Claude Code again; every call failed on the `_meta` field Claude Code sends. Reads follow a tab moved to another workspace, and a terminal stacked behind another in its pane can be read.
+- **Agent integrations:**
+  - Updating the Codex MCP entry keeps your `env`, timeouts, tool lists, and `enabled = false`.
+  - Codex hooks work under a Windows profile with a space in its name.
+  - Gemini's `settings.json` with comments is edited in place, and a user `enabled: false` in opencode is kept.
+  - Two Paneflow helper folders on `PATH` no longer make the agent shim loop, and helper folders of past versions are removed at startup.
+  - An agent waiting for input lights its pane's attention marker even without a message, agent rows follow a tab dragged to another workspace, and two agents of the same tool keep separate rows.
+  - The Sessions sidebar keeps a Claude or Pi session whose log has a line cut in the middle of a character.
+- **Workspaces and tabs:** undo close pane restores into the workspace and tab it came from, a rename no longer lands on another tab after a close, the close button of a modified file tab ignores a double click, hiding the sidebar during a rename keeps the typed name, and toggling the sidebar while Settings is open closes Settings first.
+- **Settings:** fast changes, such as clicking a stepper, no longer snap back, and a value the schema rejects says so instead of doing nothing. `Reset all to defaults` first saves `paneflow.json.before-reset`, and recording a shortcut while filtering binds the action you picked. An invalid `paneflow.json` being edited no longer resets the theme, config errors are now logged on macOS and Windows, and the JSON schema accepts the `path` and `session` surface keys Paneflow writes.
+- **Updates:** on a macOS or Windows install Paneflow cannot classify, Update opens the release page instead of failing on the Linux tarball.
+- **macOS menus** bring the Paneflow window forward and act on it when it is minimized or another window is in front, Quit works with no window open, and `Window > Next Workspace` follows the sidebar order.
+- **Files:** a FIFO in place of `paneflow.json`, `session.json`, or an open file no longer hangs Paneflow, including at startup.
+- Telemetry toasts are in English.
+
+### Security
+
+- Background git commands no longer run a repository's fsmonitor, hooks, external diff, textconv, or filter drivers declared in its own config, so opening an untrusted repository no longer executes its code. Filters from your global or system config, such as Git LFS, still apply.
+- `.worktreeinclude` copies recreate symlinks as links and never follow them, so a `.env` linked to a secret outside the repository is no longer copied into a new worktree.
+- Update downloads follow at most 5 redirects, each over HTTPS to a GitHub host, and the release page link is validated.
+- A dev server URL in a service chip is used only when it is a real loopback address on the detected port.
+- An MCP bridge in a session with no workspace reaches only its own pane, where it could read every other such session.
+- Kitty graphics PNGs are capped at 8192 px per side before decoding. A long image such as 16384 by 1024 px, accepted before, is now refused.
+- Every authorized write into a pane through IPC is logged at info level under `paneflow::ipc::write`, with the method, pane, caller, length, and authorization, never the text. Only `ai_unrestricted` writes were logged before, under `paneflow::ipc::unrestricted`.
 
 ## [0.17.4] - 2026-09-27
 

@@ -4358,7 +4358,7 @@ dependencies = [
 
 [[package]]
 name = "paneflow-agent-config"
-version = "0.17.4"
+version = "0.17.5"
 dependencies = [
  "dirs",
  "log",
@@ -4371,7 +4371,7 @@ dependencies = [
 
 [[package]]
 name = "paneflow-ai-hook"
-version = "0.17.4"
+version = "0.17.5"
 dependencies = [
  "interprocess",
  "paneflow-agent-config",
@@ -4382,7 +4382,7 @@ dependencies = [
 
 [[package]]
 name = "paneflow-app"
-version = "0.17.4"
+version = "0.17.5"
 dependencies = [
  "anyhow",
  "clap",
@@ -4471,7 +4471,7 @@ dependencies = [
 
 [[package]]
 name = "paneflow-config"
-version = "0.17.4"
+version = "0.17.5"
 dependencies = [
  "dirs",
  "log",
@@ -4487,7 +4487,7 @@ dependencies = [
 
 [[package]]
 name = "paneflow-ghostty-smoke"
-version = "0.17.4"
+version = "0.17.5"
 dependencies = [
  "anyhow",
  "libc",
@@ -4506,7 +4506,7 @@ dependencies = [
 
 [[package]]
 name = "paneflow-host"
-version = "0.17.4"
+version = "0.17.5"
 dependencies = [
  "base64 0.22.1",
  "clap",
@@ -4532,7 +4532,7 @@ dependencies = [
 
 [[package]]
 name = "paneflow-ipc-client"
-version = "0.17.4"
+version = "0.17.5"
 dependencies = [
  "interprocess",
  "libc",
@@ -4544,7 +4544,7 @@ dependencies = [
 
 [[package]]
 name = "paneflow-libghostty-sys"
-version = "0.17.4"
+version = "0.17.5"
 dependencies = [
  "serde",
  "sha2 0.10.9",
@@ -4554,7 +4554,7 @@ dependencies = [
 
 [[package]]
 name = "paneflow-mcp"
-version = "0.17.4"
+version = "0.17.5"
 dependencies = [
  "paneflow-home",
  "paneflow-ipc-client",
@@ -4564,7 +4564,7 @@ dependencies = [
 
 [[package]]
 name = "paneflow-mcp-install"
-version = "0.17.4"
+version = "0.17.5"
 dependencies = [
  "anyhow",
  "dirs",
@@ -4578,7 +4578,7 @@ dependencies = [
 
 [[package]]
 name = "paneflow-process"
-version = "0.17.4"
+version = "0.17.5"
 dependencies = [
  "log",
  "win32job",
@@ -4587,7 +4587,7 @@ dependencies = [
 
 [[package]]
 name = "paneflow-serve"
-version = "0.17.4"
+version = "0.17.5"
 dependencies = [
  "interprocess",
  "log",
@@ -4607,7 +4607,7 @@ dependencies = [
 
 [[package]]
 name = "paneflow-shim"
-version = "0.17.4"
+version = "0.17.5"
 dependencies = [
  "ctrlc",
  "libc",
@@ -4618,7 +4618,7 @@ dependencies = [
 
 [[package]]
 name = "paneflow-telemetry"
-version = "0.17.4"
+version = "0.17.5"
 dependencies = [
  "log",
  "semver",
@@ -4630,7 +4630,7 @@ dependencies = [
 
 [[package]]
 name = "paneflow-terminal-ghostty"
-version = "0.17.4"
+version = "0.17.5"
 dependencies = [
  "libc",
  "paneflow-libghostty-sys",
@@ -4641,7 +4641,7 @@ dependencies = [
 
 [[package]]
 name = "paneflow-textdiff"
-version = "0.17.4"
+version = "0.17.5"
 dependencies = [
  "imara-diff",
 ]
