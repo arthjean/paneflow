@@ -77,6 +77,7 @@ pub enum LifecycleSource {
 #[serde(rename_all = "snake_case")]
 pub enum LifecycleAuthority {
     Complete,
+    Screen,
     None,
 }
 
@@ -102,22 +103,44 @@ pub struct Integration {
     pub hook_adapter: HookAdapter,
 }
 
-#[derive(Debug, Clone, Copy, Deserialize)]
-#[serde(rename_all = "snake_case")]
+pub const ACCEPTED_HOOK_ADAPTERS: &str = "none, claude, codex";
+pub const INSTALLER_HOOK_ADAPTERS: &str = "claude, codex";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(try_from = "String")]
 pub enum HookAdapter {
     Claude,
     Codex,
-    Codebuddy,
-    Qoder,
-    Gemini,
-    Cursor,
-    Opencode,
-    Hermes,
-    Grok,
-    Muse,
-    Pi,
-    Dsh,
     None,
+}
+
+impl HookAdapter {
+    fn has_installer(self) -> bool {
+        matches!(self, Self::Claude | Self::Codex)
+    }
+
+    fn name(self) -> &'static str {
+        match self {
+            Self::Claude => "claude",
+            Self::Codex => "codex",
+            Self::None => "none",
+        }
+    }
+}
+
+impl TryFrom<String> for HookAdapter {
+    type Error = String;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        match value.as_str() {
+            "claude" => Ok(Self::Claude),
+            "codex" => Ok(Self::Codex),
+            "none" => Ok(Self::None),
+            other => Err(format!(
+                "integration.hook_adapter '{other}' has no installer; accepted adapters: {ACCEPTED_HOOK_ADAPTERS}"
+            )),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -283,12 +306,27 @@ fn validate(descriptors: &[LocatedDescriptor]) -> Result<(), String> {
                 path.display()
             ));
         }
-        if runtime.lifecycle.source == LifecycleSource::Hooks
-            && matches!(runtime.integration.hook_adapter, HookAdapter::None)
+        if runtime.lifecycle.authority == LifecycleAuthority::Screen
+            && runtime.lifecycle.fallback != LifecycleFallback::Screen
         {
             errors.push(format!(
-                "{}: lifecycle.source = 'hooks' requires integration.hook_adapter",
+                "{}: lifecycle.authority = 'screen' requires fallback = 'screen'",
                 path.display()
+            ));
+        }
+        let adapter = runtime.integration.hook_adapter;
+        if runtime.lifecycle.authority == LifecycleAuthority::Complete && !adapter.has_installer() {
+            errors.push(format!(
+                "{}: lifecycle.authority = 'complete' requires an integration.hook_adapter with an installer, got '{}'; accepted adapters: {INSTALLER_HOOK_ADAPTERS}",
+                path.display(),
+                adapter.name()
+            ));
+        }
+        if adapter.has_installer() && runtime.lifecycle.authority != LifecycleAuthority::Complete {
+            errors.push(format!(
+                "{}: integration.hook_adapter = '{}' installs lifecycle hooks and requires lifecycle.authority = 'complete'",
+                path.display(),
+                adapter.name()
             ));
         }
         if let Some(screen) = &runtime.screen {
@@ -522,6 +560,7 @@ fn source(value: LifecycleSource) -> &'static str {
 fn authority(value: LifecycleAuthority) -> &'static str {
     match value {
         LifecycleAuthority::Complete => "Complete",
+        LifecycleAuthority::Screen => "Screen",
         LifecycleAuthority::None => "None",
     }
 }
@@ -537,16 +576,6 @@ fn hook_adapter(value: HookAdapter) -> &'static str {
     match value {
         HookAdapter::Claude => "Claude",
         HookAdapter::Codex => "Codex",
-        HookAdapter::Codebuddy => "Codebuddy",
-        HookAdapter::Qoder => "Qoder",
-        HookAdapter::Gemini => "Gemini",
-        HookAdapter::Cursor => "Cursor",
-        HookAdapter::Opencode => "Opencode",
-        HookAdapter::Hermes => "Hermes",
-        HookAdapter::Grok => "Grok",
-        HookAdapter::Muse => "Muse",
-        HookAdapter::Pi => "Pi",
-        HookAdapter::Dsh => "Dsh",
         HookAdapter::None => "None",
     }
 }
@@ -674,6 +703,69 @@ command = "{alias}"
         assert!(error.contains("differs from directory name"));
         assert!(error.contains("duplicate id"));
         assert!(error.contains("conflicts with runtime"));
+    }
+
+    #[test]
+    fn a_complete_authority_without_an_installer_fails_naming_the_file_field_and_adapters() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let text = descriptor("alpha", "com.example.alpha", "alpha")
+            .replace("source = \"output\"", "source = \"hooks\"")
+            .replace("authority = \"none\"", "authority = \"complete\"");
+        write_runtime(temp.path(), "alpha", &text);
+        let error = discover_and_validate(temp.path()).unwrap_err();
+        assert!(error.contains("alpha"), "{error}");
+        assert!(error.contains("runtime.toml"), "{error}");
+        assert!(error.contains("lifecycle.authority"), "{error}");
+        assert!(error.contains("integration.hook_adapter"), "{error}");
+        assert!(
+            error.contains("accepted adapters: claude, codex"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn a_hook_adapter_without_an_installer_fails_listing_the_accepted_adapters() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let text = descriptor("alpha", "com.example.alpha", "alpha")
+            .replace("authority = \"none\"", "authority = \"complete\"")
+            .replace("hook_adapter = \"none\"", "hook_adapter = \"gemini\"");
+        write_runtime(temp.path(), "alpha", &text);
+        let error = discover_and_validate(temp.path()).unwrap_err();
+        assert!(error.contains("runtime.toml"), "{error}");
+        assert!(
+            error.contains("integration.hook_adapter 'gemini'"),
+            "{error}"
+        );
+        assert!(
+            error.contains("accepted adapters: none, claude, codex"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn an_installer_adapter_requires_the_complete_authority() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let text = descriptor("alpha", "com.example.alpha", "alpha")
+            .replace("hook_adapter = \"none\"", "hook_adapter = \"claude\"");
+        write_runtime(temp.path(), "alpha", &text);
+        let error = discover_and_validate(temp.path()).unwrap_err();
+        assert!(
+            error.contains("requires lifecycle.authority = 'complete'"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn a_screen_authority_requires_the_screen_fallback() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let text = descriptor("alpha", "com.example.alpha", "alpha")
+            .replace("authority = \"none\"", "authority = \"screen\"");
+        write_runtime(temp.path(), "alpha", &text);
+        let error = discover_and_validate(temp.path()).unwrap_err();
+        assert!(
+            error.contains("lifecycle.authority = 'screen' requires fallback = 'screen'"),
+            "{error}"
+        );
     }
 
     #[test]

@@ -19,16 +19,16 @@ script_path_signatures = []
 strip_inherited = []
 
 [lifecycle]
-source = "hooks"
-authority = "complete"
+source = "output"
+authority = "none"
 fallback = "none"
 escape_cancels_turn = false
 attention_clears_on_output = false
 anchor_start_event_to_output = false
 
 [integration]
-summary = "Installs Paneflow lifecycle hooks in Grok's global hook directory."
-hook_adapter = "grok"
+summary = "Grok is detected from its process; Paneflow reads no turn status from it."
+hook_adapter = "none"
 
 [[suggested_presets]]
 id = "grok"

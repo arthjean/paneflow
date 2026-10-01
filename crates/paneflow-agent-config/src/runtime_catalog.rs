@@ -15,6 +15,7 @@ pub enum RuntimeLifecycleSource {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RuntimeLifecycleAuthority {
     Complete,
+    Screen,
     None,
 }
 
@@ -28,16 +29,6 @@ pub enum RuntimeLifecycleFallback {
 pub enum RuntimeHookAdapter {
     Claude,
     Codex,
-    Codebuddy,
-    Qoder,
-    Gemini,
-    Cursor,
-    Opencode,
-    Hermes,
-    Grok,
-    Muse,
-    Pi,
-    Dsh,
     None,
 }
 

@@ -3,8 +3,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{anyhow, bail, Context, Result};
 use paneflow_agent_config::claude_hooks::{cmd_command_word, sh_command_word, MANAGED_MARKER};
 use paneflow_agent_config::{
-    runtime_by_command_alias, runtime_by_slug, Runtime, RuntimeHookAdapter,
-    RuntimeLifecycleAuthority, RUNTIMES,
+    runtime_by_command_alias, runtime_by_slug, Runtime, RuntimeHookAdapter, RUNTIMES,
 };
 use serde_json::{json, Value};
 
@@ -169,11 +168,10 @@ fn installed_evidence(paths: &ConfigPaths, runtime: &Runtime) -> bool {
 }
 
 fn has_installer(runtime: &Runtime) -> bool {
-    runtime.lifecycle.authority != RuntimeLifecycleAuthority::None
-        && matches!(
-            runtime.integration.hook_adapter,
-            RuntimeHookAdapter::Claude | RuntimeHookAdapter::Codex
-        )
+    matches!(
+        runtime.integration.hook_adapter,
+        RuntimeHookAdapter::Claude | RuntimeHookAdapter::Codex
+    )
 }
 
 pub fn install_integration(
@@ -883,6 +881,59 @@ mod tests {
                 bridge_binary,
             },
         )
+    }
+
+    #[test]
+    fn every_runtime_claims_complete_authority_exactly_when_it_has_an_installer() {
+        use paneflow_agent_config::RuntimeLifecycleAuthority;
+        for runtime in RUNTIMES {
+            assert_eq!(
+                runtime.lifecycle.authority == RuntimeLifecycleAuthority::Complete,
+                has_installer(runtime),
+                "{}",
+                runtime.slug
+            );
+        }
+        let installers: Vec<_> = RUNTIMES
+            .iter()
+            .filter(|runtime| has_installer(runtime))
+            .map(|runtime| runtime.slug)
+            .collect();
+        assert_eq!(installers, ["claude-code", "codex"]);
+        let (_directory, paths, binaries) = fixture();
+        for slug in [
+            "codebuddy",
+            "cursor-agent",
+            "gemini",
+            "muse-code",
+            "opencode",
+            "qoder",
+            "hermes",
+            "grok",
+        ] {
+            let runtime = runtime_by_slug(slug).expect("runtime");
+            let summary = runtime.integration.summary.to_ascii_lowercase();
+            assert!(
+                !summary.contains("hook") && !summary.contains("install"),
+                "{slug}: {summary}"
+            );
+            assert!(
+                install_integration_at(&paths, slug, &binaries, None).is_err(),
+                "{slug}"
+            );
+        }
+        let gemini = runtime_by_slug("gemini").expect("gemini");
+        assert_eq!(
+            gemini.lifecycle.authority,
+            RuntimeLifecycleAuthority::Screen
+        );
+        assert_eq!(
+            runtime_by_slug("opencode")
+                .expect("opencode")
+                .lifecycle
+                .authority,
+            RuntimeLifecycleAuthority::None
+        );
     }
 
     #[test]

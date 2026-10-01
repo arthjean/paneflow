@@ -19,16 +19,16 @@ script_path_signatures = []
 strip_inherited = []
 
 [lifecycle]
-source = "hooks"
-authority = "complete"
+source = "output"
+authority = "none"
 fallback = "none"
 escape_cancels_turn = false
 attention_clears_on_output = true
 anchor_start_event_to_output = true
 
 [integration]
-summary = "Installs Paneflow lifecycle hooks in Cursor Agent's global configuration."
-hook_adapter = "cursor"
+summary = "Cursor Agent is detected from its process; Paneflow reads no turn status from it."
+hook_adapter = "none"
 
 [[suggested_presets]]
 id = "cursor"

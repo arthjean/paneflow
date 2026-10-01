@@ -29,7 +29,7 @@ anchor_start_event_to_output = true
 
 [integration]
 summary = "DeepSeek Harness reports turn activity through the Claude Code hooks bridge; its stream is not a lifecycle authority."
-hook_adapter = "dsh"
+hook_adapter = "none"
 
 [[suggested_presets]]
 id = "deepseek_harness"

@@ -19,8 +19,8 @@ script_path_signatures = []
 strip_inherited = []
 
 [lifecycle]
-source = "hooks"
-authority = "complete"
+source = "output"
+authority = "screen"
 fallback = "screen"
 escape_cancels_turn = true
 attention_clears_on_output = true
@@ -31,8 +31,8 @@ working = ["esc to cancel"]
 idle_prompt = ["Type your message", "> Type your message"]
 
 [integration]
-summary = "Installs Paneflow lifecycle hooks in Gemini CLI's global settings."
-hook_adapter = "gemini"
+summary = "Gemini CLI turn status is read from its screen."
+hook_adapter = "none"
 
 [[suggested_presets]]
 id = "gemini"
