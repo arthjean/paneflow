@@ -547,8 +547,9 @@ impl PaneFlowApp {
                     .animated_hover(move |style, delta| {
                         style.bg(lerp_color(ui.surface.opacity(0.0), ui.surface, delta));
                     })
-                    .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                    .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
                         this.delete_button(&del_id, cx);
+                        this.custom_buttons_modal_focus.focus(window, cx);
                         cx.stop_propagation();
                     }))
                     .child(

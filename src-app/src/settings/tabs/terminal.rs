@@ -1,6 +1,6 @@
 use gpui::{
-    ClickEvent, Context, CursorStyle, Hsla, InteractiveElement, IntoElement, MouseButton,
-    ParentElement, Rgba, SharedString, Styled, div, prelude::*, px,
+    ClickEvent, Context, CursorStyle, Hsla, InteractiveElement, IntoElement, ParentElement, Rgba,
+    SharedString, Styled, div, prelude::*, px,
 };
 use serde_json::{Value, json};
 
@@ -604,27 +604,26 @@ impl PaneFlowApp {
 
         let top = div()
             .id("term-cursor-color-row")
+            .accessible_control(gpui::accesskit::Role::ComboBox, search::CURSOR_COLOR.title)
+            .aria_expanded(is_open)
             .flex()
             .flex_row()
             .items_center()
             .gap(px(16.))
             .px(px(12.))
             .py(px(10.))
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(move |this, _, window, cx| {
-                    cx.stop_propagation();
-                    this.font_dropdown_open = false;
-                    this.font_search.clear();
-                    this.terminal_dropdown = if is_open {
-                        None
-                    } else {
-                        Some(TerminalDropdown::CursorColor)
-                    };
-                    this.settings_focus.focus(window, cx);
-                    cx.notify();
-                }),
-            )
+            .on_press(cx.listener(move |this, _, window, cx| {
+                cx.stop_propagation();
+                this.font_dropdown_open = false;
+                this.font_search.clear();
+                this.terminal_dropdown = if is_open {
+                    None
+                } else {
+                    Some(TerminalDropdown::CursorColor)
+                };
+                this.settings_focus.focus(window, cx);
+                cx.notify();
+            }))
             .child(setting_text(
                 ui,
                 search::CURSOR_COLOR.title,

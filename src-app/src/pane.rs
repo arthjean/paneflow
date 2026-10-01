@@ -919,6 +919,7 @@ impl Pane {
     fn action_button(
         &self,
         id: &'static str,
+        label: &'static str,
         icon_path: &'static str,
         handler: impl Fn(&gpui::ClickEvent, &mut Window, &mut App) + 'static,
         cx: &mut Context<Self>,
@@ -926,6 +927,7 @@ impl Pane {
         let ui = pane_colors();
         self.action_button_shell(
             SharedString::from(id),
+            label,
             crate::settings::components::render_logo(icon_path, false, px(14.), ui.muted),
             ui.muted,
             Some(ui.text),
@@ -972,6 +974,7 @@ impl Pane {
     fn header_button_shell(
         &self,
         id: SharedString,
+        label: &'static str,
         icon: AnyElement,
         size: f32,
         base_tint: Hsla,
@@ -990,6 +993,7 @@ impl Pane {
         let hover_background = crate::app::constants::sidebar_tab_hover_background();
         let button = div()
             .id(id.clone())
+            .accessible_control(gpui::accesskit::Role::Button, label)
             .flex()
             .flex_none()
             .items_center()
@@ -1073,9 +1077,11 @@ impl Pane {
         .into_any_element()
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn action_button_shell(
         &self,
         id: SharedString,
+        label: &'static str,
         icon: AnyElement,
         base_tint: Hsla,
         hover_tint: Option<Hsla>,
@@ -1084,6 +1090,7 @@ impl Pane {
     ) -> AnyElement {
         self.header_button_shell(
             id,
+            label,
             icon,
             ACTION_BUTTON_SIZE,
             base_tint,
@@ -1776,26 +1783,24 @@ impl Pane {
             .h_full()
             .gap(px(0.));
 
-        let detach = div()
-            .id("pane-detach-control")
-            .delayed_tooltip(crate::ui_primitives::text_tooltip(if self.is_detached() {
+        let detach = div().id("pane-detach-control").child(self.action_button(
+            "pane-btn-detach",
+            if self.is_detached() {
                 "Return to workspace"
             } else {
                 "Detach pane into a window"
-            }))
-            .child(self.action_button(
-                "pane-btn-detach",
-                if self.is_detached() {
-                    "icons/dock-pane.svg"
-                } else {
-                    "icons/detach-pane.svg"
-                },
-                cx.listener(|this, _, window, cx| {
-                    this.toggle_detached(window, cx);
-                    cx.stop_propagation();
-                }),
-                cx,
-            ));
+            },
+            if self.is_detached() {
+                "icons/dock-pane.svg"
+            } else {
+                "icons/detach-pane.svg"
+            },
+            cx.listener(|this, _, window, cx| {
+                this.toggle_detached(window, cx);
+                cx.stop_propagation();
+            }),
+            cx,
+        ));
         if self.is_detached() {
             return end_section.child(detach);
         }
@@ -1829,6 +1834,7 @@ impl Pane {
         action_cluster = action_cluster
             .child(self.action_button(
                 "pane-btn-split-v",
+                "Split right",
                 "icons/split_vertical.svg",
                 cx.listener(|_this, _, _window, cx| {
                     cx.emit(PaneEvent::Split(crate::layout::SplitDirection::Vertical));
@@ -1837,6 +1843,7 @@ impl Pane {
             ))
             .child(self.action_button(
                 "pane-btn-split-h",
+                "Split down",
                 "icons/split_horizontal.svg",
                 cx.listener(|_this, _, _window, cx| {
                     cx.emit(PaneEvent::Split(crate::layout::SplitDirection::Horizontal));
@@ -1845,6 +1852,7 @@ impl Pane {
             ))
             .child(self.action_button(
                 "pane-btn-diff-dock",
+                "Toggle diff dock",
                 "icons/layout-sidebar-right.svg",
                 cx.listener(|_this, _e: &ClickEvent, _window, cx| {
                     cx.emit(PaneEvent::ToggleDiffDock);
