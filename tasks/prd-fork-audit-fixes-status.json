@@ -52,7 +52,7 @@
       "status": "IN_REVIEW",
       "priority": "P1",
       "stories_total": 9,
-      "stories_done": 0
+      "stories_done": 4
     }
   ],
   "stories": [
@@ -592,19 +592,19 @@
       ],
       "started_at": "2026-09-30T17:51:45+02:00",
       "completed_at": null,
-      "reviewed_at": null
+      "reviewed_at": "2026-10-01T00:54:24+02:00"
     },
     {
       "id": "US-041",
       "title": "Restaurer le focus et rendre les notifications in-app fiables",
       "epic": "EP-006",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P1",
       "size": "L",
       "blocked_by": [],
       "started_at": "2026-09-30T17:51:45+02:00",
-      "completed_at": null,
-      "reviewed_at": null
+      "completed_at": "2026-10-01T09:15:42+02:00",
+      "reviewed_at": "2026-10-01T09:15:42+02:00"
     },
     {
       "id": "US-042",
@@ -616,19 +616,19 @@
       "blocked_by": [],
       "started_at": "2026-09-30T17:51:45+02:00",
       "completed_at": null,
-      "reviewed_at": null
+      "reviewed_at": "2026-10-01T00:54:24+02:00"
     },
     {
       "id": "US-043",
       "title": "Rendre les contrôles accessibles, lisibles et conformes à Reduce motion",
       "epic": "EP-006",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P2",
       "size": "L",
       "blocked_by": [],
       "started_at": "2026-09-30T17:51:45+02:00",
-      "completed_at": null,
-      "reviewed_at": null
+      "completed_at": "2026-10-01T09:15:42+02:00",
+      "reviewed_at": "2026-10-01T09:15:42+02:00"
     },
     {
       "id": "US-044",
@@ -640,19 +640,19 @@
       "blocked_by": [],
       "started_at": "2026-09-30T17:51:45+02:00",
       "completed_at": null,
-      "reviewed_at": null
+      "reviewed_at": "2026-10-01T00:54:24+02:00"
     },
     {
       "id": "US-045",
       "title": "Fiabiliser la mise à jour",
       "epic": "EP-006",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P1",
       "size": "M",
       "blocked_by": [],
       "started_at": "2026-09-30T17:51:45+02:00",
-      "completed_at": null,
-      "reviewed_at": null
+      "completed_at": "2026-10-01T00:54:24+02:00",
+      "reviewed_at": "2026-10-01T00:54:24+02:00"
     },
     {
       "id": "US-046",
@@ -664,7 +664,7 @@
       "blocked_by": [],
       "started_at": "2026-09-30T17:51:45+02:00",
       "completed_at": null,
-      "reviewed_at": null
+      "reviewed_at": "2026-10-01T00:54:24+02:00"
     },
     {
       "id": "US-047",
@@ -676,19 +676,19 @@
       "blocked_by": [],
       "started_at": "2026-09-30T17:51:45+02:00",
       "completed_at": null,
-      "reviewed_at": null
+      "reviewed_at": "2026-10-01T00:54:24+02:00"
     },
     {
       "id": "US-050",
       "title": "Isoler les tests du home et de la config git de l'utilisateur",
       "epic": "EP-006",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P1",
       "size": "M",
       "blocked_by": [],
       "started_at": "2026-09-30T17:51:45+02:00",
-      "completed_at": null,
-      "reviewed_at": null
+      "completed_at": "2026-10-01T09:15:42+02:00",
+      "reviewed_at": "2026-10-01T09:15:42+02:00"
     }
   ]
 }
